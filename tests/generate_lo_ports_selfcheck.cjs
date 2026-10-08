@@ -283,6 +283,56 @@ function panelText(win) {
     'L8: the build request carries specWithCoBands(), not the raw spec');
 })();
 
+// ---- L8a: a row rewrite also reaches its other coupled port ---------------
+(function () {
+  function port(n, io) { return { con: 1, slot: 3, port: n, io_type: io }; }
+  function scenario(rf, reverse) {
+    const w = world('generate', {
+      qubit: { q1: { RF_freq: 6.0e9 }, q2: { RF_freq: 4.0e9 } },
+      resonator: { q1: { RF_freq: 5.2e9 }, q2: { RF_freq: rf } } }, ['q1', 'q2']);
+    w.st.allocation = {
+      q1: { xy: xy(reverse ? 8 : 1),
+            rr: [port(reverse ? 1 : 8, 'output'), port(reverse ? 2 : 1, 'input')] },
+      q2: { xy: xy(4), rr: [port(2, 'output'), port(reverse ? 1 : 2, 'input')] }
+    };
+    return w;
+  }
+  [false, true].forEach(function (reverse) {
+    const w = scenario(5.25e9, reverse);
+    const calc = w.T.loBandFindings(w.T.computeLoAssignments());
+    ok(!calc.warnings.some(function (x) { return /coupled/.test(x.message); }),
+      'L8a: a satisfiable chain has no coupled warning (reverse=' + reverse + ')');
+    ok(calc.coBands['qubit/q1'] === 2 && calc.coBands['resonator/q1'] === 2 &&
+       calc.coBands['resonator/q2'] === 2,
+      'L8a: band 2 propagates through both resonator ports (reverse=' + reverse + ')');
+    const sp = w.T.specWithCoBands();
+    ok(sp.populate.resonator.q2.band === 2,
+      'L8a: the third port row carries band 2 into the build');
+    w.st.spec = sp;
+    const built = w.T.loBandFindings(w.T.computeLoAssignments());
+    ok(!built.warnings.some(function (x) { return /coupled/.test(x.message); }),
+      'L8a: every coupled pair remains compatible after applying the build bands');
+  });
+  // A frequency outside band 2 prevents any assignment for the full chain.
+  const w = scenario(3.0e9, false);
+  const calc = w.T.loBandFindings(w.T.computeLoAssignments());
+  ok(Object.keys(calc.coBands).length === 0,
+    'L8b: an unsatisfiable chain discards every tentative row rewrite');
+  ok(calc.warnings.some(function (x) { return /Out1/.test(x.message) && /In1/.test(x.message) && /coupled/.test(x.message); }),
+    'L8b: the original coupled conflict stays visible');
+  ok(calc.notes.length === 0,
+    'L8b: Review never claims a shared build band for a discarded assignment');
+  ok(w.T.specWithCoBands().populate.resonator.q1.band == null,
+    'L8b: the rejected assignment leaves the build rows automatic');
+  const locked = scenario(5.25e9, false);
+  locked.st.spec.populate.resonator.q2.band = 1;
+  const explicit = locked.T.loBandFindings(locked.T.computeLoAssignments());
+  ok(Object.keys(explicit.coBands).length === 0 && explicit.notes.length === 0 &&
+     explicit.warnings.some(function (x) { return /coupled/.test(x.message); }) &&
+     locked.T.specWithCoBands().populate.resonator.q2.band === 1,
+    'L8c: an explicit band on the third port is preserved and blocks an incompatible rewrite');
+})();
+
 // ---- L7: step-6 deep link with no allocation -----------------------------
 (async function () {
   const alloc = { q1: { xy: xy(2) }, q2: { xy: xy(3) } };

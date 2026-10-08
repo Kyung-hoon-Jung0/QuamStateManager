@@ -8511,13 +8511,19 @@ window.switchCompareTab = function(el) {
 
 window.initPathAutocomplete = function(inputEl) {
     var timer = null;
+    var browseSeq = 0;
     var box = document.createElement("div");
     box.className = "path-suggestions";
     inputEl.parentNode.style.position = "relative";
     inputEl.parentNode.appendChild(box);
     var activeIdx = -1;
 
-    function hide() { box.innerHTML = ""; box.style.display = "none"; activeIdx = -1; }
+    function hide() {
+        clearTimeout(timer);
+        timer = null;
+        browseSeq++;
+        box.innerHTML = ""; box.style.display = "none"; activeIdx = -1;
+    }
 
     // docs/301 F34: the list opened over the form's own submit button (the
     // sidebar's "State Load" sits right under the box), so the button could
@@ -8584,6 +8590,7 @@ window.initPathAutocomplete = function(inputEl) {
 
     inputEl.addEventListener("input", function() {
         clearTimeout(timer);
+        var seq = ++browseSeq;
         var val = inputEl.value.trim();
         if (!val) { hide(); return; }
         timer = setTimeout(function() {
@@ -8593,13 +8600,14 @@ window.initPathAutocomplete = function(inputEl) {
             fetch("/browse?complete=1&path=" + encodeURIComponent(val))
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
+                    if (seq !== browseSeq) return;
                     var items = (data.dirs || []).map(function(d) { return { path: d }; });
                     // docs/301 F34: a typed path that IS a chip folder offers
                     // itself first (it used to offer only its subfolders).
                     if (data.has_quam_state && data.path) items.unshift({ path: data.path, self: true });
                     show(items);
                 })
-                .catch(function() { hide(); });
+                .catch(function() { if (seq === browseSeq) hide(); });
         }, 250);
     });
 
@@ -24210,31 +24218,42 @@ window.FieldHistory = (function () {
     // by itself -- only while the panel is open on the SAME path, and only for
     // the newest open (a stale retry never overwrites another field's panel).
     var loadSeq = 0;
-    function load(anchor, path, seq, all) {
-        var p = ensurePanel();
+    function load(anchor, path, seq, all, container) {
+        var p = container || ensurePanel();
+        var isPanel = p === panel;
+        var contentStart = p.firstChild;
+        function current() {
+            return isPanel ? seq === loadSeq && openPath === path
+                : p.isConnected && p._fhLoadSeq === seq && p.firstChild === contentStart;
+        }
+        function replace(html) {
+            if (window.PlotHost) { try { window.PlotHost.purgeWithin(p); } catch (e) {} }
+            p.innerHTML = html;
+            contentStart = p.firstChild;
+        }
         fetch("/field/history?path=" + encodeURIComponent(path) + (all ? "&all=1" : ""))
             .then(function (r) { return r.text(); })
             .then(function (html) {
-                if (seq !== loadSeq || openPath !== path) return;
-                p.innerHTML = html;
+                if (!current()) return;
+                replace(html);
                 // same reason as the Column History card: no swap event here
                 if (window.applyLocalTimes) window.applyLocalTimes(p);
                 if (window.htmx) window.htmx.process(p);
                 renderChart(p);
-                position(anchor);
+                if (isPanel) position(anchor);
                 var wait = p.querySelector("[data-vh-retry]");
                 if (wait) {
                     var ms = parseInt(wait.getAttribute("data-vh-retry"), 10) || 2000;
                     setTimeout(function () {
-                        if (seq !== loadSeq || openPath !== path) return;
-                        if (p.style.display === "none") return;
-                        load(anchor, path, seq, all);
+                        if (!current()) return;
+                        if (isPanel && p.style.display === "none") return;
+                        load(anchor, path, seq, all, p);
                     }, ms);
                 }
             })
             .catch(function () {
-                if (seq !== loadSeq) return;
-                p.innerHTML = '<p class="fh-empty">Could not load history.</p>';
+                if (!current()) return;
+                replace('<p class="fh-empty">Could not load history.</p>');
             });
     }
 
@@ -24320,6 +24339,9 @@ window.FieldHistory = (function () {
 
     function close() {
         if (panel) panel.style.display = "none";
+        openPath = null;
+        openAnchor = null;
+        ++loadSeq;
     }
 
     function useValue(btn) {
@@ -24672,9 +24694,18 @@ window.FieldHistory = (function () {
     });
 
     // docs/301 F15: the footer's "Show all N" -- the same panel, every point
-    function showAll() {
-        if (!openPath) return;
-        load(openAnchor, openPath, ++loadSeq, true);
+    function showAll(btn) {
+        if (!btn) return;
+        var path = btn.getAttribute("data-path");
+        var p = btn.closest("#field-history-panel, #inspector-pane");
+        if (!path || !p) return;
+        if (p === panel) {
+            if (openPath !== path || p.style.display === "none") return;
+            load(openAnchor, path, ++loadSeq, true, p);
+        } else {
+            p._fhLoadSeq = (p._fhLoadSeq || 0) + 1;
+            load(null, path, p._fhLoadSeq, true, p);
+        }
     }
 
     return { open: open, close: close, useValue: useValue, revertTo: revertTo,

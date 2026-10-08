@@ -100,5 +100,6 @@
   &middot; from the change ledger ({{ ledger.events }} event{{ 's' if ledger.events != 1 }}: runs and SM writes){% if total > points|length %} &middot; {{ total - points|length }} older not shown{% endif %}
   {#- docs/301 F15: the older points were named but unreachable -#}
   {% if total > points|length and not show_all %}<button type="button" class="fh-show-all"
-      onclick="FieldHistory.showAll()" title="Load every change point of this value">Show all {{ total }}</button>{% endif %}
+      data-path="{{ dot_path }}" onclick="FieldHistory.showAll(this)"
+      title="Load every change point of this value">Show all {{ total }}</button>{% endif %}
 </p>
