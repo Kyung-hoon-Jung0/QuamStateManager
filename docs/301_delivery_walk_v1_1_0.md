@@ -64,6 +64,27 @@ Also in this release: docs/298 (RAM-first speed: the ledger tables and parts kep
 merged after review), docs/299 (the Calibration log's address names its day) and docs/300
 (Interactive fit overlays draw the node's own curve or say why not).
 
+## The release review (two independent reviewers, refute lens)
+
+The release diff was reviewed in two halves by two different models: the Python side by Codex, the
+browser side by a Claude agent, each told to assume every fix wrong until the code proved it. 14
+findings; every one was re-checked here, and fixed with a pin that fails without the fix.
+
+| Finding | Fix |
+|---|---|
+| P1 2Q RB: a pair absent from the fit dataset was drawn with the FIRST pair's fit and success flag | no fit, and a note |
+| P1 Calibration Age on a renamed chip: a run that still wrote the old ids dated today's holder of the name | each change respelled from its event's era (`hub_eras.Renamer`); a rename event uses the read side's own per-qubit recompute |
+| P2 Generate: the shared-band rewrite moved the resonator's other port without re-judging that port's pair (Review said "band 2 on both"; the build wrote an unsupported pair) | every coupled pair re-judged to a fixed point; no complete assignment, no rewrite, warnings kept |
+| P2 Value drawer "Show all" did nothing in the inspector pane | the button carries its path and loads into its own drawer; the old chart is purged |
+| P2 Ramsey: partial sign sets paired by position; a missing mixed-model curve silently became the exponential | matched by sign value only; no curve and a note otherwise |
+| P2 Pairs: the Bell fallback could show NaN beside a finite value | non-finite values ignored |
+| P2 History / Versions counts used max(snapshots, ledger states) | the ledger's own count |
+| P2 A stale "only the new path" answer scoped the project to a withdrawn folder | the banner and the answer share one rule; nothing left to answer changes nothing |
+| P2 "Show all" stopped at 5,000 with no word | "newest 5,000 of N shown" |
+| P3 the age wording claimed a run made a change it is not proven to have made | "moved in a run's saved state (the run is not named as its writer)" |
+| P3 the path autocomplete could reopen after submit | the pending lookup is cancelled; a late answer is dropped |
+| P2 (F42, found while checking a P3) every browser Back re-ran base.html's body scripts: listeners grew by ~11-14 per Back and a run opened after three Backs had four stacked split gutters -- on origin/main too | see below |
+
 ## Decisions that changed an existing pin (old expectation → new, and why)
 
 - `test_hub_versions` exact-pair pins (docs/284): "the version's saved files exactly" →
