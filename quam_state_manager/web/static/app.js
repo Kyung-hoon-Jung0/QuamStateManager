@@ -8509,17 +8509,28 @@ window.switchCompareTab = function(el) {
 /* Path autocomplete                                                    */
 /* ------------------------------------------------------------------ */
 
-window.initPathAutocomplete = function(inputEl) {
+window.initPathAutocomplete = function(inputEl, scope) {
+    var listen = scope ? scope.listen : function (target, type, callback) {
+        target.addEventListener(type, callback);
+    };
+    var timeout = scope ? scope.timeout : window.setTimeout.bind(window);
+    var cancelTimeout = scope ? scope.clearTimeout : window.clearTimeout.bind(window);
     var timer = null;
     var browseSeq = 0;
+    if (scope) {
+        inputEl.parentNode.querySelectorAll('.path-suggestions').forEach(function (previous) {
+            previous.remove();
+        });
+    }
     var box = document.createElement("div");
     box.className = "path-suggestions";
     inputEl.parentNode.style.position = "relative";
     inputEl.parentNode.appendChild(box);
     var activeIdx = -1;
+    if (scope) scope.cleanup(function () { hide(); box.remove(); });
 
     function hide() {
-        clearTimeout(timer);
+        cancelTimeout(timer);
         timer = null;
         browseSeq++;
         box.innerHTML = ""; box.style.display = "none"; activeIdx = -1;
@@ -8564,7 +8575,7 @@ window.initPathAutocomplete = function(inputEl) {
                 div.insertBefore(tag, div.firstChild);
                 div.title = "This folder holds state.json + wiring.json";
             }
-            div.addEventListener("mousedown", function(e) {
+            listen(div, "mousedown", function(e) {
                 e.preventDefault();
                 inputEl.value = this.getAttribute("data-path");
                 var self = this.getAttribute("data-self") === "1";
@@ -8578,7 +8589,7 @@ window.initPathAutocomplete = function(inputEl) {
     }
 
     var _form = inputEl.form || inputEl.closest("form");
-    if (_form) _form.addEventListener("submit", hide);
+    if (_form) listen(_form, "submit", hide);
 
     function highlight(idx) {
         var items = box.querySelectorAll(".path-suggestion");
@@ -8588,12 +8599,12 @@ window.initPathAutocomplete = function(inputEl) {
         activeIdx = idx;
     }
 
-    inputEl.addEventListener("input", function() {
-        clearTimeout(timer);
+    listen(inputEl, "input", function() {
+        cancelTimeout(timer);
         var seq = ++browseSeq;
         var val = inputEl.value.trim();
         if (!val) { hide(); return; }
-        timer = setTimeout(function() {
+        timer = timeout(function() {
             // complete=1: the autocomplete wants prefix-completions of the
             // half-typed last segment; the folder-browser DIALOG never sends
             // it (it gets ancestor-walk semantics instead — see /browse).
@@ -8611,7 +8622,7 @@ window.initPathAutocomplete = function(inputEl) {
         }, 250);
     });
 
-    inputEl.addEventListener("keydown", function(e) {
+    listen(inputEl, "keydown", function(e) {
         var items = box.querySelectorAll(".path-suggestion");
         if (!items.length) return;
         if (e.key === "ArrowDown") {
@@ -8629,8 +8640,8 @@ window.initPathAutocomplete = function(inputEl) {
         }
     });
 
-    inputEl.addEventListener("blur", function() {
-        setTimeout(hide, 200);
+    listen(inputEl, "blur", function() {
+        timeout(hide, 200);
     });
 };
 

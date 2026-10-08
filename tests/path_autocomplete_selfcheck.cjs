@@ -175,7 +175,8 @@ async function main() {
     timers.clear();
     pending.forEach(callback => callback());
   }
-  const start = APP_JS.indexOf('window.initPathAutocomplete = function(inputEl) {');
+  // the signature grew an optional lifecycle scope (F42); anchor on the name
+  const start = APP_JS.indexOf('window.initPathAutocomplete = function(inputEl');
   const end = APP_JS.indexOf('/* Folder browser modal', start);
   new iw.Function(APP_JS.slice(start, end)).call(iw);
   const pendingInput = iw.document.querySelector('input');
