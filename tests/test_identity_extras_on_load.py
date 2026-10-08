@@ -192,6 +192,25 @@ def test_an_extras_root_the_chip_no_longer_declares_is_not_asked(tmp_path):
             routes_mod._load_project_roots = orig
 
 
+def test_a_stale_answer_never_scopes_the_project_to_a_withdrawn_root(tmp_path, monkeypatch):
+    """Review: the banner was rendered, then the chip stopped declaring the
+    proposed folder; an "only the new path" answer from that old banner
+    replaced the project's roots with the withdrawn folder."""
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    b, c = str(tmp_path / "b"), str(tmp_path / "c")
+    monkeypatch.setattr(routes_mod, "_active_ctx",
+                        lambda: {"qualibrate_project": "proj", "extras_data_roots": []})
+    monkeypatch.setattr(routes_mod, "_load_project_roots", lambda: {"proj": [c]})
+    with app.test_request_context("/project-roots/confirm", method="POST",
+                                  data={"project": "proj", "choice": "new_only"}):
+        routes_mod._save_pending_roots({"proj": {"new": [b], "extras": [b]}})
+        routes_mod.project_roots_confirm()
+        roots_file = routes_mod._project_roots_file()
+        assert not roots_file.exists() or "b" not in [
+            Path(r).name for r in json.loads(roots_file.read_text(encoding="utf-8")).get("proj", [])],             "the project's roots were rewritten from a withdrawn proposal"
+        assert "proj" not in routes_mod._load_pending_roots(), "the stale question is dropped"
+
+
 def test_the_stop_asking_button_is_a_small_text_button():
     import re
     css = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "static"

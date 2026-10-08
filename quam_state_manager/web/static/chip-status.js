@@ -1511,7 +1511,7 @@ window.ChipStatus.mount = function (opts) {
             var newest = Math.max.apply(null, stamps), oldest = Math.min.apply(null, stamps);
             freshTile = { id: 'cal_age', composite: true, title: 'Calibration Age', value: _ageLabel(newest),
                 sub: 'oldest ' + _ageLabel(oldest) + '  ·  ('
-                     + (byRun ? byRun + ' by a run\u2019s change, ' + (stamps.length - byRun) + ' stamped'
+                     + (byRun ? byRun + ' moved in a run, ' + (stamps.length - byRun) + ' stamped'
                               : stamps.length + ' stamped') + ')',
                 color: '#76b7b2' };
         } else {
@@ -2717,7 +2717,8 @@ window.ChipStatus.mount = function (opts) {
                 if (!ac) return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)', text: '—', title: '' };
                 return { cls: 'hs-' + ac, text: _ageLabel(ms),
                          title: n.last_calibrated_from === 'run'
-                             ? 'last changed by a run ' + _ageLabel(ms) + ' (change ledger)'
+                             ? 'last moved in a run\u2019s saved state ' + _ageLabel(ms)
+                               + ' (change ledger; the run is not named as its writer)'
                              : 'last calibrated ' + _ageLabel(ms) };
             }
             if (_badFit(n, m.key)) {

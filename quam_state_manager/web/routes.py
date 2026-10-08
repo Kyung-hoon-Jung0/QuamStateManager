@@ -15911,7 +15911,9 @@ def wiring_view():
         try:
             _hv = _versions_read(_active_ctx(), _snaps, limit=1)
             if _hv["mode"] == "ledger":
-                history_count = max(history_count, int(_hv.get("total") or 0))
+                # the ledger's own count, not max() with the snapshots: several
+                # snapshots of one content are one recorded state (review)
+                history_count = int(_hv.get("total") or 0)
         except Exception:  # noqa: BLE001 -- the snapshot count stands
             logger.debug("history count from the ledger failed", exc_info=True)
 
@@ -18796,7 +18798,7 @@ def _state_version_now(ctx: dict | None) -> dict:
     try:
         _v = _versions_read(ctx, snaps, limit=1)
         if _v["mode"] == "ledger":
-            out["count"] = max(out["count"], int(_v.get("total") or 0))
+            out["count"] = int(_v.get("total") or 0)
     except Exception:  # noqa: BLE001 -- the snapshot count stands
         logger.debug("version count from the ledger failed", exc_info=True)
     # WHOSE version this is, stated rather than assumed. The hash above is of
@@ -35582,18 +35584,24 @@ def _dataset_roots_ask(ctx: dict | None) -> dict | None:
     entry = _load_pending_roots().get(project)
     if not isinstance(entry, dict) or entry.get("declined"):
         return None
+    new = _pending_roots_still_proposed(entry, ctx)
+    if not new:
+        return None
+    return {"project": project, "new": new,
+            "current": _load_project_roots().get(project, [])}
+
+
+def _pending_roots_still_proposed(entry: dict, ctx: dict | None) -> list[str]:
+    """docs/301 F26: the pending roots still proposed -- a root the chip's
+    extras.data_folder proposed counts only while the chip still declares it.
+    The ONE rule for the banner and for the answer to it."""
     new = [r for r in entry.get("new", []) if isinstance(r, str)]
-    # docs/301 F26: a root the chip's extras.data_folder proposed is asked
-    # about only while the chip still declares it
     from_extras = {path_match.fs_key(r) for r in entry.get("extras", []) if isinstance(r, str)}
     if from_extras:
         declared = {path_match.fs_key(r) for r in (ctx or {}).get("extras_data_roots") or []}
         new = [r for r in new
                if path_match.fs_key(r) not in from_extras or path_match.fs_key(r) in declared]
-    if not new:
-        return None
-    return {"project": project, "new": new,
-            "current": _load_project_roots().get(project, [])}
+    return new
 
 
 @bp.route("/project-roots/confirm", methods=["POST"])
@@ -35610,12 +35618,17 @@ def project_roots_confirm():
     choice = (request.form.get("choice") or "").strip()
     pend = _load_pending_roots()
     entry = pend.get(project)
-    new = [r for r in (entry or {}).get("new", [])] if isinstance(entry, dict) else []
-    # docs/301 F26: answer for the roots the banner showed (a withdrawn
-    # extras root is not scoped by "only the new path")
-    _shown = _dataset_roots_ask(_active_ctx())
-    if _shown and _shown.get("project") == project:
-        new = list(_shown["new"])
+    # docs/301 F26: answer for the roots still proposed -- a withdrawn extras
+    # root is never scoped by "only the new path", even when the answer comes
+    # from a banner rendered before it was withdrawn (review)
+    new = _pending_roots_still_proposed(entry, _active_ctx()) if isinstance(entry, dict) else []
+    if choice in ("both", "new_only") and project and not new:
+        # nothing left to answer: drop the question, keep the project's roots
+        if project in pend:
+            pend.pop(project, None)
+            _save_pending_roots(pend)
+        return render_template("_dataset_roots_banner.html",
+                               dataset_roots_ask=_dataset_roots_ask(_active_ctx()))
     if choice == "decline":
         pend[project] = {"declined": True}
         _save_pending_roots(pend)

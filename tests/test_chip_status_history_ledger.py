@@ -68,6 +68,30 @@ class TestHistoryDrawer:
         assert snaps == [], "fixture: a chip with a ledger and no snapshot"
         assert "unrecorded" not in chip
 
+    def test_snapshots_of_one_content_count_once(self, tmp_path):
+        """Review: max(snapshots, ledger states) overstated the drawer --
+        snapshots of the content a run already recorded are that one state."""
+        from quam_state_manager.core import hub_sync
+        from quam_state_manager.web import routes
+        from tests import test_rename_history as rh
+        st = rh.state({"q0": 5e9})
+        env = rh.make(tmp_path, [st], st)
+        c = env["client"]
+        for _ in range(5):
+            assert c.post("/state-history/snapshot").status_code == 200
+        with env["app"].app_context():
+            hub_sync.on_roots_moved([str(env["data"])])
+        with env["app"].test_request_context():
+            assert len(routes._history().list_snapshots(env["live"])) >= 5
+        drawer = flat(c.get("/api/history").data.decode())
+        listed = int(re.search(r"(\d+) recorded states?", drawer).group(1))
+        page = flat(c.get("/topology").data.decode())
+        button = int(re.search(r'History \(<span id="history-count">(\d+)</span>\)', page).group(1))
+        chip = flat(c.get("/state/version").data.decode())
+        top = int(re.search(r'<span class="state-version-count">(\d+)</span>', chip).group(1))
+        assert listed < 5, ("fixture: the snapshots fold into the run's state", listed)
+        assert button == listed == top, (button, listed, top)
+
     def test_a_chip_with_no_ledger_keeps_the_snapshot_drawer(self, tmp_path):
         env = load(tmp_path, [(chip_state(), None)], chip_state(), sync=False)
         html = env["client"].get("/api/history").data.decode()

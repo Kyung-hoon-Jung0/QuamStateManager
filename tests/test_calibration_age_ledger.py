@@ -113,3 +113,32 @@ class TestEverySurfaceReadsIt:
         body = sm["client"].get("/chip-status/report/section/chip_status?redact=0").data.decode()
         row = re.search(r"<strong>qA1</strong>.*?</tr>", body, re.S)
         assert row and "2026-01-01" in row.group(0), (row.group(0) if row else body[:800])
+
+
+class TestARenamedChip:
+    """A run that still wrote the old ids after a Re-generate rename dates
+    the qubit those ids meant THEN (review of docs/301 F11): with q1 -> q0
+    and q2 -> q1, a later run moving the old "q1" moved today's q0."""
+
+    def test_an_old_id_dates_the_qubit_it_meant(self, tmp_path):
+        from tests import test_rename_history as rh
+        rec = rh.record(["q1", "q2"], ["q0", "q1"], {"q0": "q1", "q1": "q2"})
+        old = rh.state({"q1": 5e9, "q2": 6e9})
+        new = rh.state({"q0": 5e9, "q1": 6e9}, [rec])
+        late = rh.state({"q1": 5.1e9, "q2": 6e9})          # still the old ids
+        env = rh.make(tmp_path, [old, new, late], new)
+        nodes = {n["id"]: n for n in topo(env)["nodes"]}
+        assert nodes["q0"].get("last_run_change") == (rh.T0 + 3 * 10_000_000) // 1000, nodes["q0"]
+        assert nodes["q1"].get("last_run_change") != (rh.T0 + 3 * 10_000_000) // 1000,             "today's q1 (the old q2) was not moved by the late run"
+
+    def test_a_change_before_the_rename_dates_todays_name(self, tmp_path):
+        from tests import test_rename_history as rh
+        rec = rh.record(["q1", "q2"], ["q0", "q1"], {"q0": "q1", "q1": "q2"})
+        env = rh.make(tmp_path, [rh.state({"q1": 5e9, "q2": 6e9}),
+                                 rh.state({"q1": 5.05e9, "q2": 6e9}),        # old q1 moves
+                                 rh.state({"q0": 5.05e9, "q1": 6e9}, [rec])],
+                      rh.state({"q0": 5.05e9, "q1": 6e9}, [rec]))
+        nodes = {n["id"]: n for n in topo(env)["nodes"]}
+        assert nodes["q0"].get("last_run_change") == (rh.T0 + 2 * 10_000_000) // 1000, nodes["q0"]
+        assert nodes["q1"].get("last_run_change") is None, "the old q2 never moved"
+

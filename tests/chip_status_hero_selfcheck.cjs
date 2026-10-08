@@ -756,16 +756,16 @@ function calibrationAgeNamesItsBasis() {
   ok(/Calibration Age/.test(html) && /oldest 8 days ago/.test(html),
      'F11: the oldest entity is the stamped one (the edge ages by its run change, not its 30-day CZ stamp): '
      + (html.match(/Calibration Age.{0,80}/) || [''])[0]);
-  ok(/2 by a run’s change, 1 stamped/.test(html),
+  ok(/2 moved in a run, 1 stamped/.test(html),
      'F11: the tile says how many ages come from a run change and how many from a stamp');
   const hero = win.document.getElementById('topo-hero');
   const btn = hero.querySelector('[data-hero-metric="last_calibrated"]');
   ok(!!btn, 'F11 fixture: the Last calibrated map metric exists');
   if (btn) btn.click();
   const q1 = hero.querySelector('[data-hero-qubit="q1"]'), q2 = hero.querySelector('[data-hero-qubit="q2"]');
-  ok(q1 && /last changed by a run/.test(q1.innerHTML) && /change ledger/.test(q1.innerHTML),
+  ok(q1 && /last moved in a run’s saved state/.test(q1.innerHTML) && /change ledger/.test(q1.innerHTML),
      'F11: a run-dated stone says so on hover');
-  ok(q2 && /last calibrated/.test(q2.innerHTML) && !/changed by a run/.test(q2.innerHTML),
+  ok(q2 && /last calibrated/.test(q2.innerHTML) && !/moved in a run/.test(q2.innerHTML),
      'F11: a stamp-dated stone keeps its own words');
 }
 

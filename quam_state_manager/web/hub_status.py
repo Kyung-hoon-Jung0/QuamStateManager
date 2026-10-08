@@ -279,6 +279,7 @@ class LedgerTable:
         lineage = scope.get("lineage")
         era = tuple(scope.get("era") or ())
         self._lineage = lineage
+        self._era = era
         # docs/296 review P1-1: two folders of one chip share its history dir
         # (a rebuild and its source; both start at mutation_seq 0) and read it
         # in different rename eras -- an answer is valid for ONE open folder
@@ -573,28 +574,48 @@ class LedgerTable:
 
         Never counted: the ledger's first event (the starting state, not a
         change), a run whose chip identity is uncertain, an SM write. On a
-        renamed chip only the events since the last rename count -- an id
-        from before it may have named another qubit."""
+        renamed chip every change is respelled from ITS event's era into
+        today's ids (``hub_eras.Renamer``, the one translator every ledger
+        surface uses) -- a run that still wrote the old ids after a rename
+        dates the qubit that id meant then, never today's holder of the
+        name; a value with no name today is dropped."""
         def compute():
             from quam_state_manager.core.hub_store import CHIP_UNCERTAIN
+            where = (" FROM changes c JOIN events e ON e.eid = c.eid JOIN paths p ON p.pid = c.pid"
+                     " WHERE e.kind = 'run' AND e.base_hash IS NOT NULL AND (e.flags & ?) = 0"
+                     " AND (p.path LIKE 'qubits.%' OR p.path LIKE 'qubit_pairs.%')")
             with hub_index.snapshot(self.binding) as (conn, index):
-                since = None
-                if self._lineage is not None:
-                    from quam_state_manager.core.hub_eras import EraTimeline, first_rename_at
-                    tl = EraTimeline(conn, index)
-                    starts = [b for b in tl.boundaries
-                              if 0 < b < len(index.eids) and first_rename_at(tl, b)]
-                    if starts:
-                        since = conn.execute("SELECT ord FROM events WHERE eid=?",
-                                             (index.eids[max(starts)],)).fetchone()[0]
-                rows = conn.execute(
-                    "SELECT p.path, MAX(e.t_utc_us) FROM changes c"
-                    " JOIN events e ON e.eid = c.eid JOIN paths p ON p.pid = c.pid"
-                    " WHERE e.kind = 'run' AND e.base_hash IS NOT NULL AND (e.flags & ?) = 0"
-                    " AND (p.path LIKE 'qubits.%' OR p.path LIKE 'qubit_pairs.%')"
-                    + (" AND e.ord >= ?" if since is not None else "")
-                    + " GROUP BY c.pid",
-                    (CHIP_UNCERTAIN,) + ((since,) if since is not None else ())).fetchall()
+                if self._lineage is None:
+                    rows = conn.execute("SELECT p.path, MAX(e.t_utc_us)" + where + " GROUP BY c.pid",
+                                        (CHIP_UNCERTAIN,)).fetchall()
+                else:
+                    from quam_state_manager.core.hub_eras import Renamer, _with_era_rows
+                    ren = Renamer(conn, index, self._lineage, self._era)
+                    best: dict = {}
+                    boundary: dict = {}
+
+                    def keep(now, t):
+                        if now is not None and t is not None and (now not in best or t > best[now]):
+                            best[now] = t
+                    for path, eid, t in conn.execute(
+                            "SELECT p.path, e.eid, e.t_utc_us" + where, (CHIP_UNCERTAIN,)):
+                        if not ren.active:
+                            keep(path, t)
+                        elif ren.boundary_before(eid) is not None:
+                            # the event's raw rows compare two spellings: the
+                            # read side's own per-qubit recompute decides what
+                            # moved there (hub_eras._with_era_rows)
+                            boundary.setdefault((eid, t), []).append(path)
+                        else:
+                            keep(ren.holder(path, ren.era_of(eid)), t)
+                    for (eid, t), paths in boundary.items():
+                        ev = {"eid": eid, "n_changes": len(paths),
+                              "changes": [{"path": q, "old": None, "new": None, "op": "set",
+                                           "proven": False} for q in paths]}
+                        _with_era_rows(conn, index, ren, ev)
+                        for c in ev["changes"]:
+                            keep(c["path"], t)
+                    rows = list(best.items())
             out: dict = {"q": {}, "p": {}}
             for path, t in rows:
                 parts = path.split(".", 2)
