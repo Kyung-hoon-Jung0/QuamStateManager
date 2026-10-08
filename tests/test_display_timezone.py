@@ -151,6 +151,7 @@ class TestTheCompactChipsCarryTheInstantToo:
         routes_src = (_ROOT / "quam_state_manager" / "web" / "routes.py"
                       ).read_text(encoding="utf-8")
         route_tpl: dict[str, set] = {}
+        shapes: set[str] = set()
         heads = list(re.finditer(r'@bp\.route\("([^"]+)"', routes_src))
         for i, m in enumerate(heads):
             end = heads[i + 1].start() if i + 1 < len(heads) else len(routes_src)
@@ -158,6 +159,9 @@ class TestTheCompactChipsCarryTheInstantToo:
             for t in carrying:
                 if f'"{t}"' in body:
                     route_tpl.setdefault(m.group(1).split("<")[0], set()).add(t)
+                    # docs/301: the whole rule too ("/dataset/<>/tag" is not
+                    # "/dataset/<>"): a prefix alone names every sub-route
+                    shapes.add(re.sub(r"<[^>]+>", "<>", m.group(1)))
 
         checked, missing = [], []
         for js in sorted(_STATIC.glob("*.js")):
@@ -166,6 +170,14 @@ class TestTheCompactChipsCarryTheInstantToo:
                 path = m.group(2)
                 if path not in route_tpl:
                     continue
+                if path.endswith("/"):
+                    # the fetched rule: the literal prefix, a variable, and the
+                    # literal that follows it ("/dataset/" + uid + "/tag")
+                    t = re.match(r"""["']\s*\+\s*[^"'+]+(?:\+\s*["']([^"'?]*))?""",
+                                 src[m.end():m.end() + 200])
+                    shape = path + "<>" + ((t.group(1) or "") if t else "")
+                    if shape not in shapes:
+                        continue
                 end = src.find(".catch(", m.end())
                 handler = src[m.end(): end if end > 0 else m.end() + 1500]
                 where = f"{js.name}:{src.count(chr(10), 0, m.start()) + 1} {path}"

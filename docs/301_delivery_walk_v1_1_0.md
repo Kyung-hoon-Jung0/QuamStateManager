@@ -104,8 +104,26 @@ findings; every one was re-checked here, and fixed with a pin that fails without
   link: no" for a run-saved row): "no Data link" → "no WRITER link (Data); the run that saved it
   is offered as Run, and opens saying it is not proven to have measured it" (F9). The rule kept is
   the binding one: a click never opens an unproven run *as if it were the measurement*.
+- `test_display_timezone::test_every_fetched_fragment_that_carries_one_is_localized` (origin/main): it
+  keyed every route by the prefix before its first variable, so once the run detail
+  (`/dataset/<uid>`) carried a `ts_local` time (F39), every `fetch('/dataset/' + uid + '/tag')`,
+  `/h5`, `/note`, ... read as loading that template. The scan now matches the whole rule
+  (`/dataset/<>/tag` is not `/dataset/<>`); the guarantee is unchanged and mutation-checked (a
+  versions-diff loader without `applyLocalTimes` still fails it). The run detail itself is only
+  ever loaded through htmx, whose swap localizes it.
 - `test_chip_report_v2` crop pin: the report's window edge interpolated (2.0) → holds the value
   before it (1.0), as the step the live chart draws (F8/F22).
+
+## The full suite before push
+
+14,329 passed, 251 skipped, 3 failed (run in six sequential chunks: the harness reaped a one-process
+run twice for memory). Each failure was re-run alone on the release and on origin/main:
+
+- `test_display_timezone` fetch scan: a release regression of the test's heuristic -- fixed above.
+- `test_overnight_run::TestTheMorningSummary::...after_a_restart`: flaky on BOTH (release 1 of 3,
+  origin/main 3 of 3 failed in one sitting): the summary can be read before the failed run's
+  `meta.json` holds its result, and then shows the gate's "class: what" text. Pre-existing; logged.
+- `test_hub_drawer::test_the_retry_selfcheck`: passes alone on both; a load flake.
 
 ## Not done in this release (honest list)
 
