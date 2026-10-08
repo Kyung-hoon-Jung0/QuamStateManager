@@ -6,6 +6,8 @@ tests/browser/journeys/agent_back.cjs and agent_setup_back.cjs."""
 
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import shutil
 import subprocess
 from pathlib import Path

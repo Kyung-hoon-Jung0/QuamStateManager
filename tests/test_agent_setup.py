@@ -139,7 +139,7 @@ class TestContext:
     def test_a_null_coupler_field_is_not_a_coupler(self):
         """QA agents round: quam_builder writes `coupler: null` on every pair, and
         the KEY alone made the lab-context question say 'tunable coupler
-        (detected)' on the KRISS 5Q chip, which has no coupler."""
+        (detected)' on the lab-F 5Q chip, which has no coupler."""
         state = {"qubits": {"q1": {}, "q2": {}},
                  "qubit_pairs": {"q1-2": {"coupler": None, "qubit_control": "#/qubits/q1"}}}
         f = st.detect_facts(state, node_names=[])
@@ -220,15 +220,15 @@ class TestRoutes:
         assert p["ok"] and p["applied"] is False and p["writes"] == {}
         assert p["previews"]["mcp"]["changed"] and p["previews"]["hooks"]["changed"] and p["previews"]["allow"]["changed"]
         assert not (home / ".claude.json").exists(), "a preview writes nothing"
-        d = c.post("/api/agent/setup/connect", json={"backend": "claude", "apply": True}, headers={"X-SM-Actor": "kyunghoon"}).get_json()
+        d = c.post("/api/agent/setup/connect", json={"backend": "claude", "apply": True}, headers={"X-SM-Actor": "user-a"}).get_json()
         assert d["applied"] and set(d["writes"]) == {"mcp", "hooks", "allow"}
         assert (home / ".claude.json").exists() and (home / ".claude" / "settings.json").exists() and (c._cal / ".claude" / "settings.local.json").exists()
         s = c.get("/api/agent/setup").get_json()
         assert s["claude"] == dict(s["claude"], mcp=True, hooks=True, allow=True) and "connect_claude" not in s["todo"] and "allow" not in s["todo"]
-        assert s["record"]["connected"]["claude"]["by"] == "human:kyunghoon"
+        assert s["record"]["connected"]["claude"]["by"] == "human:user-a"
         from quam_state_manager.core import journal as jm
         from datetime import datetime
-        assert "claude connected to SM by human:kyunghoon (mcp, hooks, allow)" in (jm.read(str(c._inst), "chip", datetime.now().strftime("%Y-%m-%d")) or "")
+        assert "claude connected to SM by human:user-a (mcp, hooks, allow)" in (jm.read(str(c._inst), "chip", datetime.now().strftime("%Y-%m-%d")) or "")
         d = c.post("/api/agent/setup/disconnect", json={"backend": "claude"}).get_json()
         assert d["removed"]["mcp"]["removed"] and d["removed"]["hooks"]["removed"]
         assert d["removed"]["allow"]["removed"] == ["mcp__quam-state-manager__*"]

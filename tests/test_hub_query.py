@@ -26,7 +26,7 @@ def ledger(tmp_path):
         root = store.register_root(tmp_path / "archive", "+00:00")
         previous = {}
 
-        def append(doc, *, experiment="scan", targets=None, actor="human:alice",
+        def append(doc, *, experiment="scan", targets=None, actor="human:user-a",
                    kind="run", instant=None, proven=None):
             nonlocal previous
             rank = store.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] + 1
@@ -90,7 +90,7 @@ def test_newest_change_is_latest_row_not_latest_event(ledger):
 
 
 def test_writer_of_inclusive_boundary_actor_kind_run_and_unknown(ledger):
-    a = ledger.add({"v": 1}, actor="human:alice")
+    a = ledger.add({"v": 1}, actor="human:user-a")
     b = ledger.add({"v": 2}, actor="autofit", kind="autofit")
     c = ledger.add({"v": 2})
     writer = query.writer_of(ledger, "v", b)
@@ -193,7 +193,7 @@ def test_missing_project_zone_fails_and_offline_utc_is_explicit(ledger, tmp_path
 def test_timeline_combines_all_filters(ledger):
     a = ledger.add({"qubits": {"qA1": {"frequency": 1}}}, experiment="scan")
     ledger.add({"qubits": {"qA1": {"frequency": 2}}}, experiment="scan", kind="autofit")
-    page = query.timeline(query.context(ledger, zone="UTC"), q="scan human:alice", kinds="run", entity="qA1",
+    page = query.timeline(query.context(ledger, zone="UTC"), q="scan human:user-a", kinds="run", entity="qA1",
                           path="qubits.qA1.frequency", day_from="2026-01-01", day_to="2026-01-01")
     assert ids(page) == [a]
     assert query.search(ledger, "frequency") == [2, 1]
@@ -406,7 +406,7 @@ def test_macro_classifier_and_actor_class_and_family_are_distinct(ledger):
     assert query.search(ledger, "cz_FAKE") == []
     assert query.search(ledger, "qA9") == []
     assert query.search(ledger, "cz_REAL by_agent") == [b]
-    assert query.search(ledger, "frequency human:alice") == [a]
+    assert query.search(ledger, "frequency human:user-a") == [a]
 
 
 def test_timeline_each_filter_excludes_unrelated_events(ledger):

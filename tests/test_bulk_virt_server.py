@@ -414,7 +414,7 @@ class TestChipGateIdentity:
         return d
 
     def test_two_chips_with_the_same_folder_name_do_not_hydrate_each_other(self, tmp_path):
-        a = self._chip(tmp_path, "labA", 0.0)
+        a = self._chip(tmp_path, "lab-A", 0.0)
         b = self._chip(tmp_path, "backup", 7.0)
         assert a.name == b.name, "fixture: the same basename in two parents"
 
@@ -692,7 +692,7 @@ class TestPairGridVirt:
 
     §4n left it whole on purpose ("generalize the mechanism into a shared
     module before a second consumer appears"), and §4ac then measured what
-    that cost: 1,489,999 of the document's 2,809,432 bytes on the PJ 20Q chip
+    that cost: 1,489,999 of the document's 2,809,432 bytes on the device 20Q chip
     -- 53%, the largest single block left once the qubit grid had been
     slimmed. `core/bulk_virt` needed no change at all: it takes columns + rows
     and the pair grid's rows already had the shape it reads.
@@ -1079,7 +1079,7 @@ class TestPairChipToken:
         raise AssertionError("fixture: the pair grid derived no columns")
 
     def test_the_pair_grid_publishes_the_token_not_the_display_name(self, tmp_path):
-        a = self._chip(tmp_path, "labA", 0.0)
+        a = self._chip(tmp_path, "lab-A", 0.0)
         b = self._chip(tmp_path, "backup", 7.0)
         assert a.name == b.name, "fixture: one basename, two parents"
 

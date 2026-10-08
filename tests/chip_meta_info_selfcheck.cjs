@@ -172,7 +172,7 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
   d = MI.describe({ ts: '20260101_110000_000', run: null, trigger: 'auto', first: false, leaves: 1,
                     value: 1.4e-5, appeared: true }, { snaps: META.snaps, cur: 1.4e-5, now: NOW });
   ok(/^First recorded: /.test(d.lines[0]), 'T5f: ...and "First recorded" when no run wrote it');
-  // 2026-09-29 (KRISS_CZ: "an IRB point says its run is a flux short
+  // 2026-09-29 (lab-F-env: "an IRB point says its run is a flux short
   // distortion experiment"): the snapshot's run only SAVED a state carrying
   // the value. The server's writer check names the real writer, or says the
   // run only captured it -- never "measured"/"Written by" that run.

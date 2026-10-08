@@ -7,6 +7,8 @@ driven under jsdom with a fake layout by `ds_scroll_anchor_selfcheck.cjs`
 randomized sequence against a cold recompute, and the capture-phase wiring).
 The real-Chrome proof is tests/browser/journeys/ds_scroll_keep.cjs.
 """
+
+# Selfcheck examples use generic device names and lab keys.
 import shutil
 import subprocess
 from pathlib import Path

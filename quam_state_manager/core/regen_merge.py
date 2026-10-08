@@ -43,7 +43,7 @@ from quam_state_manager.core import regen_spec
 # TWPA support in its wiring registry, so EVERY rebuild emits an empty ``twpas``
 # dict regardless of the source — a missing TWPA is a builder gap, never a user
 # removal. Blocking the graft would silently drop the chip's real TWPAs (156
-# leaves lost on LabA); leaving ``twpas`` graftable preserves them wholesale
+# leaves lost on lab-A); leaving ``twpas`` graftable preserves them wholesale
 # (residual loss 0). See docs/51_regenerate_config.md.
 ENTITY_COLLECTIONS = {"qubits", "qubit_pairs", "ports", "octaves", "mixers"}
 

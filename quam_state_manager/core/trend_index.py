@@ -42,7 +42,7 @@ Every key is built by :func:`_key` from NAMED components, so the mutation
 sweep in tests/test_trend_index.py can drop each one and watch a pin fail.
 
 TODO(M4 downsampling -- deliberately NOT implemented). At the measured
-scales (<= ~1,000 runs per experiment, 962 on the 4,121-run KH archive) no
+scales (<= ~1,000 runs per experiment, 962 on the 4,121-run lab-I archive) no
 series exceeds 4*W points for a ~1,000 px chart, so nothing needs reducing
 and nothing is reduced: every point is sent and drawn. If an experiment ever
 exceeds that, the design (ram_design.md §2a/§2b) prescribes M4 (first, min,

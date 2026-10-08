@@ -1,8 +1,8 @@
 """Real-env integration test: build a QDAC-biased chip through conda env
-``CQT_20Q`` and verify every QDAC-related key lands in state.json/wiring.json
+``lab-J-env`` and verify every QDAC-related key lands in state.json/wiring.json
 with the right shape.
 
-CQT_20Q has the customer's own ``quam_config`` package (providing
+lab-J-env has the customer's own ``quam_config`` package (providing
 ``quam_config.qdac_components``) editable-installed alongside quam 0.6.0 /
 quam_builder 0.4.0 / qualang_tools 0.23.0 — the one env on this machine that
 can actually exercise the QDAC-II attach path end to end, rather than just
@@ -15,6 +15,8 @@ correct shape/type. Output goes to a pytest tmp_path, never into any real
 project's quam_state folder (this repo's own README/CLAUDE.md doctrine: a
 generator subprocess must never write over calibrated live data).
 """
+
+from tests.archive_roots import lab_value
 import json
 import subprocess
 
@@ -22,13 +24,10 @@ import pytest
 
 from quam_state_manager.core import config_generator as cg
 
-# The env name says CQT; `import quam_config` in it resolved to the
-# PJ_10082026 tree, the verification baseline until the user deleted it
-# (2026-09-19, docs/202 §16) -- see _env_with_customer_qdac. The `cqt` env —
-# the one pytest itself runs in — resolves to the older CQT/CS_installations
-# tree instead. Do not "correct" this name on the strength of what it reads
-# like; check `import quam_config` first.
-_ENV_NAME = "CQT_20Q"
+# lab-J's environment resolves to the newer customer source tree. lab-B's
+# environment resolves to an older installation. Resolve the environment
+# from the external map and verify the imported package before building.
+_ENV_NAME = lab_value("lab-J", "env")
 
 
 def _find_env_python() -> str | None:
@@ -48,7 +47,7 @@ def _env_with_customer_qdac() -> str | None:
     """The env's python, only when it can import the customer's
     ``quam_config.qdac_components`` -- the thing every test here exercises.
 
-    docs/202 §16: the user deleted the PJ_10082026 tree this env's editable
+    docs/202 §16: the user deleted the lab-J tree this env's editable
     install points at (2026-09-19, no longer needed). The env itself stays
     QM-usable, so the old ``_find_env_python() is None`` gate let all three
     tests run and fail on a missing package; they skip now, and say why."""

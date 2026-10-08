@@ -6910,7 +6910,7 @@
   }
 
   // Real device states show per-qubit x180 length / amplitude / DRAG α /
-  // detuning (LabA: 8 distinct α across 9 qubits; variantb: 48 vs 80 ns x180
+  // detuning (lab-A: 8 distinct α across 9 qubits; variantb: 48 vs 80 ns x180
   // length). The pulses table mirrors the per-qubit shape of the other
   // populate tables — "Set all →" provides the global-default behaviour.
   // spec.populate.pulses is therefore a per-qubit map: {qN: {x180_length…}}.

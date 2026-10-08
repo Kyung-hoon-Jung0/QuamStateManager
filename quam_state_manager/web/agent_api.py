@@ -738,7 +738,7 @@ def journal_append():
     if request.headers.get("X-SM-Agent"):
         # docs/252 (A-09): an agent's line is signed with the agent's own name,
         # whatever kind it asked for -- never `sm` (SM's bookkeeping, "armed by
-        # human:Kim"), `human`, or the other CLI. Only the bridge's bookkeeping
+        # human:user-c"), `human`, or the other CLI. Only the bridge's bookkeeping
         # of its own acts (`sm`: "applied 2 edits") needs no reason.
         needs_reason = kind != "sm"
         actor = _r()._request_actor()

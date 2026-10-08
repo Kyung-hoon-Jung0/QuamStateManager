@@ -327,7 +327,7 @@ class TestIncompleteRunsHeal:
         the Trends routes and the run-watch ingest make. Its outer gate
         compares date-dir mtimes only; with an incomplete run on record it
         must stay open, or the run is frozen half-parsed until another run
-        lands (seen on the KH rig: a run the run-watch tick caught mid-copy
+        lands (seen on the lab-I rig: a run the run-watch tick caught mid-copy
         never reached /trends/series)."""
         root = tmp_path / "data"
         w = RunWriter(root)

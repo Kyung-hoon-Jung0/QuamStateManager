@@ -155,22 +155,22 @@ const SPEC = {
   G.init();
   const st = G._test.state;
   ok(st.scriptsEnabled === true, 'P5: scripts export defaults ON');
-  ok(G._test.autoScriptsPath('D:\\quam_states\\labd\\17Q') ===
-     'D:\\quam_states\\labd\\17Q\\state_gen_scripts',
+  ok(G._test.autoScriptsPath('D:\\quam_states\\lab-D\\17Q') ===
+     'D:\\quam_states\\lab-D\\17Q\\state_gen_scripts',
      'P5: windows join');
   ok(G._test.autoScriptsPath('/data/chips/17Q/') ===
      '/data/chips/17Q/state_gen_scripts', 'P5: posix join + trailing slash');
 
   const out = win.document.getElementById('gen-output-path');
   const sp = win.document.getElementById('gen-scripts-path');
-  out.value = 'D:\\quam_states\\labd\\17Q_20260802';
+  out.value = 'D:\\quam_states\\lab-D\\17Q_20260802';
   out.dispatchEvent(new win.Event('input', { bubbles: true }));
-  ok(sp.value === 'D:\\quam_states\\labd\\17Q_20260802\\state_gen_scripts',
+  ok(sp.value === 'D:\\quam_states\\lab-D\\17Q_20260802\\state_gen_scripts',
      'P5: scripts path follows the output folder');
 
   sp.value = 'D:\\custom\\scripts';
   sp.dispatchEvent(new win.Event('input', { bubbles: true }));
-  out.value = 'D:\\quam_states\\labd\\other';
+  out.value = 'D:\\quam_states\\lab-D\\other';
   out.dispatchEvent(new win.Event('input', { bubbles: true }));
   ok(st.scriptsPath === 'D:\\custom\\scripts',
      'P5: a user-typed scripts path stops the follow');
@@ -375,10 +375,10 @@ const SPEC = {
   const urls = [];
   win.fetch = function (u) { urls.push(String(u)); return new win.Promise(function () {}); };
   const ci = win.document.getElementById('gen-env-custom-path');
-  ci.value = '"D:\\miniconda3\\envs\\cqt\\python.exe"';
+  ci.value = '"D:\\miniconda3\\envs\\lab-B\\python.exe"';
   G.useCustomEnv();
   const want = '/generate/probe?python=' +
-    encodeURIComponent('D:\\miniconda3\\envs\\cqt\\python.exe');
+    encodeURIComponent('D:\\miniconda3\\envs\\lab-B\\python.exe');
   ok(urls.indexOf(want) >= 0, 'P11: the interpreter is probed without its quotes — got ' +
      JSON.stringify(urls));
 })();

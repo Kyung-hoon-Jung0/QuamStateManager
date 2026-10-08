@@ -88,15 +88,15 @@ async function main() {
   await land(A); await land(B);
   await A.ev('window.confirm=function(){return true}; window.prompt=function(){return "a note"}; 1');
   await B.ev('window.confirm=function(){return true}; window.prompt=function(){return "a note"}; 1');
-  await A.ev('AgentPanel.setActor("Kyunghoon"); 1');
-  await B.ev('AgentPanel.setActor("Minji"); 1');
+  await A.ev('AgentPanel.setActor("user-a"); 1');
+  await B.ev('AgentPanel.setActor("user-b"); 1');
 
   const mkPlan = (C, who, line) => C.ev('fetch("/api/agent/plans",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"' + who + '"},body:JSON.stringify({run_line:' + JSON.stringify(line) + '}),credentials:"same-origin"}).then(function(r){return r.json();}).then(function(j){return (j.plan||{}).id||("ERR "+JSON.stringify(j).slice(0,160));})');
 
   /* ── R1. the mode-change latency, measured cleanly, twice ─────────── */
   const lat = [];
   for (let i = 0; i < 2; i++) {
-    const pid = await mkPlan(A, 'Kyunghoon', '/run 02a_fake_resonator q' + (6 + i));
+    const pid = await mkPlan(A, 'user-a', '/run 02a_fake_resonator q' + (6 + i));
     if (!/^pl-/.test(pid)) { note('plan_make_failed', pid); break; }
     const sel = '#agent-home [data-card=\'plan:' + pid + '\'] .ag-mode select';
     // B must first HAVE the card (the wake path) before the mode is changed
@@ -137,11 +137,11 @@ async function main() {
   await B.shot(OUT.replace(/\.json$/, '_22_B_tray_after_A_edits.png'));
 
   /* ── R3. cancel a plan that is ALREADY cancelled (no race needed) ── */
-  const pidX = await mkPlan(A, 'Kyunghoon', '/run 02a_fake_resonator q8');
+  const pidX = await mkPlan(A, 'user-a', '/run 02a_fake_resonator q8');
   const mkc = (C, who) => C.ev('fetch("/api/agent/plans/' + pidX + '/cancel",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"' + who + '"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})');
-  const c1 = await mkc(A, 'Kyunghoon');
+  const c1 = await mkc(A, 'user-a');
   await sleep(1200);
-  const c2 = await mkc(B, 'Minji');            // sequential, not a race
+  const c2 = await mkc(B, 'user-b');            // sequential, not a race
   await sleep(1500);
   const j = await A.ev('fetch("/api/agent/journal",{headers:{Accept:"application/json"}}).then(function(r){return r.json();}).then(function(j){return JSON.stringify(j);})');
   const n = ((j || '').match(/q8` cancelled by/g) || []).length;
@@ -151,7 +151,7 @@ async function main() {
   const planX = await A.ev('fetch("/api/agent/plans/' + pidX + '",{headers:{Accept:"application/json"}}).then(function(r){return r.json();}).then(function(j){return JSON.stringify((j.plan||{}));})');
   let endedBy = null; try { endedBy = JSON.parse(planX).ended_by; } catch (e) { /* ignore */ }
   note('plan_ended_by_after_two_cancels', endedBy);
-  ok('the plan still names the person who actually cancelled it', endedBy === 'human:Kyunghoon', { ended_by: endedBy });
+  ok('the plan still names the person who actually cancelled it', endedBy === 'human:user-a', { ended_by: endedBy });
 
   /* ── R4. the same approval, two people, the same moment ──────────── */
   if (APID) {
@@ -163,7 +163,7 @@ async function main() {
     await A.shot(OUT.replace(/\.json$/, '_23_A_approval.png'));
     await B.shot(OUT.replace(/\.json$/, '_24_B_approval.png'));
     const mk = (C, who, verb) => C.ev('fetch("/api/agent/approvals/' + APID + '/' + verb + '",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"' + who + '"},body:"{}",credentials:"same-origin"}).then(function(r){return r.text().then(function(t){return r.status+" "+t.replace(/\\s+/g," ").slice(0,220);});})');
-    const [r1, r2] = await Promise.all([mk(A, 'Kyunghoon', 'approve'), mk(B, 'Minji', 'reject')]);
+    const [r1, r2] = await Promise.all([mk(A, 'user-a', 'approve'), mk(B, 'user-b', 'reject')]);
     note('approval_race', { A_approve: r1, B_reject: r2 });
     const accepted = [r1, r2].filter(x => /^200/.test(x)).length;
     ok('one approval decided by two people at once yields exactly ONE decision', accepted === 1, { A: r1, B: r2 });
@@ -200,14 +200,14 @@ async function main() {
   ok('the same line WITH the slash makes only a plan card', (probe2 || []).some(x => /agent\/plans/.test(x)) && !(probe2 || []).some(x => /chat\/start/.test(x)), probe2);
 
   /* ── R6. the name box: what a Hangul name does, end to end ───────── */
-  await A.typeInto('#agent-home .ag-actor', '정경훈');
+  await A.typeInto('#agent-home .ag-actor', '\uac00\uac01\uac02');
   const box = await A.ev('document.querySelector("#agent-home .ag-actor").value');
   const stored = await A.ev('AgentPanel.actorName()');
   const hdr = await A.ev('(function(){var calls=[]; var real=window.fetch;'
     + ' window.fetch=function(u,o){ calls.push({u:String(u), actor:(o&&o.headers&&o.headers["X-SM-Actor"])||null}); return real.apply(window,arguments); };'
     + ' return AgentPanel.poll(true).then(function(){ window.fetch=real; return calls; });})()');
   note('hangul_end_to_end', { box, stored, header_on_next_call: hdr });
-  ok('a Hangul name shown in the box is the name SM records', stored === '정경훈', { box, stored });
+  ok('a Hangul name shown in the box is the name SM records', stored === '\uac00\uac01\uac02', { box, stored });
   ok('the box at least shows the user what SM kept', box === stored, { box, stored });
   await A.shot(OUT.replace(/\.json$/, '_25_A_hangul_name.png'));
 

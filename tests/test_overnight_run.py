@@ -392,7 +392,7 @@ class TestThePhoneHears:
         _step(c, pid, 0, "qA1")
         assert c.post(f"/api/agent/plans/{pid}/cancel", json={}, headers=HUMAN).status_code == 200
         done = _wait(lambda: _events(notified, "plan_done"))
-        assert done[0]["reason"] == "cancelled" and "human:kyunghoon" in done[0]["why"]
+        assert done[0]["reason"] == "cancelled" and "human:user-a" in done[0]["why"]
 
     def test_a_persons_stop_is_no_agent_failure_and_plan_done_says_stopped(self, c, inst, monkeypatch, notified):
         monkeypatch.setattr(scheduler, "_run_item", TargetRun(until_cancel=True))
@@ -661,7 +661,7 @@ class TestTheMorningSummary:
         r = c.post(f"/api/agent/approvals/{held['id']}/approve", json={}, headers=HUMAN)
         assert r.status_code == 200 and r.get_json()["stage"]["applied"] is True, r.get_json()
         h = c.get("/api/agent/summary").get_json()["held"][0]
-        assert h["status"] == "approved" and h["decided_by"] == "human:kyunghoon"
+        assert h["status"] == "approved" and h["decided_by"] == "human:user-a"
         html = c.get("/agent/summary", headers={"HX-Request": "true"}).get_data(as_text=True)
         assert "(0 waiting, 1 decided)" in html and 'data-ns-act="approve"' not in html, "a decided item is not a wait"
 

@@ -33,7 +33,7 @@ def search_fixture():
             cards.append({
                 "kind": "run", "run_id": i, "node": node, "family_label": node,
                 "family_short": node, "targets": [f"qA{i}"], "time": "12:00:00",
-                "ts": i, "author": "human:alice", "certainty": "claimed",
+                "ts": i, "author": "human:user-a", "certainty": "claimed",
                 "outcome": "ok", "gate": None, "writes": [], "params_diff": [],
                 "because": "", "figure": None, "uid": None, "plan_id": None,
                 "note": "", "duration_s": 1, "folder": "data",
@@ -42,9 +42,9 @@ def search_fixture():
             })
         for i, node in enumerate(["ramsey", "rabi"], 1):
             cards.append({"kind": "write", "id": i, "time": "12:00:00", "ts": 10 + i,
-                          "author": "human:alice", "src": "manual", "plan_id": None,
+                          "author": "human:user-a", "src": "manual", "plan_id": None,
                           "entries": [{"path": f"qubits.qA{i}.{node}", "old": 1,
-                                       "new": 2, "actor": "human:alice"}]})
+                                       "new": 2, "actor": "human:user-a"}]})
         return {"day": day, "chip": "chipX", "cards": cards,
                 "loose": [line("ramsey human", "human"), line("ramsey agent"),
                           line("looseonly agent"), line("rabi human", "human")],

@@ -11,15 +11,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from tests.archive_roots import lab_value
 
 import pytest
 
 _ROOT = Path(os.environ.get("SM_REAL_ARCHIVES", "<work-root>"))
 _CANDIDATES = [
-    (_ROOT / "dataset" / "AS_10TQ9TC", "#*17b_ramsey_vs_coupler_flux*"),
-    (_ROOT / "Novera9Q", "#*21a_ramsey_vs_coupler_flux*"),
-    (_ROOT / "Novera9Q", "#*10b_ramsey_vs_coupler_flux*"),
-    # date-dir layout (<root>/<date>/#N_...) — the CQT archive shape the
+    (_ROOT / "dataset" / lab_value("lab-A", "name"), "#*17b_ramsey_vs_coupler_flux*"),
+    (_ROOT / lab_value("lab-H", "name"), "#*21a_ramsey_vs_coupler_flux*"),
+    (_ROOT / lab_value("lab-H", "name"), "#*10b_ramsey_vs_coupler_flux*"),
+    # date-dir layout (<root>/<date>/#N_...) — the lab-B archive shape the
     # docs/124 M-12 inversion was executed on (run #490 of 2026-08-14)
     (_ROOT, "#*17b_ramsey_vs_coupler_flux*"),
     (_ROOT, "#*21a_ramsey_vs_coupler_flux*"),

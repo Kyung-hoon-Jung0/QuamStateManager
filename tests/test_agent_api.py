@@ -140,7 +140,7 @@ class TestWithAChip:
                                                          "author": "claude-code"}, headers=_H)
         assert r.status_code == 200 and r.get_json()["note"]["author"] == "human"
         r = loaded_client.post("/api/agent/note", json={"subject": "qA1", "text": "fridge warming",
-                                                         "author": "human:Kim"},
+                                                         "author": "human:user-c"},
                                headers={**_H, "X-SM-Agent": "codex"})
         assert r.get_json()["note"]["author"] == "by_codex"
         assert r.get_json()["note"]["subject"] == "qubits.qA1", "a bare name is the qubit's dot path"

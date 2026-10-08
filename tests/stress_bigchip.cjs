@@ -1,7 +1,7 @@
 /* The two plain boxes on a REAL 20-qubit chip, not the 5Q rig.
  *
- * Customer, earlier in the same round: "지금 5Q는 너무 규모가 작아 CQT 칩도
- * 알아봐, 그리고 adaptive하게 해야해... 30, 50개 큐빗일수도있거든."
+ * The customer requested coverage on lab-B's larger chip and layouts that
+ * also adapt to devices with 30 or 50 qubits.
  *
  * This is where the per-keystroke cost lives: 300+ column headers on the Live
  * Edit grid and ~12,000 leaves in the Json tree. It measures the keystroke,

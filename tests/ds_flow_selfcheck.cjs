@@ -408,7 +408,7 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
     const html = `<div id="folder-filter-grid">
         <span class="folder-chip active" data-folder-key="">All</span>
         <span class="folder-chip" data-folder-key="f1">f1</span>
-        <span class="folder-chip" data-folder-key="kh">kh</span></div>
+        <span class="folder-chip" data-folder-key="lab-I">lab-I</span></div>
       <div id="tag-filter-grid"><span class="tag-chip active" data-tag="">All</span>
         <span class="tag-chip" data-tag="flagged">flagged</span></div>
       <input type="hidden" id="ds-active-date" name="date" value="2026-08-10">
@@ -420,9 +420,9 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
     const w = boot(null, { html: html, view: view, rows: rows });
     await tick();
     const doc = w.document;
-    w.DatasetVirtual.toggleFolder('kh');                       // a folder with no runs on this date
+    w.DatasetVirtual.toggleFolder('lab-I');                       // a folder with no runs on this date
     doc.querySelectorAll('#folder-filter-grid .folder-chip').forEach(c =>
-      c.classList.toggle('active', c.getAttribute('data-folder-key') === 'kh'));
+      c.classList.toggle('active', c.getAttribute('data-folder-key') === 'lab-I'));
     ok(doc.getElementById('datasets-empty').style.display === '',
        `[${view}] fixture: the folder chip empties the table`);
     w._selectedTags = new Set(['flagged']);

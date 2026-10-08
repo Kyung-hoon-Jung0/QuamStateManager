@@ -26,6 +26,8 @@ SM-blue tint at the same time as the band it opens went away.
 
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import re
 import shutil
 import subprocess

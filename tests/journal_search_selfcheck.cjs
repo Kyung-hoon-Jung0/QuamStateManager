@@ -152,7 +152,7 @@ pin('day_swap_reindexes_and_uses_current_query', p => {
   p.input.value = 'rabi'; const body = p.d.querySelector('#jr-body'); body.innerHTML = fixture.swap;
   body.dispatchEvent(new p.w.Event('htmx:afterSwap', { bubbles: true }));
   assert.equal(p.visible('#card-2'), 1); assert.equal(p.visible('#card-1'), 0);
-  const author = p.d.querySelector('#jr-author'); author.value = 'human:alice';
+  const author = p.d.querySelector('#jr-author'); author.value = 'human:user-a';
   author.dispatchEvent(new p.w.Event('change', { bubbles: true }));
   assert.equal(p.visible('.jr-run'), 1); p.search(''); assert.equal(p.visible('.jr-run'), 8);
 });

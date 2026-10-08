@@ -4,7 +4,7 @@ Re-implements ``waveform_function()`` for every class in
 :mod:`quam_state_manager.core.pulse_catalog` using numpy + scipy only — the
 app process never imports the QM stack (CLAUDE.md invariant). The formulas
 are transcribed from the authoritative quam 0.5.0a3 + qualang_tools sources
-in the user's ``LabC`` env and pinned bit-for-bit by the golden tests
+in the user's ``lab-C`` env and pinned bit-for-bit by the golden tests
 (``tests/test_waveform_golden.py``); scipy's ``gaussian``/``blackman``
 windows and ``gaussian_filter1d`` are the *same functions* quam calls, so
 those paths are exact by construction.
@@ -147,7 +147,7 @@ def _flattop_waveform(kind: str, amplitude: float, flat_length: int,
 def _blackman_integral_waveform(pulse_length, v_start, v_end):
     if pulse_length < 2:
         # quam divides by (pulse_length - 1) and emits a nan sample WITHOUT raising
-        # (verified against the LabC env: generate_config() does NOT crash here),
+        # (verified against the lab-C env: generate_config() does NOT crash here),
         # unlike DragCosine which genuinely raises. Mirror quam so the diagnostics
         # layer never over-reports an invalid-waveform error for a len<2 Blackman.
         return np.full(max(int(pulse_length), 0), float("nan"))
@@ -399,7 +399,7 @@ def _waveform_passthrough(p):
 def _flattop_gaussian_deprecated(p):
     # NB: quam passes self.sigma to flattop_gaussian_waveform only when the
     # installed qualang_tools accepts a sigma kwarg (inspect.signature check).
-    # The LabC qualang_tools does NOT, so sigma is ignored and the window std
+    # The lab-C qualang_tools does NOT, so sigma is ignored and the window std
     # is rise_fall_length / 5 — pinned by the ftgauss_dep_pad golden case.
     smoothing_length = int(p.get("smoothing_length", 0) or 0)
     rise_fall_length = smoothing_length // 2

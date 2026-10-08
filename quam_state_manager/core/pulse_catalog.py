@@ -13,7 +13,7 @@ pulse class without importing the QM stack:
   quam class, not a JSON node).
 
 The schemas below are transcribed from the authoritative quam source the
-user's calibrations run on (conda env ``LabC``, quam 0.5.0a3,
+user's calibrations run on (conda env ``lab-C``, quam 0.5.0a3,
 ``quam/components/pulses.py``) and are pinned against it by the golden
 waveform tests (``tests/test_waveform_golden.py``).
 

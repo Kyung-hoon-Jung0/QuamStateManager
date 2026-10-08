@@ -198,10 +198,10 @@ class TestTheAuthorLadder:
 
     def test_a_human_claim_beats_everything(self, world):
         story.record_agent_run(world["inst"], {"run_id": 104, "plan_id": "p1", "backend": "codex"})
-        story.claim_run(world["inst"], "chip", 104, author="human:박OO", note="I ran it")
+        story.claim_run(world["inst"], "chip", 104, author="human:\uac00OO", note="I ran it")
         d = story.build_day(world["inst"], "chip", DAY, ds=world["ds"], with_gates=False)
         c = next(x for x in d["cards"] if x.get("run_id") == 104)
-        assert c["author"] == "human:박OO" and c["certainty"] == "claimed" and c["note"] == "I ran it"
+        assert c["author"] == "human:\uac00OO" and c["certainty"] == "claimed" and c["note"] == "I ran it"
 
 
 class TestTheGate:
@@ -248,14 +248,14 @@ class TestWriteCards:
         e1 = ChangeEntry("qubits.q4.f_01", 4.80e9, 4.81e9, "state")
         e1.actor = "by_claude"
         e2 = ChangeEntry("qubits.q4.xy.operations.x180.amplitude", 0.31, 0.29, "state")
-        e2.actor = "human:이OO"
+        e2.actor = "human:\uac01OO"
         ts = datetime.strptime(f"{DAY} 14:22:00", "%Y-%m-%d %H:%M:%S").timestamp()
         u = undo_journal.make_unit([e1], ts=ts, meta={"plan_id": "p1"})
         u2 = undo_journal.make_unit([e2], ts=ts + 60)
         undo_journal.append_units(undo_journal.sidecar_path(world["inst"], live), [u, u2])
         d = story.build_day(world["inst"], "chip", DAY, ds=world["ds"], active_path=str(live), with_gates=False)
         writes = [c for c in d["cards"] if c["kind"] == "write"]
-        assert [w["author"] for w in writes] == ["by_claude", "human:이OO"]
+        assert [w["author"] for w in writes] == ["by_claude", "human:\uac01OO"]
         assert writes[0]["plan_id"] == "p1" and writes[0]["entries"][0]["actor"] == "by_claude"
         assert d["counts"]["writes"] == 2
         assert d["counts"]["biggest_write"]["path"] == "qubits.q4.f_01"

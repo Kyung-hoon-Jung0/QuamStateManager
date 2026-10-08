@@ -28,7 +28,7 @@ def _good_ctx(tmp_path) -> dict:
     inst = tmp_path / "superconducting"
     cal = inst / "calibrations" / "1Q_2Q_calibrations"
     cal.mkdir(parents=True)
-    ds = tmp_path / "dataset" / "LabA_1Q"
+    ds = tmp_path / "dataset" / "lab-A_1Q"
     ds.mkdir(parents=True)
     return {
         "chip_open": True, "chip_type": "quam",

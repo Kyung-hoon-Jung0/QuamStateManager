@@ -436,7 +436,7 @@ async function datasetHintChecks() {
 }
 
 /* ── 6d. QA F15 (review): a parameter that CONTAINS the word ────────────
- * The KH corpus has a parameter named leakage_metric, so `metric>=0.99`
+ * The lab-I corpus has a parameter named leakage_metric, so `metric>=0.99`
  * silently compared THAT and ended at "Showing 0 of N" with no hint (the
  * hint spoke only when no parameter matched, or the key was a fit key). A
  * substring hit that is not the typed name, and a comparison that leaves

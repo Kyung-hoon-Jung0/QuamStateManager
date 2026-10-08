@@ -6,7 +6,7 @@ chip in the corpus uses — ``anharmonicity=-250e6`` (negative) and
 a broken feature ship with a green suite: the sign test passed against the
 code's own mistake, and the two route crashes were never exercised at all.
 
-The fixtures here are the REAL shape: ``anharmonicity`` positive (CQT 20Q
+The fixtures here are the REAL shape: ``anharmonicity`` positive (lab-B 20Q
 stores 135–229 MHz on all twenty qubits, and the lab's own
 ``chevron_cz/cz_branch.py`` says "anharmonicity A is stored as a positive
 magnitude in this state"), ``flux_point`` a mode STRING, and the idle bias in
@@ -65,7 +65,7 @@ WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 
 
 def _chip_state():
-    """A chip shaped like the real CQT 20Q pairs: pointer refs, cz macros,
+    """A chip shaped like the real lab-B 20Q pairs: pointer refs, cz macros,
     ``moving_qubit``, and CZ pulses parked on the moving qubit's z line."""
     def qubit(name, f01, anh, quad, joint, ops=None):
         return {
@@ -209,7 +209,7 @@ class TestAnharmonicitySign:
 class TestFluxPointIsAMode:
     """``z.flux_point`` is "joint"/"independent", never a voltage. Reading it
     as one made ``float("joint")`` fail, silently re-centring the parabola on
-    0 V while the qubit really idles at ``joint_offset`` — on the real CQT
+    0 V while the qubit really idles at ``joint_offset`` — on the real lab-B
     chip, 62.7 mV away, with the click-to-stage target computed from there."""
 
     def test_the_vertex_and_the_operating_point_are_the_idle_bias(self):

@@ -543,7 +543,7 @@ class TestNaturalOrderTieBreak:
     which ``limit`` rows survive.  A plain string compare listed
     ``weights_imag.1009`` before ``weights_imag.101`` (the customer's
     screenshot) and ``qubits.q10`` before ``qubits.q2`` (measured on the real
-    ``AS_10TQ9TC`` chip, which numbers its qubits q1..q10).
+    ``lab-A`` chip, which numbers its qubits q1..q10).
     """
 
     @staticmethod

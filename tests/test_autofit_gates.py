@@ -319,8 +319,8 @@ class TestCorruptionLedger:
         assert v.failure_mode == "unverifiable"
 
 
-class TestRamseyCqtRecalibration:
-    """docs/127 — the CQT corpus (2,655 real runs) recalibrated ramsey by the
+class TestRamseylab_BRecalibration:
+    """docs/127 — the lab-B corpus (2,655 real runs) recalibrated ramsey by the
     §15.2 method. The ±5 MHz freq_offset band fired on 26 node-accepted
     offsets, ~20 CONFIRMED good (r² to 0.997; the next run shows the 39.8 MHz
     correction landing at 60 kHz); the decay band's entire measured effect was

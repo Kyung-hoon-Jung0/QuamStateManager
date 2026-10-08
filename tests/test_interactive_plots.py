@@ -1160,7 +1160,7 @@ def test_interactive_tab_is_superset_of_figures_tab(store):
     Node types with NO recipe yet resolve to the empty ``fallback`` and legitimately
     render every figure as a static PNG. Those are reported as a non-fatal warning
     (add a recipe to make them interactive), NOT a failure — so the live, ever-
-    growing LabA dataset can sprout new experiment types without turning this guard
+    growing lab-A dataset can sprout new experiment types without turning this guard
     red. The moment a recipe is added for such a type, clause (2) starts enforcing it.
     """
     import warnings

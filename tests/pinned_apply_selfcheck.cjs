@@ -3,7 +3,7 @@
  * togglePinDataset prefixes every id of the pinned clone with "pinned-", so in
  * the split the global #ds-detail-root is always the OTHER (current) column.
  * applyFitValue / applyAllFitValues / goToFitState / the Interactive-tab click
- * read that global root, so a pinned KRISS fit was sent with the current KH
+ * read that global root, so a pinned lab-F fit was sent with the current lab-I
  * run's chip token: no cross-chip confirm, and expect_chip let the server gate
  * pass too. Driven through the REAL app.js (the real _openPlotApplyPopup and
  * _renderPlotApplyPopup), with /chip/active-token naming the loaded chip "B".
@@ -29,8 +29,8 @@ function detail(prefix, uid, token, name, exp, qubits) {
 }
 const dom = new JSDOM('<!doctype html><html><head></head><body>' +
     '<div id="table-pane"></div><div id="inspector-pane"><div class="inspector-split">' +
-    '<div class="inspector-pinned-col">' + detail('pinned-', 'kriss:9', 'A', 'KRISS_CZ_260906', '03_res_spec', 'qZ9') + '</div>' +
-    '<div class="inspector-current-col">' + detail('', 'kh:4113', 'B', 'KH_CHIP', '03_res_spec', 'qA1') + '</div>' +
+    '<div class="inspector-pinned-col">' + detail('pinned-', 'lab-F:9', 'A', 'lab-F-run', '03_res_spec', 'qZ9') + '</div>' +
+    '<div class="inspector-current-col">' + detail('', 'lab-I:4113', 'B', 'chipX', '03_res_spec', 'qA1') + '</div>' +
     '</div></div>' +
     '<div id="plot-apply-popup" style="display:none"><h3 id="plot-apply-title"></h3>' +
     '<div id="plot-apply-context"></div><div id="plot-apply-verdict" hidden tabindex="-1"></div>' +
@@ -49,7 +49,7 @@ window.fetch = function (url) {
     url = String(url); fetched.push(url);
     if (url.indexOf('/chip/active-token') === 0) {
         return Promise.resolve({ ok: true, status: 200, json: function () {
-            return Promise.resolve({ loaded: true, token: 'B', name: 'KH_CHIP', path: 'D:/chips/kh' }); } });
+            return Promise.resolve({ loaded: true, token: 'B', name: 'chipX', path: 'D:/chips/lab-I' }); } });
     }
     return new Promise(function () {});   // peek / verdict: never answer
 };
@@ -76,11 +76,11 @@ const C = document.getElementById('ds-detail-root');
     reset();
     window.applyFitValue(P.querySelector('.fit-apply-btn'));
     await sleep(20);
-    ok(confirms.length === 1 && confirms[0].indexOf('KRISS_CZ_260906') !== -1,
+    ok(confirms.length === 1 && confirms[0].indexOf('lab-F-run') !== -1,
        'pinned Apply → the cross-chip confirm names the PINNED run\'s chip');
     ok(pop.dataset.expectChip === 'A', 'pinned Apply → the write carries the pinned run\'s token (A), not the other column\'s');
     ok(pop.dataset.forceChip === '1', 'the accepted confirm is what forces it (force_chip), never a silent pass');
-    ok(pop.dataset.runUid === 'kriss:9', 'the popup knows WHICH run it applies (verdict badge audits the pinned run)');
+    ok(pop.dataset.runUid === 'lab-F:9', 'the popup knows WHICH run it applies (verdict badge audits the pinned run)');
 
     /* 2. current column is unchanged: same chip as loaded → no confirm, token B */
     reset();
@@ -88,7 +88,7 @@ const C = document.getElementById('ds-detail-root');
     await sleep(20);
     ok(confirms.length === 0, 'current-column Apply (same chip as loaded) → no confirm');
     ok(pop.dataset.expectChip === 'B', 'current-column Apply → its own token (B)');
-    ok(pop.dataset.runUid === 'kh:4113', 'current-column popup → its own run uid');
+    ok(pop.dataset.runUid === 'lab-I:4113', 'current-column popup → its own run uid');
 
     /* 3. Apply all mapped (section button) in the pinned column */
     reset();
@@ -101,7 +101,7 @@ const C = document.getElementById('ds-detail-root');
     reset();
     window.goToFitState(P.querySelector('.fit-goto-btn'));
     await sleep(20);
-    ok(toasts.length === 1 && toasts[0].indexOf('KRISS_CZ_260906') !== -1,
+    ok(toasts.length === 1 && toasts[0].indexOf('lab-F-run') !== -1,
        'pinned "Go to state" → the A18 cross-chip warning names the pinned run\'s chip');
 
     /* 5. Interactive-tab click on a tile INSIDE the pinned column */
@@ -119,9 +119,9 @@ const C = document.getElementById('ds-detail-root');
     /* 6. verdict badge fetches for the popup's run, not the global root's */
     reset();
     window._renderPlotApplyPopup([{ dot_path: 'qubits.qA1.resonator.f_01', value: 1 }], 'e', 'qA1', [],
-                                 { token: 'A', name: 'x' }, 'kriss:9');
-    ok(fetched.some(function (u) { return u.indexOf('/fit-audit/verdict?uid=' + encodeURIComponent('kriss:9')) === 0; }),
-       'the verdict badge audits the popup\'s run (kriss:9)');
+                                 { token: 'A', name: 'x' }, 'lab-F:9');
+    ok(fetched.some(function (u) { return u.indexOf('/fit-audit/verdict?uid=' + encodeURIComponent('lab-F:9')) === 0; }),
+       'the verdict badge audits the popup\'s run (lab-F:9)');
 
     /* 7. an element outside any detail (and a fake with no .closest) keeps the global root */
     reset();

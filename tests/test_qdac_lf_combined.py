@@ -12,6 +12,8 @@ Every static pin below was mutation-checked when written.
 
 from __future__ import annotations
 
+from tests.archive_roots import lab_path, lab_value
+
 import ast
 import json
 import os
@@ -27,9 +29,8 @@ from quam_state_manager.core import qdac_lf_recipe as R
 from quam_state_manager.core import script_emitter as SE
 
 _ROOT = Path(__file__).resolve().parent.parent
-_ENV_NAME = "CQT_20Q"          # resolves quam_config to PJ_10082026 (docs/136 §19)
-_PJ = Path(r"D:\work\Customer_Codes\PJ_10082026\qualibration_graphs"
-           r"\superconducting\quam_config")
+_ENV_NAME = lab_value("lab-J", "env")
+_SOURCE = lab_path("lab-J", "source")
 
 
 # --------------------------------------------------------------------------
@@ -356,7 +357,7 @@ def _patched_quam_config(dest: Path) -> Path:
     """A COPY of the lab's quam_config with the snippet applied. Their own tree
     is never written to."""
     pkg = dest / "quam_config"
-    shutil.copytree(_PJ, pkg,
+    shutil.copytree(_SOURCE, pkg,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git"))
     body = R.SNIPPET.split("# ---- and widen")[0].split("---\n", 1)[-1]
     qc = pkg / "qdac_components.py"
@@ -382,7 +383,7 @@ def _patched_quam_config(dest: Path) -> Path:
 
 @pytest.mark.skipif(_env_python() is None,
                     reason=f"conda env {_ENV_NAME!r} not found or not QM-usable")
-@pytest.mark.skipif(not _PJ.is_dir(), reason="the lab's quam_config is not on this machine")
+@pytest.mark.skipif(not _SOURCE.is_dir(), reason="the lab's quam_config is not on this machine")
 @pytest.mark.parametrize("pairs", [(), (("q1", "q2"), ("q2", "q3"))],
                          ids=["no-pairs", "tunable-couplers"])
 def test_the_emitted_generator_builds_a_loadable_bias_tee_chip(tmp_path, pairs):

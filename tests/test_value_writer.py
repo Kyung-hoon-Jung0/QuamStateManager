@@ -1,6 +1,6 @@
 """Which run WROTE a value -- core.value_writer, one fixture per mismatch class.
 
-Customer report 2026-09-29 (KRISS_CZ chip): *"In Chip Status Trends, one IRB
+Customer report 2026-09-29 (lab-F-env chip): *"In Chip Status Trends, one IRB
 point says its run is a flux short distortion experiment -- how can that be?
 T1 points also point to runs that are not T1."* Measured on that chip's own
 history: 157 of 219 run-bearing T1/T2/IRB change points named a run that did
@@ -322,7 +322,7 @@ def test_guard_vocabulary_a_run_of_another_family_whose_save_introduced_it(tmp_p
 
 
 def test_a_qubit_gate_fidelity_has_the_1Q_RB_vocabulary_a_pair_one_does_not(tmp_path):
-    """KRISS_CZ: #1485 27 1Q RB ran on q1 only (its patches say so) and
+    """lab-F-env: #1485 27 1Q RB ran on q1 only (its patches say so) and
     captured q2's gate_fidelity.averaged, which #402 -- a 1Q RB run on q2 --
     wrote."""
     assert vw.families_for("qubits.q2.gate_fidelity.averaged") == frozenset({"1Q RB", "1Q IRB"})

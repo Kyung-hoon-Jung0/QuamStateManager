@@ -2,7 +2,7 @@
 reads the run's INSTANT (``core/run_time``), never the folder digits read in
 the server's zone.
 
-The archive here is a -04:00 lab (the Novera9Q shape, docs/256: every
+The archive here is a -04:00 lab (the lab-H shape, docs/256: every
 ``created_at`` carries -04:00 and the folder digits are that lab's wall
 clock). The server's zone is FORCED to UTC+09:00 by handing each module
 under test a ``datetime`` whose machine zone is +09:00 (Windows has no
@@ -122,7 +122,7 @@ class TestStory:
         live = tmp_path / "live"
         live.mkdir()
         e = ChangeEntry("qubits.q4.f_01", 4.80e9, 4.81e9, "state")
-        e.actor = "human:kim"
+        e.actor = "human:user-c"
         undo_journal.append_units(undo_journal.sidecar_path(lab.inst, live),
                                   [undo_journal.make_unit([e], ts=lab.t7 - 3600)])
         journal.append(lab.inst, "chip", "q4 rabi looked off, rerunning", kind="human",

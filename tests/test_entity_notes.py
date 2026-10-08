@@ -80,7 +80,7 @@ class TestTheSidecar:
         state_file = chip["live"] + "/state.json"
         with open(state_file, encoding="utf-8") as f:
             data = json.load(f)
-        data["extras"] = {"chip_name": "PJ_RENAMED"}
+        data["extras"] = {"chip_name": "device_RENAMED"}
         with open(state_file, "w", encoding="utf-8") as f:
             json.dump(data, f)
 

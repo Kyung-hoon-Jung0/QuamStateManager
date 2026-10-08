@@ -229,7 +229,7 @@ class TestAnAllowCoversExactlyOneRun:
         assert card["id"] == aid and card["params"] == {"num_averages": 9}
         _allow(c, aid)
         recent = c.get("/api/agent/approvals").get_json()["recent"]
-        assert recent[-1]["params"] == {"num_averages": 9} and recent[-1]["decided_by"] == "human:kyunghoon"
+        assert recent[-1]["params"] == {"num_averages": 9} and recent[-1]["decided_by"] == "human:user-a"
 
     def test_the_run_card_carries_its_params(self, c, inst, fake_run):
         pid = _plan(c, [{"params": {"num_averages": 3}}], mode="ask-writes")
@@ -263,7 +263,7 @@ class TestAllowTellsTheExactCall:
         _allow(c, aid)
         j = _journal(c, inst)
         assert "asked to run `05_power_rabi` on qA1 (num_averages=9)" in j
-        assert "human:kyunghoon allowed the run of `05_power_rabi` on qA1 (num_averages=9)" in j
+        assert "human:user-a allowed the run of `05_power_rabi` on qA1 (num_averages=9)" in j
 
     def test_an_edited_value_is_named_in_the_approve_line(self, c, inst, fake_run):
         """C-30: the line named neither the approver nor the value the person changed."""
@@ -275,7 +275,7 @@ class TestAllowTellsTheExactCall:
                    json={"writes": [dict(ap["writes"][0], new=6.3e9)]}, headers=HUMAN).get_json()
         assert d["ok"], d
         j = _journal(c, inst)
-        assert "human:kyunghoon approved 1 write(s) from `05_power_rabi`" in j
+        assert "human:user-a approved 1 write(s) from `05_power_rabi`" in j
         assert f"edited before writing: `qubits.qA1.f_01` proposed {proposed} -> written {6.3e9}" in j
         assert r["ok"]
 
@@ -308,7 +308,7 @@ class TestThePlanStepSaysWhatItWaitsOn:
         assert step["request"] == {"id": aid, "status": "pending", "decided_by": None, "params": {"num_averages": 9}}
         _allow(c, aid)
         step = c.get(f"/api/agent/plans/{pid}").get_json()["plan"]["steps"][0]
-        assert step["request"]["status"] == "approved" and step["request"]["decided_by"] == "human:kyunghoon"
+        assert step["request"]["status"] == "approved" and step["request"]["decided_by"] == "human:user-a"
         r = _run(c, params={"num_averages": 9}, plan_id=pid, step=0, approval_id=aid).get_json()
         assert r["ok"], r
         plan = c.get(f"/api/agent/plans/{pid}").get_json()["plan"]

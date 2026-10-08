@@ -105,11 +105,11 @@ class TestThePage:
         body, _, oob = html.partition('<select name="author"')
         assert body.count(">unknown<") == 2, "both runs' authors"
         assert ">unknown<" in oob, "and the filter offers it as a choice"
-        r = c.post("/journal/claim", json={"run_id": 101, "who": "박OO", "note": "mine"}, headers=_H)
-        assert r.status_code == 200 and r.get_json()["claim"]["author"] == "human:박OO"
+        r = c.post("/journal/claim", json={"run_id": 101, "who": "\uac00OO", "note": "mine"}, headers=_H)
+        assert r.status_code == 200 and r.get_json()["claim"]["author"] == "human:\uac00OO"
         html = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)
-        assert "human:박OO" in html and "<b>Note:</b> mine" in html
-        assert "run #101 was run by human:박OO: mine" in journal.read(world["inst"], "chip", DAY), \
+        assert "human:\uac00OO" in html and "<b>Note:</b> mine" in html
+        assert "run #101 was run by human:\uac00OO: mine" in journal.read(world["inst"], "chip", DAY), \
             "the claim is itself a journal line"
         assert c.post("/journal/claim", json={"run_id": "x"}, headers=_H).status_code == 400
 
@@ -244,22 +244,22 @@ class TestACorrectionIsNotAnErasure:
 
     def test_the_boxes_show_what_is_already_recorded(self, world):
         c = world["client"]
-        r = c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon",
+        r = c.post("/journal/claim", json={"run_id": 104, "who": "user-a",
                                           "note": "fridge still warming"}, headers=_H)
         assert r.status_code == 200
         html = c.get(f"/journal?day={DAY}").get_data(as_text=True)
-        assert 'class="jr-who" placeholder="your name" value="Kyunghoon"' in html, \
+        assert 'class="jr-who" placeholder="your name" value="user-a"' in html, \
             "the name box must arrive carrying the author it is about to replace"
         assert 'class="jr-note-in" placeholder="optional" value="fridge still warming"' in html, \
             "the note box must arrive carrying the note it is about to replace"
 
     def test_a_claim_that_says_nothing_about_the_note_keeps_it(self, world):
         c = world["client"]
-        c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon",
+        c.post("/journal/claim", json={"run_id": 104, "who": "user-a",
                                        "note": "fridge still warming"}, headers=_H)
-        rec = c.post("/journal/claim", json={"run_id": 104, "who": "Jihoon"},
+        rec = c.post("/journal/claim", json={"run_id": 104, "who": "user-d"},
                      headers=_H).get_json()["claim"]
-        assert rec["author"] == "human:Jihoon"
+        assert rec["author"] == "human:user-d"
         assert rec["note"] == "fridge still warming", \
             "correcting the NAME deleted the note the last claim left"
 
@@ -276,18 +276,18 @@ class TestACorrectionIsNotAnErasure:
         without this the day reads as two people claiming one run with no way to
         tell which was said last."""
         c = world["client"]
-        c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon"}, headers=_H)
-        c.post("/journal/claim", json={"run_id": 104, "who": "Jihoon"}, headers=_H)
+        c.post("/journal/claim", json={"run_id": 104, "who": "user-a"}, headers=_H)
+        c.post("/journal/claim", json={"run_id": 104, "who": "user-d"}, headers=_H)
         text = journal.read(world["inst"], "chip", DAY)
         lines = [ln for ln in text.splitlines() if "run #104 was run by" in ln]
         assert len(lines) == 2, lines
-        assert "corrects an earlier claim of human:Kyunghoon" in lines[-1], lines
+        assert "corrects an earlier claim of human:user-a" in lines[-1], lines
         assert "corrects an earlier claim" not in lines[0], "the FIRST claim corrected nothing"
 
     def test_a_reclaim_by_the_same_person_is_not_a_correction(self, world):
         c = world["client"]
-        c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon"}, headers=_H)
-        c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon", "note": "added later"},
+        c.post("/journal/claim", json={"run_id": 104, "who": "user-a"}, headers=_H)
+        c.post("/journal/claim", json={"run_id": 104, "who": "user-a", "note": "added later"},
                headers=_H)
         text = journal.read(world["inst"], "chip", DAY)
         assert "corrects an earlier claim" not in text, \
@@ -365,13 +365,13 @@ class TestTheDayNavigationActuallyNavigates:
         was if it stays behind: claim a run on one day, step to it, and the
         filter must offer that person."""
         c = world["client"]
-        c.post("/journal/claim", json={"run_id": 101, "who": "Kyunghoon"}, headers=_H)
+        c.post("/journal/claim", json={"run_id": 101, "who": "user-a"}, headers=_H)
         html = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)
         i = html.find('id="jr-author"')
         assert i >= 0, "the author filter must come back with the day"
         sel = html[i:html.find("</select>", i)]
         assert 'hx-swap-oob="true"' in sel, "and out-of-band, since the target is #jr-body"
-        assert "human:Kyunghoon" in sel, "offering the day's own authors"
+        assert "human:user-a" in sel, "offering the day's own authors"
 
     def test_the_full_page_and_the_swap_render_the_same_nav(self, world):
         """One partial, two callers -- the strip cannot drift between them."""

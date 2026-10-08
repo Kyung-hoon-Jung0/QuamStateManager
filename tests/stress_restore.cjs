@@ -19,8 +19,9 @@ const CDP = process.argv[3] || '9463';
 const BASE = process.argv[4] || 'http://127.0.0.1:5463';
 const ONLY = (process.argv[5] || '').split(',').filter(Boolean);
 
-const SCRATCH = 'C:/Users/KyunghoonJung/AppData/Local/Temp/claude/D--work-statemanager/dd0fa2c3-e492-405d-8783-2c62cd30ba4a/scratchpad';
-const PY = 'D:/miniconda3/envs/cqt/python.exe';
+const SCRATCH = labPath('lab-P', 'scratch');
+const { labPath } = require('./lab_map.cjs');
+const PY = process.env.SM_PY || labPath('lab-B', 'python');
 
 const errors = [];
 const results = [];

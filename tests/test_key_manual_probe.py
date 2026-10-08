@@ -66,7 +66,7 @@ class TestParser:
 
 
 def test_the_real_flux_line_docstring_comes_through():
-    """Runs where the customer env is importable (the cqt pytest env)."""
+    """Runs where the customer env is importable (the lab-B pytest env)."""
     pytest.importorskip("quam_builder")
     # docs/141 4h: the catalogue enumerates the env's component classes
     # without walking unknown packages -- quam's own components and

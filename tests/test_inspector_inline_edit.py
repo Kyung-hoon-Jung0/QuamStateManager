@@ -1,7 +1,7 @@
 """docs/183 — the inspector's inline edit sent nothing at all.
 
 Found by the write-path stress round's Ctrl+Z lane and reproduced independently
-on a copy of the customer's KRISS 5Q chip in real headless Chrome: click a value
+on a copy of the customer's lab-F 5Q chip in real headless Chrome: click a value
 in the qubit or pair inspector, type, press Enter — **zero POST requests**, the
 tray stays at 0, no toast, no error, and the field shows the old value again on
 the next render. Both inspectors, and both ways of reaching them (full page and

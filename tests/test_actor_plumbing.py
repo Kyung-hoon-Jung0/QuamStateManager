@@ -95,17 +95,17 @@ class TestTheActorLandsEverywhere:
         path = _numeric_leaf(c)
         c.post("/field/edit", data={"dot_path": path, "value": "1", "expect_chip": tok}, headers=_H)
         c.post("/field/edit", data={"dot_path": path, "value": "2", "expect_chip": tok},
-               headers={**_H, "X-SM-Actor": "박OO"})
+               headers={**_H, "X-SM-Actor": "\uac00OO"})
         actors = [e["actor"] for e in c.get("/api/agent/tray").get_json()["entries"]]
-        assert actors == ["human", "human:박OO"]
+        assert actors == ["human", "human:\uac00OO"]
 
     def test_a_cookie_names_the_person_too(self, loaded):
         c = loaded
         tok = c.get("/api/agent/chip").get_json()["chip_token"]
         path = _numeric_leaf(c)
-        c.set_cookie("sm_actor", "이OO")
+        c.set_cookie("sm_actor", "\uac01OO")
         c.post("/field/edit", data={"dot_path": path, "value": "3", "expect_chip": tok}, headers=_H)
-        assert c.get("/api/agent/tray").get_json()["entries"][-1]["actor"] == "human:이OO"
+        assert c.get("/api/agent/tray").get_json()["entries"][-1]["actor"] == "human:\uac01OO"
 
 
 class TestTheHookNamesItsBackend:
@@ -174,9 +174,9 @@ class TestTheNameBoxIsEnglishOnly:
 
     def test_the_server_side_writer_follows_the_same_rule(self):
         from quam_state_manager.web.agent_api import _ascii_actor
-        assert _ascii_actor("kyunghoon") == "kyunghoon"
-        assert _ascii_actor("정경훈") == ""
-        assert _ascii_actor("Min 정 ji") == "Min  ji".strip()
+        assert _ascii_actor("user-a") == "user-a"
+        assert _ascii_actor("\uac00\uac01\uac02") == ""
+        assert _ascii_actor("user \uac00 a") == "user  a".strip()
         assert _ascii_actor("a%b") == "a%b"        # ASCII punctuation is a name
         assert _ascii_actor(None) == ""
 
@@ -201,7 +201,7 @@ class TestTheNameBoxIsEnglishOnly:
         """The property that actually broke it, stated once: whatever survives
         the rule must be encodable as ISO-8859-1."""
         from quam_state_manager.web.agent_api import _ascii_actor
-        for raw in ["kyunghoon", "정경훈", "kyunghoon 🙂", "박OO", "a\tb", ""]:
+        for raw in ["user-a", "\uac00\uac01\uac02", "user-a 🙂", "\uac00OO", "a\tb", ""]:
             _ascii_actor(raw).encode("latin-1")
 
     def test_but_what_you_say_to_the_agent_is_not_restricted(self, client):

@@ -24,12 +24,11 @@ function arg(name, dflt) {
 const PORT = arg('port', '8811');
 const TAG = arg('tag', 'run');
 const REPO = path.join(__dirname, '..', '..');
-const PY = 'D:\\miniconda3\\envs\\cqt\\python.exe';
+const { labPath } = require('../lab_map.cjs');
+const PY = labPath('lab-B', 'python');
 // --chip overrides the default real-chip folder (a verification may need a
 // specific snapshot generation, e.g. the shared-trigger-port one).
-const CHIP = arg('chip',
-  'D:\\work\\Customer_Codes\\CQT\\CS_installations\\qualibration_graphs'
-  + '\\superconducting\\quam_state');
+const CHIP = arg('chip', labPath('lab-B'));
 
 // REFUSE to start on a port something else already holds. Without this the
 // readiness probe below is satisfied by the STALE server — it GETs "/" on the

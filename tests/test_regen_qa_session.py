@@ -72,11 +72,11 @@ class TestReconstructSourceName:
 
     def test_a_generic_container_folder_names_the_chip(self, client, tmp_path):
         loaded = _chip(tmp_path / "loaded_chip")
-        other = _chip(tmp_path / "LabB" / "quam_state")
+        other = _chip(tmp_path / "lab-B" / "quam_state")
         client.post("/load", data={"folder": str(loaded)})
         body = client.post("/regenerate/reconstruct",
                            json={"folder": str(other)}).get_json()
-        assert body["source_name"] == "LabB"
+        assert body["source_name"] == "lab-B"
 
 
 # ── regenerate-r2-18 (core) ───────────────────────────────────────────────

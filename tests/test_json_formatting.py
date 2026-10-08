@@ -14,10 +14,10 @@ It is not only the indent. A file has three formatting facts SM does not own:
 
 ============  ==============================================================
 indent        2 vs 4 spaces, or tabs
-line endings  the KRISS chip on this machine is CRLF, and ``open(.., "w")``
+line endings  the lab-F chip on this machine is CRLF, and ``open(.., "w")``
               translates by PLATFORM — the same SM rewrites the same file
               differently on Windows and on Linux
-trailing NL   the KRISS chip has none; SM always appended one
+trailing NL   the lab-F chip has none; SM always appended one
 ============  ==============================================================
 
 So SM writes back what it found. A file that does **not** exist yet — every file
@@ -80,7 +80,7 @@ class TestTheSniffer:
         assert fmt["indent"] == 2 and fmt["newline"] == "\n" and fmt["trailing"]
 
     def test_it_reads_crlf_and_a_missing_trailing_newline(self, tmp_path):
-        """The KRISS chip on this machine, exactly."""
+        """The lab-F chip on this machine, exactly."""
         p = tmp_path / "s.json"
         _write_as(p, _STATE, indent=4, newline="\r\n", trailing=False)
         fmt = safe_io.json_format_of(p)

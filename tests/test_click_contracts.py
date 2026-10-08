@@ -15,10 +15,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-_LabA = Path("<dataset-root>/example_lab")
+_lab_A = Path("<dataset-root>/example_lab")
 _DATASET_ROOT = Path("<dataset-root>")
-_LabC_ARCHIVE = Path("<install-root>/dataset")
-_LabC_TOP = Path("<install-root>")
+_lab_C_ARCHIVE = Path("<install-root>/dataset")
+_lab_C_TOP = Path("<install-root>")
 
 
 def _find_run(roots_and_globs):
@@ -121,7 +121,7 @@ class TestQubitSpecVsPowerUnit:
 # Round-trip goldens (real archive)
 # ──────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.skipif(not (_LabA.is_dir() or _LabC_TOP.is_dir()),
+@pytest.mark.skipif(not (_lab_A.is_dir() or _lab_C_TOP.is_dir()),
                     reason="real data archive not present")
 class TestRoundTripGoldens:
 
@@ -130,8 +130,8 @@ class TestRoundTripGoldens:
         Clicking the fitted absolute frequency (RF_run + shift) through the
         baked affine must land exactly on f_01_frozen + shift."""
         folder = _find_run([
-            (_LabC_ARCHIVE, "#*resonator_spectroscopy_vs_power_iq*"),
-            (_LabC_TOP, "#*resonator_spectroscopy_vs_power_iq*"),
+            (_lab_C_ARCHIVE, "#*resonator_spectroscopy_vs_power_iq*"),
+            (_lab_C_TOP, "#*resonator_spectroscopy_vs_power_iq*"),
         ])
         if folder is None:
             pytest.skip("no 05b run in the archive")
@@ -169,9 +169,9 @@ class TestRoundTripGoldens:
         Clicking the fitted vertex through the baked affine must land on
         offset_pre + delta — with offset_pre patches-aware."""
         folder = _find_run([
-            (_LabC_ARCHIVE, "#*ramsey_vs_flux_calibration*"),
-            (_LabC_TOP, "#*ramsey_vs_flux_calibration*"),
-            (_LabA, "#*ramsey_vs_flux_calibration*"),
+            (_lab_C_ARCHIVE, "#*ramsey_vs_flux_calibration*"),
+            (_lab_C_TOP, "#*ramsey_vs_flux_calibration*"),
+            (_lab_A, "#*ramsey_vs_flux_calibration*"),
         ])
         if folder is None:
             pytest.skip("no ramsey_vs_flux run")
@@ -208,8 +208,8 @@ class TestRoundTripGoldens:
         """11 err-amp: the mV axis (ds_raw.full_amp) already carries the
         run-time amplitude — opt_amp = full_amp at the fitted prefactor."""
         folder = _find_run([
-            (_LabA, "#*power_rabi*"),
-            (_LabC_TOP, "#*power_rabi*"),
+            (_lab_A, "#*power_rabi*"),
+            (_lab_C_TOP, "#*power_rabi*"),
         ])
         if folder is None:
             pytest.skip("no power_rabi run")
@@ -270,15 +270,15 @@ def _eval_target(t, clicked):
     return t.get("scale", 1) * clicked + t.get("offset", 0)
 
 
-@pytest.mark.skipif(not _LabC_ARCHIVE.is_dir(), reason="LabC archive not present")
+@pytest.mark.skipif(not _lab_C_ARCHIVE.is_dir(), reason="lab-C archive not present")
 class TestExtendedGoldens:
 
     def test_09_flux_delta_click_reproduces_patch(self):
-        """LabC #220: joint 0.07203367 → 0.06961581 with idle_offset −0.00241786.
+        """lab-C #220: joint 0.07203367 → 0.06961581 with idle_offset −0.00241786.
         Clicking the fitted vertex (a DELTA) through the recipe's baked target
         must reproduce the node's write — the old recipe staged −0.0024 ABSOLUTE
         (the P0 bug this pins)."""
-        folder = _LabC_ARCHIVE / "2026-06-03" / "#220_1Q_09_qubit_spectroscopy_vs_flux_204227"
+        folder = _lab_C_ARCHIVE / "2026-06-03" / "#220_1Q_09_qubit_spectroscopy_vs_flux_204227"
         if not folder.is_dir():
             pytest.skip("golden run missing")
         run, clk = _clickable_for(folder, "amplitude")
@@ -298,9 +298,9 @@ class TestExtendedGoldens:
             "baked offset must be the PRE-update (patches.old) value"
 
     def test_06_f01_increment_and_flux_absolute(self):
-        """LabC #212: RF += freq_shift (increment) while flux sweet spot is an
+        """lab-C #212: RF += freq_shift (increment) while flux sweet spot is an
         ABSOLUTE assign — the two semantics in ONE figure."""
-        folder = _LabC_ARCHIVE / "2026-06-03" / "#212_1Q_06_resonator_spectroscopy_vs_flux_203012"
+        folder = _lab_C_ARCHIVE / "2026-06-03" / "#212_1Q_06_resonator_spectroscopy_vs_flux_203012"
         if not folder.is_dir():
             pytest.skip("golden run missing")
         run, clk = _clickable_for(folder, "amplitude")
@@ -330,11 +330,11 @@ class TestExtendedGoldens:
             "f_01 must move by the SHIFT, not be overwritten with the click"
 
     def test_13_drag_absolute_alpha_axis(self):
-        """LabC #101: patch old 0.0 → −1.08 with alpha_setpoint=1.0 — the
+        """lab-C #101: patch old 0.0 → −1.08 with alpha_setpoint=1.0 — the
         prefactor≠absolute trap. The recipe clicks the PERSISTED absolute alpha
         axis (scale 1) so the staged value == the node's write directly; the
         prefactor-only fallback must be VIEW-ONLY."""
-        folder = _LabC_ARCHIVE / "2026-06-03" / "#101_1Q_13_drag_calibration_180_minus_180_142608"
+        folder = _lab_C_ARCHIVE / "2026-06-03" / "#101_1Q_13_drag_calibration_180_minus_180_142608"
         if not folder.is_dir():
             pytest.skip("golden run missing")
         run, clk = _clickable_for(folder, "amplitude")
@@ -512,11 +512,11 @@ class TestQubitSpecVsPowerGoldens:
         pytest.skip("no 08b run with an anharmonicity patch + ef fit")
 
     def test_15a_absolute_freq_assign(self):
-        """LabC #111: RF/f_01 assigned the absolute optimum; the recipe's ×1e9
+        """lab-C #111: RF/f_01 assigned the absolute optimum; the recipe's ×1e9
         contract on the persisted full_freq axis is faithful."""
-        folder = _LabC_ARCHIVE / "2026-06-03" / "#111_1Q_15a_readout_frequency_optimization_144345"
+        folder = _lab_C_ARCHIVE / "2026-06-03" / "#111_1Q_15a_readout_frequency_optimization_144345"
         if not folder.is_dir():
-            hits = sorted(_LabC_ARCHIVE.rglob("#111_*readout_frequency*"))
+            hits = sorted(_lab_C_ARCHIVE.rglob("#111_*readout_frequency*"))
             folder = hits[0] if hits else folder
         if not folder.is_dir():
             pytest.skip("golden run missing")
@@ -533,11 +533,11 @@ class TestQubitSpecVsPowerGoldens:
         assert _eval_target(t, new / 1e9) == pytest.approx(new, rel=1e-12)
 
     def test_15b_absolute_amp_assign(self):
-        """LabC #110: readout amplitude assigned the absolute optimum (V axis
+        """lab-C #110: readout amplitude assigned the absolute optimum (V axis
         persisted) — scale-1 contract faithful."""
-        folder = _LabC_ARCHIVE / "2026-06-03" / "#110_1Q_15b_readout_power_optimization_144257"
+        folder = _lab_C_ARCHIVE / "2026-06-03" / "#110_1Q_15b_readout_power_optimization_144257"
         if not folder.is_dir():
-            hits = sorted(_LabC_ARCHIVE.rglob("#110_*readout_power*"))
+            hits = sorted(_lab_C_ARCHIVE.rglob("#110_*readout_power*"))
             folder = hits[0] if hits else folder
         if not folder.is_dir():
             pytest.skip("golden run missing")
@@ -554,12 +554,12 @@ class TestQubitSpecVsPowerGoldens:
         assert _eval_target(t, new) == pytest.approx(new, rel=1e-12)
 
 
-@pytest.mark.skipif(not _LabA.is_dir(), reason="LabA archive not present")
+@pytest.mark.skipif(not _lab_A.is_dir(), reason="lab-A archive not present")
 def test_wide_pyloop_absolute_assign():
-    """LabA #354 (wide python-loop): new == ds_fit f0 exactly; the recipe's
+    """lab-A #354 (wide python-loop): new == ds_fit f0 exactly; the recipe's
     ×1e9 absolute contract is faithful and the registry now routes it.
-    (LabA-gated: this golden lives in the LabA archive, not LabC.)"""
-    folder = _LabA / "2026-05-30" / "#354_1Q_03_resonator_spectroscopy_wide_python_loop_200526"
+    (lab-A-gated: this golden lives in the lab-A archive, not lab-C.)"""
+    folder = _lab_A / "2026-05-30" / "#354_1Q_03_resonator_spectroscopy_wide_python_loop_200526"
     if not folder.is_dir():
         pytest.skip("golden run missing")
     run, clk = _clickable_for(folder, "amplitude")
@@ -581,7 +581,7 @@ class TestAuditRegressions:
         (clicking the E→F peak into f_01 is wrong by the anharmonicity)."""
         folder = Path("<dataset-root>/example_lab_cr")
         if not folder.is_dir():
-            pytest.skip("LabA_CR archive absent")
+            pytest.skip("lab-A_CR archive absent")
         from quam_state_manager.core.dataset import DatasetStore
         from quam_state_manager.core.interactive_plots import (
             build_interactive_figure, list_interactive_figures)

@@ -110,7 +110,7 @@ def test_route_serves_all_formats(tmp_path):
 
 def test_route_names_the_chip_folder_and_dates_locally(tmp_path, monkeypatch):
     """QA review of regenerate-r2-33 (+ its F26 sibling): the report was named
-    after the chip folder's PARENT (a customer chip in ``chip/260907_KRS_5Q``
+    after the chip folder's PARENT (a customer chip in ``chip/lab-F``
     downloaded as ``chip_report_chip_...``) and stamped in UTC, so a 07:49 KST
     report was dated the day before. It follows the chip header's name now,
     and a local stamp that carries its offset."""
@@ -131,7 +131,7 @@ def test_route_names_the_chip_folder_and_dates_locally(tmp_path, monkeypatch):
         def astimezone(self, tz=None):    # "the machine's local zone" = KST here
             return self if tz is None else datetime.astimezone(self, tz)
 
-    chip = tmp_path / "chip" / "260907_KRS_5Q"
+    chip = tmp_path / "chip" / "lab-F"
     chip.mkdir(parents=True)
     (chip / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
     (chip / "wiring.json").write_text(json.dumps(
@@ -143,9 +143,9 @@ def test_route_names_the_chip_folder_and_dates_locally(tmp_path, monkeypatch):
     resp = c.get("/topology/report?format=md")
     assert resp.status_code == 200
     cd = resp.headers.get("Content-Disposition", "")
-    assert "chip_report_260907_KRS_5Q_2026-09-24.md" in cd, cd
+    assert "chip_report_lab-F_2026-09-24.md" in cd, cd
     body = resp.get_data(as_text=True)
-    assert "260907_KRS_5Q" in body.splitlines()[0], body.splitlines()[0]
+    assert "lab-F" in body.splitlines()[0], body.splitlines()[0]
     assert "2026-09-24T07:49:18+09:00" in body
 
 
@@ -174,7 +174,7 @@ def test_below_spec_pair_rows_carry_the_metric_label_not_bell():
 def _report_client(tmp_path):
     import json
     from quam_state_manager.web.app import create_app
-    chip = tmp_path / "LabA"
+    chip = tmp_path / "lab-A"
     chip.mkdir()
     (chip / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
     (chip / "wiring.json").write_text(json.dumps(

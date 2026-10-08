@@ -5,7 +5,7 @@ generate + populate combined). These pin: the emitted source is valid Python,
 the wiring/populate/pairs blocks are present and faithful to the spec, and a
 real chip round-trips through reconstruct -> emit -> compile with no loss of
 structure. (An end-to-end *execution* of the emitted script needs the QM stack +
-a calibration repo; it was verified manually against the LabA chip in the LabB
+a calibration repo; it was verified manually against the lab-A chip in the lab-B
 env: 21 qubits, 31 pairs, generate_config() -> 63 elements.)
 """
 from __future__ import annotations
@@ -141,20 +141,20 @@ def test_no_pairs_omits_pair_import():
 
 
 # --- real-chip round-trip (auto-skip when absent) ---------------------------
-_LabA = Path("<quam-states>/example_lab")
+_lab_A = Path("<quam-states>/example_lab")
 
 
-@pytest.mark.skipif(not (_LabA / "state.json").exists(),
-                    reason="real LabA chip folder not present")
+@pytest.mark.skipif(not (_lab_A / "state.json").exists(),
+                    reason="real lab-A chip folder not present")
 def test_real_chip_reconstruct_emit_compiles():
-    state = json.loads((_LabA / "state.json").read_text())
-    wiring = json.loads((_LabA / "wiring.json").read_text())
+    state = json.loads((_lab_A / "state.json").read_text())
+    wiring = json.loads((_lab_A / "wiring.json").read_text())
     rec = regen_spec.reconstruct_spec(state, wiring)
-    src = regen_script.emit_build_script(rec.spec, chip_name="LabA")
+    src = regen_script.emit_build_script(rec.spec, chip_name="lab-A")
     ast.parse(src)                                   # valid Python
     # every qubit + every pair represented
     for q in rec.spec["qubits"]:
         assert repr(q) in src
-    assert src.count("add_qubit_flux_lines") == 21   # LabA flux lines
+    assert src.count("add_qubit_flux_lines") == 21   # lab-A flux lines
     assert "PAIRS = {" in src
-    assert compile(src, "build_LabA.py", "exec")     # bytecode-compiles
+    assert compile(src, "build_lab-A.py", "exec")     # bytecode-compiles

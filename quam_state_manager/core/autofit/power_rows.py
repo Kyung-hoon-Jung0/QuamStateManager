@@ -1,7 +1,7 @@
 """Coupled power-write rows for resonator-spectroscopy-vs-power applies.
 
 The rvp node's own update is ATOMIC across three kinds of state fields
-(real-archive confirmed — LabA #565/#599, LabA_CR #9):
+(real-archive confirmed — lab-A #565/#599, lab-A_CR #9):
 
     resonator f_01/RF_frequency            (per fitted qubit)
     resonator readout amplitude            (per fitted qubit)

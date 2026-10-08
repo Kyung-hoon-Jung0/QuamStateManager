@@ -2,7 +2,7 @@
  * customer's bench does constantly: ANOTHER PROGRAM WRITING THE CHIP.
  *
  * Evidence this is their shape, not a guess:
- *   instances/4928.json  chip_path = D:\work\...\260907_KRS_5Q  (SM on :5050)
+ *   instances/4928.json  chip_path = D:\work\...\lab-F  (SM on :5050)
  *   ~/.qualibrate/config.toml  state_path = the same folder
  *   qualibrate.log  "Saving machine to active path <that folder>" every 30-60s
  *

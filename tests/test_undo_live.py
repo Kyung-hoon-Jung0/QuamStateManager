@@ -1344,8 +1344,8 @@ class TestUndoChipIdentity:
         return json.loads((folder / "state.json").read_text())["qubits"][q]["z"]["joint_offset"]
 
     def _two_chips(self, tmp_path):
-        A = tmp_path / "labA" / "chipA"; self._chip(A, "qA1", 0.10, "10.0.0.1")
-        B = tmp_path / "labB" / "chipB"; self._chip(B, "qB1", 0.55, "10.0.0.2")
+        A = tmp_path / "lab-A" / "chipA"; self._chip(A, "qA1", 0.10, "10.0.0.1")
+        B = tmp_path / "lab-B" / "chipB"; self._chip(B, "qB1", 0.55, "10.0.0.2")
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
         c = app.test_client()
         c.post("/load", data={"folder": str(A)})

@@ -36,7 +36,7 @@ def _write_chip(folder: Path, *, host="10.1.1.1", cluster="clusterA",
     return folder
 
 
-def _make_storage(root: Path, project_sub="LabA_1Q", run="#1_1Q_08_qubit_spec_120000") -> Path:
+def _make_storage(root: Path, project_sub="lab-A_1Q", run="#1_1Q_08_qubit_spec_120000") -> Path:
     """A storage tree: <root>/<project_sub>/<date>/<run>/ with a node.json."""
     run_dir = root / project_sub / "2026-01-15" / run
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -84,8 +84,8 @@ class TestSettings:
 
 class TestFindDatasetRoots:
     def test_finds_project_subfolder(self, tmp_path):
-        storage = tmp_path / "dataset" / "LabA"
-        proj = _make_storage(storage, project_sub="LabA_1Q")
+        storage = tmp_path / "dataset" / "lab-A"
+        proj = _make_storage(storage, project_sub="lab-A_1Q")
         roots = scheduler.find_dataset_roots(str(storage))
         assert str(proj) in roots
 
@@ -170,10 +170,10 @@ class TestPathHelpers:
         assert scheduler.folder_under_install(str(cal), str(inst)) is True
 
     def test_storage_registered(self, tmp_path):
-        ds = tmp_path / "dataset" / "LabA" / "LabA_1Q"
+        ds = tmp_path / "dataset" / "lab-A" / "lab-A_1Q"
         ds.mkdir(parents=True)
         roots = [str(ds)]
-        assert scheduler.storage_registered(roots, [str(tmp_path / "dataset" / "LabA")]) is True
+        assert scheduler.storage_registered(roots, [str(tmp_path / "dataset" / "lab-A")]) is True
         assert scheduler.storage_registered(roots, [str(ds)]) is True
         assert scheduler.storage_registered(roots, [str(tmp_path / "unrelated")]) is False
         assert scheduler.storage_registered([], [str(tmp_path)]) is False
@@ -213,7 +213,7 @@ def _good_ctx(tmp_path) -> dict:
     inst = tmp_path / "superconducting"
     cal = inst / "calibrations" / "1Q_2Q_calibrations"
     cal.mkdir(parents=True)
-    ds = tmp_path / "dataset" / "LabA_1Q"
+    ds = tmp_path / "dataset" / "lab-A_1Q"
     ds.mkdir(parents=True)
     return {
         "chip_open": True,
@@ -326,7 +326,7 @@ class TestReadEffectiveConfig:
     def test_parses_result_json(self, monkeypatch):
         payload = {
             "status": "ok",
-            "config": {"project": "LabA_1Q_2Q", "state_path": "D:/x",
+            "config": {"project": "lab-A_1Q_2Q", "state_path": "D:/x",
                        "storage_location": "D:/ds", "calibration_library_folder": "D:/cal"},
             "editable_install": {"dist": "superconducting_calibrations", "path": "D:/inst"},
             "versions": {"qualibrate": "1.3.0", "quam": "0.5.0a3"},
@@ -340,7 +340,7 @@ class TestReadEffectiveConfig:
         monkeypatch.setattr(config_generator, "_run_command", fake_run_command)
         result = scheduler.read_effective_config("/fake/python")
         assert result["ok"] is True
-        assert result["config"]["project"] == "LabA_1Q_2Q"
+        assert result["config"]["project"] == "lab-A_1Q_2Q"
         assert result["editable_install"]["path"] == "D:/inst"
 
     def test_missing_result_json_reports_error(self, monkeypatch):

@@ -674,7 +674,7 @@ def _data_folder_name(quam_state_path: str | Path) -> str | None:
     returns ``<chip_label>``. Returns None for paths that don't match.
 
     The ``data/`` segment is the convention in qualibration_graphs workflows.
-    User uses chip labels (LabB_1Q, ExampleChip_1Q, …) at this level to organise
+    User uses chip labels (lab-B_1Q, ExampleChip_1Q, …) at this level to organise
     different chips on the same hardware setup.
     """
     p = Path(quam_state_path).resolve()
@@ -961,7 +961,7 @@ class SnapshotMeta:
     run_id: int | None = None  # workspace run id, if experiment-driven
     experiment_folder_path: str | None = None  # absolute path to the run folder
     state_hash: str | None = None  # SHA256 of canonical state+wiring (for dedup)
-    data_folder: str | None = None  # workspace data folder label (e.g. "LabB_1Q")
+    data_folder: str | None = None  # workspace data folder label (e.g. "lab-B_1Q")
     # If non-None, this snapshot was routed to a chip dir different from the
     # one the loaded path's _key_for would normally produce — meaning the
     # content's fingerprint diverged from the existing chip dir's. UI uses
@@ -1097,7 +1097,7 @@ _GENERIC_SOURCE_DIRS = frozenset({"quam_state", "quam_states", "state", "states"
 def source_folder_label(folder: str | None) -> str | None:
     """Short display name of a source folder: its own name, or
     ``<parent>/<name>`` when the name is a generic container
-    (``labB/quam_state``). Display only -- the full path rides the title."""
+    (``lab-B/quam_state``). Display only -- the full path rides the title."""
     if not folder:
         return None
     parts = [p for p in re.split(r"[\\/]+", str(folder)) if p]
@@ -6761,7 +6761,7 @@ class HistoryManager:
         ``pending_decisions`` looks like::
 
             [
-              {"data_folder": "LabB_1Q", "count": 125, "chip_key": "superconducting"},
+              {"data_folder": "lab-B_1Q", "count": 125, "chip_key": "superconducting"},
               ...
             ]
 
@@ -7575,10 +7575,10 @@ def _build_fingerprint_index(
     belong to this fingerprint beats a dir where this fingerprint is
     a minority. Concretely, for the failing-test scenario:
 
-    - ``LabB_1Q`` has 1 LabB snap of 1 total -> purity 1.0
-    - ``ExampleChip_1Q`` has 1 LabB snap of 2 total (mixed with a ExampleChip
+    - ``lab-B_1Q`` has 1 lab-B snap of 1 total -> purity 1.0
+    - ``ExampleChip_1Q`` has 1 lab-B snap of 2 total (mixed with a ExampleChip
       snap) -> purity 0.5
-    - LabB_1Q wins for the LabB fingerprint.
+    - lab-B_1Q wins for the lab-B fingerprint.
 
     Falls back to absolute count, then alphabetical first dir name,
     for further ties. The index is build-once: the migration is

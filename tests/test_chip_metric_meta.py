@@ -12,6 +12,8 @@ route's answer equals an independent recompute from the raw snapshot contents
 """
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import json
 import random
 import shutil

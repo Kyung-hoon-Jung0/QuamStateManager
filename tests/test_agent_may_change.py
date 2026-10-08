@@ -14,6 +14,8 @@ change" read "now: not set" for every row, and its count stopped at the
 
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import copy
 import json
 import sys

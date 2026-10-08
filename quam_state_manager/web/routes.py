@@ -2590,8 +2590,8 @@ def _chip_display_name(path: str | Path) -> str:
     """The most human-meaningful chip name for *path*.
 
     A standalone chip folder holds ``state.json`` directly and is named after
-    the chip (``.../quam_states/LabA`` → ``LabA``); only when the folder
-    itself is a generic container (``.../LabA/quam_state``) do we fall back
+    the chip (``.../quam_states/lab-A`` → ``lab-A``); only when the folder
+    itself is a generic container (``.../lab-A/quam_state``) do we fall back
     to :func:`chip_name_for`, which understands the qualibration layout. This
     avoids the confusing ``quam_states`` label the raw parent-name gave."""
     p = Path(path)
@@ -8742,7 +8742,7 @@ def bulk_edit():
     else:
         p_ent = _pair_grid_entry(store, modified)
         pair_columns, pair_groups, pair_rows = p_ent["grid"]
-    # docs/141 4ad: and it is virtualized the same way. On the PJ 20Q chip this
+    # docs/141 4ad: and it is virtualized the same way. On the device 20Q chip this
     # table was 1.49 MB of a 2.81 MB document — 53%, the largest single block
     # left after §4n — while the qubit grid beside it had been slimmed to a
     # third. Same planner, same gates, same macro: `core/bulk_virt` needed no
@@ -32126,8 +32126,8 @@ def _compare_source_label(p: str | Path) -> str:
 def _dedupe_compare_labels(labels: list[str], paths: list[str]) -> list[str]:
     """Disambiguate colliding labels with the shortest distinguishing path suffix.
 
-    Two sources that still produce the same label (e.g. ``rootA/LabA`` and
-    ``rootB/LabA``) get ``LabA (rootA)`` / ``LabA (rootB)``: the longest
+    Two sources that still produce the same label (e.g. ``rootA/lab-A`` and
+    ``rootB/lab-A``) get ``lab-A (rootA)`` / ``lab-A (rootB)``: the longest
     common trailing path suffix is stripped, then the shortest suffix of the
     remaining parent chain that makes every member of the collision group
     unique is appended. Identical resolved paths (the same folder added
@@ -33037,7 +33037,7 @@ def _hub_basket(refs: list[str], live_paths: set[str]):
             "error": None, "transient": False,
         })
         sources.append(src)
-    # Same-named flat chips (two "LabA" folders under different roots)
+    # Same-named flat chips (two "lab-A" folders under different roots)
     # would render identical labels — disambiguate with the shortest
     # distinguishing path suffix (the P0 honest-label rule, carried over).
     valid_rows = [r for r in rows if r["error"] is None]
@@ -34264,7 +34264,7 @@ def param_history():
     #
     # The chip selector lists ONLY:
     #   - active_chips: the currently-loaded chip (path-derived from quam_state).
-    #     Workspace top-level folders (e.g. data/LabB_1Q/) DO NOT define chips
+    #     Workspace top-level folders (e.g. data/lab-B_1Q/) DO NOT define chips
     #     here — they're data sources whose alignment with the loaded chip is
     #     determined by network fingerprint, surfaced via the alignment banner.
     #   - archived_chips: chips with on-disk history that aren't currently
@@ -37538,7 +37538,7 @@ def _ingest_after_steps(app) -> list:
 
     def workspace_sidebar(roots: list[str]) -> None:
         # the sidebar's rescan (the first /workspace/tree or /tree/poll after
-        # a run used to pay it: 1.85-5.2 s measured on KH)
+        # a run used to pay it: 1.85-5.2 s measured on lab-I)
         ws = app.config.get("workspace")
         if ws is None:
             return

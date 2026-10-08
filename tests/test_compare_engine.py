@@ -715,7 +715,7 @@ class TestAutoMap:
         assert mr.unmatched_a == ["q2"]
 
     def test_crossed_names_reject_grid(self, tmp_path, env):
-        # the variantb⊂LabA shape: B shares names but at DIFFERENT positions.
+        # the variantb⊂lab-A shape: B shares names but at DIFFERENT positions.
         A = _grid_chip({"q1": "0,0", "q2": "1,0", "q3": "0,1"})
         B = _grid_chip({"q2": "0,0", "q1": "1,0", "q3": "0,1"})
         sa, sb = self._snaps(tmp_path, env, A, B)
@@ -746,7 +746,7 @@ class TestAutoMap:
         assert mr.pairs == {}                      # NEVER positional zip
 
     def test_name_fallback_is_intersection_never_zip(self, tmp_path, env):
-        # deviceC (qB*) vs LabA (qA*): no grid trust, no shared names →
+        # deviceC (qB*) vs lab-A (qA*): no grid trust, no shared names →
         # sorted-zip would pair qB1↔qA1 — forbidden.
         A = _grid_chip({"qA1": "0,0", "qA2": "1,0"})
         B = ({"qubits": {"qB1": make_qubit(6.2e9, None),
@@ -1120,9 +1120,9 @@ class TestCachingContract:
 class TestMappingStore:
     def test_roundtrip(self, tmp_path):
         ms = C.MappingStore(tmp_path)
-        ms.save("net1", "LabA", "deviceB", {"qA1": "qB1", "qA2": "qB2"},
+        ms.save("net1", "lab-A", "deviceB", {"qA1": "qB1", "qA2": "qB2"},
                 {"qA1", "qA2"}, {"qB1", "qB2"})
-        rec = ms.load("net1", "LabA", "deviceB", {"qA1", "qA2"}, {"qB1", "qB2"})
+        rec = ms.load("net1", "lab-A", "deviceB", {"qA1", "qA2"}, {"qB1", "qB2"})
         assert rec["pairs"] == {"qA1": "qB1", "qA2": "qB2"}
         assert rec["stale"] == {}
 

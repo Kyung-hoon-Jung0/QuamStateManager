@@ -54,7 +54,7 @@ const [SM, OUT, W] = [process.argv[2], process.argv[3], +process.argv[4] || 1600
   await press('#agent-home .ag-actor');
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
   await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
-  await p.send('Input.insertText', { text: '정경훈' }); await sleep(300);
+  await p.send('Input.insertText', { text: '\uac00\uac01\uac02' }); await sleep(300);
   console.log('actor hangul', JSON.stringify(await p.ev(`[document.querySelector('#agent-home .ag-actor').value, localStorage.getItem('quam_actor_name')]`)));
   // verifier P1: with that name in the box, a MOUSE click on Send must still
   // submit (a custom validity on the box used to invalidate the composer form).

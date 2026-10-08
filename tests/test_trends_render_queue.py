@@ -1,7 +1,7 @@
 """QA F6 -- Datasets > Trends froze the page for 4-6 s when an experiment was
 chosen, with no loading indicator.
 
-Measured in real Chrome on the QA rig (KH folder, 08_qubit_spectroscopy, 139
+Measured in real Chrome on the QA rig (lab-I folder, 08_qubit_spectroscopy, 139
 runs, 50 series): one 6.2 s long task. Two causes, both fixed:
 
 * the app shell was selected by ``body:has(> .app-layout)``; a :has() in

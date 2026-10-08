@@ -84,8 +84,8 @@ def two(tmp_path):
     """A has its own history; B (same chip_name) is created afterwards and
     then records alongside A; A records again after B."""
     hm = HistoryManager(str(tmp_path / "_inst"))
-    a = tmp_path / "labA" / "quam_state"
-    b = tmp_path / "labB" / "quam_state"
+    a = tmp_path / "lab-A" / "quam_state"
+    b = tmp_path / "lab-B" / "quam_state"
     a1 = _snap(hm, a, _state(5.00e9))
     a2 = _snap(hm, a, _state(5.01e9))
     b1 = _snap(hm, b, _state(5.10e9))
@@ -108,7 +108,7 @@ class TestOneDirTwoFolders:
         assert vals == [5.01e9, 5.00e9], "B's 5.12/5.10 are not A's history"
         assert all(p["source"]["kind"] == "this" for p in out["points"])
         assert out["parallel_hidden"] == 2
-        assert [f["label"] for f in out["other_folders"]] == ["labB/quam_state"]
+        assert [f["label"] for f in out["other_folders"]] == ["lab-B/quam_state"]
         assert out["other_folders"][0]["snapshots"] == 2
 
     def test_a_folder_copied_after_keeps_the_earlier_history_labelled(self, two):
@@ -117,15 +117,15 @@ class TestOneDirTwoFolders:
         rows = [(p["value"], p["source"]["kind"], p["source"]["label"])
                 for p in out["points"]]
         assert rows == [(5.12e9, "this", None), (5.10e9, "this", None),
-                        (5.01e9, "other", "labA/quam_state"),
-                        (5.00e9, "other", "labA/quam_state")]
+                        (5.01e9, "other", "lab-A/quam_state"),
+                        (5.00e9, "other", "lab-A/quam_state")]
         assert out["parallel_hidden"] == 0
         assert {p["source"]["lineage"] for p in out["points"][2:]} == {"earlier"}
 
     def test_a_new_folder_with_no_rows_yet_keeps_the_whole_history(self, two):
         """The moved-chip case: the identity ladder's continuity survives."""
         hm = two["hm"]
-        c = two["tmp"] / "labC" / "quam_state"
+        c = two["tmp"] / "lab-C" / "quam_state"
         _write(c, _state(5.12e9))
         out = hm.field_history(c, "qubits.q1.f_01")
         assert [p["value"] for p in out["points"]] == [5.12e9, 5.10e9, 5.01e9, 5.00e9]
@@ -246,8 +246,8 @@ def _apply(client):
 
 @pytest.fixture
 def app_two(tmp_path):
-    a = tmp_path / "labA" / "quam_state"
-    b = tmp_path / "labB" / "quam_state"
+    a = tmp_path / "lab-A" / "quam_state"
+    b = tmp_path / "lab-B" / "quam_state"
     _write(a, _state(5.00e9))
     _write(b, _state(5.10e9))
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
@@ -266,7 +266,7 @@ class TestTheSurfaces:
     def test_the_popover_shows_only_this_folders_values_and_says_why(self, app_two):
         html = app_two["client"].get("/field/history?path=qubits.q1.f_01").data.decode()
         assert 'data-value="5120000000.0"' not in html, "B's value is not A's to revert to"
-        assert "fh-other-note" in html and "labB/quam_state" in html
+        assert "fh-other-note" in html and "lab-B/quam_state" in html
         assert "not part of this folder&#39;s timeline" in html \
             or "not part of this folder's timeline" in html
 
@@ -276,7 +276,7 @@ class TestTheSurfaces:
         html = c.get("/field/history?path=qubits.q1.f_01").data.decode()
         # A's rows predate B's own history: kept, and named as A's
         assert html.count('class="snap-src fh-srcfolder"') == 2
-        assert ">from labA/quam_state<" in html
+        assert ">from lab-A/quam_state<" in html
         assert "snapshot of another folder (" in html
         assert "snapshot of the live folder" not in html
         assert "fh-other-note" not in html
@@ -284,7 +284,7 @@ class TestTheSurfaces:
     def test_the_versions_panel_labels_and_diffs_this_folder(self, app_two):
         html = app_two["client"].get("/state/versions?changes=all").data.decode()
         assert html.count('class="snap-src sv-src"') == 2, "B's two rows carry its folder"
-        assert ">from labB/quam_state<" in html
+        assert ">from lab-B/quam_state<" in html
         # A's own edit, not B's: the quick diff is #4 -> #3 (A's backup -> A's save)
         assert '<span class="sv-quick-ord">#4 → #3</span>' in html
         assert "5000000000.0</span> → <b>5010000000.0</b>" in html
@@ -309,7 +309,7 @@ class TestTheSurfaces:
         body = app_two["client"].get("/api/agent/versions?n=10").get_json()
         kinds = [v["source"]["kind"] for v in body["versions"]]
         assert kinds.count("other") == 2 and kinds.count("this") == 2, kinds
-        assert all(v["source"]["label"] == "labB/quam_state"
+        assert all(v["source"]["label"] == "lab-B/quam_state"
                    for v in body["versions"] if v["source"]["kind"] == "other")
         assert body["other_folders"], "the other folder is summarized for the agent"
 
@@ -325,7 +325,7 @@ class TestTheSurfaces:
     def test_a_take_live_backup_is_this_folders(self, tmp_path):
         """Captured from <instance>/working_state/<wc>.takelive_backup/... --
         a temporary stand-in for THIS folder's working copy."""
-        a = tmp_path / "labA" / "quam_state"
+        a = tmp_path / "lab-A" / "quam_state"
         _write(a, _state(5.00e9))
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
         c = app.test_client()

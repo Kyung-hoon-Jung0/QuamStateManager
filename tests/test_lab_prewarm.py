@@ -17,7 +17,7 @@ a cell. Now:
 4. The UI's state: ``worker_state`` -> ready / starting / cold / no-env, what
    "Preparing your lab code... (first check after start)" is decided on.
 
-The subprocess pins run the REAL worker script under this interpreter (the cqt
+The subprocess pins run the REAL worker script under this interpreter (the lab-B
 env carries quam); they skip where quam is absent.
 """
 

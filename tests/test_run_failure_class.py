@@ -21,6 +21,8 @@ test_agent_runs).
 
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import json
 import subprocess
 import sys

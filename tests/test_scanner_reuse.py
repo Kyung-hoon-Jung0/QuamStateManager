@@ -1,7 +1,7 @@
 """RAM P7 -- the workspace scanner's new-run path.
 
 A new run bumps its date dir, and the incremental rescan used to re-walk and
-re-parse EVERY run of that day (649 node.json reads on the KH archive's
+re-parse EVERY run of that day (649 node.json reads on the lab-I archive's
 busiest day, for one new run). It now reuses a run the walk would reach when
 nothing its parse read can have moved (run dir mtime, node.json
 (mtime_ns, size), quam_state dir mtime). These pins hold the result of every

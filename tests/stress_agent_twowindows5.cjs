@@ -61,10 +61,10 @@ async function main() {
   const A = await makeConn('ws://127.0.0.1:' + CDP + '/devtools/page/' + tA, 'A', errors);
   const B = await makeConn('ws://127.0.0.1:' + CDP + '/devtools/page/' + tB, 'B', errors);
   for (const C of [A, B]) { await C.send('Page.navigate', { url: BASE + '/' }); await C.until('!!document.querySelector("#agent-home .ag-root .ag-cards")', 30000); }
-  await A.ev('AgentPanel.setActor("Kyunghoon"); 1');
-  await B.ev('AgentPanel.setActor("Minji"); 1');
+  await A.ev('AgentPanel.setActor("user-a"); 1');
+  await B.ev('AgentPanel.setActor("user-b"); 1');
 
-  const pid = await A.ev('fetch("/api/agent/plans",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"Kyunghoon"},body:JSON.stringify({run_line:"/run 02a_fake_resonator q14"}),credentials:"same-origin"}).then(function(r){return r.json();}).then(function(j){return (j.plan||{}).id||"ERR";})');
+  const pid = await A.ev('fetch("/api/agent/plans",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"user-a"},body:JSON.stringify({run_line:"/run 02a_fake_resonator q14"}),credentials:"same-origin"}).then(function(r){return r.json();}).then(function(j){return (j.plan||{}).id||"ERR";})');
   note('plan', pid);
   const s = '#agent-home [data-card=\'plan:' + pid + '\'] .ag-mode select';
   await B.until('!!document.querySelector("' + s + '")', 30000, 80);
@@ -77,7 +77,7 @@ async function main() {
   ok('B has the mode picker focused, as a person choosing a mode would', focusedB === true);
 
   // A now changes the same plan's mode to auto
-  await A.ev('fetch("/api/agent/plans/' + pid + '/mode",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"Kyunghoon"},body:JSON.stringify({mode:"auto"}),credentials:"same-origin"}).then(function(r){return r.status;})');
+  await A.ev('fetch("/api/agent/plans/' + pid + '/mode",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"user-a"},body:JSON.stringify({mode:"auto"}),credentials:"same-origin"}).then(function(r){return r.status;})');
   await sleep(12000);           // well past both the 4-5s and any push
   const shows = await B.ev('(function(){var e=document.querySelector("' + s + '"); return e? e.value:null;})()');
   const server = await B.ev('fetch("/api/agent/plans/' + pid + '",{headers:{Accept:"application/json"}}).then(function(r){return r.json();}).then(function(j){return (j.plan||{}).mode;})');
@@ -98,7 +98,7 @@ async function main() {
   ok('the card feed says a person changed the mode', /mode set to/.test(feed), feed.slice(-300));
 
   // clean up this plan
-  await A.ev('fetch("/api/agent/plans/' + pid + '/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"Kyunghoon"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})');
+  await A.ev('fetch("/api/agent/plans/' + pid + '/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"user-a"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})');
 
   fs.writeFileSync(OUT, JSON.stringify({ results, notes, errors }, null, 1));
   const bad = results.filter(x => !x.pass);

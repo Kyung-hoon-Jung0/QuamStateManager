@@ -492,11 +492,11 @@ function toStep4(win, G, n) {
 
   // ── F4: Reset keeps the highlighted env as the real selection ────────────
   await (async function f4ResetEnv() {
-    const PY = 'C:/envs/KRISS_CZ/python.exe';
+    const PY = 'C:/envs/lab-F-env/python.exe';
     const w = makeWorld({ routes: [
       { match: '/generate/envs', reply: {
         envs: [{ name: 'base', python: 'C:/envs/base/python.exe' },
-               { name: 'KRISS_CZ', python: PY }],
+               { name: 'lab-F-env', python: PY }],
         selected: PY } },
       { match: '/generate/probe', reply: { usable: true, versions: {} } }
     ] });
@@ -894,8 +894,8 @@ function toStep4(win, G, n) {
     ok($(w.win, 'gen-scripts-path').value === 'D:\\gen_out\\e1_sc\\state_gen_scripts',
       'r2-18 re-verify: picking an output folder takes the box back to following it (got ' +
       $(w.win, 'gen-scripts-path').value + ')');
-    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\gen_out\\e2_novera');
-    ok(w.G.state.scriptsPath === 'D:\\gen_out\\e2_novera\\state_gen_scripts',
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\gen_out\\e2_lab-H');
+    ok(w.G.state.scriptsPath === 'D:\\gen_out\\e2_lab-H\\state_gen_scripts',
       'r2-18 re-verify: ...and keeps following the next one');
     // a path typed in THIS session still wins over the output
     const w2 = makeWorld({ local: { quam_gen_scripts_path: OLD } });

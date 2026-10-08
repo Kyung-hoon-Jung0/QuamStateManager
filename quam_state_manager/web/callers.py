@@ -3,7 +3,7 @@ caller SM cannot vouch for (docs/252).
 
 Before this module, identity was a header: ``X-SM-Agent`` named an agent,
 anything else was "a human" -- so ``curl -X POST .../session/arm`` with no
-header armed the agent, ``X-SM-Actor: Kim`` made the press Kim's, and any
+header armed the agent, ``X-SM-Actor: user-c`` made the press user-c's, and any
 POST to ``/api/agent/event`` became a ``by_claude`` journal line (A-09).
 
 Two proofs, each as strong as this machine allows:

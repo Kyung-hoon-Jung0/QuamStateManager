@@ -71,7 +71,7 @@ def build(bundle, key):
     # CONTRACT-FAITHFUL (P0 fix): node 09's flux axis is a DELTA played on top
     # of the parked offset, and the node INCREMENTS joint_offset (assigns the
     # delta for independent flux points). The old clickable staged the clicked
-    # DELTA as an ABSOLUTE offset — proven data-destroying on LabC #220
+    # DELTA as an ABSOLUTE offset — proven data-destroying on lab-C #220
     # (0.072 V parked point would have become −0.0024 V). Frequency legs stay
     # absolute assigns (the node assigns both f_01 and RF the same absolute).
     from .. import contracts as _contracts

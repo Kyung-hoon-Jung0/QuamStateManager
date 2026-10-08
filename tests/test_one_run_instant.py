@@ -9,7 +9,7 @@ axis (``trend_index.run_instant_ms``) and the cross-folder orderings. The
 migration (``core/history_rekey.py``) moves snapshots stored under the old
 reading (created_at digits read in THIS machine's zone) to the instant's key.
 
-The fixtures are -04:00 runs (the real Novera archive's zone, docs/256) and
+The fixtures are -04:00 runs (the real lab-H archive's zone, docs/256) and
 +09:00 runs (this machine's). The OLD key is simulated with an explicit +09:00
 machine zone, so every expectation is a fixed string, true on any host. A
 mutation that re-introduces a zone-dependent reading is caught on any host
@@ -187,7 +187,7 @@ class TestTheKeyIsTheInstant:
         assert key == "20260403_012042_172" == utc_key("2026-04-02T21:20:42-04:00", 1172)
 
     def test_a_same_zone_run_keeps_the_key_it_always_had(self, tmp_path):
-        """The real KRISS_CZ snapshot 20260907_073939_039 (+09:00 run on a
+        """The real lab-F-env snapshot 20260907_073939_039 (+09:00 run on a
         +09:00 machine): the new reading is byte-identical, so that history
         needs no re-key."""
         run = make_run(tmp_path / "k", 39, "res_vs_flux", "2026-09-07T16:39:39+09:00")

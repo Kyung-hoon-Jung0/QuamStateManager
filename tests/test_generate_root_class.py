@@ -1,6 +1,6 @@
 """docs/176 — the review can SEE the root, and the wizard can NAME it.
 
-Found trying to generate the KRISS 5Q chip in the environment that lab actually
+Found trying to generate the lab-F 5Q chip in the environment that lab actually
 runs. Four defects, three of them in the browser (pinned by
 ``tests/generate_root_selfcheck.cjs``, driven below) and one here:
 

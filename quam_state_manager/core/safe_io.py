@@ -429,7 +429,7 @@ def _tmp_for(path: Path) -> Path:
 
     Customer, on-site 2026-09-09 -- a warning on their own console:
 
-        listing cache save for ...\\KH_202608_CZ failed
+        listing cache save for ...\\lab-I failed
         LiveFileError: Could not write ...\\workspace_cache\\ws_....json
         after 3 attempts: [WinError 2] The system cannot find the file specified
 

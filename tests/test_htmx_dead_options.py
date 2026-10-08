@@ -17,6 +17,8 @@ drops the rest.
 
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import re
 from pathlib import Path
 

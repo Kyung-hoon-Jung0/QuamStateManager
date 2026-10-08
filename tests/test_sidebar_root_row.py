@@ -59,7 +59,7 @@ def _tree_html(c, root: Path) -> str:
 
 def test_the_row_carries_name_then_dimmed_parent_and_the_full_path_as_title(client):
     c, tmp = client
-    deep = tmp / "a_rather_long_customer_codes_folder_name" / "CQT" / "CS_installations_2026"
+    deep = tmp / "a_rather_long_customer_codes_folder_name" / "lab-B" / "CS_installations_2026"
     run = deep / "2026-08-01" / "#1_foo_120000" / "quam_state"
     run.mkdir(parents=True)
     (run / "state.json").write_text(json.dumps({"qubits": {}}), encoding="utf-8")

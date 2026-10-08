@@ -78,9 +78,9 @@ def test_is_linked_helper():
 
 
 def test_chip_label_uses_folder_name_for_per_chip_layout(tmp_path):
-    # <workspace>/LabA/state.json  ->  "LabA"
-    chip = _chip(tmp_path / "LabA", ["q1"])
-    assert pm.chip_label(chip) == "LabA"
+    # <workspace>/lab-A/state.json  ->  "lab-A"
+    chip = _chip(tmp_path / "lab-A", ["q1"])
+    assert pm.chip_label(chip) == "lab-A"
 
 
 def test_chip_label_falls_back_for_generic_state_dir(tmp_path):

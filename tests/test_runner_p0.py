@@ -83,7 +83,7 @@ class TestRunParams:
         # it used raw _deep_find, so params stayed {"model": ..., "schema": ...}
         # and every knob fell to defaults — a use_state_discrimination=True run
         # then re-processed its state-only ds_raw through convert_IQ_to_V and
-        # died on KeyError 'I' (the CQT corpus, docs/127)
+        # died on KeyError 'I' (the lab-B corpus, docs/127)
         import inspect
         from quam_state_manager.generator import run_autofit_replay as AR
         src = inspect.getsource(AR.main)

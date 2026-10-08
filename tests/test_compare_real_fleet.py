@@ -1,19 +1,19 @@
 """P1a — real-fleet goldens for the Compare-hub engine (docs/49).
 
 Path-gated on the maintainer's fleet at <quam-states>
-(LabA 21q, LabA - 복사본 backup twin, deviceC 15q, variantb, CR_state,
+(lab-A 21q, lab-A - 복사본 backup twin, deviceC 15q, variantb, CR_state,
 examplechip9q_repro) and the archive at <dataset-root>/example_lab.
 Every empirical claim in the amendments this engine implements is pinned
 against the actual files:
 
   * variantb's 2-hop pair endpoints through the malformed wiring key qA1-A2 (A7/M8)
-  * variantb ⊂ LabA grid containment REJECTED by name-consistency (A2 / B2)
+  * variantb ⊂ lab-A grid containment REJECTED by name-consistency (A2 / B2)
   * examplechip's degenerate 1×9 grid → name branch (A2)
   * CR_state's directional pairs never offered a flip (A3)
-  * flipped-CZ confusion permutation on LabA's real 4×4 data (A3)
+  * flipped-CZ confusion permutation on lab-A's real 4×4 data (A3)
   * the 92 #/wiring pointers → not_in_source, never modified (A6)
   * variantb's 60 bulk dangling optional-default pointers coalesce (A6)
-  * LabA vs LabA-복사본 backup verification + deviceC-vs-variantb scale + timings
+  * lab-A vs lab-A-복사본 backup verification + deviceC-vs-variantb scale + timings
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ FLEET = Path("<quam-states>")
 ARCHIVE = Path("<dataset-root>/example_lab")
 
 pytestmark = pytest.mark.skipif(
-    not (FLEET / "LabA" / "state.json").exists(),
+    not (FLEET / "lab-A" / "state.json").exists(),
     reason="real fleet not present on this machine")
 
 
@@ -55,11 +55,11 @@ def _snap(env, chip: str) -> C.ComparisonSnapshot:
 
 
 class TestFleetResolution:
-    def test_laba_family_shares_network_token(self, env):
-        """A1's measured collision: LabA / LabA-복사본 / deviceB share the
+    def test_lab_A_family_shares_network_token(self, env):
+        """A1's measured collision: lab-A / lab-A-복사본 / deviceB share the
         identical network block — network_token alone can NOT key mappings."""
         toks = {c: _src(env, c).network_token
-                for c in ("LabA", "LabA - 복사본", "deviceB")}
+                for c in ("lab-A", "lab-A - 복사본", "deviceB")}
         assert len(set(toks.values())) == 1
 
     def test_variantb_two_hop_endpoints(self, env):
@@ -81,7 +81,7 @@ class TestFleetResolution:
         run = sorted(ARCHIVE.glob("*/*/quam_state"))[-1]
         src = cs.resolve_source(f"run:{run}", env[0])
         assert src.origin == "run_archive"
-        assert src.chip_name == "LabA"
+        assert src.chip_name == "lab-A"
         assert src.snapshot_ts                      # honest snapshot time
 
 
@@ -91,11 +91,11 @@ class TestFleetResolution:
 
 
 class TestFleetAutoMap:
-    def test_variantb_subset_of_laba_rejected_by_names(self, env):
-        """The B2 case: variantb's 17 grid positions sit 100% inside LabA's 21
+    def test_variantb_subset_of_lab_A_rejected_by_names(self, env):
+        """The B2 case: variantb's 17 grid positions sit 100% inside lab-A's 21
         with CROSSED names — grid containment alone would produce a
         confidently WRONG map. Must fall back to names, suggested-only."""
-        mr = C.auto_map_qubits(_snap(env, "variantb"), _snap(env, "LabA"))
+        mr = C.auto_map_qubits(_snap(env, "variantb"), _snap(env, "lab-A"))
         assert mr.confidence["contained"] is True          # the trap is real
         assert mr.confidence["name_consistent"] is False   # ...and caught
         assert mr.status != "auto"
@@ -111,10 +111,10 @@ class TestFleetAutoMap:
         assert mr.method == "name"                         # never grid
         assert mr.status == "suggested"
 
-    def test_laba_vs_deviceB_same_design_grid_auto(self, env):
-        """LabA and deviceB share names AND grid — the same-design case the
+    def test_lab_A_vs_deviceB_same_design_grid_auto(self, env):
+        """lab-A and deviceB share names AND grid — the same-design case the
         grid branch exists for: 100% contained + name-consistent → auto."""
-        mr = C.auto_map_qubits(_snap(env, "LabA"), _snap(env, "deviceB"))
+        mr = C.auto_map_qubits(_snap(env, "lab-A"), _snap(env, "deviceB"))
         assert mr.status == "auto" and mr.method == "grid"
         assert len(mr.pairs) == 21
 
@@ -173,12 +173,12 @@ class TestFleetPairMap:
                 for n in out["active_qubit_pair_names"]]
         return out
 
-    def test_laba_flipped_cz_confusion_permute_real_data(self, env, tmp_path):
-        """Flip-consistent re-declaration of a real LabA pair (real 4×4
+    def test_lab_A_flipped_cz_confusion_permute_real_data(self, env, tmp_path):
+        """Flip-consistent re-declaration of a real lab-A pair (real 4×4
         confusion) must compare with ZERO physics drift under the A3 policy."""
         pool, cache = env
-        state = json.loads((FLEET / "LabA" / "state.json").read_text())
-        wiring = json.loads((FLEET / "LabA" / "wiring.json").read_text())
+        state = json.loads((FLEET / "lab-A" / "state.json").read_text())
+        wiring = json.loads((FLEET / "lab-A" / "wiring.json").read_text())
         flipped = self._flip_pair_declaration(state, "qA2-qA1", "qA1-qA2")
         fa = tmp_path / "A"
         fb = tmp_path / "B"
@@ -196,12 +196,12 @@ class TestFleetPairMap:
                  if r["cls"] in (C.CLS_MODIFIED, C.CLS_WITHIN)]
         assert drift == [], drift[:10]
 
-    def test_laba_unpermuted_confusion_is_caught(self, env, tmp_path):
+    def test_lab_A_unpermuted_confusion_is_caught(self, env, tmp_path):
         """Negative control: flip WITHOUT the confusion permute = the ~0.03
         phantom-diagonal case — the engine must expose it, not absorb it."""
         pool, cache = env
-        state = json.loads((FLEET / "LabA" / "state.json").read_text())
-        wiring = json.loads((FLEET / "LabA" / "wiring.json").read_text())
+        state = json.loads((FLEET / "lab-A" / "state.json").read_text())
+        wiring = json.loads((FLEET / "lab-A" / "wiring.json").read_text())
         flipped = self._flip_pair_declaration(state, "qA2-qA1", "qA1-qA2")
         # undo ONLY the confusion permute (keep the raw matrix as-is)
         flipped["qubit_pairs"]["qA1-qA2"]["confusion"] = \
@@ -228,8 +228,8 @@ class TestFleetPairMap:
 
 
 class TestFleetPointerSemantics:
-    def test_laba_92_wiring_pointers_not_in_source(self, env, tmp_path):
-        """LabA state carries exactly 92 #/wiring pointers.  Compared
+    def test_lab_A_92_wiring_pointers_not_in_source(self, env, tmp_path):
+        """lab-A state carries exactly 92 #/wiring pointers.  Compared
         against its own state WITHOUT wiring.json they must ALL classify
         not_in_source — the naive resolved-compare manufactured 92 bogus
         modified rows."""
@@ -237,8 +237,8 @@ class TestFleetPointerSemantics:
         stateonly = tmp_path / "no_wiring"
         stateonly.mkdir()
         stateonly.joinpath("state.json").write_text(
-            (FLEET / "LabA" / "state.json").read_text())
-        a = _src(env, "LabA")
+            (FLEET / "lab-A" / "state.json").read_text())
+        a = _src(env, "lab-A")
         b = cs.resolve_source(f"ws:{stateonly}", pool)
         assert b.wiring_missing is True
         res = C.compare([a, b], pool, bucket=1, cache=cache)
@@ -278,8 +278,8 @@ class TestFleetPointerSemantics:
                  if r["cls"] == C.CLS_UNRESOLVED]
         assert len(loose) == 0
 
-    def test_laba_derived_self_refs_present(self, env):
-        snap = _snap(env, "LabA")
+    def test_lab_A_derived_self_refs_present(self, env):
+        snap = _snap(env, "lab-A")
         assert len(snap.derived) > 100          # inferred_id / inferred_duration...
         # a known one: the cz alias chain
         assert "qubit_pairs.qA2-qA1.macros.cz" in snap.derived
@@ -291,12 +291,12 @@ class TestFleetPointerSemantics:
 
 
 class TestFleetGoldens:
-    def test_laba_backup_twin(self, env, capsys):
+    def test_lab_A_backup_twin(self, env, capsys):
         """The literal backup-verification scenario the doc opens with:
-        users keep ``LabA - 복사본`` folders."""
+        users keep ``lab-A - 복사본`` folders."""
         pool, cache = env
-        a = _src(env, "LabA")
-        b = _src(env, "LabA - 복사본")
+        a = _src(env, "lab-A")
+        b = _src(env, "lab-A - 복사본")
         t0 = time.perf_counter()
         res = C.compare([a, b], pool, bucket=1, cache=cache)
         dt = (time.perf_counter() - t0) * 1e3
@@ -307,7 +307,7 @@ class TestFleetGoldens:
         assert h["one_sided"] == 0              # same schema, both sides full
         assert res["summary"], "summary rows expected"
         with capsys.disabled():
-            print(f"\n[timing] LabA twin assemble: {dt:.1f} ms "
+            print(f"\n[timing] lab-A twin assemble: {dt:.1f} ms "
                   f"(changed={h['changed']}, equal={h['equal']})")
         assert dt < 2000
 
@@ -340,7 +340,7 @@ class TestFleetGoldens:
         """Fresh pool/cache: honest cold-build numbers for the report."""
         pool, cache = cs.SourcePool(), C.SnapshotCache()
         lines = []
-        for chip in ("LabA", "deviceC", "variantb"):
+        for chip in ("lab-A", "deviceC", "variantb"):
             src = cs.resolve_source(f"ws:{FLEET / chip}", pool)
             t0 = time.perf_counter()
             snap = C.snapshot_for(src, pool, cache)
@@ -354,11 +354,11 @@ class TestFleetGoldens:
 
     def test_identical_hero_on_true_copy(self, env, tmp_path):
         pool, cache = env
-        dup = tmp_path / "laba_copy"
+        dup = tmp_path / "lab-A_copy"
         dup.mkdir()
         for f in ("state.json", "wiring.json"):
-            dup.joinpath(f).write_text((FLEET / "LabA" / f).read_text())
-        a = _src(env, "LabA")
+            dup.joinpath(f).write_text((FLEET / "lab-A" / f).read_text())
+        a = _src(env, "lab-A")
         b = cs.resolve_source(f"ws:{dup}", pool)
         res = C.compare([a, b], pool, cache=cache)
         assert res["identical"] is True
@@ -366,7 +366,7 @@ class TestFleetGoldens:
 
     def test_cr_state_summary_fidelity_clifford_labelled(self, env, tmp_path):
         """CR_state carries bare-float StandardRB — must surface labelled
-        clifford=True (the LabB incident guard)."""
+        clifford=True (the lab-B incident guard)."""
         pool, cache = env
         entry = pool.get(_src(env, "CR_state").content_hash)
         store = entry.store()
@@ -375,9 +375,9 @@ class TestFleetGoldens:
             assert isinstance(fid["value"], float)
             assert "gate" in fid
 
-    def test_laba_pair_fidelity_via_cz_alias(self, env):
+    def test_lab_A_pair_fidelity_via_cz_alias(self, env):
         pool, cache = env
-        entry = pool.get(_src(env, "LabA").content_hash)
+        entry = pool.get(_src(env, "lab-A").content_hash)
         fid = C.canonical_pair_fidelity(entry.store(), "qA2-qA1")
         assert fid is not None
         assert fid["gate"] == "cz_unipolar"    # followed macros.cz → variant

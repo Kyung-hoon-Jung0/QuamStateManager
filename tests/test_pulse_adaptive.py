@@ -21,7 +21,7 @@ seams that make it adaptive instead:
    drawing at the CURRENT values over a possibly older generated config, and
    the create form draws a class that has no pulse yet.
 
-The subprocess tests run the REAL scripts under this interpreter (the cqt env
+The subprocess tests run the REAL scripts under this interpreter (the lab-B env
 carries quam); they skip where quam is absent.
 """
 

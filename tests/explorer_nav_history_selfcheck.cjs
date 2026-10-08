@@ -75,7 +75,7 @@ class FakeXHR {
 w.XMLHttpRequest = FakeXHR;
 w.fetch = function (url) {
   url = String(url);
-  const body = url.indexOf('/chip/active-token') === 0 ? { loaded: true, token: 't', name: 'LabA', path: '/c' } : {};
+  const body = url.indexOf('/chip/active-token') === 0 ? { loaded: true, token: 't', name: 'lab-A', path: '/c' } : {};
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
 };
 const order = [];

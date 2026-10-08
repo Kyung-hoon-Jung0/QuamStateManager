@@ -731,7 +731,7 @@ class Workspace:
         # The old test (ANY standalone entry) also fired for a run caught
         # between its quam_state and its node.json landing -- which parses as
         # standalone -- so the rescan right after a new run was often a full
-        # re-walk and re-parse of the whole archive (~5 s on KH). A standalone
+        # re-walk and re-parse of the whole archive (~5 s on lab-I). A standalone
         # entry inside a run folder carries run_mtime 0.0 and so re-parses on
         # the incremental path's verify pass as soon as its folder is seen.
         standalone_root = any(e.is_standalone and str(e.quam_state_path) == key
@@ -1216,7 +1216,7 @@ def _incremental_rescan(root: Path, old_entries: list[ExperimentEntry],
     tops_set = set(tops)
 
     # RAM P7: a new run bumps its DATE dir, which then became a top whose
-    # every run was re-walked and re-parsed -- 649 node.json reads on the KH
+    # every run was re-walked and re-parsed -- 649 node.json reads on the lab-I
     # archive's busiest day for ONE new run (measured 1.9 s of a 4.2 s
     # rescan). A run folder the walk would reach is now reused instead when
     # nothing that parse read can have moved: its own mtime (the existing

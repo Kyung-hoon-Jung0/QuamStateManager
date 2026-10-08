@@ -31,7 +31,7 @@ const now = Date.now() / 1000;
 let feed = {
   ok: true, chip: 'PJ', last: 3, agent_seq: 1, qubits: 20,
   cards: [
-    { n: 1, ts: now - 60, kind: 'user', text: 'run rabi on q1', who: 'human:kyunghoon' },
+    { n: 1, ts: now - 60, kind: 'user', text: 'run rabi on q1', who: 'human:user-a' },
     { n: 2, ts: now - 50, kind: 'tool', tool: 'mcp__sm__sm_status', summary: '{}', failed: false },
     { n: 3, ts: now - 40, kind: 'answer', text: 'ok', html: '<p><strong>ok</strong> #12</p>', backend: 'claude' }],
   live: {
@@ -43,7 +43,7 @@ let feed = {
                   writes: [{ path: 'qubits.q1.f_01', old: 4.31e9, new: 4.32e9 }] }]
   },
   session: { alive: true, busy: false, backend: 'claude', ended: null },
-  file: { owner: 'human:kyunghoon', backend: 'claude', armed: false, stopped: false },
+  file: { owner: 'human:user-a', backend: 'claude', armed: false, stopped: false },
   now: { state: 'between', session: { backend: 'claude' }, events_today: 5, failures_today: 0, waiting: 1, mode: 'ask-writes' }
 };
 let setupBody = {
@@ -406,13 +406,13 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   P.setObserver(false);
   // simulated flag, interrupted step, a stopping plan
   feed.live.runs.push({ key: 'r2', node: '05_power_rabi', targets: ['q1'], status: 'ended', since: now - 3, simulated: true, result: { status: 'done', simulated: true, classification: 'ok', run_id: 79, writes: [{ path: 'qubits.q1.f_01', old: 1, new: 2 }], applied: false, approval: { id: 'x' } } });
-  feed.live.plans.push({ id: 'pl-3', title: 'stopping one', status: 'stopping', source: 'run_cmd', created_by: 'human:kyunghoon', created: now - 2, mode: 'auto',
+  feed.live.plans.push({ id: 'pl-3', title: 'stopping one', status: 'stopping', source: 'run_cmd', created_by: 'human:user-a', created: now - 2, mode: 'auto',
                          steps: [{ i: 0, node: '12_T1', targets: ['q1'], status: 'interrupted', simulated: true }], counts: { total: 1 } });
   await P.poll(true); await tick();
   const r2 = cards.querySelector('[data-card="run:r2"]');
   ok(r2 && r2.querySelector('.ag-sim') && /waiting for approval/.test(r2.textContent), 'a simulated run wears the flag');
   const pl3 = cards.querySelector('[data-card="plan:pl-3"]');
-  ok(pl3 && /stopping — finishes the current run/.test(pl3.textContent) && pl3.querySelector('.ag-stop-now') && !pl3.querySelector('.ag-stop:not(.ag-stop-now)') && /\/run typed by human:kyunghoon/.test(pl3.textContent), 'a stopping plan offers only Stop now, and names who typed /run');
+  ok(pl3 && /stopping — finishes the current run/.test(pl3.textContent) && pl3.querySelector('.ag-stop-now') && !pl3.querySelector('.ag-stop:not(.ag-stop-now)') && /\/run typed by human:user-a/.test(pl3.textContent), 'a stopping plan offers only Stop now, and names who typed /run');
   ok(pl3.querySelector('.ag-st-interrupted') && pl3.querySelector('.ag-steps .ag-sim'), 'an interrupted step and its simulated flag render');
   // docs/249: a failed run says WHAT failed in plain words, above its raw error
   feed.live.runs.push({ key: 'r3', node: '01_tof', targets: ['q1'], status: 'ended', since: now - 2, result: { status: 'failed', classification: 'host_unreachable',
@@ -459,9 +459,9 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
      'the name is remembered for the datalist');
   // a name a browser could not send is reduced to the part it can, and the
   // panel keeps working rather than going dark
-  P.setActor('박OO');
+  P.setActor('\uac00OO');
   ok(P.actorName() === 'OO', 'a non-ASCII name is stripped, not stored whole');
-  P.setActor('정경훈');
+  P.setActor('\uac00\uac01\uac02');
   ok(P.actorName() === '', 'a name with nothing sendable in it becomes no name');
   P.setActor('Park OO');
   calls.length = 0;
@@ -556,7 +556,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
      'the strip says "thinking · by_claude" without the topbar pill\'s "Agent:" prefix');
   // round 2: "claude session · human:…" became "claude · human:…" -- the word "session" cost
   // a row on the customer's own strip and says nothing the backend name does not
-  ok(/today 5 events/.test(strip.textContent) && /waiting 1/.test(strip.textContent) && /claude · human:kyunghoon · not armed/.test(strip.textContent), 'session + today\'s counts sit in the strip');
+  ok(/today 5 events/.test(strip.textContent) && /waiting 1/.test(strip.textContent) && /claude · human:user-a · not armed/.test(strip.textContent), 'session + today\'s counts sit in the strip');
   ok(!strip.querySelector('.ag-now-run'), 'no run in progress: no second row');
   feed.now.state = 'running'; feed.now.running = { node: '05_power_rabi', since: now - 30, typical_s: 300 };
   await P.poll(true); await tick();
@@ -700,7 +700,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   obs.focus();
   ok(document.activeElement === obs, 'precondition: the observer box holds the focus');
   feed.file.armed = true;                                   // a Start armed a plan: the acts part is rebuilt
-  feed.file.grant = { plan_id: 'pl-9', title: '/run 05_power_rabi q1', steps: 1, by: 'human:kyunghoon', at: now - 5,
+  feed.file.grant = { plan_id: 'pl-9', title: '/run 05_power_rabi q1', steps: 1, by: 'human:user-a', at: now - 5,
                       driver: { kind: 'terminal', actor: 'by_claude', id: 't-1', pid: 4242 } };
   await P.poll(true); await tick();
   const obs2 = strip.querySelector('.ag-observer input');

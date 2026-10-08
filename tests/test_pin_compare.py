@@ -5,6 +5,8 @@ afterSwap for a cancelled swap), and the pinned run is identified by
 Pinned against the REAL app.js by ``tests/pin_compare_selfcheck.cjs``."""
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import shutil
 import subprocess
 from pathlib import Path

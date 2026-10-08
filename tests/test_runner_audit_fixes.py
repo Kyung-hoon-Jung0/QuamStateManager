@@ -124,7 +124,7 @@ class TestTheRawDataGateReadsBothFormats:
 
 
 class TestTraceVarAndPairCoordEquivalents:
-    """The CQT corpus exposed three recording-convention renames that left
+    """The lab-B corpus exposed three recording-convention renames that left
     whole families' G3 stuck at unverifiable (docs/127): state-discriminated
     runs save the fitted trace as 'state' with no I/Q at all (423 targets),
     the current coupler-node generation names the PAIR dim plain 'qubit'
@@ -201,7 +201,7 @@ class TestTraceVarAndPairCoordEquivalents:
 
 class TestThreeZoneFeatureCheck:
     """A family that declares a lower ``z_min`` buys a MIDDLE zone, not a
-    lower localization bar (docs/127). On the CQT chip corroborated qubit-spec
+    lower localization bar (docs/127). On the lab-B chip corroborated qubit-spec
     claims carry prominence z down to 2.35 — below the module floor of 5 —
     but between the floors a global SEARCH is unreliable both ways (max-of-N
     on a flat window already reads z≈3.3, and claim-vs-argmax turned 91
@@ -372,7 +372,7 @@ class TestAdjudication40Bands:
 
 
 class TestSandboxRevertWalksLists:
-    """295 of 1,755 real CQT revert targets died as dict lookups: iq_blobs and
+    """295 of 1,755 real lab-B revert targets died as dict lookups: iq_blobs and
     readout-power patches touch LIST elements (confusion_matrix/0/0), and the
     sandbox fix walked every dotted segment as a dict key. The walk is now
     structural — a digit segment indexes a list PARENT and stays a dict key

@@ -85,7 +85,7 @@ WIRING = {"wiring": {"qubits": {}}, "network": {"host": "x"}}
 class TestReconcileScenarios:
     def test_clean_apply_then_reload_is_in_sync(self, tmp_path):
         inst = tmp_path / "inst"
-        live = tmp_path / "live" / "LabA"
+        live = tmp_path / "live" / "lab-A"
         _write(live, {"qubits": {"q1": {"f_01": 6.0e9}}}, WIRING)
         wc = W.create(inst, live)
         # edit working + apply
@@ -101,7 +101,7 @@ class TestReconcileScenarios:
         drops a legacy key but keeps the user's edit. This must NOT produce a
         false STALE banner — the clean working copy auto-pulls."""
         inst = tmp_path / "inst"
-        live = tmp_path / "live" / "LabA"
+        live = tmp_path / "live" / "lab-A"
         _write(live, {"qubits": {"q1": {"f_01": 6.0e9, "legacy_x": 1}}}, WIRING)
         wc = W.create(inst, live)
         ws = json.loads((wc.working_folder / "state.json").read_text())
@@ -119,7 +119,7 @@ class TestReconcileScenarios:
         """A genuinely dirty working copy (saved, NOT applied) + a live change
         is a real conflict — STALE is correct."""
         inst = tmp_path / "inst"
-        live = tmp_path / "live" / "LabA"
+        live = tmp_path / "live" / "lab-A"
         _write(live, {"qubits": {"q1": {"f_01": 6.0e9}}}, WIRING)
         wc = W.create(inst, live)
         # save to working WITHOUT applying
@@ -137,7 +137,7 @@ class TestReconcileScenarios:
 # ---------------------------------------------------------------------------
 
 def _make_live(tmp_path):
-    live = tmp_path / "live" / "LabA"
+    live = tmp_path / "live" / "lab-A"
     live.mkdir(parents=True)
     state = {"qubits": {"q1": {"id": "q1", "f_01": 6.0e9, "xy": {"operations": {}}}},
              "qubit_pairs": {}, "active_qubit_names": ["q1"]}
@@ -209,7 +209,7 @@ class TestChipIdentityAndOrigin:
             name = app.config["active_context"]
             app.config["active_context"] = name
             html = c.get("/qubits").data.decode()
-        # the topbar tray badge carries the chip name (LabA) even with 0 edits
+        # the topbar tray badge carries the chip name (lab-A) even with 0 edits
         assert "pending-tray" in html
 
     def test_active_origin_default_live(self, tmp_path):

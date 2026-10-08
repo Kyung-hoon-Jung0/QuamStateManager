@@ -6,7 +6,7 @@
  * the drawing kept its own coordinates, so every FEM past the host width was
  * painted outside the visible box — and because the element itself fitted,
  * the host's `overflow-x:auto` never produced a scrollbar either. On the real
- * CQT 20Q chip (8 FEMs; 1884 px of rack with the DIG column, 1356 without)
+ * lab-B 20Q chip (8 FEMs; 1884 px of rack with the DIG column, 1356 without)
  * both surfaces silently dropped the right-hand FEMs, and how many depended
  * on the pane: the user read "3 MW + 4 LF" off /instrument and "3 MW + 2 LF,
  * cut off" off the wizard, for one chip whose real inventory is 3 MW + 5 LF.
@@ -94,7 +94,7 @@ window.fetch = global.fetch = () => Promise.resolve(
 window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 
 /* An 8-FEM OPX1000 rack, the shape query.py:get_instrument_wiring() emits:
- * 3 MW FEMs then 5 LF FEMs, exactly the CQT 20Q chip's inventory. */
+ * 3 MW FEMs then 5 LF FEMs, exactly the lab-B 20Q chip's inventory. */
 function rack() {
   const fems = {};
   for (let slot = 1; slot <= 8; slot++) {

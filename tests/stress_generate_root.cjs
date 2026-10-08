@@ -1,7 +1,9 @@
+const { labValue } = require('./lab_map.cjs');
+const ENV_LABEL = process.env.ENV_LABEL || labValue('lab-F', 'env');
 /* The Generate wizard's four measured defects, re-driven after the fix.
  *
- * Found while trying to generate the KRISS 5Q chip in the environment that lab
- * actually runs (conda KRISS_CZ, which imports their own quam_config):
+ * Found while trying to generate the lab-F 5Q chip in the environment that lab
+ * actually runs (conda lab-F-env, which imports their own quam_config):
  *
  *  1. A QDAC spec is refused by the build with a precise, well-written
  *     sentence — and the page rendered it as
@@ -58,11 +60,11 @@ async function main() {
   const env = await ev(`(function(){
     var rows = document.querySelectorAll('#gen-env-list .gen-env-row');
     for (var i = 0; i < rows.length; i++) {
-      if (/KRISS_CZ/.test(rows[i].textContent)) { rows[i].click(); return rows[i].getAttribute('data-python'); }
+      if (rows[i].textContent.includes(${JSON.stringify(ENV_LABEL)})) { rows[i].click(); return rows[i].getAttribute('data-python'); }
     }
     return null;
   })()`);
-  ok('the lab env is selectable', !!env && /KRISS_CZ/.test(env), env);
+  ok('the lab env is selectable', !!env && env.includes(ENV_LABEL), env);
   await sleep(2500);
 
   // walk to Qubits and build a QDAC spec straight through the spec object,

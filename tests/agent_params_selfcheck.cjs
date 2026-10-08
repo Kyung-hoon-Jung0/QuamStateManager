@@ -32,7 +32,7 @@ const plan = { id: 'pl-1', title: 'replay plan', status: 'running', mode: 'ask-a
     { i: 0, node: '03_resonator_spectroscopy_single', targets: ['qA1'], params: { load_data_id: 9 }, status: 'pending',
       request: { id: 'ap-run1', status: 'pending', decided_by: null, params: { load_data_id: 9 } } },
     { i: 1, node: '05_power_rabi', targets: ['qA2'], params: {}, status: 'pending',
-      request: { id: 'ap-x', status: 'approved', decided_by: 'human:Kim', params: {} } },
+      request: { id: 'ap-x', status: 'approved', decided_by: 'human:user-c', params: {} } },
     { i: 2, node: '06_ramsey', targets: ['qA3'], params: { num_shots: 100000 }, status: 'pending' }] };
 const run = { key: 'k1', status: 'running', node: '06_ramsey', targets: ['qA3'], params: { num_shots: 250 }, since: now - 5, result: {} };
 const feed = { ok: true, chip: 'C', chip_key: 'C-1', last: 0, agent_seq: 1, cards: [], session: {}, file: {}, now: { state: 'waiting', waiting: 3 },
@@ -75,7 +75,7 @@ const txt = (el) => (el ? el.textContent.replace(/\s+/g, ' ') : '');
   const rows = Array.from(card('plan:pl-1').querySelectorAll('.ag-step')).map(txt);
   ok(rows.length === 3, 'three step rows');
   ok(/load_data_id=9/.test(rows[0]) && /run request waiting for Allow/.test(rows[0]), 'step 0: params + "run request waiting for Allow": ' + rows[0]);
-  ok(/node defaults/.test(rows[1]) && /allowed by human:Kim — the agent runs it next/.test(rows[1]), 'step 1: allowed, waiting for the agent: ' + rows[1]);
+  ok(/node defaults/.test(rows[1]) && /allowed by human:user-c — the agent runs it next/.test(rows[1]), 'step 1: allowed, waiting for the agent: ' + rows[1]);
   ok(/num_shots=100000/.test(rows[2]) && !/request|allowed/.test(rows[2]), 'step 2: params, no request');
 
   // the run card says what it is running with

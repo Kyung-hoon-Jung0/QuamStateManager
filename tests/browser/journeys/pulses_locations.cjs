@@ -1,6 +1,6 @@
 /* docs/217 pulse locations -- pulses a user hand-added where SM never looked.
  *
- * Rig: an SM serving a COPY of 260907_KRS_5Q whose LIVE state.json had three
+ * Rig: an SM serving a COPY of lab-F whose LIVE state.json had three
  * pulses hand-added AFTER the chip was loaded (scratch handadd.py):
  *   qubits.q1.xy2.operations.x180_hand            -- a new channel
  *   qubit_pairs.q1-2.macros.cz_SNZ.flux_pulse_extra -- a new macro slot, the

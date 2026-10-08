@@ -429,7 +429,7 @@ class TestRevertAcrossAChipIdentityChange:
         c = env["client"]
         root = env["tmp"] / "data"
         # a different chip: its own name, qubits and network (as the rig's
-        # IQCC_QOP37_1Q run was against KRISS_CZ)
+        # lab-K run was against lab-F-env)
         other = {"qubits": {"qZ7": {"id": "qZ7", "f_01": 4.1e9,
                                     "z": {"joint_offset": 0.079}}},
                  "qubit_pairs": {}, "active_qubit_names": ["qZ7"],

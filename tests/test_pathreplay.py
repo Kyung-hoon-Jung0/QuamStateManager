@@ -24,7 +24,7 @@ import pytest
 
 import sys as _sys  # noqa: E402
 _sys.path.insert(0, str(Path(__file__).parent))   # the house idiom (cr_fixtures)
-from archive_roots import lab_archive  # noqa: E402
+from tests.archive_roots import lab_archive  # noqa: E402
 
 from quam_state_manager.core.autofit import pathreplay as PR
 
@@ -392,7 +392,7 @@ class TestReplayWalksAndStops:
         assert PR.replay(s, "q9").runs_consumed == 0
 
 
-REAL_2026_08_16 = r"D:\work\Customer_Codes\CQT\data\2026-08-16"
+REAL_2026_08_16 = (lab_archive("lab-B") / "2026-08-16")
 
 
 @pytest.mark.skipif(not Path(REAL_2026_08_16).exists(),
@@ -401,7 +401,7 @@ class TestOnTheRealArchive:
     """Anchored on maps a human reader classified from the figure (docs/129)."""
 
     def test_a_textbook_punchout_reads_as_c1(self):
-        folder = next(Path(r"D:\work\Customer_Codes\CQT\data\2026-08-16")
+        folder = next((lab_archive("lab-B") / "2026-08-16")
                       .glob("#996_05_resonator_spectroscopy_vs_power_*"))
         g = PR.measure(folder, "q20")
         v = PR.classify(PR.load_run(folder), "q20", g)
@@ -424,7 +424,7 @@ class TestOnTheRealArchive:
 
 @pytest.mark.skipif(
     not (_ROOT / "tests/golden/calib_paths/resonator_spectroscopy_vs_power"
-         / "CQT" / "2026-08-16.json").exists()
+         / "lab-B" / "2026-08-16.json").exists()
     or not Path(REAL_2026_08_16).exists(),
     reason="answer keys or the pilot archive are not present on this machine")
 class TestTheBenchmarkDoesNotRegress:
@@ -442,13 +442,13 @@ class TestTheBenchmarkDoesNotRegress:
         import collections
         from quam_state_manager.core.autofit import knowledge
         G = (_ROOT / "tests/golden/calib_paths/resonator_spectroscopy_vs_power")
-        archives = {"AS": lab_archive("AS_10TQ9TC"),
-                    "CQT": Path(r"D:\work\Customer_Codes\CQT\data")}
+        archives = {"lab-A": lab_archive("lab-A"),
+                    "lab-B": (lab_archive("lab-B"))}
         pack = knowledge.load_family("resonator_spectroscopy_vs_power")
         rows = []
         for gf in sorted(G.rglob("2026-*.json")):
             doc = json.loads(gf.read_text(encoding="utf-8"))
-            chip = "AS" if gf.parent.name.startswith("AS") else "CQT"
+            chip = gf.parent.name
             day = archives[chip] / gf.stem
             if not day.exists():
                 continue

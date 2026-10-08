@@ -115,7 +115,7 @@ async function tab(local, opts) {
 const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
 
 (async () => {
-  const local = store({ quam_actor_name: 'Alice' });
+  const local = store({ quam_actor_name: 'user-a' });
   const sessA = store();
   const A = await tab(local, { session: sessA });
 
@@ -172,33 +172,33 @@ const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   pin('c24-write-sends-the-raw-value-it-showed', sw && sw[0].new === 0.00005 && sw[1].new === 6.25001e9 && sw[2].new === 0.373876, JSON.stringify(sw));
 
   // ------------------------------------------------------------ C-23
-  pin('c23-a-tab-seeds-from-the-shared-name', A.P.actorName() === 'Alice' && sessA.getItem('quam_actor_name') === 'Alice');
+  pin('c23-a-tab-seeds-from-the-shared-name', A.P.actorName() === 'user-a' && sessA.getItem('quam_actor_name') === 'user-a');
   const sessB = store();
   const B = await tab(local, { session: sessB, scripts: ['agent-pill.js', 'agent.js', 'agent-setup.js', 'journal.js'],
     body: '<div id="agent-home"></div><div class="jr-claim" data-run="7"><input class="jr-who"><input class="jr-note-in" value=""><button class="claim-btn">Save</button></div>' });
-  A.P.setActor('Bob', A.doc.querySelector('.ag-actor'));
+  A.P.setActor('user-b', A.doc.querySelector('.ag-actor'));
   A.P.stop('now'); B.P.stop('now');
   await tick();
-  pin('c23-another-tabs-name-does-not-move-mine', B.P.actorName() === 'Alice' && B.headerOf(/\/stop$/) === 'Alice', B.headerOf(/\/stop$/));
-  pin('c23-my-tab-records-mine', A.headerOf(/\/stop$/) === 'Bob' && sessA.getItem('quam_actor_name') === 'Bob', A.headerOf(/\/stop$/));
-  pin('c23-the-last-name-set-is-the-new-tab-default', local.getItem('quam_actor_name') === 'Bob');
+  pin('c23-another-tabs-name-does-not-move-mine', B.P.actorName() === 'user-a' && B.headerOf(/\/stop$/) === 'user-a', B.headerOf(/\/stop$/));
+  pin('c23-my-tab-records-mine', A.headerOf(/\/stop$/) === 'user-b' && sessA.getItem('quam_actor_name') === 'user-b', A.headerOf(/\/stop$/));
+  pin('c23-the-last-name-set-is-the-new-tab-default', local.getItem('quam_actor_name') === 'user-b');
   const C = await tab(local);
-  pin('c23-a-new-tab-starts-from-it', C.P.actorName() === 'Bob');
-  pin('c23-the-composer-says-whose-name-it-records', txt(A.doc.querySelector('.ag-actor-record')) === 'records human:Bob · this tab'
-    && txt(B.doc.querySelector('.ag-actor-record')) === 'records human:Alice · this tab' && B.doc.querySelector('.ag-actor').value === 'Alice',
+  pin('c23-a-new-tab-starts-from-it', C.P.actorName() === 'user-b');
+  pin('c23-the-composer-says-whose-name-it-records', txt(A.doc.querySelector('.ag-actor-record')) === 'records human:user-b · this tab'
+    && txt(B.doc.querySelector('.ag-actor-record')) === 'records human:user-a · this tab' && B.doc.querySelector('.ag-actor').value === 'user-a',
     txt(A.doc.querySelector('.ag-actor-record')) + ' | ' + txt(B.doc.querySelector('.ag-actor-record')));
-  local.setItem('quam_actor_name', 'Carol');                     // a third tab moved the shared default
+  local.setItem('quam_actor_name', 'user-c');                     // a third tab moved the shared default
   const A2 = await tab(local, { session: sessA });               // ... and tab A reloads
-  pin('c23-a-reload-keeps-the-tabs-name', A2.P.actorName() === 'Bob' && txt(A2.doc.querySelector('.ag-actor-record')) === 'records human:Bob · this tab');
+  pin('c23-a-reload-keeps-the-tabs-name', A2.P.actorName() === 'user-b' && txt(A2.doc.querySelector('.ag-actor-record')) === 'records human:user-b · this tab');
   B.w.AgentSetup.disconnect('claude');
   await tick();
-  pin('c23-setup-records-the-tabs-name', B.headerOf(/setup\/disconnect$/) === 'Alice', B.headerOf(/setup\/disconnect$/));
-  pin('c23-the-journal-prefills-the-tabs-name', B.doc.querySelector('.jr-who').value === 'Alice', B.doc.querySelector('.jr-who').value);
+  pin('c23-setup-records-the-tabs-name', B.headerOf(/setup\/disconnect$/) === 'user-a', B.headerOf(/setup\/disconnect$/));
+  pin('c23-the-journal-prefills-the-tabs-name', B.doc.querySelector('.jr-who').value === 'user-a', B.doc.querySelector('.jr-who').value);
   B.doc.querySelector('.jr-who').value = '';
   B.w.JournalPage.claim(B.doc.querySelector('.claim-btn'));
   await tick();
   const claimCall = B.calls.find(c => /journal\/claim$/.test(c.url));
-  pin('c23-an-empty-claim-is-the-tabs-name', claimCall && JSON.parse(claimCall.opts.body).who === 'Alice', claimCall && claimCall.opts.body);
+  pin('c23-an-empty-claim-is-the-tabs-name', claimCall && JSON.parse(claimCall.opts.body).who === 'user-a', claimCall && claimCall.opts.body);
   A.P.setActor('', A.doc.querySelector('.ag-actor'));
   pin('c23-no-name-says-plain-human', txt(A.doc.querySelector('.ag-actor-record')) === 'records human · this tab' && A.P.actorName() === '');
   // a page with no Agent panel on it still fixes its tab's name when it LOADS, not at first use

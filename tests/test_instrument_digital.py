@@ -21,6 +21,8 @@ no-digital layout) lives in tests/instrument_digital_selfcheck.cjs.
 """
 from __future__ import annotations
 
+from tests.archive_roots import lab_archive, lab_path
+
 import json
 from pathlib import Path
 
@@ -247,12 +249,11 @@ class TestDigitalCollection:
 # Real chip (skip-gated)
 # ---------------------------------------------------------------------------
 
-_REAL = Path(r"D:\work\Customer_Codes\CQT\CS_installations\qualibration_graphs"
-             r"\superconducting\quam_state")
+_REAL = lab_path("lab-B")
 
 
 @pytest.mark.skipif(not (_REAL / "state.json").exists(),
-                    reason="CQT customer quam_state not present")
+                    reason="lab-B customer quam_state not present")
 class TestRealChipDigital:
     def test_qdac_triggers_all_placed(self):
         state = json.loads((_REAL / "state.json").read_text(encoding="utf-8"))

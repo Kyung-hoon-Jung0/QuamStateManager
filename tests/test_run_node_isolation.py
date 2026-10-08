@@ -16,7 +16,7 @@ what the node's ``record_state_updates`` blocks / ``node.state_updates`` recorde
 or -- for a node with no block -- its machine changes since that machine was last
 assigned (so a replay's swapped-in snapshot is the baseline, never a write).
 
-The pins use the REAL qualibrate_config / qualibrate resolvers from the cqt env
+The pins use the REAL qualibrate_config / qualibrate resolvers from the lab-B env
 (skip without them); the node is a stand-in whose save goes where qualibrate's
 own resolver says the framework saves.
 """

@@ -11,6 +11,8 @@ rule, which must not offer a bare ``id=...`` that would now mean the run id.
 """
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import json
 import shutil
 import subprocess

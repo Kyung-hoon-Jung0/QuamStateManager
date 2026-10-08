@@ -3,6 +3,8 @@ pin <-> channel mapping (CR/ZZ are MW drive tones, docs/54; a resonator pin
 names the OUTPUT and its input follows the LO partner, QA F6), ALLOC_KEY,
 deriveLines' CR/ZZ lines and applyPortCsv. Skips without node + jsdom.
 """
+
+# Selfcheck examples use generic device names and lab keys.
 import shutil
 import subprocess
 from pathlib import Path

@@ -32,15 +32,15 @@ class TestStorage:
         assert journal.root(tmp_path) == tmp_path / "journal"
 
     def test_append_creates_one_file_per_chip_per_day_with_a_title(self, tmp_path):
-        rec = journal.append(tmp_path, "PJ 20Q", "set q1 amplitude", kind="agent",
+        rec = journal.append(tmp_path, "device 20Q", "set q1 amplitude", kind="agent",
                              reason="Rabi was left-biased", run_id=12, paths=["qubits.q1.xy.operations.x180.amplitude"])
-        text = journal.read(tmp_path, "PJ 20Q")
-        assert text.startswith("# PJ 20Q — ")
+        text = journal.read(tmp_path, "device 20Q")
+        assert text.startswith("# device 20Q — ")
         assert "`agent` set q1 amplitude · run #12 · `qubits.q1.xy.operations.x180.amplitude`" in text
         assert "  - because: Rabi was left-biased" in text
-        assert rec["file"].endswith(".md") and "PJ_20Q" in rec["file"], "chip names are made filesystem-safe"
-        assert journal.list_days(tmp_path, "PJ 20Q") == [rec["ts"][:10]]
-        assert journal.list_chips(tmp_path) == ["PJ_20Q"]
+        assert rec["file"].endswith(".md") and "device_20Q" in rec["file"], "chip names are made filesystem-safe"
+        assert journal.list_days(tmp_path, "device 20Q") == [rec["ts"][:10]]
+        assert journal.list_chips(tmp_path) == ["device_20Q"]
 
     def test_a_second_append_does_not_repeat_the_title(self, tmp_path):
         journal.append(tmp_path, "c", "one", kind="hook")
@@ -224,7 +224,7 @@ class TestAKeyIsADirectoryName:
         assert len(a) <= journal._KEY_MAX and len(b) <= journal._KEY_MAX
 
     def test_a_short_name_is_byte_identical_to_before(self, tmp_path):
-        for name in ("chip", "live_kriss", "PJ_10082026", "q-1.2_3", "a" * 80):
+        for name in ("chip", "live_lab-F", "lab-J", "q-1.2_3", "a" * 80):
             assert journal._safe_key(name) == re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._"), name
 
     def test_the_journal_door_survives_a_5000_character_chip(self, tmp_path):

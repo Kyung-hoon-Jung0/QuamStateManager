@@ -8,6 +8,8 @@ served from RAM for a CHANGED subtree would show up as a mismatch.
 """
 from __future__ import annotations
 
+from tests.archive_roots import lab_path
+
 import hashlib
 import json
 import os
@@ -97,7 +99,7 @@ def test_content_hash_is_unchanged():
 
 
 _REAL = [p for p in (
-    r"D:\work\Customer_Codes\quam_states\260907_KRS_5Q\state.json",
+    lab_path("lab-F") / "state.json",
     r"D:\work\sm_qa_rigs\_shared\bigstate\big20\state.json",
 ) if os.path.exists(p)]
 

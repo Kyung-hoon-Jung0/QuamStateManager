@@ -3,10 +3,10 @@ there is carried to the per-user folder once, losing nothing.
 
 Customer 2026-09-30: ``dash-bootstrap-components`` ships a ``pyproject.toml``
 into ``site-packages``; ``default_instance_path()`` took ANY pyproject beside
-the package for a repo checkout, so the ``kriss_arbel`` env kept its own
-instance folder in ``<env>/var``. There, the arbel chip's history sat in a
+the package for a repo checkout, so the ``lab-G-env`` env kept its own
+instance folder in ``<env>/var``. There, the lab-G chip's history sat in a
 folder named ``quam_states`` -- the same name the per-user folder already used
-for the KRISS_CZ chip (647 snapshots): a naive copy would have merged two
+for the lab-F-env chip (647 snapshots): a naive copy would have merged two
 chips' histories.
 """
 from __future__ import annotations
@@ -62,10 +62,10 @@ def test_a_foreign_pyproject_in_site_packages_uses_the_user_folder_and_moves_the
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
     monkeypatch.setattr(sys, "prefix", str(tmp_path / "env"))
     legacy = tmp_path / "env" / "var" / "quam_state_manager.web.app-instance"
-    _w(legacy / "project_envs.json", {"projects": {"arbel": {"python": "X", "at": 1, "how": "changed"}}})
+    _w(legacy / "project_envs.json", {"projects": {"lab-G": {"python": "X", "at": 1, "how": "changed"}}})
     got = app_mod.default_instance_path()
     assert got is not None and "QUAM State Manager" in got
-    assert _r(Path(got) / "project_envs.json")["projects"]["arbel"]["python"] == "X"
+    assert _r(Path(got) / "project_envs.json")["projects"]["lab-G"]["python"] == "X"
     assert (legacy / M.MARKER).exists()
 
 
@@ -85,25 +85,25 @@ def test_nothing_to_move(two):
 def test_settings_merge_and_the_user_folder_wins(two):
     legacy, user = two
     _w(legacy / "project_envs.json", {
-        "projects": {"arbel": {"python": "A"}, "shared": {"python": "OLD"}},
-        "last_used": {"python": "A", "project": "arbel"}})
+        "projects": {"lab-G": {"python": "A"}, "shared": {"python": "OLD"}},
+        "last_used": {"python": "A", "project": "lab-G"}})
     _w(user / "project_envs.json", {
-        "projects": {"KRISS_CZ": {"python": "K"}, "shared": {"python": "NEW"}},
-        "last_used": {"python": "K", "project": "KRISS_CZ"}})
-    _w(legacy / "workspace_roots.json", [r"D:\data\arbel", r"D:\data\KH"])
-    _w(user / "workspace_roots.json", [r"D:\data\KH", r"D:\data\KRISS"])
-    _w(legacy / "project_dataset_roots.json", {"arbel": [r"D:\data\arbel"], "KRISS_CZ": [r"D:\data\x"]})
-    _w(user / "project_dataset_roots.json", {"KRISS_CZ": [r"D:\data\KRISS"]})
+        "projects": {"lab-F-env": {"python": "K"}, "shared": {"python": "NEW"}},
+        "last_used": {"python": "K", "project": "lab-F-env"}})
+    _w(legacy / "workspace_roots.json", [r"D:\data\lab-G", r"D:\data\lab-I"])
+    _w(user / "workspace_roots.json", [r"D:\data\lab-I", r"D:\data\lab-F"])
+    _w(legacy / "project_dataset_roots.json", {"lab-G": [r"D:\data\lab-G"], "lab-F-env": [r"D:\data\x"]})
+    _w(user / "project_dataset_roots.json", {"lab-F-env": [r"D:\data\lab-F"]})
     _w(legacy / "config_generator.json", {"selected_env": "A"})
     _w(user / "config_generator.json", {"selected_env": "K"})
     r = M.migrate(legacy, user)
     pe = _r(user / "project_envs.json")
-    assert pe["projects"]["arbel"]["python"] == "A"
+    assert pe["projects"]["lab-G"]["python"] == "A"
     assert pe["projects"]["shared"]["python"] == "NEW"          # user wins
-    assert pe["last_used"]["project"] == "KRISS_CZ"
-    assert _r(user / "workspace_roots.json") == [r"D:\data\KH", r"D:\data\KRISS", r"D:\data\arbel"]
+    assert pe["last_used"]["project"] == "lab-F-env"
+    assert _r(user / "workspace_roots.json") == [r"D:\data\lab-I", r"D:\data\lab-F", r"D:\data\lab-G"]
     pdr = _r(user / "project_dataset_roots.json")
-    assert pdr["arbel"] == [r"D:\data\arbel"] and pdr["KRISS_CZ"] == [r"D:\data\KRISS", r"D:\data\x"]
+    assert pdr["lab-G"] == [r"D:\data\lab-G"] and pdr["lab-F-env"] == [r"D:\data\lab-F", r"D:\data\x"]
     assert _r(user / "config_generator.json")["selected_env"] == "K"
     assert "config_generator.json" in r["kept_user"]
 
@@ -139,7 +139,7 @@ def test_a_working_copy_the_user_folder_has_is_kept(two):
 
 def test_a_history_index_in_wal_mode_arrives_whole(two):
     legacy, user = two
-    db = legacy / "history" / "arbel" / "index.sqlite"
+    db = legacy / "history" / "lab-G" / "index.sqlite"
     db.parent.mkdir(parents=True)
     con = sqlite3.connect(str(db))
     con.execute("pragma journal_mode=wal")
@@ -151,11 +151,11 @@ def test_a_history_index_in_wal_mode_arrives_whole(two):
         M.migrate(legacy, user)
     finally:
         con.close()
-    out = sqlite3.connect(str(user / "history" / "arbel" / "index.sqlite"))
+    out = sqlite3.connect(str(user / "history" / "lab-G" / "index.sqlite"))
     assert out.execute("select count(*) from t").fetchone()[0] == 500
     assert out.execute("pragma integrity_check").fetchone()[0] == "ok"
     out.close()
-    assert not (user / "history" / "arbel" / "index.sqlite-wal").exists()
+    assert not (user / "history" / "lab-G" / "index.sqlite-wal").exists()
 
 
 # ------------------------------------ the chip-folder collision, end to end
@@ -170,36 +170,36 @@ def _chip(folder: Path, name: str, qubits: list[str], host: str) -> Path:
 
 def test_two_chips_with_one_folder_name_stay_two_chips(tmp_path):
     """The customer's exact shape: both instance folders hold a history chip
-    folder called ``quam_states`` -- arbel in the env's, KRISS_CZ in the
+    folder called ``quam_states`` -- lab-G in the env's, lab-F-env in the
     user's. After the move each chip still opens ITS OWN history."""
     legacy, user = tmp_path / "legacy", tmp_path / "user"
-    arbel = _chip(tmp_path / "chips" / "quam_states" / "arbel_kriss", "arbel", ["qA1", "qB1"], "10.0.0.1")
-    kriss = _chip(tmp_path / "chips2" / "quam_states" / "KRS_5Q", "KRISS_CZ", ["q1", "q2"], "10.0.0.2")
+    lab_G = _chip(tmp_path / "chips" / "quam_states" / "lab-G-chip", "lab-G", ["qA1", "qB1"], "10.0.0.1")
+    lab_F = _chip(tmp_path / "chips2" / "quam_states" / "chipX_5Q", "lab-F-env", ["q1", "q2"], "10.0.0.2")
     hl, hu = HistoryManager(legacy), HistoryManager(user)
     for i in range(3):
-        s = json.loads((arbel / "state.json").read_text(encoding="utf-8"))
+        s = json.loads((lab_G / "state.json").read_text(encoding="utf-8"))
         s["qubits"]["qA1"]["f_01"] = 5e9 + i
-        _w(arbel / "state.json", s)
-        hl.check_and_snapshot(arbel, "manual", force=True)
-    hu.check_and_snapshot(kriss, "manual", force=True)
-    a_key = hl.resolve_chip_dir(arbel)[1]
-    k_key = hu.resolve_chip_dir(kriss)[1]
-    n_a, n_k = len(hl.list_snapshots(arbel)), len(hu.list_snapshots(kriss))
+        _w(lab_G / "state.json", s)
+        hl.check_and_snapshot(lab_G, "manual", force=True)
+    hu.check_and_snapshot(lab_F, "manual", force=True)
+    a_key = hl.resolve_chip_dir(lab_G)[1]
+    k_key = hu.resolve_chip_dir(lab_F)[1]
+    n_a, n_k = len(hl.list_snapshots(lab_G)), len(hu.list_snapshots(lab_F))
     assert n_a == 3 and n_k == 1
     # force the collision the customer had: both chips in a folder of ONE name
     if a_key != k_key:
         (legacy / "history" / a_key).rename(legacy / "history" / k_key)
         al = _r(legacy / "history" / "_chip_aliases.json")
-        al["names"]["arbel"]["dir"] = k_key
-        al["dirs"] = {k_key: {"display": "arbel"}}
+        al["names"]["lab-G"]["dir"] = k_key
+        al["dirs"] = {k_key: {"display": "lab-G"}}
         _w(legacy / "history" / "_chip_aliases.json", al)
     r = M.migrate(legacy, user)
-    assert r["renamed"] == {k_key: "arbel"}
+    assert r["renamed"] == {k_key: "lab-G"}
     hm = HistoryManager(user)
-    assert hm.resolve_chip_dir(arbel)[1] == "arbel"
-    assert len(hm.list_snapshots(arbel)) == 3
-    assert hm.resolve_chip_dir(kriss)[1] == k_key
-    assert len(hm.list_snapshots(kriss)) == 1
+    assert hm.resolve_chip_dir(lab_G)[1] == "lab-G"
+    assert len(hm.list_snapshots(lab_G)) == 3
+    assert hm.resolve_chip_dir(lab_F)[1] == k_key
+    assert len(hm.list_snapshots(lab_F)) == 1
 
 
 def test_a_concurrent_move_is_skipped(two):

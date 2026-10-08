@@ -75,7 +75,7 @@ function val(win, id) {
   // Step 2: network
   G.goToStep(2);
   setInput(win, 'gen-net-host', '127.0.0.1');
-  setInput(win, 'gen-net-cluster', 'LabA_CR');
+  setInput(win, 'gen-net-cluster', 'lab-A_CR');
 
   // Step 3: one chassis with a MW-FEM in slot 1 (drive the model directly via state)
   G.goToStep(3);
@@ -92,7 +92,7 @@ function val(win, id) {
   G.goToStep(4);
   ok(val(win, 'gen-qubit-count') == 3, 'A: qubit-count input still shows 3 after Back->Forward');
   ok(G.state.spec.qubits.length === 3, 'A: state still has 3 qubits after Back->Forward');
-  ok(val(win, 'gen-net-cluster') === 'LabA_CR' || G.state.spec.network.cluster_name === 'LabA_CR',
+  ok(val(win, 'gen-net-cluster') === 'lab-A_CR' || G.state.spec.network.cluster_name === 'lab-A_CR',
      'A: cluster name retained in state');
 })();
 

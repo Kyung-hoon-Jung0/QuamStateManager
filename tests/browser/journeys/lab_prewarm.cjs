@@ -38,10 +38,11 @@ const PORT = +(process.env.PORT || 5351);
 const BASE = `http://127.0.0.1:${PORT}`;
 const DIR = process.env.SHOT_DIR || '.';
 const PHASE = process.env.PHASE || 'first';
-const PROJ = process.env.PROJ || 'LW_krs5';
+const { labValue } = require('../../lab_map.cjs');
+const PROJ = process.env.PROJ || labValue('lab-F', 'project');
 const PROJ2 = process.env.PROJ2 || 'LW_second';
-const ENV_LABEL = process.env.ENV_LABEL || 'KRISS_CZ';
-const ALT = process.env.ALT || 'cqt';
+const ENV_LABEL = process.env.ENV_LABEL || labValue('lab-F', 'env');
+const ALT = process.env.ALT || labValue('lab-B', 'env');
 const SRV_LOG = process.env.SRV_LOG || '';
 const PAIR = process.env.PAIR || 'q1-2', GATE = process.env.GATE || 'cz_SNZ';
 const FQ = `qubit_pairs.${PAIR}.macros.${GATE}.flux_pulse_qubit`;
@@ -116,7 +117,7 @@ async function openPulseByUrl(p) {
   if (PHASE === 'first') {
     check(!!(await landing(p)), 'the landing shows the project cards');
     const t1 = await cardText(p, PROJ), t2 = await cardText(p, PROJ2);
-    check(/env\s+KRISS_CZ/.test(t1) && /suggested — confirm/.test(t1) && /Confirm/.test(t1), `${PROJ}: suggested env with Confirm -> "${t1}"`);
+    check(( /env\s/.test(t1) && t1.includes(ENV_LABEL) ) && /suggested — confirm/.test(t1) && /Confirm/.test(t1), `${PROJ}: suggested env with Confirm -> "${t1}"`);
     check(/suggested — confirm/.test(t2), `${PROJ2}: suggested too -> "${t2}"`);
     await p.shot(`${DIR}/01_landing_suggested.png`);
     await clickSel(p, `${cardSel(PROJ)} .landing-env-confirm`);
@@ -125,10 +126,10 @@ async function openPulseByUrl(p) {
     await p.shot(`${DIR}/02_confirmed.png`);
     await landing(p);                                          // cold reload
     const t1b = await cardText(p, PROJ);
-    check(/KRISS_CZ/.test(t1b) && !/suggested/.test(t1b) && !/Confirm\b/.test(t1b.replace('Confirmed', '')), `a cold reload shows it remembered -> "${t1b}"`);
+    check(t1b.includes(ENV_LABEL) && !/suggested/.test(t1b) && !/Confirm\b/.test(t1b.replace('Confirmed', '')), `a cold reload shows it remembered -> "${t1b}"`);
     const t0 = await openProject(p, PROJ);
     const b = JSON.parse(await badge(p) || 'null');
-    check(b && /env KRISS_CZ/.test(b.text) && b.state === 'remembered' && !/warn/.test(b.cls), `the sidebar names the env -> ${J(b)}`);
+    check(b && b.text.includes("env " + ENV_LABEL) && b.state === 'remembered' && !/warn/.test(b.cls), `the sidebar names the env -> ${J(b)}`);
     await p.shot(`${DIR}/03_open_badge.png`);
     const r = await readyAfter(p, t0);
     timing.first_open_to_ready_ms = r;
@@ -198,7 +199,7 @@ async function openPulseByUrl(p) {
     const L0 = logLines().length;
     await landing(p);
     const t1 = await cardText(p, PROJ);
-    check(/KRISS_CZ/.test(t1) && !/suggested/.test(t1) && /✓/.test(t1), `${PROJ}: the remembered env, pre-selected -> "${t1}"`);
+    check(t1.includes(ENV_LABEL) && !/suggested/.test(t1) && /✓/.test(t1), `${PROJ}: the remembered env, pre-selected -> "${t1}"`);
     await p.shot(`${DIR}/09_second_landing.png`);
     const t0 = await openProject(p, PROJ);
     const r = await readyAfter(p, t0);
@@ -215,7 +216,7 @@ async function openPulseByUrl(p) {
   } else if (PHASE === 'other') {
     await landing(p);
     const t2 = await cardText(p, PROJ2);
-    check(/suggested — confirm/.test(t2) && /KRISS_CZ/.test(t2), `${PROJ2} (never synced): suggested -> "${t2}"`);
+    check(/suggested — confirm/.test(t2) && t2.includes(ENV_LABEL), `${PROJ2} (never synced): suggested -> "${t2}"`);
     await openProject(p, PROJ2);
     const b = JSON.parse(await badge(p) || 'null');
     check(b && b.state === 'suggested' && /suggested — confirm/.test(b.text) && /warn/.test(b.cls), `the badge says it is only suggested -> ${J(b)}`);
@@ -257,7 +258,7 @@ async function openPulseByUrl(p) {
     check(!!back, `changed back -> "${back}"`);
     await landing(p);
     const cold = await cardText(p, PROJ);
-    check(/KRISS_CZ/.test(cold) && !/suggested/.test(cold), `a cold reload shows the same -> "${cold}"`);
+    check(cold.includes(ENV_LABEL) && !/suggested/.test(cold), `a cold reload shows the same -> "${cold}"`);
   }
   // a lab REFUSAL answers 400 by design (prep, grid): that one line is the
   // expected answer, not a page error

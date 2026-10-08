@@ -4,7 +4,7 @@ Two customer reports (2026-09-05): the run table's loading "got slow again"
 and its refresh button with it; and the "N new" chip on the sync pill kept
 counting up, and clicking it did nothing but make it disappear.
 
-What was measured (real Chrome over CDP, the 2,655-run CQT archive):
+What was measured (real Chrome over CDP, the 2,655-run lab-B archive):
 
 * The server code on the Datasets path is byte-identical between the 09-02
   build the customer praised and the 09-05 build they reported. What is slow

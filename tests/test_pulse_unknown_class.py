@@ -2,7 +2,7 @@
 
 Customer, on-site 2026-09-16: *"pulses 메뉴에서 snz 는 plotting이 안돼. 왜 그래?"*
 
-The KRISS_CZ chip's CZ flux pulse is `quam_config.two_flux_gate.SNZTwoFluxPulse`
+The lab-F-env chip's CZ flux pulse is `quam_config.two_flux_gate.SNZTwoFluxPulse`
 — a class that lab wrote. `core/waveform_synth.py` mirrors quam's own classes,
 so it answered ``unrecognized pulse class '...'`` and the page drew nothing.
 Four such classes cover 30 pulse objects on that one chip.

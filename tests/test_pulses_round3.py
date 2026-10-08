@@ -337,7 +337,7 @@ class TestRosterArithmetic:
 
     @staticmethod
     def _roster():
-        """The shape the KRISS_CZ env really returns: catalog types, aliases
+        """The shape the lab-F-env env really returns: catalog types, aliases
         for catalog types, base classes and deprecated spellings."""
         fields = {"length": {"type": {"base": "int"}, "default": 100},
                   "amplitude": {"type": {"base": "float"}}}
@@ -470,7 +470,7 @@ def _fields(*names, length_ref=False):
 
 
 def _inventory() -> dict:
-    """The shape the KRISS_CZ chip really probes to: classes the LAB wrote, a
+    """The shape the lab-F-env chip really probes to: classes the LAB wrote, a
     lab GATE MACRO beside them, and the chip root."""
     return {
         _LAB + "SNZTwoFluxPulse": {

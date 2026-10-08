@@ -81,7 +81,7 @@ ok(T.pinToChannel('1/2/3', 'cross_resonance').out_port === 3,
      'F6: an output with no input LO partner leaves in_port to the allocator');
   ok(T.pinToChannel('1//1', 'resonator') === null, 'F6: a blank segment is still refused');
   // QA review of F6: the readout INPUT is its own cable -- retyping the output
-  // pin must not rewire it. Real chips read out on (out 1, in 2) (KRS_5Q) and
+  // pin must not rewire it. Real chips read out on (out 1, in 2) (chipX_5Q) and
   // (out 8, in 1); deriving the input from the new output rewired them.
   const was = state.mode;
   state.mode = 'regenerate';

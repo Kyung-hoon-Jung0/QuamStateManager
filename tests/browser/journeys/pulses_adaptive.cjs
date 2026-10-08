@@ -101,7 +101,7 @@ async function openDetail(p, path) {
   check(!!max1, `after amplitude=${amp1} the curve peaks at ${want1.toFixed(3)} -> ${max1}`);
   await p.shot(`${DIR}/adaptive_2_wobble_edited.png`);
 
-  // 3. the lab's REAL class (customer quam_config, KRISS_CZ env)
+  // 3. the lab's REAL class (customer quam_config, lab-F-env env)
   const SNZ = 'qubits.q1.z.operations.cz_SNZ_flux_pulse_q1_q2';
   const snzOpen = await openDetail(p, SNZ);
   check(!!snzOpen, 'SNZ detail opened');

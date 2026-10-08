@@ -1,3 +1,4 @@
+const { labPath } = require('./lab_map.cjs');
 /* Ctrl+Z, which now WRITES the chip (docs/160) — a hostile round in real
  * headless Chrome, against a COPY of the customer 20Q chip.
  *
@@ -15,7 +16,7 @@ const OUT = process.argv[2] || 'undo.json';
 const CDP = process.argv[3] || '9462';
 const BASE = process.argv[4] || 'http://127.0.0.1:5462';
 const PHASES = (process.argv[5] || 'A,B,C,D,E,F,G,H,I,J').split(',').map(s => s.trim());
-const CHIP = process.argv[6] || 'C:/Users/KyunghoonJung/AppData/Local/Temp/claude/D--work-statemanager/dd0fa2c3-e492-405d-8783-2c62cd30ba4a/scratchpad/chip_5462/quam_state';
+const CHIP = process.argv[6] || require('path').join(labPath('lab-P', 'scratch'), 'chip_5462', 'quam_state');
 const SHOTDIR = OUT.replace(/[^\\/]*$/, '');
 
 const errors = [];

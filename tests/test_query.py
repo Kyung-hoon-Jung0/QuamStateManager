@@ -379,7 +379,7 @@ class TestGetPair:
                     "macros": {
                         "cz_flattop": {
                             # All inner objects explicitly null — the
-                            # exact pattern that crashed for LabB data.
+                            # exact pattern that crashed for lab-B data.
                             "flux_pulse_qubit": None,
                             "coupler_flux_pulse": None,
                             "fidelity": None,
@@ -481,7 +481,7 @@ class TestGetPortFor:
 
 class TestGetPortForPair:
     def test_null_coupler_returns_none_not_crash(self):
-        """Every LabA pair has ``"coupler": null`` — this 500'd every pair click."""
+        """Every lab-A pair has ``"coupler": null`` — this 500'd every pair click."""
         store = QuamStore.from_dicts(
             {"qubit_pairs": {"qX-qY": {"id": "qX-qY", "coupler": None}}}, {}
         )
@@ -774,7 +774,7 @@ class TestExtractPairGateFidelities:
     """The UI (2Q RB panels, Overview tiles) reads a single ``value`` per metric.
 
     Two schemas exist in the wild: older data stores a bare float per metric,
-    newer LabA data nests a dict (StandardRB.average_gate_fidelity,
+    newer lab-A data nests a dict (StandardRB.average_gate_fidelity,
     Bell_State.Fidelity). Both must yield a canonical numeric ``value``.
     """
 
@@ -981,7 +981,7 @@ class TestNotFoundListsIdsNaturally:
     """`get_qubit`/`get_pair`'s "not found" message PRINTS every available id
     — the CLI shows it (`console.print(f"[red]Error:[/red] {e}")`) and
     `/api/qubit/<name>` returns it as a 404 body. On a q1..q10 lab
-    (`AS_10TQ9TC` is one, on disk) a string sort read q1, q10, q2."""
+    (`lab-A` is one, on disk) a string sort read q1, q10, q2."""
 
     @staticmethod
     def _engine(tmp_path: Path) -> QueryEngine:

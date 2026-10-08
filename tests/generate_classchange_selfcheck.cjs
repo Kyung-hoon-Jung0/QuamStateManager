@@ -1,6 +1,6 @@
 // docs/202 — a class substitution is named in the build panel.
 //
-// The customer's KRS_5Q chip carries the lab's OWN readout pulse classes
+// The customer's chipX_5Q chip carries the lab's OWN readout pulse classes
 // (ComplexWeightsReadoutPulse / GefWeightsReadoutPulse). A re-generate rebuilds
 // them as the stock SquareReadoutPulse, because the build spec has no slot for
 // a per-pulse class — so every field only their classes declare drops out. The

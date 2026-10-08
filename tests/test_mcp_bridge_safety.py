@@ -189,9 +189,9 @@ class TestAgentUndoIsItsOwnOnly:
 class TestApplyNamesItsChip:
     def test_chip_and_tray_say_who_the_chip_is(self, tmp_path):
         _a, c = _app(tmp_path)
-        c.post("/load", data={"folder": str(_chip_dir(tmp_path / "x", chip_name="arbel"))})
+        c.post("/load", data={"folder": str(_chip_dir(tmp_path / "x", chip_name="lab-G"))})
         ch = c.get("/api/agent/chip").get_json()
-        assert ch["name"] == "chip" and ch["declared_name"] == "arbel"
+        assert ch["name"] == "chip" and ch["declared_name"] == "lab-G"
         assert ch["pin"] == ch["chip_key"] and ch["chip_key"]
         tr = c.get("/api/agent/tray").get_json()
         assert tr["chip_key"] == ch["chip_key"] and tr["chip_token"] == ch["chip_token"] and tr["seen_sig"]
@@ -415,21 +415,21 @@ class TestPinIsAnIdentity:
         """SM's in-app session pins the DISPLAY name; a chip that also declares
         extras.chip_name must still answer it -- and stay the only chip that does."""
         self._pin(monkeypatch, "chip")
-        _chip_answer(link, name="chip", chip_key="rA-1", declared_name="arbel")
+        _chip_answer(link, name="chip", chip_key="rA-1", declared_name="lab-G")
         assert mcp._chip_facts()["chip_key"] == "rA-1"
         _chip_answer(link, name="chip", chip_key="alt-2", declared_name="otherfridge")
         with pytest.raises(mcp.ToolError):
             mcp._chip_facts()
-        _chip_answer(link, name="chip", chip_key="rA-1", declared_name="arbel")
+        _chip_answer(link, name="chip", chip_key="rA-1", declared_name="lab-G")
         assert mcp._chip_facts(), "back on its own chip, the bridge works again"
 
     def test_the_declared_name_and_the_chip_key_both_match(self, link, monkeypatch):
-        self._pin(monkeypatch, "arbel")
-        _chip_answer(link, name="chip", chip_key="chip-aaaa", declared_name="arbel")
+        self._pin(monkeypatch, "lab-G")
+        _chip_answer(link, name="chip", chip_key="chip-aaaa", declared_name="lab-G")
         assert mcp._chip_facts()
         monkeypatch.setattr(mcp, "_pin_key", None)
         self._pin(monkeypatch, "chip-aaaa")
         assert mcp._chip_facts()
-        _chip_answer(link, name="chip", chip_key="chip-bbbb", declared_name="arbel")
+        _chip_answer(link, name="chip", chip_key="chip-bbbb", declared_name="lab-G")
         with pytest.raises(mcp.ToolError):
             mcp._chip_facts()

@@ -2,7 +2,7 @@
 
 Single source of truth consumed by BOTH sides of the parity check:
 
-- ``generator/run_waveform_golden.py`` (run in the user's ``LabC`` QM-stack
+- ``generator/run_waveform_golden.py`` (run in the user's ``lab-C`` QM-stack
   env) instantiates the real quam classes with these params and dumps
   ``calculate_waveform()`` output to ``tests/golden/waveform_golden.json``;
 - ``tests/test_waveform_golden.py`` (run in ``qm_mng``) synthesizes the
@@ -162,7 +162,7 @@ CASES = [
     #      _CosineBipolarPulse: different fields — explicit total ``length``,
     #      no smoothing/padding — and a different edge split: the remaining
     #      length divides into rise/switch/fall THIRDS. Golden lives in
-    #      ``waveform_golden_qb04.json`` (cqt env; the legacy golden's env
+    #      ``waveform_golden_qb04.json`` (lab-B env; the legacy golden's env
     #      predates the class). docs/126 ⑦a. ----
     _c("cosbip_new_basic", "CosineBipolarPulse", length=124, amplitude=0.1,
        flat_length=100),                       # the customer chip's exact shape

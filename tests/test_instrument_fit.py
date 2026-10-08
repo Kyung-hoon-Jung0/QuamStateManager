@@ -9,6 +9,8 @@ while the drawing kept its coordinates — everything past the host width was
 painted outside the visible box, and the host's `overflow-x:auto` never saw
 an overflow to scroll. Skips without node + jsdom.
 """
+
+# Selfcheck examples use generic device names and lab keys.
 import shutil
 import subprocess
 from pathlib import Path

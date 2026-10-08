@@ -5,7 +5,7 @@ Customer, on-site (2026-09-12): "live edit에서 enter를 누르면 그 다음�
 auto sync가 깨짐", and "이유없이 pull&apply 문구가 뜬다".
 
 Their bench is the reason: SM (pid 4928, :5050) has
-``D:\\work\\Customer_Codes\\quam_states\\260907_KRS_5Q`` open, and that is
+``D:\\work\\Customer_Codes\\quam_states\\lab-F`` open, and that is
 qualibrate's own ``state_path`` — its log saves the machine there on every node
 run, every 30–60 s. So a node writes the chip between two of the user's edits
 as a matter of course, the push conflicts, and the session disarmed. Auto-Sync

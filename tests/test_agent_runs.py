@@ -46,7 +46,7 @@ from qualibrate import QualibrationNode
 node = QualibrationNode[Parameters, Quam](name="util_no_hook", parameters=Parameters())
 '''
 AGENT = {"X-SM-Agent": "claude"}
-HUMAN = {"X-SM-Actor": "kyunghoon"}
+HUMAN = {"X-SM-Actor": "user-a"}
 
 
 def _wait(pred, timeout=20.0):
@@ -823,10 +823,10 @@ class TestRun:
         assert c.post("/api/agent/session/arm", json={}, headers=HUMAN).status_code == 409
         _arm(c)
         s = c.get("/api/agent/session").get_json()["session"]
-        assert s["armed"] is True and s["armed_by"] == "human:kyunghoon" and s["grant"]["title"] == "the pins' plan"
-        assert "STARTED by human:kyunghoon" in _journal(c, inst) and "armed for this plan only" in _journal(c, inst)
+        assert s["armed"] is True and s["armed_by"] == "human:user-a" and s["grant"]["title"] == "the pins' plan"
+        assert "STARTED by human:user-a" in _journal(c, inst) and "armed for this plan only" in _journal(c, inst)
         assert c.post("/api/agent/session/disarm", json={}, headers=HUMAN).get_json()["session"]["armed"] is False
-        assert "disarmed by human:kyunghoon" in _journal(c, inst)
+        assert "disarmed by human:user-a" in _journal(c, inst)
 
 
 def test_a_chip_switch_moves_the_agent_clock(app, synth_folder, tmp_path):

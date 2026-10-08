@@ -35,7 +35,7 @@ def _norm_name(bundle) -> str:
 
 
 def _is_power(bundle) -> bool:
-    # Normalized match: LabB standalone runs drop the "1Q_05" prefix
+    # Normalized match: lab-B standalone runs drop the "1Q_05" prefix
     # ("05b_..." → "resonator_spectroscopy_vs_power_iq"); a raw-prefix guard
     # mis-routed them.
     return "vs_power" in _norm_name(bundle)
@@ -44,7 +44,7 @@ def _is_power(bundle) -> bool:
 def _is_coupler(bundle) -> bool:
     # Sweeps the *coupler* flux; the per-qubit z-offset click target of the
     # qubit-flux variant doesn't apply → view-only. Normalized match: the raw
-    # "1Q_07" prefix guard let LabB standalone "07_..." coupler maps through as
+    # "1Q_07" prefix guard let lab-B standalone "07_..." coupler maps through as
     # CLICKABLE into the qubit's z.joint_offset (a wrong-field write).
     return "coupler" in _norm_name(bundle)
 

@@ -18,6 +18,8 @@ has to answer it with the SAME rule the Datasets table uses (dataset-virtual.js
 
 from __future__ import annotations
 
+from tests.archive_roots import lab_archive, lab_path
+
 import json
 import re
 from pathlib import Path
@@ -249,7 +251,7 @@ class TestTheSidebarSaysTheScopeExists:
 
 
 # ── on the customer's own archive ───────────────────────────────────────────
-_REAL = Path("D:/work/Customer_Codes/dataset/KH_202608_CZ")
+_REAL = lab_archive("lab-I")
 
 
 @pytest.mark.skipif(not _REAL.is_dir(), reason="customer archive not on this machine")

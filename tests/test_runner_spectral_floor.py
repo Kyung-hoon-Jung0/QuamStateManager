@@ -45,7 +45,7 @@ class TestTheFloorIsDeclaredWhereMeasured:
         assert _fam(key).feature_check.spectral_min is None
 
     def test_ramsey_left_the_default_when_its_band_was_re_derived(self):
-        """docs/127 §15.2 gave ramsey a floor of its own as part of the CQT
+        """docs/127 §15.2 gave ramsey a floor of its own as part of the lab-B
         recalibration — the decay band was deleted and the spectral floor took
         over its honest job. This test still asserted the old default and had
         been failing since; it is the assertion that was stale, not the code."""

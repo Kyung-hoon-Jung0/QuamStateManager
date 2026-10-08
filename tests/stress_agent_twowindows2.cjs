@@ -95,10 +95,10 @@ async function main() {
   await land(A); await land(B);
   await A.ev('window.confirm=function(){return true}; window.prompt=function(){return "a note"}; 1');
   await B.ev('window.confirm=function(){return true}; window.prompt=function(){return "a note"}; 1');
-  await A.typeInto('#agent-home .ag-actor', 'Kyunghoon');
-  await B.typeInto('#agent-home .ag-actor', 'Minji');
-  ok('A is named Kyunghoon', (await A.ev('AgentPanel.actorName()')) === 'Kyunghoon');
-  ok('B is named Minji', (await B.ev('AgentPanel.actorName()')) === 'Minji');
+  await A.typeInto('#agent-home .ag-actor', 'user-a');
+  await B.typeInto('#agent-home .ag-actor', 'user-b');
+  ok('A is named user-a', (await A.ev('AgentPanel.actorName()')) === 'user-a');
+  ok('B is named user-b', (await B.ev('AgentPanel.actorName()')) === 'user-b');
 
   /* 1. an ASCII name DOES reach the card feed (the control for round 1) */
   await A.typeInto('#agent-home .ag-input', '/run 02a_fake_resonator q3');
@@ -108,7 +108,7 @@ async function main() {
   note('plan_id', planId);
   const sel = '#agent-home [data-card=\'' + cardId + '\']';
   const bTxt = await B.until('(function(){var c=document.querySelector("' + sel + '"); return c? c.textContent.replace(/\\s+/g," "):null;})()', 60000, 120);
-  ok('with an ASCII name, the card names the person', !!bTxt.v && /typed by human:Kyunghoon/.test(bTxt.v), (bTxt.v || '').slice(0, 200));
+  ok('with an ASCII name, the card names the person', !!bTxt.v && /typed by human:user-a/.test(bTxt.v), (bTxt.v || '').slice(0, 200));
   note('ascii_card_text', (bTxt.v || '').slice(0, 200));
 
   /* 2. REPRODUCTION: the mode change latency, a second time */
@@ -158,7 +158,7 @@ async function main() {
   await B.ev('(function(){var s=document.querySelector("' + modeSel + '"); if(s) s.focus(); return document.activeElement===s;})()');
   const focused = await B.ev('(function(){var s=document.querySelector("' + modeSel + '"); return document.activeElement===s;})()');
   note('B_focus_in_card', focused);
-  await A.ev('fetch("/api/agent/plans/' + planId + '/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"Kyunghoon"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})');
+  await A.ev('fetch("/api/agent/plans/' + planId + '/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"user-a"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})');
   await sleep(3000);
   await B.ev('AgentPanel.poll(true)'); await sleep(1500);
   const bStillDraft = await B.ev('(function(){var c=document.querySelector("' + sel + '"); return c? {text:c.textContent.replace(/\\s+/g," ").slice(0,140), hasCancel:!!c.querySelector(".ag-cancel"), hasStart:!!c.querySelector(".ag-start")}:null;})()');
@@ -174,7 +174,7 @@ async function main() {
   ok('and it catches up once the focus leaves', !!bAfterBlur.v, { ms: bAfterBlur.ms, card: await B.ev('(function(){var c=document.querySelector("' + sel + '"); return c? c.textContent.replace(/\\s+/g," ").slice(0,160):null;})()') });
   const endedTxt = await B.ev('(function(){var c=document.querySelector("' + sel + '"); return c? c.textContent.replace(/\\s+/g," "):null;})()');
   note('cancelled_card_text', (endedTxt || '').slice(0, 260));
-  ok('a cancelled plan names WHO ended it', /by human:Kyunghoon|ended .*Kyunghoon/.test(endedTxt || ''), (endedTxt || '').slice(0, 260));
+  ok('a cancelled plan names WHO ended it', /by human:user-a|ended .*user-a/.test(endedTxt || ''), (endedTxt || '').slice(0, 260));
 
   /* 6. the Calibration log, read in the browser */
   await B.send('Page.navigate', { url: BASE + '/journal' });
@@ -183,8 +183,8 @@ async function main() {
   const log = await B.ev('document.body.textContent.replace(/\\s+/g," ")');
   note('journal_text', (log || '').slice(0, 3500));
   ok('the Calibration log records the plans', /plan/.test(log || ''), null);
-  ok('and names the people who acted', /Kyunghoon/.test(log || ''), null);
-  ok('a Hangul-named person is NOT in the log (round 1 typed one)', !/정경훈/.test(log || ''), null);
+  ok('and names the people who acted', /user-a/.test(log || ''), null);
+  ok('a Hangul-named person is NOT in the log (round 1 typed one)', !/\uac00\uac01\uac02/.test(log || ''), null);
   await B.shot(OUT.replace(/\.json$/, '_13_journal.png'));
   await B.send('Page.navigate', { url: BASE + '/' });
   await B.until('!!document.querySelector("#agent-home .ag-root .ag-cards")', 30000);
@@ -196,7 +196,7 @@ async function main() {
   try { const j = JSON.parse(aps); apId = (j.approvals || j.pending || [])[0] && ((j.approvals || j.pending)[0].id); } catch (e) { /* ignore */ }
   if (apId) {
     const mk = (who, verb) => 'fetch("/api/agent/approvals/' + apId + '/' + verb + '",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"' + who + '"},body:"{}",credentials:"same-origin"}).then(function(r){return r.text().then(function(t){return r.status+" "+t.slice(0,200);});})';
-    const [r1, r2] = await Promise.all([A.ev(mk('Kyunghoon', 'reject')), B.ev(mk('Minji', 'reject'))]);
+    const [r1, r2] = await Promise.all([A.ev(mk('user-a', 'reject')), B.ev(mk('user-b', 'reject'))]);
     note('double_reject', { A: r1, B: r2 });
     ok('two people deciding one approval: exactly one decision is accepted',
        [r1, r2].filter(x => /^200/.test(x)).length === 1, { A: r1, B: r2 });
@@ -206,11 +206,11 @@ async function main() {
   }
 
   /* 8. both press the observer toggle / both cancel at once, again */
-  const p2 = await A.ev('fetch("/api/agent/plans",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"Kyunghoon"},body:JSON.stringify({run_line:"/run 02a_fake_resonator q5"}),credentials:"same-origin"}).then(function(r){return r.json();}).then(function(j){return (j.plan||{}).id||JSON.stringify(j).slice(0,150);})');
+  const p2 = await A.ev('fetch("/api/agent/plans",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"user-a"},body:JSON.stringify({run_line:"/run 02a_fake_resonator q5"}),credentials:"same-origin"}).then(function(r){return r.json();}).then(function(j){return (j.plan||{}).id||JSON.stringify(j).slice(0,150);})');
   note('race_plan_id', p2);
   if (p2 && /^pl-/.test(p2)) {
     const mkc = (who) => 'fetch("/api/agent/plans/' + p2 + '/cancel",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"' + who + '"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})';
-    const [q1, q2] = await Promise.all([A.ev(mkc('Kyunghoon')), B.ev(mkc('Minji'))]);
+    const [q1, q2] = await Promise.all([A.ev(mkc('user-a')), B.ev(mkc('user-b'))]);
     note('double_cancel_status_run2', { A: q1, B: q2 });
     await sleep(2000);
     const jr = await A.ev('fetch("/api/agent/journal",{headers:{Accept:"application/json"}}).then(function(r){return r.json();}).then(function(j){return JSON.stringify(j);})');

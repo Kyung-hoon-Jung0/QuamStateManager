@@ -12,6 +12,8 @@ that a few failed-fit values do not flatten (off-scale triangles on the edge).
 """
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import shutil
 import subprocess
 from pathlib import Path

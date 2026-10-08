@@ -1145,7 +1145,7 @@ def _value_findings_rel(section: str, rel: str, items: list) -> list[Finding]:
 # 1Q_08_qubit_spectroscopy sets ``q.f_01`` and ``q.xy.RF_frequency`` to the
 # identical value; 1Q_12_ramsey applies the same delta to both; 1Q_02 does it for
 # the resonator). Critically, ONLY ``RF_frequency`` reaches the hardware — quam's
-# config uses the channel ``intermediate_frequency``, which the LabA states infer
+# config uses the channel ``intermediate_frequency``, which the lab-A states infer
 # as ``RF_frequency - LO`` (quam ``inferred_intermediate_frequency``); ``f_01`` is
 # never read by ``generate_config``. So when the two drift, the box keeps driving
 # at ``RF_frequency`` while ``f_01`` silently lies — usually because one was edited

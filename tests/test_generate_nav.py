@@ -8,6 +8,8 @@ its commit event never fires. Skips when node or jsdom is unavailable (the
 selfcheck exits 2 for a missing jsdom), so CI without a JS toolchain still runs
 the rest of the suite. Install once with ``npm install jsdom``.
 """
+
+# Selfcheck examples use generic device names and lab keys.
 import shutil
 import subprocess
 from pathlib import Path

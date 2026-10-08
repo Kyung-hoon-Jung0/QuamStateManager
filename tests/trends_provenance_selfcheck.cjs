@@ -467,7 +467,7 @@ world.push((function () {
 })());
 
 // ── 7) the point names the run that WROTE it (2026-09-29) ──────────────────
-/* Customer (KRISS_CZ): "one IRB point says its run is a flux short distortion
+/* Customer (lab-F-env): "one IRB point says its run is a flux short distortion
    experiment". The snapshot map names the run whose SAVE the snapshot copied;
    the server's per-series `attr` overrides it per point. A captured-only point
    says so and OPENS NOTHING ("wrong information is the worst"); a point whose

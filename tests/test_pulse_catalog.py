@@ -31,7 +31,7 @@ class TestCatalogShape:
         assert set(PULSE_CATALOG) == expected
 
     def test_qclass_strings_are_canonical(self):
-        # The LabC quam loader needs these verbatim. CosineBipolarPulse is
+        # The lab-C quam loader needs these verbatim. CosineBipolarPulse is
         # the one class with NO quam-era home (quam_builder >= 0.4 only) —
         # its qclass is the quam_builder arch path by design (docs/126 ⑦a).
         for spec in PULSE_CATALOG.values():

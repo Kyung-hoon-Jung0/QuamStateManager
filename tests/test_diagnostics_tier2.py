@@ -311,7 +311,7 @@ class TestBandEdge:
         assert _band_edge(_be_state(2, 7.498e9, port="8")) == []
 
     def test_labalike_pointer_linked_mate_feasible(self):
-        # real LabA shape: in1's downconverter is a POINTER to out1's upconverter
+        # real lab-A shape: in1's downconverter is a POINTER to out1's upconverter
         # (shared LO). It resolves to 7.498 GHz, which fits band 3 → kept.
         state = _be_coupled_state(
             1, 7.498e9, 1,
