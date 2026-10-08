@@ -176,13 +176,18 @@
     };
 
     // Escape closes the JSON panel when it's open.
-    document.addEventListener('keydown', function(e) {
-        if (e.key !== 'Escape') return;
-        var p = document.getElementById('json-panel');
-        if (p && !p.classList.contains('hidden')) {
-            window.closeJsonPanel();
-            e.preventDefault();
-        }
-    });
+    // docs/301 F42: this page's script runs on every visit; the Escape
+    // handler reads the panel at keypress time, so ONE copy serves them all
+    if (!window.__jsonPanelEscBound) {
+        window.__jsonPanelEscBound = true;
+        document.addEventListener('keydown', function(e) {
+            if (e.key !== 'Escape') return;
+            var p = document.getElementById('json-panel');
+            if (p && !p.classList.contains('hidden') && window.closeJsonPanel) {
+                window.closeJsonPanel();
+                e.preventDefault();
+            }
+        });
+    }
 })();
 </script>
