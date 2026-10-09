@@ -5,6 +5,7 @@
 {% from '_journal_changes.html' import change_list, run_changes, undo_links %}
 <h2>Calibration log</h2>
 {% if building %}<p>building the history{{ building|hub_progress }}: days that hold only runs or SM writes are not listed yet, so this log is incomplete.</p>{% endif %}
+{% if gates_pending %}<p>The gates of {{ '{:,}'.format(gates_pending) }} run{{ 's' if gates_pending != 1 }} were not checked yet when this file was made; the Calibration log checks them in the background. Make the file again to include them.</p>{% endif %}
 {% for s in days %}
 <h3>{{ s.day }}</h3>
 {% if s.history.state == 'building' %}
@@ -37,7 +38,7 @@
 {% endif %}
 {% if c.plan_id %}<p>plan {{ c.plan_id }}{% if c.step is defined and c.step is not none %}, step {{ c.step }}{% endif %}</p>{% endif %}
 {% if c.kind == 'run' %}
-<p>Targets: {{ c.targets|join(' ') }}; outcome: {{ c.outcome or c.status }}{% if c.gate %}; gate: {{ c.gate.verdict }} - {{ c.gate.reason }}{% endif %}</p>
+<p>Targets: {{ c.targets|join(' ') }}; outcome: {{ c.outcome or c.status }}{% if c.gate and c.gate.verdict == 'pending' %}; gate: not checked yet{% elif c.gate %}; gate: {{ c.gate.verdict }} - {{ c.gate.reason }}{% endif %}</p>
 {% if c.because %}<p>{{ c.because }}</p>{% endif %}
 {% if c.note %}<p>Note: {{ c.note }}</p>{% endif %}
 {% if c.figures %}<p>Figures: {{ c.figures|join(', ') }}</p>{% endif %}

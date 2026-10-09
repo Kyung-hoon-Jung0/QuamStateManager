@@ -14975,7 +14975,7 @@ def _report_section_uncached(key: str, rc: _ReportCtx) -> tuple[str, bool]:
     ms = int((time.monotonic() - t0) * 1000)
     out = (f'<section class="rep-sec" id="rep-sec-{key}" data-rep-sec="{key}"'
            f' data-rep-redact="{int(rc.redact)}" data-rep-ms="{ms}">{body}</section>')
-    if rc.red is not None:
+    if rc.red is not None and not (succeeded and key in _REPORT_SELF_REDACTED):
         out = rc.red.redact_html(out)
     return out, succeeded
 
@@ -15687,13 +15687,28 @@ def _report_build_calibration_log(rc: _ReportCtx) -> str:
                 days.add(story._hub_clock(int(e["ts"] * 1e6), ledger, "%Y-%m-%d") if ledger is not None else file_day)
             except (OverflowError, OSError, ValueError):
                 days.add(file_day)
-    data = [log._build(day, filters={"author": "", "q": ""}, gate_wait=True, lazy_ok=False)
+    # S10 walk 2: the page's own day build, gates included only as far as
+    # REPORT_GATE_BUDGET_S allows (a cold archive's thousands of gates took
+    # ~40 s); the rest are checked in the background, as on the page, and
+    # the file says how many were not checked yet
+    deadline = time.monotonic() + REPORT_GATE_BUDGET_S
+    data = [log._build(day, filters={"author": "", "q": ""}, gate_wait=deadline, lazy_ok=False)
             for day in sorted(days or {log._today()})]
+    story._start_gates()
     data = [d for d in data if d["cards"] or d["loose"] or d.get("unrecorded")
             or (d.get("history") or {}).get("state") in ("building", "unavailable")] or data[-1:]
     red = _report_log_redactor(rc, data) if rc.red is not None else None
-    html = render_template("_report_calibration_log.html", days=data, building=building)
+    html = render_template("_report_calibration_log.html", days=data, building=building,
+                           gates_pending=sum(int(d.get("gates_pending") or 0) for d in data))
     return red.redact_html(html) if red is not None else html
+
+
+#: S10 walk 2: how long the report's Calibration log waits for gates the page
+#: has not checked yet before it leaves the rest to the background check
+REPORT_GATE_BUDGET_S = 5.0
+#: sections whose builder redacts with a widened redactor (a superset of the
+#: report's): the section pass would only repeat it (~1 s per 12 MB)
+_REPORT_SELF_REDACTED = frozenset({"calibration_log"})
 
 
 def _report_log_redactor(rc: _ReportCtx, days: list[dict]):
