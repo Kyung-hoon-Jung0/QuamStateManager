@@ -12182,6 +12182,42 @@ def _vh_not_kept_view(ans: dict, key: str) -> list[dict]:
     return out
 
 
+def _vh_runs_text(skipped: list[dict]) -> str:
+    """The runs of a skipped excursion, compactly: "run #7", "runs #4-#6",
+    "9 runs from #1534 to #1549"."""
+    ids = sorted({s["run_id"] for s in skipped if s.get("run_id") is not None})
+    if not ids:
+        return f"{len(skipped)} saves"
+    if len(ids) == 1:
+        return f"run #{ids[0]}"
+    if ids[-1] - ids[0] + 1 == len(ids):
+        return f"runs #{ids[0]}-#{ids[-1]}"
+    return f"{len(ids)} runs from #{ids[0]} to #{ids[-1]}"
+
+
+def _vh_since_view(ans: dict, key: str, uid_roots=None, uid_memo=None, *,
+                   in_force: bool = False) -> dict | None:
+    """P0-1: where the value's stay on the chip began, when it is older than
+    its newest change (``value_history.read``'s ``since``: the holder's own
+    points; ``in_force``: the value in force through the path's pointers) --
+    with the plain sentence every surface says about the excursion it skipped."""
+    s = ans["rows"][key].get("since_in_force" if in_force else "since")
+    if not s:
+        return None
+    a = s["point"]
+    info = _vh_present(a, uid_roots if uid_roots is not None else [], uid_memo if uid_memo is not None else {})
+    runs = _vh_runs_text(s["skipped"])
+    return {"t": a["t"], "eid": a["eid"], "run_id": a.get("run_id"), "label": info["label"],
+            "runs": runs, "n": len(s["skipped"]),
+            "note": f"{runs} saved other values that no later read of the chip confirmed"}
+
+
+def _vh_since_brief(ans: dict, key: str) -> dict | None:
+    """The agent's copy of :func:`_vh_since_view`."""
+    v = _vh_since_view(ans, key)
+    return {k: v[k] for k in ("t", "run_id", "note")} if v else None
+
+
 def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
     uid_roots, uid_memo = _uid_roots(), {}
     tgt = ans["targets"][key]
@@ -12201,6 +12237,7 @@ def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
             "renames": _vh_rename_view(row.get("renames") or [], tgt.get("holder")),
             "ledger": ans["ledger"], "chart": chart if len(chart) >= 2 else [],
             "not_kept": _vh_not_kept_view(ans, key),
+            "since": _vh_since_view(ans, key, uid_roots, uid_memo),
             "current_display": cur_display,
             "current_value": current if not isinstance(current, (dict, list)) else None}
 
@@ -12255,6 +12292,9 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
             "points": [{**{k: p.get(k) for k in keep},
                         **({"source": p["source"]} if p.get("source") else {})} for p in pts],
             "total": ans["rows"][key]["total"], "notes": ans["notes"].get(key) or [],
+            # P0-1: where the value's stay on the chip began, when an excursion of
+            # unconfirmed saves came back to it
+            "since": _vh_since_brief(ans, key),
             # P0-1: saved values the chip never kept, left out of points / in_force
             "not_kept": [{"t": n.get("t"), "value": n.get("value"), "old": n.get("old"),
                           "run_id": n.get("run_id"), "experiment": n.get("experiment"),
@@ -12321,6 +12361,7 @@ def _vh_column_view(ans: dict, path_map: dict[str, str], *, label: str, unit: st
             "chips": pts[:CH_MAX_CHIPS], "more": max(0, len(pts) - CH_MAX_CHIPS),
             "total": ans["rows"][row_id]["total"],
             "not_kept_n": len(ans["rows"][row_id].get("not_kept") or ()),
+            "since": _vh_since_view(ans, row_id, uid_roots, uid_memo),
             "differs": any(n["code"] == "current_differs" for n in ans["notes"].get(row_id) or []),
             "via": _vh_via_view(ans, row_id, uid_roots, uid_memo),
         })
@@ -17944,8 +17985,14 @@ def _hub_metric_meta(table) -> dict:
     table.fact("currents", tuple(dict.fromkeys(wanted)))      # matches_current reads them
     rows = ans["rows"]
 
+    def anchor(dp: str) -> dict:
+        # P0-1: the start of the value's stay on the chip (an excursion of
+        # unconfirmed saves that came back to it is not a change of the chip)
+        s = rows[dp].get("since_in_force")
+        return s["point"] if s else rows[dp]["effective"][-1]
+
     def entry_for(paths: list[str]) -> dict | None:
-        newest = [rows[dp]["effective"][-1] for dp in paths if rows[dp]["effective"]]
+        newest = [anchor(dp) for dp in paths if rows[dp]["effective"]]
         if not newest:
             return None
         top = max(p["ord"] for p in newest)
@@ -17968,11 +18015,14 @@ def _hub_metric_meta(table) -> dict:
         # S10 C5 (C3 review): no "appeared" on the ledger -> restored: the newest change made
         # some leaf a value for the FIRST time (null, absent or removed before) -- its first
         # record, never "unchanged since history began" and never just "last changed"
+        def appeared_at(dp):
+            eff = rows[dp]["effective"]
+            a = anchor(dp)
+            at = next(i for i, p in enumerate(eff) if p is a)
+            return (a["ord"] == top and not a["removed"]
+                    and all(p["removed"] or p["value"] is None for p in eff[:at]))
         appeared = not first and not best["removed"] and any(
-            rows[dp]["effective"] and rows[dp]["effective"][-1]["ord"] == top
-            and not rows[dp]["effective"][-1]["removed"]
-            and all(p["removed"] or p["value"] is None for p in rows[dp]["effective"][:-1])
-            for dp in paths)
+            rows[dp]["effective"] and appeared_at(dp) for dp in paths)
         entry = {"ts": best["t"], "eid": best["eid"], "leaves": len(newest),
                  "first": first, "appeared": appeared,
                  "matches_current": matches, "gone": best["removed"],
@@ -17983,6 +18033,9 @@ def _hub_metric_meta(table) -> dict:
                  # named only on proof (docs/283 §1.2)
                  "run": best["run_id"] if proven else None,
                  "writer": {"run": best["run_id"], "uid": info["uid"]} if proven else None}
+        notes = [v["note"] for v in (_vh_since_view(ans, dp, in_force=True) for dp in paths) if v]
+        if notes:
+            entry["since_note"] = "; ".join(dict.fromkeys(notes)) + "."
         if len(paths) == 1 and not best["removed"]:
             value = best["value"]
             if isinstance(value, float) and not math.isfinite(value):

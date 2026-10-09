@@ -77,6 +77,8 @@ DIFFERS = "differs"
 
 #: every verdict a judged run change can have
 VERDICTS = (CONFIRMED, CONTRADICTED, OPEN, REMEASURED, DIFFERS)
+#: the verdicts that leave a run's saved value unconfirmed on the chip
+UNCONFIRMED = frozenset((OPEN, REMEASURED, CONTRADICTED, DIFFERS))
 
 #: the event classes that read the chip (the ``witnesses`` argument)
 RUN, OBSERVED, SM = "run", "observed", "sm"
@@ -519,17 +521,96 @@ def verdicts(index, conn, *, witnesses: frozenset = ALL_WITNESSES,
 
 
 def of(conn, index) -> Verdicts:
-    """THE verdicts every reader uses: built once per index (a folder view's
-    lane or the ledger's own) and kept on it -- dropped with it when the
-    ledger grows (``hub_index.extend_index`` drops every view). Each holder is
-    judged when first asked about, through this snapshot's connection."""
-    key = (len(index.eids), index.eids[-1] if index.eids else 0)
+    """THE verdicts every reader uses: one per lane of the ledger (a folder
+    view's lane, or the ledger's own events), kept on the zone-free index and
+    shared by every zone view of it -- the drawer, Chip Status and the
+    Calibration log read in different zones, never in different lanes. Dropped
+    with the views when the ledger grows (``hub_index.extend_index``). Each
+    holder is judged when first asked about, through this snapshot's
+    connection."""
+    lane = getattr(index, "lane", None)
+    key = (len(index.eids), index.eids[-1] if index.eids else 0,
+           lane.digest if lane is not None else None)
     got = index.__dict__.get("_witness")
     if got is None or got[0] != key:
-        got = (key, verdicts(index, conn, lazy=True))
+        zone_view = lane.base if lane is not None else index
+        root = zone_view.__dict__.get("_base", zone_view)
+        shared = root.__dict__.setdefault("_witness_shared", {})
+        v = shared.get(key)
+        if v is None:
+            v = shared[key] = verdicts(index, conn, lazy=True)
+        got = (key, v)
         index.__dict__["_witness"] = got
     got[1].conn = conn
     return got[1]
+
+
+def since(seq, same) -> tuple[int, list[int]]:
+    """Where the current value's stay on the chip began [derived].
+
+    *seq*: a value's points, oldest first, as ``(value, verdict)``
+    (``verdict`` None: not a judged run change). The anchor is the OLDEST
+    point of the newest value's run of equal values, reached by skipping back
+    over every excursion whose points are all unconfirmed
+    (:data:`UNCONFIRMED`) and that returns EXACTLY (*same*) to that value:
+    such an excursion saved other values that no later read of the chip
+    confirmed. A confirmed point -- or any point that is not a judged run
+    change -- inside an excursion ends the search (the newest change is then
+    the anchor, as before). Returns ``(anchor index, skipped indices)``; the
+    points themselves stay listed, only "since" moves. -1 for no points."""
+    if not seq:
+        return -1, []
+    j = len(seq) - 1
+    v = seq[j][0]
+    skipped: list[int] = []
+    while j > 0:
+        k, between, found = j - 1, [], None
+        while k >= 0:
+            val, code = seq[k]
+            if same(val, v):
+                found = k
+                break
+            if code not in UNCONFIRMED:
+                break
+            between.append(k)
+            k -= 1
+        if found is None:
+            break
+        skipped.extend(between)
+        j = found
+    return j, sorted(skipped)
+
+
+def since_positions(conn, index, pids) -> dict:
+    """``{pid: index position of its anchor}`` for the holders whose
+    :func:`since` anchor is older than their newest row -- over the chip's
+    series (the pairs the verdicts leave out removed) and their verdicts.
+    The calibration age reads it: a value's excursion that returned is not
+    a change of the chip."""
+    pids = [p for p in pids if p is not None]
+    if not pids:
+        return {}
+    v = of(conn, index)
+    many = len(pids) > _PRIME_ALL_FROM
+    v.prime(None if many else pids)
+    rows = _rows(conn, index, None if many else pids)
+    out = {}
+    for pid in pids:
+        seq = rows.get(pid)
+        if not seq:
+            continue
+        drop = v.drop(pid)
+        kept = [r for r in seq if r[1] not in drop] if drop else seq
+        if len(kept) < 3:
+            continue
+        j, skipped = since([(r[3], v.code(r[1], pid)) for r in kept], _equal)
+        if skipped:
+            out[pid] = kept[j][0]
+    return out
+
+
+def _equal(a, b) -> bool:
+    return a == b
 
 
 def describe(index, ev: dict | None, eid: int) -> dict:

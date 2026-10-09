@@ -294,6 +294,8 @@ window.ChipStatus.metaInfo = (function () {
             lines.push((wrote ? 'Written by: ' : 'Recorded: ') + who);
             tag = whenShort(ms) + (e.run != null ? ' · #' + e.run : '');
         }
+        // P0-1: the value's stay began before its newest change -- say why
+        if (e.since_note) lines.push(e.since_note);
         (e.flags || []).forEach(function (flag) { lines.push(flag); });
         if (e.undone) lines.push('A later undo took this write back.');
         if (typeof ctx.stamp === 'number' && isFinite(ctx.stamp)) {

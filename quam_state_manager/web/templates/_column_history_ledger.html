@@ -42,7 +42,8 @@
         {% if row.svg %}<svg class="history-cell-spark ch-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{{ row.svg | safe }}</svg>
         {% else %}<span class="ch-nospark">—</span>{% endif %}
       </td>
-      <td class="ch-current" title="{{ row.current_fill }}{% if row.differs %} — not the newest recorded value (an edit not applied yet, or a change made outside SM since the last run){% endif %}"><code>{{ row.current }}</code>{% if row.differs %} <span class="vh-flag">not recorded yet</span>{% endif %}</td>
+      <td class="ch-current" title="{{ row.current_fill }}{% if row.differs %} — not the newest recorded value (an edit not applied yet, or a change made outside SM since the last run){% endif %}"><code>{{ row.current }}</code>{% if row.differs %} <span class="vh-flag">not recorded yet</span>{% endif %}{% if row.since %}
+        <span class="vh-since-chip" data-since-eid="{{ row.since.eid }}" title="On the chip since {{ row.since.t | format_ts_zone }} ({{ row.since.label }}): {{ row.since.note }}.">since {{ row.since.t | ts_local(short=True) }}{% if row.since.run_id is not none %} &middot; #{{ row.since.run_id }}{% endif %}</span>{% endif %}</td>
       <td class="ch-chips">
         {% if row.via %}<span class="vh-chip-via" title="{{ row.via[0].from_path }} = {{ row.via[0].pointer }}">via {{ row.via[0].alias }} &rarr; {{ row.via[0].holder }}</span>{% endif %}
         {% for p in row.chips %}

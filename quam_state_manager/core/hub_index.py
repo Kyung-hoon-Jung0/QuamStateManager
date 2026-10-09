@@ -194,6 +194,9 @@ class LedgerIndex:
                                self.run_id, self.experiment, self.flags, self.positions, self.names,
                                postings, self.paths, self.search_paths, self.path_postings, self.keys,
                                self.live)
+            # P0-1: what does not depend on the zone (the witness verdicts of
+            # a lane) is kept once, on this zone-free index
+            view.__dict__["_base"] = self
             views[zone] = view
         return view
 
@@ -384,6 +387,7 @@ def extend_index(conn, prev: LedgerIndex | None) -> LedgerIndex:
                 arr.extend(sorted(ids))     # new eids are all larger: still sorted
     prev.__dict__.pop("_views", None)       # day postings follow the new events
     prev.__dict__.pop("_folder_views", None)    # S10 C1.5: and every folder view
+    prev.__dict__.pop("_witness_shared", None)  # P0-1: and every lane's verdicts
     if "_bytes" in prev.__dict__:
         prev.__dict__["_bytes"] += 160 * len(new) + 260 * new_paths + 16 * len(added)
     return prev

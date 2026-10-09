@@ -619,14 +619,25 @@ class LedgerTable:
                 # P0-1: a run's value the chip never kept did not calibrate it,
                 # and the run that still found the old value did not either
                 verdicts = hub_witness.of(conn, index).prime()
+                # ... nor did an excursion of unconfirmed saves that came back to
+                # the value the chip held (the value's "since", hub_witness.since)
+                cut = hub_witness.since_positions(conn, index, [
+                    pid for path, pid in index.paths.items()
+                    if path.startswith(("qubits.", "qubit_pairs."))])
+
+                def skip(pid, eid) -> bool:
+                    if pid is None:
+                        return False
+                    at = cut.get(pid)
+                    return eid in verdicts.drop(pid) or (at is not None and index.positions.get(eid, -1) > at)
                 lane = getattr(index, "lane", None)
                 if lane is not None:
-                    rows = self._lane_change_times(conn, index, lane, where, CHIP_UNCERTAIN, verdicts)
+                    rows = self._lane_change_times(conn, index, lane, where, CHIP_UNCERTAIN, skip)
                 elif self._lineage is None:
                     best: dict = {}
                     for path, pid, eid, t in conn.execute("SELECT p.path, c.pid, e.eid, e.t_utc_us" + where,
                                                           (CHIP_UNCERTAIN,)):
-                        if eid not in verdicts.drop(pid) and (path not in best or t > best[path]):
+                        if not skip(pid, eid) and (path not in best or t > best[path]):
                             best[path] = t
                     rows = list(best.items())
                 else:
@@ -640,7 +651,7 @@ class LedgerTable:
                             best[now] = t
                     for path, pid, eid, t in conn.execute(
                             "SELECT p.path, c.pid, e.eid, e.t_utc_us" + where, (CHIP_UNCERTAIN,)):
-                        if eid in verdicts.drop(pid):
+                        if skip(pid, eid):
                             continue
                         if not ren.active:
                             keep(path, t)
@@ -670,11 +681,11 @@ class LedgerTable:
             return out
         return self.part(("run_change_times",), compute)
 
-    def _lane_change_times(self, conn, index, lane, where, uncertain, verdicts):
+    def _lane_change_times(self, conn, index, lane, where, uncertain, skip):
         """:meth:`run_change_times` through a folder view (S10 C1.5): only
         the lane's runs, each read by the lane's rows (a seam's own rows in
         place of the stored ones), its flags and first event as the lane
-        sees them -- and (P0-1) none the chip never kept."""
+        sees them -- and (P0-1) none the chip never kept (*skip*)."""
         from quam_state_manager.core.hub_store import CHIP_UNCERTAIN
         best: dict = {}
         ren = None
@@ -691,7 +702,7 @@ class LedgerTable:
 
         def keep(path, eid):
             t = runs.get(eid)
-            if t is not None and eid in verdicts.drop(index.paths.get(path)):
+            if t is not None and skip(index.paths.get(path), eid):
                 return
             now = ren.holder(path, ren.era_of(eid)) if ren is not None else path
             if t is not None and now is not None and (now not in best or t > best[now]):

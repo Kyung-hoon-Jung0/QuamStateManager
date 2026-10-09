@@ -963,7 +963,10 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
     * the live tail: the holder's newest change with no witness yet is
       decided by the chip's value now (*live*, :data:`ABSENT` when not known)
       -- equal, it is confirmed; else it was never kept: it leaves the points
-      and the in-force series and joins ``not_kept``, witnessed by the chip.
+      and the in-force series and joins ``not_kept``, witnessed by the chip;
+    * ``since``: where the current value's stay on the chip began when an
+      excursion of unconfirmed saves came back to it (``hub_witness.since``):
+      the anchor point and the skipped points (which stay listed).
 
     *marks* names every decision (a key's serial carries them)."""
     from quam_state_manager.core import hub_witness
@@ -989,6 +992,7 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
     kept_nk = row.get("not_kept") or []
     not_kept = kept_nk
     total = row["total"]
+    dropped_newest = False
     if points and live is not _ABSENT:
         p = points[-1]
         holder = p.get("recorded_as") or here
@@ -1003,6 +1007,7 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
                              if e["eid"] == p["eid"] and e["op"] != "via" else e for e in effective]
             else:
                 points = points[:-1]
+                dropped_newest = True
                 effective = [e for e in effective
                              if not (e["eid"] == p["eid"] and e["op"] != "via"
                                      and e.get("holder") == holder)]
@@ -1011,9 +1016,36 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
                 gone.update(witness=hub_witness.CONTRADICTED, holder=holder,
                             by={"kind": "live", "value": live, "removed": False})
                 not_kept = list(kept_nk) + [gone]
-    if points is row["points"] and effective is row["effective"] and not_kept is kept_nk:
+    # "since": the oldest point of the current value's stay, past every
+    # excursion of unconfirmed saves that came back to it (hub_witness.since)
+    # -- over the holder's own points (every one, not only the newest shown)
+    # and over the in-force series through the path's pointers
+    every = row.get("every_point") or row["points"]
+    if dropped_newest:
+        every = every[:-1]                # the live tail left the newest out
+
+    def code_of(p, holder):
+        if p["kind"] != "run" or p["provenance"] == "first_record":
+            return None
+        c = verdicts.code(p["eid"], _pid_of(index, holder))
+        return None if c == hub_witness.CONFIRMED else c
+
+    def since_of(seq, codes):
+        j, skipped = hub_witness.since([(_ABSENT if e["removed"] else e["value"], c)
+                                        for e, c in zip(seq, codes)], _same_or_absent)
+        if not skipped:
+            return None
+        marks.append(("since", seq[j]["eid"], len(skipped)))
+        return {"point": seq[j],
+                "skipped": [{"eid": seq[i]["eid"], "run_id": seq[i].get("run_id"),
+                             "experiment": seq[i].get("experiment"), "t": seq[i]["t"]} for i in skipped]}
+    since = since_of(every, [code_of(p, p.get("recorded_as") or here) for p in every])
+    since_in_force = since_of(effective, [e.get("witness") for e in effective])
+    if (points is row["points"] and effective is row["effective"] and not_kept is kept_nk
+            and since is None and since_in_force is None):
         return row, ()
-    return dict(row, points=points, effective=effective, not_kept=not_kept, total=total), tuple(marks)
+    return (dict(row, points=points, effective=effective, not_kept=not_kept, total=total, since=since,
+                 since_in_force=since_in_force), tuple(marks))
 
 
 def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[str, dict],
@@ -1110,6 +1142,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
             was = _segment_at(hsegs[key], at)
             p["recorded_as"] = was if was != here else None
         total = len(pts)
+        every_point = pts                 # P0-1: "since" reads every point, not the newest N
         if limit is not None and len(pts) > limit:
             pts = pts[-limit:] if limit else []
         latest = segs[key][-1][1] if segs[key] else None
@@ -1137,6 +1170,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
                                     else None))
         out_rows[key] = {
             "points": pts, "total": total, "retargets": retargets,
+            **({"every_point": every_point} if every_point is not pts else {}),
             "not_kept": [nk_point(*r) for r in nk_raw[key]],
             "effective": [dict(p, holder=_segment_at(segs[key], index.positions[p["eid"]]))
                           for p in points(eff[key])],

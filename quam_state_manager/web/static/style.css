@@ -12514,6 +12514,9 @@ tr.vh-undone .ba-new { text-decoration: line-through; }
 .ch-not-kept-flag { display: block; width: max-content; }
 tr.ph-not-kept .ba-new, li.jr-not-kept .ba-new { text-decoration: line-through; }
 .jr-run-not-kept { color: var(--color-text-muted); }
+.vh-since { margin: 0 0 .3rem; font-size: .7rem; color: var(--color-text-muted);
+    border-left: 3px solid var(--pico-muted-border-color); padding: .1rem .4rem; }
+.vh-since-chip { display: block; font-size: .6rem; color: var(--color-text-muted); white-space: nowrap; }
 
 /* inspector-row button — INSIDE the edit box (search-icon pattern), never a
    separate element beside it. .fh-host scopes this to the qubit/pair detail

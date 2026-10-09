@@ -17,6 +17,11 @@
 {% if current_display and current_display != '—' %}
 <div class="fh-currentline">now: <code>{{ current_display }}</code></div>
 {% endif %}
+{% if since %}
+{# P0-1: the value's stay on the chip began before its newest change: the
+   excursion between saved other values no later read of the chip confirmed #}
+<p class="vh-since" data-since-eid="{{ since.eid }}">On the chip since <b>{{ since.t | ts_local(short=True) }}</b> ({{ since.label }}): {{ since.note }}.</p>
+{% endif %}
 {% if via %}
 <div class="vh-via">
   {% for hop in via %}
