@@ -719,6 +719,31 @@ def _listed_foreign(binding, listed: set) -> dict[str, int]:
         return out
 
 
+def _reverted_applies(store: _Ledger) -> frozenset:
+    """S10 walk: the SM writes a later "Revert last apply" took back. That
+    press stages the chip as it was right before the apply and writes it, so
+    the write it reverted is the newest landed write before it whose BASE
+    content (the chip right before it) is exactly what the revert wrote.
+    Content, never a guess by time: an edit made between staging and applying
+    the revert matches nothing and marks nothing."""
+    out: set = set()
+    try:
+        reverts = store.conn.execute(
+            "SELECT e.ord, s.post_chash FROM events e JOIN sm_events s USING(eid) "
+            "WHERE e.src='revert_last_apply' AND s.outcome='landed' AND s.post_chash IS NOT NULL").fetchall()
+        for order, post in reverts:
+            row = store.conn.execute(
+                "SELECT e.eid FROM events e JOIN sm_events s USING(eid) WHERE s.outcome='landed' "
+                "AND e.ord < ? AND s.base_chash = ? AND e.kind IN ("
+                + ",".join("'%s'" % k for k in SM_KINDS if k not in ("undo", "redo"))
+                + ") ORDER BY e.ord DESC LIMIT 1", (order, post)).fetchone()
+            if row is not None:
+                out.add(row[0])
+    except sqlite3.OperationalError:          # a ledger without SM writes
+        return frozenset()
+    return frozenset(out)
+
+
 def _summary(store: _Ledger, directory: Path, snapshots, st: dict, binding=None) -> dict:
     """The parts of a read that depend on the whole ledger and the whole
     snapshot list (not on the page): counts and which snapshots it holds."""
@@ -735,7 +760,7 @@ def _summary(store: _Ledger, directory: Path, snapshots, st: dict, binding=None)
     chashes, pending = hashes_for(directory).lookup(snapshots)
     covered = coverage(store, snapshots, chashes)
     return {"no_runs": False, "has_runs": has_runs, "count": count, "uncertain": uncertain,
-            "foreign": foreign,
+            "foreign": foreign, "reverted": _reverted_applies(store),
             "pending": set(pending), "covered": len(covered), "covered_by": dict(covered),
             "older": frozenset(s.timestamp for s in snapshots if s.timestamp not in covered),
             "snapshot_chashes": chashes,
@@ -808,54 +833,67 @@ def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0
         return out
     binding = binding or SimpleNamespace(directory=directory)
     try:
-        key = (str(directory), _version_token(binding), tuple(s.timestamp for s in snapshots))
-        with _ledger(directory) as store:
-            summary = _recall(_SUMMARIES, key)
-            if summary is None:
-                summary = _summary(store, directory, snapshots, st, binding)
-                if not summary.get("pending"):
-                    _remember(_SUMMARIES, key, summary)
-            out["has_runs"] = summary["has_runs"]
-            out["observed"] = summary["observed"]
-            out["snapshot_chashes"] = summary["snapshot_chashes"]
-            out["writes"] = summary["writes"]
-            count, uncertain, pending = summary["count"], summary["uncertain"], summary["pending"]
-            # this request's own snapshot objects (a label or a pin edited
-            # since is drawn as it is now; the cache holds stamps only)
-            older = [s for s in snapshots if s.timestamp in summary["older"] or s.timestamp in keep]
-            # the newest offset+limit state-bearing events, through the timeline
-            want = offset + limit
-            events: list[dict] = []
-            cursor = None
-            page = max(50, min(want, 500))
-            while len(events) < want:
-                # S10 C1.5: a listing keeps every row; another folder's is labelled
-                res = hub_query.timeline(binding, limit=page, cursor=cursor, foreign="label")
-                events.extend(e for e in res["events"]
-                              if has_state(e) and not e["flags"] & CHIP_UNCERTAIN)
-                cursor = res["cursor"]
-                if not cursor:
-                    break
-            rows = [("event", order_key(e), e) for e in events[:want]]
-            rows += [("legacy", (_snapshot_instant(s.timestamp), -1), s) for s in older]
-            rows.sort(key=lambda r: r[1], reverse=True)
-            window = rows[offset:offset + limit]
-            shown = []
-            for kind, _key, item in window:
-                if kind == "event":
-                    why_diff, why_write = availability(store, item)
-                    shown.append({"legacy": False, "event": item, "ref": ref_of(item),
-                                  "stamp": stamp_of(item["t_utc_us"]),
-                                  "why_diff": why_diff, "why_write": why_write})
-                else:
-                    shown.append({"legacy": True, "snapshot": item, "ref": item.timestamp,
-                                  "stamp": item.timestamp, "why_diff": None, "why_write": None,
-                                  "pending": item.timestamp in pending})
-            out.update(rows=shown, total=count + len(older), legacy_total=len(older),
-                       pending=len(pending), uncertain=uncertain, events=count,
-                       foreign=dict(summary.get("foreign") or {}),
-                       covered_by=dict(summary.get("covered_by") or {}),
-                       covered=summary["covered"], older=frozenset(s.timestamp for s in older))
+        for attempt in range(3):
+            token = _version_token(binding)
+            key = (str(directory), token, tuple(s.timestamp for s in snapshots))
+            with _ledger(directory) as store:
+                summary = _recall(_SUMMARIES, key)
+                if summary is None:
+                    summary = _summary(store, directory, snapshots, st, binding)
+                    if not summary.get("pending"):
+                        _remember(_SUMMARIES, key, summary)
+                count, uncertain, pending = summary["count"], summary["uncertain"], summary["pending"]
+                # the newest offset+limit state-bearing events, through the timeline
+                want = offset + limit
+                events: list[dict] = []
+                cursor = None
+                page = max(50, min(want, 500))
+                while len(events) < want:
+                    # S10 C1.5: a listing keeps every row; another folder's is labelled
+                    res = hub_query.timeline(binding, limit=page, cursor=cursor, foreign="label")
+                    events.extend(e for e in res["events"]
+                                  if has_state(e) and not e["flags"] & CHIP_UNCERTAIN)
+                    cursor = res["cursor"]
+                    if not cursor:
+                        break
+                if attempt < 2 and _version_token(binding) != token:
+                    # S10 walk: the ledger moved under this read (a snapshot just
+                    # imported): the counts and the rows must come from ONE
+                    # version, or the new snapshot was listed twice ("2 older
+                    # snapshots", its event row and its older row) -- read again
+                    continue
+                out["has_runs"] = summary["has_runs"]
+                out["observed"] = summary["observed"]
+                out["snapshot_chashes"] = summary["snapshot_chashes"]
+                out["writes"] = summary["writes"]
+                # an observed event listed here IS its snapshot: never its own older row too
+                seen = {str(e.get("t_src") or "") for e in events[:want] if e.get("kind") == OBSERVED_KIND}
+                # this request's own snapshot objects (a label or a pin edited
+                # since is drawn as it is now; the cache holds stamps only)
+                older = [s for s in snapshots if s.timestamp in keep
+                         or (s.timestamp in summary["older"] and s.timestamp not in seen)]
+                rows = [("event", order_key(e), e) for e in events[:want]]
+                rows += [("legacy", (_snapshot_instant(s.timestamp), -1), s) for s in older]
+                rows.sort(key=lambda r: r[1], reverse=True)
+                window = rows[offset:offset + limit]
+                shown = []
+                for kind, _key, item in window:
+                    if kind == "event":
+                        why_diff, why_write = availability(store, item)
+                        shown.append({"legacy": False, "event": item, "ref": ref_of(item),
+                                      "stamp": stamp_of(item["t_utc_us"]),
+                                      "why_diff": why_diff, "why_write": why_write})
+                    else:
+                        shown.append({"legacy": True, "snapshot": item, "ref": item.timestamp,
+                                      "stamp": item.timestamp, "why_diff": None, "why_write": None,
+                                      "pending": item.timestamp in pending})
+                out.update(rows=shown, total=count + len(older), legacy_total=len(older),
+                           pending=len(pending), uncertain=uncertain, events=count,
+                           foreign=dict(summary.get("foreign") or {}),
+                           reverted=summary.get("reverted") or frozenset(),
+                           covered_by=dict(summary.get("covered_by") or {}),
+                           covered=summary["covered"], older=frozenset(s.timestamp for s in older))
+            break
     except hub_sync.Building as exc:
         out.update(mode="building", status=getattr(exc, "status", None) or st)
     except NotReady:

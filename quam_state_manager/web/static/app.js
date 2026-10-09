@@ -7503,7 +7503,58 @@ window.ValueDelta = (function () {
         return groupInt(intPart) + (frac ? "." + frac : "");
     }
 
+    /* S10 walk (v1.2.0): the ON-SCREEN magnitude, exactly as
+       core.value_delta.compact_magnitude -- SIG_DIGITS significant digits,
+       half-up on the exact digits (never fewer than the integer digits),
+       trailing zeros dropped, grouped fixed-point in [1e-4, 1e15), else
+       exponential. Adjacent drawer rows read "-0.000001489640122237915" next
+       to "-2.420e-07"; one magnitude now reads in one notation. */
+    var SIG_DIGITS = 6;
+    var COMPACT_LOW_EXP = -4;  // |v| <  1e-4  (mirrors _COMPACT_LOW)
+    function roundKeep(digits, keep) {
+        if (digits.length <= keep) return { digits: digits, dropped: 0 };
+        var head = digits.slice(0, keep);
+        var up = digits.charCodeAt(keep) >= 53;          // the next digit is 5..9
+        return { digits: up ? (BigInt(head) + 1n).toString() : head,
+                 dropped: digits.length - keep };
+    }
+    function fixedString(digits, scale) {
+        var intPart, frac;
+        if (scale <= 0) {
+            intPart = digits + new Array(1 - scale).join("0");
+            frac = "";
+        } else {
+            while (digits.length <= scale) digits = "0" + digits;
+            intPart = digits.slice(0, digits.length - scale);
+            frac = digits.slice(digits.length - scale).replace(/0+$/, "");
+        }
+        return groupInt(intPart) + (frac ? "." + frac : "");
+    }
+    function compactMagnitude(mant, scale) {
+        if (mant === 0n) return "0";
+        var digits = (mant < 0n ? -mant : mant).toString();
+        var expo = digits.length - scale;
+        if (expo >= SCI_HIGH_EXP || expo <= COMPACT_LOW_EXP) {
+            var r = roundKeep(digits, SIG_DIGITS);
+            var e = expo - 1 + (r.digits.length > Math.min(digits.length, SIG_DIGITS) ? 1 : 0);
+            var m = r.digits.replace(/0+$/, "");
+            return m.charAt(0) + (m.length > 1 ? "." + m.slice(1) : "")
+                 + "e" + (e < 0 ? "-" : "+") + (Math.abs(e) < 10 ? "0" : "") + Math.abs(e);
+        }
+        var decimals = Math.max(0, SIG_DIGITS - expo);
+        if (scale > decimals) {
+            var r2 = roundKeep(digits, expo + decimals);
+            return fixedString(r2.digits, scale - r2.dropped);
+        }
+        return fixedString(digits, scale);
+    }
+
     function formatDelta(mant, scale) {
+        if (mant === 0n) return "0";
+        return (mant < 0n ? "-" : "+") + compactMagnitude(mant, scale);
+    }
+    /* every digit the subtraction produced: the hover title */
+    function formatDeltaExact(mant, scale) {
         if (mant === 0n) return "0";
         return (mant < 0n ? "-" : "+") + formatMagnitude(mant, scale);
     }
@@ -7534,7 +7585,8 @@ window.ValueDelta = (function () {
         var dir = dm > 0n ? "up" : (dm < 0n ? "down" : "same");
         var coerced = (typeof oldValue === "string") || (typeof newValue === "string");
         var bothText = (typeof oldValue === "string") && (typeof newValue === "string");
-        var title = "difference: " + text + (pctText ? " (" + pctText + ")" : "");
+        // the screen shows SIG_DIGITS digits; the hover keeps every digit
+        var title = "difference: " + formatDeltaExact(dm, al.scale) + (pctText ? " (" + pctText + ")" : "");
         if (coerced) title += bothText ? " — both sides are stored as text" : " — one side is stored as text";
         if (dm === 0n) title = "same numeric value" + (coerced && !bothText ? " (stored type differs)" : "");
         return { delta: toNumber(dm, al.scale), text: text, pct: pct,

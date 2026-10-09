@@ -4006,6 +4006,7 @@ input.edit-input {
 /* S10 walk: the unreadable end state's one manual press, beside its words */
 .vh-wait .vh-try-again { margin: 0 0 0 0.5rem; }
 .hub-notes .vh-try-again { margin: 0 0 0.4rem; }
+.jr-history-status .vh-try-again { margin: 0 0 0 0.5rem; }
 .hp-snapshot-note, .sh-snapshot-note { margin: 0.3rem 0.8rem; font-size: 0.85em; }
 .sh-snapshot-note { margin: 0 0 0.4rem; }
 /* S10 walk: first / prev / page box / next / last */
@@ -12693,6 +12694,8 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .ch-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
 #hub-folder-modal { z-index: 9700; }
 #hub-folder-body { overflow: auto; min-height: 0; }
+/* S10 walk: the dialog title sits in the card header beside its x */
+.hub-folder-title { font-size: 1.05rem; margin: 0; }
 .ch-card {
     position: relative; z-index: 1;
     background: var(--pico-card-background-color);
@@ -14598,12 +14601,20 @@ td.cell-live-stale .cell-live-now {
    hides MORE. */
 .topbar > nav > ul:first-child > li { flex-shrink: 0; }
 .topbar.tb-fit-1 .wb-link-text, .topbar.tb-fit-1 .agent-pill-res { display: none; }
-.topbar.tb-fit-2 .agent-pill-mode { display: none !important; }
-.topbar.tb-fit-2 .auto-apply-pill .aa-long, .topbar.tb-fit-2 .state-version-chip .state-version-id,
-.topbar.tb-fit-2 .state-version-chip .state-version-none { display: none; }
-.topbar.tb-fit-2 { --search-box-width: 200px; }
-.topbar.tb-fit-3 .app-title { font-size: .9rem; }
-.topbar.tb-fit-3 { --search-box-width: 150px; }
+/* S10 walk (round 3): space is freed BEFORE any label goes -- with one edit
+   staged at 1600 px the bar dropped "Versions", "-Sync" and "ask-writes" while
+   every item still carried Pico's 10.5 px side padding and the full-size title.
+   Level 1 tightens the items, level 2 shrinks the title and the chip name;
+   the words go at level 3. */
+.topbar.tb-fit-1 > nav > ul > li { padding-left: .15rem; padding-right: .15rem; }
+/* .9rem is no smaller than the title already is at the default UI scale */
+.topbar.tb-fit-2 .app-title { font-size: .72rem; }
+.topbar.tb-fit-2 .sync-control .state-status-name { max-width: 3.5rem; }
+.topbar.tb-fit-3 .agent-pill-mode { display: none !important; }
+.topbar.tb-fit-3 .auto-apply-pill .aa-long, .topbar.tb-fit-3 .state-version-chip .state-version-id,
+.topbar.tb-fit-3 .state-version-chip .state-version-none { display: none; }
+.topbar.tb-fit-3 { --search-box-width: 200px; }
+.topbar.tb-fit-4 { --search-box-width: 150px; }
 .topbar.tb-fit-4 .sync-control .state-status-name { display: none; }
 .topbar.tb-fit-5 .app-title { font-size: 0; }
 .topbar.tb-fit-5 .app-title::after { content: "QSM"; font-size: .95rem; }

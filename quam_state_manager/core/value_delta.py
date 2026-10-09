@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import math
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Optional
 
 # A display-form number may carry thousands commas (that is how group_digits
@@ -47,6 +47,17 @@ _GROUPED = re.compile(r"^[+-]?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$")
 # informative and exponential is the honest form. Mirrored in JS.
 _SCI_HIGH = Decimal("1e15")
 _SCI_LOW = Decimal("1e-6")
+
+# S10 walk (v1.2.0): what a delta -- and a before/after value beside it -- shows
+# ON SCREEN. Adjacent drawer rows read "-0.000001489640122237915" and
+# "-2.420e-07": twenty digits next to exponential for the same magnitude. The
+# display keeps SIG_DIGITS significant digits (never fewer than the integer
+# digits: a frequency delta is never rounded to fake zeros), fixed-point from
+# _COMPACT_LOW up to _SCI_HIGH and exponential outside, so one magnitude always
+# reads in one notation. The subtraction stays exact; the exact difference is
+# in the hover title. Mirrored in JS (window.ValueDelta), parity-pinned.
+SIG_DIGITS = 6
+_COMPACT_LOW = Decimal("1e-4")
 
 
 def _strip_grouping(s: str) -> str:
@@ -115,11 +126,64 @@ def _format_magnitude(mag: Decimal) -> str:
     return _group_int_part(s)
 
 
+def _strip_frac_zeros(s: str) -> str:
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s
+
+
+def compact_magnitude(mag: Decimal) -> str:
+    """A NON-NEGATIVE exact decimal as the screen shows it: SIG_DIGITS
+    significant digits, half-up (never fewer than its integer digits),
+    trailing zeros dropped, grouped fixed-point in [1e-4, 1e15), else
+    exponential (``1.48964e-06``, ``2.42e-07``). Rounds the exact digits
+    (``quantize``), never a float: the JS mirror rounds the same digits."""
+    if mag == 0:
+        return "0"
+    adj = mag.adjusted()                    # mag in [10^adj, 10^(adj+1))
+    if mag >= _SCI_HIGH or mag < _COMPACT_LOW:
+        q = mag.quantize(Decimal(1).scaleb(adj - SIG_DIGITS + 1), rounding=ROUND_HALF_UP)
+        adj = q.adjusted()                  # a carry (9.999995 -> 10) moves it up
+        mant = _strip_frac_zeros(format(q.scaleb(-adj), "f"))
+        return f"{mant}e{'-' if adj < 0 else '+'}{abs(adj):02d}"
+    decimals = max(0, SIG_DIGITS - (adj + 1))
+    q = mag.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+    s = format(q, "f")
+    if "." in s:
+        int_part, frac = s.split(".", 1)
+        frac = frac.rstrip("0")
+        return _group_int_part(int_part) + ("." + frac if frac else "")
+    return _group_int_part(s)
+
+
 def format_delta(d: Decimal) -> str:
-    """``+100,000,000`` / ``-0.0035`` / ``0`` / ``+1.500e-08``."""
+    """The on-screen difference: ``+100,000,000`` / ``-0.0477229`` / ``0`` /
+    ``-1.48964e-06`` (:func:`compact_magnitude`)."""
+    if d == 0:
+        return "0"
+    return ("-" if d < 0 else "+") + compact_magnitude(-d if d < 0 else d)
+
+
+def format_delta_exact(d: Decimal) -> str:
+    """The difference with every digit the subtraction produced (the hover
+    title): ``-0.000001489640122237915``, extremes ``+1.500e-08``."""
     if d == 0:
         return "0"
     return ("-" if d < 0 else "+") + _format_magnitude(-d if d < 0 else d)
+
+
+def format_value(value: Any) -> str:
+    """A before/after VALUE beside a delta, by the delta's own rule (the State
+    History diff printed ``4.374739e-01 -> 3.897510e-01`` beside a plain
+    ``-0.04772291024636856``). A non-number is returned as written."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if not isinstance(value, (int, float)):
+        return "" if value is None else str(value)
+    d = as_decimal(value)
+    if d is None:
+        return str(value)
+    return ("-" if d < 0 else "") + compact_magnitude(-d if d < 0 else d)
 
 
 def format_percent(pct: float) -> str:
@@ -186,7 +250,8 @@ def compute(old: Any, new: Any) -> Optional[dict]:
     coerced = isinstance(old, str) or isinstance(new, str)
     both_text = isinstance(old, str) and isinstance(new, str)
 
-    title = f"difference: {text}"
+    # the screen shows SIG_DIGITS digits; the hover keeps every digit
+    title = f"difference: {format_delta_exact(d)}"
     if pct_text:
         title += f" ({pct_text})"
     if coerced:

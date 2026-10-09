@@ -15892,10 +15892,7 @@ def history_snapshot():
         return render_template("_status.html", message="No state loaded", level="warning")
 
     hm = _history()
-    meta = hm.check_and_snapshot(_active_path(), "manual", force=True, kind="manual",
-                                 project=_scope_for(_active_path(), _active_ctx()))
-    # S10 walk: a press that adds no row says so
-    note = _SNAPSHOT_NOTHING_NEW if _snapshot_adds_nothing(_active_ctx(), meta) else None
+    note = _snapshot_press(_active_ctx(), hm)
 
     # QA chipstatus-r2-15: announce it, so every surface that counts snapshots
     # (Chip Status Trends, the top-bar Versions chip) catches up now instead of
@@ -16180,10 +16177,19 @@ def state_history_stage(timestamp: str):
     _push = _auto_push_note(ctx)
     from quam_state_manager.core import hub_versions
     _what = ("Version" if hub_versions.is_ref(timestamp) else "Snapshot")
+    _did = f"{_what} {zone_ts_text(timestamp[:22])} loaded as the working state."
+    _last = ctx.get("last_apply") or {}
+    if request.values.get("from") == "tray" and _last.get("pre_ts") == timestamp and _last.get("at"):
+        # S10 walk: Revert last apply says what the user did, never only the
+        # snapshot it content-matched ("Snapshot 03:09:14 loaded" after an
+        # apply at 03:15:25 read as some other, older state)
+        _at, _snap = zone_ts_text(_last["at"]), zone_ts_text(timestamp[:22])
+        _did = (f"Restored the state from before your apply at {_at}"
+                + (f" (same content as the snapshot of {_snap})" if _snap != _at else "")
+                + " as the working state.")
     msg = render_template(
         "_status.html",
-        message=(f"{_what} {zone_ts_text(timestamp[:22])} "
-                 "loaded as the working state." + _kept_note
+        message=(_did + _kept_note
                  + (_push or " Review it against the live chip from the sync "
                     "status in the top bar (Staged version · not on live), then "
                     "press ↑ Apply.")),
@@ -16457,7 +16463,7 @@ def _snapshot_adds_nothing(ctx, meta) -> bool:
     the ledger cannot answer, every snapshot is a listed row."""
     if meta is None or not ctx:
         return False
-    from quam_state_manager.core import hub_query, hub_versions
+    from quam_state_manager.core import hub_versions
     try:
         chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
         if chip_dir is None:
@@ -16469,21 +16475,54 @@ def _snapshot_adds_nothing(ctx, meta) -> bool:
         digest = hub_versions.snapshot_chash(chip_dir, meta.timestamp)
         if not digest:
             return False
-        binding = _vh_binding(ctx, chip_dir)
-        cursor = None
-        for _page in range(10):
-            res = hub_query.timeline(binding, limit=50, cursor=cursor)
-            for ev in res["events"]:
-                if ev.get("kind") == hub_versions.OBSERVED_KIND and str(ev.get("t_src") or "") == meta.timestamp:
-                    return False          # this very snapshot, already a row of its own
-                if hub_versions.has_state(ev) and not int(ev.get("flags") or 0) & hub_versions.CHIP_UNCERTAIN:
-                    return ev.get("chash") == digest
-            cursor = res.get("cursor")
-            if not cursor:
-                return False
+        newest = _newest_recorded_chash(ctx, chip_dir, skip_snapshot=meta.timestamp)
+        return newest is not None and newest == digest
     except Exception:  # noqa: BLE001 -- a message never breaks the press (a building ledger lists the row)
         logger.debug("snapshot-adds-nothing check failed", exc_info=True)
     return False
+
+
+def _newest_recorded_chash(ctx, chip_dir, *, skip_snapshot: str | None = None) -> str | None:
+    """The content hash of the newest state this folder's change history holds
+    (its lane), or None (none yet, or *skip_snapshot*'s own row is the newest:
+    a snapshot is never "nothing new" against itself). Raises while the ledger
+    cannot answer."""
+    from quam_state_manager.core import hub_query, hub_versions
+    binding = _vh_binding(ctx, chip_dir)
+    cursor = None
+    for _page in range(10):
+        res = hub_query.timeline(binding, limit=50, cursor=cursor)
+        for ev in res["events"]:
+            if (skip_snapshot and ev.get("kind") == hub_versions.OBSERVED_KIND
+                    and str(ev.get("t_src") or "") == skip_snapshot):
+                return None               # this very snapshot, already a row of its own
+            if hub_versions.has_state(ev) and not int(ev.get("flags") or 0) & hub_versions.CHIP_UNCERTAIN:
+                return ev.get("chash")
+        cursor = res.get("cursor")
+        if not cursor:
+            return None
+    return None
+
+
+def _live_adds_nothing(ctx) -> bool:
+    """S10 walk: whether the live chip holds exactly the state this folder's
+    change history already ends on. A Take snapshot press then writes nothing:
+    each such press wrote a ~1.2 MB snapshot folder the ledger only recorded as
+    "same as before" and never listed. False whenever it cannot tell (no
+    ledger, still being built): the press then snapshots as before."""
+    if not ctx or ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
+        return False
+    try:
+        chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+        if chip_dir is None:
+            return False
+        live = _version_live_chash(ctx)
+        if not live:
+            return False
+        return _newest_recorded_chash(ctx, chip_dir) == live
+    except Exception:  # noqa: BLE001 -- unknown: the press snapshots as before
+        logger.debug("live-adds-nothing check failed", exc_info=True)
+        return False
 
 
 @bp.route("/state-history/snapshot", methods=["POST"])
@@ -16499,13 +16538,27 @@ def state_history_snapshot():
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     try:
-        meta = _history().check_and_snapshot(ctx["path"], "manual", force=True,
-                                             kind="manual",
-                                             project=_scope_for(ctx["path"], ctx))
+        note = _snapshot_press(ctx, _history())
     except Exception as exc:
         return render_template("_status.html",
                                message=f"Snapshot failed: {exc}", level="error"), 500
-    return state_history(snapshot_note=_SNAPSHOT_NOTHING_NEW if _snapshot_adds_nothing(ctx, meta) else None)
+    resp = make_response(state_history(snapshot_note=note))
+    # S10 walk: the top-bar Versions badge (and an open panel) follow the press
+    # now -- it stayed on the old count until a reload
+    resp.headers["HX-Trigger"] = "stateHistoryChanged"
+    return resp
+
+
+def _snapshot_press(ctx, hm) -> str | None:
+    """S10 walk: one Take snapshot press (State History, the History drawer).
+    When the live chip holds exactly the state this folder's history already
+    ends on, nothing is written and the press says so; otherwise a manual
+    snapshot, and the same words if the ledger finds it held nothing new."""
+    if _live_adds_nothing(ctx):
+        return _SNAPSHOT_NOTHING_NEW
+    meta = hm.check_and_snapshot(ctx["path"], "manual", force=True, kind="manual",
+                                 project=_scope_for(ctx["path"], ctx))
+    return _SNAPSHOT_NOTHING_NEW if _snapshot_adds_nothing(ctx, meta) else None
 
 
 # ── docs/120 items 5+9 — chip-wide Trends ─────────────────────────────────
@@ -18188,6 +18241,11 @@ def _state_version_now(ctx: dict | None) -> dict:
             ctx["_version_memo"] = (str(p), stamp, out["ts"], snaps)
     # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
     # not a fault — say so plainly rather than inventing a nearest match.
+    if out["ts"] is None:
+        # S10 walk: the change history holds the state too -- a Take snapshot
+        # press that adds nothing writes no snapshot any more, so a state the
+        # ledger recorded (a run's save, an SM write) is a recorded version
+        out["ts"] = _ledger_version_of_live(ctx)
     out["unmatched"] = out["ts"] is None and out["count"] > 0
     # docs/301 F14: the chip counts what its panel lists. ``unmatched`` above
     # stays a snapshot fact: it is what ``ts`` was read from. S10 walk: ONE
@@ -18352,6 +18410,9 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
         flags = []
         if int(ev.get("flags") or 0) & UNDONE:
             flags.append("undone later")
+        if ev["eid"] in (res.get("reverted") or ()):
+            # S10 walk: an apply "Revert last apply" took back, like an undone one
+            flags.append("reverted later")
         if int(ev.get("flags") or 0) & REVERTS_TO_EARLIER:
             flags.append("returns to an earlier state")
         current = False
@@ -18506,6 +18567,21 @@ def _version_run_uid(folder: str, run_id, roots) -> str | None:
     while len(_VERSION_UID_MEMO) > 4096:
         _VERSION_UID_MEMO.popitem(last=False)
     return uid
+
+
+def _ledger_version_of_live(ctx) -> str | None:
+    """S10 walk: the newest listed change-history version holding exactly the
+    live chip's content (its ref), or None (none, or the ledger cannot answer)."""
+    from quam_state_manager.core import hub_versions
+    try:
+        chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+        live = _version_live_chash(ctx) if chip_dir is not None else None
+        if not live:
+            return None
+        found = hub_versions.versions_with_content(chip_dir, live)
+    except Exception:  # noqa: BLE001 -- unknown stays unknown (the snapshot fact stands)
+        return None
+    return max(found)[1] if found else None
 
 
 def _version_live_chash(ctx) -> str | None:

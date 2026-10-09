@@ -18,14 +18,17 @@ window.HubFolders = (function () {
         overlay = document.createElement('div');
         overlay.id = 'hub-folder-modal';
         overlay.className = 'ch-overlay';
+        // S10 walk: a header row with the dialog's own x (the Column history
+        // card's control) -- a full-width "Close" bar sat between the title and
+        // the candidate folder
         overlay.innerHTML = '<div class="ch-backdrop"></div>' +
             '<section class="ch-card" role="dialog" aria-modal="true" aria-labelledby="hub-folder-title" tabindex="-1">' +
-            '<h2 id="hub-folder-title">Link a data folder</h2>' +
-            '<button type="button" class="outline btn-sm" aria-label="Close">Close</button>' +
+            '<div class="ch-head"><h2 id="hub-folder-title" class="ch-title hub-folder-title">Link a data folder</h2>' +
+            '<button type="button" class="ch-close" aria-label="Close" title="Close (Esc)">&times;</button></div>' +
             '<div id="hub-folder-body" aria-live="polite">Checking folders...</div></section>';
         document.body.appendChild(overlay);
         overlay.style.display = 'flex';
-        overlay.querySelector('button').addEventListener('click', close);
+        overlay.querySelector('.ch-close').addEventListener('click', close);
         overlay.querySelector('.ch-backdrop').addEventListener('click', close);
         document.addEventListener('keydown', onKey, true);
         release = window.trapFocus(overlay.querySelector('.ch-card'), close);

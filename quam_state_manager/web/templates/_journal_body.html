@@ -12,7 +12,10 @@
     {% for error in history.errors %}<li>{{ error }}</li>{% endfor %}</ul>
 </div>
 {% elif history.state == 'unavailable' %}
-<p class="jr-note warn jr-history-status">{{ history.note }}</p>
+{#- S10 walk: the same single manual press every other surface offers on an
+    unreadable change history -- one read per press, never an automatic re-ask -#}
+<p class="jr-note warn jr-history-status">{{ history.note }}
+<button type="button" class="btn-sm vh-try-again" hx-get="/journal/day?day={{ s.day }}&amp;q={{ s.filters.q|urlencode }}&amp;author={{ s.filters.author|urlencode }}" hx-target="#jr-body" hx-swap="innerHTML">Try again</button></p>
 {% elif history.state == 'idle' %}
 <p class="jr-note jr-history-status jr-history-idle">As last recorded: this window is not updating the chip history, so runs saved since are not shown.</p>
 {% endif %}{% for n in s.folder_notes or () %}

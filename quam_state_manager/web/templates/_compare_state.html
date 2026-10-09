@@ -53,8 +53,7 @@
                 {% if val is none %}<span class="muted">-</span>
                 {% elif val is sameas true %}true
                 {% elif val is sameas false %}false
-                {% elif val is number and (val | abs >= 1e6 or (0 < val | abs < 1e-3)) %}{{ "%.4e" | format(val) }}{% if is_diff and ref_val is number %}{{ render_delta(val, ref_val) }}{% endif %}
-                {% elif val is number %}{{ "%.6f" | format(val) }}{% if is_diff and ref_val is number %}{{ render_delta(val, ref_val) }}{% endif %}
+                {% elif val is number %}{{ val | sigval }}{% if is_diff and ref_val is number %}{{ render_delta(val, ref_val) }}{% endif %}
                 {% elif val is iterable and val is not string %}{{ val | join(", ") }}
                 {% else %}{{ val }}{% endif %}
             </td>
@@ -95,8 +94,7 @@
                 {% if val is none %}<span class="muted">-</span>
                 {% elif val is sameas true %}true
                 {% elif val is sameas false %}false
-                {% elif val is number and (val | abs >= 1e6 or (0 < val | abs < 1e-3)) %}{{ "%.4e" | format(val) }}{% if is_diff and rval is number %}{{ render_delta(val, rval) }}{% endif %}
-                {% elif val is number %}{{ "%.6f" | format(val) }}{% if is_diff and rval is number %}{{ render_delta(val, rval) }}{% endif %}
+                {% elif val is number %}{{ val | sigval }}{% if is_diff and rval is number %}{{ render_delta(val, rval) }}{% endif %}
                 {% else %}{{ val }}{% endif %}
             </td>
         </tr>

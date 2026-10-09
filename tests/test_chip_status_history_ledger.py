@@ -86,8 +86,11 @@ class TestHistoryDrawer:
         st = rh.state({"q0": 5e9})
         env = rh.make(tmp_path, [st], st)
         c = env["client"]
-        for _ in range(5):
-            assert c.post("/state-history/snapshot").status_code == 200
+        # S10 walk (round 3): old -> new, a Take snapshot press that changes nothing
+        # writes no snapshot any more; the five snapshots of one content are made directly
+        with env["app"].test_request_context():
+            for _ in range(5):
+                assert routes._history().check_and_snapshot(env["live"], "manual", force=True)
         with env["app"].app_context():
             hub_sync.on_roots_moved([str(env["data"])])
         with env["app"].test_request_context():

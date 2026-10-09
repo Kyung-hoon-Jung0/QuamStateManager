@@ -118,7 +118,9 @@ def test_an_identical_copy_is_still_hidden(app_client, tmp_path):
     body = c.get("/state/versions").get_data(as_text=True)
     shown = re.findall(r'sv-check" value="([^"]+)"', body)
     assert len(shown) == 3 and all("_event-" in ref for ref in shown)
-    assert len(app.config["history_manager"].list_snapshots(live.parent)) == 4
+    # S10 walk (round 3): old -> new, the press on the identical copy writes no
+    # snapshot at all (it only ever was a ~1 MB folder no list showed)
+    assert len(app.config["history_manager"].list_snapshots(live.parent)) == 3
     assert "unchanged copy hidden" not in body
 
 

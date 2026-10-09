@@ -1111,8 +1111,12 @@ class TestChangesOnlyFilter:
         assert "sv-pin" in body and "unchanged" not in body
 
     def test_the_kept_note_states_the_true_total(self, client, tmp_path):
-        client.post("/api/history/snapshot")
-        client.post("/api/history/snapshot")
+        # S10 walk (round 3): old -> new, a press that changes nothing writes no
+        # snapshot any more; the two manual snapshots of one state are made directly
+        _live = Path(client.application.config["contexts"][
+            client.application.config["active_context"]]["path"])
+        for _ in range(2):
+            _hm_of(client).check_and_snapshot(_live, "manual", force=True, kind="manual")
         # S10 C6: no older rows -> two run snapshots no ledger event holds (a folder
         # nothing links), so "N recorded states" can no longer pass as the list's total
         for rid, f in ((7, 6.2e9), (8, 6.4e9)):

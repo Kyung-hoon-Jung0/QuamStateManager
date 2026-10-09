@@ -98,7 +98,11 @@ class TestExactDecimalArithmetic:
         assert d["dir"] == "up"
 
     def test_full_precision_is_kept(self):
-        assert compute(5075187484.52453, 5075187500.0)["text"] == "+15.47547"
+        # S10 walk: old -> new, the screen keeps SIG_DIGITS significant digits
+        # (adjacent rows read 20 digits next to exponential); every digit the
+        # exact subtraction produced stays in the hover title
+        d = compute(5075187484.52453, 5075187500.0)
+        assert d["text"] == "+15.4755" and d["title"].startswith("difference: +15.47547 ")
 
     def test_negative_direction(self):
         d = compute(0.215, 0.21)
@@ -112,8 +116,9 @@ class TestExactDecimalArithmetic:
         assert d["pct_text"] is None        # "0" already says it
 
     def test_extremes_fall_back_to_exponential(self):
-        assert compute(1e-9, 1.5e-9)["text"] == "+5.000e-10"
-        assert compute(1e15, 2e15)["text"] == "+1.000e+15"
+        # S10 walk: old -> new, the same significant-digit rule in exponential form
+        assert compute(1e-9, 1.5e-9)["text"] == "+5e-10"
+        assert compute(1e15, 2e15)["text"] == "+1e+15"
 
     def test_grouped_display_strings_round_trip(self):
         # what an editable field hands back
@@ -151,6 +156,63 @@ class TestACoordinateIsNotANumber:
                 "{% from '_delta_macros.html' import delta_chip %}"
                 "{{ delta_chip('0,0', '0,1') }}")
         assert out.strip() == ""
+
+
+class TestOnScreenDigits:
+    """S10 walk (v1.2.0): adjacent value-drawer rows read
+    "-0.000001489640122237915 (-4.44%)" and "-2.420e-07 (-0.764%)", and the
+    State History diff printed "4.374739e-01 -> 3.897510e-01" beside
+    "-0.04772291024636856 (-10.9%)". One display rule for a delta and the
+    values beside it: SIG_DIGITS significant digits (never fewer than the
+    integer digits), one notation per magnitude; the subtraction stays exact
+    and its every digit stays in the hover title."""
+
+    def test_the_walks_drawer_rows_read_in_one_notation(self):
+        a = compute(3.3530114585237375e-05, 3.2040474462999946e-05)
+        b = compute(3.1662e-05, 3.142e-05)
+        assert (a["text"], b["text"]) == ("-1.48964e-06", "-2.42e-07")
+        assert a["title"].startswith("difference: -0.000001489640122237425 ")
+
+    def test_the_walks_diff_row_reads_its_values_by_the_same_rule(self):
+        from quam_state_manager.core.value_delta import format_value
+        assert compute(0.4374739, 0.389751)["text"] == "-0.0477229"
+        assert (format_value(0.4374739), format_value(0.389751)) == ("0.437474", "0.389751")
+        assert format_value(5078705034.109805) == "5,078,705,034"
+        assert format_value(3.2040474462999946e-05) == "3.20405e-05"
+        assert (format_value(-0.23999999999999488), format_value(48), format_value(True)) ==             ("-0.24", "48", "true")
+
+    @pytest.mark.parametrize("old,new", [
+        (0.1234567891234, 0.98765432198765), (1e-5, 3.3333333333e-5), (5.078705034109805e9, 5.0787013971e9),
+        (0.3530008549275264, 0.3531), (2.5e-3, 2.4999999999e-3), (123456.789123, 123457.0)])
+    def test_never_more_than_six_significant_digits_beyond_the_integer_part(self, old, new):
+        import re
+        text = compute(old, new)["text"]
+        mant = re.sub(r"e[+-]\d+$", "", text).lstrip("+-").replace(",", "")
+        int_part, _, frac = mant.partition(".")
+        sig = (int_part + frac).lstrip("0")
+        assert len(sig) <= max(6, len(int_part.lstrip("0"))), text
+
+    def test_a_carry_moves_the_exponent(self):
+        assert compute(0, 9.999995e-05)["text"] == "+1e-04"
+        assert compute(0, 0.000123456789)["text"] == "+0.000123457"
+        assert compute(0, 123456789.123456)["text"] == "+123,456,789"
+
+    def test_one_magnitude_one_notation(self):
+        # every delta in one decade reads in one notation
+        for decade, sci in ((1e-6, True), (1e-5, True), (1e-3, False), (1.0, False), (1e9, False)):
+            texts = [compute(0, k * decade)["text"] for k in (1.1, 2.5, 4.4, 9.3)]
+            assert all(("e" in t) == sci for t in texts), (decade, texts)
+
+    def test_the_diff_table_prints_its_values_by_the_rule(self, app):
+        with app.app_context():
+            from flask import render_template
+            from types import SimpleNamespace
+            html = render_template("_history_detail.html", timestamp="20261010_031514_000000",
+                                   summary={"added": 0, "removed": 0, "modified": 1, "total": 1}, total=1,
+                                   entries=[SimpleNamespace(change_type="modified", dot_path="a.b",
+                                                            old_value=0.4374739, new_value=0.389751)])
+        assert "0.437474" in html and "0.389751" in html and "-0.0477229" in html
+        assert "e-01" not in html
 
 
 class TestPercent:
@@ -252,6 +314,11 @@ _PARITY_CASES = [
     # JT-08: malformed grouping is text, and both-text titles say so
     ["0,0", "1,1"], ["4,0", "2,2"], ["1,5", 2], ["12,34", 5],
     ["-5,075,187,484.52453", "-5,075,187,400"], ["0.13", "0.130"],
+    # S10 walk: the on-screen significant-digit rule (both notations, carries)
+    [3.3530114585237375e-05, 3.2040474462999946e-05], [3.1662e-05, 3.142e-05],
+    [0.4374739, 0.389751], [0.3530008549275264, 0.3531], [5078705034.109805, 5078701397.0],
+    [0, 9.999995e-05], [0, 0.000123456789], [0, 123456789.123456], [0.1234567891234, 0.98765432198765],
+    [2e15, 5e15], [0, -9.9999995e-07], [1.23456789e-12, 0], [999999.5, 0], [0, 0.0001],
 ]
 
 

@@ -604,6 +604,8 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.globals["search_title"] = _search_title
     app.jinja_env.filters["value_delta"] = _value_delta.compute
     app.jinja_env.filters["delta_describe"] = _value_delta.describe
+    # S10 walk: a before/after value beside a delta, by the delta's own rule
+    app.jinja_env.filters["sigval"] = _value_delta.format_value
 
     # `phys_amp` — the TRUE physical output behind an amplitude leaf (docs/109):
     # MW channel -> dBm via P = FSP + 20·log10|amp| (the FSP-compensation

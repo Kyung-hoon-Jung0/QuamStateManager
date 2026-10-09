@@ -28,8 +28,11 @@
 {# S10 walk: the live-change tracker's baseline, as a badge on the listed row that
    holds it (routes._version_baseline) -- not a label, not a pin, nothing to
    unpin; its time is the banner's "baseline:" time. #}
+{#- S10 walk: the badge names the baseline's own time from the banner's source
+    (captured_utc) -- it read only the row's time, 03:53:44 beside the banner's
+    "baseline: 03:49:40", when the row is the nearest recorded holder of that state -#}
 {% macro baseline_tag(r, lv, cls='') -%}
 {%- if r.baseline and lv and lv.baseline -%}
-<span class="snap-baseline {{ cls }}" title="The live-change tracker compares the live chip against this state (its baseline, set {{ lv.baseline.captured_utc | format_ts_zone }}). Reset it from the tracker's Reset baseline button.">baseline of the live-change tracker</span>
+<span class="snap-baseline {{ cls }}" title="The live-change tracker compares the live chip against this state (its baseline, set {{ lv.baseline.captured_utc | format_ts_zone }}). Reset it from the tracker's Reset baseline button.">baseline of the live-change tracker, set {{ lv.baseline.captured_utc | ts_local }}</span>
 {%- endif -%}
 {%- endmacro %}

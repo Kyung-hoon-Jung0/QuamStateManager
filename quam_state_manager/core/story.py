@@ -718,14 +718,46 @@ def _agent_text(card: dict) -> str:
     return f"{who} ran {node}{on}. No run folder: {phrase}."
 
 
+_ERR_MISSING = re.compile(r"\[WinError [23]\]|\[Errno 2\]|No such file|cannot find the (?:path|file)", re.I)
+_ERR_DENIED = re.compile(r"\[WinError 5\]|\[Errno 13\]|Permission denied|Access is denied", re.I)
+_ERR_NOT_JSON = re.compile(r"Expecting |JSONDecodeError|Extra data|Unterminated|Invalid control|"
+                           r"not a state/wiring pair|codec can't decode", re.I)
+_ERR_QUOTED_PATH = re.compile(r"'([^']*[\\/][^']*)'")
+
+
+def read_error_text(error: Any) -> str:
+    """S10 walk: why a run's saved state could not be read, in plain words.
+    The ledger keeps the OS's own text (``[WinError 3] The system cannot find
+    the path specified: 'D:\\\\work\\\\...\\\\state.json'``, the path in Python's
+    repr with doubled backslashes); a card says what happened and names the
+    file as the user's own file browser spells it."""
+    err = str(error or "")
+    if _ERR_MISSING.search(err):
+        why = "the file is missing"
+    elif _ERR_DENIED.search(err):
+        why = "the file could not be opened (access denied)"
+    elif _ERR_NOT_JSON.search(err):
+        why = "the file is not a readable state file"
+    else:
+        why = "the file could not be opened"
+    paths = _ERR_QUOTED_PATH.findall(err)
+    if not paths:
+        return why
+    path = paths[-1].replace("\\\\", "\\")
+    return f"{why}: {path}"
+
+
 def _flags_of(event: Mapping) -> list[dict]:
     """The ledger's facts about one run event, each a badge and one line."""
     from quam_state_manager.core import hub_store as hs
     flags = int(event.get("flags") or 0)
     out = []
     if event.get("error"):
+        # S10 walk: plain words, the path as the user's file browser spells it
+        # (the card printed the raw OS text with doubled backslashes)
         out.append({"key": "no-state", "label": "no state",
-                    "note": f"Its saved state could not be read ({event['error']})."})
+                    "note": f"Its saved state could not be read: {read_error_text(event['error'])}.",
+                    "title": str(event["error"])})
     elif flags & hs.CHIP_UNCERTAIN:
         out.append({"key": "other-chip", "label": "other chip?",
                     "note": "Its saved state may be another chip's: its identity does not match this "

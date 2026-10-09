@@ -35,6 +35,10 @@ w.HubFolders.open(opener);
 let modal = w.document.getElementById('hub-folder-modal');
 assert(modal.querySelector('[role="dialog"][aria-modal="true"][aria-labelledby="hub-folder-title"]'));
 const close = modal.querySelector('button');
+// S10 walk: the close control is the header's x beside the title, not a full-width bar
+assert(close.classList.contains('ch-close') && close.textContent === '\u00d7', close.outerHTML);
+assert(close.parentElement.classList.contains('ch-head') && close.parentElement.querySelector('#hub-folder-title'));
+assert(!/>Close</.test(modal.innerHTML), 'no Close bar');
 const link = w.document.createElement('button');
 link.textContent = 'Link';
 modal.querySelector('#hub-folder-body').appendChild(link);
