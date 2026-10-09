@@ -244,8 +244,7 @@ def _walk_dict(node: Any, path: tuple[str, ...]) -> Any:
 
 
 # Reverse of _VALUE_PATHS: "xy.operations.x180_DragCosine.amplitude" → the
-# SQLite property name. Lets field_history() route a Live-Edit dot-path to
-# the index tier when the leaf is one we already track per snapshot.
+# S10 C4: drawer index -> calibration columns, retain tracked property mapping.
 _TRACKED_QUBIT_SUFFIX_TO_PROP: dict[str, str] = {
     ".".join(path): prop for prop, path in _VALUE_PATHS.items()
 }
@@ -1188,55 +1187,7 @@ _SNAPSHOT_META_FIELDS: frozenset = frozenset(f.name for f in fields(SnapshotMeta
 
 
 
-# RAM P8: the snapshot scan tier's per-snapshot memo (see _scan_field_series).
-_SCAN_SERIES: "OrderedDict[tuple[str, str], dict[str, tuple]]" = OrderedDict()
-_SCAN_SERIES_LOCK = threading.Lock()
-_SCAN_SERIES_MAX = 256
-
-
-def _snap_files_sig(snap_dir: Path) -> tuple | None:
-    """(mtime_ns, size) of a snapshot's two files; None when state.json is
-    unreadable (the scan skips such a snapshot)."""
-    try:
-        st = os.stat(snap_dir / "state.json")
-    except OSError:
-        return None
-    try:
-        wt = os.stat(snap_dir / "wiring.json")
-        w = (wt.st_mtime_ns, wt.st_size)
-    except OSError:
-        w = None
-    return (st.st_mtime_ns, st.st_size, w)
-
-
-def _scan_one_snapshot(snap_dir: Path, segs: list[str], is_pointer, is_self_ref,
-                       resolve_pointer) -> tuple[bool, Any]:
-    """``(usable, value)`` of one dot path in one snapshot -- the body of the
-    scan tier's loop, unchanged: ``usable`` False is a snapshot the loop
-    skipped (unreadable / not an object)."""
-    try:
-        root = safe_io.read_json(snap_dir / "state.json")
-    except (OSError, ValueError):
-        return False, None
-    if not isinstance(root, dict):
-        return False, None
-    if segs and segs[0] not in root:
-        try:
-            wiring = safe_io.read_json(snap_dir / "wiring.json")
-        except (OSError, ValueError):
-            wiring = None
-        if isinstance(wiring, dict):
-            merged = dict(root)
-            merged.update(wiring)
-            root = merged
-    found, value = _walk_any_path(root, segs)
-    if not found:
-        value = None
-    elif is_pointer(value) and not is_self_ref(value):
-        value = resolve_pointer(root, value, tuple(segs))
-    return True, value
-
-
+# S10 C4: field snapshot scan -> ledger index, retire scan-only helpers.
 def _file_sig(p: Path) -> tuple | None:
     """(mtime_ns, size, ino) of *p*, or None when it does not exist."""
     try:
@@ -3644,7 +3595,7 @@ class HistoryManager:
             except Exception:  # noqa: BLE001
                 pass
 
-    # ── Per-field value history (Live-Edit revert popover, docs/20) ────────
+    # S10 C4: field snapshot tiers -> calibration columns, retain G5 reads.
 
     @staticmethod
     def _tracked_property_for(dot_path: str) -> str | None:
@@ -3655,235 +3606,7 @@ class HistoryManager:
             return None
         return _TRACKED_QUBIT_SUFFIX_TO_PROP.get(".".join(parts[2:]))
 
-    def field_history(
-        self,
-        quam_state_path: str | Path,
-        dot_path: str,
-        *,
-        scan_limit: int = 150,
-        max_points: int = 20,
-        extra_series: list[tuple] | None = None,
-    ) -> dict[str, Any]:
-        """Change-point timeline of ONE dot-path across this chip's snapshots.
-
-        Two tiers: a path mapping to a TRACKED qubit property reads the
-        SQLite index (instant, full history depth — survives snapshot
-        pruning); any other leaf parses the snapshot ``state.json`` /
-        ``wiring.json`` copies directly, newest-first, capped at
-        ``scan_limit`` (honest ``truncated`` flag). Consecutive-equal
-        snapshots collapse into the snapshot that INTRODUCED each value, so
-        rows answer "when did this value change, and which experiment set
-        it". Pointer leaves resolve per-snapshot (extractor parity;
-        self-refs stay raw) so the timeline shows the value the chip
-        actually had, never the pointer string.
-
-        ``extra_series`` (docs/20 v2 runs tier): additional
-        ``(ts, value, trigger, run_id, experiment, folder)`` rows — the
-        caller's direct scan of workspace run folders — merged by timestamp
-        BEFORE the change-point collapse, so today's runs appear even when
-        Param History ingestion hasn't run. Timestamps use the
-        ingested-snapshot format (``_entry_timestamp``), so a run that WAS
-        ingested dedups naturally against its snapshot row.
-        """
-        path = Path(quam_state_path)
-        snapshots = self.list_snapshots(path)          # newest-first, cached
-        meta_by_ts = {m.timestamp: m for m in snapshots}
-        # docs/250: which folder each row came from, relative to THIS folder.
-        # Rows another folder with the same chip name recorded while this one
-        # had its own history are not this folder's timeline: interleaving
-        # them made fake change points (A's value -> B's -> A's) and put B's
-        # newest value on top of A's popover. They are left out and COUNTED
-        # (``other_folders``) -- never silently.
-        srcs, first_own = self._sources_and_cut(path, snapshots)
-        mine = [m for m in snapshots
-                if srcs[m.timestamp]["lineage"] != LINEAGE_PARALLEL]
-        # docs/296: a snapshot saved under another rename era names another
-        # qubit by this path -- cut, never joined
-        rkeep, rinfo = self.rename_keep(path)
-        if rkeep is not None:
-            mine = [m for m in mine if rkeep(m.timestamp, dot_path)]
-        out: dict[str, Any] = {
-            "dot_path": dot_path, "points": [],
-            "total_snapshots": len(snapshots), "scanned": 0,
-            "truncated": False, "source": "scan", "runs_merged": 0,
-            "parallel_hidden": 0, "other_folders": [],
-            "renamed_hidden": 0, "renamed": rinfo,
-        }
-
-        # (ts, value, trigger, run_id, experiment, folder) oldest-first
-        series: list[tuple] = []
-        prop = self._tracked_property_for(dot_path)
-        if prop is not None and snapshots:
-            # docs/258: any non-empty row set is taken as the WHOLE timeline
-            # (the tiers below run only on zero rows), so an index behind disk
-            # silently drops values -- heal it first, as every other curated
-            # reader does.
-            self._index_fresh_for_read(path)
-            try:
-                conn = self._open_index(path)
-                try:
-                    rows = conn.execute(
-                        "SELECT timestamp, value, trigger, run_id, experiment "
-                        "FROM param_history WHERE qubit=? AND property=? "
-                        "ORDER BY timestamp",
-                        (dot_path.split(".")[1], prop)).fetchall()
-                finally:
-                    conn.close()
-            except sqlite3.Error:
-                rows = []
-            if rows:
-                out["source"] = "index"
-                out["scanned"] = len(rows)
-                series = [tuple(r) + (None,) for r in rows]
-        if not series:
-            # Tier 0 (docs/83): the all-numeric-parameter change-point index.
-            # Measured on a real 264-snapshot chip, this is the difference
-            # between 0.02 ms over the FULL history and 555 ms truncated at 150
-            # snapshots. It declines (returns None) for a leaf it never indexed
-            # and for one that is a pointer anywhere in its history — the scan
-            # below is the only tier that can resolve those.
-            leaf_rows = self.leaf_field_series(path, dot_path)
-            if leaf_rows:
-                out["source"] = "leaf-index"
-                out["scanned"] = len(mine)
-                series = [tuple(r) for r in leaf_rows]
-        if not series:
-            out["source"] = "scan"
-            # the scan budget is spent on THIS folder's timeline only
-            series, out["scanned"], out["truncated"] = self._scan_field_series(
-                path, mine, dot_path, scan_limit)
-
-        # docs/250: every row carries its source as a 7th slot; a parallel
-        # folder's row leaves the timeline here and is counted instead.
-        kept: list[tuple] = []
-        hidden: dict[str, dict] = {}
-        for r in series:
-            r = tuple(r)[:6]
-            if rkeep is not None and not rkeep(r[0], dot_path):
-                out["renamed_hidden"] += 1
-                continue
-            ent = self._row_source(srcs, first_own, r[0], r[2], r[5])
-            if ent["lineage"] == LINEAGE_PARALLEL:
-                h = hidden.setdefault(ent["folder"] or "", {
-                    "folder": ent["folder"], "label": ent["label"],
-                    "snapshots": 0})
-                h["snapshots"] += 1
-                continue
-            kept.append(r + (ent,))
-        if hidden:
-            if out["source"] == "index":
-                out["scanned"] = len(kept)
-            out["parallel_hidden"] = sum(h["snapshots"] for h in hidden.values())
-            out["other_folders"] = sorted(hidden.values(),
-                                          key=lambda h: -h["snapshots"])
-        series = kept
-
-        if extra_series:
-            out["runs_merged"] = len(extra_series)
-            out["source"] += "+runs"
-            # Stable sort: snapshot rows sort before run rows on an equal
-            # timestamp, so an ingested run's snapshot row wins the collapse
-            # (its meta already knows the folder) and the direct run row
-            # dedups away when values agree.
-            merged = ([(r, 0) for r in series]
-                      + [(tuple(r)[:6] + (self._source_entry(
-                          SOURCE_RUN, tuple(r)[5], LINEAGE_RUN),), 1)
-                         for r in extra_series])
-            merged.sort(key=lambda t: (t[0][0], t[1]))
-            series = [r for r, _rank in merged]
-
-        # Collapse to change points. NaN never equals itself — normalise so a
-        # stretch of NaN snapshots doesn't explode into one row each.
-        def _key(v):
-            if isinstance(v, float) and v != v:
-                return "\x00nan"
-            return v
-
-        points: list[tuple] = []
-        prev: Any = object()
-        for row in series:
-            if _key(row[1]) != prev:
-                points.append(row)
-            prev = _key(row[1])
-        points.reverse()                               # newest change first
-        if len(points) > max_points:
-            points = points[:max_points]
-            out["truncated"] = True
-
-        for ts, value, trigger, run_id, experiment, folder, src in points:
-            meta = meta_by_ts.get(ts)
-            out["points"].append({
-                "timestamp": ts,
-                "value": value,
-                "trigger": trigger or (meta.trigger if meta else None),
-                "run_id": run_id if run_id is not None
-                else (meta.run_id if meta else None),
-                "experiment": experiment or (meta.experiment_name if meta else None),
-                # run rows carry their folder directly; snapshot rows get it
-                # from the live meta (pruned snapshots keep index rows but
-                # lose the meta → no data link)
-                "experiment_folder_path": folder or (
-                    meta.experiment_folder_path if meta else None),
-                # docs/250: WHERE this row was recorded, relative to the folder
-                # being shown -- "other"/"unknown" rows are labelled, never
-                # presented as this folder's
-                "source": src,
-            })
-        return out
-
-    def _scan_field_series(
-        self,
-        quam_state_path: Path,
-        snapshots: list[SnapshotMeta],
-        dot_path: str,
-        scan_limit: int,
-    ) -> tuple[list[tuple], int, bool]:
-        """Direct-parse tier: (series oldest-first, scanned, truncated).
-
-        Reads each snapshot's ``state.json`` (plus ``wiring.json`` only when
-        the path's root key isn't state-side), walks the dot-path with
-        list-index support, resolves pointer leaves against that snapshot's
-        own document. Unreadable snapshots are skipped, never fatal."""
-        from quam_state_manager.core.pointer_resolver import (
-            is_pointer, is_self_ref, resolve_pointer,
-        )
-        hist_dir = self._history_dir(quam_state_path)
-        take = snapshots[:scan_limit]                  # newest-first
-        truncated = len(snapshots) > len(take)
-        segs = dot_path.split(".")
-        series: list[tuple] = []
-        # RAM P8 (ram_design.md §1.4 "Field scan-series cache"): one parsed
-        # value per (chip dir, dot path, snapshot), validated on read by that
-        # snapshot's state.json + wiring.json (mtime_ns, size) -- a re-open of
-        # the same leaf parses nothing, a new snapshot parses only itself
-        # (19 MB x 150 snapshots was 45 s per open on a 30-qubit chip). A
-        # pruned or restamped snapshot simply stops being asked for.
-        with _SCAN_SERIES_LOCK:
-            per_ts = _SCAN_SERIES.pop((str(hist_dir), dot_path), None) or {}
-            _SCAN_SERIES[(str(hist_dir), dot_path)] = per_ts      # LRU touch
-            while len(_SCAN_SERIES) > _SCAN_SERIES_MAX:
-                _SCAN_SERIES.popitem(last=False)
-        for meta in reversed(take):                    # oldest-first
-            snap_dir = hist_dir / meta.timestamp
-            sig = _snap_files_sig(snap_dir)
-            if sig is None:
-                continue                               # unreadable: skipped, as before
-            hit = per_ts.get(meta.timestamp)
-            if hit is not None and hit[0] == sig:
-                ok, value = hit[1]
-            else:
-                ok, value = _scan_one_snapshot(snap_dir, segs, is_pointer,
-                                               is_self_ref, resolve_pointer)
-                per_ts[meta.timestamp] = (sig, (ok, value))
-            if not ok:
-                continue
-            if isinstance(value, (dict, list)):
-                value = copy.deepcopy(value)       # the memo's copy stays pristine
-            series.append((meta.timestamp, value, meta.trigger,
-                           meta.run_id, meta.experiment_name,
-                           meta.experiment_folder_path))
-        return series, len(take), truncated
-
+    # S10 C4: field snapshot tiers -> value ledger, retain calibration column reads.
     def column_history(
         self,
         quam_state_path: str | Path,
@@ -3896,18 +3619,15 @@ class HistoryManager:
         ``path_map`` maps row ids (qubit / pair names) to their dot-paths for
         one column (docs/20 v2 Column History). Returns
         ``{row_id: [(ts, value, trigger, run_id, exp, folder)] oldest-first}``.
-        Two tiers, mirroring :meth:`field_history`'s split (runs merging is
-        the caller's job): when every row's suffix maps to ONE tracked
-        property, a single SQL query over ``qubit IN (...)`` serves all rows
+        Two tiers (runs merging is the caller's job): when every row's suffix
+        maps to ONE tracked property, a single SQL query over ``qubit IN (...)`` serves all rows
         from the index; otherwise each snapshot's ``state.json`` is parsed
         ONCE and every row's value extracted from it — never N separate
         scans for an N-row column.
 
-        Index rows don't store the experiment folder, so the fastpath
-        coalesces it from the snapshot meta by timestamp (field_history
-        parity) — that's what gives tracked columns their Data links. A
-        pruned snapshot keeps its index row but loses the meta → folder None
-        (honest: attribution survives, the link doesn't).
+        Index rows get their experiment folder from the snapshot meta by
+        timestamp. A pruned snapshot keeps its index row but loses the meta:
+        attribution survives, while the Data link is absent.
         """
         path = Path(quam_state_path)
         snapshots = self.list_snapshots(path)          # newest-first, cached
@@ -3915,7 +3635,7 @@ class HistoryManager:
         out: dict[str, list[tuple]] = {row: [] for row in path_map}
         if not path_map:
             return out
-        # docs/250: field_history's rule -- a parallel folder's rows are not
+        # S10 C4: drawer tiers -> folder-aware calibration, parallel rows are not
         # this folder's column history (they made fake change points)
         srcs, first_own = self._sources_and_cut(path, snapshots)
         snapshots = [m for m in snapshots
@@ -3931,7 +3651,7 @@ class HistoryManager:
                 and len(entity_by_row) == len(path_map)):
             prop = next(iter(props))
             entities = sorted(set(entity_by_row.values()))
-            self._index_fresh_for_read(path)       # docs/258: field_history's rule
+            self._index_fresh_for_read(path)       # S10 C4: field tier -> calibration column, retain index healing
             try:
                 conn = self._open_index(path)
                 try:
@@ -5349,7 +5069,7 @@ class HistoryManager:
         pair preserves the true flat-then-step shape; a lone changed point
         would draw a long slope that never happened). A series whose value
         never changed end-to-end becomes exactly [first, last]. Equality is
-        the repo's exact rule with NaN normalised (field_history's collapse,
+        the repo's exact rule with NaN normalised (change-point collapse,
         NOT differ.compare_equal -- a tolerance would hide real sub-tolerance
         drift on surfaces whose whole job is showing drift). A customer's
         Chip Status Trends plotted one point per run for values that never
@@ -7286,7 +7006,7 @@ def _cp_invalidate(conn) -> None:
 
 
 def _cp_val_key(v):
-    """Exact equality with NaN normalised (the field_history rule)."""
+    """Exact equality with NaN normalised for change points."""
     return "\x00nan" if isinstance(v, float) and v != v else v
 
 

@@ -293,6 +293,7 @@ def test_js_mirror_matches_python_character_for_character():
 # Wiring pins — every surface the user named, plus the ones swept with them
 # ---------------------------------------------------------------------------
 
+# S10 C4: snapshot templates -> ledger templates, retain shared delta rendering.
 class TestSurfacesRenderTheDelta:
     """Each of these was an old→new pair with no difference shown (docs/76)."""
 
@@ -304,8 +305,8 @@ class TestSurfacesRenderTheDelta:
         ("_changes.html", "delta_cell"),
         ("_dataset_prev_diff.html", "delta_cell"),   # run vs previous run
         ("_dataset_compare.html", "delta_chip"),     # compare selected runs
-        ("_field_history.html", "delta_chip"),       # 🕘 value timeline
-        ("_column_history.html", "delta_chip"),      # column history chips
+        ("_field_history_ledger.html", "delta_chip"),       # 🕘 value timeline
+        ("_column_history_ledger.html", "delta_chip"),      # column history chips
     ])
     def test_template_uses_the_shared_macro(self, template, importer):
         src = (_TPL / template).read_text(encoding="utf-8")

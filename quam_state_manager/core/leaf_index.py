@@ -2,7 +2,7 @@
 
 Param History has always tracked a curated list — T1, T2ramsey, f_01, eleven
 properties in all (``history.DEFAULT_TRACKED_PROPERTIES``). Everything else was
-answerable only by ``field_history``'s fallback tier, which re-parses snapshot
+previously answered by a capped value scan, which re-parsed snapshot
 ``state.json`` files newest-first and gives up after 150 of them. Measured on a
 real 264-snapshot chip: **555 ms and truncated** for one untracked leaf, versus
 2.6 ms and complete for a tracked one.
@@ -185,10 +185,11 @@ def is_pointer(value: Any) -> bool:
     return isinstance(value, str) and value.startswith(_POINTER_PREFIXES)
 
 
+# S10 C4: field scan -> leaf index, retain state-first wiring precedence.
 def merged_doc(state: Any, wiring: Any = None) -> dict:
     """The document a dot path is resolved against.
 
-    Mirrors ``HistoryManager._scan_field_series`` exactly: state first, wiring
+    Reads state first, wiring
     only for top-level keys state does not already have, so a dot path means
     the same thing in every tier.
     """
@@ -215,8 +216,7 @@ def numeric_leaves(state: Any, wiring: Any = None, *,
     pointers and 570-1,190 of them resolve to numbers — on a 1Q chip that is as
     many parameters again as the direct ones, and they include exactly the
     fields a user clicks (``xy.operations.x180.amplitude``). Resolving them
-    costs 3-7 ms per snapshot, and it is what ``_scan_field_series`` already
-    does, so both tiers answer with the same number.
+    costs 3-7 ms per snapshot, following the same snapshot extraction rule.
 
     Booleans are excluded — ``True`` is not a parameter, and Python would
     happily arithmetic it into 1.0.
@@ -521,11 +521,12 @@ def path_needs_scan(conn: sqlite3.Connection, path: str) -> bool:
     return row is not None
 
 
+# S10 C4: drawer tiers -> ledger, retain tuples for snapshot index consumers.
 def series(conn: sqlite3.Connection, path: str) -> list[tuple]:
-    """``(ts, value, trigger, run_id, experiment, folder)`` oldest-first —
-    exactly the tuple ``HistoryManager.field_history`` collapses. Rows that are
-    not a number (pointer / gone / other) carry ``None``, which is what the
-    caller already renders for a missing value."""
+    """Snapshot change points: (ts, value, trigger, run_id, experiment, folder).
+
+    Non-numeric pointer, gone and other rows carry None.
+    """
     return [tuple(r) for r in conn.execute(
         "SELECT s.ts, l.value, s.trigger, s.run_id, s.experiment, s.folder "
         "  FROM leaf_cp l "

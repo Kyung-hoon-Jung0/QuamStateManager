@@ -121,7 +121,9 @@ class TestWithAChip:
         cont = c.get("/api/agent/state?path=qubits.qA1").get_json()["value"]
         key = next(k for k, v in cont.items() if isinstance(v, (int, float)) and not isinstance(v, bool))
         h = c.get(f"/api/agent/field-history?path=qubits.qA1.{key}").get_json()
+        # S10 C4: generic history success -> ledger success, the snapshot branch is gone.
         assert h["ok"] and h["path"] == f"qubits.qA1.{key}"
+        assert h["source"] == "ledger" and isinstance(h["history"]["points"], list)
         assert c.get("/api/agent/field-history").status_code == 400
 
     def test_diagnostics_is_json(self, loaded_client):

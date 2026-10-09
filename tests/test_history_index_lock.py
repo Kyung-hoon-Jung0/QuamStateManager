@@ -112,9 +112,11 @@ def _apply(tmp_path, monkeypatch, pause_sql: str = _WAL):
     return hm, live, backup, save
 
 
-def test_fresh_chip_race_keeps_both_values_in_field_history(tmp_path, monkeypatch, caplog):
+# S10 C4: drawer index tier -> ledger fixture, retain the fresh-chip race contract.
+def test_fresh_chip_race_keeps_both_values_in_the_ledger(tmp_path, monkeypatch, caplog):
+    from tests.ledger_fixture import observed_view
     hm, live, _, _ = _apply(tmp_path, monkeypatch)
-    out = hm.field_history(live, "qubits.q1.T1")
+    out = observed_view(hm, live, "qubits.q1.T1")
     assert [p["value"] for p in out["points"]] == [2.0, 1.0]
     assert "Deferred index of snapshot" not in caplog.text
 
@@ -242,20 +244,13 @@ def _two_snapshots_second_unindexed(tmp_path):
     return hm, live, first, second
 
 
-@pytest.mark.parametrize("reader", ["field", "column"])
-def test_tracked_tier_reads_heal_a_lost_write(tmp_path, reader):
-    """The 🕘 popover and the column 🕘 (and autofit's G5 trend, which reads
-    through column_history) answer from the index ALONE whenever it has any
-    row -- so they must run the curated self-heal first."""
+def test_calibration_column_reads_heal_a_lost_write(tmp_path):
+    """Calibration columns heal missing curated rows before reading the index."""
     hm, live, first, second = _two_snapshots_second_unindexed(tmp_path)
-    if reader == "field":
-        out = hm.field_history(live, "qubits.q1.T1")
-        assert out["source"] == "index"
-        assert [p["value"] for p in out["points"]] == [2.0, 1.0]
-    else:
-        out = hm.column_history(live, {"q1": "qubits.q1.T1"})
-        assert [(r[0], r[1]) for r in out["q1"]] == [
-            (first.timestamp, 1.0), (second.timestamp, 2.0)]
+    # S10 C4: field tier -> calibration column, retain lost-write healing.
+    out = hm.column_history(live, {"q1": "qubits.q1.T1"})
+    assert [(r[0], r[1]) for r in out["q1"]] == [
+        (first.timestamp, 1.0), (second.timestamp, 2.0)]
 
 
 def test_a_failing_heal_never_costs_the_read(tmp_path, monkeypatch):
@@ -265,6 +260,6 @@ def test_a_failing_heal_never_costs_the_read(tmp_path, monkeypatch):
         raise RuntimeError("heal failed")
 
     monkeypatch.setattr(hm, "_ensure_index_fresh", boom)
-    out = hm.field_history(live, "qubits.q1.T1")
-    assert out["source"] == "index"
-    assert [p["value"] for p in out["points"]] == [1.0]
+    # S10 C4: field tier -> calibration column, failed healing keeps usable rows.
+    out = hm.column_history(live, {"q1": "qubits.q1.T1"})
+    assert [p[1] for p in out["q1"]] == [1.0]

@@ -1,11 +1,4 @@
-"""Per-field value-history popover (/field/history + HistoryManager.field_history).
-
-The Live-Edit revert flow: a 🕘 button beside every editable value opens the
-field's past values parsed from Param History snapshots — SQLite index tier
-for tracked qubit props, direct snapshot scan for any other leaf — each row
-naming the experiment/trigger that introduced the value, with a Use button
-(fills the edit input; commit stays user-explicit) and a Data button that
-loads the producing run's detail into #inspector-pane."""
+"""Ledger value-history popover: Use, current values, run links and isolation."""
 
 from __future__ import annotations
 
@@ -80,86 +73,7 @@ def _mutate_and_snap(env, state, trigger="manual", **kw):
     return meta
 
 
-class TestFieldHistoryCore:
-    def test_tracked_prop_uses_index_and_collapses_duplicates(self, env):
-        _mutate_and_snap(env, _state(f01=5.0e9))
-        _mutate_and_snap(env, _state(f01=5.1e9), trigger="experiment",
-                         experiment_name="06_ramsey", run_id=31)
-        _mutate_and_snap(env, _state(f01=5.1e9, anh=201e6))  # f_01 unchanged
-        out = env["hm"].field_history(env["live"], "qubits.qA1.f_01")
-        assert out["source"] == "index"
-        vals = [p["value"] for p in out["points"]]
-        assert vals == [5.1e9, 5.0e9], "newest change first, duplicates collapsed"
-        newest = out["points"][0]
-        assert newest["experiment"] == "06_ramsey" and newest["run_id"] == 31
-
-    def test_untracked_leaf_scans_snapshots(self, env):
-        _mutate_and_snap(env, _state(anh=200e6))
-        _mutate_and_snap(env, _state(anh=190e6), trigger="experiment",
-                         experiment_name="08b_vs_power", run_id=44)
-        _mutate_and_snap(env, _state(anh=190e6))
-        out = env["hm"].field_history(env["live"], "qubits.qA1.anharmonicity")
-        # docs/83: an untracked NUMERIC leaf is now answered by the
-        # change-point index instead of the capped scan. What must not move is
-        # the answer — the tier is an implementation detail, the values are the
-        # contract (cross-checked against the scan tier below).
-        assert out["source"] == "leaf-index"
-        assert [p["value"] for p in out["points"]] == [190e6, 200e6]
-        assert out["points"][0]["experiment"] == "08b_vs_power"
-        scan, _n, _t = env["hm"]._scan_field_series(
-            env["live"], env["hm"].list_snapshots(env["live"]),
-            "qubits.qA1.anharmonicity", 150)
-        assert [r[1] for r in scan][-1] == out["points"][0]["value"]
-
-    def test_wiring_side_path_merges_wiring(self, env):
-        _mutate_and_snap(env, _state())
-        wiring2 = json.loads(json.dumps(_WIRING))
-        wiring2["ports"]["mw_outputs"]["con1"]["1"]["2"]["band"] = 3
-        _write_chip(env["live"], _state(f01=5.05e9), wiring2)
-        env["hm"].check_and_snapshot(str(env["live"]), "manual", force=True)
-        out = env["hm"].field_history(env["live"],
-                                      "ports.mw_outputs.con1.1.2.band")
-        assert out["source"] == "leaf-index"      # wiring leaves index too
-        assert [p["value"] for p in out["points"]] == [3, 1]
-
-    def test_pointer_leaf_resolves_per_snapshot(self, env):
-        _mutate_and_snap(env, _state(extra={"ref": "#/qubits/qA1/f_01"}))
-        _mutate_and_snap(env, _state(f01=5.2e9,
-                                     extra={"ref": "#/qubits/qA1/f_01"}))
-        out = env["hm"].field_history(env["live"], "qubits.qA1.ref")
-        vals = [p["value"] for p in out["points"]]
-        assert vals == [5.2e9, 5.0e9], "pointer resolved per snapshot, never raw"
-
-    def test_never_present_path_yields_single_not_set_point(self, env):
-        _mutate_and_snap(env, _state())
-        _mutate_and_snap(env, _state(f01=5.3e9))
-        out = env["hm"].field_history(env["live"], "qubits.qA1.no_such_leaf")
-        assert [p["value"] for p in out["points"]] == [None]
-
-    def test_scan_limit_truncates_honestly(self, env):
-        """The scan tier still says so when it only looked at part of the
-        history. Reached here through a leaf the index declines: a dangling
-        pointer resolves to nothing numeric, and only the scan can show the
-        raw string."""
-        for f in (5.0e9, 5.1e9, 5.2e9, 5.3e9):
-            _mutate_and_snap(env, _state(anh=f / 25,
-                                         extra={"ref": "#/qubits/qA1/nowhere"}))
-        out = env["hm"].field_history(env["live"], "qubits.qA1.ref",
-                                      scan_limit=2)
-        assert out["source"] == "scan"
-        assert out["truncated"] is True and out["scanned"] == 2
-
-    def test_an_indexed_leaf_ignores_scan_limit(self, env):
-        """docs/83: the cap existed because the scan was expensive. A leaf the
-        index covers is answered over the FULL history no matter how low the
-        caller sets scan_limit — that is the whole point of the tier."""
-        for f in (5.0e9, 5.1e9, 5.2e9, 5.3e9):
-            _mutate_and_snap(env, _state(anh=f / 25))
-        out = env["hm"].field_history(env["live"], "qubits.qA1.anharmonicity",
-                                      scan_limit=2)
-        assert out["source"] == "leaf-index" and out["truncated"] is False
-        assert [p["value"] for p in out["points"]] == [
-            5.3e9 / 25, 5.2e9 / 25, 5.1e9 / 25, 5.0e9 / 25]
+# S10 C4: old -> new, retire tests whose whole subject was the removed snapshot tiers.
 
 
 class TestFieldHistoryRoute:

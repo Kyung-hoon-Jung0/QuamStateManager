@@ -319,10 +319,7 @@ def test_the_snapshot_history_cuts_at_a_rename_and_says_so(tmp_path):
     save(state({"q1": 5.0e9, "q2": 6.0e9}))
     save(state({"q0": 5.1e9, "q1": 6.1e9}, [REC]))
     save(state({"q0": 5.2e9, "q1": 6.2e9}, [REC]))
-    h = hm.field_history(live, "qubits.q1.f_01")
-    assert sorted(p["value"] for p in h["points"]) == [6.1e9, 6.2e9], \
-        "the old q1 (today's q0) never appears under today's q1"
-    assert h["renamed_hidden"] >= 1 and h["renamed"]["since"] == REC["at"]
+    # S10 C4: removed drawer cutoff -> retained snapshot extraction cutoff.
     rows = hm.extract_property_history(live, ["f_01"], downsample=None)
     by_qubit = {r["qubit"]: [v["value"] for v in r["values"]] for r in rows}
     assert by_qubit.get("q1") == [6.1e9, 6.2e9] and "q2" not in by_qubit, by_qubit
@@ -445,21 +442,18 @@ def test_a_runs_prev_state_diff_across_the_rename_shows_only_real_changes(shifte
     assert not [p for p in paths if p.startswith("qubits.")], paths[:10]
 
 
-def test_the_snapshot_history_keeps_a_qubit_the_rename_did_not_touch(tmp_path):
-    import time
-    from quam_state_manager.core.history import HistoryManager
+# S10 C4: snapshot cutoff -> ledger fixture, keep untouched qubits continuous.
+def test_the_ledger_keeps_a_qubit_the_rename_did_not_touch(tmp_path):
+    from tests.ledger_fixture import declare_root
     rec = record(["q1", "q2", "q5"], ["q0", "q1", "q5"], {"q0": "q1", "q1": "q2"})
-    live = tmp_path / "chip"
-    live.mkdir()
-    hm = HistoryManager(tmp_path / "instance", max_snapshots=50, cache_size=3)
-    for st in (state({"q1": 5.0e9, "q2": 6.0e9, "q5": 7.0e9}),
-               state({"q0": 5.0e9, "q1": 6.0e9, "q5": 7.1e9}, [rec])):
-        (live / "state.json").write_text(json.dumps(st), encoding="utf-8")
-        (live / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
-        hm.check_and_snapshot(live, trigger="manual", force=True)
-        time.sleep(0.02)
-    h = hm.field_history(live, "qubits.q5.f_01")
-    assert sorted(p["value"] for p in h["points"]) == [7.0e9, 7.1e9], "q5 is the same qubit"
-    assert h["renamed_hidden"] == 0
-    h1 = hm.field_history(live, "qubits.q1.f_01")
-    assert [p["value"] for p in h1["points"]] == [6.0e9] and h1["renamed_hidden"] == 1
+    runs = [state({"q1": 5.0e9, "q2": 6.0e9, "q5": 7.0e9}),
+            state({"q0": 5.0e9, "q1": 6.0e9, "q5": 7.1e9}, [rec])]
+    env = make(tmp_path, runs, runs[-1])
+    declare_root(env["client"], env["data"])
+    ans = history(env, "qubits.q5.f_01")
+    assert values(ans) == [7.0e9, 7.1e9]
+    assert ans["rows"]["k"]["renames"] == []
+    ans = history(env, "qubits.q1.f_01")
+    assert values(ans) == [6.0e9]
+    assert [(r["was"], r["now"]) for r in ans["rows"]["k"]["renames"]] == [
+        ("qubits.q2.f_01", "qubits.q1.f_01")]

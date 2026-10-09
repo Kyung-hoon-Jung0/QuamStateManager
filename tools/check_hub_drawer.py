@@ -1,6 +1,5 @@
-"""S7 checks (docs/282) on disposable copies: the old per-value history must be
-contained in the ledger's, one alias path must agree across three surfaces,
-and the drawer's server time before vs after.
+"""S7 checks (docs/282) on disposable copies: ledger alias truth and drawer server times.
+The old comparison command is retired; its final results remain in docs/282.
 
 Nothing here writes into a source archive: run folders are byte-copied
 (``shutil.copy2``, never a link) into ``--scratch``, and everything under the
@@ -199,7 +198,7 @@ def sample_paths(merged, n: int, seed: int) -> list[dict]:
 
 
 # ----------------------------------------------------------------------
-# golden containment
+# recorded comparison and ledger truth
 # ----------------------------------------------------------------------
 
 def _same(a, b) -> bool:
@@ -213,6 +212,7 @@ def _same(a, b) -> bool:
         return a == b
 
 
+# S10 C4: live snapshot comparison -> recorded data, retain offline classifiers.
 def _seq(points, positions):
     return [(positions[p["eid"]], None if p["removed"] else p["value"], p) for p in points]
 
@@ -338,122 +338,10 @@ def classify(path_rec, old_points, new_points, hop_seqs, positions, key_pos, las
     return res, extra, missing
 
 
+
 def golden(args) -> dict:
-    scratch = args.scratch.resolve()
-    work = scratch / "golden"
-    remove_scratch(work, scratch)
-    data, chip, inst = work / "data", work / "chip", work / "inst"
-    t0 = time.perf_counter()
-    copied = copy_runs(args.archive, data, args.runs)
-    copy_s = time.perf_counter() - t0
-    make_chip(copied[-1], chip, data)
-    report = {"runs_copied": len(copied), "copy_s": round(copy_s, 1), "seed": args.seed}
-    try:
-        with sm_app(inst, chip, data, backfill=True) as sm:
-            r = sm.routes
-            report["load_and_ledger_s"] = round(sm.load_s, 1)
-            if args.observed:
-                report["outside_edits"] = inject_outside_edits(sm, chip, copied, args.observed, args.seed)
-            report["param_history_backfill_s"] = round(sm.backfill_s, 1)
-            report["param_history_backfill"] = sm.backfill_report
-            with sm.app.test_request_context():
-                ctx = r._active_ctx()
-                chip_dir = Path(r._hub_chip_dir(ctx["path"]))
-                merged = ctx["store"].merged
-                snaps = r._history().list_snapshots(ctx["path"])
-                report["param_history_snapshots"] = len(snaps)
-                with hub_index.snapshot(SimpleNamespace(directory=chip_dir)) as (_c, index):
-                    positions = dict(index.positions)
-                    run_kind = index.names["kind"].get("run")
-                    key_pos = {}
-                    obs_kind = index.names["kind"].get("observed")
-                    for pos, eid in enumerate(index.eids):
-                        if index.kind[pos] == run_kind:
-                            key_pos[run_time.snapshot_key(index.t[pos], index.run_id[pos])] = pos
-                        elif index.kind[pos] == obs_kind:
-                            rel = index.keys[eid][4]
-                            key_pos[rel.split(":", 1)[1]] = pos
-                    report["ledger_observed_events"] = sum(
-                        1 for k in index.kind if obs_kind is not None and k == obs_kind)
-                    key_of_pos = {p: k for k, p in key_pos.items()}
-                    last_pos = len(index.eids)
-                    report["ledger_events"] = len(index.eids)
-                    chash = {r[0]: r[1] for r in _c.execute("SELECT eid, chash FROM events")}
-                    seen_at: dict = {}
-                    content_returns = set()
-                    for pos, eid in enumerate(index.eids):
-                        h = chash.get(eid)
-                        if h is not None and h in seen_at and seen_at[h] < pos - 1:
-                            content_returns.add(eid)
-                        if h is not None:
-                            seen_at[h] = pos
-                snap_keys = frozenset(m.timestamp for m in snaps)
-                examples = {"drawer": {}, "column": {}}
-                picks = sample_paths(merged, args.paths, args.seed)
-                moved = (report.get("outside_edits") or {}).get("moved_paths") or []
-                have = {p["path"] for p in picks}
-                extra = [{"path": p, "class": "outside_edit"} for p in moved if p not in have]
-                picks = extra + picks[:max(0, args.paths - len(extra))]
-                totals = {"drawer": Counter(), "column": Counter()}
-                extras = {"drawer": Counter(), "column": Counter()}
-                missing = {"drawer": [], "column": []}
-                per_class = Counter(p["class"] for p in picks)
-                modes = Counter()
-                for rec in picks:
-                    dp = rec["path"]
-                    ans_all = r._value_history(ctx, {"v": dp})
-                    modes[ans_all["mode"]] += 1
-                    if ans_all["mode"] != "ledger":
-                        continue
-                    new_pts = ans_all["rows"]["v"]["points"]
-                    shown = r._value_history(ctx, {"v": dp}, limit=r._VH_DRAWER_LIMIT)
-                    shown_eids = {p["eid"] for p in shown["rows"]["v"]["points"]}
-                    hop_seqs = [_seq(h["rows"], positions) for h in ans_all["rows"]["v"]["retargets"]]
-                    hist, _cur, _chart = r._legacy_field_history(ctx, dp)
-                    old_d = [{"ts": p["timestamp"], "value": p["value"]} for p in reversed(hist["points"])]
-                    res, ext, miss = classify(rec, old_d, new_pts, hop_seqs, positions, key_pos,
-                                              last_pos, shown_eids, cap_rows=20, snap_keys=snap_keys,
-                                              key_of_pos=key_of_pos, examples=examples["drawer"],
-                                              old_source=hist.get("source"), content_returns=content_returns)
-                    totals["drawer"].update(res)
-                    extras["drawer"].update(ext)
-                    missing["drawer"] += miss
-                    view = r._legacy_column_history(ctx, {"v": dp})
-                    chips = view["rows"][0]["chips"] if view["rows"] else []
-                    old_c = [{"ts": ch["ts"], "value": ch["raw"]} for ch in reversed(chips)]
-                    col_shown = {p["eid"] for p in new_pts[-r.CH_MAX_CHIPS:]}
-                    res, ext, miss = classify(rec, old_c, new_pts, hop_seqs, positions, key_pos,
-                                              last_pos, col_shown, cap_rows=r.CH_MAX_CHIPS,
-                                              snap_keys=snap_keys, key_of_pos=key_of_pos,
-                                              examples=examples["column"], content_returns=content_returns)
-                    totals["column"].update(res)
-                    extras["column"].update(ext)
-                    missing["column"] += miss
-                report.update({
-                    "paths": len(picks), "path_classes": dict(per_class), "modes": dict(modes),
-                    "old_points": {k: dict(v) for k, v in totals.items()},
-                    "extra_ledger_points": {k: dict(v) for k, v in extras.items()},
-                    "missing_examples": {k: v[:20] for k, v in missing.items()},
-                    "examples": examples,
-                })
-                if args.alias:
-                    report["alias"] = alias_agreement(sm, ctx, args.alias)
-                # the alias path with the most recorded changes, for (b)
-                best, best_n = None, 0
-                for ap in alias_paths(merged):
-                    a = r._value_history(ctx, {"v": ap})
-                    n = len(a["rows"]["v"]["points"]) if a["mode"] == "ledger" else 0
-                    if n > best_n:
-                        best, best_n = ap, n
-                if best:
-                    report["alias_most_changed"] = alias_agreement(sm, ctx, best)
-                # P0-1 / P0-3 / P1-1: every alias path against each sampled run's own state
-                report["alias_truth"] = alias_truth(chip_dir, alias_paths(merged), args.truth_runs, args.seed)
-    finally:
-        hub_index.close_readers()
-        if not args.keep:
-            report["cleanup_done"] = remove_scratch(work, scratch, strict=False)
-    return report
+    # S10 C4: old comparison -> archived reports, its snapshot readers were removed.
+    raise RuntimeError("Snapshot comparison retired in S10 C4; use the recorded golden reports.")
 
 
 def inject_outside_edits(sm, chip: Path, copied: list, count: int, seed: int) -> dict:
@@ -572,74 +460,8 @@ def alias_truth(chip_dir: Path, aliases: list[str], runs_to_check: int, seed: in
 
 
 def alias_agreement(sm, ctx, dot_path: str) -> dict:
-    """(b): the drawer, Column History and Chip Status Trends for ONE alias
-    path, before (the old code paths) and after (the shared read)."""
-    r = sm.routes
-    store = ctx["store"]
-    qubits = list(store.qubit_names)
-    pairs = list(store.qubit_pair_names)
-    hm = r._history()
-    from quam_state_manager.core import chip_trends_ram
-    tbl = chip_trends_ram.table(hm, Path(ctx["path"]))
-
-    # docs/283 (S8): Chip Status Trends reads the change ledger, so the old
-    # alias-series path this compared no longer exists; the ledger Trends is
-    # pinned against the drawer by tests/test_hub_chip_status.py
-    legacy_trends = hasattr(r, "_trend_alias_series")
-
-    def trends(alias_on: bool):
-        if not legacy_trends:
-            return None
-        real = r._trend_alias_series
-        if not alias_on:
-            r._trend_alias_series = lambda dps: {}
-        try:
-            got = r._trend_series_leaf(hm, Path(ctx["path"]), dot_path, qubits, pairs, tbl)
-        finally:
-            r._trend_alias_series = real
-        q = dot_path.split(".")[1]
-        for s in got:
-            if s["entity"] == q:
-                held = s.get("held") or {}
-                return [(ts, v) for ts, v in s["points"] if ts not in held]
-        return []
-
-    hist, _c, _ch = r._legacy_field_history(ctx, dot_path)
-    before_drawer = [(p["timestamp"], p["value"]) for p in reversed(hist["points"])]
-    view = r._legacy_column_history(ctx, {"v": dot_path})
-    before_col = [(c["ts"], c["raw"]) for c in reversed(view["rows"][0]["chips"])]
-    before_trends = trends(False)
-    ans = r._value_history(ctx, {"v": dot_path})
-    after = [(run_time.snapshot_key(p["t_us"], p.get("run_id") or 0), p["value"])
-             for p in ans["rows"]["v"]["points"]]
-    col = r._value_history(ctx, {"qX": dot_path}, runs=r.CH_BYRUN_COLS)
-    after_col = [(run_time.snapshot_key(p["t_us"], p.get("run_id") or 0), p["value"])
-                 for p in col["rows"]["qX"]["points"]]
-    after_trends = trends(True)
-    # docs/282 review: the drawer and Column History show the holder's own
-    # rows (each marked when the alias did not name that holder then); Trends
-    # and By run show the value IN FORCE through the alias -- the agent's
-    # in_force series. The two agree wherever the alias named the holder.
-    in_force = [(run_time.snapshot_key(p["t_us"], p.get("run_id") or 0), p["value"])
-                for p in ans["rows"]["v"]["effective"]]
-    unmarked = {(run_time.snapshot_key(p["t_us"], p.get("run_id") or 0), p["value"])
-                for p in ans["rows"]["v"]["points"] if not p["before_via"]}
-    marked = sum(1 for p in ans["rows"]["v"]["points"] if p["before_via"])
-    holder = ans["targets"]["v"]["holder"]
-    other = [e for e in ans["rows"]["v"]["effective"] if e.get("holder") != holder]
-    return {"path": dot_path,
-            "before": {"drawer": before_drawer, "column": before_col, "trends": before_trends},
-            "after": {"drawer": after, "column": after_col, "trends": after_trends},
-            "before_agree": before_drawer == before_col and (not legacy_trends or before_col == before_trends),
-            "after_drawer_equals_column": after == after_col,
-            "after_trends_equals_in_force": after_trends == in_force if legacy_trends else None,
-            "unmarked_rows_all_in_trends": unmarked <= set(after_trends) if legacy_trends else None,
-            "rows": len(after), "rows_marked_before_via": marked,
-            "in_force_points": len(in_force), "in_force_from_another_holder": len(other),
-            "after_agree": after == after_col and (not legacy_trends or (
-                after_trends == in_force and unmarked <= set(after_trends))),
-            "holder": ans["targets"]["v"]["holder_path"],
-            "via": [h["from_path"] + " -> " + h["to_path"] for h in ans["targets"]["v"]["via"]]}
+    # S10 C4: live snapshot comparison -> archived reports, its readers were removed.
+    raise RuntimeError("Snapshot alias comparison retired in S10 C4.")
 
 
 # ----------------------------------------------------------------------
@@ -651,39 +473,30 @@ def _pct(values, q):
     return round(v[max(0, math.ceil(q * len(v)) - 1)], 2)
 
 
-def time_drawer(sm, paths: list[str], *, legacy: bool, passes: int) -> dict:
-    r = sm.routes
-    real = r._value_history
-    if legacy:
-        def stub(ctx, path_map, **kw):
-            return {"mode": "fallback", "fallback_note": None, "targets": {}, "notes": {}}
-        r._value_history = stub
-    try:
-        cold, warm = [], []
-        kinds = Counter()
-        for i in range(passes + 1):
-            for p in paths:
-                t = time.perf_counter()
-                resp = sm.client.get("/field/history", query_string={"path": p})
-                dt = (time.perf_counter() - t) * 1000
-                assert resp.status_code == 200
-                (cold if i == 0 else warm).append(dt)
-                body = resp.data.decode("utf-8", "replace")
-                kinds["ledger_rows" if 'class="vh-row' in body else
-                      "ledger_empty" if "from the change ledger" in body else
-                      "wait" if "data-vh-retry" in body else
-                      "old_path" if "fh-table" in body or "fh-empty" in body else "other"] += 1
-        return {"first_ms": round(cold[0], 2) if cold else None,
-                "cold_p50": _pct(cold, .5), "cold_p95": _pct(cold, .95),
-                "warm_p50": _pct(warm, .5), "warm_p95": _pct(warm, .95),
-                "n_warm": len(warm), "answers": dict(kinds)}
-    finally:
-        r._value_history = real
+def time_drawer(sm, paths: list[str], *, passes: int) -> dict:
+    # S10 C4: forced snapshot mode -> ledger timing, no retired route stub.
+    cold, warm = [], []
+    kinds = Counter()
+    for i in range(passes + 1):
+        for p in paths:
+            t = time.perf_counter()
+            resp = sm.client.get("/field/history", query_string={"path": p})
+            dt = (time.perf_counter() - t) * 1000
+            assert resp.status_code == 200
+            (cold if i == 0 else warm).append(dt)
+            body = resp.data.decode("utf-8", "replace")
+            kinds["ledger_rows" if 'class="vh-row' in body else
+                  "ledger_empty" if "from the change ledger" in body else
+                  "wait" if "data-vh-retry" in body else "other"] += 1
+    return {"first_ms": round(cold[0], 2) if cold else None,
+            "cold_p50": _pct(cold, .5), "cold_p95": _pct(cold, .95),
+            "warm_p50": _pct(warm, .5), "warm_p95": _pct(warm, .95),
+            "n_warm": len(warm), "answers": dict(kinds)}
 
 
 def perf_big(args) -> dict:
     """A big chip (its own state) with *runs* synthetic runs that each move a
-    few numeric leaves; Param History backfilled for the old path."""
+    few numeric leaves; Param History captures remain available."""
     scratch = args.scratch.resolve()
     work = scratch / "perf_big"
     remove_scratch(work, scratch)
@@ -724,8 +537,7 @@ def perf_big(args) -> dict:
             rest = [p for p, v in leaves(merged) if isinstance(v, float)]
             paths += random.Random(args.seed).sample(rest, min(25, len(rest)))
             report["paths"] = len(paths)
-            report["before"] = time_drawer(sm, paths, legacy=True, passes=args.passes)
-            report["after"] = time_drawer(sm, paths, legacy=False, passes=args.passes)
+            report["ledger"] = time_drawer(sm, paths, passes=args.passes)
     finally:
         hub_index.close_readers()
         if not args.keep:
@@ -768,8 +580,7 @@ def perf_synthetic(args) -> dict:
             rng = random.Random(args.seed)
             paths = [f"qubits.qA{rng.randrange(128)}.field{rng.randrange(8)}" for _ in range(50)]
             report["paths"] = len(paths)
-            report["before"] = time_drawer(sm, paths, legacy=True, passes=args.passes)
-            report["after"] = time_drawer(sm, paths, legacy=False, passes=args.passes)
+            report["ledger"] = time_drawer(sm, paths, passes=args.passes)
     finally:
         hub_index.close_readers()
         if not args.keep:

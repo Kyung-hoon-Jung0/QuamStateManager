@@ -8,7 +8,7 @@ history read of folder A answered with folder B's newest value and B's backups
 as if they were A's.
 
 Measured repro (docs/250 §1): A edit+apply -> 2 rows; B (copy, same name)
-edit+apply -> 2 rows; back on A, ``field_history(A)`` listed B's 5.12 GHz as
+edit+apply -> 2 rows; back on A, the value drawer for A listed B's 5.12 GHz as
 the newest change of A's f_01 and the Versions quick-diff "#2 -> #1" showed B's
 edit as what just changed on A.
 
@@ -42,6 +42,7 @@ from quam_state_manager.core.history import HistoryManager
 from quam_state_manager.core.scanner import ExperimentEntry
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests.ledger_fixture import observed_view, declare_root
 
 _WIRING = {"network": {"host": "10.0.0.7", "cluster_name": "c1"},
            "wiring": {"qubits": {}}}
@@ -94,6 +95,7 @@ def two(tmp_path):
             "tmp": tmp_path}
 
 
+# S10 C4: snapshot field reader -> shared ledger fixture, retain per-folder evidence.
 class TestOneDirTwoFolders:
     def test_both_folders_share_one_chip_dir(self, two):
         """The premise: one identity, one dir (this fix keeps it)."""
@@ -103,23 +105,26 @@ class TestOneDirTwoFolders:
 
     def test_a_parallel_folders_rows_leave_the_timeline_and_are_counted(self, two):
         hm = two["hm"]
-        out = hm.field_history(two["a"], "qubits.q1.f_01")
+        out = observed_view(hm, two["a"], "qubits.q1.f_01")
         vals = [p["value"] for p in out["points"]]
         assert vals == [5.01e9, 5.00e9], "B's 5.12/5.10 are not A's history"
-        assert all(p["source"]["kind"] == "this" for p in out["points"])
-        assert out["parallel_hidden"] == 2
-        assert [f["label"] for f in out["other_folders"]] == ["lab-B/quam_state"]
-        assert out["other_folders"][0]["snapshots"] == 2
+        assert all(not p.get("source") or p["source"]["kind"] == "this"
+                   for p in out["points"])
+        assert out["ledger"]["left_out"]["parallel"] == 2
+        note = next(n for n in out["notes"] if n["code"] == "other_folders")
+        assert [f["label"] for f in note["folders"]] == ["lab-B/quam_state"]
+        assert note["folders"][0]["events"] == 2
 
     def test_a_folder_copied_after_keeps_the_earlier_history_labelled(self, two):
         hm = two["hm"]
-        out = hm.field_history(two["b"], "qubits.q1.f_01")
-        rows = [(p["value"], p["source"]["kind"], p["source"]["label"])
+        out = observed_view(hm, two["b"], "qubits.q1.f_01")
+        rows = [(p["value"], (p.get("source") or {}).get("kind", "this"),
+                 (p.get("source") or {}).get("label"))
                 for p in out["points"]]
         assert rows == [(5.12e9, "this", None), (5.10e9, "this", None),
                         (5.01e9, "other", "lab-A/quam_state"),
                         (5.00e9, "other", "lab-A/quam_state")]
-        assert out["parallel_hidden"] == 0
+        assert not out["ledger"].get("left_out", {}).get("parallel")
         assert {p["source"]["lineage"] for p in out["points"][2:]} == {"earlier"}
 
     def test_a_new_folder_with_no_rows_yet_keeps_the_whole_history(self, two):
@@ -127,10 +132,10 @@ class TestOneDirTwoFolders:
         hm = two["hm"]
         c = two["tmp"] / "lab-C" / "quam_state"
         _write(c, _state(5.12e9))
-        out = hm.field_history(c, "qubits.q1.f_01")
+        out = observed_view(hm, c, "qubits.q1.f_01")
         assert [p["value"] for p in out["points"]] == [5.12e9, 5.10e9, 5.01e9, 5.00e9]
-        assert {p["source"]["kind"] for p in out["points"]} == {"other"}
-        assert out["parallel_hidden"] == 0
+        assert all(p.get("source", {}).get("kind") == "other" for p in out["points"])
+        assert not out["ledger"].get("left_out", {}).get("parallel")
 
     def test_the_version_chip_prefers_this_folders_identical_copy(self, two):
         hm, a, b = two["hm"], two["a"], two["b"]
@@ -149,9 +154,9 @@ class TestOneDirTwoFolders:
             "one leaf changed in A; against B's newest row it would be 2")
         # B's rows now sit BETWEEN A's own rows: still not A's timeline (the
         # cut is A's FIRST own row, not its newest)
-        out = hm.field_history(a, "qubits.q1.f_01")
+        out = observed_view(hm, a, "qubits.q1.f_01")
         assert [p["value"] for p in out["points"]] == [5.01e9, 5.00e9]
-        assert out["parallel_hidden"] == 2
+        assert out["ledger"]["left_out"]["parallel"] == 2
 
 
 class TestSourceKinds:
@@ -192,7 +197,14 @@ class TestSourceKinds:
         srcs = hm.snapshot_sources(a)
         run_rows = [v for v in srcs.values() if v["kind"] == "run"]
         assert len(run_rows) == 1 and run_rows[0]["lineage"] == "run"
-        out = hm.field_history(a, "qubits.q1.f_01")
+        # S10 C4: ingested snapshot value -> declared run ledger, retain source classification.
+        app = create_app(testing=True, instance_path=str(hm._root.parent))
+        client = app.test_client()
+        assert client.post("/load", data={"folder": str(a)}).status_code in (200, 302)
+        declare_root(client, two["tmp"] / "data")
+        with app.test_request_context():
+            ans = routes_mod._value_history(routes_mod._active_ctx(), {"v": "qubits.q1.f_01"})
+            out = routes_mod._vh_drawer_view(ans, "v", "qubits.q1.f_01")
         assert 5.05e9 in [p["value"] for p in out["points"]], \
             "a run row stays in the timeline (copied-state runs are not flagged)"
 
