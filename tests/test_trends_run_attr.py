@@ -21,6 +21,8 @@ The fixture is one chip, one dataset root and four snapshots:
 """
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import json
 import re
 from datetime import datetime, timezone
@@ -65,7 +67,7 @@ def _run(root: Path, rid: int, name: str, t1: float, *, patches=None,
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    # S10 C5: value_writer caches + the writer-check budget -> not read, these surfaces read the ledger.
+    # S10 C5: retired writer caches + the writer-check budget -> not read, these surfaces read the ledger.
     live = tmp_path / "chips" / "live"
     _write_chip(live, _state(2.0e-5))
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
@@ -131,8 +133,8 @@ class TestTrends:
         its series' attr, and a run that only saved the value is never its writer."""
         _, s1, _, _ = _four(env)
         body = env["client"].get("/topology/trends?metrics=T1").get_data(as_text=True)
-        m = re.search(r'id="topo-trends-snaps">(.*?)</script>', body, re.S)
-        snaps = json.loads(m.group(1))
+        m = re.search(r'id="topo-trends-' r'snaps">(.*?)</script>', body, re.S)
+        snaps = json.loads(m.group(1)) if m else {}
         # S10 C3: snapshot capturer map -> ledger point context, carried saves invent no changes.
         assert snaps == {}
         (ser,) = [c for c in _charts(body) if c["metric"] == "T1"][0]["series"]

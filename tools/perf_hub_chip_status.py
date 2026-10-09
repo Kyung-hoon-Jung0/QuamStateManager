@@ -16,6 +16,8 @@ key so earlier reports still compare.
 
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import argparse
 from datetime import datetime, timedelta, timezone
 import json
@@ -27,7 +29,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_hub_drawer as base  # noqa: E402
-from quam_state_manager.core import chip_trends_ram, hub_index, param_history_ram  # noqa: E402
+from quam_state_manager.core import hub_index, param_history_ram  # noqa: E402
 from quam_state_manager.web import hub_status  # noqa: E402
 
 SURFACES = {
@@ -54,8 +56,8 @@ def _get(sm, url):
 
 
 def _drop_caches(sm):
+    # S10 C7: old -> new, only the remaining reader pools need cleanup.
     hub_index.close_readers()
-    chip_trends_ram.close_all()
     param_history_ram.close_all()
     hub_status._CACHE.clear()
 

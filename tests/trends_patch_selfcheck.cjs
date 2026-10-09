@@ -1,3 +1,4 @@
+// S10 C7: old -> new, remove snapshot-only payloads and preserve ledger behavior.
 /* RAM P2: a Trends toggle PATCHES the section (ChipTrends._apply) instead of
  * re-rendering every chart, and SnapTime builds one Intl formatter per zone.
  * Driven by tests/test_chip_trends_ram.py::test_client_patch_selfcheck. */
@@ -17,7 +18,7 @@ function frag(boxes, extra) {
         + '" data-trend-sig="' + b.sig + '"><div class="topo-trend-title">' + b.metric + '</div>'
         + '<div class="topo-trend-chart" id="topo-trend-' + i + '"></div></div>').join('')
     + '</div><script type="application/json" id="topo-trends-data">' + JSON.stringify(charts) + '</script>'
-    + '<script type="application/json" id="topo-trends-snaps">{}</script>'
+    + ''
     + '<script>ChipTrends.render(JSON.parse(document.getElementById("topo-trends-data").textContent));</script></div>';
 }
 

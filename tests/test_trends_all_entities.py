@@ -303,20 +303,18 @@ class TestTheTypeaheadReadsAFreshIndex:
         real = hm._ensure_leaf_index_fresh
         monkeypatch.setattr(hm, "_ensure_leaf_index_fresh",
                             lambda p: (calls.append(str(p)), real(p))[1])
+        # S10 C7: old -> new, spy on ledger families after retiring the snapshot table.
+        from quam_state_manager.web.hub_status import LedgerTable
         fam = []
-        # RAM P1a: the route reads families through the per-token table
-        # (core/chip_trends_ram), whose ``leaf_families`` is the drop-in twin
-        # of HistoryManager's -- same ``fresh`` contract.
-        from quam_state_manager.core import chip_trends_ram as _ctr
-        real_fam = _ctr.ChipTrendsTable.leaf_families
-        monkeypatch.setattr(_ctr.ChipTrendsTable, "leaf_families",
+        real_fam = LedgerTable.leaf_families
+        monkeypatch.setattr(LedgerTable, "leaf_families",
                             lambda self, *a, **k: (fam.append(k.get("fresh", False)),
                                                    real_fam(self, *a, **k))[1])
         assert client.get("/topology/trends?metrics=f_01").status_code == 200
         # S10 C3: the page reads the snapshot table and only the typeahead freshens the leaf
         # index -> both read the change ledger, so neither reaches the retired table nor ever
         # freshens (write-locks) the leaf index, and the typeahead still finds the family.
-        assert fam == [], f"the render reached the retired snapshot table: {fam}"
+        assert fam and not any(fam), f"ledger families requested a write: {fam}"
         assert calls == [], f"the page render rebuilt the leaf index: {calls}"
         rows = client.get("/topology/trends/paths?q=interaction_offset").get_json()
         assert calls == [], f"the typeahead rebuilt the leaf index: {calls}"

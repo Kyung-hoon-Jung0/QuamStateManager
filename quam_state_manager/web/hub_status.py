@@ -246,7 +246,7 @@ def meta_paths(store) -> tuple:
 
 
 class LedgerTable:
-    """The Trends table interface (``chip_trends_ram.table``'s methods the
+    """The Trends table interface (the methods the
     renderers call) over the chip's ledger.
 
     The route supplies its one reader (``_value_history``) and presenter
@@ -407,9 +407,8 @@ class LedgerTable:
 
     # -------------------------------------------------------------- memo
     def part(self, key, compute, *, narrow: bool = True, **_kwargs):
-        """*key*'s value for this ledger state. Shared and read-only, like a
-        ``chip_trends_ram`` part: every caller builds its own structures from
-        it and never writes into it.
+        """*key*'s value for this ledger state. Shared and read-only: every
+        caller builds its own structures from it and never writes into it.
 
         docs/298: with *narrow*, a part computed at another edit counter is
         served again when the ledger, the roots, the status and the folder are
@@ -511,8 +510,7 @@ class LedgerTable:
     def snapshot_count(self):
         return self.answer["ledger"].get("events", 0)
 
-    def index_updating(self):
-        return False
+    # S10 C7: old -> new, retire a callerless snapshot reader.
 
     def _family(self):
         if self._fam is None:

@@ -13,12 +13,14 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = "quam_state_manager/core/hub_index.py"
 QUERY = "quam_state_manager/core/hub_query.py"
+SYNC = "quam_state_manager/core/hub_sync.py"
 
+# S10 C7: old -> new, anchors follow the current read snapshot and zone gates.
 # Every entry targets behavior; syntax and collection errors never count.
 # name, module, exact source, replacement, test function suffix
 MUTATIONS = [
-    ("timeline_order", QUERY, '[events[eid] for eid in selected]',
-     '[events[eid] for eid in reversed(selected)]',
+    ("timeline_order", QUERY, '"events": [events[eid] for eid in selected], "cursor"',
+     '"events": [events[eid] for eid in reversed(selected)], "cursor"',
      "timeline_newest_first_exact_rows_and_zero_change_events"),
     ("timeline_old", QUERY, '"old": value(row["old_num"], row["old_txt"])',
      '"old": value(row["num"], row["txt"])',
@@ -38,7 +40,7 @@ MUTATIONS = [
      "search_shared_and_or_grammar_and_literal_pipes"),
     ("pair_members", INDEX, 'yield from text.split("-")', 'yield ""',
      "pair_members_and_macro_targets_and_changed_segments"),
-    ("path_entities", INDEX, 'for entity in _entities(part)})', 'for entity in ()})',
+    ("path_entities", INDEX, 'for entity in _entities(part)}', 'for entity in ()}',
      "pair_members_and_macro_targets_and_changed_segments"),
     ("project_day", INDEX, 'tz = ZoneInfo(zone)', 'tz = ZoneInfo("UTC")',
      "day_comes_from_project_zone_not_folder_or_pc"),
@@ -53,7 +55,7 @@ MUTATIONS = [
      "cursor_stable_on_new_and_late_appends_and_rank_renumbering"),
     ("cursor_filters", QUERY, 'data.get("filters") != signature', 'False',
      "cursor_rejects_other_query_zone_ledger_and_malformed"),
-    ("warming", INDEX, 'hub_sync.require_ready(directory)', 'None',
+    ("warming", SYNC, '    if st["state"] == "building":\n        raise Building(chip_dir, st)', '    if False:\n        raise Building(chip_dir, st)',
      "every_api_raises_existing_warming_even_on_cached_index"),
     ("warming_after", INDEX,
      '        hub_sync.require_ready(directory)\n        if conn.execute',
@@ -62,8 +64,8 @@ MUTATIONS = [
      "alias_free_escaped_and_case_distinct_holder_paths"),
     ("lossless_values", QUERY, 'value(changes[eid]["num"], changes[eid]["txt"])',
      'changes[eid]["num"]', "payloads_nonfinite_large_numbers_long_array_and_raw_pointer"),
-    ("rewrite_token", INDEX, 'ledger_id, version, high, journal_size, zone)',
-     'ledger_id, 0, high, journal_size, zone)',
+    ("rewrite_token", INDEX, 'token = (reader.identity, ledger_id, version, high, journal_size)',
+     'token = (reader.identity, ledger_id, 0, high, journal_size)',
      "cache_reuses_index_and_invalidates_same_connection_rewrites"),
     ("sparse_positions", INDEX, 'index.positions[eid] = len(index.eids)',
      'index.positions[eid] = eid - 1', "cache_external_changes_rows_and_sparse_eids"),
@@ -83,7 +85,8 @@ MUTATIONS = [
     ("series_cap", QUERY, 'ids = sorted(ids, key=index.positions.__getitem__)',
      'ids = sorted(ids, key=index.positions.__getitem__)[:500]',
      "large_pages_and_many_series_batch_sql_parameters"),
-    ("root_holder", INDEX, 'index.paths[path] = pid', 'index.paths[path or "root"] = pid',
+    # S10 C7: old -> new, the lookup covers full and incremental indexes.
+    ("root_holder", QUERY, 'pid = index.paths.get(path)', 'pid = index.paths.get(path or "root")',
      "root_empty_key_and_backslash_holder_paths"),
     ("macro_class", INDEX, 'if _ENTITY.fullmatch(token) or token.startswith("cz_"):',
      'if _ENTITY.fullmatch(token):', "macro_classifier_and_actor_class_and_family_are_distinct"),
@@ -98,7 +101,7 @@ MUTATIONS = [
      'return {path: series(store, path) for path in paths}', "series_many_uses_one_snapshot"),
     ("reader_bound", INDEX, 'while len(_READERS) > 8:', 'while len(_READERS) > 80:',
      "reader_handles_are_bounded_and_close_drops_index"),
-    ("unbound_day", INDEX, 'if not isinstance(store, ReadContext):', 'if False:',
+    ("unbound_day", INDEX, '    if not _calendar(store):\n        raise ValueError("bind the project time zone before querying ledger days")', '    if False:\n        raise ValueError("bind the project time zone before querying ledger days")',
      "missing_project_zone_fails_and_offline_utc_is_explicit"),
     ("array_root", INDEX, 'index.root.append(row["root_id"] if row["root_id"] is not None else -1)',
      'index.root.append(-1)', "columnar_arrays_postings_footprint_and_read_only_sql"),
@@ -118,8 +121,8 @@ def main():
     if ROOT not in scratch.parents:
         parser.error("scratch must be inside this worktree")
     scratch.mkdir(parents=True, exist_ok=True)
-    originals = {name: (ROOT / name).read_bytes() for name in (INDEX, QUERY)}
-    env = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
+    originals = {name: (ROOT / name).read_bytes() for name in (INDEX, QUERY, SYNC)}
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1", NODE_PATH="D:/work/statemanager/node_modules")
     results = []
     test_tree = ast.parse((ROOT / "tests/test_hub_query.py").read_text(encoding="utf-8"))
     pins = {node.name for node in test_tree.body if isinstance(node, ast.FunctionDef)
@@ -130,7 +133,9 @@ def main():
     try:
         for name, filename, old, new, suffix in MUTATIONS:
             source = originals[filename].decode("utf-8")
-            if old not in source:
+            if "\r\n" in source:
+                old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
+            if source.count(old) != 1:
                 raise ValueError(f"mutation target not found: {name}")
             mutated = source.replace(old, new)
             compile(mutated, filename, "exec")
@@ -139,7 +144,7 @@ def main():
             try:
                 target = "tests/test_hub_query.py::test_" + suffix
                 proc = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-                                       "--timeout=900", "--basetemp", str(scratch / name), target],
+                                       "--timeout=900", "--timeout-method=thread", "--basetemp", str(scratch / name), target],
                                       cwd=ROOT, capture_output=True, text=True, env=env)
                 log = proc.stdout + proc.stderr
                 (scratch / (name + ".log")).write_text(log, encoding="utf-8")

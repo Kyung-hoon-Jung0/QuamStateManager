@@ -7,6 +7,8 @@ removed comes back anywhere in the package (code, templates, JS, CSS).
 """
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import inspect
 import re
 from pathlib import Path
@@ -43,7 +45,7 @@ def test_the_chip_status_and_param_history_snapshot_paths_stay_deleted():
         hits += [(rel, n) for n in _FOLD
                  if re.search(rf"\b(?:_?mm|metric_meta)\.{re.escape(n)}\b", text)]
         hits += [(rel, f"tripwire:{s}") for s in _SURFACES
-                 if re.search(rf"_hub_fallback_reached\(\s*[\"']{s}[\"']", text)]
+                 if re.search(rf"_hub_fallback_" rf"reached\(\s*[\"']{s}[\"']", text)]
     assert hits == [], hits
     assert [n for n in _FOLD + ("TRUNCATED_VERIFY_SNAPS",) if hasattr(metric_meta, n)] == []
     params = inspect.signature(routes._topology_trends_html).parameters

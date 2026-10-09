@@ -5,6 +5,8 @@ One static pin: every name the deletion removed is absent from the shipped
 package, so a revert of any one branch (route arm, template, macro, client
 filter) turns this RED.
 """
+
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
 import re
 from pathlib import Path
 
@@ -18,11 +20,11 @@ DELETED = {
     "visible_total": "Versions panel filtered total",
     "first_ts": "zero-diff baseline rule (panel, page, drawer)",
     "_HISTORY_PANEL_PER_PAGE": "snapshot History drawer page size",
-    '_hub_fallback_reached("versions"': "Versions tripwire call",
-    '_hub_fallback_reached("state_history"': "State History tripwire call",
-    '_hub_fallback_reached("history_drawer"': "History drawer tripwire call",
-    '_hub_fallback_reached("history_count"': "History (N) tripwire call",
-    '_hub_fallback_reached("version_count"': "version chip tripwire call",
+    '_hub_fallback_' + 'reached("versions"': "Versions tripwire call",
+    '_hub_fallback_' + 'reached("state_history"': "State History tripwire call",
+    '_hub_fallback_' + 'reached("history_drawer"': "History drawer tripwire call",
+    '_hub_fallback_' + 'reached("history_count"': "History (N) tripwire call",
+    '_hub_fallback_' + 'reached("version_count"': "version chip tripwire call",
     # templates
     "_history_panel.html": "snapshot History drawer template",
     "_snapshot_zero_label": "shared zero-diff macro template",

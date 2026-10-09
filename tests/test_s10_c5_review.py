@@ -12,6 +12,8 @@ error (logged, a 500).
 """
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import json
 from pathlib import Path
 
@@ -19,7 +21,7 @@ import pytest
 
 from quam_state_manager.web import routes
 from tests.test_hub_drawer import _inline, chip_state, make_app, write_chip  # noqa: F401
-from tests.test_hub_fallback_tripwire import no_runs  # noqa: F401
+from tests.hub_surface_fixture import no_runs  # noqa: F401
 
 
 def _archived(tmp_path, *, empty_ledger: bool):

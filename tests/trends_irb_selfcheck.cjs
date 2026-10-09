@@ -1,8 +1,9 @@
+// S10 C7: old -> new, remove snapshot-only payloads and preserve ledger behavior.
 /* docs/208: the Trends client half of the IRB fix, under jsdom. */
 const {JSDOM} = require('jsdom');
 const fs = require('fs');
 const assert = require('assert');
-const HTML = `<div id="topo-trends"><div class="topo-trends-controls"><input id="topo-trend-path"><div id="topo-trend-suggest"><button data-path="qubit_pairs.*.macros.*.fidelity.InterleavedRB"></button></div></div><p>Pick a metric above.</p><div class="topo-trends-grid"><div id="topo-trend-0"></div></div><script id="topo-trends-snaps" type="application/json">{"20260102_000000":{"run":99,"uid":"run:99"}}</script></div>`;
+const HTML = `<div id="topo-trends"><div class="topo-trends-controls"><input id="topo-trend-path"><div id="topo-trend-suggest"><button data-path="qubit_pairs.*.macros.*.fidelity.InterleavedRB"></button></div></div><p>Pick a metric above.</p><div class="topo-trends-grid"><div id="topo-trend-0"></div></div></div>`;
 function boot(html) {
   const dom = new JSDOM(html, {url: 'http://localhost', runScripts: 'outside-only'});
   const w = dom.window;
@@ -45,7 +46,7 @@ ok(w.localStorage.length === 0, 'no empty selection stored');
 
 // D1: the "index updating" note re-fetches the CURRENT selection -- and never
 // when the user asked for something newer meanwhile.
-const NOTE = HTML.replace('<p>Pick a metric above.</p>', '<p class="muted topo-trends-updating" data-trends-updating="1">History index updating (9 snapshots)</p>');
+const NOTE = HTML.replace('<p>Pick a metric above.</p>', '<p class="muted topo-trends-updating" data-trends-updating="1">Preparing the change history.</p>');
 s = boot(NOTE); w = s.w;
 w.setTimeout = (fn, ms) => { s.timers.push({fn, ms}); return s.timers.length; };
 w.clearTimeout = () => {};

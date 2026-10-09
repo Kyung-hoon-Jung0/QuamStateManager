@@ -165,6 +165,12 @@ def scenarios(scratch: Path) -> list[dict]:
     with e["app"].app_context():
         hub_sync.on_roots_moved([str(e["data"])])
     c = e["client"]
+    # S10 C7: old -> new, foreign-run provenance is excluded by the folder lane.
+    history = c.get("/api/agent/field-history?path=qubits.qA1.T1").get_json()["history"]
+    assert history.get("other_chip_hidden") == 1
+    assert all(p["value"] != 9e-5 for p in history["points"])
+    entry = c.get("/topology/metric-meta").get_json()["q"]["T1"]["qA1"]
+    assert entry.get("value") != 9e-5 and entry.get("run") != 5
     case("a run of another chip identity", "run #5 saved with another chip name, its patch sets qA1 T1", e,
          _point_words(c, "metrics=T1", "qA1"), _meta(c, "T1", "qA1"), _drawer(c, "T1"), _changes(c, "#5"))
     shutil.rmtree(root, ignore_errors=True)

@@ -44,6 +44,7 @@ RL = "TestReviewIndexLocks::"
 RO = "TestReviewObserved::"
 RM = "TestReviewMore::"
 
+# S10 C7: old -> new, the folder lane owns foreign-run exclusion before By run.
 MUTATIONS = [
     ("proven_ignored", VH, '        if proven:\n            return "run_proven"',
      '        if False:\n            return "run_proven"',
@@ -180,8 +181,9 @@ MUTATIONS = [
      '                    v = cache.fold(targets[key]["holder"], pos)',
      [RR + "test_p0_3_by_run_shows_the_then_holders_value_for_an_alias_row",
       RR + "test_p0_3_and_p1_1_share_one_rule_after_a_return"]),
-    ("p0_2_foreign_run_offered", VH, '                if int(ev.get("flags") or 0) & CHIP_UNCERTAIN:',
-     '                if False:',
+    ("p0_2_foreign_run_offered", "quam_state_manager/core/hub_lanes.py",
+     '            if any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN:',
+     '            if False:',
      [RR + "test_p0_2_by_run_leaves_out_a_run_of_another_chip"]),
     ("p1_1_newest_hop_row_decides", VH,
      '            p["before_via"] = _segment_at(segs[key], at) != _segment_at(hsegs[key], at)',

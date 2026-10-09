@@ -1,6 +1,8 @@
 """Shared ledger setup for surfaces that previously read snapshot fallbacks."""
 from pathlib import Path
 
+import pytest
+
 
 def declare_root(client, root):
     """Declare a synthetic data root and project it before a surface read."""
@@ -36,3 +38,22 @@ def observed_view(hm, live, dot_path):
             return routes._vh_drawer_view(ans, "value", dot_path)
     finally:
         hub.set_inline(old)
+
+
+# S10 C7: old -> new, readable empty-ledger fixtures live with ledger setup.
+
+
+@pytest.fixture
+def no_runs(tmp_path):
+    from tests.test_hub_drawer import chip_dir, chip_state, make_app, write_chip
+    live = tmp_path / "chip"
+    write_chip(live, chip_state(), None)
+    app = make_app(tmp_path)
+    client = app.test_client()
+    assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    env = {"app": app, "client": client}
+    # An SM-only ledger, with no data folder or observed run states.
+    from quam_state_manager.core.hub_store import HubStore
+    with HubStore(chip_dir(env)):
+        pass
+    return env

@@ -27,6 +27,8 @@ Pins, on generic synthetic chips in ``tmp_path`` (each mutation-checked):
 
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import json
 import os
 import re
@@ -73,9 +75,6 @@ def _open_folderless(tmp_path, monkeypatch, *, parallel: bool) -> dict:
     first state (T1 1e-5), an outside edit SM saw (2e-5), a run's save
     (9e-5, never imported), optionally a parallel folder's save of the same
     chip identity (5e-5, never imported) and its newest outside edit (3e-5)."""
-    monkeypatch.delenv("HUB_FALLBACK_TRIPWIRE", raising=False)
-    monkeypatch.setattr(routes_mod, "_HUB_FALLBACK_REACHED", {})
-    monkeypatch.setattr(routes_mod, "_HUB_FALLBACK_WARNED", set())
     live, other = tmp_path / "chips" / "live", tmp_path / "chips" / "copy"
     app = make_app(tmp_path, sync=False)       # a TESTING app: data folders are not synced on open
     with app.app_context():
@@ -212,25 +211,22 @@ def test_no_parallel_folder_snapshot_is_imported_and_the_folder_keeps_its_own_pa
     html = drawer(two_folders, "qubits.qA1.T1")
     assert "5e-05" not in html and "5.0e-05" not in html
     assert "from the change ledger" in html
-    reached = two_folders["client"].get("/hub/status").get_json()["fallback_reached"]
-    assert "drawer" not in reached, reached
+    # S10 C7: old -> new, readiness remains observable without retired counters.
+    assert two_folders["client"].get("/hub/status").get_json()["state"] == "ready"
     panel = two_folders["client"].get("/state/versions").get_data(as_text=True)
     assert 'data-source="ledger"' in panel
 
 
-def test_the_tripwire_stays_silent_on_the_drawer_versions_state_history_and_trends(folderless, monkeypatch):
-    monkeypatch.setenv("HUB_FALLBACK_TRIPWIRE", "1")
+# S10 C7: old -> new, live ledger surfaces replace instrumentation-only assertions.
+def test_folderless_surfaces_read_the_ledger(folderless):
     client = folderless["client"]
     for url in ("/field/history?path=qubits.qA1.T1", "/state/versions", "/state-history?body=1",
                 "/topology/trends?metrics=T1"):
-        try:
-            r = client.get(url, headers={"HX-Request": "true"})
-        except RuntimeError as exc:           # the tripwire: a fallback was drawn
-            raise AssertionError(f"{url}: {exc}") from exc
+        r = client.get(url, headers={"HX-Request": "true"})
         assert r.status_code == 200, (url, r.data[:300])
-    reached = client.get("/hub/status").get_json()["fallback_reached"]
-    assert not {k: v for k, v in reached.items()
-                if k in ("drawer", "versions", "state_history", "trends")}, reached
+        html = r.get_data(as_text=True)
+        assert "Older snapshot history" not in html
+        assert "No data folder is linked to this chip" in html
 
 
 def test_a_snapshot_taken_after_the_open_is_imported_at_the_next_look(folderless):

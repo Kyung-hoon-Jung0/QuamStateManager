@@ -15,6 +15,8 @@ scratch directory is removed at the end unless ``--keep``.
 
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import argparse
 from collections import Counter
 from contextlib import contextmanager
@@ -46,11 +48,7 @@ def remove_scratch(target: Path, scratch: Path, *, strict: bool = True) -> bool:
         raise ValueError("cleanup target must be inside the scratch directory")
     if not target.exists():
         return True
-    try:
-        from quam_state_manager.core import chip_trends_ram
-        chip_trends_ram.close_all()
-    except Exception:  # noqa: BLE001
-        pass
+    # S10 C7: old -> new, cleanup closes only the live ledger reader pool.
     hub_index.close_readers()
     import gc
     gc.collect()

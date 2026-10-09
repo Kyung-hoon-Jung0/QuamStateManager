@@ -87,7 +87,6 @@ from quam_state_manager.core import activity as _activity
 from quam_state_manager.core import json_pieces as _json_pieces
 from quam_state_manager.core import trend_index as _trend_index
 # S10 C5: chip_trends_ram import -> gone, no route reads the snapshot Trends table any more.
-from quam_state_manager.core import value_writer as _value_writer
 # S10 C5 (C3 review P2): only a failed read of the ledger's rows is an unreadable ledger
 from quam_state_manager.web.hub_status import LedgerUnreadable, ledger_read
 # S10 C5: the history value-path map import -> gone with the series' writer-check leaf
@@ -3561,43 +3560,12 @@ def install_hub_capture_refresh(app) -> None:
     app.config["history_manager"].add_captured_listener(captured)
 
 
-_HUB_FALLBACK_REACHED: dict[tuple[str, str], int] = {}
-_HUB_FALLBACK_WARNED: set[tuple[str, str, str]] = set()
-_HUB_FALLBACK_LOCK = threading.Lock()
 
 
-def _hub_fallback_reached(surface: str, reason: str) -> None:
-    """Record a permanent snapshot fallback; optionally fail a testing request."""
-    # bookkeeping only: it must never break the surface it reports on (the
-    # no_chip_dir reason is exactly "_hub_chip_dir raised")
-    try:
-        ctx = _active_ctx() or {}
-        directory = ctx.get("hub_chip_dir")
-        if directory is None and ctx.get("path"):
-            directory = _hub_chip_dir(ctx["path"])
-    except Exception:  # noqa: BLE001
-        directory = None
-    chip_key = (request.args.get("chip_key") if has_request_context() else None) or (
-        Path(directory).name if directory is not None else "no_chip_dir")
-    with _HUB_FALLBACK_LOCK:
-        key = (surface, reason)
-        _HUB_FALLBACK_REACHED[key] = _HUB_FALLBACK_REACHED.get(key, 0) + 1
-        warning_key = (chip_key, surface, reason)
-        first = warning_key not in _HUB_FALLBACK_WARNED
-        _HUB_FALLBACK_WARNED.add(warning_key)
-    if first:
-        logger.warning("hub fallback reached: %s (%s), chip key %s", surface, reason, chip_key)
-    if os.environ.get("HUB_FALLBACK_TRIPWIRE") == "1" and current_app.testing:
-        raise RuntimeError(f"hub fallback reached: {surface} ({reason})")
+# S10 C7: old -> new, retire a callerless snapshot reader.
 
 
-def _hub_fallback_counts() -> dict:
-    """Return a detached JSON view; callers cannot alter the counters."""
-    with _HUB_FALLBACK_LOCK:
-        out: dict[str, dict[str, int]] = {}
-        for (surface, reason), count in _HUB_FALLBACK_REACHED.items():
-            out.setdefault(surface, {})[reason] = count
-        return out
+# S10 C7: old -> new, retire a callerless snapshot reader.
 
 
 @bp.route("/hub/status")
@@ -3607,13 +3575,11 @@ def hub_status():
     from quam_state_manager.core import hub_sync
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam":
-        resp = jsonify({"state": "idle", "note": "no chip is open",
-                        "fallback_reached": _hub_fallback_counts()})
+        resp = jsonify({"state": "idle", "note": "no chip is open"})
     else:
         chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
         st = hub_sync.status(chip_dir) if chip_dir is not None else {"state": "idle"}
         st["chip_dir"] = str(chip_dir) if chip_dir is not None else None
-        st["fallback_reached"] = _hub_fallback_counts()
         resp = jsonify(st)
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -11823,12 +11789,7 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
         title = (f"The change ledger begins at run {run}; the value was already set then. "
                  f"Who set it is not recorded.")
         trigger = "auto"
-    elif prov == "run_uncertain_chip":
-        label = f"{run} (chip uncertain)"
-        sub = "not named as writer"
-        title = (f"Run {run}'s chip identity disagrees with this chip's, so it is not "
-                 f"named as the writer of this value.")
-        trigger = "auto"
+    # S10 C7: old -> new, foreign runs are excluded by the folder lane.
     elif prov == "held_before_write":
         # S10 C1.5: an SM write's row its entries did not write
         label = "held before this write"
@@ -15640,33 +15601,7 @@ def history_diff_detail(timestamp: str):
     )
 
 
-@bp.route("/api/history/compare")
-def history_compare():
-    """Compare two historical snapshots side by side."""
-    store = _store()
-    if not store:
-        return render_template("_status.html", message="No state loaded", level="warning")
-
-    ts_a = request.args.get("ts_a", "")
-    ts_b = request.args.get("ts_b", "")
-    if not ts_a or not ts_b:
-        return render_template("_status.html", message="Select two snapshots", level="warning")
-
-    hm = _history()
-    try:
-        entries = hm.diff_snapshots(_active_path(), ts_a, ts_b)
-    except Exception as e:
-        return render_template("_status.html", message=f"Compare failed: {e}", level="error")
-
-    summary = Differ.summary(entries)
-    return render_template(
-        "_history_compare.html",
-        entries=entries,
-        summary=summary,
-        ts_a=ts_a,
-        ts_b=ts_b,
-        total=len(entries),
-    )
+# S10 C7: old -> new, retire a callerless snapshot reader.
 
 
 # ======================================================================
@@ -16235,25 +16170,10 @@ def _trend_points(values: list[dict]) -> list[tuple]:
     return out
 
 
-# Why a snapshot exists when NO run produced it — the customer's words for the
-# one that matters ("modified externally") plus the three others SM genuinely
-# knows. Flattening all four into "modified externally" would be a lie about the
-# three: a save through the app is not something that happened behind your back.
-_SNAPSHOT_WHY: dict[str, str] = {
-    "auto":    "Modified externally",
-    "save":    "Saved in the app",
-    "manual":  "Manual snapshot",
-    "restore": "Restored from history",
-}
-
-
-_UID_DEFERRED = object()
-
-
+# S10 C7: old -> new, snapshot provenance is retired; dataset links remain.
 def _snapshot_run_uid(folder: Any, run_id: Any,
                    roots: list[tuple[Path, str]],
-                   memo: dict | None = None,
-                   fallback: bool = True) -> Any:
+                   memo: dict | None = None) -> Any:
     """A dataset uid for a run folder, or None when the click would not open.
 
     A run's DatasetStore is keyed on the run folder's GRANDPARENT (the same
@@ -16298,11 +16218,6 @@ def _snapshot_run_uid(folder: Any, run_id: Any,
     date_dir, run_dir = rp.parent.name, rp.name
     if not date_dir or not run_dir:
         return None
-    if not fallback:
-        # RAM P1a: the look-under-every-root answer below reads the FILE
-        # SYSTEM (a run copied into a registered root later), which no
-        # history token covers -- a cached map defers it to serve time.
-        return _UID_DEFERRED
     hits = []
     for root, key in roots:
         try:
@@ -16313,116 +16228,10 @@ def _snapshot_run_uid(folder: Any, run_id: Any,
     return _dataset_uid(hits[0], rid) if len(hits) == 1 else None
 
 
-def _snapshot_provenance_map(hm, path: Path,
-                             only: set[str] | None = None,
-                             tbl=None, volatile: list | None = None) -> dict[str, dict]:
-    """``{snapshot id: {run, node, short, why, uid}}`` — ONE map per response.
-
-    Provenance is a property of the SNAPSHOT, and every series on the Trends
-    page shares one snapshot vocabulary, so this is O(snapshots) — 161 entries
-    on a real chip — where four more fields per POINT would be O(points).
-    ``_trend_points``' docstring records what that costs: one extra derived
-    field per point measured 61 bytes/point and up to 2.3 MB of HTML for a
-    single section on a 419-snapshot chip, and this page fans a chart out over
-    every qubit, which multiplies the point count again.
-
-    *only* narrows it to the snapshot ids the response actually needs, and it
-    is not an optimisation detail — WITHOUT it the O(snapshots) argument above
-    inverts on a sparse chip. Review round 1 measured the default Trends
-    request on a real 5-qubit chip: 35 drawn points over 8 distinct snapshot
-    ids, against 228 map entries / 27.6 KB, i.e. 78% of the fragment was
-    provenance for snapshots nothing on the page could look up — more than the
-    ~4.1 KB the per-point shape would have cost there. Filtered, the map is
-    ``min(O(snapshots), O(distinct drawn ids))``, which is <= both shapes on
-    every chip. It also skips the per-row ``Path.resolve()`` the uid mint does,
-    so a chip with hundreds of snapshots stops paying hundreds of stat calls
-    for rows it will not ship.
-
-    Honest by construction: a snapshot with no run carries ``run``/``uid`` null
-    and a ``why`` sentence naming what SM actually knows; a run whose folder is
-    not a live dataset root keeps its run number and loses only the uid.
-
-    *tbl* (RAM P1a, core/chip_trends_ram): the FULL map is built once per
-    (history token, registered dataset roots) and only the *only* filter runs
-    per request -- the build was 160-500 ms on every open and every toggle.
-    """
-    if tbl is not None:
-        try:
-            roots_sig = tuple(str(c) for c in _dataset_candidate_folders(fast=True))
-        except Exception:  # noqa: BLE001
-            roots_sig = None
-        full, pending, roots, memo = tbl.part(
-            ("provmap", roots_sig),
-            lambda: _snapshot_provenance_build(hm, path),
-            cold=lambda: _snapshot_provenance_build(hm, path))
-        keys = full.keys() if only is None else [k for k in only if k in full]
-        out = {k: dict(full[k]) for k in keys}
-        # A row whose recorded run folder is under no registered root is
-        # answered by is_dir probes, i.e. by the file system as it is NOW --
-        # recomputed on every serve (only for such rows), never cached.
-        for k in keys:
-            if k in pending:
-                folder, rid = pending[k]
-                out[k]["uid"] = _snapshot_run_uid(folder, rid, roots, dict(memo))
-                if volatile is not None:
-                    volatile.append(k)
-        return out
-    return _snapshot_provenance_build(hm, path, only=only, deferred=False)[0]
+# S10 C7: old -> new, retire a callerless snapshot reader.
 
 
-def _snapshot_provenance_build(hm, path: Path, only: set[str] | None = None,
-                               deferred: bool = True):
-    """``(map, pending, roots, uid memo)`` -- the body of
-    :func:`_snapshot_provenance_map`. With *deferred*, a row whose uid needs
-    the file-system fallback of :func:`_snapshot_run_uid` keeps ``uid: None``
-    and is listed in *pending* as ``{ts: (folder, run_id)}``."""
-    try:
-        rows = hm.snapshot_provenance(path)
-    except Exception:  # noqa: BLE001
-        logger.debug("snapshot provenance unavailable", exc_info=True)
-        return {}, {}, [], {}
-    try:
-        roots = _uid_roots()
-    except Exception:  # noqa: BLE001
-        roots = []
-    uid_memo: dict = {}
-    out: dict[str, dict] = {}
-    pending: dict[str, tuple] = {}
-    # node_label is a pure function of the node name, and a chip's snapshots
-    # name a handful of nodes: one label per NAME, not per snapshot (1,600
-    # calls were ~20 ms of every rebuild after a capture, RAM P1a).
-    labels: dict[str, str] = {}
-    for r in rows:
-        ts = str(r.get("ts") or "")
-        if not ts:
-            continue
-        if only is not None and ts not in only:
-            continue
-        rid = r.get("run_id")
-        node = str(r.get("experiment") or "")
-        trig = str(r.get("trigger") or "")
-        try:
-            run = int(rid) if rid is not None else None
-        except (TypeError, ValueError):
-            run = None
-        entry: dict[str, Any] = {
-            "run": run,
-            "node": node,
-            "short": labels[node] if node in labels else labels.setdefault(node, node_label(node)),
-            "why": None,
-            "uid": None,
-        }
-        if entry["run"] is None:
-            entry["why"] = _SNAPSHOT_WHY.get(trig, trig)
-        else:
-            uid = _snapshot_run_uid(r.get("folder"), rid, roots, uid_memo,
-                                    fallback=not deferred)
-            if uid is _UID_DEFERRED:
-                pending[ts] = (r.get("folder"), rid)
-                uid = None
-            entry["uid"] = uid
-        out[ts] = entry
-    return out, pending, roots, uid_memo
+# S10 C7: old -> new, retire a callerless snapshot reader.
 
 
 def _trend_unit(metric: str) -> str:
@@ -17418,8 +17227,6 @@ def _hub_waiting(table, surface: str = "table_read") -> dict:
     ans = dict(table.waiting or table.answer)
     if ans.get("mode") not in ("building", "preparing", "unavailable"):
         ans["mode"] = "preparing"
-    if ans.get("mode") == "fallback":  # unreachable after the C3 mode mapping
-        _hub_fallback_reached(surface, ans["reason"])
     return ans
 
 
@@ -17691,7 +17498,6 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     # TestTheReadStaysOffTheIndexWriteLock); while it runs, the section says
     # so and re-fetches itself (the note's own hx-trigger), and stops the
     # moment the repair is over.
-    updating = tbl.index_updating()
     # docs/283: every point carries its own words (series["attr"], S7's
     # provenance); there is no snapshot map and no writer re-check -- the
     # ledger's ``proven`` is the proof.
@@ -17707,110 +17513,18 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
-                           trim_note=trim_note, index_updating=updating,
-                           snaps=snaps,
+                           trim_note=trim_note,
                            snapshots=tbl.snapshot_count(),
                            hub_notes=tbl.notes,
                            hub_mode="ledger")
 
 
-def _trend_run_folder_resolver(roots: list[tuple[Path, str]]):
-    """A recorded run folder -> the folder on disk: as recorded, or the same
-    ``<date>/<run>`` under exactly one registered dataset root (a copied or
-    moved root -- the same rule as :func:`_snapshot_run_uid`)."""
-    memo: dict = {}
-
-    def resolve(folder: Any):
-        if not folder:
-            return None
-        key = str(folder)
-        if key in memo:
-            return memo[key]
-        hit = None
-        try:
-            rp = Path(key)
-            if rp.is_dir():
-                hit = rp
-            else:
-                cands = []
-                for root, _k in roots:
-                    q = root / rp.parent.name / rp.name
-                    if q.is_dir() and q not in cands:
-                        cands.append(q)
-                hit = cands[0] if len(cands) == 1 else None
-        except (OSError, ValueError):
-            hit = None
-        memo[key] = hit
-        return hit
-    return resolve
+# S10 C7: old -> new, retire a callerless snapshot reader.
 
 
 # S10 C5: Trends / metric meta / grid drawer callers -> gone; the value drawer and Column
 # History snapshot paths (C4's) still call it, so it and the resolver above go with C7.
-class _WriterCheck:
-    """One request's view of :mod:`core.value_writer` -- the registered
-    dataset roots, the folder resolver and the uid memo built ONCE and shared
-    by every point the response names a run for.
-
-    :meth:`override` is the single rule every surface that maps a value to a
-    run applies (Trends points, Chip Status metric meta, the value-history
-    drawer, Column History): ``None`` when the recorded run did write it (or
-    nothing can be checked -- no run, a folder not on disk), ``{"run",
-    "short", "node", "uid"}`` when ANOTHER run wrote it, ``{"captured":
-    True}`` when no run can be shown to have written it. Wrong information is
-    the worst outcome (customer, 2026-09-29): a surface given ``captured``
-    names the recorded run only as "captured with run #N (not the run that
-    measured it)" and never opens it as if it were the measurement.
-    """
-
-    def __init__(self, budget_s: float | None = None):
-        # With a budget, a check not answered in time is finished in the
-        # background and reported as pending (self.pending); the page's own
-        # "updating" re-fetch picks it up.
-        import time as _t
-        self.deadline = (_t.monotonic() + budget_s) if budget_s is not None else None
-        self.pending = False
-        try:
-            self.roots = _uid_roots()
-        except Exception:  # noqa: BLE001
-            self.roots = []
-        self.resolve = _trend_run_folder_resolver(self.roots)
-        self.uid_memo: dict = {}
-
-    @staticmethod
-    def hint(leaves) -> None:
-        """Every leaf this response will ask about: one parse of a run's
-        state then answers all of them (value_writer.hint)."""
-        try:
-            _value_writer.hint([lf for lf in leaves if lf and "*" not in str(lf)])
-        except Exception:  # noqa: BLE001
-            pass
-
-    def override(self, leaf: str | None, value: Any, ts: Any, prev_ts: Any,
-                 run: Any, node: Any, folder: Any) -> dict | None:
-        if not leaf or "*" in str(leaf) or run is None or not folder or not ts:
-            return None
-        if value is None or isinstance(value, (dict, list)):
-            return None
-        args = (str(leaf), value, str(ts), {"run": run, "node": node, "folder": folder},
-                str(prev_ts) if prev_ts else None, self.resolve)
-        try:
-            a = (_value_writer.attribute_cached(*args) if self.deadline is None
-                 else _value_writer.attribute_by(self.deadline, *args))
-        except Exception:  # noqa: BLE001 - a provenance hint never 500s a page
-            logger.debug("value writer failed for %s @ %s", leaf, ts, exc_info=True)
-            return None
-        if a.get("verdict") == "pending":
-            self.pending = True
-            return {"pending": True}
-        if a.get("verdict") == "other":
-            return {"run": a["run"], "node": a.get("node") or "",
-                    "short": node_label(a.get("node") or ""),
-                    "uid": _snapshot_run_uid(a.get("folder"), a["run"],
-                                             self.roots, self.uid_memo)}
-        if a.get("verdict") == "captured":
-            return {"captured": True}
-        return None
+# S10 C7: old -> new, retire a callerless snapshot reader.
 
 
 def _trend_chart_sig(chart: dict, snaps: dict) -> str:

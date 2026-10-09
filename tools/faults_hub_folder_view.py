@@ -10,6 +10,8 @@ Every fault runs on generic synthetic folders in a fresh temporary directory
 
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import argparse
 import json
 import os
@@ -41,7 +43,7 @@ def notes_of(html: str) -> list[str]:
     out = []
     for m in re.finditer(r'<p class="vh-note[^"]*" data-note="([^"]+)">(.*?)</p>', html, re.S):
         out.append(f"{m.group(1)}: {re.sub(r'<[^>]+>', '', m.group(2)).strip()}")
-    for m in re.finditer(r"<p class=\"vh-note vh-fallback\">(.*?)</p>", html, re.S):
+    for m in re.finditer(r"<p class=\"vh-note vh-note-warning\">(.*?)</p>", html, re.S):
         out.append("fallback: " + re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", m.group(1))).strip())
     return out
 

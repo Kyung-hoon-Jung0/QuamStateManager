@@ -22,7 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from quam_state_manager.core import agent_runs, journal, run_time, story, timefmt, value_writer
+from quam_state_manager.core import agent_runs, journal, run_time, story, timefmt
 from quam_state_manager.core.autofit import realbackend
 from quam_state_manager.core.dataset import DatasetStore
 
@@ -274,37 +274,6 @@ class TestRealBackendRunStart:
         assert be._attribute("08_qubit_spectroscopy", datetime(2026, 10, 2, 12, 31, tzinfo=UTC)) is None
 
 
-# --------------------------------------------------- 7. core/value_writer.py
+# S10 C7: old -> new, obsolete writer timestamp tests retire with their reader.
 
-class TestValueWriterRunEnd:
-    def test_an_offset_run_end_is_the_exact_instant(self):
-        got = value_writer._parse_iso(f"{DAY}T09:04:00.250-04:00")
-        assert got == datetime(2026, 10, 2, 13, 4, 0, 250000, tzinfo=UTC) and got.tzinfo is not None
-
-    @pytest.mark.parametrize("naive", [f"{DAY}T09:04:00.250", f"{DAY} 09:04:00", f"{DAY}T09:04:00"])
-    def test_a_naive_run_end_proves_nothing(self, naive):
-        """Provenance: a zone-less clock is never claimed, even though the
-        run_instant rule would read it as ``assumed_local``."""
-        assert run_time.iso_instant(naive)[1] == "assumed_local"
-        assert value_writer._parse_iso(naive) is None
-
-    @pytest.mark.parametrize("text", [f"{DAY}T09:04:00-04:00", f"{DAY}T13:04:00Z", f"{DAY}T13:04:00z",
-                                      f" {DAY}T09:04:00.5-04:00 ", f"{DAY} 09:04:00-04:00"])
-    def test_run_end_reads_as_run_instant_reads_it(self, text):
-        """One reading (docs/262): what value_writer proves is what the
-        Datasets table dates -- the same ``timefmt.run_instant`` answer."""
-        us, q = timefmt.run_instant(timefmt.node_times(None, text))
-        assert q == "offset"
-        got = value_writer._parse_iso(text)
-        assert got is not None and timefmt._utc_us(got) == us
-
-    def test_run_verdict_uses_the_instant(self):
-        """A -04:00 run that saved four minutes AFTER the 13:00Z snapshot
-        cannot have written the value that snapshot holds."""
-        snap_at = value_writer._parse_ts("20261002_130000")
-        ns = {"end": f"{DAY}T09:04:00-04:00", "name": "05_power_rabi"}
-        assert value_writer.run_verdict(ns, None, "qubits.q4.no_such_leaf", 1.0, snap_at) == "no"
-        ns["end"] = f"{DAY}T08:59:00-04:00"           # saved before it: no time objection
-        assert value_writer.run_verdict(ns, None, "qubits.q4.no_such_leaf", 1.0, snap_at) == "unknown"
-        ns["end"] = f"{DAY}T09:04:00"                 # zone-less: no time objection either
-        assert value_writer.run_verdict(ns, None, "qubits.q4.no_such_leaf", 1.0, snap_at) == "unknown"
+# S10 C7: old -> new, retire a callerless snapshot reader.

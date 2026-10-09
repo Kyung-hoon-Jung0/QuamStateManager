@@ -12431,7 +12431,7 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .fh-other-note { margin: .3rem 0 0; font-size: .66rem; color: var(--color-text-muted); }
 /* docs/282: the value drawer and Column History on the change ledger. */
 .vh-note { margin: .2rem 0 .3rem; font-size: .7rem; color: var(--color-text-muted); }
-.vh-note-warning, .vh-fallback {
+.vh-note-warning { /* S10 C7: old -> new, only ledger notes remain. */
     color: var(--color-warning-text); background: var(--color-warning-bg);
     border-left: 3px solid var(--color-warning-border); padding: .15rem .4rem; border-radius: 4px; }
 .vh-wait { margin: .5rem 0; font-size: .78rem; color: var(--color-text-muted); }
@@ -12453,7 +12453,7 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     border-left: 3px solid var(--pico-muted-border-color); padding: .1rem .4rem; }
 .vh-rename code { font-size: .7rem; }
 .vh-flag-renamed { color: var(--color-text-muted); border-style: dashed; }
-.vh-run_saved .vh-by, .vh-first_record .vh-by, .vh-run_uncertain_chip .vh-by { color: var(--color-text-muted); }
+.vh-run_saved .vh-by, .vh-first_record .vh-by { color: var(--color-text-muted); }
 .vh-chip { flex-wrap: wrap; max-width: 100%; }
 .vh-chip-who { flex: 1 0 100%; font-size: .6rem; line-height: 1.2; color: var(--color-text-muted);
     white-space: normal; text-align: left; }

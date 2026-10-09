@@ -231,26 +231,10 @@ def data_version(index_path: Path) -> tuple:
 
 
 def settle_wal(index_path: Path) -> None:
-    """Before a caller measures the history dir on disk: let the persistent
-    connection (only if one is open in this pool or in ``chip_trends_ram``'s
-    -- with no reader open anywhere there is no pin to undo) see any commit
-    made since it last looked, which truncates the WAL that commit left
-    (``_truncate_wal``)."""
+    """Settle a pooled history reader before measuring its index on disk."""
+    # S10 C7: old -> new, the removed Trends pool no longer pins this index.
     with _CONN_LOCK:
         open_ = str(index_path) in _CONNS
-    if not open_:
-        # w7 integration: chip_trends_ram keeps its own persistent READ
-        # connection per index (Chip Status Trends), and an open reader from
-        # EITHER pool is a pin. Its readers never checkpoint; since fq-ds its
-        # token's version is read through THIS pool (one version connection
-        # per index, the only one that gives back), so the pool normally holds
-        # the connection already -- this fallback covers an LRU eviction in
-        # between, by re-opening it here (bounded, same owner).
-        try:
-            from quam_state_manager.core import chip_trends_ram
-            open_ = chip_trends_ram.has_conn(index_path)
-        except Exception:  # noqa: BLE001 - a measurement helper never raises
-            open_ = False
     if open_:
         data_version(index_path)
 
@@ -283,84 +267,4 @@ def close_all() -> None:
         _close_entry(ent)
 
 
-# ── the parameter typeahead (/param-history/param-search) ─────────────────
-# One ranked path list per chip history, validated on read by hist_token:
-# a capture/ingest/prune (any commit to index.sqlite) is a miss and a full
-# rebuild -- never a patched list.
-_PATH_RANK_MEMO: Any = None
-#: per history dir, the natural order of every path the last rank saw -- a
-#: pure function of the path strings, so it can never be stale, only
-#: incomplete (a new path), which PathRank detects and recomputes
-_NAT_ORDER: "dict[str, dict[str, int]]" = {}
-_PATH_RANK_LOCK = threading.Lock()
-
-
-def _path_rank_memo() -> Any:
-    global _PATH_RANK_MEMO
-    with _PATH_RANK_LOCK:
-        if _PATH_RANK_MEMO is None:
-            from quam_state_manager.core import ramcache
-            _PATH_RANK_MEMO = ramcache.KeyedMemo(
-                "param_history.path_rank", max_entries=2,
-                max_bytes=96 * 1024 * 1024, sizeof=lambda v: v.nbytes)
-        return _PATH_RANK_MEMO
-
-
-def leaf_search(hm: Any, quam_state_path: Path | str, query: str, *,
-                limit: int = 50) -> list[dict]:
-    """``hm.leaf_search(path, query, limit=limit)`` answered from RAM.
-
-    The token is read BEFORE the rank is built, so a commit landing during
-    the build leaves an entry whose token is already old: the next read
-    misses and rebuilds (a value is never newer-labelled than its data).
-    Any failure of the accelerator answers through the manager's own SQL."""
-    from quam_state_manager.core import leaf_index, ramcache
-    path = Path(quam_state_path)
-
-    def compute():
-        conn = hm._open_index(path)
-        try:
-            rank = leaf_index.PathRank.from_conn(
-                conn, _NAT_ORDER.get(str(hm._history_dir(path))))
-        finally:
-            conn.close()
-        with _PATH_RANK_LOCK:
-            _NAT_ORDER[str(hm._history_dir(path))] = rank.nat_order
-            while len(_NAT_ORDER) > 2:
-                _NAT_ORDER.pop(next(iter(_NAT_ORDER)))
-        return rank
-
-    try:
-        token = hist_token(hm, path)
-        rank = _path_rank_memo().get(("rank", token[0]), token, compute,
-                                     wait_s=30.0)
-        return rank.search(query, limit=limit)
-    except ramcache.Warming:
-        return hm.leaf_search(path, query, limit=limit)
-    except Exception:             # noqa: BLE001 -- the memo is an accelerator
-        logger.debug("path-rank memo bypassed", exc_info=True)
-        return hm.leaf_search(path, query, limit=limit)
-
-
-_WARMING: set = set()
-
-
-def warm_path_rank(hm: Any, quam_state_path: Path | str) -> None:
-    """Build the typeahead's rank off the request (the Changes page, which
-    carries the typeahead, calls this on render), so the first keystroke
-    after a capture is not the one that pays the ~1 s rebuild on a 30-qubit
-    chip. A current entry makes this a token read and a memo hit."""
-    key = str(Path(quam_state_path))
-    with _PATH_RANK_LOCK:
-        if key in _WARMING:
-            return
-        _WARMING.add(key)
-
-    def run():
-        try:
-            leaf_search(hm, quam_state_path, "", limit=1)   # "" builds, answers []
-        finally:
-            with _PATH_RANK_LOCK:
-                _WARMING.discard(key)
-
-    threading.Thread(target=run, name="path-rank-warm", daemon=True).start()
+# S10 C7: old -> new, parameter search uses the ledger rank.
