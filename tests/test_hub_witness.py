@@ -468,3 +468,32 @@ class TestTheSurfaces:
             view = routes._vh_agent_view(ans, "v")
         assert [p["value"] for p in view["points"]] == [A]
         assert [(n["value"], n["run_id"], n["witness"]["run_id"]) for n in view["not_kept"]] == [(B, 4, 5)]
+
+
+# ======================================================================
+# 3. an archived chip (S10 F3): its history from runs, run captures and states SM saw
+# ======================================================================
+
+def test_an_archived_chips_history_still_reads_every_value(tmp_path):
+    """A run captured by Param History whose folder is gone is a run event
+    with no data root and no targets (``snapshot:`` rel_path): it may have
+    measured anything, so it never witnesses a value -- and nothing the
+    pre-S10 grid drew for the chip is left out."""
+    from tests.test_archived_chip_build import GONE, _drawer, _grid, _ledger, _pre_s10, _with_runs
+    env = _with_runs(tmp_path)
+    _grid(env)
+    _body, row = _drawer(env, "qA1")
+    assert [v["value"] for v in row["values"]] == _pre_s10(env, "qA1"), "every value is still read"
+    captured = {e for (e,) in _ledger(env, "SELECT eid FROM events WHERE kind='run' AND rel_path LIKE 'snapshot:%'")}
+    assert len(captured) == len(GONE)
+    conn = sqlite3.connect((env["dir"] / "ledger.sqlite").resolve().as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        index = hub_index.build_index(conn)
+        v = hub_witness.verdicts(index, conn)
+        pid = index.paths["qubits.qA1.T1"]
+        assert not v.pairs_of(pid), "nothing the chip saw is left out"
+        assert not captured & {v.witness_of(e, pid) for e in index.path_postings[pid]}, \
+            "a capture with no targets never vouches for a value"
+    finally:
+        conn.close()

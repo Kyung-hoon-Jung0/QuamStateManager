@@ -7,6 +7,8 @@
    writes a handful of parameters at once, and reading them together is what
    makes the feed mean something. #}
 {% from '_delta_macros.html' import before_after %}
+{# S10 walk: an archived chip's Changes keep its chip on every link (chip_qs) #}
+{% set cq = chip_qs | default('') %}
 
 <div id="param-history-root" class="param-history">
   {# docs/283: the change ledger's notes -- inside the root, so a swap
@@ -14,7 +16,14 @@
      (its label, snapshot groups, old/arrow/new/delta cells) -> gone with that feed. #}
   {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
   <div class="param-history-header">
-    <h2 style="margin:0">Param History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
+    <h2 style="margin:0">Param History{% if project_scope and not archive_chip %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
+    {% if archive_chip %}
+    <p class="muted" style="margin:0">Chip <strong class="ph-archive-name">{{ archive_chip.display }}</strong>
+      {%- if archive_chip.display != archive_chip.key %} <code class="ph-archive-key">{{ archive_chip.key }}</code>{% endif %}
+      &middot; not the open chip &middot;
+      <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
+         hx-swap="outerHTML" hx-push-url="true">Back to the open chip</a></p>
+    {% endif %}
     <p class="muted" style="margin:0">
       Every recorded parameter in <code>state.json</code> and <code>wiring.json</code> —
       {{ '{:,}'.format(stats.paths) }} of them — with the moment each one changed.
@@ -22,7 +31,7 @@
   </div>
 
   <div class="ph-tabs">
-    <button type="button" class="ph-tab" hx-get="/param-history"
+    <button type="button" class="ph-tab" hx-get="/param-history{% if cq %}?{{ cq }}&amp;since=all{% endif %}"
             hx-target="#param-history-root" hx-swap="outerHTML"
             hx-push-url="true">Trends</button>
     <button type="button" class="ph-tab active" aria-current="page">Changes</button>
@@ -31,6 +40,7 @@
   <form class="ph-changes-bar" hx-get="/param-history/changes"
         hx-target="#param-history-root" hx-swap="outerHTML"
         hx-trigger="submit, keyup changed delay:400ms from:find input[name=prefix]">
+    {% if archive_chip %}<input type="hidden" name="chip_key" value="{{ archive_chip.key }}">{% endif %}
     <span class="tree-search-icon">&#128269;</span>
     {#- RAM P8 (typing): the whole root swaps on every debounced keyup. With
         no id the focused input was replaced -- focus fell to <body> and every
@@ -48,7 +58,7 @@
         filled the detached one (measured: 0 options after any swap) #}
     <datalist id="ph-param-paths" hx-preserve="true"></datalist>
     {% if prefix %}
-    <a class="btn-sm outline" role="button" href="/param-history/changes">Clear</a>
+    <a class="btn-sm outline" role="button" href="/param-history/changes{% if cq %}?{{ cq }}{% endif %}">Clear</a>
     {% endif %}
     <span class="muted ph-changes-stat">
       {{ '{:,}'.format(stats.rows) }} recorded changes over
@@ -88,10 +98,13 @@
         {% for r in g.rows %}
           <tr{% if r.undone %} class="vh-undone"{% endif %}>
             <td class="ph-change-path">
+              {# S10 walk: a parameter's timeline is the OPEN chip's; an archived
+                 chip's path is shown, never linked to another chip's history #}
+              {% if archive_chip %}<code class="ph-path-text">{{ r.path }}</code>{% else %}
               <button type="button" class="ph-path-btn"
                       hx-get="/field/history?path={{ r.path | urlencode }}"
                       hx-target="#inspector-pane" hx-swap="innerHTML"
-                      title="Open this parameter's full timeline">{{ r.path }}</button>{% if r.recorded_as %}
+                      title="Open this parameter's full timeline">{{ r.path }}</button>{% endif %}{% if r.recorded_as %}
               <span class="vh-flag vh-flag-renamed" title="Recorded as {{ r.recorded_as }}, before a Re-generate rename">as {{ r.recorded_short }}</span>{% endif %}
             </td>
             <td class="ph-change-new" colspan="3">{{ before_after(r.previous, r.value, 'first' if r.is_first else r.op) }}</td>
@@ -116,7 +129,7 @@
       {% if g.total > g.shown %}
       <div class="ph-change-rest">
         <button type="button" class="btn-xs outline"
-                hx-get="/param-history/changes?at={{ g.eid }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
+                hx-get="/param-history/changes?at={{ g.eid }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}{% if cq %}&amp;{{ cq }}{% endif %}"
                 hx-target="#param-history-root" hx-swap="outerHTML">
           Show all {{ '{:,}'.format(g.total) }} from this event</button>
         <span class="muted">&hellip; and {{ '{:,}'.format(g.total - g.shown) }} more</span>
@@ -129,14 +142,14 @@
   {% if at_ts %}
   <div class="ph-changes-more">
     <button type="button" class="btn-sm outline"
-            hx-get="/param-history/changes{% if prefix %}?prefix={{ prefix | urlencode }}{% endif %}"
+            hx-get="/param-history/changes?{% if prefix %}prefix={{ prefix | urlencode }}{% endif %}{% if cq %}&amp;{{ cq }}{% endif %}"
             hx-target="#param-history-root" hx-swap="outerHTML">
       &larr; Back to all changes</button>
   </div>
   {% elif has_more %}
   <div class="ph-changes-more">
     <button type="button" class="btn-sm outline"
-            hx-get="/param-history/changes?before={{ oldest_ts }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
+            hx-get="/param-history/changes?before={{ oldest_ts }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}{% if cq %}&amp;{{ cq }}{% endif %}"
             hx-target="#param-history-root" hx-swap="outerHTML">
       Load older changes</button>
   </div>
@@ -162,7 +175,7 @@
         var my = ++seq;
         if (q.length < 2) { var l0 = curList(); if (l0) l0.innerHTML = ''; return; }
         timer = setTimeout(function () {
-            fetch('/param-history/param-search?q=' + encodeURIComponent(q))
+            fetch('/param-history/param-search?q=' + encodeURIComponent(q) + {{ (('&' + cq) if cq else '') | tojson }})
                 .then(function (r) { return r.ok ? r.json() : null; })
                 .then(function (d) {
                     var list = curList();
