@@ -429,7 +429,8 @@ def test_runs_build_in_the_background_and_resume_after_a_restart(tmp_path, monke
     assert _one_slice(env) is True
     second = _grid(env)
     assert 'data-vh-mode="building"' in second
-    assert re.search(r"being built \(\d+ of 9 runs\)", _t(second)), _t(second)
+    # S10 walk (perf): "(n of 9 runs)" -> the phase it is in, counted from the first slice
+    assert re.search(r"being built(: looking through run folders)? \(\d+ of 9( runs)?\)", _t(second)), _t(second)
     for _ in range(4):
         _one_slice(env)
     assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == [("running",)]

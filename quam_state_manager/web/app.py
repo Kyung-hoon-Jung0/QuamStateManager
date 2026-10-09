@@ -654,6 +654,13 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
             return ""
     app.jinja_env.filters["env_roster_note"] = _env_roster_note_filter
 
+    # S10 walk (perf): the Calibration log's "building the history" line says
+    # what the build is doing now, in the words every history surface uses
+    def _hub_progress_filter(status):
+        from quam_state_manager.core.hub_sync import progress_words
+        return progress_words(status if isinstance(status, dict) else None, short=True)
+    app.jinja_env.filters["hub_progress"] = _hub_progress_filter
+
     def _flatten_leaves_filter(value, cap: int = 40):
         """(dot_path, leaf_value) pairs for a nested mapping — the Review
         tray's created/deleted subtree expansion (r16 ②, docs/73). Lists are

@@ -119,10 +119,15 @@ def enumerate_runs(root: Path) -> tuple[list[Run], str | None]:
 
 
 def state_paths(folder: Path) -> tuple[Path, Path]:
-    """Standard layout first; older archives also have alternate subfolders."""
+    """Standard layout first; older archives also have alternate subfolders.
+
+    S10 walk (perf): the alternate subfolders are searched only when neither
+    standard place holds a state -- the first one that does is the answer
+    either way, and the search was a directory scan per run on every read."""
     candidates = [folder / "quam_state" / "state.json", folder / "state.json"]
-    candidates.extend(sorted(folder.glob("*/state.json")))
-    state = next((p for p in candidates if p.is_file()), candidates[0])
+    state = next((p for p in candidates if p.is_file()), None)
+    if state is None:
+        state = next((p for p in sorted(folder.glob("*/state.json")) if p.is_file()), candidates[0])
     return state, state.with_name("wiring.json")
 
 

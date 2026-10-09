@@ -288,6 +288,12 @@ def lint_state(store, *, budget_s: float | None = None) -> list[Finding] | None:
     hit = lookup()
     if hit is not activity.MISS:
         return hit
+    # S10 walk (perf): the waveform checks import scipy's window / filter
+    # modules on first use (about 1 s on an idle PC, 4-15 s on a busy cold
+    # start). Imported inside the walk they held the chip's state lock all that
+    # time, and every page and history surface waited behind it; imported
+    # here, before the lock, once per process.
+    waveform_synth.preload_scipy()
     # Hold the store lock across the walk: _lint_state_uncached iterates
     # store.merged, and a concurrent /field/edit inserting/deleting a key would
     # raise 'dict changed size during iteration'. The store's RLock is
