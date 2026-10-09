@@ -268,6 +268,40 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
     ok(metaFetches(early) === 2, 'Q1f: a fetch that left before the move is asked again -- ' + metaFetches(early));
   }
 
+  // S10 walk: the chip-wide notes are said once per surface -- never in a
+  // panel's line, never in a tile's card; an unreadable ledger is said once,
+  // in its own words (never "no history snapshots")
+  {
+    const NOTE = '1 run whose saved chip identity does not match this chip\u2019s is not part of this chip\u2019s timeline: #9 in data.';
+    META_NOW = Object.assign({}, META, { notes: [NOTE] });
+    const wn = makeWin({ quam_chip_meta_panels: JSON.stringify({ T1: true }) });
+    await tick(150);
+    const secN = wn.document.querySelector('.topo-section[data-density-panel="T1"]');
+    const lineN = secN.querySelector('.topo-metric-panel-meta');
+    ok(lineN && /newest change/.test(lineN.textContent) && lineN.textContent.indexOf(NOTE) < 0,
+       'N1: a panel line carries no chip-wide note -- ' + (lineN && lineN.textContent));
+    const cellN = secN.querySelector('.heatmap-cell[data-qubit="q1"]');
+    cellN.dispatchEvent(new wn.MouseEvent('mouseover', { bubbles: true }));
+    const popN = wn.document.getElementById('cs-meta-pop');
+    ok(popN && /Last changed/.test(popN.textContent) && popN.textContent.indexOf(NOTE) < 0,
+       'N2: a tile card carries no chip-wide note -- ' + (popN && popN.textContent));
+    const UNREAD = 'The change history could not be read (unreadable). Nothing older is shown in its place.';
+    META_NOW = { ok: true, mode: 'unavailable', message: UNREAD, updating: false, q: {}, p: {}, snaps: {},
+                 notes: [UNREAD] };
+    const wu = makeWin({ quam_chip_meta_panels: JSON.stringify({ T1: true }) });
+    await tick(150);
+    const secU = wu.document.querySelector('.topo-section[data-density-panel="T1"]');
+    const lineU = secU.querySelector('.topo-metric-panel-meta');
+    ok(lineU && lineU.textContent === UNREAD,
+       'N3: an unreadable ledger is said once in a panel line, nothing else -- ' + (lineU && lineU.textContent));
+    secU.querySelector('.heatmap-cell[data-qubit="q1"]').dispatchEvent(new wu.MouseEvent('mouseover', { bubbles: true }));
+    const popU = wu.document.getElementById('cs-meta-pop');
+    const nU = popU ? popU.textContent.split(UNREAD).length - 1 : 0;
+    ok(nU === 1 && !/history snapshots/.test(popU.textContent),
+       'N4: ...and once in a tile card -- ' + (popU && popU.textContent));
+    META_NOW = META;
+  }
+
   // D7 hover: card up, native title parked; leave: card gone, title back
   const cell = t1.querySelector('.heatmap-cell[data-qubit="q1"]');
   const title0 = cell.getAttribute('title');

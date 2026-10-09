@@ -1081,7 +1081,10 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
         else:
             row = conn.execute("SELECT eid FROM events WHERE error IS NULL ORDER BY ord LIMIT 1").fetchone()
             first_eid = row[0] if row else None
+        kinds = kind_counts(index)
         ledger = {"events": len(index.eids), "has_runs": has_runs, "has_observed": has_observed,
+                  # S10 walk: what those events are (the footers name them)
+                  "kind_counts": kinds, "events_text": events_words(len(index.eids), kinds),
                   "first": iso_z(index.t[0]) if index.eids else None,
                   # S10 C3: the event the history starts at (its rows are the
                   # starting state -- the timeline's ``first``, docs/281)
@@ -1192,8 +1195,36 @@ def run_era(chip_dir, folder, binding=None) -> tuple | None:
     return rename_lineage.folder_era(folder)
 
 
+#: how many of another chip's runs the other_chip note names before "and N more"
+OTHER_CHIP_SHOWN = 3
+
+
 def _plural(n: int, one: str, many: str) -> str:
     return f"{n:,} {one if n == 1 else many}"
+
+
+def kind_counts(index) -> dict:
+    """S10 walk: ``{"runs", "sm", "observed"}`` -- how many of a (lane) index's
+    events are runs, SM writes and states SM saw."""
+    out = {"runs": 0, "sm": 0, "observed": 0}
+    for name in index.names["kind"]:
+        key = ("runs" if name == "run" else "observed" if name == OBSERVED_KIND
+               else "sm" if name in SM_KINDS else None)
+        if key is not None:
+            out[key] += len(index.postings["kind"].get(name) or ())
+    return out
+
+
+def events_words(total: int, kinds: dict | None) -> str:
+    """S10 walk: "3,515 events: 3,496 runs, 18 SM writes, 1 state SM saw" --
+    only the kinds the history holds (a folder with no runs never reads as
+    "runs and SM writes")."""
+    head = _plural(int(total or 0), "event", "events")
+    k = kinds or {}
+    parts = [_plural(k[key], one, many) for key, one, many in (
+        ("runs", "run", "runs"), ("sm", "SM write", "SM writes"),
+        ("observed", "state SM saw", "states SM saw")) if k.get(key)]
+    return head + (": " + ", ".join(parts) if parts else "")
 
 
 def folder_notes(left_out: dict | None) -> list[dict]:
@@ -1232,10 +1263,18 @@ def folder_notes(left_out: dict | None) -> list[dict]:
                     "roots": roots})
     other_chip = int(lo.get("other_chip") or 0)
     if other_chip:
+        # S10 walk: which runs (newest first, a few), not only how many
+        named = [r for r in lo.get("other_chip_runs") or () if r.get("run_id") is not None][:OTHER_CHIP_SHOWN]
+        names = ", ".join(f"#{r['run_id']}" + (f" in {r['label']}" if r.get("label") else "")
+                          + (" (saved state unreadable)" if r.get("unreadable") else "") for r in named)
+        more = other_chip - len(named)
+        if names and more > 0:
+            names += f" and {more:,} more"
         out.append({"level": "info", "code": "other_chip",
                     "text": _plural(other_chip, "run", "runs") + " whose saved chip identity does not "
                             "match this chip's " + ("is" if other_chip == 1 else "are")
-                            + " not part of this chip's timeline."})
+                            + " not part of this chip's timeline" + (f": {names}." if names else "."),
+                    "runs": named})
     derived = int(lo.get("derived") or 0)
     if derived:
         out.append({"level": "info", "code": "derived_seam",

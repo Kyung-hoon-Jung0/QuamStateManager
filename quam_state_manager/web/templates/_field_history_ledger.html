@@ -99,7 +99,7 @@
   {% else %}
   {{ points|length }}{% if total > points|length %} of {{ total }}{% endif %} change point{{ 's' if total != 1 }}
   {% endif %}
-  &middot; from the change ledger ({{ ledger.events }} event{{ 's' if ledger.events != 1 }}: runs and SM writes){% if total > points|length %} &middot; {{ total - points|length }} older not shown{% endif %}
+  &middot; from the change ledger ({{ ledger.events_text or ('%s event%s' % (ledger.events, '' if ledger.events == 1 else 's')) }}){% if total > points|length %} &middot; {{ total - points|length }} older not shown{% endif %}
   {#- docs/301 F15: the older points were named but unreachable -#}
   {% if total > points|length and not show_all %}<button type="button" class="fh-show-all"
       data-path="{{ dot_path }}" onclick="FieldHistory.showAll(this)"

@@ -33508,19 +33508,65 @@ def _hub_link_rows(ctx, chip_dir, workspace, alignment):
               ("other", alignment.get("renamed") or []),
               ("unreadable", alignment.get("unknown") or [])]
     groups.extend(("other", entries) for entries in (alignment.get("different_chip") or {}).values())
+    # S10 walk: a run the chip's ledger flags CHIP_UNCERTAIN is another chip's
+    # here too (the folder view's other_chip note leaves it out by that rule),
+    # also when the scan has no state of it to align -- so the dialog and the
+    # note agree. The scan's own "another chip" stays (never moved back).
+    ledger_runs = _hub_link_ledger_runs(chip_dir)
+    counted: set = set()
+
+    def add(path_key, bucket):
+        holders = [k for k in rows if _hub_root_contains(k, path_key)]
+        if holders:
+            rows[max(holders, key=len)][bucket] += 1
     for bucket, entries in groups:
         for entry in entries:
             path = getattr(entry, "quam_state_path", None)
             if not path:
                 continue
-            path_key = _hub_root_key(path)
-            holders = [k for k in rows if _hub_root_contains(k, path_key)]
-            if holders:
-                rows[max(holders, key=len)][bucket] += 1
+            folder = getattr(entry, "folder_path", None)
+            run_key = _hub_run_key(str(folder)) if folder else None
+            if run_key in ledger_runs:
+                counted.add(run_key)
+            add(_hub_root_key(path), "other" if ledger_runs.get(run_key) else bucket)
+    for run_key, uncertain in ledger_runs.items():
+        if uncertain and run_key not in counted:
+            add(run_key, "other")                   # e.g. a run with no saved state to align
     candidates = [row for k, row in rows.items() if k not in registered
                   and _hub_root_decision(chip_dir.name, row["path"], roots, decisions) != "different"
                   and hub_sync._holds_runs(Path(row["path"]))]
     return sorted(candidates, key=lambda row: (-row["matches"], row["fs_key"]))
+
+
+def _hub_run_key(path: str) -> str:
+    """A run folder's spelling for matching against the ledger (no file
+    system access): the ledger's root key rule (``hub_lanes.root_key``)."""
+    from quam_state_manager.core.hub_lanes import root_key
+    return root_key(os.path.normpath(path))
+
+
+def _hub_link_ledger_runs(chip_dir) -> dict:
+    """S10 walk: ``{run folder key: CHIP_UNCERTAIN}`` for every run the
+    chip's ledger holds whose folder is still there; ``{}`` when the ledger
+    cannot be read (the scan's own buckets then stand)."""
+    from quam_state_manager.core import hub_versions
+    from quam_state_manager.core.hub_store import CHIP_UNCERTAIN, SOURCE_GONE
+    if chip_dir is None or not (Path(chip_dir) / "ledger.sqlite").is_file():
+        return {}
+    out: dict = {}
+    try:
+        with hub_versions._ledger(chip_dir) as store:
+            for root, rel, flags in store.conn.execute(
+                    "SELECT r.path, COALESCE(l.rel_path, e.rel_path), e.flags FROM events e "
+                    "LEFT JOIN locations l USING(eid) JOIN roots r ON r.root_id=COALESCE(l.root_id, e.root_id) "
+                    "WHERE e.kind='run'"):
+                if not rel or int(flags or 0) & SOURCE_GONE:
+                    continue
+                out[_hub_run_key(os.path.join(root, rel))] = bool(int(flags or 0) & CHIP_UNCERTAIN)
+    except Exception:  # noqa: BLE001 -- the dialog then counts by the scan alone
+        logger.warning("link dialog: the ledger of %s could not be read", chip_dir, exc_info=True)
+        return {}
+    return out
 
 
 def _hub_link_context():
