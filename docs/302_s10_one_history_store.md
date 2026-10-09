@@ -76,6 +76,16 @@ not kept on the chip (#3314, which did not measure qA1, still had ...)"); "since
 stay on the chip began (an unconfirmed excursion that returned to the same value is skipped and named).
 For three parameters checked by hand against the backups, every surface now gives the true date.
 
+### First open after a data folder moved
+
+Every history surface used to take the chip's state lock before saying "building" -- and the first
+diagnostics check held it while importing scipy (4-15 s on a cold open); the build paused for every
+request. Now the status is read first (7-40 ms per surface while building), the build works in 50 ms
+slices under requests, progress names its phase from the first second ("looking through run folders (n
+of N)", "matching a new data folder's runs ..."), and the saved-pair hash is streamed. Catch-up of 3,521
+runs with no page open: 27-31 s -> 9-11 s. Still open: a Datasets index scan (32 threads) started by the
+chip page starves the build on a cold open (catch-up ~22 s with the page open) -- a follow-up.
+
 ## Decisions
 
 * D1-D5 (docs per spec, approved by the user): copies share runs under linked roots; Trends / Param

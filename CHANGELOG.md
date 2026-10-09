@@ -821,3 +821,25 @@ four kinds of chip (docs/301).
   say which env location the choice outranks; Reset goes back to it.
 - Customer, lab and chip names removed from code, tests and comments (the
   real names live in an external lab map).
+
+## v1.2.0 (2026-10-10)
+
+- **One history store (S10, docs/302)**: every surface that shows a value's past -- value drawer, Column
+  History, agent field history, Chip Status Trends / metric meta / calibration age, Param History grid /
+  drawer / Changes, the report, Versions, State History, the History drawer, the Calibration log --
+  reads the per-chip change ledger through the open folder's view. The old Param History snapshot
+  fallbacks are deleted, so two surfaces can no longer disagree. A chip with no linked data folder shows
+  SM's own writes and the states SM saw, with a "Link a data folder" offer; an unreadable history says so
+  in one plain sentence; an archived chip builds its history (runs, run captures, states SM saw) in the
+  background the first time it is viewed.
+- **Values the chip never kept**: a run that saved its own fit result which never reached the live chip
+  no longer shows as the chip's value. Checked against a lab's timestamped live backups: the rule is
+  98.9% / 96.2% precise; such values are listed as "not kept on the chip", and "since" is when the value's
+  stay on the chip began.
+- Another chip's run in a linked folder is left out only when its saved state declares another chip;
+  the user's Apply is listed once; the lists, counts and notes agree; the Calibration log never returns
+  500 on an unreadable history; a user's bookmark is never overwritten by the live-tracking marker.
+- First open after a data folder moved: surfaces answer at once with progress that names its phase; the
+  catch-up is about 3x faster.
+- Fixed two missing imports (the overnight grant watch; autofit figure generation) and added a guard
+  against undefined names.

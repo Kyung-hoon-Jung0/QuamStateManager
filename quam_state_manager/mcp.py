@@ -41,7 +41,7 @@ from typing import Any
 from quam_state_manager.core import agent_link
 
 PROTOCOL = "2025-06-18"
-SERVER = {"name": "quam-state-manager", "version": "1.1.2"}
+SERVER = {"name": "quam-state-manager", "version": "1.2.0"}
 
 _link: agent_link.SMLink | None = None
 # docs/120's rule, applied to the agent: a press means what the presser could
