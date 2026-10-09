@@ -467,7 +467,7 @@ function p15() {
 }
 
 
-// 2026-09-27 (pulse-create QA, real Chrome on big30x + KRS 5Q):
+// 2026-09-27 (pulse-create QA, real Chrome on big30x + lab-F 5Q):
 // P16 only the slots the SERVER listed are offered -- a coupler slot on a
 //     pair with no coupler is not in the island, so it must not appear;
 // P17 a probe finishing while the user types never rebuilds the form (it

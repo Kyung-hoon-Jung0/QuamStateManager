@@ -314,7 +314,7 @@ class TestTheGateNameBoxIsWired:
         """2026-09-27: "+ new gate" was withdrawn from the create form -- the
         gate it wrote carried its slot pulse on no channel, so quam_builder's
         CZGate.apply() played a name the moving qubit's z did not have
-        (measured with pulse_lab_check.py on the KRS 5Q chip). An old page
+        (measured with pulse_lab_check.py on the lab-F 5Q chip). An old page
         still posting it is refused, taken or free name alike, and nothing
         is written."""
         ctx = next(iter(pairs_client._app.config["contexts"].values()))

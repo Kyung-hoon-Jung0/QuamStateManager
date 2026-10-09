@@ -103,7 +103,7 @@ class TestExplicitMovingRole:
                                        {"moving_qubit": ""})
         assert w is not None and "cz_order" in w
 
-    def test_regen_shaped_krs_pair_silent(self):
+    def test_regen_shaped_lab_pair_silent(self):
         # chipX_5Q q2-3: control q2 3.4008 GHz, target q3 4.7631 GHz, the chip
         # records moving_qubit='control' (q2, the LOWER qubit, carries
         # cz_unipolar_flux_pulse_q2_q3). regen_spec copies that role into

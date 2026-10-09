@@ -41,7 +41,7 @@ cold through the uncached path and compared; a difference raises
 AT the table's token (``data_version`` unchanged before and after the cold
 recompute): a part computed a moment after a commit, or a cold read made
 after one, describes a DIFFERENT index than the one the table is valid for,
-and comparing the two raised on a correct serve (D1, the verifier's krs5h
+and comparing the two raised on a correct serve (D1, the verifier's lab-F-5h
 rig: the background indexer committing between a memoized delta and its
 shadow read). A skipped comparison is counted in ``COUNTS["verify_moved"]``.
 

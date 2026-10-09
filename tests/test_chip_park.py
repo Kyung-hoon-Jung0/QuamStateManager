@@ -419,7 +419,7 @@ def test_randomized_event_sequence_matches_a_cold_build(app, tmp_path):
 # ------------------------------------------------------------- memory pin
 def _make_sized_chip(folder: Path, n: int, pad: int) -> Path:
     """A chip whose qubits each carry *pad* calibration floats, so three
-    chips differ in size the way big30x / big20 / krs5 do (30 / 20 / 5)."""
+    chips differ in size the way big30x / big20 / lab-F-5q do (30 / 20 / 5)."""
     _make_chip(folder, n=n)
     st = json.loads((folder / "state.json").read_text())
     for i, q in enumerate(st["qubits"].values()):
@@ -458,7 +458,7 @@ def test_ten_chip_switches_hold_memory_flat_and_debug_ram_adds_up(app, tmp_path,
     c = app.test_client()
     chips = [_make_sized_chip(tmp_path / "big30x", 30, 600),
              _make_sized_chip(tmp_path / "big20", 20, 600),
-             _make_sized_chip(tmp_path / "krs5", 5, 600)]
+             _make_sized_chip(tmp_path / "lab-F-5q", 5, 600)]
     biggest = max((p / "state.json").stat().st_size + (p / "wiring.json").stat().st_size
                   for p in chips)
     budget = biggest // 2

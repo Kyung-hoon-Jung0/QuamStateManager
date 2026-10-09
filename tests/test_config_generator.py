@@ -364,7 +364,7 @@ class TestTwoPinsOnOneOutputAreNamed:
     the allocator and came back as "NotEnoughChannelsException ... add a FEM".
     Inside one allocate_wiring call the wirer blocks a channel once a line took
     it, so two pinned lines on one output can never build -- measured on the
-    KRS 5Q rig for drive/drive, flux/flux, drive onto the feedline output and
+    lab-F 5Q rig for drive/drive, flux/flux, drive onto the feedline output and
     drive onto the TWPA pump. A feedline is ONE line (run_build uses its first
     member's pin); CR / ZZ lines share the control's xy port by design
     (cr_port_mode=shared_xy) and are never flagged.

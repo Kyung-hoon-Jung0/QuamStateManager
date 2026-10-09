@@ -131,7 +131,7 @@ def cached(python_path: str, qclass: str, params: dict) -> dict | None:
 WARM = True
 #: w9/labwarm: 10 min -> 60 min. A lab session is edit, run a node, look at
 #: the result, edit again -- ten minutes of looking cost the next edit a cold
-#: start (5-12 s krs5). The other retirements are unchanged: another env
+#: start (5-12 s lab-F-5q). The other retirements are unchanged: another env
 #: selected, a lab file edited (``fresh``), interpreter exit.
 WARM_IDLE_S = 3600
 _WARM_MARK = "@@SM-LABWF@@"
@@ -316,7 +316,7 @@ def retire_except(python_path: str | None, *, background: bool = False) -> int:
 
 # ---------------------------------------------------------------- pre-warm
 # w9/labwarm. The first lab check after a server start paid the worker's
-# spawn + imports (5-12 s krs5, ~12 s big30x) while the user watched a cell.
+# spawn + imports (5-12 s lab-F-5q, ~12 s big30x) while the user watched a cell.
 # A chip that carries a lab class the check would ask, opened with an env
 # already selected, now starts that worker in the background: it IMPORTS the
 # chip's lab classes (the modules the chip-open class probe imports already)

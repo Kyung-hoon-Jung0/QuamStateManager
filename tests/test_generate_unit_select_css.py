@@ -6,7 +6,7 @@ reserves `padding-right: spacing + 1.5rem` for it. `.gen-pop-unit select`
 (the Units row on /generate and /regenerate step 6: Frequency / Time /
 Voltage / Amplitude + the Power-input select) overrode the padding with
 `0.1rem 0.3rem` and `width: auto`, so the box shrank to the text and the
-chevron was drawn over it -- measured in real Chrome on the KRS 5Q copy:
+chevron was drawn over it -- measured in real Chrome on the lab-F 5Q copy:
 clientWidth GHz 41 / ns 27 / V 33 / 0-1 42 px, padding-right 6.3 px, the
 chevron covering "GHz", "ns", "V", "0-1", "dBm" and "absolute dBm (auto FSP)".
 

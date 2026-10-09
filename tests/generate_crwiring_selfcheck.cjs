@@ -85,8 +85,8 @@ ok(T.pinToChannel('1/2/3', 'cross_resonance').out_port === 3,
   // (out 8, in 1); deriving the input from the new output rewired them.
   const was = state.mode;
   state.mode = 'regenerate';
-  const krs = { kind: 'mw_fem', con: 1, slot: 3, out_port: 1, in_port: 2 };
-  const moved = T.pinToChannel('1/4/1', 'resonator', krs);
+  const crPort = { kind: 'mw_fem', con: 1, slot: 3, out_port: 1, in_port: 2 };
+  const moved = T.pinToChannel('1/4/1', 'resonator', crPort);
   ok(moved && moved.slot === 4 && moved.out_port === 1 && moved.in_port === 2,
      'F6 review: a pin retyped over (out 1, in 2) keeps in 2 (got ' + JSON.stringify(moved) + ')');
   const r81 = T.pinToChannel('1/1/1', 'resonator', { kind: 'mw_fem', con: 1, slot: 1, out_port: 8, in_port: 1 });

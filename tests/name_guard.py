@@ -6,6 +6,9 @@ import re
 from pathlib import Path
 
 NAME_DIGESTS = frozenset((
+    'c2e7e7b1d3688ea1f82ea53b3fda3a53b86e46a92488d88e2e50ffafd4ef3272',
+    '62bfbd452ae09b4bddff99ff0fac0ad6cbfddbbcde0f56595be6e6f381b69089',
+    'd1fbaf47a485bd25d8661c9b5edfde65dce6f20b516a815e57822552214a039c',
     '075b2fb09cb081cc20244b4f273535309fd32f88f622e5afe37cff4ae0c2dc08',
     '08dc9a0b95dd772053ee1a2b77c57083507e6fe1986543e5be576d858fd537cf',
     '1475001d1abb7d41064af695fd1420803699ac5ca718787f7dbeb00dd0be58ce',

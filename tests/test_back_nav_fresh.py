@@ -1,7 +1,7 @@
 """w7 final QA (P2): a full-page Back never shows an old value, nor a number in
 the wrong field.
 
-Repro (real Chrome, krs5): Enter-edit ``qubits.q2.chi`` on /bulk, leave by a
+Repro (real Chrome, lab-F-5q): Enter-edit ``qubits.q2.chi`` on /bulk, leave by a
 FULL navigation (typed URL, non-htmx link), press Back. Before the fix:
 
 * the page came from the HTTP cache (navigation type ``back_forward``,

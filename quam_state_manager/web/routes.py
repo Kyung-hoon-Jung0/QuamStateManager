@@ -2157,7 +2157,7 @@ def _maybe_warm_generated_config(ctx, inst) -> None:
 #: w9/labwarm: the pre-warm's in-process step (the class map, a store-lock
 #: walk) waits at most this long for a quiet server, then goes: what follows
 #: is a SUBPROCESS -- no GIL, no lock -- and every second it waits is a second
-#: the first check waits (measured on krs5: the chip-open page loads kept the
+#: the first check waits (measured on lab-F-5q: the chip-open page loads kept the
 #: server "busy" ~14 s under load, and a +15 s check found no worker yet).
 _LAB_PREWARM_QUIET_MAX_S = 3.0
 
@@ -20974,7 +20974,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "delete_lab_check": delete_lab_check,
         # w9/labwarm: the lab worker's state AT RENDER -- the first word the
         # lab indicators say before their own status poll answers (a busy
-        # server answered that poll 1.2 s late on krs5: the step said
+        # server answered that poll 1.2 s late on lab-F-5q: the step said
         # "Checking..." first, then "Preparing..."); corrected by the poll
         "lab_worker_state": (_lab_worker_state()
                              if (delete_lab_check or unknown_class) else None),
@@ -21834,7 +21834,7 @@ def pulse_create_form():
         # wrote carried its slot pulse INLINE, on no channel: quam_builder's
         # CZGate.apply() plays `moving_qubit.z.play(flux_pulse_qubit_label)`,
         # a name no channel had, and generate_config() never saw the pulse
-        # (measured on the KRS 5Q chip, pulse_lab_check.py). New CZ gates
+        # (measured on the lab-F 5Q chip, pulse_lab_check.py). New CZ gates
         # come from the Gaussian CZ builder, which writes the channel ops.
         info["new_gates"] = []
         pairs_info[pair_name] = info
@@ -22408,7 +22408,7 @@ def api_pulse_create():
             "_status.html", level="error",
             message=(f"Unknown target kind {target_kind!r} "
                      "(expected qubit, pair or pair_channel)")), 400
-    # 2026-09-27 (measured on the KRS 5Q chip): a LAB class validates its own
+    # 2026-09-27 (measured on the lab-F 5Q chip): a LAB class validates its own
     # values inside its waveform code -- GaussianNZTwoFluxPulse refuses a
     # flat_length under 12 sigma of its filter -- and generate_config() then
     # raised for the WHOLE chip, so no node could compile. SM cannot know a
@@ -22518,7 +22518,7 @@ def _lab_unavailable_note(python_path, qclass, rec) -> str:
 def _lab_edit_refusal(store, dot_path: str, write_path: str, value) -> str | None:
     """The error a LAB class's own code raises for a /pulse/edit, or None.
 
-    2026-09-27 (verifier, KRS 5Q): the create path ran the class's own check,
+    2026-09-27 (verifier, lab-F 5Q): the create path ran the class's own check,
     the edit path did not -- ``flat_length=4`` typed into an existing
     ``GaussianNZTwoFluxPulse`` committed, and after Apply generate_config()
     raised for the WHOLE chip. One door with /field/edit(-batch): see
@@ -23968,7 +23968,7 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
     _dropped = env_field_filter(template, spec.key)
     if env_dropped_out is not None:
         env_dropped_out.extend(_dropped)
-    # 2026-09-27 (measured, KRS 5Q): an IQ waveform on a single (LF) channel
+    # 2026-09-27 (measured, lab-F 5Q): an IQ waveform on a single (LF) channel
     # makes quam's generate_config() raise for the WHOLE machine -- every
     # node would stop compiling. Refuse it here, where it is one pulse.
     if _channel_single(chan_obj) and _template_is_iq(spec.iq, template, spec.key):
@@ -24025,7 +24025,7 @@ def api_pulse_delete():
         return render_template("_status.html", message="Invalid pulse path",
                                level="error"), 400
 
-    # Verifier 3 (KRS 5Q): a lab gate plays its channel op BY NAME
+    # Verifier 3 (lab-F 5Q): a lab gate plays its channel op BY NAME
     # (CZGateTwoFlux: qubit_control.z.play(pulse.id)) -- no pointer names it,
     # so used_by was empty and the delete went through; every CZ node on the
     # pair then failed. The gate's own apply() is asked, as on every door.

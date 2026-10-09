@@ -27,7 +27,7 @@ const norm = (v) => { const o = JSON.parse(v); delete o.strip; return JSON.strin
       await sleep(500);
       v = await a.ev(view);
       const c0 = JSON.parse(v);
-      if (tag === 'switch' ? !/KRS_QA_30Q/.test(c0.head) : /KRS_QA_30Q/.test(c0.head)) { seen = Date.now() - t0; break; }
+      if (tag === 'switch' ? !/LAB_QA_30Q/.test(c0.head) : /LAB_QA_30Q/.test(c0.head)) { seen = Date.now() - t0; break; }
     }
     await sleep(1500);
     v = await a.ev(view);

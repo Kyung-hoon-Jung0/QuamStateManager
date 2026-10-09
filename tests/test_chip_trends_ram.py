@@ -743,7 +743,7 @@ _PAT = "qubit_pairs.*.macros.*.fidelity.InterleavedRB"
 
 
 def test_a_commit_between_a_delta_and_its_shadow_check_is_not_a_stale_serve(tmp_path, monkeypatch):
-    """D1 (verifier, krs5h rig, SM_RAM_VERIFY=1): ``part ('delta', marks)
+    """D1 (verifier, lab-F-5h rig, SM_RAM_VERIFY=1): ``part ('delta', marks)
     differs from a cold recompute`` on leaf_matching_paths right after a
     capture. Reproduced deterministically: the background indexer commits
     between the delta read and its shadow recompute. The SERVED delta is the

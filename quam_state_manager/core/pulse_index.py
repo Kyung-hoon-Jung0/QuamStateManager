@@ -1152,7 +1152,7 @@ def copy_pulse_to(merged: dict, src_path: str, dst_path: str, *,
     """The subtree to write at *dst_path* so it plays what *src_path* plays,
     laid out the way the chip lays out its own pulses.
 
-    The chip's own layout is the pattern (surveyed on the KRS 5Q chip: an op
+    The chip's own layout is the pattern (surveyed on the lab-F 5Q chip: an op
     points at its OWN qubit's properties -- ``anharmonicity =
     "#/qubits/q1/anharmonicity"`` -- and at sibling ops of its own channel --
     ``length = "#../x180_DragCosine/length"``). So a copy:
