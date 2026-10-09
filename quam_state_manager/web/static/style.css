@@ -7945,6 +7945,13 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     font-family: var(--pico-font-family-monospace, monospace);
     font-weight: 500;
 }
+/* S10 walk: the display name leads; the history folder is secondary */
+.archive-name { display: inline-flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
+.archive-name .archive-key {
+    font-weight: 400;
+    font-size: 0.8em;
+    color: var(--pico-muted-color);
+}
 .archive-meta {
     color: var(--pico-muted-color);
     font-size: 0.85em;

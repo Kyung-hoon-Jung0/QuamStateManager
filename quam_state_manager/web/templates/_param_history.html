@@ -40,17 +40,15 @@
   </div>
 
   {# docs/83: the curated grid answers "how has T1 drifted"; Changes answers
-     "what did that run change?" across EVERY numeric parameter. Only on the
-     loaded chip — the feed reads the loaded chip's index. #}
-  {% if is_loaded_chip %}
+     "what did that run change?" across EVERY numeric parameter. S10 walk:
+     an archived chip has its Changes too (its own ledger, ?chip_key=). #}
   <div class="ph-tabs">
     <button type="button" class="ph-tab active" aria-current="page">Trends</button>
-    <button type="button" class="ph-tab" hx-get="/param-history/changes"
+    <button type="button" class="ph-tab" hx-get="/param-history/changes{% if not is_loaded_chip %}?chip_key={{ active_chip_key | urlencode }}{% endif %}"
             hx-target="#param-history-root" hx-swap="outerHTML"
             hx-push-url="true"
             title="Every numeric parameter's change points, newest first">Changes</button>
   </div>
-  {% endif %}
 
   {% if reattributed_v3 %}
   <div class="toast toast-info" style="margin:0.5rem 0">
@@ -181,7 +179,11 @@
     <div class="archive-list">
       {% for chip in archived_chips %}
         <div class="archive-item">
-          <code class="archive-key">{{ chip.key }}</code>
+          {# S10 walk: the chip's own name (declared / alias) first, its
+             history folder second -- folder names like "quam_states" say
+             nothing about which chip it is #}
+          <span class="archive-name"><strong class="archive-display">{{ chip.display or chip.key }}</strong>
+            {%- if chip.display and chip.display != chip.key %} <code class="archive-key" title="History folder">{{ chip.key }}</code>{% endif %}</span>
           <span class="archive-meta">
             {{ chip.snapshot_count }} snapshots
             {% if chip.latest_timestamp %}
@@ -253,7 +255,8 @@
     {% endif %}
   {% elif not is_loaded_chip %}
     <div class="alignment-banner alignment-info">
-      Viewing history for chip <code>{{ active_chip_key }}</code>
+      Viewing history for chip <strong>{{ active_chip_name or active_chip_key }}</strong>
+      {%- if active_chip_name and active_chip_name != active_chip_key %} <code title="History folder">{{ active_chip_key }}</code>{% endif %}
       &nbsp;·&nbsp; current load is <code>{{ loaded_chip_key }}</code>
       &nbsp;·&nbsp;
       <a href="/param-history" hx-get="/param-history"

@@ -157,7 +157,9 @@ def test_archived_missing_ledger_offers_a_real_folder(no_runs, tmp_path):
                           headers={"HX-Request": "true"})
     body = response.get_data(as_text=True)
     assert response.status_code == 200
-    assert 'data-vh-mode="unavailable"' in body and "could not be read (no_ledger)" in body
+    # S10 walk: no_ledger end state -> built from the chip's own snapshots, Open still offered
+    assert 'data-vh-mode="unavailable"' not in body and "could not be read" not in body
+    assert (directory / "ledger.sqlite").is_file() and 'data-note="archive_built"' in body
     assert "Open this chip" in body and str(live) in body
     assert "/hub/link-folder" not in body and "load delay:" not in body
     assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
@@ -418,7 +420,8 @@ def test_archived_open_offer_never_names_a_folder_of_another_chip(no_runs, tmp_p
     (directory / "ledger.sqlite").unlink()
     body = client.get("/param-history", query_string={"chip_key": directory.name, "since": "all"},
                       headers={"HX-Request": "true"}).get_data(as_text=True)
-    assert 'data-vh-mode="unavailable"' in body and "could not be read (no_ledger)" in body
+    # S10 walk: no_ledger end state -> built from ITS OWN history folder's snapshots
+    assert 'data-vh-mode="unavailable"' not in body and 'data-note="archive_built"' in body
     assert "Open this chip" not in body and str(live) not in body
 
 

@@ -76,11 +76,11 @@ def test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open(tmp
                         headers={"HX-Request": "true"}).get_data(as_text=True)
     for body in (grid, drawer):
         note = _note(body)
-        if empty_ledger:
-            assert "holds nothing yet" in note and "4 captures of it (3 from runs)" in note, note
-        else:
-            assert "3 run captures of this chip that its change ledger does not" in note, note
-        assert "Open this chip to build its ledger, then link the folder" in note, note
+        # S10 walk: an empty archived ledger -> built from its 1 snapshot that is not a run;
+        # the note then says what it lacks (runs) and how to add them, never "build its ledger"
+        assert "3 run captures of this chip that its change ledger does not" in note, note
+        assert "Open this chip, then link the folder its runs are saved in." in note, note
+        assert ('data-note="archive_built"' in body) == empty_ledger
         assert f'name="folder" value="{live}">Open this chip</button>' in body
         assert 'data-vh-mode="unavailable"' not in body
 

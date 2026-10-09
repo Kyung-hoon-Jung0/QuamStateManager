@@ -362,6 +362,12 @@ class ChipSync:
         self.observed_source: Callable[[], list[dict]] | None = None
         self.observe_wanted = True
         self.observe_queue: deque = deque()
+        # S10 walk: the observed import's own progress (snapshots, not runs)
+        self.obs_done = 0
+        self.obs_total = 0
+        # S10 walk: an archived chip's one-off build from its own snapshots
+        # (no folder is open; ``build_archived``); a live open clears it
+        self.archive = False
         # S10 C1: why the last slice could not run (the ledger could not be
         # opened or bound); cleared by the next slice that completes
         self.slice_error: str | None = None
@@ -485,6 +491,9 @@ class ChipSync:
             "errors": list(self.errors),
             "last_slice_ms": round(self.last_slice_ms, 1),
             "slices": self.slices,
+            "observed_done": self.obs_done,
+            "observed_total": self.obs_total,
+            "archive": self.archive,
         }
         if self.slice_error is not None:
             st["ledger_error"] = self.slice_error
@@ -597,8 +606,19 @@ class ChipSync:
         if full or dirty:
             if self.phase == "ready":
                 self.done = self.total = 0          # a new burst of work
+                self.obs_done = self.obs_total = 0
         if self._bind(store):
             full = True
+        if self.archive and store.meta(ARCHIVE_BUILD) != "running":
+            # S10 walk: a build that stops part way (the process ends) is
+            # resumed by the next view, never read as a complete history
+            with txn(store):
+                store.set_meta(ARCHIVE_BUILD, "running")
+        elif not self.archive and store.meta(ARCHIVE_BUILD) is not None:
+            # S10 walk: opened live, the chip's ledger is kept by its folder
+            # from now on -- no longer one built from its snapshots alone
+            with txn(store):
+                store.conn.execute("DELETE FROM meta WHERE k=?", (ARCHIVE_BUILD,))
         if self.links_due:
             self._link(store)
         if full or dirty or listing:
@@ -659,6 +679,7 @@ class ChipSync:
                     self.errors.append(f"snapshot {snap.get('ts')}: {type(exc).__name__}: {exc}")
                 finally:
                     self.in_hand -= 1
+                    self.obs_done += 1
                 steps += 1
             if ingested != self.__dict__.get("_ingested_seen", 0):
                 # a run that landed next to an observation of its own save
@@ -666,6 +687,9 @@ class ChipSync:
                 self.__dict__["_ingested_seen"] = ingested
                 self.counts["observed:dropped"] += drop_observed_runs(store)
         more = self.has_work()
+        if not more and self.archive:
+            with txn(store):
+                store.set_meta(ARCHIVE_BUILD, "done")
         self.slice_error = None
         if not more:
             self.phase = "ready"
@@ -688,6 +712,7 @@ class ChipSync:
         fresh = [s for s in snaps if s["ts"] not in seen and s["ts"] not in queued]
         fresh.sort(key=lambda s: (s["t_us"], s["ts"]))
         self.observe_queue.extend(fresh)
+        self.obs_total += len(fresh)
 
     # -- listing ---------------------------------------------------------
 
@@ -1686,6 +1711,7 @@ def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | No
             if other is not cs:
                 other.active = False
     cs.active = True
+    cs.archive = False             # S10 walk: a live open keeps the chip from now on
     cs.set_roots(roots)
     if folder is not None:
         # S10 C1.5: the opening folder (its comparison key); its data roots
@@ -1700,6 +1726,71 @@ def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | No
     if kick and cs.syncable:
         _kick(cs)
     return cs
+
+
+#: S10 walk: ledger meta of an archived chip's build from its own snapshots --
+#: "running" from its first slice, "done" when the last snapshot was looked at
+ARCHIVE_BUILD = "archive_build"
+
+
+def registered_for(chip_dir) -> ChipSync | None:
+    """The chip's sync in this process, or None (never creates one)."""
+    with _SYNCS_LOCK:
+        return _SYNCS.get(_norm(chip_dir))
+
+
+def build_archived(chip_dir, observed: Callable[[], list[dict]]) -> ChipSync:
+    """S10 walk: build an ARCHIVED chip's ledger from its own Param History
+    snapshots -- the observed import a live chip with no data folder gets
+    (S10 C1), with no folder open: each snapshot that is not a run becomes an
+    ``observed`` event. In the background (the
+    projector; inline in tests), progress in ``status()``. The sync is not
+    active: nothing re-lists it, and it never takes the open chip's place.
+    A chip this process opened live before is built the same way: the
+    snapshots are read from ITS history folder (the live folder may resolve
+    to another chip now); its registered data folders, if any, are read as
+    they were. A live open makes it the folder's sync again."""
+    cs = sync_for(chip_dir)
+    with cs.lock:
+        cs.archive = True
+        cs.observed_source = observed
+        cs.active = False
+    cs.request(full=True)
+    kick(cs)
+    return cs
+
+
+def archive_peek(chip_dir) -> dict | None:
+    """S10 walk: what an archived chip's ledger holds, read only -- ``events``
+    (good events), ``looked`` (snapshots the observed import looked at),
+    ``outcomes`` (per outcome) and ``build`` (:data:`ARCHIVE_BUILD`, None when
+    it was not built from its snapshots). None when the chip has no ledger
+    file."""
+    import sqlite3
+    path = Path(chip_dir) / "ledger.sqlite"
+    if not path.is_file():
+        return None
+    con = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0)
+    try:
+        def meta(key):
+            try:
+                row = con.execute("SELECT v FROM meta WHERE k=?", (key,)).fetchone()
+            except sqlite3.OperationalError:
+                return None
+            return row[0] if row else None
+        try:
+            events = con.execute("SELECT COUNT(*) FROM events WHERE error IS NULL").fetchone()[0]
+        except sqlite3.OperationalError:
+            events = 0
+        try:
+            outcomes = {o: n for o, n in con.execute(
+                "SELECT outcome, COUNT(*) FROM observed_snapshots GROUP BY outcome")}
+        except sqlite3.OperationalError:
+            outcomes = {}
+        return {"events": int(events), "looked": sum(outcomes.values()), "outcomes": outcomes,
+                "build": meta(ARCHIVE_BUILD)}
+    finally:
+        con.close()
 
 
 def on_roots_moved(moved: Iterable[str]) -> int:

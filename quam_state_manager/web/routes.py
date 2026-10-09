@@ -3444,13 +3444,29 @@ def _hub_live_identity(ctx) -> dict | None:
     return ident if ident and ident.get("name") else None
 
 
-def _hub_observed_source(ctx, chip_dir):
+def _is_run_snapshot(meta) -> bool:
+    """A Param History snapshot of a RUN -- its saved quam_state, ingested from
+    the run's folder (``trigger == "experiment"``, run fields stamped) -- never
+    imported as a state SM saw: runs reach the change ledger from their data
+    folder. ``kind == "exp"`` alone is not one: SM's own capture of the LIVE
+    folder after it adopted a run's write (``auto``, kind ``exp``) is a state
+    SM saw of that folder (S10 final review)."""
+    return bool(getattr(meta, "trigger", None) == "experiment"
+                or getattr(meta, "run_id", None) is not None
+                or getattr(meta, "experiment_folder_path", None))
+
+
+def _hub_observed_source(ctx, chip_dir, *, strict_files: bool = True):
     """docs/282 review P1-2: what the run sync imports as ``observed`` events
     -- this chip's Param History snapshots that are NOT runs (``auto`` /
     ``manual`` / ``save`` / ``backup`` / ``restore`` captures: states SM itself
     saw), of this folder's own timeline (never a parallel folder's, docs/250).
     Runs come from the data folders; a snapshot of a run is never imported.
-    Called on the projector thread: no request context is used."""
+    Called on the projector thread: no request context is used.
+
+    ``strict_files=False`` (S10 walk, an archived chip's build): a snapshot
+    whose saved pair is missing is offered too, so it is counted as one that
+    could not be read instead of being passed over in silence."""
     from quam_state_manager.core import hub_sync
     from quam_state_manager.core.history import LINEAGE_PARALLEL
     hm = _history()
@@ -3465,15 +3481,15 @@ def _hub_observed_source(ctx, chip_dir):
             return []
         out = []
         for m in snaps:
-            if (getattr(m, "kind", None) == "exp" or m.trigger == "experiment"
-                    or m.run_id is not None or m.experiment_folder_path):
+            if _is_run_snapshot(m):
                 continue
             src = srcs.get(m.timestamp) or {}
             if src.get("lineage", LINEAGE_PARALLEL) == LINEAGE_PARALLEL:
                 continue
             t_us = hub_sync.snapshot_instant_us(m.timestamp)
             folder = base / m.timestamp
-            if t_us is None or not (folder / "state.json").is_file() or not (folder / "wiring.json").is_file():
+            if t_us is None or (strict_files and not ((folder / "state.json").is_file()
+                                                      and (folder / "wiring.json").is_file())):
                 continue
             # S10 C1.5: the folder the observed state stands for (its
             # snapshot's recorded source; None when it cannot be shown)
@@ -11458,6 +11474,16 @@ _VH_UNAVAILABLE_NOTES = {
     reason: f"The change history could not be read ({reason}). Nothing older is shown in its place."
     for reason in ("no_chip_dir", "no_ledger", "unreadable")
 }
+# S10 walk: an archived chip whose history cannot be built from its snapshots
+_VH_UNAVAILABLE_NOTES.update({
+    "no_snapshots": ("This chip's Param History holds only captures of runs. Runs reach its "
+                     "change history only from their data folder, so there is nothing to "
+                     "build it from here."),
+    "snapshots_unreadable": ("This chip's Param History snapshots could not be read, so its "
+                             "change history cannot be built from them."),
+})
+#: S10 walk: end states a Try again cannot change (the same files answer the same)
+_VH_FINAL_REASONS = frozenset({"no_ledger", "no_snapshots", "snapshots_unreadable"})
 
 
 def _rename_scope(ctx: dict | None = None, chip_dir=None) -> dict:
@@ -11549,8 +11575,9 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
                            "status": None, "fallback_note": None, "notes": {}, "rows": {},
                            "runs": [], "ledger": {}}
 
-    def unavailable(reason: str) -> dict:
-        out.update(mode="unavailable", reason=reason, unavailable_note=_VH_UNAVAILABLE_NOTES[reason])
+    def unavailable(reason: str, note: str | None = None) -> dict:
+        out.update(mode="unavailable", reason=reason,
+                   unavailable_note=note or _VH_UNAVAILABLE_NOTES[reason])
         return out
 
     try:
@@ -11564,6 +11591,14 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     out["status"] = st
     if st.get("state") == "building":
         out.update(mode="building")
+        return out
+    # S10 walk: an archived chip whose history cannot be built from its own
+    # snapshots (:func:`_hub_archive_ensure`) ends here, in plain words
+    blocked = ctx.get("hub_archive_unavailable")
+    if blocked:
+        return unavailable(*blocked)
+    if ctx.get("hub_archive_warming"):
+        out.update(mode="preparing")
         return out
     if not (chip_dir / "ledger.sqlite").exists():
         readonly = ctx.get("hub_no_folder") or (ctx.get("origin") or "live") != "live"
@@ -11867,8 +11902,17 @@ def _vh_wait_message(ans: dict) -> str:
         return "Preparing the change history…"
     st = ans.get("status") or {}
     done, total = st.get("done"), st.get("total")
-    if total:
+    # S10 walk: once the runs are in, the states SM saw are imported -- that
+    # work is counted in snapshots, never as "N of N runs" standing still
+    seen_done, seen_total = st.get("observed_done") or 0, st.get("observed_total") or 0
+    if total and ((done or 0) < total or not seen_total):
         return (f"The change history is being built ({done or 0} of {total} runs). "
+                "It shows here when it is complete.")
+    if seen_total:
+        return (f"The change history is being built from this chip's Param History snapshots "
+                f"({min(seen_done, seen_total)} of {seen_total}). It shows here when it is complete.")
+    if st.get("archive"):
+        return ("The change history is being built from this chip's Param History snapshots. "
                 "It shows here when it is complete.")
     return "The change history is being built. It shows here when it is complete."
 
@@ -17249,7 +17293,9 @@ def _hub_surface_wait(ans, surface):
         template = "hub_surface_wait.html"
     return render_template(template, **_ctx(page="param_history", ans=ans, surface=surface,
                                           message=_vh_wait_message(ans),
-                                          open_chip_path=ans.get("open_chip_path")))
+                                          open_chip_path=ans.get("open_chip_path"),
+                                          retry=ans.get("reason") not in _VH_FINAL_REASONS,
+                                          archive_chip=ans.get("archive_chip")))
 
 
 def _topology_trends_html(hm, path: Path, store, qubits: list[str],
@@ -32996,27 +33042,113 @@ def _param_history_hub_ctx(hm, target_path, is_loaded_chip: bool) -> dict:
     if is_loaded_chip:
         return ctx
     from types import SimpleNamespace
-    from quam_state_manager.core import hub_index
+    from quam_state_manager.core import hub_index, hub_sync
     from quam_state_manager.core.loader import QuamStore
     directory = None
     try:
         directory = hm.history_dir_cached(target_path) if target_path else None
     except Exception:   # noqa: BLE001 -- no folder: the labelled fallback
         directory = None
+    blocked = None
+    if directory:
+        # S10 walk: a ledger holding nothing is built from the chip's own
+        # snapshots before anything is read (in the background; the read
+        # then says "being built")
+        blocked = _hub_archive_ensure(hm, target_path, Path(directory))
     names: list[str] = []
-    if directory and (Path(directory) / "ledger.sqlite").exists():
+    warming = False
+    if directory and blocked is None and (Path(directory) / "ledger.sqlite").exists():
         try:
             with hub_index.snapshot(SimpleNamespace(directory=Path(directory))) as (_c, index):
                 names = sorted({p.split(".")[1] for p in index.paths
                                 if p.startswith("qubits.") and p.count(".") >= 2},
                                key=natural_key)
-        except Exception:   # noqa: BLE001 -- busy / unreadable: _value_history says so
+        except hub_sync.Building:   # _value_history says "being built"
+            names = []
+        except _ramcache.Warming:
+            # S10 walk: the index is being prepared (a build just ended): the
+            # surface waits, never draws a grid with no qubit as complete
+            names, warming = [], True
+        except Exception:   # noqa: BLE001 -- unreadable: _value_history says so
             names = []
     # S10 C1.5: no folder is open for an archived chip (its path is a
     # stand-in for its history key): it reads its ledger chip-wide
     return {"type": "quam", "path": target_path, "hub_chip_dir": directory,
             "qualibrate_project": None, "hub_no_folder": True, "origin": "archive",
+            "hub_archive_unavailable": blocked, "hub_archive_warming": warming,
             "store": QuamStore.from_dicts({"qubits": {q: {} for q in names}}, {})}
+
+
+def _hub_archive_ensure(hm, target_path, directory: Path) -> tuple[str, str] | None:
+    """S10 walk: an ARCHIVED chip (one Param History holds but no open folder
+    is) whose change ledger holds nothing -- never opened since ledgers exist,
+    or its live folder is gone -- gets its history back from its own Param
+    History snapshots, with no live folder: the observed import S10 C1 gives a
+    live chip with no data folder (each snapshot that is not a run becomes an
+    ``observed`` event, "seen by SM", writer unknown), read only on every live
+    and data folder. Started on the first view, in the background
+    (``hub_sync.build_archived``: the projector, sliced, the existing
+    ``building`` mode and its progress); a build that stopped part way is
+    resumed. A ledger that holds events is read as it is.
+
+    Returns None (read on: the ledger, or "being built") or ``(reason, text)``
+    for an end state: ``no_snapshots`` (every snapshot is a run capture) or
+    ``snapshots_unreadable`` (none could be read)."""
+    from quam_state_manager.core import hub_sync
+
+    def building() -> bool:
+        cs = hub_sync.registered_for(directory)
+        return cs is not None and cs.status().get("state") == "building"
+    if building():
+        return None
+    try:
+        peek = hub_sync.archive_peek(directory)
+    except Exception:  # noqa: BLE001 -- a ledger that cannot be opened: the read says so
+        return None
+    # nothing in it: never built from its snapshots -- or built, but its
+    # snapshots could not even be listed then (tried again once per process,
+    # never in a loop: this process's own try ends it)
+    empty = peek is not None and not peek["events"]
+    unlisted = empty and not peek["looked"] and hub_sync.registered_for(directory) is None
+    wanted = (peek is None or peek["build"] == "running"
+              or (empty and (peek["build"] is None or unlisted)))
+    if wanted:
+        try:
+            snaps = hm.list_snapshots(target_path)
+        except Exception:  # noqa: BLE001 -- the history folder cannot be listed
+            logger.warning("param history: the snapshots of %s could not be listed", directory,
+                           exc_info=True)
+            return "snapshots_unreadable", _VH_UNAVAILABLE_NOTES["snapshots_unreadable"]
+        if not snaps:
+            return None                  # no history at all: the read says so (no_ledger)
+        runs = sum(1 for m in snaps if _is_run_snapshot(m))
+        if runs == len(snaps):
+            if peek is not None and peek["events"]:
+                return None
+            n = len(snaps)
+            return "no_snapshots", (
+                (f"All {n} of this chip's Param History snapshots are captures of runs. " if n > 1
+                 else "This chip's one Param History snapshot is a capture of a run. ")
+                + "Runs reach its change history only from their data folder, so there is "
+                "nothing to build it from here.")
+        hub_sync.build_archived(directory, _hub_observed_source(
+            {"path": target_path}, directory, strict_files=False))
+        if building():
+            return None
+        try:
+            peek = hub_sync.archive_peek(directory)
+        except Exception:  # noqa: BLE001
+            return None
+    if peek is not None and peek["build"] == "done" and not peek["events"]:
+        n = peek["looked"]
+        if n:
+            text = (f"None of this chip's {n} Param History snapshot{'' if n == 1 else 's'} that "
+                    f"{'is' if n == 1 else 'are'} not a run could be read, so its change "
+                    "history cannot be built from them.")
+        else:
+            text = _VH_UNAVAILABLE_NOTES["snapshots_unreadable"]
+        return "snapshots_unreadable", text
+    return None
 
 
 def _openable_folder_for_chip(hm, target_path, *, tries: int = 6) -> str | None:
@@ -33052,7 +33184,9 @@ def _openable_folder_for_chip(hm, target_path, *, tries: int = 6) -> str | None:
         snapshots = []
     seen: set[str] = set()
     for meta in snapshots:                       # newest first
-        if getattr(meta, "kind", None) == "exp" or getattr(meta, "trigger", None) == "experiment":
+        # S10 final review: a run's saved copy is never offered; SM's capture
+        # of the live folder after adopting a run (kind "exp") is that folder
+        if _is_run_snapshot(meta):
             continue
         owner = hm._source_owner(getattr(meta, "source_path", None))
         if owner is None or owner[0] in seen:
@@ -33068,6 +33202,16 @@ def _openable_folder_for_chip(hm, target_path, *, tries: int = 6) -> str | None:
     return None
 
 
+def _archive_chip_names(hm, chip_key: str) -> dict:
+    """S10 walk: ``{"key", "display"}`` of an archived chip -- its declared
+    name (the alias registry) first, its history folder name second."""
+    try:
+        display = hm.display_name_for_dir(chip_key)
+    except Exception:  # noqa: BLE001 -- the folder name is still a name
+        display = None
+    return {"key": chip_key, "display": display or chip_key}
+
+
 def _archive_ledger_notes(hm, target_path, ledger: dict) -> list[dict]:
     """S10 C5 (C3 review P1): an ARCHIVED chip's ledger is read as it is, and
     it may hold less than Param History holds of the chip -- nothing at all
@@ -33075,33 +33219,69 @@ def _archive_ledger_notes(hm, target_path, ledger: dict) -> list[dict]:
     History holds captures of runs (runs reach a ledger only from a data
     folder linked to the chip). Either is said, never shown as an empty
     history, with the one press that builds the ledger: open the chip
-    (:func:`_openable_folder_for_chip`). ``[]`` when the ledger holds both."""
+    (:func:`_openable_folder_for_chip`). When the ledger holds both, only the
+    Open offer is said (where a folder opens as the chip), else ``[]``.
+
+    S10 walk: a ledger built from the chip's own snapshots
+    (:func:`_hub_archive_ensure`) says so first, with how many of them could
+    not be read, and keeps the Open offer wherever a folder opens as the chip."""
     try:
         snaps = hm.list_snapshots(target_path)
     except Exception:  # noqa: BLE001 -- Param History unreadable: nothing to compare with
         return []
+    from quam_state_manager.core import hub_sync
     total = len(snaps)
-    runs = sum(1 for m in snaps if getattr(m, "kind", None) == "exp"
-               or getattr(m, "trigger", None) == "experiment")
+    runs = sum(1 for m in snaps if _is_run_snapshot(m))
     events = int(ledger.get("events") or 0)
+    out: list[dict] = []
+    # S10 walk: a ledger built from the chip's own snapshots says so -- and
+    # how many of them could not be read
+    try:
+        directory = hm.history_dir_cached(target_path)
+        peek = hub_sync.archive_peek(directory) if directory is not None else None
+    except Exception:  # noqa: BLE001 -- nothing more to say
+        peek = None
+    built = bool(peek and peek.get("build"))
+    # S10 final review: the Open offer stands wherever a folder on disk opens
+    # as this chip -- never "no folder opens" while one does
+    open_path = _openable_folder_for_chip(hm, target_path)
+    short = bool((total and not events) or (runs and not ledger.get("has_runs")))
+    if built:
+        n = int(peek["looked"])
+        bad = int(peek["outcomes"].get("unreadable", 0))
+        text = (f"Built from this chip's {n} Param History snapshot{'' if n == 1 else 's'} that "
+                f"{'is' if n == 1 else 'are'} not a run: states SM saw, writer unknown.")
+        if bad:
+            text += f" {bad} could not be read and {'is' if bad == 1 else 'are'} left out."
+        note = {"level": "warning" if bad else "info", "code": "archive_built", "text": text}
+        out.append(note)
+    if not short:
+        if open_path:
+            # no shortfall to say: the offer stands on its own
+            out.append({"level": "info", "code": "archive_open", "open_chip_path": open_path,
+                        "text": "This chip is not open, so its history is not kept current here. "
+                                "Open this chip to keep it current."})
+        return out
     if total and not events:
         text = (f"This chip's change ledger holds nothing yet, while Param History holds "
                 f"{total} capture{'' if total == 1 else 's'} of it"
                 + (f" ({runs} from runs)" if runs else "") + ".")
-    elif runs and not ledger.get("has_runs"):
+    else:
         text = (f"Param History holds {runs} run capture{'' if runs == 1 else 's'} of this chip "
                 "that its change ledger does not: the ledger holds no runs (runs reach it only "
                 "from a data folder linked to the chip).")
-    else:
-        return []
-    open_path = _openable_folder_for_chip(hm, target_path)
-    if open_path:
+    if events:
+        # S10 walk: the ledger holds the states SM saw; what it lacks is runs
+        text += (" Open this chip, then link the folder its runs are saved in." if open_path
+                 else " No folder on disk opens as this chip now, so its runs cannot be added here.")
+    elif open_path:
         text += " Open this chip to build its ledger" + (
             ", then link the folder its runs are saved in." if runs else ".")
     else:
         text += " No folder on disk opens as this chip now, so its ledger cannot be built here."
-    return [{"level": "warning", "code": "archive_short", "text": text,
-             "open_chip_path": open_path}]
+    out.append({"level": "warning", "code": "archive_short", "text": text,
+                "open_chip_path": open_path})
+    return out
 
 
 def _hub_grid_rows(table, props, qubit_filter, since, until, triggers) -> list[dict]:
@@ -33231,10 +33411,18 @@ def param_history():
     # S10 C5: the snapshot grid (non-ledger arm) -> gone; no ledger table is the mode's own page.
     hub_answer, hub_table = _hub_status_table(
         _param_history_hub_ctx(hm, target_path, is_loaded_chip))
+    archive_chip = None if is_loaded_chip else _archive_chip_names(hm, active_chip_key)
+
+    def wait(ans):
+        # S10 walk: an archived chip's wait / end page names the chip it is
+        # about (it replaces the whole root) and offers Open where it can
+        if archive_chip is not None:
+            ans = dict(ans, archive_chip=archive_chip)
+            if ans["mode"] == "unavailable":
+                ans["open_chip_path"] = _openable_folder_for_chip(hm, target_path)
+        return _hub_surface_wait(ans, "grid")
     if hub_table is None:
-        if not is_loaded_chip and hub_answer["mode"] == "unavailable":
-            hub_answer["open_chip_path"] = _openable_folder_for_chip(hm, target_path)
-        return _hub_surface_wait(hub_answer, "grid")
+        return wait(hub_answer)
     try:
         # docs/158: nothing selected is an honest empty grid, not a query
         if none_props or none_qubits or none_triggers:
@@ -33242,11 +33430,11 @@ def param_history():
         else:
             rows = _hub_grid_rows(hub_table, props, qubit_filter, since, until, triggers)
     except _ramcache.Warming:
-        return _hub_surface_wait(_hub_waiting(hub_table, "param_history_grid"), "grid")
-    except Exception as exc:   # noqa: BLE001 — never 500 the dashboard on a busy index
-        logger.warning("param-history trend query failed: %s", exc)
-        rows = []
-        index_error = "The trend index is busy (a save or import may be running). Reload in a moment."
+        return wait(_hub_waiting(hub_table, "param_history_grid"))
+    except LedgerUnreadable:
+        # S10 final review: a failed ledger READ says so (any other error is
+        # a real one: logged and raised, never "the index is busy")
+        return wait(_hub_table_failed("param_history_grid"))
 
     if only_changed:
         def _changed(values: list[dict[str, Any]]) -> bool:
@@ -33421,6 +33609,9 @@ def param_history():
             only_changed=only_changed,
             # Multi-chip:
             active_chip_key=active_chip_key,
+            # S10 walk: an archived chip is named by its display name, its
+            # history folder second
+            active_chip_name=(archive_chip or {}).get("display") or active_chip_key,
             loaded_chip_key=loaded_key,
             legacy_chip_key=legacy_chip_key,
             is_loaded_chip=is_loaded_chip,
@@ -33647,9 +33838,19 @@ def param_history_changes():
     if not (ctx and ctx.get("type") == "quam" and ctx.get("path") and _store()):
         # S10 C5: the snapshot feed's no-chip page -> _no_chip directly, the feed is gone.
         return _no_chip("parameter history", "param_history")
+    # S10 walk: ?chip_key= names an ARCHIVED chip (the grid's own rule): its
+    # Changes read its ledger -- built from its snapshots when it held nothing
+    hm = _history()
+    archive = _changes_archive(hm)
+    if archive is not None:
+        ctx = _param_history_hub_ctx(hm, archive["path"], False)
     ans, table = _hub_status_table(ctx)
     if table is None:
         # S10 C5: a non-ledger mode -> its wait / unavailable page only, never the snapshot feed.
+        if archive is not None:
+            ans = dict(ans, archive_chip=archive["names"])
+            if ans["mode"] == "unavailable":
+                ans["open_chip_path"] = _openable_folder_for_chip(hm, archive["path"])
         return _hub_surface_wait(ans, "changes")
     try:
         # docs/298: what the page lists reads only the ledger (kept while
@@ -33669,6 +33870,21 @@ def param_history_changes():
     except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only
         return _hub_surface_wait(_hub_table_failed("changes"), "changes")
     return body, status
+
+
+def _changes_archive(hm) -> dict | None:
+    """S10 walk: the archived chip a Param History request names
+    (``?chip_key=`` other than the open chip's key) -- ``{"key", "path",
+    "names"}`` -- or None for the open chip."""
+    key = (request.args.get("chip_key") or "").strip()
+    if not key:
+        return None
+    try:
+        if key == hm._key_for(Path(_active_path())):
+            return None
+    except Exception:  # noqa: BLE001 -- no open chip to compare with: the key names it
+        pass
+    return {"key": key, "path": _path_for_chip_key(key), "names": _archive_chip_names(hm, key)}
 
 
 def _hub_param_changes(table, data: dict | None = None) -> tuple[str, int]:
@@ -33701,7 +33917,9 @@ def _hub_param_changes_data(table) -> dict:
     bad = {"bad": ("This history page reference is invalid; open Changes again.", 400)}
     if at is not None and not at.isdigit():
         return bad
-    scope = _rename_scope()
+    archived = (table.ctx.get("origin") or "live") == "archive"
+    # S10 walk: an archived chip's names are its own ledger's, never the open chip's
+    scope = _rename_scope(table.ctx, table.ctx.get("hub_chip_dir")) if archived else _rename_scope()
     # S10 C5 (C3 review P2): the page's reads of the ledger -> LedgerUnreadable when they fail
     with ledger_read():
         try:
@@ -33779,9 +33997,19 @@ def _hub_param_changes_data(table) -> dict:
                        "shown": len(rows), "rows": rows})
     stats = {"paths": len(table.paths), "rows": sum(table.counts.values()),
              "snapshots": table.snapshot_count(), "dirty": False}
+    archive = None
+    extra_notes: list = []
+    if archived:
+        hm = _history()
+        key = Path(table.ctx["hub_chip_dir"]).name if table.ctx.get("hub_chip_dir") else ""
+        archive = _archive_chip_names(hm, key)
+        extra_notes = _archive_ledger_notes(hm, table.ctx["path"], table.answer.get("ledger") or {})
     return {"groups": groups, "stats": stats, "prefix": prefix,
             "has_more": (not at) and result["cursor"] is not None, "oldest_ts": result["cursor"],
-            "at_ts": at, "hub_mode": "ledger", "hub_notes": table.notes}
+            "at_ts": at, "hub_mode": "ledger", "hub_notes": list(table.notes) + extra_notes,
+            # S10 walk: an archived chip's page keeps its chip on every link
+            "archive_chip": archive,
+            "chip_qs": f"chip_key={quote(archive['key'])}" if archive else ""}
 
 
 @bp.route("/param-history/param-search")
@@ -33797,6 +34025,10 @@ def param_history_param_search():
     if not (ctx and ctx.get("type") == "quam" and ctx.get("path")):
         # S10 C5: the snapshot index's leaf search -> nothing to suggest without a chip.
         return jsonify(ok=True, results=[])
+    archive = _changes_archive(_history())
+    if archive is not None:
+        # S10 walk: an archived chip's Changes suggest its own ledger's paths
+        ctx = _param_history_hub_ctx(_history(), archive["path"], False)
     ans, table = _hub_status_table(ctx)
     if table is None:
         return jsonify(ok=True, results=[], mode=ans["mode"])
@@ -33904,10 +34136,15 @@ def param_history_expand():
     hub_answer, hub_table = _hub_status_table(
         _param_history_hub_ctx(hm, target_path, is_loaded))
     if hub_table is None:
+        # S10 final review: an archived chip's end state offers the grid's
+        # own action (Open this chip, where a folder opens as it)
+        open_path = (_openable_folder_for_chip(hm, target_path)
+                     if not is_loaded and hub_answer["mode"] == "unavailable" else None)
         return render_template("_param_history_drawer.html", row={
             "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
             row_json="{}", qubit=qubit, prop=prop, current_value=None,
-            hub_wait=_vh_wait_message(hub_answer), hub_mode=hub_answer["mode"])
+            hub_wait=_vh_wait_message(hub_answer), hub_mode=hub_answer["mode"],
+            open_chip_path=open_path)
     # S10 C5 (C3 review P1): the archived chip's shortfall note rides the drawer too
     extra = [] if is_loaded else _archive_ledger_notes(hm, target_path, hub_answer["ledger"])
     try:
