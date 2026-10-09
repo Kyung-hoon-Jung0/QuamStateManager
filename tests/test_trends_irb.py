@@ -169,20 +169,16 @@ def test_default_irb_pressed_and_explicit_off_sticks(irb_client):
 
 
 def test_stale_route_reports_progress_and_retries(irb_client, monkeypatch):
-    hm = irb_client.application.config["history_manager"]
-    monkeypatch.setattr(hm, "leaf_index_updating", lambda p: True)
-    # RAM P1a: the route asks by the already-resolved chip dir
-    monkeypatch.setattr(hm, "leaf_index_updating_dir", lambda d: True)
-    monkeypatch.setattr(hm, "_ensure_leaf_index_fresh", lambda p: None)
+    # S10 C3: snapshot repair -> ledger preparation, the active reader supplies the wait.
+    from quam_state_manager.core import value_history, ramcache
+    def warming(*args, **kwargs):
+        raise ramcache.Warming("fixture", "key", 0)
+    monkeypatch.setattr(value_history, "read", warming)
     body = irb_client.get("/topology/trends?metrics=").get_data(as_text=True)
-    assert "History index updating (" in body
-    assert 'data-trends-updating="1"' in body
-    # docs/208 D1: the note must not fetch its OWN url -- that request aborted
-    # the user's badge press and brought the old selection back. The client
-    # re-fetches the current selection (trends_irb_selfcheck.cjs).
-    note = body[body.index("data-trends-updating"):]
-    note = note[:note.index("</p>")]
-    assert "hx-get" not in body[body.rindex("<p", 0, body.index("data-trends-updating")):body.index("data-trends-updating") + len(note)]
+    assert "Preparing the change history" in body
+    assert "load delay:" in body
+    assert 'id="chip-trends-data"' not in body
+    assert "Older snapshot history" not in body
 
 
 def test_irb_client_selfcheck():

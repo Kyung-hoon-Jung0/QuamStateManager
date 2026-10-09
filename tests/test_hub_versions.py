@@ -357,9 +357,11 @@ def test_modes_other_than_ledger_say_why(env, monkeypatch, case):
     else:
         monkeypatch.setattr(hub_query_mod(), "timeline", lambda *a, **k: 1 / 0)
     res = hub_versions.read(directory, [])
-    assert res["mode"] == (case if case in ("building", "preparing") else "fallback")
+    # S10 C3: old -> new, no runs is ledger; permanent errors are unavailable.
+    assert res["mode"] == (case if case in ("building", "preparing") else
+                           "ledger" if case == "no_runs" else "unavailable")
     assert not res["rows"], "no ledger row is drawn from a list that is not complete"
-    if case not in ("building", "preparing"):
+    if case not in ("building", "preparing", "no_runs"):
         assert res["reason"] == case
 
 
@@ -523,13 +525,15 @@ def test_a_chip_without_a_ledger_keeps_the_old_path_labelled(tmp_path):
     panel = c.get("/state/versions").get_data(as_text=True)
     # S10 C1: the open creates the ledger of a chip with no data folder (its first
     # sync slice); with nothing in it the panel says "holds no runs", not "no ledger yet"
-    assert 'data-source="snapshots"' in panel and "holds no runs" in panel
+    # S10 C3: old -> new, a fresh ledger uses the ledger renderer and link offer.
+    assert 'data-source="ledger"' in panel and 'data-note="no_folder_linked"' in panel
 
 
 def test_a_building_ledger_draws_the_older_snapshots_and_says_so(env, monkeypatch):
     monkeypatch.setattr(hub_sync, "status", lambda _d: {"state": "building", "done": 1, "total": 3})
     panel = env.client.get("/state/versions").get_data(as_text=True)
-    assert 'data-source="snapshots"' in panel and "being built (1 of 3 runs)" in panel
+    # S10 C3: old -> new, building lists legacy snapshots through the ledger renderer.
+    assert 'data-source="ledger"' in panel and "being built (1 of 3 runs)" in panel
     assert "run #" not in text(panel)
     assert "No recorded versions" not in panel, "the runs being read are not denied"
     page = env.client.get("/state-history").get_data(as_text=True)

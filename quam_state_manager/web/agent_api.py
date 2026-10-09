@@ -356,7 +356,7 @@ def field_history():
     ctx = r._active_ctx()
     try:
         ans = r._value_history(ctx, {"value": dot}, limit=r._VH_DRAWER_LIMIT)
-        if ans["mode"] in ("building", "preparing"):
+        if ans["mode"] in ("building", "preparing", "unavailable"):
             st = ans.get("status") or {}
             return jsonify(ok=True, path=dot, source=ans["mode"], history=None,
                            note=r._vh_wait_message(ans),

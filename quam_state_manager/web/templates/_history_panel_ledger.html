@@ -5,6 +5,7 @@
    ledger the State History page reads, read-only, and sends the user there to
    compare, load or restore one. #}
 {% from '_snapshot_source.html' import source_badge %}{% set lv = ledger_versions %}
+{% if lv.mode == 'ledger' %}<span id="history-count" hx-swap-oob="true">{{ lv.total }}</span>{% endif %}
 <div id="history-list">
 <div class="history-toolbar">
     <a class="outline btn-sm" role="button" href="/state-history" hx-get="/state-history"
@@ -14,9 +15,15 @@
             hx-post="/api/history/snapshot"
             hx-target="#history-content"
             hx-swap="innerHTML">Take Snapshot</button>
-    <small class="muted hp-ledger-count">{{ lv.total }} recorded state{{ 's' if lv.total != 1 }}{% if lv.rows | length < lv.total %} &middot; newest {{ lv.rows | length }} shown{% endif %}</small>
+    <small class="muted hp-ledger-count">{{ lv.total }} recorded state{{ 's' if lv.total != 1 }}{% if lv.rows | length < lv.total %} &middot; {% if page == 1 %}newest {% endif %}{{ lv.rows | length }} shown{% endif %}</small>
+    <select aria-label="States per page" name="per_page"
+            hx-get="/api/history" hx-target="#history-content" hx-swap="innerHTML">
+        {% for size in (20, 50, 100, 0) %}
+        <option value="{{ size }}"{% if per_page == size %} selected{% endif %}>{{ size if size else 'All' }}</option>
+        {% endfor %}
+    </select>
 </div>
-{% for n in lv.notes %}<p class="muted hp-ledger-note">{{ n.text }}</p>{% endfor %}
+{% with notes=lv.notes %}{% include '_hub_notes.html' %}{% endwith %}
 <div class="history-timeline">
 {% for r in lv.rows %}
 <div class="history-entry hp-ledger-row" data-ts="{{ r.ts }}">
@@ -30,9 +37,21 @@
         {% endif %}
         {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
     </div>
+    {% if r.label %}<div class="sh-label">{{ r.label }}</div>{% endif %}
+    {% if r.note %}<div class="sh-note">{{ r.note }}</div>{% endif %}
+    {% if r.pinned %}<span class="sh-pin-badge" title="Pinned snapshot">&#128204;</span>{% endif %}
 </div>
 {% else %}
-<p class="muted" style="padding: 0.5rem;">No recorded states yet.</p>
+{% if lv.mode == 'ledger' %}<p class="muted" style="padding: 0.5rem;">No recorded states yet.</p>{% endif %}
 {% endfor %}
 </div>
+{% if total_pages > 1 %}
+<nav class="history-pagination">
+    {% if page > 1 %}<button class="outline btn-sm" hx-get="/api/history?page={{ page - 1 }}&amp;per_page={{ per_page }}"
+        hx-target="#history-content" hx-swap="innerHTML">Prev</button>{% endif %}
+    <span class="muted">Page {{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}<button class="outline btn-sm" hx-get="/api/history?page={{ page + 1 }}&amp;per_page={{ per_page }}"
+        hx-target="#history-content" hx-swap="innerHTML">Next</button>{% endif %}
+</nav>
+{% endif %}
 </div>

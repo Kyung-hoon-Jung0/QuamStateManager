@@ -85,9 +85,10 @@ MUTATIONS = [
      '        if flags & UNDONE:\n            pts[i]["undone"] = "undone"\n            continue',
      '        if flags & UNDONE:\n            continue',
      [S + "test_an_apply_names_its_actor_and_an_undo_marks_it"]),
+    # S10 C3: re-anchored -- the wait template also ends an unavailable read
     ("building_drawn_as_fallback", RT,
-     '    if ans["mode"] in ("building", "preparing"):\n        return render_template("_value_history_wait.html", ans=ans, surface="drawer",',
-     '    if ans["mode"] == "preparing":\n        return render_template("_value_history_wait.html", ans=ans, surface="drawer",',
+     '    if ans["mode"] in ("building", "preparing", "unavailable"):\n        return render_template("_value_history_wait.html", ans=ans, surface="drawer",',
+     '    if ans["mode"] in ("preparing", "unavailable"):\n        return render_template("_value_history_wait.html", ans=ans, surface="drawer",',
      [H + "test_a_building_ledger_says_so_and_shows_no_rows"]),
     ("building_read_called_preparing", RT,
      '        out.update(mode="building", status=getattr(exc, "status", None) or st)',
@@ -107,10 +108,9 @@ MUTATIONS = [
      '        if current is None or newest is None or not rules.same(current, newest):',
      '        if False:',
      [H + "test_a_current_value_not_yet_recorded_is_said"]),
-    ("sm_only_ledger_used", RT,
-     '    if (not res["ledger"].get("has_runs") and not res["ledger"].get("has_observed")\n'
-     '            and not st.get("roots")):', '    if (False):',
-     [H + "test_a_chip_whose_ledger_holds_no_runs_gets_the_old_path_labelled"]),
+    # S10 C3: "sm_only_ledger_used" retired -- the no_runs fallback it guarded is gone;
+    # its opposite (a no-run ledger IS read) is tools/mutate_hub_mode_switch.py's
+    # no_runs_value_fallback
     ("missing_ledger_not_checked", RT,
      '    if not (chip_dir / "ledger.sqlite").exists():', '    if False:',
      [H + "test_a_chip_whose_ledger_holds_no_runs_gets_the_old_path_labelled"]),

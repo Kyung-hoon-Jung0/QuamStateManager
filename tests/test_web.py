@@ -3057,14 +3057,15 @@ class TestParamHistory:
         row = _json.loads(m.group(1))
         # The row's values list has the keys the new hover/click logic needs
         assert "values" in row
-        if row["values"]:
-            sample = row["values"][0]
-            assert "trigger" in sample
-            assert "timestamp" in sample
-            # run_id and experiment may be None for non-experiment triggers,
-            # but the keys must be present for the customdata indexing
-            assert "run_id" in sample
-            assert "experiment" in sample
+        # S10 C3: snapshot hover keys -> ledger point context, the drawer reads observed states.
+        assert row["values"]
+        sample = row["values"][0]
+        assert sample["trigger"] == "manual"
+        assert "timestamp" in sample
+        assert "_e" in sample["timestamp"]
+        assert sample["provenance"] == "observed"
+        assert sample["uid"] is None and sample["run"] is None
+        assert "writer unknown" in sample["sub"]
 
     def test_drawer_endpoint_requires_args(self, loaded_client):
         resp = loaded_client.get("/param-history/expand")
@@ -3262,7 +3263,10 @@ class TestParamHistoryMultiChip:
         assert resp.status_code == 200
         body = resp.data.decode()
         # Cross-chip banner should be present (we're viewing a non-loaded chip)
-        assert "alignment-info" in body or "Switch to current load" in body
+        # S10 C3: empty snapshot archive -> terminal unavailable, no ledger exists to read.
+        assert 'data-vh-mode="unavailable"' in body
+        assert "The change history could not be read (no_ledger). Nothing older is shown in its place." in body
+        assert "data-vh-retry" not in body
 
     def test_alignment_banner_red_when_workspace_has_no_match(self, client, tmp_path):
         # Synthesize a "loaded" state with one set of qubits; workspace has only a different chip.
@@ -3344,6 +3348,9 @@ class TestParamHistoryMultiChip:
         assert active_loaded.group(1) == "now-7d"
 
         # Non-loaded chip case — default since is all
+        # S10 C3: missing snapshot index -> readable archived ledger, retaining the date-filter pin.
+        from quam_state_manager.core.hub_store import HubStore
+        HubStore(Path(loaded_client.application.instance_path) / "history" / "__some_other_chip__").close()
         body_other = loaded_client.get(
             "/param-history?chip_key=__some_other_chip__",
             headers={"HX-Request": "true"},
@@ -7241,16 +7248,19 @@ class TestParamHistoryBusyIndexDegrade:
 
     def test_locked_index_degrades_to_200(self, loaded_client, app, monkeypatch):
         import sqlite3
-        from quam_state_manager.core.history import HistoryManager
+        from quam_state_manager.core import value_history
 
         def boom(self, *a, **k):
             raise sqlite3.OperationalError("database is locked")
 
-        monkeypatch.setattr(HistoryManager, "extract_property_history", boom)
-        monkeypatch.setattr(HistoryManager, "index_summary", boom)
+        # S10 C3: busy snapshot index -> unreadable ledger, retaining the 200-error pin.
+        monkeypatch.setattr(value_history, "read", boom)
         r = loaded_client.get("/param-history", headers={"HX-Request": "true"})
         assert r.status_code == 200
-        assert "trend index is busy" in r.get_data(as_text=True)
+        body = r.get_data(as_text=True)
+        assert 'data-vh-mode="unavailable"' in body
+        assert "The change history could not be read (unreadable). Nothing older is shown in its place." in body
+        assert "data-vh-retry" not in body
 
 
 class TestBatchUndoAtomic:

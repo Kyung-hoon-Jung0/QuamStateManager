@@ -11,12 +11,14 @@ one change_log GROUP from the tray; pre-apply snapshots power the explicit
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests.ledger_fixture import declare_root
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 
@@ -48,13 +50,15 @@ def _seed_run(root: Path, run_id: int, state: dict, *, name="08_spec",
     hhmmss = hhmmss or f"{run_id % 24:02d}0000"
     run = root / date / f"#{run_id}_{name}_{hhmmss}"
     run.mkdir(parents=True)
+    # S10 C3: one fixed clock for every run -> the folder's own HHMMSS, so the
+    # ledger orders runs by time (as real runs are), never by a tie-break
+    t = f"{date}T{hhmmss[:2]}:{hhmmss[2:4]}:{hhmmss[4:6]}"
     (run / "node.json").write_text(json.dumps({
         "metadata": {"name": name, "status": "successful",
-                     "run_start": f"{date}T01:00:00",
-                     "run_end": f"{date}T01:00:01"},
+                     "run_start": t, "run_end": t},
         "data": {"parameters": {"model": {"qubits": ["qA1", "qA2"]}},
                  "outcomes": {}},
-        "id": run_id, "parents": [], "created_at": f"{date}T01:00:00",
+        "id": run_id, "parents": [], "created_at": t,
         **({"patches": patches} if patches is not None else {}),
     }), encoding="utf-8")
     (run / "data.json").write_text("{}", encoding="utf-8")
@@ -92,33 +96,58 @@ class TestColumnHistoryPanel:
         _seed_run(data_root, 32, _state(off_a=0.081, off_b=0.110))
         _seed_run(data_root, 33, _state(off_a=0.081, off_b=0.112))
         c.post("/workspace/add", data={"folder": str(data_root)})
+        # S10 C3: runs scanned from a workspace root -> runs of a root linked
+        # to the chip (the ledger reads only those); every By-run cell, its
+        # change highlight and the current column are pinned exactly now
+        declare_root(c, data_root)
         r = _post_column(c, _COL)
         assert r.status_code == 200
         html = r.data.decode()
-        # run columns newest-first with values + direct Data links
+        byrun = _byrun_part(html)
+        heads, cells = _byrun(html)
+        # run columns newest-first, each opening its own run's data
         key = routes_mod._folder_key(data_root)
-        assert f'hx-get="/dataset/{key}:33"' in html
-        assert 'data-fill="0.081"' in html and 'data-fill="0.112"' in html
-        # per-run Use all + per-value fill hooks
-        assert "ColumnHistory.useAll" in html
-        assert "ColumnHistory.useValue" in html
-        # trend sparkline SVG rendered server-side (>=2 change points per row)
-        assert "history-cell-spark" in html
-        assert "hs-line" in html
-        # current column from the loaded store
-        assert "0.08" in html
-        # diff highlight where a run changed the value
-        assert "ch-changed" in html
+        assert heads == [(33, f"{key}:33"), (32, f"{key}:32"), (31, f"{key}:31")]
+        # each row's value at each run; highlighted where it differs from the
+        # previous (older) run's value
+        assert cells == {
+            "qA1": [("0.081", False, False), ("0.081", True, False), ("0.079", False, False)],
+            "qA2": [("0.112", True, False), ("0.11", False, False), ("0.11", False, False)],
+        }
+        # one Use all per run + per-value fill hooks
+        assert byrun.count("ColumnHistory.useAll") == 3
+        assert "ColumnHistory.useValue" in byrun
+        # trend sparkline SVG rendered server-side on both rows (>=2 change
+        # points each: 0.079 -> 0.081 and 0.11 -> 0.112)
+        for row in ("qA1", "qA2"):
+            piece = _rows(byrun)[row]
+            assert "history-cell-spark" in piece and "hs-line" in piece, row
+        # current column from the loaded store, not from any run
+        assert '<td class="ch-current" title="0.08"><code>0.08</code></td>' in byrun
 
     def test_foreign_run_excluded(self, env):
         c = env["client"]
         data_root = env["tmp"] / "data2"
+        # S10 C3: a lone foreign-host run dropped by the scan -> an own run then
+        # a foreign-host run in a linked root (a nameless chip's ledger takes
+        # its identity from its first run); the foreign one is kept but
+        # flagged, never a By-run column and never named as the writer
+        _seed_run(data_root, 40, _state())
         _seed_run(data_root, 41, _state(off_a=0.5),
                   wiring={"network": {"host": "9.9.9.9", "cluster_name": "X"}})
         c.post("/workspace/add", data={"folder": str(data_root)})
+        declare_root(c, data_root)
         html = _post_column(c, _COL).data.decode()
-        assert 'data-fill="0.5"' not in html
-        assert "0 matching run" in html
+        key = routes_mod._folder_key(data_root)
+        heads, cells = _byrun(html)
+        byrun = _byrun_part(html)
+        assert heads == [(40, f"{key}:40")], "the foreign run is not a By-run column"
+        assert 'data-fill="0.5"' not in byrun
+        assert "1 run of an uncertain chip identity is left out" in byrun
+        newest = _chips(html)["qA1"][0]
+        assert (newest["prov"], newest["fill"], newest["data"]) == ("run_uncertain_chip", "0.5", None)
+        assert newest["by"] == "#41 (chip uncertain)" and "not named as writer" in newest["sub"]
+        assert f"/dataset/{key}:41" not in _changes(html)
 
     def test_missing_leaf_renders_dash(self, env):
         c = env["client"]
@@ -127,8 +156,13 @@ class TestColumnHistoryPanel:
         del state["qubits"]["qA2"]["z"]          # qA2 has no joint_offset here
         _seed_run(data_root, 51, state)
         c.post("/workspace/add", data={"folder": str(data_root)})
+        # S10 C3: workspace-scanned run -> run of a linked root; the dash is
+        # pinned on qA2's own cell (and not on qA1's) instead of anywhere
+        declare_root(c, data_root)
         html = _post_column(c, _COL).data.decode()
-        assert "ch-missing" in html
+        _heads, cells = _byrun(html)
+        assert cells == {"qA1": [("0.08", False, False)],
+                         "qA2": [(None, False, True)]}
 
     def test_tracked_column_uses_index_fastpath(self, env):
         """f_01 is a tracked prop: snapshots serve all rows from ONE SQL."""
@@ -187,15 +221,72 @@ def _changes(html: str) -> str:
     return html.split("ch-view-byrun")[0]
 
 
+def _byrun_part(html: str) -> str:
+    """The By-run tab's slice of the panel (everything after its wrapper)."""
+    head, sep, tail = html.partition("ch-view-byrun")
+    assert sep, "the By-run tab is missing"
+    return tail
+
+
+def _rows(part: str) -> dict[str, str]:
+    """{row id: that row's markup} of one tab slice."""
+    return {piece.split('"', 1)[0]: piece
+            for piece in part.split('<tr data-row="')[1:]}
+
+
+def _chips(html: str) -> dict[str, list[dict]]:
+    """S10 C3: the Changes tab per row, newest first -- each chip's ledger
+    provenance, fill value, trigger dot, current badge, who-line and the
+    dataset uid of its Data link (None when the chip names no writer)."""
+    def one(rx, text):
+        m = re.search(rx, text)
+        return m.group(1) if m else None
+    out = {}
+    for row, piece in _rows(_changes(html)).items():
+        out[row] = [{
+            "prov": one(r'data-provenance="([^"]*)"', wrap),
+            "fill": one(r'data-fill="([^"]*)"', wrap),
+            "dot": one(r'ch-chip-dot ch-dot-(\w+)', wrap),
+            "now": "ch-chip-now" in wrap,
+            "by": one(r'<span class="vh-chip-by">([^<]*)</span>', wrap),
+            "sub": one(r'<span class="vh-chip-sub">([^<]*)</span>', wrap) or "",
+            "data": one(r'class="ch-chip-data" hx-get="/dataset/([^"]*)"', wrap),
+        } for wrap in piece.split('<span class="ch-chipwrap">')[1:]]
+    return out
+
+
+def _byrun(html: str) -> tuple[list, dict[str, list]]:
+    """S10 C3: the By-run tab as data -- the run columns newest first as
+    ``(run id, dataset uid or None)``, and per row one
+    ``(fill or None, highlighted as changed, rendered as missing)`` per run."""
+    part = _byrun_part(html)
+    heads = []
+    for th in re.findall(r'<th class="ch-run">(.*?)</th>', part, re.S):
+        uid = re.search(r'hx-get="/dataset/([^"]*)"', th)
+        heads.append((int(re.search(r'>#(\d+)</(?:a|span)>', th).group(1)),
+                      uid.group(1) if uid else None))
+    cells = {}
+    for row, piece in _rows(part).items():
+        cells[row] = []
+        for cls, _idx, body in re.findall(
+                r'<td class="ch-val([^"]*)"\s+data-run-index="(\d+)"(.*?)</td>', piece, re.S):
+            fill = re.search(r'data-fill="([^"]*)"', body)
+            cells[row].append((fill.group(1) if fill else None,
+                               "ch-changed" in cls, "ch-missing" in cls))
+    return heads, cells
+
+
 class TestColumnHistoryChanges:
-    """r9 amendment: the default tab shows each row's OWN change points from
-    the merged snapshot+runs series — manual applied edits included — instead
-    of a wall of per-run values that mostly never changed."""
+    """r9 amendment: the default tab shows each row's OWN change points --
+    manual applied edits included -- instead of a wall of per-run values
+    that mostly never changed."""
+    # S10 C3: the merged snapshot+runs series -> the chip's change ledger
+    # (SM writes, states SM observed, runs of linked roots), the only source
 
     def test_manual_applied_edit_appears_as_save_chip(self, env):
-        """THE report: '수동으로 수정한 건 컬럼 시계에 안 나온다'. A manual
-        edit applied to live produces a trigger-'save' snapshot — it must
-        surface as a chip with the not-from-an-experiment tooltip."""
+        """THE report: a manual edit did not show in the column clock. An
+        edit applied to live must surface as its own chip, said to be an SM
+        write, beside the value it replaced."""
         c = env["client"]
         hm = env["app"].config["history_manager"]
         hm.check_and_snapshot(str(env["live"]), "manual", force=True)  # 0.08
@@ -206,12 +297,19 @@ class TestColumnHistoryChanges:
         })
         assert r.get_json()["ok"]
         assert c.post("/state/apply-to-live").status_code == 200
-        ch = _changes(_post_column(c, _COL).data.decode())
-        assert 'data-fill="0.09"' in ch and 'data-fill="0.08"' in ch, \
-            "both the old and the manually-applied value must be chips"
-        assert "a save snapshot of the live folder" in ch
-        assert "ch-dot-save" in ch
-        assert "ch-chip-now" in ch, "newest chip == current gets the badge"
+        html = _post_column(c, _COL).data.decode()
+        ch = _changes(html)
+        # S10 C3: a trigger-'save' snapshot chip -> the ledger's SM-write chip
+        # (provenance sm, still the save dot) over the observed manual capture;
+        # each chip's who-line and the current badge are pinned per chip
+        assert [(p["prov"], p["fill"], p["dot"], p["now"]) for p in _chips(html)["qA1"]] == [
+            ("sm", "0.09", "save", True),
+            ("observed", "0.08", "auto", False),
+        ], "both the old and the manually-applied value must be chips"
+        newest, older = _chips(html)["qA1"]
+        assert newest["by"] == "applied by a person" and newest["data"] is None
+        assert "Written by SM (sm_apply" in ch
+        assert older["by"] == "seen by SM (manual snapshot)" and "writer unknown" in older["sub"]
 
     def test_run_attributed_chip_carries_data_link(self, env):
         c = env["client"]
@@ -221,11 +319,21 @@ class TestColumnHistoryChanges:
         _seed_run(data_root, 32, _state(off_a=0.081, off_b=0.110))
         _seed_run(data_root, 33, _state(off_a=0.081, off_b=0.110))
         c.post("/workspace/add", data={"folder": str(data_root)})
-        ch = _changes(_post_column(c, _COL).data.decode())
+        # S10 C3: workspace-scanned runs -> runs of a linked root; the Data
+        # link is pinned to the proven writer's chip, and its absence to the
+        # chip of the run whose saved state only carried the value
+        declare_root(c, data_root)
+        html = _post_column(c, _COL).data.decode()
+        ch = _changes(html)
         key = routes_mod._folder_key(data_root)
-        # 0.079 was INTRODUCED by run 31 — the chip links to that run, and
-        # the hover Data affordance exists.
-        assert "ch-chip-data" in ch
+        # 0.079 was WRITTEN by run 31 (its own patch) -- the chip links to
+        # that run; 0.081 first appears in run 32 with no patch: not proven,
+        # so no run is named and nothing is linked
+        assert [(p["prov"], p["fill"], p["by"], p["data"]) for p in _chips(html)["qA1"]] == [
+            ("run_saved", "0.081", "saved in #32 08_spec", None),
+            ("run_proven", "0.079", "#31 08_spec", f"{key}:31"),
+        ]
+        assert ch.count("ch-chip-data") == 1
         assert f'hx-get="/dataset/{key}:31"' in ch
 
     def test_repeated_run_values_collapse_to_one_chip(self, env):
@@ -236,14 +344,20 @@ class TestColumnHistoryChanges:
         for rid in (41, 42, 43):
             _seed_run(data_root, rid, _state(off_a=0.081, off_b=0.110))
         c.post("/workspace/add", data={"folder": str(data_root)})
-        ch = _changes(_post_column(c, _COL).data.decode())
+        # S10 C3: workspace-scanned runs -> runs of a linked root; the three
+        # runs are shown to be read (By run), so one chip is a collapse, not
+        # two runs gone missing
+        declare_root(c, data_root)
+        html = _post_column(c, _COL).data.decode()
+        ch = _changes(html)
         assert ch.count('data-fill="0.081"') == 1
+        assert [p["fill"] for p in _chips(html)["qA1"]] == ["0.081"]
+        assert [rid for rid, _uid in _byrun(html)[0]] == [43, 42, 41]
 
     def test_attribution_survives_beyond_byrun_window(self, env):
-        """The Changes series merges MORE runs than the By-run tab shows: a
+        """The Changes series reads MORE runs than the By-run tab shows: a
         value introduced by a run older than the 6 displayed columns keeps
-        its run attribution (cell-popover consistency) instead of degrading
-        to a later snapshot."""
+        its run attribution (cell-popover consistency)."""
         c = env["client"]
         data_root = env["tmp"] / "data_wide"
         _seed_run(data_root, 51, _state(off_a=0.077, off_b=0.110),
@@ -253,37 +367,27 @@ class TestColumnHistoryChanges:
                       patches=([{"op": "replace", "path": "/quam/qubits/qA1/z/joint_offset", "value": 0.081}]
                                if rid == 52 else None))
         c.post("/workspace/add", data={"folder": str(data_root)})
+        # S10 C3: workspace-scanned runs -> runs of a linked root; "newest 6
+        # of 8 matching runs" -> the exact six By-run columns plus the
+        # ledger's own count of all eight runs
+        declare_root(c, data_root)
         html = _post_column(c, _COL).data.decode()
-        ch, byrun = html.split("ch-view-byrun")
+        ch, byrun = _changes(html), _byrun_part(html)
         key = routes_mod._folder_key(data_root)
         # introducers 51 + 52 are OUTSIDE the newest-6 (53..58) By-run window
+        assert [(p["prov"], p["fill"], p["data"]) for p in _chips(html)["qA1"]] == [
+            ("run_proven", "0.081", f"{key}:52"),
+            ("run_proven", "0.077", f"{key}:51"),
+        ]
         assert f'hx-get="/dataset/{key}:51"' in ch
         assert f'hx-get="/dataset/{key}:52"' in ch
+        assert [rid for rid, _uid in _byrun(html)[0]] == [58, 57, 56, 55, 54, 53]
         assert f'/dataset/{key}:51"' not in byrun
-        assert "newest 6 of 8 matching runs" in byrun
+        assert f'/dataset/{key}:52"' not in byrun
+        assert "the newest 6 runs of this chip" in byrun
+        assert "from the change ledger (8 events" in ch
 
-    def test_tracked_fastpath_chip_gets_uid_from_meta(self, env):
-        """Tracked columns come from the SQLite index whose rows carry no
-        folder — the meta-by-timestamp coalesce must supply it so the Data
-        link renders (fails without the history.column_history fix)."""
-        c = env["client"]
-        hm = env["app"].config["history_manager"]
-        data_root = env["tmp"] / "data_trk"
-        run = _seed_run(data_root, 77, _state(),
-                        patches=[{"op": "replace", "path": "/quam/qubits/qA1/f_01", "value": 5.2e9}])
-        (run / "quam_state" / "state.json").unlink()   # runs tier can't serve it
-        c.post("/workspace/add", data={"folder": str(data_root)})
-        _write_chip(env["live"], _state(f01_a=5.1e9))
-        hm.check_and_snapshot(str(env["live"]), "manual", force=True)
-        _write_chip(env["live"], _state(f01_a=5.2e9))
-        hm.check_and_snapshot(str(env["live"]), "experiment", force=True,
-                              experiment_name="08_spec", run_id=77,
-                              experiment_folder_path=str(run))
-        ch = _changes(_post_column(c, {"qA1": "qubits.qA1.f_01",
-                                       "qA2": "qubits.qA2.f_01"},
-                                   label="f 01", unit="Hz").data.decode())
-        key = routes_mod._folder_key(data_root)
-        assert f'hx-get="/dataset/{key}:77"' in ch
+    # S10 C3: deleted test_tracked_fastpath_chip_gets_uid_from_meta -> nothing; its whole subject was the old curated SQLite fast path and the run hint of an "experiment" snapshot's meta, and the ledger imports no experiment snapshot and has no tracked-column tier
 
     def test_tab_markup_and_js_pins(self, env):
         c = env["client"]

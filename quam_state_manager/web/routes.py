@@ -3531,6 +3531,27 @@ def _hub_sync_open(ctx) -> None:
         logger.warning("hub run sync could not start", exc_info=True)
 
 
+def install_hub_capture_refresh(app) -> None:
+    """S10 C3: promptly import captures of the open folder as observed states."""
+    def captured(path, directory):
+        from quam_state_manager.core import hub_sync
+        with app.app_context():
+            ctx = _active_ctx()
+            if (not ctx or (ctx.get("origin") or "live") != "live"
+                    or ctx.get("hub_chip_dir") is None
+                    or Path(ctx["hub_chip_dir"]).resolve() != Path(directory).resolve()):
+                return
+            hm = app.config["history_manager"]
+            owner, current = hm._source_owner(str(Path(path).resolve())), hm._source_owner(ctx["path"])
+            if owner is None or current is None or owner[0] != current[0]:
+                return
+            cs = hub_sync.sync_for(directory)
+            with cs.lock:
+                cs.observe_wanted = True
+            hub_sync.kick(cs)
+    app.config["history_manager"].add_captured_listener(captured)
+
+
 _HUB_FALLBACK_REACHED: dict[tuple[str, str], int] = {}
 _HUB_FALLBACK_WARNED: set[tuple[str, str, str]] = set()
 _HUB_FALLBACK_LOCK = threading.Lock()
@@ -11797,15 +11818,9 @@ _VH_DRAWER_LIMIT = 40
 # The Show all read stays bounded; the footer discloses any older points omitted.
 _VH_DRAWER_ALL_LIMIT = 5000
 
-_VH_FALLBACK_NOTES = {
-    "no_ledger": ("Older snapshot history: this chip has no change ledger yet, so "
-                  "changes between snapshots can be missing."),
-    "no_runs": ("Older snapshot history: this chip's change ledger holds no runs (no data "
-                "folder is linked to the chip), so changes between snapshots can be missing."),
-    "no_chip_dir": ("Older snapshot history: the chip's history folder could not be "
-                    "resolved, so changes between snapshots can be missing."),
-    "unreadable": ("Older snapshot history: the change ledger could not be read, so "
-                   "changes between snapshots can be missing."),
+_VH_UNAVAILABLE_NOTES = {
+    reason: f"The change history could not be read ({reason}). Nothing older is shown in its place."
+    for reason in ("no_chip_dir", "no_ledger", "unreadable")
 }
 
 
@@ -11882,8 +11897,7 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     * ``ledger`` -- the answer: ``rows`` / ``runs`` / ``ledger`` from
       :func:`value_history.read`, ``notes`` per key; ``serials`` names each
       key's answer (docs/298: the same serial is the same, unchanged answer);
-    * ``fallback`` -- the chip has no ledger of its runs yet: the caller
-      draws the OLD path under ``fallback_note``.
+    * ``unavailable`` -- a terminal read error, with no substitute rows.
 
     *targets* / *scope*: the paths already resolved (``value_history.target``)
     and the rename scope (:func:`_rename_scope`), by a caller whose cache is
@@ -11895,17 +11909,20 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
         with store._lock:
             merged = store.merged
         targets = {k: vh.target(merged, dp) for k, dp in path_map.items()}
-    out: dict[str, Any] = {"mode": "fallback", "targets": targets, "status": None,
-                           "fallback_note": None, "notes": {}, "rows": {}, "runs": [],
-                           "ledger": {}}
+    out: dict[str, Any] = {"mode": "unavailable", "reason": None, "targets": targets,
+                           "status": None, "fallback_note": None, "notes": {}, "rows": {},
+                           "runs": [], "ledger": {}}
 
-    def fallback(reason: str) -> dict:
-        out.update(mode="fallback", reason=reason, fallback_note=_VH_FALLBACK_NOTES[reason])
+    def unavailable(reason: str) -> dict:
+        out.update(mode="unavailable", reason=reason, unavailable_note=_VH_UNAVAILABLE_NOTES[reason])
         return out
 
-    chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    try:
+        chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    except Exception:  # noqa: BLE001 -- resolving a history directory can fail
+        return unavailable("no_chip_dir")
     if chip_dir is None:
-        return fallback("no_chip_dir")
+        return unavailable("no_chip_dir")
     chip_dir = Path(chip_dir)
     st = hub_sync.status(chip_dir)
     out["status"] = st
@@ -11913,7 +11930,8 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
         out.update(mode="building")
         return out
     if not (chip_dir / "ledger.sqlite").exists():
-        return fallback("no_ledger")
+        readonly = ctx.get("hub_no_folder") or (ctx.get("origin") or "live") != "live"
+        return unavailable("no_ledger" if readonly else "unreadable")
     # docs/296: today's paths are spelled in today's rename era; the ledger
     # reads each position in its own
     try:
@@ -11929,10 +11947,7 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     except Exception:  # noqa: BLE001 -- an unreadable ledger never 500s a drawer
         logger.warning("value history: the ledger of %s could not be read", chip_dir,
                        exc_info=True)
-        return fallback("unreadable")
-    if (not res["ledger"].get("has_runs") and not res["ledger"].get("has_observed")
-            and not st.get("roots")):
-        return fallback("no_runs")
+        return unavailable("unreadable")
     out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"],
                runs_left_out=res.get("runs_left_out", 0), serials=res.get("serials") or {})
     for key, tgt in targets.items():
@@ -12206,8 +12221,10 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
 
 
 def _vh_wait_message(ans: dict) -> str:
-    if ans["mode"] == "fallback":           # S8 review P2-1: an end state, in S7's words
-        return ans.get("fallback_note") or _VH_FALLBACK_NOTES["unreadable"]
+    if ans["mode"] == "unavailable":
+        # S10 C3: an end state names its own reason (never a stand-in one)
+        return (ans.get("unavailable_note") or _VH_UNAVAILABLE_NOTES.get(ans.get("reason") or "")
+                or _VH_UNAVAILABLE_NOTES["unreadable"])
     if ans["mode"] == "preparing":
         return "Preparing the change history…"
     st = ans.get("status") or {}
@@ -12447,7 +12464,7 @@ def bulk_column_history():
     # docs/282: the same ledger read as the value drawer, every row from one
     # read snapshot; the old two-tier path is the labelled fallback only.
     ans = _value_history(ctx, path_map, runs=CH_BYRUN_COLS)
-    if ans["mode"] in ("building", "preparing"):
+    if ans["mode"] in ("building", "preparing", "unavailable"):
         return render_template("_value_history_wait.html", ans=ans, surface="column",
                                message=_vh_wait_message(ans),
                                label=label)
@@ -12660,7 +12677,7 @@ def field_history():
     show_all = request.args.get("all") == "1"
     ans = _value_history(ctx, {"value": dot_path},
                          limit=_VH_DRAWER_ALL_LIMIT if show_all else _VH_DRAWER_LIMIT)
-    if ans["mode"] in ("building", "preparing"):
+    if ans["mode"] in ("building", "preparing", "unavailable"):
         return render_template("_value_history_wait.html", ans=ans, surface="drawer",
                                message=_vh_wait_message(ans),
                                dot_path=dot_path)
@@ -15701,18 +15718,21 @@ def _report_build_trends(rc: _ReportCtx) -> str:
     # only for a chip with no ledger. It said "No parameter history" beside a
     # Trends page charting 2,082 runs.
     tbl, building = None, None
-    ans = {"mode": "fallback", "reason": "unreadable"}
+    ans = {"mode": "unavailable", "reason": "unreadable"}
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path") and Path(ctx["path"]) == path:
         try:
             ans, tbl = _hub_status_table(ctx)
-            if ans.get("mode") in ("building", "preparing"):
+            if ans.get("mode") in ("building", "preparing", "unavailable"):
                 building = _vh_wait_message(ans)
         except Exception:  # noqa: BLE001 -- the snapshot table still answers
             logger.warning("report trends: ledger table unavailable", exc_info=True)
             tbl = None
+    if tbl is None and ans["mode"] == "unavailable":
+        building = _vh_wait_message(ans)
     if building:
         return render_template("_report_trends.html", charts=[], building=building,
+                               building_mode=ans.get("mode"),
                                window_label=_cr.window_label(rc.window),
                                zone_label=_report_zone_label(rc), no_time=0, n_snapshots=0)
     if tbl is None:
@@ -15771,7 +15791,8 @@ def _report_build_trends(rc: _ReportCtx) -> str:
     return render_template("_report_trends.html", charts=charts,
                            window_label=_cr.window_label(rc.window),
                            zone_label=_report_zone_label(rc), no_time=no_time,
-                           n_snapshots=len(hm.list_snapshots(path)) if charts else 0)
+                           n_snapshots=len(hm.list_snapshots(path)) if charts else 0,
+                           hub_notes=tbl.notes if _is_ledger_table(tbl) else [])
 
 
 _REPORT_CHANNEL = {"xy": "xy", "z": "z", "resonator": "res", "flux_pulse_qubit": "flux",
@@ -16087,10 +16108,10 @@ def wiring_view():
     # docs/301 F14: the History (N) button counts what its drawer lists -- the
     # ledger's recorded states when the chip has one (it said 3 beside a
     # State History of ~3,000)
-    _hv = {"mode": "fallback", "reason": "unreadable"}
+    _hv = {"mode": "unavailable", "reason": "unreadable"}
     if store:
         try:
-            _hv = _versions_read(_active_ctx(), _snaps, limit=1)
+            _hv = _versions_read(_active_ctx(), _snaps, limit=1, lane_notes=False)
             if _hv["mode"] == "ledger":
                 # the ledger's own count, not max() with the snapshots: several
                 # snapshots of one content are one recorded state (review)
@@ -16182,9 +16203,14 @@ def history_list():
     # docs/301 F14: a chip with a change ledger lists ITS newest recorded
     # states -- what the State History page lists -- instead of the Param
     # History snapshots alone, under the same title
-    versions = _versions_read(_active_ctx(), snapshots, limit=_HISTORY_DRAWER_LEDGER_ROWS)
-    if versions["mode"] == "ledger":
-        return render_template("_history_panel_ledger.html", ledger_versions=versions)
+    page = _int_arg("page", 1, minimum=1)
+    per_page = _int_arg("per_page", _HISTORY_DRAWER_LEDGER_ROWS, minimum=0)
+    versions = _versions_read(_active_ctx(), snapshots, limit=per_page or 2**31 - 1,
+                              offset=(page - 1) * per_page)
+    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):
+        total_pages = max(1, math.ceil(versions["total"] / per_page)) if per_page else 1
+        return render_template("_history_panel_ledger.html", ledger_versions=versions,
+                               page=page, total_pages=total_pages, per_page=per_page)
 
     if versions["mode"] == "fallback":
         _hub_fallback_reached("history_drawer", versions["reason"])
@@ -16324,14 +16350,18 @@ def state_history():
     # (runs, SM writes, observed states + older snapshots it does not cover)
     versions = _versions_read(_active_ctx(), snapshots, limit=per_page,
                               offset=(page - 1) * per_page)
-    if versions["mode"] == "ledger":
+    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):
         total = versions["total"]
         total_pages = max(1, math.ceil(total / per_page))
+        try:
+            disk_stats = hm.history_disk_stats(_active_path())
+        except Exception:  # noqa: BLE001 -- storage stats never prevent a history read
+            disk_stats = None
         ctx = _ctx(page="state_history", snapshots=[], ledger_versions=versions,
                    total=total, current_page=min(page, total_pages),
                    total_pages=total_pages, per_page=per_page,
                    chip_origin=_active_origin(), hist_chip_key=versions["chip_key"],
-                   disk_stats=None, first_ts=None)
+                   disk_stats=disk_stats, first_ts=None)
         if request.args.get("body") == "1":
             return render_template("_state_history_body.html", **ctx)
         template = "_state_history.html" if _is_htmx() else "state_history.html"
@@ -18011,7 +18041,7 @@ def topology_trends():
     # again; a chip with no ledger of its runs keeps the snapshot path below,
     # under a label saying so.
     ans, ledger_table = _hub_status_table(ctx)
-    if ans["mode"] in ("building", "preparing"):
+    if ans["mode"] in ("building", "preparing", "unavailable"):
         return _hub_surface_wait(ans, "trends")
     if ledger_table is not None:
         try:
@@ -18024,6 +18054,8 @@ def topology_trends():
                 narrow=not (request.args.get("path") or "").strip())
         except _ramcache.Warming:
             return _hub_surface_wait(_hub_waiting(ledger_table, "trends"), "trends")
+        except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
+            return _hub_surface_wait(_hub_table_failed("trends"), "trends")
     _hub_fallback_reached("trends", ans["reason"])
     fallback = ans.get("fallback_note")
     # RAM P1a: every derived read below comes from ONE table validated
@@ -18067,7 +18099,10 @@ def _hub_status_table(ctx):
     over S7's reader and presenter only in ``ledger`` mode, else None."""
     from quam_state_manager.web.hub_status import LedgerTable
     ctx = dict(ctx)
-    ctx["hub_chip_dir"] = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    try:
+        ctx["hub_chip_dir"] = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    except Exception:  # noqa: BLE001 -- the shared reader supplies the terminal reason
+        ctx["hub_chip_dir"] = None
     ans = _value_history(ctx, {})
     if ans["mode"] != "ledger":
         return ans, None
@@ -18085,6 +18120,11 @@ def _hub_status_table(ctx):
         if getattr(exc, "status", None):
             ans["status"] = exc.status
         return ans, None
+    except Exception:  # noqa: BLE001 -- a table error is terminal, never snapshot rows
+        logger.warning("history table could not be read", exc_info=True)
+        ans.update(mode="unavailable", reason="unreadable",
+                   unavailable_note=_VH_UNAVAILABLE_NOTES["unreadable"])
+        return ans, None
     return ans, table
 
 
@@ -18093,11 +18133,20 @@ def _hub_waiting(table, surface: str = "table_read") -> dict:
     from the ledger (the read's own building / preparing answer, or
     ``preparing`` when another request's read is in flight)."""
     ans = dict(table.waiting or table.answer)
-    if ans.get("mode") not in ("building", "preparing", "fallback"):
+    if ans.get("mode") not in ("building", "preparing", "unavailable"):
         ans["mode"] = "preparing"
-    if ans.get("mode") == "fallback":
+    if ans.get("mode") == "fallback":  # unreachable after the C3 mode mapping
         _hub_fallback_reached(surface, ans["reason"])
     return ans
+
+
+def _hub_table_failed(surface: str) -> dict:
+    """S10 C3: a ledger table read that RAISED (a corrupt page, a reader
+    bug) ends ``unavailable`` like a failed mode read -- the reason named,
+    no rows, never a 500 and never another history in its place."""
+    logger.warning("change history table read failed (%s)", surface, exc_info=True)
+    return {"mode": "unavailable", "reason": "unreadable",
+            "unavailable_note": _VH_UNAVAILABLE_NOTES["unreadable"]}
 
 
 def _hub_surface_wait(ans, surface):
@@ -18109,7 +18158,8 @@ def _hub_surface_wait(ans, surface):
     else:
         template = "hub_surface_wait.html"
     return render_template(template, **_ctx(page="param_history", ans=ans, surface=surface,
-                                          message=_vh_wait_message(ans)))
+                                          message=_vh_wait_message(ans),
+                                          open_chip_path=ans.get("open_chip_path")))
 
 
 def _topology_trends_html(hm, path: Path, store, qubits: list[str],
@@ -18630,18 +18680,24 @@ def topology_metric_meta():
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path") and _store():
         ans, table = _hub_status_table(ctx)
-        if ans["mode"] in ("building", "preparing"):
+        if ans["mode"] in ("building", "preparing", "unavailable"):
             return jsonify(ok=True, mode=ans["mode"], message=_vh_wait_message(ans),
-                           updating=True, q={}, p={}, snaps={})
+                           updating=ans["mode"] != "unavailable", q={}, p={}, snaps={},
+                           notes=[_vh_wait_message(ans)] if ans["mode"] == "unavailable" else [])
         if table is not None:
             try:
                 return jsonify(table.part("metric_meta", lambda: _hub_metric_meta(table)))
             except _ramcache.Warming:
                 waiting = _hub_waiting(table, "metric_meta")
-                ended = waiting["mode"] == "fallback"     # S8 review P2-1: nothing to wait for
+                ended = waiting["mode"] == "unavailable"     # S8 review P2-1: nothing to wait for
                 return jsonify(ok=True, mode=waiting["mode"], message=_vh_wait_message(waiting),
                                updating=not ended, q={}, p={}, snaps={},
                                **({"notes": [_vh_wait_message(waiting)]} if ended else {}))
+            except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
+                failed = _hub_table_failed("metric_meta")
+                return jsonify(ok=True, mode="unavailable", message=_vh_wait_message(failed),
+                               updating=False, q={}, p={}, snaps={},
+                               notes=[_vh_wait_message(failed)])
         _hub_fallback_reached("metric_meta", ans["reason"])
         payload = _legacy_topology_metric_meta().get_json()
         if payload.get("ok"):
@@ -18686,7 +18742,12 @@ def _hub_metric_meta(table) -> dict:
             None if rows[dp]["effective"][-1]["removed"] else rows[dp]["effective"][-1]["value"])
             for dp in paths)
         entry = {"ts": best["t"], "eid": best["eid"], "leaves": len(newest),
-                 "first": best["provenance"] == "first_record",
+                 # "unchanged since history began": the newest value is the
+                 # one the ledger started with -- a run's first record, or
+                 # (S10 C3: a chip with no data folder) the first state SM saw
+                 "first": (best["provenance"] == "first_record"
+                           or (best["provenance"] == "observed"
+                               and best["eid"] == (ans.get("ledger") or {}).get("first_eid"))),
                  "matches_current": matches, "gone": best["removed"],
                  "provenance": best["provenance"], "label": info["label"],
                  "sub": info["sub"], "title": info["title"], "actor": best.get("actor"),
@@ -18898,7 +18959,10 @@ def topology_trends_paths():
             return jsonify(table.leaf_families(q, limit=25))
         except _ramcache.Warming:
             return jsonify([])
-    if ans["mode"] in ("building", "preparing"):
+        except Exception:  # noqa: BLE001 -- S10 C3: nothing to suggest, never a 500
+            _hub_table_failed("trends_paths")
+            return jsonify([])
+    if ans["mode"] in ("building", "preparing", "unavailable"):
         return jsonify([])
     # Grouped in SQL, so each row's entity count is exact and the 25 is a limit
     # on FAMILIES rather than on the rows a count was folded from.
@@ -18989,9 +19053,9 @@ def _state_version_now(ctx: dict | None) -> dict:
     # docs/301 F14: the chip counts what its panel lists -- the ledger's
     # recorded states when the chip has one (it said 5 over a list of ~3,000).
     # ``unmatched`` above stays a snapshot fact: it is what ``ts`` was read from.
-    _v = {"mode": "fallback", "reason": "unreadable"}
+    _v = {"mode": "unavailable", "reason": "unreadable"}
     try:
-        _v = _versions_read(ctx, snaps, limit=1)
+        _v = _versions_read(ctx, snaps, limit=1, lane_notes=False)
         if _v["mode"] == "ledger":
             out["count"] = int(_v.get("total") or 0)
     except Exception:  # noqa: BLE001 -- the snapshot count stands
@@ -19086,6 +19150,7 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
     live_chash = _version_live_chash(ctx) if (ctx.get("origin") or "live") == "live" else None
     current_seen = False
     rows = []
+    annotations_by_event = _version_annotations(hm, res, snapshots, srcs)
     for item in res["rows"]:
         if item["legacy"]:
             m = item["snapshot"]
@@ -19100,7 +19165,8 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
                 "run_uid": (_uid_for_run_ref(m.experiment_folder_path, m.run_id, roots)
                             if m.run_id is not None else None),
                 "source": srcs.get(m.timestamp), "current": False, "flags": [],
-                "why_diff": None, "why_write": None, "pending": item.get("pending", False)})
+                "why_diff": None, "why_write": None, "pending": item.get("pending", False),
+                "annotations": [m]})
             continue
         ev = item["event"]
         kind = ev["kind"]
@@ -19148,14 +19214,80 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
         current = False
         if not current_seen and live_chash and ev.get("chash") == live_chash:
             current = current_seen = True
+        annotations = annotations_by_event.get(ev["eid"], [])
         rows.append({
             "ts": item["ref"], "when": item["stamp"], "legacy": False, "badge": badge,
             "title": title, "sub": sub, "hover": hover, "kind": None, "kind_legacy": False,
-            "trigger": kind, "label": "", "note": "", "pinned": False,
+            "trigger": kind, "label": " / ".join(m.label for m in annotations if m.label),
+            "note": " / ".join(m.note for m in annotations if m.note),
+            "pinned": any(m.pinned for m in annotations), "annotations": annotations,
             "experiment": experiment, "run_id": run_id, "run_uid": run_uid,
             "source": source, "current": current, "flags": flags,
             "why_diff": item["why_diff"], "why_write": item["why_write"], "pending": False})
     return rows
+
+
+def _version_annotations(hm, res: dict, snapshots, srcs: dict) -> dict:
+    """S10 C3: ``{eid: [SnapshotMeta]}`` -- the Param History snapshots whose
+    pin / label / note a ledger row carries, so a bookmark stays visible (and
+    can be unpinned) once its state is a ledger event rather than a snapshot
+    row of its own.
+
+    * An observed event carries the snapshot it was imported from (its own
+      Pin button).
+    * Another snapshot carries over only when it is annotated (a pin, a
+      label, a note) -- a hundred plain captures of one state are one row with
+      one Pin, never a hundred. It goes to the observed event of the same
+      recorded content AND the same recorded folder (the newest one at or
+      before it), else to an SM write of the same content written to the same
+      folder. Equal content in another folder never takes it: a label is
+      matched on what was recorded, never on what it says."""
+    from quam_state_manager.core.hub_versions import _snapshot_instant
+    by_stamp = {m.timestamp: m for m in snapshots}
+
+    def folder_of(m):
+        src = srcs.get(m.timestamp) or {}
+        return (getattr(m, "state_hash", None), src.get("kind"), src.get("folder"))
+    out: dict = {}
+    own: set[str] = set()
+    observed: dict = {}
+    for eid, stamp in res.get("observed", ()):
+        m = by_stamp.get(stamp)
+        if m is None:
+            continue
+        own.add(stamp)
+        out.setdefault(eid, []).append(m)
+        if getattr(m, "state_hash", None):
+            observed.setdefault(folder_of(m), []).append((stamp, eid))
+    for cands in observed.values():
+        cands.sort()
+    writes: dict = {}
+    for eid, instant, chash, live in res.get("writes", ()):
+        owner = hm._source_owner(live)
+        if chash and owner:
+            writes.setdefault((chash, owner[0]), []).append((instant, eid))
+    for cands in writes.values():
+        cands.sort()
+    chashes = res.get("snapshot_chashes") or {}
+    for m in snapshots:
+        if m.timestamp in own or not (m.label or m.note or m.pinned):
+            continue
+        cands = observed.get(folder_of(m)) if getattr(m, "state_hash", None) else None
+        at = m.timestamp
+        if not cands:
+            owner = hm._source_owner(getattr(m, "source_path", None))
+            digest = chashes.get(m.timestamp)
+            if digest is None and writes and res.get("chip_dir") is not None:
+                # still pending in the background hasher: this one is needed now
+                from quam_state_manager.core.hub_versions import snapshot_chash
+                digest = snapshot_chash(res["chip_dir"], m.timestamp)
+            cands = writes.get((digest, owner[0])) if digest and owner else None
+            at = _snapshot_instant(m.timestamp)
+        if not cands:
+            continue                  # not on a listed row: nothing to carry
+        before = [c for c in cands if c[0] <= at]
+        out.setdefault((before[-1] if before else cands[0])[1], []).append(m)
+    return out
 
 
 _VERSION_UID_MEMO: "OrderedDict[tuple, str | None]" = OrderedDict()
@@ -19197,33 +19329,55 @@ def _version_live_chash(ctx) -> str | None:
     return digest
 
 
-def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0) -> dict:
+def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0,
+                   lane_notes: bool = True) -> dict:
     """docs/284: what both history surfaces draw. ``mode`` ``ledger`` carries
-    display ``rows``; any other mode means "draw the older snapshot path",
-    with ``notes`` saying why (S7's wording)."""
+    display ``rows`` in every mode, with the reason beside legacy rows
+    while the ledger cannot answer. ``lane_notes=False``: a caller that only
+    counts (the History (N) button, the version chip) skips the folder-view
+    read the notes need."""
     from quam_state_manager.core import hub_versions, value_history as vh
-    out: dict[str, Any] = {"mode": "fallback", "reason": "no_chip_dir", "rows": [],
+    out: dict[str, Any] = {"mode": "unavailable", "reason": "no_chip_dir", "rows": [],
                            "notes": [], "chip_key": "", "total": 0}
     if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
         return out
-    chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    try:
+        chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    except Exception:  # noqa: BLE001 -- retain the snapshot listing on a directory error
+        chip_dir = None
     if chip_dir is None:
+        out.update(hub_versions.legacy_rows(snapshots, limit=limit, offset=offset))
+        out["rows"] = _version_rows(ctx, out, snapshots)
         out["notes"] = [{"level": "info", "code": "no_chip_dir",
-                         "text": _VH_FALLBACK_NOTES["no_chip_dir"]}]
+                         "text": _VH_UNAVAILABLE_NOTES["no_chip_dir"]}]
         return out
     chip_dir = Path(chip_dir)
-    res = hub_versions.read(chip_dir, snapshots, binding=_vh_binding(ctx, chip_dir),
-                            limit=limit, offset=offset)
+    try:
+        binding = _vh_binding(ctx, chip_dir)
+    except _ramcache.Warming:
+        res = {"mode": "preparing", "reason": None}
+        res.update(hub_versions.legacy_rows(snapshots, limit=limit, offset=offset))
+    except Exception:  # noqa: BLE001 -- the folder view could not be built
+        logger.warning("version folder view could not be read", exc_info=True)
+        res = {"mode": "unavailable", "reason": "unreadable"}
+        res.update(hub_versions.legacy_rows(snapshots, limit=limit, offset=offset))
+    else:
+        res = hub_versions.read(chip_dir, snapshots, binding=binding, limit=limit, offset=offset)
+    if (res.get("reason") == "no_ledger" and not ctx.get("hub_no_folder")
+            and (ctx.get("origin") or "live") == "live"):
+        res["reason"] = "unreadable"
     res["chip_key"] = chip_dir.name
     res["chip_dir"] = chip_dir
-    if res["mode"] == "fallback":
-        res["notes"] = [{"level": "info", "code": res["reason"],
-                         "text": _VH_FALLBACK_NOTES[res["reason"]]}]
+    if res["mode"] in ("unavailable", "building", "preparing"):
+        text = (_VH_UNAVAILABLE_NOTES[res["reason"]] if res["mode"] == "unavailable"
+                else _versions_wait_text(res))
+        res["notes"] = [{"level": "info", "code": res["reason"] or res["mode"], "text": text}]
+        res["rows"] = _version_rows(ctx, res, snapshots)
         return res
-    if res["mode"] in ("building", "preparing"):
-        res["notes"] = [{"level": "info", "code": res["mode"], "text": _versions_wait_text(res)}]
-        return res
-    notes = list(vh.notes(res.get("status"), {"has_runs": res.get("has_runs")},
+    # S10 C1.5/C3: the notes speak for THIS folder's lane (its runs, the
+    # roots it left out), not the whole ledger
+    lane = _value_history(ctx, {}) if lane_notes else {}
+    notes = list(vh.notes(res.get("status"), lane.get("ledger") or {"has_runs": res.get("has_runs")},
                           origin=ctx.get("origin") or "live"))
     if res.get("pending"):
         n = res["pending"]
@@ -19338,7 +19492,7 @@ def state_versions_panel():
     # events (+ the older snapshots it does not cover); any other answer draws
     # the older snapshot path below, saying why
     versions = _versions_read(ctx, snaps, limit=limit)
-    if versions["mode"] == "ledger":
+    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):
         rows = versions["rows"]
         quick = None
         # "what just changed?" is asked of THIS folder (docs/250), between two
@@ -19527,7 +19681,9 @@ def state_version_diff(timestamp: str):
     if offers_pull and is_version:
         # docs/284: the row offers Pull to Live only for a version the
         # ledger can hand over exactly (the door re-checks when pressed)
-        offers_pull = why_write is None
+        live_chash = _version_live_chash(ctx)
+        offers_pull = (why_write is None
+                       and not (live_chash and hub_versions.event_info(chip_dir, timestamp).get("chash") == live_chash))
     return render_template(
         "_version_diff.html",
         entries=entries[:300],
@@ -29738,7 +29894,7 @@ def topology_sparklines(qubit: str):
     # thinned for the drawing only), the snapshot index otherwise. It drew
     # three flat Param History snapshots beside a Trends chart of 25 changes.
     ledger_rows, events = None, None
-    _ans = {"mode": "fallback", "reason": "unreadable"}
+    _ans = {"mode": "unavailable", "reason": "unreadable"}
     table = None
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path"):
@@ -29753,7 +29909,10 @@ def topology_sparklines(qubit: str):
             if isinstance(exc, _ramcache.Warming):
                 _ans = dict(getattr(table, "waiting", None) or {"mode": "preparing"})
             else:
-                _ans = {"mode": "fallback", "reason": "unreadable"}
+                _ans = {"mode": "unavailable", "reason": "unreadable"}
+    if ledger_rows is None and _ans["mode"] in ("building", "preparing", "unavailable"):
+        return render_template("_topo_sparklines.html", rows=[], snapshots=0, ledger=True,
+                               hub_message=_vh_wait_message(_ans), hub_mode=_ans["mode"])
     # docs/142 compress: the popup's delta arrow now reads "since the last
     # CHANGE", not "since the previous identical sample" -- which is what a
     # trend arrow was always meant to say.
@@ -29824,7 +29983,8 @@ def topology_sparklines(qubit: str):
     return render_template("_topo_sparklines.html", rows=rows,
                            snapshots=(events if ledger_rows is not None
                                       else len(hm.list_snapshots(path))),
-                           ledger=ledger_rows is not None)
+                           ledger=ledger_rows is not None,
+                           hub_notes=table.notes if table is not None else [])
 
 
 @bp.route("/topology/report")
@@ -30680,7 +30840,7 @@ def diff_versions():
         # (docs/94) is exactly the difference a physicist opens this for, and
         # the 2-tick button on the same panel (the /diff workbench) already
         # reports it — the two must not disagree about the same two versions.
-        if versions:
+        if ts_list:  # S10 C3: every version uses the ledger comparison rule
             # docs/284: ledger versions (merged documents) and snapshots, under
             # the one rule the 2-tick workbench uses with them (compare_equal)
             rows = hub_versions.compare_n(_sides_in_one_era(
@@ -34213,8 +34373,57 @@ def _param_history_hub_ctx(hm, target_path, is_loaded_chip: bool) -> dict:
     # S10 C1.5: no folder is open for an archived chip (its path is a
     # stand-in for its history key): it reads its ledger chip-wide
     return {"type": "quam", "path": target_path, "hub_chip_dir": directory,
-            "qualibrate_project": None, "hub_no_folder": True,
+            "qualibrate_project": None, "hub_no_folder": True, "origin": "archive",
             "store": QuamStore.from_dicts({"qubits": {q: {} for q in names}}, {})}
+
+
+def _openable_folder_for_chip(hm, target_path, *, tries: int = 6) -> str | None:
+    """S10 C3: the folder the "Open this chip" button of an archived chip with
+    no change ledger opens (opening a live folder builds its ledger).
+
+    ``target_path`` is a history-key stand-in (:func:`_path_for_chip_key`)
+    that cannot itself be opened, so the folder offered must RESOLVE to the
+    same history folder: the folder the newest captures were taken from
+    (a take-live backup stands for its live folder; a run's saved copy is
+    never offered), else a live chip folder of the workspace. None when no
+    folder on disk resolves there -- the page then offers nothing."""
+    try:
+        directory = hm.history_dir_cached(target_path)
+    except Exception:  # noqa: BLE001 -- nothing to resolve against
+        return None
+    if directory is None:
+        return None
+    want = Path(directory).resolve()
+
+    def resolves_here(folder) -> bool:
+        # the identity ladder as the folder's files say NOW (an mtime-keyed
+        # memo, never the TTL one: a renamed chip must not be offered)
+        try:
+            got = hm.resolve_chip_dir(folder)[0]
+            return (got is not None and Path(got).resolve() == want
+                    and (Path(folder) / "state.json").is_file())
+        except Exception:  # noqa: BLE001 -- an unreadable folder is not offered
+            return False
+    try:
+        snapshots = hm.list_snapshots(target_path)
+    except Exception:  # noqa: BLE001
+        snapshots = []
+    seen: set[str] = set()
+    for meta in snapshots:                       # newest first
+        if getattr(meta, "kind", None) == "exp" or getattr(meta, "trigger", None) == "experiment":
+            continue
+        owner = hm._source_owner(getattr(meta, "source_path", None))
+        if owner is None or owner[0] in seen:
+            continue
+        seen.add(owner[0])
+        if resolves_here(owner[1]):
+            return owner[1]
+        if len(seen) >= tries:
+            break
+    for cand in _detect_workspace_chips(current_app.config.get("workspace")):
+        if not cand.get("snapshot_ts") and resolves_here(cand["path"]):
+            return str(cand["path"])
+    return None
 
 
 def _hub_grid_rows(table, props, qubit_filter, since, until, triggers) -> list[dict]:
@@ -34344,7 +34553,9 @@ def param_history():
     # chip's runs the snapshot path below answers, under a label.
     hub_answer, hub_table = _hub_status_table(
         _param_history_hub_ctx(hm, target_path, is_loaded_chip))
-    if hub_answer["mode"] in ("building", "preparing"):
+    if hub_answer["mode"] in ("building", "preparing", "unavailable"):
+        if not is_loaded_chip and hub_answer["mode"] == "unavailable":
+            hub_answer["open_chip_path"] = _openable_folder_for_chip(hm, target_path)
         return _hub_surface_wait(hub_answer, "grid")
     if hub_table is None:
         _hub_fallback_reached("param_history_grid", hub_answer["reason"])
@@ -34791,7 +35002,7 @@ def param_history_changes():
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path") and _store():
         ans, table = _hub_status_table(ctx)
-        if ans["mode"] in ("building", "preparing"):
+        if ans["mode"] in ("building", "preparing", "unavailable"):
             return _hub_surface_wait(ans, "changes")
         if table is not None:
             try:
@@ -34809,6 +35020,8 @@ def param_history_changes():
                     body, status = _hub_param_changes(table, data)
             except _ramcache.Warming:
                 return _hub_surface_wait(_hub_waiting(table, "changes"), "changes")
+            except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
+                return _hub_surface_wait(_hub_table_failed("changes"), "changes")
             return body, status
         _hub_fallback_reached("changes", ans["reason"])
         return _legacy_param_history_changes(fallback_note=ans.get("fallback_note"))
@@ -34876,7 +35089,11 @@ def _hub_param_changes_data(table) -> dict:
             info = _vh_present(pt, table.roots, table.uid_memo)
             rows.append({"path": c["path"], "previous": c["old"], "value": c["new"],
                          "recorded_as": c.get("recorded_as"), "recorded_short": c.get("recorded_short"),
-                         "op": c["op"], "is_first": pt["provenance"] == "first_record",
+                         # docs/281: the ledger's (the lane's) first event holds the
+                         # starting state -- its rows were first recorded, not added
+                         # (S10 C3: a no-folder chip's ledger starts with an observed state)
+                         "op": c["op"], "is_first": (pt["provenance"] == "first_record"
+                                                     or bool(ev.get("first") and c["op"] == "add")),
                          "proven": pt["provenance"] == "run_proven",
                          "who": info["sub"] if ev.get("kind") == "run" else "",
                          "undone": bool(pt["undone"])})
@@ -35001,13 +35218,15 @@ def param_history_param_search():
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path"):
         ans, table = _hub_status_table(ctx)
-        if ans["mode"] in ("building", "preparing"):
+        if ans["mode"] in ("building", "preparing", "unavailable"):
             return jsonify(ok=True, results=[], mode=ans["mode"])
         if table is not None:
             try:
                 return jsonify(ok=True, results=table.path_rank().search(q, limit=30))
             except _ramcache.Warming:
-                return jsonify(ok=True, results=[], mode="preparing")
+                return jsonify(ok=True, results=[], mode=_hub_waiting(table, "changes_paths")["mode"])
+            except Exception:  # noqa: BLE001 -- S10 C3: nothing to suggest, never a 500
+                return jsonify(ok=True, results=[], mode=_hub_table_failed("changes_paths")["mode"])
     if ctx and ctx.get("type") == "quam" and ctx.get("path"):
         _hub_fallback_reached("changes_paths", ans["reason"])
     try:
@@ -35113,19 +35332,26 @@ def param_history_expand():
     # ledger when it holds the chip's runs, each point in S7's words
     hub_answer, hub_table = _hub_status_table(
         _param_history_hub_ctx(hm, target_path, is_loaded))
-    if hub_answer["mode"] in ("building", "preparing"):
+    if hub_answer["mode"] in ("building", "preparing", "unavailable"):
         return render_template("_param_history_drawer.html", row={
             "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
             row_json="{}", qubit=qubit, prop=prop, current_value=None,
-            hub_wait=_vh_wait_message(hub_answer))
+            hub_wait=_vh_wait_message(hub_answer), hub_mode=hub_answer["mode"])
     if hub_table is not None:
         try:
             return _hub_param_history_expand(hub_table, qubit, prop, is_loaded)
         except _ramcache.Warming:
+            waiting = _hub_waiting(hub_table, "param_history_expand")
             return render_template("_param_history_drawer.html", row={
                 "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
                 row_json="{}", qubit=qubit, prop=prop, current_value=None,
-                hub_wait=_vh_wait_message(_hub_waiting(hub_table, "param_history_expand")))
+                hub_wait=_vh_wait_message(waiting), hub_mode=waiting["mode"])
+        except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
+            failed = _hub_table_failed("param_history_expand")
+            return render_template("_param_history_drawer.html", row={
+                "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
+                row_json="{}", qubit=qubit, prop=prop, current_value=None,
+                hub_wait=_vh_wait_message(failed), hub_mode="unavailable")
     _hub_fallback_reached("param_history_expand", hub_answer["reason"])
     rows = hm.extract_property_history(
         target_path, [prop],

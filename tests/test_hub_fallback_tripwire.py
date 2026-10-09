@@ -49,19 +49,11 @@ def test_no_runs_fallback_counts_and_tripwire_surfaces(no_runs, monkeypatch, sur
     client = no_runs["client"]
     response = client.get(url, headers={"HX-Request": "true"})
     assert response.status_code == 200
-    status = client.get("/hub/status").get_json()
-    assert status["fallback_reached"].get(surface, {}).get("no_runs") == 1
-    assert "state" in status and "chip_dir" in status
-    status["fallback_reached"][surface]["no_runs"] = 999
-    assert routes._hub_fallback_counts()[surface]["no_runs"] == 1
+    # S10 C3: old -> new, readable no-run ledgers never enter a snapshot fallback.
+    assert client.get("/hub/status").get_json()["fallback_reached"] == {}
     monkeypatch.setenv("HUB_FALLBACK_TRIPWIRE", "1")
-    raised = None
-    try:
-        client.get(url, headers={"HX-Request": "true"})
-    except RuntimeError as exc:
-        raised = str(exc)
-    assert raised == f"hub fallback reached: {surface} (no_runs)"
-    assert client.get("/hub/status").get_json()["fallback_reached"][surface]["no_runs"] == 2
+    assert client.get(url, headers={"HX-Request": "true"}).status_code == 200
+    assert routes._hub_fallback_counts() == {}
 
 
 def test_warning_once_per_chip_surface_reason_and_testing_gate(no_runs, monkeypatch, caplog):
@@ -124,22 +116,17 @@ def test_a_ledger_becoming_unreadable_after_the_mode_check_trips(sm, monkeypatch
         return real(directory, targets, **kwargs)
     monkeypatch.setattr(value_history, "read", unreadable)
     monkeypatch.setenv("HUB_FALLBACK_TRIPWIRE", "1")
-    raised = None
-    try:
-        sm["client"].get(url)
-    except RuntimeError as exc:
-        raised = str(exc)
-    assert raised == f"hub fallback reached: {surface} (unreadable)"
+    # S10 C3: old -> new, a table-time error ends unavailable without old rows.
+    response = sm["client"].get(url)
+    assert response.status_code == 200
+    assert 'data-vh-mode="unavailable"' in response.get_data(as_text=True)
+    assert "Nothing older is shown in its place." in response.get_data(as_text=True)
 
 
 def test_snapshot_count_under_app_context_has_the_correct_tripwire(no_runs, monkeypatch):
     with no_runs["app"].app_context():
         assert isinstance(routes._state_version_now(routes._active_ctx())["count"], int)
         monkeypatch.setenv("HUB_FALLBACK_TRIPWIRE", "1")
-        raised = None
-        try:
-            routes._state_version_now(routes._active_ctx())
-        except RuntimeError as exc:
-            raised = str(exc)
-        assert raised == "hub fallback reached: version_count (no_runs)"
-
+        # S10 C3: old -> new, the no-run version count uses the ledger without fallback.
+        assert isinstance(routes._state_version_now(routes._active_ctx())["count"], int)
+        assert routes._hub_fallback_counts() == {}

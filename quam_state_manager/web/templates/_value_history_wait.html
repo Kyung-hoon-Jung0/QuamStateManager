@@ -18,5 +18,5 @@
           title="Close (Esc)">&times;</button>
 </div>
 {% endif %}
-<p class="vh-wait" data-vh-retry="{{ 800 if ans.mode == 'preparing' else 2000 }}"
+<p class="vh-wait" {% if ans.mode != 'unavailable' %}data-vh-retry="{{ 800 if ans.mode == 'preparing' else 2000 }}"{% endif %}
    data-vh-mode="{{ ans.mode }}">{{ message }}</p>

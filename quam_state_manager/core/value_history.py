@@ -1074,8 +1074,16 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                                "run_id": ev.get("run_id"), "experiment": ev.get("experiment"),
                                "folder": folder, "flags": _flags(int(ev.get("flags") or 0)),
                                "values": values})
+        if lane is not None:
+            first_eid = lane.first
+        else:
+            row = conn.execute("SELECT eid FROM events WHERE error IS NULL ORDER BY ord LIMIT 1").fetchone()
+            first_eid = row[0] if row else None
         ledger = {"events": len(index.eids), "has_runs": has_runs, "has_observed": has_observed,
                   "first": iso_z(index.t[0]) if index.eids else None,
+                  # S10 C3: the event the history starts at (its rows are the
+                  # starting state -- the timeline's ``first``, docs/281)
+                  "first_eid": first_eid,
                   "last": iso_z(index.t[-1]) if index.eids else None,
                   "last_us": index.t[-1] if index.eids else None,
                   "last_eid": index.eids[-1] if index.eids else None,

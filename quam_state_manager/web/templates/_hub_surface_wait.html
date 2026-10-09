@@ -6,13 +6,18 @@
 {% set again = '/topology/trends' if surface == 'trends' else ('/param-history/changes' if surface == 'changes' else '/param-history') %}
 {% set qs = request.query_string.decode() %}
 <div {% if surface == 'trends' %}class="topo-trends" id="topo-trends"{% else %}id="param-history-root" class="param-history"{% endif %}>
-  {% if ans.mode == 'fallback' %}
-  {# S8 review P2-1: the ledger could not be read -- an end state, not a wait: no
-     self re-ask loop, one explicit press to try again #}
-  <p class="vh-wait" data-vh-mode="fallback">{{ message }}
+  {% if ans.mode == 'unavailable' %}
+  {# S8 review P2-1 / S10 C3: the change history could not be read -- an end
+     state, not a wait: no self re-ask loop, one explicit press to try again #}
+  <p class="vh-wait" data-vh-mode="unavailable">{{ message }}
     <button type="button" class="btn-sm" hx-get="{{ again }}{% if qs %}?{{ qs }}{% endif %}"
        hx-target="{{ '#topo-trends' if surface == 'trends' else '#param-history-root' }}"
        hx-swap="outerHTML">Try again</button></p>
+  {% if open_chip_path %}
+  <form method="post" action="/load">
+    <button type="submit" class="btn-sm" name="folder" value="{{ open_chip_path }}">Open this chip</button>
+  </form>
+  {% endif %}
   {% else %}
   <p class="vh-wait" data-vh-mode="{{ ans.mode }}"
      hx-get="{{ again }}{% if qs %}?{{ qs }}{% endif %}"

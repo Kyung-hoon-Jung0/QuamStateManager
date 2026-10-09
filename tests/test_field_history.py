@@ -16,6 +16,7 @@ import pytest
 
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests.ledger_fixture import declare_root
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"},
            "ports": {"mw_outputs": {"con1": {"1": {"2": {"band": 1}}}}}}
@@ -165,25 +166,29 @@ class TestFieldHistoryRoute:
     def test_panel_renders_values_use_and_current(self, env):
         c = env["client"]
         _mutate_and_snap(env, _state(f01=5.0e9))   # == loaded store value
-        _mutate_and_snap(env, _state(f01=5.1e9), trigger="experiment",
-                         experiment_name="06_ramsey", run_id=31)
+        # S10 C3: fabricated run attribution -> observed capture, retaining Use/current precision.
+        _mutate_and_snap(env, _state(f01=5.1e9))
         r = c.get("/field/history?path=qubits.qA1.f_01")
         assert r.status_code == 200
         html = r.data.decode()
         assert 'data-value="5100000000.0"' in html      # Use fills full precision
-        assert "06_ramsey" in html and "#31" in html    # provenance shown
+        assert "writer unknown" in html                 # provenance shown honestly
         assert 'id="fh-chart-data"' in html             # mini trend payload
-        assert "Not from an experiment" in html         # manual-row tooltip
+        assert "not proven" in html or "writer unknown" in html
         # the store still holds the ORIGINAL 5.0e9 → that row is "current":
         # no Use button for it, badge present
-        assert html.count("fh-use") == 1
-        assert "fh-now" in html
+        # S10 C3: any matching historical row -> newest matching ledger point; now stays a separate fact.
+        assert html.count("fh-use") == 2
+        assert "fh-currentline" in html and "fh-now" not in html
 
     def test_data_button_only_for_registered_run(self, env):
         c = env["client"]
         data_root = env["tmp"] / "data"
-        run = _seed_run(data_root, 31, patches=[{"op": "replace", "path": "/quam/qubits/qA1/f_01", "value": 5.1e9}])
+        # S10 C3: snapshot run hints -> declared ledger runs with a saved pair and patch proof.
+        _seed_run(data_root, 30, hhmmss="000000", quam_state=_state())
+        run = _seed_run(data_root, 31, quam_state=_state(f01=5.1e9), patches=[{"op": "replace", "path": "/quam/qubits/qA1/f_01", "value": 5.1e9}])
         c.post("/workspace/add", data={"folder": str(data_root)})
+        declare_root(c, data_root)
         _mutate_and_snap(env, _state(f01=5.0e9))
         _mutate_and_snap(env, _state(f01=5.1e9), trigger="experiment",
                          experiment_name="08_qubit_spectroscopy", run_id=31,
@@ -238,16 +243,18 @@ class TestRunsTier:
                   quam_wiring={"network": {"host": "9.9.9.9",
                                            "cluster_name": "X"}})
         c.post("/workspace/add", data={"folder": str(data_root)})
+        # S10 C3: request-time run scan -> declared ledger, no Param History ingestion needed.
+        declare_root(c, data_root)
         r = c.get("/field/history?path=qubits.qA1.f_01")
         assert r.status_code == 200
         html = r.data.decode()
         assert 'data-value="5320000000.0"' in html
         assert "06_ramsey" in html and "#32" in html
         key = routes_mod._folder_key(data_root)
-        assert f'hx-get="/dataset/{key}:32"' in html, \
-            "run-derived rows carry a guaranteed Data link"
+        assert f'hx-get="/dataset/{key}:32?via=saved"' in html, \
+            "a saved-run link carries its unproven context"
         assert "9900000000" not in html, "foreign chip's runs are gated out"
-        assert "live run value" in html
+        assert "saved" in html and "not proven" in html
 
     def test_name_match_beats_network_move(self, env, tmp_path):
         """Both sides declare the same extras chip name but hosts differ (a
@@ -263,6 +270,8 @@ class TestRunsTier:
                   quam_wiring={"network": {"host": "10.9.9.9",
                                            "cluster_name": "MOVED"}})
         c.post("/workspace/add", data={"folder": str(data_root)})
+        # S10 C3: implicit run scan -> explicit ledger root, the declared identity still gates runs.
+        declare_root(c, data_root)
         html = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
         assert 'data-value="5550000000.0"' in html
 
@@ -275,6 +284,8 @@ class TestRunsTier:
         _seed_run(data_root, 51, date="2026-12-31", hhmmss="120000",
                   quam_state=self._run_state(5.77e9), quam_wiring=_WIRING)
         c.post("/workspace/add", data={"folder": str(data_root)})
+        # S10 C3: merged snapshot/run scan -> observed and run events in one ledger timeline.
+        declare_root(c, data_root)
         r = c.get("/field/history?path=qubits.qA1.f_01")
         html = r.data.decode()
         i_run = html.find('data-value="5770000000.0"')
@@ -305,13 +316,23 @@ class TestRunCacheChipIndependence:
         c = app.test_client()
         assert c.post("/load", data={"folder": str(live_a)}).status_code in (200, 302)
         c.post("/workspace/add", data={"folder": str(root)})
+        # S10 C3: cached run-scan verdicts -> per-chip ledger views, preserving cross-chip isolation.
+        declare_root(c, root)
         h1 = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
         assert 'data-value="7100000000.0"' in h1
-        assert 'data-value="7200000000.0"' not in h1
+        # S10 C3: foreign rows discarded by a scan -> flagged ledger evidence, never a proven writer.
+        points_a = c.get("/api/agent/field-history?path=qubits.qA1.f_01").get_json()["history"]["points"]
+        foreign_a = [p for p in points_a if p["value"] == 7.2e9]
+        assert foreign_a and all(p["provenance"] == "run_uncertain_chip" and not p.get("uid") for p in foreign_a)
+        assert "chip uncertain" in h1
         assert c.post("/load", data={"folder": str(live_b)}).status_code in (200, 302)
+        declare_root(c, root)
         h2 = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
         assert 'data-value="7200000000.0"' in h2, "B's own run suppressed by A's cache"
-        assert 'data-value="7100000000.0"' not in h2, "A's value leaked into B"
+        points_b = c.get("/api/agent/field-history?path=qubits.qA1.f_01").get_json()["history"]["points"]
+        foreign_b = [p for p in points_b if p["value"] == 7.1e9]
+        assert foreign_b and all(p["provenance"] == "run_uncertain_chip" and not p.get("uid") for p in foreign_b)
+        assert "chip uncertain" in h2
 
 
 class TestUidDeepestRoot:
@@ -332,6 +353,8 @@ class TestUidDeepestRoot:
         assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
         c.post("/workspace/add", data={"folder": str(outer)})
         c.post("/workspace/add", data={"folder": str(chip_root)})
+        # S10 C3: run-scan fixture -> declared ledger root, retaining deepest-root UID resolution.
+        declare_root(c, chip_root)
         html = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
         deep = routes_mod._folder_key(chip_root)
         shallow = routes_mod._folder_key(outer)

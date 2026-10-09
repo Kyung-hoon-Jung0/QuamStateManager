@@ -19,7 +19,7 @@
   {% if hub_fallback %}<p class="vh-fallback">{{ hub_fallback }}</p>{% endif %}
   {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
   {% if hub_wait %}
-  <p class="vh-wait">{{ hub_wait }} Open this cell again in a moment.</p>
+  <p class="vh-wait">{{ hub_wait }}{% if hub_mode != 'unavailable' %} Open this cell again in a moment.{% endif %}</p>
   {% else %}
   <div id="phd-chart" style="width:100%;height:340px"></div>
 

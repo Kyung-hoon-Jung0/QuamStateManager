@@ -156,12 +156,18 @@ def test_missing_field_history_is_a_404(loaded_client):
     assert "no such path" in response.get_json()["error"]
 
 
-def test_existing_field_with_no_history_is_an_empty_success(loaded_client, monkeypatch):
+def test_existing_field_with_no_history_is_an_empty_success(loaded_client, tmp_path):
     with loaded_client.application.app_context():
-        hm = agent_api._r()._history()
-    monkeypatch.setattr(hm, "field_history", lambda *a, **k: [])
+        # S10 C3: snapshot-reader stub -> empty readable ledger, retaining the empty-success contract.
+        from quam_state_manager.core.hub_store import HubStore
+        directory = tmp_path / "empty"
+        HubStore(directory).close()
+        agent_api._r()._active_ctx()["hub_chip_dir"] = str(directory)
     response = loaded_client.get("/api/agent/field-history?path=qubits.qA1.id")
-    assert response.status_code == 200 and response.get_json()["history"] == []
+    data = response.get_json()
+    assert response.status_code == 200 and data["source"] == "ledger"
+    assert data["history"]["points"] == []
+    assert data["history"]["total"] == 0
 
 
 @pytest.mark.parametrize("endpoint", ["runs", "journal"])

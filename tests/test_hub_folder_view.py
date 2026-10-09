@@ -493,7 +493,8 @@ def test_the_c1_other_folders_fallback_is_gone():
     import inspect
     src = inspect.getsource(routes_mod)
     assert "_hub_other_folders" not in src
-    assert '"other_folders"' not in src.split("_VH_FALLBACK_NOTES = {", 1)[1].split("}", 1)[0]
+    # S10 C3: old -> new, the terminal-note map replaces the fallback-note map.
+    assert '"other_folders"' not in src.split("_VH_UNAVAILABLE_NOTES = {", 1)[1].split("}", 1)[0]
 
 
 # ======================================================================

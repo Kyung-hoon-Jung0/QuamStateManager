@@ -25,7 +25,7 @@
    write with its actor and kind, a state SM observed) plus the older
    snapshots no event covers; every other mode draws the snapshot rows below
    with a note saying why. #}
-{% set ledger_mode = ledger_versions is defined and ledger_versions and ledger_versions.mode == 'ledger' %}
+{% set ledger_mode = ledger_versions is defined and ledger_versions and ledger_versions.mode in ('ledger', 'building', 'preparing', 'unavailable') %}
 {# data-changes is the snapshot path's changes-only filter; the client
    re-asks when it differs from the browser's choice. Ledger rows are not
    filtered, so they carry none (a value there would re-ask forever). #}
@@ -44,7 +44,7 @@
     {# docs/284: the change history is not ready; the note above says so, and
        "no recorded versions" would deny the runs it is reading right now #}
     <p class="muted state-versions-empty">No older snapshots to show meanwhile.</p>
-    {% elif not rows %}
+    {% elif not rows and (not ledger_versions or ledger_versions.mode == 'ledger') %}
     {# Honest empty state: no history for this chip is a fact, not a failure. #}
     <p class="muted state-versions-empty">
         No recorded versions for this chip yet. One is captured every time the

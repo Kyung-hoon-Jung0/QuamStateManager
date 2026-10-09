@@ -228,8 +228,9 @@ def test_no_request_ever_rebuilds_the_leaf_index(client, tmp_path, monkeypatch):
                 "/topology/trends/paths?q=offset"):
         assert client.get(url).status_code == 200
     _join_repairs(hm)
-    assert threads, "setup: a dirty index must be repaired by someone"
-    assert set(threads) == {"leaf-history-rebuild"}, threads
+    # S10 C3: snapshot repair -> ledger reads, the retired leaf index is never needed.
+    assert threads == [], threads
+    assert _charts(client.get("/topology/trends").get_data(as_text=True))
 
 
 def test_a_chart_signature_is_stable_across_toggles_and_moves_with_data(client, tmp_path):
@@ -278,12 +279,14 @@ def test_another_connections_write_is_seen_on_the_next_request(client, tmp_path)
     url = "/topology/trends?metrics=T1"
     before = _charts(client.get(url).get_data(as_text=True))
     last = before[0]["series"][0]["points"][-1]
-    idx = hm._history_dir(tmp_path / "quam_state") / "index.sqlite"
+    # S10 C3: foreign snapshot-index write -> foreign ledger write, preserving immediate freshness.
+    idx = hm._history_dir(tmp_path / "quam_state") / "ledger.sqlite"
     other = sqlite3.connect(str(idx), isolation_level=None, timeout=10)
-    other.execute("UPDATE param_history_cp_last SET value = 4.2e-4 WHERE property='T1' AND qubit=?",
-                  (before[0]["series"][0]["entity"],))
-    other.execute("UPDATE param_history_cp SET value = 4.2e-4 WHERE property='T1' AND qubit=? AND timestamp=?",
-                  (before[0]["series"][0]["entity"], last[0]))
+    path = "qubits." + before[0]["series"][0]["entity"] + ".T1"
+    other.execute("UPDATE changes SET num = 4.2e-4 WHERE pid = "
+                  "(SELECT pid FROM paths WHERE path=?) AND eid = "
+                  "(SELECT MAX(eid) FROM changes WHERE pid=(SELECT pid FROM paths WHERE path=?))",
+                  (path, path))
     other.close()
     after = _charts(client.get(url).get_data(as_text=True))
     assert after[0]["series"][0]["points"][-1][1] == pytest.approx(4.2e-4), after[0]["series"][0]["points"]
@@ -335,16 +338,49 @@ def test_a_capture_prewarms_an_open_chip_off_the_request_path(client, tmp_path, 
     hm = client.application.config["history_manager"]
     assert client.get("/topology/trends").status_code == 200        # Trends opened
     time.sleep(1.05)
-    _capture(client, folder, 7.7e-5)
-    _join_background(hm)
-    n = _spy_builds(monkeypatch)
+    # S10 C3: snapshot-table prewarm -> the ledger's: the capture reaches the ledger on the
+    # projector thread (capture refresh) and the read index is rebuilt there after the burst,
+    # so the first chart request builds no index and never reads the retired snapshot table.
+    from quam_state_manager.core import hub, hub_index
+    from tests.test_hub_incremental import from_scratch
+    old_inline, old_pre = hub._PROJECTOR.inline, hub.PREWARM
+    hub.set_inline(False)
+    hub.set_prewarm(True)
+    try:
+        _capture(client, folder, 7.7e-5)
+        _join_background(hm)
+        assert hub._PROJECTOR.flush(30), "the capture's ledger import never finished"
+        deadline = time.monotonic() + 30
+        while hub._PREWARM_THREAD is not None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert hub._PREWARM_THREAD is None, "the index prewarm never finished"
+    finally:
+        hub.set_inline(old_inline)
+        hub.set_prewarm(old_pre)
+    n = {"index": 0, "snapshot": 0}
+    real_extend, real_build = hub_index.extend_index, hub_index.build_index
+
+    def index(*a, **k):
+        n["index"] += 1
+        return real_extend(*a, **k)
+
+    def build(*a, **k):
+        n["index"] += 1
+        return real_build(*a, **k)
+
+    def snapshot(*a, **k):
+        n["snapshot"] += 1
+        raise AssertionError("retired snapshot table was read")
+
+    monkeypatch.setattr(hub_index, "extend_index", index)
+    monkeypatch.setattr(hub_index, "build_index", build)
+    monkeypatch.setattr(hm, "extract_property_history", snapshot)
     warm = client.get("/topology/trends?metrics=T1,f_01").get_data(as_text=True)
-    assert n == {"prov": 0, "chips": 0, "rows": 0}, n
+    assert n == {"index": 0, "snapshot": 0}, n
     monkeypatch.undo()
     assert "7.7e-05" in warm or "7.7e-5" in warm, "the new snapshot's value is charted"
-    ctr.forget(hm)
-    hm.clear_cache()
-    assert client.get("/topology/trends?metrics=T1,f_01").get_data(as_text=True) == warm
+    with from_scratch():
+        assert client.get("/topology/trends?metrics=T1,f_01").get_data(as_text=True) == warm
 
 
 def test_a_chip_nobody_opened_trends_for_is_not_prewarmed(client, tmp_path, monkeypatch):
@@ -374,11 +410,9 @@ def _norm(resp):
 
 def test_a_random_event_sequence_never_serves_a_stale_answer(tmp_path, monkeypatch):
     monkeypatch.setenv("SM_RAM_VERIFY", "1")
-    # S10 C1: opening a folderless chip imports its Param History snapshots into its
-    # ledger as observed states, and Trends then reads the ledger instead of the RAM
-    # snapshot table this test pins; an empty import keeps the table in use
-    from quam_state_manager.web import routes as routes_mod
-    monkeypatch.setattr(routes_mod, "_hub_observed_source", lambda ctx, chip_dir: (lambda: []))
+    # S10 C3: forced snapshot fallback -> actual ledger events, preserving the random cold oracle.
+    from quam_state_manager.web import hub_status
+    from tests.test_hub_incremental import from_scratch
     folder = _chip(tmp_path / "quam_state")
     warm = create_app(testing=True, instance_path=str(tmp_path / "_i")).test_client()
     warm.post("/load", data={"folder": str(folder)})
@@ -388,10 +422,10 @@ def test_a_random_event_sequence_never_serves_a_stale_answer(tmp_path, monkeypat
     cold.post("/load", data={"folder": str(folder)})
     hm_w = warm.application.config["history_manager"]
     hm_c = cold_app.config["history_manager"]
-    idx = hm_w._history_dir(folder) / "index.sqlite"
+    idx = hm_w._history_dir(folder) / "ledger.sqlite"
     rng = random.Random(20260926)
     counts = {"capture": 0, "leaf_write": 0, "cp_write": 0, "new_path": 0, "none": 0}
-    hits0 = ctr.stats()["hits"]
+    hits0 = hub_status._CACHE.hits
     for step in range(60):
         ev = rng.choice(["none", "none", "none", "leaf_write", "cp_write", "new_path"]
                         + (["capture"] if counts["capture"] < 4 else []))
@@ -408,29 +442,29 @@ def test_a_random_event_sequence_never_serves_a_stale_answer(tmp_path, monkeypat
         elif ev in ("leaf_write", "cp_write", "new_path"):
             c = sqlite3.connect(str(idx), isolation_level=None, timeout=10)
             if ev == "leaf_write":
-                # leaf_cp is WITHOUT ROWID: address a row by its primary key
-                row = c.execute("SELECT path_id, snap_id FROM leaf_cp WHERE kind = 0 "
-                                "ORDER BY snap_id DESC, path_id DESC LIMIT 1").fetchone()
-                c.execute("UPDATE leaf_cp SET value = ? WHERE path_id = ? AND snap_id = ?",
+                row = c.execute("SELECT pid, eid FROM changes WHERE num IS NOT NULL "
+                                "ORDER BY eid DESC, pid DESC LIMIT 1").fetchone()
+                c.execute("UPDATE changes SET num = ? WHERE pid = ? AND eid = ?",
                           (rng.uniform(0, 1), row[0], row[1]))
             elif ev == "cp_write":
-                c.execute("UPDATE param_history_cp_last SET value = ? WHERE rowid = "
-                          "(SELECT MIN(rowid) FROM param_history_cp_last)", (rng.uniform(1e-5, 9e-5),))
+                c.execute("UPDATE changes SET num = ? WHERE pid = "
+                          "(SELECT pid FROM paths WHERE path='qubits.q1.T1')",
+                          (rng.uniform(1e-5, 9e-5),))
             else:
-                pid = c.execute("SELECT COALESCE(MAX(id), -1) + 1 FROM leaf_paths").fetchone()[0]
-                sid = c.execute("SELECT MAX(id) FROM leaf_snaps").fetchone()[0]
-                c.execute("INSERT INTO leaf_paths (id, path) VALUES (?, ?)",
-                          (pid, f"qubit_pairs.q1-q2.coupler.offset_{step}"))
-                c.execute("INSERT INTO leaf_cp (path_id, snap_id, value, kind) VALUES (?,?,?,0)",
-                          (pid, sid, 0.5))
+                pid = c.execute("INSERT INTO paths(path,entity,entity_kind,family) VALUES (?,?,?,?)",
+                                (f"qubit_pairs.q1-q2.coupler.offset_{step}", "q1-q2", "pair",
+                                 f"coupler.offset_{step}")).lastrowid
+                eid = c.execute("SELECT MAX(eid) FROM events").fetchone()[0]
+                c.execute("INSERT INTO changes(pid,eid,num,op) VALUES (?,?,?,1)", (pid, eid, 0.5))
+                # a writer that adds a row to an event re-diffs it: its row count moves too
+                c.execute("UPDATE events SET n_changes = n_changes + 1 WHERE eid = ?", (eid,))
             c.close()
         for url in rng.sample(_URLS, 3):
             got = _norm(warm.get(url))
-            ctr.forget(hm_c)
-            hm_c.clear_cache()
-            want = _norm(cold.get(url))
+            with from_scratch():
+                want = _norm(cold.get(url))
             assert got == want, (step, ev, url)
-    assert ctr.stats()["hits"] > hits0, "the sequence must exercise cache HITS, or it pins nothing"
+    assert hub_status._CACHE.hits > hits0, "the sequence must exercise cache HITS, or it pins nothing"
     assert all(v for v in counts.values()), counts
 
 

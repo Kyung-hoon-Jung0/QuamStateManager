@@ -545,6 +545,25 @@ _HASHERS: dict[str, _Hashes] = {}
 _HASHERS_LOCK = threading.Lock()
 
 
+def snapshot_chash(directory, ts: str) -> str | None:
+    """S10 C3: one snapshot's content hash now -- the known one, else hashed
+    on the caller's thread and remembered (for the few annotated snapshots a
+    listing must place on a row while the background worker is still busy;
+    two small reads, never the whole list)."""
+    h = hashes_for(directory)
+    with h.lock:
+        h._load()
+        hit = h.known.get(ts)
+    if hit is not None:
+        return hit[4]
+    entry = h._hash_one(ts)
+    if entry is None:
+        return None
+    with h.lock:
+        h.known.setdefault(ts, entry)
+    return entry[4]
+
+
 def hashes_for(directory) -> _Hashes:
     key = str(Path(directory).resolve()).lower()
     with _HASHERS_LOCK:
@@ -690,8 +709,6 @@ def _summary(store: _Ledger, directory: Path, snapshots, st: dict) -> dict:
     has_runs = bool(store.conn.execute("SELECT 1 FROM events WHERE kind='run' LIMIT 1").fetchone())
     has_observed = bool(store.conn.execute(
         "SELECT 1 FROM events WHERE kind=? LIMIT 1", (OBSERVED_KIND,)).fetchone())
-    if not has_runs and not has_observed and not st.get("roots"):
-        return {"no_runs": True}
     count = store.conn.execute("SELECT COUNT(*) FROM events WHERE " + _state_events_sql()).fetchone()[0]
     uncertain = store.conn.execute("SELECT COUNT(*) FROM events WHERE (flags & ?) != 0 AND error IS NULL",
                                    (CHIP_UNCERTAIN,)).fetchone()[0]
@@ -699,16 +716,30 @@ def _summary(store: _Ledger, directory: Path, snapshots, st: dict) -> dict:
     covered = coverage(store, snapshots, chashes)
     return {"no_runs": False, "has_runs": has_runs, "count": count, "uncertain": uncertain,
             "pending": set(pending), "covered": len(covered),
-            "older": frozenset(s.timestamp for s in snapshots if s.timestamp not in covered)}
+            "older": frozenset(s.timestamp for s in snapshots if s.timestamp not in covered),
+            "snapshot_chashes": chashes,
+            "writes": tuple(store.conn.execute("SELECT eid,t_utc_us,chash,live FROM events WHERE kind IN ("
+                         + ",".join("'%s'" % k for k in SM_KINDS) + ") AND " + _state_events_sql())),
+            "observed": tuple(store.conn.execute("SELECT eid,t_src FROM events WHERE kind=? AND "
+                                                  + _state_events_sql(), (OBSERVED_KIND,)))}
+
+
+def legacy_rows(snapshots, *, limit: int = 40, offset: int = 0) -> dict:
+    """S10 C3: the same paged snapshot rows for every non-ledger listing."""
+    return {"rows": [{"legacy": True, "snapshot": s, "ref": s.timestamp,
+                      "stamp": s.timestamp, "why_diff": None, "why_write": None}
+                     for s in snapshots[offset:offset + limit]],
+            "total": len(snapshots), "legacy_total": len(snapshots), "pending": 0,
+            "events": 0, "uncertain": 0, "covered": 0}
 
 
 def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0) -> dict:
     """The rows of one page, newest first, for both surfaces.
 
-    ``mode``: ``building`` (the ledger is catching up: draw the older snapshot
-    path, saying so), ``preparing`` (its RAM index is being built by another
-    request), ``fallback`` with ``reason`` (no_ledger / no_runs / unreadable --
-    the old path, labelled), or ``ledger`` with ``rows``, ``total``,
+    ``mode``: ``building`` (catching up), ``preparing`` (building the RAM
+    index), ``unavailable`` with ``reason`` (no_ledger / unreadable), or
+    ``ledger``. Every mode supplies ``rows`` and ``total``; non-ledger modes
+    supply only paged Param History snapshots as legacy rows. Ledger mode has
     ``legacy_total``, ``pending`` (older snapshots still being matched).
 
     The whole-ledger part (counts, which snapshots the ledger holds) is
@@ -721,9 +752,11 @@ def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0
                            "legacy_total": 0, "pending": 0, "reason": None}
     if st.get("state") == "building":
         out["mode"] = "building"
+        out.update(legacy_rows(snapshots, limit=limit, offset=offset))
         return out
     if not (directory / "ledger.sqlite").is_file():
-        out.update(mode="fallback", reason="no_ledger")
+        out.update(mode="unavailable", reason="no_ledger")
+        out.update(legacy_rows(snapshots, limit=limit, offset=offset))
         return out
     binding = binding or SimpleNamespace(directory=directory)
     try:
@@ -734,10 +767,10 @@ def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0
                 summary = _summary(store, directory, snapshots, st)
                 if not summary.get("pending"):
                     _remember(_SUMMARIES, key, summary)
-            if summary["no_runs"]:
-                out.update(mode="fallback", reason="no_runs")
-                return out
             out["has_runs"] = summary["has_runs"]
+            out["observed"] = summary["observed"]
+            out["snapshot_chashes"] = summary["snapshot_chashes"]
+            out["writes"] = summary["writes"]
             count, uncertain, pending = summary["count"], summary["uncertain"], summary["pending"]
             # this request's own snapshot objects (a label or a pin edited
             # since is drawn as it is now; the cache holds stamps only)
@@ -781,5 +814,7 @@ def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0
         out.update(mode="preparing")
     except Exception:  # noqa: BLE001 -- an unreadable ledger never 500s a history surface
         logger.warning("versions: the ledger of %s could not be read", directory, exc_info=True)
-        out.update(mode="fallback", reason="unreadable", rows=[])
+        out.update(mode="unavailable", reason="unreadable", rows=[])
+    if out["mode"] != "ledger":
+        out.update(legacy_rows(snapshots, limit=limit, offset=offset))
     return out

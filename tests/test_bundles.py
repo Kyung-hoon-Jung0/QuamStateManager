@@ -58,6 +58,9 @@ def client():
         r = c.post("/load", data={"folder": str(live)})
         assert r.status_code in (200, 302)
         yield c
+        # S10 C3: snapshot readers -> ledger readers, release the pool before deleting the fixture.
+        from quam_state_manager.core.hub_index import close_readers
+        close_readers()
 
 
 def test_every_page_ships_the_core_and_only_its_own_bundles(client):

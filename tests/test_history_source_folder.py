@@ -314,7 +314,9 @@ class TestTheSurfaces:
         assert [p["value"] for p in pts] == [5.01e9, 5.0e9]
         # S10 C1.5: 2 (B's snapshots) -> 1 (B's ledger events): the ledger holds B's apply
         # as one SM write, counted once by A's folder view
-        assert body["history"]["parallel_hidden"] == 1
+        # S10 C3: 1 -> 2, B's pre-apply capture now reaches the ledger at once as B's observed
+        # state (capture refresh), so A's view hides B's two recorded states: that one and B's write
+        assert body["history"]["parallel_hidden"] == 2
 
     def test_the_agents_versions_name_their_folder(self, app_two):
         # docs/250 at integration: /api/agent/versions read the same rows with nothing saying whose

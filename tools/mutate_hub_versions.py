@@ -194,10 +194,12 @@ MUTATIONS = [
     ("stage_writes_the_merged_document", RT, '        return hub_versions.exact_pair(chip_dir, timestamp)',
      '        return hub_versions.document(chip_dir, timestamp), {}', [STAGE, RESTORE]),
     # -- routes: the surfaces
-    ("panel_keeps_the_snapshot_rows", RT, '    if versions["mode"] == "ledger":\n        rows = versions["rows"]',
+    # S10 C3: re-anchored -- every listing mode draws through the ledger templates now
+    ("panel_keeps_the_snapshot_rows", RT,
+     '    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):\n        rows = versions["rows"]',
      '    if False:\n        rows = versions["rows"]', [NAMES]),
     ("history_page_keeps_the_snapshot_rows", RT,
-     '    if versions["mode"] == "ledger":\n        total = versions["total"]',
+     '    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):\n        total = versions["total"]',
      '    if False:\n        total = versions["total"]', [NAMES, PAGES]),
     ("sm_write_without_its_actor", RT,
      '    else:\n        label = f"{verb} by {who}"\n    src = ev.get("src") or kind',
@@ -213,14 +215,16 @@ MUTATIONS = [
      '    live_chash = _version_live_chash(ctx)', [ARCHIVE]),
     ("live_version_never_marked", RT,
      '        if not current_seen and live_chash and ev.get("chash") == live_chash:', '        if False:', [NAMES]),
+    # S10 C3: re-anchored -- the fallback label is gone; a non-ledger mode's note
+    # (building / preparing / unavailable) is what must never be dropped
     ("fallback_unlabelled", RT,
-     '        res["notes"] = [{"level": "info", "code": res["reason"],\n'
-     '                         "text": _VH_FALLBACK_NOTES[res["reason"]]}]',
-     '        res["notes"] = []', [NOLEDGER]),
+     '        res["notes"] = [{"level": "info", "code": res["reason"] or res["mode"], "text": text}]',
+     '        res["notes"] = []', [BUILDING]),
     ("version_diff_empty", RT, '            entries = hub_versions.compare((doc, {}), ctx["store"])',
      '            entries = []', [DIFF]),
-    ("pull_offered_for_any_version", RT, '        offers_pull = why_write is None', '        offers_pull = True',
-     [REFUSE]),
+    # S10 C3: re-anchored -- the overlay also withholds Pull for the version live holds
+    ("pull_offered_for_any_version", RT, '        offers_pull = (why_write is None\n',
+     '        offers_pull = True or (why_write is None\n', [REFUSE]),
     ("workbench_compares_a_wiring", RT, '        if merged and tab == "wiring":', '        if False:', [DIFF]),
     ("workbench_state_tab_unmerged", RT,
      '        if merged:\n            from quam_state_manager.core.hub_rules import merged as merge_pair',

@@ -58,10 +58,24 @@ def _labels(html: str) -> list[str]:
     return out
 
 
+def _capture_value(client, value):
+    ctx = client.application.config["contexts"][client.application.config["active_context"]]
+    live = Path(ctx["path"]) / "state.json"
+    doc = json.loads(live.read_text(encoding="utf-8"))
+    doc["qubits"]["q1"]["f_01"] = value
+    live.write_text(json.dumps(doc), encoding="utf-8")
+    return client.post("/api/history/snapshot").get_data(as_text=True)
+
+
+def _ledger_refs(html):
+    return re.findall(r'data-ts="([^"]+)"', html)
+
+
 class TestTheCountFollowsTakeSnapshot:
     def test_every_press_carries_the_new_total_out_of_band(self, client):
+        # S10 C3: duplicate snapshot counts -> recorded state counts, change the state for each press.
         for n in (1, 2, 3):
-            html = client.post("/api/history/snapshot").get_data(as_text=True)
+            html = _capture_value(client, 6e9 + n * 1e8)
             assert _oob_count(html) == n, html[-400:]
         # paging renders carry it too (the full total, not the page's)
         html = client.get("/api/history?page=2&per_page=1").get_data(as_text=True)
@@ -81,23 +95,31 @@ class TestTheCountFollowsTakeSnapshot:
         client.post("/api/history/snapshot")
         client.post("/api/history/snapshot")
         html = client.get("/topology/trends").get_data(as_text=True)
-        assert _oob_count(html) == 2
-        assert "2 snapshots" in html
+        # S10 C3: Trends wrote the History (N) count -> a ledger's Trends counts recorded EVENTS
+        # and leaves that count to what the drawer lists (docs/301 F14); the drawer carries it.
+        assert _oob_count(html) is None
+        assert "1 recorded event" in html
+        assert _oob_count(client.get("/api/history").get_data(as_text=True)) == 1
 
 
 class TestZeroDiffRowsSayWhatTheyAre:
     def test_only_the_first_snapshot_is_the_baseline(self, client):
         client.post("/api/history/snapshot")
         html = client.post("/api/history/snapshot").get_data(as_text=True)
-        assert _labels(html) == ["no changes", "baseline"]
+        # S10 C3: zero-diff snapshot labels -> observed writer unknown, no false baseline.
+        assert len(_ledger_refs(html)) == 1 and "writer unknown" in html
+        assert "(baseline)" not in html and "(no changes)" not in html
 
     def test_the_baseline_is_the_chips_first_even_on_another_page(self, client):
-        client.post("/api/history/snapshot")
-        client.post("/api/history/snapshot")
+        # S10 C3: snapshot pages -> ledger pages, two distinct observed states retain their order.
+        _capture_value(client, 6.1e9)
+        _capture_value(client, 6.3e9)
         p1 = client.get("/api/history?page=1&per_page=1").get_data(as_text=True)
         p2 = client.get("/api/history?page=2&per_page=1").get_data(as_text=True)
-        assert _labels(p1) == ["no changes"]
-        assert _labels(p2) == ["baseline"]
+        assert len(_ledger_refs(p1)) == len(_ledger_refs(p2)) == 1
+        assert _ledger_refs(p1)[0] > _ledger_refs(p2)[0]
+        assert "writer unknown" in p1 and "writer unknown" in p2
+        assert "(baseline)" not in p1 + p2
 
     def test_a_run_rows_zeros_do_not_claim_no_changes(self, client, tmp_path):
         """Bulk-backfilled EXP rows keep a zeroed summary that means NOT
@@ -117,7 +139,10 @@ class TestZeroDiffRowsSayWhatTheyAre:
         (hm._history_dir(path) / hm._MANIFEST_NAME).unlink(missing_ok=True)
         hm.clear_cache()
         html = client.get("/api/history").get_data(as_text=True)
-        assert _labels(html) == ["no diff recorded", "baseline"]
+        # S10 C3: edited snapshot run hint -> ledger observation, metadata cannot invent a run writer.
+        assert len(_ledger_refs(html)) == 1
+        assert "writer unknown" in html and "seen by SM" in html
+        assert "(no changes)" not in html and "(baseline)" not in html
 
     def test_a_real_change_still_shows_its_badges(self, client, tmp_path):
         client.post("/api/history/snapshot")
@@ -126,8 +151,13 @@ class TestZeroDiffRowsSayWhatTheyAre:
         doc["qubits"]["q1"]["f_01"] = 6.3e9
         live.write_text(json.dumps(doc), encoding="utf-8")
         html = client.post("/api/history/snapshot").get_data(as_text=True)
-        assert _labels(html) == ["", "baseline"]
-        assert 'class="diff-badge diff-modified"' in html
+        # S10 C3: snapshot diff badges -> observed states, the shared comparison still records the change.
+        refs = _ledger_refs(html)
+        assert len(refs) == 2 and html.count("writer unknown") == 2
+        from quam_state_manager.web import routes
+        with client.application.app_context():
+            entries = routes._version_quick_entries(tmp_path / "quam_state", refs[1], refs[0])
+        assert any(e.dot_path == "qubits.q1.f_01" and e.new_value == 6.3e9 for e in entries)
 
 
 def _sh_labels(html: str) -> list[str]:
@@ -149,23 +179,29 @@ class TestTheStateHistoryPageSaysTheSame:
         client.post("/api/history/snapshot")
         client.post("/api/history/snapshot")
         html = client.get("/state-history?body=1").get_data(as_text=True)
-        assert _sh_labels(html) == ["no changes", "baseline"]
-        # the drawer reads the same rows the same way
-        assert _labels(client.get("/api/history").get_data(as_text=True)) == _sh_labels(html)
+        # S10 C3: snapshot baseline labels -> one observed state, the drawer reads the same ledger row.
+        assert len(_ledger_refs(html)) == 1 and "writer unknown" in html
+        drawer = client.get("/api/history").get_data(as_text=True)
+        assert _ledger_refs(drawer) == _ledger_refs(html)
+        assert "(baseline)" not in html + drawer
 
     def test_the_baseline_is_the_chips_first_even_on_another_page(self, client):
-        client.post("/api/history/snapshot")
-        client.post("/api/history/snapshot")
+        # S10 C3: snapshot pages -> ledger pages, distinct observations stay distinct on every page.
+        _capture_value(client, 6.1e9)
+        _capture_value(client, 6.3e9)
         p1 = client.get("/state-history?body=1&page=1&per_page=1").get_data(as_text=True)
         p2 = client.get("/state-history?body=1&page=2&per_page=1").get_data(as_text=True)
-        assert _sh_labels(p1) == ["no changes"]
-        assert _sh_labels(p2) == ["baseline"]
+        assert len(_ledger_refs(p1)) == len(_ledger_refs(p2)) == 1
+        assert _ledger_refs(p1)[0] > _ledger_refs(p2)[0]
+        assert "writer unknown" in p1 + p2 and "(baseline)" not in p1 + p2
 
     def test_the_full_page_says_it_too(self, client):
         client.post("/api/history/snapshot")
         client.post("/api/history/snapshot")
         html = client.get("/state-history").get_data(as_text=True)
-        assert _sh_labels(html) == ["no changes", "baseline"]
+        # S10 C3: snapshot labels -> one observed ledger state, full and partial pages agree.
+        assert len(_ledger_refs(html)) == 1 and "writer unknown" in html
+        assert "(baseline)" not in html and "(no changes)" not in html
 
 
 def test_chip_status_refreshes_trends_on_a_capture():

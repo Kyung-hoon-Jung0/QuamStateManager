@@ -222,8 +222,20 @@ def test_unlink_keeps_events_and_shows_no_folder_even_after_label_link(env):
     with HubStore(env.directory) as store:
         assert [tuple(r) for r in store.conn.execute("SELECT * FROM events ORDER BY ord")] == before
     html = env.client.get("/field/history?path=qubits.qA1.T1").get_data(as_text=True)
-    assert 'data-note="no_folder"' in html and "newer runs may be missing" in html
-    assert 'data-note="no_folder_linked"' not in html
+    # S10 C3: old -> new, unlink hides runs in the folder view and offers a link.
+    assert 'data-note="unlinked_roots"' in html and "not part of this folder" in html
+    assert 'data-note="no_folder_linked"' in html and "/hub/link-folder" in html
+    assert "Older snapshot history" not in html and 'data-eid=' not in html
+    with env.app.app_context():
+        answer = routes._value_history(env.ctx, {"value": "qubits.qA1.T1"}, runs=10)
+    assert answer["mode"] == "ledger" and not answer["ledger"]["has_runs"]
+    assert answer["ledger"]["left_out"]["unlinked"] == 2 and not answer["runs"]
+    for url in ("/topology/trends?metrics=T1", "/param-history?since=all&props=T1",
+                "/param-history/expand?qubit=qA1&prop=T1", "/param-history/changes",
+                "/api/topology/sparklines/qA1", "/chip-status/report/section/trends?redact=0",
+                "/state/versions", "/state-history?body=1", "/api/history"):
+        body = env.client.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'data-note="unlinked_roots"' in body and "/hub/link-folder" in body, url
 
 
 def test_unlink_refuses_a_declared_root(env):

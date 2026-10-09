@@ -30,6 +30,8 @@
         <span class="muted sh-event-sub">{{ r.sub }}</span>
         {% for f in r.flags %}<span class="sv-flag">{{ f }}</span>{% endfor %}
         {% endif %}
+        {# docs/63 project lens, on the snapshots this row carries (S10 C3) #}
+        {% for p in (r.annotations or []) | map(attribute='project') | select | unique %}<span class="sh-project-badge" title="Captured while scoped to qualibrate project &quot;{{ p }}&quot;">&#9879; {{ p }}</span>{% endfor %}
         {{ source_badge(r.source, 'sh-src') }}
         {% if r.pinned %}<span class="sh-pin-badge" title="Pinned (kept regardless of retention)">&#128204;</span>{% endif %}
         {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
@@ -43,6 +45,15 @@
     {% if r.why_write and r.why_write != r.why_diff %}<p class="sh-state-unavailable muted">{{ r.why_write }}</p>{% endif %}
 
     <div class="sh-entry-actions">
+        {% if chip_origin == 'live' %}
+        {% for m in r.annotations %}
+        <button class="outline btn-sm"
+                hx-post="/state-history/{{ m.timestamp }}/label"
+                hx-vals='{"pinned":"{{ 0 if m.pinned else 1 }}"}'
+                hx-target="#table-pane" hx-swap="innerHTML"
+                title="{{ 'Let retention remove' if m.pinned else 'Keep' }} the Param History snapshot of {{ m.timestamp | ts_local }}">{{ 'Unpin' if m.pinned else 'Pin' }}</button>
+        {% endfor %}
+        {% endif %}
         {% if not r.why_diff %}
         <button class="outline btn-sm" hx-get="/api/history/{{ r.ts }}/diff"
                 hx-target="#state-history-detail" hx-swap="innerHTML">View changes vs current</button>
@@ -84,6 +95,8 @@
 </nav>
 {% endif %}
 {% else %}
+{% if lv.mode == 'ledger' %}
 <p class="muted" style="padding:1rem">No recorded states yet. The change history records
    every run, every SM write and every state SM sees change outside SM.</p>
+{% endif %}
 {% endif %}

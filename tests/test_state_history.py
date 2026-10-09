@@ -311,7 +311,11 @@ class TestBuildLockBinding:
 
 class TestLabelPin:
     def test_pin_and_unpin(self, client):
-        ts = _take_snapshot(client)[0]
+        _take_snapshot(client)
+        # S10 C3: event display reference -> snapshot annotation ID, only snapshots carry pins.
+        hm = client.application.config["history_manager"]
+        ctx = client.application.config["contexts"][client.application.config["active_context"]]
+        ts = hm.list_snapshots(ctx["path"])[0].timestamp
         r = client.post(f"/state-history/{ts}/label", data={"pinned": "1"})
         assert r.status_code == 200
         assert "Unpin" in r.data.decode()        # now pinned → button flips
@@ -319,7 +323,11 @@ class TestLabelPin:
         assert "Pin" in r2.data.decode()
 
     def test_label_set(self, client):
-        ts = _take_snapshot(client)[0]
+        _take_snapshot(client)
+        # S10 C3: event display reference -> snapshot annotation ID, preserving bookmark labels.
+        hm = client.application.config["history_manager"]
+        ctx = client.application.config["contexts"][client.application.config["active_context"]]
+        ts = hm.list_snapshots(ctx["path"])[0].timestamp
         r = client.post(f"/state-history/{ts}/label",
                         data={"label": "known-good baseline", "pinned": "1"})
         assert b"known-good baseline" in r.data
@@ -431,9 +439,10 @@ class TestHistoryScaleSurfaces:
         _take_snapshot(client)
         self._fabricate_snapshots(app, live, 60)          # 61 total
         html = client.get("/api/history").data.decode()
-        assert html.count('data-ts="') == 50              # a PAGE, not everything
-        assert "Page 1 / 2" in html
-        assert 'value="50" selected' in html              # the default, visible
+        # S10 C3: default 50 snapshot rows -> newest 20 ledger rows, the full list remains paged.
+        assert html.count('data-ts="') == 20
+        assert "Page 1 / 4" in html
+        assert 'value="20" selected' in html
         assert 'value="0"' in html and ">All</option>" in html   # All stays a choice
 
     def test_panel_all_option_still_shows_everything(self, app, client, live):

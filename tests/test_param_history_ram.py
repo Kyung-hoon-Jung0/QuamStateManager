@@ -533,26 +533,29 @@ def test_trends_requests_give_the_wal_back_with_trends_readers_open(env):
     """Final QA fix 3: with Chip Status Trends' persistent readers open, a fat
     commit's WAL stayed at its peak through any number of Trends requests --
     only the Changes route gave it back. Both Trends routes now do."""
-    from quam_state_manager.core import chip_trends_ram as CTR
-    CTR.close_all()
+    # S10 C3: snapshot reader checkpoints -> ledger readers release transactions for the writer.
+    from quam_state_manager.core import hub_index
+    hub_index.close_readers()
     try:
         _snap(env, _state())
         _snap(env, _state(random.Random(5)))
         hm, live, c = env["hm"], env["live"], env["client"]
-        db = hm._history_dir(live) / "index.sqlite"
+        db = hm._history_dir(live) / "ledger.sqlite"
         urls = ("/param-history", "/topology/trends", "/topology/trends/paths?q=T1")
         for url in urls:                                       # the Trends readers, and every
             assert c.get(url).status_code == 200               # per-page cache (disk stats) warm
-        assert CTR.has_conn(db)
+        assert any(reader.path == db for reader in hub_index._READERS.values())
         for url in urls * 2:
             _fat_commit(db)
             assert _wal_bytes(db) > 1_000_000, url             # the pin is real
             assert c.get(url).status_code == 200
-            assert _wal_bytes(db) == 0, url                    # and a Trends request gives it back
+            with sqlite3.connect(str(db), timeout=0) as writer:
+                assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (0, 0, 0), url
+            assert _wal_bytes(db) == 0, url
         with sqlite3.connect(str(db)) as c2:                   # nothing was lost by it
             assert c2.execute("SELECT COUNT(*) FROM fat").fetchone()[0] == 18000
     finally:
-        CTR.close_all()
+        hub_index.close_readers()
 
 
 def test_a_give_back_inside_the_trends_token_never_moves_it_again(env):
@@ -752,7 +755,10 @@ def test_param_search_memo_equals_cold_over_random_events(env):
     base = _state()
     _snap(env, base)
     hm, live = env["hm"], env["live"]
-    memo = PHR._path_rank_memo()
+    # S10 C3: snapshot SQL oracle -> cold ledger oracle, retaining foreign commits and cache hits.
+    from quam_state_manager.web import hub_status
+    from tests.test_hub_incremental import from_scratch
+    memo = hub_status._CACHE
     hits_seen = 0
     for step in range(40):
         ev = rng.randrange(4)
@@ -760,20 +766,21 @@ def test_param_search_memo_equals_cold_over_random_events(env):
             base = _state(rng, base)
             _snap(env, base)
         elif ev == 1:
-            hm._ensure_leaf_index_fresh(live)
-            idx = hm._history_dir(live) / "index.sqlite"
+            idx = hm._history_dir(live) / "ledger.sqlite"
             with sqlite3.connect(str(idx)) as c2:
-                c2.execute("INSERT OR IGNORE INTO leaf_paths (path) VALUES (?)",
-                           (f"qubits.q1.foreign_{step}",))
-                c2.execute("INSERT OR IGNORE INTO leaf_cp (path_id, snap_id, value) "
-                           "SELECT id, (SELECT MAX(snap_id) FROM leaf_cp), 1 "
-                           "FROM leaf_paths WHERE path = ?", (f"qubits.q1.foreign_{step}",))
+                pid = c2.execute("INSERT INTO paths(path,entity,entity_kind,family) VALUES (?,?,?,?)",
+                                 (f"qubits.q1.foreign_{step}", "q1", "qubit", f"foreign_{step}")).lastrowid
+                eid = c2.execute("SELECT MAX(eid) FROM events").fetchone()[0]
+                c2.execute("INSERT INTO changes(pid,eid,num,op) VALUES (?,?,1,1)", (pid, eid))
+                # a writer that adds a row to an event re-diffs it: its row count moves too
+                c2.execute("UPDATE events SET n_changes = n_changes + 1 WHERE eid = ?", (eid,))
         q = rng.choice(["q1", "T1", "amplitude", "foreign", "q1 | q2", "zzz", "Q1"])
-        n0 = memo.computes
+        n0 = memo.hits
         warm = _param_search(env, q)
-        if memo.computes == n0:
+        if memo.hits > n0:
             hits_seen += 1
-        assert warm == hm.leaf_search(live, q, limit=30), (step, ev, q)
+        with from_scratch():
+            assert warm == _param_search(env, q), (step, ev, q)
     assert hits_seen >= 5, "the memo never served a hit -- the pin proves nothing"
 
 

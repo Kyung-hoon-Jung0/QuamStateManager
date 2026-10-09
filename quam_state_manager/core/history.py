@@ -1367,6 +1367,7 @@ class HistoryManager:
         self._verify_last: dict[str, float] = {}
         self._verify_threads: dict[str, threading.Thread] = {}
         self._lock = threading.RLock()
+        self._captured_listeners = []
 
         # Param-history performance caches (see docs/23_param_history_performance.md)
         # All keyed by string paths and protected by _lock unless noted.
@@ -2792,7 +2793,14 @@ class HistoryManager:
                 "Snapshot %s created for %s (trigger=%s, %s)",
                 ts, path.name, trigger, diff_summary,
             )
-            return meta
+        # S10 C3: notify after cache invalidation, even with a deferred index.
+        # Release the manager lock before an inline projector takes the ledger lock.
+        for fn in list(self._captured_listeners):
+            try:
+                fn(quam_state_path, hist_dir)
+            except Exception:  # noqa: BLE001 -- a capture remains valid if refresh fails
+                logger.warning("capture ledger refresh failed", exc_info=True)
+        return meta
 
     # ------------------------------------------------------------------
     # Query operations
@@ -6092,6 +6100,10 @@ class HistoryManager:
         with self._lock:
             hit = self._snapshot_list_cache.get(memo[0])
         return hit if hit is not None else self.list_snapshots(quam_state_path)
+
+    def add_captured_listener(self, fn) -> None:
+        """Register fn(path, directory) after a successful snapshot capture."""
+        self._captured_listeners.append(fn)
 
     def add_indexed_listener(self, fn) -> None:
         """Register ``fn(quam_state_path)``, called on a background thread

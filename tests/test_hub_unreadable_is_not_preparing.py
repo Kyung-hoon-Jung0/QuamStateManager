@@ -34,14 +34,17 @@ def test_a_surface_says_unreadable_and_stops_asking(broken, url):
     body = broken["client"].get(url).data.decode()
     assert "could not be read" in body and "Preparing" not in body, body[:300]
     wait = re.search(r'<p class="vh-wait"[^>]*>', body)
-    assert wait and 'data-vh-mode="fallback"' in wait.group(0), body[:300]
+    # S10 C3: old -> new, unreadable is terminal unavailable with no substitute rows.
+    assert wait and 'data-vh-mode="unavailable"' in wait.group(0), body[:300]
     assert "hx-trigger" not in wait.group(0), "an end state never re-asks by itself"
     assert "Try again" in body
+    assert "Nothing older is shown in its place." in body
 
 
 def test_the_metric_meta_says_unreadable_and_is_not_updating(broken):
     d = broken["client"].get("/topology/metric-meta").get_json()
-    assert d["mode"] == "fallback" and d["updating"] is False, d
+    # S10 C3: old -> new, unreadable is unavailable and stops updating.
+    assert d["mode"] == "unavailable" and d["updating"] is False, d
     assert any("could not be read" in n for n in d.get("notes", []))
 
 

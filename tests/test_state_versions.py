@@ -156,7 +156,8 @@ class TestVersionsPanel:
         # docs/132: rows speak the user's vocabulary (EXP/MANUAL/BACKUP kind
         # chip) instead of the raw capture trigger; the trigger lives in the
         # chip's tooltip.
-        assert "sv-kind" in body                 # what produced it
+        # S10 C3: snapshot kind -> observed ledger provenance, a capture cannot name its writer.
+        assert "seen by SM (manual snapshot)" in body and "writer unknown" in body
         assert "before-cz" in body               # its label
 
     def test_the_current_version_is_marked(self, client):
@@ -218,7 +219,13 @@ class TestReviewFindings:
         """A real chip has 433 versions; the first page shows 40 and used to
         end there with no footer, so the list silently claimed to BE the
         history."""
+        # S10 C3: identical snapshot copies -> distinct ledger states, preserving paging coverage.
+        ctx = client.application.config["contexts"][client.application.config["active_context"]]
+        live = Path(ctx["path"]) / "state.json"
         for i in range(45):
+            doc = json.loads(live.read_text(encoding="utf-8"))
+            doc["qubits"]["q1"]["f_01"] = 6.1e9 + i * 1e6
+            live.write_text(json.dumps(doc), encoding="utf-8")
             client.post("/state/archive", data={"tag": f"v{i}"})
         body = client.get("/state/versions").get_data(as_text=True)
         n = body.count('class="sv-check"')
@@ -228,7 +235,13 @@ class TestReviewFindings:
         assert "StateVersions.more(" in body
 
     def test_show_more_reaches_the_rest(self, client):
+        # S10 C3: identical snapshot copies -> distinct ledger states, preserving paging coverage.
+        ctx = client.application.config["contexts"][client.application.config["active_context"]]
+        live = Path(ctx["path"]) / "state.json"
         for i in range(45):
+            doc = json.loads(live.read_text(encoding="utf-8"))
+            doc["qubits"]["q1"]["f_01"] = 6.1e9 + i * 1e6
+            live.write_text(json.dumps(doc), encoding="utf-8")
             client.post("/state/archive", data={"tag": f"v{i}"})
         body = client.get("/state/versions?limit=200").get_data(as_text=True)
         assert body.count('class="sv-check"') > 40
@@ -289,6 +302,8 @@ class TestTheAuditsHonestyFindings:
         inventing a second."""
         client.post("/state/archive", data={"tag": "a"})
         client.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "6.2e9"})
+        # S10 C3: duplicate live bookmark -> actual ledger write, preserving the overwrite affordance pin.
+        client.post("/state/apply-to-live")
         client.post("/state/archive", data={"tag": "b"})
         body = client.get("/state/versions").get_data(as_text=True)
         assert "restore-live" in body
@@ -949,11 +964,12 @@ class TestKindChips:
     def test_a_bookmark_wears_manual(self, client):
         client.post("/state/archive", data={"tag": "t"})
         body = client.get("/state/versions").get_data(as_text=True)
-        assert "sv-kind-manual" in body and ">MANUAL<" in body
-        assert "recorded trigger: manual" in body
+        # S10 C3: manual snapshot kind -> observed manual capture, the writer stays unknown.
+        assert "seen by SM (manual snapshot)" in body and "writer unknown" in body
+        assert 'class="sv-label">t</span>' in body and "sv-pin" in body
 
     def test_a_pre_kind_auto_row_reads_backup_and_says_legacy(
-            self, client, tmp_path):
+            self, client, tmp_path, monkeypatch):
         """Old snapshots predate `kind`. The mapping (auto → BACKUP) is the
         statistically honest reading, and the chip SAYS it is a reading."""
         client.post("/state/archive", data={"tag": "t"})
@@ -972,6 +988,11 @@ class TestKindChips:
         # made by a text editor.
         (hm._history_dir(path) / hm._MANIFEST_NAME).unlink(missing_ok=True)
         hm.clear_cache()
+        # S10 C3: normal snapshot renderer -> legacy rows while preparing, preserving pre-kind display.
+        from quam_state_manager.core import hub_versions, ramcache
+        def warming(*args):
+            raise ramcache.Warming("fixture", "key", 0)
+        monkeypatch.setattr(hub_versions, "_version_token", warming)
         body = client.get("/state/versions").get_data(as_text=True)
         assert "sv-kind-backup" in body and ">BACKUP<" in body
         assert "sv-kind-legacy" in body
@@ -1045,11 +1066,11 @@ class TestChangesOnlyFilter:
             self, client, tmp_path):
         self._mint(client, tmp_path)
         ts_all, _ = _panel_ts_list(client, changes="all")
-        assert len(ts_all) == 4
+        # S10 C3: snapshot filtering -> observed dedup, both queries expose the same three states.
+        assert len(ts_all) == 3
         ts_only, body = _panel_ts_list(client, changes="only")
-        assert len(ts_only) == 3
-        assert "1 unchanged copy hidden" in body
-        assert "show all" in body
+        assert ts_only == ts_all
+        assert "unchanged copy hidden" not in body and 'data-source="ledger"' in body
 
     def test_the_first_snapshot_is_never_called_an_unchanged_copy(
             self, client, tmp_path):
@@ -1064,21 +1085,27 @@ class TestChangesOnlyFilter:
         self._mint(client, tmp_path)
         body = client.get("/state/versions").get_data(as_text=True)
         assert body.count('class="sv-check"') == 3
-        assert 'data-changes="only"' in body
+        # S10 C3: snapshot changes-only default -> ledger dedup, the retired filter must not re-ask.
+        assert "data-changes=" not in body and 'data-source="ledger"' in body
 
     def test_pinned_and_labeled_rows_are_exempt(self, client):
         """A deliberate bookmark of identical content is still a bookmark."""
         client.post("/state/archive", data={"tag": "a"})
         client.post("/state/archive", data={"tag": "b"})   # same content, pinned
         body = client.get("/state/versions").get_data(as_text=True)
-        assert body.count('class="sv-check"') == 2
-        assert "unchanged" not in body
+        # S10 C3: duplicate bookmarked rows -> one state with both labels and pins retained.
+        assert body.count('class="sv-check"') == 1
+        assert "a / b" in body or "b / a" in body
+        assert "sv-pin" in body and "unchanged" not in body
 
     def test_the_kept_note_states_the_true_total(self, client):
         client.post("/api/history/snapshot")
         client.post("/api/history/snapshot")
         body = client.get("/state/versions").get_data(as_text=True)
-        assert "All 2 versions are kept" in body
+        # S10 C3: snapshot copy total -> one recorded state, physical bookmarks remain kept.
+        assert "1 recorded" in body and "state" in body
+        assert len(_hm_of(client).list_snapshots(Path(client.application.config["contexts"][
+            client.application.config["active_context"]]["path"]))) == 2
         assert "State History" in body
 
 

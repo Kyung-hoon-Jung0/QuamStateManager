@@ -30,6 +30,7 @@ import pytest
 from quam_state_manager.core import value_writer as vw
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests.ledger_fixture import declare_root
 
 _WIRING = {"network": {"host": "3.3.3.3", "cluster_name": "C9"},
            "ports": {"mw_outputs": {"con1": {"1": {"2": {"band": 1}}}}}}
@@ -84,6 +85,8 @@ def env(tmp_path, monkeypatch):
             {"op": "replace", "path": "/quam/qubits/qA1/T1", "value": 4.0e-5}]),
     }
     c.post("/workspace/add", data={"folder": str(data)})
+    # S10 C3: workspace writer scans -> declared ledger fixture, provenance requires an event's patch.
+    declare_root(c, data)
     hm = app.config["history_manager"]
 
     def snap(t1, trigger="manual", run=None, name=None):
@@ -100,8 +103,9 @@ def env(tmp_path, monkeypatch):
 
 
 def _four(env):
+    # S10 C3: fake starting capturer -> the real starting run, ledger chronology supplies provenance.
     s = env["snap"]
-    return (s(2.0e-5), s(2.5e-5, "experiment", 401, "24_all_xy"),
+    return (s(2.0e-5, "experiment", 390, "11_power_rabi"), s(2.5e-5, "experiment", 401, "24_all_xy"),
             s(3.3e-5, "experiment", 403, "15b_readout_weights_optimization"),
             s(4.0e-5, "experiment", 404, "25_T1"))
 
@@ -118,14 +122,12 @@ class TestTrends:
         (chart,) = [c for c in _charts(body) if c["metric"] == "T1"]
         (ser,) = chart["series"]
         attr = ser.get("attr") or {}
-        # S1: the AllXY run only carried it -- #394 25_T1 wrote it, and the
-        # point opens #394, never #401
-        assert attr[s1]["run"] == 394 and attr[s1]["short"] == "25 T1"
-        assert attr[s1]["uid"] and attr[s1]["uid"].endswith(":394")
-        # S2: no run of the family wrote it -> captured, no uid to open
-        assert attr[s2] == {"captured": True}
-        # S3: the captured run wrote it -> the snapshot's own answer stands
-        assert s3 not in attr and s0 not in attr
+        # S10 C3: inferred writer by run family -> patch proof, saved states stay explicitly unproven.
+        proven = [a for a in attr.values() if a["provenance"] == "run_proven"]
+        saved = [a for a in attr.values() if a["provenance"] == "run_saved"]
+        assert len(proven) == 1 and proven[0]["uid"].endswith(":404")
+        assert saved and any(a.get("saved_uid", "").endswith(":394") for a in saved)
+        assert all("uid" not in a for a in saved)
 
     def test_the_snapshot_map_still_names_the_capturer(self, env):
         """The override rides the SERIES; the per-snapshot map is unchanged,
@@ -134,18 +136,24 @@ class TestTrends:
         body = env["client"].get("/topology/trends?metrics=T1").get_data(as_text=True)
         m = re.search(r'id="topo-trends-snaps">(.*?)</script>', body, re.S)
         snaps = json.loads(m.group(1))
-        assert snaps[s1]["run"] == 401
+        # S10 C3: snapshot capturer map -> ledger point context, carried saves invent no changes.
+        assert snaps == {}
+        (ser,) = [c for c in _charts(body) if c["metric"] == "T1"][0]["series"]
+        attrs = ser["attr"]
+        assert all("provenance" in a and "label" in a for a in attrs.values())
+        assert any(a.get("uid", "").endswith(":404") for a in attrs.values())
+        assert all(not a.get("uid", "").endswith(":401") for a in attrs.values())
 
 
 class TestChipStatusMetricMeta:
     def test_last_changed_by_names_the_writer(self, env):
         s = env["snap"]
-        s(2.0e-5)
-        ts = s(2.5e-5, "experiment", 401, "24_all_xy")
+        _four(env)
         d = env["client"].get("/topology/metric-meta").get_json()
         e = d["q"]["T1"]["qA1"]
-        assert e["ts"] == ts
-        assert e["writer"]["run"] == 394 and e["writer"]["short"] == "25 T1"
+        # S10 C3: inferred snapshot writer -> newest proven ledger write, with the event's instant.
+        assert e["provenance"] == "run_proven" and e["run"] == 404
+        assert e["writer"]["run"] == 404 and e["writer"]["uid"].endswith(":404")
 
     def test_a_captured_only_value_says_so(self, env):
         s = env["snap"]
@@ -153,20 +161,20 @@ class TestChipStatusMetricMeta:
         s(2.5e-5, "experiment", 401, "24_all_xy")
         s(3.3e-5, "experiment", 403, "15b_readout_weights_optimization")
         d = env["client"].get("/topology/metric-meta").get_json()
-        assert d["q"]["T1"]["qA1"]["writer"] == {"captured": True}
+        # S10 C3: captured-only snapshot hint -> observed event, never invent a measuring run.
+        entry = d["q"]["T1"]["qA1"]
+        assert entry["provenance"] == "observed" and entry["run"] is None
+        assert entry.get("uid") is None and "writer unknown" in entry["sub"]
 
 
 class TestValueHistoryDrawer:
     def test_the_data_button_opens_only_the_writer(self, env):
         _four(env)
         html = env["client"].get("/field/history?path=qubits.qA1.T1").get_data(as_text=True)
-        # the carried value: named and opened as #394, not #401
-        assert re.search(r'#394 25_T1', html)
-        assert '/dataset/' in html and ':394"' in html
-        assert ':401"' not in html, "a Data button opened the run that only carried it"
-        # the edit-carried value: captured, no Data for #403
-        assert "captured with #403" in html and "not the run that measured it" in html
-        assert ':403"' not in html
+        # S10 C3: inferred writer links -> proven ledger writer, saved-run links say unproven.
+        assert "run #404" in html and ':404"' in html
+        assert "not proven" in html and ':394?via=saved"' in html
+        assert ':401"' not in html and ':403"' not in html
 
 
 class TestParamHistoryDrawer:
@@ -176,12 +184,12 @@ class TestParamHistoryDrawer:
         html = env["client"].get("/param-history/expand?qubit=qA1&prop=T1").get_data(as_text=True)
         m = re.search(r'id="phd-data" type="application/json">(.*?)</script>', html, re.S)
         row = json.loads(m.group(1))
-        by_ts = {p["timestamp"]: p for p in row["values"]}
-        assert by_ts[s1]["writer"]["run"] == 394 and by_ts[s1]["uid"].endswith(":394")
-        assert by_ts[s2]["writer"] == {"captured": True} and by_ts[s2]["uid"] is None
-        assert "writer" not in by_ts[s3] and by_ts[s3]["uid"].endswith(":404")
-        last = max(by_ts)
-        assert by_ts[last].get("unchanged") and by_ts[last]["uid"] is None
+        # S10 C3: snapshot customdata -> shared ledger context, only own-patch proof names a writer.
+        attrs = row["values"]
+        proven = [a for a in attrs if a["provenance"] == "run_proven"]
+        assert len(proven) == 1 and proven[0]["uid"].endswith(":404")
+        assert all(a["uid"] is None for a in attrs if a["provenance"] != "run_proven")
+        assert all(a["run"] not in (401, 403) for a in attrs)
 
 
 class TestAColdArchiveNeverBlocksNorGuesses:
@@ -192,30 +200,34 @@ class TestAColdArchiveNeverBlocksNorGuesses:
     partial fragment is not memoised, and the re-fetch has the answers."""
 
     def test_pending_then_answered(self, env, monkeypatch):
-        import time
         _, s1, s2, _ = _four(env)
-        monkeypatch.setattr(routes_mod, "_WRITER_BUDGET_S", 0.0)
+        # S10 C3: snapshot writer budget -> ledger preparation wait, no guessed rows before readiness.
+        from quam_state_manager.core import value_history, ramcache
+        real = value_history.read
+        def preparing(*a, **k):
+            raise ramcache.Warming("fixture", "key", 0)
+        monkeypatch.setattr(value_history, "read", preparing)
+        body = env["client"].get("/topology/trends?metrics=T1").get_data(as_text=True)
+        assert 'data-vh-mode="preparing"' in body and 'load delay:' in body
+        assert _charts(body) == []
+        monkeypatch.setattr(value_history, "read", real)
         body = env["client"].get("/topology/trends?metrics=T1").get_data(as_text=True)
         (ser,) = [c for c in _charts(body) if c["metric"] == "T1"][0]["series"]
-        assert ser["attr"][s1] == {"pending": True}
-        assert ser["attr"][s2] == {"pending": True}
-        assert "Checking which run wrote each point" in body
-        assert 'data-trends-updating="1"' in body
-        deadline = time.monotonic() + 30
-        while True:
-            body = env["client"].get("/topology/trends?metrics=T1").get_data(as_text=True)
-            (ser,) = [c for c in _charts(body) if c["metric"] == "T1"][0]["series"]
-            if not any(a.get("pending") for a in (ser.get("attr") or {}).values()):
-                break
-            assert time.monotonic() < deadline, "the background check never finished"
-            time.sleep(0.2)
-        assert ser["attr"][s1]["run"] == 394 and ser["attr"][s2] == {"captured": True}
-        assert "Checking which run wrote each point" not in body
+        assert any(a.get("uid", "").endswith(":404") for a in ser["attr"].values())
+        assert all("pending" not in a for a in ser["attr"].values())
 
     def test_metric_meta_says_updating_while_pending(self, env, monkeypatch):
         s = env["snap"]
         s(2.0e-5)
         s(2.5e-5, "experiment", 401, "24_all_xy")
-        monkeypatch.setattr(routes_mod, "_WRITER_BUDGET_S", 0.0)
+        # S10 C3: pending snapshot-writer checks -> preparing ledger, then the ready answer.
+        from quam_state_manager.core import value_history, ramcache
+        real = value_history.read
+        def preparing(*a, **k):
+            raise ramcache.Warming("fixture", "key", 0)
+        monkeypatch.setattr(value_history, "read", preparing)
         d = env["client"].get("/topology/metric-meta").get_json()
-        assert d["q"]["T1"]["qA1"]["writer"] == {"pending": True} and d["updating"] is True
+        assert d["mode"] == "preparing" and d["updating"] is True and d["q"] == {}
+        monkeypatch.setattr(value_history, "read", real)
+        d = env["client"].get("/topology/metric-meta").get_json()
+        assert d["mode"] == "ledger" and d["updating"] is False and d["q"]["T1"]["qA1"]

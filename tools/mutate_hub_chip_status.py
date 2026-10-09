@@ -204,9 +204,8 @@ MUTATIONS = [
     ("degraded_words_lost", VH, '"text": "This history may be missing changes: "',
      '"text": "This history is complete: "',
      [M + "test_degraded_says_changes_may_be_missing"]),
-    ("fallback_label_lost", RT, '    "no_ledger": ("Older snapshot history: this chip has no change ledger yet, so "',
-     '    "no_ledger": ("Snapshot history: this chip has no change ledger yet, so "',
-     [M + "test_a_chip_with_no_ledger_keeps_the_old_path_labelled"]),
+    # S10 C3: "fallback_label_lost" retired -- the snapshot fallback's label is gone; the
+    # unavailable line that replaces it is pinned by tools/mutate_hub_mode_switch.py
     ("trends_fallback_label_dropped", RT,
      '                           hub_fallback=None if ledger else fallback_note,',
      '                           hub_fallback=None,',

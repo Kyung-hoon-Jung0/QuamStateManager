@@ -313,10 +313,14 @@ class TestTheTypeaheadReadsAFreshIndex:
                             lambda self, *a, **k: (fam.append(k.get("fresh", False)),
                                                    real_fam(self, *a, **k))[1])
         assert client.get("/topology/trends?metrics=f_01").status_code == 200
-        assert fam and not any(fam), f"setup: the render reached leaf_families: {fam}"
+        # S10 C3: the page reads the snapshot table and only the typeahead freshens the leaf
+        # index -> both read the change ledger, so neither reaches the retired table nor ever
+        # freshens (write-locks) the leaf index, and the typeahead still finds the family.
+        assert fam == [], f"the render reached the retired snapshot table: {fam}"
         assert calls == [], f"the page render rebuilt the leaf index: {calls}"
-        client.get("/topology/trends/paths?q=interaction_offset")
-        assert len(calls) == 1, f"the typeahead ran the freshness gate: {calls}"
+        rows = client.get("/topology/trends/paths?q=interaction_offset").get_json()
+        assert calls == [], f"the typeahead rebuilt the leaf index: {calls}"
+        assert [r["path"] for r in rows] == ["qubit_pairs.*.coupler.interaction_offset"], rows
 
 
 class TestSeveralFamiliesAtOnce:
@@ -1631,8 +1635,9 @@ class TestTypedTextThatNamesNoParameter:
             {"path": "qubit_pairs.*.two", "label": "two", "scope": "qubit_pairs", "n": 2},
         ]
         # RAM P1a: both halves read families through the per-token table.
-        from quam_state_manager.core import chip_trends_ram as _ctr
-        monkeypatch.setattr(_ctr.ChipTrendsTable, "leaf_families",
+        # S10 C3: the snapshot table -> the ledger table, which both halves now read.
+        from quam_state_manager.web import hub_status as _hs
+        monkeypatch.setattr(_hs.LedgerTable, "leaf_families",
                             lambda self, *a, **k: [dict(r) for r in rows])
         slot = self._slot(client.get("/topology/trends?metrics=&path=zzq").get_data(as_text=True))
         assert "is not one parameter" in slot, slot

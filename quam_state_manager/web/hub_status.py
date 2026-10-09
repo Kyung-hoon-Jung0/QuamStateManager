@@ -442,7 +442,7 @@ class LedgerTable:
             # FALLBACK (an unreadable ledger, no runs) keeps its own mode -- it
             # is not "about to be ready", and saying "Preparing" made the page
             # ask again every 800 ms forever (S8 review P2-1)
-            if ans["mode"] not in ("building", "preparing", "fallback"):
+            if ans["mode"] not in ("building", "preparing", "unavailable"):
                 ans["mode"] = "preparing"
             self.waiting = ans
             raise ramcache.Warming("hub_status", self.directory, 0)

@@ -35,7 +35,8 @@ class TestPopupSparklines:
         env = load(tmp_path, [(chip_state(), None), (chip_state(t1=3e-5), None)],
                    chip_state(t1=3e-5), sync=False)
         html = flat(env["client"].get("/api/topology/sparklines/qA1").data.decode())
-        assert "recorded event" not in html
+        # S10 C3: old -> new, a deferred linked ledger waits without snapshot trends.
+        assert "recorded event" not in html and "being built" in html
 
 
 class TestHistoryDrawer:
@@ -95,4 +96,6 @@ class TestHistoryDrawer:
     def test_a_chip_with_no_ledger_keeps_the_snapshot_drawer(self, tmp_path):
         env = load(tmp_path, [(chip_state(), None)], chip_state(), sync=False)
         html = env["client"].get("/api/history").data.decode()
-        assert "hp-ledger-row" not in html and "Open State History" not in html
+        # S10 C3: old -> new, all listing modes use one renderer with the mode note.
+        assert "hp-ledger-row" not in html and "Open State History" in html
+        assert "being built" in html

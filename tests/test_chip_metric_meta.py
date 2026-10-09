@@ -254,10 +254,47 @@ def env(tmp_path):
 
 
 def _snap(env, state, trigger="manual", **kw):
+    # S10 C3: fabricated snapshot run hints -> real ledger runs, retaining the raw-state oracle.
+    from datetime import datetime, timezone
+    from quam_state_manager.core import hub_sync, value_history
+    from quam_state_manager.core.hub_store import HubStore
+    from quam_state_manager.core.loader import flatten
+    from tests.ledger_fixture import declare_root
+    before = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
     _write_chip(env["live"], state)
     meta = env["hm"].check_and_snapshot(str(env["live"]), trigger, force=True, **kw)
     assert meta is not None
+    if trigger == "experiment":
+        root = env["live"].parent.parent / "data"
+        folder = root / "2026-10-09" / f"#{kw['run_id']}_scan_010000"
+        _write_chip(folder / "quam_state", state)
+        flat, old = flatten(state), flatten(before)
+        patches = [{"op": "replace", "path": "/quam/" + p.replace(".", "/"),
+                    "value": v, "old": old.get(p)} for p, v in flat.items()
+                   if p not in old or old[p] != v]
+        instant = hub_sync.snapshot_instant_us(meta.timestamp)
+        clock = datetime.fromtimestamp(instant / 1e6, timezone.utc).isoformat()
+        (folder / "node.json").write_text(json.dumps({"id": kw["run_id"], "created_at": clock,
+            "metadata": {"name": kw.get("experiment_name", "scan"), "status": "finished"},
+            "patches": patches}), encoding="utf-8")
+        env["client"].post("/workspace/add", data={"folder": str(root)})
+        directory = declare_root(env["client"], root)
+    else:
+        with env["app"].app_context():
+            from quam_state_manager.web import routes
+            directory = routes._active_ctx()["hub_chip_dir"]
+    with HubStore(directory) as store:
+        if trigger == "experiment":
+            eid = store.conn.execute("SELECT eid FROM events WHERE run_id=?", (kw["run_id"],)).fetchone()[0]
+        else:
+            eid = store.conn.execute("SELECT eid FROM events WHERE t_src=?", (meta.timestamp,)).fetchone()[0]
+    env.setdefault("event_ids", {})[meta.timestamp] = eid
     return meta.timestamp
+
+
+def _instant(ts):
+    from quam_state_manager.core import hub_sync, value_history
+    return value_history.iso_z(hub_sync.snapshot_instant_us(ts))
 
 
 def _meta(env) -> dict:
@@ -284,11 +321,13 @@ def test_the_route_names_the_run_and_the_snapshot(env):
     d = _meta(env)
     assert d["ok"] and d["snapshots"] >= 2
     t1e = d["q"]["T1"]["q1"]
-    assert t1e["ts"] == t1 and t1e["run"] == 77 and t1e["first"] is False and t1e["value"] == 2.5e-5
-    assert d["snaps"][t1]["run"] == 77
+    # S10 C3: snapshot stamp/capturer -> ledger instant and own-patch writer, no capturer map.
+    assert t1e["ts"] == _instant(t1) and t1e["eid"] == env["event_ids"][t1]
+    assert t1e["run"] == 77 and t1e["first"] is False and t1e["value"] == 2.5e-5
+    assert t1e["provenance"] == "run_proven" and d["snaps"] == {}
     # f_01 never changed: its newest row is its first -> "unchanged since"
     f = d["q"]["f_01"]["q1"]
-    assert f["first"] is True and f["ts"] <= t0
+    assert f["first"] is True and f["ts"] == _instant(t0) and f["provenance"] == "observed"
     # the 2Q panel key is the page's own, and the lab's load_id rides along
     p = d["p"]["2q:StandardRB:cz_SNZ"]["q1-2"]
     assert p["load_id"] == 529 and p["ts"]
@@ -352,9 +391,12 @@ def test_a_value_null_in_the_first_snapshot_is_never_since_history_began(env):
     _take_live(env)
     d = _meta(env)
     e = d["q"]["T2echo"]["q1"]
-    assert e["ts"] == t2 and e["first"] is False and e.get("appeared") is True, e
+    # S10 C3: snapshot appearance flag -> proven ledger change, retaining the no-false-baseline pin.
+    assert e["ts"] == _instant(t2) and e["eid"] == env["event_ids"][t2] and e["first"] is False, e
+    assert e["provenance"] == "run_proven" and e["value"] == 3.3e-5
     assert e["run"] == 142 and e["matches_current"] is True
     # f_01 WAS there from the oldest snapshot and never moved
+    assert d["q"]["f_01"]["q1"]["provenance"] == "observed"
     assert d["q"]["f_01"]["q1"]["first"] is True
 
 
@@ -426,16 +468,19 @@ def test_a_random_event_sequence_never_serves_a_stale_answer(env):
                 continue
             exps = [_oracle(states, dt) for dt in dots]
             newest_ts = max(x[0] for x in exps)
-            assert got["ts"] == newest_ts, (step, dots, got, exps)
+            # S10 C3: snapshot stamp/first flag -> ledger instant/event, observations never claim a writer.
+            assert got["ts"] == _instant(newest_ts), (step, dots, got, exps)
+            assert got["eid"] == env["event_ids"][newest_ts], (step, dots, got, exps)
             assert got["first"] is all(x[1] for x in exps), (step, dots, got, exps)
             # the working copy was just taken from live == the newest snapshot
             assert got["matches_current"] is True, (step, dots, got)
-            if got["first"]:
-                assert got["ts"] == d["oldest"] == states[0][0], (step, dots, got, d["oldest"])
-            firsts += got["first"]
-            appeared += bool(got.get("appeared"))
+            if all(x[1] for x in exps):
+                assert got["ts"] == d["oldest"] == _instant(states[0][0]), (step, dots, got, d["oldest"])
+                assert got["provenance"] == "observed"
+                firsts += 1
+            appeared += any(not x[1] for x in exps)
         e = d["q"]["T1"]["q1"]
-        assert d["snaps"].get(e["ts"], {}).get("run") == e["run"] or e["run"] is None
+        assert e["run"] is None or e["writer"]["run"] == e["run"]
     # the sequence exercised both labels (a vacuous pass would see neither)
     assert firsts and appeared, (firsts, appeared)
 
@@ -466,9 +511,10 @@ def test_a_truncated_index_never_dates_what_it_cannot_vouch_for(env, monkeypatch
     _snap(env, _state(2.2e-5, 5.001e9, [[0.91, 0.09], [0.2, 0.8]], 4, t2e=3e-5))
     _take_live(env)
     d = _meta(env)
-    assert d["incomplete_index"] is True
+    # S10 C3: capped snapshot index -> complete ledger, the legacy caps cannot truncate its answer.
+    assert d["mode"] == "ledger" and not d.get("incomplete_index")
     states = _history_states(env)
-    assert d["oldest"] == states[0][0]
+    assert d["oldest"] == _instant(states[0][0])
     dots = {
         ("q", "T1", "q1"): ["qubits.q1.T1"], ("q", "T1", "q2"): ["qubits.q2.T1"],
         ("q", "f_01", "q1"): ["qubits.q1.f_01"], ("q", "f_01", "q2"): ["qubits.q2.f_01"],
@@ -482,13 +528,11 @@ def test_a_truncated_index_never_dates_what_it_cannot_vouch_for(env, monkeypatch
     dated = incomplete = firsts = rescued = 0
     for (g, key, ent), dl in dots.items():
         got = d[g][key][ent]
-        if got.get("incomplete"):
-            incomplete += 1
-            assert "ts" not in got and "first" not in got and "run" not in got, got
-            continue
+        assert not got.get("incomplete"), got
         dated += 1
         exps = [_oracle(states, dt) for dt in dl]
-        assert got["ts"] == max(x[0] for x in exps), (key, ent, got, exps)
+        stamp = max(x[0] for x in exps)
+        assert got["ts"] == _instant(stamp) and got["eid"] == env["event_ids"][stamp], (key, ent, got, exps)
         assert got["first"] is all(x[1] for x in exps), (key, ent, got, exps)
         firsts += got["first"]
         # dated although the index alone could not vouch for it: a leaf with
@@ -496,7 +540,7 @@ def test_a_truncated_index_never_dates_what_it_cannot_vouch_for(env, monkeypatch
         rescued += any(len(raw.get(dt) or []) == 1 and raw[dt][0][0] != d["oldest"] for dt in dl)
     # both outcomes happened (a vacuous pass would see only one), and the
     # snapshot check dated something the index alone could not
-    assert dated and incomplete and firsts and rescued, (dated, incomplete, firsts, rescued)
+    assert dated == len(dots) and firsts and rescued, (dated, firsts, rescued)
 
 
 # ── the shipped JS ──────────────────────────────────────────────────────────

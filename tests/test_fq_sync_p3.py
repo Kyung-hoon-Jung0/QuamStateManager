@@ -76,47 +76,50 @@ def _meta(ts, *, kind, trigger, total, h):
                         new_experiments=[], source_path="", state_hash=h, kind=kind)
 
 
-def test_a_no_prior_row_stays_visible_once_older_runs_land_beneath_it(app_client, monkeypatch):
-    """The first Apply on a chip with a data folder: the pre-apply capture had
-    no prior (zeros), the apply's own capture diffs against it (1 change), and
-    the run ingest then lands two OLDER EXP rows. Newest-first:"""
-    app, c = app_client
-    snaps = [
-        _meta("20260928_120010", kind="manual", trigger="save", total=1, h="H2"),
-        _meta("20260928_120000", kind="backup", trigger="auto", total=0, h="H1"),
-        _meta("20260907_100000", kind="exp", trigger="experiment", total=0, h="H41"),
-        _meta("20260906_100000", kind="exp", trigger="experiment", total=0, h="H39"),
-    ]
+def test_a_no_prior_row_stays_visible_once_older_runs_land_beneath_it(tmp_path, monkeypatch):
+    # S10 C3: snapshot filtering -> ledger versions, quick diff uses the adjacent recorded states.
+    from tests.test_hub_versions import build_env, chip_state, apply_edit, ctx_of
+    from quam_state_manager.web import routes
+    env = build_env(tmp_path, [chip_state(t1=1e-5), chip_state(t1=2e-5)])
+    live = env.live / "state.json"
+    state = json.loads(live.read_text(encoding="utf-8"))
+    state["qubits"]["qA1"]["T1"] = 3e-5
+    live.write_text(json.dumps(state), encoding="utf-8")
+    env.client.post("/api/history/snapshot")
+    env.client.post("/state/sync", data={"mode": "discard"})
+    apply_edit(env, "qubits.qA1.T1", 4e-5)
+    with env.app.app_context():
+        ctx = ctx_of(env)
+        listing = routes._versions_read(ctx, env.app.config["history_manager"].list_snapshots(env.live))
+    refs = [r["ts"] for r in listing["rows"]]
+    assert len(refs) == 4 and listing["rows"][1]["badge"] == "seen"
     asked = []
-    hm = app.config["history_manager"]
-    monkeypatch.setattr(hm, "list_snapshots", lambda p: snaps)
-    monkeypatch.setattr(hm, "snapshot_ts_for_current_content", lambda p: "20260928_120010")
-    monkeypatch.setattr(hm, "diff_snapshots", lambda p, a, b: (asked.append((a, b)), [])[1])
-    body = c.get("/state/versions").get_data(as_text=True)
-    shown = re.findall(r'sv-check" value="(\d{8}_\d{6})"', body)
-    assert shown == [m.timestamp for m in snaps]          # nothing called an unchanged copy
-    assert asked == [("20260928_120000", "20260928_120010")], \
-        "the quick-diff compared the Apply with something that is not its previous version"
+    real = routes._version_quick_entries
+    def checked(path, a, b):
+        asked.append((a, b))
+        return real(path, a, b)
+    monkeypatch.setattr(routes, "_version_quick_entries", checked)
+    body = env.client.get("/state/versions").get_data(as_text=True)
+    shown = re.findall(r'sv-check" value="([^"]+)"', body)
+    assert shown == refs
+    assert asked == [(refs[1], refs[0])]
+    assert "1 change" in body
 
 
-def test_an_identical_copy_is_still_hidden(app_client, monkeypatch):
-    """The docs/132 filter keeps working where it can vouch: zeros AND the
-    same content as the row below."""
+def test_an_identical_copy_is_still_hidden(app_client, tmp_path):
+    # S10 C3: snapshot zero-diff filter -> observed dedup, copies add no state rows.
     app, c = app_client
-    snaps = [
-        _meta("20260928_120020", kind="manual", trigger="save", total=1, h="H3"),
-        _meta("20260928_120010", kind="manual", trigger="manual", total=0, h="H2"),
-        _meta("20260928_120000", kind="manual", trigger="save", total=1, h="H2"),
-        _meta("20260927_120000", kind="manual", trigger="manual", total=0, h="H1"),
-    ]
-    hm = app.config["history_manager"]
-    monkeypatch.setattr(hm, "list_snapshots", lambda p: snaps)
-    monkeypatch.setattr(hm, "snapshot_ts_for_current_content", lambda p: "20260928_120020")
-    monkeypatch.setattr(hm, "diff_snapshots", lambda p, a, b: [])
+    live = tmp_path / "quam_state" / "state.json"
+    for value in (6.1e9, 6.3e9, 6.3e9, 6.5e9):
+        state = json.loads(live.read_text(encoding="utf-8"))
+        state["qubits"]["q1"]["f_01"] = value
+        live.write_text(json.dumps(state), encoding="utf-8")
+        c.post("/api/history/snapshot")
     body = c.get("/state/versions").get_data(as_text=True)
-    shown = re.findall(r'sv-check" value="(\d{8}_\d{6})"', body)
-    assert "20260928_120010" not in shown and len(shown) == 3
-    assert "1 unchanged copy hidden" in body
+    shown = re.findall(r'sv-check" value="([^"]+)"', body)
+    assert len(shown) == 3 and all("_event-" in ref for ref in shown)
+    assert len(app.config["history_manager"].list_snapshots(live.parent)) == 4
+    assert "unchanged copy hidden" not in body
 
 
 # --------------------------------------------------------------------- (c)

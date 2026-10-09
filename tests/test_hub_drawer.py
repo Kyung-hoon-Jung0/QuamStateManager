@@ -349,15 +349,18 @@ class TestHonesty:
         # S10 C1: opening a chip with no data folder runs its first sync slice, which
         # creates the ledger -- the first answer is "holds no runs", no longer "no ledger yet"
         assert (chip_dir(env) / "ledger.sqlite").exists()
-        assert "holds no runs (no data folder is linked" in html and not rows(html)
+        # S10 C3: old -> new, an empty readable ledger answers with the link offer.
+        assert 'data-note="no_folder_linked"' in html and not rows(html)
         assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "4e-5"}).status_code == 200
         assert c.post("/state/apply-to-live").status_code == 200
         assert (chip_dir(env) / "ledger.sqlite").exists()
         html = drawer(env, "qubits.qA1.T1")
-        assert "holds no runs (no data folder is linked" in html and not rows(html)
-        assert "holds no runs" in column(env, {"qA1": "qubits.qA1.T1"})
+        # S10 C3: old -> new, SM writes remain visible without a linked run folder.
+        assert 'data-note="no_folder_linked"' in html and rows(html)
+        assert 'data-note="no_folder_linked"' in column(env, {"qA1": "qubits.qA1.T1"})
         j = c.get("/api/agent/field-history?path=qubits.qA1.T1").get_json()
-        assert j["source"] == "snapshots" and "holds no runs" in j["note"]
+        # S10 C3: old -> new, the agent reads the same ledger and offers the same link.
+        assert j["source"] == "ledger" and j["history"]["points"] and j["link"]["offer"]
 
 
 # ======================================================================

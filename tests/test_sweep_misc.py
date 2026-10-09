@@ -84,9 +84,12 @@ class TestParamHistoryChipKey:
         html = c.get("/param-history", headers={"HX-Request": "true"}).get_data(as_text=True)
         form = re.search(r'<form id="param-history-filters".*?</form>', html, re.S).group(0)
         assert 'name="chip_key"' in form, "the loaded chip's form carries its own key"
-        html = c.get("/param-history?chip_key=SomeOtherChip", headers={"HX-Request": "true"}).get_data(as_text=True)
+        # S10 C3: missing snapshot index -> readable archive ledger, preserving the pinned form key.
+        from quam_state_manager.core.hub_store import HubStore
+        HubStore(Path(app.instance_path) / "history" / "archived").close()
+        html = c.get("/param-history?chip_key=archived", headers={"HX-Request": "true"}).get_data(as_text=True)
         form = re.search(r'<form id="param-history-filters".*?</form>', html, re.S).group(0)
-        assert '<input type="hidden" name="chip_key" value="SomeOtherChip">' in form
+        assert '<input type="hidden" name="chip_key" value="archived">' in form
 
     def test_the_busy_index_banner_is_inside_the_results(self):
         tpl = (_TPL / "_param_history.html").read_text(encoding="utf-8")

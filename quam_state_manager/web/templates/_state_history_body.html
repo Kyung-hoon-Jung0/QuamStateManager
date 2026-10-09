@@ -6,7 +6,7 @@
 {# docs/284: why this list reads what it reads (the change ledger, or the
    older snapshot path while the ledger is being built / absent) #}
 {% if ledger_versions is defined and ledger_versions %}{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}{% endwith %}{% endif %}
-{% if ledger_versions is defined and ledger_versions and ledger_versions.mode == 'ledger' %}
+{% if ledger_versions is defined and ledger_versions and ledger_versions.mode in ('ledger', 'building', 'preparing', 'unavailable') %}
 {% include '_ledger_state_history.html' %}
 {% elif snapshots %}
 <div class="sh-toolbar">

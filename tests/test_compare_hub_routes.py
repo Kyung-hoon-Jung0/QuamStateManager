@@ -750,8 +750,11 @@ class TestP2DeepLinks:
         r = c.get("/api/history")
         assert r.status_code == 200
         assert b"/compare-hub?src=hist:" not in r.data, "the hub is retired as a destination"
-        assert b"/diff?a=hist:" in r.data and b"&b=working:" in r.data
-        assert b"View Changes" in r.data          # drawer diff stays (U1a)
+        # S10 C3: snapshot-row Compare -> ledger drawer's full State History link, with the same diff door.
+        assert b"Open State History" in r.data and b'href="/state-history"' in r.data
+        page = c.get("/state-history")
+        assert b"/diff?a=hist:" in page.data and b"&b=working:" in page.data
+        assert b"View changes vs current" in page.data
 
     def test_deep_link_resolves_with_primary_suggestion(self, env):
         c, a, _b = env

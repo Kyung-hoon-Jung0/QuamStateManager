@@ -452,12 +452,14 @@ class TestModes:
         r = c.get(url)
         assert r.status_code == 200
         if url == META:
-            assert r.get_json()["mode"] == "fallback"
-            assert "Older snapshot history" in r.get_json()["notes"][0]
+            # S10 C3: old -> new, no-folder chips read their ledger with a link offer.
+            assert r.get_json()["mode"] == "ledger"
+            assert r.get_json()["link"]["offer"]
             return
         body = r.data.decode()
         root = 'id="topo-trends"' if url == TRENDS else 'id="param-history-root"'
-        assert body.find("Older snapshot history") > body.find(root) >= 0, \
+        # S10 C3: old -> new, the no-folder note stays inside the swapped root.
+        assert body.find('data-note="no_folder_linked"') > body.find(root) >= 0, \
             "the label is inside the swapped root (a swap replaces it, never stacks it)"
 
 

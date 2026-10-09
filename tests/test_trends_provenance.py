@@ -27,6 +27,7 @@ import pytest
 
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests.ledger_fixture import declare_root
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SELFCHECK = _ROOT / "tests" / "trends_provenance_selfcheck.cjs"
@@ -85,6 +86,34 @@ def _snap(env, state, trigger="manual", **kw):
     return meta
 
 
+def _ledger_run(env, run_id, *, f01=6.1e9, t1=2.0e-5, name="03_resonator_spectroscopy_single",
+                patches=None, root=None, date="2026-09-01") -> Path:
+    """S10 C3: a run the chip's change ledger reads -- its saved state under a
+    data root linked to the open chip (declared), the way every surface now
+    learns of a run (the snapshot map that named runs from snapshot metas is
+    unreachable)."""
+    root = root or env["tmp"] / "data"
+    run = _seed_run(root, run_id, name=name, patches=patches, date=date)
+    _write_chip(run / "quam_state", _state(f01=f01, t1=t1))
+    env["client"].post("/workspace/add", data={"folder": str(root)})
+    declare_root(env["client"], root)
+    return run
+
+
+def _drawer_row(client) -> dict:
+    html = client.get("/param-history/expand?qubit=qA1&prop=f_01").get_data(as_text=True)
+    m = re.search(r'id="phd-data" type="application/json">(.*?)</script>', html, re.S)
+    assert m
+    return json.loads(m.group(1).replace("\\u003c", "<").replace("\\u003e", ">")
+                      .replace("\\u0026", "&"))
+
+
+def _series(body: str, metric: str) -> dict:
+    (chart,) = [c for c in _charts(body) if c["metric"] == metric]
+    (ser,) = chart["series"]
+    return ser
+
+
 def _charts(body: str) -> list[dict]:
     m = re.search(r'id="topo-trends-data">(.*?)</script>', body, re.S)
     return json.loads(m.group(1)) if m else []
@@ -99,16 +128,18 @@ class TestTheMapShape:
     """One map per response, keyed by snapshot — never four fields per point."""
 
     def test_points_stay_two_tuples(self, env):
+        # S10 C3: snapshot run hint -> a run the ledger reads; the words ride the series' attr map.
+        _ledger_run(env, 31, f01=6.1e9, name="06_ramsey")
         _snap(env, _state(f01=6.0e9))
-        _snap(env, _state(f01=6.1e9), trigger="experiment",
-              experiment_name="06_ramsey", run_id=31)
         body = env["client"].get("/topology/trends?metrics=f_01").get_data(as_text=True)
         charts = _charts(body)
         assert charts and charts[0]["series"]
         for s in charts[0]["series"]:
+            assert len(s["points"]) >= 2, "the pin needs a drawn trend"
             for p in s["points"]:
                 assert len(p) == 2, \
-                    "provenance rides the snapshot map, never the point"
+                    "provenance rides the series' attr map, never the point"
+                assert p[0] in s["attr"]
 
     def test_the_map_is_bounded_by_both_shapes(self, env):
         """The shape argument, as review round 1 corrected it.
@@ -138,6 +169,8 @@ class TestTheMapShape:
         body = env["client"].get(
             "/topology/trends?metrics=f_01,T1").get_data(as_text=True)
         snaps = _snaps(body)
+        # S10 C3: a bounded snapshot map -> none at all: ledger points carry their own words.
+        assert snaps == {}
         charts = _charts(body)
         charted = {p[0] for c in charts for s in c["series"] for p in s["points"]}
         drawn = sum(len(s["points"]) for c in charts for s in c["series"])
@@ -165,6 +198,8 @@ class TestTheMapShape:
                    for p in s["points"]}
         all_ts = {m.timestamp for m in env["hm"].list_snapshots(env["live"])}
         assert len(all_ts) > len(charted), "fixture must hold undrawn snapshots"
+        # S10 C3: a filtered snapshot map -> none at all: ledger points carry their own words.
+        assert _snaps(body) == {}
         assert set(_snaps(body)) <= charted, \
             "the map must not carry a snapshot nothing on the page can read"
 
@@ -218,19 +253,19 @@ class TestTheMapShape:
         response really contains several charts over several snapshots. A pin
         that cannot reach the failing shape proves nothing.
         """
+        # S10 C3: snapshot-id map -> the ledger series' attr map; a run point comes from a linked root.
+        _ledger_run(env, 31, f01=6.1e9, t1=2.5e-5, name="06_ramsey")
         _snap(env, _state(f01=6.0e9, t1=2.0e-5))
-        _snap(env, _state(f01=6.1e9, t1=2.5e-5), trigger="experiment",
-              experiment_name="06_ramsey", run_id=31)
         _snap(env, _state(f01=6.2e9, t1=3.0e-5), trigger="auto")
         body = env["client"].get(
             "/topology/trends?metrics=f_01,T1&path=qubits.qA1.T1"
         ).get_data(as_text=True)
-        snaps = _snaps(body)
         charts = _charts(body)
         drawn = {p[0] for c in charts for s in c["series"] for p in s["points"]}
         assert len(charts) >= 2, "the pin must span more than one chart"
-        assert len(drawn) >= 3, "the pin must span more than one snapshot"
-        missing = sorted(drawn - set(snaps))
+        assert len(drawn) >= 3, "the pin must span more than one recorded event"
+        missing = sorted((c["metric"], p[0]) for c in charts for s in c["series"]
+                         for p in s["points"] if p[0] not in (s.get("attr") or {}))
         assert not missing, f"points with no provenance entry: {missing}"
 
 
@@ -308,38 +343,29 @@ class TestARunSnapshot:
     def test_run_short_and_uid(self, env):
         """The customer's ask, whole: the run number, a short node name, and a
         uid that opens the dataset."""
+        # S10 C3: snapshot-map entry (run/node/short/uid) -> the ledger point's words: the run
+        # number and node in its label, a uid only on its own patch's proof.
         c, data_root = env["client"], env["tmp"] / "data"
-        run = _seed_run(data_root, 31)
-        c.post("/workspace/add", data={"folder": str(data_root)})
+        _ledger_run(env, 31, f01=6.1e9, patches=_F01_PATCH)
         _snap(env, _state(f01=6.0e9))
-        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
-                     experiment_name="03_resonator_spectroscopy_single",
-                     run_id=31, experiment_folder_path=str(run))
-        snaps = _snaps(c.get("/topology/trends?metrics=f_01").get_data(as_text=True))
-        got = snaps[meta.timestamp]
-        assert got["run"] == 31
-        assert got["node"] == "03_resonator_spectroscopy_single"
-        assert got["short"] == "03 Res spec", "story.node_label -- the NUMBER identifies the node"
+        ser = _series(c.get("/topology/trends?metrics=f_01").get_data(as_text=True), "f_01")
+        (got,) = [a for a in ser["attr"].values() if a["provenance"] == "run_proven"]
+        assert got["label"] == "#31 03_resonator_spectroscopy_single"
+        assert got["sub"] == "its own patch set it", "a run says which run, never a why-sentence"
         assert got["uid"] == f"{routes_mod._folder_key(data_root)}:31"
-        assert got["why"] is None, "a run says which run, never a why-sentence"
+        assert _snaps(c.get("/topology/trends?metrics=f_01").get_data(as_text=True)) == {}
 
     def test_the_uid_round_trips_through_the_dataset_resolver(self, env):
         """Clickable only when it actually opens: the uid the hover offers must
         survive _split_dataset_uid AND resolve to a live store."""
+        # S10 C3: snapshot-map uid -> the ledger point's uid (a proven run under a linked root).
         c, data_root = env["client"], env["tmp"] / "data"
-        run = _seed_run(data_root, 31)
-        c.post("/workspace/add", data={"folder": str(data_root)})
-        # Two DIFFERING snapshots, deliberately: since review round 3 a
-        # family whose every series holds one point draws no axis (one point
-        # is not a trend), and the provenance map carries only what the page
-        # DRAWS. On one snapshot this pin would assert against a chart that
-        # no longer exists.
+        _ledger_run(env, 31, f01=6.1e9, patches=_F01_PATCH)
+        # Two DIFFERING states, deliberately: a family whose every series
+        # holds one point draws no axis (one point is not a trend).
         _snap(env, _state(f01=6.0e9))
-        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
-                     experiment_name="03_resonator_spectroscopy_single",
-                     run_id=31, experiment_folder_path=str(run))
-        uid = _snaps(c.get("/topology/trends?metrics=f_01")
-                     .get_data(as_text=True))[meta.timestamp]["uid"]
+        ser = _series(c.get("/topology/trends?metrics=f_01").get_data(as_text=True), "f_01")
+        (uid,) = [a["uid"] for a in ser["attr"].values() if a.get("uid")]
         with env["app"].test_request_context():
             assert routes_mod._split_dataset_uid(uid) == (
                 routes_mod._folder_key(data_root), 31)
@@ -370,25 +396,31 @@ class TestASnapshotWithNoRun:
         # is not a trend), and the provenance map carries only what the page
         # DRAWS. On one snapshot this pin would assert against a chart that
         # no longer exists.
+        # S10 C3: snapshot "why" -> the ledger's observed point: SM saw it change, writer unknown.
         _snap(env, _state(f01=5.9e9))
-        meta = _snap(env, _state(f01=6.0e9), trigger="auto")
-        got = _snaps(env["client"].get("/topology/trends?metrics=f_01")
-                     .get_data(as_text=True))[meta.timestamp]
-        assert got["why"] == "Modified externally"
-        assert got["run"] is None and got["uid"] is None, \
+        _snap(env, _state(f01=6.0e9), trigger="auto")
+        ser = _series(env["client"].get("/topology/trends?metrics=f_01")
+                      .get_data(as_text=True), "f_01")
+        got = ser["attr"][ser["points"][-1][0]]
+        assert got["label"] == "seen by SM (auto snapshot)" and got["sub"] == "writer unknown"
+        assert got["provenance"] == "observed"
+        assert "uid" not in got and "saved_uid" not in got, \
             "no run ⇒ nothing to open, and no fabricated run number"
 
     def test_the_other_triggers_say_the_true_thing(self, env):
-        """Flattening save/manual/restore into 'modified externally' would be a
-        lie about three things SM genuinely knows."""
-        want = {"save": "Saved in the app", "manual": "Manual snapshot",
-                "restore": "Restored from history"}
-        metas = {t: _snap(env, _state(f01=6.0e9 + i * 1e6), trigger=t)
-                 for i, t in enumerate(want)}
-        snaps = _snaps(env["client"].get("/topology/trends?metrics=f_01")
-                       .get_data(as_text=True))
-        for trig, sentence in want.items():
-            assert snaps[metas[trig].timestamp]["why"] == sentence
+        """Flattening an SM write and a capture into one sentence would be a
+        lie about what SM genuinely knows."""
+        # S10 C3: snapshot triggers (save/manual/restore) -> ledger kinds: a capture is a state
+        # SM saw (its trigger named), an SM write names its own kind.
+        _snap(env, _state(f01=6.0e9), trigger="manual")
+        c = env["client"]
+        assert c.post("/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "6.05e9"}).status_code == 200
+        assert c.post("/state/apply-to-live").status_code == 200
+        ser = _series(c.get("/topology/trends?metrics=f_01").get_data(as_text=True), "f_01")
+        words = [ser["attr"][p[0]] for p in ser["points"]]
+        assert words[0]["label"] == "seen by SM (manual snapshot)" and words[0]["provenance"] == "observed"
+        assert words[-1]["provenance"] == "sm" and "seen by SM" not in words[-1]["label"]
+        assert words[-1]["sub"] != "writer unknown", "SM knows its own write"
 
     def test_a_chip_with_no_run_provenance_at_all_renders(self, env):
         """The real 3-snapshot chip: honest why-sentences, no click, no error."""
@@ -396,117 +428,18 @@ class TestASnapshotWithNoRun:
             _snap(env, _state(f01=6.0e9 + i * 1e6), trigger="auto")
         r = env["client"].get("/topology/trends?metrics=f_01")
         assert r.status_code == 200
-        snaps = _snaps(r.get_data(as_text=True))
-        assert snaps and all(v["uid"] is None and v["run"] is None
-                             for v in snaps.values())
+        # S10 C3: snapshot map -> the ledger series' attr; observed points open nothing.
+        attrs = list(_series(r.get_data(as_text=True), "f_01")["attr"].values())
+        assert len(attrs) == 3 and all("uid" not in v and "saved_uid" not in v and
+                                       v["provenance"] == "observed" for v in attrs)
 
 
 class TestTheUidIsOnlyOfferedWhenItOpens:
-    def test_a_run_folder_outside_every_dataset_root_gets_no_uid(self, env):
-        """The run number is still true and still shown; only the click goes."""
-        c = env["client"]
-        elsewhere = env["tmp"] / "elsewhere" / "2026-09-01" / "#99_x_010000"
-        elsewhere.mkdir(parents=True)
-        # Two DIFFERING snapshots, deliberately: since review round 3 a
-        # family whose every series holds one point draws no axis (one point
-        # is not a trend), and the provenance map carries only what the page
-        # DRAWS. On one snapshot this pin would assert against a chart that
-        # no longer exists.
-        _snap(env, _state(f01=6.1e9))
-        meta = _snap(env, _state(f01=6.2e9), trigger="experiment",
-                     experiment_name="06_ramsey", run_id=99,
-                     experiment_folder_path=str(elsewhere))
-        got = _snaps(c.get("/topology/trends?metrics=f_01")
-                     .get_data(as_text=True))[meta.timestamp]
-        assert got["run"] == 99 and got["short"] == "06 Ramsey"
-        assert got["uid"] is None, "an unregistered folder would 404 on click"
-
-    def test_a_malformed_folder_string_does_not_raise(self, env):
-        """A folder recorded by an old snapshot can be junk, or name a drive
-        that is gone. Computing a hover hint must never 500 the section."""
-        # Two DIFFERING snapshots, deliberately: since review round 3 a
-        # family whose every series holds one point draws no axis (one point
-        # is not a trend), and the provenance map carries only what the page
-        # DRAWS. On one snapshot this pin would assert against a chart that
-        # no longer exists.
-        _snap(env, _state(f01=6.2e9))
-        meta = _snap(env, _state(f01=6.3e9), trigger="experiment",
-                     experiment_name="06_ramsey", run_id=7,
-                     experiment_folder_path="\x00://not/a/path\x00")
-        r = env["client"].get("/topology/trends?metrics=f_01")
-        assert r.status_code == 200
-        got = _snaps(r.get_data(as_text=True))[meta.timestamp]
-        assert got["run"] == 7 and got["uid"] is None
-
-    def _moved(self, env, roots, run_id=31):
-        """Seed run *run_id* under each of *roots* (registered), and snapshot it
-        as recorded under a root that is registered NOWHERE -- the dataset was
-        copied / moved after the snapshot was taken."""
-        c = env["client"]
-        runs = [_seed_run(r, run_id) for r in roots]
-        for r in roots:
-            c.post("/workspace/add", data={"folder": str(r)})
-        gone = env["tmp"] / "old_share" / runs[0].parent.name / runs[0].name
-        _snap(env, _state(f01=6.0e9))
-        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
-                     experiment_name="03_resonator_spectroscopy_single",
-                     run_id=run_id, experiment_folder_path=str(gone))
-        body = c.get("/topology/trends?metrics=f_01").get_data(as_text=True)
-        return _snaps(body)[meta.timestamp]
-
-    def test_a_moved_dataset_root_still_opens_the_same_run(self, env):
-        """QA F-09 (review): the hover said "not openable here" and the click
-        did nothing for every point of a copied / moved dataset root, although
-        the very same run folder sits under a registered root."""
-        data_root = env["tmp"] / "data"
-        got = self._moved(env, [data_root])
-        assert got["run"] == 31
-        assert got["uid"] == f"{routes_mod._folder_key(data_root)}:31", got
-        with env["app"].test_request_context():
-            resolved = routes_mod._resolve_run(got["uid"])
-        assert resolved is not None and resolved[0].get_run(31) is not None,             "the uid must open the run under the root it was found in"
-
-    def test_a_run_found_under_two_registered_roots_is_not_guessed(self, env):
-        """Two copies registered at once: which one the point meant is not
-        knowable, so the click is not offered (the hover still says why)."""
-        got = self._moved(env, [env["tmp"] / "copyA", env["tmp"] / "copyB"])
-        assert got["run"] == 31 and got["uid"] is None, got
-
-    def test_a_registered_root_without_that_run_folder_does_not_match(self, env):
-        """Only the run's OWN <date>/<run folder> counts -- a registered root
-        holding other runs of the same day is not that run."""
-        c, data_root = env["client"], env["tmp"] / "data"
-        _seed_run(data_root, 32)
-        c.post("/workspace/add", data={"folder": str(data_root)})
-        gone = env["tmp"] / "old_share" / "2026-09-01" / "#31_03_resonator_spectroscopy_single_010000"
-        _snap(env, _state(f01=6.0e9))
-        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
-                     experiment_name="03_resonator_spectroscopy_single",
-                     run_id=31, experiment_folder_path=str(gone))
-        got = _snaps(c.get("/topology/trends?metrics=f_01").get_data(as_text=True))[meta.timestamp]
-        assert got["run"] == 31 and got["uid"] is None, got
-
-    def test_a_run_copied_in_after_the_map_was_served_opens_next_request(self, env):
-        """RAM P1a: the provenance map is kept per history token, but the
-        F-09 answer (is that run folder under a registered root?) reads the
-        FILE SYSTEM, which no token covers. A run copied into a registered
-        root after the section was served must open on the very next
-        request, with no new snapshot in between -- a cold recompute says so."""
-        c, data_root = env["client"], env["tmp"] / "data"
-        _seed_run(data_root, 32)                       # the root exists, run 31 not yet
-        c.post("/workspace/add", data={"folder": str(data_root)})
-        gone = env["tmp"] / "old_share" / "2026-09-01" / "#31_03_resonator_spectroscopy_single_010000"
-        _snap(env, _state(f01=6.0e9))
-        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
-                     experiment_name="03_resonator_spectroscopy_single",
-                     run_id=31, experiment_folder_path=str(gone))
-        url = "/topology/trends?metrics=f_01"
-        for _ in range(2):                             # served, then served warm
-            got = _snaps(c.get(url).get_data(as_text=True))[meta.timestamp]
-            assert got["uid"] is None, got
-        _seed_run(data_root, 31)                       # the copy lands
-        got = _snaps(c.get(url).get_data(as_text=True))[meta.timestamp]
-        assert got["uid"] == f"{routes_mod._folder_key(data_root)}:31", got
+    # S10 C3: six route tests deleted here -- their whole subject was the snapshot map's
+    # uid for the run folder a snapshot META recorded (unregistered, junk, moved, copied in
+    # later, under two roots), an input the ledger never reads: its runs come only from
+    # linked roots, and its own no-uid-unless-it-opens rule is pinned in test_hub_chip_status
+    # (a deleted run folder keeps its proof and loses its link).
 
     def test_the_helper_itself_swallows_a_bad_path(self, env):
         with env["app"].test_request_context():
@@ -579,69 +512,37 @@ class TestTheParamHistoryDrawerUid:
         """The drawer's click has always built "/dataset/<run_id>", which
         _split_dataset_uid refuses — so it landed on the 404 panel every time.
         Same server-minted uid, one spelling of the click."""
+        # S10 C3: snapshot run hint -> a proven ledger run under a linked root; the observed
+        # state beside it opens nothing.
         c, data_root = env["client"], env["tmp"] / "data"
-        run = _seed_run(data_root, 31, patches=_F01_PATCH)
-        c.post("/workspace/add", data={"folder": str(data_root)})
+        _ledger_run(env, 31, f01=6.1e9, patches=_F01_PATCH)
         _snap(env, _state(f01=6.0e9))
-        _snap(env, _state(f01=6.1e9), trigger="experiment",
-              experiment_name="03_resonator_spectroscopy_single",
-              run_id=31, experiment_folder_path=str(run))
-        html = c.get("/param-history/expand?qubit=qA1&prop=f_01").get_data(as_text=True)
-        m = re.search(r'id="phd-data" type="application/json">(.*?)</script>', html, re.S)
-        assert m
-        row = json.loads(m.group(1).replace("\\u003c", "<").replace("\\u003e", ">")
-                         .replace("\\u0026", "&"))
-        by_run = {p.get("run_id"): p for p in row["values"]}
+        row = _drawer_row(c)
+        by_run = {p.get("run"): p for p in row["values"]}
         assert by_run[31]["uid"] == f"{routes_mod._folder_key(data_root)}:31"
         assert all("uid" in p for p in row["values"]), \
             "every point declares its uid, even when that uid is null"
-        assert by_run[None]["uid"] is None
+        assert by_run[None]["uid"] is None and by_run[None]["provenance"] == "observed"
 
     def test_the_run_travels_with_the_uid_across_the_tier_split(self, env):
         """Review round 1, seen in a real browser: "click → open dataset #null".
-
-        The uid is minted from the snapshot META (the only place that records
-        the run FOLDER — round 2 moved this off the leaf index, which is built
-        from those metas anyway); the point's own ``run_id`` is the CURATED
-        ``param_history`` column, and that column is legitimately NULL for a
-        snapshot whose meta names a run — the docs/132 reverse-order case,
-        annotated by ``_enrich_run_fields`` after the rows were written. On the
-        real 5-qubit chip 26 of 230 points on q1/f_01 sat in exactly that
-        state. Gating the hint on one tier and numbering it from the other is
-        what printed the word "null", so the run must ride WITH the uid.
-        """
-        import sqlite3
+        Gating the hint on one source and numbering it from another is what
+        printed the word "null", so the run must ride WITH the uid."""
+        # S10 C3: curated-tier/meta split -> one ledger point: run, node and uid ride together
+        # on the run's own patch proof, and a run that only saved the value names none of them.
         c, data_root = env["client"], env["tmp"] / "data"
-        run = _seed_run(data_root, 31, patches=_F01_PATCH)
-        c.post("/workspace/add", data={"folder": str(data_root)})
+        _ledger_run(env, 31, f01=6.1e9, patches=_F01_PATCH)
+        _ledger_run(env, 32, f01=6.2e9, date="2026-09-02")
         _snap(env, _state(f01=6.0e9))
-        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
-                     experiment_name="03_resonator_spectroscopy_single",
-                     run_id=31, experiment_folder_path=str(run))
-        hm, live = env["hm"], env["live"]
-        # The meta already names the run; strip the curated columns to
-        # reproduce the exact divergence the customer's index is in.
-        assert hm.snapshot_provenance(live)
-        conn = sqlite3.connect(hm._index_path(Path(live)))
-        try:
-            conn.execute("UPDATE param_history SET run_id = NULL,"
-                         " experiment = NULL, trigger = 'save'"
-                         " WHERE timestamp = ?", (meta.timestamp,))
-            conn.commit()
-        finally:
-            conn.close()
-        html = c.get("/param-history/expand?qubit=qA1&prop=f_01").get_data(as_text=True)
-        m = re.search(r'id="phd-data" type="application/json">(.*?)</script>', html, re.S)
-        assert m
-        row = json.loads(m.group(1).replace("\\u003c", "<").replace("\\u003e", ">")
-                         .replace("\\u0026", "&"))
-        pt = {p["timestamp"]: p for p in row["values"]}[meta.timestamp]
-        assert pt["run_id"] is None, "fixture must reproduce the tier split"
-        assert pt["uid"] == f"{routes_mod._folder_key(data_root)}:31", \
-            "the meta still mints the uid"
-        assert pt["run"] == 31, \
-            "…and the number the hint prints must come from the same tier"
-        assert pt["node"] == "03_resonator_spectroscopy_single"
+        row = _drawer_row(c)
+        provs = {p["provenance"] for p in row["values"]}
+        assert {"run_proven", "run_saved", "observed"} <= provs, \
+            f"fixture must reach a proven, a saved-only and an observed point: {provs}"
+        for p in row["values"]:
+            assert (p["uid"] is None) == (p["run"] is None) == (p["node"] is None), p
+        (proven,) = [p for p in row["values"] if p["provenance"] == "run_proven"]
+        assert proven["run"] == 31 and proven["node"] == "03_resonator_spectroscopy_single"
+        assert proven["uid"] == f"{routes_mod._folder_key(data_root)}:31"
 
     def test_enrichment_reaches_the_curated_index_rows(self, env):
         """Root cause of that split: ``_enrich_run_fields``' UPDATE named the
