@@ -539,6 +539,9 @@ def test_a_building_ledger_draws_the_older_snapshots_and_says_so(env, monkeypatc
     assert 'data-source="ledger"' in panel and "being built (1 of 3 runs)" in panel
     assert "run #" not in text(panel)
     assert "No recorded versions" not in panel, "the runs being read are not denied"
+    # S10 C6: + the panel's own building line -- with the snapshot list deleted, a dropped
+    # branch fell through to an empty Compare list (mutation building_says_no_versions survived)
+    assert "No older snapshots to show meanwhile." in panel and 'id="sv-compare"' not in panel
     page = env.client.get("/state-history").get_data(as_text=True)
     assert "being built (1 of 3 runs)" in page and "run #1 scan" not in page
 
@@ -993,5 +996,7 @@ def test_a_version_diff_racing_a_lost_ledger_explains(env, monkeypatch):
     def gone(*a, **k):
         raise hub_versions.Unavailable("The change history could not be read (gone).")
     monkeypatch.setattr(hub_versions, "event_info", gone)
+    # a server error is the browser's 500, not an exception in the test
+    monkeypatch.setitem(env.app.config, "PROPAGATE_EXCEPTIONS", False)
     r = env.client.get(f"/state/versions/{env.refs[0]}/diff")
     assert r.status_code == 200 and "Diff failed" in r.get_data(as_text=True)

@@ -5,6 +5,7 @@ One static pin: every name the deletion removed is absent from the shipped
 package, so a revert of any one branch (route arm, template, macro, client
 filter) turns this RED.
 """
+import re
 from pathlib import Path
 
 PKG = Path(__file__).resolve().parents[1] / "quam_state_manager"
@@ -55,6 +56,7 @@ def test_the_deleted_snapshot_branch_names_are_absent():
             for p, text in shipped
             for name, where in DELETED.items() if name in text]
     assert hits == [], hits
-    # one comparison rule: the N-way Compare no longer calls Differ.diff_n itself
+    # one comparison rule: the N-way Compare no longer reaches Differ's N-way diff
+    # itself (hub_versions.compare_n does, under compare_equal)
     routes = (PKG / "web" / "routes.py").read_text(encoding="utf-8")
-    assert ".diff_n(" not in routes
+    assert re.search(r"\bdiff_n\b", routes) is None

@@ -64,6 +64,7 @@ FOLLOW = "test_the_list_follows_the_ledger_and_the_snapshot_list"
 PAGES = "test_state_history_pages_through_the_ledger_rows"
 REFILTER = "test_the_ledger_panel_never_asks_the_browser_to_refilter"
 ARCHIVE = "test_an_archive_lists_versions_but_offers_no_write_and_no_live_mark"
+ZONE = "test_a_ledger_rows_confirms_name_its_time_in_the_pages_zone"
 NAN = "test_the_workbench_compares_ledger_versions_under_the_one_rule"
 # S10 C6: the review of C3 on these surfaces
 PINLABEL = "test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline"
@@ -364,6 +365,9 @@ MUTATIONS = [
      '            older = [s for s in snapshots if s.timestamp in summary["older"]]', [UNATTACHED]),
     ("drawer_all_reads_everything", RT,
      'limit=per_page or _HISTORY_DRAWER_ALL_CAP,', 'limit=per_page or 2**31 - 1,', [CAP]),
+    ("history_confirm_in_utc", LSH,
+     'hx-confirm="Load the version of {{ r.when | format_ts_zone }} as the working state?',
+     'hx-confirm="Load the version of {{ r.when | format_ts }} as the working state?', [ZONE]),
     ("drawer_cap_unsaid", DRAWER,
      "{% if per_page == 0 and lv.rows | length < lv.total %}", "{% if false %}", [CAP]),
     ("version_hash_read_outside_the_try", RT,

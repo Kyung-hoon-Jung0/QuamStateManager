@@ -30720,7 +30720,7 @@ def diff_versions():
         # reports it — the two must not disagree about the same two versions.
         # docs/284: ledger versions (merged documents) and snapshots, under the
         # one rule the 2-tick workbench uses with them (compare_equal). S10 C6:
-        # the snapshot-only Differ.diff_n arm is gone.
+        # the snapshot-only Differ N-way arm is gone.
         rows = hub_versions.compare_n(_sides_in_one_era(
             [(ledger_docs[ts][1], {}) if ts in ledger_docs else _version_side(path, ts)
              for ts in ts_list]))
