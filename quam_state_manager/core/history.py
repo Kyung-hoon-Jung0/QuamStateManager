@@ -3451,11 +3451,17 @@ class HistoryManager:
             if (s.label == LIVE_BASELINE_LABEL
                     and (match is None or s.timestamp != match.timestamp)):
                 # Release a stale baseline marker: clear the label and unpin so
-                # it can be pruned normally again.
+                # it can be pruned normally again (only SM's own marker -- a row
+                # the user labelled never carries this label)
                 self.annotate_snapshot(quam_state_path, s.timestamp,
                                        label=None, pinned=False)
-        if match is not None and (match.label != LIVE_BASELINE_LABEL
-                                  or not match.pinned):
+        # A row the user labelled or pinned is the user's: the cosmetic marker
+        # never replaces their label, and never takes over a pin a later
+        # release would then drop (a "known good" bookmark was lost this way)
+        users = match is not None and match.label != LIVE_BASELINE_LABEL and (
+            bool(match.label) or bool(match.pinned))
+        if match is not None and not users and (match.label != LIVE_BASELINE_LABEL
+                                                or not match.pinned):
             self.annotate_snapshot(quam_state_path, match.timestamp,
                                    label=LIVE_BASELINE_LABEL, pinned=True)
 

@@ -139,6 +139,23 @@ class TestBaselinePrimitives:
         _, summary, _ = hm.live_drift(str(live_folder), _chip_state(f_01=6.30e9), _wiring())
         assert summary["total"] == 0      # now in sync with the new baseline
 
+    @pytest.mark.parametrize("label,pinned", [("known good", False), ("known good", True), (None, True)])
+    def test_the_baseline_marker_never_takes_a_users_bookmark(self, tmp_path, live_folder,
+                                                              label, pinned):
+        """A row the user labelled or pinned keeps its label and pin when the
+        live chip returns to its content -- and after the baseline moves on
+        (the marker used to replace "known good", and its release then
+        cleared the label and dropped the pin)."""
+        hm = HistoryManager(tmp_path / "inst")
+        state, wiring = _chip_state(), _wiring()
+        meta = hm.check_and_snapshot(live_folder, "manual", force=True)
+        assert meta is not None
+        hm.annotate_snapshot(str(live_folder), meta.timestamp, label=label, pinned=pinned)
+        hm.set_live_baseline(str(live_folder), state, wiring)      # live back at that content
+        hm.set_live_baseline(str(live_folder), _chip_state(f_01=6.3e9), wiring)   # and on again
+        got = next(s for s in hm.list_snapshots(str(live_folder)) if s.timestamp == meta.timestamp)
+        assert (got.label, bool(got.pinned)) == (label, pinned)
+
     def test_baseline_sidecar_is_not_a_snapshot(self, tmp_path, live_folder):
         """The _baseline.json file lives in the chip dir but must not show up
         as (or break) snapshot listing — dir scans skip files."""
