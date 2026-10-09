@@ -455,10 +455,13 @@ class ChipSync:
         if not self.syncable:
             # nothing to read: no data folder and no observed states
             state = "ready"
-        elif not roots and self.slice_error is not None:
-            # S10 C1: a chip with no data folder whose ledger could not be
-            # opened -- not "building" forever: what the ledger holds (if
-            # anything) is what can be shown, and the note says why
+        elif self.slice_error is not None:
+            # S10 C1: a ledger that could not be opened, bound or written in
+            # the last slice -- not "building" forever (S10 C6: a corrupt
+            # ledger.sqlite left every list "being built" on a chip WITH a
+            # data folder): what the ledger holds (if anything) is what can
+            # be shown, a reader that cannot open it says so, and the next
+            # good slice clears this
             state = "degraded"
         elif building:
             state = "building"
@@ -490,6 +493,9 @@ class ChipSync:
             if state == "degraded":
                 st["note"] += ("; the change ledger could not be opened now, so it holds only "
                                "what it held before")
+        elif state == "degraded" and self.slice_error is not None:
+            st["note"] = ("the change ledger could not be opened or written now, so it holds only "
+                          "what it held before")
         elif state == "degraded":
             st["note"] = ("a data folder cannot be read now" if unreadable
                           else "some runs could not be ingested") + "; the ledger holds everything else"

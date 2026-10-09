@@ -201,7 +201,9 @@ async function fullText(b, url) {
     ok(await waitFor(b, "document.querySelector('#pending-tray').dataset.workingDirty==='0'", 30000), 'reverted on live (tray clean)');
     await b.shot(path.join(SHOTS, '07_reverted.png'));
     const after = await fullText(b, '/state/versions');
-    ok((after.match(/applied by /g) || []).length >= 2 && /apply_staged/.test(after) && /revert_last_apply/.test(after),
+    // S10 C6: the door is named in words (story._SM_DOOR), not by its raw key
+    ok((after.match(/applied by /g) || []).length >= 2 && /Applied a staged version/.test(after)
+       && /Reverted the last apply/.test(after),
        'the two SM writes are listed with their actor and door (no actor was given in this tab: "a person")');
 
     // 6. State History

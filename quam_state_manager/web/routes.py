@@ -18432,7 +18432,8 @@ def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0,
                       "text": f"{n} older snapshot{'s are' if n != 1 else ' is'} still being matched "
                               "against the change history; such a row may repeat a state listed "
                               "above until it is done. Reopen in a moment."})
-    if res.get("uncertain"):
+    if res.get("uncertain") and not any(n.get("code") == "other_chip" for n in notes):
+        # the folder view already said it (its other_chip note): one note, not two
         n = res["uncertain"]
         notes.append({"level": "info", "code": "uncertain",
                       "text": f"{n} run{'s' if n != 1 else ''} of an uncertain chip identity "

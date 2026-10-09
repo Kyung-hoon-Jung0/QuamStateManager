@@ -99,3 +99,4 @@ def test_the_listing_says_the_run_was_left_out(tmp_path):
     html = c.get("/state/versions?changes=all&limit=50").data.decode()
     assert html.count('<li class="state-version-row') == 1, "beta's run is not a version of alpha"
     assert "1 run whose saved chip identity does not match this chip" in html
+    assert "of an uncertain chip identity" not in html, "one note for the left-out run, not two"

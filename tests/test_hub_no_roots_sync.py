@@ -152,6 +152,28 @@ def test_a_folderless_chip_whose_ledger_cannot_open_is_degraded_not_building(tmp
     assert st["state"] == "ready" and "ledger_error" not in st
 
 
+def test_a_chip_with_a_data_folder_whose_ledger_cannot_open_is_degraded_not_building(tmp_path, monkeypatch):
+    """S10 C6 browser check: a corrupt ledger.sqlite on a chip WITH a data
+    folder left every list "being built" forever -- the folderless rule now
+    holds for every chip: a slice that cannot open the ledger is degraded."""
+    chip = tmp_path / "hist" / "broken_rooted"
+    root = tmp_path / "data"
+    root.mkdir()
+
+    def refuse(*_a, **_k):
+        raise sqlite3.DatabaseError("file is not a database")
+    monkeypatch.setattr(hub_store_mod, "HubStore", refuse)
+    cs = hub_sync.open_chip(chip, [(str(root), "extras")], observed=lambda: [])
+    hub_sync.kick(cs)
+    st = hub_sync.status(chip)
+    assert st["state"] == "degraded", "a ledger that cannot open is not 'building' forever"
+    assert "could not be opened or written" in st["note"] and "not a database" in st["ledger_error"]
+    monkeypatch.undo()
+    hub_sync.kick(cs)                             # the retry succeeds
+    st = hub_sync.status(chip)
+    assert st["state"] in ("ready", "building") and "ledger_error" not in st
+
+
 def test_periodic_relists_the_observed_states_of_a_folderless_chip(tmp_path):
     chip = tmp_path / "hist" / "periodic"
     calls = []
