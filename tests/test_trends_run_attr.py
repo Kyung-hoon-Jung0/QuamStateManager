@@ -4,11 +4,12 @@ Customer report 2026-09-29 (lab-F-env): *"one IRB point says its run is a flux
 short distortion experiment -- how can that be? T1 points also point to runs
 that are not T1."* And, on the click: *"wrong information is the worst."* A
 history snapshot names the run whose SAVE it copied; that save carries every
-value written before it. So a surface names that run only when
-``core.value_writer`` shows it wrote the value, names the real writer when one
-is found among the runs before it, and otherwise says "captured with run #N
-(not the run that measured it)" -- and never OPENS a run that did not write
-the value.
+value written before it. So a surface names a run as the writer only when the
+chip's change ledger proves it (the run's own patch set the value), and
+otherwise says what the ledger knows ("saved in #N, writer not proven", an
+observed state with its writer unknown) -- and never OPENS a run as the writer
+when it did not write the value. (S10 C5: the snapshot writer check is no longer read by
+these surfaces.)
 
 The fixture is one chip, one dataset root and four snapshots:
 
@@ -27,8 +28,6 @@ from pathlib import Path
 
 import pytest
 
-from quam_state_manager.core import value_writer as vw
-from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
 from tests.ledger_fixture import declare_root
 
@@ -66,9 +65,7 @@ def _run(root: Path, rid: int, name: str, t1: float, *, patches=None,
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    vw.clear_caches()
-    # an inline answer: the budgeted background path has its own test below
-    monkeypatch.setattr(routes_mod, "_WRITER_BUDGET_S", 120.0)
+    # S10 C5: value_writer caches + _WRITER_BUDGET_S -> not read, these surfaces read the ledger.
     live = tmp_path / "chips" / "live"
     _write_chip(live, _state(2.0e-5))
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
@@ -99,7 +96,6 @@ def env(tmp_path, monkeypatch):
         assert m is not None
         return m.timestamp
     yield {"client": c, "snap": snap, "runs": runs, "hm": hm, "live": live}
-    vw.clear_caches()
 
 
 def _four(env):

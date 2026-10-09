@@ -377,21 +377,17 @@ def brute_writer(conn, led: Ledger, sm_lines: dict, roots: dict, eid: int, holde
 
 
 def meta_check(sm, ctx, table, led: Ledger, seed: int, evidence: dict) -> dict:
-    """100 metric-meta cells: the writer the NEW meta names against brute
-    force; the cells the OLD meta named a run for that the new one calls not
-    proven, with 10 spot-check records for a person to read."""
-    r = sm.routes
+    """100 metric-meta cells: the writer the meta names, judged against brute
+    force (the run's own ``node.json`` patches, the ledger rows and the SM
+    events' own entries).
+
+    S10 C5: the old-meta side (which cells the snapshot meta named a run for,
+    and 10 spot checks of those) -> gone with the snapshot meta; its last run
+    was the C0 golden."""
     from quam_state_manager.core import metric_meta as mm
     from functools import partial
     new = sm.client.get("/topology/metric-meta").get_json()
     assert new["mode"] == "ledger", new.get("mode")
-    with sm.app.test_request_context():
-        old = r._legacy_topology_metric_meta().get_json()
-        for _ in range(30):                       # the old writer check runs in the background
-            if not old.get("updating"):
-                break
-            time.sleep(1.0)
-            old = r._legacy_topology_metric_meta().get_json()
     store = ctx["store"]
     with store._lock:
         doc = store.merged
@@ -443,77 +439,6 @@ def meta_check(sm, ctx, table, led: Ledger, seed: int, evidence: dict) -> dict:
             if not ok and len(disagree) < 20:
                 disagree.append({"metric": metric, "provenance": e["provenance"], "bf": {
                     k: v for k, v in bf.items() if k != "folder"}})
-    # the cells the OLD meta named a run for, now "not proven" / "unknown"
-    newly = []
-    for key in ("q", "p"):
-        for metric, per in (old.get(key) or {}).items():
-            for entity, o in per.items():
-                w = o.get("writer") or {}
-                if o.get("first") or o.get("incomplete") or w.get("captured") or w.get("pending"):
-                    continue          # the old hover named no WRITER for these
-                named = w.get("run") if w.get("run") is not None else o.get("run")
-                n = (new.get(key) or {}).get(metric, {}).get(entity) or {}
-                if named is not None and n.get("run") is None:
-                    newly.append((key, metric, entity, named, n))
-    counts["old_named_a_writer_run"] = sum(
-        1 for key in ("q", "p") for per in (old.get(key) or {}).values() for o in per.values()
-        if not (o.get("first") or o.get("incomplete") or (o.get("writer") or {}).get("captured")
-                or (o.get("writer") or {}).get("pending"))
-        and ((o.get("writer") or {}).get("run") is not None or o.get("run") is not None))
-    counts["old_named_new_not_proven"] = len(newly)
-    same = other = 0
-    for key in ("q", "p"):
-        for metric, per in (old.get(key) or {}).items():
-            for entity, o in per.items():
-                w = o.get("writer") or {}
-                if o.get("first") or o.get("incomplete") or w.get("captured") or w.get("pending"):
-                    continue
-                named = w.get("run") if w.get("run") is not None else o.get("run")
-                n = (new.get(key) or {}).get(metric, {}).get(entity) or {}
-                if named is not None and n.get("run") is not None:
-                    same += n["run"] == named
-                    other += n["run"] != named
-    counts["old_named_new_names_the_same_run"] = same
-    counts["old_named_new_names_another_run"] = other
-    counts["old_named_new_not_proven:by_new_provenance"] = dict(Counter(n.get("provenance") for *_x, n in newly))
-    # 10 spot checks, distinct (run, metric) pairs where possible
-    spots, seen = [], set()
-    rng.shuffle(newly)
-    with hub_index.snapshot(table.binding) as (conn, _index):
-        roots = {row[0]: row[1] for row in conn.execute("SELECT root_id, path FROM roots")}
-        for key, metric, entity, named, n in newly:
-            sig = (named, metric)
-            if sig in seen or len(spots) >= 10:
-                continue
-            seen.add(sig)
-            group = qpaths if key == "q" else ppaths
-            paths = group.get(metric, {}).get(entity) or []
-            holders = [vh.target(store.merged, dp)["holder"] for dp in paths]
-            ev = led.events.get(n.get("eid")) or {}
-            old_ev = next((x for x in led.events.values() if x.get("kind") == "run"
-                           and x.get("run_id") == named), None)
-            rec = {"metric": metric, "entity": entity, "old_named_run": named,
-                   "new_label": n.get("label"), "new_sub": n.get("sub"),
-                   "new_event_run": ev.get("run_id"), "holders": holders}
-            for tag, e2 in (("old_named", old_ev), ("new_event", ev)):
-                if not e2 or e2.get("kind") != "run":
-                    continue
-                folder = (roots.get(e2["root_id"]) or "").rstrip("/\\") + "/" + (e2.get("rel_path") or "")
-                try:
-                    node = json.loads((Path(folder) / "node.json").read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    node = {}
-                rec[tag + "_patches"] = [{"path": p.get("path"), "value": p.get("value")}
-                                         for p in node.get("patches") or [] if isinstance(p, dict)]
-                vals = {}
-                for h in holders:
-                    row = conn.execute("SELECT c.num, c.txt FROM changes c JOIN paths p USING(pid) "
-                                       "WHERE c.eid=? AND p.path=?", (e2["eid"], h)).fetchone()
-                    if row is not None:
-                        vals[h] = json.loads(row[1]) if row[1] is not None else row[0]
-                rec[tag + "_ledger_rows"] = vals
-            spots.append(rec)
-    evidence["meta_spot_checks"] = spots
     evidence["meta_disagree"] = disagree
     return {k: v for k, v in counts.items()}
 

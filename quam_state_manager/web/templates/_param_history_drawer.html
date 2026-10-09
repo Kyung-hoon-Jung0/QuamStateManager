@@ -14,9 +14,8 @@
             onclick="paramHistoryCloseDrawer()">Close</button>
   </div>
 
-  {# docs/283: the ledger's notes, the older snapshot path's label, or the
-     ledger still being built (no chart then: never a partial history) #}
-  {% if hub_fallback %}<p class="vh-fallback">{{ hub_fallback }}</p>{% endif %}
+  {# docs/283: the ledger's notes, or the ledger still being built (no chart
+     then: never a partial history). S10 C5: the older snapshot path's label -> gone. #}
   {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
   {% if hub_wait %}
   <p class="vh-wait">{{ hub_wait }}{% if hub_mode != 'unavailable' %} Open this cell again in a moment.{% endif %}</p>

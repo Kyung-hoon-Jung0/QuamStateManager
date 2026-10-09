@@ -17,7 +17,7 @@ SOURCE = ROOT / "quam_state_manager/web/routes.py"
 TEST = "tests/test_hub_fallback_tripwire.py"
 MUTATIONS = [
     ("drawer_call_removed", '    _hub_fallback_reached("drawer", ans["reason"])', "    pass"),
-    ("trends_call_removed", '    _hub_fallback_reached("trends", ans["reason"])', "    pass"),
+    # S10 C5: "trends_call_removed" retired -- the Trends snapshot arm and its tripwire call are deleted
     ("versions_call_removed", '        _hub_fallback_reached("versions", versions["reason"])', "        pass"),
     ("state_history_call_removed", '        _hub_fallback_reached("state_history", versions["reason"])', "        pass"),
     ("counts_removed", '        _HUB_FALLBACK_REACHED[key] = _HUB_FALLBACK_REACHED.get(key, 0) + 1', "        pass"),

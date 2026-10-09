@@ -7287,15 +7287,8 @@ window.ChipTrends = (function () {
         }
         return info.why ? _esc(info.why) : '';
     }
-    /* A point whose value no run can be shown to have written: the
-       snapshot's run only SAVED a state that already carried it. Say so --
-       never the confident "#3087 · 20 Flux short" on an IRB point. */
-    function _capturedLine(info) {
-        if (!info || !info.run) return '';
-        return 'captured with run #' + _esc(info.run)
-             + (info.short ? ' · ' + _esc(info.short) : '')
-             + '<br><i style="opacity:.7">(not the run that measured it)</i>';
-    }
+    /* S10 C5: the captured-only hover line (the snapshot writer check's "captured with
+       run #N") -> gone; a ledger point says "saved in #N, writer not proven" itself. */
     /* The writer was found among the runs BEFORE the snapshot's own run;
        name the capturer too, so the snapshot id below still makes sense. */
     function _capturerLine(info) {
@@ -7607,21 +7600,11 @@ window.ChipTrends = (function () {
                                 + _esc(since ? String(since).replace('T', ' ') : held[p[0]]), '', null];
                     }
                     var info = snaps && snaps[String(p[0])];
-                    // The run that WROTE this value, when it is not the run
-                    // whose save the snapshot copied (routes
-                    // ._trend_point_writers): the snapshot's run is the
-                    // CAPTURER, and naming it as the point's run was the
-                    // "IRB point says Flux short" report (2026-09-29).
+                    // The point's own words (docs/283: the ledger's attr per
+                    // point -- a run named as the writer only on its own patch).
+                    // S10 C5: the snapshot writer check's captured / pending arms -> gone.
                     var ov = s.attr && s.attr[String(p[0])];
                     if (ov) {
-                        if (ov.captured) {
-                            return [p[0], _capturedLine(info), '', null];
-                        }
-                        if (ov.pending) {
-                            // still being checked: name no run, open nothing
-                            return [p[0], '<i style="opacity:.7">checking which run'
-                                    + ' wrote this value…</i>', '', null];
-                        }
                         return [p[0], _provLine(ov) + _capturerLine(info),
                                 _hintLine(ov), ov.uid || null,
                                 (!ov.uid && ov.saved_uid) || null];

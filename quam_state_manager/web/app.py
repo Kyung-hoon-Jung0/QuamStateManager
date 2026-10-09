@@ -923,8 +923,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # its chip's ledger -- found through the same identity ladder
     from quam_state_manager.core import hub as _hub_mod
     _hub_mod.set_chip_dir_resolver(app.config["history_manager"].history_dir_cached)
-    from quam_state_manager.web.routes import install_trends_prewarm
-    install_trends_prewarm(app)
+    # S10 C5: the snapshot-table Trends prewarm -> gone; it warmed only the deleted table.
     from quam_state_manager.web.routes import install_hub_capture_refresh
     install_hub_capture_refresh(app)
     app.config["contexts"] = {}

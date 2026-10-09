@@ -92,9 +92,12 @@ MUTATIONS.extend([
      '<span id="history-count" hx-swap-oob="true">{{ lv.total }}</span>',
      '<span>{{ lv.total }}</span>',
      [TEST + "::test_ledger_drawer_pages_states_and_refreshes_count"]),
+    # S10 C5: re-pointed -- the snapshot arm that wrote the count is deleted; the defect is
+    # the count written beside the ledger's event count again
     ("trends_writes_the_drawer_count", TEMPLATES + "_topo_trends.html",
-     "{% if hub_mode != 'ledger' %}<span id=\"history-count\"",
-     "{% if True %}<span id=\"history-count\"",
+     "recorded event{{ '' if snapshots == 1 else 's' }}</span>",
+     "recorded event{{ '' if snapshots == 1 else 's' }}</span>"
+     "<span id=\"history-count\" hx-swap-oob=\"true\">{{ snapshots }}</span>",
      [TEST + "::test_ledger_drawer_pages_states_and_refreshes_count",
       "tests/test_history_drawer.py::TestTheCountFollowsTakeSnapshot::test_the_trends_fragment_carries_the_same_count"]),
     ("ledger_disk_usage_missing", ROUTES,
@@ -136,12 +139,16 @@ MUTATIONS.extend([
     ("empty_drawer_denies_states", TEMPLATES + "_history_panel_ledger.html",
      "{% if lv.mode == 'ledger' %}<p class=", "{% if True %}<p class=",
      [TEST, "-k", "nonledger_empty_list"]),
+    # S10 C5: re-pointed -- the sparkline route lost its snapshot arm
     ("sparklines_omit_link_note", ROUTES,
-     '                           hub_notes=table.notes if table is not None else [])',
+     '    return render_template("_topo_sparklines.html", rows=rows, snapshots=events, ledger=True,\n'
+     '                           hub_notes=table.notes)',
+     '    return render_template("_topo_sparklines.html", rows=rows, snapshots=events, ledger=True,\n'
      '                           hub_notes=[])',
      [TEST, "-k", "no_run_ledger_never"]),
+    # S10 C5: re-pointed -- the report lost its snapshot-table arm
     ("report_omits_link_note", ROUTES,
-     '                           hub_notes=tbl.notes if _is_ledger_table(tbl) else [])',
+     '                           hub_notes=tbl.notes)',
      '                           hub_notes=[])',
      [TEST, "-k", "no_run_ledger_never"]),
     ("owned_backup_not_refreshed", ROUTES,
@@ -174,14 +181,16 @@ MUTATIONS.extend([
      '        if m.timestamp in own or not (m.label or m.note or m.pinned):',
      '        if m.timestamp in own:',
      [TEST, "-k", "plain_copies_of_one_state"]),
+    # S10 C5: re-pointed -- one indentation level less with the snapshot arm gone
     ("trends_table_error_escapes", ROUTES,
-     '        except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500\n'
-     '            return _hub_surface_wait(_hub_table_failed("trends"), "trends")\n',
+     '    except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500\n'
+     '        return _hub_surface_wait(_hub_table_failed("trends"), "trends")\n',
      '',
      [TEST + "::test_a_table_read_that_raises_is_terminal_never_a_500[/topology/trends?metrics=T1]"]),
+    # S10 C5: re-pointed -- one indentation level less with the snapshot arm gone
     ("changes_table_error_escapes", ROUTES,
-     '            except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500\n'
-     '                return _hub_surface_wait(_hub_table_failed("changes"), "changes")\n',
+     '    except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500\n'
+     '        return _hub_surface_wait(_hub_table_failed("changes"), "changes")\n',
      '',
      [TEST + "::test_a_table_read_that_raises_is_terminal_never_a_500[/param-history/changes]"]),
     ("table_error_reads_as_a_wait", ROUTES,

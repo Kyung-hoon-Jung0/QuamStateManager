@@ -1,14 +1,14 @@
 """S8 server time (docs/283): Chip Status Trends, the metric meta, the Param
-History grid and Changes, before (the old snapshot paths) vs after (the change
-ledger), cold and warm, through the Flask test client (server time, no
-network). One process, the same chip for both sides.
+History grid and Changes from the change ledger, cold and warm, through the
+Flask test client (server time, no network).
 
-"Before" is the old code path exactly: ``routes._hub_status_table`` is
-stubbed to answer ``fallback`` at zero cost, so every route runs its
-unchanged old body. "After" is the ledger path. "Cold" is the first request
-after every RAM cache and read index was dropped (a ledger answer that says
-"preparing" is asked again, and the waiting counts); "warm" is the median of
-the passes that follow, the two sides alternating pass by pass.
+"Cold" is the first request after every RAM cache and read index was dropped
+(a ledger answer that says "preparing" is asked again, and the waiting
+counts); "warm" is the median of the passes that follow.
+
+S10 C5: the "before" side (the old snapshot paths, reached by stubbing the
+mode to ``fallback``) -> gone with those paths; the report keeps its "after"
+key so earlier reports still compare.
 
     python tools/perf_hub_chip_status.py --chip <chip dir> --runs 20 --scratch <dir> --report <json>
     python tools/perf_hub_chip_status.py --runs 10000 --qubits 32 --scratch <dir> --report <json>
@@ -58,7 +58,6 @@ def _drop_caches(sm):
     chip_trends_ram.close_all()
     param_history_ram.close_all()
     hub_status._CACHE.clear()
-    sm.routes._PH_CHANGES_MEMO.clear()
 
 
 def _once(sm, urls) -> tuple[float, int, int]:
@@ -72,40 +71,20 @@ def _once(sm, urls) -> tuple[float, int, int]:
 
 
 def measure(sm, passes: int) -> dict:
-    """``{"before": {surface: ...}, "after": {...}}``. Cold: each side's
-    first request after every cache was dropped. Warm: both sides warmed,
-    then *passes* rounds ALTERNATING the side (and its order each round), so
-    the drift of a shared PC falls on both alike."""
-    routes = sm.routes
-    real = routes._hub_status_table
-    stub = lambda ctx: ({"mode": "fallback", "fallback_note": "", "ledger": {}}, None)  # noqa: E731
-
-    def side(name):
-        routes._hub_status_table = stub if name == "before" else real
-    out = {"before": {}, "after": {}}
-    try:
-        for name, urls in SURFACES.items():
-            for s in ("before", "after"):
-                side(s)
-                _drop_caches(sm)
-                ms, size, waits = _once(sm, urls)
-                out[s][name] = {"cold_ms": round(ms, 1), "bytes": size, "preparing_reasks": waits}
-            for s in ("before", "after"):          # warm both
-                side(s)
-                for _ in range(2):
-                    _once(sm, urls)
-            warm = {"before": [], "after": []}
-            for i in range(passes):
-                for s in (("before", "after") if i % 2 == 0 else ("after", "before")):
-                    side(s)
-                    warm[s].append(_once(sm, urls)[0])
-            for s in ("before", "after"):
-                w = sorted(warm[s])
-                out[s][name].update(warm_ms=round(statistics.median(w), 1),
-                                    warm_p90_ms=round(w[int(0.9 * (len(w) - 1))], 1))
-        return out
-    finally:
-        routes._hub_status_table = real
+    """``{"after": {surface: ...}}`` (the ledger). Cold: the first request
+    after every cache was dropped. Warm: two warm-up requests, then the median
+    and p90 of *passes* requests."""
+    out = {"after": {}}
+    for name, urls in SURFACES.items():
+        _drop_caches(sm)
+        ms, size, waits = _once(sm, urls)
+        out["after"][name] = {"cold_ms": round(ms, 1), "bytes": size, "preparing_reasks": waits}
+        for _ in range(2):
+            _once(sm, urls)
+        w = sorted(_once(sm, urls)[0] for _ in range(passes))
+        out["after"][name].update(warm_ms=round(statistics.median(w), 1),
+                                  warm_p90_ms=round(w[int(0.9 * (len(w) - 1))], 1))
+    return out
 
 
 def main() -> None:
