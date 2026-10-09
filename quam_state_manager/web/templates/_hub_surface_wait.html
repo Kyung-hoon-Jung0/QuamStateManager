@@ -6,13 +6,28 @@
 {% set again = '/topology/trends' if surface == 'trends' else ('/param-history/changes' if surface == 'changes' else '/param-history') %}
 {% set qs = request.query_string.decode() %}
 <div {% if surface == 'trends' %}class="topo-trends" id="topo-trends"{% else %}id="param-history-root" class="param-history"{% endif %}>
+  {% if archive_chip %}
+  {# S10 walk: an archived chip's wait / end page replaces the whole root, so
+     it names the chip it is about (display name first, history folder second)
+     and the way back to the open chip #}
+  <div class="param-history-header ph-archive-head">
+    <h2 style="margin:0">Param History</h2>
+    <p class="muted" style="margin:0">Chip <strong class="ph-archive-name">{{ archive_chip.display }}</strong>
+      {%- if archive_chip.display != archive_chip.key %} <code class="ph-archive-key">{{ archive_chip.key }}</code>{% endif %}
+      &middot; not the open chip &middot;
+      <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
+         hx-swap="outerHTML" hx-push-url="true">Back to the open chip</a></p>
+  </div>
+  {% endif %}
   {% if ans.mode == 'unavailable' %}
   {# S8 review P2-1 / S10 C3: the change history could not be read -- an end
-     state, not a wait: no self re-ask loop, one explicit press to try again #}
-  <p class="vh-wait" data-vh-mode="unavailable">{{ message }}
-    <button type="button" class="btn-sm" hx-get="{{ again }}{% if qs %}?{{ qs }}{% endif %}"
+     state, not a wait: no self re-ask loop. One explicit press to try again,
+     only where a retry can change the answer (S10 walk: never for an end
+     state the same files would give again) #}
+  <p class="vh-wait" data-vh-mode="unavailable" data-vh-reason="{{ ans.reason or '' }}">{{ message }}
+    {% if retry is not defined or retry %}<button type="button" class="btn-sm" hx-get="{{ again }}{% if qs %}?{{ qs }}{% endif %}"
        hx-target="{{ '#topo-trends' if surface == 'trends' else '#param-history-root' }}"
-       hx-swap="outerHTML">Try again</button></p>
+       hx-swap="outerHTML">Try again</button>{% endif %}</p>
   {% if open_chip_path %}
   <form method="post" action="/load">
     <button type="submit" class="btn-sm" name="folder" value="{{ open_chip_path }}">Open this chip</button>

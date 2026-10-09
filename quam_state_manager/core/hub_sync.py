@@ -314,6 +314,9 @@ class RootState:
     readable: bool = True
     list_cursor: int = 0
     sweep_cursor: int = 0
+    #: S10 walk: an archived chip's build reads only the run folders its run
+    #: captures name (``YYYY-MM-DD/#N_name_HHMMSS``); None: every run of the root
+    only: set | None = None
 
     def hint(self, extra: Counter | None = None) -> str | None:
         votes = self.votes + extra if extra else self.votes
@@ -362,6 +365,17 @@ class ChipSync:
         self.observed_source: Callable[[], list[dict]] | None = None
         self.observe_wanted = True
         self.observe_queue: deque = deque()
+        # S10 walk: the observed import's own progress (snapshots, not runs)
+        self.obs_done = 0
+        self.obs_total = 0
+        # S10 walk: an archived chip's one-off build from its own snapshots
+        # (no folder is open; ``build_archived``); a live open clears it
+        self.archive = False
+        # S10 walk: what the archive build reads on its first slice (on the
+        # projector, never the request thread): ``{"roots", "only"}`` -- the
+        # data roots its run captures name that are still on disk, and per
+        # root the run folders they name
+        self.archive_setup: Callable[[], dict] | None = None
         # S10 C1: why the last slice could not run (the ledger could not be
         # opened or bound); cleared by the next slice that completes
         self.slice_error: str | None = None
@@ -489,6 +503,9 @@ class ChipSync:
             "errors": list(self.errors),
             "last_slice_ms": round(self.last_slice_ms, 1),
             "slices": self.slices,
+            "observed_done": self.obs_done,
+            "observed_total": self.obs_total,
+            "archive": self.archive,
         }
         if self.slice_error is not None:
             st["ledger_error"] = self.slice_error
@@ -589,6 +606,8 @@ class ChipSync:
         t0 = time.perf_counter()
         deadline = None if budget_s is None else time.monotonic() + budget_s
         self.slices += 1
+        if self.archive and self.archive_setup is not None:
+            self._archive_setup()
         with self.lock:
             full, dirty, listing = self.full_wanted, set(self.dirty), self.listing_wanted
             if full or dirty:
@@ -601,8 +620,19 @@ class ChipSync:
         if full or dirty:
             if self.phase == "ready":
                 self.done = self.total = 0          # a new burst of work
+                self.obs_done = self.obs_total = 0
         if self._bind(store):
             full = True
+        if self.archive and store.meta(ARCHIVE_BUILD) != "running":
+            # S10 walk: a build that stops part way (the process ends) is
+            # resumed by the next view, never read as a complete history
+            with txn(store):
+                store.set_meta(ARCHIVE_BUILD, "running")
+        elif not self.archive and store.meta(ARCHIVE_BUILD) is not None:
+            # S10 walk: opened live, the chip's ledger is kept by its folder
+            # from now on -- no longer one built from its snapshots alone
+            with txn(store):
+                store.conn.execute("DELETE FROM meta WHERE k=?", (ARCHIVE_BUILD,))
         if self.links_due:
             self._link(store)
         if full or dirty or listing:
@@ -657,12 +687,16 @@ class ChipSync:
                 snap = self.observe_queue.popleft()
                 self.in_hand += 1
                 try:
-                    self.counts["observed:" + attach_observed(store, snap)] += 1
+                    # S10 walk: an archived chip's run capture whose run folder
+                    # is gone is that run's saved state -- a run, not a state SM saw
+                    attach = attach_captured_run if snap.get("run") else attach_observed
+                    self.counts["observed:" + attach(store, snap)] += 1
                 except Exception as exc:  # noqa: BLE001 -- one snapshot never stops the sync
                     logger.warning("hub sync: snapshot %s failed", snap.get("ts"), exc_info=True)
                     self.errors.append(f"snapshot {snap.get('ts')}: {type(exc).__name__}: {exc}")
                 finally:
                     self.in_hand -= 1
+                    self.obs_done += 1
                 steps += 1
             if ingested != self.__dict__.get("_ingested_seen", 0):
                 # a run that landed next to an observation of its own save
@@ -672,6 +706,9 @@ class ChipSync:
                 # S10 walk: a run placed before an observation of its own state
                 self.counts["observed:dropped"] += drop_observed_explained(store)
         more = self.has_work()
+        if not more and self.archive:
+            with txn(store):
+                store.set_meta(ARCHIVE_BUILD, ARCHIVE_DONE)
         self.slice_error = None
         self.slice_error_transient = False
         if not more:
@@ -680,6 +717,28 @@ class ChipSync:
             self.sweep_initial = False
         self.last_slice_ms = (time.perf_counter() - t0) * 1000.0
         return more
+
+    def _archive_setup(self) -> None:
+        """S10 walk: an archived chip's build reads, once, the data roots of
+        the run folders its run captures name (still on disk: those runs are
+        ingested as a live chip's catch-up ingests them -- ONLY those: another
+        chip's runs in the same data folder are never read into this chip's
+        history)."""
+        setup, self.archive_setup = self.archive_setup, None
+        try:
+            got = setup() or {}
+        except Exception as exc:  # noqa: BLE001 -- no root: the captures stand for the runs
+            self.errors.append(f"archive roots: {type(exc).__name__}: {exc}")
+            got = {}
+        roots = list(got.get("roots") or ())
+        if roots:
+            self.set_roots(roots)
+            only = got.get("only") or {}
+            with self.lock:
+                for k, rs in self.roots.items():
+                    if k in only:
+                        rs.only, rs.listed = set(only[k]), False
+                        rs.dates.clear()
 
     def _observe_list(self, store: HubStore) -> None:
         """Queue the snapshots the ledger has not looked at yet, oldest first."""
@@ -695,6 +754,7 @@ class ChipSync:
         fresh = [s for s in snaps if s["ts"] not in seen and s["ts"] not in queued]
         fresh.sort(key=lambda s: (s["t_us"], s["ts"]))
         self.observe_queue.extend(fresh)
+        self.obs_total += len(fresh)
 
     # -- listing ---------------------------------------------------------
 
@@ -773,6 +833,8 @@ class ChipSync:
             rs.readable = False
             self.errors.append(f"{rs.path}: cannot list ({exc})")
             return []
+        if rs.only is not None:
+            days = [d for d in days if any(r.startswith(d + "/") for r in rs.only)]
         for gone in set(rs.dates) - set(days):
             rs.dates.pop(gone, None)
         newest = set(days[-NEWEST_DATES:]) | {d for d in days if d not in rs.dates}
@@ -807,7 +869,7 @@ class ChipSync:
                 rs.dates[day] = mtime
             for name in names:
                 rel = f"{day}/{name}"
-                if rel in rs.known or rel in rs.failed:
+                if rel in rs.known or rel in rs.failed or (rs.only is not None and rel not in rs.only):
                     continue
                 new.append(rel)
         rs.listed = True
@@ -1540,6 +1602,92 @@ def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str
     return done("added" if hi is None else "inserted", eid)
 
 
+#: S10 walk: the ``src`` of a run event imported from a Param History capture
+#: of the run (its run folder is gone): the run's saved state, no location
+RUN_CAPTURE_SRC = "param_history:run_capture"
+
+
+def attach_captured_run(store: HubStore, snap: dict, *, in_txn: bool = False) -> str:
+    """S10 walk: an ARCHIVED chip's Param History capture of a run whose run
+    folder no longer exists, placed as THAT RUN's event: ``kind`` run, the
+    run id / experiment / time of the capture, the capture as the run's saved
+    state, no data root (``SOURCE_GONE``: no folder to open). Its rows are its
+    diff against the event before it (its successor is re-diffed, I2), and no
+    row is proven: the run's own patches are not known, so a reader says
+    "saved in #N", writer not proven -- never "seen by SM". A capture of a run
+    the ledger already holds (same run, same saved state) is left out.
+    ``snap``: an observed snapshot dict plus ``run`` ``{"run_id",
+    "experiment", "folder"}``. Returns ``run_added`` / ``run_inserted`` /
+    ``run_present`` / ``unreadable`` / ``present``."""
+    if not in_txn:
+        with txn(store):
+            return attach_captured_run(store, snap, in_txn=True)
+    c = store.conn
+    _observed_table(c)
+    if c.execute("SELECT 1 FROM observed_snapshots WHERE ts=?", (snap["ts"],)).fetchone():
+        return "present"
+
+    def done(outcome, eid=None):
+        c.execute("INSERT OR REPLACE INTO observed_snapshots VALUES(?,?,?)", (snap["ts"], outcome, eid))
+        c.execute("INSERT OR IGNORE INTO observed_lanes(ts) VALUES(?)", (snap["ts"],))
+        return outcome
+    run = snap["run"]
+    folder = Path(snap["dir"])
+    try:
+        raw = (hub_build._read_shared(folder / "state.json"), hub_build._read_shared(folder / "wiring.json"))
+        # its chip identity is not judged again: Param History filed the
+        # capture under this chip (as its pre-S10 grid showed it)
+        doc, flat, _id_flags, chip, pair = hub_build.parse_state(raw, folder, _chip(store), want_pair=True)
+    except (OSError, ValueError, TypeError) as exc:
+        logger.debug("hub sync: run capture %s unreadable: %s", snap["ts"], exc)
+        return done("unreadable")
+    digest = rules.state_hash(*raw)
+    chash = _content_hash_of(*pair)
+    # the same run with the same saved content (compared parsed: a capture
+    # is a copy, not the same bytes) is already in the ledger
+    if c.execute("SELECT 1 FROM events WHERE kind='run' AND error IS NULL AND run_id IS ? AND experiment IS ? "
+                 "AND (state_hash=? OR chash=?)",
+                 (run.get("run_id"), run.get("experiment"), digest, chash)).fetchone():
+        return done("run_present")
+    t_us = int(snap["t_us"])
+    rel = "snapshot:" + snap["ts"]
+    lo, hi = store.neighbors((t_us, "", run.get("run_id") or 0, run.get("experiment") or "", rel, _NEW))
+    pred, succ = store.good_at_or_before(lo), store.good_at_or_after(hi)
+    pred_flat = store.flat_of(pred) if pred is not None else {}
+    rows = rules.diff(pred_flat, flat)
+    succ_flat = _prepare_successor(store, succ)
+    ord_ = store.alloc_ord(lo, hi)
+    event = dict(kind="run", t_utc_us=t_us, t_src=snap["ts"], t_quality="snapshot", ord=ord_,
+                 root_id=None, rel_path=rel, run_id=run.get("run_id"), experiment=run.get("experiment"),
+                 status=None, run_start_us=None, run_end_us=None, parents="[]", targets="{}", patches_n=0,
+                 actor=None, plan_id=None, src=RUN_CAPTURE_SRC, live=snap.get("live"),
+                 state_hash=digest, base_hash=pred["state_hash"] if pred is not None else None,
+                 state_ref=str(folder), n_changes=len(rows), flags=SOURCE_GONE,
+                 shape_hash=store.shape_and_arrays(doc, flat), error=None, t_ord=t_us, chash=chash)
+    columns = ",".join(event)
+    eid = c.execute(f"INSERT INTO events({columns}) VALUES({','.join('?' for _ in event)})",
+                    tuple(event.values())).lastrowid
+    if chip is not None and store.meta("chip_identity") is None:
+        store.set_meta("chip_identity", json_bytes(chip).decode("utf-8"))
+    if succ is not None:
+        succ = store.event(succ["eid"])              # alloc_ord may have renumbered
+    hi_ord = succ["ord"] if succ is not None else None
+    store.write_rows(eid, rows, set())
+    row = store.event(eid)
+    store.remember_flat(row, flat)
+
+    def doc_fn():
+        return doc
+    if succ is not None and succ_flat is not None:
+        _rediff_successor(store, succ, flat, digest, succ_flat)
+    store.refresh_error_checkpoints(ord_, hi_ord, doc_fn)
+    store.refresh_error_bases(ord_, hi_ord, digest)
+    store.maybe_checkpoint(eid, ord_, doc_fn)
+    store.refresh_reverts([eid, succ["eid"] if succ is not None else None,
+                           *store.same_hash_after(digest, ord_)])
+    return done("run_added" if hi is None else "run_inserted", eid)
+
+
 def drop_observed_runs(store: HubStore) -> int:
     """An observed event whose next event is a run that saved exactly the
     same state was that run's save, seen by SM before the run's folder (clock
@@ -1732,7 +1880,13 @@ def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | No
             if other is not cs:
                 other.active = False
     cs.active = True
+    cs.archive = False             # S10 walk: a live open keeps the chip from now on
+    cs.archive_setup = None
     cs.set_roots(roots)
+    for rs in cs.roots.values():
+        if rs.only is not None:    # every run of a live chip's data folder: list it all again
+            rs.only, rs.listed = None, False
+            rs.dates.clear()
     if folder is not None:
         # S10 C1.5: the opening folder (its comparison key); its data roots
         # are linked to it at the next slice
@@ -1746,6 +1900,93 @@ def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | No
     if kick and cs.syncable:
         _kick(cs)
     return cs
+
+
+#: S10 walk: ledger meta of an archived chip's build from its own snapshots --
+#: "running" from its first slice, :data:`ARCHIVE_DONE` when the last snapshot
+#: was looked at (any other value -- a build of an older kind -- is resumed)
+ARCHIVE_BUILD = "archive_build"
+ARCHIVE_DONE = "done:runs"
+
+
+def registered_for(chip_dir) -> ChipSync | None:
+    """The chip's sync in this process, or None (never creates one)."""
+    with _SYNCS_LOCK:
+        return _SYNCS.get(_norm(chip_dir))
+
+
+def build_archived(chip_dir, observed: Callable[[], list[dict]],
+                   setup: Callable[[], dict] | None = None) -> ChipSync:
+    """S10 walk: build an ARCHIVED chip's ledger from its own Param History
+    snapshots -- the observed import a live chip with no data folder gets
+    (S10 C1), with no folder open: each snapshot that is not a run becomes an
+    ``observed`` event. Its RUN captures are its run history: *setup* (read
+    on the first slice) names the data roots of the run folders still on
+    disk -- their runs are ingested exactly as a live chip's catch-up does --
+    and *observed* also yields, as ``run`` items, the captures of runs whose
+    folder is gone (:func:`attach_captured_run`). In the background (the
+    projector; inline in tests), progress in ``status()``. The sync is not
+    active: nothing re-lists it, and it never takes the open chip's place.
+    A chip this process opened live before is built the same way: the
+    snapshots are read from ITS history folder (the live folder may resolve
+    to another chip now); its registered data folders, if any, are read as
+    they were. A live open makes it the folder's sync again."""
+    cs = sync_for(chip_dir)
+    with cs.lock:
+        cs.archive = True
+        cs.observed_source = observed
+        cs.archive_setup = setup
+        cs.active = False
+        cs.folder = None           # no folder is open: its data roots are linked to none
+    cs.request(full=True)
+    kick(cs)
+    return cs
+
+
+def archive_peek(chip_dir) -> dict | None:
+    """S10 walk: what an archived chip's ledger holds, read only -- ``events``
+    (good events), ``looked`` (snapshots the observed import looked at),
+    ``outcomes`` (per outcome), ``build`` (:data:`ARCHIVE_BUILD`, None when
+    it was not built from its snapshots), ``runs`` (good run events) and what
+    it was built from (``runs_in_folders`` -- runs read from their data
+    folders --, ``runs_from_captures``, ``observed``). None when the chip
+    has no ledger file."""
+    import sqlite3
+    path = Path(chip_dir) / "ledger.sqlite"
+    if not path.is_file():
+        return None
+    con = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0)
+    try:
+        def meta(key):
+            try:
+                row = con.execute("SELECT v FROM meta WHERE k=?", (key,)).fetchone()
+            except sqlite3.OperationalError:
+                return None
+            return row[0] if row else None
+        try:
+            events = con.execute("SELECT COUNT(*) FROM events WHERE error IS NULL").fetchone()[0]
+        except sqlite3.OperationalError:
+            events = 0
+        try:
+            outcomes = {o: n for o, n in con.execute(
+                "SELECT outcome, COUNT(*) FROM observed_snapshots GROUP BY outcome")}
+        except sqlite3.OperationalError:
+            outcomes = {}
+        try:
+            # what the history was built from: runs read from their data
+            # folders (this chip's), runs from captures, states SM saw
+            kinds = con.execute(
+                "SELECT SUM(kind='run' AND root_id IS NOT NULL), SUM(kind='run' AND src=?), "
+                "SUM(kind=?), SUM(kind='run') FROM events WHERE error IS NULL",
+                (RUN_CAPTURE_SRC, OBSERVED_KIND)).fetchone()
+        except sqlite3.OperationalError:
+            kinds = (0, 0, 0, 0)
+        return {"events": int(events), "looked": sum(outcomes.values()), "outcomes": outcomes,
+                "build": meta(ARCHIVE_BUILD), "runs_in_folders": int(kinds[0] or 0),
+                "runs_from_captures": int(kinds[1] or 0), "observed": int(kinds[2] or 0),
+                "runs": int(kinds[3] or 0)}
+    finally:
+        con.close()
 
 
 def on_roots_moved(moved: Iterable[str]) -> int:
@@ -1881,7 +2122,9 @@ def verify(store: HubStore, *, sample: int | None = None, read_runs: bool = True
                                   if sample is not None and sample < len(good_runs) else good_runs))
     for r in rows:
         if r["kind"] == "run":
-            if not store.conn.execute("SELECT 1 FROM locations WHERE eid=?", (r["eid"],)).fetchone():
+            # S10 walk: a run imported from its capture has no folder by design
+            if (r["src"] != RUN_CAPTURE_SRC
+                    and not store.conn.execute("SELECT 1 FROM locations WHERE eid=?", (r["eid"],)).fetchone()):
                 problems.append(f"eid {r['eid']}: run without a location")
             if r["error"] is None:
                 want = prev_good["state_hash"] if prev_good is not None else None

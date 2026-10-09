@@ -22,6 +22,12 @@
     {#- S10 walk: the unreadable end state's one manual press, as on every surface -#}
     <button type="button" class="btn-sm vh-try-again"
             onclick='paramHistoryOpenDrawer({{ qubit | tojson }}, {{ prop | tojson }})'>Try again</button>{% endif %}</p>
+  {% if open_chip_path %}
+  {# S10 final review: the grid's own action, offered here too #}
+  <form method="post" action="/load" class="hub-open-chip">
+    <button type="submit" class="btn-sm" name="folder" value="{{ open_chip_path }}">Open this chip</button>
+  </form>
+  {% endif %}
   {% else %}
   <div id="phd-chart" style="width:100%;height:340px"></div>
 

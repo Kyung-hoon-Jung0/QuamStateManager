@@ -232,8 +232,9 @@ MUTATIONS = [
      '            token = (reader.identity, ledger_id, version, high, journal_size, zone)\n',
      [RM + "test_p2_3_every_zone_shares_one_index"]),
     # S10 C4: skipped observation loop -> skipped imports, consume queued work before asserting.
+    # S10 walk: re-pointed -- the observed import dispatches a captured run to its own attach
     ("p1_2_snapshots_never_imported", SY,
-     '                    self.counts["observed:" + attach_observed(store, snap)] += 1',
+     '                    self.counts["observed:" + attach(store, snap)] += 1',
      '                    self.counts["observed:skipped"] += 1',
      [RO + "test_p1_2_a_state_sm_saw_between_runs_is_in_the_history"]),
     ("p1_2_a_runs_early_save_imported", SY,

@@ -46,9 +46,9 @@ MUTATIONS = [
      "                or not roots)",
      "        kick = (not app.config.get(\"TESTING\") or bool(app.config.get(\"HUB_SYNC_ON_OPEN\")))",
      "gets_its_ledger or versions_show or tripwire"),
+    # S10 walk: re-pointed -- one run rule (routes._is_run_snapshot) for every reader
     ("run_snapshots_imported", ROUTES,
-     "            if (getattr(m, \"kind\", None) == \"exp\" or m.trigger == \"experiment\"\n"
-     "                    or m.run_id is not None or m.experiment_folder_path):\n                continue",
+     "            if _is_run_snapshot(m):\n                continue",
      "            if False:\n                continue",
      "no_run_snapshot"),
     ("parallel_snapshots_imported", ROUTES,
@@ -64,10 +64,13 @@ MUTATIONS = [
      "            hub_sync.slice_failed(hub.dir, exc)\n\n    def _sync_one",
      "            self.errors.append(f\"{hub.dir}: sync: {type(exc).__name__}: {exc}\")\n\n    def _sync_one",
      "cannot_open"),
+    # S10 walk: re-pointed -- the archive marker is written between the two lines
     ("failed_slice_never_cleared", SYNC,
-     "        more = self.has_work()\n        self.slice_error = None\n",
-     "        more = self.has_work()\n",
+     "        self.slice_error = None\n        if not more:\n",
+     "        if not more:\n",
      "cannot_open"),
+    # S10 walk: re-pointed -- the anchor went stale when S10 C6 made the state for
+    # every chip (``elif self.slice_error is not None``)
     ("degraded_state_removed", SYNC,
      "        elif self.slice_error is not None and not (self.slice_error_transient and building):",
      "        elif False:",
