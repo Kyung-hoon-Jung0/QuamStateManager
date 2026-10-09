@@ -181,11 +181,17 @@ def test_column_reads_no_run_ledger_and_ends_on_unreadable(no_runs, monkeypatch)
 @pytest.mark.parametrize("url", ["/topology/trends?metrics=T1", "/param-history?since=all",
                                  "/topology/metric-meta", "/param-history/changes"])
 def test_table_construction_error_is_terminal(no_runs, monkeypatch, url):
+    import sqlite3
     from quam_state_manager.web import hub_status
+    # S10 C5 (C3 review P2): any constructor error -> the table's own READ of the ledger
+    # failing; a constructor bug is a real error (tests/test_s10_c5_review.py)
     def broken(*a, **k):
-        raise ValueError("corrupt table")
-    monkeypatch.setattr(hub_status.LedgerTable, "__init__", broken)
-    body = no_runs["client"].get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+        raise sqlite3.DatabaseError("database disk image is malformed")
+    monkeypatch.setattr(hub_status, "hub_index", SimpleNamespace(snapshot=broken))
+    try:
+        body = no_runs["client"].get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+    except Exception as exc:  # noqa: BLE001 -- any escape is the defect this pins
+        raise AssertionError(f"the read error escaped the route: {exc!r}") from None
     assert "could not be read (unreadable)" in body
     assert "Nothing older is shown in its place." in body
     assert "load delay:" not in body and "data-eid=" not in body
@@ -443,21 +449,24 @@ def test_plain_copies_of_one_state_carry_one_pin(no_runs, url):
                                  "/param-history/changes", "/param-history/expand?qubit=qA1&prop=T1",
                                  "/topology/trends/paths?q=T1", "/param-history/param-search?q=T1"])
 def test_a_table_read_that_raises_is_terminal_never_a_500(no_runs, monkeypatch, url):
-    """The mode read succeeded, then the table's own read raised (a corrupt
-    page, a reader bug): the surface ends unavailable, naming the reason --
-    never a 500, never rows, never another history in its place."""
+    """The mode read succeeded, then the table's own read of the ledger raised
+    (a corrupt page): the surface ends unavailable, naming the reason -- never
+    a 500, never rows, never another history in its place."""
+    import sqlite3
     from quam_state_manager.web import hub_status
 
+    # S10 C5 (C3 review P2): any RuntimeError from the table -> a failed ledger READ inside
+    # it; a presenter's own bug is a real error now (tests/test_s10_c5_review.py)
     def broken(*a, **k):
-        raise RuntimeError("corrupt page")
-    for name in ("part", "leaf_families", "path_rank"):
+        with hub_status.ledger_read():
+            raise sqlite3.DatabaseError("database disk image is malformed")
+    for name in ("part", "curated", "leaf_families", "path_rank"):
         monkeypatch.setattr(hub_status.LedgerTable, name, broken)
-    monkeypatch.setattr(routes, "_hub_param_history_expand", broken)
     monkeypatch.setenv("HUB_FALLBACK_TRIPWIRE", "1")
     try:
         response = no_runs["client"].get(url, headers={"HX-Request": "true"})
-    except RuntimeError as exc:
-        raise AssertionError(f"the table error escaped the route: {exc}") from None
+    except Exception as exc:  # noqa: BLE001 -- any escape is the defect this pins
+        raise AssertionError(f"the table error escaped the route: {exc!r}") from None
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     if "/paths" in url or "param-search" in url:

@@ -176,9 +176,16 @@ def test_stale_route_reports_progress_and_retries(irb_client, monkeypatch):
     monkeypatch.setattr(value_history, "read", warming)
     body = irb_client.get("/topology/trends?metrics=").get_data(as_text=True)
     assert "Preparing the change history" in body
-    assert "load delay:" in body
     assert 'id="chip-trends-data"' not in body
     assert "Older snapshot history" not in body
+    # S10 C5 (C3 review): "load delay:" (the note re-fetching itself) -> the docs/208 D1 pin
+    # restored: the note must not fetch its OWN url -- that request aborted the user's
+    # badge press and brought the old selection back. The client re-fetches the
+    # selection the note carries (trends_irb_selfcheck.cjs).
+    assert 'data-trends-updating="1"' in body and 'data-trends-query="metrics="' in body
+    start = body.rindex("<p", 0, body.index("data-trends-updating"))
+    note = body[start:body.index("</p>", start)]
+    assert "hx-get" not in note and "hx-trigger" not in note, note
 
 
 def test_irb_client_selfcheck():

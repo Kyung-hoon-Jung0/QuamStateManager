@@ -242,6 +242,17 @@ def _oracle(states: list[tuple[str, dict]], dot: str):
     return states[last_i][0], last_i == 0
 
 
+def _appeared(states: list[tuple[str, dict]], dots: list[str], newest_ts: str) -> bool:
+    """Did the newest change make some leaf a value for the FIRST time -- null
+    or absent in every earlier state, a value at *newest_ts* (from the raw
+    states, never the ledger)?"""
+    at = [ts for ts, _st in states].index(newest_ts)
+    if at == 0:
+        return False
+    return any(_get(states[at][1], dt) is not None
+               and all(_get(st, dt) is None for _ts, st in states[:at]) for dt in dots)
+
+
 def test_a_value_null_in_the_first_snapshot_is_never_since_history_began(env):
     """Verifier P1 repro, pinned: q1.T2echo is None in snapshot 1 and a number
     from snapshot 2 on. Its one index row is the write -- the route must say
@@ -258,6 +269,10 @@ def test_a_value_null_in_the_first_snapshot_is_never_since_history_began(env):
     assert e["ts"] == _instant(t2) and e["eid"] == env["event_ids"][t2] and e["first"] is False, e
     assert e["provenance"] == "run_proven" and e["value"] == 3.3e-5
     assert e["run"] == 142 and e["matches_current"] is True
+    # S10 C5 (C3 review): the dropped "appeared" pin restored on the ledger: the write is
+    # the value's first record, so the hover says "First recorded", not "Last changed"
+    assert e.get("appeared") is True, e
+    assert d["q"]["f_01"]["q1"].get("appeared") is False
     # f_01 WAS there from the oldest snapshot and never moved
     assert d["q"]["f_01"]["q1"]["provenance"] == "observed"
     assert d["q"]["f_01"]["q1"]["first"] is True
@@ -341,7 +356,11 @@ def test_a_random_event_sequence_never_serves_a_stale_answer(env):
                 assert got["ts"] == d["oldest"] == _instant(states[0][0]), (step, dots, got, d["oldest"])
                 assert got["provenance"] == "observed"
                 firsts += 1
-            appeared += any(not x[1] for x in exps)
+            # S10 C5 (C3 review): "appeared" counted from the oracle -> the route's own flag,
+            # equal to the raw-state oracle at every step
+            want = _appeared(states, dots, newest_ts)
+            assert bool(got.get("appeared")) is want, (step, dots, got, want)
+            appeared += want
         e = d["q"]["T1"]["q1"]
         assert e["run"] is None or e["writer"]["run"] == e["run"]
     # the sequence exercised both labels (a vacuous pass would see neither)

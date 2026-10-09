@@ -713,7 +713,7 @@ def _param_search(env, q):
     return r.get_json()["results"]
 
 
-def test_param_search_memo_equals_cold_over_random_events(env):
+def test_param_search_memo_equals_cold_over_random_events(env, monkeypatch):
     """Captures and foreign commits (a second process adding a path and a
     change point) interleaved with typeahead reads: the memo's answer always
     equals the manager's own SQL on the index as it is NOW."""
@@ -724,7 +724,21 @@ def test_param_search_memo_equals_cold_over_random_events(env):
     # S10 C3: snapshot SQL oracle -> cold ledger oracle, retaining foreign commits and cache hits.
     from quam_state_manager.web import hub_status
     from tests.test_hub_incremental import from_scratch
-    memo = hub_status._CACHE
+    # S10 C5 (C3 review): any hit of the shared memo -> a hit of the RANK's own key: the
+    # paths key alone kept this pin green with the rank built afresh on every keystroke
+    real_get = hub_status._CACHE.get
+    rank = {"asks": 0, "computes": 0}
+
+    def get(key, token, compute, *a, **k):
+        if isinstance(key, tuple) and len(key) == 2 and key[1] == "rank":
+            rank["asks"] += 1
+
+            def counted(*ca, **ck):
+                rank["computes"] += 1
+                return compute(*ca, **ck)
+            return real_get(key, token, counted, *a, **k)
+        return real_get(key, token, compute, *a, **k)
+    monkeypatch.setattr(hub_status._CACHE, "get", get)
     hits_seen = 0
     for step in range(40):
         ev = rng.randrange(4)
@@ -741,9 +755,9 @@ def test_param_search_memo_equals_cold_over_random_events(env):
                 # a writer that adds a row to an event re-diffs it: its row count moves too
                 c2.execute("UPDATE events SET n_changes = n_changes + 1 WHERE eid = ?", (eid,))
         q = rng.choice(["q1", "T1", "amplitude", "foreign", "q1 | q2", "zzz", "Q1"])
-        n0 = memo.hits
+        asks0, computes0 = rank["asks"], rank["computes"]
         warm = _param_search(env, q)
-        if memo.hits > n0:
+        if rank["asks"] > asks0 and rank["computes"] == computes0:
             hits_seen += 1
         with from_scratch():
             assert warm == _param_search(env, q), (step, ev, q)

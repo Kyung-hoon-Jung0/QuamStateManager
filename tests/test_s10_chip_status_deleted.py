@@ -19,7 +19,8 @@ _PKG = Path(__file__).resolve().parents[1] / "quam_state_manager"
 # names that existed only for the deleted paths
 _UNIQUE = ("_trend_point_writers", "install_trends_prewarm", "_METRIC_META_SNAP_CACHE",
            "_legacy_topology_metric_meta", "_PH_CHANGES_MEMO", "_legacy_param_history_changes",
-           "_WRITER_BUDGET_S", "TRUNCATED_VERIFY_SNAPS", "_capturedLine", "hub_fallback")
+           "_WRITER_BUDGET_S", "TRUNCATED_VERIFY_SNAPS", "_capturedLine", "hub_fallback",
+           "writers_pending", "_HIST_VALUE_PATHS")
 # metric_meta's snapshot fold: generic words, so only a metric_meta reference counts
 _FOLD = ("current_values", "_num_eq", "verify_truncated", "snapshot_values", "newest_change")
 # the tripwire reasons of the deleted arms

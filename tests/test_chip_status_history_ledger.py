@@ -31,7 +31,8 @@ class TestPopupSparklines:
         t1 = re.search(r'<span class="topo-prop-label">T1</span>.*?</svg>', html).group(0)
         assert "hs-line" in t1 and "▲" in t1, t1[:300]     # 1e-5 -> 3e-5: up
 
-    def test_a_chip_with_no_ledger_keeps_the_snapshot_path(self, tmp_path):
+    # S10 C5: renamed from ..._keeps_the_snapshot_path -- it asserts the opposite now
+    def test_a_building_ledger_waits_without_snapshot_trends(self, tmp_path):
         env = load(tmp_path, [(chip_state(), None), (chip_state(t1=3e-5), None)],
                    chip_state(t1=3e-5), sync=False)
         html = flat(env["client"].get("/api/topology/sparklines/qA1").data.decode())
@@ -93,7 +94,8 @@ class TestHistoryDrawer:
         assert listed < 5, ("fixture: the snapshots fold into the run's state", listed)
         assert button == listed == top, (button, listed, top)
 
-    def test_a_chip_with_no_ledger_keeps_the_snapshot_drawer(self, tmp_path):
+    # S10 C5: renamed from ..._keeps_the_snapshot_drawer -- it asserts the opposite now
+    def test_a_building_ledger_says_so_in_the_drawer_without_ledger_rows(self, tmp_path):
         env = load(tmp_path, [(chip_state(), None)], chip_state(), sync=False)
         html = env["client"].get("/api/history").data.decode()
         # S10 C3: old -> new, all listing modes use one renderer with the mode note.

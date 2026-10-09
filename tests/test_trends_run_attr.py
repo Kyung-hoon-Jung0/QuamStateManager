@@ -125,9 +125,10 @@ class TestTrends:
         assert saved and any(a.get("saved_uid", "").endswith(":394") for a in saved)
         assert all("uid" not in a for a in saved)
 
-    def test_the_snapshot_map_still_names_the_capturer(self, env):
-        """The override rides the SERIES; the per-snapshot map is unchanged,
-        so the client can say "captured later with #401" beside the writer."""
+    # S10 C5: renamed from ..._snapshot_map_still_names_the_capturer -- the map is empty now
+    def test_the_snapshot_map_is_empty_and_each_point_carries_its_words(self, env):
+        """No per-snapshot map: every point carries the ledger's own words in
+        its series' attr, and a run that only saved the value is never its writer."""
         _, s1, _, _ = _four(env)
         body = env["client"].get("/topology/trends?metrics=T1").get_data(as_text=True)
         m = re.search(r'id="topo-trends-snaps">(.*?)</script>', body, re.S)
@@ -204,7 +205,8 @@ class TestAColdArchiveNeverBlocksNorGuesses:
             raise ramcache.Warming("fixture", "key", 0)
         monkeypatch.setattr(value_history, "read", preparing)
         body = env["client"].get("/topology/trends?metrics=T1").get_data(as_text=True)
-        assert 'data-vh-mode="preparing"' in body and 'load delay:' in body
+        # S10 C5 (C3 review): 'load delay:' (a self-fetching note) -> the client's re-ask marker
+        assert 'data-vh-mode="preparing"' in body and 'data-trends-updating="1"' in body
         assert _charts(body) == []
         monkeypatch.setattr(value_history, "read", real)
         body = env["client"].get("/topology/trends?metrics=T1").get_data(as_text=True)

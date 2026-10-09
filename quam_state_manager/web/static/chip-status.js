@@ -291,7 +291,9 @@ window.ChipStatus.metaInfo = (function () {
             lines.push('No newer change on record — the value itself may be older.');
             tag = '≤' + whenShort(ms);
         } else {
-            lines.push('Last changed: ' + when(ms) + ' (' + ageLong(ms, now) + ')');
+            // S10 C5 (C3 review): "Last changed" for every change -> "First recorded" for a
+            // value that APPEARED then (null or absent before): its first record, not a change
+            lines.push((e.appeared ? 'First recorded: ' : 'Last changed: ') + when(ms) + ' (' + ageLong(ms, now) + ')');
             lines.push((wrote ? 'Written by: ' : 'Recorded: ') + who);
             tag = whenShort(ms) + (e.run != null ? ' · #' + e.run : '');
         }
@@ -6789,7 +6791,14 @@ window.ChipTrends = (function () {
         // "metrics=" and store it, and aborting the build request for that
         // left the section empty for good. The build request is already
         // asking with the remembered selection; let it land.
-        if (!host.querySelector('.topo-trends-controls, .topo-trend-chip, .topo-trend-box')) return;
+        // S10 C5 (C3 review): a ledger wait (no controls) -> asked again with the exact
+        // selection it answers, which it carries; never a DOM-derived empty one
+        var waitQ = null;
+        if (!host.querySelector('.topo-trends-controls, .topo-trend-chip, .topo-trend-box')) {
+            var w = host.querySelector('[data-trends-updating][data-trends-query]');
+            if (!w) return;
+            waitQ = w.getAttribute('data-trends-query') || '';
+        }
         if (htmx.trigger) htmx.trigger('#topo-trends', 'htmx:abort');
         var loading = host.querySelector('.topo-trends-loading');
         if (!loading) {
@@ -6806,8 +6815,10 @@ window.ChipTrends = (function () {
             if (p.textContent.trim() === 'Pick a metric above.') p.textContent = 'loading…';
         });
         var mine = ++_reloadSeq;
-        var q = _params();
-        try { window.localStorage.setItem(_selKey(), q); } catch (e) { /* private window */ }
+        var q = waitQ !== null ? waitQ : _params();
+        if (waitQ === null) {
+            try { window.localStorage.setItem(_selKey(), q); } catch (e) { /* private window */ }
+        }
         /* RAM P2 -- a toggle is a PATCH, not a re-render. The response is the
            same fragment as before, but instead of swapping the whole section
            (which rebuilt EVERY chart: measured 5 Plotly renders, 6,823

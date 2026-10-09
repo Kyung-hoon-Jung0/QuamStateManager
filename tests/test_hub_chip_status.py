@@ -391,7 +391,11 @@ class TestModes:
         assert r.status_code == 200 and "being built (2 of 9 runs)" in body
         assert "Older snapshot history" not in body
         assert '"series"' not in body and "ph-change-group" not in body and "history-cell" not in body
-        if not url.startswith("/topology/metric-meta"):
+        if url.startswith(TRENDS):
+            # S10 C5 (C3 review): the Trends wait no longer fetches its own URL (docs/208 D1);
+            # it carries its selection and the Trends client asks again with it
+            assert 'data-trends-updating="1"' in body and "hx-trigger" not in body
+        elif not url.startswith("/topology/metric-meta"):
             assert re.search(r'hx-trigger="load delay:2000ms"', body), "the surface asks again by itself"
         else:
             assert r.get_json()["updating"] and r.get_json()["mode"] == "building"
@@ -443,7 +447,8 @@ class TestModes:
             "/param-history?props=").data.decode()
 
     @pytest.mark.parametrize("url", SURFACES)
-    def test_a_chip_with_no_ledger_keeps_the_old_path_labelled(self, tmp_path, url):
+    # S10 C5: renamed from ..._keeps_the_old_path_labelled -- it asserts the opposite now
+    def test_a_chip_with_no_data_folder_reads_its_ledger_with_the_link_offer(self, tmp_path, url):
         live = tmp_path / "chip"
         write_chip(live, chip_state(), None)
         app = make_app(tmp_path, sync=False)

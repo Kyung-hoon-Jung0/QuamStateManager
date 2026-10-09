@@ -88,7 +88,9 @@ from quam_state_manager.core import json_pieces as _json_pieces
 from quam_state_manager.core import trend_index as _trend_index
 # S10 C5: chip_trends_ram import -> gone, no route reads the snapshot Trends table any more.
 from quam_state_manager.core import value_writer as _value_writer
-from quam_state_manager.core.history import _VALUE_PATHS as _HIST_VALUE_PATHS
+# S10 C5 (C3 review P2): only a failed read of the ledger's rows is an unreadable ledger
+from quam_state_manager.web.hub_status import LedgerUnreadable, ledger_read
+# S10 C5: the history value-path map import -> gone with the series' writer-check leaf
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
 from quam_state_manager.core import differ as _differ_mod
@@ -17153,12 +17155,7 @@ def _trend_series_curated(hm, path: Path, props: list[str], tbl=None) -> list[di
                 row["held"] = {p["timestamp"]: p["held"] for p in r["values"] if p.get("held")}
                 # what each point says about who set it (S7's words)
                 row["attr"] = dict(r.get("_attrs") or {})
-            # The concrete leaf the value lives at, for the per-point writer
-            # check (value_writer). A derived metric (a readout fidelity from
-            # a confusion matrix) has no scalar leaf and gets none.
-            _vp = _HIST_VALUE_PATHS.get(r["property"])
-            if _vp:
-                row["leaf"] = ".".join(("qubits", str(r["qubit"])) + tuple(_vp))
+            # S10 C5: row["leaf"] (read only by the deleted per-point writer check) -> gone
             out.append(row)
     return out
 
@@ -17287,8 +17284,8 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
             pts = [(r[0], r[1] if (_vh_numeric(r[1]) is not None if ledger else
                                   _trend_is_num(r[1])) else None) for r in rows]
             if any(v is not None for _, v in pts):
-                ser = {"metric": label, "entity": e, "kind": kind,
-                       "points": pts, "leaf": dp}
+                # S10 C5: "leaf" (read only by the deleted writer check) -> gone
+                ser = {"metric": label, "entity": e, "kind": kind, "points": pts}
                 held = {r[0]: r[6] for r in rows if len(r) > 6}
                 if held:
                     ser["held"] = held
@@ -17305,7 +17302,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
                            if isinstance(r[1], (int, float))])
     if any(v is not None for _, v in pts):
         ser = {"metric": dot_path, "entity": dot_path.split(".")[-1],
-               "kind": "", "points": pts, "leaf": dot_path}
+               "kind": "", "points": pts}
         if ledger:
             ser["attr"] = dict(tbl.attrs.get(dot_path) or {})
         out.append(ser)
@@ -18040,7 +18037,7 @@ def topology_trends():
             narrow=not (request.args.get("path") or "").strip())
     except _ramcache.Warming:
         return _hub_surface_wait(_hub_waiting(ledger_table, "trends"), "trends")
-    except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
+    except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only
         return _hub_surface_wait(_hub_table_failed("trends"), "trends")
 
 
@@ -18078,7 +18075,9 @@ def _hub_status_table(ctx):
         if getattr(exc, "status", None):
             ans["status"] = exc.status
         return ans, None
-    except Exception:  # noqa: BLE001 -- a table error is terminal, never snapshot rows
+    except LedgerUnreadable:
+        # S10 C5 (C3 review P2): any table error -> only the table's LEDGER READ is unreadable;
+        # a bug building the table is a real error (logged, a 500), never an unreadable ledger
         logger.warning("history table could not be read", exc_info=True)
         ans.update(mode="unavailable", reason="unreadable",
                    unavailable_note=_VH_UNAVAILABLE_NOTES["unreadable"])
@@ -18535,7 +18534,7 @@ def topology_metric_meta():
         return jsonify(ok=True, mode=waiting["mode"], message=_vh_wait_message(waiting),
                        updating=not ended, q={}, p={}, snaps={},
                        **({"notes": [_vh_wait_message(waiting)]} if ended else {}))
-    except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
+    except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only
         failed = _hub_table_failed("metric_meta")
         return jsonify(ok=True, mode="unavailable", message=_vh_wait_message(failed),
                        updating=False, q={}, p={}, snaps={},
@@ -18577,13 +18576,22 @@ def _hub_metric_meta(table) -> dict:
             vh.comparable(ans["targets"][dp]),
             None if rows[dp]["effective"][-1]["removed"] else rows[dp]["effective"][-1]["value"])
             for dp in paths)
+        # "unchanged since history began": the newest value is the one the
+        # ledger started with -- a run's first record, or (S10 C3: a chip with
+        # no data folder) the first state SM saw
+        first = (best["provenance"] == "first_record"
+                 or (best["provenance"] == "observed"
+                     and best["eid"] == (ans.get("ledger") or {}).get("first_eid")))
+        # S10 C5 (C3 review): no "appeared" on the ledger -> restored: the newest change made
+        # some leaf a value for the FIRST time (null, absent or removed before) -- its first
+        # record, never "unchanged since history began" and never just "last changed"
+        appeared = not first and not best["removed"] and any(
+            rows[dp]["effective"] and rows[dp]["effective"][-1]["ord"] == top
+            and not rows[dp]["effective"][-1]["removed"]
+            and all(p["removed"] or p["value"] is None for p in rows[dp]["effective"][:-1])
+            for dp in paths)
         entry = {"ts": best["t"], "eid": best["eid"], "leaves": len(newest),
-                 # "unchanged since history began": the newest value is the
-                 # one the ledger started with -- a run's first record, or
-                 # (S10 C3: a chip with no data folder) the first state SM saw
-                 "first": (best["provenance"] == "first_record"
-                           or (best["provenance"] == "observed"
-                               and best["eid"] == (ans.get("ledger") or {}).get("first_eid"))),
+                 "first": first, "appeared": appeared,
                  "matches_current": matches, "gone": best["removed"],
                  "provenance": best["provenance"], "label": info["label"],
                  "sub": info["sub"], "title": info["title"], "actor": best.get("actor"),
@@ -34084,6 +34092,42 @@ def _openable_folder_for_chip(hm, target_path, *, tries: int = 6) -> str | None:
     return None
 
 
+def _archive_ledger_notes(hm, target_path, ledger: dict) -> list[dict]:
+    """S10 C5 (C3 review P1): an ARCHIVED chip's ledger is read as it is, and
+    it may hold less than Param History holds of the chip -- nothing at all
+    (a chip not opened since the ledger existed), or no runs while Param
+    History holds captures of runs (runs reach a ledger only from a data
+    folder linked to the chip). Either is said, never shown as an empty
+    history, with the one press that builds the ledger: open the chip
+    (:func:`_openable_folder_for_chip`). ``[]`` when the ledger holds both."""
+    try:
+        snaps = hm.list_snapshots(target_path)
+    except Exception:  # noqa: BLE001 -- Param History unreadable: nothing to compare with
+        return []
+    total = len(snaps)
+    runs = sum(1 for m in snaps if getattr(m, "kind", None) == "exp"
+               or getattr(m, "trigger", None) == "experiment")
+    events = int(ledger.get("events") or 0)
+    if total and not events:
+        text = (f"This chip's change ledger holds nothing yet, while Param History holds "
+                f"{total} capture{'' if total == 1 else 's'} of it"
+                + (f" ({runs} from runs)" if runs else "") + ".")
+    elif runs and not ledger.get("has_runs"):
+        text = (f"Param History holds {runs} run capture{'' if runs == 1 else 's'} of this chip "
+                "that its change ledger does not: the ledger holds no runs (runs reach it only "
+                "from a data folder linked to the chip).")
+    else:
+        return []
+    open_path = _openable_folder_for_chip(hm, target_path)
+    if open_path:
+        text += " Open this chip to build its ledger" + (
+            ", then link the folder its runs are saved in." if runs else ".")
+    else:
+        text += " No folder on disk opens as this chip now, so its ledger cannot be built here."
+    return [{"level": "warning", "code": "archive_short", "text": text,
+             "open_chip_path": open_path}]
+
+
 def _hub_grid_rows(table, props, qubit_filter, since, until, triggers) -> list[dict]:
     """docs/283: the grid's rows from the ledger (``LedgerTable.curated``),
     windowed the way the snapshot grid windowed (the same stamp-string
@@ -34390,7 +34434,10 @@ def param_history():
             snap_summary=snap_summary,
             disk_stats=disk_stats,
             index_error=index_error,
-            hub_notes=hub_table.notes,
+            # S10 C5 (C3 review P1): an archived ledger holding less than Param History's
+            # captures -> said, with Open this chip, never a silently empty grid
+            hub_notes=list(hub_table.notes) + (
+                [] if is_loaded_chip else _archive_ledger_notes(hm, target_path, hub_answer["ledger"])),
             hub_mode="ledger",
             since=since_raw,
             triggers_filter=raw_triggers,
@@ -34643,7 +34690,7 @@ def param_history_changes():
             body, status = _hub_param_changes(table, data)
     except _ramcache.Warming:
         return _hub_surface_wait(_hub_waiting(table, "changes"), "changes")
-    except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
+    except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only
         return _hub_surface_wait(_hub_table_failed("changes"), "changes")
     return body, status
 
@@ -34678,16 +34725,21 @@ def _hub_param_changes_data(table) -> dict:
     bad = {"bad": ("This history page reference is invalid; open Changes again.", 400)}
     if at is not None and not at.isdigit():
         return bad
-    try:
-        result = hub_query.timeline(table.binding, path=prefix or None, path_prefix=True,
-                                    cursor=None if at else cursor,
-                                    event_id=int(at) if at else None, changed_only=True,
-                                    limit=1 if at else _CHANGES_SNAPS, **_rename_scope())
-    except ValueError:
+    scope = _rename_scope()
+    # S10 C5 (C3 review P2): the page's reads of the ledger -> LedgerUnreadable when they fail
+    with ledger_read():
+        try:
+            result = hub_query.timeline(table.binding, path=prefix or None, path_prefix=True,
+                                        cursor=None if at else cursor,
+                                        event_id=int(at) if at else None, changed_only=True,
+                                        limit=1 if at else _CHANGES_SNAPS, **scope)
+        except ValueError:
+            result = None
+    if result is None:
         return bad
     events = result["events"]
     sm_eids = [ev["eid"] for ev in events if ev.get("kind") in SM_KINDS]
-    with hub_index.snapshot(table.binding) as (conn, index):
+    with ledger_read(), hub_index.snapshot(table.binding) as (conn, index):
         sm = vh._sm_info(conn, sm_eids)
         undone = {ev["eid"]: vh.undone_paths(conn, index, ev, sm) for ev in events
                   if ev.get("kind") in SM_KINDS}
@@ -34880,15 +34932,17 @@ def param_history_expand():
             "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
             row_json="{}", qubit=qubit, prop=prop, current_value=None,
             hub_wait=_vh_wait_message(hub_answer), hub_mode=hub_answer["mode"])
+    # S10 C5 (C3 review P1): the archived chip's shortfall note rides the drawer too
+    extra = [] if is_loaded else _archive_ledger_notes(hm, target_path, hub_answer["ledger"])
     try:
-        return _hub_param_history_expand(hub_table, qubit, prop, is_loaded)
+        return _hub_param_history_expand(hub_table, qubit, prop, is_loaded, extra_notes=extra)
     except _ramcache.Warming:
         waiting = _hub_waiting(hub_table, "param_history_expand")
         return render_template("_param_history_drawer.html", row={
             "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
             row_json="{}", qubit=qubit, prop=prop, current_value=None,
             hub_wait=_vh_wait_message(waiting), hub_mode=waiting["mode"])
-    except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
+    except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only
         failed = _hub_table_failed("param_history_expand")
         return render_template("_param_history_drawer.html", row={
             "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
@@ -34896,7 +34950,8 @@ def param_history_expand():
             hub_wait=_vh_wait_message(failed), hub_mode="unavailable")
 
 
-def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool):
+def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
+                              extra_notes=()):
     """docs/283: one grid cell's drawer on the ledger -- the cell's recorded
     changes (``LedgerTable.curated``, the grid's own rows), each with S7's
     words; a point opens its run only when that run's own patch proves it
@@ -34937,7 +34992,7 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool):
             current_value = None  # a NaN would end the drawer's script
     return render_template("_param_history_drawer.html", row=out, row_json=json.dumps(out),
                            qubit=qubit, prop=prop, current_value=current_value,
-                           hub_notes=table.notes)
+                           hub_notes=list(table.notes) + list(extra_notes))
 
 
 @bp.route("/param-history/backfill", methods=["POST"])
