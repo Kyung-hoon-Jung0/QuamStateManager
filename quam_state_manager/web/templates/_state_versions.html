@@ -38,9 +38,7 @@
         <button type="button" class="state-versions-close" onclick="StateVersions.close()"
                 aria-label="Close">&times;</button>
     </div>
-    {% if ledger_versions is defined and ledger_versions %}{% for n in ledger_versions.notes %}
-    <p class="muted sv-ledger-note" data-note="{{ n.code }}">{{ n.text }}</p>
-    {% endfor %}{% endif %}
+    {% if ledger_versions is defined and ledger_versions %}{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}{% endwith %}{% endif %}
 
     {% if not rows and ledger_versions is defined and ledger_versions and ledger_versions.mode in ('building', 'preparing') %}
     {# docs/284: the change history is not ready; the note above says so, and

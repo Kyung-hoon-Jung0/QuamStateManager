@@ -1153,7 +1153,7 @@ def run_era(chip_dir, folder, binding=None) -> tuple | None:
 
 
 def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
-          newest: Any = _ABSENT) -> list[dict]:
+          newest: Any = _ABSENT, origin: str = "live") -> list[dict]:
     """What every surface says beside a ledger answer (docs/282 §1.3)."""
     st = status or {}
     out: list[dict] = []
@@ -1182,6 +1182,12 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
     elif not st.get("roots") and state in ("ready", "degraded") and ledger.get("has_runs"):
         out.append({"level": "info", "code": "no_folder",
                     "text": "No data folder is linked to this chip now; newer runs may be missing."})
+    elif (not st.get("roots") and state in ("ready", "degraded")
+          and not ledger.get("has_runs") and origin == "live"):
+        out.append({"level": "info", "code": "no_folder_linked",
+                    "text": "No data folder is linked to this chip, so this history holds SM's own "
+                            "writes and the states SM saw -- no runs. Link the folder its runs are saved in.",
+                    "link": {"offer": True, "url": "/hub/link-folder"}})
     if current is not _ABSENT and newest is not _ABSENT and not (
             current is None and newest is None):
         if current is None or newest is None or not rules.same(current, newest):

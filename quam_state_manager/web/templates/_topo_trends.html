@@ -28,7 +28,7 @@
     {# docs/283: the change ledger's notes (degraded / deferred / idle / no
        data folder), or the label of the older snapshot path #}
     {% if hub_fallback %}<p class="vh-fallback">{{ hub_fallback }}</p>{% endif %}
-    {% for note in hub_notes or [] %}<p class="vh-note vh-note-{{ note.level }}" data-code="{{ note.code }}">{{ note.text }}</p>{% endfor %}
+    {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
     <div class="topo-trends-controls">
         <span class="muted topo-trends-label">Qubits</span>
         <span class="topo-trends-chips">

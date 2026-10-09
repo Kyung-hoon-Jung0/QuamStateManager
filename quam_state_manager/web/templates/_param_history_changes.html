@@ -11,7 +11,7 @@
   {# docs/283: the change ledger's notes, or the label of the older
      change-point index path -- inside the root, so a swap replaces them #}
   {% if hub_fallback %}<p class="vh-fallback">{{ hub_fallback }}</p>{% endif %}
-  {% for note in hub_notes or [] %}<p class="vh-note vh-note-{{ note.level }}" data-code="{{ note.code }}">{{ note.text }}</p>{% endfor %}
+  {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
   <div class="param-history-header">
     <h2 style="margin:0">Param History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
     <p class="muted" style="margin:0">

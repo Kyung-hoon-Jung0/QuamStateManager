@@ -1,0 +1,9 @@
+<div class="hub-notes" data-hub-url="{{ request.full_path.rstrip('?') }}">
+{% for note in notes or [] %}
+<p class="vh-note vh-note-{{ note.level }}" data-note="{{ note.code }}" data-code="{{ note.code }}">{{ note.text }}</p>
+{% if note.code == 'no_folder_linked' %}
+<button type="button" class="outline btn-sm" hx-get="/hub/link-folder"
+        hx-target="#hub-folder-body" hx-swap="innerHTML" onclick="HubFolders.open(this)">Link a data folder...</button>
+{% endif %}
+{% endfor %}
+</div>

@@ -1,0 +1,526 @@
+{
+  "mutations": [
+    {
+      "mutation": "rank",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_candidate_bucketing_and_ranking",
+      "assertion_failure": true,
+      "summary": "1 failed in 6.92s"
+    },
+    {
+      "mutation": "deepest",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_deepest_root_owns_evidence_and_prefix_boundaries",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.95s"
+    },
+    {
+      "mutation": "boundary",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_deepest_root_owns_evidence_and_prefix_boundaries",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.53s"
+    },
+    {
+      "mutation": "unreadable",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_deepest_root_owns_evidence_and_prefix_boundaries",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.87s"
+    },
+    {
+      "mutation": "renamed",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_deepest_root_owns_evidence_and_prefix_boundaries",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.05s"
+    },
+    {
+      "mutation": "inside",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_deepest_root_owns_evidence_and_prefix_boundaries",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.92s"
+    },
+    {
+      "mutation": "registered",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_candidates_exclude_decisions_registered_and_empty_roots",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.06s"
+    },
+    {
+      "mutation": "different",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_candidates_exclude_decisions_registered_and_empty_roots",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.07s"
+    },
+    {
+      "mutation": "label",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_candidates_exclude_decisions_registered_and_empty_roots",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.03s"
+    },
+    {
+      "mutation": "holds_runs",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_candidates_exclude_decisions_registered_and_empty_roots",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.27s"
+    },
+    {
+      "mutation": "unique_label",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_unique_label_is_not_evidence_for_two_roots",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.11s"
+    },
+    {
+      "mutation": "explicit_override",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_unlink_keeps_events_and_shows_no_folder_even_after_label_link",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.28s"
+    },
+    {
+      "mutation": "zero_post",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_refuses_stale_or_unproven_requests[zero]",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.15s"
+    },
+    {
+      "mutation": "zero_button",
+      "file": "quam_state_manager/web/templates/_hub_link_folder.html",
+      "pin": "test_candidate_bucketing_and_ranking",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.04s"
+    },
+    {
+      "mutation": "workspace",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_refuses_stale_or_unproven_requests[outside]",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.08s"
+    },
+    {
+      "mutation": "root_spelling",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_refuses_stale_or_unproven_requests[mismatched_root]",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.14s"
+    },
+    {
+      "mutation": "chip_switch",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_refuses_stale_or_unproven_requests[switch]",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.13s"
+    },
+    {
+      "mutation": "scan_ready",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_refuses_stale_or_unproven_requests[running]",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.96s"
+    },
+    {
+      "mutation": "switch_after_scan",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_scan_chip_switch_is_rechecked_before_saving",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.02s"
+    },
+    {
+      "mutation": "live_type",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_live_context_required",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.00s"
+    },
+    {
+      "mutation": "archive_doors",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_archive_link_doors_are_read_only",
+      "assertion_failure": true,
+      "summary": "3 failed in 4.80s"
+    },
+    {
+      "mutation": "wait_budget",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_pending_fragment_keeps_chip_and_refetches",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.00s"
+    },
+    {
+      "mutation": "self_refetch",
+      "file": "quam_state_manager/web/templates/_hub_link_folder.html",
+      "pin": "test_pending_fragment_keeps_chip_and_refetches",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.85s"
+    },
+    {
+      "mutation": "hint",
+      "file": "quam_state_manager/web/templates/_hub_link_folder.html",
+      "pin": "test_state_folder_hint_is_rendered",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.63s"
+    },
+    {
+      "mutation": "written_key",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_writes_the_read_key_and_registers_then_shows_run_rows",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.11s"
+    },
+    {
+      "mutation": "link_sync",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_writes_the_read_key_and_registers_then_shows_run_rows",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.93s"
+    },
+    {
+      "mutation": "unlink_decision",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_unlink_keeps_events_and_shows_no_folder_even_after_label_link",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.17s"
+    },
+    {
+      "mutation": "unlink_sync",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_unlink_keeps_events_and_shows_no_folder_even_after_label_link",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.93s"
+    },
+    {
+      "mutation": "unlink_source",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_unlink_refuses_a_declared_root",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.28s"
+    },
+    {
+      "mutation": "decide_sync",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_decide_same_reregisters_only_the_open_chip",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.11s"
+    },
+    {
+      "mutation": "decide_open_chip",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_decide_same_reregisters_only_the_open_chip",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.13s"
+    },
+    {
+      "mutation": "link_event",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_writes_the_read_key_and_registers_then_shows_run_rows",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.99s"
+    },
+    {
+      "mutation": "unlink_event",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_unlink_keeps_events_and_shows_no_folder_even_after_label_link",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.97s"
+    },
+    {
+      "mutation": "note",
+      "file": "quam_state_manager/core/value_history.py",
+      "pin": "test_no_roots_offer_on_html_surfaces",
+      "assertion_failure": true,
+      "summary": "8 failed in 7.93s"
+    },
+    {
+      "mutation": "note_runs",
+      "file": "quam_state_manager/core/value_history.py",
+      "pin": "test_note_condition",
+      "assertion_failure": true,
+      "summary": "1 failed, 6 passed in 1.12s"
+    },
+    {
+      "mutation": "note_roots",
+      "file": "quam_state_manager/core/value_history.py",
+      "pin": "test_note_condition",
+      "assertion_failure": true,
+      "summary": "1 failed, 6 passed in 1.18s"
+    },
+    {
+      "mutation": "note_state",
+      "file": "quam_state_manager/core/value_history.py",
+      "pin": "test_note_condition",
+      "assertion_failure": true,
+      "summary": "1 failed, 6 passed in 1.30s"
+    },
+    {
+      "mutation": "note_degraded",
+      "file": "quam_state_manager/core/value_history.py",
+      "pin": "test_note_condition",
+      "assertion_failure": true,
+      "summary": "1 failed, 6 passed in 1.17s"
+    },
+    {
+      "mutation": "note_archive",
+      "file": "quam_state_manager/core/value_history.py",
+      "pin": "test_archive_history_has_no_offer",
+      "assertion_failure": true,
+      "summary": "6 failed in 3.88s"
+    },
+    {
+      "mutation": "value_archive",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_archive_history_has_no_offer[/field/history?path=qubits.qA1.T1]",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.19s"
+    },
+    {
+      "mutation": "table_archive",
+      "file": "quam_state_manager/web/hub_status.py",
+      "pin": "test_archive_history_has_no_offer[/topology/trends]",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.05s"
+    },
+    {
+      "mutation": "versions_archive",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_archive_history_has_no_offer[/state/versions]",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.38s"
+    },
+    {
+      "mutation": "offer_button",
+      "file": "quam_state_manager/web/templates/_hub_notes.html",
+      "pin": "test_no_roots_offer_on_html_surfaces",
+      "assertion_failure": true,
+      "summary": "8 failed in 7.93s"
+    },
+    {
+      "mutation": "notes_drawer",
+      "file": "quam_state_manager/web/templates/_field_history_ledger.html",
+      "pin": "test_no_roots_offer_on_html_surfaces[drawer]",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.57s"
+    },
+    {
+      "mutation": "notes_column",
+      "file": "quam_state_manager/web/templates/_column_history_ledger.html",
+      "pin": "test_no_roots_offer_on_html_surfaces[column]",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.53s"
+    },
+    {
+      "mutation": "notes_versions",
+      "file": "quam_state_manager/web/templates/_state_versions.html",
+      "pin": "test_no_roots_offer_on_html_surfaces[versions]",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.78s"
+    },
+    {
+      "mutation": "notes_state_history",
+      "file": "quam_state_manager/web/templates/_state_history_body.html",
+      "pin": "test_no_roots_offer_on_html_surfaces[state_history]",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.57s"
+    },
+    {
+      "mutation": "notes_trends",
+      "file": "quam_state_manager/web/templates/_topo_trends.html",
+      "pin": "test_no_roots_offer_on_html_surfaces[trends]",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.58s"
+    },
+    {
+      "mutation": "notes_grid",
+      "file": "quam_state_manager/web/templates/_param_history.html",
+      "pin": "test_no_roots_offer_on_html_surfaces[grid]",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.89s"
+    },
+    {
+      "mutation": "notes_changes",
+      "file": "quam_state_manager/web/templates/_param_history_changes.html",
+      "pin": "test_no_roots_offer_on_html_surfaces[changes]",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.81s"
+    },
+    {
+      "mutation": "notes_cell",
+      "file": "quam_state_manager/web/templates/_param_history_drawer.html",
+      "pin": "test_no_roots_offer_on_html_surfaces[cell]",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.54s"
+    },
+    {
+      "mutation": "meta_json",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_json_surfaces_offer_a_read_url[meta]",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.01s"
+    },
+    {
+      "mutation": "agent_json",
+      "file": "quam_state_manager/web/agent_api.py",
+      "pin": "test_json_surfaces_offer_a_read_url[agent]",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.04s"
+    },
+    {
+      "mutation": "agent_write_door",
+      "file": "quam_state_manager/web/agent_api.py",
+      "pin": "test_json_surfaces_offer_a_read_url[agent]",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.59s"
+    },
+    {
+      "mutation": "focus_trap",
+      "file": "quam_state_manager/web/static/hub-folders.js",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.75s"
+    },
+    {
+      "mutation": "nested_focus",
+      "file": "quam_state_manager/web/static/app.js",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.79s"
+    },
+    {
+      "mutation": "modal_errors",
+      "file": "quam_state_manager/web/static/hub-folders.js",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.81s"
+    },
+    {
+      "mutation": "accessible",
+      "file": "quam_state_manager/web/static/hub-folders.js",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.76s"
+    },
+    {
+      "mutation": "surface_refresh",
+      "file": "quam_state_manager/web/static/hub-folders.js",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.71s"
+    },
+    {
+      "mutation": "refresh_swap",
+      "file": "quam_state_manager/web/static/hub-folders.js",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.86s"
+    },
+    {
+      "mutation": "drawer_refresh",
+      "file": "quam_state_manager/web/static/app.js",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.92s"
+    },
+    {
+      "mutation": "column_refresh",
+      "file": "quam_state_manager/web/static/app.js",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.99s"
+    },
+    {
+      "mutation": "versions_refresh",
+      "file": "quam_state_manager/web/static/app.js",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.99s"
+    },
+    {
+      "mutation": "history_refresh",
+      "file": "quam_state_manager/web/templates/_state_history.html",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.79s"
+    },
+    {
+      "mutation": "script_loaded",
+      "file": "quam_state_manager/web/templates/base.html",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.72s"
+    },
+    {
+      "mutation": "decide_key",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_decide_root_uses_the_shared_key",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.09s"
+    },
+    {
+      "mutation": "current_evidence",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_checks_the_scan_again_at_press_time",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.24s"
+    },
+    {
+      "mutation": "link_building",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_builds_before_run_rows_are_read",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.07s"
+    },
+    {
+      "mutation": "events_kept",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_unlink_keeps_events_and_shows_no_folder_even_after_label_link",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.80s"
+    },
+    {
+      "mutation": "retained_note",
+      "file": "quam_state_manager/core/value_history.py",
+      "pin": "test_unlink_keeps_events_and_shows_no_folder_even_after_label_link",
+      "assertion_failure": true,
+      "summary": "1 failed in 4.35s"
+    },
+    {
+      "mutation": "empty_text",
+      "file": "quam_state_manager/web/templates/_hub_link_folder.html",
+      "pin": "test_candidates_exclude_decisions_registered_and_empty_roots",
+      "assertion_failure": true,
+      "summary": "1 failed in 1.77s"
+    },
+    {
+      "mutation": "modal_layer",
+      "file": "quam_state_manager/web/static/style.css",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.46s"
+    },
+    {
+      "mutation": "modal_scroll",
+      "file": "quam_state_manager/web/static/style.css",
+      "pin": "test_modal_focus_and_refresh_selfcheck",
+      "assertion_failure": true,
+      "summary": "1 failed in 2.58s"
+    },
+    {
+      "mutation": "read_key",
+      "file": "quam_state_manager/web/routes.py",
+      "pin": "test_link_writes_the_read_key_and_registers_then_shows_run_rows",
+      "assertion_failure": true,
+      "summary": "1 failed in 3.81s"
+    }
+  ],
+  "restored_green": true,
+  "green_summary": [
+    "47 passed in 23.15s"
+  ]
+}

@@ -316,7 +316,7 @@ class LedgerTable:
         # what every surface says beside the answer (degraded / deferred /
         # idle / no data folder): the sync status's notes, never a per-value
         # "the value now differs" (that one belongs to the value itself)
-        self.notes = value_history.notes(status, answer["ledger"])
+        self.notes = value_history.notes(status, answer["ledger"], origin=ctx.get("origin") or "live")
         self.attrs: dict = {}
         self._fam = None
 

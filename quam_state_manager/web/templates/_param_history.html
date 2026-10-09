@@ -401,7 +401,7 @@
   {# docs/283: the change ledger's notes, or the label of the older
      snapshot path -- inside the results, so a filter change keeps them #}
   {% if hub_fallback %}<p class="vh-fallback">{{ hub_fallback }}</p>{% endif %}
-  {% for note in hub_notes or [] %}<p class="vh-note vh-note-{{ note.level }}" data-code="{{ note.code }}">{{ note.text }}</p>{% endfor %}
+  {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
   {# the busy-index banner lives INSIDE the results (code-review sweep): a
      filter change swaps only this container, so a failure during one must
      land where the user can see it #}

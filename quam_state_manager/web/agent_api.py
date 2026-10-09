@@ -363,7 +363,10 @@ def field_history():
                            building={"done": st.get("done"), "total": st.get("total")})
         if ans["mode"] == "ledger":
             return jsonify(ok=True, path=dot, source="ledger",
-                           history=_jsonable(r._vh_agent_view(ans, "value")))
+                           history=_jsonable(r._vh_agent_view(ans, "value")),
+                           **({"link": {"offer": True, "url": "/hub/link-folder"}}
+                              if any(n["code"] == "no_folder_linked"
+                                     for n in ans["notes"].get("value", [])) else {}))
         r._hub_fallback_reached("agent_field_history", ans["reason"])
         data, _current, _chart = r._legacy_field_history(ctx, dot)
     except Exception as exc:  # noqa: BLE001

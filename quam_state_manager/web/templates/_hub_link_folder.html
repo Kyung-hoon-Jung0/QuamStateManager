@@ -1,0 +1,33 @@
+{% if scan.state != 'ready' %}
+<div hx-get="{{ url_for('main.hub_link_folder', chip_key=chip_key) }}"
+     hx-trigger="every 1s" hx-target="this" hx-swap="outerHTML" role="status">
+  checking {{ scan.done or 0 }} of {{ scan.total or 0 }} runs
+</div>
+{% else %}
+{% for row in rows %}
+<div class="hub-folder-row" data-root="{{ row.fs_key }}" data-matches="{{ row.matches }}">
+  <p><code>{{ row.path }}</code></p>
+  <p>{{ row.matches }} runs match this chip, {{ row.other }} belong to other chips, {{ row.unreadable }} unreadable</p>
+  {% if row.inside %}<p>this chip's state folder is inside it</p>{% endif %}
+  {% if row.matches >= 1 %}
+  <form hx-post="/hub/link-folder" hx-target="#hub-folder-body">
+    <input type="hidden" name="root" value="{{ row.path }}">
+    <input type="hidden" name="fs_key" value="{{ row.fs_key }}">
+    <input type="hidden" name="chip_key" value="{{ chip_key }}">
+    <button type="submit" class="btn-sm">Link</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+{% if not rows or not (rows | selectattr('matches', 'ge', 1) | list) %}
+<p>No Datasets folder holds runs of this chip. Add it to Datasets or set <code>extras.data_folder</code>.</p>
+{% endif %}
+{% for row in linked %}
+<form hx-post="/hub/unlink-folder" hx-target="#hub-folder-body">
+  <p><code>{{ row.path }}</code></p>
+  <input type="hidden" name="fs_key" value="{{ row.fs_key }}">
+  <input type="hidden" name="chip_key" value="{{ chip_key }}">
+  <button type="submit" class="outline btn-sm">Unlink</button>
+</form>
+{% endfor %}
+{% endif %}
