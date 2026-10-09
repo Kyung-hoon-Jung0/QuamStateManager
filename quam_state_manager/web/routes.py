@@ -45,6 +45,7 @@ from urllib.parse import quote, urlencode
 from flask import (
     Blueprint,
     current_app,
+    has_request_context,
     jsonify,
     make_response,
     redirect,
@@ -3511,6 +3512,45 @@ def _hub_sync_open(ctx) -> None:
         logger.warning("hub run sync could not start", exc_info=True)
 
 
+_HUB_FALLBACK_REACHED: dict[tuple[str, str], int] = {}
+_HUB_FALLBACK_WARNED: set[tuple[str, str, str]] = set()
+_HUB_FALLBACK_LOCK = threading.Lock()
+
+
+def _hub_fallback_reached(surface: str, reason: str) -> None:
+    """Record a permanent snapshot fallback; optionally fail a testing request."""
+    # bookkeeping only: it must never break the surface it reports on (the
+    # no_chip_dir reason is exactly "_hub_chip_dir raised")
+    try:
+        ctx = _active_ctx() or {}
+        directory = ctx.get("hub_chip_dir")
+        if directory is None and ctx.get("path"):
+            directory = _hub_chip_dir(ctx["path"])
+    except Exception:  # noqa: BLE001
+        directory = None
+    chip_key = (request.args.get("chip_key") if has_request_context() else None) or (
+        Path(directory).name if directory is not None else "no_chip_dir")
+    with _HUB_FALLBACK_LOCK:
+        key = (surface, reason)
+        _HUB_FALLBACK_REACHED[key] = _HUB_FALLBACK_REACHED.get(key, 0) + 1
+        warning_key = (chip_key, surface, reason)
+        first = warning_key not in _HUB_FALLBACK_WARNED
+        _HUB_FALLBACK_WARNED.add(warning_key)
+    if first:
+        logger.warning("hub fallback reached: %s (%s), chip key %s", surface, reason, chip_key)
+    if os.environ.get("HUB_FALLBACK_TRIPWIRE") == "1" and current_app.testing:
+        raise RuntimeError(f"hub fallback reached: {surface} ({reason})")
+
+
+def _hub_fallback_counts() -> dict:
+    """Return a detached JSON view; callers cannot alter the counters."""
+    with _HUB_FALLBACK_LOCK:
+        out: dict[str, dict[str, int]] = {}
+        for (surface, reason), count in _HUB_FALLBACK_REACHED.items():
+            out.setdefault(surface, {})[reason] = count
+        return out
+
+
 @bp.route("/hub/status")
 def hub_status():
     """docs/275: the open chip's ledger -- ``building`` (n/N) or ``ready`` --
@@ -3518,11 +3558,13 @@ def hub_status():
     from quam_state_manager.core import hub_sync
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam":
-        resp = jsonify({"state": "idle", "note": "no chip is open"})
+        resp = jsonify({"state": "idle", "note": "no chip is open",
+                        "fallback_reached": _hub_fallback_counts()})
     else:
         chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
         st = hub_sync.status(chip_dir) if chip_dir is not None else {"state": "idle"}
         st["chip_dir"] = str(chip_dir) if chip_dir is not None else None
+        st["fallback_reached"] = _hub_fallback_counts()
         resp = jsonify(st)
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -12283,6 +12325,7 @@ def bulk_column_history():
         return render_template("_column_history_ledger.html",
                                **_vh_column_view(ans, path_map, label=label, unit=unit,
                                                  grid=grid, col_key=col_key))
+    _hub_fallback_reached("column_history", ans["reason"])
     view = _legacy_column_history(ctx, path_map)
     return render_template(
         "_column_history.html", label=label, unit=unit, grid=grid,
@@ -12494,6 +12537,7 @@ def field_history():
     if ans["mode"] == "ledger":
         return render_template("_field_history_ledger.html", show_all=show_all,
                                **_vh_drawer_view(ans, "value", dot_path))
+    _hub_fallback_reached("drawer", ans["reason"])
     hist, current, chart = _legacy_field_history(ctx, dot_path)
     hist["fallback_note"] = ans.get("fallback_note")
     return render_template("_field_history.html", hist=hist,
@@ -15527,6 +15571,7 @@ def _report_build_trends(rc: _ReportCtx) -> str:
     # only for a chip with no ledger. It said "No parameter history" beside a
     # Trends page charting 2,082 runs.
     tbl, building = None, None
+    ans = {"mode": "fallback", "reason": "unreadable"}
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path") and Path(ctx["path"]) == path:
         try:
@@ -15541,6 +15586,8 @@ def _report_build_trends(rc: _ReportCtx) -> str:
                                window_label=_cr.window_label(rc.window),
                                zone_label=_report_zone_label(rc), no_time=0, n_snapshots=0)
     if tbl is None:
+        if ans["mode"] == "fallback":
+            _hub_fallback_reached("report_trends", ans["reason"])
         tbl = chip_trends_ram.table(hm, path)
     curated = list(DEFAULT_TRACKED_PROPERTIES)
     have = _trend_metrics_with_data(hm, path, curated, tbl)
@@ -15910,6 +15957,7 @@ def wiring_view():
     # docs/301 F14: the History (N) button counts what its drawer lists -- the
     # ledger's recorded states when the chip has one (it said 3 beside a
     # State History of ~3,000)
+    _hv = {"mode": "fallback", "reason": "unreadable"}
     if store:
         try:
             _hv = _versions_read(_active_ctx(), _snaps, limit=1)
@@ -15919,6 +15967,8 @@ def wiring_view():
                 history_count = int(_hv.get("total") or 0)
         except Exception:  # noqa: BLE001 -- the snapshot count stands
             logger.debug("history count from the ledger failed", exc_info=True)
+        if _hv["mode"] == "fallback":
+            _hub_fallback_reached("history_count", _hv["reason"])
 
     # Health layer (Chip Status overhaul): the structural linter (port collisions,
     # dangling pointers, value-spec violations) — already used by the drag-drop
@@ -16006,6 +16056,8 @@ def history_list():
     if versions["mode"] == "ledger":
         return render_template("_history_panel_ledger.html", ledger_versions=versions)
 
+    if versions["mode"] == "fallback":
+        _hub_fallback_reached("history_drawer", versions["reason"])
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _HISTORY_PANEL_PER_PAGE, minimum=0)  # 0 = All (explicit)
     page_items, total, current_page, total_pages = _paginate(snapshots, page, per_page)
@@ -16154,6 +16206,8 @@ def state_history():
             return render_template("_state_history_body.html", **ctx)
         template = "_state_history.html" if _is_htmx() else "state_history.html"
         return render_template(template, **ctx)
+    if versions["mode"] == "fallback":
+        _hub_fallback_reached("state_history", versions["reason"])
     page_items, total, page, total_pages = _paginate(snapshots, page, per_page)
     # QA chipstatus-r2-15: the drawer's zero-diff rule -- only the chip's FIRST
     # snapshot (of the full newest-first list, not the page) is a baseline.
@@ -17839,7 +17893,8 @@ def topology_trends():
                 lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table),
                 narrow=not (request.args.get("path") or "").strip())
         except _ramcache.Warming:
-            return _hub_surface_wait(_hub_waiting(ledger_table), "trends")
+            return _hub_surface_wait(_hub_waiting(ledger_table, "trends"), "trends")
+    _hub_fallback_reached("trends", ans["reason"])
     fallback = ans.get("fallback_note")
     # RAM P1a: every derived read below comes from ONE table validated
     # against the chip's history token (core/chip_trends_ram).
@@ -17903,13 +17958,15 @@ def _hub_status_table(ctx):
     return ans, table
 
 
-def _hub_waiting(table) -> dict:
+def _hub_waiting(table, surface: str = "table_read") -> dict:
     """The answer a surface waits on after its table's read did not answer
     from the ledger (the read's own building / preparing answer, or
     ``preparing`` when another request's read is in flight)."""
     ans = dict(table.waiting or table.answer)
     if ans.get("mode") not in ("building", "preparing", "fallback"):
         ans["mode"] = "preparing"
+    if ans.get("mode") == "fallback":
+        _hub_fallback_reached(surface, ans["reason"])
     return ans
 
 
@@ -18450,11 +18507,12 @@ def topology_metric_meta():
             try:
                 return jsonify(table.part("metric_meta", lambda: _hub_metric_meta(table)))
             except _ramcache.Warming:
-                waiting = _hub_waiting(table)
+                waiting = _hub_waiting(table, "metric_meta")
                 ended = waiting["mode"] == "fallback"     # S8 review P2-1: nothing to wait for
                 return jsonify(ok=True, mode=waiting["mode"], message=_vh_wait_message(waiting),
                                updating=not ended, q={}, p={}, snaps={},
                                **({"notes": [_vh_wait_message(waiting)]} if ended else {}))
+        _hub_fallback_reached("metric_meta", ans["reason"])
         payload = _legacy_topology_metric_meta().get_json()
         if payload.get("ok"):
             payload.update(mode="fallback", notes=[ans["fallback_note"]])
@@ -18715,6 +18773,7 @@ def topology_trends_paths():
     # fresh=True (QA F-10): an explicit leaf-tier query, like the chart query,
     # so it pays the freshness gate -- a stale index answered [] for the
     # placeholder's own example.
+    _hub_fallback_reached("trends_paths", ans["reason"])
     return jsonify(chip_trends_ram.table(_history(), Path(ctx["path"])).leaf_families(
         q, limit=25, fresh=True))
 
@@ -18798,12 +18857,18 @@ def _state_version_now(ctx: dict | None) -> dict:
     # docs/301 F14: the chip counts what its panel lists -- the ledger's
     # recorded states when the chip has one (it said 5 over a list of ~3,000).
     # ``unmatched`` above stays a snapshot fact: it is what ``ts`` was read from.
+    _v = {"mode": "fallback", "reason": "unreadable"}
     try:
         _v = _versions_read(ctx, snaps, limit=1)
         if _v["mode"] == "ledger":
             out["count"] = int(_v.get("total") or 0)
     except Exception:  # noqa: BLE001 -- the snapshot count stands
         logger.debug("version count from the ledger failed", exc_info=True)
+    # The Versions panel supplies its displayed count from its own rows; this
+    # helper supplies its current snapshot ID there.
+    if (_v["mode"] == "fallback" and (not has_request_context()
+            or request.endpoint != f"{bp.name}.state_versions_panel")):
+        _hub_fallback_reached("version_count", _v["reason"])
     # WHOSE version this is, stated rather than assumed. The hash above is of
     # ``ctx["path"]`` — the LIVE pair — so the id names what the chip is on,
     # not what SM is holding. With unapplied edits those are different states,
@@ -19156,6 +19221,8 @@ def state_versions_panel():
                                changes_only=False, cap=_STATE_VERSIONS_CAP, quick=quick,
                                ledger_versions=versions,
                                archive=(ctx.get("origin") or "live") != "live")
+    if versions["mode"] == "fallback":
+        _hub_fallback_reached("versions", versions["reason"])
     # docs/132 — the changes-only filter (default ON: "users do not care about
     # rows with no diff"). A row is hidden iff its capture-time diff_summary is a
     # true zero AND nothing marks it as individually meaningful: pinned rows,
@@ -29531,6 +29598,8 @@ def topology_sparklines(qubit: str):
     # thinned for the drawing only), the snapshot index otherwise. It drew
     # three flat Param History snapshots beside a Trends chart of 25 changes.
     ledger_rows, events = None, None
+    _ans = {"mode": "fallback", "reason": "unreadable"}
+    table = None
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path"):
         try:
@@ -29539,11 +29608,17 @@ def topology_sparklines(qubit: str):
                 ledger_rows = [r for r in table.curated(tuple(DEFAULT_TRACKED_PROPERTIES))
                                if r.get("qubit") == qubit]
                 events = table.snapshot_count()
-        except Exception:  # noqa: BLE001 -- warming / unreadable: the snapshot index answers
+        except Exception as exc:  # noqa: BLE001 -- warming / unreadable: the snapshot index answers
             ledger_rows = None
+            if isinstance(exc, _ramcache.Warming):
+                _ans = dict(getattr(table, "waiting", None) or {"mode": "preparing"})
+            else:
+                _ans = {"mode": "fallback", "reason": "unreadable"}
     # docs/142 compress: the popup's delta arrow now reads "since the last
     # CHANGE", not "since the previous identical sample" -- which is what a
     # trend arrow was always meant to say.
+    if ledger_rows is None and _ans["mode"] == "fallback":
+        _hub_fallback_reached("sparklines", _ans["reason"])
     source = ledger_rows if ledger_rows is not None else hm.extract_property_history(
         path, list(DEFAULT_TRACKED_PROPERTIES), qubit_filter=[qubit],
         downsample=_SPARK_POINTS, compress="changes")
@@ -34129,6 +34204,8 @@ def param_history():
         _param_history_hub_ctx(hm, target_path, is_loaded_chip))
     if hub_answer["mode"] in ("building", "preparing"):
         return _hub_surface_wait(hub_answer, "grid")
+    if hub_table is None:
+        _hub_fallback_reached("param_history_grid", hub_answer["reason"])
     try:
         # docs/158: nothing selected is an honest empty grid, not a query
         if none_props or none_qubits or none_triggers:
@@ -34143,7 +34220,7 @@ def param_history():
                 triggers=triggers,
             )
     except _ramcache.Warming:
-        return _hub_surface_wait(_hub_waiting(hub_table), "grid")
+        return _hub_surface_wait(_hub_waiting(hub_table, "param_history_grid"), "grid")
     except Exception as exc:   # noqa: BLE001 — never 500 the dashboard on a busy index
         logger.warning("param-history trend query failed: %s", exc)
         rows = []
@@ -34487,8 +34564,9 @@ def param_history_changes():
                 else:
                     body, status = _hub_param_changes(table, data)
             except _ramcache.Warming:
-                return _hub_surface_wait(_hub_waiting(table), "changes")
+                return _hub_surface_wait(_hub_waiting(table, "changes"), "changes")
             return body, status
+        _hub_fallback_reached("changes", ans["reason"])
         return _legacy_param_history_changes(fallback_note=ans.get("fallback_note"))
     return _legacy_param_history_changes()
 
@@ -34685,6 +34763,8 @@ def param_history_param_search():
                 return jsonify(ok=True, results=table.path_rank().search(q, limit=30))
             except _ramcache.Warming:
                 return jsonify(ok=True, results=[], mode="preparing")
+    if ctx and ctx.get("type") == "quam" and ctx.get("path"):
+        _hub_fallback_reached("changes_paths", ans["reason"])
     try:
         from quam_state_manager.core import param_history_ram as _phr
         hits = _phr.leaf_search(_history(), Path(_active_path()), q, limit=30)
@@ -34793,7 +34873,8 @@ def param_history_expand():
             return render_template("_param_history_drawer.html", row={
                 "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
                 row_json="{}", qubit=qubit, prop=prop, current_value=None,
-                hub_wait=_vh_wait_message(_hub_waiting(hub_table)))
+                hub_wait=_vh_wait_message(_hub_waiting(hub_table, "param_history_expand")))
+    _hub_fallback_reached("param_history_expand", hub_answer["reason"])
     rows = hm.extract_property_history(
         target_path, [prop],
         qubit_filter=[qubit], downsample=None,

@@ -364,8 +364,12 @@ def field_history():
         if ans["mode"] == "ledger":
             return jsonify(ok=True, path=dot, source="ledger",
                            history=_jsonable(r._vh_agent_view(ans, "value")))
+        r._hub_fallback_reached("agent_field_history", ans["reason"])
         data, _current, _chart = r._legacy_field_history(ctx, dot)
     except Exception as exc:  # noqa: BLE001
+        if (current_app.testing and os.environ.get("HUB_FALLBACK_TRIPWIRE") == "1"
+                and isinstance(exc, RuntimeError) and str(exc).startswith("hub fallback reached:")):
+            raise
         return _err(f"field history unavailable: {exc}", 500)
     return jsonify(ok=True, path=dot, source="snapshots", note=ans.get("fallback_note"),
                    history=_jsonable(data))
