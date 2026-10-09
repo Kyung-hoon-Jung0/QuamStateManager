@@ -17953,7 +17953,10 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
             "pinned": any(m.pinned for m in annotations), "annotations": annotations,
             "experiment": experiment, "run_id": run_id, "run_uid": run_uid,
             "source": source, "current": current, "flags": flags,
-            "why_diff": item["why_diff"], "why_write": item["why_write"], "pending": False})
+            "why_diff": item["why_diff"], "why_write": item["why_write"], "pending": False,
+            # S10 walk: the state's content hash (the quick diff skips a row
+            # holding the same state as the one it compares from)
+            "chash": ev.get("chash")})
     return rows
 
 
@@ -18228,6 +18231,31 @@ def _version_quick_entries(path, ref_a: str, ref_b: str) -> list:
     return entries
 
 
+#: how many older rows the quick diff looks through for a different state
+_VERSION_QUICK_TRIES = 6
+
+
+def _version_quick_pair(path, rows: list, mine: list) -> tuple[int, int, list]:
+    """S10 walk: ``(a_i, b_i, entries)`` -- the newest readable row of this
+    folder against the newest older one that holds a DIFFERENT state (a row
+    with the same content hash, or that compares equal, is skipped; within
+    ``_VERSION_QUICK_TRIES`` rows, else the row just below it, 0 changes)."""
+    b_i = mine[0]
+    own = rows[b_i].get("chash")
+    fallback = None
+    for a_i in mine[1:1 + _VERSION_QUICK_TRIES]:
+        if own and rows[a_i].get("chash") == own:
+            if fallback is None:
+                fallback = (a_i, b_i, [])
+            continue
+        entries = _version_quick_entries(path, rows[a_i]["ts"], rows[b_i]["ts"])
+        if entries:
+            return a_i, b_i, entries
+        if fallback is None:
+            fallback = (a_i, b_i, entries)
+    return fallback if fallback is not None else (mine[1], b_i, [])
+
+
 @bp.route("/state/versions")
 def state_versions_panel():
     """The version list the chip opens: when each was recorded, what produced
@@ -18256,9 +18284,8 @@ def state_versions_panel():
             if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked", "other_chip")
             and not r["why_diff"] and not r["pending"]]
     if len(mine) >= 2:
-        b_i, a_i = mine[0], mine[1]
         try:
-            entries = _version_quick_entries(path, rows[a_i]["ts"], rows[b_i]["ts"])
+            a_i, b_i, entries = _version_quick_pair(path, rows, mine)
             quick = {"a_ts": rows[a_i]["when"], "b_ts": rows[b_i]["when"],
                      "a_ord": a_i + 1, "b_ord": b_i + 1, "n": len(entries),
                      "entries": entries if 0 < len(entries) <= 50 else None}

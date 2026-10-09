@@ -1184,6 +1184,16 @@ def project(hub: Hub, proj: _Projector | None = None) -> int:
                                 anchor_every=ANCHOR_EVERY, keep_entries_bytes=KEEP_ENTRIES_GZ_BYTES)
             proj.forget(line["id"])
             done += 1
+        if done:
+            # S10 walk: an SM write placed before an observation of its own
+            # state (the Apply's save copy, imported before this line landed)
+            # takes that state back -- one event per state, whichever came first
+            try:
+                from quam_state_manager.core import hub_sync
+                hub_sync.drop_observed_explained(store)
+            except Exception as exc:  # noqa: BLE001 -- the projection itself stands
+                logger.warning("hub: observed dedupe after projection failed", exc_info=True)
+                proj.note_error(hub, f"observed dedupe: {type(exc).__name__}: {exc}")
         return done
     finally:
         store.close()
