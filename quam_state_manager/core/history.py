@@ -1179,6 +1179,9 @@ def source_folder_label(folder: str | None) -> str | None:
 # Sentinel for annotate_snapshot's ``note``: "argument not provided" so a label-
 # only edit leaves an existing note untouched (distinct from note=None = clear it).
 _KEEP_NOTE: Any = object()
+# The same for ``label``: a pin-only edit leaves an existing label untouched
+# (S10 C6 review: a Pin press on a State History row cleared the bookmark's label).
+_KEEP_LABEL: Any = object()
 
 # Known SnapshotMeta fields — meta.json is filtered to these before SnapshotMeta(**data)
 # so a forward/foreign key (e.g. one a newer build wrote) degrades to "ignored" instead
@@ -3570,15 +3573,15 @@ class HistoryManager:
 
     def annotate_snapshot(
         self, quam_state_path: str | Path, timestamp: str, *,
-        label: str | None = None, pinned: bool | None = None,
+        label: Any = _KEEP_LABEL, pinned: bool | None = None,
         note: Any = _KEEP_NOTE,
     ) -> None:
         """Update a snapshot's label / pinned flag / note in its meta sidecar.
 
-        ``label`` replaces the stored label (None clears it). ``pinned`` and
-        ``note`` are applied only when provided (pinned not None; note not the
-        ``_KEEP_NOTE`` sentinel), so a caller can change one without clobbering
-        the others — e.g. renaming a bookmark's tag must not wipe its note.
+        Each is applied only when provided (label / note not their ``_KEEP_*``
+        sentinel -- None clears them; pinned not None), so a caller can change
+        one without clobbering the others — e.g. renaming a bookmark's tag must
+        not wipe its note, and pinning it must not wipe its label.
         Invalidates the cached snapshot list."""
         path = Path(quam_state_path)
         snap_dir = self._history_dir(path) / timestamp
@@ -3588,7 +3591,8 @@ class HistoryManager:
             # snapshot listing reading this meta.json at that moment); Take live's
             # backup then silently lost its "Backup before Take live" label
             data = safe_io.read_json(meta_p)
-            data["label"] = label
+            if label is not _KEEP_LABEL:
+                data["label"] = label
             if pinned is not None:
                 data["pinned"] = bool(pinned)
             if note is not _KEEP_NOTE:

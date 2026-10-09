@@ -733,14 +733,18 @@ def legacy_rows(snapshots, *, limit: int = 40, offset: int = 0) -> dict:
             "events": 0, "uncertain": 0, "covered": 0}
 
 
-def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0) -> dict:
+def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0,
+         keep: frozenset = frozenset()) -> dict:
     """The rows of one page, newest first, for both surfaces.
 
     ``mode``: ``building`` (catching up), ``preparing`` (building the RAM
     index), ``unavailable`` with ``reason`` (no_ledger / unreadable), or
     ``ledger``. Every mode supplies ``rows`` and ``total``; non-ledger modes
     supply only paged Param History snapshots as legacy rows. Ledger mode has
-    ``legacy_total``, ``pending`` (older snapshots still being matched).
+    ``legacy_total``, ``pending`` (older snapshots still being matched) and
+    ``older`` (the stamps listed as older rows). ``keep``: snapshot stamps
+    listed as older rows even when the ledger holds their state (a bookmark
+    no row at or before it can carry -- S10 C6 review).
 
     The whole-ledger part (counts, which snapshots the ledger holds) is
     cached on the ledger's version and the snapshot list, never while a
@@ -774,7 +778,7 @@ def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0
             count, uncertain, pending = summary["count"], summary["uncertain"], summary["pending"]
             # this request's own snapshot objects (a label or a pin edited
             # since is drawn as it is now; the cache holds stamps only)
-            older = [s for s in snapshots if s.timestamp in summary["older"]]
+            older = [s for s in snapshots if s.timestamp in summary["older"] or s.timestamp in keep]
             # the newest offset+limit state-bearing events, through the timeline
             want = offset + limit
             events: list[dict] = []
@@ -805,7 +809,7 @@ def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0
                                   "pending": item.timestamp in pending})
             out.update(rows=shown, total=count + len(older), legacy_total=len(older),
                        pending=len(pending), uncertain=uncertain, events=count,
-                       covered=summary["covered"])
+                       covered=summary["covered"], older=frozenset(s.timestamp for s in older))
     except hub_sync.Building as exc:
         out.update(mode="building", status=getattr(exc, "status", None) or st)
     except NotReady:

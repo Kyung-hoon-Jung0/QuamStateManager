@@ -102,7 +102,13 @@ def test_nonledger_versions_keep_paged_legacy_rows(no_runs, monkeypatch, mode):
         assert snapshots[0].timestamp in body and "older snapshot" in body
         if url == "/state/versions":
             assert 'data-source="ledger"' in body
-        assert "could not be read" in body if mode == "unavailable" else "change history" in body
+        # S10 C6: "could not be read" (beside "Nothing older is shown", above older rows) ->
+        # the listing's own wording, the note may not deny the rows drawn under it
+        if mode == "unavailable":
+            assert "Older Param History snapshots are listed below." in body
+            assert "Nothing older is shown" not in body
+        else:
+            assert "change history" in body
 
 
 def test_unavailable_table_wait_preserves_terminal_mode():
@@ -436,7 +442,8 @@ def test_plain_copies_of_one_state_carry_one_pin(no_runs, url):
         "the observed row carries the snapshot it was imported from, only"
     body = no_runs["client"].get(url).get_data(as_text=True)
     if url == "/state-history?body=1":
-        assert body.count("/label\"") == 1 and f"/state-history/{stamps[0]}/label" in body
+        # S10 C6: '/label"' -> '/label?body=1', the Pin now redraws only the timeline
+        assert body.count("/label?body=1") == 1 and f"/state-history/{stamps[0]}/label?" in body
 
 
 @pytest.mark.parametrize("url", ["/topology/trends?metrics=T1", "/topology/metric-meta",

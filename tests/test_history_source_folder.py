@@ -285,7 +285,8 @@ class TestTheSurfaces:
         assert "fh-other-note" not in html
 
     def test_the_versions_panel_labels_and_diffs_this_folder(self, app_two):
-        html = app_two["client"].get("/state/versions?changes=all").data.decode()
+        # S10 C6: "?changes=all" -> the plain panel URL, the changes-only filter is deleted
+        html = app_two["client"].get("/state/versions").data.decode()
         assert html.count('class="snap-src sv-src"') == 2, "B's two rows carry its folder"
         assert ">from lab-B/quam_state<" in html
         # A's own edit, not B's: the quick diff is #4 -> #3 (A's backup -> A's save)
@@ -357,7 +358,8 @@ class TestTheSurfaces:
             assert bk and ".takelive_backup" in bk[0].source_path
             src = hm.snapshot_source(bk[0], str(a))
         assert src["kind"] == "this", src
-        html = c.get("/state/versions?changes=all").data.decode()
+        # S10 C6: "?changes=all" -> the plain panel URL, the changes-only filter is deleted
+        html = c.get("/state/versions").data.decode()
         assert "snap-src" not in html
 
 

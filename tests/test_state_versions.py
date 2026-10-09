@@ -410,7 +410,8 @@ class TestQuickDiff:
         assert "document.addEventListener('htmx:afterSwap'" in block
         assert "document.body.addEventListener" not in block
         assert "auto-apply-on" in block        # armed sessions only
-        assert "'/state/versions?changes='" in block   # what it refetches
+        # S10 C6: "?changes=<mode>" refetch -> the page alone, the changes-only filter is deleted
+        assert "return '/state/versions' + (limit ? '?limit='" in block   # what it refetches
 
 
 def _app_js_stateversions_block() -> str:
@@ -952,8 +953,9 @@ def _hm_of(client):
     return client.application.config["history_manager"]
 
 
-def _panel_ts_list(client, changes="all"):
-    body = client.get(f"/state/versions?changes={changes}").get_data(as_text=True)
+def _panel_ts_list(client):
+    # S10 C6: "?changes=<mode>" -> the plain panel URL, the changes-only filter is deleted
+    body = client.get("/state/versions").get_data(as_text=True)
     return re.findall(r'sv-check" value="(\d{8}_\d{6}\S*?)"', body), body
 
 
@@ -1004,14 +1006,14 @@ class TestExpRow:
     that produced it — 'After #id' (qualibrate saves state post-fit), full
     experiment name on hover, click opens the run's data panel."""
 
-    def _ingest(self, client, tmp_path, run_id=42, name="qubit_spectroscopy"):
+    def _ingest(self, client, tmp_path, run_id=42, name="qubit_spectroscopy", f01=6.777e9):
         from types import SimpleNamespace
         run = tmp_path / "ws" / "2026-12-01" / f"#{run_id}_{name}_120000"
         qs = run / "quam_state"
         qs.mkdir(parents=True)
         live = tmp_path / "quam_state"
         doc = json.loads((live / "state.json").read_text(encoding="utf-8"))
-        doc["qubits"]["q1"]["f_01"] = 6.777e9
+        doc["qubits"]["q1"]["f_01"] = f01  # S10 C6: a parameter, so two runs hold two states
         (qs / "state.json").write_text(json.dumps(doc), encoding="utf-8")
         (qs / "wiring.json").write_text(
             (live / "wiring.json").read_text(encoding="utf-8"), encoding="utf-8")
@@ -1041,8 +1043,10 @@ class TestExpRow:
 
 
 class TestChangesOnlyFilter:
-    """docs/132 #4: users don't care about unchanged copies — hidden by
-    default, counted honestly, one click back."""
+    """docs/132 #4: users don't care about unchanged copies. S10 C6: the
+    snapshot list's changes-only filter is deleted; the ledger lists one row
+    per recorded state, so an identical copy never makes a second row and
+    nothing needs hiding, counting or a toggle."""
 
     def _mint(self, client, tmp_path):
         """v1(first) · v2(real change) · v3(identical copy of v2) · v4(real
@@ -1065,11 +1069,10 @@ class TestChangesOnlyFilter:
     def test_default_hides_zero_diff_copies_and_says_so(
             self, client, tmp_path):
         self._mint(client, tmp_path)
-        ts_all, _ = _panel_ts_list(client, changes="all")
         # S10 C3: snapshot filtering -> observed dedup, both queries expose the same three states.
+        # S10 C6: two filter modes -> one request, the filter is deleted; the dedup is the pin.
+        ts_all, body = _panel_ts_list(client)
         assert len(ts_all) == 3
-        ts_only, body = _panel_ts_list(client, changes="only")
-        assert ts_only == ts_all
         assert "unchanged copy hidden" not in body and 'data-source="ledger"' in body
 
     def test_the_first_snapshot_is_never_called_an_unchanged_copy(
@@ -1077,18 +1080,27 @@ class TestChangesOnlyFilter:
         """Its zeros mean NOTHING-EARLIER, not no-change (docs/132 review:
         the filter was hiding the chip's original state)."""
         self._mint(client, tmp_path)
-        ts_only, _ = _panel_ts_list(client, changes="only")
-        ts_all, _ = _panel_ts_list(client, changes="all")
-        assert sorted(ts_all)[0] in ts_only      # the oldest stays visible
+        # S10 C6: "oldest of ?changes=all is in ?changes=only" -> the oldest row IS the
+        # chip's original state, the filter is deleted and the original must still be listed
+        ts, _ = _panel_ts_list(client)
+        from quam_state_manager.core import hub_versions
+        from quam_state_manager.web import routes
+        with client.application.app_context():
+            chip_dir = routes._hub_chip_dir(routes._active_ctx()["path"])
+        oldest = hub_versions.document(chip_dir, sorted(ts)[0])
+        assert oldest["qubits"]["q1"]["f_01"] == 6.1e9
 
     def test_the_default_mode_is_only(self, client, tmp_path):
         self._mint(client, tmp_path)
         body = client.get("/state/versions").get_data(as_text=True)
         assert body.count('class="sv-check"') == 3
         # S10 C3: snapshot changes-only default -> ledger dedup, the retired filter must not re-ask.
-        assert "data-changes=" not in body and 'data-source="ledger"' in body
+        # S10 C6: "no filter attribute" -> the root carries data-source alone, the filter is deleted
+        root = re.search(r'<div class="state-versions"[^>]*>', body).group(0)
+        assert re.findall(r'\sdata-([\w-]+)=', root) == ["source"] and 'data-source="ledger"' in root
 
-    def test_pinned_and_labeled_rows_are_exempt(self, client):
+    # S10 C6: renamed from test_pinned_and_labeled_rows_are_exempt -- no filter exempts anything now
+    def test_a_bookmarked_copy_is_one_row_with_both_labels(self, client):
         """A deliberate bookmark of identical content is still a bookmark."""
         client.post("/state/archive", data={"tag": "a"})
         client.post("/state/archive", data={"tag": "b"})   # same content, pinned
@@ -1098,14 +1110,19 @@ class TestChangesOnlyFilter:
         assert "a / b" in body or "b / a" in body
         assert "sv-pin" in body and "unchanged" not in body
 
-    def test_the_kept_note_states_the_true_total(self, client):
+    def test_the_kept_note_states_the_true_total(self, client, tmp_path):
         client.post("/api/history/snapshot")
         client.post("/api/history/snapshot")
+        # S10 C6: no older rows -> two run snapshots no ledger event holds (a folder
+        # nothing links), so "N recorded states" can no longer pass as the list's total
+        for rid, f in ((7, 6.2e9), (8, 6.4e9)):
+            TestExpRow()._ingest(client, tmp_path, run_id=rid, name=f"scan{rid}", f01=f)
         body = client.get("/state/versions").get_data(as_text=True)
         # S10 C3: snapshot copy total -> one recorded state, physical bookmarks remain kept.
-        assert "1 recorded" in body and "state" in body
+        foot = re.sub(r"\s+", " ", body[body.index("sv-kept-note"):])
+        assert "From the change history: 1 recorded state and 2 older snapshots" in foot, foot[:200]
         assert len(_hm_of(client).list_snapshots(Path(client.application.config["contexts"][
-            client.application.config["active_context"]]["path"]))) == 2
+            client.application.config["active_context"]]["path"]))) == 4
         assert "State History" in body
 
 

@@ -91,7 +91,8 @@ assert(fs.readFileSync(path.join(templates, 'base.html'), 'utf8').includes("asse
     assert.strictEqual(fetched.length, before + 2);
     assert(fetched.slice(before).some(c => c.url === '/field/history?path=qubits.qA1.T1'));
     assert(fetched.slice(before).some(c => c.url === '/bulk/column-history' && c.opts.body.includes('paths=')));
-    assert(calls.some(c => c.url && c.url.startsWith('/state/versions?')));
+    // S10 C6: '/state/versions?changes=...' -> '/state/versions', the changes-only filter is gone
+    assert(calls.some(c => c.url === '/state/versions'));
     console.log('Folder modal focus, errors and surface refresh: passed');
     w.close();
 })().catch(error => { console.error(error); w.close(); process.exitCode = 1; });
