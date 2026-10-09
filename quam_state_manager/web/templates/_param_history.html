@@ -71,6 +71,9 @@
      History panel (shared #live-drift-panel id — one page renders at a
      time); refreshes on load, on the 5s /state/drift poll's change
      dispatch, and whenever a sync/apply/reset fires liveDriftChanged. #}
+  {# S10 walk (N4): the OPEN chip's live drift and its chip pill are not shown
+     over an archived chip's history (the banner below names both chips) #}
+  {% if is_loaded_chip %}
   <details class="ph-drift-card" open>
     <summary class="ph-drift-title">Live changes since baseline
       <small class="muted">— what the live chip changed (formerly the main-screen alarm)</small></summary>
@@ -79,9 +82,10 @@
          hx-trigger="load, liveDriftChanged from:body"
          hx-swap="innerHTML"></div>
   </details>
+  {% endif %}
 
   {# ── Chip selector — workspace + currently-loaded chips only ───── #}
-  {% if active_chips %}
+  {% if active_chips and is_loaded_chip %}
   <div class="phf-row chip-selector-row">
     <label class="phf-label">Chip</label>
     <div class="phf-chips">
@@ -391,8 +395,10 @@
       <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
          hx-select="unset" hx-swap="outerHTML" hx-push-url="true"
          class="phf-chip" role="button" style="text-decoration:none">Reset filters</a>
+      {% if is_loaded_chip %}{# S10 walk (N4): an import into the OPEN chip #}
       <button type="button" class="phf-backfill outline btn-sm"
               onclick="paramHistoryBackfill()">Import from workspace &#8635;</button>
+      {% endif %}
       <span id="ph-backfill-status" class="muted" style="font-size:0.85em"></span>
     </div>
   </form>
@@ -509,6 +515,7 @@
               {% for p in properties %}
                 {% set cell = cells.get((q, p)) %}
                 {% set cur = current_values.get((q, p)) %}
+                {% set latest = none if is_loaded_chip else (latest_values or {}).get((q, p)) %}
                 <td class="history-cell"
                     data-qubit="{{ q }}" data-prop="{{ p }}"
                     onclick="paramHistoryOpenDrawer('{{ q }}', '{{ p }}')">
@@ -517,8 +524,10 @@
                       <span class="history-cell-ptr-badge"
                             title="{{ cell.raw_pointer }}">↪</span>
                     {% endif %}
-                    <span class="history-cell-value">
-                      {% if cur is not none %}{{ '%.4g' % cur if cur is number else cur }}{% else %}—{% endif %}
+                    {# S10 walk (N4): an archived chip's cell shows its newest recorded value #}
+                    <span class="history-cell-value{% if latest %} history-cell-latest{% endif %}"
+                          {%- if latest %} title="Newest recorded value{% if latest.t %} ({{ latest.t | format_ts_zone }}){% endif %}: this chip is not open, so it has no current value here"{% endif %}>
+                      {% if cur is not none %}{{ '%.4g' % cur if cur is number else cur }}{% elif latest and latest.value is not none %}{{ '%.4g' % latest.value if latest.value is number else latest.value }}{% else %}—{% endif %}
                     </span>
                   </div>
                   <svg class="history-cell-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{% if cell and cell.svg_inner %}{{ cell.svg_inner|safe }}{% endif %}</svg>

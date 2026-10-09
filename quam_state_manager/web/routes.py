@@ -12109,6 +12109,9 @@ def _vh_wait_message(ans: dict) -> str:
     # S10 walk (perf): what the build is doing now, from its first second
     # (looking for / through run folders, matching a new data folder, n of N runs)
     words = hub_sync.progress_words(st)
+    if words:
+        # S10 walk (N8): the step it is on, each step counting its own work
+        return f"The change history is being built{words}. It shows here when it is complete."
     if total and ((done or 0) < total or not seen_total):
         return f"The change history is being built{words}. It shows here when it is complete."
     if seen_total:
@@ -18516,6 +18519,13 @@ def _version_annotations(hm, res: dict, snapshots, srcs: dict, chip_dir=None) ->
     unattached: set[str] = set()
     for m in snapshots:
         if m.timestamp in own or not (m.label or m.note or m.pinned):
+            continue
+        if getattr(m, "kind", None) == "backup":
+            # S10 walk (N5): SM's own protective copy ("Backup before Take live
+            # ...") was written for ITS row: its words never ride another
+            # row of the same content (an SM write's row then read as two
+            # actions at once) -- it is listed as its own row
+            unattached.add(m.timestamp)
             continue
         why = str(covered_by.get(m.timestamp) or "")
         if why.startswith("run:"):
@@ -34120,6 +34130,14 @@ def param_history():
                     current_values[(q, p)] = qd.get(p)
             except Exception:
                 pass
+    # S10 walk (N4): an archived chip has no live state -- each cell shows the
+    # NEWEST value its history recorded, labelled as such (never "current")
+    latest_values: dict = {}
+    if not is_loaded_chip:
+        try:
+            latest_values = _hub_latest_values(hub_table, props)
+        except (_ramcache.Warming, LedgerUnreadable):
+            latest_values = {}        # the grid read just answered: never reached in practice
 
     # Pre-render sparkline SVGs server-side (Family D1+D2 in
     # docs/23_param_history_performance.md): the JS used to JSON.parse
@@ -34202,6 +34220,7 @@ def param_history():
             all_qubits=all_qubits,
             cells=by_cell,
             current_values=current_values,
+            latest_values=latest_values,
             summary=summary,
             snap_summary=snap_summary,
             disk_stats=disk_stats,
@@ -34832,6 +34851,19 @@ def param_history_expand():
             hub_wait=_vh_wait_message(failed), hub_mode="unavailable")
 
 
+def _hub_latest_values(table, props) -> dict:
+    """S10 walk (N4): ``{(qubit, property): {"value", "t"}}`` -- each cell's
+    newest RECORDED value (its last change point, not the held repeat of it)
+    and when it was recorded, for a chip with no live state (an archived one)."""
+    out: dict = {}
+    for r in table.curated(tuple(props)):
+        pts = [v for v in r.get("values") or () if not v.get("held")]
+        if pts:
+            out[(r["qubit"], r["property"])] = {"value": pts[-1]["value"],
+                                                "t": (pts[-1].get("point") or {}).get("t")}
+    return out
+
+
 def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
                               extra_notes=()):
     """docs/283: one grid cell's drawer on the ledger -- the cell's recorded
@@ -34851,7 +34883,7 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
         value = v["value"]
         if isinstance(value, float) and value != value or value in (float("inf"), float("-inf")):
             value = None          # JSON has no NaN; the chart draws finite numbers
-        values.append({"timestamp": v["timestamp"], "value": value,
+        values.append({"timestamp": v["timestamp"], "value": value, "t": pt.get("t"),
                        "trigger": v.get("trigger") or "auto",
                        "label": info.get("label"), "sub": info.get("sub"),
                        "flags": info.get("flag_text") or [],
@@ -34872,8 +34904,13 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
                 pass
         if isinstance(current_value, float) and _vh_numeric(current_value) is None:
             current_value = None  # a NaN would end the drawer's script
+    # S10 walk (N4): a chip with no live state names its newest recorded point
+    # as the latest (never "current")
+    latest = values[-1] if values and not is_loaded else None
     return render_template("_param_history_drawer.html", row=out, row_json=json.dumps(out),
                            qubit=qubit, prop=prop, current_value=current_value,
+                           latest_value=latest["value"] if latest else None,
+                           latest_t=latest["t"] if latest else None,
                            hub_notes=list(table.notes) + list(extra_notes))
 
 

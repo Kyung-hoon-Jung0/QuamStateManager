@@ -349,21 +349,31 @@ def spelled_roots(conn, roots: dict) -> dict:
     path when no run says (or the spelling is not the same folder)."""
     out = dict(roots)
     for rid, path in roots.items():
+        if not path:
+            continue
         try:
             row = conn.execute("SELECT state_ref, rel_path FROM events WHERE root_id=? AND kind='run' "
                                "AND state_ref IS NOT NULL AND rel_path IS NOT NULL ORDER BY eid DESC LIMIT 1",
                                (rid,)).fetchone()
         except Exception:  # noqa: BLE001 -- a display spelling never breaks a view
             continue
-        if not row or not path:
-            continue
-        raw = str(row[0]).rstrip("/\\")
-        rel = _seps(str(row[1]).strip("/\\"))
-        if not rel or len(raw) <= len(rel) or root_key(_seps(raw[-len(rel):])) != root_key(rel):
-            continue
-        base = raw[:-len(rel)].rstrip("/\\")          # the characters as read, separators included
-        if base and root_key(_seps(base)) == root_key(_seps(str(path)).rstrip("/\\")):
-            out[rid] = base
+        want = root_key(_seps(str(path)).rstrip("/\\"))
+        if row:
+            raw = str(row[0]).rstrip("/\\")
+            rel = _seps(str(row[1]).strip("/\\"))
+            if rel and len(raw) > len(rel) and root_key(_seps(raw[-len(rel):])) == root_key(rel):
+                base = raw[:-len(rel)].rstrip("/\\")      # the characters as read, separators included
+                if base and root_key(_seps(base)) == want:
+                    out[rid] = base
+                    continue
+        # S10 walk (N5): no run was read under this root (a moved folder's runs
+        # only gained a location there): the root as it was declared
+        try:
+            got = conn.execute("SELECT v FROM meta WHERE k=?", (f"root_spelled:{rid}",)).fetchone()
+        except Exception:  # noqa: BLE001
+            got = None
+        if got and got[0] and root_key(_seps(str(got[0])).rstrip("/\\")) == want:
+            out[rid] = got[0]
     return out
 
 
@@ -440,9 +450,19 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
     for rid, folder in _table_rows(conn, "SELECT root_id, folder FROM root_links"):
         links.setdefault(rid, set()).add(folder)
     locs: dict[int, list] = {}
-    for eid, rid in conn.execute("SELECT l.eid, l.root_id FROM locations l JOIN events e USING(eid) "
-                                 "WHERE e.kind='run'"):
+    gone: set = set()
+    for eid, rid, sig in conn.execute(
+            "SELECT l.eid, l.root_id, f.sig FROM locations l JOIN events e USING(eid) "
+            "LEFT JOIN run_files f ON f.root_id=l.root_id AND f.rel_path=l.rel_path WHERE e.kind='run'"):
         locs.setdefault(eid, []).append(rid)
+        if sig == "gone":
+            gone.add((eid, rid))
+    # S10 walk (N5): a run recorded under more than one data root (a moved or
+    # copied folder) is named by the folder it is under NOW -- a location not
+    # found gone first, then the root registered last -- never the one it left
+    for eid, rids in locs.items():
+        if len(rids) > 1:
+            rids.sort(key=lambda r, e=eid: ((e, r) in gone, -(r or 0)))
 
     def linked(rid) -> bool:
         path = roots.get(rid)
@@ -675,6 +695,7 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
     # what was left out, counted and named
     folders: dict[str, dict] = {}
     unlinked_roots: dict[str, dict] = {}
+    unlinked_apart = {"unreadable": 0, "uncertain": 0}
     other_runs: list[dict] = []
     counts = {PARALLEL: 0, UNKNOWN: 0, UNLINKED: 0, OTHER_CHIP: 0}
     for eid, why in lane.hidden.items():
@@ -689,6 +710,16 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
                                "t": f.get("t") or 0})
             continue
         if why == UNLINKED:
+            # S10 walk (N5): one count everywhere -- the runs a listing lists
+            # (a readable saved state of this chip's identity); the others of
+            # that folder are counted apart and said apart
+            f = facts.get(eid) or {}
+            if f.get("error") or not _has_state(f):
+                unlinked_apart["unreadable"] += 1
+                continue
+            if int(f.get("flags") or 0) & CHIP_UNCERTAIN:
+                unlinked_apart["uncertain"] += 1
+                continue
             r = unlinked_roots.setdefault(entry.get("folder") or "", {"path": entry.get("folder"),
                                                                      "label": entry.get("label"), "runs": 0})
             r["runs"] += 1
@@ -699,7 +730,10 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
             r["events"] += 1
     earlier = sum(1 for e, s in lane.src.items() if e in keep and s["lineage"] == "earlier")
     lane.left_out = {"parallel": counts[PARALLEL], "unknown": counts[UNKNOWN],
-                     "unlinked": counts[UNLINKED], "other_chip": counts[OTHER_CHIP], "earlier": earlier,
+                     "unlinked": counts[UNLINKED] - sum(unlinked_apart.values()),
+                     "unlinked_unreadable": unlinked_apart["unreadable"],
+                     "unlinked_uncertain": unlinked_apart["uncertain"],
+                     "other_chip": counts[OTHER_CHIP], "earlier": earlier,
                      "folders": sorted(folders.values(), key=lambda r: (-r["events"], r["folder"] or "")),
                      "roots": sorted(unlinked_roots.values(), key=lambda r: (-r["runs"], r["path"] or "")),
                      # newest first, a few: the count above says how many in all

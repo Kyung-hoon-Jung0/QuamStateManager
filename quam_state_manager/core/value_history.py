@@ -1577,6 +1577,21 @@ def folder_notes(left_out: dict | None, listing: dict | None = None) -> list[dic
                     'not linked"; ' + ("it is" if unlinked == 1 else "they are") + " not this folder's changes.")
         else:
             text = head + (" is" if unlinked == 1 else " are") + " not part of this folder's timeline."
+        # S10 walk (N5): the same count on every surface (the runs a listing
+        # lists); that folder's runs it cannot list are said apart, never
+        # folded into one surface's number and not the other's
+        apart = []
+        bad = int(lo.get("unlinked_unreadable") or 0)
+        if bad:
+            apart.append(_plural(bad, "more run", "more runs") + " of it "
+                         + ("has" if bad == 1 else "have") + " no readable saved state")
+        odd = int(lo.get("unlinked_uncertain") or 0)
+        if odd:
+            apart.append(_plural(odd, "more run", "more runs") + " of it "
+                         + ("is" if odd == 1 else "are") + " recorded with another chip's identity")
+        if apart:
+            joined = "; ".join(apart)
+            text += " " + joined[:1].upper() + joined[1:] + "."
         out.append({"level": "info", "code": "unlinked_roots", "text": text, "roots": roots})
     other_chip = int((listing.get("uncertain") if listing is not None else lo.get("other_chip")) or 0)
     if other_chip:

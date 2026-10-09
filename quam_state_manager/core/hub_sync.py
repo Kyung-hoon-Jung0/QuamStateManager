@@ -527,6 +527,8 @@ class ChipSync:
             "observed_done": self.obs_done,
             "observed_total": self.obs_total,
             "archive": self.archive,
+            # S10 walk (N8): whether the build has a "states SM saw" step at all
+            "observes": self.observed_source is not None,
         }
         if self.slice_error is not None:
             st["ledger_error"] = self.slice_error
@@ -605,6 +607,13 @@ class ChipSync:
             row = store.conn.execute("SELECT root_id, folder_key, offset_hint FROM roots WHERE path=?",
                                      (normalized,)).fetchone()
         rs.root_id, rs.fkey, rs.stored_hint = row[0], row[1], row[2]
+        # S10 walk (N5): the root as it was declared (the ``roots`` table keeps
+        # a normcased key): what a note prints when no run of the ledger was
+        # read under this root (a moved folder's runs only gained a location)
+        spelled = str(rs.path.resolve())
+        if store.meta(f"{ROOT_SPELLING}{rs.root_id}") != spelled:
+            with txn(store):
+                store.set_meta(f"{ROOT_SPELLING}{rs.root_id}", spelled)
         votes = store.meta(f"offset_votes:{rs.root_id}")
         rs.votes = Counter(json.loads(votes)) if votes else Counter()
         rs.known = {r[0]: [r[1], r[2]] for r in store.conn.execute(
@@ -710,6 +719,8 @@ class ChipSync:
             if self.observe_wanted:
                 self.observe_wanted = False
                 self._observe_list(store)
+            if self.observe_queue:
+                self.phase = "observing"     # S10 walk (N8): its own step, counted in snapshots
             while self.observe_queue and not late():
                 snap = self.observe_queue.popleft()
                 self.in_hand += 1
@@ -1946,6 +1957,10 @@ ARCHIVE_BUILD = "archive_build"
 ARCHIVE_DONE = "done:runs"
 
 
+#: S10 walk (N5): ledger meta prefix -- a data root's spelling as declared, by root id
+ROOT_SPELLING = "root_spelled:"
+
+
 def registered_for(chip_dir) -> ChipSync | None:
     """The chip's sync in this process, or None (never creates one)."""
     with _SYNCS_LOCK:
@@ -2143,13 +2158,47 @@ def progress_words(st: dict | None, *, short: bool = False) -> str:
     run folders -> looking through them (n of N, their node.json read) ->
     matching a new data folder's runs to the runs recorded (n of N) or n of N
     runs -> checking the known run folders for changes. A status with no
-    phase (or ``ingesting``) says what it always said: `` (n of N runs)``."""
+    phase (or ``ingesting``) says what it always said: `` (n of N runs)``.
+
+    S10 walk (N8): each phase counts its own work, so the count would go DOWN
+    from one phase to the next ("1864 of 3521" folders looked through, then
+    "925 of 3521" runs added; "563 of 576" runs, then "271 of 647"
+    snapshots). A build whose status names its steps (its data folders --
+    ``roots`` --, and whether it imports the states SM saw -- ``observes``)
+    therefore says which step it is on: "step 1 of 3, looking through run
+    folders (n of N)" -> "step 2 of 3, adding runs (n of N)" -> "step 3 of 3,
+    importing the states SM saw (n of M)" (an archived chip's build: "reading
+    this chip's Param History snapshots"). One step alone needs no number."""
     st = st or {}
     phase = st.get("phase")
     done, total = st.get("done") or 0, st.get("total") or 0
 
     def count(n, of):
         return f"{n}/{of}" if short else f"{n} of {of}"
+    steps = (2 if st.get("roots") else 0) + (1 if st.get("observes") else 0)
+    if steps:
+        def step(k, what, n=None, of=None):
+            cnt = f" ({count(n, of)})" if of else ""
+            return (f": step {k} of {steps}, " if steps > 1 else ": ") + what + cnt
+        seen_done, seen_total = st.get("observed_done") or 0, st.get("observed_total") or 0
+        if phase == "observing" and seen_total:
+            what = ("reading this chip's Param History snapshots" if st.get("archive")
+                    else "importing the states SM saw")
+            return step(steps, what, min(seen_done, seen_total), seen_total)
+        if st.get("roots"):
+            if phase == "reading" and total:
+                return step(1, "looking through run folders", min(st.get("looked") or 0, total), total)
+            if phase in ("idle", "listing", "reading") and not total:
+                return step(1, "looking for run folders")
+            if phase == "matching" and total:
+                return step(2, "matching a new data folder's runs to the runs recorded", done, total)
+            if phase == "sweeping" and not total:
+                swept = st.get("sweep_total") or 0
+                return step(2, "checking the known run folders for changes",
+                            min(st.get("sweep_done") or 0, swept) if swept else None, swept or None)
+            if total:
+                return step(2, "adding runs", done, total)
+        return ""
     if phase == "reading" and total:
         return f": looking through run folders ({count(min(st.get('looked') or 0, total), total)})"
     if phase == "matching" and total:
