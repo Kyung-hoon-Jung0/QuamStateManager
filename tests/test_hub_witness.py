@@ -193,6 +193,20 @@ class TestTheRule:
         v0, _ = judged(led, refined=False)
         assert v0.code(r, pid[F]) == hub_witness.CONTRADICTED
 
+    @pytest.mark.parametrize("unknown", [{"qubits": None}, None, {}, {"qubits": []}, {"cz_macro_name": "cz"}])
+    def test_a_run_that_names_no_target_is_never_a_witness(self, led, unknown):
+        led.add(doc(), targets=q("qA1"))
+        r = led.add(doc(f=B), targets=q("qA1"))
+        led.add(doc(f=B, f2=2.0), targets=unknown)            # may have measured qA1 too
+        v, pid = judged(led)
+        assert v.code(r, pid[F]) == hub_witness.OPEN, "it carried the value but may have measured it"
+        w = led.add(doc(f=A, f2=2.0), targets=unknown)         # changes it back: a re-measurement
+        v, pid = judged(led)
+        assert v.code(r, pid[F]) == hub_witness.REMEASURED and v.drop(pid[F]) == frozenset()
+        v0, _ = judged(led, unknown_targets="none")
+        assert v0.code(r, pid[F]) == hub_witness.CONFIRMED, "read as naming nothing it would vouch for qA1"
+        assert w not in v.drop(pid[F])
+
     def test_runs_alone_as_witnesses(self, led):
         led.add(doc(), targets=q("qA1"))
         r = led.add(doc(f=B), targets=q("qA1"))

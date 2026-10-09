@@ -95,14 +95,39 @@ def _class_of(kind: str | None) -> str | None:
     return None
 
 
-def target_tokens(text: Any) -> frozenset:
+class _Every:
+    """The targets of a run that names none (``{"qubits": null}``, nothing,
+    an empty list): it may have measured every entity."""
+
+    def __contains__(self, _entity) -> bool:
+        return True
+
+    def __repr__(self) -> str:
+        return "EVERY"
+
+
+#: :func:`target_tokens` of a run whose targets are unknown
+EVERY = _Every()
+
+#: the target keys that name entities (``hub_build.read_node`` keeps these)
+_ENTITY_KEYS = ("qubits", "qubit_pairs", "pairs")
+
+
+def target_tokens(text: Any):
     """Every entity a run's ``targets`` names (``events.targets`` JSON:
     ``{"qubits": [...]}``, ``{"qubit_pairs": ["qB3-qA4"]}``): each item, and
-    each part of a pair id -- a pair target covers both of its qubits."""
+    each part of a pair id -- a pair target covers both of its qubits.
+    :data:`EVERY` when the run names no entity (``{"qubits": null}``, no
+    targets, empty lists): such a run may have measured every one."""
     try:
         raw = json.loads(text) if isinstance(text, str) and text else text
     except ValueError:
         raw = None
+    named = (any(isinstance(v, list) and any(x is not None for x in v) or isinstance(v, str) and v
+                 for k, v in raw.items() if k in _ENTITY_KEYS) if isinstance(raw, dict)
+             else isinstance(raw, list) and any(x is not None for x in raw))
+    if not named:
+        return EVERY
     items: list = []
     if isinstance(raw, dict):
         for v in raw.values():
@@ -165,7 +190,7 @@ class Verdicts(Mapping):
     Every access happens inside the read snapshot of the index it was built
     for (``of`` hands it that snapshot's connection)."""
 
-    def __init__(self, index, conn, witnesses: frozenset, refined: bool):
+    def __init__(self, index, conn, witnesses: frozenset, refined: bool, unknown_targets: str = "every"):
         self.index, self.conn = index, conn
         self.refined = refined
         n = len(index.eids)
@@ -188,8 +213,10 @@ class Verdicts(Mapping):
             if cls == RUN and not uncertain:
                 judged[i] = 1
                 targets[i] = target_tokens(text)
-            if cls in witnesses and not uncertain:
-                capable[i] = 1
+                if targets[i] is EVERY and unknown_targets != "every":
+                    targets[i] = frozenset()      # the spec section 2 reading: it names nothing
+            if cls in witnesses and not uncertain and targets[i] is not EVERY:
+                capable[i] = 1                     # a run that may have measured everything reads nothing
         self._every = [i for i in range(n) if capable[i]]
         self._lanes: dict[Any, array] = {}
         self._entities: dict[int, str | None] = {}
@@ -306,7 +333,8 @@ class Verdicts(Mapping):
                 if w is not None and i2 == w:
                     wrow = kk
                     break
-                if kinds[i2] == RUN and ent is not None and targets[i2] is not None and ent in targets[i2]:
+                t2 = targets[i2]
+                if kinds[i2] == RUN and t2 is not None and (t2 is EVERY or (ent is not None and ent in t2)):
                     if not (refined and seq[kk][1] in pairs):
                         code = REMEASURED    # measured again before anything read the chip
                         break
@@ -473,16 +501,20 @@ def _first(row):
 
 
 def verdicts(index, conn, *, witnesses: frozenset = ALL_WITNESSES,
-             refined: bool = True, lazy: bool = False) -> Verdicts:
+             refined: bool = True, unknown_targets: str = "every", lazy: bool = False) -> Verdicts:
     """The witness verdict of every run change of *index* (see the module
     docstring). *witnesses*: which event classes may read the chip (all by
     default). *refined* (default): a walk passes a re-measurement that was
     itself contradicted, and a change the run's own node.json patch proves is
     ``confirmed`` by that patch (the node wrote it to the chip; spec P0-1 section 1:
     every proven change was live). The replay harness scores the spec's section 2
-    rule with runs alone and ``refined=False``. *lazy*: judge each holder when
-    it is first asked about (:func:`of`); else every holder now."""
-    out = Verdicts(index, conn, witnesses, refined)
+    rule with runs alone, ``refined=False`` and ``unknown_targets="none"``.
+    *unknown_targets*: a run that names no target may have measured every
+    entity (``"every"``, default: never a witness, and a re-measurement of
+    whatever it changes) or names nothing (``"none"``: a witness for all).
+    *lazy*: judge each holder when it is first asked about (:func:`of`); else
+    every holder now."""
+    out = Verdicts(index, conn, witnesses, refined, unknown_targets)
     return out if lazy else out.prime()
 
 
