@@ -4,7 +4,7 @@
    "State History" title. It now lists the newest recorded states of the SAME
    ledger the State History page reads, read-only, and sends the user there to
    compare, load or restore one. #}
-{% set lv = ledger_versions %}
+{% from '_snapshot_source.html' import source_badge %}{% set lv = ledger_versions %}
 <div id="history-list">
 <div class="history-toolbar">
     <a class="outline btn-sm" role="button" href="/state-history" hx-get="/state-history"
@@ -23,10 +23,10 @@
     <div class="history-entry-header">
         <span class="history-entry-time">{{ r.when | ts_local }}</span>
         {% if r.legacy %}
-        <span class="sh-older-badge" title="A Param History snapshot no change-history event covers">older snapshot</span>
+        <span class="sh-older-badge" title="A Param History snapshot no change-history event covers">older snapshot</span>{{ source_badge(r.source, 'hp-src') }}
         {% else %}
         <strong class="sh-event sh-event-{{ r.badge | replace(' ', '-') }}" title="{{ r.hover }}">{{ r.title }}</strong>
-        <span class="muted sh-event-sub">{{ r.sub }}</span>
+        <span class="muted sh-event-sub">{{ r.sub }}</span>{{ source_badge(r.source, 'hp-src') }}
         {% endif %}
         {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
     </div>

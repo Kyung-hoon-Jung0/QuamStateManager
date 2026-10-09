@@ -675,9 +675,13 @@ def _version_token(binding) -> tuple:
     moves it). Raises ``hub_sync.Building`` / ``ramcache.Warming``."""
     from quam_state_manager.core import hub_index
     with hub_index.snapshot(binding) as (conn, index):
+        lane = getattr(index, "lane", None)
+        folder = getattr(binding, "folder", None)
+        # S10 C1.5: a summary is one folder's (its view and its lane)
         return (index.ledger_id, getattr(conn, "gen", 0),
                 conn.execute("PRAGMA data_version").fetchone()[0],
-                max(index.eids, default=0), len(index.eids))
+                max(index.eids, default=0), len(index.eids)) + (
+            (folder.ident(), lane.digest if lane is not None else None) if folder is not None else ())
 
 
 def _summary(store: _Ledger, directory: Path, snapshots, st: dict) -> dict:
@@ -744,7 +748,8 @@ def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0
             cursor = None
             page = max(50, min(want, 500))
             while len(events) < want:
-                res = hub_query.timeline(binding, limit=page, cursor=cursor)
+                # S10 C1.5: a listing keeps every row; another folder's is labelled
+                res = hub_query.timeline(binding, limit=page, cursor=cursor, foreign="label")
                 events.extend(e for e in res["events"]
                               if has_state(e) and not e["flags"] & CHIP_UNCERTAIN)
                 cursor = res["cursor"]

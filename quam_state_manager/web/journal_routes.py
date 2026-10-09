@@ -93,8 +93,10 @@ def _ledger_context():
     directory = ctx.get("hub_chip_dir") or r._hub_chip_dir(active)
     if directory is None:
         raise RuntimeError("the chip history is unavailable")
+    # S10 C1.5: the log reads the ledger as the open folder sees it (the one
+    # folder view every value surface binds)
     return context(SimpleNamespace(directory=Path(directory)), instance=current_app.instance_path,
-                   project=ctx.get("qualibrate_project"))
+                   project=ctx.get("qualibrate_project"), folder=r._hub_folder_view(ctx, directory))
 
 
 def _filters() -> dict:

@@ -31,14 +31,15 @@ class EraTimeline:
     """``at(position) -> era`` over one ledger read snapshot."""
 
     def __init__(self, conn, index):
+        from quam_state_manager.core.hub_query import path_rows
         self.holders: list[tuple[list[int], list[tuple]]] = []
         while True:
             pid = index.paths.get(era_holder(len(self.holders)))
             if pid is None:
                 break
             rows = []
-            for eid, op, num, txt, onum, otxt in conn.execute(
-                    "SELECT eid, op, num, txt, old_num, old_txt FROM changes WHERE pid=?", (pid,)):
+            # S10 C1.5: a folder view's rows (a seam's own in its place)
+            for eid, op, num, txt, onum, otxt in path_rows(conn, index, pid):
                 pos = index.positions.get(eid)
                 if pos is not None:
                     rows.append((pos, op, value(num, txt), value(onum, otxt)))

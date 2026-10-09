@@ -105,7 +105,7 @@
     <details class="jr-card jr-write jr-by-{{ (c.author or 'unknown').split(':')[0] }}" data-ts="{{ c.ts or 0 }}" id="write-{{ c.id }}" data-jr-order="{{ c.search_order }}"{% if not paged %} data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}"{% endif %}>
         <summary>
             <span class="jr-time">{{ c.time }}</span>
-            <span class="jr-family">{{ c.label or 'SM write' }}: {{ n }} value{{ 's' if n != 1 }}</span>
+            <span class="jr-family">{{ c.label or 'SM write' }}: {{ n }} value{{ 's' if n != 1 }}</span>{% if c.source %}{% from '_snapshot_source.html' import source_badge %}{{ source_badge(c.source, 'jr-src') }}{% endif %}
             <span class="jr-targets"></span>
             <span class="jr-pills">{% if c.undone %}<span class="jr-badge jr-undone">undone</span>{% elif c.partly_undone %}<span class="jr-badge jr-undone">partly undone</span>{% endif %}{% if c.src == 'auto' %}<span class="jr-badge" title="an armed auto session">auto</span>{% endif %}</span>
             <span class="jr-run-link muted"></span>

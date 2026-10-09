@@ -11,5 +11,8 @@
 <span class="snap-src {{ cls }}" title="Recorded from another folder with the same chip name: {{ src.folder }}{% if src.lineage == 'earlier' %} — before this folder's own history began{% else %} — while this folder had its own history{% endif %}">from {{ src.label or src.folder }}</span>
 {%- elif src and src.kind == 'unknown' -%}
 <span class="snap-src snap-src-unknown {{ cls }}" title="No source folder is recorded for this row, so it cannot be shown to come from this folder">source unknown</span>
+{%- elif src and src.kind == 'unlinked' -%}
+{#- S10 C1.5: a run of a data folder not linked to this folder -#}
+<span class="snap-src snap-src-unlinked {{ cls }}" title="A run saved in a data folder that is not linked to this folder: {{ src.folder }}">data folder not linked</span>
 {%- endif -%}
 {%- endmacro %}

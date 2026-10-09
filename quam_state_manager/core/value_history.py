@@ -553,8 +553,15 @@ def _flags(bits: int) -> list[str]:
     return [name for bit, name in FLAG_NAMES if bits & bit]
 
 
-def provenance(ev: dict, proven: bool) -> str:
-    """What the ledger can say about who set a row (docs/282 §1.4)."""
+def provenance(ev: dict, proven: bool, held: bool = False) -> str:
+    """What the ledger can say about who set a row (docs/282 §1.4).
+
+    S10 C1.5: ``held_before_write`` -- a row of an SM write that SM's entries
+    did not write: the open folder held that value when SM wrote over it
+    (an outside edit, or another folder's history before this one's), so who
+    set it is not known."""
+    if held or ev.get("_held"):
+        return "held_before_write"
     kind = ev.get("kind")
     if kind == "run":
         if ev.get("flags", 0) & CHIP_UNCERTAIN:
@@ -572,7 +579,7 @@ def provenance(ev: dict, proven: bool) -> str:
 
 
 def _point(ev: dict, old: Any, new: Any, op: str, proven: bool, roots: dict,
-           sm: dict) -> dict:
+           sm: dict, held: bool = False) -> dict:
     flags = int(ev.get("flags") or 0)
     folder = None
     if ev.get("root_id") is not None and ev.get("rel_path"):
@@ -584,7 +591,7 @@ def _point(ev: dict, old: Any, new: Any, op: str, proven: bool, roots: dict,
         "eid": ev["eid"], "ord": ev["ord"], "t_us": ev["t_utc_us"], "t": iso_z(ev["t_utc_us"]),
         "kind": ev["kind"], "op": op, "value": new, "old": old,
         "removed": op == "gone", "was_absent": op == "add",
-        "proven": bool(proven), "provenance": provenance(ev, proven),
+        "proven": bool(proven), "provenance": provenance(ev, proven, held),
         "run_id": ev.get("run_id"), "experiment": ev.get("experiment"),
         "folder": folder, "status": ev.get("status"),
         "actor": ev.get("actor"), "src": ev.get("src"), "plan_id": ev.get("plan_id"),
@@ -592,6 +599,9 @@ def _point(ev: dict, old: Any, new: Any, op: str, proven: bool, roots: dict,
         "flags": _flags(flags),
         "undone": None,
         "before_via": False,
+        # S10 C1.5: another folder's event in this folder's view (recorded
+        # before this folder's own history began): the folder it came from
+        **({"source": ev["_source"]} if ev.get("_source") is not None else {}),
     }
 
 
@@ -667,7 +677,7 @@ def undone_paths(conn, index, ev: dict, sm: dict) -> Any:
     if not later:
         return set()
     facts = _sm_info(conn, later)
-    levs = hub_query._events(conn, later)
+    levs = hub_query._events(conn, later, index)
     out: set[str] = set()
     for eid in later:
         lev = levs.get(eid)
@@ -738,14 +748,17 @@ hub_index.ON_CLOSE.append(_drop_chip)
 
 def _stamp(conn, index) -> tuple:
     """The ledger state one read snapshot sees: ``(ledger id, reader opening,
-    data version, rewrite log mark, newest eid, events, first event)``. Equal
-    stamps mean nothing changed at all; the rewrite log mark
+    data version, rewrite log mark, newest eid, events, first event, lane)``.
+    Equal stamps mean nothing changed at all; the rewrite log mark
     (``hub_store.rewrite_mark``, None when the ledger has no complete log) is
-    what lets a later state vouch for an earlier answer."""
+    what lets a later state vouch for an earlier answer. ``lane``: a folder
+    view's digest of its events up to the newest (S10 C1.5,
+    ``hub_lanes.Lane.digest_upto``; None on the ledger's own index)."""
+    lane = getattr(index, "lane", None)
     return (index.ledger_id, getattr(conn, "gen", 0),
             conn.execute("PRAGMA data_version").fetchone()[0],
             rewrite_mark(conn), max(index.eids, default=0), len(index.eids),
-            index.eids[0] if index.eids else None)
+            index.eids[0] if index.eids else None, lane.digest if lane is not None else None)
 
 
 class _Reuse:
@@ -788,9 +801,15 @@ class _Reuse:
         old, now = entry.stamp, self.stamp
         if old == now:
             return True
-        lid, gen, _dv, mark, high, n, first = old
-        nlid, ngen, _ndv, nmark, nhigh, nn, nfirst = now
+        lid, gen, _dv, mark, high, n, first, digest = old
+        nlid, ngen, _ndv, nmark, nhigh, nn, nfirst, ndigest = now
         if mark is None or nmark is None or (lid, gen, mark[0]) != (nlid, ngen, nmark[0]):
+            return False
+        lane = getattr(self.index, "lane", None)
+        if (digest is None) != (ndigest is None) or (
+                lane is not None and digest != lane.digest_upto(high)):
+            # S10 C1.5: the lane of the events it read changed (one joined or
+            # left, a seam moved, a recomputed flag)
             return False
         if first != nfirst:
             return False            # the ledger START moved: every key reads position 0
@@ -814,6 +833,9 @@ class _Reuse:
                 touched = {r[0] for r in self.conn.execute(
                     "SELECT DISTINCT p.path FROM changes c JOIN paths p USING(pid) WHERE c.eid > ?",
                     (high,))}
+                lane = getattr(self.index, "lane", None)
+                if lane is not None:
+                    touched |= lane.new_rows(high)      # S10 C1.5: a new seam's own rows
                 moved = any(p == _ERA_ROOT or p.startswith(_ERA_ROOT + ".") for p in touched)
                 self._touched[high] = (touched, moved)
             touched, moved = self._touched[high]
@@ -845,7 +867,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
     cache.seen = None
     # the events a retarget point may need (segment starts), fetched once
     starts = {s for lst in list(segs.values()) + list(hsegs.values()) for s, _h in lst}
-    start_events = hub_query._events(conn, [index.eids[p] for p in starts if 0 <= p < len(index.eids)])
+    start_events = hub_query._events(conn, [index.eids[p] for p in starts if 0 <= p < len(index.eids)], index)
     start_ev = {p: start_events[index.eids[p]] for p in starts
                 if 0 <= p < len(index.eids) and index.eids[p] in start_events}
     raw: dict[str, list] = {}
@@ -954,6 +976,8 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
     """
     memo = not runs
     with hub_index.snapshot(binding if binding is not None else _reader(chip_dir)) as (conn, index):
+        lane = getattr(index, "lane", None)
+        folder = getattr(binding, "folder", None)
         kind_names = {v: k for k, v in index.names["kind"].items()}
         run_kind = index.names["kind"].get("run")
         has_runs = bool(index.postings["kind"].get("run"))
@@ -973,7 +997,9 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
             chip = hub_index._slot(chip_dir)
             check = _Reuse(conn, index, stamp)
             for key, tgt in targets.items():
-                slots[key] = (chip, target_sig(tgt), limit, scope)
+                # S10 C1.5: an answer is one folder's (its view's key)
+                slots[key] = (chip, target_sig(tgt), limit, scope) + (
+                    (folder.ident(),) if folder is not None else ())
                 held = _KEYS.peek(slots[key])
                 if held is not None and check.holds(held[1]):
                     reused[key] = held[1]
@@ -1016,7 +1042,7 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                     picked.append(index.eids[pos])
                     if len(picked) >= runs * 3 + 8:
                         break
-            evs = hub_query._events(conn, picked)
+            evs = hub_query._events(conn, picked, index)
             good = []
             for e in picked:
                 ev = evs.get(e)
@@ -1061,6 +1087,10 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                   "version": [index.ledger_id, getattr(conn, "gen", 0),
                               conn.execute("PRAGMA data_version").fetchone()[0],
                               max(index.eids, default=0), len(index.eids), len(index.paths)]}
+        if lane is not None:
+            # S10 C1.5: what this folder's view left out, and its own version
+            ledger["left_out"] = lane.left_out
+            ledger["version"].append(lane.digest)
         if run_kind is not None:
             for pos in range(len(index.eids) - 1, -1, -1):
                 if index.kind[pos] == run_kind:
@@ -1152,6 +1182,55 @@ def run_era(chip_dir, folder, binding=None) -> tuple | None:
     return rename_lineage.folder_era(folder)
 
 
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n:,} {one if n == 1 else many}"
+
+
+def folder_notes(left_out: dict | None) -> list[dict]:
+    """S10 C1.5: what a folder's view of the chip's ledger left out, said
+    (docs/250 wording): another folder's changes recorded while this folder
+    had its own history, a folder that cannot be shown, runs of a data folder
+    not linked to this one, SM writes whose state was derived at a seam."""
+    lo = left_out or {}
+    out: list[dict] = []
+    parallel, unknown = int(lo.get("parallel") or 0), int(lo.get("unknown") or 0)
+    if parallel or unknown:
+        named = [f for f in lo.get("folders") or () if f.get("folder")]
+        parts = []
+        if parallel:
+            labels = ", ".join(f.get("label") or f.get("folder") for f in named[:3])
+            more = f" and {len(named) - 3} more" if len(named) > 3 else ""
+            parts.append(_plural(parallel, "change", "changes")
+                         + " from " + ("other folders" if len(named) > 1 else "another folder")
+                         + " with this chip name" + (f" ({labels}{more})" if labels else ""))
+        if unknown:
+            parts.append(_plural(unknown, "change", "changes")
+                         + " from a folder that is not recorded")
+        n = parallel + unknown
+        out.append({"level": "info", "code": "other_folders",
+                    "text": " and ".join(parts) + (" is" if n == 1 else " are")
+                            + " not part of this folder's timeline.",
+                    "folders": named})
+    unlinked = int(lo.get("unlinked") or 0)
+    if unlinked:
+        roots = [r for r in lo.get("roots") or () if r.get("path")]
+        where = ", ".join(r["path"] for r in roots[:2]) + (" and more" if len(roots) > 2 else "")
+        out.append({"level": "info", "code": "unlinked_roots",
+                    "text": _plural(unlinked, "run", "runs") + " of a data folder not linked to this folder"
+                            + (f" ({where})" if where else "") + (" is" if unlinked == 1 else " are")
+                            + " not part of this folder's timeline.",
+                    "roots": roots})
+    derived = int(lo.get("derived") or 0)
+    if derived:
+        out.append({"level": "info", "code": "derived_seam",
+                    "text": _plural(derived, "SM write", "SM writes") + " where this folder's history "
+                            "meets another's " + ("shows" if derived == 1 else "show")
+                            + " only the entries SM wrote: " + ("its state was" if derived == 1
+                                                              else "their states were")
+                            + " derived, not recorded."})
+    return out
+
+
 def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
           newest: Any = _ABSENT) -> list[dict]:
     """What every surface says beside a ledger answer (docs/282 §1.3)."""
@@ -1185,6 +1264,7 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
     elif not st.get("roots") and state in ("ready", "degraded") and ledger.get("has_runs"):
         out.append({"level": "info", "code": "no_folder",
                     "text": "No data folder is linked to this chip now; newer runs may be missing."})
+    out.extend(folder_notes(ledger.get("left_out")))
     if current is not _ABSENT and newest is not _ABSENT and not (
             current is None and newest is None):
         if current is None or newest is None or not rules.same(current, newest):
