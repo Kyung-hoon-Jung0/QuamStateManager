@@ -12,6 +12,12 @@ from quam_state_manager.web import routes
 from tests.hub_surface_fixture import SURFACES, no_runs  # noqa: F401
 from tests.test_hub_drawer import chip_dir, chip_state, sm, write_chip  # noqa: F401
 
+# S10 walk: old -> new, a note names its reason in plain words -- never the raw
+# code ("could not be read (no_ledger)" was shown to a user as it stood)
+PLAIN = {"no_chip_dir": "This chip's history folder cannot be found",
+         "no_ledger": "No change history has been built for this chip yet",
+         "unreadable": "The change history file could not be read"}
+
 
 @pytest.mark.parametrize("surface,url", SURFACES + [("report", "/chip-status/report/section/trends?redact=0")])
 def test_no_run_ledger_never_reads_snapshot_fallback(no_runs, monkeypatch, surface, url):
@@ -42,7 +48,7 @@ def test_unreadable_is_terminal_on_every_surface(no_runs, monkeypatch, surface, 
     assert "data-eid=" not in body
     assert "data-vh-retry=" not in body and "load delay:" not in body
     if surface not in ("trends_paths", "changes_paths"):
-        assert "could not be read (unreadable)" in body
+        assert PLAIN["unreadable"] in body
         assert "Nothing older is shown in its place." in body
 
 
@@ -134,7 +140,8 @@ def test_mode_table(no_runs, monkeypatch, reason):
         assert answer["mode"] == ("ledger" if reason is None else "unavailable")
         if reason:
             assert answer["reason"] == reason and not answer["rows"]
-            assert f"could not be read ({reason})" in routes._vh_wait_message(answer)
+            message = routes._vh_wait_message(answer)
+            assert PLAIN[reason] in message and f"({reason})" not in message
         else:
             assert answer["rows"]["value"]["points"] == []
             assert any(n["code"] == "no_folder_linked" for n in answer["notes"]["value"])
@@ -157,7 +164,7 @@ def test_archived_missing_ledger_offers_a_real_folder(no_runs, tmp_path):
                           headers={"HX-Request": "true"})
     body = response.get_data(as_text=True)
     assert response.status_code == 200
-    assert 'data-vh-mode="unavailable"' in body and "could not be read (no_ledger)" in body
+    assert 'data-vh-mode="unavailable"' in body and PLAIN["no_ledger"] in body
     assert "Open this chip" in body and str(live) in body
     assert "/hub/link-folder" not in body and "load delay:" not in body
     assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
@@ -176,7 +183,7 @@ def test_column_reads_no_run_ledger_and_ends_on_unreadable(no_runs, monkeypatch)
         raise ValueError("corrupt ledger")
     monkeypatch.setattr(value_history, "read", broken)
     body = client.post("/bulk/column-history", data=data).get_data(as_text=True)
-    assert 'data-vh-mode="unavailable"' in body and "could not be read (unreadable)" in body
+    assert 'data-vh-mode="unavailable"' in body and PLAIN["unreadable"] in body
     assert "data-vh-retry=" not in body and "data-eid=" not in body
 
 
@@ -194,7 +201,7 @@ def test_table_construction_error_is_terminal(no_runs, monkeypatch, url):
         body = no_runs["client"].get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
     except Exception as exc:  # noqa: BLE001 -- any escape is the defect this pins
         raise AssertionError(f"the read error escaped the route: {exc!r}") from None
-    assert "could not be read (unreadable)" in body
+    assert PLAIN["unreadable"] in body
     assert "Nothing older is shown in its place." in body
     assert "load delay:" not in body and "data-eid=" not in body
 
@@ -209,7 +216,7 @@ def test_version_folder_binding_error_keeps_only_legacy_rows(no_runs, monkeypatc
         raise ValueError("corrupt folder view")
     monkeypatch.setattr(routes, "_vh_binding", broken)
     body = no_runs["client"].get(url).get_data(as_text=True)
-    assert "could not be read (unreadable)" in body
+    assert PLAIN["unreadable"] in body
     assert meta.timestamp in body and "older snapshot" in body
     assert "writer unknown" not in body
 
@@ -224,7 +231,7 @@ def test_deleted_live_ledger_is_unreadable(no_runs):
         versions = routes._versions_read(ctx, [])
         assert versions["mode"] == "unavailable" and versions["reason"] == "unreadable"
     body = no_runs["client"].get("/field/history?path=qubits.qA1.T1").get_data(as_text=True)
-    assert "could not be read (unreadable)" in body and "data-vh-retry=" not in body
+    assert PLAIN["unreadable"] in body and "data-vh-retry=" not in body
 
 
 @pytest.mark.parametrize("mode", ["building", "preparing", "unavailable"])
@@ -418,14 +425,14 @@ def test_archived_open_offer_never_names_a_folder_of_another_chip(no_runs, tmp_p
     (directory / "ledger.sqlite").unlink()
     body = client.get("/param-history", query_string={"chip_key": directory.name, "since": "all"},
                       headers={"HX-Request": "true"}).get_data(as_text=True)
-    assert 'data-vh-mode="unavailable"' in body and "could not be read (no_ledger)" in body
+    assert 'data-vh-mode="unavailable"' in body and PLAIN["no_ledger"] in body
     assert "Open this chip" not in body and str(live) not in body
 
 
 @pytest.mark.parametrize("reason", ["no_chip_dir", "no_ledger", "unreadable"])
 def test_an_unavailable_answer_without_its_note_still_names_its_own_reason(reason):
     message = routes._vh_wait_message({"mode": "unavailable", "reason": reason})
-    assert f"could not be read ({reason})" in message
+    assert PLAIN[reason] in message and f"({reason})" not in message
     assert "Nothing older is shown in its place." in message
 
 
@@ -475,7 +482,7 @@ def test_a_table_read_that_raises_is_terminal_never_a_500(no_runs, monkeypatch, 
         data = response.get_json()
         assert (data if isinstance(data, list) else data["results"]) == []
     else:
-        assert "could not be read (unreadable)" in body
+        assert PLAIN["unreadable"] in body
         assert "Nothing older is shown in its place." in body
         assert "load delay:" not in body and "data-eid=" not in body
 
@@ -498,9 +505,9 @@ def test_capture_keeps_the_testing_gate_for_a_chip_with_a_data_folder(no_runs, m
     assert len(kicks) == expect
 
 # S10 C7: old -> new, live wait and count pins belong to mode selection.
-@pytest.mark.parametrize("url", [url for surface, url in SURFACES[:4]])
+@pytest.mark.parametrize("surface,url", SURFACES[:4])
 @pytest.mark.parametrize("mode", ["building", "preparing"])
-def test_transient_modes_remain_successful(no_runs, monkeypatch, url, mode):
+def test_transient_modes_remain_successful(no_runs, monkeypatch, surface, url, mode):
     from quam_state_manager.core import hub_sync, ramcache
     if mode == "building":
         monkeypatch.setattr(hub_sync, "status", lambda directory: {"state": "building", "done": 0, "total": 1})
@@ -512,6 +519,18 @@ def test_transient_modes_remain_successful(no_runs, monkeypatch, url, mode):
         monkeypatch.setattr(hub_versions, "_version_token", warming)
     response = no_runs["client"].get(url, headers={"HX-Request": "true"})
     assert response.status_code == 200
+    # S10 final review: old -> new, "200" alone passed whatever a waiting surface
+    # said -- each says ITS mode in S7's words, waits on its own, shows no rows
+    body = response.get_data(as_text=True)
+    words = {"building": "The change history is being built (0 of 1 runs)",
+             "preparing": "Preparing the change history"}[mode]
+    assert words in body, (surface, body[:400])
+    if surface in ("versions", "state_history"):
+        assert f'data-note="{mode}"' in body and "this list shows the older snapshot history" in body
+    else:
+        assert f'data-vh-mode="{mode}"' in body, (surface, body[:400])
+        assert ("data-vh-retry=" in body) if surface == "drawer" else ('data-trends-updating="1"' in body)
+    assert "data-eid=" not in body and "Try again" not in body, "a wait is not an end state"
 
 
 @pytest.mark.parametrize("surface,url", [
@@ -534,8 +553,27 @@ def test_a_ledger_becoming_unreadable_after_the_mode_check_is_terminal(sm, monke
 
 
 def test_no_run_version_count_is_stable_under_app_context(no_runs):
+    import re
+    import sqlite3
+    client = no_runs["client"]
+    # S10 final review: old -> new, "an int, the same twice" passed with the count
+    # hard-coded to 12345 -- it is the TRUE count: the rows State History lists,
+    # which are the ledger's state-bearing events (no older row on this chip)
+    for t1 in (2e-5, 3e-5):
+        with no_runs["app"].app_context():
+            write_chip(Path(routes._active_ctx()["path"]), chip_state(t1=t1), None)
+        assert client.post("/state-history/snapshot").status_code == 200
+    body = client.get("/state-history?body=1&per_page=500").get_data(as_text=True)
+    listed = len(re.findall(r'<div class="sh-entry[ "]', body))
+    con = sqlite3.connect(f"file:{chip_dir(no_runs) / 'ledger.sqlite'}?mode=ro", uri=True)
+    try:
+        events = con.execute("SELECT COUNT(*) FROM events WHERE error IS NULL AND (flags & 4) = 0 AND "
+                             "((kind = 'observed' AND state_hash IS NOT NULL) OR status = 'landed')").fetchone()[0]
+    finally:
+        con.close()
     with no_runs["app"].app_context():
         # S10 C7: old -> new, count consistency survives removal of instrumentation.
         count = routes._state_version_now(routes._active_ctx())["count"]
         assert isinstance(count, int)
         assert routes._state_version_now(routes._active_ctx())["count"] == count
+    assert listed >= 2 and count == listed == events, (count, listed, events)

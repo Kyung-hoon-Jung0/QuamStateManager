@@ -37,6 +37,14 @@
         snapshot fact ``ts`` was read from (``unmatched``) -#}
     {% if ver.unmatched %}<span class="state-version-none">unrecorded</span>{% endif %}
     {% if ver.dirty %}<span class="state-version-edits" aria-label="unapplied edits">+</span>{% endif %}
-    {% if ver.count %}<span class="state-version-count">{{ ver.count }}</span>{% endif %}
+    {#- S10 walk: the one history count (routes._versions_count), written as every
+        history surface writes it; while the change history catches up there is
+        no count yet, and the chip asks again (backing off) -#}
+    {% if ver.waiting %}<span class="state-version-count state-version-wait"
+          title="The change history is catching up; the count follows in a moment.">&hellip;</span>
+    {% elif ver.count %}<span class="state-version-count">{{ '{:,}'.format(ver.count) }}</span>{% endif %}
 </button>
+{% if ver.waiting %}<span hidden class="state-version-reask" hx-get="/state/version?wait={{ (ver.wait_n or 0) + 1 }}"
+      hx-trigger="load delay:{{ ver.retry_ms or 1500 }}ms" hx-target="#state-version-slot"
+      hx-swap="innerHTML"></span>{% endif %}
 {% endif %}

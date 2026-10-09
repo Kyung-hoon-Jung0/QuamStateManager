@@ -18,7 +18,10 @@
      then: never a partial history). S10 C5: the older snapshot path's label -> gone. #}
   {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
   {% if hub_wait %}
-  <p class="vh-wait">{{ hub_wait }}{% if hub_mode != 'unavailable' %} Open this cell again in a moment.{% endif %}</p>
+  <p class="vh-wait" data-vh-mode="{{ hub_mode }}">{{ hub_wait }}{% if hub_mode != 'unavailable' %} Open this cell again in a moment.{% else %}
+    {#- S10 walk: the unreadable end state's one manual press, as on every surface -#}
+    <button type="button" class="btn-sm vh-try-again"
+            onclick='paramHistoryOpenDrawer({{ qubit | tojson }}, {{ prop | tojson }})'>Try again</button>{% endif %}</p>
   {% else %}
   <div id="phd-chart" style="width:100%;height:340px"></div>
 

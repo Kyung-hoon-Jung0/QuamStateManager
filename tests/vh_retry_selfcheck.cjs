@@ -175,6 +175,34 @@ const DONE = (v) => '<table class="fh-table vh-table"><tr class="vh-row"><td><co
     ok(asked.length === 1 && asked[0].indexOf('path=' + encodeURIComponent('qubits.q1.resonator.operations.readout.amplitude')) >= 0,
        'the drawer is asked for the cell\'s own (alias) path: ' + asked.join(', '));
 
+    // 6. S10 walk: an unreadable change history is an END state -- no automatic
+    //    re-ask; its one "Try again" reads again once per press (the drawer and
+    //    Column History offered none while Trends / Param History did)
+    const GONE = '<p class="vh-wait" data-vh-mode="unavailable">The change history file could not be read. ' +
+        'Nothing older is shown in its place.<button type="button" class="btn-sm vh-try-again" ' +
+        'data-vh-try-again="1">Try again</button></p>';
+    queues['/field/history|qubits.q1.gone'] = [GONE, DONE('back-again')];
+    window.FieldHistory.open(anchor, 'qubits.q1.gone', null);
+    await wait(150);
+    const ng = calls.filter(c => c.url.indexOf('qubits.q1.gone') >= 0).length;
+    ok(ng === 1 && panel.textContent.indexOf('could not be read') >= 0,
+       'an unreadable history asks no more by itself (' + ng + ' request)');
+    panel.querySelector('[data-vh-try-again]').click();
+    await wait(60);
+    ok(calls.filter(c => c.url.indexOf('qubits.q1.gone') >= 0).length === 2 &&
+       panel.textContent.indexOf('back-again') >= 0, 'one press of Try again reads it again, once');
+    queues['/bulk/column-history'] = [GONE, '<p class="ch-empty">col-back</p>'];
+    const ncol = calls.filter(c => c.url.indexOf('/bulk/column-history') >= 0).length;
+    window.ColumnHistory.open(btn);
+    await wait(150);
+    const card6 = window.document.querySelector('.ch-card');
+    ok(calls.filter(c => c.url.indexOf('/bulk/column-history') >= 0).length === ncol + 1,
+       'Column History: an unreadable history asks no more by itself');
+    card6.querySelector('[data-vh-try-again]').click();
+    await wait(60);
+    ok(calls.filter(c => c.url.indexOf('/bulk/column-history') >= 0).length === ncol + 2 &&
+       card6.textContent.indexOf('col-back') >= 0, 'Column History: one press reads it again, once');
+
     if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
     console.log('all ' + oks + ' checks passed');
     process.exit(0);

@@ -932,9 +932,10 @@ def test_an_unreadable_listing_says_the_older_rows_are_below(env, monkeypatch, u
     assert all(s in body for s in stamps), "the older rows are listed"
     assert "Nothing older is shown" not in body
     assert "recorded state" not in text(body) and "From the change history" not in text(body)
-    assert re.search(r"\b2 older snapshots\b", text(body)), text(body)[:600]
+    # S10 walk: old -> new, one count line on every listing and the reason in plain words
+    assert re.search(r"\b2 versions \(older snapshots\)", text(body)), text(body)[:600]
     if mode == "unavailable":
-        assert ("The change history could not be read (unreadable). Older Param History snapshots are "
+        assert ("The change history file could not be read. Older Param History snapshots are "
                 "listed below.") in text(body)
 
 

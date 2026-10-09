@@ -16,3 +16,20 @@
 <span class="snap-src snap-src-unlinked {{ cls }}" title="A run saved in a data folder that is not linked to this folder: {{ src.folder }}">data folder not linked</span>
 {%- endif -%}
 {%- endmacro %}
+
+{# S10 walk: a LISTING keeps another folder's rows (docs/250); each such row says
+   it is not this folder's, and its title says why it is listed at all. #}
+{% macro foreign_tag(r, cls='') -%}
+{%- if r.foreign -%}
+<span class="snap-foreign {{ cls }}" title="{{ r.foreign_why }}">not this folder's</span>
+{%- endif -%}
+{%- endmacro %}
+
+{# S10 walk: the live-change tracker's baseline, as a badge on the listed row that
+   holds it (routes._version_baseline) -- not a label, not a pin, nothing to
+   unpin; its time is the banner's "baseline:" time. #}
+{% macro baseline_tag(r, lv, cls='') -%}
+{%- if r.baseline and lv and lv.baseline -%}
+<span class="snap-baseline {{ cls }}" title="The live-change tracker compares the live chip against this state (its baseline, set {{ lv.baseline.captured_utc | format_ts_zone }}). Reset it from the tracker's Reset baseline button.">baseline of the live-change tracker</span>
+{%- endif -%}
+{%- endmacro %}

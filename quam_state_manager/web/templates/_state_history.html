@@ -5,12 +5,15 @@
     {# Project lens (docs/63): display-only suffix when the loaded chip
        carries a qualibrate-project scope. #}
     <h2>State History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}
-        <small class="muted">full state.json + wiring.json snapshots — review, compare, roll back</small>
+        {# S10 walk: the list is the chip's recorded states (runs, SM writes, states
+           SM saw) -- no longer "snapshots" #}
+        <small class="muted">every recorded state of the chip — review, compare, roll back</small>
     </h2>
     <button class="btn-sm outline" hx-post="/state-history/snapshot"
             hx-target="#table-pane" hx-swap="innerHTML"
             title="Capture the current state now">Take snapshot</button>
 </div>
+{% if snapshot_note %}<p class="muted sh-snapshot-note" role="status">{{ snapshot_note }}</p>{% endif %}
 
 {# Honest footprint (cached per capture/prune — no walk on steady-state
    renders). Retention is mentioned ONLY when a real budget is configured:
@@ -18,8 +21,9 @@
    doesn't exist would be a lie. #}
 {% if disk_stats and disk_stats.snapshots %}
 <p class="muted history-disk-line" style="margin:0 0 0.4rem;font-size:0.85em">
-  {{ disk_stats.snapshots }} snapshot{{ 's' if disk_stats.snapshots != 1 }} ·
-  {{ disk_stats.bytes | filesizeformat }} on disk{% if disk_stats.prune_active %} · retention: newest {{ disk_stats.max_snapshots }} kept, oldest auto-pruned{% endif %}
+  {#- S10 walk: storage, not the list's count (that is the count line below) -#}
+  Snapshot files on disk: {{ '{:,}'.format(disk_stats.snapshots) }} ·
+  {{ disk_stats.bytes | filesizeformat }}{% if disk_stats.prune_active %} · retention: newest {{ disk_stats.max_snapshots }} kept, oldest auto-pruned{% endif %}
 </p>
 {% endif %}
 

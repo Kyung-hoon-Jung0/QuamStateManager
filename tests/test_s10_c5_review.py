@@ -178,4 +178,5 @@ def test_a_changes_page_read_that_fails_is_unreadable(no_runs, monkeypatch, modu
         raise AssertionError(f"the read error escaped the route: {exc!r}") from None
     body = response.get_data(as_text=True)
     assert response.status_code == 200
-    assert "could not be read (unreadable)" in body and "load delay:" not in body
+    # S10 walk: old -> new, the reason in plain words (never the raw "(unreadable)")
+    assert "The change history file could not be read." in body and "load delay:" not in body

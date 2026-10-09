@@ -465,7 +465,8 @@ def test_the_retry_selfcheck():
     if r.returncode == 2 and "jsdom not installed" in r.stdout:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "all 13 checks passed" in r.stdout, r.stdout
+    # S10 walk: old -> new, 13 -> 17 checks (the unreadable end state's manual Try again)
+    assert "all 17 checks passed" in r.stdout, r.stdout
 
 # ======================================================================
 # 8. the index-build speedup keeps the decoder's answer (docs/282 perf)
