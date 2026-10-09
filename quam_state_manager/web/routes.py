@@ -18123,7 +18123,7 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                           pairs: list[str], tbl) -> str:
     """The body of :func:`topology_trends` (the section fragment), read from
     the chip's change ledger table (``hub_status.LedgerTable``)."""
-    # S10 C5: volatile / fallback_note params -> none, only the ledger table renders this.
+    # S10 C5: the volatile-list and fallback-label params -> none, only the ledger table renders this.
     curated = list(DEFAULT_TRACKED_PROPERTIES)
     # ONE ?path= could never carry a badge AND something typed at the same
     # time, so the 2Q badges below (which are template paths, tier 2, needing

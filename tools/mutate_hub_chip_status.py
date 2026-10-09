@@ -81,6 +81,7 @@ MUTATIONS = [
      '    return bool(points) and all(p["provenance"] == "run_proven" for p in points)',
      '    return bool(points) and any(p["provenance"] == "run_proven" for p in points)',
      [W + "test_a_matrix_is_proven_only_when_every_leaf_change_is"]),
+    # S10 C5: the pin's fixture moved to the diagonal (the panel's own leaves): see the test
     ("a_proven_leaf_speaks_for_the_matrix", HS,
      '        if p["provenance"] != "run_proven":\n            return p',
      '        if False:\n            return p',
@@ -214,6 +215,11 @@ MUTATIONS = [
      "  {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}",
      "  {% with notes=[] %}{% include '_hub_notes.html' %}{% endwith %}",
      [M + "test_idle_is_said", M + "test_an_empty_grid_still_says_idle"]),
+    # S10 C5: the renamed no-folder pin's own mutation (its fallback-label one was retired)
+    ("no_folder_offer_dropped", VH,
+     '          and not ledger.get("has_runs") and origin == "live"):',
+     '          and not ledger.get("has_runs") and origin == "never"):',
+     [M + "test_a_chip_with_no_data_folder_reads_its_ledger_with_the_link_offer"]),
     ("degraded_words_lost", VH, '"text": "This history may be missing changes: "',
      '"text": "This history is complete: "',
      [M + "test_degraded_says_changes_may_be_missing"]),

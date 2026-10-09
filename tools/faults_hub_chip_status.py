@@ -140,7 +140,8 @@ def scenarios(scratch: Path) -> list[dict]:
     try:
         c = e["client"]
         def wait(url):
-            m = re.search(r'<p class="vh-wait"[^>]*>(.*?)</p>', c.get(url).data.decode(), re.S)
+            # S10 C5: the Trends wait carries a second class (the client re-asks it)
+            m = re.search(r'<p class="vh-wait[^"]*"[^>]*>(.*?)</p>', c.get(url).data.decode(), re.S)
             return (_text(m.group(1)) + " (asks again by itself; no rows)") if m else "(no wait line)"
         case("a building ledger", "hub_sync.status = building 2/9", e, wait("/topology/trends?metrics=T1"),
              _meta(c, "T1", "qA1"), wait("/param-history?since=all"), wait("/param-history/changes"))

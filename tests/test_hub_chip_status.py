@@ -145,20 +145,23 @@ class TestWriterOnlyOnProof:
 
     def test_a_matrix_is_proven_only_when_every_leaf_change_is(self, tmp_path):
         base = [[0.9, 0.1], [0.1, 0.9]]
-        moved = [[0.8, 0.2], [0.1, 0.9]]
+        # S10 C5: the run moved one OFF-diagonal cell -> both DIAGONAL cells. Since S8 P0-1
+        # the panel reads the diagonal only, so a patched off-diagonal cell never reached the
+        # proof and "any proven leaf proves the matrix" passed (tools/mutate_hub_chip_status)
+        moved = [[0.8, 0.2], [0.15, 0.85]]
         cm = "qubits.qA1.resonator.confusion_matrix"
         env = load(tmp_path, [
             (matrix_state(base), None),
-            # the run's patch sets ONE of the two elements it moved (the
+            # the run's patch sets ONE of the two value cells it moved (the
             # later one in path order: no "last leaf" shortcut can pass)
-            (matrix_state(moved), [patch(cm + ".0.1", 0.2, 0.1)]),
+            (matrix_state(moved), [patch(cm + ".1.1", 0.85, 0.9)]),
         ], matrix_state(moved))
         meta = env["client"].get(META).get_json()["q"]["assignment_fidelity"]["qA1"]
         assert meta["run"] is None and meta["writer"] is None and meta["sub"] == "writer not proven", \
             "one proven leaf never makes the run the writer of the whole matrix"
         s = series_of(env["client"].get("/topology/trends?metrics=assignment_fidelity"), "qA1")
         last = [p for p in s["points"] if p[0] not in (s.get("held") or {})][-1]
-        assert last[1] == pytest.approx(0.85)
+        assert last[1] == pytest.approx(0.825)
         assert s["attr"][last[0]]["provenance"] == "run_saved"
 
     def test_a_matrix_whose_every_change_is_patched_names_its_run(self, tmp_path):

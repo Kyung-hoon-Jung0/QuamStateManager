@@ -65,7 +65,7 @@ def _run(root: Path, rid: int, name: str, t1: float, *, patches=None,
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    # S10 C5: value_writer caches + _WRITER_BUDGET_S -> not read, these surfaces read the ledger.
+    # S10 C5: value_writer caches + the writer-check budget -> not read, these surfaces read the ledger.
     live = tmp_path / "chips" / "live"
     _write_chip(live, _state(2.0e-5))
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
