@@ -585,7 +585,10 @@ class LedgerTable:
                      " WHERE e.kind = 'run' AND e.base_hash IS NOT NULL AND (e.flags & ?) = 0"
                      " AND (p.path LIKE 'qubits.%' OR p.path LIKE 'qubit_pairs.%')")
             with hub_index.snapshot(self.binding) as (conn, index):
-                if self._lineage is None:
+                lane = getattr(index, "lane", None)
+                if lane is not None:
+                    rows = self._lane_change_times(conn, index, lane, where, CHIP_UNCERTAIN)
+                elif self._lineage is None:
                     rows = conn.execute("SELECT p.path, MAX(e.t_utc_us)" + where + " GROUP BY c.pid",
                                         (CHIP_UNCERTAIN,)).fetchall()
                 else:
@@ -626,6 +629,40 @@ class LedgerTable:
                     group[parts[1]] = t
             return out
         return self.part(("run_change_times",), compute)
+
+    def _lane_change_times(self, conn, index, lane, where, uncertain):
+        """:meth:`run_change_times` through a folder view (S10 C1.5): only
+        the lane's runs, each read by the lane's rows (a seam's own rows in
+        place of the stored ones), its flags and first event as the lane
+        sees them."""
+        from quam_state_manager.core.hub_store import CHIP_UNCERTAIN
+        best: dict = {}
+        ren = None
+        if self._lineage is not None:
+            from quam_state_manager.core.hub_eras import Renamer
+            ren = Renamer(conn, index, self._lineage, self._era)
+            if not ren.active:
+                ren = None
+        runs = {}
+        run_kind = index.names["kind"].get("run")
+        for pos, eid in enumerate(index.eids):
+            if index.kind[pos] == run_kind and not index.flags[pos] & CHIP_UNCERTAIN and eid != lane.first:
+                runs[eid] = index.t[pos]
+
+        def keep(path, eid):
+            t = runs.get(eid)
+            now = ren.holder(path, ren.era_of(eid)) if ren is not None else path
+            if t is not None and now is not None and (now not in best or t > best[now]):
+                best[now] = t
+        for path, eid, _t in conn.execute("SELECT p.path, e.eid, e.t_utc_us" + where, (uncertain,)):
+            if eid not in lane.seams:
+                keep(path, eid)
+        for eid, rows in lane.seams.items():
+            if eid in runs:
+                for r in rows.values():
+                    if r["path"].startswith(("qubits.", "qubit_pairs.")):
+                        keep(r["path"], eid)
+        return list(best.items())
 
     def leaf_series(self, dp):
         """One path's series with no held point (the old tier's shape)."""

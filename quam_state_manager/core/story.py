@@ -1213,7 +1213,8 @@ def _one_zone(ledger):
     thousands of times; one build is one zone anyway."""
     from quam_state_manager.core.hub_index import ReadContext, _binding
     if isinstance(ledger, ReadContext) and ledger.instance is not None:
-        return ReadContext(ledger.store, None, None, _binding(ledger)[1])
+        # S10 C1.5: the same folder view
+        return ReadContext(ledger.store, None, None, _binding(ledger)[1], ledger.folder)
     return ledger
 
 
@@ -1396,6 +1397,10 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
     out = {"chip": chip, "day": day, "cards": cards, "loose": loose, "digest": _digest(cards),
            "timeline": _timeline(cards), "unassigned": unassigned, "counts": _counts(cards), "history": history,
            "gates_pending": sum(1 for c in cards if c["kind"] == "run" and (c.get("gate") or {}).get("verdict") == "pending")}
+    if page.get("left_out"):
+        # S10 C1.5: what this folder's view of the chip's history left out
+        from quam_state_manager.core.value_history import folder_notes
+        out["folder_notes"] = folder_notes(page["left_out"])
     out["unrecorded"] = _unrecorded_edits(instance_path, active_path, day, ledger)
     _start_gates()
     return out
@@ -1428,13 +1433,17 @@ def _hub_write(event, ledger, int_of=None):
         entries.append(dict(row, op=entry_op(row), old=old, new=new,
                             actor=row.get("by") or row.get("actor") or author,
                             taken_back=partly and row.get("path") in taken_back))
-    return {"kind": "write", "id": event.get("sm_id") or event["eid"], "eid": event["eid"], "order": event.get("ord"),
+    card = {"kind": "write", "id": event.get("sm_id") or event["eid"], "eid": event["eid"], "order": event.get("ord"),
             "event_kind": event["kind"], "label": write_label(event["kind"], event.get("src")),
             "ts": event["t_utc_us"] / 1e6, "time": _hub_clock(event["t_utc_us"], ledger), "author": author,
             "entries": entries, "entries_error": event.get("entries_error"),
             "src": event.get("src"), "plan_id": event.get("plan_id"),
             "undoes": undoes,
             "undone": bool(flags & UNDONE), "partly_undone": partly}
+    if event.get("_source") is not None:
+        # S10 C1.5: another folder's write, before this folder's own history
+        card["source"] = event["_source"]
+    return card
 
 
 def build_day(instance_path, chip: str, day: str, *, ds, hm=None, active_path=None,

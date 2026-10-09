@@ -34,21 +34,34 @@ class ReadContext:
     A project binding re-reads display_zone on every query. An unset project
     zone fails explicitly; it never substitutes the server's local zone.
     Unbound HubStore inputs support non-calendar queries only.
+
+    S10 C1.5: ``folder`` (a ``hub_lanes.FolderView``) reads the ledger as the
+    open folder sees it -- :func:`snapshot` yields ``for_zone(z).for_folder(view)``.
+    A binding with a folder and neither a project nor a zone reads UTC days
+    and, like an unbound store, answers no calendar query.
     """
 
     store: Any
     instance: Any = None
     project: str | None = None
     zone: str | None = None
+    folder: Any = None
 
 
-def context(store, *, instance=None, project=None, zone=None) -> ReadContext:
+def context(store, *, instance=None, project=None, zone=None, folder=None) -> ReadContext:
     if zone is not None and instance is not None:
         raise ValueError("choose a project setting or an explicit offline zone")
-    return ReadContext(store, instance, project, zone)
+    return ReadContext(store, instance, project, zone, folder)
+
+
+def _calendar(store) -> bool:
+    """Whether *store* was bound to a zone (a project setting or an explicit one)."""
+    return isinstance(store, ReadContext) and (store.instance is not None or store.zone is not None)
 
 
 def _binding(store):
+    if isinstance(store, ReadContext) and not _calendar(store):
+        return store.store, "UTC"          # a folder binding with no zone (S10 C1.5)
     if isinstance(store, ReadContext):
         zone = (project_time.display_zone(store.instance, store.project)["zone"]
                 if store.instance is not None else store.zone)
@@ -66,7 +79,7 @@ def _binding(store):
 
 def require_day_zone(store):
     """Calendar answers require a declared zone, never an implicit default."""
-    if not isinstance(store, ReadContext):
+    if not _calendar(store):
         raise ValueError("bind the project time zone before querying ledger days")
 
 
@@ -124,13 +137,19 @@ class LedgerIndex:
     experiment: array = field(default_factory=lambda: array("I"))
     flags: array = field(default_factory=lambda: array("I"))
     positions: dict = field(default_factory=dict)
-    names: dict = field(default_factory=lambda: {"kind": {}, "experiment": {}})
+    names: dict = field(default_factory=lambda: {"kind": {}, "experiment": {}, "live": {}})
     postings: dict = field(default_factory=lambda: {
         key: {} for key in ("experiment", "entity", "day", "actor", "family", "kind")})
     paths: dict = field(default_factory=dict)
     search_paths: dict = field(default_factory=dict)
     path_postings: dict = field(default_factory=dict)
     keys: dict = field(default_factory=dict)
+    #: S10 C1.5: the folder each event was recorded from (``events.live``,
+    #: else ``sm_events.live``), interned in ``names["live"]``; 0 is none
+    live: array = field(default_factory=lambda: array("I"))
+    #: S10 C1.5: a folder view's lane facts (``hub_lanes.Lane``); None on the
+    #: ledger's own index (every event, its stored rows)
+    lane: Any = None
 
     def classify(self, token):
         if _DAY.fullmatch(token):
@@ -173,9 +192,28 @@ class LedgerIndex:
             postings["day"] = {d: array("I", sorted(ids)) for d, ids in days.items()}
             view = LedgerIndex(self.ledger_id, zone, self.eids, self.t, self.kind, self.root,
                                self.run_id, self.experiment, self.flags, self.positions, self.names,
-                               postings, self.paths, self.search_paths, self.path_postings, self.keys)
+                               postings, self.paths, self.search_paths, self.path_postings, self.keys,
+                               self.live)
             views[zone] = view
         return view
+
+    def for_folder(self, view, conn=None) -> "LedgerIndex":
+        """S10 C1.5: the ledger as the open folder *view* sees it
+        (``hub_lanes``): its lane's events, a seam's rows re-diffed within the
+        lane, and what was left out, counted. A chip whose every event is in
+        the lane with no seam gets THIS index back (the fast path: answers
+        byte-identical to the ledger's own). Built once per view and kept on
+        this index, so it is dropped with the zone views when the ledger
+        grows."""
+        if view is None:
+            return self
+        views = self.__dict__.setdefault("_folder_views", {})
+        key = view.sig()
+        got = views.get(key)
+        if got is None:
+            from quam_state_manager.core import hub_lanes
+            got = views[key] = hub_lanes.build(self, view, conn)
+        return got
 
     def search(self, text):
         result = None
@@ -189,13 +227,20 @@ class LedgerIndex:
         return set(self.eids) if result is None else result
 
 
-_EVENTS_SQL = ("SELECT e.*, COALESCE(r.folder_key,'') AS folder_key FROM events e "
-               "LEFT JOIN roots r USING(root_id) ORDER BY e.ord")
+_EVENTS_SQL = ("SELECT e.*, COALESCE(r.folder_key,'') AS folder_key, {live} AS live_key FROM events e "
+               "LEFT JOIN roots r USING(root_id) LEFT JOIN sm_events s USING(eid) ORDER BY e.ord")
 #: what an already-indexed event must still be for an append-only update to
 #: keep it (docs/282 review P2-3): its place, every field the index reads, and
 #: the facts a re-diff of its rows changes (n_changes, base/state hash)
 _SIG_COLS = ("ord", "t_utc_us", "kind", "root_id", "rel_path", "run_id", "experiment", "flags",
-             "actor", "targets", "n_changes", "base_hash", "state_hash", "folder_key")
+             "actor", "targets", "n_changes", "base_hash", "state_hash", "folder_key", "live_key")
+
+
+def _events_sql(conn) -> str:
+    """S10 C1.5: an event's folder is ``events.live``; a ledger no writer has
+    upgraded yet (no such column) reads an SM write's from ``sm_events``."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(events)")}
+    return _EVENTS_SQL.format(live="COALESCE(e.live, s.live)" if "live" in cols else "s.live")
 
 
 def _event_sig(row) -> tuple:
@@ -217,6 +262,9 @@ def _add_event(index: LedgerIndex, row, add) -> None:
     eid = row["eid"]
     index.positions[eid] = len(index.eids)
     index.eids.append(eid)
+    lk = row["live_key"]
+    lives = index.names.setdefault("live", {})
+    index.live.append(lives.setdefault(lk, len(lives) + 1) if lk else 0)
     index.t.append(row["t_utc_us"])
     index.kind.append(intern("kind", row["kind"]))
     index.root.append(row["root_id"] if row["root_id"] is not None else -1)
@@ -251,7 +299,7 @@ def build_index(conn, zone: str | None = None) -> LedgerIndex:
             pending[kind].setdefault(token.lower(), set()).add(eid)
 
     sigs = {}
-    for row in conn.execute(_EVENTS_SQL):
+    for row in conn.execute(_events_sql(conn)):
         _add_event(index, row, add)
         sigs[row["eid"]] = _event_sig(row)
 
@@ -287,7 +335,7 @@ def extend_index(conn, prev: LedgerIndex | None) -> LedgerIndex:
     ledger_id = conn.execute("SELECT v FROM meta WHERE k='ledger_id'").fetchone()[0]
     if ledger_id != prev.ledger_id:
         return build_index(conn)
-    rows = conn.execute(_EVENTS_SQL).fetchall()
+    rows = conn.execute(_events_sql(conn)).fetchall()
     sigs = prev.__dict__["_sig"]
     n = len(prev.eids)
     if len(rows) < n:
@@ -335,6 +383,7 @@ def extend_index(conn, prev: LedgerIndex | None) -> LedgerIndex:
             else:
                 arr.extend(sorted(ids))     # new eids are all larger: still sorted
     prev.__dict__.pop("_views", None)       # day postings follow the new events
+    prev.__dict__.pop("_folder_views", None)    # S10 C1.5: and every folder view
     if "_bytes" in prev.__dict__:
         prev.__dict__["_bytes"] += 160 * len(new) + 260 * new_paths + 16 * len(added)
     return prev
@@ -439,6 +488,7 @@ def close_readers(directory=None):
 @contextmanager
 def snapshot(store):
     """One serialized read snapshot and index. Never use the writer connection."""
+    store_arg = store
     raw = store.store if isinstance(store, ReadContext) else store
     directory = raw.directory
     hub_sync.require_ready(directory)
@@ -480,6 +530,11 @@ def snapshot(store):
             token = (reader.identity, ledger_id, version, high, journal_size)
             index = INDEX_CACHE.get(slot, token, lambda prev: extend_index(conn, prev), wait_s=0,
                                     incremental=True).for_zone(zone)
+            # S10 C1.5: the ledger as the open folder sees it (the index
+            # itself on the fast path)
+            folder = store_arg.folder if isinstance(store_arg, ReadContext) else None
+            if folder is not None:
+                index = index.for_folder(folder, conn)
             hub_sync.require_ready(directory)
             yield conn, index
         finally:

@@ -1,4 +1,4 @@
-{% from '_delta_macros.html' import delta_chip, delta_pct %}
+{% from '_delta_macros.html' import delta_chip, delta_pct %}{% from '_snapshot_source.html' import source_badge %}
 {# docs/282: the value drawer on the chip's change ledger. Rows are the
    ledger's change points for the value's holder, newest first. "Set by" names
    only what the ledger proves (routes._vh_present): a run is named as the
@@ -62,7 +62,7 @@
       <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if pt.has_prev and pt.usable %}{{ delta_chip(pt.prev_value, pt.value, 'fh-delta') }}{% endif %}
         {% if pt.before_via %}<span class="vh-flag vh-flag-bv" title="The alias named another holder at this time{% if via_since %}; it has named this one since {{ via_since | format_ts_zone }}{% endif %}.">before {{ via[0].alias if via else 'the alias' }} pointed here</span>{% endif %}
         {% if pt.recorded_as %}<span class="vh-flag vh-flag-renamed" title="Recorded as {{ pt.recorded_as }}, before a rename">as {{ pt.recorded_as_short }}</span>{% endif %}
-        {% for f in pt.flag_text %}<span class="vh-flag">{{ f }}</span>{% endfor %}
+        {% for f in pt.flag_text %}<span class="vh-flag">{{ f }}</span>{% endfor %}{{ source_badge(pt.source, 'fh-srcfolder') }}
       </td>
       <td class="fh-ts">{{ pt.t | ts_local(short=True) }}</td>
       <td class="fh-src"><span class="fh-exp vh-by" title="{{ pt.title }}">{{ pt.label }}</span><span class="vh-sub" title="{{ pt.title }}">{{ pt.sub }}</span></td>

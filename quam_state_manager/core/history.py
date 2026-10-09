@@ -661,6 +661,17 @@ def save_chip_decision(
         data = load_chip_decisions(instance_path)
         data[f"{chip_key}::{data_folder}"] = decision
         safe_io.atomic_write_json(p, data)
+        _DECISIONS_GEN[0] += 1
+
+
+#: S10 C1.5: bumped by every decision this process saves, so a reader that
+#: derived something from the decisions (a folder view's unlinked roots)
+#: knows to derive it again without reading the file per request
+_DECISIONS_GEN = [0]
+
+
+def decisions_generation() -> int:
+    return _DECISIONS_GEN[0]
 
 
 def _decision_key(chip_key: str, data_folder: str) -> str:
@@ -1094,6 +1105,63 @@ def _source_key(raw: Any) -> str | None:
 _GENERIC_SOURCE_DIRS = frozenset({"quam_state", "quam_states", "state", "states"})
 
 
+def source_kind(owner: tuple[str, str] | None, here: str | None) -> tuple[str, str | None]:
+    """``(kind, folder)`` of a recorded row whose folder STANDS FOR *owner*
+    (``(comparison key, display path)``, None when no folder can be shown),
+    relative to the folder being shown (comparison key *here*). Part of THE
+    classifier (docs/250, S10 C1.5): Param History snapshots and change-ledger
+    events are classified by this one rule."""
+    if owner is None:
+        return SOURCE_UNKNOWN, None
+    if here is not None and owner[0] == here:
+        return SOURCE_THIS, owner[1]
+    return SOURCE_OTHER, owner[1]
+
+
+def source_lineage(kind: str, at: str, first_own: str | None) -> str:
+    """Whether a row of *kind* recorded at stamp *at* belongs to the shown
+    folder's timeline: its own (``own`` / ``run``), another folder's (or an
+    unprovable one's) recorded before this folder's own history began
+    (``earlier``: the identity-continuous predecessor), or recorded while
+    this folder had its own history (``parallel``). *first_own* is the CUT:
+    the stamp of the folder's first own record (:func:`first_own_of`)."""
+    if kind == SOURCE_THIS:
+        return LINEAGE_OWN
+    if kind == SOURCE_RUN:
+        return LINEAGE_RUN
+    if first_own is None or str(at) < first_own:
+        return LINEAGE_EARLIER
+    return LINEAGE_PARALLEL
+
+
+def first_own_of(rows) -> str | None:
+    """THE cut: the earliest stamp among ``(stamp, kind)`` *rows* whose kind
+    is :data:`SOURCE_THIS` (None: the folder has no own record yet)."""
+    first: str | None = None
+    for at, kind in rows:
+        if kind == SOURCE_THIS and (first is None or at < first):
+            first = at
+    return first
+
+
+def classify_source(owner: tuple[str, str] | None, here: str | None, at: str,
+                    first_own: str | None) -> tuple[str, str | None, str]:
+    """``(kind, folder, lineage)`` of one recorded row: :func:`source_kind`
+    then :func:`source_lineage` against the cut. The one classifier for a
+    Param History snapshot and a change-ledger event alike (S10 C1.5)."""
+    kind, folder = source_kind(owner, here)
+    return kind, folder, source_lineage(kind, at, first_own)
+
+
+def source_stamp(t_us: int) -> str:
+    """An instant (UTC microseconds) in the Param History stamp spelling
+    (``YYYYmmdd_HHMMSS_ffff``), so a ledger event is compared with the cut
+    exactly as a snapshot is."""
+    from datetime import timedelta
+    return (datetime(1970, 1, 1, tzinfo=timezone.utc)
+            + timedelta(microseconds=int(t_us))).strftime("%Y%m%d_%H%M%S_%f")[:20]
+
+
 def source_folder_label(folder: str | None) -> str | None:
     """Short display name of a source folder: its own name, or
     ``<parent>/<name>`` when the name is a generic container
@@ -1506,15 +1574,9 @@ class HistoryManager:
 
     @staticmethod
     def _lineage_of(kind: str, ts: str, first_own: str | None) -> str:
-        if kind == SOURCE_THIS:
-            return LINEAGE_OWN
-        if kind == SOURCE_RUN:
-            return LINEAGE_RUN
         # another folder's (or an unprovable) row: a predecessor only when it
         # was recorded before this folder's own history began
-        if first_own is None or str(ts) < first_own:
-            return LINEAGE_EARLIER
-        return LINEAGE_PARALLEL
+        return source_lineage(kind, ts, first_own)
 
     def _classify_source(self, meta: "SnapshotMeta",
                          p_key: str | None) -> tuple[str, str | None]:
@@ -1524,12 +1586,27 @@ class HistoryManager:
             # source_path, so that field is not evidence for these rows).
             return SOURCE_RUN, (meta.experiment_folder_path
                                 or meta.source_path or None)
-        owner = self._source_owner(meta.source_path)
-        if owner is None:
-            return SOURCE_UNKNOWN, None
-        if p_key is not None and owner[0] == p_key:
-            return SOURCE_THIS, owner[1]
-        return SOURCE_OTHER, owner[1]
+        return source_kind(self._source_owner(meta.source_path), p_key)
+
+    def source_cut(self, quam_state_path: str | Path,
+                   snapshots: "list[SnapshotMeta] | None" = None) -> tuple[str | None, str | None]:
+        """``(comparison key of the folder, its cut)`` -- the inputs a
+        change-ledger folder view classifies its events with (S10 C1.5), from
+        the same cached classification :meth:`snapshot_sources` uses."""
+        _srcs, first_own = self._sources_and_cut(quam_state_path, snapshots)
+        return self._folder_key(quam_state_path), first_own
+
+    def snapshot_list_is_current(self, resolved_key: str, snaps: Any) -> bool:
+        """S10 C1.5: is *snaps* still the cached snapshot list of the folder
+        whose resolved spelling is *resolved_key* (a capture, prune or
+        annotation replaces the list object)? A dict lookup: no file system
+        access, so a warm request can validate what it derived from it."""
+        return self._snapshot_list_cache.get(resolved_key) is snaps
+
+    def owner_of(self, raw: Any) -> tuple[str, str] | None:
+        """The public face of :meth:`_source_owner` (the folder a recorded
+        path stands for; a take-live backup stands for its live folder)."""
+        return self._source_owner(raw)
 
     def _sources_and_cut(
         self, quam_state_path: str | Path,
@@ -1547,15 +1624,12 @@ class HistoryManager:
             return cached[1], cached[2]
         p_key = self._folder_key(path)
         classified: list[tuple[str, str, str | None]] = []
-        first_own: str | None = None
         for m in snaps:
             kind, folder = self._classify_source(m, p_key)
-            if kind == SOURCE_THIS and (first_own is None
-                                        or m.timestamp < first_own):
-                first_own = m.timestamp
             classified.append((m.timestamp, kind, folder))
+        first_own = first_own_of((ts, kind) for ts, kind, _f in classified)
         out = {ts: self._source_entry(kind, folder,
-                                      self._lineage_of(kind, ts, first_own))
+                                      source_lineage(kind, ts, first_own))
                for ts, kind, folder in classified}
         self._sources_cache[ck] = (snaps, out, first_own)
         return out, first_own
@@ -2702,6 +2776,10 @@ class HistoryManager:
             # Update tracking state
             self._last_mtime[key] = current_mt
             self._snapshot_list_cache.pop(str(path.resolve()), None)
+            # S10 C1.5: another folder of this chip identity reads the same
+            # snapshots (its sources, its cut, whether another folder is
+            # known): its cached list is stale now too
+            self._invalidate_snapshot_lists_for(hist_dir)
             if not defer_index:
                 self._fire_indexed(quam_state_path)
             # Invalidate param-history caches that depend on this chip dir.

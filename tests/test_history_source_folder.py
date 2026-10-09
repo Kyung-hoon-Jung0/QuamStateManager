@@ -277,7 +277,10 @@ class TestTheSurfaces:
         # A's rows predate B's own history: kept, and named as A's
         assert html.count('class="snap-src fh-srcfolder"') == 2
         assert ">from labA/quam_state<" in html
-        assert "snapshot of another folder (" in html
+        # S10 C1.5: snapshot-path title "snapshot of another folder (" -> the ledger drawer's
+        # badge title, because the drawer now reads the chip's ledger through B's folder view
+        assert "before this folder&#39;s own history began" in html \
+            or "before this folder's own history began" in html
         assert "snapshot of the live folder" not in html
         assert "fh-other-note" not in html
 
@@ -291,6 +294,13 @@ class TestTheSurfaces:
         assert "5120000000.0" not in html.split('class="state-versions-actions"')[0]
 
     def test_state_history_labels_other_folder_rows(self, app_two):
+        # S10 C1.5: snapshot path -> the ledger listing, whose older snapshots are matched
+        # against the ledger in the background: wait for it, then count as before
+        from quam_state_manager.core import hub_versions
+        for chip_dir in (app_two["tmp"] / "_inst" / "history").iterdir():
+            if (chip_dir / "ledger.sqlite").exists():
+                app_two["client"].get("/state-history")
+                assert hub_versions.hashes_for(chip_dir).wait(30)
         html = app_two["client"].get("/state-history").data.decode()
         assert html.count('class="snap-src sh-src"') == 2
         # the Chip Status history drawer lists the same metas
@@ -302,7 +312,9 @@ class TestTheSurfaces:
             "/api/agent/field-history?path=qubits.q1.f_01").get_json()
         pts = body["history"]["points"]
         assert [p["value"] for p in pts] == [5.01e9, 5.0e9]
-        assert body["history"]["parallel_hidden"] == 2
+        # S10 C1.5: 2 (B's snapshots) -> 1 (B's ledger events): the ledger holds B's apply
+        # as one SM write, counted once by A's folder view
+        assert body["history"]["parallel_hidden"] == 1
 
     def test_the_agents_versions_name_their_folder(self, app_two):
         # docs/250 at integration: /api/agent/versions read the same rows with nothing saying whose

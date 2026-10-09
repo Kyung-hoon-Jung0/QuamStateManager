@@ -207,15 +207,15 @@ def test_no_parallel_folder_snapshot_is_imported_and_the_folder_keeps_its_own_pa
     assert len(imported) == 3, [m.source_path for m in imported]
     assert all(Path(m.source_path or "").name == "live" for m in imported), \
         [m.source_path for m in imported]
-    # one ledger per chip identity cannot tell the two folders apart: this
-    # folder's surfaces keep its own snapshot timeline, never the other's value
+    # S10 C1.5: other_folders snapshot fallback -> the folder view: the one ledger per chip
+    # identity is read per folder, so this folder reads it and never shows the other's value
     html = drawer(two_folders, "qubits.qA1.T1")
     assert "5e-05" not in html and "5.0e-05" not in html
-    assert "another folder with this chip" in html and "from the change ledger" not in html
+    assert "from the change ledger" in html
     reached = two_folders["client"].get("/hub/status").get_json()["fallback_reached"]
-    assert reached.get("drawer") == {"other_folders": 1}, reached
+    assert "drawer" not in reached, reached
     panel = two_folders["client"].get("/state/versions").get_data(as_text=True)
-    assert 'data-source="snapshots"' in panel and "another folder with this chip" in panel
+    assert 'data-source="ledger"' in panel
 
 
 def test_the_tripwire_stays_silent_on_the_drawer_versions_state_history_and_trends(folderless, monkeypatch):

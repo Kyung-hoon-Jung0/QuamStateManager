@@ -15,7 +15,8 @@
 <p class="jr-note warn jr-history-status">{{ history.note }}</p>
 {% elif history.state == 'idle' %}
 <p class="jr-note jr-history-status jr-history-idle">As last recorded: this window is not updating the chip history, so runs saved since are not shown.</p>
-{% endif %}
+{% endif %}{% for n in s.folder_notes or () %}
+<p class="jr-note jr-folder-note" data-note="{{ n.code }}">{{ n.text }}</p>{% endfor %}
 {% if history.state in ('building', 'unavailable') and (s.loose or s.unassigned) %}
 <p class="jr-note jr-journal-status">Recorded journal lines only. Run history and line attachments are {{ 'building' if history.state == 'building' else 'unavailable' }}.</p>
 {% endif %}

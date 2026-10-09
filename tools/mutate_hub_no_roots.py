@@ -20,10 +20,6 @@ SYNC = "quam_state_manager/core/hub_sync.py"
 HUB = "quam_state_manager/core/hub.py"
 STORE = "quam_state_manager/core/hub_store.py"
 ROUTES = "quam_state_manager/web/routes.py"
-PARALLEL_PINS = [
-    "tests/test_hub_no_roots_sync.py::test_no_parallel_folder_snapshot_is_imported_and_the_folder_keeps_its_own_path",
-    "tests/test_history_source_folder.py::TestTheSurfaces",
-]
 #: (name, file, anchor, replacement, the pins it must turn red: a -k expression
 #: over TEST, or a list of pytest node ids)
 MUTATIONS = [
@@ -54,23 +50,13 @@ MUTATIONS = [
      "            if False:\n                continue",
      "no_run_snapshot"),
     ("parallel_snapshots_imported", ROUTES,
-     "            if (srcs.get(m.timestamp) or {}).get(\"lineage\", LINEAGE_PARALLEL) == LINEAGE_PARALLEL:\n"
+     "            if src.get(\"lineage\", LINEAGE_PARALLEL) == LINEAGE_PARALLEL:\n"
      "                continue",
      "            if False:\n                continue",
      "no_parallel_folder_snapshot"),
-    ("other_folders_gate_removed_from_the_value_surfaces", ROUTES,
-     "    if not st.get(\"roots\") and _hub_other_folders(ctx):\n        return fallback(\"other_folders\")\n",
-     "",
-     PARALLEL_PINS),
-    ("other_folders_gate_removed_from_versions", ROUTES,
-     "    if (res[\"mode\"] == \"ledger\" and not (res.get(\"status\") or {}).get(\"roots\")\n"
-     "            and _hub_other_folders(ctx, snapshots)):",
-     "    if False:",
-     PARALLEL_PINS),
-    ("other_folders_counts_only_parallel", ROUTES,
-     "    return any(e.get(\"kind\") == SOURCE_OTHER or e.get(\"lineage\") == LINEAGE_PARALLEL",
-     "    return any(e.get(\"lineage\") == LINEAGE_PARALLEL",
-     ["tests/test_history_source_folder.py::TestTheSurfaces"]),
+    # S10 C1.5 deleted C1's other_folders fallback (routes._hub_other_folders and
+    # its two gates): every chip reads through its folder view, mutation-checked
+    # by tools/mutate_hub_folder_view.py.
     ("failed_slice_not_recorded", HUB,
      "            self.errors.append(f\"{hub.dir}: sync: {type(exc).__name__}: {exc}\")\n"
      "            hub_sync.slice_failed(hub.dir, exc)\n\n    def _sync_one",

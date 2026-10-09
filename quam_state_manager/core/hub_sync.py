@@ -365,6 +365,10 @@ class ChipSync:
         # S10 C1: why the last slice could not run (the ledger could not be
         # opened or bound); cleared by the next slice that completes
         self.slice_error: str | None = None
+        # S10 C1.5: the live folder that opened the chip last (its comparison
+        # key): every registered data root is linked to it in the ledger
+        self.folder: str | None = None
+        self.links_due = True
 
     @property
     def syncable(self) -> bool:
@@ -392,6 +396,7 @@ class ChipSync:
             if changed:
                 self.full_wanted = True
                 self.ready = False
+            self.links_due = True
             return changed
 
     def request(self, *, full: bool = False, listing: bool = False, roots: Iterable[str] = ()) -> bool:
@@ -523,6 +528,24 @@ class ChipSync:
                 reset = True
         return reset
 
+    def _link(self, store: HubStore) -> None:
+        """S10 C1.5: record that the folder that opened the chip registered
+        each of its data roots (``root_links``): a run is in that folder's
+        view of the ledger when one of its roots is linked to it."""
+        self.links_due = False
+        if not self.folder:
+            return
+        ids = [rs.root_id for rs in list(self.roots.values()) if rs.root_id is not None]
+        if not ids:
+            return
+        have = {r[0] for r in store.conn.execute("SELECT root_id FROM root_links WHERE folder=?",
+                                                 (self.folder,))}
+        if set(ids) <= have:
+            return
+        with txn(store):
+            for rid in ids:
+                store.link_root(rid, self.folder)
+
     def _register(self, store: HubStore, rs: RootState) -> None:
         normalized = os.path.normcase(str(rs.path.resolve()))
         row = store.conn.execute("SELECT root_id, folder_key, offset_hint FROM roots WHERE path=?",
@@ -570,6 +593,8 @@ class ChipSync:
                 self.done = self.total = 0          # a new burst of work
         if self._bind(store):
             full = True
+        if self.links_due:
+            self._link(store)
         if full or dirty or listing:
             self._list(full=full, dirty=dirty, listing=listing)
         steps = 0
@@ -651,6 +676,7 @@ class ChipSync:
             self.errors.append(f"snapshots: {type(exc).__name__}: {exc}")
             return
         _observed_table(store.conn)
+        self.counts["observed:offered_again"] += _observed_lanes(store, snaps)
         seen = {r[0] for r in store.conn.execute("SELECT ts FROM observed_snapshots")}
         queued = {s["ts"] for s in self.observe_queue}
         fresh = [s for s in snaps if s["ts"] not in seen and s["ts"] not in queued]
@@ -1300,6 +1326,92 @@ OBSERVED_KIND = "observed"
 def _observed_table(conn) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS observed_snapshots("
                   "ts TEXT PRIMARY KEY, outcome TEXT NOT NULL, eid INTEGER)")
+    # S10 C1.5: a snapshot row looked at under the per-folder rule (its
+    # event's folder recorded; a dedupe against another folder's neighbour
+    # offered again). A row made before has none here.
+    conn.execute("CREATE TABLE IF NOT EXISTS observed_lanes(ts TEXT PRIMARY KEY)")
+
+
+def folder_key(raw) -> str | None:
+    """S10 C1.5: the comparison key of a recorded folder path -- the ONE key
+    Param History compares folders with (``history._source_key``)."""
+    from quam_state_manager.core.history import _source_key
+    return _source_key(raw)
+
+
+def _root_folders(store: HubStore, root_id) -> set:
+    return {r[0] for r in store.conn.execute("SELECT folder FROM root_links WHERE root_id=?", (root_id,))}
+
+
+def same_lane(store: HubStore, row, key: str | None) -> bool:
+    """S10 C1.5: does event *row* belong to the folder *key*'s lane, for the
+    observed dedupe? An SM write / observed state when its recorded folder is
+    that folder; a run when one of its data roots is linked to that folder,
+    or carries no link at all (a root registered before links were kept). A
+    snapshot whose folder cannot be shown (*key* None) is compared with its
+    neighbours as before."""
+    if row is None or key is None:
+        return True
+    if row["kind"] == "run":
+        roots = [r[0] for r in store.conn.execute("SELECT root_id FROM locations WHERE eid=?", (row["eid"],))]
+        for rid in roots or [row["root_id"]]:
+            links = _root_folders(store, rid)
+            if not links or key in links:
+                return True
+        return False
+    try:
+        live = row["live"]
+    except (IndexError, KeyError):
+        live = None
+    return folder_key(live) == key
+
+
+def _lane_good(store: HubStore, edge, key: str | None, *, before: bool):
+    """The nearest good event of folder *key*'s lane at or before (after)
+    *edge* (an event row, or None)."""
+    if edge is None:
+        return None
+    if key is None:
+        return store.good_at_or_before(edge) if before else store.good_at_or_after(edge)
+    sql = ("SELECT * FROM events WHERE ord<=? AND error IS NULL ORDER BY ord DESC" if before
+           else "SELECT * FROM events WHERE ord>=? AND error IS NULL ORDER BY ord")
+    for row in store.conn.execute(sql, (edge["ord"],)):
+        if same_lane(store, row, key):
+            return row
+    return None
+
+
+def _observed_lanes(store: HubStore, snaps: list[dict]) -> int:
+    """S10 C1.5 backfill, once per snapshot row made before the per-folder
+    rule: the observed event's folder is recorded from its snapshot's source,
+    and a snapshot left out as equal to a neighbour of ANOTHER folder (that
+    folder held it; this one may not have) is offered again. Returns how many
+    were offered again."""
+    rows = store.conn.execute("SELECT o.ts, o.outcome, o.eid FROM observed_snapshots o "
+                              "LEFT JOIN observed_lanes l USING(ts) WHERE l.ts IS NULL").fetchall()
+    if not rows:
+        return 0
+    by_ts = {s["ts"]: s for s in snaps}
+    redo = 0
+    with txn(store):
+        for ts, outcome, eid in rows:
+            snap = by_ts.get(ts)
+            if snap is None:
+                continue                 # another folder's snapshot: its own listing records it
+            live = snap.get("live")
+            key = folder_key(live)
+            if eid is not None and live:
+                store.conn.execute("UPDATE events SET live=? WHERE eid=? AND live IS NULL", (live, eid))
+            if outcome in ("same_before", "same_after") and key is not None:
+                t_us = int(snap["t_us"])
+                lo, hi = store.neighbors((t_us, "", 0, "", "snapshot:" + ts, _NEW))
+                near = store.good_at_or_before(lo) if outcome == "same_before" else store.good_at_or_after(hi)
+                if near is not None and not same_lane(store, near, key):
+                    store.conn.execute("DELETE FROM observed_snapshots WHERE ts=?", (ts,))
+                    redo += 1
+                    continue
+            store.conn.execute("INSERT OR IGNORE INTO observed_lanes(ts) VALUES(?)", (ts,))
+    return redo
 
 
 def snapshot_instant_us(ts: str) -> int | None:
@@ -1340,6 +1452,7 @@ def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str
 
     def done(outcome, eid=None):
         c.execute("INSERT OR REPLACE INTO observed_snapshots VALUES(?,?,?)", (snap["ts"], outcome, eid))
+        c.execute("INSERT OR IGNORE INTO observed_lanes(ts) VALUES(?)", (snap["ts"],))
         return outcome
     folder = Path(snap["dir"])
     try:
@@ -1357,14 +1470,25 @@ def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str
     rel = "snapshot:" + snap["ts"]
     lo, hi = store.neighbors((t_us, "", 0, "", rel, _NEW))
     pred, succ = store.good_at_or_before(lo), store.good_at_or_after(hi)
-    pred_flat = store.flat_of(pred) if pred is not None else {}
-    rows = rules.diff(pred_flat, flat)
-    if not rows:
+    # S10 C1.5: a snapshot is left out as "already explained" only against a
+    # neighbour of ITS OWN folder's lane: another folder holding this state
+    # says nothing about whether this folder held it
+    key = folder_key(snap.get("live"))
+    lpred = pred if same_lane(store, pred, key) else _lane_good(store, lo, key, before=True)
+    lsucc = succ if same_lane(store, succ, key) else _lane_good(store, hi, key, before=False)
+    lpred_flat = store.flat_of(lpred) if lpred is not None else {}
+    if not rules.diff(lpred_flat, flat):
         return done("same_before")
-    if succ is not None and not rules.diff(store.flat_of(succ), flat):
+    if lsucc is not None and not rules.diff(store.flat_of(lsucc), flat):
         # the next event's own state, seen a moment early (a save copy, or a
         # run's save on a PC whose clock is ahead): it belongs to that event
         return done("same_after")
+    # the stored rows stay the diff against the GLOBAL predecessor (I2)
+    if pred is not None and (lpred is None or lpred["eid"] != pred["eid"]):
+        pred_flat = store.flat_of(pred)
+    else:
+        pred_flat = lpred_flat if pred is not None else {}
+    rows = rules.diff(pred_flat, flat)
     succ_flat = _prepare_successor(store, succ)
     chash = _content_hash_of(state, wiring)
     ord_ = store.alloc_ord(lo, hi)
@@ -1373,6 +1497,7 @@ def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str
                  root_id=None, rel_path=rel, run_id=None, experiment=None, status=trigger,
                  run_start_us=None, run_end_us=None, parents=None, targets=None, patches_n=0,
                  actor=snap.get("actor"), plan_id=None, src="param_history:" + trigger,
+                 live=snap.get("live"),
                  state_hash=digest, base_hash=pred["state_hash"] if pred is not None else None,
                  state_ref=str(folder), n_changes=len(rows), flags=0,
                  shape_hash=store.shape_and_arrays(doc, flat), error=None, t_ord=t_us, chash=chash)
@@ -1411,6 +1536,12 @@ def drop_observed_runs(store: HubStore) -> int:
                                  (ev["ord"],)).fetchone()
         if nxt is None or nxt["kind"] != "run":
             continue
+        try:
+            key = folder_key(ev["live"])
+        except (IndexError, KeyError):
+            key = None
+        if not same_lane(store, nxt, key):
+            continue                # S10 C1.5: a run of another folder's lane explains nothing
         # cheap first: the same bytes, or the same parsed content
         if not ((nxt["state_hash"] and nxt["state_hash"] == ev["state_hash"])
                 or (nxt["chash"] and nxt["chash"] == ev["chash"])):
@@ -1537,7 +1668,8 @@ def registered() -> list[ChipSync]:
 
 def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | None = None,
               kick: bool = True, exclusive: bool = True,
-              observed: Callable[[], list[dict]] | None = None) -> ChipSync:
+              observed: Callable[[], list[dict]] | None = None,
+              folder: str | None = None) -> ChipSync:
     """A chip was activated: register its roots and catch every one of them
     up in the background (no page visit needed). ``exclusive``: every other
     chip's sync goes idle -- not watched, not swept -- until it is opened
@@ -1549,6 +1681,11 @@ def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | No
                 other.active = False
     cs.active = True
     cs.set_roots(roots)
+    if folder is not None:
+        # S10 C1.5: the opening folder (its comparison key); its data roots
+        # are linked to it at the next slice
+        cs.folder = folder
+        cs.links_due = True
     if identity:
         cs.identity = identity
     if observed is not None:

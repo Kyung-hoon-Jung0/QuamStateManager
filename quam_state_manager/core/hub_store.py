@@ -94,6 +94,9 @@ CREATE INDEX IF NOT EXISTS events_by_time ON events(t_utc_us, ord);
 CREATE TABLE IF NOT EXISTS run_files(
  root_id INTEGER NOT NULL REFERENCES roots, rel_path TEXT NOT NULL, sig TEXT,
  rewritten_us INTEGER, PRIMARY KEY(root_id, rel_path)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS root_links(
+ root_id INTEGER NOT NULL REFERENCES roots, folder TEXT NOT NULL,
+ PRIMARY KEY(root_id, folder)) WITHOUT ROWID;
 """
 # S5 (docs/275), additive like S4's tables: ``events_by_time`` places an event
 # by its instant; ``run_files`` is the stat watermark (size + mtime of the
@@ -107,7 +110,16 @@ CREATE TABLE IF NOT EXISTS run_files(
 #   events.chash   working_copy.content_hash of the event's (state, wiring) --
 #                  the hash an SM write names as its base
 #   sm_events.jpos the line's journal position (journal order = causal order)
-_COLUMNS = (("events", "t_ord", "INTEGER"), ("events", "chash", "TEXT"), ("sm_events", "jpos", "INTEGER"))
+#
+# S10 C1.5 (one ledger per chip identity, read per FOLDER), additive:
+#   events.live    the live folder an SM write wrote (``sm_events.live``) or the
+#                  folder a state SM observed stands for (its snapshot's
+#                  recorded source); NULL for a run (a run is placed by its
+#                  data root) and for a folder that cannot be shown
+#   root_links     (root_id, folder): which live folder registered a data root
+#                  (the folder's comparison key, ``history._source_key``)
+_COLUMNS = (("events", "t_ord", "INTEGER"), ("events", "chash", "TEXT"), ("sm_events", "jpos", "INTEGER"),
+            ("events", "live", "TEXT"))
 # The same statements one by one: a trigger body holds a ';', so the script
 # cannot be split on it, and executescript() would COMMIT the creating
 # transaction first.
@@ -142,14 +154,14 @@ _SCHEMA_S5R_STATEMENTS = (
 REWRITE_EVENT_COLUMNS = ("eid", "kind", "t_utc_us", "t_src", "t_quality", "root_id", "rel_path",
                          "run_id", "experiment", "status", "run_start_us", "run_end_us", "parents",
                          "targets", "patches_n", "actor", "plan_id", "src", "state_hash", "base_hash",
-                         "state_ref", "n_changes", "flags", "shape_hash", "error", "chash")
+                         "state_ref", "n_changes", "flags", "shape_hash", "error", "chash", "live")
 #: the log is trimmed past this many entries (the meta key ``rewrite_trimmed``
 #: names the newest position trimmed: a reader stamped before it re-derives)
 REWRITE_KEEP = 65536
 #: what the triggers below log; a ledger whose log was made by other trigger
 #: definitions gets them replaced (and a new epoch) by the next writer, and is
 #: never trusted by a reader until then
-REWRITE_LOG_VERSION = "298-2"
+REWRITE_LOG_VERSION = "298-3"
 
 
 def _rewrite_trigger(name: str, when: str, table: str, values: tuple[str, ...], cond: str = "") -> str:
@@ -191,7 +203,7 @@ REWRITE_OBJECTS = ("rewrite_log", "rewrite_events_upd", "rewrite_events_ord", "r
 _SCHEMA_OBJECTS = ("meta", "roots", "events", "run_identity", "locations", "locations_by_event", "paths",
                    "changes", "changes_by_event", "blobs", "checkpoints", "sm_events", "sm_anchors",
                    "events_by_state_hash", "events_by_time", "run_files", "events_by_order_time",
-                   "events_by_chash", "events_default_t_ord", *REWRITE_OBJECTS)
+                   "events_by_chash", "events_default_t_ord", "root_links", *REWRITE_OBJECTS)
 
 
 def rewrite_mark(conn) -> tuple | None:
@@ -415,6 +427,11 @@ class HubStore:
                     if col not in have:
                         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
                 self.conn.execute("UPDATE events SET t_ord=t_utc_us WHERE t_ord IS NULL")
+                # S10 C1.5 backfill: an SM write's folder is the one its journal
+                # line named (sm_events.live); an observed state's is filled in
+                # by the next observed listing (hub_sync._observe_list)
+                self.conn.execute("UPDATE events SET live=(SELECT s.live FROM sm_events s WHERE s.eid=events.eid) "
+                                  "WHERE live IS NULL AND eid IN (SELECT eid FROM sm_events WHERE live IS NOT NULL)")
                 for stmt in _SCHEMA_S5R_STATEMENTS:
                     self.conn.execute(stmt)
                 self._create_rewrite_log()
@@ -480,6 +497,13 @@ class HubStore:
                               "ON CONFLICT(path) DO UPDATE SET offset_hint=excluded.offset_hint",
                               (normalized, folder_key, offset_hint))
         return self.conn.execute("SELECT root_id FROM roots WHERE path=?", (normalized,)).fetchone()[0]
+
+    def link_root(self, root_id: int, folder: str | None) -> None:
+        """S10 C1.5: record that the live folder *folder* (its comparison key)
+        registered data root *root_id* (inside the caller's transaction)."""
+        if folder:
+            self.conn.execute("INSERT OR IGNORE INTO root_links(root_id, folder) VALUES(?,?)",
+                              (root_id, folder))
 
     def put_blob(self, payload: bytes, *, expected_hash: str | None = None, level: int = 9) -> str:
         digest = hashlib.sha1(payload).hexdigest()
@@ -768,6 +792,7 @@ class HubStore:
                     kind=line.get("kind") or "sm_apply", t_utc_us=int(line["t_utc_us"]), t_ord=t_ord,
                     chash=line.get("post_hash") if landed_ok else None, t_src=line.get("t"),
                     t_quality="sm_clock", ord=ord_, root_id=None, rel_path=None, run_id=None,
+                    live=line.get("live"),
                     experiment=None, status=outcome, actor=line.get("actor"), plan_id=line.get("plan_id"),
                     src=line.get("src"), state_hash=state_hash if landed_ok else None, base_hash=None,
                     state_ref=(f"pair:{anchor_hash}" if anchor_hash else ("replay" if landed_ok else None)),

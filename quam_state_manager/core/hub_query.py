@@ -12,25 +12,67 @@ from pathlib import Path
 
 from quam_state_manager.core import search_query
 from quam_state_manager.core.hub_index import context, require_day_zone, snapshot
-from quam_state_manager.core.hub_store import OPS, value
+from quam_state_manager.core.hub_store import OPS, SM_KINDS, value
 
 _OP_NAMES = {number: name for name, number in OPS.items()}
 
 
-def _events(conn, eids):
+def _events(conn, eids, index=None):
+    """``{eid: event dict}``; read through a folder view (*index* with a
+    lane, S10 C1.5) each dict carries the lane's flags / base hash and, for
+    another folder's event, its ``_source``."""
     result = {}
     ids = list(eids)
     for start in range(0, len(ids), 500):
         chunk = ids[start:start + 500]
         sql = "SELECT * FROM events WHERE eid IN (" + ",".join("?" for _ in chunk) + ")"
         result.update((row["eid"], dict(row)) for row in conn.execute(sql, chunk))
+    lane = getattr(index, "lane", None)
+    if lane is not None:
+        result = {eid: lane.event(ev) for eid, ev in result.items()}
     return result
 
 
 def _change(row):
-    return {"path": row["path"], "old": value(row["old_num"], row["old_txt"]),
-            "new": value(row["num"], row["txt"]), "op": _OP_NAMES[row["op"]],
-            "proven": bool(row["proven"])}
+    out = {"path": row["path"], "old": value(row["old_num"], row["old_txt"]),
+           "new": value(row["num"], row["txt"]), "op": _OP_NAMES[row["op"]],
+           "proven": bool(row["proven"])}
+    if isinstance(row, dict) and row.get("held"):
+        # S10 C1.5: this folder held the value when SM wrote; writer unknown
+        out["held"] = True
+    return out
+
+
+def event_rows(conn, index, eid):
+    """S10 C1.5: one event's change rows as a folder view reads them (each a
+    mapping with ``path``): a seam's rows within the lane, else the stored
+    rows."""
+    lane = getattr(index, "lane", None)
+    got = lane.rows(eid) if lane is not None else None
+    if got is not None:
+        return sorted(got, key=lambda r: r["path"])
+    return conn.execute("SELECT c.*, p.path FROM changes c JOIN paths p USING(pid) WHERE c.eid=? "
+                        "ORDER BY p.path", (eid,)).fetchall()
+
+
+def path_rows(conn, index, pid):
+    """S10 C1.5: ``(eid, op, num, txt, old_num, old_txt)`` of every row of
+    holder *pid* the (view) index reads: its events' stored rows, a seam's
+    own rows in their place."""
+    lane = getattr(index, "lane", None)
+    out = []
+    if pid is not None and pid >= 0:
+        for eid, op, num, txt, onum, otxt in conn.execute(
+                "SELECT eid, op, num, txt, old_num, old_txt FROM changes WHERE pid=?", (pid,)):
+            if lane is not None and eid in lane.seams:
+                continue
+            out.append((eid, op, num, txt, onum, otxt))
+    if lane is not None:
+        for eid, rows in lane.seams.items():
+            r = rows.get(pid)
+            if r is not None:
+                out.append((eid, r["op"], r["num"], r["txt"], r["old_num"], r["old_txt"]))
+    return out
 
 
 def _undo_links(text):
@@ -90,7 +132,7 @@ def _decode(cursor):
 def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
              day_to=None, cursor=None, limit=50, include_runs=False,
              include_ambiguous=False, path_prefix=False, event_id=None, changed_only=False,
-             lineage=None, era=()):
+             lineage=None, era=(), foreign=None):
     """Return {events: [... with changes], cursor: str | None}, newest first.
 
     The cursor freezes the initial max eid, excluding subsequent appends even
@@ -115,8 +157,18 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
     spelling it was saved under), the event where a rename came into force
     has its rows recomputed qubit by qubit (``renamed_here``), and ``path``
     is matched in each event's own era.
+
+    S10 C1.5: read through a folder view, the events are the folder's lane
+    (each another folder's earlier event carrying its ``_source``) and a
+    seam's rows are its difference within the lane. ``foreign="label"`` (a
+    LISTING: Versions, State History) lists every event of the ledger; one
+    outside the lane carries its ``_source`` and ``foreign`` True and
+    withholds its rows (``changes`` empty, ``n_changes`` None) -- except an
+    SM write, which shows its own entries only.
     """
-    with snapshot(store) as (conn, index):
+    with snapshot(store) as (conn, view):
+        lane = getattr(view, "lane", None)
+        index = lane.base if (lane is not None and foreign == "label") else view
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
             raise ValueError("timeline limit must be a positive integer")
         lo, hi = _bound(day_from), _bound(day_to)
@@ -128,6 +180,9 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
         filters = (q, kinds, entity, path, lo, hi)
         if path_prefix or event_id is not None or changed_only:
             filters += (bool(path_prefix), event_id, bool(changed_only))
+        if lane is not None:
+            # S10 C1.5: a cursor of one folder's view never pages another's
+            filters += (lane.digest, foreign)
         signature = hashlib.sha256(json.dumps(filters, separators=(",", ":")).encode()).hexdigest()
         high = max(index.eids, default=0)
         last = None
@@ -169,7 +224,14 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
         if event_id is not None:
             found.intersection_update((event_id,))
         if changed_only:
-            found.intersection_update(row[0] for row in conn.execute("SELECT eid FROM events WHERE n_changes>0"))
+            changed = {row[0] for row in conn.execute("SELECT eid FROM events WHERE n_changes>0")}
+            if lane is not None:
+                for eid, rows in lane.seams.items():
+                    if rows:
+                        changed.add(eid)
+                    else:
+                        changed.discard(eid)
+            found.intersection_update(changed)
         if lo or hi:
             allowed = {eid for day, ids in index.postings["day"].items()
                        if (lo is None or day >= lo) and (hi is None or day <= hi) for eid in ids}
@@ -182,7 +244,7 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
                     break
         more = len(selected) > limit
         selected = selected[:limit]
-        events = _events(conn, selected)
+        events = _events(conn, selected, view if lane is not None else index)
         roots = {row["root_id"]: row["path"] for row in conn.execute("SELECT root_id,path FROM roots")}
         journal = None
         targets = set()
@@ -230,16 +292,33 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
         # Leading events with no readable state (an error) do not count.
         first = conn.execute("SELECT eid FROM events WHERE error IS NULL ORDER BY ord LIMIT 1").fetchone()
         first = first[0] if first else None
+        if lane is not None:
+            first = lane.first
         for event in events.values():
             event["root_path"] = roots.get(event["root_id"])
             event["first"] = event["eid"] == first
             event["changes"] = []
-        for start in range(0, len(selected), 500):
-            chunk = selected[start:start + 500]
+        seamed = set(lane.seams) if lane is not None else set()
+        withheld = set()
+        if lane is not None:
+            for eid in selected:
+                if eid in lane.hidden:
+                    events[eid]["foreign"] = True
+                    if events[eid]["kind"] not in SM_KINDS:
+                        withheld.add(eid)       # a foreign run / observed state: no change count
+                        events[eid]["n_changes"] = None
+        stored = [e for e in selected if e not in seamed and e not in withheld]
+        for start in range(0, len(stored), 500):
+            chunk = stored[start:start + 500]
             sql = ("SELECT c.*,p.path FROM changes c JOIN paths p USING(pid) WHERE eid IN ("
                    + ",".join("?" for _ in chunk) + ") ORDER BY p.path")
             for row in conn.execute(sql, chunk):
                 events[row["eid"]]["changes"].append(_change(row))
+        for eid in selected:
+            if eid in seamed and eid not in withheld:
+                rows = sorted(lane.seams[eid].values(), key=lambda r: r["path"])
+                events[eid]["changes"] = [_change(r) for r in rows]
+                events[eid]["n_changes"] = len(rows)
         next_cursor = _encode({"v": 1, "ledger": index.ledger_id, "zone": index.zone,
                                "filters": signature, "high": high,
                                "last": index.keys[selected[-1]]}) if more else None
@@ -255,6 +334,9 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
                     (c["path"].lower().startswith(low) if path_prefix else c["path"] == path)
                     for c in events[eid]["changes"])]
         result = {"events": [events[eid] for eid in selected], "cursor": next_cursor}
+        if lane is not None:
+            # S10 C1.5: what the folder's view left out, counted
+            result["left_out"] = lane.left_out
         if include_ambiguous:
             result["ambiguous_run_ids"] = {row[0] for row in conn.execute(
                 "SELECT run_id FROM events WHERE kind='run' AND run_id IS NOT NULL "
@@ -379,17 +461,34 @@ def _series(conn, index, path, limit=None, before=None):
         ids = ids[-limit:] if limit else []
     if not ids:
         return []
-    events = _events(conn, ids)
+    events = _events(conn, ids, index)
     changes = {}
-    for start in range(0, len(ids), 500):
-        chunk = ids[start:start + 500]
+    lane = getattr(index, "lane", None)
+    stored = ids
+    if lane is not None:
+        # S10 C1.5: a seam's row is its difference within the lane
+        stored = []
+        for eid in ids:
+            if eid not in lane.seams:
+                stored.append(eid)
+                continue
+            row = lane.seams[eid].get(pid)
+            if row is not None:
+                changes[eid] = row
+                if row.get("held"):
+                    # this folder held it when SM wrote: the write is not
+                    # its writer
+                    events[eid] = dict(events[eid], _held=True)
+    for start in range(0, len(stored), 500):
+        chunk = stored[start:start + 500]
         sql = ("SELECT * FROM changes WHERE pid=? AND eid IN ("
                + ",".join("?" for _ in chunk) + ")")
         for row in conn.execute(sql, [pid, *chunk]):
             changes[row["eid"]] = row
     return [(events[eid], value(changes[eid]["old_num"], changes[eid]["old_txt"]),
              value(changes[eid]["num"], changes[eid]["txt"]),
-             _OP_NAMES[changes[eid]["op"]], bool(changes[eid]["proven"])) for eid in ids]
+             _OP_NAMES[changes[eid]["op"]], bool(changes[eid]["proven"])) for eid in ids
+            if eid in changes]
 
 
 def series(store, path, limit=None):

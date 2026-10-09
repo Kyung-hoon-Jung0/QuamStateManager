@@ -3351,8 +3351,10 @@ def _hub_catch_up(folder) -> None:
         logger.debug("hub catch-up failed", exc_info=True)
 
 
-def _hub_root_key(p) -> str:
-    """The filesystem key used by every folder decision."""
+def _hub_root_key(p: str) -> str:
+    """THE key of a data root in a chip decision (``<chip>::root:<key>``) and
+    in a folder view (S10 C1.5): the folder's canonical identity
+    (``path_match.fs_key``), else its normalized absolute path."""
     try:
         return path_match.fs_key(p) or os.path.normcase(os.path.abspath(p))
     except (OSError, ValueError):
@@ -3465,14 +3467,17 @@ def _hub_observed_source(ctx, chip_dir):
             if (getattr(m, "kind", None) == "exp" or m.trigger == "experiment"
                     or m.run_id is not None or m.experiment_folder_path):
                 continue
-            if (srcs.get(m.timestamp) or {}).get("lineage", LINEAGE_PARALLEL) == LINEAGE_PARALLEL:
+            src = srcs.get(m.timestamp) or {}
+            if src.get("lineage", LINEAGE_PARALLEL) == LINEAGE_PARALLEL:
                 continue
             t_us = hub_sync.snapshot_instant_us(m.timestamp)
             folder = base / m.timestamp
             if t_us is None or not (folder / "state.json").is_file() or not (folder / "wiring.json").is_file():
                 continue
+            # S10 C1.5: the folder the observed state stands for (its
+            # snapshot's recorded source; None when it cannot be shown)
             out.append({"ts": m.timestamp, "t_us": t_us, "trigger": m.trigger, "dir": str(folder),
-                        "actor": getattr(m, "actor", None)})
+                        "actor": getattr(m, "actor", None), "live": src.get("folder")})
         return out
     return source
 
@@ -3491,6 +3496,8 @@ def _hub_sync_open(ctx) -> None:
             return
         roots = _hub_roots_for(ctx)
         ctx["hub_chip_dir"] = str(chip_dir)
+        # S10 C1.5: the folder view's declared roots (_hub_folder_view)
+        ctx["hub_roots"] = list(roots)
         app = current_app._get_current_object()
         # A TESTING app (which syncs inline, on the request thread) runs the
         # catch-up only when a test asks for it: an unrelated test opening a
@@ -3501,7 +3508,8 @@ def _hub_sync_open(ctx) -> None:
         kick = (not app.config.get("TESTING") or bool(app.config.get("HUB_SYNC_ON_OPEN"))
                 or not roots)
         cs = hub_sync.open_chip(chip_dir, roots, identity=_hub_live_identity(ctx), kick=False,
-                                observed=_hub_observed_source(ctx, chip_dir))
+                                observed=_hub_observed_source(ctx, chip_dir),
+                                folder=_history().source_cut(ctx["path"])[0])
         if not app.config.get("TESTING"):
             # the watcher first: its baseline is ~a stat per run of the newest
             # day, and once the catch-up runs it competes for the interpreter
@@ -11798,36 +11806,7 @@ _VH_FALLBACK_NOTES = {
                     "resolved, so changes between snapshots can be missing."),
     "unreadable": ("Older snapshot history: the change ledger could not be read, so "
                    "changes between snapshots can be missing."),
-    "other_folders": ("Older snapshot history: another folder with this chip's name has "
-                      "recorded into the same change ledger, which does not keep the folders "
-                      "apart yet, so this folder's own snapshots are shown and changes "
-                      "between them can be missing."),
 }
-
-
-def _hub_other_folders(ctx: dict, snapshots=None) -> bool:
-    """S10 C1: does this chip's Param History hold a record of ANOTHER live
-    folder with the same chip identity (docs/250: an earlier folder this one
-    was copied or moved from, or a folder recording alongside it)?
-
-    One change ledger is kept per chip identity, so every such folder's SM
-    writes -- and the states its own window observed -- land in it as one
-    timeline that cannot tell the folders apart yet. Before S10 C1 a chip with
-    no data folder reached its history only through the snapshot path, which
-    keeps each folder's timeline and names the other folder's rows; such a
-    chip stays there rather than show another folder's writes as its own
-    history (never wrong provenance). A chip with a data folder reads its
-    ledger as before (the same mixing applies to it; not changed here).
-    Unknown lineage counts as shared."""
-    from quam_state_manager.core.history import LINEAGE_PARALLEL, SOURCE_OTHER
-    try:
-        srcs = _history().snapshot_sources(ctx["path"], snapshots)
-    except Exception:  # noqa: BLE001 -- lineage unknown: the path that labels it
-        logger.warning("hub: the snapshot sources of %s could not be read", ctx.get("path"),
-                       exc_info=True)
-        return True
-    return any(e.get("kind") == SOURCE_OTHER or e.get("lineage") == LINEAGE_PARALLEL
-               for e in srcs.values())
 
 
 def _rename_scope(ctx: dict | None = None, chip_dir=None) -> dict:
@@ -11954,8 +11933,6 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     if (not res["ledger"].get("has_runs") and not res["ledger"].get("has_observed")
             and not st.get("roots")):
         return fallback("no_runs")
-    if not st.get("roots") and _hub_other_folders(ctx):
-        return fallback("other_folders")
     out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"],
                runs_left_out=res.get("runs_left_out", 0), serials=res.get("serials") or {})
     for key, tgt in targets.items():
@@ -11969,13 +11946,101 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     return out
 
 
+def _hub_folder_view(ctx: dict | None, chip_dir=None):
+    """S10 C1.5: THE folder view every reader of this chip's ledger binds
+    (``hub_lanes.FolderView``): the open folder's comparison key and docs/250
+    cut (Param History's own classification, ``HistoryManager.source_cut``),
+    the data roots it declares now (``_hub_roots_for``, kept on the ctx by
+    the open), the roots decided ``different`` for this chip, and whether
+    Param History knows another folder of this identity. None for a context
+    with no folder. Param History unreadable: a view whose every other
+    folder's event counts as parallel (never this folder's)."""
+    from quam_state_manager.core import hub_lanes
+    from quam_state_manager.core.history import (SOURCE_OTHER, _data_folder_name, _source_key,
+                                                 decisions_generation, load_chip_decisions)
+    if not ctx or not ctx.get("path") or ctx.get("hub_no_folder"):
+        return None
+    hm = _history()
+    path = ctx["path"]
+    chip_name = Path(chip_dir).name if chip_dir is not None else ""
+    declared = ctx.get("hub_roots")
+    memo_key = (str(path), chip_name, tuple(r for r, _s in declared) if declared is not None else None,
+                str(current_app.instance_path))
+    # a warm request validates the kept view without touching the file system:
+    # the snapshot list object it was derived from is still Param History's
+    # (a capture or prune replaces it), and no decision was saved since
+    hit = _HUB_FOLDER_VIEWS.get(memo_key)
+    if (hit is not None and hit[2] == decisions_generation()
+            and hm.snapshot_list_is_current(hit[0], hit[1])):
+        return hit[3]
+    ok = True
+    try:
+        resolved = str(Path(path).resolve())
+        snaps = hm.list_snapshots(path)
+        srcs = hm.snapshot_sources(path, snaps)
+        key, cut = hm.source_cut(path, snaps)
+    except Exception:  # noqa: BLE001 -- Param History unreadable: every other folder is parallel
+        logger.warning("hub: the snapshot sources of %s could not be read", path, exc_info=True)
+        resolved, snaps, srcs, cut, ok = None, None, {}, None, False
+        try:
+            key = _source_key(str(Path(path).resolve()))
+        except (OSError, ValueError):
+            key = _source_key(str(path))
+    roots = declared
+    if roots is None:
+        # a context the open did not register (an archive): the roots it
+        # would declare
+        try:
+            roots = _hub_roots_for(ctx)
+        except Exception:  # noqa: BLE001 -- no declared roots
+            roots = []
+    gen = decisions_generation()
+    different: set[str] = set()
+    if chip_name:
+        try:
+            decisions = load_chip_decisions(current_app.instance_path)
+        except Exception:  # noqa: BLE001 -- no decisions
+            decisions = {}
+        prefix = f"{chip_name}::root:"
+        different.update(k[len(prefix):] for k, v in decisions.items()
+                         if v == "different" and k.startswith(prefix))
+        ws = current_app.config.get("workspace")
+        ws_roots = [str(r) for r in (ws.root_folders if ws is not None else [])]
+        labels = Counter(_data_folder_name(r) for r in ws_roots)
+        for r in ws_roots:
+            label = _data_folder_name(r)
+            if label and labels[label] == 1 and decisions.get(f"{chip_name}::{label}") == "different":
+                different.add(_hub_root_key(r))
+    view = hub_lanes.FolderView(
+        key=key, path=str(path), cut=cut,
+        roots=frozenset(_hub_root_key(r) for r, _src in roots),
+        different=frozenset(different),
+        others=(not ok) or any(e.get("kind") == SOURCE_OTHER for e in srcs.values()),
+        sources_ok=ok,
+        snapshots={ts: (e.get("kind"), e.get("folder")) for ts, e in srcs.items()})
+    if ok:
+        if len(_HUB_FOLDER_VIEWS) > 64:
+            _HUB_FOLDER_VIEWS.clear()
+        _HUB_FOLDER_VIEWS[memo_key] = (resolved, snaps, gen, view)
+    return view
+
+
+#: S10 C1.5: ``{(folder, chip, declared roots, instance): (resolved folder,
+#: snapshot list, decisions generation, view)}`` -- one folder view per open
+#: folder, served while what it was derived from is current
+_HUB_FOLDER_VIEWS: dict = {}
+
+
 def _vh_binding(ctx: dict, chip_dir):
     """The read binding every reader of this chip uses, so they share ONE RAM
     index (docs/282 review P2-3): the chip's project zone when one is set --
-    the Calibration log binds the same -- else the plain store (UTC days)."""
+    the Calibration log binds the same -- else UTC days with no calendar
+    query. S10 C1.5: it carries the open folder's view (``_hub_folder_view``),
+    so every reader reads the ledger as this folder sees it."""
     from types import SimpleNamespace
     from quam_state_manager.core import hub_index
     raw = SimpleNamespace(directory=Path(chip_dir))
+    folder = _hub_folder_view(ctx, chip_dir)
     try:
         from quam_state_manager.core import project_time
         zone = project_time.display_zone(current_app.instance_path,
@@ -11983,9 +12048,9 @@ def _vh_binding(ctx: dict, chip_dir):
     except Exception:  # noqa: BLE001 -- no zone: the plain store
         zone = None
     if not zone:
-        return raw
+        return hub_index.context(raw, folder=folder) if folder is not None else raw
     return hub_index.context(raw, instance=current_app.instance_path,
-                             project=ctx.get("qualibrate_project"))
+                             project=ctx.get("qualibrate_project"), folder=folder)
 
 
 def _vh_actor(actor: Any) -> str:
@@ -12072,6 +12137,14 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
         title = (f"Run {run}'s chip identity disagrees with this chip's, so it is not "
                  f"named as the writer of this value.")
         trigger = "auto"
+    elif prov == "held_before_write":
+        # S10 C1.5: an SM write's row its entries did not write
+        label = "held before this write"
+        sub = "writer unknown"
+        title = ("This folder held this value when SM wrote over it; the write did not set it "
+                 "(a change made outside SM, or another folder's history before this folder's "
+                 "began), so who set it is not known.")
+        trigger = "auto"
     elif prov == "observed":
         trig = str(p.get("src") or "").split(":", 1)[-1] or "snapshot"
         label = f"seen by SM ({trig} snapshot)"
@@ -12117,6 +12190,14 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
         # docs/282 review P2-2: decided per path (value_history._mark_undone)
         label += " (undone)"
         title += " A later undo took this write back."
+    src = p.get("source")
+    if src is not None:
+        # S10 C1.5: another folder's event, before this folder's own history
+        where = src.get("label") or src.get("folder")
+        title += (f" Recorded in another folder with this chip name ({src.get('folder')}), before "
+                  "this folder's own history began." if src.get("kind") == "other" and where else
+                  " Recorded before this folder's own history began, from a folder that is not "
+                  "recorded.")
     flags = [_VH_FLAG_TEXT[f] for f in p["flags"] if f in _VH_FLAG_TEXT]
     display, fill, usable = _vh_value_strings(p["value"], p["removed"])
     return {**p, "label": label, "sub": sub, "title": title, "trigger": trigger, "uid": uid,
@@ -12249,12 +12330,18 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
                            "unrecorded": v["unrecorded"],
                            "changes": [{k: r.get(k) for k in keep} for r in v["retargets"]]}
                           for v in _vh_via_view(ans, key, uid_roots, uid_memo)],
-            "points": [{k: p.get(k) for k in keep} for p in pts],
+            # S10 C1.5: another folder's point names its folder
+            "points": [{**{k: p.get(k) for k in keep},
+                        **({"source": p["source"]} if p.get("source") else {})} for p in pts],
             "total": ans["rows"][key]["total"], "notes": ans["notes"].get(key) or [],
             "in_force": [{"t": e["t"], "value": e["value"], "removed": e["removed"],
                           "holder": e.get("holder"), "provenance": e["provenance"],
                           "run_id": e.get("run_id")} for e in ans["rows"][key]["effective"]],
-            "ledger": ans["ledger"]}
+            "ledger": ans["ledger"],
+            # S10 C1.5: what this folder's view left out (docs/250's count)
+            **({"parallel_hidden": int(left.get("parallel") or 0) + int(left.get("unknown") or 0),
+                "unlinked_hidden": int(left.get("unlinked") or 0)}
+               if (left := ans["ledger"].get("left_out")) else {})}
 
 
 def _vh_column_view(ans: dict, path_map: dict[str, str], *, label: str, unit: str,
@@ -19026,15 +19113,22 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
             folder = (ev.get("root_path") or "").rstrip("/\\") + "/" + (ev.get("rel_path") or "")
             if run_id is not None and not item["why_write"]:
                 run_uid = _version_run_uid(folder, run_id, roots)
-            source = {"kind": "run", "folder": folder, "label": None, "lineage": "run"}
+            source = ev.get("_source") or {"kind": "run", "folder": folder, "label": None, "lineage": "run"}
             badge = "run"
         elif kind == OBSERVED_KIND:
             trig = str(ev.get("src") or "").split(":", 1)[-1] or "snapshot"
             title, sub = f"seen by SM ({trig} snapshot)", "writer unknown"
             hover = ("SM saw the chip hold this state when it took a Param History snapshot; no "
                      "run or SM write recorded in the ledger produced it, so who did is not known.")
-            source = {"kind": "this", "folder": None, "label": None, "lineage": "own"}
+            # S10 C1.5: the one classifier's answer (the folder view), never
+            # "this folder's own" for another folder's observation
+            source = ev.get("_source") or {"kind": "this", "folder": None, "label": None, "lineage": "own"}
             badge = "seen"
+        elif ev.get("_source") is not None:
+            # S10 C1.5: another folder's SM write, by the one classifier
+            title, sub, hover = _version_sm_words(ev)
+            source = ev["_source"]
+            badge = "SM write"
         else:
             title, sub, hover = _version_sm_words(ev)
             live = ev.get("_live")
@@ -19122,10 +19216,6 @@ def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0) -> dict:
                             limit=limit, offset=offset)
     res["chip_key"] = chip_dir.name
     res["chip_dir"] = chip_dir
-    if (res["mode"] == "ledger" and not (res.get("status") or {}).get("roots")
-            and _hub_other_folders(ctx, snapshots)):
-        # S10 C1: the ledger mixes this folder with another one (see the helper)
-        res.update(mode="fallback", reason="other_folders", rows=[])
     if res["mode"] == "fallback":
         res["notes"] = [{"level": "info", "code": res["reason"],
                          "text": _VH_FALLBACK_NOTES[res["reason"]]}]
@@ -19254,7 +19344,7 @@ def state_versions_panel():
         # "what just changed?" is asked of THIS folder (docs/250), between two
         # versions that can be read
         mine = [i for i, r in enumerate(rows)
-                if (r["source"] or {}).get("lineage") != "parallel"
+                if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked")
                 and not r["why_diff"] and not r["pending"]]
         if len(mine) >= 2:
             b_i, a_i = mine[0], mine[1]
@@ -19346,7 +19436,7 @@ def state_versions_panel():
     # docs/250: "what just changed?" is asked of THIS folder -- rows another
     # folder with the same chip name recorded alongside it are skipped
     mine = [i for i, r in enumerate(rows)
-            if (r["source"] or {}).get("lineage") != "parallel"]
+            if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked")]
     if len(mine) >= 2:
         b_i, a_i = mine[0], mine[1]
         try:
@@ -34120,8 +34210,10 @@ def _param_history_hub_ctx(hm, target_path, is_loaded_chip: bool) -> dict:
                                key=natural_key)
         except Exception:   # noqa: BLE001 -- busy / unreadable: _value_history says so
             names = []
+    # S10 C1.5: no folder is open for an archived chip (its path is a
+    # stand-in for its history key): it reads its ledger chip-wide
     return {"type": "quam", "path": target_path, "hub_chip_dir": directory,
-            "qualibrate_project": None,
+            "qualibrate_project": None, "hub_no_folder": True,
             "store": QuamStore.from_dicts({"qubits": {q: {} for q in names}}, {})}
 
 
@@ -34777,7 +34869,8 @@ def _hub_param_changes_data(table) -> dict:
         taken = undone.get(ev["eid"])
         rows = []
         for c in changes[:shown_n]:
-            pt = vh._point(ev, c["old"], c["new"], c["op"], c["proven"], roots, sm)
+            pt = vh._point(ev, c["old"], c["new"], c["op"], c["proven"], roots, sm,
+                           held=bool(c.get("held")))
             if taken is not None and (taken is vh.ALL_PATHS or c["path"] in taken):
                 pt["undone"] = "undone"
             info = _vh_present(pt, table.roots, table.uid_memo)
