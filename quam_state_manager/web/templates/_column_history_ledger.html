@@ -42,8 +42,7 @@
         {% if row.svg %}<svg class="history-cell-spark ch-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{{ row.svg | safe }}</svg>
         {% else %}<span class="ch-nospark">—</span>{% endif %}
       </td>
-      <td class="ch-current" title="{{ row.current_fill }}{% if row.differs %} — not the newest recorded value (an edit not applied yet, or a change made outside SM since the last run){% endif %}"><code>{{ row.current }}</code>{% if row.differs %} <span class="vh-flag">not recorded yet</span>{% endif %}{% if row.since %}
-        <span class="vh-since-chip" data-since-eid="{{ row.since.eid }}" title="On the chip since {{ row.since.t | format_ts_zone }} ({{ row.since.label }}): {{ row.since.note }}.">since {{ row.since.t | ts_local(short=True) }}{% if row.since.run_id is not none %} &middot; #{{ row.since.run_id }}{% endif %}</span>{% endif %}</td>
+      <td class="ch-current" title="{{ row.current_fill }}{% if row.differs %} — not the newest recorded value (an edit not applied yet, or a change made outside SM since the last run){% endif %}"><code>{{ row.current }}</code>{% if row.differs %} <span class="vh-flag">not recorded yet</span>{% endif %}</td>
       <td class="ch-chips">
         {% if row.via %}<span class="vh-chip-via" title="{{ row.via[0].from_path }} = {{ row.via[0].pointer }}">via {{ row.via[0].alias }} &rarr; {{ row.via[0].holder }}</span>{% endif %}
         {% for p in row.chips %}
@@ -61,7 +60,7 @@
             {% if p.is_current %}<span class="ch-chip-now">current</span>{% endif %}
             {% if _prev and p.usable and _prev.usable %}{{ delta_chip(_prev.value, p.value, 'ch-chip-delta') }}{% endif %}
             {# who set it, on its own line under the value: the chip never clips it #}
-            <span class="vh-chip-who"><span class="vh-chip-by">{{ p.label }}</span>{% if p.provenance not in ('run_proven', 'sm') %}<span class="vh-chip-sub"> · {{ p.sub }}</span>{% endif %}{% if p.before_via %}<span class="vh-chip-bv"> · before {{ row.via[0].alias if row.via else 'the alias' }} pointed here</span>{% endif %}{% if p.recorded_as %}<span class="vh-chip-renamed" title="Recorded as {{ p.recorded_as }}, before a Re-generate rename"> · as {{ p.recorded_as_short }}</span>{% endif %}</span>
+            <span class="vh-chip-who"><span class="vh-chip-by">{{ p.label }}</span>{% if p.provenance not in ('run_proven', 'sm') %}<span class="vh-chip-sub"> · {{ p.sub }}</span>{% endif %}{% if p.before_via %}<span class="vh-chip-bv"> · before {{ row.via[0].alias if row.via else 'the alias' }} pointed here</span>{% endif %}{% if p.retarget %}<span class="vh-chip-renamed vh-chip-retarget" title="The pointer this value is read through moved here: from this event the value in force is {{ p.recorded_as or row.holder }}"> · {{ row.via[0].alias if row.via else 'pointer' }} &rarr; {{ p.recorded_as_short or (row.holder.split('.')[-2] if row.holder else '') }}</span>{% elif p.via_holder %}<span class="vh-chip-renamed" title="The value of {{ p.recorded_as }}: the pointer named it then"> · via {{ p.recorded_as_short }}</span>{% elif p.recorded_as %}<span class="vh-chip-renamed" title="Recorded as {{ p.recorded_as }}, before a Re-generate rename"> · as {{ p.recorded_as_short }}</span>{% endif %}</span>
           </button>
           {% if p.uid %}
           <button type="button" class="ch-chip-data" hx-get="/dataset/{{ p.uid }}"
@@ -71,7 +70,7 @@
         </span>
         {% else %}<span class="ch-nochips">—</span>{% endfor %}
         {% if row.more %}<span class="vh-more" title="Older change points of this row: open its value drawer (&#128344;) and press Show all">+{{ row.more }} older</span>{% endif %}
-        {% if row.not_kept_n %}<span class="vh-more vh-not-kept-n" title="Values a run saved in its own folder that the next read of the chip did not find there: left out of this row's changes. Its value drawer (&#128344;) lists them.">{{ row.not_kept_n }} not kept on the chip</span>{% endif %}
+        {% if row.not_kept_n %}<span class="vh-more vh-not-kept-n" title="Values a run saved in its own folder that the next read of the chip did not find there: left out of this row's changes. Its value drawer (&#128344;) lists them.">{{ row.not_kept_n }} saved value{{ 's' if row.not_kept_n != 1 }} not on the chip</span>{% endif %}
       </td>
     </tr>
   {% endfor %}

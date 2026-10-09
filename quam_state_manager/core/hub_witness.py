@@ -46,10 +46,17 @@ Measured on a real chip's ledger against the lab's own timestamped live
 backups (17,270 judgeable run changes): ``confirmed`` 98.8 % precision,
 ``contradicted`` 96.1 % (spec P0-1 section 2; the replay harness calls THIS
 function). Only run changes are judged: an SM write is exact and an observed
-state is the live content; the ledger's first state is not a change. A
-re-measurement chain that ends by saving back exactly the value it started
-from stays ``remeasured``: on the same backups it was never-live for 302 of
-342 changes (88 %), too weak to leave values out.
+state is the live content; the ledger's first state is not a change.
+
+**Excursions** (:func:`excursions`, [derived]): a stretch of unconfirmed
+saves after a value the chip held that comes back EXACTLY to it is not chip
+history either -- on the same backups 400 of 434 such saves (92 %) were never
+live, while 1,208 of 1,212 returns were. Its saves and its return leave every
+value series with the contradicted pairs (:meth:`Verdicts.drop`), so every
+"current", "since" and "last changed" is :func:`since`.
+
+**Renames** (docs/295-296): a value is read only in the rename era it was
+saved in -- a walk ends at the next era, and no excursion spans one.
 
 One implementation: every reader (``hub_query``'s series and timeline,
 ``value_history``, ``hub_status``) asks :func:`of`; nothing else implements
@@ -79,6 +86,24 @@ DIFFERS = "differs"
 VERDICTS = (CONFIRMED, CONTRADICTED, OPEN, REMEASURED, DIFFERS)
 #: the verdicts that leave a run's saved value unconfirmed on the chip
 UNCONFIRMED = frozenset((OPEN, REMEASURED, CONTRADICTED, DIFFERS))
+
+#: what every surface says beside a change whose value is not confirmed on
+#: the chip: ``{verdict: (short, sentence)}`` (one wording: the drawer, the
+#: Calibration log, Param History Changes, the agent)
+DOUBT_TEXT = {
+    OPEN: ("no later run has read the chip yet",
+           "No later run has read the chip yet, so whether the chip kept this value is not known."),
+    REMEASURED: ("changed again before the chip was read",
+                 "A later run that may have measured it saved another value before anything read "
+                 "the chip, so whether the chip ever held this value is not known."),
+    DIFFERS: ("the next read of the chip found another value",
+              "The next event that read the chip (a run that did not measure it, a state SM saw, or "
+              "an SM write) found another value there, so whether the chip kept this value is not "
+              "known."),
+    CONTRADICTED: ("not kept on the chip",
+                   "The next event that read the chip still found the earlier value: this value was "
+                   "saved in the run's own folder and never reached the chip."),
+}
 
 #: the event classes that read the chip (the ``witnesses`` argument)
 RUN, OBSERVED, SM = "run", "observed", "sm"
@@ -219,6 +244,26 @@ class Verdicts(Mapping):
                     targets[i] = frozenset()      # the spec section 2 reading: it names nothing
             if cls in witnesses and not uncertain and targets[i] is not EVERY:
                 capable[i] = 1                     # a run that may have measured everything reads nothing
+        # the first state is the starting state, not a change a run claims: it
+        # is never judged (and anchors what follows it)
+        first = next((i for i, eid in enumerate(index.eids) if (facts.get(eid) or (None, False))[1]), None)
+        if first is not None:
+            judged[first] = 0
+        # docs/295-296: a value is read only in the rename era it was saved in.
+        # Across a Re-generate rename a holder and a run's targets are spelled
+        # in other names (a qubit renamed q2 -> q1 is "gone" from q2 and "new"
+        # in q1 at the event where the rename came into force), so a walk ends
+        # at the next era (no witness there) and no excursion spans one.
+        # ``_era_end[i]``: the first position after *i* in another era.
+        self._era_end = None
+        from quam_state_manager.core.hub_eras import EraTimeline
+        timeline = EraTimeline(conn, index)
+        if timeline.any:
+            eras = [timeline.at(i) for i in range(n)]
+            end = [n] * n
+            for i in range(n - 2, -1, -1):
+                end[i] = i + 1 if eras[i + 1] != eras[i] else end[i + 1]
+            self._era_end = end
         self._every = [i for i in range(n) if capable[i]]
         self._lanes: dict[Any, array] = {}
         self._entities: dict[int, str | None] = {}
@@ -234,6 +279,8 @@ class Verdicts(Mapping):
         self._newest: dict[int, tuple] = {}
         #: the entity each judged holder belongs to
         self._entity: dict[int, str | None] = {}
+        #: pid -> [(anchor eid, [eids of the excursion], eid of the return)]
+        self._excursions: dict[int, list] = {}
         self._drop: dict[int, frozenset] = {}
         self._back: dict[int, dict] = {}
         self._sig: dict[int, str] = {}
@@ -325,11 +372,16 @@ class Verdicts(Mapping):
                 continue
             j = bisect_right(wit, i)
             w = wit[j] if j < len(wit) else None
+            stop = self._era_end[i] if self._era_end is not None else None
+            if stop is not None and w is not None and w >= stop:
+                w = None                 # the next read is in another era: none in this one
             code = None
             wrow = None
             last = k                     # the newest row at or before the witness
             for kk in range(k + 1, len(seq)):
                 i2 = seq[kk][0]
+                if stop is not None and i2 >= stop:
+                    break                # the era ended before anything read the chip
                 if w is not None and i2 > w:
                     break
                 if w is not None and i2 == w:
@@ -361,6 +413,28 @@ class Verdicts(Mapping):
             codes[eid] = code
         if pairs:
             self._pairs[pid] = pairs
+        # excursions of the series the pairs leave: unconfirmed saves that came
+        # back EXACTLY to the value the chip held before them
+        gone = set(pairs) | set(pairs.values())
+        kept = [r for r in seq if r[1] not in gone]
+        groups = [kept]
+        if self._era_end is not None:
+            groups, cur, until = [], [], -1
+            for r in kept:                   # era by era: no excursion spans a rename
+                if cur and r[0] >= until:
+                    groups.append(cur)
+                    cur = []
+                if not cur:
+                    until = self._era_end[r[0]]
+                cur.append(r)
+            if cur:
+                groups.append(cur)
+        found = []
+        for g in groups:
+            for a, pts, r in excursions([(x[3], codes.get(x[1]) if judged[x[0]] else None) for x in g], _equal):
+                found.append((g[a][1], [g[x][1] for x in pts], g[r][1]))
+        if found:
+            self._excursions[pid] = found
         self._newest[pid] = (last_eid, codes.get(last_eid) if judged[last_i] else None)
 
     # ------------------------------------------------------------- Mapping
@@ -409,16 +483,46 @@ class Verdicts(Mapping):
             back = self._back[pid] = {w: c for c, w in (self._pairs.get(pid) or {}).items()}
         return back.get(eid)
 
+    def excursions_of(self, pid: int | None) -> list:
+        """``[(anchor eid, [eids of its points], eid of the return)]`` of
+        *pid*: every excursion (:func:`excursions`) of its series."""
+        return (self._excursions.get(pid) or []) if self._ensure(pid) else []
+
     def drop(self, pid: int | None) -> frozenset:
-        """The eids of *pid*'s rows a value series leaves out: every
-        contradicted change that has its restoring row, and that row."""
+        """The eids of *pid*'s rows a value series leaves out -- they are not
+        chip history: every contradicted change that has its restoring row,
+        and that row; every point of an excursion, and its return."""
         if not self._ensure(pid):
             return frozenset()
         got = self._drop.get(pid)
         if got is None:
             pairs = self._pairs.get(pid) or {}
-            got = self._drop[pid] = frozenset(pairs) | frozenset(pairs.values())
+            out = set(pairs) | set(pairs.values())
+            for _a, pts, r in self._excursions.get(pid) or ():
+                out.update(pts)
+                out.add(r)
+            got = self._drop[pid] = frozenset(out)
         return got
+
+    def left_out_as(self, eid: int, pid: int | None) -> str | None:
+        """Why row (eid, pid) leaves the series: ``"contradicted"`` (saved,
+        and the next read of the chip still found the old value),
+        ``"restores"`` (that read's own row), ``"excursion"`` (saved, never
+        confirmed, and the value came back), ``"returns"`` (the row that came
+        back) -- or None (it stays)."""
+        if eid not in self.drop(pid):
+            return None
+        pairs = self._pairs.get(pid) or {}
+        if eid in pairs:
+            return "contradicted"
+        if self.restores(eid, pid) is not None:
+            return "restores"
+        for _a, pts, r in self._excursions.get(pid) or ():
+            if eid in pts:
+                return "excursion"
+            if eid == r:
+                return "returns"
+        return None
 
     def signature(self, pid: int | None) -> str:
         """What a series of *pid* derived from the verdicts depends on (the
@@ -429,8 +533,9 @@ class Verdicts(Mapping):
         got = self._sig.get(pid)
         if got is None:
             pairs = sorted((self._pairs.get(pid) or {}).items())
-            got = self._sig[pid] = (hashlib.sha1(repr(pairs).encode()).hexdigest()[:16]
-                                    if pairs else "")
+            exc = self._excursions.get(pid) or []
+            got = self._sig[pid] = (hashlib.sha1(repr((pairs, exc)).encode()).hexdigest()[:16]
+                                    if pairs or exc else "")
         return got
 
     def tail(self, pid: int | None) -> tuple | None:
@@ -545,68 +650,69 @@ def of(conn, index) -> Verdicts:
     return got[1]
 
 
-def since(seq, same) -> tuple[int, list[int]]:
-    """Where the current value's stay on the chip began [derived].
+def excursions(seq, same) -> list[tuple[int, list[int], int]]:
+    """THE rule for values a run saved that are not chip history [derived].
 
     *seq*: a value's points, oldest first, as ``(value, verdict)``
-    (``verdict`` None: not a judged run change). The anchor is the OLDEST
-    point of the newest value's run of equal values, reached by skipping back
-    over every excursion whose points are all unconfirmed
-    (:data:`UNCONFIRMED`) and that returns EXACTLY (*same*) to that value:
-    such an excursion saved other values that no later read of the chip
-    confirmed. A confirmed point -- or any point that is not a judged run
-    change -- inside an excursion ends the search (the newest change is then
-    the anchor, as before). Returns ``(anchor index, skipped indices)``; the
-    points themselves stay listed, only "since" moves. -1 for no points."""
+    (``verdict`` None: not a judged run change). An EXCURSION is a stretch of
+    points that are all unconfirmed (:data:`UNCONFIRMED`: no later read of the
+    chip confirmed them) after an ANCHOR -- the newest point before it that is
+    not unconfirmed (a confirmed save, a state SM saw, an SM write, the first
+    state) -- that comes back EXACTLY (*same*) to the anchor's value. The
+    chip held the anchor's value across it: the excursion's points and the
+    point that came back leave the value series (the value stays the
+    anchor's -- exact), and are listed apart. A stretch that never comes back,
+    or a confirmed point inside it, is no excursion: its points stay, labelled.
+    Returns ``[(anchor index, [excursion indices], return index)]``.
+
+    Measured against the lab's own live backups (replay harness): 400 of the
+    434 points this leaves out were never on the chip (module docstring)."""
+    out: list[tuple[int, list[int], int]] = []
+    anchor = None
+    i, n = 0, len(seq)
+    while i < n:
+        if seq[i][1] in UNCONFIRMED and anchor is not None:
+            v = seq[anchor][0]
+            k, found = i + 1, None
+            while k < n:
+                if same(seq[k][0], v):
+                    found = k
+                    break
+                if seq[k][1] not in UNCONFIRMED:
+                    break
+                k += 1
+            if found is not None:
+                out.append((anchor, list(range(i, found)), found))
+                i = found + 1
+                continue
+            i += 1
+            continue
+        if seq[i][1] not in UNCONFIRMED:
+            anchor = i
+        i += 1
+    return out
+
+
+def since(seq, same) -> tuple[int, list[int]]:
+    """Where the current value's stay on the chip began: the newest point
+    that is chip history once :func:`excursions` are left out, and the
+    excursion points after it. Every "since", "unchanged since", "last
+    changed" and the drawer's "current" row is this point. On a series the
+    verdicts already left the excursions out of it is the newest point.
+    ``(-1, [])`` for no points."""
     if not seq:
         return -1, []
-    j = len(seq) - 1
-    v = seq[j][0]
+    gone: set[int] = set()
     skipped: list[int] = []
-    while j > 0:
-        k, between, found = j - 1, [], None
-        while k >= 0:
-            val, code = seq[k]
-            if same(val, v):
-                found = k
-                break
-            if code not in UNCONFIRMED:
-                break
-            between.append(k)
-            k -= 1
-        if found is None:
-            break
-        skipped.extend(between)
-        j = found
-    return j, sorted(skipped)
-
-
-def since_positions(conn, index, pids) -> dict:
-    """``{pid: index position of its anchor}`` for the holders whose
-    :func:`since` anchor is older than their newest row -- over the chip's
-    series (the pairs the verdicts leave out removed) and their verdicts.
-    The calibration age reads it: a value's excursion that returned is not
-    a change of the chip."""
-    pids = [p for p in pids if p is not None]
-    if not pids:
-        return {}
-    v = of(conn, index)
-    many = len(pids) > _PRIME_ALL_FROM
-    v.prime(None if many else pids)
-    rows = _rows(conn, index, None if many else pids)
-    out = {}
-    for pid in pids:
-        seq = rows.get(pid)
-        if not seq:
-            continue
-        drop = v.drop(pid)
-        kept = [r for r in seq if r[1] not in drop] if drop else seq
-        if len(kept) < 3:
-            continue
-        j, skipped = since([(r[3], v.code(r[1], pid)) for r in kept], _equal)
-        if skipped:
-            out[pid] = kept[j][0]
-    return out
+    for _a, pts, r in excursions(seq, same):
+        gone.update(pts)
+        gone.add(r)
+        skipped.extend(pts)
+    kept = [i for i in range(len(seq)) if i not in gone]
+    if not kept:
+        return -1, sorted(skipped)
+    j = kept[-1]
+    return j, sorted(i for i in skipped if i > j)
 
 
 def _equal(a, b) -> bool:

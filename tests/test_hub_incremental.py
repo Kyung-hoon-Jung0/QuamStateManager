@@ -403,7 +403,12 @@ class TestKeptAnswers:
         (folder / "quam_state" / "state.json").write_text(json.dumps(st), encoding="utf-8")
         full_sync(sm)
         b = history(sm, T1)
-        assert 7.7e-5 in [p["value"] for p in b["rows"]["b"]["points"]]
+        # P0-1: old -> new, why: 7.7e-5 was a point of the series; #3 re-measured
+        # qA2 and #4 saved 2e-5 back before anything read the chip -- an
+        # excursion, so the re-derived row is listed apart, never dropped silently
+        row = b["rows"]["b"]
+        assert 7.7e-5 in [p["value"] for e in row["excursions"] for p in e["points"]]
+        assert 7.7e-5 not in [p["value"] for p in row["points"]]
         with from_scratch():
             assert canon(b) == canon(history(sm, T1))
         assert b["serials"]["b"] != a["serials"]["b"]

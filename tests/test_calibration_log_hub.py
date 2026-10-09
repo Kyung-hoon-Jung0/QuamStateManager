@@ -146,9 +146,11 @@ def test_run_exact_rows_without_snapshot(world):
     world["add"]({"v": 2, "enabled": True})
     cards = world["build"]()["cards"]
     assert [c["run_id"] for c in cards] == [1, 2]
+    # P0-1: old -> new, why: each row now carries its verdict ("doubt"): the
+    # newest run's changes are open (no later read of the chip yet)
     assert cards[1]["writes"] == [
-        {"path": "enabled", "old": None, "new": True, "op": "add", "proven": False},
-        {"path": "v", "old": 1, "new": 2, "op": "set", "proven": False}]
+        {"path": "enabled", "old": None, "new": True, "op": "add", "proven": False, "doubt": "open"},
+        {"path": "v", "old": 1, "new": 2, "op": "set", "proven": False, "doubt": "open"}]
     assert cards[1]["author"] == "human:user-a"
     body = world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True)
     card = _card_html(body, 'id="card-2"')

@@ -215,11 +215,14 @@ class TestAliases:
         assert "pointed here since" in t and "#./x180_Gauss" in t, \
             "the retarget names when the alias moved and what it pointed to before"
         got = rows(html)
-        assert [r["value"] for r in got] == ["0.25", "0.2", "0.1"]
-        assert "vh-before-via" not in got[0]["cls"]
-        assert all("vh-before-via" in r["cls"] for r in got[1:]), \
-            "values from before #4 belonged to a holder the alias did not name then"
-        assert "before x180 pointed here" in got[1]["body"]
+        # P0-1: old -> new, why: the drawer listed DragCosine's own values
+        # (0.25, 0.2, 0.1) and marked the two from before #4 "before x180
+        # pointed here"; it now shows the value IN FORCE through x180 (as the
+        # metric meta does): Gauss's 0.3 until #4 moved the pointer, then 0.25
+        assert [r["value"] for r in got] == ["0.25", "0.3"]
+        assert "x180 &rarr; x180_DragCosine" in got[0]["body"], "the retarget says where it went"
+        assert "via x180_Gauss" in got[1]["body"], "a value read through another holder names it"
+        assert not any("vh-before-via" in r["cls"] for r in got)
 
 
     def test_a_pointer_to_a_whole_object_shows_the_pointers_own_history(self, sm):
@@ -236,7 +239,11 @@ class TestAliases:
         assert "via <code>x180</code> &rarr; <code>x180_Gauss</code>" in html
         assert "this pointer is not recorded yet" in html
         got = rows(html)
-        assert [r["value"] for r in got] == ["0.3"]
+        # P0-1: old -> new, why: ["0.3"] (Gauss's own rows) -> the recorded
+        # value in force through x180: Gauss's 0.3 (#1), then DragCosine's 0.25
+        # from #4 -- the unapplied edit is not recorded yet, said above
+        assert [r["value"] for r in got] == ["0.25", "0.3"]
+        assert "x180 &rarr; x180_DragCosine" in got[0]["body"]
         # review P1-1: runs #1-#3 DID read x180_Gauss through x180, so its 0.3
         # (recorded at #1) is not "before x180 pointed here" -- one rule, the
         # holder the alias named at that row
@@ -400,7 +407,11 @@ class TestOneImplementation:
         assert [(routes_mod._fh_display_string(p["value"]), p["label"], p["before_via"])
                 for p in h["points"]] == [
             (r["value"], r["label"], "vh-before-via" in r["cls"]) for r in rows(html)]
-        assert [p["value"] for p in h["points"]] == [0.25, 0.2, 0.1]
+        # P0-1: old -> new, why: [0.25, 0.2, 0.1] (DragCosine's own) -> the value
+        # in force through x180, as the drawer shows it
+        assert [p["value"] for p in h["points"]] == [0.25, 0.3]
+        assert [p["retarget"] for p in h["points"]] == [True, False]
+        assert [p["recorded_as"] for p in h["points"]] == [None, "qubits.qA1.xy.operations.x180_Gauss.amplitude"]
 
     def test_column_history_shows_the_drawers_points(self, sm):
         html = column(sm, {"qA1": "qubits.qA1.T1", "qA2": "qubits.qA2.T1"})
@@ -596,11 +607,21 @@ class TestReviewRound:
         assert "1 run whose saved chip identity does not match this chip" in html
 
     def test_p1_1_before_via_marks_only_rows_the_alias_did_not_name(self, aba):
+        # P0-1: old -> new, why: 0.12 was marked "before x180 pointed here"
+        # (x180 named Gauss at #2). #2's move to Gauss was never confirmed and
+        # #3 moved it back before anything read the chip: an excursion of the
+        # pointer, not chip history -- x180 named DragCosine throughout, so
+        # every row is in force and none is before-via; the move is listed apart
         html = drawer(aba, self.ALIAS)
         got = {r["value"]: "vh-before-via" in r["cls"] for r in rows(html)}
-        assert got == {"0.15": False, "0.12": True, "0.1": False}, got
+        assert got == {"0.15": False, "0.12": False, "0.1": False}, got
+        assert [r["value"] for r in rows(html)] == ["0.15", "0.12", "0.1"]
+        assert '<details class="vh-not-kept vh-excursions">' in html, "the pointer's move is listed apart"
+        listed = text(html.split('<details class="vh-not-kept vh-excursions">', 1)[1].split("</details>", 1)[0])
+        assert "Saved by run #2 (scan): #./x180_Gauss" in listed and "returned to #./x180_DragCosine" in listed
         j = aba["client"].get("/api/agent/field-history", query_string={"path": self.ALIAS}).get_json()
-        assert {p["value"]: p["before_via"] for p in j["history"]["points"]} == {0.15: False, 0.12: True, 0.1: False}
+        assert {p["value"]: p["before_via"] for p in j["history"]["points"]} == {0.15: False, 0.12: False, 0.1: False}
+        assert j["history"]["excursions"][0]["values"] == ["#./x180_Gauss"]
 
     def test_p0_3_and_p1_1_share_one_rule_after_a_return(self, aba):
         html = column(aba, {"qA1": self.ALIAS})
@@ -651,10 +672,14 @@ class TestReviewRound:
         tr = re.search(r'<tr data-row="qA1">(.*?)</tr>', byrun, re.S).group(1)
         assert "ch-changed" not in tr, "NaN then NaN is no change"
 
-    def test_p3_column_history_says_before_via_in_text(self, aba):
-        html = column(aba, {"qA1": self.ALIAS})
-        changes = html.split("ch-view-byrun")[0]
-        assert "before x180 pointed here" in changes, "a visible marker, not only opacity"
+    def test_p3_column_history_says_before_via_in_text(self, sm):
+        # P0-1: old -> new, why: the chips were the holder's own values, marked
+        # "before x180 pointed here"; they are now the value in force, and a
+        # value read through another holder, or a retarget, says so in text
+        html = column(sm, {"qA1": self.ALIAS})
+        changes = text(html.split("ch-view-byrun")[0]).replace("&rarr;", "->")
+        assert "via x180_Gauss" in changes and "x180 -> x180_DragCosine" in changes, \
+            "a visible marker, not only opacity"
 
 
 # ======================================================================
@@ -797,7 +822,10 @@ class TestReviewMore:
         series = [s for c in charts for s in c["series"] if s["entity"] == "qA1"][0]
         pts = [v for ts, v in series["points"] if ts not in (series.get("held") or {})]
         truth = [_truth_through_alias(f, self.ALIAS) for f in _runs_of(aba)]
-        assert truth == [0.1, 0.3, 0.15] and pts == truth, (pts, truth)
+        # P0-1: old -> new, why: pts == what each run saved through x180 (0.3 at
+        # #2); #2's move of x180 to Gauss was never confirmed and came back at #3
+        # (an excursion), so the chip's value in force stayed DragCosine's
+        assert truth == [0.1, 0.3, 0.15] and pts == [0.1, 0.12, 0.15], (pts, truth)
 
     def test_p2_3_every_zone_shares_one_index(self, sm):
         from types import SimpleNamespace

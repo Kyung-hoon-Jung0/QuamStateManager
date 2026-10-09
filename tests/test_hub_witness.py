@@ -13,7 +13,12 @@ Pins, on generic synthetic ledgers and run folders in ``tmp_path``:
   the value series and the fold stays exact across them; the live tail decides
   the newest change; nothing is silent (``not_kept``);
 * the surfaces: value drawer, Column History (Changes + By run), Calibration
-  log, Param History Changes, metric meta, Trends, the calibration age.
+  log, Param History Changes, metric meta, Trends, the calibration age;
+* an excursion (unconfirmed saves that came back exactly to the value the
+  chip held) leaves every series and is listed apart; the newest point of the
+  value in force is ``hub_witness.since``;
+* a change that stays but is not confirmed on the chip is never listed as a
+  plain change (Calibration log rows and cards, Param History Changes).
 """
 
 from __future__ import annotations
@@ -158,14 +163,17 @@ class TestTheRule:
         assert v.code(r2, pid[F]) == hub_witness.CONFIRMED
         assert v.code(r2, pid["qubit_pairs.qA1-qA2.ph"]) == hub_witness.CONFIRMED
 
-    def test_a_masked_remeasurement_is_open_not_contradicted(self, led):
+    def test_a_masked_remeasurement_is_remeasured_not_contradicted(self, led):
         led.add(doc(), targets=q("qA1"))
         r = led.add(doc(f=B), targets=q("qA1"))
         rr = led.add(doc(f=A), targets=q("qA1"))               # re-measures AND carries old back
         led.add(doc(f=A, f2=2.0), targets=q("qA2"))
         v, pid = judged(led)
-        assert v.code(r, pid[F]) == hub_witness.REMEASURED
-        assert r not in v.drop(pid[F]) and rr not in v.drop(pid[F])
+        assert v.code(r, pid[F]) == hub_witness.REMEASURED and not v.pairs_of(pid[F])
+        # P0-1: old -> new, why: r and rr stayed in the series; the save came
+        # back exactly to the value the chip held, never confirmed -- an
+        # excursion (92 % never live on the lab's backups), so both leave it
+        assert (v.left_out_as(r, pid[F]), v.left_out_as(rr, pid[F])) == ("excursion", "returns")
 
     def test_the_newest_change_with_no_witness_is_open(self, led):
         led.add(doc(), targets=q("qA1"))
@@ -202,10 +210,14 @@ class TestTheRule:
         assert v.code(r, pid[F]) == hub_witness.OPEN, "it carried the value but may have measured it"
         w = led.add(doc(f=A, f2=2.0), targets=unknown)         # changes it back: a re-measurement
         v, pid = judged(led)
-        assert v.code(r, pid[F]) == hub_witness.REMEASURED and v.drop(pid[F]) == frozenset()
+        assert v.code(r, pid[F]) == hub_witness.REMEASURED and not v.pairs_of(pid[F])
         v0, _ = judged(led, unknown_targets="none")
         assert v0.code(r, pid[F]) == hub_witness.CONFIRMED, "read as naming nothing it would vouch for qA1"
-        assert w not in v.drop(pid[F])
+        # P0-1: old -> new, why: r and w stayed in the series; r was never
+        # confirmed and w came back exactly to the value before it -- an
+        # excursion, not a contradiction (w is still never r's witness)
+        assert (v.left_out_as(r, pid[F]), v.left_out_as(w, pid[F])) == ("excursion", "returns")
+        assert v.witness_of(r, pid[F]) is None
 
     def test_runs_alone_as_witnesses(self, led):
         led.add(doc(), targets=q("qA1"))
@@ -420,7 +432,9 @@ class TestTheSurfaces:
             "paths": json.dumps({"qA1": "qubits.qA1.f_01"})})
         html = r.data.decode()
         chips = html.split('class="ch-view ch-view-changes"', 1)[1].split('class="ch-view ch-view-byrun"', 1)[0]
-        assert "5,200,000,000" not in chips and "1 not kept on the chip" in text(chips)
+        # P0-1: old -> new, why: "1 not kept on the chip" -> "1 saved value not on
+        # the chip": the count now also holds excursions (never confirmed, came back)
+        assert "5,200,000,000" not in chips and "1 saved value not on the chip" in text(chips)
         byrun = html.split('class="ch-view ch-view-byrun"', 1)[1]
         cells = re.findall(r'<td class="ch-val[^"]*".*?</td>', byrun, re.S)
         marked = [text(c) for c in cells if "ch-not-kept" in c]
@@ -519,31 +533,43 @@ def test_an_archived_chips_history_still_reads_every_value(tmp_path):
 
 
 # ======================================================================
-# 4. "since": an excursion of unconfirmed saves that came back is not a change of the chip
+# 4. an excursion: unconfirmed saves that came back to the chip's value are not chip history
 # ======================================================================
 
-C_, R_, D_ = hub_witness.CONFIRMED, hub_witness.REMEASURED, hub_witness.DIFFERS
+C_, R_, D_, O_ = hub_witness.CONFIRMED, hub_witness.REMEASURED, hub_witness.DIFFERS, hub_witness.OPEN
+
+
+def _exc(seq):
+    return hub_witness.excursions(seq, lambda a, b: a == b)
 
 
 def _since(seq):
     return hub_witness.since(seq, lambda a, b: a == b)
 
 
-class TestSince:
-    def test_the_chain_shape_anchors_at_the_value_it_came_back_to(self):
-        # first state X; #58 A (confirmed); #1534.. B, C (re-measured, unconfirmed); back to A
+class TestTheExcursionRule:
+    def test_the_chain_shape(self):
+        # first state X; A confirmed; B, C re-measured and never confirmed; back to A
+        assert _exc([("X", None), ("A", C_), ("B", R_), ("C", R_), ("A", C_)]) == [(1, [2, 3], 4)]
         assert _since([("X", None), ("A", C_), ("B", R_), ("C", R_), ("A", C_)]) == (1, [2, 3])
 
-    def test_a_confirmed_change_inside_breaks_the_excursion(self):
+    def test_a_confirmed_change_inside_breaks_it(self):
+        assert _exc([("X", None), ("A", C_), ("B", C_), ("C", R_), ("A", C_)]) == []
+        assert _exc([("A", C_), ("B", R_), ("C", C_), ("A", R_)]) == [], "the chip held C in between"
         assert _since([("X", None), ("A", C_), ("B", C_), ("C", R_), ("A", C_)]) == (4, [])
 
-    def test_an_excursion_back_to_a_different_value_is_a_change(self):
+    def test_coming_back_to_another_value_is_a_change(self):
+        assert _exc([("X", None), ("A", C_), ("B", R_), ("C", C_)]) == []
         assert _since([("X", None), ("A", C_), ("B", R_), ("C", C_)]) == (3, [])
 
-    def test_every_excursion_back_to_the_value_is_skipped(self):
+    def test_every_excursion_back_to_the_value(self):
+        assert _exc([("A", C_), ("B", R_), ("A", R_), ("C", D_), ("A", C_)]) == [(0, [1], 2), (0, [3], 4)]
         assert _since([("A", C_), ("B", R_), ("A", R_), ("C", D_), ("A", C_)]) == (0, [1, 3])
 
-    def test_a_point_that_is_not_a_judged_change_breaks_it(self):
+    def test_the_anchor_is_a_value_the_chip_held(self):
+        assert _exc([("A", R_), ("B", R_), ("A", R_)]) == [], "nothing confirmed to come back to"
+        assert _exc([("A", None), ("B", O_), ("A", None)]) == [(0, [1], 2)], \
+            "a state SM saw anchors; the return may be any point"
         assert _since([("A", C_), ("B", None), ("A", C_)]) == (2, [])
         assert _since([]) == (-1, []) and _since([("A", C_)]) == (0, [])
 
@@ -552,31 +578,58 @@ class TestSince:
         r58 = led.add(doc(f=B), targets=q("qA1"))
         led.add(doc(f=B, f2=2.0), targets=q("qA2"))            # confirms #58
         r1 = led.add(doc(f=C, f2=2.0), targets=q("qA1"))
+        r2 = led.add(doc(f=4.0e9, f2=2.0), targets=q("qA1"))
         if confirm_inside:
-            led.add(doc(f=C, f2=2.5), targets=q("qA2"))         # the chip held C: confirmed
-        r2 = led.add(doc(f=4.0e9, f2=2.5), targets=q("qA1"))
+            led.add(doc(f=4.0e9, f2=2.5), targets=q("qA2"))     # the chip held 4.0e9: confirmed
         r3 = led.add(doc(f=back, f2=2.5), targets=q("qA1"))
         led.add(doc(f=back, f2=3.0), targets=q("qA2"))         # confirms the return
         return r58, r1, r2, r3
 
-    def test_the_series_keeps_every_point_and_says_since(self, led):
+    def test_it_leaves_every_series_and_is_listed(self, led):
+        # P0-1: old -> new, why: round 2 kept the excursion's points in the
+        # series and only said "since #58" beside them; on the lab's backups
+        # 400 of 434 such points were never on the chip (92 %), so they now
+        # leave every value series (exact: the value stays #58's) and are
+        # listed apart, like a value the chip never kept
         r58, r1, r2, r3 = self._chain(led)
+        assert [e for e, _v in series(led, F)][-1] == r58 and not {r1, r2, r3} & {e for e, _v in series(led, F)}
         row = vh.read(led.dir, {"f": vh.target(doc(f=B, f2=3.0), F)})["rows"]["f"]
-        assert [p["eid"] for p in row["points"]][-4:] == [r58, r1, r2, r3], "the excursion stays listed"
-        assert [p.get("witness") for p in row["points"]][-3:] == [R_, R_, None]
-        assert row.get("since"), "the value has been on the chip since #58, not since its return"
-        assert row["since"]["point"]["eid"] == r58
-        assert [s["eid"] for s in row["since"]["skipped"]] == [r1, r2]
+        assert [p["eid"] for p in row["points"]][-1] == r58
+        assert not {r1, r2, r3} & {p["eid"] for p in row["points"] + row["effective"]}
+        assert row["not_kept"] == []
+        assert len(row["excursions"]) == 1, "listed apart, never silent"
+        ex = row["excursions"][0]
+        assert (ex["anchor"]["eid"], [p["eid"] for p in ex["points"]], ex["back"]["eid"]) == (r58, [r1, r2], r3)
+        assert [p["value"] for p in ex["points"]] == [C, 4.0e9] and ex["back"]["value"] == B
+        assert [p["witness"] for p in ex["points"]] == [R_, R_]
 
-    def test_no_since_when_a_save_inside_was_confirmed(self, led):
-        self._chain(led, confirm_inside=True)
+    def test_the_newest_point_is_since(self, led):
+        """Every "current", "since" and "last changed" is ``hub_witness.since``
+        over the holder's saves as judged: the in-force series' newest point."""
+        self._chain(led)
+        conn = sqlite3.connect(f"file:{(led.dir / 'ledger.sqlite').as_posix()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            index = hub_index.build_index(conn)
+            v = hub_witness.verdicts(index, conn)
+            pid = index.paths[F]
+            raw = [(row[0]["eid"], row[2]) for row in hub_query._series(conn, index, F, witness=False)]
+        finally:
+            conn.close()
+        j, _skipped = _since([(val, v.code(eid, pid)) for eid, val in raw])
         row = vh.read(led.dir, {"f": vh.target(doc(f=B, f2=3.0), F)})["rows"]["f"]
-        assert not row.get("since")
+        assert row["effective"][-1]["eid"] == raw[j][0]
 
-    def test_no_since_when_it_came_back_to_another_value(self, led):
-        self._chain(led, back=5.5e9)
+    def test_a_save_confirmed_inside_keeps_every_point(self, led):
+        r58, r1, r2, r3 = self._chain(led, confirm_inside=True)
+        row = vh.read(led.dir, {"f": vh.target(doc(f=B, f2=3.0), F)})["rows"]["f"]
+        assert [p["eid"] for p in row["points"]][-4:] == [r58, r1, r2, r3] and row["excursions"] == []
+
+    def test_coming_back_to_another_value_keeps_every_point(self, led):
+        r58, r1, r2, r3 = self._chain(led, back=5.5e9)
         row = vh.read(led.dir, {"f": vh.target(doc(f=5.5e9, f2=3.0), F)})["rows"]["f"]
-        assert not row.get("since")
+        assert [p["eid"] for p in row["points"]][-4:] == [r58, r1, r2, r3] and row["excursions"] == []
+        assert [p.get("witness") for p in row["points"]][-3:] == [R_, R_, None], "labelled, never plain"
 
 
 #: #1 genesis; #2 qA1 T1 3e-5 (confirmed by #3, which did not measure qA1);
@@ -605,37 +658,166 @@ def chain(tmp_path):
     return {"app": app, "client": c, "live": live, "data": data, "tmp": tmp_path}
 
 
-NOTE = "runs #4-#5 saved other values that no later read of the chip confirmed"
-
-
-class TestSinceOnTheSurfaces:
-    def test_the_drawer_says_since_the_value_the_chip_kept(self, chain):
+class TestTheExcursionOnTheSurfaces:
+    # P0-1: old -> new, why: round 2 listed #4 and #5 as rows and printed an
+    # "On the chip since" note; the excursion now leaves every series, the
+    # "current" badge sits on #2 (``hub_witness.since``) and the drawer lists
+    # the excursion apart -- never silent
+    def test_the_drawer(self, chain):
         html = drawer(chain, "qubits.qA1.T1")
         rows = rows_of(html)
-        assert [r.split()[0] for r in rows] == ["3e-05", "3.4e-05", "3.3e-05", "3e-05", "1e-05"], \
-            "every save stays listed"
-        assert "changed again before the chip was read" in rows[1] and "changed again" in rows[2]
-        since = text(html.split('class="vh-since"', 1)[1].split("</p>", 1)[0]) if 'class="vh-since"' in html else ""
-        assert "On the chip since" in since and f"(saved in #2 scan): {NOTE}." in since, since
+        assert [r.split()[0] for r in rows] == ["3e-05", "1e-05"], rows
+        assert "current" in rows[0] and "saved in #2" in rows[0]
+        assert "3.3e-05" not in " ".join(rows) and "3.4e-05" not in " ".join(rows), \
+            "no Revert / Use offers a value no read of the chip confirmed"
+        assert '<details class="vh-not-kept vh-excursions">' in html
+        listed = text(html.split('<details class="vh-not-kept vh-excursions">', 1)[1].split("</details>", 1)[0])
+        assert "2 saved values no later read of the chip confirmed" in listed
+        assert ("Saved by runs #4-#5 (scan): 3.3e-05, 3.4e-05 \u2014 no later read of the chip confirmed "
+                "them, and the chip's value returned to 3e-05 (#6 scan)") in listed, listed
+        foot = text(html.split('class="fh-foot vh-foot"', 1)[1])
+        assert "2 change points" in foot and "2 never confirmed and came back" in foot, foot
 
-    def test_the_metric_meta_and_the_calibration_age_anchor_there(self, chain):
+    def test_the_metric_meta_trends_and_the_calibration_age(self, chain):
         meta = chain["client"].get("/topology/metric-meta").get_json()["q"]["T1"]["qA1"]
-        assert meta["saved_run"] == 2 and meta["since_note"] == NOTE + ".", meta
-        assert meta["ts"] == vh.iso_z(T0 + 2 * 10_000_000)
+        assert meta["saved_run"] == 2 and meta["ts"] == vh.iso_z(T0 + 2 * 10_000_000), meta
+        assert "since_note" not in meta
+        r = chain["client"].get("/topology/trends", query_string={"metrics": "", "path": "qubits.qA1.T1"})
+        data = json.loads(re.search(r'id="topo-trends-data"[^>]*>(.*?)</script>', r.data.decode(), re.S).group(1))
+        values = [p[1] for c in data for s in c["series"] if s["entity"] == "qA1" for p in s["points"]]
+        assert values and not {3.3e-5, 3.4e-5} & set(values) and set(values) <= {1e-5, 3e-5}
         with chain["app"].test_request_context():
             _ans, table = routes._hub_status_table(routes._active_ctx())
             times = table.run_change_times()
         assert times["q"]["qA1"] == T0 + 2 * 10_000_000, "the returning excursion did not calibrate it"
         assert times["q"]["qA2"] == T0 + 7 * 10_000_000
 
-    def test_column_history_and_the_agent_say_it_too(self, chain):
+    def test_column_history_and_the_agent(self, chain):
         r = chain["client"].post("/bulk/column-history", data={
             "grid": "qubit", "label": "T1", "unit": "", "col_key": "c",
             "paths": json.dumps({"qA1": "qubits.qA1.T1"})})
-        m = re.search(r'<span class="vh-since-chip"[^>]*title="([^"]*)"[^>]*>(.*?)</td>', r.data.decode(), re.S)
-        assert m and "since" in text(m.group(2)) and "#2" in text(m.group(2)), r.data.decode()[-800:]
-        assert "<" not in m.group(1) and NOTE in m.group(1), "the title is plain text"
+        html = r.data.decode()
+        chips = html.split('class="ch-view ch-view-changes"', 1)[1].split('class="ch-view ch-view-byrun"', 1)[0]
+        assert "3.3e-05" not in chips and "3.4e-05" not in chips
+        assert "2 saved values not on the chip" in text(chips)
+        assert "vh-since-chip" not in html
         with chain["app"].test_request_context():
             ans = routes._value_history(routes._active_ctx(), {"v": "qubits.qA1.T1"})
             view = routes._vh_agent_view(ans, "v")
-        assert view["since"]["run_id"] == 2 and view["since"]["note"] == NOTE
+        assert [p["value"] for p in view["points"]] == [3e-5, 1e-5] and view["points"][0]["is_current"]
+        assert view["points"][0]["run_id"] == 2
+        assert view["excursions"] == [{"runs": "runs #4-#5 (scan)", "values": ["3.3e-05", "3.4e-05"],
+                                       "held": "3e-05", "back": "#6 scan"}]
+
+    def test_the_calibration_log_and_param_history_changes(self, chain):
+        with chain["app"].test_request_context():
+            ctx = routes._active_ctx()
+            binding = routes._vh_binding(ctx, chip_dir(chain))
+        by_run = {e["run_id"]: e for e in hub_query.timeline(binding)["events"]}
+        for rid in (4, 5):
+            assert [c["path"] for c in by_run[rid]["changes"]] == []
+            assert len(by_run[rid].get("not_kept") or []) == 1, "listed apart, never silent"
+            nk = by_run[rid]["not_kept"][0]
+            assert nk["path"] == "qubits.qA1.T1" and nk["excursion"] and nk["held"] == 3e-5
+            assert nk["witness"]["run_id"] == 6
+        assert [c["path"] for c in by_run[6]["changes"]] == [], "#6 did not change the chip"
+        html = chain["client"].get("/param-history/changes").data.decode()
+        groups = {re.search(r"run #(\d+)", g).group(1): g
+                  for g in html.split('<div class="ph-change-group">')[1:] if re.search(r"run #(\d+)", g)}
+        assert "6" not in groups or "qubits.qA1.T1" not in groups["6"]
+        assert "never confirmed; the value came back" in text(groups["4"])
+
+
+# ======================================================================
+# 5. a change that stays but is not confirmed is never a plain change (N3)
+# ======================================================================
+
+#: #1 genesis; #2 qA1 f_01 -> B (re-measured by #3 before anything read the
+#: chip); #3 qA1 f_01 -> C (the newest: no later run read the chip)
+OPEN_RUNS = [
+    (state(), ["qA1", "qA2"]),
+    (state(f1=B), ["qA1"]),
+    (state(f1=C), ["qA1"]),
+]
+
+
+@pytest.fixture
+def unconfirmed(tmp_path):
+    data, live = tmp_path / "data", tmp_path / "chips" / "live"
+    for rid, (st, targets) in enumerate(OPEN_RUNS, start=1):
+        run_folder(data, rid, st, targets)
+    write_chip(live, OPEN_RUNS[-1][0], data)
+    app = make_app(tmp_path)
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    return {"app": app, "client": c, "live": live, "data": data, "tmp": tmp_path}
+
+
+class TestQualifiedChanges:
+    def test_the_log_rows_carry_their_verdict(self, unconfirmed):
+        with unconfirmed["app"].test_request_context():
+            ctx = routes._active_ctx()
+            binding = routes._vh_binding(ctx, chip_dir(unconfirmed))
+        by_run = {e["run_id"]: e for e in hub_query.timeline(binding)["events"]}
+        assert [(c["path"], c.get("doubt")) for c in by_run[2]["changes"]] == [("qubits.qA1.f_01", R_)]
+        assert [(c["path"], c.get("doubt")) for c in by_run[3]["changes"]] == [("qubits.qA1.f_01", O_)]
+
+    def test_the_card_says_so(self, unconfirmed):
+        with unconfirmed["app"].test_request_context():
+            ctx = routes._active_ctx()
+            binding = routes._vh_binding(ctx, chip_dir(unconfirmed))
+        bound = hub_index.context(binding.store if hasattr(binding, "store") else binding,
+                                  zone="UTC", folder=getattr(binding, "folder", None))
+        day = story.build_day(unconfirmed["tmp"] / "_inst", "device", "2026-01-01", ds=None, ledger=bound,
+                              with_gates=False)
+        cards = {c["run_id"]: c for c in day["cards"] if c["kind"] == "run"}
+        assert [w.get("doubt") for w in cards[2]["writes"]] == [R_]
+        with unconfirmed["app"].test_request_context():
+            html = unconfirmed["app"].jinja_env.from_string(
+                "{% from '_journal_changes.html' import run_changes %}{{ run_changes(c) }}").render(c=cards[2])
+        assert 'class="jr-badge jr-doubt"' in html and "changed again before the chip was read" in text(html)
+
+    def test_param_history_changes_say_so(self, unconfirmed):
+        html = unconfirmed["client"].get("/param-history/changes").data.decode()
+        groups = {re.search(r"run #(\d+)", g).group(1): g
+                  for g in html.split('<div class="ph-change-group">')[1:] if re.search(r"run #(\d+)", g)}
+        assert "ph-doubt" in groups["2"] and "changed again before the chip was read" in text(groups["2"])
+        assert "no later run has read the chip yet" in text(groups["3"])
+
+
+# ======================================================================
+# 6. a rename (docs/295-296): a value is read only in the era it was saved in
+# ======================================================================
+
+def test_no_excursion_spans_a_rename(tmp_path):
+    """#2 saves qubit A's T1 (then q1) and is never confirmed; the rebuild at
+    #3 names qubit B q1, whose T1 equals A's old one exactly. That is another
+    qubit's value under the same holder, not A's value coming back: A's
+    history (q0 now) keeps #2."""
+    from tests.test_rename_history import REC, history, make
+    from tests.test_rename_history import state as rstate
+    runs = [rstate({"q1": 5.0e9, "q2": 6.0e9}),
+            rstate({"q1": 5.0e9, "q2": 6.0e9}, extra_t1={"q1": 3e-5}),
+            rstate({"q0": 5.0e9, "q1": 6.0e9}, [REC], extra_t1={"q0": 3e-5})]
+    env = make(tmp_path, runs, runs[-1])
+    row = history(env, "qubits.q0.T1")["rows"]["k"]
+    assert [(p["value"], p["run_id"]) for p in row["points"]] == [(1e-5, 1), (3e-5, 2)], row["points"]
+    assert row["excursions"] == []
+
+
+def test_a_walk_ends_at_the_rename(tmp_path):
+    """#2 saves both qubits' T1; the rebuild at #3 names A q0 and B q1. In
+    another era a holder and a run's targets are other qubits' names: #3
+    re-measured "q1" (now B), which is not A's re-measurement, and #3 names
+    no "q2", which is not a read of B's old holder. Both #2 changes stay
+    open (no read in their era), never re-measured nor confirmed."""
+    from tests.test_rename_history import REC, history, make
+    from tests.test_rename_history import state as rstate
+    runs = [rstate({"q1": 5.0e9, "q2": 6.0e9}),
+            rstate({"q1": 5.0e9, "q2": 6.0e9}, extra_t1={"q1": 3e-5, "q2": 4e-5}),
+            rstate({"q0": 5.0e9, "q1": 6.0e9}, [REC], extra_t1={"q0": 3e-5, "q1": 4e-5})]
+    env = make(tmp_path, runs, runs[-1])
+    a = history(env, "qubits.q0.T1")["rows"]["k"]["points"]
+    b = history(env, "qubits.q1.T1")["rows"]["k"]["points"]
+    assert [(p["value"], p["run_id"], p.get("witness")) for p in a] == [(1e-5, 1, None), (3e-5, 2, O_)], a
+    assert [(p["value"], p["run_id"], p.get("witness")) for p in b] == [(1e-5, 1, None), (4e-5, 2, O_)], b

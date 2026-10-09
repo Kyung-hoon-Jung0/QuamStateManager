@@ -11790,6 +11790,8 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
         logger.warning("value history: the ledger of %s could not be read", chip_dir,
                        exc_info=True)
         return unavailable("unreadable")
+    # P0-1: the drawer shows the newest *limit* of the value in force
+    out["limit"] = limit
     out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"],
                runs_left_out=res.get("runs_left_out", 0), serials=res.get("serials") or {})
     for key, tgt in targets.items():
@@ -11945,23 +11947,9 @@ def _vh_value_strings(value: Any, removed: bool) -> tuple[str, str, bool]:
     return _fh_display_string(value), _fh_fill_string(value), value is not None
 
 
-#: P0-1: what a point says when the chip may not have kept its value
-#: (``hub_witness``): ``(short, sentence)``
-_VH_WITNESS_TEXT = {
-    "open": ("no later run has read the chip yet",
-             "No later run has read the chip yet, so whether the chip kept this value is not "
-             "known."),
-    "remeasured": ("changed again before the chip was read",
-                   "A later run that may have measured it saved another value before anything "
-                   "read the chip, so whether the chip ever held this value is not known."),
-    "differs": ("the next read of the chip found another value",
-                "The next event that read the chip (a run that did not measure it, a state SM "
-                "saw, or an SM write) found another value there, so whether the chip kept this "
-                "value is not known."),
-    "contradicted": ("not kept on the chip",
-                     "The next event that read the chip still found the earlier value: this value "
-                     "was saved in the run's own folder and never reached the chip."),
-}
+#: P0-1: what a point says when the chip may not have kept its value --
+#: hub_witness's one wording (``DOUBT_TEXT``)
+from quam_state_manager.core.hub_witness import DOUBT_TEXT as _VH_WITNESS_TEXT  # noqa: E402
 
 
 def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
@@ -12127,13 +12115,32 @@ def _vh_numeric(v: Any) -> float | None:
     return f if f == f and f not in (float("inf"), float("-inf")) else None
 
 
+def _vh_series(ans: dict, key: str) -> list[dict]:
+    """P0-1: what every per-value surface draws -- the value IN FORCE through
+    the path's pointers (``value_history.read``'s ``effective``; a retarget is
+    a change), the newest ``limit`` of it. What is not chip history was left
+    out of it by the witness verdicts (``hub_witness``)."""
+    series = ans["rows"][key]["effective"]
+    limit = ans.get("limit")
+    return series[-limit:] if limit else series
+
+
 def _vh_points_view(ans: dict, key: str, uid_roots, uid_memo: dict) -> list[dict]:
-    """Presented points, NEWEST first, each with the value it replaced."""
+    """Presented points of the value in force (:func:`_vh_series`), NEWEST
+    first, each with the value it replaced. A point read from another holder
+    than today's (the pointer named another one then, or a rename) says
+    which; a retarget says where the pointer went."""
     from quam_state_manager.core import hub_rules
     tgt = ans["targets"][key]
-    pts = [_vh_present(p, uid_roots, uid_memo) for p in ans["rows"][key]["points"]]
-    for pt in pts:
-        pt["recorded_as_short"] = _vh_short_name(pt.get("recorded_as"), tgt.get("holder"))
+    here = tgt.get("holder")
+    pts = []
+    for p in _vh_series(ans, key):
+        held = p.get("holder")
+        pt = _vh_present(dict(p, recorded_as=held if held and held != here else None), uid_roots, uid_memo)
+        pt["recorded_as_short"] = _vh_short_name(pt.get("recorded_as"), here)
+        pt["via_holder"] = bool(tgt.get("via")) and bool(pt.get("recorded_as"))
+        pt["retarget"] = bool(p.get("retarget")) or p.get("op") == "via"
+        pts.append(pt)
     pts.reverse()
     current = tgt.get("current")
     marked = False
@@ -12209,27 +12216,24 @@ def _vh_runs_text(skipped: list[dict]) -> str:
     return f"{len(ids)} runs from #{ids[0]} to #{ids[-1]}"
 
 
-def _vh_since_view(ans: dict, key: str, uid_roots=None, uid_memo=None, *,
-                   in_force: bool = False) -> dict | None:
-    """P0-1: where the value's stay on the chip began, when it is older than
-    its newest change (``value_history.read``'s ``since``: the holder's own
-    points; ``in_force``: the value in force through the path's pointers) --
-    with the plain sentence every surface says about the excursion it skipped."""
-    s = ans["rows"][key].get("since_in_force" if in_force else "since")
-    if not s:
-        return None
-    a = s["point"]
-    info = _vh_present(a, uid_roots if uid_roots is not None else [], uid_memo if uid_memo is not None else {})
-    runs = _vh_runs_text(s["skipped"])
-    return {"t": a["t"], "eid": a["eid"], "run_id": a.get("run_id"), "label": info["label"],
-            "runs": runs, "n": len(s["skipped"]),
-            "note": f"{runs} saved other values that no later read of the chip confirmed"}
-
-
-def _vh_since_brief(ans: dict, key: str) -> dict | None:
-    """The agent's copy of :func:`_vh_since_view`."""
-    v = _vh_since_view(ans, key)
-    return {k: v[k] for k in ("t", "run_id", "note")} if v else None
+def _vh_excursion_view(ans: dict, key: str) -> list[dict]:
+    """P0-1: the excursions of the value (``value_history.read``'s
+    ``excursions``), newest first, one line each: the runs that saved other
+    values no later read of the chip confirmed, and the value it came back
+    to."""
+    out = []
+    for ex in reversed(ans["rows"][key].get("excursions") or []):
+        pts = ex["points"]
+        back = ex.get("back") or {}
+        held = _vh_value_strings(back.get("value"), back.get("value") is None)[0]
+        who = (f"#{back['run_id']} {back.get('experiment') or ''}".strip() if back.get("run_id") is not None
+               else (back.get("kind") or "the next event"))
+        exps = sorted({p.get("experiment") for p in pts if p.get("experiment")})
+        out.append({"t": pts[0]["t"] if pts else None, "eid": pts[0]["eid"] if pts else None,
+                    "runs": _vh_runs_text(pts) + (f" ({', '.join(exps)})" if exps else ""),
+                    "saved": [_vh_value_strings(p["value"], p["removed"])[0] for p in pts],
+                    "held": held, "who": who, "n": len(pts)})
+    return out
 
 
 def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
@@ -12245,13 +12249,13 @@ def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
         chart.append({"t": pt["t"], "v": f, "trigger": pt["trigger"]})
     current = tgt.get("current")
     cur_display = _vh_value_strings(current, False)[0] if tgt.get("has_current") else "—"
-    return {"dot_path": dot_path, "tgt": tgt, "points": pts, "total": row["total"],
+    return {"dot_path": dot_path, "tgt": tgt, "points": pts, "total": len(row["effective"]),
             "via": _vh_via_view(ans, key, uid_roots, uid_memo),
             "via_since": row.get("via_since"), "notes": ans["notes"].get(key) or [],
             "renames": _vh_rename_view(row.get("renames") or [], tgt.get("holder")),
             "ledger": ans["ledger"], "chart": chart if len(chart) >= 2 else [],
             "not_kept": _vh_not_kept_view(ans, key),
-            "since": _vh_since_view(ans, key, uid_roots, uid_memo),
+            "excursions": _vh_excursion_view(ans, key),
             "current_display": cur_display,
             "current_value": current if not isinstance(current, (dict, list)) else None}
 
@@ -12295,7 +12299,7 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
     pts = _vh_points_view(ans, key, uid_roots, uid_memo)
     keep = ("t", "value", "old", "op", "removed", "kind", "provenance", "proven", "label",
             "sub", "title", "run_id", "experiment", "actor", "src", "plan_id", "run_uid", "flags",
-            "undone", "before_via", "is_current", "uid", "recorded_as", "witness")
+            "undone", "before_via", "is_current", "uid", "recorded_as", "witness", "retarget")
     return {"path": tgt["path"], "holder": tgt["holder_path"], "current": tgt.get("current"),
             "via": [{k: h[k] for k in ("from_path", "pointer", "to_path")} for h in tgt["via"]],
             "retargets": [{"from_path": v["from_path"], "pointer": v["pointer"],
@@ -12305,10 +12309,10 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
             # S10 C1.5: another folder's point names its folder
             "points": [{**{k: p.get(k) for k in keep},
                         **({"source": p["source"]} if p.get("source") else {})} for p in pts],
-            "total": ans["rows"][key]["total"], "notes": ans["notes"].get(key) or [],
-            # P0-1: where the value's stay on the chip began, when an excursion of
-            # unconfirmed saves came back to it
-            "since": _vh_since_brief(ans, key),
+            "total": len(ans["rows"][key]["effective"]), "notes": ans["notes"].get(key) or [],
+            # P0-1: saves no later read of the chip confirmed, whose value came back
+            "excursions": [{"runs": e["runs"], "values": e["saved"], "held": e["held"], "back": e["who"]}
+                           for e in _vh_excursion_view(ans, key)],
             # P0-1: saved values the chip never kept, left out of points / in_force
             "not_kept": [{"t": n.get("t"), "value": n.get("value"), "old": n.get("old"),
                           "run_id": n.get("run_id"), "experiment": n.get("experiment"),
@@ -12369,13 +12373,14 @@ def _vh_column_view(ans: dict, path_map: dict[str, str], *, label: str, unit: st
                 notes_seen.setdefault(n["code"], n)
         cd, cf, _u = _vh_value_strings(current, False) if tgt.get("has_current") else ("—", "", False)
         rows_out.append({
-            "id": row_id, "dot_path": path_map[row_id], "svg": svg,
+            "id": row_id, "dot_path": path_map[row_id], "svg": svg, "holder": tgt.get("holder"),
             "current": cd, "current_fill": cf,
             "editable": tgt.get("resolvable", False), "cells": cells,
             "chips": pts[:CH_MAX_CHIPS], "more": max(0, len(pts) - CH_MAX_CHIPS),
-            "total": ans["rows"][row_id]["total"],
-            "not_kept_n": len(ans["rows"][row_id].get("not_kept") or ()),
-            "since": _vh_since_view(ans, row_id, uid_roots, uid_memo),
+            "total": len(ans["rows"][row_id]["effective"]),
+            # P0-1: saved values left out of the row: never kept, or an excursion that came back
+            "not_kept_n": len(ans["rows"][row_id].get("not_kept") or ())
+                          + sum(len(e["points"]) for e in ans["rows"][row_id].get("excursions") or ()),
             "differs": any(n["code"] == "current_differs" for n in ans["notes"].get(row_id) or []),
             "via": _vh_via_view(ans, row_id, uid_roots, uid_memo),
         })
@@ -18005,10 +18010,9 @@ def _hub_metric_meta(table) -> dict:
     rows = ans["rows"]
 
     def anchor(dp: str) -> dict:
-        # P0-1: the start of the value's stay on the chip (an excursion of
-        # unconfirmed saves that came back to it is not a change of the chip)
-        s = rows[dp].get("since_in_force")
-        return s["point"] if s else rows[dp]["effective"][-1]
+        # P0-1: the start of the value's stay on the chip -- the newest point of
+        # the in-force series (what is not chip history never reached it)
+        return rows[dp]["effective"][-1]
 
     def entry_for(paths: list[str]) -> dict | None:
         newest = [anchor(dp) for dp in paths if rows[dp]["effective"]]
@@ -18052,9 +18056,6 @@ def _hub_metric_meta(table) -> dict:
                  # named only on proof (docs/283 §1.2)
                  "run": best["run_id"] if proven else None,
                  "writer": {"run": best["run_id"], "uid": info["uid"]} if proven else None}
-        notes = [v["note"] for v in (_vh_since_view(ans, dp, in_force=True) for dp in paths) if v]
-        if notes:
-            entry["since_note"] = "; ".join(dict.fromkeys(notes)) + "."
         if len(paths) == 1 and not best["removed"]:
             value = best["value"]
             if isinstance(value, float) and not math.isfinite(value):
@@ -34533,7 +34534,7 @@ def _hub_param_changes_data(table) -> dict:
         changes = [c for c in ev["changes"] if not low or c["path"].lower().startswith(low)]
         # P0-1: what this run saved that the chip never kept (not a change)
         unkept = [{"path": c["path"], "value": c["new"], "previous": c["old"], "op": c["op"],
-                   "witness": c.get("witness") or {}}
+                   "witness": c.get("witness") or {}, "excursion": bool(c.get("excursion"))}
                   for c in ev.get("not_kept") or () if not low or c["path"].lower().startswith(low)]
         if not changes and not unkept:
             continue
@@ -34554,6 +34555,8 @@ def _hub_param_changes_data(table) -> dict:
                                                      or bool(ev.get("first") and c["op"] == "add")),
                          "proven": pt["provenance"] == "run_proven",
                          "who": info["sub"] if ev.get("kind") == "run" else "",
+                         # P0-1: a change not confirmed on the chip is never a plain change
+                         "doubt": _VH_WITNESS_TEXT.get(c.get("doubt") or ""),
                          "undone": bool(pt["undone"])})
         head = vh._point(ev, None, None, "set", False, roots, sm)
         info = _vh_present(head, table.roots, table.uid_memo)
