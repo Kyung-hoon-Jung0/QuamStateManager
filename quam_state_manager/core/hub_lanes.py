@@ -10,9 +10,13 @@ its *view* (:func:`build`, reached as ``LedgerIndex.for_folder``):
   recorded BEFORE this folder's own history began (docs/250's cut: the copy
   source, the old path of a move), labelled with their folder; runs under a
   data root linked to it. Another folder's events after the cut, an unknown
-  folder's after the cut, runs under no linked root and runs whose saved chip
-  identity disagrees with the chip's (``CHIP_UNCERTAIN``: another chip's run
-  is never this chip's value) are left out of every value answer and COUNTED
+  folder's after the cut, runs under no linked root and runs whose saved state
+  DECLARES another chip (a different declared name, or the same name with no
+  qubit in common -- another chip's run is never this chip's value) are left
+  out of every value answer and COUNTED. A run flagged ``CHIP_UNCERTAIN`` for
+  any other reason (no name on one side and the hardware fingerprint differs:
+  a nameless chip that gained a qubit, say) stays, shown and never named as
+  the writer
   (``Lane.left_out``); listings keep them, labelled -- except another chip's
   run, which ``hub_versions`` never offers as a version (the note says it).
 * **seams** -- a stored row is a diff against the GLOBAL predecessor. In a
@@ -339,6 +343,58 @@ def _table_rows(conn, sql: str, args=()) -> list:
         raise
 
 
+_DECLARED: "OrderedDict[tuple, bool]" = OrderedDict()
+_DECLARED_MAX = 4096
+
+
+def _ledger_identity(conn) -> dict | None:
+    try:
+        row = conn.execute("SELECT v FROM meta WHERE k='chip_identity'").fetchone()
+    except Exception:  # noqa: BLE001 -- an older ledger: nothing declared to compare
+        return None
+    if not row or not row[0]:
+        return None
+    try:
+        got = json.loads(row[0])
+    except ValueError:
+        return None
+    return got if isinstance(got, dict) else None
+
+
+def declares_another_chip(conn, ledger_id: str, f: dict, chip: dict | None) -> bool:
+    """True when run *f*'s saved state DECLARES another chip than the ledger's:
+    both sides name a chip and the names differ, or they share the name but no
+    qubit (docs/275's rule, ``hub_build.identity_disagrees``, restricted to what
+    a declaration proves). A run whose identity is only uncertain -- no name on
+    one side, so the hardware fingerprint decided, and fingerprints change as a
+    chip does -- is not another chip's. An unreadable run declares nothing."""
+    if not chip or not chip.get("name") or not _has_state(f) or f.get("error"):
+        return False
+    key = (ledger_id, f["eid"], f.get("state_hash"))
+    with _LOCK:
+        hit = _DECLARED.get(key)
+    if hit is not None:
+        return hit
+    try:
+        doc = _Reader(conn).state_at(f["eid"])
+    except Exception:  # noqa: BLE001 -- unreadable here: no declaration proven
+        doc = None
+    out = False
+    if isinstance(doc, Mapping):
+        extras = doc.get("extras") if isinstance(doc.get("extras"), Mapping) else {}
+        name = extras.get("chip_name")
+        qubits = doc.get("qubits") if isinstance(doc.get("qubits"), Mapping) else {}
+        if isinstance(name, str) and name.strip():
+            from quam_state_manager.core.hub_build import identity_disagrees
+            out = identity_disagrees(chip, {"name": name.strip(), "fingerprint": None,
+                                            "qubits": sorted(qubits)})
+    with _LOCK:
+        _DECLARED[key] = out
+        while len(_DECLARED) > _DECLARED_MAX:
+            _DECLARED.popitem(last=False)
+    return out
+
+
 def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, dict]:
     """``({eid: (in lane, source entry or None)}, roots, links)`` for every
     event of the ledger, by THE classifier (``history.classify_source``)."""
@@ -372,6 +428,7 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
 
     lives = {v: k for k, v in index.names.get("live", {}).items()}
     owners: dict[int, Any] = {}
+    chip = _ledger_identity(conn)
     out: dict[int, tuple] = {}
     for pos, eid in enumerate(index.eids):
         f = facts.get(eid)
@@ -379,8 +436,9 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
             continue
         if f["kind"] == "run":
             rids = locs.get(eid) or ([f["root_id"]] if f["root_id"] is not None else [])
-            if any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN:
-                # its saved state names another chip (or none): never this chip's value
+            if (any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN
+                    and declares_another_chip(conn, index.ledger_id, f, chip)):
+                # its saved state declares another chip: never this chip's value
                 path = roots.get(rids[0]) if rids else None
                 out[eid] = (False, {"kind": OTHER_CHIP, "folder": path, "label": source_folder_label(path),
                                     "lineage": OTHER_CHIP})

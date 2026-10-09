@@ -11789,7 +11789,12 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
         title = (f"The change ledger begins at run {run}; the value was already set then. "
                  f"Who set it is not recorded.")
         trigger = "auto"
-    # S10 C7: old -> new, foreign runs are excluded by the folder lane.
+    elif prov == "run_uncertain_chip":
+        label = f"{run} (chip uncertain)"
+        sub = "not named as writer"
+        title = (f"Run {run}'s saved chip identity differs from this chip's and no declared "
+                 f"name settles it, so it is not named as the writer of this value.")
+        trigger = "auto"
     elif prov == "held_before_write":
         # S10 C1.5: an SM write's row its entries did not write
         label = "held before this write"

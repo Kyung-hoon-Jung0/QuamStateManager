@@ -365,6 +365,8 @@ class ChipSync:
         # S10 C1: why the last slice could not run (the ledger could not be
         # opened or bound); cleared by the next slice that completes
         self.slice_error: str | None = None
+        # a busy/locked ledger: the projector's retry will very likely get through
+        self.slice_error_transient = False
         # S10 C1.5: the live folder that opened the chip last (its comparison
         # key): every registered data root is linked to it in the ledger
         self.folder: str | None = None
@@ -455,7 +457,9 @@ class ChipSync:
         if not self.syncable:
             # nothing to read: no data folder and no observed states
             state = "ready"
-        elif self.slice_error is not None:
+        elif self.slice_error is not None and not (self.slice_error_transient and building):
+            # (a busy / locked ledger in the middle of a catch-up stays "building":
+            # a half-built ledger is never presented as the answer -- final review)
             # S10 C1: a ledger that could not be opened, bound or written in
             # the last slice -- not "building" forever (S10 C6: a corrupt
             # ledger.sqlite left every list "being built" on a chip WITH a
@@ -667,6 +671,7 @@ class ChipSync:
                 self.counts["observed:dropped"] += drop_observed_runs(store)
         more = self.has_work()
         self.slice_error = None
+        self.slice_error_transient = False
         if not more:
             self.phase = "ready"
             self.ready = True
@@ -1775,6 +1780,8 @@ def slice_failed(chip_dir, exc: BaseException) -> None:
             cs = _SYNCS.get(_norm(chip_dir))
         if cs is not None:
             cs.slice_error = f"{type(exc).__name__}: {exc}"
+            msg = str(exc).lower()
+            cs.slice_error_transient = "locked" in msg or "busy" in msg
             cs.errors.append("slice: " + cs.slice_error)
     except Exception:  # noqa: BLE001 -- bookkeeping only
         logger.debug("hub sync: recording a failed slice failed", exc_info=True)

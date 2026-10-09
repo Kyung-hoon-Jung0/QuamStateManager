@@ -20,7 +20,9 @@ def test_callerless_snapshot_machinery_stays_absent():
         "_HUB_FALLBACK_" + "REACHED", "_HUB_FALLBACK_" + "WARNED",
         "_HUB_FALLBACK_" + "LOCK", "HUB_FALLBACK_" + "TRIPWIRE",
         "fallback_" + "reached",
-        "run_" + "uncertain_chip", "history_" + "compare",
+        # (run_uncertain_chip is NOT here: S10 final review restored it -- a run whose
+        # identity is only uncertain stays in the lane, and the archived reader has none)
+        "history_" + "compare",
         "/api/history/" + "compare", "_history_" + "compare.html",
         "history-detail-" + "area", "topo-trends-" + "snaps",
         "_capturer" + "Line", "_UID_" + "DEFERRED",

@@ -69,9 +69,14 @@ MUTATIONS = [
      "        more = self.has_work()\n",
      "cannot_open"),
     ("degraded_state_removed", SYNC,
-     "        elif not roots and self.slice_error is not None:",
+     "        elif self.slice_error is not None and not (self.slice_error_transient and building):",
      "        elif False:",
      "cannot_open"),
+    # S10 final review: a locked ledger mid catch-up stays building
+    ("transient_lock_degrades", SYNC,
+     "        elif self.slice_error is not None and not (self.slice_error_transient and building):",
+     "        elif self.slice_error is not None:",
+     "locked_ledger"),
     ("idle_signalled_before_the_handles_are_released", HUB,
      # the order before the fix: idle first, the handles released after
      ["            finally:\n                try:\n                    if self._q.empty():",

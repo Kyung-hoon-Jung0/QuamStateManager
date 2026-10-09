@@ -145,11 +145,14 @@ class TestColumnHistoryPanel:
         byrun = _byrun_part(html)
         assert heads == [(40, f"{key}:40")], "the foreign run is not a By-run column"
         assert 'data-fill="0.5"' not in byrun
-        # S10 C3 review P1-4: flagged "(chip uncertain)" newest value -> left out of the
-        # chip's timeline and said in a note: another chip's value is never this chip's
-        assert "1 run whose saved chip identity does not match this chip" in html
-        assert all(ch["fill"] != "0.5" and ch["prov"] != ("run_" + "uncertain_chip")
-                   for ch in _chips(html)["qA1"]), "never this chip's newest value"
+        # S10 final review: a NAMELESS run on another host proves no other chip (a
+        # nameless chip's fingerprint changes as the chip does), so it stays, flagged,
+        # never named as the writer -- only a run that DECLARES another chip leaves
+        # the timeline (tests/test_hub_other_chip.py)
+        assert "1 run of an uncertain chip identity is left out" in byrun
+        newest = _chips(html)["qA1"][0]
+        assert (newest["prov"], newest["fill"], newest["data"]) == ("run_uncertain_chip", "0.5", None)
+        assert newest["by"] == "#41 (chip uncertain)" and "not named as writer" in newest["sub"]
         assert f"/dataset/{key}:41" not in _changes(html)
 
     def test_missing_leaf_renders_dash(self, env):

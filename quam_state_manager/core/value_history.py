@@ -567,7 +567,10 @@ def provenance(ev: dict, proven: bool, held: bool = False, start: bool = False) 
         return "held_before_write"
     kind = ev.get("kind")
     if kind == "run":
-        # S10 C7: old -> new, folder lanes exclude foreign runs before provenance.
+        if ev.get("flags", 0) & CHIP_UNCERTAIN:
+            # its saved chip identity disagrees (no name to decide by, or a reader with
+            # no folder view): shown, never named as the writer
+            return "run_uncertain_chip"
         if proven:
             return "run_proven"
         if ev.get("base_hash") is None:
@@ -1262,9 +1265,9 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
                          + (" and more" if len(bad) > 2 else "") + ")")
         if failed:
             parts.append(f"{failed} run{'s' if failed != 1 else ''} could not be read into it")
-        if st.get("ledger_error") and not st.get("roots"):
-            # S10 C1: a chip with no data folder whose ledger could not be opened
-            parts.append("the change ledger could not be opened now")
+        if st.get("ledger_error"):
+            # the change ledger itself could not be opened or written (any chip)
+            parts.append("the change ledger could not be opened or written now")
         out.append({"level": "warning", "code": "degraded",
                     "text": "This history may be missing changes: " + "; ".join(parts or ["see Diagnostics"]) + "."})
     deferred = int(st.get("deferred") or 0)

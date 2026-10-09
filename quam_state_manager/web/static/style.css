@@ -12453,7 +12453,7 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     border-left: 3px solid var(--pico-muted-border-color); padding: .1rem .4rem; }
 .vh-rename code { font-size: .7rem; }
 .vh-flag-renamed { color: var(--color-text-muted); border-style: dashed; }
-.vh-run_saved .vh-by, .vh-first_record .vh-by { color: var(--color-text-muted); }
+.vh-run_saved .vh-by, .vh-first_record .vh-by, .vh-run_uncertain_chip .vh-by { color: var(--color-text-muted); }
 .vh-chip { flex-wrap: wrap; max-width: 100%; }
 .vh-chip-who { flex: 1 0 100%; font-size: .6rem; line-height: 1.2; color: var(--color-text-muted);
     white-space: normal; text-align: left; }
