@@ -202,7 +202,10 @@ def test_a_warm_request_resolves_nothing_and_barely_stats(client, tmp_path, monk
     monkeypatch.undo()
     assert "coupler.interaction_offset" in body
     assert n["resolve"] == 0, n
-    assert n["stat"] <= 5, n
+    # S10 C1: the open now creates this folderless chip's ledger (no runs in it), so the
+    # warm request reads it to learn that before drawing the table: 3 stats -> 6 (the
+    # zone config, the ledger file's identity, the SM-write journal), each O(1)
+    assert n["stat"] <= 6, n
     assert ms < 200, ms
 
 
@@ -371,6 +374,11 @@ def _norm(resp):
 
 def test_a_random_event_sequence_never_serves_a_stale_answer(tmp_path, monkeypatch):
     monkeypatch.setenv("SM_RAM_VERIFY", "1")
+    # S10 C1: opening a folderless chip imports its Param History snapshots into its
+    # ledger as observed states, and Trends then reads the ledger instead of the RAM
+    # snapshot table this test pins; an empty import keeps the table in use
+    from quam_state_manager.web import routes as routes_mod
+    monkeypatch.setattr(routes_mod, "_hub_observed_source", lambda ctx, chip_dir: (lambda: []))
     folder = _chip(tmp_path / "quam_state")
     warm = create_app(testing=True, instance_path=str(tmp_path / "_i")).test_client()
     warm.post("/load", data={"folder": str(folder)})

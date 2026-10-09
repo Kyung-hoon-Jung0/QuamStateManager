@@ -346,7 +346,10 @@ class TestHonesty:
         c.post("/load", data={"folder": str(live)})
         env = {"app": app, "client": c}
         html = drawer(env, "qubits.qA1.T1")
-        assert "this chip has no change ledger yet" in html
+        # S10 C1: opening a chip with no data folder runs its first sync slice, which
+        # creates the ledger -- the first answer is "holds no runs", no longer "no ledger yet"
+        assert (chip_dir(env) / "ledger.sqlite").exists()
+        assert "holds no runs (no data folder is linked" in html and not rows(html)
         assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "4e-5"}).status_code == 200
         assert c.post("/state/apply-to-live").status_code == 200
         assert (chip_dir(env) / "ledger.sqlite").exists()

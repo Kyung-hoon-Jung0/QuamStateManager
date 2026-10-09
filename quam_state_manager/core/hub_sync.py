@@ -362,6 +362,17 @@ class ChipSync:
         self.observed_source: Callable[[], list[dict]] | None = None
         self.observe_wanted = True
         self.observe_queue: deque = deque()
+        # S10 C1: why the last slice could not run (the ledger could not be
+        # opened or bound); cleared by the next slice that completes
+        self.slice_error: str | None = None
+
+    @property
+    def syncable(self) -> bool:
+        """S10 C1: whether a slice has anything to read -- a registered data
+        folder, or the chip's own observed states (its Param History
+        snapshots). A chip with no data folder still gets its ledger and the
+        states SM saw; it is kicked, re-listed and reported like any other."""
+        return bool(self.roots) or self.observed_source is not None
 
     # -- registration ----------------------------------------------------
 
@@ -436,8 +447,14 @@ class ChipSync:
         building = ((not self.ready) or inbox or pending > 0 or due > 0
                     or (self.sweep_initial and bool(self.sweep)))
         unreadable = [str(rs.path) for rs in roots if not rs.readable]
-        if not roots:
+        if not self.syncable:
+            # nothing to read: no data folder and no observed states
             state = "ready"
+        elif not roots and self.slice_error is not None:
+            # S10 C1: a chip with no data folder whose ledger could not be
+            # opened -- not "building" forever: what the ledger holds (if
+            # anything) is what can be shown, and the note says why
+            state = "degraded"
         elif building:
             state = "building"
         elif unreadable or gave_up:
@@ -461,8 +478,13 @@ class ChipSync:
             "last_slice_ms": round(self.last_slice_ms, 1),
             "slices": self.slices,
         }
+        if self.slice_error is not None:
+            st["ledger_error"] = self.slice_error
         if not roots:
             st["note"] = "no data folder is registered to this chip"
+            if state == "degraded":
+                st["note"] += ("; the change ledger could not be opened now, so it holds only "
+                               "what it held before")
         elif state == "degraded":
             st["note"] = ("a data folder cannot be read now" if unreadable
                           else "some runs could not be ingested") + "; the ledger holds everything else"
@@ -613,6 +635,7 @@ class ChipSync:
                 self.__dict__["_ingested_seen"] = ingested
                 self.counts["observed:dropped"] += drop_observed_runs(store)
         more = self.has_work()
+        self.slice_error = None
         if not more:
             self.phase = "ready"
             self.ready = True
@@ -1531,7 +1554,7 @@ def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | No
     if observed is not None:
         cs.observed_source = observed
     cs.request(full=True)
-    if kick and cs.roots:
+    if kick and cs.syncable:
         _kick(cs)
     return cs
 
@@ -1556,7 +1579,10 @@ def periodic(now: float | None = None) -> int:
     now = time.monotonic() if now is None else now
     n = 0
     for cs in registered():
-        if not cs.roots or not cs.active:
+        # S10 C1: a chip with no data folder is looked at too -- its observed
+        # states (Param History snapshots SM captured since) are re-listed
+        # every LISTING_EVERY_S
+        if not cs.syncable or not cs.active:
             continue
         if cs.has_work():
             if not _queued(cs):
@@ -1591,9 +1617,24 @@ def _kick(cs: ChipSync) -> None:
 
 
 def kick(cs: ChipSync) -> None:
-    """Queue a slice for a registered chip (when it has roots)."""
-    if cs.roots:
+    """Queue a slice for a registered chip (when it has roots, or observed
+    states to import -- S10 C1)."""
+    if cs.syncable:
         _kick(cs)
+
+
+def slice_failed(chip_dir, exc: BaseException) -> None:
+    """The hub's projector could not run a slice for *chip_dir* (the ledger
+    could not be opened, bound or written). Recorded for ``status()``; the
+    projector retries. Never raises."""
+    try:
+        with _SYNCS_LOCK:
+            cs = _SYNCS.get(_norm(chip_dir))
+        if cs is not None:
+            cs.slice_error = f"{type(exc).__name__}: {exc}"
+            cs.errors.append("slice: " + cs.slice_error)
+    except Exception:  # noqa: BLE001 -- bookkeeping only
+        logger.debug("hub sync: recording a failed slice failed", exc_info=True)
 
 
 def run(chip_dir, store: HubStore, budget_s: float | None,

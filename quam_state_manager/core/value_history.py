@@ -1167,6 +1167,9 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
                          + (" and more" if len(bad) > 2 else "") + ")")
         if failed:
             parts.append(f"{failed} run{'s' if failed != 1 else ''} could not be read into it")
+        if st.get("ledger_error") and not st.get("roots"):
+            # S10 C1: a chip with no data folder whose ledger could not be opened
+            parts.append("the change ledger could not be opened now")
         out.append({"level": "warning", "code": "degraded",
                     "text": "This history may be missing changes: " + "; ".join(parts or ["see Diagnostics"]) + "."})
     deferred = int(st.get("deferred") or 0)

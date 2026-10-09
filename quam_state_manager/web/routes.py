@@ -3488,7 +3488,11 @@ def _hub_sync_open(ctx) -> None:
         # A TESTING app (which syncs inline, on the request thread) runs the
         # catch-up only when a test asks for it: an unrelated test opening a
         # chip whose declared data folder is a real archive must not ingest it.
-        kick = not app.config.get("TESTING") or bool(app.config.get("HUB_SYNC_ON_OPEN"))
+        # S10 C1: a chip with NO data folder is kicked regardless -- its slice
+        # reads no data folder, only this chip's own Param History snapshots
+        # (the observed states), so it creates the ledger and imports them.
+        kick = (not app.config.get("TESTING") or bool(app.config.get("HUB_SYNC_ON_OPEN"))
+                or not roots)
         cs = hub_sync.open_chip(chip_dir, roots, identity=_hub_live_identity(ctx), kick=False,
                                 observed=_hub_observed_source(ctx, chip_dir))
         if not app.config.get("TESTING"):
@@ -11787,7 +11791,36 @@ _VH_FALLBACK_NOTES = {
                     "resolved, so changes between snapshots can be missing."),
     "unreadable": ("Older snapshot history: the change ledger could not be read, so "
                    "changes between snapshots can be missing."),
+    "other_folders": ("Older snapshot history: another folder with this chip's name has "
+                      "recorded into the same change ledger, which does not keep the folders "
+                      "apart yet, so this folder's own snapshots are shown and changes "
+                      "between them can be missing."),
 }
+
+
+def _hub_other_folders(ctx: dict, snapshots=None) -> bool:
+    """S10 C1: does this chip's Param History hold a record of ANOTHER live
+    folder with the same chip identity (docs/250: an earlier folder this one
+    was copied or moved from, or a folder recording alongside it)?
+
+    One change ledger is kept per chip identity, so every such folder's SM
+    writes -- and the states its own window observed -- land in it as one
+    timeline that cannot tell the folders apart yet. Before S10 C1 a chip with
+    no data folder reached its history only through the snapshot path, which
+    keeps each folder's timeline and names the other folder's rows; such a
+    chip stays there rather than show another folder's writes as its own
+    history (never wrong provenance). A chip with a data folder reads its
+    ledger as before (the same mixing applies to it; not changed here).
+    Unknown lineage counts as shared."""
+    from quam_state_manager.core.history import LINEAGE_PARALLEL, SOURCE_OTHER
+    try:
+        srcs = _history().snapshot_sources(ctx["path"], snapshots)
+    except Exception:  # noqa: BLE001 -- lineage unknown: the path that labels it
+        logger.warning("hub: the snapshot sources of %s could not be read", ctx.get("path"),
+                       exc_info=True)
+        return True
+    return any(e.get("kind") == SOURCE_OTHER or e.get("lineage") == LINEAGE_PARALLEL
+               for e in srcs.values())
 
 
 def _rename_scope(ctx: dict | None = None, chip_dir=None) -> dict:
@@ -11914,6 +11947,8 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     if (not res["ledger"].get("has_runs") and not res["ledger"].get("has_observed")
             and not st.get("roots")):
         return fallback("no_runs")
+    if not st.get("roots") and _hub_other_folders(ctx):
+        return fallback("other_folders")
     out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"],
                runs_left_out=res.get("runs_left_out", 0), serials=res.get("serials") or {})
     for key, tgt in targets.items():
@@ -19077,6 +19112,10 @@ def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0) -> dict:
                             limit=limit, offset=offset)
     res["chip_key"] = chip_dir.name
     res["chip_dir"] = chip_dir
+    if (res["mode"] == "ledger" and not (res.get("status") or {}).get("roots")
+            and _hub_other_folders(ctx, snapshots)):
+        # S10 C1: the ledger mixes this folder with another one (see the helper)
+        res.update(mode="fallback", reason="other_folders", rows=[])
     if res["mode"] == "fallback":
         res["notes"] = [{"level": "info", "code": res["reason"],
                          "text": _VH_FALLBACK_NOTES[res["reason"]]}]

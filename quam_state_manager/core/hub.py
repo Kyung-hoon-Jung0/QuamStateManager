@@ -815,20 +815,26 @@ class _Projector:
                     touched.add(str(item.dir))
                     self._run_locked(item)
             finally:
-                with self._lock:
-                    self._pending -= 1
-                    if self._pending <= 0:
-                        self._pending = 0
-                        self._idle.set()
-                if self._q.empty():
-                    # docs/275: the burst is over, no ledger handle stays open
-                    for h in list(Hub._cache.values()):
-                        h.release()
-                    # docs/282 review P2-3: build the read index now, off the
-                    # request thread, so the first drawer after a run finds it
-                    if PREWARM and touched:
-                        _prewarm_soon(touched)
-                    touched.clear()
+                try:
+                    if self._q.empty():
+                        # docs/275: the burst is over, no ledger handle stays
+                        # open -- released BEFORE the projector says it is idle,
+                        # so flush() means "done and closed" (S10 C1: with one
+                        # Hub per chip ever synced, this loop outlasted the
+                        # flush() that signalled idle before it)
+                        for h in list(Hub._cache.values()):
+                            h.release()
+                        # docs/282 review P2-3: build the read index now, off the
+                        # request thread, so the first drawer after a run finds it
+                        if PREWARM and touched:
+                            _prewarm_soon(touched)
+                        touched.clear()
+                finally:
+                    with self._lock:
+                        self._pending -= 1
+                        if self._pending <= 0:
+                            self._pending = 0
+                            self._idle.set()
                 if time.monotonic() - self.__dict__.get("_last_periodic", 0.0) >= _PERIODIC_S:
                     self._periodic()               # a busy queue never starves it
 
@@ -871,6 +877,7 @@ class _Projector:
         except Exception as exc:  # noqa: BLE001 -- the run folders stay the record
             logger.warning("hub run sync failed for %s", hub.dir, exc_info=True)
             self.errors.append(f"{hub.dir}: sync: {type(exc).__name__}: {exc}")
+            hub_sync.slice_failed(hub.dir, exc)
 
     def _sync_one(self, hub: Hub) -> None:
         from quam_state_manager.core import hub_sync
@@ -892,6 +899,7 @@ class _Projector:
         except Exception as exc:  # noqa: BLE001
             logger.warning("hub run sync failed for %s", hub.dir, exc_info=True)
             self.errors.append(f"{hub.dir}: sync: {type(exc).__name__}: {exc}")
+            hub_sync.slice_failed(hub.dir, exc)
             self._retry_sync_later(hub)
         if more:
             self.kick_sync(hub)

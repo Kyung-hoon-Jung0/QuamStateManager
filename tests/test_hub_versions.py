@@ -521,7 +521,9 @@ def test_a_chip_without_a_ledger_keeps_the_old_path_labelled(tmp_path):
     c = app.test_client()
     c.post("/load", data={"folder": str(live)})
     panel = c.get("/state/versions").get_data(as_text=True)
-    assert 'data-source="snapshots"' in panel and "no change ledger yet" in panel
+    # S10 C1: the open creates the ledger of a chip with no data folder (its first
+    # sync slice); with nothing in it the panel says "holds no runs", not "no ledger yet"
+    assert 'data-source="snapshots"' in panel and "holds no runs" in panel
 
 
 def test_a_building_ledger_draws_the_older_snapshots_and_says_so(env, monkeypatch):
