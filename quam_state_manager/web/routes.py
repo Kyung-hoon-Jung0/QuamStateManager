@@ -86,9 +86,11 @@ from quam_state_manager.core import bg_gate as _bg_gate
 from quam_state_manager.core import activity as _activity
 from quam_state_manager.core import json_pieces as _json_pieces
 from quam_state_manager.core import trend_index as _trend_index
-from quam_state_manager.core import chip_trends_ram
+# S10 C5: chip_trends_ram import -> gone, no route reads the snapshot Trends table any more.
 from quam_state_manager.core import value_writer as _value_writer
-from quam_state_manager.core.history import _VALUE_PATHS as _HIST_VALUE_PATHS
+# S10 C5 (C3 review P2): only a failed read of the ledger's rows is an unreadable ledger
+from quam_state_manager.web.hub_status import LedgerUnreadable, ledger_read
+# S10 C5: the history value-path map import -> gone with the series' writer-check leaf
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
 from quam_state_manager.core import differ as _differ_mod
@@ -15092,31 +15094,23 @@ def _report_build_trends(rc: _ReportCtx) -> str:
     hm = _history()
     path = Path(rc.path)
     # docs/301 F22: the report reads what Chip Status > Trends reads -- the
-    # chip's change ledger when it holds the chip's runs, the snapshot table
-    # only for a chip with no ledger. It said "No parameter history" beside a
-    # Trends page charting 2,082 runs.
-    tbl, building = None, None
+    # chip's change ledger. It said "No parameter history" beside a Trends
+    # page charting 2,082 runs.
+    # S10 C5: the snapshot-table arm -> gone; no ledger table is the mode's own line.
+    tbl = None
     ans = {"mode": "unavailable", "reason": "unreadable"}
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path") and Path(ctx["path"]) == path:
         try:
             ans, tbl = _hub_status_table(ctx)
-            if ans.get("mode") in ("building", "preparing", "unavailable"):
-                building = _vh_wait_message(ans)
-        except Exception:  # noqa: BLE001 -- the snapshot table still answers
+        except Exception:  # noqa: BLE001 -- a terminal read error, never a 500
             logger.warning("report trends: ledger table unavailable", exc_info=True)
             tbl = None
-    if tbl is None and ans["mode"] == "unavailable":
-        building = _vh_wait_message(ans)
-    if building:
-        return render_template("_report_trends.html", charts=[], building=building,
+    if tbl is None:
+        return render_template("_report_trends.html", charts=[], building=_vh_wait_message(ans),
                                building_mode=ans.get("mode"),
                                window_label=_cr.window_label(rc.window),
                                zone_label=_report_zone_label(rc), no_time=0, n_snapshots=0)
-    if tbl is None:
-        if ans["mode"] == "fallback":
-            _hub_fallback_reached("report_trends", ans["reason"])
-        tbl = chip_trends_ram.table(hm, path)
     curated = list(DEFAULT_TRACKED_PROPERTIES)
     have = _trend_metrics_with_data(hm, path, curated, tbl)
     metrics = [m for m in curated if m in have]
@@ -15170,7 +15164,7 @@ def _report_build_trends(rc: _ReportCtx) -> str:
                            window_label=_cr.window_label(rc.window),
                            zone_label=_report_zone_label(rc), no_time=no_time,
                            n_snapshots=len(hm.list_snapshots(path)) if charts else 0,
-                           hub_notes=tbl.notes if _is_ledger_table(tbl) else [])
+                           hub_notes=tbl.notes)
 
 
 _REPORT_CHANNEL = {"xy": "xy", "z": "z", "resonator": "res", "flux_pulse_qubit": "flux",
@@ -16543,12 +16537,7 @@ def _trend_series_curated(hm, path: Path, props: list[str], tbl=None) -> list[di
                 row["held"] = {p["timestamp"]: p["held"] for p in r["values"] if p.get("held")}
                 # what each point says about who set it (S7's words)
                 row["attr"] = dict(r.get("_attrs") or {})
-            # The concrete leaf the value lives at, for the per-point writer
-            # check (value_writer). A derived metric (a readout fidelity from
-            # a confusion matrix) has no scalar leaf and gets none.
-            _vp = _HIST_VALUE_PATHS.get(r["property"])
-            if _vp:
-                row["leaf"] = ".".join(("qubits", str(r["qubit"])) + tuple(_vp))
+            # S10 C5: row["leaf"] (read only by the deleted per-point writer check) -> gone
             out.append(row)
     return out
 
@@ -16677,8 +16666,8 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
             pts = [(r[0], r[1] if (_vh_numeric(r[1]) is not None if ledger else
                                   _trend_is_num(r[1])) else None) for r in rows]
             if any(v is not None for _, v in pts):
-                ser = {"metric": label, "entity": e, "kind": kind,
-                       "points": pts, "leaf": dp}
+                # S10 C5: "leaf" (read only by the deleted writer check) -> gone
+                ser = {"metric": label, "entity": e, "kind": kind, "points": pts}
                 held = {r[0]: r[6] for r in rows if len(r) > 6}
                 if held:
                     ser["held"] = held
@@ -16695,7 +16684,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
                            if isinstance(r[1], (int, float))])
     if any(v is not None for _, v in pts):
         ser = {"metric": dot_path, "entity": dot_path.split(".")[-1],
-               "kind": "", "points": pts, "leaf": dot_path}
+               "kind": "", "points": pts}
         if ledger:
             ser["attr"] = dict(tbl.attrs.get(dot_path) or {})
         out.append(ser)
@@ -17414,54 +17403,24 @@ def topology_trends():
     store = _store()
     qubits = list(store.qubit_names) if store else []
     pairs = list(store.qubit_pair_names) if store else []
-    # docs/283: the chip's change ledger answers when it holds the chip's
-    # runs (S7's mode rule); while it builds the section says so and asks
-    # again; a chip with no ledger of its runs keeps the snapshot path below,
-    # under a label saying so.
+    # docs/283: the chip's change ledger answers; while it builds the section
+    # says so and asks again.
+    # S10 C5: snapshot-table Trends -> the ledger's wait / unavailable line, the old path is gone.
     ans, ledger_table = _hub_status_table(ctx)
-    if ans["mode"] in ("building", "preparing", "unavailable"):
+    if ledger_table is None:
         return _hub_surface_wait(ans, "trends")
-    if ledger_table is not None:
-        try:
-            # docs/298: a TYPED path also asks the chip's state whether it names a
-            # leaf (outside the table's facts): such a fragment is recomputed on
-            # every edit; any other is served again while its facts hold
-            return ledger_table.part(
-                ("trends_fragment", request.query_string, tuple(qubits), tuple(pairs)),
-                lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table),
-                narrow=not (request.args.get("path") or "").strip())
-        except _ramcache.Warming:
-            return _hub_surface_wait(_hub_waiting(ledger_table, "trends"), "trends")
-        except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
-            return _hub_surface_wait(_hub_table_failed("trends"), "trends")
-    _hub_fallback_reached("trends", ans["reason"])
-    fallback = ans.get("fallback_note")
-    # RAM P1a: every derived read below comes from ONE table validated
-    # against the chip's history token (core/chip_trends_ram).
-    tbl = chip_trends_ram.table(hm, path)
-    # ...and the finished fragment is kept IN that table, keyed on
-    # everything else it reads: the request's own arguments, the chip's
-    # entity names, the registered dataset roots (a point's click target)
-    # and whether a background repair is running (the "updating" note). A
-    # TYPED path also reads the chip's STATE (does it name a leaf?), so it is
-    # never served from the memo. A new history token is a new table, so no
-    # fragment outlives the history it was built from.
-    if not (request.args.get("path") or "").strip():
-        try:
-            roots_sig = tuple(str(c) for c in _dataset_candidate_folders(fast=True))
-        except Exception:  # noqa: BLE001
-            roots_sig = None
-        key = (request.query_string, tuple(qubits), tuple(pairs), roots_sig,
-               tbl.index_updating(), fallback)
-        def _render():
-            vol: list = []
-            html = _topology_trends_html(hm, path, store, qubits, pairs, tbl, vol,
-                                         fallback_note=fallback)
-            # a fragment that read the file system (see
-            # _snapshot_provenance_map) is served but never kept
-            return html, not vol
-        return tbl.fragment(key, _render)
-    return _topology_trends_html(hm, path, store, qubits, pairs, tbl, fallback_note=fallback)
+    try:
+        # docs/298: a TYPED path also asks the chip's state whether it names a
+        # leaf (outside the table's facts): such a fragment is recomputed on
+        # every edit; any other is served again while its facts hold
+        return ledger_table.part(
+            ("trends_fragment", request.query_string, tuple(qubits), tuple(pairs)),
+            lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table),
+            narrow=not (request.args.get("path") or "").strip())
+    except _ramcache.Warming:
+        return _hub_surface_wait(_hub_waiting(ledger_table, "trends"), "trends")
+    except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only
+        return _hub_surface_wait(_hub_table_failed("trends"), "trends")
 
 
 def _is_ledger_table(tbl) -> bool:
@@ -17498,7 +17457,9 @@ def _hub_status_table(ctx):
         if getattr(exc, "status", None):
             ans["status"] = exc.status
         return ans, None
-    except Exception:  # noqa: BLE001 -- a table error is terminal, never snapshot rows
+    except LedgerUnreadable:
+        # S10 C5 (C3 review P2): any table error -> only the table's LEDGER READ is unreadable;
+        # a bug building the table is a real error (logged, a 500), never an unreadable ledger
         logger.warning("history table could not be read", exc_info=True)
         ans.update(mode="unavailable", reason="unreadable",
                    unavailable_note=_VH_UNAVAILABLE_NOTES["unreadable"])
@@ -17541,9 +17502,10 @@ def _hub_surface_wait(ans, surface):
 
 
 def _topology_trends_html(hm, path: Path, store, qubits: list[str],
-                          pairs: list[str], tbl, volatile: list | None = None,
-                          fallback_note: str | None = None) -> str:
-    """The body of :func:`topology_trends` (the section fragment)."""
+                          pairs: list[str], tbl) -> str:
+    """The body of :func:`topology_trends` (the section fragment), read from
+    the chip's change ledger table (``hub_status.LedgerTable``)."""
+    # S10 C5: the volatile-list and fallback-label params -> none, only the ledger table renders this.
     curated = list(DEFAULT_TRACKED_PROPERTIES)
     # ONE ?path= could never carry a badge AND something typed at the same
     # time, so the 2Q badges below (which are template paths, tier 2, needing
@@ -17719,10 +17681,9 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
 
     # A value first seen at the newest snapshot has no duration to plot.
     # Earlier constant values carry an explicit held endpoint and draw a line.
-    ledger = _is_ledger_table(tbl)
     for c in charts:
         rows = c.get("series") or []
-        if ledger and rows and not any(
+        if rows and not any(
                 _vh_numeric(p[1]) is not None for r in rows for p in r.get("points") or []):
             # docs/283: values were recorded, none of them a finite number
             # (NaN, text): there is no numeric trend, and that is the answer
@@ -17787,38 +17748,26 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     # so and re-fetches itself (the note's own hx-trigger), and stops the
     # moment the repair is over.
     updating = tbl.index_updating()
-    charted = {str(p[0]) for c in charts for s in c["series"] for p in s["points"]}
-    if ledger:
-        # docs/283: every point carries its own words (series["attr"], S7's
-        # provenance); there is no snapshot map and no writer re-check -- the
-        # ledger's ``proven`` is the proof
-        snaps = {}
-        writers_pending = False
-    else:
-        snaps = _snapshot_provenance_map(hm, path, only=charted, tbl=tbl, volatile=volatile)
-        writers_pending = _trend_point_writers(charts, snaps, tbl)
-    if writers_pending and volatile is not None:
-        # a partial answer is served, never kept: the re-fetch the note
-        # below triggers must see the finished checks
-        volatile.append("writers")
+    # docs/283: every point carries its own words (series["attr"], S7's
+    # provenance); there is no snapshot map and no writer re-check -- the
+    # ledger's ``proven`` is the proof.
+    # S10 C5: snapshot map + writer re-check (non-ledger arm) -> gone, only the ledger renders.
+    snaps: dict = {}
     for c in charts:
         c["sig"] = _trend_chart_sig(c, snaps)
     # docs/296: where the chip's qubits were renamed (a dotted mark per chart)
     from quam_state_manager.core.story import _rename_words
-    renames = ([{"t": r["t"], "words": _rename_words(r["renames"])} for r in tbl.renames()]
-               if ledger else [])
+    renames = [{"t": r["t"], "words": _rename_words(r["renames"])} for r in tbl.renames()]
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            renames=renames,
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
                            trim_note=trim_note, index_updating=updating,
-                           writers_pending=writers_pending,
                            snaps=snaps,
                            snapshots=tbl.snapshot_count(),
-                           hub_notes=tbl.notes if ledger else [],
-                           hub_fallback=None if ledger else fallback_note,
-                           hub_mode="ledger" if ledger else "fallback")
+                           hub_notes=tbl.notes,
+                           hub_mode="ledger")
 
 
 def _trend_run_folder_resolver(roots: list[tuple[Path, str]]):
@@ -17852,6 +17801,8 @@ def _trend_run_folder_resolver(roots: list[tuple[Path, str]]):
     return resolve
 
 
+# S10 C5: Trends / metric meta / grid drawer callers -> gone; the value drawer and Column
+# History snapshot paths (C4's) still call it, so it and the resolver above go with C7.
 class _WriterCheck:
     """One request's view of :mod:`core.value_writer` -- the registered
     dataset roots, the folder resolver and the uid memo built ONCE and shared
@@ -17918,71 +17869,6 @@ class _WriterCheck:
         return None
 
 
-# How long one Trends / metric-metadata response spends checking writers
-# inline before handing the rest to the background worker (value_writer).
-_WRITER_BUDGET_S = 1.0
-
-
-def _trend_point_writers(charts: list[dict], snaps: dict, tbl) -> bool:
-    """Name the run that WROTE each charted value, not just the snapshot's run.
-
-    Customer, 2026-09-29 (a 5-qubit CZ chip): *"one IRB point says its run is a flux
-    short distortion experiment -- how can that be? T1 points also point to
-    runs that are not T1."* A point is a change point between two snapshots
-    and ``snaps`` names the run whose SAVE the snapshot copied; that save
-    carries every value written before it (runs the history never captured,
-    out-of-band edits), and an external snapshot linked to a run by content
-    hash names a run that started after the value was on disk. Measured on
-    the chip's own history: 157 of 219 run-bearing T1/T2/IRB change points
-    named a run that did not write the value.
-
-    The answer rides the SERIES as ``attr: {snapshot id: override}``
-    (:meth:`_WriterCheck.override`) -- only for points whose answer differs
-    from the snapshot's run, so a chip whose snapshots are all their own
-    writers ships nothing extra. The client names the writer (and the
-    capturer beneath it), or says "captured with run #N (not the run that
-    measured it)" and makes the point unclickable.
-    """
-    try:
-        rows = tbl.provenance_rows() if tbl is not None else []
-    except Exception:  # noqa: BLE001
-        rows = []
-    by_ts = {str(r.get("ts")): r for r in rows or [] if r.get("ts")}
-    if not by_ts or not snaps:
-        return False
-    wc = _WriterCheck(budget_s=_WRITER_BUDGET_S)
-    wc.hint(s.get("leaf") for c in charts for s in c.get("series") or [])
-    for c in charts:
-        for s in c.get("series") or []:
-            leaf = s.get("leaf")
-            if not leaf or "*" in leaf:
-                continue
-            held = s.get("held") or {}
-            attr: dict = {}
-            prev_ts = None
-            for p in s.get("points") or []:
-                ts, val = str(p[0]), p[1]
-                if ts in held:
-                    continue
-                if val is None:
-                    prev_ts = ts
-                    continue
-                row = by_ts.get(ts)
-                info = snaps.get(ts)
-                if row is not None and info is not None and info.get("run") is not None:
-                    ov = wc.override(leaf, val, ts, prev_ts, info.get("run"),
-                                     row.get("experiment"), row.get("folder"))
-                    if ov is not None:
-                        attr[ts] = ({"captured": True} if ov.get("captured") else
-                                    {"pending": True} if ov.get("pending") else
-                                    {"run": ov["run"], "short": ov["short"],
-                                     "uid": ov["uid"]})
-                prev_ts = ts
-            if attr:
-                s["attr"] = attr
-    return wc.pending
-
-
 def _trend_chart_sig(chart: dict, snaps: dict) -> str:
     """What a drawn chart depends on, as one short digest (RAM P2).
 
@@ -18002,86 +17888,39 @@ def _trend_chart_sig(chart: dict, snaps: dict) -> str:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
-def install_trends_prewarm(app) -> None:
-    """RAM P1a: after a chip's index commits (a capture, a leaf repair), derive
-    that chip's Trends parts on a background thread -- the ones every default
-    open reads -- so the first request after a new snapshot renders from a
-    warm table instead of paying the rebuild (0.4-2.2 s measured at 1,600
-    snapshots). Only for a chip whose Trends was opened in this process. Every
-    part is computed through the SAME table and token a request uses, so a
-    pre-warmed part is exactly what the request would have computed; a commit
-    racing the pre-warm only moves the token (a redundant build, never a stale
-    serve)."""
-    hm = app.config["history_manager"]
-
-    def prewarm(quam_state_path: str) -> None:
-        if not chip_trends_ram.is_open(hm, quam_state_path):
-            return
-        # w7 integration: like the run-watch tick's precompute (RAM P7), this
-        # CPU work waits, bounded, for the user's in-flight requests -- the
-        # commit it follows is usually an apply whose page is rendering now.
-        from quam_state_manager.core.run_ingest import FOREGROUND as _fg
-        _fg.wait_idle()
-        path = Path(quam_state_path)
-        with app.app_context():
-            tbl = chip_trends_ram.table(hm, path)
-            if tbl.token is None:
-                return
-            curated = list(DEFAULT_TRACKED_PROPERTIES)
-            _trend_metrics_with_data(hm, path, curated, tbl)
-            _trend_series_curated(hm, path, curated, tbl)
-            _snapshot_provenance_map(hm, path, only=set(), tbl=tbl)
-            _trend_pair_chips(hm, path, [], tbl)
-            irb = tbl.leaf_matching_paths(_TREND_IRB)
-            if irb:
-                tbl.leaf_series_many(list(irb), hold_to_newest=True)
-            tbl.families(("qubits", "qubit_pairs"), None)
-
-    hm.add_indexed_listener(prewarm)
-
-
-# snapshot dir -> {dot path: value}: the few snapshots a truncated index's
-# check reads (a snapshot is immutable, so a hit is always right)
-_METRIC_META_SNAP_CACHE: dict[str, dict] = {}
-
-
 @bp.route("/topology/metric-meta")
 def topology_metric_meta():
     """docs/283: per-cell provenance for every Chip Status metric panel, from
-    the chip's change ledger when it holds the chip's runs (S7's mode rule),
-    else the snapshot path below, labelled (``mode: fallback`` + a note).
+    the chip's change ledger (S7's mode rule); while it builds the answer says
+    so and asks again, and an unreadable ledger says that and stops asking.
 
     On the ledger an entry names a run as the WRITER only when the run's own
     patch set exactly that value (S7's ``proven``); every other entry says
     what the ledger knows -- "saved in #N, writer not proven", "first
     recorded in #N, writer unknown", an SM write's actor and kind."""
     ctx = _active_ctx()
-    if ctx and ctx.get("type") == "quam" and ctx.get("path") and _store():
-        ans, table = _hub_status_table(ctx)
-        if ans["mode"] in ("building", "preparing", "unavailable"):
-            return jsonify(ok=True, mode=ans["mode"], message=_vh_wait_message(ans),
-                           updating=ans["mode"] != "unavailable", q={}, p={}, snaps={},
-                           notes=[_vh_wait_message(ans)] if ans["mode"] == "unavailable" else [])
-        if table is not None:
-            try:
-                return jsonify(table.part("metric_meta", lambda: _hub_metric_meta(table)))
-            except _ramcache.Warming:
-                waiting = _hub_waiting(table, "metric_meta")
-                ended = waiting["mode"] == "unavailable"     # S8 review P2-1: nothing to wait for
-                return jsonify(ok=True, mode=waiting["mode"], message=_vh_wait_message(waiting),
-                               updating=not ended, q={}, p={}, snaps={},
-                               **({"notes": [_vh_wait_message(waiting)]} if ended else {}))
-            except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
-                failed = _hub_table_failed("metric_meta")
-                return jsonify(ok=True, mode="unavailable", message=_vh_wait_message(failed),
-                               updating=False, q={}, p={}, snaps={},
-                               notes=[_vh_wait_message(failed)])
-        _hub_fallback_reached("metric_meta", ans["reason"])
-        payload = _legacy_topology_metric_meta().get_json()
-        if payload.get("ok"):
-            payload.update(mode="fallback", notes=[ans["fallback_note"]])
-        return jsonify(payload)
-    return _legacy_topology_metric_meta()
+    if not (ctx and ctx.get("type") == "quam" and ctx.get("path") and _store()):
+        # S10 C5: the snapshot meta's no-chip answer -> inline, the snapshot meta is gone.
+        return jsonify({"ok": False, "reason": "no chip"})
+    ans, table = _hub_status_table(ctx)
+    if table is None:
+        # S10 C5: a non-ledger mode -> its wait / unavailable answer only, never snapshot rows.
+        return jsonify(ok=True, mode=ans["mode"], message=_vh_wait_message(ans),
+                       updating=ans["mode"] != "unavailable", q={}, p={}, snaps={},
+                       notes=[_vh_wait_message(ans)] if ans["mode"] == "unavailable" else [])
+    try:
+        return jsonify(table.part("metric_meta", lambda: _hub_metric_meta(table)))
+    except _ramcache.Warming:
+        waiting = _hub_waiting(table, "metric_meta")
+        ended = waiting["mode"] == "unavailable"     # S8 review P2-1: nothing to wait for
+        return jsonify(ok=True, mode=waiting["mode"], message=_vh_wait_message(waiting),
+                       updating=not ended, q={}, p={}, snaps={},
+                       **({"notes": [_vh_wait_message(waiting)]} if ended else {}))
+    except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only
+        failed = _hub_table_failed("metric_meta")
+        return jsonify(ok=True, mode="unavailable", message=_vh_wait_message(failed),
+                       updating=False, q={}, p={}, snaps={},
+                       notes=[_vh_wait_message(failed)])
 
 
 def _hub_metric_meta(table) -> dict:
@@ -18119,13 +17958,22 @@ def _hub_metric_meta(table) -> dict:
             vh.comparable(ans["targets"][dp]),
             None if rows[dp]["effective"][-1]["removed"] else rows[dp]["effective"][-1]["value"])
             for dp in paths)
+        # "unchanged since history began": the newest value is the one the
+        # ledger started with -- a run's first record, or (S10 C3: a chip with
+        # no data folder) the first state SM saw
+        first = (best["provenance"] == "first_record"
+                 or (best["provenance"] == "observed"
+                     and best["eid"] == (ans.get("ledger") or {}).get("first_eid")))
+        # S10 C5 (C3 review): no "appeared" on the ledger -> restored: the newest change made
+        # some leaf a value for the FIRST time (null, absent or removed before) -- its first
+        # record, never "unchanged since history began" and never just "last changed"
+        appeared = not first and not best["removed"] and any(
+            rows[dp]["effective"] and rows[dp]["effective"][-1]["ord"] == top
+            and not rows[dp]["effective"][-1]["removed"]
+            and all(p["removed"] or p["value"] is None for p in rows[dp]["effective"][:-1])
+            for dp in paths)
         entry = {"ts": best["t"], "eid": best["eid"], "leaves": len(newest),
-                 # "unchanged since history began": the newest value is the
-                 # one the ledger started with -- a run's first record, or
-                 # (S10 C3: a chip with no data folder) the first state SM saw
-                 "first": (best["provenance"] == "first_record"
-                           or (best["provenance"] == "observed"
-                               and best["eid"] == (ans.get("ledger") or {}).get("first_eid"))),
+                 "first": first, "appeared": appeared,
                  "matches_current": matches, "gone": best["removed"],
                  "provenance": best["provenance"], "label": info["label"],
                  "sub": info["sub"], "title": info["title"], "actor": best.get("actor"),
@@ -18163,158 +18011,6 @@ def _hub_metric_meta(table) -> dict:
                if any(n["code"] == "no_folder_linked" for n in table.notes) else {})}
 
 
-def _legacy_topology_metric_meta():
-    """Queue item 4: per-cell provenance for every Chip Status metric panel.
-
-    ``{ok, newest, snapshots, oldest, updating, q: {panel key: {qubit: entry}},
-    p: {"2q:<rbType>:<gate>": {pair: entry}}, snaps: {ts: provenance}}`` where
-    an entry is :func:`metric_meta.newest_change`'s fold of the change points
-    of the leaves that panel reads, plus ``load_id`` for a 2Q RB value whose
-    lab node recorded one. Fetched lazily by the page (first hover over a
-    panel, or a panel whose "Show meta info" is on) -- never on the Chip
-    Status render. The change-point index read never waits for a rebuild
-    (``_ensure_leaf_index_fresh`` schedules one in the background); while one
-    runs the response says ``updating`` and the page asks again later.
-    """
-    from quam_state_manager.core import metric_meta as _mm
-    ctx = _active_ctx()
-    store = _store()
-    if not ctx or ctx.get("type") != "quam" or not ctx.get("path") or not store:
-        return jsonify({"ok": False, "reason": "no chip"})
-    hm = _history()
-    path = Path(ctx["path"])
-    with store._lock:
-        doc = store.merged
-        qpaths = _mm.qubit_paths(doc, list(store.qubit_names))
-        ppaths, loads = _mm.pair_rb_paths(doc, list(store.qubit_pair_names))
-        current = _mm.current_values(doc, qpaths, ppaths)
-    wanted: list[str] = []
-    _seen: set[str] = set()
-    for group in (qpaths, ppaths):
-        for per in group.values():
-            for plist in per.values():
-                for dp in plist:
-                    if dp not in _seen:
-                        _seen.add(dp)
-                        wanted.append(dp)
-    origin: dict = {}
-    try:
-        series = (hm.leaf_field_series_many(path, wanted, origin=origin)
-                  if wanted else {})
-    except Exception:  # noqa: BLE001 - metadata must never break the page
-        logger.debug("metric meta: leaf series unavailable", exc_info=True)
-        series = {}
-    truncated = bool(origin.get("truncated"))
-    confirmed: set[str] = set()
-    if truncated and series:
-        # verifier D2 (2026-09-27): an incomplete index's lone late rows are
-        # checked against the snapshot before them (bounded, cached -- a
-        # snapshot never changes); what cannot be checked is reported as
-        # incomplete, never dated
-        def _snap_values(ts: str, paths: list[str]) -> dict:
-            sdir = hm.snapshot_dir(path, ts)
-            ck = str(sdir)
-            have = _METRIC_META_SNAP_CACHE.get(ck)
-            if have is None or any(p not in have for p in paths):
-                st = safe_io.read_json(sdir / "state.json")
-                wp = sdir / "wiring.json"
-                wr = safe_io.read_json(wp) if wp.exists() else None
-                have = _mm.snapshot_values(st, wr, paths)
-                _METRIC_META_SNAP_CACHE[ck] = have
-                while len(_METRIC_META_SNAP_CACHE) > 8:
-                    _METRIC_META_SNAP_CACHE.pop(next(iter(_METRIC_META_SNAP_CACHE)))
-            return have
-        try:
-            series, confirmed = _mm.verify_truncated(
-                series, oldest=origin.get("oldest"),
-                ts_list=origin.get("ts_list") or [], load_values=_snap_values)
-        except Exception:  # noqa: BLE001 - unverified stays incomplete
-            logger.debug("metric meta: truncated-index check failed", exc_info=True)
-    stamps: set[str] = set()
-    wc = _WriterCheck(budget_s=_WRITER_BUDGET_S)
-    wc.hint(wanted)
-    _prov_by_ts: dict | None = None
-
-    def _writer(e: dict, plist: list[str]) -> None:
-        # The run a panel's "last changed by" names must be the run that
-        # WROTE the value (2026-09-29): the snapshot's run only saved a state
-        # that carried it. Checked on a scalar leaf that changed at the
-        # entry's time; a family leaf (T1, IRB) first. The snapshot's run is
-        # read from its META (the source of truth -- an enriched run may be
-        # missing from the index rows), exactly as the page's snaps map is.
-        nonlocal _prov_by_ts
-        if e.get("first") or e.get("gone"):
-            return
-        if _prov_by_ts is None:
-            try:
-                _prov_by_ts = {str(r.get("ts")): r for r in hm.snapshot_provenance(path)}
-            except Exception:  # noqa: BLE001
-                _prov_by_ts = {}
-        prov = _prov_by_ts.get(e["ts"]) or {}
-        run = prov.get("run_id") if prov.get("run_id") is not None else e.get("run")
-        if run is None:
-            return
-        cands = []
-        for dp in plist:
-            rows = series.get(dp) or []
-            if rows and str(rows[-1][0]) == e["ts"] and _trend_is_num(rows[-1][1]):
-                cands.append((0 if _value_writer.families_for(dp) else 1, dp, rows))
-        if not cands:
-            return
-        cands.sort(key=lambda t: t[0])
-        _, dp, rows = cands[0]
-        last = rows[-1]
-        prev = rows[-2][0] if len(rows) > 1 else None
-        ov = wc.override(dp, last[1], last[0], prev, run,
-                         prov.get("experiment") or last[4],
-                         prov.get("folder") or (last[5] if len(last) > 5 else None))
-        if ov is not None:
-            e["writer"] = ({"captured": True} if ov.get("captured") else
-                           {"pending": True} if ov.get("pending") else
-                           {"run": ov["run"], "short": ov["short"], "uid": ov["uid"]})
-
-    def fold(group: dict) -> dict:
-        out: dict = {}
-        for key, per in group.items():
-            for ent, plist in per.items():
-                e = _mm.newest_change(series, plist, oldest=origin.get("oldest"),
-                                      current=current, truncated=truncated,
-                                      confirmed=confirmed)
-                if e:
-                    if e.get("ts"):
-                        stamps.add(e["ts"])
-                        _writer(e, plist)
-                    out.setdefault(key, {})[ent] = e
-        return out
-
-    q_out = fold(qpaths)
-    p_out = fold(ppaths)
-    for key, per in loads.items():
-        for pid, lid in per.items():
-            p_out.setdefault(key, {}).setdefault(pid, {})["load_id"] = lid
-    try:
-        snaps = hm.list_snapshots(path)
-    except Exception:  # noqa: BLE001
-        snaps = []
-    return jsonify({
-        "ok": True,
-        "newest": snaps[0].timestamp if snaps else None,
-        "snapshots": len(snaps),
-        # the oldest snapshot the change-point index holds: an entry is
-        # ``first`` ("unchanged since history began") only AT this snapshot
-        "oldest": origin.get("oldest"),
-        # ...or a writer check is still running in the background: the page
-        # asks again, exactly as for an index repair
-        "updating": bool(hm.leaf_index_updating(path)) or wc.pending,
-        # the change-point index hit its caps on this chip: undated entries
-        # carry ``incomplete`` and the page says the index is incomplete
-        "incomplete_index": truncated,
-        "q": q_out,
-        "p": p_out,
-        "snaps": _snapshot_provenance_map(hm, path, only=stamps) if stamps else {},
-    })
-
-
 @bp.route("/topology/trends/paths")
 def topology_trends_paths():
     """Typeahead over every numeric leaf the chip has ever recorded — offered
@@ -18331,25 +18027,17 @@ def topology_trends_paths():
     ctx = _active_ctx()
     if not q or not ctx or not ctx.get("path"):
         return jsonify([])
-    ans, table = _hub_status_table(ctx)
-    if table is not None:
-        try:
-            return jsonify(table.leaf_families(q, limit=25))
-        except _ramcache.Warming:
-            return jsonify([])
-        except Exception:  # noqa: BLE001 -- S10 C3: nothing to suggest, never a 500
-            _hub_table_failed("trends_paths")
-            return jsonify([])
-    if ans["mode"] in ("building", "preparing", "unavailable"):
+    _ans, table = _hub_status_table(ctx)
+    if table is None:
+        # S10 C5: snapshot-index families -> nothing to suggest until the ledger answers.
         return jsonify([])
-    # Grouped in SQL, so each row's entity count is exact and the 25 is a limit
-    # on FAMILIES rather than on the rows a count was folded from.
-    # fresh=True (QA F-10): an explicit leaf-tier query, like the chart query,
-    # so it pays the freshness gate -- a stale index answered [] for the
-    # placeholder's own example.
-    _hub_fallback_reached("trends_paths", ans["reason"])
-    return jsonify(chip_trends_ram.table(_history(), Path(ctx["path"])).leaf_families(
-        q, limit=25, fresh=True))
+    try:
+        return jsonify(table.leaf_families(q, limit=25))
+    except _ramcache.Warming:
+        return jsonify([])
+    except Exception:  # noqa: BLE001 -- S10 C3: nothing to suggest, never a 500
+        _hub_table_failed("trends_paths")
+        return jsonify([])
 
 
 # ── docs/120 item 10 — the working-state version, from the top bar ────────
@@ -29249,12 +28937,13 @@ _SPARK_POINTS = 40   # the popup sparkline's LTTB budget
 
 @bp.route("/api/topology/sparklines/<qubit>")
 def topology_sparklines(qubit: str):
-    """Lazy per-qubit Param-History sparklines for the Chip Status '…more' popup.
+    """Lazy per-qubit sparklines for the Chip Status '…more' popup.
 
-    Reuses the Param History index (extract_property_history) + the same
-    server-rendered SVG (render_sparkline_svg_inner). Emits a row ONLY for
-    metrics with a real ≥2-point series — assignment_fidelity / cz are never
-    tracked here, so they honestly get no sparkline rather than a fake flat line.
+    Reads the chip's change ledger (the Trends table's curated rows) + the
+    same server-rendered SVG (render_sparkline_svg_inner). Emits a row ONLY
+    for metrics with a real ≥2-point series — assignment_fidelity / cz are
+    never tracked here, so they honestly get no sparkline rather than a fake
+    flat line.
     """
     engine = _engine()
     store = _store()
@@ -29265,12 +28954,12 @@ def topology_sparklines(qubit: str):
         qd = engine.get_qubit(qubit)
     except Exception:
         qd = {}
-    hm = _history()
     rows = []
     # docs/301 F13: the popup reads what Chip Status > Trends reads -- the
-    # chip's change ledger when it holds the chip's runs (every change point,
-    # thinned for the drawing only), the snapshot index otherwise. It drew
-    # three flat Param History snapshots beside a Trends chart of 25 changes.
+    # chip's change ledger (every change point, thinned for the drawing
+    # only). It drew three flat Param History snapshots beside a Trends chart
+    # of 25 changes.
+    # S10 C5: the snapshot-index arm -> gone; no ledger rows is the mode's own line.
     ledger_rows, events = None, None
     _ans = {"mode": "unavailable", "reason": "unreadable"}
     table = None
@@ -29282,24 +28971,19 @@ def topology_sparklines(qubit: str):
                 ledger_rows = [r for r in table.curated(tuple(DEFAULT_TRACKED_PROPERTIES))
                                if r.get("qubit") == qubit]
                 events = table.snapshot_count()
-        except Exception as exc:  # noqa: BLE001 -- warming / unreadable: the snapshot index answers
+        except Exception as exc:  # noqa: BLE001 -- warming / unreadable: said, never a 500
             ledger_rows = None
             if isinstance(exc, _ramcache.Warming):
                 _ans = dict(getattr(table, "waiting", None) or {"mode": "preparing"})
             else:
                 _ans = {"mode": "unavailable", "reason": "unreadable"}
-    if ledger_rows is None and _ans["mode"] in ("building", "preparing", "unavailable"):
+    if ledger_rows is None:
         return render_template("_topo_sparklines.html", rows=[], snapshots=0, ledger=True,
                                hub_message=_vh_wait_message(_ans), hub_mode=_ans["mode"])
     # docs/142 compress: the popup's delta arrow now reads "since the last
     # CHANGE", not "since the previous identical sample" -- which is what a
     # trend arrow was always meant to say.
-    if ledger_rows is None and _ans["mode"] == "fallback":
-        _hub_fallback_reached("sparklines", _ans["reason"])
-    source = ledger_rows if ledger_rows is not None else hm.extract_property_history(
-        path, list(DEFAULT_TRACKED_PROPERTIES), qubit_filter=[qubit],
-        downsample=_SPARK_POINTS, compress="changes")
-    for r in source:
+    for r in ledger_rows:
         prop = r["property"]
         cur = qd.get(prop)
         cur_num = float(cur) if isinstance(cur, (int, float)) and not isinstance(cur, bool) else None
@@ -29311,7 +28995,7 @@ def topology_sparklines(qubit: str):
         # / amplitudes are unconstrained and pass through unchanged.
         phys_vals = [p for p in r["values"] if chip_health.physicality(prop, p.get("value"))]
         drawn = phys_vals
-        if ledger_rows is not None and len(phys_vals) > _SPARK_POINTS:
+        if len(phys_vals) > _SPARK_POINTS:
             thin = HistoryManager._lttb_downsample(
                 [(i, p.get("value")) for i, p in enumerate(phys_vals)
                  if isinstance(p.get("value"), (int, float)) and not isinstance(p.get("value"), bool)],
@@ -29326,20 +29010,9 @@ def topology_sparklines(qubit: str):
         # step, so its last two points are equal unless the last change landed
         # on the newest snapshot -- nums[-1] - nums[-2] read '–' after a real
         # change. The arrow is the newest value against the previous DISTINCT
-        # one. When LTTB thinned the series (it can drop a step's flat edge),
-        # read that one property undownsampled so the step is the real last one.
+        # one, read from the full (never thinned) ledger series.
+        # S10 C5: the undownsampled snapshot re-read -> gone, the ledger rows are never thinned.
         full = phys_vals
-        if ledger_rows is None and len(r["values"]) >= _SPARK_POINTS:
-            try:
-                ex = [b for b in hm.extract_property_history(
-                          path, [prop], qubit_filter=[qubit], downsample=None,
-                          compress="changes")
-                      if b.get("qubit") == r.get("qubit") and b.get("property") == prop]
-                if ex:
-                    full = [p for p in ex[0]["values"]
-                            if chip_health.physicality(prop, p.get("value"))] or phys_vals
-            except Exception:
-                logger.debug("sparkline full-series read failed", exc_info=True)
         fin = [float(p["value"]) for p in full
                if isinstance(p.get("value"), (int, float)) and not isinstance(p.get("value"), bool)
                and math.isfinite(p["value"])]
@@ -29358,11 +29031,8 @@ def topology_sparklines(qubit: str):
             "trend": None if delta in (None, 0) else ("up" if delta > 0 else "down"),
             "good": good,
         })
-    return render_template("_topo_sparklines.html", rows=rows,
-                           snapshots=(events if ledger_rows is not None
-                                      else len(hm.list_snapshots(path))),
-                           ledger=ledger_rows is not None,
-                           hub_notes=table.notes if table is not None else [])
+    return render_template("_topo_sparklines.html", rows=rows, snapshots=events, ledger=True,
+                           hub_notes=table.notes)
 
 
 @bp.route("/topology/report")
@@ -33804,6 +33474,42 @@ def _openable_folder_for_chip(hm, target_path, *, tries: int = 6) -> str | None:
     return None
 
 
+def _archive_ledger_notes(hm, target_path, ledger: dict) -> list[dict]:
+    """S10 C5 (C3 review P1): an ARCHIVED chip's ledger is read as it is, and
+    it may hold less than Param History holds of the chip -- nothing at all
+    (a chip not opened since the ledger existed), or no runs while Param
+    History holds captures of runs (runs reach a ledger only from a data
+    folder linked to the chip). Either is said, never shown as an empty
+    history, with the one press that builds the ledger: open the chip
+    (:func:`_openable_folder_for_chip`). ``[]`` when the ledger holds both."""
+    try:
+        snaps = hm.list_snapshots(target_path)
+    except Exception:  # noqa: BLE001 -- Param History unreadable: nothing to compare with
+        return []
+    total = len(snaps)
+    runs = sum(1 for m in snaps if getattr(m, "kind", None) == "exp"
+               or getattr(m, "trigger", None) == "experiment")
+    events = int(ledger.get("events") or 0)
+    if total and not events:
+        text = (f"This chip's change ledger holds nothing yet, while Param History holds "
+                f"{total} capture{'' if total == 1 else 's'} of it"
+                + (f" ({runs} from runs)" if runs else "") + ".")
+    elif runs and not ledger.get("has_runs"):
+        text = (f"Param History holds {runs} run capture{'' if runs == 1 else 's'} of this chip "
+                "that its change ledger does not: the ledger holds no runs (runs reach it only "
+                "from a data folder linked to the chip).")
+    else:
+        return []
+    open_path = _openable_folder_for_chip(hm, target_path)
+    if open_path:
+        text += " Open this chip to build its ledger" + (
+            ", then link the folder its runs are saved in." if runs else ".")
+    else:
+        text += " No folder on disk opens as this chip now, so its ledger cannot be built here."
+    return [{"level": "warning", "code": "archive_short", "text": text,
+             "open_chip_path": open_path}]
+
+
 def _hub_grid_rows(table, props, qubit_filter, since, until, triggers) -> list[dict]:
     """docs/283: the grid's rows from the ledger (``LedgerTable.curated``),
     windowed the way the snapshot grid windowed (the same stamp-string
@@ -33924,32 +33630,23 @@ def param_history():
     # swaps a Werkzeug error page into #param-history-root, turning the whole menu
     # into a dead/broken page (the diff/compare routes already catch this way).
     index_error = None
-    # docs/283: the grid reads the chip's change ledger when it holds the
-    # chip's runs (S7's mode rule) -- for an archived chip too, whose ledger
-    # is read as it is (an "idle" note says no sync keeps it current here);
-    # while it builds the page says so and asks again; with no ledger of the
-    # chip's runs the snapshot path below answers, under a label.
+    # docs/283: the grid reads the chip's change ledger (S7's mode rule) --
+    # for an archived chip too, whose ledger is read as it is (an "idle" note
+    # says no sync keeps it current here); while it builds the page says so
+    # and asks again.
+    # S10 C5: the snapshot grid (non-ledger arm) -> gone; no ledger table is the mode's own page.
     hub_answer, hub_table = _hub_status_table(
         _param_history_hub_ctx(hm, target_path, is_loaded_chip))
-    if hub_answer["mode"] in ("building", "preparing", "unavailable"):
+    if hub_table is None:
         if not is_loaded_chip and hub_answer["mode"] == "unavailable":
             hub_answer["open_chip_path"] = _openable_folder_for_chip(hm, target_path)
         return _hub_surface_wait(hub_answer, "grid")
-    if hub_table is None:
-        _hub_fallback_reached("param_history_grid", hub_answer["reason"])
     try:
         # docs/158: nothing selected is an honest empty grid, not a query
         if none_props or none_qubits or none_triggers:
             rows = []
-        elif hub_table is not None:
-            rows = _hub_grid_rows(hub_table, props, qubit_filter, since, until, triggers)
         else:
-            rows = hm.extract_property_history(
-                target_path, props,
-                qubit_filter=qubit_filter,
-                since=since, until=until,
-                triggers=triggers,
-            )
+            rows = _hub_grid_rows(hub_table, props, qubit_filter, since, until, triggers)
     except _ramcache.Warming:
         return _hub_surface_wait(_hub_waiting(hub_table, "param_history_grid"), "grid")
     except Exception as exc:   # noqa: BLE001 — never 500 the dashboard on a busy index
@@ -33959,33 +33656,22 @@ def param_history():
 
     if only_changed:
         def _changed(values: list[dict[str, Any]]) -> bool:
-            if hub_table is not None:
-                # the one equality (hub_rules.same), finite numbers only
-                nums = [v["value"] for v in values if _vh_numeric(v.get("value")) is not None]
-                return any(not _vh_same(nums[0], n) for n in nums[1:])
-            seen: set[float] = set()
-            for v in values:
-                x = v.get("value")
-                if isinstance(x, (int, float)):
-                    seen.add(round(float(x), 12))
-                if len(seen) > 1:
-                    return True
-            return False
+            # the one equality (hub_rules.same), finite numbers only
+            # S10 C5: the snapshot arm's rounded-set test -> gone, one equality remains.
+            nums = [v["value"] for v in values if _vh_numeric(v.get("value")) is not None]
+            return any(not _vh_same(nums[0], n) for n in nums[1:])
         rows = [r for r in rows if _changed(r["values"])]
 
     snap_summary = None
     try:
-        if hub_table is not None:
-            summary = _hub_grid_summary(hub_answer["ledger"], rows)
-            # the page's auto-import gate counts SNAPSHOTS (the importer it
-            # gates writes snapshots), never ledger events
-            try:
-                snap_summary = hm.index_summary(target_path)
-            except Exception:   # noqa: BLE001
-                snap_summary = None
-        else:
-            summary = hm.index_summary(target_path)
-            summary["window_count"] = hm.count_window(target_path, since=since, until=until, triggers=triggers)
+        # S10 C5: the snapshot index summary (non-ledger arm) -> gone, the ledger's summary.
+        summary = _hub_grid_summary(hub_answer["ledger"], rows)
+        # the page's auto-import gate counts SNAPSHOTS (the importer it
+        # gates writes snapshots), never ledger events
+        try:
+            snap_summary = hm.index_summary(target_path)
+        except Exception:   # noqa: BLE001
+            snap_summary = None
     except Exception as exc:   # noqa: BLE001 — same busy-index degrade as the trend query
         logger.warning("param-history summary failed: %s", exc)
         # Must match index_summary's shape (+ window_count) or the template throws.
@@ -34022,21 +33708,10 @@ def param_history():
     # complete even if some qubits have no indexed data yet.
     if is_loaded_chip:
         all_qubits = list(store.qubit_names)
-    elif hub_table is not None:
-        # docs/283: an archived chip's qubits are the ones its ledger names
-        all_qubits = sorted(hub_table.ctx["store"].qubit_names, key=natural_key)
     else:
-        try:
-            conn = hm._open_index(target_path)
-            # SQLite's ORDER BY is BYTE order (q10 before q2); the displayed
-            # list counts numerically (customer rule 2026-09-09).
-            all_qubits = sorted(
-                (r[0] for r in conn.execute(
-                    "SELECT DISTINCT qubit FROM param_history").fetchall()),
-                key=natural_key)
-            conn.close()
-        except Exception:
-            all_qubits = sorted({r["qubit"] for r in rows}, key=natural_key)
+        # docs/283: an archived chip's qubits are the ones its ledger names
+        # S10 C5: the snapshot index's DISTINCT qubit (non-ledger arm) -> gone.
+        all_qubits = sorted(hub_table.ctx["store"].qubit_names, key=natural_key)
 
     if qubits_selected:
         qubits = sorted(qubits_selected, key=natural_key)
@@ -34141,9 +33816,11 @@ def param_history():
             snap_summary=snap_summary,
             disk_stats=disk_stats,
             index_error=index_error,
-            hub_notes=hub_table.notes if hub_table is not None else [],
-            hub_mode="ledger" if hub_table is not None else "fallback",
-            hub_fallback=None if hub_table is not None else hub_answer.get("fallback_note"),
+            # S10 C5 (C3 review P1): an archived ledger holding less than Param History's
+            # captures -> said, with Open this chip, never a silently empty grid
+            hub_notes=list(hub_table.notes) + (
+                [] if is_loaded_chip else _archive_ledger_notes(hm, target_path, hub_answer["ledger"])),
+            hub_mode="ledger",
             since=since_raw,
             triggers_filter=raw_triggers,
             none_triggers=none_triggers,
@@ -34362,11 +34039,6 @@ def param_history_alignment():
     )
 
 
-# RAM P8: (groups, stats) of one feed page, see param_history_changes
-_PH_CHANGES_MEMO = _ramcache.KeyedMemo("param_history.changes", max_entries=16,
-                                       max_bytes=16 * 1024 * 1024,
-                                       sizeof=lambda v: 2048 + 400 * sum(
-                                           len(g.get("rows") or ()) for g in v[0]))
 _CHANGES_SNAPS = 20        # snapshots per page — the feed's unit is the EVENT
 _CHANGES_ROWS = 25         # rows shown per snapshot before "and N more"
 _CHANGES_ROWS_AT = 2000    # one snapshot opened in full
@@ -34375,35 +34047,34 @@ _CHANGES_ROWS_AT = 2000    # one snapshot opened in full
 @bp.route("/param-history/changes")
 def param_history_changes():
     """docs/283: "what changed", newest first -- from the chip's change
-    ledger (``hub_query.timeline`` with a path filter) when it holds the
-    chip's runs, else the change-point index below, labelled."""
+    ledger (``hub_query.timeline`` with a path filter); while it builds the
+    page says so and asks again."""
     ctx = _active_ctx()
-    if ctx and ctx.get("type") == "quam" and ctx.get("path") and _store():
-        ans, table = _hub_status_table(ctx)
-        if ans["mode"] in ("building", "preparing", "unavailable"):
-            return _hub_surface_wait(ans, "changes")
-        if table is not None:
-            try:
-                # docs/298: what the page lists reads only the ledger (kept while
-                # it holds); the FULL page also carries the top bar -- the pending
-                # tray and the sync state, which an apply moves without an edit or
-                # a ledger change (an apply of no change) -- so it is rendered on
-                # every request from the kept list, never kept itself
-                data = table.part(("changes_data", request.query_string),
-                                  lambda: _hub_param_changes_data(table))
-                if _is_htmx():
-                    body, status = table.part(("changes_page", request.query_string, True),
-                                              lambda: _hub_param_changes(table, data))
-                else:
-                    body, status = _hub_param_changes(table, data)
-            except _ramcache.Warming:
-                return _hub_surface_wait(_hub_waiting(table, "changes"), "changes")
-            except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
-                return _hub_surface_wait(_hub_table_failed("changes"), "changes")
-            return body, status
-        _hub_fallback_reached("changes", ans["reason"])
-        return _legacy_param_history_changes(fallback_note=ans.get("fallback_note"))
-    return _legacy_param_history_changes()
+    if not (ctx and ctx.get("type") == "quam" and ctx.get("path") and _store()):
+        # S10 C5: the snapshot feed's no-chip page -> _no_chip directly, the feed is gone.
+        return _no_chip("parameter history", "param_history")
+    ans, table = _hub_status_table(ctx)
+    if table is None:
+        # S10 C5: a non-ledger mode -> its wait / unavailable page only, never the snapshot feed.
+        return _hub_surface_wait(ans, "changes")
+    try:
+        # docs/298: what the page lists reads only the ledger (kept while
+        # it holds); the FULL page also carries the top bar -- the pending
+        # tray and the sync state, which an apply moves without an edit or
+        # a ledger change (an apply of no change) -- so it is rendered on
+        # every request from the kept list, never kept itself
+        data = table.part(("changes_data", request.query_string),
+                          lambda: _hub_param_changes_data(table))
+        if _is_htmx():
+            body, status = table.part(("changes_page", request.query_string, True),
+                                      lambda: _hub_param_changes(table, data))
+        else:
+            body, status = _hub_param_changes(table, data)
+    except _ramcache.Warming:
+        return _hub_surface_wait(_hub_waiting(table, "changes"), "changes")
+    except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only
+        return _hub_surface_wait(_hub_table_failed("changes"), "changes")
+    return body, status
 
 
 def _hub_param_changes(table, data: dict | None = None) -> tuple[str, int]:
@@ -34436,16 +34107,21 @@ def _hub_param_changes_data(table) -> dict:
     bad = {"bad": ("This history page reference is invalid; open Changes again.", 400)}
     if at is not None and not at.isdigit():
         return bad
-    try:
-        result = hub_query.timeline(table.binding, path=prefix or None, path_prefix=True,
-                                    cursor=None if at else cursor,
-                                    event_id=int(at) if at else None, changed_only=True,
-                                    limit=1 if at else _CHANGES_SNAPS, **_rename_scope())
-    except ValueError:
+    scope = _rename_scope()
+    # S10 C5 (C3 review P2): the page's reads of the ledger -> LedgerUnreadable when they fail
+    with ledger_read():
+        try:
+            result = hub_query.timeline(table.binding, path=prefix or None, path_prefix=True,
+                                        cursor=None if at else cursor,
+                                        event_id=int(at) if at else None, changed_only=True,
+                                        limit=1 if at else _CHANGES_SNAPS, **scope)
+        except ValueError:
+            result = None
+    if result is None:
         return bad
     events = result["events"]
     sm_eids = [ev["eid"] for ev in events if ev.get("kind") in SM_KINDS]
-    with hub_index.snapshot(table.binding) as (conn, index):
+    with ledger_read(), hub_index.snapshot(table.binding) as (conn, index):
         sm = vh._sm_info(conn, sm_eids)
         undone = {ev["eid"]: vh.undone_paths(conn, index, ev, sm) for ev in events
                   if ev.get("kind") in SM_KINDS}
@@ -34514,76 +34190,6 @@ def _hub_param_changes_data(table) -> dict:
             "at_ts": at, "hub_mode": "ledger", "hub_notes": table.notes}
 
 
-def _legacy_param_history_changes(fallback_note: str | None = None):
-    """"What changed" — every numeric parameter's change points, newest first.
-
-    The curated dashboard answers "how has T1 drifted"; this answers the
-    question a user actually arrives with — "what did that run change?" — over
-    ALL ~8,000 numeric parameters, which only became affordable once they were
-    stored as change points (docs/83).
-
-    Paged by SNAPSHOT, not by row: a regenerate rewrites thousands of
-    parameters at once (2,716 measured on a real chip) and a row-paged feed
-    would spend the whole page on it and hide every other event.
-    """
-    store = _store()
-    if not store:
-        return _no_chip("parameter history", "param_history")
-    hm = _history()
-    path = Path(_active_path())
-    prefix = (request.args.get("prefix") or "").strip()
-    before = (request.args.get("before") or "").strip() or None
-    at = (request.args.get("at") or "").strip() or None
-    roots = _uid_roots()
-
-    def compute():
-        try:
-            groups = hm.leaf_change_groups(
-                path, limit_snaps=1 if at else _CHANGES_SNAPS + 1,
-                rows_per_snap=_CHANGES_ROWS_AT if at else _CHANGES_ROWS,
-                prefix=prefix or None, before_ts=before, at_ts=at)
-        except Exception as exc:      # noqa: BLE001 — never 500 the menu
-            logger.warning("param-history changes failed: %s", exc, exc_info=True)
-            groups = []
-        for g in groups:
-            ts = g.get("timestamp") or ""
-            g["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
-                         if len(ts) >= 13 else ts)
-            g["uid"] = _uid_for_run_ref(g.get("experiment_folder_path"),
-                                        g.get("run_id"), roots)
-        return groups, hm.leaf_stats(path)
-
-    # RAM P8: the feed page is a function of the chip's history store and
-    # the dataset roots its Data links resolve against -- validated on read
-    # (``param_history_ram.hist_token``: in-process version, the index's
-    # PRAGMA data_version, the snapshot list). The freshness gate runs first,
-    # exactly as leaf_change_groups ran it, so a behind index is still seen.
-    from quam_state_manager.core import param_history_ram as _phr
-    try:
-        hm._ensure_leaf_index_fresh(path)
-        token = (_phr.hist_token(hm, path), tuple((str(r), k) for r, k in roots))
-        slot = ("changes", token[0][0], prefix, before, at)
-        groups, stats = _PH_CHANGES_MEMO.get(slot, token, compute, wait_s=30.0)
-    except _ramcache.Warming:
-        groups, stats = compute()
-    except Exception:             # noqa: BLE001 — the token is an accelerator
-        logger.debug("changes memo bypassed", exc_info=True)
-        groups, stats = compute()
-    try:
-        _phr.warm_path_rank(hm, path)     # the typeahead on this page
-    except Exception:             # noqa: BLE001
-        logger.debug("path-rank warm not started", exc_info=True)
-    has_more = (not at) and len(groups) > _CHANGES_SNAPS
-    groups = groups[:1 if at else _CHANGES_SNAPS]
-    oldest = groups[-1]["timestamp"] if groups else None
-    template = ("_param_history_changes.html" if _is_htmx()
-                else "param_history_changes.html")
-    return render_template(
-        template, **_ctx(page="param_history", groups=groups, stats=stats,
-                         prefix=prefix, has_more=has_more, oldest_ts=oldest,
-                         at_ts=at, hub_fallback=fallback_note))
-
-
 @bp.route("/param-history/param-search")
 def param_history_param_search():
     """Typeahead over every indexed parameter path (docs/83). 8,000 paths is
@@ -34594,26 +34200,18 @@ def param_history_param_search():
     # docs/283: the Changes page reads the change ledger, so its typeahead
     # offers the ledger's paths (the same ranking over the ledger's rows)
     ctx = _active_ctx()
-    if ctx and ctx.get("type") == "quam" and ctx.get("path"):
-        ans, table = _hub_status_table(ctx)
-        if ans["mode"] in ("building", "preparing", "unavailable"):
-            return jsonify(ok=True, results=[], mode=ans["mode"])
-        if table is not None:
-            try:
-                return jsonify(ok=True, results=table.path_rank().search(q, limit=30))
-            except _ramcache.Warming:
-                return jsonify(ok=True, results=[], mode=_hub_waiting(table, "changes_paths")["mode"])
-            except Exception:  # noqa: BLE001 -- S10 C3: nothing to suggest, never a 500
-                return jsonify(ok=True, results=[], mode=_hub_table_failed("changes_paths")["mode"])
-    if ctx and ctx.get("type") == "quam" and ctx.get("path"):
-        _hub_fallback_reached("changes_paths", ans["reason"])
+    if not (ctx and ctx.get("type") == "quam" and ctx.get("path")):
+        # S10 C5: the snapshot index's leaf search -> nothing to suggest without a chip.
+        return jsonify(ok=True, results=[])
+    ans, table = _hub_status_table(ctx)
+    if table is None:
+        return jsonify(ok=True, results=[], mode=ans["mode"])
     try:
-        from quam_state_manager.core import param_history_ram as _phr
-        hits = _phr.leaf_search(_history(), Path(_active_path()), q, limit=30)
-    except Exception:      # noqa: BLE001
-        logger.debug("param search failed", exc_info=True)
-        hits = []
-    return jsonify(ok=True, results=hits)
+        return jsonify(ok=True, results=table.path_rank().search(q, limit=30))
+    except _ramcache.Warming:
+        return jsonify(ok=True, results=[], mode=_hub_waiting(table, "changes_paths")["mode"])
+    except Exception:  # noqa: BLE001 -- S10 C3: nothing to suggest, never a 500
+        return jsonify(ok=True, results=[], mode=_hub_table_failed("changes_paths")["mode"])
 
 
 def _pending_decisions_for(loaded_path: Path) -> list[dict[str, Any]]:
@@ -34707,123 +34305,35 @@ def param_history_expand():
         target_path = _path_for_chip_key(chip_key)
         is_loaded = False
     # docs/283: the cell's drawer reads what its grid read -- the change
-    # ledger when it holds the chip's runs, each point in S7's words
+    # ledger, each point in S7's words
+    # S10 C5: the snapshot drawer (non-ledger arm, writer re-check) -> gone; no table is its line.
     hub_answer, hub_table = _hub_status_table(
         _param_history_hub_ctx(hm, target_path, is_loaded))
-    if hub_answer["mode"] in ("building", "preparing", "unavailable"):
+    if hub_table is None:
         return render_template("_param_history_drawer.html", row={
             "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
             row_json="{}", qubit=qubit, prop=prop, current_value=None,
             hub_wait=_vh_wait_message(hub_answer), hub_mode=hub_answer["mode"])
-    if hub_table is not None:
-        try:
-            return _hub_param_history_expand(hub_table, qubit, prop, is_loaded)
-        except _ramcache.Warming:
-            waiting = _hub_waiting(hub_table, "param_history_expand")
-            return render_template("_param_history_drawer.html", row={
-                "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
-                row_json="{}", qubit=qubit, prop=prop, current_value=None,
-                hub_wait=_vh_wait_message(waiting), hub_mode=waiting["mode"])
-        except Exception:  # noqa: BLE001 -- S10 C3: terminal, never a 500
-            failed = _hub_table_failed("param_history_expand")
-            return render_template("_param_history_drawer.html", row={
-                "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
-                row_json="{}", qubit=qubit, prop=prop, current_value=None,
-                hub_wait=_vh_wait_message(failed), hub_mode="unavailable")
-    _hub_fallback_reached("param_history_expand", hub_answer["reason"])
-    rows = hm.extract_property_history(
-        target_path, [prop],
-        qubit_filter=[qubit], downsample=None,
-    )
-    row = rows[0] if rows else {"qubit": qubit, "property": prop, "raw_pointer": None, "values": []}
-
-    # The drawer's click has always built "/dataset/<run_id>" from the bare run
-    # id, and `_split_dataset_uid` refuses a uid with no colon — so every one of
-    # those clicks has landed on the "Run N not found" panel since the day it
-    # shipped. The uid is a SERVER fact (it needs the run FOLDER, which the
-    # curated table does not store, and the live dataset-root set, which the
-    # browser cannot know), so it is computed here through the same one helper
-    # the Trends hover uses. Null uid ⇒ the point is simply not clickable.
-    #
-    # The RUN travels with the uid, and that pairing is the round-1 fix. The
-    # two facts come from different tiers: the uid is minted from the leaf
-    # change-point index (the only tier that records the run FOLDER) while the
-    # point's own ``run_id`` is the curated ``param_history`` column, and that
-    # column is legitimately NULL for a snapshot whose META names a run — the
-    # docs/132 reverse-order case, where a run's fit values were applied before
-    # the ingest saw the run, so the content landed in a save/manual snapshot
-    # that ``_enrich_run_fields`` annotated afterwards without rewriting the
-    # index rows. Gating the hover's click hint on one tier while numbering it
-    # from the other printed "open dataset #null" on 26 of 230 real points and
-    # let the same tooltip deny a run happened and offer to open it. One map,
-    # both fields, so the two lines can never name different runs.
-    points = [p for p in (row.get("values") or []) if isinstance(p, dict)]
+    # S10 C5 (C3 review P1): the archived chip's shortfall note rides the drawer too
+    extra = [] if is_loaded else _archive_ledger_notes(hm, target_path, hub_answer["ledger"])
     try:
-        prov = _snapshot_provenance_map(
-            hm, Path(target_path),
-            only={str(p.get("timestamp") or "") for p in points})
-    except Exception:  # noqa: BLE001
-        logger.debug("drawer provenance unavailable", exc_info=True)
-        prov = {}
-    for p in points:
-        _pv = prov.get(str(p.get("timestamp") or "")) or {}
-        p["uid"] = _pv.get("uid")
-        p["run"] = _pv.get("run")
-        p["node"] = _pv.get("node") or None
-    # Which run WROTE each value (2026-09-29, the Trends report's same rule):
-    # a point whose value did not change at its snapshot was not written by
-    # that snapshot's run at all, and a changed one is checked against the
-    # run folders (_WriterCheck). Neither opens a run that did not write it.
-    _vp = _HIST_VALUE_PATHS.get(prop)
-    _leaf = ".".join(("qubits", qubit) + tuple(_vp)) if _vp else None
-    try:
-        _rows = {str(r.get("ts")): r for r in hm.snapshot_provenance(Path(target_path))}
-    except Exception:  # noqa: BLE001
-        _rows = {}
-    _wc = _WriterCheck()
-    _prev_v: Any = object()
-    _prev_ts = None
-    for p in sorted(points, key=lambda q: str(q.get("timestamp") or "")):
-        ts = str(p.get("timestamp") or "")
-        v = p.get("value")
-        if p.get("run") is not None:
-            if _prev_ts is not None and v == _prev_v:
-                p["unchanged"] = True
-                p["uid"] = None
-            else:
-                ov = _wc.override(_leaf, v, ts, _prev_ts, p.get("run"),
-                                  (_rows.get(ts) or {}).get("experiment"),
-                                  (_rows.get(ts) or {}).get("folder"))
-                if ov is not None and ov.get("captured"):
-                    p["writer"] = {"captured": True}
-                    p["uid"] = None
-                elif ov is not None:
-                    p["writer"] = {"run": ov["run"], "short": ov["short"],
-                                   "node": ov["node"]}
-                    p["uid"] = ov["uid"]
-        _prev_v, _prev_ts = v, ts
-
-    current_value = None
-    if is_loaded:
-        engine = _engine()
-        if engine:
-            try:
-                current_value = engine.get_qubit(qubit).get(prop)
-            except Exception:
-                pass
-
-    return render_template(
-        "_param_history_drawer.html",
-        row=row,
-        row_json=json.dumps(row),
-        qubit=qubit,
-        prop=prop,
-        current_value=current_value,
-        hub_fallback=hub_answer.get("fallback_note"),
-    )
+        return _hub_param_history_expand(hub_table, qubit, prop, is_loaded, extra_notes=extra)
+    except _ramcache.Warming:
+        waiting = _hub_waiting(hub_table, "param_history_expand")
+        return render_template("_param_history_drawer.html", row={
+            "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
+            row_json="{}", qubit=qubit, prop=prop, current_value=None,
+            hub_wait=_vh_wait_message(waiting), hub_mode=waiting["mode"])
+    except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only
+        failed = _hub_table_failed("param_history_expand")
+        return render_template("_param_history_drawer.html", row={
+            "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
+            row_json="{}", qubit=qubit, prop=prop, current_value=None,
+            hub_wait=_vh_wait_message(failed), hub_mode="unavailable")
 
 
-def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool):
+def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
+                              extra_notes=()):
     """docs/283: one grid cell's drawer on the ledger -- the cell's recorded
     changes (``LedgerTable.curated``, the grid's own rows), each with S7's
     words; a point opens its run only when that run's own patch proves it
@@ -34864,7 +34374,7 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool):
             current_value = None  # a NaN would end the drawer's script
     return render_template("_param_history_drawer.html", row=out, row_json=json.dumps(out),
                            qubit=qubit, prop=prop, current_value=current_value,
-                           hub_notes=table.notes)
+                           hub_notes=list(table.notes) + list(extra_notes))
 
 
 @bp.route("/param-history/backfill", methods=["POST"])

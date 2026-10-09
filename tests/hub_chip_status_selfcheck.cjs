@@ -93,6 +93,11 @@ ok(lt.indexOf('Run recorded by the lab’s node: #77') >= 0, '1k the lab node\'s
 ok(lt.indexOf('Measured (the lab’s own stamp)') >= 0, '1l the lab\'s own stamp still shows');
 ok(lt.indexOf('A later undo took this write back.') >= 0 && lt.indexOf('run folder deleted') >= 0,
    '1m undone and flags are said');
+// S10 C5 (C3 review): a value that appeared at its newest change says so
+const appeared = MI.describe({ ts: stamp, provenance: 'run_proven', run: 2, label: '#2 scan',
+  sub: 'its own patch set it', matches_current: true, value: 3e-5, appeared: true }, { cur: 3e-5 });
+ok(/^First recorded: /.test(appeared.lines[0]) && /^Last changed: /.test(proven.lines[0]),
+   '1n a value that appeared at its newest change is "First recorded", any other "Last changed"');
 
 const waiting = MI.describe(null, { mode: 'building',
   message: 'The change history is being built (2 of 9 runs). It shows here when it is complete.' });

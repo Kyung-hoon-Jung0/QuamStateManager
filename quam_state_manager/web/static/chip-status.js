@@ -291,7 +291,9 @@ window.ChipStatus.metaInfo = (function () {
             lines.push('No newer change on record — the value itself may be older.');
             tag = '≤' + whenShort(ms);
         } else {
-            lines.push('Last changed: ' + when(ms) + ' (' + ageLong(ms, now) + ')');
+            // S10 C5 (C3 review): "Last changed" for every change -> "First recorded" for a
+            // value that APPEARED then (null or absent before): its first record, not a change
+            lines.push((e.appeared ? 'First recorded: ' : 'Last changed: ') + when(ms) + ' (' + ageLong(ms, now) + ')');
             lines.push((wrote ? 'Written by: ' : 'Recorded: ') + who);
             tag = whenShort(ms) + (e.run != null ? ' · #' + e.run : '');
         }
@@ -6789,7 +6791,14 @@ window.ChipTrends = (function () {
         // "metrics=" and store it, and aborting the build request for that
         // left the section empty for good. The build request is already
         // asking with the remembered selection; let it land.
-        if (!host.querySelector('.topo-trends-controls, .topo-trend-chip, .topo-trend-box')) return;
+        // S10 C5 (C3 review): a ledger wait (no controls) -> asked again with the exact
+        // selection it answers, which it carries; never a DOM-derived empty one
+        var waitQ = null;
+        if (!host.querySelector('.topo-trends-controls, .topo-trend-chip, .topo-trend-box')) {
+            var w = host.querySelector('[data-trends-updating][data-trends-query]');
+            if (!w) return;
+            waitQ = w.getAttribute('data-trends-query') || '';
+        }
         if (htmx.trigger) htmx.trigger('#topo-trends', 'htmx:abort');
         var loading = host.querySelector('.topo-trends-loading');
         if (!loading) {
@@ -6806,8 +6815,10 @@ window.ChipTrends = (function () {
             if (p.textContent.trim() === 'Pick a metric above.') p.textContent = 'loading…';
         });
         var mine = ++_reloadSeq;
-        var q = _params();
-        try { window.localStorage.setItem(_selKey(), q); } catch (e) { /* private window */ }
+        var q = waitQ !== null ? waitQ : _params();
+        if (waitQ === null) {
+            try { window.localStorage.setItem(_selKey(), q); } catch (e) { /* private window */ }
+        }
         /* RAM P2 -- a toggle is a PATCH, not a re-render. The response is the
            same fragment as before, but instead of swapping the whole section
            (which rebuilt EVERY chart: measured 5 Plotly renders, 6,823
@@ -7287,15 +7298,8 @@ window.ChipTrends = (function () {
         }
         return info.why ? _esc(info.why) : '';
     }
-    /* A point whose value no run can be shown to have written: the
-       snapshot's run only SAVED a state that already carried it. Say so --
-       never the confident "#3087 · 20 Flux short" on an IRB point. */
-    function _capturedLine(info) {
-        if (!info || !info.run) return '';
-        return 'captured with run #' + _esc(info.run)
-             + (info.short ? ' · ' + _esc(info.short) : '')
-             + '<br><i style="opacity:.7">(not the run that measured it)</i>';
-    }
+    /* S10 C5: the captured-only hover line (the snapshot writer check's "captured with
+       run #N") -> gone; a ledger point says "saved in #N, writer not proven" itself. */
     /* The writer was found among the runs BEFORE the snapshot's own run;
        name the capturer too, so the snapshot id below still makes sense. */
     function _capturerLine(info) {
@@ -7607,21 +7611,11 @@ window.ChipTrends = (function () {
                                 + _esc(since ? String(since).replace('T', ' ') : held[p[0]]), '', null];
                     }
                     var info = snaps && snaps[String(p[0])];
-                    // The run that WROTE this value, when it is not the run
-                    // whose save the snapshot copied (routes
-                    // ._trend_point_writers): the snapshot's run is the
-                    // CAPTURER, and naming it as the point's run was the
-                    // "IRB point says Flux short" report (2026-09-29).
+                    // The point's own words (docs/283: the ledger's attr per
+                    // point -- a run named as the writer only on its own patch).
+                    // S10 C5: the snapshot writer check's captured / pending arms -> gone.
                     var ov = s.attr && s.attr[String(p[0])];
                     if (ov) {
-                        if (ov.captured) {
-                            return [p[0], _capturedLine(info), '', null];
-                        }
-                        if (ov.pending) {
-                            // still being checked: name no run, open nothing
-                            return [p[0], '<i style="opacity:.7">checking which run'
-                                    + ' wrote this value…</i>', '', null];
-                        }
                         return [p[0], _provLine(ov) + _capturerLine(info),
                                 _hintLine(ov), ov.uid || null,
                                 (!ov.uid && ov.saved_uid) || null];

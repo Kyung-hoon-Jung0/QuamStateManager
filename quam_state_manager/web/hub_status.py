@@ -20,6 +20,7 @@ Two display calculations live here, and neither is a history reader:
 from __future__ import annotations
 
 from collections import OrderedDict
+import contextlib
 import json
 from pathlib import Path
 import threading
@@ -45,6 +46,26 @@ _MAX_MATRIX = 16
 
 #: the Param History Source filter's vocabulary
 SOURCES = ("save", "manual", "auto", "experiment", "restore")
+
+
+class LedgerUnreadable(Exception):
+    """S10 C5 (C3 review P2): a read of the change ledger's own rows failed (a
+    corrupt page, a schema the reader does not know). Only this ends a surface
+    ``unavailable`` / ``unreadable``; an error raised by the code that presents
+    a successful read is a real error (logged, a 500), never an unreadable
+    ledger."""
+
+
+@contextlib.contextmanager
+def ledger_read():
+    """Mark a read of the ledger's rows: whatever fails inside it is
+    :class:`LedgerUnreadable` (a wait -- ``ramcache.Warming`` -- stays a wait)."""
+    try:
+        yield
+    except (ramcache.Warming, LedgerUnreadable):
+        raise
+    except Exception as exc:  # noqa: BLE001 -- every failure inside a ledger read
+        raise LedgerUnreadable(f"{type(exc).__name__}: {exc}") from exc
 
 
 def event_key(t_us, eid):
@@ -299,7 +320,8 @@ class LedgerTable:
         self._meta = None
 
         def paths():
-            with hub_index.snapshot(binding) as (conn, index):
+            # S10 C5: the table's own read of the ledger -> LedgerUnreadable when it fails
+            with ledger_read(), hub_index.snapshot(binding) as (conn, index):
                 numeric = {pid for (pid,) in conn.execute(
                     "SELECT DISTINCT pid FROM changes WHERE num IS NOT NULL")}
                 if lineage is not None:
@@ -555,7 +577,7 @@ class LedgerTable:
 
         def compute():
             from quam_state_manager.core.hub_eras import EraTimeline, first_rename_at
-            with hub_index.snapshot(self.binding) as (conn, index):
+            with ledger_read(), hub_index.snapshot(self.binding) as (conn, index):
                 tl = EraTimeline(conn, index)
                 out = []
                 for b in tl.boundaries:
@@ -584,7 +606,7 @@ class LedgerTable:
             where = (" FROM changes c JOIN events e ON e.eid = c.eid JOIN paths p ON p.pid = c.pid"
                      " WHERE e.kind = 'run' AND e.base_hash IS NOT NULL AND (e.flags & ?) = 0"
                      " AND (p.path LIKE 'qubits.%' OR p.path LIKE 'qubit_pairs.%')")
-            with hub_index.snapshot(self.binding) as (conn, index):
+            with ledger_read(), hub_index.snapshot(self.binding) as (conn, index):
                 lane = getattr(index, "lane", None)
                 if lane is not None:
                     rows = self._lane_change_times(conn, index, lane, where, CHIP_UNCERTAIN)

@@ -62,6 +62,41 @@ const before2 = s.events.length;
 tick2.fn();
 ok(s.events.length === before2 + 2 && s.events[before2] === 'htmx:abort', 'with no newer request it re-fetches');
 
+// S10 C5 (C3 review): a ledger WAIT (no controls) answering a badge press is merged by
+// _apply; the client asks again with the selection the wait carries -- the note itself
+// never fetches its own URL (docs/208 D1), and a newer press still wins.
+{
+  const WAIT = '<div class="topo-trends" id="topo-trends"><p class="vh-wait topo-trends-updating" data-vh-mode="preparing" data-trends-updating="1" data-trends-query="metrics=T1&amp;paths=x">Preparing the change history…</p><script>if (window.ChipTrends) ChipTrends.render(null);</script></div>';
+  const sw = boot(HTML); const ww = sw.w;
+  ww.setTimeout = (fn, ms) => { sw.timers.push({fn, ms}); return sw.timers.length; };
+  ww.clearTimeout = () => {};
+  ww.htmx.ajax = (m, url, opts) => {
+    sw.events.push(url);
+    if (opts && opts.handler) opts.handler(null, {xhr: {status: 200, responseText: WAIT}});
+    return Promise.resolve();
+  };
+  ww.localStorage.clear();
+  ww.ChipTrends.reload();                    // a press answered by a wait
+  const host = ww.document.getElementById('topo-trends');
+  ok(host.querySelector('[data-trends-updating]') && !host.querySelector('[hx-get]'),
+     'the wait is merged in and fetches nothing by itself');
+  const stored = ww.localStorage.getItem('quam_trends_sel_v1');
+  const t = sw.timers.filter(x => x.ms === 3000).pop();
+  ok(t, 'a follow-up is scheduled for the wait');
+  ww.htmx.ajax = (m, url) => { sw.events.push(url); return Promise.resolve(); };
+  const b = sw.events.length;
+  t.fn();
+  ok(sw.events.length === b + 2 && sw.events[b] === 'htmx:abort'
+     && sw.events[b + 1] === '/topology/trends?metrics=T1&paths=x',
+     'it asks again with the selection the wait answers: ' + JSON.stringify(sw.events.slice(b)));
+  ok(ww.localStorage.getItem('quam_trends_sel_v1') === stored,
+     'asking again from a wait stores no selection of its own');
+  // a wait with no query of its own (an empty section) asks nothing
+  const se = boot('<div id="topo-trends"><p class="vh-wait" data-trends-updating="1">Preparing</p></div>');
+  se.w.ChipTrends.reload();
+  ok(se.events.length === 0, 'a wait without its query asks nothing: ' + JSON.stringify(se.events));
+}
+
 // docs/301 F10: the hover's value carries its unit, the way the tiles and the
 // axis title say it -- Plotly's %{y} borrowed the axis' SI exponent and read
 // "33.883" + micro sign with no unit. PlotTheme.siFormat is the text rule.

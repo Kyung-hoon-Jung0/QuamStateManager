@@ -145,20 +145,23 @@ class TestWriterOnlyOnProof:
 
     def test_a_matrix_is_proven_only_when_every_leaf_change_is(self, tmp_path):
         base = [[0.9, 0.1], [0.1, 0.9]]
-        moved = [[0.8, 0.2], [0.1, 0.9]]
+        # S10 C5: the run moved one OFF-diagonal cell -> both DIAGONAL cells. Since S8 P0-1
+        # the panel reads the diagonal only, so a patched off-diagonal cell never reached the
+        # proof and "any proven leaf proves the matrix" passed (tools/mutate_hub_chip_status)
+        moved = [[0.8, 0.2], [0.15, 0.85]]
         cm = "qubits.qA1.resonator.confusion_matrix"
         env = load(tmp_path, [
             (matrix_state(base), None),
-            # the run's patch sets ONE of the two elements it moved (the
+            # the run's patch sets ONE of the two value cells it moved (the
             # later one in path order: no "last leaf" shortcut can pass)
-            (matrix_state(moved), [patch(cm + ".0.1", 0.2, 0.1)]),
+            (matrix_state(moved), [patch(cm + ".1.1", 0.85, 0.9)]),
         ], matrix_state(moved))
         meta = env["client"].get(META).get_json()["q"]["assignment_fidelity"]["qA1"]
         assert meta["run"] is None and meta["writer"] is None and meta["sub"] == "writer not proven", \
             "one proven leaf never makes the run the writer of the whole matrix"
         s = series_of(env["client"].get("/topology/trends?metrics=assignment_fidelity"), "qA1")
         last = [p for p in s["points"] if p[0] not in (s.get("held") or {})][-1]
-        assert last[1] == pytest.approx(0.85)
+        assert last[1] == pytest.approx(0.825)
         assert s["attr"][last[0]]["provenance"] == "run_saved"
 
     def test_a_matrix_whose_every_change_is_patched_names_its_run(self, tmp_path):
@@ -392,7 +395,11 @@ class TestModes:
         assert r.status_code == 200 and "being built (2 of 9 runs)" in body
         assert "Older snapshot history" not in body
         assert '"series"' not in body and "ph-change-group" not in body and "history-cell" not in body
-        if not url.startswith("/topology/metric-meta"):
+        if url.startswith(TRENDS):
+            # S10 C5 (C3 review): the Trends wait no longer fetches its own URL (docs/208 D1);
+            # it carries its selection and the Trends client asks again with it
+            assert 'data-trends-updating="1"' in body and "hx-trigger" not in body
+        elif not url.startswith("/topology/metric-meta"):
             assert re.search(r'hx-trigger="load delay:2000ms"', body), "the surface asks again by itself"
         else:
             assert r.get_json()["updating"] and r.get_json()["mode"] == "building"
@@ -444,7 +451,8 @@ class TestModes:
             "/param-history?props=").data.decode()
 
     @pytest.mark.parametrize("url", SURFACES)
-    def test_a_chip_with_no_ledger_keeps_the_old_path_labelled(self, tmp_path, url):
+    # S10 C5: renamed from ..._keeps_the_old_path_labelled -- it asserts the opposite now
+    def test_a_chip_with_no_data_folder_reads_its_ledger_with_the_link_offer(self, tmp_path, url):
         live = tmp_path / "chip"
         write_chip(live, chip_state(), None)
         app = make_app(tmp_path, sync=False)

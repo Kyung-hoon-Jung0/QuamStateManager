@@ -26,8 +26,7 @@
     <p class="muted">No chip is open.</p>
 {% else %}
     {# docs/283: the change ledger's notes (degraded / deferred / idle / no
-       data folder), or the label of the older snapshot path #}
-    {% if hub_fallback %}<p class="vh-fallback">{{ hub_fallback }}</p>{% endif %}
+       data folder). S10 C5: the older snapshot path's label -> gone with that path. #}
     {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
     <div class="topo-trends-controls">
         <span class="muted topo-trends-label">Qubits</span>
@@ -51,12 +50,10 @@
             <div class="topo-trend-suggest" id="topo-trend-suggest" hidden></div>
         </span>
         {% if snapshots is defined %}
-        <span class="muted topo-trends-count">{{ snapshots }} {{ ('recorded event' if hub_mode == 'ledger' else 'snapshot') }}{{ '' if snapshots == 1 else 's' }}</span>
-        {# QA chipstatus-r2-15: the same count as the History (N) button; a
-           Trends refresh keeps the two in step #}
+        <span class="muted topo-trends-count">{{ snapshots }} recorded event{{ '' if snapshots == 1 else 's' }}</span>
         {# S10 C3: a ledger's Trends counts recorded EVENTS, the History (N) button
-           counts what its drawer lists (docs/301 F14) -- never written from here #}
-        {% if hub_mode != 'ledger' %}<span id="history-count" hx-swap-oob="true">{{ snapshots }}</span>{% endif %}
+           counts what its drawer lists (docs/301 F14) -- never written from here.
+           S10 C5: the snapshot arm's "snapshot" count and History (N) out-of-band write -> gone. #}
         {% endif %}
     </div>
 
@@ -98,11 +95,7 @@
        this fragment's own URL aborted the user's badge press and brought
        the old selection back). #}
     <p class="muted topo-trends-updating" data-trends-updating="1">History index updating ({{ snapshots }} snapshots)…</p>
-    {% elif writers_pending %}
-    {# value_writer: some points' writers are still being checked against the
-       run folders (a cold archive); the same re-fetch brings them in. Until
-       then those points name no run. #}
-    <p class="muted topo-trends-updating" data-trends-updating="1">Checking which run wrote each point…</p>
+    {# S10 C5: the snapshot path's pending writer-check line -> gone with that check. #}
     {% endif %}
     {% if not charts %}
     <p class="muted">Pick a metric above.</p>

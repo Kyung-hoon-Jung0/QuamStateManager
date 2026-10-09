@@ -466,48 +466,9 @@ world.push((function () {
   });
 })());
 
-// ── 7) the point names the run that WROTE it (2026-09-29) ──────────────────
-/* Customer (lab-F-env): "one IRB point says its run is a flux short distortion
-   experiment". The snapshot map names the run whose SAVE the snapshot copied;
-   the server's per-series `attr` overrides it per point. A captured-only point
-   says so and OPENS NOTHING ("wrong information is the worst"); a point whose
-   writer was found names and opens the writer, and names the capturer too. */
-world.push((function () {
-  const charts = JSON.parse(JSON.stringify(CHARTS));
-  charts[0].series[0].attr = {
-    '20260901_010100': { captured: true },
-    '20260901_010200': { run: 12, short: '12 Ramsey', uid: 'a1b2c3d4:12' },
-  };
-  const win = makeWorld({ charts: charts });
-  render(win);
-  return bound(win).then(function () {
-    const cd = host(win).data[0].customdata;
-    ok(/^captured with run #34 · 03 Res spec/.test(cd[1][1])
-       && /not the run that measured it/.test(cd[1][1]),
-       '7a a captured-only point says "captured with run #N (not the run that measured it)": '
-       + JSON.stringify(cd[1][1]));
-    ok(cd[1][2] === '' && cd[1][3] === null,
-       '7b ...offers no click hint and carries no uid');
-    ok(/^#12 · 12 Ramsey/.test(cd[2][1]) && /captured later with #99 · 06 Ramsey/.test(cd[2][1]),
-       '7c a found writer is named first, the capturer beneath it: ' + JSON.stringify(cd[2][1]));
-    ok(/click to open the dataset/.test(cd[2][2]) && cd[2][3] === 'a1b2c3d4:12',
-       '7d ...and the point carries the WRITER uid');
-    ok(cd[0][1] === 'Modified externally' && cd[0][3] === null,
-       '7e a point without an override is unchanged');
-    win._htmxCalls.length = 0;
-    fire(win, 'plotly_click', { points: [{ customdata: cd[1] }] });
-    ok(win._htmxCalls.length === 0,
-       '7f clicking a captured-only point does NOT open the run that only carried it '
-       + '(the snapshot map still holds that run uid)');
-    fire(win, 'plotly_click', { points: [{ customdata: cd[2] }] });
-    ok(win._htmxCalls.length === 1 && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:12',
-       '7g clicking a writer-found point opens the WRITER, never the capturer');
-    fire(win, 'plotly_hover', { points: [{ customdata: cd[1] }] });
-    ok(host(win).style.cursor !== 'pointer', '7h the cursor stays plain on a captured-only point');
-    fire(win, 'plotly_hover', { points: [{ customdata: cd[2] }] });
-    ok(host(win).style.cursor === 'pointer', '7i ...and says clickable on the writer');
-  });
-})());
+// S10 C5: section 7 (the snapshot writer check's per-point override: captured / found
+// writer + capturer) deleted -- its whole subject, the Trends writer re-check, is gone;
+// the ledger's own words per point are pinned in 7b.
 
 // ── 7b) docs/301 F9: an unproven ledger point opens the run that SAVED it ──
 /* A customer archive whose nodes record no patches: 24 of 25 T1 points were
@@ -548,70 +509,10 @@ world.push((function () {
   });
 })());
 
-// ── 8) the Param History drawer opens only a run that WROTE the value ─────
-/* 2026-09-29: the drawer plots every snapshot's value; its run is the run
-   whose save the snapshot copied. An unchanged value was not written there,
-   and a changed one is checked on the server (routes._WriterCheck) -- neither
-   may open, or be described as, a run that did not write it. */
-world.push((function () {
-  const dom = new JSDOM(
-    '<!DOCTYPE html><html><body><div id="param-history-drawer">'
-    + '<div id="phd-chart"></div></div><div id="table-pane"></div></body></html>',
-    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
-  const win = dom.window;
-  win._htmxCalls = [];
-  win.htmx = { ajax: function () {
-    win._htmxCalls.push(Array.prototype.slice.call(arguments)); } };
-  win.fetch = function () { return new win.Promise(function () {}); };
-  win.Plotly = {
-    newPlot: function (id, data, layout) {
-      const el = win.document.getElementById(id);
-      el.data = data; el.layout = layout; el.__renders = (el.__renders || 0) + 1;
-      el.__handlers = {};
-      el.on = function (n, fn) { (el.__handlers[n] = el.__handlers[n] || []).push(fn); };
-      return win.Promise.resolve(el);
-    },
-  };
-  win.eval(APP_JS);
-  win.requirePlotly = function () { return win.Promise.resolve(win.Plotly); };
-  const chart = win.document.getElementById('phd-chart');
-  win.paramHistoryRenderDrawerChart({
-    property: 'T1',
-    values: [
-      { timestamp: '20260901_010000', value: 2e-5, trigger: 'experiment',
-        run: 70, node: '24_all_xy', uid: null, unchanged: true },
-      { timestamp: '20260901_010100', value: 3e-5, trigger: 'experiment',
-        run: 71, node: '15b_readout_weights_optimization', uid: null,
-        writer: { captured: true } },
-      { timestamp: '20260901_010200', value: 4e-5, trigger: 'experiment',
-        run: 72, node: '24_all_xy', uid: 'a1b2c3d4:12',
-        writer: { run: 12, short: '25 T1', node: '25_T1' } },
-    ],
-  }, null);
-  return until(win, function () { return chart.__renders === 1
-                                  && (chart.__handlers.plotly_click || []).length; },
-               'drawer chart drawn (8)').then(function () {
-    const exp = chart.data.filter(function (t) { return t.name === 'Experiment'; })[0];
-    const by = function (run) { return exp.customdata.filter(function (cd) { return cd[0] === run; })[0]; };
-    const un = by(70), cap = by(71), wr = by(72);
-    ok(/^Unchanged here \(snapshot after #70/.test(un[2]) && un[3] === '' && un[4] === '',
-       '8a an unchanged value names its snapshot run only as context, no click: ' + JSON.stringify(un[2]));
-    ok(/^Captured with #71 .*not the run that measured it/.test(cap[2]) && cap[3] === '' && cap[4] === '',
-       '8b a captured-only value says so and offers no click: ' + JSON.stringify(cap[2]));
-    ok(/^Experiment: #12 25_T1/.test(wr[2]) && /captured later with #72/.test(wr[2])
-       && /open dataset #12/.test(wr[3]) && wr[4] === 'a1b2c3d4:12',
-       '8c a found writer is named, hinted and opened -- never the capturer: '
-       + JSON.stringify([wr[2], wr[3]]));
-    const fireIt = function (cd) {
-      chart.__handlers.plotly_click.forEach(function (fn) {
-        fn({ points: [{ customdata: cd }] }); }); };
-    fireIt(un); fireIt(cap);
-    ok(win._htmxCalls.length === 0, '8d clicking an unchanged or captured-only point opens nothing');
-    fireIt(wr);
-    ok(win._htmxCalls.length === 1 && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:12',
-       '8e clicking a writer-found point opens the WRITER');
-  });
-})());
+// S10 C5: section 8 (the Param History drawer's snapshot writer check: unchanged /
+// captured / found writer) deleted -- its whole subject, the drawer's _WriterCheck arm,
+// is gone; the drawer's ledger points (label / sub / proven run) are pinned in
+// tests/test_hub_chip_status.py and tests/test_trends_provenance.py.
 
 Promise.all(world).then(function () {
   if (fails === 0) console.log('all checks passed (' + checks + ' assertions)');

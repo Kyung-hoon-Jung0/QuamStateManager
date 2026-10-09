@@ -92,7 +92,8 @@ def _meta(c, metric, entity) -> str:
 
 def _grid(c) -> str:
     html = c.get("/param-history?since=all&props=T1").data.decode()
-    notes = re.findall(r'<p class="vh-(?:note|fallback|wait)[^"]*"[^>]*>(.*?)</p>', html, re.S)
+    # S10 C5: the snapshot path's label class -> not read, the grid has no snapshot arm
+    notes = re.findall(r'<p class="vh-(?:note|wait)[^"]*"[^>]*>(.*?)</p>', html, re.S)
     return " | ".join(_text(n) for n in notes) or "(the grid, no note)"
 
 
@@ -112,7 +113,8 @@ def _drawer(c, prop) -> str:
 
 def _changes(c, needle=None) -> str:
     html = c.get("/param-history/changes").data.decode()
-    notes = re.findall(r'<p class="vh-(?:note|fallback|wait)[^"]*"[^>]*>(.*?)</p>', html, re.S)
+    # S10 C5: the snapshot feed's label class -> not read, Changes has no snapshot arm
+    notes = re.findall(r'<p class="vh-(?:note|wait)[^"]*"[^>]*>(.*?)</p>', html, re.S)
     groups = html.split('<div class="ph-change-group">')[1:]
     pick = next((g for g in groups if needle and needle in g), groups[0] if groups else "")
     head = re.search(r'<div class="ph-change-head">(.*?)</div>', pick, re.S)
@@ -138,7 +140,8 @@ def scenarios(scratch: Path) -> list[dict]:
     try:
         c = e["client"]
         def wait(url):
-            m = re.search(r'<p class="vh-wait"[^>]*>(.*?)</p>', c.get(url).data.decode(), re.S)
+            # S10 C5: the Trends wait carries a second class (the client re-asks it)
+            m = re.search(r'<p class="vh-wait[^"]*"[^>]*>(.*?)</p>', c.get(url).data.decode(), re.S)
             return (_text(m.group(1)) + " (asks again by itself; no rows)") if m else "(no wait line)"
         case("a building ledger", "hub_sync.status = building 2/9", e, wait("/topology/trends?metrics=T1"),
              _meta(c, "T1", "qA1"), wait("/param-history?since=all"), wait("/param-history/changes"))

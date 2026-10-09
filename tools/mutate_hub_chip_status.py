@@ -47,13 +47,18 @@ MUTATIONS = [
      'values.append({"timestamp": key, "value": None if p["removed"] else p["value"],',
      'values.append({"timestamp": key, "value": 0,',
      [R + "test_trends_the_grid_and_the_meta_read_through_the_value_history"]),
+    # S10 C5: grid_reads_the_old_index re-pointed -- the snapshot grid it switched to is gone;
+    # the grid now reads nothing from the ledger instead
     ("grid_reads_the_old_index", RT,
-     '        elif hub_table is not None:\n            rows = _hub_grid_rows(',
-     '        elif False:\n            rows = _hub_grid_rows(',
+     '            rows = _hub_grid_rows(hub_table, props, qubit_filter, since, until, triggers)',
+     '            rows = []',
      [R + "test_trends_the_grid_and_the_meta_read_through_the_value_history"]),
+    # S10 C5: re-pointed to the loop's current indentation (stale since docs/298)
     ("alias_drawn_from_todays_holder", HS,
-     '            for p in ans["rows"][dp]["effective"]:\n                key, info = self.point(p)\n                rows.append(',
-     '            for p in ans["rows"][dp]["points"]:\n                key, info = self.point(p)\n                rows.append(',
+     '                for p in ans["rows"][dp]["effective"]:\n                    key, info = self.point(p)\n'
+     '                    rows.append(',
+     '                for p in ans["rows"][dp]["points"]:\n                    key, info = self.point(p)\n'
+     '                    rows.append(',
      [R + "test_an_alias_is_drawn_from_the_holder_it_named_then"]),
     ("text_families_offered", HS,
      '((p, self.counts[p]) for p in self.paths if p in self.numeric)',
@@ -76,6 +81,7 @@ MUTATIONS = [
      '    return bool(points) and all(p["provenance"] == "run_proven" for p in points)',
      '    return bool(points) and any(p["provenance"] == "run_proven" for p in points)',
      [W + "test_a_matrix_is_proven_only_when_every_leaf_change_is"]),
+    # S10 C5: the pin's fixture moved to the diagonal (the panel's own leaves): see the test
     ("a_proven_leaf_speaks_for_the_matrix", HS,
      '        if p["provenance"] != "run_proven":\n            return p',
      '        if False:\n            return p',
@@ -91,9 +97,10 @@ MUTATIONS = [
      '                         "who": info["sub"] if ev.get("kind") == "run" else "",',
      '                         "who": "its own patch set it" if ev.get("kind") == "run" else "",',
      [W + "test_changes_name_the_writer_per_row"]),
+    # S10 C5: re-pointed to the call's current form (it gained held=)
     ("change_rows_proven_by_the_event", RT,
-     '            pt = vh._point(ev, c["old"], c["new"], c["op"], c["proven"], roots, sm)',
-     '            pt = vh._point(ev, c["old"], c["new"], c["op"], True, roots, sm)',
+     '            pt = vh._point(ev, c["old"], c["new"], c["op"], c["proven"], roots, sm,\n',
+     '            pt = vh._point(ev, c["old"], c["new"], c["op"], True, roots, sm,\n',
      [W + "test_changes_name_the_writer_per_row"]),
     ("drawer_names_any_run", RT,
      '                       "run": pt.get("run_id") if proven else None,',
@@ -106,10 +113,11 @@ MUTATIONS = [
     # -- SM writes and undo
     ("sm_actor_dropped", RT, '        return a[len("human:"):] or "a person"', '        return "a person"',
      [S + "test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"]),
+    # S10 C5: re-pointed to the comprehension's current indentation
     ("in_force_points_never_undone", VH,
-     '                              for p in points(eff[key])]',
-     '                              for p in [_point(ev, old, new, op, proven, roots, sm)\n'
-     '                                        for ev, old, new, op, proven in eff[key]]]',
+     '                          for p in points(eff[key])],',
+     '                          for p in [_point(ev, old, new, op, proven, roots, sm)\n'
+     '                                    for ev, old, new, op, proven in eff[key]]],',
      [S + "test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"]),
     ("partly_undone_marks_every_row", VH,
      '    if flags & UNDONE:\n        return ALL_PATHS',
@@ -157,26 +165,31 @@ MUTATIONS = [
      '                                    event_id=int(at) if at else None, changed_only=True,',
      '                                    event_id=None, changed_only=True,',
      [C + "test_one_event_opens_whole_and_pages_never_skip_one"]),
+    # S10 C5: re-pointed to the page data dict (docs/298 split it from the render)
     ("older_page_never_offered", RT,
-     '        has_more=(not at) and result["cursor"] is not None, oldest_ts=result["cursor"],',
-     '        has_more=False, oldest_ts=result["cursor"],',
+     '            "has_more": (not at) and result["cursor"] is not None, "oldest_ts": result["cursor"],',
+     '            "has_more": False, "oldest_ts": result["cursor"],',
      [C + "test_one_event_opens_whole_and_pages_never_skip_one"]),
     ("changes_numbers_only", RT,
      '        changes = [c for c in ev["changes"] if not low or c["path"].lower().startswith(low)]',
      '        changes = [c for c in ev["changes"] if (not low or c["path"].lower().startswith(low))\n'
      '                   and isinstance(c["new"], (int, float)) and not isinstance(c["new"], bool)]',
      [C + "test_text_booleans_and_removals_are_changes_too"]),
+    # S10 C5: re-pointed to the page data's {"bad": ...} form
     ("invalid_reference_answers_200", RT,
-     '    bad = ("This history page reference is invalid; open Changes again.", 400)',
-     '    bad = ("This history page reference is invalid; open Changes again.", 200)',
+     '    bad = {"bad": ("This history page reference is invalid; open Changes again.", 400)}',
+     '    bad = {"bad": ("This history page reference is invalid; open Changes again.", 200)}',
      [C + "test_an_invalid_page_reference_is_a_readable_refusal"]),
+    # S10 C5: re-pointed -- the route lost its snapshot arm and one indentation level
     ("typeahead_reads_the_old_index", RT,
-     '                return jsonify(ok=True, results=table.path_rank().search(q, limit=30))',
-     '                raise _ramcache.Warming("x", "y", 0)',
+     '        return jsonify(ok=True, results=table.path_rank().search(q, limit=30))',
+     '        raise _ramcache.Warming("x", "y", 0)',
      [C + "test_the_typeahead_offers_the_ledgers_paths"]),
+    # S10 C5: re-pointed -- since docs/298 only the htmx fragment is kept; the defect is
+    # the full page served from that kept fragment
     ("page_cache_ignores_the_swap", RT,
-     '                body, status = table.part(("changes_page", request.query_string, _is_htmx()),',
-     '                body, status = table.part(("changes_page", request.query_string),',
+     '        if _is_htmx():\n            body, status = table.part(("changes_page", request.query_string, True),',
+     '        if True:\n            body, status = table.part(("changes_page", request.query_string, True),',
      [C + "test_a_full_page_after_a_swap_is_still_a_full_page"]),
     # -- modes
     ("building_words_lost", RT,
@@ -197,19 +210,23 @@ MUTATIONS = [
      [M + "test_a_busy_read_after_the_mode_check_is_never_an_empty_answer"]),
     ("idle_words_lost", VH, 'The ledger is not being kept current in this window', 'The ledger is current',
      [M + "test_idle_is_said", M + "test_an_empty_grid_still_says_idle"]),
+    # S10 C5: re-pointed to the shared notes partial (S10 C2)
     ("grid_notes_dropped", GRID,
-     '  {% for note in hub_notes or [] %}<p class="vh-note vh-note-{{ note.level }}"',
-     '  {% for note in [] %}<p class="vh-note vh-note-{{ note.level }}"',
+     "  {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}",
+     "  {% with notes=[] %}{% include '_hub_notes.html' %}{% endwith %}",
      [M + "test_idle_is_said", M + "test_an_empty_grid_still_says_idle"]),
+    # S10 C5: the renamed no-folder pin's own mutation (its fallback-label one was retired)
+    ("no_folder_offer_dropped", VH,
+     '          and not ledger.get("has_runs") and origin == "live"):',
+     '          and not ledger.get("has_runs") and origin == "never"):',
+     [M + "test_a_chip_with_no_data_folder_reads_its_ledger_with_the_link_offer"]),
     ("degraded_words_lost", VH, '"text": "This history may be missing changes: "',
      '"text": "This history is complete: "',
      [M + "test_degraded_says_changes_may_be_missing"]),
     # S10 C3: "fallback_label_lost" retired -- the snapshot fallback's label is gone; the
     # unavailable line that replaces it is pinned by tools/mutate_hub_mode_switch.py
-    ("trends_fallback_label_dropped", RT,
-     '                           hub_fallback=None if ledger else fallback_note,',
-     '                           hub_fallback=None,',
-     [M + "test_a_chip_with_no_ledger_keeps_the_old_path_labelled"]),
+    # S10 C5: "trends_fallback_label_dropped" retired -- the Trends snapshot arm and its label
+    # are deleted; the no-folder note that replaced it is "grid_notes_dropped" above
     # -- faults
     ("nan_drawn_as_a_number", RT,
      '    f = float(v)\n    return f if f == f and f not in (float("inf"), float("-inf")) else None\n\n\ndef _vh_points_view',

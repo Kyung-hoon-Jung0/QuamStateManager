@@ -3,8 +3,9 @@
 Item 4: every per-metric panel says when each value was last measured, which
 run wrote it and which snapshot -- on hover, and in the panel with a per-panel
 "Show Meta Info" toggle. The data is ``GET /topology/metric-meta``: the newest
-change point of the leaves each panel reads, from the docs/83 change-point
-index. Item 10: Overview tiles jump to their panel (pinned in the selfcheck).
+recorded change of the leaves each panel reads, from the chip's change ledger
+(docs/283; S10 C5: the docs/83 change-point index path is gone). Item 10:
+Overview tiles jump to their panel (pinned in the selfcheck).
 
 The staleness pin is the one that matters: after ANY sequence of snapshots the
 route's answer equals an independent recompute from the raw snapshot contents
@@ -79,150 +80,10 @@ class TestPaths:
         assert loads["2q:InterleavedRB:cz_SNZ"]["q1-2"] == 529   # gate-level fallback
 
 
-class TestFold:
-    O = "20260101_000000"
-
-    def test_newest_change_first_and_value(self):
-        s = {"a": [("20260101_000000", 1.0, "manual", None, "", "")],
-             "b": [("20260101_000000", 1.0, "manual", None, "", ""),
-                   ("20260102_000000", 2.0, "experiment", 31, "06_ramsey", "f")]}
-        e = mm.newest_change(s, ["a"], oldest=self.O)
-        assert e["first"] is True and e["value"] == 1.0 and e["run"] is None
-        assert "appeared" not in e
-        e = mm.newest_change(s, ["b"], oldest=self.O)
-        assert e == {"ts": "20260102_000000", "run": 31, "trigger": "experiment",
-                     "first": False, "leaves": 1, "value": 2.0}
-        e = mm.newest_change(s, ["a", "b"], oldest=self.O)
-        assert e["ts"] == "20260102_000000" and e["first"] is False and "value" not in e
-        assert mm.newest_change(s, ["zzz"], oldest=self.O) is None
-        gone = {"c": [("20260101_000000", 1.0, "m", None, "", ""),
-                      ("20260103_000000", None, "m", None, "", "")]}
-        assert mm.newest_change(gone, ["c"], oldest=self.O).get("gone") is True
-        # the oldest snapshot unknown: nothing is called "since history began"
-        assert mm.newest_change(s, ["a"])["first"] is False
-
-    def test_a_value_that_appears_later_is_its_first_write_not_history_began(self):
-        """Verifier P1 (2026-09-26): the index records no row for a null or
-        absent leaf, so a leaf null in snapshot 1 and a number from snapshot 2
-        on has ONE row -- at its write. That is not "unchanged since history
-        began"; it appeared then."""
-        s = {"t1": [("20260102_000000", 2e-5, "experiment", 142, "11_rabi", "f")],
-             "cm0": [("20260101_000000", 0.9, "m", None, "", "")],
-             "cm1": [("20260105_000000", 0.8, "auto", None, "", "")]}
-        e = mm.newest_change(s, ["t1"], oldest=self.O)
-        assert e["first"] is False and e["appeared"] is True and e["ts"] == "20260102_000000"
-        assert e["run"] == 142
-        # a subtree with one cell there from the start and one appearing later
-        e = mm.newest_change(s, ["cm0", "cm1"], oldest=self.O)
-        assert e["first"] is False and e["appeared"] is True and e["ts"] == "20260105_000000"
-
-    def test_matches_current_covers_every_leaf_of_a_subtree(self):
-        """Verifier P1: a readout fidelity from a confusion matrix has no one
-        value, so only a per-leaf comparison says the matrix on screen is not
-        one history ever held."""
-        s = {f"m.{i}": [(self.O, v, "m", None, "", "")] for i, v in enumerate((0.754, 0.246))}
-        same = {"m.0": 0.754, "m.1": 0.246}
-        assert mm.newest_change(s, ["m.0", "m.1"], oldest=self.O, current=same)["matches_current"] is True
-        assert mm.newest_change(s, ["m.0", "m.1"], oldest=self.O,
-                                current={"m.0": 0.968, "m.1": 0.246})["matches_current"] is False
-        # float noise is not an edit; a leaf history never held is
-        assert mm.newest_change(s, ["m.0"], oldest=self.O,
-                                current={"m.0": 0.754 * (1 + 1e-13)})["matches_current"] is True
-        assert mm.newest_change(s, ["m.0", "m.9"], oldest=self.O,
-                                current={"m.0": 0.754, "m.9": 0.5})["matches_current"] is False
-        assert "matches_current" not in mm.newest_change(s, ["m.0"], oldest=self.O)
-
-    def test_a_near_miss_value_is_not_history(self):
-        """Verifier D4a (2026-09-27): a 1 % tolerance passed every pin. A
-        relative difference of 1e-4 (a 5 GHz frequency moved by 500 kHz, a
-        fidelity's 4th digit) is a different value, never "matches history";
-        1e-12 is float noise."""
-        s = {"f": [(self.O, 5.0e9, "m", None, "", "")],
-             "r": [(self.O, 0.9912, "m", None, "", "")]}
-        for dp, v in (("f", 5.0e9), ("r", 0.9912)):
-            for rel in (1e-4, -1e-4, 1e-6, 5e-3):
-                e = mm.newest_change(s, [dp], oldest=self.O, current={dp: v * (1 + rel)})
-                assert e["matches_current"] is False, (dp, rel)
-            e = mm.newest_change(s, [dp], oldest=self.O, current={dp: v * (1 + 1e-12)})
-            assert e["matches_current"] is True, dp
-
-    def test_appeared_only_when_the_lone_row_is_the_newest_change(self):
-        """Verifier D4b: a subtree whose leaf A appeared late (one row) but
-        whose leaf B changed AFTER that: the newest change is B's second row,
-        a change of a value that already existed -- not an appearance."""
-        s = {"a": [("20260103_000000", 0.1, "m", None, "", "")],
-             "b": [(self.O, 0.9, "m", None, "", ""),
-                   ("20260105_000000", 0.8, "experiment", 9, "x", "f")]}
-        e = mm.newest_change(s, ["a", "b"], oldest=self.O)
-        assert e["ts"] == "20260105_000000" and e["first"] is False
-        assert "appeared" not in e, e
-        # ...and the same subtree with A's lone row the newest does appear
-        s["a"] = [("20260106_000000", 0.1, "m", None, "", "")]
-        assert mm.newest_change(s, ["a", "b"], oldest=self.O).get("appeared") is True
-
-
-class TestTruncated:
-    """Verifier D2 (2026-09-27): on a chip larger than the change-point index
-    covers (``leaf_meta truncated=1``), a leaf's lone row later than the
-    oldest snapshot may be a cap artifact and a leaf with no row may simply
-    never have been walked. Neither is a fact to date a value from."""
-    O, T2, T3 = "20260101_000000", "20260102_000000", "20260103_000000"
-
-    def test_missing_or_unverified_leaves_are_incomplete_not_dated(self):
-        s = {"a": [(self.T2, 1.0, "experiment", 5, "x", "f")],
-             "b": [(self.O, 2.0, "m", None, "", ""), (self.T3, 3.0, "m", None, "", "")]}
-        assert mm.newest_change(s, ["zzz"], oldest=self.O, truncated=True) ==             {"incomplete": True, "leaves": 0}
-        assert mm.newest_change(s, ["a"], oldest=self.O, truncated=True)["incomplete"] is True
-        assert mm.newest_change(s, ["a", "b"], oldest=self.O, truncated=True)["incomplete"] is True
-        # a multi-row leaf is dated as before; a confirmed lone row too
-        assert mm.newest_change(s, ["b"], oldest=self.O, truncated=True)["ts"] == self.T3
-        e = mm.newest_change(s, ["a"], oldest=self.O, truncated=True, confirmed={"a"})
-        assert e["ts"] == self.T2 and e.get("appeared") is True
-        # the same inputs on a complete index are dated (no regression)
-        assert mm.newest_change(s, ["a"], oldest=self.O)["ts"] == self.T2
-
-    def test_the_snapshot_before_a_lone_row_decides_what_it_was(self):
-        s = {"same_at_oldest": [(self.T2, 1.0, "m", None, "", "")],
-             "absent_before": [(self.T2, 2.0, "experiment", 7, "x", "f")],
-             "changed": [(self.T2, 3.0, "experiment", 7, "x", "f")],
-             "same_later": [(self.T3, 4.0, "m", None, "", "")],
-             "multi": [(self.O, 5.0, "experiment", 1000, "boot", "f0"), (self.T3, 6.0, "m", None, "", "")]}
-        files = {self.O: {"same_at_oldest": 1.0, "changed": 2.5},
-                 self.T2: {"same_later": 4.0}}
-        reads = []
-
-        def load(ts, paths):
-            reads.append((ts, sorted(paths)))
-            return {p: files[ts].get(p) for p in paths}
-
-        out, conf = mm.verify_truncated(s, oldest=self.O, ts_list=[self.O, self.T2, self.T3],
-                                        load_values=load)
-        assert conf == {"same_at_oldest", "absent_before", "changed"}
-        e = mm.newest_change(out, ["same_at_oldest"], oldest=self.O, truncated=True, confirmed=conf)
-        assert e["first"] is True and e["ts"] == self.O
-        # the oldest snapshot's own provenance rides along (read off another
-        # leaf's row at it), never an invented "no run"
-        assert e["run"] == 1000 and e["trigger"] == "experiment"
-        e = mm.newest_change(out, ["absent_before"], oldest=self.O, truncated=True, confirmed=conf)
-        assert e["ts"] == self.T2 and e["appeared"] is True and e["run"] == 7
-        e = mm.newest_change(out, ["changed"], oldest=self.O, truncated=True, confirmed=conf)
-        assert e["ts"] == self.T2 and "appeared" not in e and e["first"] is False
-        assert mm.newest_change(out, ["same_later"], oldest=self.O, truncated=True,
-                                confirmed=conf)["incomplete"] is True
-        assert out["multi"] is s["multi"]           # never re-read
-        # bounded: one read per predecessor snapshot, the budget honoured
-        assert len(reads) == 2
-        reads.clear()
-        out1, conf1 = mm.verify_truncated(s, oldest=self.O, ts_list=[self.O, self.T2, self.T3],
-                                          load_values=load, max_snaps=1)
-        assert len(reads) == 1 and reads[0][0] == self.O       # the busiest first
-        assert "same_later" not in conf1
-        # an unreadable snapshot leaves its leaves unconfirmed
-        def boom(ts, paths):
-            raise OSError("gone")
-        _o, c2 = mm.verify_truncated(s, oldest=self.O, ts_list=[self.O, self.T2, self.T3],
-                                     load_values=boom)
-        assert c2 == set()
+# S10 C5: TestFold and TestTruncated deleted -- their whole subject was metric_meta's
+# snapshot-index fold (the newest-change fold and the truncated-index check), deleted
+# with the snapshot metric meta; the route below answers from the ledger, and its
+# random-sequence and truncated-index pins keep the raw-state oracle.
 
 
 # ── the route, against real snapshots ───────────────────────────────────────
@@ -381,6 +242,17 @@ def _oracle(states: list[tuple[str, dict]], dot: str):
     return states[last_i][0], last_i == 0
 
 
+def _appeared(states: list[tuple[str, dict]], dots: list[str], newest_ts: str) -> bool:
+    """Did the newest change make some leaf a value for the FIRST time -- null
+    or absent in every earlier state, a value at *newest_ts* (from the raw
+    states, never the ledger)?"""
+    at = [ts for ts, _st in states].index(newest_ts)
+    if at == 0:
+        return False
+    return any(_get(states[at][1], dt) is not None
+               and all(_get(st, dt) is None for _ts, st in states[:at]) for dt in dots)
+
+
 def test_a_value_null_in_the_first_snapshot_is_never_since_history_began(env):
     """Verifier P1 repro, pinned: q1.T2echo is None in snapshot 1 and a number
     from snapshot 2 on. Its one index row is the write -- the route must say
@@ -397,6 +269,10 @@ def test_a_value_null_in_the_first_snapshot_is_never_since_history_began(env):
     assert e["ts"] == _instant(t2) and e["eid"] == env["event_ids"][t2] and e["first"] is False, e
     assert e["provenance"] == "run_proven" and e["value"] == 3.3e-5
     assert e["run"] == 142 and e["matches_current"] is True
+    # S10 C5 (C3 review): the dropped "appeared" pin restored on the ledger: the write is
+    # the value's first record, so the hover says "First recorded", not "Last changed"
+    assert e.get("appeared") is True, e
+    assert d["q"]["f_01"]["q1"].get("appeared") is False
     # f_01 WAS there from the oldest snapshot and never moved
     assert d["q"]["f_01"]["q1"]["provenance"] == "observed"
     assert d["q"]["f_01"]["q1"]["first"] is True
@@ -480,7 +356,11 @@ def test_a_random_event_sequence_never_serves_a_stale_answer(env):
                 assert got["ts"] == d["oldest"] == _instant(states[0][0]), (step, dots, got, d["oldest"])
                 assert got["provenance"] == "observed"
                 firsts += 1
-            appeared += any(not x[1] for x in exps)
+            # S10 C5 (C3 review): "appeared" counted from the oracle -> the route's own flag,
+            # equal to the raw-state oracle at every step
+            want = _appeared(states, dots, newest_ts)
+            assert bool(got.get("appeared")) is want, (step, dots, got, want)
+            appeared += want
         e = d["q"]["T1"]["q1"]
         assert e["run"] is None or e["writer"]["run"] == e["run"]
     # the sequence exercised both labels (a vacuous pass would see neither)

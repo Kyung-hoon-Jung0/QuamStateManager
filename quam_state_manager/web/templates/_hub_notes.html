@@ -5,5 +5,11 @@
 <button type="button" class="outline btn-sm" hx-get="/hub/link-folder"
         hx-target="#hub-folder-body" hx-swap="innerHTML" onclick="HubFolders.open(this)">Link a data folder...</button>
 {% endif %}
+{% if note.open_chip_path %}
+{# S10 C5 (C3 review P1): opening an archived chip builds its ledger #}
+<form method="post" action="/load" class="hub-open-chip">
+  <button type="submit" class="btn-sm" name="folder" value="{{ note.open_chip_path }}">Open this chip</button>
+</form>
+{% endif %}
 {% endfor %}
 </div>

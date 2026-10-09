@@ -18,6 +18,14 @@
     <button type="submit" class="btn-sm" name="folder" value="{{ open_chip_path }}">Open this chip</button>
   </form>
   {% endif %}
+  {% elif surface == 'trends' %}
+  {# S10 C5 (C3 review): a Trends note fetching its own URL -> the Trends client asks again
+     with the selection this wait answers (data-trends-query), and only when nothing newer
+     was asked meanwhile (docs/208 D1: a self-fetching note aborted a badge press and
+     brought the old selection back; a wait merged by a badge press was never re-asked) #}
+  <p class="vh-wait topo-trends-updating" data-vh-mode="{{ ans.mode }}" data-trends-updating="1"
+     data-trends-query="{{ qs }}">{{ message }}</p>
+  <script>if (window.ChipTrends) ChipTrends.render(null);</script>
   {% else %}
   <p class="vh-wait" data-vh-mode="{{ ans.mode }}"
      hx-get="{{ again }}{% if qs %}?{{ qs }}{% endif %}"

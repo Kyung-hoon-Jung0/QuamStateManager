@@ -185,6 +185,13 @@ class TestTheMapShape:
             "never more entries than distinct ids the page draws"
         assert len(snaps) <= len(env["hm"].list_snapshots(env["live"])), \
             "and never more than the chip has snapshots"
+        # S10 C5 (C3 review): the empty snapshot map alone -> the bound where the words ride
+        # now: each series' attr holds only the points that series draws (500 undrawn
+        # entries per series passed the map-only pin)
+        for c in charts:
+            for s in c["series"]:
+                assert set(s.get("attr") or {}) <= {str(p[0]) for p in s["points"]}, \
+                    "a series ships words only for the points it draws"
 
     def test_a_snapshot_the_page_never_draws_is_not_shipped(self, env):
         """The charts are CHANGE POINTS, so a chip holds far more snapshots
@@ -204,6 +211,12 @@ class TestTheMapShape:
         assert _snaps(body) == {}
         assert set(_snaps(body)) <= charted, \
             "the map must not carry a snapshot nothing on the page can read"
+        # S10 C5 (C3 review): ...and no series' attr carries a point it does not draw
+        series = [s for c in _charts(body) for s in c["series"]]
+        assert series and all(s.get("attr") for s in series), "the pin needs drawn words"
+        for s in series:
+            assert set(s["attr"]) <= {str(p[0]) for p in s["points"]}, \
+                "a point nothing on the page draws must not travel"
 
     def test_a_typed_path_that_charts_nothing_ships_no_map(self, env):
         """The worst unfiltered case: zero points, whole vocabulary anyway."""

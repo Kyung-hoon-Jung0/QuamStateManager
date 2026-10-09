@@ -138,7 +138,7 @@ def test_changes_by_snapshot_matches_the_group_by_it_replaced(env):
         conn.close()
 
 
-# ── /param-history/changes: memo never differs from a cold compute ──────────
+# ── /param-history/changes: the page fragment the tests below read ──────────
 
 def _feed(env, qs=""):
     r = env["client"].get("/param-history/changes" + qs, headers={"HX-Request": "true"})
@@ -146,44 +146,10 @@ def _feed(env, qs=""):
     return r.get_data(as_text=True)
 
 
-def _cold_feed(env, qs=""):
-    R._PH_CHANGES_MEMO.clear()
-    return _feed(env, qs)
-
-
-def test_changes_memo_equals_cold_over_random_events(env):
-    rng = random.Random(20260926)
-    base = _state()
-    _snap(env, base)
-    hm, live = env["hm"], env["live"]
-    hits_seen = 0
-    for step in range(40):
-        ev = rng.randrange(4)
-        if ev == 0:                                     # a capture
-            base = _state(rng, base)
-            _snap(env, base)
-        elif ev == 1:                                   # a foreign commit (2nd process)
-            hm._ensure_leaf_index_fresh(live)
-            idx = hm._history_dir(live) / "index.sqlite"
-            with sqlite3.connect(str(idx)) as c2:
-                c2.execute("UPDATE leaf_cp SET value = value + 1 WHERE snap_id = "
-                           "(SELECT MAX(snap_id) FROM leaf_cp)")
-        qs = rng.choice(["", "?prefix=qubits.q1", "?prefix=qubit_pairs"])
-        n0 = R._PH_CHANGES_MEMO.computes
-        warm = _feed(env, qs)
-        if R._PH_CHANGES_MEMO.computes == n0:
-            hits_seen += 1
-        assert warm == _cold_feed(env, qs), (step, ev, qs)
-    assert hits_seen >= 5, "the memo never served a hit -- the pin proves nothing"
-
-
-def test_changes_repeat_is_served_from_the_memo(env):
-    _snap(env, _state())
-    _snap(env, _state(random.Random(1), _state()))
-    _feed(env)
-    n = R._PH_CHANGES_MEMO.computes
-    _feed(env)
-    assert R._PH_CHANGES_MEMO.computes == n
+# S10 C5: the Changes feed's own memo pins (memo equals cold over random events; a
+# repeat served from the memo) deleted -- their whole subject was the snapshot feed's
+# page memo, deleted with that feed; the ledger feed's kept answer equals a scratch
+# one in tests/test_hub_incremental.py (TestSurfacesAfterAnEdit).
 
 
 def test_hist_token_moves_on_a_foreign_commit(env):
@@ -722,7 +688,7 @@ def _param_search(env, q):
     return r.get_json()["results"]
 
 
-def test_param_search_memo_equals_cold_over_random_events(env):
+def test_param_search_memo_equals_cold_over_random_events(env, monkeypatch):
     """Captures and foreign commits (a second process adding a path and a
     change point) interleaved with typeahead reads: the memo's answer always
     equals the manager's own SQL on the index as it is NOW."""
@@ -733,7 +699,21 @@ def test_param_search_memo_equals_cold_over_random_events(env):
     # S10 C3: snapshot SQL oracle -> cold ledger oracle, retaining foreign commits and cache hits.
     from quam_state_manager.web import hub_status
     from tests.test_hub_incremental import from_scratch
-    memo = hub_status._CACHE
+    # S10 C5 (C3 review): any hit of the shared memo -> a hit of the RANK's own key: the
+    # paths key alone kept this pin green with the rank built afresh on every keystroke
+    real_get = hub_status._CACHE.get
+    rank = {"asks": 0, "computes": 0}
+
+    def get(key, token, compute, *a, **k):
+        if isinstance(key, tuple) and len(key) == 2 and key[1] == "rank":
+            rank["asks"] += 1
+
+            def counted(*ca, **ck):
+                rank["computes"] += 1
+                return compute(*ca, **ck)
+            return real_get(key, token, counted, *a, **k)
+        return real_get(key, token, compute, *a, **k)
+    monkeypatch.setattr(hub_status._CACHE, "get", get)
     hits_seen = 0
     for step in range(40):
         ev = rng.randrange(4)
@@ -750,27 +730,18 @@ def test_param_search_memo_equals_cold_over_random_events(env):
                 # a writer that adds a row to an event re-diffs it: its row count moves too
                 c2.execute("UPDATE events SET n_changes = n_changes + 1 WHERE eid = ?", (eid,))
         q = rng.choice(["q1", "T1", "amplitude", "foreign", "q1 | q2", "zzz", "Q1"])
-        n0 = memo.hits
+        asks0, computes0 = rank["asks"], rank["computes"]
         warm = _param_search(env, q)
-        if memo.hits > n0:
+        if rank["asks"] > asks0 and rank["computes"] == computes0:
             hits_seen += 1
         with from_scratch():
             assert warm == _param_search(env, q), (step, ev, q)
     assert hits_seen >= 5, "the memo never served a hit -- the pin proves nothing"
 
 
-def test_changes_page_warms_the_typeahead_rank(env):
-    _snap(env, _state())
-    memo = PHR._path_rank_memo()
-    memo.clear()
-    _feed(env)
-    for _ in range(200):                      # the warm runs on a daemon thread
-        if memo.slots():
-            break
-        time.sleep(0.01)
-    n = memo.computes
-    _param_search(env, "q1")
-    assert memo.computes == n, "the first keystroke rebuilt the rank"
+# S10 C5: test_changes_page_warms_the_typeahead_rank deleted -- its whole subject was
+# the snapshot feed warming the snapshot index's path rank, gone with that feed; the
+# Changes typeahead reads the ledger's rank (test_param_search_memo_equals_cold above).
 
 
 # ── distinct counts by index skip-scan ──────────────────────────────────────
