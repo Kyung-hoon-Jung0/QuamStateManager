@@ -235,12 +235,20 @@ class TestParamHistoryDeferredAlignment:
         from quam_state_manager.web.app import create_app
         monkeypatch.setenv("SM_DISABLE_ENV_WARMUP", "1")
         qs = _mk_run(tmp_path / "data", "2026-03-01", 1)
-        app = create_app()
+        # S10 C3: a ledger-less archive's snapshot grid -> its ledger grid: a run's saved state
+        # opened read-only with no change ledger now ends unavailable (no_ledger), so the page
+        # these pins read needs the ledger its history folder holds (an own instance, so the
+        # ledger made here never reaches another test)
+        app = create_app(instance_path=str(tmp_path / "_inst"))
         app.config["TESTING"] = True
         c = app.test_client()
         r = c.post("/load", data={"folder": str(qs)},
                    headers={"Origin": "http://localhost"})
         assert r.status_code in (200, 302)
+        from quam_state_manager.core.hub_store import HubStore
+        from quam_state_manager.web import routes as routes_mod
+        with app.app_context():
+            HubStore(routes_mod._hub_chip_dir(routes_mod._active_ctx()["path"])).close()
         return c
 
     def test_get_never_runs_the_alignment_scan(self, client, monkeypatch):

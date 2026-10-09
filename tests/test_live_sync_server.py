@@ -140,6 +140,10 @@ class TestAliasColumnHistory:
         data_root = env["tmp"] / "data"
         _seed_run(data_root, 31, _state(amp=0.2838))
         c.post("/workspace/add", data={"folder": str(data_root)})
+        # S10 C3: a workspace folder's runs scanned by identity -> runs of a folder linked to the
+        # chip (the ledger never adopts runs by identity alone), read through the same alias
+        from tests.ledger_fixture import declare_root
+        declare_root(c, data_root)
 
         r = c.post("/bulk/column-history", data={
             "grid": "qubit", "label": "x180 amp", "unit": "", "col_key": "x180_amp",
