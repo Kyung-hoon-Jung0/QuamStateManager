@@ -130,7 +130,7 @@ def test_a_listing_says_another_chips_run_is_not_listed(tmp_path):
     c = _open(tmp_path, [(31, 7.1e9, "alpha", "010000"), (32, 7.2e9, "beta", "020000")])
     for url in LISTINGS:
         n = notes(get(c, url))
-        assert n["other_chip"] == "1 run whose saved chip identity does not match this chip's is not listed.", \
+        assert n["other_chip"] == "1 run whose saved chip identity does not match this chip's is not listed: #32 in data.", \
             (url, n)
 
 

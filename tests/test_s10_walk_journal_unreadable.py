@@ -17,7 +17,8 @@ import pytest
 from quam_state_manager.core import hub, hub_index
 from tests.test_hub_drawer import _inline, chip_dir, sm  # noqa: F401
 
-NOTE = "The change history could not be read (unreadable). Nothing older is shown in its place."
+# S10 walk F1 + F2 merged: the reason in plain words (F1) on the log's unreadable note (F2)
+NOTE = "The change history file could not be read. Nothing older is shown in its place."
 DAY = "2026-01-01"
 
 
