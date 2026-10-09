@@ -63,7 +63,7 @@ def _assert_one_write(env):
     text = _text(body)
     assert body.count('<li class="state-version-row') == 2, text
     assert "save snapshot" not in text, "the apply's own copy is not listed as a second version"
-    m = re.search(r"Since the previous version #(\d+) → #(\d+) .*? · (\d+) changes? ", text)
+    m = re.search(r"Since the previous version #(\d+) \S #(\d+) .*? \S (\d+) changes? ", text)
     assert m and m.groups() == ("2", "1", "1"), text[:600]
     assert "qubits.qA1.T1" in text
 
@@ -119,6 +119,6 @@ def test_the_quick_diff_skips_a_row_holding_the_same_state(sm):
         hub_sync.on_roots_moved([str(sm["data"])])
     text = _text(sm["client"].get("/state/versions").get_data(as_text=True))
     assert re.search(r"#1 .*? run #5 ", text) and re.search(r"#2 .*? applied by ", text), text[:900]
-    m = re.search(r"Since the previous version #(\d+) → #(\d+) .*? · (\d+) changes? ", text)
+    m = re.search(r"Since the previous version #(\d+) \S #(\d+) .*? \S (\d+) changes? ", text)
     assert m and m.groups() == ("3", "1", "1"), text[:600]
     assert "qubits.qA1.T1" in text.split("Compare")[0]
