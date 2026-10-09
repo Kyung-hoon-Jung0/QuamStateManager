@@ -99,7 +99,7 @@ class TestTheRule:
         r = led.add(doc(f=B), targets=q("qA1"))
         w = led.add(doc(f=B, f2=2.0), targets=q("qA2"))
         v, pid = judged(led)
-        assert v.code(r, pid[F]) == hub_witness.CONFIRMED and v.witness[(r, pid[F])] == w
+        assert v.code(r, pid[F]) == hub_witness.CONFIRMED and v.witness_of(r, pid[F]) == w
         assert v.drop(pid[F]) == frozenset()
 
     def test_contradicted_by_a_run_that_did_not_measure_the_qubit(self, led):
@@ -107,8 +107,8 @@ class TestTheRule:
         r = led.add(doc(f=B), targets=q("qA1"))
         w = led.add(doc(f=A, f2=2.0), targets=q("qA2"))
         v, pid = judged(led)
-        assert v.code(r, pid[F]) == hub_witness.CONTRADICTED and v.witness[(r, pid[F])] == w
-        assert v.pairs[pid[F]] == {r: w} and v.restores(w, pid[F]) == r
+        assert v.code(r, pid[F]) == hub_witness.CONTRADICTED and v.witness_of(r, pid[F]) == w
+        assert v.pairs_of(pid[F]) == {r: w} and v.restores(w, pid[F]) == r
         assert v.drop(pid[F]) == {r, w}, "the change AND the witness's restoring row leave the series"
         assert v.code(w, pid["qubits.qA2.f"]) is not None and w not in v.drop(pid["qubits.qA2.f"]), \
             "the witness's own change of its own qubit stays"
@@ -128,7 +128,7 @@ class TestTheRule:
         led.add(doc(f=B, ph=0.6), targets=q("qA1"))            # targets qA1, f untouched
         w = led.add(doc(f=A, f2=2.0), targets=q("qA2"))
         v, pid = judged(led)
-        assert v.code(r, pid[F]) == hub_witness.CONTRADICTED and v.witness[(r, pid[F])] == w
+        assert v.code(r, pid[F]) == hub_witness.CONTRADICTED and v.witness_of(r, pid[F]) == w
 
     @pytest.mark.parametrize("kind", ["observed", "sm_apply"])
     def test_an_observed_state_and_an_sm_write_are_witnesses(self, led, kind):
@@ -136,7 +136,7 @@ class TestTheRule:
         r = led.add(doc(f=B), targets=q("qA1"))
         w = led.add(doc(f=A), kind=kind)
         v, pid = judged(led)
-        assert v.code(r, pid[F]) == hub_witness.CONTRADICTED and v.pairs[pid[F]] == {r: w}
+        assert v.code(r, pid[F]) == hub_witness.CONTRADICTED and v.pairs_of(pid[F]) == {r: w}
 
     @pytest.mark.parametrize("kind", ["observed", "sm_apply"])
     def test_an_observed_state_and_an_sm_write_confirm(self, led, kind):
@@ -144,7 +144,7 @@ class TestTheRule:
         r = led.add(doc(f=B), targets=q("qA1"))
         w = led.add(doc(f=B, f2=2.0), kind=kind)
         v, pid = judged(led)
-        assert v.code(r, pid[F]) == hub_witness.CONFIRMED and v.witness[(r, pid[F])] == w
+        assert v.code(r, pid[F]) == hub_witness.CONFIRMED and v.witness_of(r, pid[F]) == w
 
     def test_a_pair_target_covers_both_qubits_and_the_pair(self, led):
         led.add(doc(), targets=q("qA1"))
@@ -179,8 +179,8 @@ class TestTheRule:
         r2 = led.add(doc(f=C), targets=q("qA1"))
         w = led.add(doc(f=B, f2=2.0), targets=q("qA2"))          # still had r's value
         v, pid = judged(led)
-        assert v.code(r2, pid[F]) == hub_witness.CONTRADICTED and v.pairs[pid[F]] == {r2: w}
-        assert v.code(r, pid[F]) == hub_witness.CONFIRMED and v.witness[(r, pid[F])] == w
+        assert v.code(r2, pid[F]) == hub_witness.CONTRADICTED and v.pairs_of(pid[F]) == {r2: w}
+        assert v.code(r, pid[F]) == hub_witness.CONFIRMED and v.witness_of(r, pid[F]) == w
         v0, _ = judged(led, refined=False)
         assert v0.code(r, pid[F]) == hub_witness.REMEASURED, "the spec's section 2 rule stops at r2"
 
@@ -199,6 +199,23 @@ class TestTheRule:
         led.add(doc(f=A), kind="observed")
         v, pid = judged(led, witnesses=frozenset({hub_witness.RUN}))
         assert v.code(r, pid[F]) == hub_witness.OPEN, "an observed state is no witness when runs alone are"
+
+    def test_judged_per_holder_or_all_at_once_the_same(self, led):
+        led.add(doc(), targets=q("qA1"))
+        led.add(doc(f=B, ph=0.7), targets=q("qA1"))
+        led.add(doc(f=A, ph=0.7, f2=2.0), targets=q("qA2"))
+        led.add(doc(f=C, ph=0.5, f2=2.0), targets={"qubit_pairs": ["qA1-qA2"]})
+        led.add(doc(f=C, ph=0.5, f2=3.0), kind="observed")
+        full, pid = judged(led)
+        conn = sqlite3.connect(f"file:{(led.dir / 'ledger.sqlite').as_posix()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            lazy = hub_witness.verdicts(hub_index.build_index(conn), conn, lazy=True)
+            for p in pid.values():
+                assert lazy.pairs_of(p) == full.pairs_of(p) and lazy.tail(p) == full.tail(p)
+            assert dict(lazy) == dict(full) and len(full) > 0
+        finally:
+            conn.close()
 
     def test_built_once_per_index(self, led):
         led.add(doc(), targets=q("qA1"))

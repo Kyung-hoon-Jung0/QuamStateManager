@@ -49,7 +49,7 @@ function). Only run changes are judged: an SM write is exact and an observed
 state is the live content; the ledger's first state is not a change. A
 re-measurement chain that ends by saving back exactly the value it started
 from stays ``remeasured``: on the same backups it was never-live for 302 of
-344 changes (88 %), too weak to leave values out.
+342 changes (88 %), too weak to leave values out.
 
 One implementation: every reader (``hub_query``'s series and timeline,
 ``value_history``, ``hub_status``) asks :func:`of`; nothing else implements
@@ -155,187 +155,136 @@ def _raw(op: int, num, txt, side: str):
 class Verdicts(Mapping):
     """``{(eid, pid): code}`` for the run changes of one index, plus what the
     readers need: the pairs to leave out of a series, the witness of each
-    judged change, and the newest change of each path."""
+    judged change and the newest change of each holder.
 
-    def __init__(self, n_events: int):
-        self.n_events = n_events
+    Built per holder on first use (a value drawer asks about one holder; a
+    full build reads every row of the ledger): the events' facts are read
+    once, each holder's rows when it is first asked about, or every holder at
+    once by :meth:`prime` (a day of the Calibration log, the calibration age,
+    the Mapping interface). The answer for a holder is the same either way.
+    Every access happens inside the read snapshot of the index it was built
+    for (``of`` hands it that snapshot's connection)."""
+
+    def __init__(self, index, conn, witnesses: frozenset, refined: bool):
+        self.index, self.conn = index, conn
+        self.refined = refined
+        n = len(index.eids)
+        self.n_events = n
+        facts = _event_facts(conn, index)
+        self._kinds = kinds = [None] * n          # event class per position
+        self._judged = judged = bytearray(n)      # a run change at this position is judged
+        capable = bytearray(n)                    # this event can be a witness
+        self._targets = targets = [None] * n      # a run's target tokens
+        for i, eid in enumerate(index.eids):
+            f = facts.get(eid)
+            if f is None:
+                continue
+            kind, has, text = f
+            cls = _class_of(kind)
+            kinds[i] = cls
+            if not has:
+                continue
+            uncertain = cls == RUN and bool(int(index.flags[i]) & CHIP_UNCERTAIN)
+            if cls == RUN and not uncertain:
+                judged[i] = 1
+                targets[i] = target_tokens(text)
+            if cls in witnesses and not uncertain:
+                capable[i] = 1
+        self._every = [i for i in range(n) if capable[i]]
+        self._lanes: dict[Any, array] = {}
+        self._entities: dict[int, str | None] = {}
+        self._all = False
+        self._done: set[int] = set()
         #: pid -> {eid: code}
-        self.by_pid: dict[int, dict[int, str]] = {}
+        self._codes: dict[int, dict[int, str]] = {}
         #: (eid, pid) -> the witness event's eid (confirmed / contradicted / differs)
-        self.witness: dict[tuple, int] = {}
+        self._witness: dict[tuple, int] = {}
         #: pid -> {eid of a contradicted change: eid of its restoring row}
-        self.pairs: dict[int, dict[int, int]] = {}
+        self._pairs: dict[int, dict[int, int]] = {}
         #: pid -> (eid, code) of its newest row (code None: not a run change)
-        self.newest: dict[int, tuple] = {}
-        #: the entity each judged path belongs to (pid -> entity or None)
-        self.entity: dict[int, str | None] = {}
+        self._newest: dict[int, tuple] = {}
+        #: the entity each judged holder belongs to
+        self._entity: dict[int, str | None] = {}
         self._drop: dict[int, frozenset] = {}
         self._back: dict[int, dict] = {}
         self._sig: dict[int, str] = {}
 
-    # Mapping
-    def __getitem__(self, key):
-        eid, pid = key
-        return self.by_pid[pid][eid]
+    # ------------------------------------------------------------- reading
+    def prime(self, pids=None) -> "Verdicts":
+        """Judge every holder (*pids* None: one read of every row) or the
+        given ones (one read of theirs) not judged yet."""
+        if self._all:
+            return self
+        if pids is None:
+            got = _rows(self.conn, self.index, None)
+            if not self._entities:
+                self._entities = dict(self.conn.execute("SELECT pid, entity FROM paths"))
+            for pid, seq in got.items():
+                if pid not in self._done:
+                    self._judge(pid, seq)
+            self._done.update(got)
+            self._all = True
+            return self
+        want = [p for p in set(pids) if p is not None and p not in self._done]
+        if len(want) > _PRIME_ALL_FROM:
+            return self.prime()             # one read of every row is cheaper
+        if want:
+            got = _rows(self.conn, self.index, want)
+            for pid in want:
+                self._judge(pid, got.get(pid) or [])
+            self._done.update(want)
+        return self
 
-    def __iter__(self) -> Iterator:
-        for pid, codes in self.by_pid.items():
-            for eid in codes:
-                yield (eid, pid)
-
-    def __len__(self) -> int:
-        return sum(len(c) for c in self.by_pid.values())
-
-    def code(self, eid: int, pid: int | None) -> str | None:
-        """The verdict of run change (eid, pid); None when it is not one."""
-        codes = self.by_pid.get(pid) if pid is not None else None
-        return codes.get(eid) if codes else None
-
-    def restores(self, eid: int, pid: int | None) -> int | None:
-        """The contradicted change whose value row (eid, pid) put back (its
-        witness's own row), or None."""
-        back = self._back.get(pid) if pid is not None else None
-        if back is None and pid is not None:
-            back = self._back[pid] = {w: c for c, w in (self.pairs.get(pid) or {}).items()}
-        return back.get(eid) if back else None
-
-    def drop(self, pid: int | None) -> frozenset:
-        """The eids of *pid*'s rows a value series leaves out: every
-        contradicted change that has its restoring row, and that row."""
+    def _ensure(self, pid) -> bool:
         if pid is None:
-            return frozenset()
-        got = self._drop.get(pid)
-        if got is None:
-            pairs = self.pairs.get(pid) or {}
-            got = self._drop[pid] = frozenset(pairs) | frozenset(pairs.values())
-        return got
+            return False
+        if pid not in self._done and not self._all:
+            self.prime((pid,))
+        return True
 
-    def signature(self, pid: int | None) -> str:
-        """What a series of *pid* derived from the verdicts depends on (the
-        pairs it leaves out and their witnesses): a kept answer is valid while
-        this is unchanged (``value_history._Reuse``)."""
-        if pid is None:
-            return ""
-        got = self._sig.get(pid)
-        if got is None:
-            pairs = sorted((self.pairs.get(pid) or {}).items())
-            got = self._sig[pid] = (hashlib.sha1(repr(pairs).encode()).hexdigest()[:16]
-                                    if pairs else "")
-        return got
-
-    def tail(self, pid: int | None) -> tuple | None:
-        """``(eid, code)`` of *pid*'s newest row, or None."""
-        return self.newest.get(pid) if pid is not None else None
-
-
-def _event_facts(conn, index) -> dict[int, tuple]:
-    """``{eid: (kind, has a state, targets text)}`` for the index's events."""
-    from quam_state_manager.core.hub_lanes import _has_state
-    out = {}
-    wanted = index.positions
-    for eid, kind, error, status, state_hash, targets in conn.execute(
-            "SELECT eid, kind, error, status, state_hash, targets FROM events"):
-        if eid not in wanted:
-            continue
-        has = _has_state({"error": error, "kind": kind, "status": status, "state_hash": state_hash})
-        out[eid] = (kind, has, targets)
-    return out
-
-
-def _rows_by_pid(conn, index) -> dict[int, list]:
-    """``{pid: [(position, eid, old token, new token, proven), ...]}`` in the
-    index's order: every stored row of an event in the index, a seam's own
-    rows in place of its stored ones (``hub_lanes``)."""
-    lane = getattr(index, "lane", None)
-    seams = lane.seams if lane is not None else {}
-    pos = index.positions
-    out: dict[int, list] = {}
-    for pid, eid, op, num, txt, onum, otxt, proven in conn.execute(
-            "SELECT pid, eid, op, num, txt, old_num, old_txt, proven FROM changes"):
-        i = pos.get(eid)
-        if i is None or eid in seams:
-            continue
-        out.setdefault(pid, []).append((i, eid, _raw(op, onum, otxt, "old"), _raw(op, num, txt, "new"),
-                                        bool(proven)))
-    for eid, rows in seams.items():
-        i = pos.get(eid)
-        if i is None:
-            continue
-        for pid, r in rows.items():
-            op = r["op"]
-            out.setdefault(pid, []).append(
-                (i, eid, _raw(op, r["old_num"], r["old_txt"], "old"), _raw(op, r["num"], r["txt"], "new"),
-                 bool(r.get("proven"))))
-    for seq in out.values():
-        seq.sort()
-    return out
-
-
-def verdicts(index, conn, *, witnesses: frozenset = ALL_WITNESSES,
-             refined: bool = True) -> Verdicts:
-    """The witness verdict of every run change of *index* (see the module
-    docstring). *witnesses*: which event classes may read the chip (all by
-    default). *refined* (default): a walk passes a re-measurement that was
-    itself contradicted, and a change the run's own node.json patch proves is
-    ``confirmed`` by that patch (the node wrote it to the chip; spec P0-1 section 1:
-    every proven change was live). The replay harness scores the spec's section 2
-    rule with runs alone and ``refined=False``."""
-    n = len(index.eids)
-    out = Verdicts(n)
-    facts = _event_facts(conn, index)
-    kinds = [None] * n          # event class per position
-    judged = bytearray(n)       # a run change at this position is judged
-    capable = bytearray(n)      # this event can be a witness
-    targets: list = [None] * n  # a run's target tokens
-    for i, eid in enumerate(index.eids):
-        f = facts.get(eid)
-        if f is None:
-            continue
-        kind, has, text = f
-        cls = _class_of(kind)
-        kinds[i] = cls
-        if not has:
-            continue
-        uncertain = cls == RUN and bool(int(index.flags[i]) & CHIP_UNCERTAIN)
-        if cls == RUN and not uncertain:
-            judged[i] = 1
-            targets[i] = target_tokens(text)
-        if cls in witnesses and not uncertain:
-            capable[i] = 1
-    every = [i for i in range(n) if capable[i]]
-    lanes: dict[Any, array] = {}
-
-    def lane_of(entity) -> array:
-        """The positions that can witness a change of *entity*'s values:
-        every capable event but a run that targets it."""
-        got = lanes.get(entity)
-        if got is None:
-            if entity is None:
-                got = array("I", every)
-            else:
-                got = array("I", (i for i in every
-                                  if not (kinds[i] == RUN and entity in targets[i])))
-            lanes[entity] = got
-        return got
-
-    entities = {pid: ent for pid, ent in conn.execute("SELECT pid, entity FROM paths")}
-    for pid, seq in _rows_by_pid(conn, index).items():
-        last_i, last_eid = seq[-1][0], seq[-1][1]
-        if not any(judged[r[0]] for r in seq):
-            out.newest[pid] = (last_eid, None)
-            continue
-        if pid in entities:
-            ent = entities[pid]
+    def _entity_of(self, pid: int) -> str | None:
+        if pid in self._entities:
+            return self._entities[pid]
+        row = self.conn.execute("SELECT entity FROM paths WHERE pid=?", (pid,)).fetchone() if pid >= 0 else None
+        if row is not None:
+            ent = row[0]
         else:
             # a lane's seam path the ledger has no row for (negative pid)
-            lane = getattr(index, "lane", None)
+            lane = getattr(self.index, "lane", None)
             path = next((r["path"] for rows in (lane.seams.values() if lane else ())
                          for p, r in rows.items() if p == pid), "")
             ent = entity_of(path)
-        out.entity[pid] = ent
-        wit = lane_of(ent)
-        codes = out.by_pid.setdefault(pid, {})
-        pairs = out.pairs.setdefault(pid, {})
+        self._entities[pid] = ent
+        return ent
+
+    def _lane_of(self, entity) -> array:
+        """The positions that can witness a change of *entity*'s values:
+        every capable event but a run that targets it."""
+        got = self._lanes.get(entity)
+        if got is None:
+            kinds, targets = self._kinds, self._targets
+            if entity is None:
+                got = array("I", self._every)
+            else:
+                got = array("I", (i for i in self._every
+                                  if not (kinds[i] == RUN and entity in targets[i])))
+            self._lanes[entity] = got
+        return got
+
+    def _judge(self, pid: int, seq: list) -> None:
+        """THE rule for one holder's rows (oldest first)."""
+        if not seq:
+            return
+        index, judged, kinds, targets = self.index, self._judged, self._kinds, self._targets
+        refined = self.refined
+        last_i, last_eid = seq[-1][0], seq[-1][1]
+        if not any(judged[r[0]] for r in seq):
+            self._newest[pid] = (last_eid, None)
+            return
+        ent = self._entity[pid] = self._entity_of(pid)
+        wit = self._lane_of(ent)
+        codes = self._codes.setdefault(pid, {})
+        pairs: dict[int, int] = {}
         # newest first: a re-measurement's own verdict is known before the
         # walk of an earlier change reaches it
         for k in range(len(seq) - 1, -1, -1):
@@ -368,7 +317,7 @@ def verdicts(index, conn, *, witnesses: frozenset = ALL_WITNESSES,
                     code = OPEN
                 else:
                     held = seq[wrow][3] if wrow is not None else seq[last][3]
-                    out.witness[(eid, pid)] = index.eids[w]
+                    self._witness[(eid, pid)] = index.eids[w]
                     if held == new:
                         code = CONFIRMED
                     elif held == old:
@@ -380,21 +329,174 @@ def verdicts(index, conn, *, witnesses: frozenset = ALL_WITNESSES,
                     else:
                         code = DIFFERS
             codes[eid] = code
-        if not pairs:
-            del out.pairs[pid]
-        out.newest[pid] = (last_eid, codes.get(last_eid) if judged[last_i] else None)
+        if pairs:
+            self._pairs[pid] = pairs
+        self._newest[pid] = (last_eid, codes.get(last_eid) if judged[last_i] else None)
+
+    # ------------------------------------------------------------- Mapping
+    def __getitem__(self, key):
+        eid, pid = key
+        self._ensure(pid)
+        return self._codes[pid][eid]
+
+    def __iter__(self) -> Iterator:
+        self.prime()
+        for pid, codes in self._codes.items():
+            for eid in codes:
+                yield (eid, pid)
+
+    def __len__(self) -> int:
+        self.prime()
+        return sum(len(c) for c in self._codes.values())
+
+    # ------------------------------------------------------------- answers
+    def code(self, eid: int, pid: int | None) -> str | None:
+        """The verdict of run change (eid, pid); None when it is not one."""
+        if not self._ensure(pid):
+            return None
+        codes = self._codes.get(pid)
+        return codes.get(eid) if codes else None
+
+    def witness_of(self, eid: int, pid: int | None) -> int | None:
+        """The eid of the event that read the chip after run change (eid, pid)."""
+        return self._witness.get((eid, pid)) if self._ensure(pid) else None
+
+    def pairs_of(self, pid: int | None) -> dict:
+        """``{eid of a contradicted change: eid of its restoring row}`` of *pid*."""
+        return (self._pairs.get(pid) or {}) if self._ensure(pid) else {}
+
+    def entity(self, pid: int | None) -> str | None:
+        """The entity a judged holder belongs to (None: not judged, or no entity)."""
+        return self._entity.get(pid) if self._ensure(pid) else None
+
+    def restores(self, eid: int, pid: int | None) -> int | None:
+        """The contradicted change whose value row (eid, pid) put back (its
+        witness's own row), or None."""
+        if not self._ensure(pid):
+            return None
+        back = self._back.get(pid)
+        if back is None:
+            back = self._back[pid] = {w: c for c, w in (self._pairs.get(pid) or {}).items()}
+        return back.get(eid)
+
+    def drop(self, pid: int | None) -> frozenset:
+        """The eids of *pid*'s rows a value series leaves out: every
+        contradicted change that has its restoring row, and that row."""
+        if not self._ensure(pid):
+            return frozenset()
+        got = self._drop.get(pid)
+        if got is None:
+            pairs = self._pairs.get(pid) or {}
+            got = self._drop[pid] = frozenset(pairs) | frozenset(pairs.values())
+        return got
+
+    def signature(self, pid: int | None) -> str:
+        """What a series of *pid* derived from the verdicts depends on (the
+        pairs it leaves out and their witnesses): a kept answer is valid while
+        this is unchanged (``value_history._Reuse``)."""
+        if not self._ensure(pid):
+            return ""
+        got = self._sig.get(pid)
+        if got is None:
+            pairs = sorted((self._pairs.get(pid) or {}).items())
+            got = self._sig[pid] = (hashlib.sha1(repr(pairs).encode()).hexdigest()[:16]
+                                    if pairs else "")
+        return got
+
+    def tail(self, pid: int | None) -> tuple | None:
+        """``(eid, code)`` of *pid*'s newest row, or None."""
+        return self._newest.get(pid) if self._ensure(pid) else None
+
+
+def _event_facts(conn, index) -> dict[int, tuple]:
+    """``{eid: (kind, has a state, targets text)}`` for the index's events."""
+    from quam_state_manager.core.hub_lanes import _has_state
+    out = {}
+    wanted = index.positions
+    for eid, kind, error, status, state_hash, targets in conn.execute(
+            "SELECT eid, kind, error, status, state_hash, targets FROM events"):
+        if eid not in wanted:
+            continue
+        has = _has_state({"error": error, "kind": kind, "status": status, "state_hash": state_hash})
+        out[eid] = (kind, has, targets)
     return out
+
+
+_ROW_SQL = "SELECT pid, eid, op, num, txt, old_num, old_txt, proven FROM changes"
+#: past this many holders asked at once, :meth:`Verdicts.prime` reads every row
+_PRIME_ALL_FROM = 1000
+
+
+def _rows(conn, index, pids) -> dict[int, list]:
+    """``{pid: [(position, eid, old token, new token, proven), ...]}`` in the
+    index's order -- every holder (*pids* None) or the given ones: every
+    stored row of an event in the index, a seam's own rows in place of its
+    stored ones (``hub_lanes``)."""
+    lane = getattr(index, "lane", None)
+    seams = lane.seams if lane is not None else {}
+    pos = index.positions
+    out: dict[int, list] = {}
+
+    def add(found):
+        for pid, eid, op, num, txt, onum, otxt, proven in found:
+            i = pos.get(eid)
+            if i is None or eid in seams:
+                continue
+            out.setdefault(pid, []).append((i, eid, (_ABSENT if op == 1 else (onum, otxt)),
+                                            (_ABSENT if op == 2 else (num, txt)), bool(proven)))
+    if pids is None:
+        add(conn.execute(_ROW_SQL))
+    else:
+        stored = [p for p in pids if p >= 0]
+        for start in range(0, len(stored), 500):
+            chunk = stored[start:start + 500]
+            add(conn.execute(_ROW_SQL + " WHERE pid IN (" + ",".join("?" * len(chunk)) + ")", chunk))
+    want = None if pids is None else set(pids)
+    for eid, rows in seams.items():
+        i = pos.get(eid)
+        if i is None:
+            continue
+        for pid, r in rows.items():
+            if want is not None and pid not in want:
+                continue
+            op = r["op"]
+            out.setdefault(pid, []).append(
+                (i, eid, _raw(op, r["old_num"], r["old_txt"], "old"), _raw(op, r["num"], r["txt"], "new"),
+                 bool(r.get("proven"))))
+    for seq in out.values():
+        seq.sort(key=_first)
+    return out
+
+
+def _first(row):
+    return row[0]
+
+
+def verdicts(index, conn, *, witnesses: frozenset = ALL_WITNESSES,
+             refined: bool = True, lazy: bool = False) -> Verdicts:
+    """The witness verdict of every run change of *index* (see the module
+    docstring). *witnesses*: which event classes may read the chip (all by
+    default). *refined* (default): a walk passes a re-measurement that was
+    itself contradicted, and a change the run's own node.json patch proves is
+    ``confirmed`` by that patch (the node wrote it to the chip; spec P0-1 section 1:
+    every proven change was live). The replay harness scores the spec's section 2
+    rule with runs alone and ``refined=False``. *lazy*: judge each holder when
+    it is first asked about (:func:`of`); else every holder now."""
+    out = Verdicts(index, conn, witnesses, refined)
+    return out if lazy else out.prime()
 
 
 def of(conn, index) -> Verdicts:
     """THE verdicts every reader uses: built once per index (a folder view's
     lane or the ledger's own) and kept on it -- dropped with it when the
-    ledger grows (``hub_index.extend_index`` drops every view)."""
+    ledger grows (``hub_index.extend_index`` drops every view). Each holder is
+    judged when first asked about, through this snapshot's connection."""
     key = (len(index.eids), index.eids[-1] if index.eids else 0)
     got = index.__dict__.get("_witness")
     if got is None or got[0] != key:
-        got = (key, verdicts(index, conn))
+        got = (key, verdicts(index, conn, lazy=True))
         index.__dict__["_witness"] = got
+    got[1].conn = conn
     return got[1]
 
 

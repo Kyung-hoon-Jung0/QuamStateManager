@@ -618,7 +618,7 @@ class LedgerTable:
             with ledger_read(), hub_index.snapshot(self.binding) as (conn, index):
                 # P0-1: a run's value the chip never kept did not calibrate it,
                 # and the run that still found the old value did not either
-                verdicts = hub_witness.of(conn, index)
+                verdicts = hub_witness.of(conn, index).prime()
                 lane = getattr(index, "lane", None)
                 if lane is not None:
                     rows = self._lane_change_times(conn, index, lane, where, CHIP_UNCERTAIN, verdicts)

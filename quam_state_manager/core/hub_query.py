@@ -532,7 +532,7 @@ def not_kept(conn, index, path, rows=None):
     pid = index.paths.get(path)
     if pid is None:
         return []
-    pairs = hub_witness.of(conn, index).pairs.get(pid)
+    pairs = hub_witness.of(conn, index).pairs_of(pid)
     if not pairs:
         return []
     rows = _series(conn, index, path, witness=False) if rows is None else rows
@@ -550,8 +550,7 @@ def witness_rows(conn, index, events):
     their path in this index."""
     from quam_state_manager.core import hub_witness
     v = hub_witness.of(conn, index)
-    if not v.pairs:
-        return
+    v.prime({index.paths.get(c["path"]) for ev in events for c in ev.get("changes") or ()})
     named: dict = {}
     for ev in events:
         changes = ev.get("changes")
@@ -561,7 +560,7 @@ def witness_rows(conn, index, events):
         kept, out = [], []
         for c in changes:
             pid = index.paths.get(c["path"])
-            pairs = v.pairs.get(pid) if pid is not None else None
+            pairs = v.pairs_of(pid)
             if not pairs:
                 kept.append(c)
                 continue

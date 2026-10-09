@@ -1130,7 +1130,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
                 old = old if old is None else cache.eras.value(old, at, h)
                 new = new if new is None else cache.eras.value(new, at, h)
             return _not_kept_point(index, ev, old, new, op, proven, wev, roots, h,
-                                   (verdicts.entity.get(index.paths.get(h)) if verdicts is not None
+                                   (verdicts.entity(index.paths.get(h)) if verdicts is not None
                                     else None))
         out_rows[key] = {
             "points": pts, "total": total, "retargets": retargets,
