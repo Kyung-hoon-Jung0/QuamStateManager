@@ -11454,9 +11454,16 @@ _VH_DRAWER_LIMIT = 40
 # The Show all read stays bounded; the footer discloses any older points omitted.
 _VH_DRAWER_ALL_LIMIT = 5000
 
+#: S10 walk: what each reason means, in plain words -- a note shown to a user
+#: never prints the raw reason code (it said "could not be read (no_ledger)")
+_VH_UNAVAILABLE_WHY = {
+    "no_chip_dir": "This chip's history folder cannot be found, so its change history cannot be read.",
+    "no_ledger": "No change history has been built for this chip yet.",
+    "unreadable": "The change history file could not be read.",
+}
 _VH_UNAVAILABLE_NOTES = {
-    reason: f"The change history could not be read ({reason}). Nothing older is shown in its place."
-    for reason in ("no_chip_dir", "no_ledger", "unreadable")
+    reason: f"{why} Nothing older is shown in its place."
+    for reason, why in _VH_UNAVAILABLE_WHY.items()
 }
 
 
@@ -15438,19 +15445,10 @@ def wiring_view():
 
     _snaps = _history().list_snapshots(_active_path()) if store else []
     history_count = len(_snaps)
-    # docs/301 F14: the History (N) button counts what its drawer lists -- the
-    # ledger's recorded states when the chip has one (it said 3 beside a
-    # State History of ~3,000); in the other modes the drawer lists every
-    # snapshot as an older row, so their count stands
+    # docs/301 F14: the History (N) button counts what its drawer lists.
+    # S10 walk: the one count (_versions_count), an ellipsis while the ledger catches up
     if store:
-        try:
-            _hv = _versions_read(_active_ctx(), _snaps, limit=1, lane_notes=False)
-            if _hv["mode"] == "ledger":
-                # the ledger's own count, not max() with the snapshots: several
-                # snapshots of one content are one recorded state (review)
-                history_count = int(_hv.get("total") or 0)
-        except Exception:  # noqa: BLE001 -- the snapshot count stands
-            logger.debug("history count from the ledger failed", exc_info=True)
+        history_count = _versions_count(_active_ctx(), _snaps)[0]
 
     # Health layer (Chip Status overhaul): the structural linter (port collisions,
     # dangling pointers, value-spec violations) — already used by the drag-drop
@@ -15523,8 +15521,9 @@ _HISTORY_DRAWER_ALL_CAP = 500
 
 
 @bp.route("/api/history")
-def history_list():
-    """The Chip Status History drawer: the chip's newest recorded states."""
+def history_list(snapshot_note: str | None = None):
+    """The Chip Status History drawer: the chip's newest recorded states.
+    *snapshot_note*: what a Take Snapshot press says (S10 walk)."""
     store = _store()
     if not store:
         return render_template("_status.html", message="No state loaded", level="warning")
@@ -15539,9 +15538,15 @@ def history_list():
     versions = _versions_read(_active_ctx(), snapshots, limit=per_page or _HISTORY_DRAWER_ALL_CAP,
                               offset=(page - 1) * per_page)
     total_pages = max(1, math.ceil(versions["total"] / per_page)) if per_page else 1
+    if per_page and page > total_pages:
+        # S10 walk: a page past the end (the page box, a stale pager) shows the last page
+        page = total_pages
+        versions = _versions_read(_active_ctx(), snapshots, limit=per_page,
+                                  offset=(page - 1) * per_page)
     return render_template("_history_panel_ledger.html", ledger_versions=versions,
                            page=page, total_pages=total_pages, per_page=per_page,
-                           all_cap=_HISTORY_DRAWER_ALL_CAP)
+                           all_cap=_HISTORY_DRAWER_ALL_CAP,
+                           snapshot_note=snapshot_note)
 
 
 @bp.route("/api/history/snapshot", methods=["POST"])
@@ -15552,14 +15557,16 @@ def history_snapshot():
         return render_template("_status.html", message="No state loaded", level="warning")
 
     hm = _history()
-    hm.check_and_snapshot(_active_path(), "manual", force=True, kind="manual",
-                          project=_scope_for(_active_path(), _active_ctx()))
+    meta = hm.check_and_snapshot(_active_path(), "manual", force=True, kind="manual",
+                                 project=_scope_for(_active_path(), _active_ctx()))
+    # S10 walk: a press that adds no row says so
+    note = _SNAPSHOT_NOTHING_NEW if _snapshot_adds_nothing(_active_ctx(), meta) else None
 
     # QA chipstatus-r2-15: announce it, so every surface that counts snapshots
     # (Chip Status Trends, the top-bar Versions chip) catches up now instead of
     # at the next drift poll. HX-Trigger, not -After-Swap: the button that
     # sent this lives inside the swapped drawer and would be detached by then.
-    resp = make_response(history_list())
+    resp = make_response(history_list(snapshot_note=note))
     resp.headers["HX-Trigger"] = "stateHistoryChanged"
     return resp
 
@@ -15614,9 +15621,10 @@ _STATE_HISTORY_PER_PAGE = 40
 
 
 @bp.route("/state-history")
-def state_history():
+def state_history(snapshot_note: str | None = None):
     """The State History page: full-chip snapshots over time, newest first,
-    framed by the experiment that produced each (experiment-attribution)."""
+    framed by the experiment that produced each (experiment-attribution).
+    *snapshot_note*: what a Take snapshot press says (S10 walk)."""
     store = _store()
     if not store:
         return _no_chip("state history", "state_history")
@@ -15632,6 +15640,11 @@ def state_history():
                               offset=(page - 1) * per_page)
     total = versions["total"]
     total_pages = max(1, math.ceil(total / per_page))
+    if page > total_pages:
+        # S10 walk: a page past the end (the page box, an old link) shows the last page
+        page = total_pages
+        versions = _versions_read(_active_ctx(), snapshots, limit=per_page,
+                                  offset=(page - 1) * per_page)
     # Honest footprint line for the header ("N snapshots · X on disk") —
     # cached per (count, newest ts), so steady-state renders pay no walk.
     try:
@@ -15642,7 +15655,7 @@ def state_history():
                total=total, current_page=min(page, total_pages),
                total_pages=total_pages, per_page=per_page,
                chip_origin=_active_origin(), hist_chip_key=versions["chip_key"],
-               disk_stats=disk_stats)
+               disk_stats=disk_stats, snapshot_note=snapshot_note)
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body
     # without disturbing the detail/result pane beside it.
@@ -16076,6 +16089,17 @@ def state_history_label(timestamp: str):
     # clear a bookmark -- S10 C6 review); a sent empty label still clears it.
     label = request.values.get("label")
     edit = {} if label is None else {"label": label.strip() or None}
+    if label is None:
+        # S10 walk: a press on a row an earlier version marked as the
+        # live-tracking baseline makes it the user's -- SM's marker label goes,
+        # so a later marker release never drops the pin the user just made
+        from quam_state_manager.core.history import LIVE_BASELINE_LABEL
+        try:
+            meta = next((m for m in hm.list_snapshots(_active_path()) if m.timestamp == timestamp), None)
+        except Exception:  # noqa: BLE001 -- the press itself still lands
+            meta = None
+        if meta is not None and meta.label == LIVE_BASELINE_LABEL:
+            edit = {"label": None}
     pinned = request.values.get("pinned")
     pinned_val = None if pinned is None else (pinned == "1")
     try:
@@ -16084,6 +16108,47 @@ def state_history_label(timestamp: str):
         return render_template("_status.html",
                                message=f"Could not update snapshot: {exc}", level="error"), 400
     return state_history()
+
+
+#: S10 walk: what a snapshot press says when the change history adds no row for it
+_SNAPSHOT_NOTHING_NEW = "No change since the last recorded state — nothing new to list."
+
+
+def _snapshot_adds_nothing(ctx, meta) -> bool:
+    """S10 walk: whether a snapshot just taken holds the state this folder's
+    change history already ends on -- the ledger then records it as looked at
+    and lists no row for it (observed import ``same_before``), and the press
+    said nothing at all. Only a listing read from the ledger hides it: while
+    the ledger cannot answer, every snapshot is a listed row."""
+    if meta is None or not ctx:
+        return False
+    from quam_state_manager.core import hub_query, hub_versions
+    try:
+        chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+        if chip_dir is None:
+            return False
+        # the ledger's own verdict when it has looked already (an inline sync)
+        outcome = hub_versions.observed_outcome(chip_dir, meta.timestamp)
+        if outcome is not None:
+            return outcome in ("same_before", "same_after")
+        digest = hub_versions.snapshot_chash(chip_dir, meta.timestamp)
+        if not digest:
+            return False
+        binding = _vh_binding(ctx, chip_dir)
+        cursor = None
+        for _page in range(10):
+            res = hub_query.timeline(binding, limit=50, cursor=cursor)
+            for ev in res["events"]:
+                if ev.get("kind") == hub_versions.OBSERVED_KIND and str(ev.get("t_src") or "") == meta.timestamp:
+                    return False          # this very snapshot, already a row of its own
+                if hub_versions.has_state(ev) and not int(ev.get("flags") or 0) & hub_versions.CHIP_UNCERTAIN:
+                    return ev.get("chash") == digest
+            cursor = res.get("cursor")
+            if not cursor:
+                return False
+    except Exception:  # noqa: BLE001 -- a message never breaks the press (a building ledger lists the row)
+        logger.debug("snapshot-adds-nothing check failed", exc_info=True)
+    return False
 
 
 @bp.route("/state-history/snapshot", methods=["POST"])
@@ -16099,13 +16164,13 @@ def state_history_snapshot():
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     try:
-        _history().check_and_snapshot(ctx["path"], "manual", force=True,
-                                      kind="manual",
-                                      project=_scope_for(ctx["path"], ctx))
+        meta = _history().check_and_snapshot(ctx["path"], "manual", force=True,
+                                             kind="manual",
+                                             project=_scope_for(ctx["path"], ctx))
     except Exception as exc:
         return render_template("_status.html",
                                message=f"Snapshot failed: {exc}", level="error"), 500
-    return state_history()
+    return state_history(snapshot_note=_SNAPSHOT_NOTHING_NEW if _snapshot_adds_nothing(ctx, meta) else None)
 
 
 # ── docs/120 items 5+9 — chip-wide Trends ─────────────────────────────────
@@ -17728,7 +17793,7 @@ def _state_version_now(ctx: dict | None) -> dict:
     endpoint (docs/28: no live reads on a surface that renders on every page).
     """
     out: dict[str, Any] = {"ts": None, "count": 0, "unmatched": False,
-                           "dirty": False}
+                           "dirty": False, "waiting": False}
     if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
         return out
     hm = _history()
@@ -17774,17 +17839,12 @@ def _state_version_now(ctx: dict | None) -> dict:
     # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
     # not a fault — say so plainly rather than inventing a nearest match.
     out["unmatched"] = out["ts"] is None and out["count"] > 0
-    # docs/301 F14: the chip counts what its panel lists -- the ledger's
-    # recorded states when the chip has one (it said 5 over a list of ~3,000).
-    # ``unmatched`` above stays a snapshot fact: it is what ``ts`` was read from.
-    # In the other modes the panel lists every snapshot as an older row, so
-    # their count stands.
-    try:
-        _v = _versions_read(ctx, snaps, limit=1, lane_notes=False)
-        if _v["mode"] == "ledger":
-            out["count"] = int(_v.get("total") or 0)
-    except Exception:  # noqa: BLE001 -- the snapshot count stands
-        logger.debug("version count from the ledger failed", exc_info=True)
+    # docs/301 F14: the chip counts what its panel lists. ``unmatched`` above
+    # stays a snapshot fact: it is what ``ts`` was read from. S10 walk: ONE
+    # count for every history surface (_versions_read's total), and none while
+    # the ledger is catching up -- the badge then asks again (it was left on
+    # the older snapshots' 210 between 3518 and 3522 after an apply).
+    out["count"], out["waiting"] = _versions_count(ctx, snaps)
     # WHOSE version this is, stated rather than assumed. The hash above is of
     # ``ctx["path"]`` — the LIVE pair — so the id names what the chip is on,
     # not what SM is holding. With unapplied edits those are different states,
@@ -17797,11 +17857,16 @@ def _state_version_now(ctx: dict | None) -> dict:
 def state_version_chip():
     """The top-bar version chip (lazy; see _state_version_now)."""
     ctx = _active_ctx()
+    ver = _state_version_now(ctx)
+    # S10 walk: a waiting chip asks again, backing off (1.5 s doubling to 20 s)
+    n = _int_arg("wait", 0, minimum=0)
+    ver["wait_n"] = min(n, 8)
+    ver["retry_ms"] = min(1500 * (2 ** min(n, 4)), 20000)
     # Gate on a chip actually being OPEN, not on a display name — the raw ctx
     # carries no "name" (that is assembled by _ctx for full renders), and using
     # it here made the chip silently render empty on every page.
     return render_template("_state_version_chip.html",
-                           ver=_state_version_now(ctx),
+                           ver=ver,
                            has_chip=bool(ctx and ctx.get("type") == "quam"
                                          and ctx.get("path")))
 
@@ -17825,7 +17890,7 @@ def _versions_unavailable_text(reason: str, older: int) -> str:
     older Param History snapshots below its note, so while there are any it
     may not say "nothing older is shown" (S10 C6 review)."""
     if older:
-        return f"The change history could not be read ({reason}). Older Param History snapshots are listed below."
+        return f"{_VH_UNAVAILABLE_WHY[reason]} Older Param History snapshots are listed below."
     return _VH_UNAVAILABLE_NOTES[reason]
 
 
@@ -17896,7 +17961,7 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
                             if m.run_id is not None else None),
                 "source": srcs.get(m.timestamp), "current": False, "flags": [],
                 "why_diff": None, "why_write": None, "pending": item.get("pending", False),
-                "annotations": [m]})
+                "foreign": False, "foreign_why": None, "annotations": [m]})
             continue
         ev = item["event"]
         kind = ev["kind"]
@@ -17945,6 +18010,7 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
         if not current_seen and live_chash and ev.get("chash") == live_chash:
             current = current_seen = True
         annotations = annotations_by_event.get(ev["eid"], [])
+        foreign = bool(ev.get("foreign"))
         rows.append({
             "ts": item["ref"], "when": item["stamp"], "legacy": False, "badge": badge,
             "title": title, "sub": sub, "hover": hover, "kind": None, "kind_legacy": False,
@@ -17953,8 +18019,28 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
             "pinned": any(m.pinned for m in annotations), "annotations": annotations,
             "experiment": experiment, "run_id": run_id, "run_uid": run_uid,
             "source": source, "current": current, "flags": flags,
+            "foreign": foreign, "foreign_why": _version_foreign_why(source) if foreign else None,
             "why_diff": item["why_diff"], "why_write": item["why_write"], "pending": False})
     return rows
+
+
+def _version_foreign_why(source: dict | None) -> str:
+    """S10 walk: why a listing shows a row that is not this folder's (docs/250:
+    a listing keeps every row, labelled) -- the title of the row's "not this
+    folder's" tag, so the row says why it is there."""
+    src = source or {}
+    kind, where = src.get("kind"), src.get("label") or src.get("folder")
+    if kind == "unlinked":
+        why = "a run saved in a data folder not linked to this folder" + (f" ({src.get('folder')})"
+                                                                          if src.get("folder") else "")
+    elif kind == "other":
+        why = ("recorded from another folder with this chip name" + (f" ({where})" if where else "")
+               + " while this folder had its own history")
+    else:
+        why = "recorded from a folder that is not recorded"
+    return ("Listed so the chip's whole record stays reachable, but not this folder's change: "
+            + why + ". It is not part of this folder's timeline; Diff, Stage and Restore read "
+            "it by its id.")
 
 
 def _version_sources(ctx, snapshots) -> dict:
@@ -18014,9 +18100,18 @@ def _version_annotations(hm, res: dict, snapshots, srcs: dict, chip_dir=None) ->
         cands.sort()
     chashes = res.get("snapshot_chashes") or {}
     chip_dir = chip_dir if chip_dir is not None else res.get("chip_dir")
+    covered_by = res.get("covered_by") or {}
     unattached: set[str] = set()
     for m in snapshots:
         if m.timestamp in own or not (m.label or m.note or m.pinned):
+            continue
+        why = str(covered_by.get(m.timestamp) or "")
+        if why.startswith("run:"):
+            # S10 final review P1: the capture of a run whose saved state the
+            # ledger holds AS that run (same run, same content) is that run's
+            # row -- its bookmark rides it (it was carried by an observed event
+            # or an SM write only, and vanished once the hasher matched it)
+            out.setdefault(int(why[4:]), []).append(m)
             continue
         seen = observed.get(folder_of(m)) if getattr(m, "state_hash", None) else None
         before = [c for c in seen or () if c[0] <= m.timestamp]
@@ -18036,7 +18131,11 @@ def _version_annotations(hm, res: dict, snapshots, srcs: dict, chip_dir=None) ->
             out.setdefault(before[-1][1], []).append(m)
         elif later:
             unattached.add(m.timestamp)   # only a later row holds it: never guessed onto it
-        # else: not on a listed row, nothing to carry
+        elif m.timestamp in covered_by:
+            # S10 final review P1: the ledger holds this state but no row here
+            # can carry the bookmark -- it is listed as its own row, never lost
+            unattached.add(m.timestamp)
+        # else: an older row of its own already (not covered): it carries itself
     return out, frozenset(unattached)
 
 
@@ -18085,7 +18184,140 @@ def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0,
     display ``rows`` in every mode, with the reason beside legacy rows
     while the ledger cannot answer. ``lane_notes=False``: a caller that only
     counts (the History (N) button, the version chip) skips the folder-view
-    read the notes need."""
+    read the notes need.
+
+    S10 walk: ``total`` is THE count every history surface shows (the top-bar
+    Versions badge, the Chip Status History (N) button and drawer header, the
+    Versions header, State History): the rows the listing lists -- every
+    state-bearing event of the chip's ledger as this folder's listing shows
+    it (its own, and another folder's labelled, never another chip's) plus
+    the older snapshot rows; while the ledger cannot answer, the older
+    snapshots it lists instead. ``count_head`` / ``count_detail`` are its one
+    wording."""
+    # S10 walk: SM's old baseline marker (a label + pin an earlier version wrote)
+    # is not a user's bookmark: no listing shows it as a label, a pin or an
+    # Unpin, and it never keeps a snapshot listed as its own row
+    snapshots = [_without_baseline_marker(m) for m in snapshots]
+    res = _versions_read_rows(ctx, snapshots, limit=limit, offset=offset, lane_notes=lane_notes)
+    res["count_head"], res["count_detail"] = _versions_count_words(res)
+    if res.get("rows") and lane_notes:
+        res["baseline"] = _version_baseline(ctx, res, snapshots)
+        ref = (res["baseline"] or {}).get("ref")
+        for r in res["rows"]:
+            r["baseline"] = r["ts"] == ref if ref else False
+    return res
+
+
+def _without_baseline_marker(m):
+    """A snapshot meta with SM's old baseline marker taken off (display copy)."""
+    from quam_state_manager.core.history import LIVE_BASELINE_LABEL
+    if getattr(m, "label", None) != LIVE_BASELINE_LABEL:
+        return m
+    import dataclasses
+    try:
+        return dataclasses.replace(m, label=None, pinned=False)
+    except TypeError:  # not a SnapshotMeta (a test double): left as it is
+        return m
+
+
+#: (folder, captured_utc, history hash) -> the baseline's content hash
+_BASELINE_CHASH: "OrderedDict[tuple, str]" = OrderedDict()
+
+
+def _version_baseline(ctx, res: dict, snapshots) -> dict | None:
+    """S10 walk: which listed version the live-change tracker's baseline is
+    (the banner's "baseline: <time>"), shown as a badge on that row -- never a
+    label or a pin the user did not make. The baseline is a content, set at an
+    instant; its row is the listed state with that content recorded NEAREST
+    that instant (the apply / reset that set it), so the row's time agrees with
+    the banner's -- not the oldest row that happens to hold equal content.
+    ``{"ref", "captured_utc"}`` or None (not tracked, no baseline, no row)."""
+    if not _drift_tracked(ctx):
+        return None
+    from quam_state_manager.core import hub_versions
+    from quam_state_manager.core.timefmt import to_utc
+    try:
+        base = _history().get_live_baseline(ctx["path"])
+    except Exception:  # noqa: BLE001 -- a badge never breaks the list
+        return None
+    if not base:
+        return None
+    captured = base.get("captured_utc")
+    at = to_utc(captured)
+    if at is None:
+        return None
+    at_us = int(at.timestamp() * 1_000_000)
+    shash = base.get("state_hash")
+    cands: list[tuple[int, str]] = []
+    if res.get("mode") == "ledger" and res.get("chip_dir") is not None:
+        key = (str(ctx["path"]), captured, shash)
+        chash = _BASELINE_CHASH.get(key)
+        if chash is None:
+            from quam_state_manager.core.working_copy import content_hash
+            try:
+                chash = content_hash(base["state"], base["wiring"])
+            except Exception:  # noqa: BLE001
+                return None
+            _BASELINE_CHASH[key] = chash
+            while len(_BASELINE_CHASH) > 8:
+                _BASELINE_CHASH.popitem(last=False)
+        try:
+            cands += [(t, ref) for t, ref in hub_versions.versions_with_content(res["chip_dir"], chash)]
+        except Exception:  # noqa: BLE001 -- a badge never breaks the list
+            logger.debug("baseline row lookup failed", exc_info=True)
+        listed_older = res.get("older") or frozenset()
+    else:
+        listed_older = None          # every snapshot is a listed row
+    from quam_state_manager.core.hub_versions import _snapshot_instant
+    for m in snapshots:
+        if shash and getattr(m, "state_hash", None) == shash and (
+                listed_older is None or m.timestamp in listed_older):
+            cands.append((_snapshot_instant(m.timestamp), m.timestamp))
+    if not cands:
+        return None
+    # nearest the instant it was set; of two equally near, the later one
+    _t, ref = min(cands, key=lambda c: (abs(c[0] - at_us), -c[0]))
+    return {"ref": ref, "captured_utc": captured}
+
+
+def _versions_count_words(res: dict) -> tuple[str, str]:
+    """S10 walk: ``(head, detail)`` -- "3,518 versions" and what is in it that
+    is not this folder's own recorded state (how many rows are not this
+    folder's, how many are older snapshots; "older snapshots" while the ledger
+    cannot answer)."""
+    total = int(res.get("total") or 0)
+    head = f"{total:,} version{'' if total == 1 else 's'}"
+    if res.get("mode") != "ledger":
+        return head, ("older snapshots" if total else "")
+    parts = []
+    foreign = sum(int(n or 0) for n in (res.get("foreign") or {}).values())
+    if foreign:
+        parts.append(f"{foreign:,} not this folder's")
+    older = int(res.get("legacy_total") or 0)
+    if older:
+        parts.append(f"{older:,} older snapshot{'' if older == 1 else 's'}")
+    return head, " · ".join(parts)
+
+
+def _versions_count(ctx, snapshots) -> tuple[int | None, bool]:
+    """S10 walk: ``(count, waiting)`` for a surface that shows only the count
+    (the top-bar Versions badge, the History (N) button): :func:`_versions_read`'s
+    ``total``, or ``(None, True)`` while the ledger is being built / prepared --
+    the count is not shown then (it would be the older snapshots' count, which
+    jumped 3518 -> 210 -> 3522 around an apply) and the badge asks again."""
+    try:
+        v = _versions_read(ctx, snapshots, limit=1, lane_notes=False)
+    except Exception:  # noqa: BLE001 -- a count never breaks the page: the snapshots'
+        logger.debug("version count read failed", exc_info=True)
+        return len(snapshots), False
+    if v.get("mode") in ("building", "preparing"):
+        return None, True
+    return int(v.get("total") or 0), False
+
+
+def _versions_read_rows(ctx, snapshots, *, limit: int = 40, offset: int = 0,
+                        lane_notes: bool = True) -> dict:
+    """:func:`_versions_read` without the count words."""
     from quam_state_manager.core import hub_versions, value_history as vh
     out: dict[str, Any] = {"mode": "unavailable", "reason": "no_chip_dir", "rows": [],
                            "notes": [], "chip_key": "", "total": 0}
@@ -18138,20 +18370,20 @@ def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0,
     # S10 C1.5/C3: the notes speak for THIS folder's lane (its runs, the
     # roots it left out), not the whole ledger
     lane = _value_history(ctx, {}) if lane_notes else {}
+    # S10 walk: a LISTING keeps another folder's rows, labelled (docs/250) --
+    # its notes say what it lists (these numbers), never "not part of this
+    # folder's timeline" over rows drawn right below
+    listing = dict(res.get("foreign") or {}, uncertain=int(res.get("uncertain") or 0))
     notes = list(vh.notes(res.get("status"), lane.get("ledger") or {"has_runs": res.get("has_runs")},
-                          origin=ctx.get("origin") or "live"))
+                          origin=ctx.get("origin") or "live", listing=listing))
     if res.get("pending"):
         n = res["pending"]
         notes.append({"level": "info", "code": "matching",
                       "text": f"{n} older snapshot{'s are' if n != 1 else ' is'} still being matched "
                               "against the change history; such a row may repeat a state listed "
                               "above until it is done. Reopen in a moment."})
-    if res.get("uncertain") and not any(n.get("code") == "other_chip" for n in notes):
-        # the folder view already said it (its other_chip note): one note, not two
-        n = res["uncertain"]
-        notes.append({"level": "info", "code": "uncertain",
-                      "text": f"{n} run{'s' if n != 1 else ''} of an uncertain chip identity "
-                              f"{'are' if n != 1 else 'is'} not listed."})
+    # S10 walk: another chip's runs (never listed) are said once, by the
+    # listing's own other_chip note (folder_notes), whatever the folder view
     res["notes"] = notes
     # the live folder each listed SM write wrote, for its source badge
     lives: dict[int, str] = {}

@@ -2306,21 +2306,37 @@ window.ChipStatus.mount = function (opts) {
             // the chip actually has snapshots. Guarded against the popup being closed/
             // replaced before the request lands; reposition once the taller content is in.
             if (_historyCount > 0) {
-                var sparkSlot = document.createElement('div');
-                sparkSlot.className = 'topo-popup-section muted';
-                sparkSlot.style.cssText = 'font-size:0.72em;text-align:center';
-                sparkSlot.textContent = 'loading trends…';
-                popup.appendChild(sparkSlot);
-                fetch('/api/topology/sparklines/' + encodeURIComponent(n.id), {cache: 'no-store'})
-                    .then(function(r) { return r.text(); })
-                    .then(function(htmlStr) {
-                        if (activePopup !== popup || !popup.isConnected) return;   // popup gone
-                        var tmp = document.createElement('div');
-                        tmp.innerHTML = htmlStr || '';
-                        sparkSlot.replaceWith.apply(sparkSlot, tmp.childNodes.length ? Array.prototype.slice.call(tmp.childNodes) : [document.createComment('no-trend')]);
-                        positionPopup(popup, anchorEl);   // re-clamp now it's taller
-                    })
-                    .catch(function() { if (sparkSlot.parentNode) sparkSlot.remove(); });
+                var loadSparks = function (before) {
+                    var sparkSlot = document.createElement('div');
+                    sparkSlot.className = 'topo-popup-section muted';
+                    sparkSlot.style.cssText = 'font-size:0.72em;text-align:center';
+                    sparkSlot.textContent = 'loading trends…';
+                    if (before) before.replaceWith(sparkSlot); else popup.appendChild(sparkSlot);
+                    fetch('/api/topology/sparklines/' + encodeURIComponent(n.id), {cache: 'no-store'})
+                        .then(function(r) { return r.text(); })
+                        .then(function(htmlStr) {
+                            if (activePopup !== popup || !popup.isConnected) return;   // popup gone
+                            var tmp = document.createElement('div');
+                            tmp.innerHTML = htmlStr || '';
+                            var nodes = tmp.childNodes.length ? Array.prototype.slice.call(tmp.childNodes) : [document.createComment('no-trend')];
+                            // S10 walk: an unreadable change history ends with one manual
+                            // "Try again" (read once per press, never an automatic re-ask);
+                            // the answer is wrapped so the press can replace all of it
+                            var box = document.createElement('div');
+                            nodes.forEach(function (nd) { box.appendChild(nd); });
+                            sparkSlot.replaceWith(box);
+                            var again = box.querySelector('[data-vh-try-again]');
+                            if (again) {
+                                again.addEventListener('click', function (ev) {
+                                    ev.stopPropagation();
+                                    loadSparks(box);
+                                });
+                            }
+                            positionPopup(popup, anchorEl);   // re-clamp now it's taller
+                        })
+                        .catch(function() { if (sparkSlot.parentNode) sparkSlot.remove(); });
+                };
+                loadSparks(null);
             }
         }
 

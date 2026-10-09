@@ -1120,7 +1120,8 @@ class TestChangesOnlyFilter:
         body = client.get("/state/versions").get_data(as_text=True)
         # S10 C3: snapshot copy total -> one recorded state, physical bookmarks remain kept.
         foot = re.sub(r"\s+", " ", body[body.index("sv-kept-note"):])
-        assert "From the change history: 1 recorded state and 2 older snapshots" in foot, foot[:200]
+        # S10 walk: old -> new, the foot says the one count line every listing says
+        assert "From the change history: " in foot and ">3 versions</span>" in foot             and "(2 older snapshots)" in foot, foot[:300]
         assert len(_hm_of(client).list_snapshots(Path(client.application.config["contexts"][
             client.application.config["active_context"]]["path"]))) == 4
         assert "State History" in body

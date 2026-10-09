@@ -1726,9 +1726,12 @@
 
             if (tid === "status-bar") {
                 var el = evt.detail.target.firstElementChild;
-                if (el) {
-                    scope.timeout(function() { el.style.opacity = "0"; }, 3000);
-                    scope.timeout(function() { el.remove(); }, 3500);
+                // S10 walk: a gate (.sh-confirm) waits for its answer (it has its
+                // own x), and a long result line stays long enough to be read
+                if (el && !(el.classList && el.classList.contains("sh-confirm"))) {
+                    var ms = Math.max(3000, Math.min(10000, (el.textContent || "").length * 45));
+                    scope.timeout(function() { el.style.opacity = "0"; }, ms);
+                    scope.timeout(function() { el.remove(); }, ms + 500);
                 }
                 return;
             }

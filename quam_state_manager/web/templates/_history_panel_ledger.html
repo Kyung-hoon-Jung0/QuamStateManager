@@ -4,8 +4,10 @@
    "State History" title. It now lists the newest recorded states of the SAME
    ledger the State History page reads, read-only, and sends the user there to
    compare, load or restore one. #}
-{% from '_snapshot_source.html' import source_badge %}{% set lv = ledger_versions %}
-{% if lv.mode == 'ledger' %}<span id="history-count" hx-swap-oob="true">{{ lv.total }}</span>{% endif %}
+{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag %}{% from '_version_count.html' import version_count %}{% from '_history_pager.html' import history_pager %}{% set lv = ledger_versions %}
+{#- S10 walk: the History (N) button shows the one count in every mode (it is
+    what this drawer lists); an ellipsis while the change history catches up -#}
+<span id="history-count" hx-swap-oob="true">{% if lv.mode in ('building', 'preparing') %}&hellip;{% else %}{{ '{:,}'.format(lv.total or 0) }}{% endif %}</span>
 <div id="history-list">
 <div class="history-toolbar">
     <a class="outline btn-sm" role="button" href="/state-history" hx-get="/state-history"
@@ -15,7 +17,7 @@
             hx-post="/api/history/snapshot"
             hx-target="#history-content"
             hx-swap="innerHTML">Take Snapshot</button>
-    <small class="muted hp-ledger-count">{{ lv.total }} {% if lv.mode == 'ledger' %}recorded state{{ 's' if lv.total != 1 }}{% else %}older snapshot{{ 's' if lv.total != 1 }}{% endif %}{% if lv.rows | length < lv.total %} &middot; {% if page == 1 %}newest {% endif %}{{ lv.rows | length }} shown{% endif %}</small>
+    <small class="muted hp-ledger-count">{{ version_count(lv) }}{% if lv.rows | length < lv.total %} &middot; {% if page == 1 %}newest {% endif %}{{ lv.rows | length }} shown{% endif %}</small>
     <select aria-label="States per page" name="per_page"
             hx-get="/api/history" hx-target="#history-content" hx-swap="innerHTML">
         {% for size in (20, 50, 100, 0) %}
@@ -23,23 +25,24 @@
         {% endfor %}
     </select>
 </div>
+{% if snapshot_note %}<p class="muted hp-snapshot-note" role="status">{{ snapshot_note }}</p>{% endif %}
 {% if per_page == 0 and lv.rows | length < lv.total %}
 {# "All" is capped (S10 C6 review): say so, and where every state is listed #}
 <p class="muted hp-all-cap">All shows the newest {{ lv.rows | length }} of {{ lv.total }};
     <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
        hx-sync="#table-pane:replace" hx-push-url="true">State History</a> lists every one.</p>
 {% endif %}
-{% with notes=lv.notes %}{% include '_hub_notes.html' %}{% endwith %}
+{% with notes=lv.notes, retry={'url': '/api/history?page=' ~ (page or 1) ~ '&per_page=' ~ per_page, 'target': '#history-content'} %}{% include '_hub_notes.html' %}{% endwith %}
 <div class="history-timeline">
 {% for r in lv.rows %}
 <div class="history-entry hp-ledger-row" data-ts="{{ r.ts }}">
     <div class="history-entry-header">
         <span class="history-entry-time">{{ r.when | ts_local }}</span>
         {% if r.legacy %}
-        <span class="sh-older-badge" title="A Param History snapshot no change-history event covers">older snapshot</span>{{ source_badge(r.source, 'hp-src') }}
+        <span class="sh-older-badge" title="A Param History snapshot no change-history event covers">older snapshot</span>{{ source_badge(r.source, 'hp-src') }}{{ baseline_tag(r, lv, 'hp-baseline') }}
         {% else %}
         <strong class="sh-event sh-event-{{ r.badge | replace(' ', '-') }}" title="{{ r.hover }}">{{ r.title }}</strong>
-        <span class="muted sh-event-sub">{{ r.sub }}</span>{{ source_badge(r.source, 'hp-src') }}
+        <span class="muted sh-event-sub">{{ r.sub }}</span>{{ source_badge(r.source, 'hp-src') }}{{ foreign_tag(r, 'hp-foreign-tag') }}{{ baseline_tag(r, lv, 'hp-baseline') }}
         {% endif %}
         {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
     </div>
@@ -51,13 +54,5 @@
 {% if lv.mode == 'ledger' %}<p class="muted" style="padding: 0.5rem;">No recorded states yet.</p>{% endif %}
 {% endfor %}
 </div>
-{% if total_pages > 1 %}
-<nav class="history-pagination">
-    {% if page > 1 %}<button class="outline btn-sm" hx-get="/api/history?page={{ page - 1 }}&amp;per_page={{ per_page }}"
-        hx-target="#history-content" hx-swap="innerHTML">Prev</button>{% endif %}
-    <span class="muted">Page {{ page }} / {{ total_pages }}</span>
-    {% if page < total_pages %}<button class="outline btn-sm" hx-get="/api/history?page={{ page + 1 }}&amp;per_page={{ per_page }}"
-        hx-target="#history-content" hx-swap="innerHTML">Next</button>{% endif %}
-</nav>
-{% endif %}
+{{ history_pager('/api/history', page, total_pages, '#history-content', per_page, 'innerHTML show:top') }}
 </div>

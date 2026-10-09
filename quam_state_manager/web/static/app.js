@@ -24225,6 +24225,15 @@ window.FieldHistory = (function () {
                 if (window.htmx) window.htmx.process(p);
                 renderChart(p);
                 if (isPanel) position(anchor);
+                // S10 walk: an unreadable change history ends with one manual
+                // "Try again" (read once per press; never an automatic re-ask)
+                var again = p.querySelector("[data-vh-try-again]");
+                if (again) {
+                    again.addEventListener("click", function () {
+                        again.disabled = true;
+                        load(anchor, path, seq, all, p);
+                    });
+                }
                 var wait = p.querySelector("[data-vh-retry]");
                 if (wait) {
                     var ms = parseInt(wait.getAttribute("data-vh-retry"), 10) || 2000;
@@ -25409,6 +25418,14 @@ window.ColumnHistory = (function () {
                 if (window.applyLocalTimes) window.applyLocalTimes(card);
                 if (window.htmx) window.htmx.process(card);
                 _applyView(card);
+                // S10 walk: the unreadable end state's one manual "Try again"
+                var again = card.querySelector("[data-vh-try-again]");
+                if (again) {
+                    again.addEventListener("click", function () {
+                        again.disabled = true;
+                        _load(o, card, payload, seq);
+                    });
+                }
                 var wait = card.querySelector("[data-vh-retry]");
                 if (wait) {
                     var ms = parseInt(wait.getAttribute("data-vh-retry"), 10) || 2000;

@@ -4,5 +4,5 @@
 {# docs/284: why this list reads what it reads (the change ledger, or every
    snapshot as an older row while the ledger is being built / prepared /
    cannot be read). S10 C6: the snapshot-only timeline is gone. #}
-{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}{% endwith %}
+{% with notes=ledger_versions.notes, retry={'url': '/state-history?body=1&page=' ~ (current_page or 1) ~ '&per_page=' ~ (per_page or 40), 'target': '#state-history-body'} %}{% include '_hub_notes.html' %}{% endwith %}
 {% include '_ledger_state_history.html' %}

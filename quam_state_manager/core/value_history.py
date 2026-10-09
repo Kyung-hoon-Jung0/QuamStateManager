@@ -1196,46 +1196,65 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n:,} {one if n == 1 else many}"
 
 
-def folder_notes(left_out: dict | None) -> list[dict]:
+def folder_notes(left_out: dict | None, listing: dict | None = None) -> list[dict]:
     """S10 C1.5: what a folder's view of the chip's ledger left out, said
     (docs/250 wording): another folder's changes recorded while this folder
     had its own history, a folder that cannot be shown, runs of a data folder
-    not linked to this one, SM writes whose state was derived at a seam."""
+    not linked to this one, SM writes whose state was derived at a seam.
+
+    S10 walk: *listing* -- the numbers a LISTING (Versions, State History, the
+    History drawer) actually lists (``hub_versions.read``'s ``foreign`` by why,
+    plus ``uncertain``). A listing keeps another folder's rows, labelled
+    (docs/250), so its note says they are listed below and are not this
+    folder's changes -- a value surface leaves them out and says so. Another
+    chip's runs are never listed: the listing note says that."""
     lo = left_out or {}
     out: list[dict] = []
-    parallel, unknown = int(lo.get("parallel") or 0), int(lo.get("unknown") or 0)
+    if listing is not None:
+        parallel, unknown = int(listing.get("parallel") or 0), int(listing.get("unknown") or 0)
+    else:
+        parallel, unknown = int(lo.get("parallel") or 0), int(lo.get("unknown") or 0)
     if parallel or unknown:
         named = [f for f in lo.get("folders") or () if f.get("folder")]
         parts = []
+        noun = ("version", "versions") if listing is not None else ("change", "changes")
         if parallel:
             labels = ", ".join(f.get("label") or f.get("folder") for f in named[:3])
             more = f" and {len(named) - 3} more" if len(named) > 3 else ""
-            parts.append(_plural(parallel, "change", "changes")
+            parts.append(_plural(parallel, *noun)
+                         + (" recorded" if listing is not None else "")
                          + " from " + ("other folders" if len(named) > 1 else "another folder")
                          + " with this chip name" + (f" ({labels}{more})" if labels else ""))
         if unknown:
-            parts.append(_plural(unknown, "change", "changes")
+            parts.append(_plural(unknown, *noun)
                          + " from a folder that is not recorded")
         n = parallel + unknown
+        if listing is not None:
+            tail = ((" is" if n == 1 else " are") + " listed below, labelled; "
+                    + ("it is" if n == 1 else "they are") + " not this folder's changes.")
+        else:
+            tail = (" is" if n == 1 else " are") + " not part of this folder's timeline."
         out.append({"level": "info", "code": "other_folders",
-                    "text": " and ".join(parts) + (" is" if n == 1 else " are")
-                            + " not part of this folder's timeline.",
-                    "folders": named})
-    unlinked = int(lo.get("unlinked") or 0)
+                    "text": " and ".join(parts) + tail, "folders": named})
+    unlinked = int((listing if listing is not None else lo).get("unlinked") or 0)
     if unlinked:
         roots = [r for r in lo.get("roots") or () if r.get("path")]
         where = ", ".join(r["path"] for r in roots[:2]) + (" and more" if len(roots) > 2 else "")
-        out.append({"level": "info", "code": "unlinked_roots",
-                    "text": _plural(unlinked, "run", "runs") + " of a data folder not linked to this folder"
-                            + (f" ({where})" if where else "") + (" is" if unlinked == 1 else " are")
-                            + " not part of this folder's timeline.",
-                    "roots": roots})
-    other_chip = int(lo.get("other_chip") or 0)
+        head = (_plural(unlinked, "run", "runs") + " of a data folder not linked to this folder"
+                + (f" ({where})" if where else ""))
+        if listing is not None:
+            text = (head + (" is" if unlinked == 1 else " are") + ' listed below, labelled "data folder '
+                    'not linked"; ' + ("it is" if unlinked == 1 else "they are") + " not this folder's changes.")
+        else:
+            text = head + (" is" if unlinked == 1 else " are") + " not part of this folder's timeline."
+        out.append({"level": "info", "code": "unlinked_roots", "text": text, "roots": roots})
+    other_chip = int((listing.get("uncertain") if listing is not None else lo.get("other_chip")) or 0)
     if other_chip:
         out.append({"level": "info", "code": "other_chip",
                     "text": _plural(other_chip, "run", "runs") + " whose saved chip identity does not "
                             "match this chip's " + ("is" if other_chip == 1 else "are")
-                            + " not part of this chip's timeline."})
+                            + (" not listed." if listing is not None
+                               else " not part of this chip's timeline.")})
     derived = int(lo.get("derived") or 0)
     if derived:
         out.append({"level": "info", "code": "derived_seam",
@@ -1248,8 +1267,9 @@ def folder_notes(left_out: dict | None) -> list[dict]:
 
 
 def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
-          newest: Any = _ABSENT, origin: str = "live") -> list[dict]:
-    """What every surface says beside a ledger answer (docs/282 §1.3)."""
+          newest: Any = _ABSENT, origin: str = "live", listing: dict | None = None) -> list[dict]:
+    """What every surface says beside a ledger answer (docs/282 §1.3).
+    *listing*: a listing's own numbers (:func:`folder_notes`)."""
     st = status or {}
     out: list[dict] = []
     state = st.get("state")
@@ -1282,11 +1302,18 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
                     "text": "No data folder is linked to this chip now; newer runs may be missing."})
     elif (not st.get("roots") and state in ("ready", "degraded")
           and not ledger.get("has_runs") and origin == "live"):
-        out.append({"level": "info", "code": "no_folder_linked",
-                    "text": "No data folder is linked to this chip, so this history holds SM's own "
-                            "writes and the states SM saw -- no runs. Link the folder its runs are saved in.",
+        if listing is not None and listing.get("unlinked"):
+            # S10 walk: a listing that lists another data folder's runs (labelled)
+            # never says "no runs" over them
+            text = ("No data folder is linked to this chip, so this folder's own history holds "
+                    "SM's own writes and the states SM saw; the runs listed below belong to a data "
+                    "folder not linked to it. Link the folder its runs are saved in.")
+        else:
+            text = ("No data folder is linked to this chip, so this history holds SM's own "
+                    "writes and the states SM saw -- no runs. Link the folder its runs are saved in.")
+        out.append({"level": "info", "code": "no_folder_linked", "text": text,
                     "link": {"offer": True, "url": "/hub/link-folder"}})
-    out.extend(folder_notes(ledger.get("left_out")))
+    out.extend(folder_notes(ledger.get("left_out"), listing))
     if current is not _ABSENT and newest is not _ABSENT and not (
             current is None and newest is None):
         if current is None or newest is None or not rules.same(current, newest):

@@ -1,6 +1,13 @@
 <div class="hub-notes" data-hub-url="{{ request.full_path.rstrip('?') }}">
 {% for note in notes or [] %}
 <p class="vh-note vh-note-{{ note.level }}{% if note.code == 'other_folders' %} fh-other-note{% endif %}" data-note="{{ note.code }}" data-code="{{ note.code }}">{{ note.text }}</p>
+{% if retry and note.code in ('unreadable', 'no_ledger', 'no_chip_dir') %}
+{#- S10 walk: every surface that ends on "the change history could not be read"
+    offers the same one manual press (Trends / Param History did, the listings
+    did not); it reads again once, never an automatic re-ask -#}
+<button type="button" class="btn-sm vh-try-again" hx-get="{{ retry.url }}"
+        hx-target="{{ retry.target }}" hx-swap="innerHTML">Try again</button>
+{% endif %}
 {% if note.code == 'no_folder_linked' %}
 <button type="button" class="outline btn-sm" hx-get="/hub/link-folder"
         hx-target="#hub-folder-body" hx-swap="innerHTML" onclick="HubFolders.open(this)">Link a data folder...</button>

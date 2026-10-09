@@ -3265,7 +3265,8 @@ class TestParamHistoryMultiChip:
         # Cross-chip banner should be present (we're viewing a non-loaded chip)
         # S10 C3: empty snapshot archive -> terminal unavailable, no ledger exists to read.
         assert 'data-vh-mode="unavailable"' in body
-        assert "The change history could not be read (no_ledger). Nothing older is shown in its place." in body
+        # S10 walk: old -> new, the reason in plain words (never the raw "(no_ledger)")
+        assert "No change history has been built for this chip yet. Nothing older is shown in its place." in body
         assert "data-vh-retry" not in body
 
     def test_alignment_banner_red_when_workspace_has_no_match(self, client, tmp_path):
@@ -7259,7 +7260,8 @@ class TestParamHistoryBusyIndexDegrade:
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         assert 'data-vh-mode="unavailable"' in body
-        assert "The change history could not be read (unreadable). Nothing older is shown in its place." in body
+        # S10 walk: old -> new, the reason in plain words (never the raw "(unreadable)")
+        assert "The change history file could not be read. Nothing older is shown in its place." in body
         assert "data-vh-retry" not in body
 
 

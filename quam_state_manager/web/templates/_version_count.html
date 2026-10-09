@@ -1,0 +1,8 @@
+{# S10 walk: THE history count line -- the same number (routes._versions_read
+   "total": the rows the listing lists) and the same words on the History
+   drawer header, the Versions panel and State History; the top-bar badge and
+   the History (N) button show the same number alone. #}
+{% macro version_count(lv, cls='') -%}
+<span class="version-count {{ cls }}" data-total="{{ lv.total or 0 }}">{{ lv.count_head }}</span>
+{%- if lv.count_detail %} <span class="muted version-count-detail">({{ lv.count_detail }})</span>{% endif %}
+{%- endmacro %}
