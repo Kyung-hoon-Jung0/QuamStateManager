@@ -2776,6 +2776,10 @@ class HistoryManager:
             # Update tracking state
             self._last_mtime[key] = current_mt
             self._snapshot_list_cache.pop(str(path.resolve()), None)
+            # S10 C1.5: another folder of this chip identity reads the same
+            # snapshots (its sources, its cut, whether another folder is
+            # known): its cached list is stale now too
+            self._invalidate_snapshot_lists_for(hist_dir)
             if not defer_index:
                 self._fire_indexed(quam_state_path)
             # Invalidate param-history caches that depend on this chip dir.
