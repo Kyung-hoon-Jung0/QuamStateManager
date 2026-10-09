@@ -8,6 +8,8 @@ a JSON pointer, an OPX port, a date, a time, a unit, a dotted parameter path.
 """
 from __future__ import annotations
 
+import html
+
 import pytest
 
 from quam_state_manager.core.report_redact import (
@@ -107,6 +109,49 @@ class TestValuePatterns:
     def test_a_path_closing_a_parenthesis_or_a_sentence_keeps_the_punctuation(self, red, text, want):
         assert red.redact_text(text) == want
         assert red.redact_html(f"<p>{text}</p>") == f"<p>{want}</p>"
+
+    # S10 walk 2: the printed Calibration log read "...path specified: '[hidden];)." -- the
+    # page escapes the quote as &#39; and the path pattern swallowed "&#39" of it
+    def test_an_escaped_quote_closing_a_hidden_path_survives(self, red):
+        err = ("Its saved state could not be read ([WinError 3] The system cannot find the path "
+               r"specified: 'D:\work\Data\2026-10-01\#237_scan_025832\quam_state\state.json').")
+        want = ("Its saved state could not be read ([WinError 3] The system cannot find the path "
+                "specified: '[hidden]').")
+        assert red.redact_text(err) == want
+        assert red.redact_html(f"<p>{html.escape(err)}</p>") == f"<p>{want}</p>"
+        attr = red.redact_html(f'<p title="{html.escape(err, quote=True)}">x</p>')
+        assert html.unescape(attr.split('"')[1]) == want, attr
+        quoted = red.redact_html("<p>&quot;D:\\a\\b.json&quot; &amp; [x]</p>")
+        assert quoted == '<p>"[hidden]" &amp; [x]</p>', quoted
+        assert red.redact_html("<p>a &amp; b &#39;c&#39;</p>") == "<p>a &amp; b &#39;c&#39;</p>", \
+            "text with nothing to hide keeps its bytes"
+
+
+class TestWholeTokens:
+    """S10 walk 2: the report title read "20260929_[hidden]_kriss" -- a folder or chip
+    name is hidden as a WHOLE token, never in part (generic synthetic names here)."""
+
+    @pytest.fixture
+    def red(self):
+        return Redactor.for_documents({"network": {"cluster_name": "site_omega"}})
+
+    @pytest.mark.parametrize("text,want", [
+        ("20260101_site_omega_lab", HIDDEN),
+        ("Chip 20260101_site_omega_lab, 21 qubits", f"Chip {HIDDEN}, 21 qubits"),
+        ("site_omega-b.h5 saved", f"{HIDDEN} saved"),
+        ("lab.site_omega", HIDDEN),
+        ("the chip site_omega.", f"the chip {HIDDEN}."),
+        ("(site_omega_x)", f"({HIDDEN})"),
+        ("run_10.1.2.3_q5 done", f"{HIDDEN} done"),
+        (r"C:\data\site_omega_x\state.json", HIDDEN),
+    ])
+    def test_a_hidden_span_takes_its_whole_token(self, red, text, want):
+        assert red.redact_text(text) == want
+        assert red.redact_html(f"<h1>{text}</h1>") == f"<h1>{want}</h1>"
+
+    def test_a_name_that_merely_contains_no_secret_is_untouched(self, red):
+        for text in ("20260101_site_alpha_lab", "qubits.qA1.xy.operations.x180", "omega site"):
+            assert red.redact_text(text) == text
 
 
 class TestLiterals:
