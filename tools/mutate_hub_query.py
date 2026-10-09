@@ -60,8 +60,17 @@ MUTATIONS = [
     ("warming_after", INDEX,
      '        hub_sync.require_ready(directory)\n        if conn.execute',
      '        None\n        if conn.execute', "sync_starting_during_query_raises_warming"),
-    ("exact_case", QUERY, 'pid = index.paths.get(path)', 'pid = index.paths.get(path.lower())',
-     "alias_free_escaped_and_case_distinct_holder_paths"),
+    # S10 C7: shared lookup -> series lookup only, preserve exact holder semantics.
+    ('exact_case', QUERY,
+     (
+      '        raise ValueError("series limit must be a nonnegative integer")\n'
+      '    pid = index.paths.get(path)'
+     ),
+     (
+      '        raise ValueError("series limit must be a nonnegative integer")\n'
+      '    pid = index.paths.get(path.lower())'
+     ),
+     'alias_free_escaped_and_case_distinct_holder_paths'),
     ("lossless_values", QUERY, 'value(changes[eid]["num"], changes[eid]["txt"])',
      'changes[eid]["num"]', "payloads_nonfinite_large_numbers_long_array_and_raw_pointer"),
     ("rewrite_token", INDEX, 'token = (reader.identity, ledger_id, version, high, journal_size)',
@@ -86,8 +95,17 @@ MUTATIONS = [
      'ids = sorted(ids, key=index.positions.__getitem__)[:500]',
      "large_pages_and_many_series_batch_sql_parameters"),
     # S10 C7: old -> new, the lookup covers full and incremental indexes.
-    ("root_holder", QUERY, 'pid = index.paths.get(path)', 'pid = index.paths.get(path or "root")',
-     "root_empty_key_and_backslash_holder_paths"),
+    # S10 C7: shared lookup -> series lookup only, preserve exact holder semantics.
+    ('root_holder', QUERY,
+     (
+      '        raise ValueError("series limit must be a nonnegative integer")\n'
+      '    pid = index.paths.get(path)'
+     ),
+     (
+      '        raise ValueError("series limit must be a nonnegative integer")\n'
+      '    pid = index.paths.get(path or "root")'
+     ),
+     'root_empty_key_and_backslash_holder_paths'),
     ("macro_class", INDEX, 'if _ENTITY.fullmatch(token) or token.startswith("cz_"):',
      'if _ENTITY.fullmatch(token):', "macro_classifier_and_actor_class_and_family_are_distinct"),
     ("q_filter", QUERY, 'found = _search(store, index, q)', 'found = _search(store, index, None)',

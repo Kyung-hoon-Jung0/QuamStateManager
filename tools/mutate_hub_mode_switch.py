@@ -21,12 +21,16 @@ MUTATIONS = [
      '        out.update(mode="fallback", reason="no_runs")\n        return out\n'
      '    out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"],',
      [TEST, "-k", "no_run_ledger_never or mode_table"]),
-    ("no_runs_versions_fallback", VERSIONS,
-     '            out["has_runs"] = summary["has_runs"]',
-     '            if not summary["has_runs"] and not st.get("roots"):\n'
-     '                out.update(mode="fallback", reason="no_runs")\n                return out\n'
-     '            out["has_runs"] = summary["has_runs"]',
-     ["tests/test_hub_versions.py::test_modes_other_than_ledger_say_why[no_runs]"]),
+    # S10 C7: summary assignment -> retry-nested assignment, keep the fallback mutation valid.
+    ('no_runs_versions_fallback', VERSIONS,
+     '                out["has_runs"] = summary["has_runs"]',
+     (
+      '                if not summary["has_runs"] and not st.get("roots"):\n'
+      '                    out.update(mode="fallback", reason="no_runs")\n'
+      '                    return out\n'
+      '                out["has_runs"] = summary["has_runs"]'
+     ),
+     ['tests/test_hub_versions.py::test_modes_other_than_ledger_say_why[no_runs]']),
     ("no_folder_note_dropped", "quam_state_manager/core/value_history.py",
      '"code": "no_folder_linked",', '"code": "omitted",',
      [TEST, "-k", "no_run_ledger_never or mode_table or column_reads"]),
@@ -82,10 +86,11 @@ MUTATIONS.extend([
     ("drawer_all_is_one_row", ROUTES,
      'limit=per_page or _HISTORY_DRAWER_ALL_CAP,', 'limit=per_page or 1,',
      [TEST + "::test_ledger_drawer_pages_states_and_refreshes_count"]),
-    ("drawer_count_not_refreshed", TEMPLATES + "_history_panel_ledger.html",
-     '<span id="history-count" hx-swap-oob="true">{{ lv.total }}</span>',
-     '<span>{{ lv.total }}</span>',
-     [TEST + "::test_ledger_drawer_pages_states_and_refreshes_count"]),
+    # S10 C7: literal count -> formatted count span, remove out-of-band refresh.
+    ('drawer_count_not_refreshed', TEMPLATES + '_history_panel_ledger.html',
+     '<span id="history-count" hx-swap-oob="true">',
+     '<span>',
+     [TEST + '::test_ledger_drawer_pages_states_and_refreshes_count']),
     # S10 C5: re-pointed -- the snapshot arm that wrote the count is deleted; the defect is
     # the count written beside the ledger's event count again
     ("trends_writes_the_drawer_count", TEMPLATES + "_topo_trends.html",
@@ -95,10 +100,11 @@ MUTATIONS.extend([
      [TEST + "::test_ledger_drawer_pages_states_and_refreshes_count",
       "tests/test_history_drawer.py::TestTheCountFollowsTakeSnapshot::test_the_trends_fragment_leaves_the_count_to_the_drawer"]),
     # S10 C7: old -> new, retired snapshot-loop prose gives way to the disk-usage anchor.
-    ("ledger_disk_usage_missing", ROUTES,
-     '               disk_stats=disk_stats)',
-     '               disk_stats=None)',
-     [TEST + "::test_ledger_state_history_keeps_snapshot_disk_usage"]),
+    # S10 C7: render arguments -> snapshot-note arguments, omit disk usage.
+    ('ledger_disk_usage_missing', ROUTES,
+     '               disk_stats=disk_stats, snapshot_note=snapshot_note)',
+     '               disk_stats=None, snapshot_note=snapshot_note)',
+     [TEST + '::test_ledger_state_history_keeps_snapshot_disk_usage']),
     ("observed_annotations_dropped", ROUTES,
      '        annotations = annotations_by_event.get(ev["eid"], [])',
      '        annotations = []',
@@ -303,10 +309,14 @@ MUTATIONS.extend([
      '                 "first": first, "appeared": appeared,',
      '                 "first": first, "appeared": False,',
      ['tests/test_chip_metric_meta.py::test_a_value_null_in_the_first_snapshot_is_never_since_history_began', 'tests/test_chip_metric_meta.py::test_a_random_event_sequence_never_serves_a_stale_answer']),
-    ("c5_appeared_for_every_change", ROUTES,
-     '            and all(p["removed"] or p["value"] is None for p in rows[dp]["effective"][:-1])',
-     '            and True',
-     ['tests/test_chip_metric_meta.py::test_a_value_null_in_the_first_snapshot_is_never_since_history_began', 'tests/test_chip_metric_meta.py::test_a_random_event_sequence_never_serves_a_stale_answer']),
+    # S10 C7: whole effective prefix -> anchor prefix, claim every change appeared.
+    ('c5_appeared_for_every_change', ROUTES,
+     '                    and all(p["removed"] or p["value"] is None for p in eff[:at]))',
+     '                    and True)',
+     [
+      'tests/test_chip_metric_meta.py::test_a_value_null_in_the_first_snapshot_is_never_since_history_began',
+      'tests/test_chip_metric_meta.py::test_a_random_event_sequence_never_serves_a_stale_answer'
+     ]),
     ("c5_appeared_wording_lost", "quam_state_manager/web/static/chip-status.js",
      "lines.push((e.appeared ? 'First recorded: ' : 'Last changed: ')",
      "lines.push(('Last changed: ')",

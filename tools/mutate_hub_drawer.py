@@ -55,11 +55,19 @@ MUTATIONS = [
      [D + "test_the_drawer_reads_the_ledger_and_names_a_run_only_on_its_own_patch"]),
     ("data_link_for_any_run", TPL, '        {% if pt.uid %}', '        {% if pt.uid or pt.run_id is not none %}',
      [D + "test_an_unproven_run_is_never_named_as_the_writer"]),
-    ("numeric_only_like_the_leaf_index", RT,
-     '    pts = [_vh_present(p, uid_roots, uid_memo) for p in ans["rows"][key]["points"]]',
-     '    pts = [_vh_present(p, uid_roots, uid_memo) for p in ans["rows"][key]["points"]\n'
-     '           if isinstance(p["value"], (int, float)) and not isinstance(p["value"], bool)]',
-     [D + "test_strings_and_booleans_have_a_history_too"]),
+    # S10 C7: point comprehension -> series presenter loop, drop text and boolean history.
+    ('numeric_only_like_the_leaf_index', RT,
+     (
+      '    for p in _vh_series(ans, key):\n'
+      '        held = p.get("holder")'
+     ),
+     (
+      '    for p in _vh_series(ans, key):\n'
+      '        if not isinstance(p["value"], (int, float)) or isinstance(p["value"], bool):\n'
+      '            continue\n'
+      '        held = p.get("holder")'
+     ),
+     [D + 'test_strings_and_booleans_have_a_history_too']),
     ("no_via", VH, '    chain = list(ft.get("chain") or [])', '    chain = []',
      [A + "test_an_alias_reads_its_holder_and_says_via"]),
     ("alias_read_literally", VH,
@@ -178,10 +186,20 @@ MUTATIONS = [
      '        if not first_row_at_start and not _same_or_absent(running, at_start) and start in events:',
      '        if False:',
      [RM + "test_p0_1_after_a_return_trends_draws_each_holders_value_in_force"]),
-    ("p0_3_by_run_reads_todays_holder", VH, '                    v = cache.fold(h, pos)',
-     '                    v = cache.fold(targets[key]["holder"], pos)',
-     [RR + "test_p0_3_by_run_shows_the_then_holders_value_for_an_alias_row",
-      RR + "test_p0_3_and_p1_1_share_one_rule_after_a_return"]),
+    # S10 C7: fold call -> saved and kept holder selection, read today instead of then.
+    ('p0_3_by_run_reads_todays_holder', VH,
+     (
+      '                    h = _segment_at(segs[key], pos)\n'
+      '                    hs = _segment_at(saved_segs[key], pos)'
+     ),
+     (
+      '                    h = targets[key]["holder"]\n'
+      '                    hs = targets[key]["holder"]'
+     ),
+     [
+      RR + 'test_p0_3_by_run_shows_the_then_holders_value_for_an_alias_row',
+      RR + 'test_p0_3_and_p1_1_share_one_rule_after_a_return'
+     ]),
     ("p0_2_foreign_run_offered", "quam_state_manager/core/hub_lanes.py",
      # S10 C7: old -> new, target the restored distinction between foreign and uncertain runs.
      '            if (any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN\n'
@@ -207,10 +225,11 @@ MUTATIONS = [
      '            if parent and last.isdigit() and parent in self.index.paths:', '            if False:',
      [RR + "test_p2_4_an_array_that_shrank_keeps_its_element_history",
       E + "test_an_element_of_a_long_array_changes_" + "only_when_it_does"]),
-    ("p3_nan_by_run_changed", RT,
-     '                          "changed": i + 1 < len(runs) and not _vh_same(v, older)})',
-     '                          "changed": i + 1 < len(runs) and v != older})',
-     [RR + "test_p3_nan_in_by_run_is_not_a_change"]),
+    # S10 C7: cell closing brace -> expanded cell dict, retain NaN inequality.
+    ('p3_nan_by_run_changed', RT,
+     '                          "changed": i + 1 < len(runs) and not _vh_same(v, older),',
+     '                          "changed": i + 1 < len(runs) and v != older,',
+     [RR + 'test_p3_nan_in_by_run_is_not_a_change']),
     ("p3_before_via_only_by_opacity", CTPL,
      "{% if p.before_via %}<span class=\"vh-chip-bv\">", "{% if False %}<span class=\"vh-chip-bv\">",
      [RR + "test_p3_column_history_says_before_via_in_text"]),

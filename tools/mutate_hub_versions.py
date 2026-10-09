@@ -192,21 +192,42 @@ MUTATIONS = [
      '            rows += []', [OLDER, FOLLOW]),
     ("oldest_first", HV, '            rows.sort(key=lambda r: r[1], reverse=True)', '            rows.sort(key=lambda r: r[1])',
      [ROWS, FOLLOW]),
-    ("one_timeline_page_only", HV, '                cursor = res["cursor"]\n                if not cursor:\n                    break',
-     '                cursor = res["cursor"]\n                break', [SHORT]),
+    # S10 C7: timeline loop -> retry-nested loop, stop after one page.
+    ('one_timeline_page_only', HV,
+     (
+      '                    cursor = res["cursor"]\n'
+      '                    if not cursor:\n'
+      '                        break'
+     ),
+     (
+      '                    cursor = res["cursor"]\n'
+      '                    break'
+     ),
+     [SHORT]),
     ("uncertain_rows_listed", HV,
      '                              if has_state(e) and not e["flags"] & CHIP_UNCERTAIN)',
      '                              if has_state(e))', [SHORT]),
-    ("summary_cached_regardless_of_the_ledger", HV,
-     '        key = (str(directory), _version_token(binding), tuple(s.timestamp for s in snapshots))',
-     '        key = (str(directory), tuple(s.timestamp for s in snapshots))', [FOLLOW]),
-    ("summary_cached_regardless_of_the_snapshots", HV,
-     '        key = (str(directory), _version_token(binding), tuple(s.timestamp for s in snapshots))',
-     '        key = (str(directory), _version_token(binding))', [FOLLOW]),
+    # S10 C7: inline token -> retry token key, ignore ledger token.
+    ('summary_cached_regardless_of_the_ledger', HV,
+     '            key = (str(directory), token, tuple(s.timestamp for s in snapshots))',
+     '            key = (str(directory), tuple(s.timestamp for s in snapshots))',
+     [FOLLOW]),
+    # S10 C7: inline token -> retry token key, ignore snapshot list.
+    ('summary_cached_regardless_of_the_snapshots', HV,
+     '            key = (str(directory), token, tuple(s.timestamp for s in snapshots))',
+     '            key = (str(directory), token)',
+     [FOLLOW]),
     # S10 C6: re-anchored -- older rows also take the kept bookmarks
-    ("cached_rows_drawn_as_they_were", HV,
-     '            older = [s for s in snapshots if s.timestamp in summary["older"] or s.timestamp in keep]',
-     '            older = summary.setdefault("rows", [s for s in snapshots if s.timestamp in summary["older"] or s.timestamp in keep])',
+    # S10 C7: older rows -> deduplicated older rows, freeze snapshot annotations.
+    ('cached_rows_drawn_as_they_were', HV,
+     (
+      '                older = [s for s in snapshots if s.timestamp in keep\n'
+      '                         or (s.timestamp in summary["older"] and s.timestamp not in seen)]'
+     ),
+     (
+      '                older = summary.setdefault("rows", [s for s in snapshots if s.timestamp in keep\n'
+      '                         or (s.timestamp in summary["older"] and s.timestamp not in seen)])'
+     ),
      [FOLLOW]),
     ("summary_cached_while_matching", HV, '                if not summary.get("pending"):', '                if True:',
      [MATCH]),
@@ -324,12 +345,19 @@ MUTATIONS = [
      "    {% if not rows and ledger_versions is defined and ledger_versions and ledger_versions.mode in ('building', 'preparing') %}",
      "    {% if false %}", [BUILDING]),
     # S10 C6: re-anchored -- the notes render through the one _hub_notes.html partial (C2)
-    ("panel_notes_hidden", PANEL,
-     "    {% if ledger_versions is defined and ledger_versions %}{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}",
-     "    {% if false %}{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}", [BUILDING, NOLEDGER]),
-    ("history_notes_hidden", BODY,
-     "{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}{% endwith %}",
-     "{% with notes=[] %}{% include '_hub_notes.html' %}{% endwith %}", [BUILDING]),
+    # S10 C7: notes include -> retry-aware include, hide panel notes.
+    ('panel_notes_hidden', PANEL,
+     '    {% if ledger_versions is defined and ledger_versions %}{% with notes=ledger_versions.notes, retry=',
+     '    {% if false %}{% with notes=ledger_versions.notes, retry=',
+     [
+      BUILDING,
+      NOLEDGER
+     ]),
+    # S10 C7: notes include -> retry-aware include, hide timeline notes.
+    ('history_notes_hidden', BODY,
+     '{% with notes=ledger_versions.notes, retry=',
+     '{% with notes=[], retry=',
+     [BUILDING]),
     ("history_write_buttons_for_any_version", LSH,
      "{% if chip_origin == 'live' and not r.why_write and not r.pending %}",
      "{% if chip_origin == 'live' and not r.pending %}", [REFUSE]),
@@ -358,20 +386,32 @@ MUTATIONS = [
     ("versions_foot_counts_older_as_recorded", PANEL,
      "<span class=\"sv-kept-note\">{% if ledger_versions.mode == 'ledger' %}From the change history:",
      "<span class=\"sv-kept-note\">{% if true %}From the change history:", [UNAVAIL]),
-    ("history_count_calls_older_recorded", LSH,
-     "<small class=\"muted\">{% if lv.mode == 'ledger' %}{{ lv.events }} recorded state",
-     "<small class=\"muted\">{% if true %}{{ lv.events }} recorded state", [UNAVAIL]),
-    ("drawer_count_calls_older_recorded", DRAWER,
-     "{{ lv.total }} {% if lv.mode == 'ledger' %}recorded state",
-     "{{ lv.total }} {% if true %}recorded state", [UNAVAIL]),
+    # S10 C7: inline wording -> count macro call, mislabel older rows as recorded.
+    ('history_count_calls_older_recorded', LSH,
+     '{{ version_count(lv) }}',
+     '{{ lv.total }} recorded states',
+     [UNAVAIL]),
+    # S10 C7: inline wording -> count macro call, mislabel older rows as recorded.
+    ('drawer_count_calls_older_recorded', DRAWER,
+     '{{ version_count(lv) }}',
+     '{{ lv.total }} recorded states',
+     [UNAVAIL]),
     ("bookmark_guessed_onto_a_later_row", RT,
      '            before = [c for c in wrote or () if c[0] <= at]',
      '            before = list(wrote or ())[:1]', [CARRIED, UNATTACHED]),
     ("unattached_bookmark_not_kept", RT,
      '            if annotated[1] - res.get("older", frozenset()):', '            if False:', [UNATTACHED]),
-    ("kept_snapshot_not_listed", HV,
-     '            older = [s for s in snapshots if s.timestamp in summary["older"] or s.timestamp in keep]',
-     '            older = [s for s in snapshots if s.timestamp in summary["older"]]', [UNATTACHED]),
+    # S10 C7: older rows -> deduplicated older rows, drop unattached kept bookmarks.
+    ('kept_snapshot_not_listed', HV,
+     (
+      '                older = [s for s in snapshots if s.timestamp in keep\n'
+      '                         or (s.timestamp in summary["older"] and s.timestamp not in seen)]'
+     ),
+     (
+      '                older = [s for s in snapshots\n'
+      '                         if s.timestamp in summary["older"] and s.timestamp not in seen]'
+     ),
+     [UNATTACHED]),
     ("drawer_all_reads_everything", RT,
      'limit=per_page or _HISTORY_DRAWER_ALL_CAP,', 'limit=per_page or 2**31 - 1,', [CAP]),
     ("history_confirm_in_utc", LSH,

@@ -1,4 +1,7 @@
-"""Run isolated folder-offer mutations; always restore the original bytes."""
+"""Run isolated folder-offer mutations; always restore the original bytes.
+
+python tools/mutate_hub_link_folder.py --report OUTPUT.json [--only NAME ...]
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 ROUTES = "quam_state_manager/web/routes.py"
@@ -68,7 +72,11 @@ add("note_degraded", VALUE, 'elif (not st.get("roots") and state in ("ready", "d
 add("note_archive", VALUE, 'and not ledger.get("has_runs") and origin == "live"):', 'and not ledger.get("has_runs")):', "test_archive_history_has_no_offer")
 add("value_archive", ROUTES, 'newest=newest,\n                                   origin=ctx.get("origin") or "live")', 'newest=newest)', "test_archive_history_has_no_offer[/field/history?path=qubits.qA1.T1]")
 add("table_archive", "quam_state_manager/web/hub_status.py", 'answer["ledger"], origin=ctx.get("origin") or "live")', 'answer["ledger"])', "test_archive_history_has_no_offer[/topology/trends]")
-add("versions_archive", ROUTES, '{"has_runs": res.get("has_runs")},\n                          origin=ctx.get("origin") or "live")', '{"has_runs": res.get("has_runs")})', "test_archive_history_has_no_offer[/state/versions]")
+# S10 C7: notes call -> listing-aware notes call, discard archive origin.
+add('versions_archive', ROUTES,
+     'origin=ctx.get("origin") or "live", listing=listing)',
+     'origin="live", listing=listing)',
+     'test_archive_history_has_no_offer[/state/versions]')
 add("offer_button", TEMPLATES + "_hub_notes.html", "{% if note.code == 'no_folder_linked' %}", "{% if false %}", "test_no_roots_offer_on_html_surfaces")
 for surface, file in (("drawer", "_field_history_ledger.html"), ("column", "_column_history_ledger.html"),
                       ("versions", "_state_versions.html"), ("state_history", "_state_history_body.html"),
@@ -102,7 +110,8 @@ add("read_key", ROUTES, 'explicit = decisions.get(f"{chip_key}::root:{_hub_root_
 
 def pytest_run(pin=None):
     env = {**os.environ, "PYTHONUTF8": "1", "NODE_PATH": "D:/work/statemanager/node_modules"}
-    command = ["conda", "run", "-n", os.environ["HUB_TEST_ENV"], "python", "-m", "pytest", TEST + ("::" + pin if pin else ""),
+    # S10 C7: nested conda -> current interpreter, run from the selected test environment.
+    command = [sys.executable, "-m", "pytest", TEST + ("::" + pin if pin else ""),
                "-q", "-p", "no:cacheprovider", "--timeout=900", "--timeout-method=thread"]
     for attempt in range(3):
         result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -115,6 +124,8 @@ def pytest_run(pin=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", nargs="*")
+    # S10 C7: fixed docs output -> explicit report, leave release docs untouched.
+    parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     selected = [m for m in MUTATIONS if args.only is None or m[0] in args.only]
     code, output = pytest_run()
@@ -138,7 +149,8 @@ def main():
         finally:
             path.write_bytes(original)
     code, output = pytest_run()
-    target = ROOT / "docs" / "s10_c2_mutations.json"
+    target = args.report
+    target.parent.mkdir(parents=True, exist_ok=True)
     if args.only is not None and target.exists():
         previous = json.loads(target.read_text(encoding="utf-8"))
         by_name = {r["mutation"]: r for r in previous["mutations"]}

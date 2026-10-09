@@ -122,8 +122,9 @@ def _history_row(html: str, ref: str) -> dict:
             "stage_offered": "/stage?" in m.group(2), "restore_offered": "/restore-live?" in m.group(2)}
 
 
-def _notes(html: str, cls: str) -> list[str]:
-    return [_text(t) for t in re.findall(r'<p class="muted %s"[^>]*>(.*?)</p>' % cls, html, re.S)]
+# S10 C7: surface note classes -> shared note class, extract the current verdict text.
+def _notes(html: str) -> list[str]:
+    return [_text(t) for t in re.findall(r'<p class="vh-note\b[^"]*"[^>]*>(.*?)</p>', html, re.S)]
 
 
 def probe(e: Env, ref: str, other: str, *, doors: bool = True) -> dict:
@@ -131,10 +132,10 @@ def probe(e: Env, ref: str, other: str, *, doors: bool = True) -> dict:
     out: dict = {}
     panel = c.get("/state/versions").get_data(as_text=True)
     src = re.search(r'data-source="(\w+)"', panel)
-    out["panel"] = {"source": src.group(1) if src else None, "notes": _notes(panel, "sv-ledger-note"),
+    out["panel"] = {"source": src.group(1) if src else None, "notes": _notes(panel),
                     "row": _panel_row(panel, ref)}
     page = c.get("/state-history").get_data(as_text=True)
-    out["state_history"] = {"notes": _notes(page, "sh-ledger-note"), "row": _history_row(page, ref)}
+    out["state_history"] = {"notes": _notes(page), "row": _history_row(page, ref)}
     r = c.get(f"/state/versions/{ref}/diff")
     body = r.get_data(as_text=True)
     out["diff"] = {"status": r.status_code,
@@ -269,8 +270,9 @@ def scenarios(scratch: Path) -> list[dict]:
         if p.exists():
             p.unlink()
     (e.chip_dir / "ledger.sqlite").write_bytes(b"not a database " * 512)
+    # S10 C7: snapshot path -> shared ledger renderer, describe the current mode table.
     case("an unreadable ledger", "ledger.sqlite overwritten with junk bytes",
-         "both surfaces draw the older snapshot path with S7's 'could not be read' note; a ledger id "
+         "both surfaces list legacy snapshots with a 'could not be read' note; a ledger id "
          "refuses at every door", probe(e, ref, other))
 
     # 7a. building (status seam)
@@ -283,7 +285,7 @@ def scenarios(scratch: Path) -> list[dict]:
     finally:
         hub_sync.status = real
     case("building", "hub_sync.status = building 1 of 3",
-         "the older snapshot path with 'being built (1 of 3 runs)'; no ledger row; every door says to "
+         "legacy snapshots in the ledger renderer with 'being built (1 of 3 runs)'; no ledger event; every door says to "
          "try again when complete", res)
 
     # 7b. preparing: another read holds the chip's read connection
@@ -309,7 +311,7 @@ def scenarios(scratch: Path) -> list[dict]:
         t.join(10)
     res["after_release"] = probe(e, ref, other, doors=False)["panel"]["source"]
     case("preparing", "another read holds the chip's read connection (hub_index reader lock)",
-         "the older snapshot path with 'Preparing the change history'; the panel answers from the "
+         "legacy snapshots in the ledger renderer with 'Preparing the change history'; the panel answers from the "
          "ledger once the other read is done", res)
     return out
 

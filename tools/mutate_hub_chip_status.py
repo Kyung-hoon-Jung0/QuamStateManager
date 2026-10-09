@@ -117,11 +117,14 @@ MUTATIONS = [
     ("sm_actor_dropped", RT, '        return a[len("human:"):] or "a person"', '        return "a person"',
      [S + "test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"]),
     # S10 C5: re-pointed to the comprehension's current indentation
-    ("in_force_points_never_undone", VH,
-     '                          for p in points(eff[key])],',
-     '                          for p in [_point(ev, old, new, op, proven, roots, sm)\n'
-     '                                    for ev, old, new, op, proven in eff[key]]],',
-     [S + "test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"]),
+    # S10 C7: indented points -> effective row builder, bypass undo decoration.
+    ('in_force_points_never_undone', VH,
+     '            "effective": [in_force(p) for p in points(eff[key])],',
+     (
+      '            "effective": [in_force(_point(ev, old, new, op, proven, roots, sm))\n'
+      '                          for ev, old, new, op, proven in eff[key]],'
+     ),
+     [S + 'test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked']),
     ("partly_undone_marks_every_row", VH,
      '    if flags & UNDONE:\n        return ALL_PATHS',
      '    if flags & (UNDONE | PARTLY_UNDONE):\n        return ALL_PATHS',
@@ -195,10 +198,14 @@ MUTATIONS = [
      '        if True:\n            body, status = table.part(("changes_page", request.query_string, True),',
      [C + "test_a_full_page_after_a_swap_is_still_a_full_page"]),
     # -- modes
-    ("building_words_lost", RT,
-     '        return (f"The change history is being built ({done or 0} of {total} runs). "',
-     '        return (f"History ready ({done or 0} of {total} runs). "',
-     [M + "test_building_is_said_and_asked_again_without_rows"]),
+    # S10 C7: run counter text -> progress formatter, suppress building words.
+    ('building_words_lost', RT,
+     '    words = hub_sync.progress_words(st)\n',
+     (
+      '    return "History ready"\n'
+      '    words = hub_sync.progress_words(st)\n'
+     ),
+     [M + 'test_building_is_said_and_asked_again_without_rows']),
     ("waiting_surface_never_asks_again", WAIT,
      '     hx-trigger="load delay:{{ 800 if ans.mode == \'preparing\' else 2000 }}ms"',
      '     data-never="{{ 800 if ans.mode == \'preparing\' else 2000 }}ms"',
@@ -231,9 +238,17 @@ MUTATIONS = [
     # S10 C5: "trends_fallback_label_dropped" retired -- the Trends snapshot arm and its label
     # are deleted; the no-folder note that replaced it is "grid_notes_dropped" above
     # -- faults
-    ("nan_drawn_as_a_number", RT,
-     '    f = float(v)\n    return f if f == f and f not in (float("inf"), float("-inf")) else None\n\n\ndef _vh_points_view',
-     '    f = float(v)\n    return f\n\n\ndef _vh_points_view', [F + "test_a_nan_only_metric_draws_no_trend_and_says_why"]),
+    # S10 C7: adjacent presenter -> numeric helper body, retain nonfinite leak.
+    ('nan_drawn_as_a_number', RT,
+     (
+      '    f = float(v)\n'
+      '    return f if f == f and f not in (float("inf"), float("-inf")) else None'
+     ),
+     (
+      '    f = float(v)\n'
+      '    return f'
+     ),
+     [F + 'test_a_nan_only_metric_draws_no_trend_and_says_why']),
     ("nan_leaks_into_the_meta_json", RT,
      '            if isinstance(value, float) and not math.isfinite(value):\n                entry["nonfinite"] = str(value)',
      '            if False:\n                entry["nonfinite"] = str(value)',

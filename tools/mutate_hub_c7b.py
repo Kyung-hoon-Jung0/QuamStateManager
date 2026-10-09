@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import sys
 
+# S10 C7: import context -> explicit sibling path, support module-based loading.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mutate_hub_drawer import run_one
 
 # S10 C7: old -> new, assert retired machinery and tool references cannot return.

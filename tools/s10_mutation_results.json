@@ -1,0 +1,4882 @@
+{
+  "total": 506,
+  "red": 496,
+  "tools": [
+    {
+      "tool": "mutate_archived_chip_build",
+      "red": 37,
+      "total": 38,
+      "results": [
+        {
+          "name": "archived_view_never_builds",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "shows_its_snapshots_values or reads_and_never_writes"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "adopt_capture_counted_as_a_run",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "adopt_capture"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "open_offer_skips_adopt_captures",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "adopt_capture"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "open_offer_missing",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "adopt_capture or reads_and_never_writes"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "build_on_the_request_thread",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "build_runs_in_the_background or runs_build_in_the_background"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "progress_not_in_snapshots",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "build_runs_in_the_background"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "snapshot_total_not_counted",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "build_runs_in_the_background"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "snapshot_done_not_counted",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "build_runs_in_the_background"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "wait_page_names_no_chip",
+          "file": "quam_state_manager/web/templates/_hub_surface_wait.html",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "build_runs_in_the_background"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "cut_short_build_not_resumed",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "cut_short or resume_after_a_restart"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "older_build_read_as_complete",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "older_kind"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "live_built_ledger_read_as_it_is",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open",
+            "tests/test_archived_chip_build.py::test_a_run_the_ledger_holds_is_never_added_twice_and_a_live_open_reads_its_whole_folder"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "running_marker_never_set",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "cut_short or resume_after_a_restart"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unreadable_offers_try_again",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "unreadable_snapshots_end"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unreadable_reads_an_empty_ledger",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "unreadable_snapshots_end or cannot_be_listed"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unlisted_build_retried_on_every_view",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "cannot_be_listed"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unlisted_build_never_retried",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "cannot_be_listed"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "no_ledger_offers_try_again",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "no_ledger_offers_no_try_again"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "picker_shows_the_folder_name",
+          "file": "quam_state_manager/web/templates/_param_history.html",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "display_name"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "grid_read_failure_reads_busy",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "grid_read_that_fails"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_offers_no_open",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "unreadable_snapshots_end"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "changes_read_the_open_chip",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "shows_its_snapshots_values"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "typeahead_reads_the_open_chip",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "shows_its_snapshots_values"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "live_open_keeps_the_archive_marker",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "reads_and_never_writes"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "missing_files_passed_over",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "files_are_gone"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "warming_names_draw_an_empty_grid",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "still_being_prepared"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "built_note_missing",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "shows_its_snapshots_values or files_are_gone"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "run_captures_left_out",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "shows_its_snapshots_values or pre_s10 or all_runs"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "rewritten_capture_left_out",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "saved_again"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "run_folders_not_read",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "pre_s10"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "every_run_of_the_root_read",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "pre_s10 or never_added_twice"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_captured_run_reads_as_a_state_sm_saw",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "shows_its_snapshots_values or all_runs"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_captured_run_names_its_folder",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "shows_its_snapshots_values or pre_s10"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_run_the_ledger_holds_added_again",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "never_added_twice"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "live_open_keeps_the_run_filter",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "never_added_twice"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "captured_run_left_out_of_the_live_folder",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "reads_and_never_writes"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "verify_wants_a_folder_for_a_captured_run",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "pre_s10"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "note_leaves_the_folder_runs_out",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_archived_chip_build.py",
+            "-k",
+            "pre_s10"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    },
+    {
+      "tool": "mutate_hub_builder",
+      "red": 36,
+      "total": 36,
+      "results": [
+        {
+          "name": "wal",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_schema_wal_and_versions"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "version_guard",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_schema_wal_and_versions"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "blob_address",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_blob_gzip_content_address_and_corruption"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "nonfinite_and_bigint",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_lossless_numbers_and_null_absence"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "array_replay",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_arrays_shapes_and_escaped_paths_survive_source_loss"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "checkpoint_cadence",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_checkpoint_cadence_and_bounded_replay"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "atomic_projection",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_event_transaction_rolls_back_all_projection_data"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "error_state_at",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_error_event_is_not_a_reconstructed_run_state"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "instant_order",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_order_is_canonical_offset_instant_with_microseconds"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "archive_hint",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_archive_offset_hint_and_assumed_local_flag"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "run_end_source",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_run_end_fallback_and_metadata"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "zero_hash_no_parse",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_identical_hash_keeps_zero_event_without_parsing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "numeric_equal",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_raw_hash_changes_but_numeric_equal_has_no_rows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "revert_fact",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_revert_is_plain_head_diff_and_only_nonadjacent_flag"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "revert_head",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_revert_is_plain_head_diff_and_only_nonadjacent_flag"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "extra_location",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_archive_copy_adds_location_not_event"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "identity_hash",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_run_identity_does_not_collapse_overlapping_ids"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "wiring_merge",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_checkpoint_replay_and_shared_merge"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "resume_watermark",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_build.py::test_resume_after_exception_and_idempotent_rebuild"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "new_limit",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_limit_counts_new_events_and_cli"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "keep_error",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_bad_state_is_kept_as_error_and_next_run_uses_good_head"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "uncertainty",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_chip_uncertain_and_patch_provenance"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "late_guard",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_late_unknown_run_fails_without_wrong_diff"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "stable_pair",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_state_pair_changed_during_read_is_rejected"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "identity_time",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_run_identity_includes_time_id_and_experiment"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "identity_id",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_run_identity_includes_time_id_and_experiment"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "identity_experiment",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_run_identity_includes_time_id_and_experiment"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "array_patch",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_long_array_patch_is_proven_under_shared_rules"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "run_bound_hint",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_naive_run_bounds_share_archive_offset"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "frozen_discovery",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_discovery_is_frozen_and_next_build_catches_new_runs"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "patch_exact_value",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_chip_uncertain_and_patch_provenance"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "blob_integrity",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_blob_gzip_content_address_and_corruption"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "shape_escaping",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_arrays_shapes_and_escaped_paths_survive_source_loss"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "checkpoint_replay",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_store.py::test_checkpoint_cadence_and_bounded_replay"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "conflicting_chip",
+          "file": "quam_state_manager/core/hub_build.py",
+          "pins": [
+            "tests/test_hub_build.py::test_declared_chip_and_conflicting_identity_are_retained"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "error_checkpoint",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_build.py::test_error_checkpoint_keeps_successful_head_and_replays_past_it"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    },
+    {
+      "tool": "mutate_hub_c7b",
+      "red": 9,
+      "total": 9,
+      "results": [
+        {
+          "name": "family_append_method_restored",
+          "file": "quam_state_manager/core/chip_trends_ram.py",
+          "pins": [
+            "tests/test_s10_c7_snapshot_machinery_gone.py::test_callerless_snapshot_machinery_stays_absent"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "family_copy_method_restored",
+          "file": "quam_state_manager/core/chip_trends_ram.py",
+          "pins": [
+            "tests/test_s10_c7_snapshot_machinery_gone.py::test_callerless_snapshot_machinery_stays_absent"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "family_append_filter_restored",
+          "file": "quam_state_manager/core/chip_trends_ram.py",
+          "pins": [
+            "tests/test_s10_c7_snapshot_machinery_gone.py::test_callerless_snapshot_machinery_stays_absent"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "family_append_index_restored",
+          "file": "quam_state_manager/core/chip_trends_ram.py",
+          "pins": [
+            "tests/test_s10_c7_snapshot_machinery_gone.py::test_callerless_snapshot_machinery_stays_absent"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "snapshot_token_reference_restored",
+          "file": "tools/perf_hub_chip_status.py",
+          "pins": [
+            "tests/test_s10_c7_snapshot_machinery_gone.py::test_callerless_snapshot_machinery_stays_absent"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "snapshot_pool_reference_restored",
+          "file": "tools/perf_hub_chip_status.py",
+          "pins": [
+            "tests/test_s10_c7_snapshot_machinery_gone.py::test_callerless_snapshot_machinery_stays_absent"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c4_tool_reference_restored",
+          "file": "tools/perf_hub_chip_status.py",
+          "pins": [
+            "tests/test_hub_drawer.py::test_removed_value_readers_are_absent"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_tool_reference_restored",
+          "file": "tools/perf_hub_chip_status.py",
+          "pins": [
+            "tests/test_s10_chip_status_deleted.py::test_the_chip_status_and_param_history_snapshot_paths_stay_deleted"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c6_tool_reference_restored",
+          "file": "tools/perf_hub_chip_status.py",
+          "pins": [
+            "tests/test_s10_c6_snapshot_branches_gone.py::test_the_deleted_snapshot_branch_names_are_absent"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    },
+    {
+      "tool": "mutate_hub_chip_status",
+      "red": 56,
+      "total": 56,
+      "results": [
+        {
+          "name": "curated_value_wrong",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestOneReader::test_trends_the_grid_and_the_meta_read_through_the_value_history"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "grid_reads_the_old_index",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestOneReader::test_trends_the_grid_and_the_meta_read_through_the_value_history"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "alias_drawn_from_todays_holder",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestOneReader::test_an_alias_is_drawn_from_the_holder_it_named_then"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "text_families_offered",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestOneReader::test_the_typeahead_offers_numeric_families_of_the_ledger"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "wildcard_crosses_segments",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestOneReader::test_a_wildcard_family_matches_whole_segments"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unproven_run_is_proven",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_the_meta_names_a_run_only_on_its_own_patch",
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_changes_name_the_writer_per_row"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "meta_names_any_run",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_the_meta_names_a_run_only_on_its_own_patch"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "one_proven_leaf_proves_the_matrix",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_a_matrix_is_proven_only_when_every_leaf_change_is"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_proven_leaf_speaks_for_the_matrix",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_a_matrix_is_proven_only_when_every_leaf_change_is"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_wholly_patched_matrix_is_not_proven",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_a_matrix_whose_every_change_is_patched_names_its_run"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "foreign_chip_flag_ignored",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_a_run_of_another_chip_is_never_the_writer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "every_change_row_claims_the_patch",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_changes_name_the_writer_per_row"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "change_rows_proven_by_the_event",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_changes_name_the_writer_per_row"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_names_any_run",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_the_grid_drawer_opens_a_run_only_on_proof"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_opens_any_run",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestWriterOnlyOnProof::test_the_grid_drawer_opens_a_run_only_on_proof"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "sm_actor_dropped",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestSmWrites::test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "in_force_points_never_undone",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestSmWrites::test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "partly_undone_marks_every_row",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestSmWrites::test_a_partly_undone_write_marks_only_the_row_taken_back"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "undone_rows_never_marked",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestSmWrites::test_a_partly_undone_write_marks_only_the_row_taken_back"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "meta_newest_by_clock",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestSmWrites::test_the_meta_takes_the_newest_change_in_ledger_order"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unproven_run_not_an_experiment",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestGrid::test_the_source_filter_keeps_every_run_event_and_maps_sm_writes"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "sm_write_not_a_save",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestGrid::test_the_source_filter_keeps_every_run_event_and_maps_sm_writes"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "window_drops_the_value_in_force",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestGrid::test_a_value_in_force_when_the_window_opens_is_carried_in"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "import_gate_counts_ledger_events",
+          "file": "quam_state_manager/web/templates/_param_history.html",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestGrid::test_the_auto_import_gate_still_counts_snapshots"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "archived_chip_reads_the_open_chip",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestGrid::test_an_archived_chip_reads_its_own_ledger"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "changes_prefix_read_exactly",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestChanges::test_changes_read_the_timeline_with_a_path_prefix"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "changes_prefix_case_sensitive",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestChanges::test_changes_read_the_timeline_with_a_path_prefix"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "one_event_reference_ignored",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestChanges::test_one_event_opens_whole_and_pages_never_skip_one"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "older_page_never_offered",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestChanges::test_one_event_opens_whole_and_pages_never_skip_one"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "changes_numbers_only",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestChanges::test_text_booleans_and_removals_are_changes_too"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "invalid_reference_answers_200",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestChanges::test_an_invalid_page_reference_is_a_readable_refusal"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "typeahead_reads_the_old_index",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestChanges::test_the_typeahead_offers_the_ledgers_paths"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "page_cache_ignores_the_swap",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestChanges::test_a_full_page_after_a_swap_is_still_a_full_page"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "building_words_lost",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestModes::test_building_is_said_and_asked_again_without_rows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "waiting_surface_never_asks_again",
+          "file": "quam_state_manager/web/templates/_hub_surface_wait.html",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestModes::test_building_is_said_and_asked_again_without_rows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "preparing_words_lost",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestModes::test_preparing_is_said_in_the_same_words",
+            "tests/test_hub_chip_status.py::TestModes::test_a_busy_read_after_the_mode_check_is_never_an_empty_answer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "busy_trends_read_swallowed",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestModes::test_a_busy_read_after_the_mode_check_is_never_an_empty_answer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "idle_words_lost",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestModes::test_idle_is_said",
+            "tests/test_hub_chip_status.py::TestModes::test_an_empty_grid_still_says_idle"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "grid_notes_dropped",
+          "file": "quam_state_manager/web/templates/_param_history.html",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestModes::test_idle_is_said",
+            "tests/test_hub_chip_status.py::TestModes::test_an_empty_grid_still_says_idle"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "no_folder_offer_dropped",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestModes::test_a_chip_with_no_data_folder_reads_its_ledger_with_the_link_offer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "degraded_words_lost",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestModes::test_degraded_says_changes_may_be_missing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "nan_drawn_as_a_number",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestFaults::test_a_nan_only_metric_draws_no_trend_and_says_why"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "nan_leaks_into_the_meta_json",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestFaults::test_a_nan_only_metric_draws_no_trend_and_says_why"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "deleted_folder_unsaid",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestFaults::test_a_deleted_run_folder_keeps_its_proof_and_loses_its_link"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "deleted_folder_still_opens",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestFaults::test_a_deleted_run_folder_keeps_its_proof_and_loses_its_link"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "cached_answers_frozen",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestFaults::test_a_new_run_moves_every_cached_answer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "aliased_matrix_not_enumerated",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_chip_status.py::TestFaults::test_an_aliased_matrix_keeps_its_logical_paths"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_iso_instant_lost",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_every_entry_written_by",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_tile_names_no_run",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_value_on_screen_ignored",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_lab_node_run_dropped",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_trends_words_lost",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_trends_words_unescaped",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_drawer_words_lost",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_drawer_restore_dropped",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ],
+      "pins_never_red": []
+    },
+    {
+      "tool": "mutate_hub_drawer",
+      "red": 53,
+      "total": 60,
+      "results": [
+        {
+          "name": "proven_ignored",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestDrawerOnTheLedger::test_the_drawer_reads_the_ledger_and_names_a_run_only_on_its_own_patch"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unproven_named_writer",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestDrawerOnTheLedger::test_an_unproven_run_is_never_named_as_the_writer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "genesis_named_writer",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestDrawerOnTheLedger::test_the_drawer_reads_the_ledger_and_names_a_run_only_on_its_own_patch"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "data_link_for_any_run",
+          "file": "quam_state_manager/web/templates/_field_history_ledger.html",
+          "pins": [
+            "tests/test_hub_drawer.py::TestDrawerOnTheLedger::test_an_unproven_run_is_never_named_as_the_writer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "numeric_only_like_the_leaf_index",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestDrawerOnTheLedger::test_strings_and_booleans_have_a_history_too"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "no_via",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestAliases::test_an_alias_reads_its_holder_and_says_via"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "alias_read_literally",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestAliases::test_an_alias_reads_its_holder_and_says_via"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "before_via_never_marked",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestAliases::test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "pointer_to_object_reads_the_object",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestAliases::test_a_pointer_to_a_whole_object_shows_the_pointers_own_history"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unapplied_pointer_unsaid",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestAliases::test_an_alias_pointer_edited_but_not_applied_marks_every_row"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "actor_dropped",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestSmWrites::test_an_apply_names_its_actor_and_an_undo_marks_it"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "approval_called_the_agent",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestSmWrites::test_an_agent_write_and_an_approved_plan_say_who"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "undone_not_marked",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestSmWrites::test_an_apply_names_its_actor_and_an_undo_marks_it"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "building_hidden_as_empty",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestHonesty::test_a_building_ledger_says_so_and_shows_no_rows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "building_read_called_preparing",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestHonesty::test_a_ledger_caught_building_mid_read_says_so"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "warming_called_building",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestHonesty::test_an_index_being_prepared_says_so"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "deferred_unsaid",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestHonesty::test_a_run_still_in_flight_is_said_to_be_missing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "degraded_unsaid",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestHonesty::test_an_unreadable_data_folder_is_named"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "gone_folder_still_linked",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestHonesty::test_a_deleted_run_folder_keeps_its_row_but_loses_its_link"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "current_differs_unsaid",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestHonesty::test_a_current_value_not_yet_recorded_is_said"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "missing_ledger_not_checked",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::test_a_missing_ledger_is_terminal_before_any_value_read"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "agent_second_implementation",
+          "file": "quam_state_manager/web/agent_api.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestOneImplementation::test_all_three_surfaces_answer_through_one_function",
+            "tests/test_hub_drawer.py::TestOneImplementation::test_the_agent_reads_the_same_points_in_the_same_words"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "agent_other_words",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestOneImplementation::test_the_agent_reads_the_same_points_in_the_same_words"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "column_chips_oldest_first",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestOneImplementation::test_column_history_shows_the_drawers_points"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "byrun_value_old_side",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestOneImplementation::test_column_history_shows_the_drawers_points"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "element_index_ignored",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestElementsAndTrends::test_an_element_of_a_long_array_changes_only_when_it_does"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "element_unchanged_versions_kept",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestElementsAndTrends::test_an_element_of_a_long_array_changes_only_when_it_does"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "js_drawer_no_retry",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_drawer.py::test_the_retry_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_drawer_retry_after_close",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_drawer.py::test_the_retry_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_drawer_stale_answer_lands",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_drawer.py::test_the_retry_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "writer_not_proven_only_on_hover",
+          "file": "quam_state_manager/web/templates/_field_history_ledger.html",
+          "pins": [
+            "tests/test_hub_drawer.py::TestDrawerOnTheLedger::test_an_unproven_run_is_never_named_as_the_writer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "chip_qualifier_dropped",
+          "file": "quam_state_manager/web/templates/_column_history_ledger.html",
+          "pins": [
+            "tests/test_hub_drawer.py::TestOneImplementation::test_column_history_shows_the_drawers_points"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "segments_fast_path_for_escaped_paths",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_drawer.py::test_holder_path_decoding_is_the_same_with_and_without_escapes"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "entity_prefilter_too_narrow",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_pair_members_and_macro_targets_and_changed_segments",
+            "tests/test_hub_query.py::test_macro_classifier_and_actor_class_and_family_are_distinct"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p0_1_trends_reads_todays_holder",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p0_1_trends_draws_the_value_in_force_through_the_alias",
+            "tests/test_hub_drawer.py::TestElementsAndTrends::test_chip_trends_charts_an_alias_path_with_the_drawers_points"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p0_1_no_via_row_at_a_retarget",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewMore::test_p0_1_after_a_return_trends_draws_each_holders_value_in_force"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "p0_3_by_run_reads_todays_holder",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p0_3_by_run_shows_the_then_holders_value_for_an_alias_row",
+            "tests/test_hub_drawer.py::TestReviewRound::test_p0_3_and_p1_1_share_one_rule_after_a_return"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p0_2_foreign_run_offered",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p0_2_by_run_leaves_out_a_run_of_another_chip"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p1_1_newest_hop_row_decides",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p1_1_before_via_marks_only_rows_the_alias_did_not_name"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "p1_1_mid_path_pointer_not_followed_at_the_time",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p1_1_before_via_marks_only_rows_the_alias_did_not_name",
+            "tests/test_hub_drawer.py::TestReviewRound::test_p0_3_and_p1_1_share_one_rule_after_a_return"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p1_1_breakpoints_not_followed",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p0_3_and_p1_1_share_one_rule_after_a_return"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_2_partly_struck_everywhere",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p2_2_partly_undone_marks_only_the_path_taken_back"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_4_element_from_todays_length",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p2_4_an_array_that_shrank_keeps_its_element_history",
+            "tests/test_hub_drawer.py::TestElementsAndTrends::test_an_element_of_a_long_array_changes_only_when_it_does"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p3_nan_by_run_changed",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p3_nan_in_by_run_is_not_a_change"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p3_before_via_only_by_opacity",
+          "file": "quam_state_manager/web/templates/_column_history_ledger.html",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewRound::test_p3_column_history_says_before_via_in_text"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "p2_1_grid_sends_the_resolved_holder",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_drawer.py::test_the_retry_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_3_wait_on_a_chip_holding_the_global_lock",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewIndexLocks::test_p2_3_a_busy_chip_never_holds_a_read_of_another_chip"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_3_second_read_blocks",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewIndexLocks::test_p2_3_a_busy_chip_never_holds_a_read_of_another_chip"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_3_no_prewarm",
+          "file": "quam_state_manager/core/hub.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewIndexLocks::test_p2_3_the_projector_builds_the_index_after_a_burst"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_3_one_index_per_zone",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewMore::test_p2_3_every_zone_shares_one_index"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p1_2_snapshots_never_imported",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewObserved::test_p1_2_a_state_sm_saw_between_runs_is_in_the_history"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p1_2_a_runs_early_save_imported",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewMore::test_p1_2_a_runs_save_seen_early_stays_the_runs"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p1_2_early_observation_kept",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewMore::test_p1_2_a_run_landing_after_its_own_early_observation_takes_it_back"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p1_2_sm_copy_same_before_imported",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewObserved::test_p1_2_an_sm_writes_own_snapshots_are_not_a_second_history"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "p1_2_observed_label_lost",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewObserved::test_p1_2_a_state_sm_saw_between_runs_is_in_the_history"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_3_extend_keeps_a_moved_event",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewIncrementalIndex::test_p2_3_an_appended_run_extends_the_index_and_equals_a_full_build"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_3_extend_drops_postings",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewIncrementalIndex::test_p2_3_an_appended_run_extends_the_index_and_equals_a_full_build"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_3_extend_keeps_stale_day_views",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewIncrementalIndex::test_p2_3_an_appended_run_extends_the_index_and_equals_a_full_build"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "p2_3_never_extend",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_drawer.py::TestReviewIncrementalIndex::test_p2_3_an_appended_run_extends_the_index_and_equals_a_full_build"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "js_column_retry_after_close",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_drawer.py::test_the_retry_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    },
+    {
+      "tool": "mutate_hub_folder_view",
+      "red": 13,
+      "total": 13,
+      "results": [
+        {
+          "name": "live_dropped_from_the_index",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "p1 or shared_data_folder_seen_from_a or cached_answer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "classify_by_time_only",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "p1 or p2 or shared_data_folder_seen_from_a or no_data_folder_seen_from_a"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "cut_at_the_newest_own_snapshot",
+          "file": "quam_state_manager/core/history.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "shared_data_folder_seen_from_a or shared_data_folder_seen_from_b"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "global_rows_at_seams",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "p1 or p2 or p3"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "break_seams_skipped",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "p3 or single_folder_break"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unknown_treated_as_own",
+          "file": "quam_state_manager/core/history.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "unknown_folder or one_classifier"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unlinked_runs_shown",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "unlinked_root or no_data_folder_b"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "slot_without_the_view_key",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "cached_answer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "fast_path_on_a_mixed_chip",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "p1 or p2 or shared_data_folder_seen_from_a or unlinked_root"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "cross_lane_dedupe",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "observed_dedupe"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "observed_hard_coded_own",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "observed_state_its_own"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "lane_flags_not_recomputed",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "lane_flags"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "reuse_ignores_a_new_seams_rows",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_folder_view.py",
+            "-k",
+            "kept_answer_is_dropped"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    },
+    {
+      "tool": "mutate_hub_link_folder",
+      "red": 73,
+      "total": 74,
+      "results": [
+        {
+          "name": "rank",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_candidate_bucketing_and_ranking"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "deepest",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_deepest_root_owns_evidence_and_prefix_boundaries"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "boundary",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_deepest_root_owns_evidence_and_prefix_boundaries"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unreadable",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_deepest_root_owns_evidence_and_prefix_boundaries"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "renamed",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_deepest_root_owns_evidence_and_prefix_boundaries"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "inside",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_deepest_root_owns_evidence_and_prefix_boundaries"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "registered",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_candidates_exclude_decisions_registered_and_empty_roots"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "different",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_candidates_exclude_decisions_registered_and_empty_roots"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "label",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_candidates_exclude_decisions_registered_and_empty_roots"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "holds_runs",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_candidates_exclude_decisions_registered_and_empty_roots"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unique_label",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_unique_label_is_not_evidence_for_two_roots"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "explicit_override",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_unlink_keeps_events_and_shows_no_folder_even_after_label_link"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "zero_post",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_refuses_stale_or_unproven_requests[zero]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "zero_button",
+          "file": "quam_state_manager/web/templates/_hub_link_folder.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_candidate_bucketing_and_ranking"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "workspace",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_refuses_stale_or_unproven_requests[outside]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "root_spelling",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_refuses_stale_or_unproven_requests[mismatched_root]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "chip_switch",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_refuses_stale_or_unproven_requests[switch]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "scan_ready",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_refuses_stale_or_unproven_requests[running]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "switch_after_scan",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_scan_chip_switch_is_rechecked_before_saving"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "live_type",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_live_context_required"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "archive_doors",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_archive_link_doors_are_read_only"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "wait_budget",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_pending_fragment_keeps_chip_and_refetches"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "self_refetch",
+          "file": "quam_state_manager/web/templates/_hub_link_folder.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_pending_fragment_keeps_chip_and_refetches"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "hint",
+          "file": "quam_state_manager/web/templates/_hub_link_folder.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_state_folder_hint_is_rendered"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "written_key",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_writes_the_read_key_and_registers_then_shows_run_rows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "link_sync",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_writes_the_read_key_and_registers_then_shows_run_rows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unlink_decision",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_unlink_keeps_events_and_shows_no_folder_even_after_label_link"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unlink_sync",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_unlink_keeps_events_and_shows_no_folder_even_after_label_link"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unlink_source",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_unlink_refuses_a_declared_root"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "decide_sync",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_decide_same_reregisters_only_the_open_chip"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "decide_open_chip",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_decide_same_reregisters_only_the_open_chip"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "link_event",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_writes_the_read_key_and_registers_then_shows_run_rows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unlink_event",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_unlink_keeps_events_and_shows_no_folder_even_after_label_link"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "note",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "note_runs",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_note_condition"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "note_roots",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_note_condition"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "note_state",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_note_condition"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "note_degraded",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_note_condition"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "note_archive",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_archive_history_has_no_offer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "value_archive",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_archive_history_has_no_offer[/field/history?path=qubits.qA1.T1]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "table_archive",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_archive_history_has_no_offer[/topology/trends]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "versions_archive",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_archive_history_has_no_offer[/state/versions]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "offer_button",
+          "file": "quam_state_manager/web/templates/_hub_notes.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "notes_drawer",
+          "file": "quam_state_manager/web/templates/_field_history_ledger.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces[drawer]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "notes_column",
+          "file": "quam_state_manager/web/templates/_column_history_ledger.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces[column]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "notes_versions",
+          "file": "quam_state_manager/web/templates/_state_versions.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces[versions]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "notes_state_history",
+          "file": "quam_state_manager/web/templates/_state_history_body.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces[state_history]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "notes_trends",
+          "file": "quam_state_manager/web/templates/_topo_trends.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces[trends]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "notes_grid",
+          "file": "quam_state_manager/web/templates/_param_history.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces[grid]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "notes_changes",
+          "file": "quam_state_manager/web/templates/_param_history_changes.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces[changes]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "notes_cell",
+          "file": "quam_state_manager/web/templates/_param_history_drawer.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_no_roots_offer_on_html_surfaces[cell]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "meta_json",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_json_surfaces_offer_a_read_url[meta]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "agent_json",
+          "file": "quam_state_manager/web/agent_api.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_json_surfaces_offer_a_read_url[agent]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "agent_write_door",
+          "file": "quam_state_manager/web/agent_api.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_json_surfaces_offer_a_read_url[agent]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "focus_trap",
+          "file": "quam_state_manager/web/static/hub-folders.js",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "nested_focus",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "modal_errors",
+          "file": "quam_state_manager/web/static/hub-folders.js",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "accessible",
+          "file": "quam_state_manager/web/static/hub-folders.js",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "surface_refresh",
+          "file": "quam_state_manager/web/static/hub-folders.js",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "refresh_swap",
+          "file": "quam_state_manager/web/static/hub-folders.js",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_refresh",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "column_refresh",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "versions_refresh",
+          "file": "quam_state_manager/web/static/app.js",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "history_refresh",
+          "file": "quam_state_manager/web/templates/_state_history.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "script_loaded",
+          "file": "quam_state_manager/web/templates/base.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "decide_key",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_decide_root_uses_the_shared_key"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "current_evidence",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_checks_the_scan_again_at_press_time"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "link_building",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_builds_before_run_rows_are_read"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "events_kept",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_unlink_keeps_events_and_shows_no_folder_even_after_label_link"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "retained_note",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_unlink_keeps_events_and_shows_no_folder_even_after_label_link"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "empty_text",
+          "file": "quam_state_manager/web/templates/_hub_link_folder.html",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_candidates_exclude_decisions_registered_and_empty_roots"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "modal_layer",
+          "file": "quam_state_manager/web/static/style.css",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "modal_scroll",
+          "file": "quam_state_manager/web/static/style.css",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_modal_focus_and_refresh_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "read_key",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_link_folder.py::test_link_writes_the_read_key_and_registers_then_shows_run_rows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    },
+    {
+      "tool": "mutate_hub_mode_switch",
+      "red": 64,
+      "total": 64,
+      "results": [
+        {
+          "name": "no_runs_value_fallback",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "no_run_ledger_never or mode_table"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "no_runs_versions_fallback",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_modes_other_than_ledger_say_why[no_runs]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "no_folder_note_dropped",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "no_run_ledger_never or mode_table or column_reads"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "capture_not_kicked",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "capture_promptly"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "legacy_rows_missing",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "nonledger_versions"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unavailable_becomes_preparing",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_unavailable_table_wait_preserves_terminal_mode",
+            "tests/test_hub_unreadable_is_not_preparing.py"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "terminal_surface_reasks",
+          "file": "quam_state_manager/web/templates/_hub_surface_wait.html",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "unreadable_is_terminal"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "terminal_drawer_reasks",
+          "file": "quam_state_manager/web/templates/_value_history_wait.html",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "unreadable_is_terminal or column_reads"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "archived_open_offer_missing",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_archived_missing_ledger_offers_a_real_folder"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "sm_bookmark_annotations_missing",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "bookmark_of_sm_write"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "current_ledger_version_offers_pull",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_state_versions.py::TestVersionDiff::test_the_pull_note_appears_only_where_the_button_does"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_ignores_page",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_ledger_drawer_pages_states_and_refreshes_count"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_all_is_one_row",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_ledger_drawer_pages_states_and_refreshes_count"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_count_not_refreshed",
+          "file": "quam_state_manager/web/templates/_history_panel_ledger.html",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_ledger_drawer_pages_states_and_refreshes_count"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "trends_writes_the_drawer_count",
+          "file": "quam_state_manager/web/templates/_topo_trends.html",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_ledger_drawer_pages_states_and_refreshes_count",
+            "tests/test_history_drawer.py::TestTheCountFollowsTakeSnapshot::test_the_trends_fragment_leaves_the_count_to_the_drawer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "ledger_disk_usage_missing",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_ledger_state_history_keeps_snapshot_disk_usage"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "observed_annotations_dropped",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "keeps_bookmarks"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "snapshot_compare_old_equality",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_snapshot_compare_uses_the_ledger_equality_rule"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "table_error_becomes_wait",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "table_construction_error"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "binding_error_becomes_wait",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "version_folder_binding_error"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "missing_live_ledger_named_no_ledger",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_deleted_live_ledger_is_unreadable"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "missing_live_versions_named_no_ledger",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_deleted_live_ledger_is_unreadable"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "empty_versions_deny_states",
+          "file": "quam_state_manager/web/templates/_state_versions.html",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "nonledger_empty_list"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "empty_state_history_denies_states",
+          "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "nonledger_empty_list"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "empty_drawer_denies_states",
+          "file": "quam_state_manager/web/templates/_history_panel_ledger.html",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "nonledger_empty_list"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "sparklines_omit_link_note",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "no_run_ledger_never"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "report_omits_link_note",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "no_run_ledger_never"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "owned_backup_not_refreshed",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_owned_backup_capture_refreshes_the_open_lane"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "capture_keeps_manager_lock",
+          "file": "quam_state_manager/core/history.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_capture_releases_manager_lock_before_projection"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "open_offer_any_existing_folder",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_archived_open_offer_never_names_a_folder_of_another_chip"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unavailable_message_wrong_reason",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "names_its_own_reason"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "every_copy_carries_a_pin",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "plain_copies_of_one_state"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "trends_table_error_escapes",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_a_table_read_that_raises_is_terminal_never_a_500[/topology/trends?metrics=T1]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "changes_table_error_escapes",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_a_table_read_that_raises_is_terminal_never_a_500[/param-history/changes]"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "table_error_reads_as_a_wait",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "table_read_that_raises"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "ledger_start_reads_added",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_param_history_changes.py::TestTheFeed::test_the_first_recorded_value_says_so_instead_of_a_fake_delta"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "ledger_start_not_unchanged_since",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_chip_metric_meta.py::test_the_route_names_the_run_and_the_snapshot",
+            "tests/test_chip_metric_meta.py::test_a_value_null_in_the_first_snapshot_is_never_since_history_began"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "bookmark_hash_waits_for_worker",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py",
+            "-k",
+            "bookmark_of_sm_write"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "project_badge_dropped",
+          "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+          "pins": [
+            "tests/test_project_scope.py::TestHistoryLens::test_state_history_row_badge_and_header"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p1_no_note",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p1_grid_drops_it",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p1_drawer_drops_it",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p1_no_open_button",
+          "file": "quam_state_manager/web/templates/_hub_notes.html",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p1_no_open_offer",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_trends_catches_all",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_a_presenter_bug_after_a_good_ledger_read_is_a_real_error"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_meta_catches_all",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_a_presenter_bug_after_a_good_ledger_read_is_a_real_error"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_changes_catches_all",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_a_presenter_bug_after_a_good_ledger_read_is_a_real_error"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_expand_catches_all",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_a_presenter_bug_after_a_good_ledger_read_is_a_real_error"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_table_catches_all",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_a_bug_building_the_table_is_a_real_error"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_read_not_converted",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_a_failed_ledger_read_is_unreadable_and_says_why",
+            "tests/test_hub_mode_switch.py::test_table_construction_error_is_terminal",
+            "tests/test_hub_mode_switch.py::test_a_table_read_that_raises_is_terminal_never_a_500"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_constructor_read_unmarked",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_hub_mode_switch.py::test_table_construction_error_is_terminal"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_wait_becomes_unreadable",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_a_failed_ledger_read_is_unreadable_and_says_why"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_changes_read_unmarked",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_a_changes_page_read_that_fails_is_unreadable"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_p2_changes_timeline_unmarked",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_c5_review.py::test_a_changes_page_read_that_fails_is_unreadable"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_rank_never_cached",
+          "file": "quam_state_manager/web/hub_status.py",
+          "pins": [
+            "tests/test_param_history_ram.py::test_param_search_memo_equals_cold_over_random_events"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_attr_ships_undrawn_points",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_trends_provenance.py::TestTheMapShape::test_the_map_is_bounded_by_both_shapes",
+            "tests/test_trends_provenance.py::TestTheMapShape::test_a_snapshot_the_page_never_draws_is_not_shipped"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_appeared_never",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_chip_metric_meta.py::test_a_value_null_in_the_first_snapshot_is_never_since_history_began",
+            "tests/test_chip_metric_meta.py::test_a_random_event_sequence_never_serves_a_stale_answer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_appeared_for_every_change",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_chip_metric_meta.py::test_a_value_null_in_the_first_snapshot_is_never_since_history_began",
+            "tests/test_chip_metric_meta.py::test_a_random_event_sequence_never_serves_a_stale_answer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_appeared_wording_lost",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_hub_chip_status.py::test_the_chip_status_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_trends_wait_fetches_itself",
+          "file": "quam_state_manager/web/templates/_hub_surface_wait.html",
+          "pins": [
+            "tests/test_trends_irb.py::test_stale_route_reports_progress_and_retries"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_trends_wait_carries_no_query",
+          "file": "quam_state_manager/web/templates/_hub_surface_wait.html",
+          "pins": [
+            "tests/test_trends_irb.py::test_stale_route_reports_progress_and_retries"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_js_wait_never_reasked",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_trends_irb.py::test_irb_client_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_js_wait_reasks_with_dom",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_trends_irb.py::test_irb_client_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "c5_js_wait_stores_selection",
+          "file": "quam_state_manager/web/static/chip-status.js",
+          "pins": [
+            "tests/test_trends_irb.py::test_irb_client_selfcheck"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    },
+    {
+      "tool": "mutate_hub_no_roots",
+      "red": 14,
+      "total": 15,
+      "results": [
+        {
+          "name": "ready_before_the_first_slice",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "building_until_the_first_slice"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "open_does_not_kick_a_folderless_chip",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "periodic_relists or cannot_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "kick_requires_a_data_folder",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "building_until_the_first_slice or gets_its_ledger or versions_show or tripwire"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "periodic_skips_a_folderless_chip",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "periodic_relists or taken_after_the_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "testing_gate_on_the_folderless_kick",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "gets_its_ledger or versions_show or tripwire"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "run_snapshots_imported",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "no_run_snapshot"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "parallel_snapshots_imported",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "no_parallel_folder_snapshot"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "failed_slice_not_recorded",
+          "file": "quam_state_manager/core/hub.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "cannot_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "failed_slice_never_cleared",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "cannot_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "degraded_state_removed",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "cannot_open"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "transient_lock_degrades",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "locked_ledger"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "idle_signalled_before_the_handles_are_released",
+          "file": "quam_state_manager/core/hub.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "flush_returns_only_once"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "wal_switch_not_retried",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "wal_switch or two_windows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "schema_step_not_under_one_lock",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "two_windows"
+          ],
+          "red_by_assertion": false,
+          "exit_code": 0
+        },
+        {
+          "name": "identity_not_rechecked_under_the_lock",
+          "file": "quam_state_manager/core/hub_store.py",
+          "pins": [
+            "tests/test_hub_no_roots_sync.py",
+            "-k",
+            "two_windows or keeps_the_identity"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    },
+    {
+      "tool": "mutate_hub_query",
+      "red": 39,
+      "total": 39,
+      "results": [
+        {
+          "name": "timeline_order",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_timeline_newest_first_exact_rows_and_zero_change_events"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "timeline_old",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_timeline_newest_first_exact_rows_and_zero_change_events"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "series_limit",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_series_old_new_operations_proof_and_latest_limit"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "proof",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_series_old_new_operations_proof_and_latest_limit"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "many_missing",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_series_many_snapshot_and_missing_paths"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "newest",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_newest_change_is_latest_row_not_latest_event"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "writer_boundary",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_writer_of_inclusive_boundary_actor_kind_run_and_unknown"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "grammar",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_search_shared_and_or_grammar_and_literal_pipes"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "pair_members",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_pair_members_and_macro_targets_and_changed_segments"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "path_entities",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_pair_members_and_macro_targets_and_changed_segments"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "project_day",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_day_comes_from_project_zone_not_folder_or_pc"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "day_upper_inclusive",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_day_filters_inclusive_open_ends_and_dst"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unset_zone",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_missing_project_zone_fails_and_offline_utc_is_explicit"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "combined_kinds",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_timeline_combines_all_filters"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "cursor_watermark",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_cursor_stable_on_new_and_late_appends_and_rank_renumbering"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "cursor_filters",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_cursor_rejects_other_query_zone_ledger_and_malformed"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "warming",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_hub_query.py::test_every_api_raises_existing_warming_even_on_cached_index"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "warming_after",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_sync_starting_during_query_raises_warming"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "exact_case",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_alias_free_escaped_and_case_distinct_holder_paths"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "lossless_values",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_payloads_nonfinite_large_numbers_long_array_and_raw_pointer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "rewrite_token",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_cache_reuses_index_and_invalidates_same_connection_rewrites"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "sparse_positions",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_cache_external_changes_rows_and_sparse_eids"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "eid_array",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "read_only",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "canonical_series",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_writer_and_series_follow_canonical_order_not_eid"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "snapshot_version",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_concurrent_commit_raises_warming_instead_of_mixed_result"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "limit_validation",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_input_limits_days_empty_results_and_sql_literals"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "series_cap",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_large_pages_and_many_series_batch_sql_parameters"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "root_holder",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_root_empty_key_and_backslash_holder_paths"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "macro_class",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_macro_classifier_and_actor_class_and_family_are_distinct"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "q_filter",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_timeline_each_filter_excludes_unrelated_events"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "entity_filter",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_timeline_each_filter_excludes_unrelated_events"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "path_filter",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_timeline_each_filter_excludes_unrelated_events"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "many_snapshots",
+          "file": "quam_state_manager/core/hub_query.py",
+          "pins": [
+            "tests/test_hub_query.py::test_series_many_uses_one_snapshot"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "reader_bound",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_reader_handles_are_bounded_and_close_drops_index"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unbound_day",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_missing_project_zone_fails_and_offline_utc_is_explicit"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "array_root",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "array_run",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "array_time",
+          "file": "quam_state_manager/core/hub_index.py",
+          "pins": [
+            "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    },
+    {
+      "tool": "mutate_hub_versions",
+      "red": 87,
+      "total": 87,
+      "results": [
+        {
+          "name": "stamp_not_checked",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_version_id_is_checked_against_its_event_instant",
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "uncertain_offered",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_state_the_ledger_cannot_hand_over_refuses",
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "errored_event_offered",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_state_the_ledger_cannot_hand_over_refuses"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "derived_shown_as_a_document",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_state_the_ledger_cannot_hand_over_refuses",
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "document_of_the_event_before",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_diff_document_is_the_ledgers_and_needs_no_archive_file",
+            "tests/test_hub_versions.py::test_diff_and_compare_read_ledger_documents_in_time_order"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "missing_blob_unnamed",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "saved_pair_unverified",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "saved_ints_read_as_floats",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_exact_pair_is_the_saved_files_types_and_all"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "run_pair_from_ram",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "remembered_pair_shared",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_sm_write_hands_over_the_pair_sm_wrote_and_verifies_a_replay"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "anchor_not_checked_against_its_hash",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_sm_write_hands_over_the_pair_sm_wrote_and_verifies_a_replay"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "replay_not_checked_against_the_door",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_sm_write_hands_over_the_pair_sm_wrote_and_verifies_a_replay"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "derived_pair_handed_over",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_state_the_ledger_cannot_hand_over_refuses"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "source_gone_staged_from_the_merged_document",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state",
+            "tests/test_hub_versions.py::test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "not_ready_said_as_unreadable",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "damaged_ledger_raw_error",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "compare_without_the_rule",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_one_comparison_rule"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "compare_n_keeps_agreeing_rows",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_one_comparison_rule"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "compare_n_changed_against_the_first",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_one_comparison_rule"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "known_stamps_forgotten",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_matching_runs_in_the_background_and_the_row_says_so",
+            "tests/test_hub_versions.py::test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "any_run_of_that_id_covers",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "observed_verdict_ignored",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_ledgers_observed_import_verdict_covers_a_snapshot"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "content_never_covers",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "older_snapshots_dropped",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state",
+            "tests/test_hub_versions.py::test_the_list_follows_the_ledger_and_the_snapshot_list"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "oldest_first",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_rows_are_events_newest_first",
+            "tests/test_hub_versions.py::test_the_list_follows_the_ledger_and_the_snapshot_list"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "one_timeline_page_only",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_filtered_events_never_leave_a_short_page"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "uncertain_rows_listed",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_filtered_events_never_leave_a_short_page"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "summary_cached_regardless_of_the_ledger",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_list_follows_the_ledger_and_the_snapshot_list"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "summary_cached_regardless_of_the_snapshots",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_list_follows_the_ledger_and_the_snapshot_list"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "cached_rows_drawn_as_they_were",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_list_follows_the_ledger_and_the_snapshot_list"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "summary_cached_while_matching",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_matching_runs_in_the_background_and_the_row_says_so"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "preparing_said_as_unreadable",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_modes_other_than_ledger_say_why"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "availability_hides_source_gone",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_missing_blob_blocks_the_exact_files",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_missing_blob_not_shown",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_missing_anchor_still_offered",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "stage_refusal_after_the_confirm",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write",
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "restore_refusal_removed",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write",
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "refusal_without_its_reason",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing",
+            "tests/test_hub_versions.py::test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "not_now_said_as_never",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "another_chips_version_accepted",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_another_chips_version_is_refused"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "confirm_forgets_the_chip",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_another_chips_version_is_refused"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "popover_confirm_lands_in_the_pane",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_another_chips_version_is_refused"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_version_called_a_snapshot",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_restore_live_keeps_every_gate_and_the_record"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_version_takes_a_label",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_ledger_version_carries_no_label"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "restore_alignment_skipped_for_versions",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_restore_live_keeps_every_gate_and_the_record"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "stage_writes_the_merged_document",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_stage_apply_revert_round_trip_through_the_existing_doors",
+            "tests/test_hub_versions.py::test_restore_live_keeps_every_gate_and_the_record"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "panel_keeps_the_snapshot_rows",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_both_surfaces_name_runs_sm_writes_and_observed_states"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "history_page_keeps_the_snapshot_rows",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_both_surfaces_name_runs_sm_writes_and_observed_states",
+            "tests/test_hub_versions.py::test_state_history_pages_through_the_ledger_rows"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "sm_write_without_its_actor",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_both_surfaces_name_runs_sm_writes_and_observed_states"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "observed_state_given_a_writer",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_both_surfaces_name_runs_sm_writes_and_observed_states"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "run_without_its_node",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_both_surfaces_name_runs_sm_writes_and_observed_states"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "an_archive_marked_as_live",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_archive_lists_versions_but_offers_no_write_and_no_live_mark"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "live_version_never_marked",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_both_surfaces_name_runs_sm_writes_and_observed_states"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "fallback_unlabelled",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_building_ledger_draws_the_older_snapshots_and_says_so"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "version_diff_empty",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_diff_and_compare_read_ledger_documents_in_time_order"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "pull_offered_for_any_version",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "workbench_compares_a_wiring",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_diff_and_compare_read_ledger_documents_in_time_order"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "workbench_state_tab_unmerged",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_diff_and_compare_read_ledger_documents_in_time_order"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "workbench_plain_equality",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_workbench_compares_ledger_versions_under_the_one_rule"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "compare_columns_newest_first",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_diff_and_compare_read_ledger_documents_in_time_order"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "compare_column_unnamed",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_diff_and_compare_read_ledger_documents_in_time_order"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "workbench_refuses_a_version_id",
+          "file": "quam_state_manager/core/compare_sources.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_diff_and_compare_read_ledger_documents_in_time_order"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "panel_stage_for_any_version",
+          "file": "quam_state_manager/web/templates/_state_versions.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "panel_diff_never_disabled",
+          "file": "quam_state_manager/web/templates/_state_versions.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "panel_reason_hidden",
+          "file": "quam_state_manager/web/templates/_state_versions.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "panel_asks_to_refilter_forever",
+          "file": "quam_state_manager/web/templates/_state_versions.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_ledger_panel_never_asks_the_browser_to_refilter"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "building_says_no_versions",
+          "file": "quam_state_manager/web/templates/_state_versions.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_building_ledger_draws_the_older_snapshots_and_says_so"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "panel_notes_hidden",
+          "file": "quam_state_manager/web/templates/_state_versions.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_building_ledger_draws_the_older_snapshots_and_says_so",
+            "tests/test_hub_versions.py::test_a_fresh_chip_lists_through_its_new_ledger_with_the_link_offer"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "history_notes_hidden",
+          "file": "quam_state_manager/web/templates/_state_history_body.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_building_ledger_draws_the_older_snapshots_and_says_so"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "history_write_buttons_for_any_version",
+          "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "history_diff_reason_hidden",
+          "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "pin_door_clears_a_label_not_sent",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "annotate_clears_a_label_not_given",
+          "file": "quam_state_manager/core/history.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "pin_title_carries_a_span",
+          "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "pin_redraws_the_whole_pane",
+          "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "listing_denies_its_older_rows",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_unreadable_listing_says_the_older_rows_are_below"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "versions_foot_counts_older_as_recorded",
+          "file": "quam_state_manager/web/templates/_state_versions.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_unreadable_listing_says_the_older_rows_are_below"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "history_count_calls_older_recorded",
+          "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_unreadable_listing_says_the_older_rows_are_below"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_count_calls_older_recorded",
+          "file": "quam_state_manager/web/templates/_history_panel_ledger.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_unreadable_listing_says_the_older_rows_are_below"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "bookmark_guessed_onto_a_later_row",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_bookmark_is_never_carried_by_a_later_row",
+            "tests/test_hub_versions.py::test_an_unattached_bookmark_is_listed_as_its_own_older_row"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "unattached_bookmark_not_kept",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_unattached_bookmark_is_listed_as_its_own_older_row"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "kept_snapshot_not_listed",
+          "file": "quam_state_manager/core/hub_versions.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_an_unattached_bookmark_is_listed_as_its_own_older_row"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_all_reads_everything",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_drawers_all_is_capped_and_says_so"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "history_confirm_in_utc",
+          "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_ledger_rows_confirms_name_its_time_in_the_pages_zone"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_cap_unsaid",
+          "file": "quam_state_manager/web/templates/_history_panel_ledger.html",
+          "pins": [
+            "tests/test_hub_versions.py::test_the_drawers_all_is_capped_and_says_so"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "version_hash_read_outside_the_try",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_hub_versions.py::test_a_version_diff_racing_a_lost_ledger_explains"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ],
+      "pins_never_red": [
+        "test_show_all_drawer_discloses_the_newest_points_cap",
+        "test_the_report_trends_read_the_ledger",
+        "test_the_value_drawer_reaches_its_older_points"
+      ]
+    },
+    {
+      "tool": "mutate_s10_walk_round3_archived",
+      "red": 15,
+      "total": 15,
+      "results": [
+        {
+          "name": "latest_values_never_filled",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "newest_recorded_value"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "latest_cell_shows_a_dash",
+          "file": "quam_state_manager/web/templates/_param_history.html",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "newest_recorded_value"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "drawer_names_no_latest",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "newest_recorded_value"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "open_chips_drift_box_drawn",
+          "file": "quam_state_manager/web/templates/_param_history.html",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "none_of_the_open_chips_widgets"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "open_chips_pill_drawn",
+          "file": "quam_state_manager/web/templates/_param_history.html",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "none_of_the_open_chips_widgets"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "open_chips_import_drawn",
+          "file": "quam_state_manager/web/templates/_param_history.html",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "none_of_the_open_chips_widgets"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "the_folder_left_is_named",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "moved_data_folder"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "declared_spelling_unused",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "moved_data_folder"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "declared_spelling_never_kept",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "moved_data_folder"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "an_unreadable_run_counted_in",
+          "file": "quam_state_manager/core/hub_lanes.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "moved_data_folder"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "the_run_apart_unsaid",
+          "file": "quam_state_manager/core/value_history.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "moved_data_folder"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "a_backup_label_rides_another_row",
+          "file": "quam_state_manager/web/routes.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "backup_label"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "steps_never_numbered",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "count_going_down or number_the_steps"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "the_snapshot_step_never_entered",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "count_going_down"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        },
+        {
+          "name": "the_snapshot_step_not_counted_as_a_step",
+          "file": "quam_state_manager/core/hub_sync.py",
+          "pins": [
+            "tests/test_s10_walk_round3_archived.py",
+            "-k",
+            "count_going_down"
+          ],
+          "red_by_assertion": true,
+          "exit_code": 1
+        }
+      ]
+    }
+  ]
+}

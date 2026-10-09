@@ -65,10 +65,18 @@ MUTATIONS = [
      "            self.errors.append(f\"{hub.dir}: sync: {type(exc).__name__}: {exc}\")\n\n    def _sync_one",
      "cannot_open"),
     # S10 walk: re-pointed -- the archive marker is written between the two lines
-    ("failed_slice_never_cleared", SYNC,
-     "        self.slice_error = None\n        if not more:\n",
-     "        if not more:\n",
-     "cannot_open"),
+    # S10 C7: slice reset -> transient-aware reset, retain stale failure.
+    ('failed_slice_never_cleared', SYNC,
+     (
+      '        self.slice_error = None\n'
+      '        self.slice_error_transient = False\n'
+      '        if not more:'
+     ),
+     (
+      '        self.slice_error_transient = False\n'
+      '        if not more:'
+     ),
+     'cannot_open'),
     # S10 walk: re-pointed -- the anchor went stale when S10 C6 made the state for
     # every chip (``elif self.slice_error is not None``)
     ("degraded_state_removed", SYNC,
