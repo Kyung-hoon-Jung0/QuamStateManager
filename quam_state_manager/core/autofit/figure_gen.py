@@ -23,6 +23,7 @@ a figure without its provenance is not evidence).
 from __future__ import annotations
 
 import json
+import os
 import logging
 import subprocess
 import tempfile

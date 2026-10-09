@@ -16,6 +16,10 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:          # the annotations below name it; imported lazily at run time
+    import weakref
 
 #: Requests that block by design (docs/141 §4p ``/datasets/wait``) or stream,
 #: plus the background polls and the agent's held node waits (RAM P7: ``/api/
