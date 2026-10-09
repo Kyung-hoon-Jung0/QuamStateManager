@@ -465,7 +465,8 @@ def test_the_retry_selfcheck():
     if r.returncode == 2 and "jsdom not installed" in r.stdout:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "all 13 checks passed" in r.stdout, r.stdout
+    # S10 walk: old -> new, 13 -> 17 checks (the unreadable end state's manual Try again)
+    assert "all 17 checks passed" in r.stdout, r.stdout
 
 # ======================================================================
 # 8. the index-build speedup keeps the decoder's answer (docs/282 perf)
@@ -975,7 +976,8 @@ def test_removed_value_readers_are_absent():
                "scan_one_snapshot", "scan_field_series", "snap_files_sig")]
     names += ["CH_SERIES_" + part for part in ("RUNS", "EXAMINE")]
     names += ["_" + part + "_history.html" for part in ("field", "column")]
-    for path in package.rglob("*"):
+    # S10 C7: old -> new, tools must not retain removed value readers either.
+    for path in (p for root in (package, package.parent / "tools") for p in root.rglob("*")):
         if not path.is_file() or "vendor" in path.parts or path.name.startswith("plotly"):
             continue
         if path.suffix in (".py", ".html", ".js", ".css"):

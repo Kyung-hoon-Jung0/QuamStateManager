@@ -70,8 +70,10 @@ ok(ut.indexOf('Recorded: saved in #3 scan — writer not proven') >= 0,
    '1d an unproven run is recorded, in the ledger\'s own words');
 ok(ut.indexOf('Written by') < 0 && !/#3/.test(unproven.tag),
    '1e ...never "Written by", and the tag names no run');
-ok(unproven.lines.indexOf('The ledger is not being kept current in this window.') >= 0,
-   '1f the ledger\'s notes ride the hover');
+// S10 walk: old -> new, the chip-wide notes rode every tile's hover; they
+// are said once per surface (Trends), never inside each tile's card
+ok(unproven.lines.indexOf('The ledger is not being kept current in this window.') < 0,
+   '1f the ledger\'s chip-wide notes never ride a tile\'s hover');
 
 const first = MI.describe({ ts: stamp, provenance: 'first_record', first: true,
   label: 'first recorded in #1', sub: 'ledger start; writer unknown', matches_current: true }, {});
@@ -104,6 +106,18 @@ const waiting = MI.describe(null, { mode: 'building',
   message: 'The change history is being built (2 of 9 runs). It shows here when it is complete.' });
 ok(waiting.tag === 'history pending' && waiting.lines[0].indexOf('2 of 9') >= 0,
    '1n a building ledger is said, with nothing dated');
+
+// S10 walk (final review): an unreadable ledger's answer carries its message
+// AND notes=[message]; the tile says it ONCE, beside what the tile still knows
+const UNREAD = 'The change history could not be read (unreadable). Nothing older is shown in its place.';
+const once = function (d) { return d.lines.filter(function (l) { return l === UNREAD; }).length; };
+const unread = MI.describe(null, { mode: 'unavailable', message: UNREAD, notes: [UNREAD], updating: false });
+ok(once(unread) === 1 && unread.lines.length === 1,
+   '1o an unreadable ledger is said once on an entry-less tile -- ' + JSON.stringify(unread.lines));
+const unreadLab = MI.describe({ load_id: 88 }, { mode: 'unavailable', message: UNREAD, notes: [UNREAD],
+  stamp: Date.parse(stamp) });
+ok(once(unreadLab) === 1 && unreadLab.lines.join('\n').indexOf('#88') >= 0,
+   '1p ...and once beside what the tile still knows (its node\'s run) -- ' + JSON.stringify(unreadLab.lines));
 
 // ── 2) a Trends point's hover and click ──────────────────────────────────
 async function trends() {

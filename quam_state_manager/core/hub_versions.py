@@ -703,19 +703,42 @@ def _version_token(binding) -> tuple:
             (folder.ident(), lane.digest if lane is not None else None) if folder is not None else ())
 
 
-def _summary(store: _Ledger, directory: Path, snapshots, st: dict) -> dict:
+def _listed_foreign(binding, listed: set) -> dict[str, int]:
+    """S10 walk: ``{why: n}`` -- how many of the *listed* events (state-bearing,
+    never another chip's) are outside the open folder's lane, by why
+    (``hub_lanes`` PARALLEL / UNKNOWN / UNLINKED). A listing keeps such a row,
+    labelled (docs/250); these are the numbers its note says it lists. A
+    folder whose every event is in its lane (the fast path) has none."""
+    from quam_state_manager.core import hub_index
+    with hub_index.snapshot(binding) as (_conn, index):
+        lane = getattr(index, "lane", None)
+        if lane is None:
+            return {}
+        out: dict[str, int] = {}
+        for eid, why in lane.hidden.items():
+            if eid in listed:
+                out[why] = out.get(why, 0) + 1
+        return out
+
+
+def _summary(store: _Ledger, directory: Path, snapshots, st: dict, binding=None) -> dict:
     """The parts of a read that depend on the whole ledger and the whole
     snapshot list (not on the page): counts and which snapshots it holds."""
     has_runs = bool(store.conn.execute("SELECT 1 FROM events WHERE kind='run' LIMIT 1").fetchone())
     has_observed = bool(store.conn.execute(
         "SELECT 1 FROM events WHERE kind=? LIMIT 1", (OBSERVED_KIND,)).fetchone())
-    count = store.conn.execute("SELECT COUNT(*) FROM events WHERE " + _state_events_sql()).fetchone()[0]
+    # every event a listing lists (the timeline's rows that have a state and are
+    # this chip's): what it counts, and what its foreign rows are taken from
+    listed = {r[0] for r in store.conn.execute("SELECT eid FROM events WHERE " + _state_events_sql())}
+    count = len(listed)
+    foreign = _listed_foreign(binding, listed) if binding is not None else {}
     uncertain = store.conn.execute("SELECT COUNT(*) FROM events WHERE (flags & ?) != 0 AND error IS NULL",
                                    (CHIP_UNCERTAIN,)).fetchone()[0]
     chashes, pending = hashes_for(directory).lookup(snapshots)
     covered = coverage(store, snapshots, chashes)
     return {"no_runs": False, "has_runs": has_runs, "count": count, "uncertain": uncertain,
-            "pending": set(pending), "covered": len(covered),
+            "foreign": foreign,
+            "pending": set(pending), "covered": len(covered), "covered_by": dict(covered),
             "older": frozenset(s.timestamp for s in snapshots if s.timestamp not in covered),
             "snapshot_chashes": chashes,
             "writes": tuple(store.conn.execute("SELECT eid,t_utc_us,chash,live FROM events WHERE kind IN ("
@@ -724,13 +747,36 @@ def _summary(store: _Ledger, directory: Path, snapshots, st: dict) -> dict:
                                                   + _state_events_sql(), (OBSERVED_KIND,)))}
 
 
+def versions_with_content(directory, chash: str) -> list[tuple[int, str]]:
+    """S10 walk: ``[(instant, version ref)]`` of every listed event (state-bearing,
+    never another chip's) whose content hash is *chash* -- where the
+    live-change tracker's baseline content was recorded."""
+    if not chash:
+        return []
+    with _ledger(directory) as store:
+        return [(int(r["t_utc_us"]), ref_of(r)) for r in store.conn.execute(
+            "SELECT eid, t_utc_us FROM events WHERE chash=? AND " + _state_events_sql(), (chash,))]
+
+
+def observed_outcome(directory, ts: str) -> str | None:
+    """S10 walk: what the ledger made of Param History snapshot *ts* (``added`` /
+    ``inserted`` / ``same_before`` / ``same_after`` / ...), None while it has
+    not looked at it yet."""
+    with _ledger(directory) as store:
+        try:
+            row = store.conn.execute("SELECT outcome FROM observed_snapshots WHERE ts=?", (ts,)).fetchone()
+        except sqlite3.OperationalError:     # no observed snapshot was ever looked at
+            return None
+    return row[0] if row else None
+
+
 def legacy_rows(snapshots, *, limit: int = 40, offset: int = 0) -> dict:
     """S10 C3: the same paged snapshot rows for every non-ledger listing."""
     return {"rows": [{"legacy": True, "snapshot": s, "ref": s.timestamp,
                       "stamp": s.timestamp, "why_diff": None, "why_write": None}
                      for s in snapshots[offset:offset + limit]],
             "total": len(snapshots), "legacy_total": len(snapshots), "pending": 0,
-            "events": 0, "uncertain": 0, "covered": 0}
+            "events": 0, "uncertain": 0, "covered": 0, "foreign": {}}
 
 
 def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0,
@@ -768,7 +814,7 @@ def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0
         with _ledger(directory) as store:
             summary = _recall(_SUMMARIES, key)
             if summary is None:
-                summary = _summary(store, directory, snapshots, st)
+                summary = _summary(store, directory, snapshots, st, binding)
                 if not summary.get("pending"):
                     _remember(_SUMMARIES, key, summary)
             out["has_runs"] = summary["has_runs"]
@@ -809,6 +855,8 @@ def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0
                                   "pending": item.timestamp in pending})
             out.update(rows=shown, total=count + len(older), legacy_total=len(older),
                        pending=len(pending), uncertain=uncertain, events=count,
+                       foreign=dict(summary.get("foreign") or {}),
+                       covered_by=dict(summary.get("covered_by") or {}),
                        covered=summary["covered"], older=frozenset(s.timestamp for s in older))
     except hub_sync.Building as exc:
         out.update(mode="building", status=getattr(exc, "status", None) or st)

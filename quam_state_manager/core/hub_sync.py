@@ -365,6 +365,8 @@ class ChipSync:
         # S10 C1: why the last slice could not run (the ledger could not be
         # opened or bound); cleared by the next slice that completes
         self.slice_error: str | None = None
+        # a busy/locked ledger: the projector's retry will very likely get through
+        self.slice_error_transient = False
         # S10 C1.5: the live folder that opened the chip last (its comparison
         # key): every registered data root is linked to it in the ledger
         self.folder: str | None = None
@@ -455,7 +457,9 @@ class ChipSync:
         if not self.syncable:
             # nothing to read: no data folder and no observed states
             state = "ready"
-        elif self.slice_error is not None:
+        elif self.slice_error is not None and not (self.slice_error_transient and building):
+            # (a busy / locked ledger in the middle of a catch-up stays "building":
+            # a half-built ledger is never presented as the answer -- final review)
             # S10 C1: a ledger that could not be opened, bound or written in
             # the last slice -- not "building" forever (S10 C6: a corrupt
             # ledger.sqlite left every list "being built" on a chip WITH a
@@ -665,8 +669,11 @@ class ChipSync:
                 # takes its change back (clock skew between the two PCs)
                 self.__dict__["_ingested_seen"] = ingested
                 self.counts["observed:dropped"] += drop_observed_runs(store)
+                # S10 walk: a run placed before an observation of its own state
+                self.counts["observed:dropped"] += drop_observed_explained(store)
         more = self.has_work()
         self.slice_error = None
+        self.slice_error_transient = False
         if not more:
             self.phase = "ready"
             self.ready = True
@@ -1482,6 +1489,11 @@ def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str
     key = folder_key(snap.get("live"))
     lpred = pred if same_lane(store, pred, key) else _lane_good(store, lo, key, before=True)
     lsucc = succ if same_lane(store, succ, key) else _lane_good(store, hi, key, before=False)
+    chash = _content_hash_of(state, wiring)
+    if lpred is not None and chash and lpred["chash"] == chash:
+        # S10 walk: the same content as the lane's newest state (an SM
+        # write's own save copy): settled by the content hash, no flat built
+        return done("same_before")
     lpred_flat = store.flat_of(lpred) if lpred is not None else {}
     if not rules.diff(lpred_flat, flat):
         return done("same_before")
@@ -1496,7 +1508,6 @@ def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str
         pred_flat = lpred_flat if pred is not None else {}
     rows = rules.diff(pred_flat, flat)
     succ_flat = _prepare_successor(store, succ)
-    chash = _content_hash_of(state, wiring)
     ord_ = store.alloc_ord(lo, hi)
     trigger = str(snap.get("trigger") or "snapshot")
     event = dict(kind=OBSERVED_KIND, t_utc_us=t_us, t_src=snap["ts"], t_quality="sm_clock", ord=ord_,
@@ -1558,6 +1569,41 @@ def drop_observed_runs(store: HubStore) -> int:
             remove_event(store, ev)
             store.conn.execute("UPDATE observed_snapshots SET outcome='same_after', eid=NULL WHERE eid=?",
                                (ev["eid"],))
+        dropped += 1
+    return dropped
+
+
+def drop_observed_explained(store: HubStore) -> int:
+    """S10 walk: an observed event whose content equals the newest good
+    event of its own folder's lane before it (an SM write, a run, an earlier
+    observation) is no new state. ``attach_observed`` leaves such a snapshot
+    out when that event is already in the ledger; this covers the other
+    order of arrival -- the capture imported first (an Apply's own ``save``
+    copy kicks the import at once, while the write's journal line is
+    projected a moment later and placed BEFORE it). The observation is
+    removed and its snapshot recorded as ``same_before``. Compared by the
+    content hash (``working_copy.content_hash``, recorded for SM writes, runs
+    and observations alike). Returns how many were removed."""
+    conn = store.conn
+    cands = [r["eid"] for r in conn.execute(
+        "SELECT o.eid FROM events o WHERE o.kind=? AND o.error IS NULL AND o.chash IS NOT NULL "
+        "AND EXISTS (SELECT 1 FROM events p WHERE p.chash=o.chash AND p.ord<o.ord AND p.error IS NULL) "
+        "ORDER BY o.ord", (OBSERVED_KIND,))]
+    if not cands:
+        return 0
+    _observed_table(conn)
+    dropped = 0
+    for eid in cands:
+        ev = conn.execute("SELECT * FROM events WHERE eid=?", (eid,)).fetchone()
+        if ev is None or ev["error"] is not None:
+            continue
+        lo = conn.execute("SELECT * FROM events WHERE ord<? ORDER BY ord DESC LIMIT 1", (ev["ord"],)).fetchone()
+        pred = _lane_good(store, lo, folder_key(ev["live"]), before=True)
+        if pred is None or pred["chash"] != ev["chash"]:
+            continue
+        with txn(store):
+            remove_event(store, ev)
+            conn.execute("UPDATE observed_snapshots SET outcome='same_before', eid=NULL WHERE eid=?", (eid,))
         dropped += 1
     return dropped
 
@@ -1775,6 +1821,8 @@ def slice_failed(chip_dir, exc: BaseException) -> None:
             cs = _SYNCS.get(_norm(chip_dir))
         if cs is not None:
             cs.slice_error = f"{type(exc).__name__}: {exc}"
+            msg = str(exc).lower()
+            cs.slice_error_transient = "locked" in msg or "busy" in msg
             cs.errors.append("slice: " + cs.slice_error)
     except Exception:  # noqa: BLE001 -- bookkeeping only
         logger.debug("hub sync: recording a failed slice failed", exc_info=True)

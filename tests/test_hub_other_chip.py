@@ -78,6 +78,7 @@ def test_another_chips_run_is_never_this_chips_newest_value(tmp_path):
     drawer = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
     assert 'data-value="7200000000.0"' not in drawer, "no Use button for another chip's value"
     assert "does not match this chip" in drawer, "the left-out run is said, not silent"
+    assert 'data-note="other_chip"' in drawer
     meta = c.get("/topology/metric-meta").get_json()
     assert (meta["q"].get("f_01", {}).get("qA1") or {}).get("value") != 7.2e9
     trends = c.get("/topology/trends?metrics=f_01").get_data(as_text=True)
@@ -102,3 +103,88 @@ def test_the_listing_says_the_run_was_left_out(tmp_path):
     assert html.count('<li class="state-version-row') == 1, "beta's run is not a version of alpha"
     assert "1 run whose saved chip identity does not match this chip" in html
     assert "of an uncertain chip identity" not in html, "one note for the left-out run, not two"
+
+
+# ----------------------------------------------------------------------
+# S10 final review P1-2 / P1-3: hide only a DECLARED other chip
+# ----------------------------------------------------------------------
+
+def _nameless_state(f01: float, qubits=("qA1",)) -> dict:
+    return {"qubits": {q: {"id": q, "f_01": f01 if q == "qA1" else 5.0e9, "anharmonicity": 200e6}
+                       for q in qubits},
+            "qubit_pairs": {}, "active_qubit_names": list(qubits)}
+
+
+def _open_nameless(tmp_path, runs, live_state):
+    root = tmp_path / "data"
+    for rid, state, hhmmss in runs:
+        _seed_run(root, rid, state, hhmmss)
+    live = tmp_path / "chips" / "a"
+    _write_chip(live, live_state)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    c.post("/workspace/add", data={"folder": str(root)})
+    declare_root(c, root)
+    return c
+
+
+def test_a_nameless_chip_that_gained_a_qubit_keeps_its_own_runs(tmp_path):
+    """No declared name: the hardware fingerprint decided "uncertain" (a qubit was
+    added), which proves no other chip -- the run stays, shown and never named as
+    the writer, as before the lane rule."""
+    two = ("qA1", "qA2")
+    c = _open_nameless(tmp_path, [(31, _nameless_state(7.1e9), "010000"),
+                                  (32, _nameless_state(7.2e9, two), "020000")],
+                       _nameless_state(7.2e9, two))
+    body, pts = _points(c)
+    assert (7.2e9, "run_uncertain_chip") in pts, pts
+    assert not body.get("other_chip_hidden")
+    drawer = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
+    assert "#32 (chip uncertain)" in drawer and "not named as writer" in drawer
+    assert 'data-note="other_chip"' not in drawer
+
+
+def test_the_same_name_with_no_qubit_in_common_is_another_chip(tmp_path):
+    other = {"qubits": {"qZ9": {"id": "qZ9", "f_01": 6.6e9}}, "qubit_pairs": {},
+             "active_qubit_names": ["qZ9"], "extras": {"chip_name": "alpha"}}
+    root = tmp_path / "data"
+    _seed_run(root, 31, _state(7.1e9, "alpha"), "010000")
+    _seed_run(root, 32, other, "020000")
+    live = tmp_path / "chips" / "a"
+    _write_chip(live, _state(7.1e9, "alpha"))
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    c.post("/workspace/add", data={"folder": str(root)})
+    declare_root(c, root)
+    body, _pts = _points(c)
+    assert body.get("other_chip_hidden") == 1
+
+
+def test_an_archived_chip_never_names_another_chips_run_as_its_writer(tmp_path):
+    """The archived Param History reader has no folder view: a run of another
+    chip in alpha's ledger is still read there, and it says so -- never "its own
+    patch set it"."""
+    from quam_state_manager.web import routes
+    root = tmp_path / "data"
+    for rid, f01, chip, hh in ((31, 7.1e9, "alpha", "010000"), (32, 7.2e9, "beta", "020000"),
+                               (33, 7.3e9, "alpha", "030000")):
+        _seed_run(root, rid, _state(f01, chip), hh)
+        node = root / "2026-07-29" / f"#{rid}_08_qubit_spectroscopy_{hh}" / "node.json"
+        body = json.loads(node.read_text(encoding="utf-8"))
+        body["patches"] = [{"op": "replace", "path": "/qubits/qA1/f_01", "value": f01}]
+        node.write_text(json.dumps(body), encoding="utf-8")
+    live = tmp_path / "chips" / "a"
+    _write_chip(live, _state(7.3e9, "alpha"))
+    other = tmp_path / "chips" / "g"
+    _write_chip(other, _state(5.0e9, "gamma"))
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    c.post("/workspace/add", data={"folder": str(root)})
+    key = declare_root(c, root).name
+    assert c.post("/load", data={"folder": str(other)}).status_code in (200, 302)
+    html = c.get(f"/param-history/expand?chip_key={key}&qubit=qA1&prop=f_01").data.decode()
+    assert "#32 (chip uncertain)" in html or "#32" not in html, "beta's run is never alpha's writer"
+    assert "its own patch set it" not in html.split("#32")[1][:300] if "#32" in html else True

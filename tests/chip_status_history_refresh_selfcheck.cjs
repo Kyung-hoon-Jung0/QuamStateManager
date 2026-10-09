@@ -13,6 +13,8 @@
  *  H2  it keeps the section's current selection (the same _params() request);
  *  H3  the sparkline gate opens once a capture is announced;
  *  H4  navigating away tears the listener down;
+ *  H6  (S10 walk) the hover trends' "could not be read" note carries one manual
+ *      Try again: no automatic re-ask, one read per press;
  *  H5  a Trends section that was never built (never scrolled near) is not
  *      fetched by a capture -- building it stays the lazy observer's call.
  *
@@ -45,7 +47,7 @@ const topo = {
   edges: [], summary: {},
 };
 
-function world(withTrends, lazy) {
+function world(withTrends, lazy, fetchImpl, historyCount) {
   const dom = new JSDOM(
     '<!DOCTYPE html><html><body>'
     + '<button class="history-toggle-btn">History (<span id="history-count">0</span>)</button>'
@@ -61,13 +63,16 @@ function world(withTrends, lazy) {
   win.__fetches = [];
   win.htmx = { process: function () {},
                ajax: function (verb, url, spec) { win.__ajax.push({ verb: verb, url: url, spec: spec }); } };
-  win.fetch = function (url) { win.__fetches.push(String(url)); return new Promise(function () {}); };
+  win.fetch = function (url) {
+    win.__fetches.push(String(url));
+    return fetchImpl ? fetchImpl(String(url)) : new Promise(function () {});
+  };
   // lazy: a real observer that never reports an intersection, so the Trends
   // section stays unbuilt (without one, jsdom builds every section at mount)
   if (lazy) win.IntersectionObserver = function () { return { observe: function () {}, disconnect: function () {} }; };
   new win.Function(SRC).call(win);
   win.ChipStatus.mount({ topo: JSON.parse(JSON.stringify(topo)), rawWiring: {}, diagFindings: [],
-                         metricMeta: {}, defaultThresholds: {}, historyCount: 0 });
+                         metricMeta: {}, defaultThresholds: {}, historyCount: historyCount || 0 });
   return win;
 }
 function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -119,6 +124,35 @@ function announce(win) {
     ok(!win.__ajax.some(function (c) { return /trends/.test(c.url); }),
       'H5b: a capture does not build an unbuilt Trends section — '
       + JSON.stringify(win.__ajax.map(function (c) { return c.url; })));
+  }
+
+  {
+    /* H6 (S10 walk): the hover trends' unreadable note carries the one manual
+       "Try again" -- read once per press, never an automatic re-ask */
+    const answers = [
+      '<p class="vh-wait" data-vh-mode="unavailable">The change history file could not be read. '
+        + '<button type="button" class="btn-sm vh-try-again" data-vh-try-again="1">Try again</button></p>',
+      '<div class="topo-popup-section topo-spark-section">spark-back</div>'];
+    const win = world(false, false, function (url) {
+      if (!/sparklines/.test(url)) return new Promise(function () {});
+      const html = answers.length > 1 ? answers.shift() : answers[0];
+      return Promise.resolve({ text: function () { return Promise.resolve(html); } });
+    }, 5);
+    await wait(20);
+    const g = win.document.querySelector('[data-hero-qubit="qA1"]');
+    g.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: true }));
+    await wait(400);
+    const sparks = function () { return win.__fetches.filter(function (u) { return /sparklines/.test(u); }).length; };
+    const popup = win.document.querySelector('.topo-node-popup') || win.document.body;
+    ok(sparks() === 1 && /could not be read/.test(popup.textContent),
+      'H6a: the unreadable note shows, and nothing asks again by itself — ' + sparks());
+    const again = win.document.querySelector('[data-vh-try-again]');
+    ok(!!again, 'H6b: the note carries a Try again button');
+    if (again) again.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await wait(100);
+    ok(sparks() === 2 && /spark-back/.test(win.document.body.textContent)
+       && !/could not be read/.test(win.document.body.textContent),
+      'H6c: one press reads the trends again, once, in place of the note — ' + sparks());
   }
 
   console.log(fails ? ('FAILED (' + fails + ')')

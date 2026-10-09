@@ -92,7 +92,19 @@ def _replace_value_match(m: re.Match) -> str:
         return value
     if re.fullmatch(r"[0-9]\.[0-9]\.[0-9]\.[0-9]", value):
         return value
-    return HIDDEN
+    # S10 walk: a path or address that ends a sentence or closes a
+    # parenthesis in prose ("(D:\data\x) are ...", "... in D:\data\x.")
+    # leaves that punctuation outside the blank -- a ")" only when the match
+    # did not open it ("C:\Program Files (x86)" stays whole)
+    tail = ""
+    while len(value) > 1:
+        last = value[-1]
+        if last in ".,;:" or (last == ")" and value.count(")") > value.count("(")):
+            tail = last + tail
+            value = value[:-1]
+        else:
+            break
+    return HIDDEN + tail
 
 
 def _value_text(s: str) -> str:

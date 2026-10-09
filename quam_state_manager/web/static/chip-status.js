@@ -300,7 +300,8 @@ window.ChipStatus.metaInfo = (function () {
             lines.push('Measured (the lab’s own stamp): ' + when(ctx.stamp) + ' (' + ageLong(ctx.stamp, now) + ')');
         }
         if (e.load_id != null) lines.push('Run recorded by the lab’s node: #' + e.load_id);
-        (ctx.notes || []).forEach(function (note) { lines.push(note); });
+        // S10 walk: the ledger's chip-wide notes (runs left out, a folder not
+        // linked) are said ONCE per surface, never inside every tile's card
         return { tag: tag, lines: lines, edited: edited };
     }
     function describe(entry, ctx) {
@@ -321,8 +322,10 @@ window.ChipStatus.metaInfo = (function () {
                 lines.push('Run recorded by the node: #' + e.load_id);
                 if (tag === '\u2014') tag = '#' + e.load_id;
             }
-            if (!lines.length) lines.push(ctx.message || 'No change of this value is on record in this chip\u2019s change ledger.');
-            (ctx.notes || []).forEach(function (note) { lines.push(note); });
+            // S10 walk: an unreadable ledger is said once (its message), whatever
+            // else the tile knows; the chip-wide notes stay off the tile
+            if (ctx.mode === 'unavailable') lines.push(ctx.message || 'The change history could not be read.');
+            else if (!lines.length) lines.push(ctx.message || 'No change of this value is on record in this chip\u2019s change ledger.');
             return {tag: tag, lines: lines, edited: false};
         }
         return _describeLedger(e, ctx, now);
@@ -2306,21 +2309,37 @@ window.ChipStatus.mount = function (opts) {
             // the chip actually has snapshots. Guarded against the popup being closed/
             // replaced before the request lands; reposition once the taller content is in.
             if (_historyCount > 0) {
-                var sparkSlot = document.createElement('div');
-                sparkSlot.className = 'topo-popup-section muted';
-                sparkSlot.style.cssText = 'font-size:0.72em;text-align:center';
-                sparkSlot.textContent = 'loading trends…';
-                popup.appendChild(sparkSlot);
-                fetch('/api/topology/sparklines/' + encodeURIComponent(n.id), {cache: 'no-store'})
-                    .then(function(r) { return r.text(); })
-                    .then(function(htmlStr) {
-                        if (activePopup !== popup || !popup.isConnected) return;   // popup gone
-                        var tmp = document.createElement('div');
-                        tmp.innerHTML = htmlStr || '';
-                        sparkSlot.replaceWith.apply(sparkSlot, tmp.childNodes.length ? Array.prototype.slice.call(tmp.childNodes) : [document.createComment('no-trend')]);
-                        positionPopup(popup, anchorEl);   // re-clamp now it's taller
-                    })
-                    .catch(function() { if (sparkSlot.parentNode) sparkSlot.remove(); });
+                var loadSparks = function (before) {
+                    var sparkSlot = document.createElement('div');
+                    sparkSlot.className = 'topo-popup-section muted';
+                    sparkSlot.style.cssText = 'font-size:0.72em;text-align:center';
+                    sparkSlot.textContent = 'loading trends…';
+                    if (before) before.replaceWith(sparkSlot); else popup.appendChild(sparkSlot);
+                    fetch('/api/topology/sparklines/' + encodeURIComponent(n.id), {cache: 'no-store'})
+                        .then(function(r) { return r.text(); })
+                        .then(function(htmlStr) {
+                            if (activePopup !== popup || !popup.isConnected) return;   // popup gone
+                            var tmp = document.createElement('div');
+                            tmp.innerHTML = htmlStr || '';
+                            var nodes = tmp.childNodes.length ? Array.prototype.slice.call(tmp.childNodes) : [document.createComment('no-trend')];
+                            // S10 walk: an unreadable change history ends with one manual
+                            // "Try again" (read once per press, never an automatic re-ask);
+                            // the answer is wrapped so the press can replace all of it
+                            var box = document.createElement('div');
+                            nodes.forEach(function (nd) { box.appendChild(nd); });
+                            sparkSlot.replaceWith(box);
+                            var again = box.querySelector('[data-vh-try-again]');
+                            if (again) {
+                                again.addEventListener('click', function (ev) {
+                                    ev.stopPropagation();
+                                    loadSparks(box);
+                                });
+                            }
+                            positionPopup(popup, anchorEl);   // re-clamp now it's taller
+                        })
+                        .catch(function() { if (sparkSlot.parentNode) sparkSlot.remove(); });
+                };
+                loadSparks(null);
             }
         }
 
@@ -4199,13 +4218,15 @@ window.ChipStatus.mount = function (opts) {
         // one history value to compare with: the server sends none
         return window.ChipStatus.metaInfo.describe(entry, {
             cur: cur, stamp: stamp, updating: !!d.updating,
-            mode: d.mode, message: d.message, notes: d.notes || [] });
+            mode: d.mode, message: d.message });
     }
     // one panel's summary: newest / oldest change, how many values have one
     function _metaPanelSummary(sec) {
         var key = sec.getAttribute('data-density-panel');
         var d = _metaData || {}, MI = window.ChipStatus.metaInfo;
         if (d.mode === 'building' || d.mode === 'preparing') return [d.message || 'Preparing the change history.'];
+        // S10 walk: an unreadable ledger is said once, in its own words
+        if (d.mode === 'unavailable') return [d.message || 'The change history could not be read.'];
         var group = /^2q:/.test(key) ? ((d.p || {})[key] || {}) : ((d.q || {})[key] || {});
         var cells = sec.querySelectorAll('.heatmap-cell[data-qubit], .heatmap-cell[data-pair]');
         var newest = null, oldest = null, changed = 0, recorded = 0, first = 0, none = 0, edited = 0, unk = 0, total = 0;
@@ -4243,9 +4264,10 @@ window.ChipStatus.mount = function (opts) {
         if (cnt.length) parts.push(cnt.join(', ') + ' (of ' + total + ')');
         if (d.snapshots) parts.push('history: ' + d.snapshots + ' recorded events'
             + (d.newest ? ', newest ' + MI.when(MI.snapMs(d.newest)) : ''));
-        else parts.push('no history snapshots for this chip yet');
+        else parts.push('no recorded events in this chip\u2019s change ledger yet');
         if (d.updating) parts.push('index updating');
-        (d.notes || []).forEach(function (note) { parts.push(note); });
+        // S10 walk: the chip-wide notes are said once on the page (Trends),
+        // not again in every panel's line
         if (d.incomplete_index) parts.push('this chip’s change-point index is incomplete: values it cannot vouch for are not dated');
         return parts;
     }

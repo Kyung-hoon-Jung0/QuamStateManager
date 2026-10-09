@@ -173,6 +173,25 @@ def test_a_chip_with_a_data_folder_whose_ledger_cannot_open_is_degraded_not_buil
     assert st["state"] in ("ready", "building") and "ledger_error" not in st
 
 
+def test_a_locked_ledger_mid_catch_up_stays_building_a_broken_one_is_degraded(tmp_path):
+    """S10 final review: one busy/locked slice in the middle of a catch-up must not turn
+    "being built" into an answer read from the half-built ledger; an error that is not
+    a busy ledger (cannot open, not a database) is degraded, and the note names it."""
+    chip = tmp_path / "hist" / "midbuild"
+    root = tmp_path / "data"
+    root.mkdir()
+    hub_sync.open_chip(chip, [(str(root), "extras")], observed=lambda: [], kick=False)
+    assert hub_sync.status(chip)["state"] == "building"
+    hub_sync.slice_failed(chip, sqlite3.OperationalError("database is locked"))
+    assert hub_sync.status(chip)["state"] == "building", "a locked ledger is retried, not degraded"
+    hub_sync.slice_failed(chip, sqlite3.DatabaseError("file is not a database"))
+    st = hub_sync.status(chip)
+    assert st["state"] == "degraded"
+    from quam_state_manager.core import value_history as vh
+    texts = [n["text"] for n in vh.notes(st, {})]
+    assert any("change ledger could not be opened or written" in t for t in texts), texts
+
+
 def test_periodic_relists_the_observed_states_of_a_folderless_chip(tmp_path):
     chip = tmp_path / "hist" / "periodic"
     calls = []

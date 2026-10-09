@@ -40,13 +40,20 @@ class TestPopupSparklines:
         assert "recorded event" not in html and "being built" in html
 
 
+def listed_count(html: str) -> int:
+    """S10 walk: old -> new, the drawer's count line says "N versions" (the one
+    wording of the one count every history surface shows), not "N recorded states"."""
+    return int(re.search(r'class="version-count[^"]*" data-total="\d+">([\d,]+) versions?<', html)
+               .group(1).replace(",", ""))
+
+
 class TestHistoryDrawer:
     def test_the_drawer_lists_the_ledger_states(self, sm):
         html = flat(sm["client"].get("/api/history").data.decode())
-        assert "Open State History" in html and "recorded state" in html
+        assert "Open State History" in html and "version-count" in html
         assert 'class="history-entry hp-ledger-row"' in html
         page = flat(sm["client"].get("/state-history").data.decode())
-        total = int(re.search(r"(\d+) recorded states?", html).group(1))
+        total = listed_count(html)
         rows_on_page = len(re.findall(r'class="sh-entry[ "]', page))
         assert total == rows_on_page, (total, rows_on_page)
         assert html.count('hp-ledger-row') == total
@@ -55,13 +62,13 @@ class TestHistoryDrawer:
         html = flat(sm["client"].get("/topology").data.decode())
         n = int(re.search(r'History \(<span id="history-count">(\d+)</span>\)', html).group(1))
         drawer = flat(sm["client"].get("/api/history").data.decode())
-        assert n == int(re.search(r"(\d+) recorded states?", drawer).group(1))
+        assert n == listed_count(drawer)
 
     def test_the_top_bar_versions_chip_counts_the_same(self, sm):
         chip = flat(sm["client"].get("/state/version").data.decode())
         n = int(re.search(r'<span class="state-version-count">(\d+)</span>', chip).group(1))
         drawer = flat(sm["client"].get("/api/history").data.decode())
-        assert n == int(re.search(r"(\d+) recorded states?", drawer).group(1))
+        assert n == listed_count(drawer)
         # "unrecorded" is a snapshot fact (no SNAPSHOT holds the live content);
         # a ledger count must not turn it on for a chip with no snapshot
         from quam_state_manager.web import routes
@@ -86,7 +93,7 @@ class TestHistoryDrawer:
         with env["app"].test_request_context():
             assert len(routes._history().list_snapshots(env["live"])) >= 5
         drawer = flat(c.get("/api/history").data.decode())
-        listed = int(re.search(r"(\d+) recorded states?", drawer).group(1))
+        listed = listed_count(drawer)
         page = flat(c.get("/topology").data.decode())
         button = int(re.search(r'History \(<span id="history-count">(\d+)</span>\)', page).group(1))
         chip = flat(c.get("/state/version").data.decode())

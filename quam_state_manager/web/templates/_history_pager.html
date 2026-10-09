@@ -1,0 +1,27 @@
+{# S10 walk: one pager for the history listings (State History, the History
+   drawer). State History had 88 pages and only "Next »" (its one older row
+   sat on page 87): first / previous / next / last, and a page box to jump; a new page opens
+   at its top (*swap*: State History scrolls its pane, the drawer shows its top). #}
+{% macro history_pager(url, page, total_pages, target, per_page, swap='innerHTML') -%}
+{%- if total_pages > 1 %}
+{%- set q = url ~ ('&' if '?' in url else '?') ~ 'per_page=' ~ per_page ~ '&page=' %}
+<nav class="history-pagination history-pager" aria-label="Pages">
+    <button class="outline btn-sm" hx-get="{{ q }}1" hx-target="{{ target }}" hx-swap="{{ swap }}"
+            title="First page (newest)"{% if page <= 1 %} disabled{% endif %}>&laquo; First</button>
+    <button class="outline btn-sm" hx-get="{{ q }}{{ page - 1 }}" hx-target="{{ target }}" hx-swap="{{ swap }}"
+            title="Previous page (newer)"{% if page <= 1 %} disabled{% endif %}>&lsaquo; Prev</button>
+    <span class="muted history-page-of">Page {{ page }} / {{ total_pages }}</span>
+    <button class="outline btn-sm" hx-get="{{ q }}{{ page + 1 }}" hx-target="{{ target }}" hx-swap="{{ swap }}"
+            title="Next page (older)"{% if page >= total_pages %} disabled{% endif %}>Next &rsaquo;</button>
+    <button class="outline btn-sm" hx-get="{{ q }}{{ total_pages }}" hx-target="{{ target }}" hx-swap="{{ swap }}"
+            title="Last page (oldest)"{% if page >= total_pages %} disabled{% endif %}>Last &raquo;</button>
+    <form class="history-page-jump" hx-get="{{ url }}" hx-target="{{ target }}" hx-swap="{{ swap }}">
+        <input type="hidden" name="per_page" value="{{ per_page }}">
+        <label class="muted">Go to page
+            <input type="number" name="page" min="1" max="{{ total_pages }}" value="{{ page }}"
+                   aria-label="Page number" class="history-page-input"></label>
+        <button type="submit" class="outline btn-sm" title="Go to this page">Go</button>
+    </form>
+</nav>
+{%- endif %}
+{%- endmacro %}

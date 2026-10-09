@@ -141,9 +141,12 @@ def test_a_bug_building_the_table_is_a_real_error(no_runs, monkeypatch, url):
 def test_a_failed_ledger_read_is_unreadable_and_says_why():
     import sqlite3
     from quam_state_manager.web import hub_status
-    with pytest.raises(hub_status.LedgerUnreadable, match="DatabaseError: malformed"):
+    # S10 C7: old -> new, retain the exact exception contract with assertion failures for wrong types.
+    with pytest.raises(Exception) as caught:
         with hub_status.ledger_read():
             raise sqlite3.DatabaseError("malformed")
+    assert isinstance(caught.value, hub_status.LedgerUnreadable)
+    assert "DatabaseError: malformed" in str(caught.value)
     from quam_state_manager.core import ramcache
     got = None
     try:                                             # a wait stays a wait
@@ -178,4 +181,5 @@ def test_a_changes_page_read_that_fails_is_unreadable(no_runs, monkeypatch, modu
         raise AssertionError(f"the read error escaped the route: {exc!r}") from None
     body = response.get_data(as_text=True)
     assert response.status_code == 200
-    assert "could not be read (unreadable)" in body and "load delay:" not in body
+    # S10 walk: old -> new, the reason in plain words (never the raw "(unreadable)")
+    assert "The change history file could not be read." in body and "load delay:" not in body

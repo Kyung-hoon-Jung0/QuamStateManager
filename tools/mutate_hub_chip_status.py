@@ -92,7 +92,9 @@ MUTATIONS = [
      '    return False',
      [W + "test_a_matrix_whose_every_change_is_patched_names_its_run"]),
     ("foreign_chip_flag_ignored", "quam_state_manager/core/hub_lanes.py",
-     '            if any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN:', '            if False:',
+     # S10 C7: old -> new, target the restored distinction between foreign and uncertain runs.
+     '            if (any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN\n'
+     '                    and declares_another_chip(conn, index.ledger_id, f, chip)):', '            if False:',
      [W + "test_a_run_of_another_chip_is_never_the_writer"]),
     ("every_change_row_claims_the_patch", RT,
      '                         "who": info["sub"] if ev.get("kind") == "run" else "",',
@@ -289,6 +291,10 @@ def _red(log: str, pins: list[str]) -> tuple[bool, list[str]]:
     hit = [n for n in names if _bare(n) in targets]
     summary = log.strip().splitlines()[-1] if log.strip() else ""
     if re.search(r"\d+ errors?\b", summary):
+        return False, hit
+    # S10 C7: old -> new, mixed assertion/runtime failures no longer count as RED.
+    errors = re.findall(r"^E\s+([.\w]*(?:Error|Exception)|Failed):", log, re.M)
+    if any(kind not in ("AssertionError", "Failed") for kind in errors):
         return False, hit
     parts = re.split(r"^_+ (.+?) _+$", log, flags=re.M)
     asserted = False

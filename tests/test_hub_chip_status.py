@@ -196,7 +196,12 @@ class TestWriterOnlyOnProof:
 
     def test_changes_name_the_writer_per_row(self, sm):
         g = groups(sm["client"].get(CHANGES).data.decode())
-        by_run = {re.search(r"(run #\d|first recorded in #\d)", x).group(1): x for x in g}
+        # S10 C7: old -> new, assert a missing run label before lookup so mutations fail by assertion.
+        by_run = {}
+        for group in g:
+            match = re.search(r"(run #\d|first recorded in #\d)", group)
+            assert match is not None, group
+            by_run[match.group(1)] = group
         assert "qubits.qA1.T1" in by_run["run #2"] and "its own patch set it" in by_run["run #2"]
         assert "qubits.qA1.f_01" in by_run["run #3"] and "writer not proven" in by_run["run #3"]
         assert "its own patch set it" not in by_run["run #3"], \
@@ -471,6 +476,8 @@ class TestModes:
         if url == META:
             # S10 C3: old -> new, no-folder chips read their ledger with a link offer.
             assert r.get_json()["mode"] == "ledger"
+            # S10 C7: old -> new, assert the link object before lookup to keep mutation failures meaningful.
+            assert "link" in r.get_json(), r.get_json()
             assert r.get_json()["link"]["offer"]
             return
         body = r.data.decode()

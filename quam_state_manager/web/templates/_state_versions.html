@@ -1,5 +1,6 @@
 {% from '_delta_macros.html' import delta_chip %}
-{% from '_snapshot_source.html' import source_badge %}
+{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag %}
+{% from '_version_count.html' import version_count %}
 {# docs/120 item 10 — the version list the top-bar chip opens.
 
    Customer: "clicking it lists the version history with WHEN each was updated,
@@ -29,11 +30,11 @@
      data-source="ledger">
     <div class="state-versions-head">
         <strong>Versions</strong>
-        {% if total %}<span class="muted">{{ rows | length }} of {{ total }}</span>{% endif %}
+        {% if total %}<span class="muted sv-head-count">{{ rows | length }} of {{ '{:,}'.format(total) }}</span>{% endif %}
         <button type="button" class="state-versions-close" onclick="StateVersions.close()"
                 aria-label="Close">&times;</button>
     </div>
-    {% if ledger_versions is defined and ledger_versions %}{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}{% endwith %}{% endif %}
+    {% if ledger_versions is defined and ledger_versions %}{% with notes=ledger_versions.notes, retry={'url': '/state/versions', 'target': '#state-version-panel'} %}{% include '_hub_notes.html' %}{% endwith %}{% endif %}
 
     {% if not rows and ledger_versions is defined and ledger_versions and ledger_versions.mode in ('building', 'preparing') %}
     {# docs/284: the change history is not ready; the note above says so, and
@@ -98,7 +99,10 @@
 
     <ul class="state-versions-list">
         {% for r in rows %}
-        <li class="state-version-row{% if r.current %} sv-current{% endif %}">
+        {# S10 walk: the version id (a ledger ref, a snapshot stamp) is a key for
+           code, not something to read -- it rides the checkbox value and the
+           buttons' requests, never a printed line under every row #}
+        <li class="state-version-row{% if r.current %} sv-current{% endif %}{% if r.foreign %} sv-foreign{% endif %}">
             <label class="sv-pick">
                 {# Ordinal, newest = #1 — what the quick-diff header's
                    "#2 → #1" points at. Server-loop index, so paging and the
@@ -110,7 +114,6 @@
                     {# ts_local renders the recorded moment in the viewer's zone —
                        "when was this updated" is the column the user asked for. #}
                     <span class="sv-time">{{ (r.when or r.ts) | ts_local }}</span>
-                    <span class="sv-id">{{ r.ts }}</span>
                 </span>
             </label>
             {# Actions sit DIRECTLY after the date (customer, 2026-08-21: "the
@@ -215,7 +218,7 @@
                 <span class="sv-kind sv-kind-{{ r.kind }}{% if r.kind_legacy %} sv-kind-legacy{% endif %}"
                       title="{% if r.kind == 'exp' %}A run produced this state{% elif r.kind == 'backup' %}Protective copy taken right before a write{% else %}You changed the state on purpose (apply / pull / restore / snapshot / bookmark){% endif %} — recorded trigger: {{ r.trigger }}{% if r.kind_legacy %} (recorded before kinds existed; this is the likely reading){% endif %}">{{ {'exp': 'EXP', 'manual': 'MANUAL', 'backup': 'BACKUP'}[r.kind] }}</span>
                 {% endif %}
-                {{ source_badge(r.source, 'sv-src') }}
+                {{ source_badge(r.source, 'sv-src') }}{{ foreign_tag(r, 'sv-foreign-tag') }}{{ baseline_tag(r, ledger_versions, 'sv-baseline') }}
                 {% if r.pinned %}<span class="sv-pin" title="Pinned — exempt from pruning">&#128204;</span>{% endif %}
                 {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
                 {% if r.label %}<span class="sv-label">{{ r.label }}</span>{% endif %}
@@ -237,9 +240,9 @@
         <button type="button" class="btn-xs outline"
                 onclick="StateVersions.more({{ rows | length + 40 }})">Show 40 more</button>
         <button type="button" class="btn-xs outline"
-                onclick="StateVersions.more({{ cap }})">All {{ total if total <= cap else cap }}</button>
+                onclick="StateVersions.more({{ cap }})">{{ 'All ' ~ total if total <= cap else 'Newest ' ~ cap }}</button>
         {% if total > cap %}
-        <span class="muted sv-cap-note">of {{ total }} — open
+        <span class="muted sv-cap-note">of {{ '{:,}'.format(total) }} — open
             <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
                hx-push-url="true" onclick="StateVersions.close()">State History</a>
             for the full list</span>
@@ -251,10 +254,7 @@
     <div class="state-versions-foot muted">
         {# while the change history cannot answer, every row is an older
            snapshot: the foot may not say "0 recorded states" from it #}
-        <span class="sv-kept-note">{% if ledger_versions.mode == 'ledger' %}From the change history: {{ ledger_versions.events }} recorded
-            state{{ '' if ledger_versions.events == 1 else 's' }}{% if ledger_versions.legacy_total %}
-            and {{ ledger_versions.legacy_total }} older snapshot{{ '' if ledger_versions.legacy_total == 1 else 's' }}{% endif %}{% else %}{{ ledger_versions.total }} older
-            snapshot{{ '' if ledger_versions.total == 1 else 's' }}{% endif %} — full list in
+        <span class="sv-kept-note">{% if ledger_versions.mode == 'ledger' %}From the change history: {% endif %}{{ version_count(ledger_versions) }} — full list in
             <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
                hx-push-url="true" onclick="StateVersions.close()">State History</a>.</span>
     </div>

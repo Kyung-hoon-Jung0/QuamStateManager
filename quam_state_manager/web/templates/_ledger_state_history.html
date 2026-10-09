@@ -5,18 +5,20 @@
    action goes through the doors the snapshot rows use, gates and all; a
    version the ledger cannot hand over exactly says why instead of offering
    them. Included by _state_history_body.html. #}
-{% from '_snapshot_source.html' import source_badge %}
+{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag %}
+{% from '_version_count.html' import version_count %}
+{% from '_history_pager.html' import history_pager %}
 {% set lv = ledger_versions %}
 {% if lv.rows %}
 <div class="sh-toolbar">
     <button id="sh-compare-btn" class="outline btn-sm" disabled
             onclick="StateHistory.compareSelected()">Compare 2 selected</button>
-    <small class="muted">{% if lv.mode == 'ledger' %}{{ lv.events }} recorded state{{ 's' if lv.events != 1 }}{% if lv.legacy_total %} · {{ lv.legacy_total }} older snapshot{{ 's' if lv.legacy_total != 1 }}{% endif %}{% else %}{{ lv.legacy_total }} older snapshot{{ 's' if lv.legacy_total != 1 }}{% endif %}</small>
+    <small class="muted sh-count">{{ version_count(lv) }}</small>
 </div>
 
 <div class="sh-timeline">
 {% for r in lv.rows %}
-<div class="sh-entry{% if r.legacy %} sh-older{% endif %}{% if r.pinned %} sh-pinned{% endif %}" data-ts="{{ r.ts }}">
+<div class="sh-entry{% if r.legacy %} sh-older{% endif %}{% if r.foreign %} sh-foreign{% endif %}{% if r.pinned %} sh-pinned{% endif %}" data-ts="{{ r.ts }}">
     <div class="sh-entry-main">
         <input type="checkbox" class="sh-cb" value="{{ r.ts }}"
                onchange="StateHistory.toggleSelect(this)" aria-label="Select for compare">
@@ -32,7 +34,7 @@
         {% endif %}
         {# docs/63 project lens, on the snapshots this row carries (S10 C3) #}
         {% for p in (r.annotations or []) | map(attribute='project') | select | unique %}<span class="sh-project-badge" title="Captured while scoped to qualibrate project &quot;{{ p }}&quot;">&#9879; {{ p }}</span>{% endfor %}
-        {{ source_badge(r.source, 'sh-src') }}
+        {{ source_badge(r.source, 'sh-src') }}{{ foreign_tag(r, 'sh-foreign-tag') }}{{ baseline_tag(r, lv, 'sh-baseline') }}
         {% if r.pinned %}<span class="sh-pin-badge" title="Pinned (kept regardless of retention)">&#128204;</span>{% endif %}
         {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
     </div>
@@ -63,16 +65,18 @@
                 hx-target="#state-history-detail" hx-swap="innerHTML">View changes vs current</button>
         {% endif %}
         {% if chip_origin == 'live' and not r.why_write and not r.pending %}
-        <button class="outline btn-sm"
-                hx-post="/state-history/{{ r.ts }}/stage?chip_key={{ hist_chip_key | urlencode }}"
-                hx-target="#state-history-detail" hx-swap="innerHTML"
+        {#- S10 walk: the result is a status line (fixed, bottom right) -- landing in
+            the detail pane below the list scrolled the page to its bottom -#}
+        <button class="outline btn-sm sh-stage"
+                hx-post="/state-history/{{ r.ts }}/stage?target=status&amp;chip_key={{ hist_chip_key | urlencode }}"
+                hx-target="#status-bar" hx-swap="innerHTML"
                 hx-confirm="Load the version of {{ r.when | format_ts_zone }} as the working state? You can then review the diff and Apply to live.{{ auto_push_note }}"
-                title="Mode 1 (safe): load as the working state, review, then apply{{ auto_push_note }}">Load as working state</button>
+                title="Load this version as the working state to review it; the live chip is untouched until you apply.{{ auto_push_note }}">Load as working state</button>
         <button class="outline btn-sm sh-restore-live"
                 hx-post="/state-history/{{ r.ts }}/restore-live?chip_key={{ hist_chip_key | urlencode }}"
                 hx-target="#state-history-detail" hx-swap="innerHTML"
                 hx-confirm="Restore the LIVE chip to the version of {{ r.when | format_ts_zone }} now? The current state is snapshotted first (reversible)."
-                title="Mode 2: replace the live chip directly (the current state is snapshotted first)">Restore to live</button>
+                title="Replace the live chip with this version now (the current live state is snapshotted first, so this can be undone)">Restore to live</button>
         {% endif %}
         {% if hist_chip_key and not r.why_diff %}
         <button class="outline btn-sm"
@@ -85,19 +89,7 @@
 {% endfor %}
 </div>
 
-{% if total_pages > 1 %}
-<nav class="history-pagination">
-    {% if current_page > 1 %}
-    <button class="outline btn-sm" hx-get="/state-history?page={{ current_page - 1 }}&per_page={{ per_page }}"
-            hx-target="#table-pane" hx-swap="innerHTML">&laquo; Prev</button>
-    {% endif %}
-    <span class="muted">Page {{ current_page }} / {{ total_pages }}</span>
-    {% if current_page < total_pages %}
-    <button class="outline btn-sm" hx-get="/state-history?page={{ current_page + 1 }}&per_page={{ per_page }}"
-            hx-target="#table-pane" hx-swap="innerHTML">Next &raquo;</button>
-    {% endif %}
-</nav>
-{% endif %}
+{{ history_pager('/state-history', current_page, total_pages, '#table-pane', per_page, 'innerHTML scroll:top') }}
 {% else %}
 {% if lv.mode == 'ledger' %}
 <p class="muted" style="padding:1rem">No recorded states yet. The change history records

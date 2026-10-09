@@ -610,7 +610,10 @@ def provenance(ev: dict, proven: bool, held: bool = False, start: bool = False) 
         return "held_before_write"
     kind = ev.get("kind")
     if kind == "run":
-        # S10 C7: old -> new, folder lanes exclude foreign runs before provenance.
+        if ev.get("flags", 0) & CHIP_UNCERTAIN:
+            # its saved chip identity disagrees (no name to decide by, or a reader with
+            # no folder view): shown, never named as the writer
+            return "run_uncertain_chip"
         if proven:
             return "run_proven"
         if ev.get("base_hash") is None:
@@ -1312,7 +1315,10 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
         else:
             row = conn.execute("SELECT eid FROM events WHERE error IS NULL ORDER BY ord LIMIT 1").fetchone()
             first_eid = row[0] if row else None
+        kinds = kind_counts(index)
         ledger = {"events": len(index.eids), "has_runs": has_runs, "has_observed": has_observed,
+                  # S10 walk: what those events are (the footers name them)
+                  "kind_counts": kinds, "events_text": events_words(len(index.eids), kinds),
                   "first": iso_z(index.t[0]) if index.eids else None,
                   # S10 C3: the event the history starts at (its rows are the
                   # starting state -- the timeline's ``first``, docs/281)
@@ -1332,6 +1338,7 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
             # S10 C1.5: what this folder's view left out, and its own version
             ledger["left_out"] = lane.left_out
             ledger["version"].append(lane.digest)
+        ledger["unreadable_runs"] = _unreadable_runs(conn, index, lane)
         if run_kind is not None:
             for pos in range(len(index.eids) - 1, -1, -1):
                 if index.kind[pos] == run_kind:
@@ -1423,50 +1430,136 @@ def run_era(chip_dir, folder, binding=None) -> tuple | None:
     return rename_lineage.folder_era(folder)
 
 
+#: how many of another chip's runs the other_chip note names before "and N more"
+OTHER_CHIP_SHOWN = 3
+
+
 def _plural(n: int, one: str, many: str) -> str:
     return f"{n:,} {one if n == 1 else many}"
 
 
-def folder_notes(left_out: dict | None) -> list[dict]:
+def kind_counts(index) -> dict:
+    """S10 walk: ``{"runs", "sm", "observed"}`` -- how many of a (lane) index's
+    events are runs, SM writes and states SM saw."""
+    out = {"runs": 0, "sm": 0, "observed": 0}
+    for name in index.names["kind"]:
+        key = ("runs" if name == "run" else "observed" if name == OBSERVED_KIND
+               else "sm" if name in SM_KINDS else None)
+        if key is not None:
+            out[key] += len(index.postings["kind"].get(name) or ())
+    return out
+
+
+def events_words(total: int, kinds: dict | None) -> str:
+    """S10 walk: "3,515 events: 3,496 runs, 18 SM writes, 1 state SM saw" --
+    only the kinds the history holds (a folder with no runs never reads as
+    "runs and SM writes")."""
+    head = _plural(int(total or 0), "event", "events")
+    k = kinds or {}
+    parts = [_plural(k[key], one, many) for key, one, many in (
+        ("runs", "run", "runs"), ("sm", "SM write", "SM writes"),
+        ("observed", "state SM saw", "states SM saw")) if k.get(key)]
+    return head + (": " + ", ".join(parts) if parts else "")
+
+
+def _unreadable_runs(conn, index, lane) -> dict:
+    """The runs of this folder's history whose saved state could not be read
+    (an ``error`` event: a run folder with no or a broken ``quam_state``). They
+    hold no values, so no value surface shows them -- the note says they exist.
+    ``{"count", "named": [(run id, folder label), ...newest first, 3]}``."""
+    try:
+        rows = conn.execute("SELECT e.eid, e.run_id, r.path FROM events e LEFT JOIN roots r "
+                            "USING(root_id) WHERE e.kind='run' AND e.error IS NOT NULL "
+                            "ORDER BY e.ord DESC").fetchall()
+    except Exception:  # noqa: BLE001 -- a note never breaks the answer
+        return {"count": 0, "named": []}
+    hidden = lane.hidden if lane is not None else {}
+    keep = [r for r in rows if r[0] not in hidden]
+    from quam_state_manager.core.history import source_folder_label
+    named = [(r[1], source_folder_label(r[2]) if r[2] else None) for r in keep[:3]]
+    return {"count": len(keep), "named": named}
+
+
+def unreadable_runs_note(unreadable: dict | None) -> list[dict]:
+    n = int((unreadable or {}).get("count") or 0)
+    if not n:
+        return []
+    named = [f"#{rid}" + (f" in {label}" if label else "") for rid, label in unreadable.get("named") or ()]
+    more = f" and {n - len(named)} more" if n > len(named) else ""
+    return [{"level": "info", "code": "unreadable_runs",
+             "text": _plural(n, "run", "runs") + (" has" if n == 1 else " have")
+                     + " no readable saved state, so " + ("it holds" if n == 1 else "they hold")
+                     + " no values here" + (": " + ", ".join(named) + more if named else "") + "."}]
+
+
+def folder_notes(left_out: dict | None, listing: dict | None = None) -> list[dict]:
     """S10 C1.5: what a folder's view of the chip's ledger left out, said
     (docs/250 wording): another folder's changes recorded while this folder
     had its own history, a folder that cannot be shown, runs of a data folder
-    not linked to this one, SM writes whose state was derived at a seam."""
+    not linked to this one, SM writes whose state was derived at a seam.
+
+    S10 walk: *listing* -- the numbers a LISTING (Versions, State History, the
+    History drawer) actually lists (``hub_versions.read``'s ``foreign`` by why,
+    plus ``uncertain``). A listing keeps another folder's rows, labelled
+    (docs/250), so its note says they are listed below and are not this
+    folder's changes -- a value surface leaves them out and says so. Another
+    chip's runs are never listed: the listing note says that."""
     lo = left_out or {}
     out: list[dict] = []
-    parallel, unknown = int(lo.get("parallel") or 0), int(lo.get("unknown") or 0)
+    if listing is not None:
+        parallel, unknown = int(listing.get("parallel") or 0), int(listing.get("unknown") or 0)
+    else:
+        parallel, unknown = int(lo.get("parallel") or 0), int(lo.get("unknown") or 0)
     if parallel or unknown:
         named = [f for f in lo.get("folders") or () if f.get("folder")]
         parts = []
+        noun = ("version", "versions") if listing is not None else ("change", "changes")
         if parallel:
             labels = ", ".join(f.get("label") or f.get("folder") for f in named[:3])
             more = f" and {len(named) - 3} more" if len(named) > 3 else ""
-            parts.append(_plural(parallel, "change", "changes")
+            parts.append(_plural(parallel, *noun)
+                         + (" recorded" if listing is not None else "")
                          + " from " + ("other folders" if len(named) > 1 else "another folder")
                          + " with this chip name" + (f" ({labels}{more})" if labels else ""))
         if unknown:
-            parts.append(_plural(unknown, "change", "changes")
+            parts.append(_plural(unknown, *noun)
                          + " from a folder that is not recorded")
         n = parallel + unknown
+        if listing is not None:
+            tail = ((" is" if n == 1 else " are") + " listed below, labelled; "
+                    + ("it is" if n == 1 else "they are") + " not this folder's changes.")
+        else:
+            tail = (" is" if n == 1 else " are") + " not part of this folder's timeline."
         out.append({"level": "info", "code": "other_folders",
-                    "text": " and ".join(parts) + (" is" if n == 1 else " are")
-                            + " not part of this folder's timeline.",
-                    "folders": named})
-    unlinked = int(lo.get("unlinked") or 0)
+                    "text": " and ".join(parts) + tail, "folders": named})
+    unlinked = int((listing if listing is not None else lo).get("unlinked") or 0)
     if unlinked:
         roots = [r for r in lo.get("roots") or () if r.get("path")]
         where = ", ".join(r["path"] for r in roots[:2]) + (" and more" if len(roots) > 2 else "")
-        out.append({"level": "info", "code": "unlinked_roots",
-                    "text": _plural(unlinked, "run", "runs") + " of a data folder not linked to this folder"
-                            + (f" ({where})" if where else "") + (" is" if unlinked == 1 else " are")
-                            + " not part of this folder's timeline.",
-                    "roots": roots})
-    other_chip = int(lo.get("other_chip") or 0)
+        head = (_plural(unlinked, "run", "runs") + " of a data folder not linked to this folder"
+                + (f" ({where})" if where else ""))
+        if listing is not None:
+            text = (head + (" is" if unlinked == 1 else " are") + ' listed below, labelled "data folder '
+                    'not linked"; ' + ("it is" if unlinked == 1 else "they are") + " not this folder's changes.")
+        else:
+            text = head + (" is" if unlinked == 1 else " are") + " not part of this folder's timeline."
+        out.append({"level": "info", "code": "unlinked_roots", "text": text, "roots": roots})
+    other_chip = int((listing.get("uncertain") if listing is not None else lo.get("other_chip")) or 0)
     if other_chip:
+        # S10 walk: which runs (newest first, a few), not only how many
+        named = [r for r in lo.get("other_chip_runs") or () if r.get("run_id") is not None][:OTHER_CHIP_SHOWN]
+        names = ", ".join(f"#{r['run_id']}" + (f" in {r['label']}" if r.get("label") else "")
+                          + (" (saved state unreadable)" if r.get("unreadable") else "") for r in named)
+        more = other_chip - len(named)
+        if names and more > 0:
+            names += f" and {more:,} more"
         out.append({"level": "info", "code": "other_chip",
                     "text": _plural(other_chip, "run", "runs") + " whose saved chip identity does not "
                             "match this chip's " + ("is" if other_chip == 1 else "are")
-                            + " not part of this chip's timeline."})
+                            + (" not listed" if listing is not None
+                               else " not part of this chip's timeline")
+                            + (f": {names}." if names else "."),
+                    "runs": named})
     derived = int(lo.get("derived") or 0)
     if derived:
         out.append({"level": "info", "code": "derived_seam",
@@ -1479,8 +1572,9 @@ def folder_notes(left_out: dict | None) -> list[dict]:
 
 
 def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
-          newest: Any = _ABSENT, origin: str = "live") -> list[dict]:
-    """What every surface says beside a ledger answer (docs/282 §1.3)."""
+          newest: Any = _ABSENT, origin: str = "live", listing: dict | None = None) -> list[dict]:
+    """What every surface says beside a ledger answer (docs/282 §1.3).
+    *listing*: a listing's own numbers (:func:`folder_notes`)."""
     st = status or {}
     out: list[dict] = []
     state = st.get("state")
@@ -1493,9 +1587,9 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
                          + (" and more" if len(bad) > 2 else "") + ")")
         if failed:
             parts.append(f"{failed} run{'s' if failed != 1 else ''} could not be read into it")
-        if st.get("ledger_error") and not st.get("roots"):
-            # S10 C1: a chip with no data folder whose ledger could not be opened
-            parts.append("the change ledger could not be opened now")
+        if st.get("ledger_error"):
+            # the change ledger itself could not be opened or written (any chip)
+            parts.append("the change ledger could not be opened or written now")
         out.append({"level": "warning", "code": "degraded",
                     "text": "This history may be missing changes: " + "; ".join(parts or ["see Diagnostics"]) + "."})
     deferred = int(st.get("deferred") or 0)
@@ -1513,11 +1607,19 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
                     "text": "No data folder is linked to this chip now; newer runs may be missing."})
     elif (not st.get("roots") and state in ("ready", "degraded")
           and not ledger.get("has_runs") and origin == "live"):
-        out.append({"level": "info", "code": "no_folder_linked",
-                    "text": "No data folder is linked to this chip, so this history holds SM's own "
-                            "writes and the states SM saw -- no runs. Link the folder its runs are saved in.",
+        if listing is not None and listing.get("unlinked"):
+            # S10 walk: a listing that lists another data folder's runs (labelled)
+            # never says "no runs" over them
+            text = ("No data folder is linked to this chip, so this folder's own history holds "
+                    "SM's own writes and the states SM saw; the runs listed below belong to a data "
+                    "folder not linked to it. Link the folder its runs are saved in.")
+        else:
+            text = ("No data folder is linked to this chip, so this history holds SM's own "
+                    "writes and the states SM saw -- no runs. Link the folder its runs are saved in.")
+        out.append({"level": "info", "code": "no_folder_linked", "text": text,
                     "link": {"offer": True, "url": "/hub/link-folder"}})
-    out.extend(folder_notes(ledger.get("left_out")))
+    out.extend(folder_notes(ledger.get("left_out"), listing))
+    out.extend(unreadable_runs_note(ledger.get("unreadable_runs")))
     if current is not _ABSENT and newest is not _ABSENT and not (
             current is None and newest is None):
         if current is None or newest is None or not rules.same(current, newest):

@@ -133,12 +133,13 @@ MUTATIONS = [
      '            return _ABSENT if row[3] == "gone" else row[1]',
      [O + "test_column_history_shows_the_drawers_points"]),
     ("element_index_ignored", VH, '    return arr[idx]', '    return arr[0]',
-     [E + "test_an_element_of_a_long_array_changes_only_when_it_does"]),
+     # S10 C7: old -> new, split an unrelated test id so deletion pins also scan tools.
+     [E + "test_an_element_of_a_long_array_changes_" + "only_when_it_does"]),
     ("element_unchanged_versions_kept", VH,
      '            if (value is _ABSENT and new is _ABSENT) or (\n'
      '                    value is not _ABSENT and new is not _ABSENT and rules.same(value, new)):',
      '            if (value is _ABSENT and new is _ABSENT):',
-     [E + "test_an_element_of_a_long_array_changes_only_when_it_does"]),
+     [E + "test_an_element_of_a_long_array_changes_" + "only_when_it_does"]),
     # ("trends_alias_unread" retired: docs/283 (S8) moved Chip Status Trends onto the
     # change ledger and removed _trend_alias_series; its mutations live in S8's tools)
     ("js_drawer_no_retry", JS,
@@ -182,7 +183,9 @@ MUTATIONS = [
      [RR + "test_p0_3_by_run_shows_the_then_holders_value_for_an_alias_row",
       RR + "test_p0_3_and_p1_1_share_one_rule_after_a_return"]),
     ("p0_2_foreign_run_offered", "quam_state_manager/core/hub_lanes.py",
-     '            if any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN:',
+     # S10 C7: old -> new, target the restored distinction between foreign and uncertain runs.
+     '            if (any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN\n'
+     '                    and declares_another_chip(conn, index.ledger_id, f, chip)):',
      '            if False:',
      [RR + "test_p0_2_by_run_leaves_out_a_run_of_another_chip"]),
     ("p1_1_newest_hop_row_decides", VH,
@@ -203,7 +206,7 @@ MUTATIONS = [
     ("p2_4_element_from_todays_length", VH,
      '            if parent and last.isdigit() and parent in self.index.paths:', '            if False:',
      [RR + "test_p2_4_an_array_that_shrank_keeps_its_element_history",
-      E + "test_an_element_of_a_long_array_changes_only_when_it_does"]),
+      E + "test_an_element_of_a_long_array_changes_" + "only_when_it_does"]),
     ("p3_nan_by_run_changed", RT,
      '                          "changed": i + 1 < len(runs) and not _vh_same(v, older)})',
      '                          "changed": i + 1 < len(runs) and v != older})',

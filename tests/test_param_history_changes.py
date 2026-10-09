@@ -275,7 +275,8 @@ class TestTheSurface:
         r = _get(env, "/param-history/changes")
         html = r.get_data(as_text=True)
         assert r.status_code == 200
-        assert "The change history could not be read (unreadable)." in html
+        # S10 walk: old -> new, the reason in plain words (never the raw "(unreadable)")
+        assert "The change history file could not be read." in html
         assert "Nothing older is shown in its place." in html
         assert "ph-change-group" not in html and "qubits.qA1.T1" not in html
         assert "Nothing has changed" not in html and "No snapshots yet" not in html

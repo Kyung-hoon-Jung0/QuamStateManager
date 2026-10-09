@@ -1,4 +1,5 @@
-{% if hub_message %}<p class="vh-wait" data-vh-mode="{{ hub_mode }}">{{ hub_message }}</p>{% endif %}
+{% if hub_message %}<p class="vh-wait" data-vh-mode="{{ hub_mode }}">{{ hub_message }}
+{%- if hub_mode == 'unavailable' %} <button type="button" class="btn-sm vh-try-again" data-vh-try-again="1">Try again</button>{% endif %}</p>{% endif %}
 {% if hub_notes %}{% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}{% endif %}
 {% if rows %}
 <div class="topo-popup-section topo-spark-section">

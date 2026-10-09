@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -91,7 +92,7 @@ MUTATIONS.extend([
      "<span id=\"history-count\" hx-swap-oob=\"true\">{{ snapshots }}</span>",
      [TEST + "::test_ledger_drawer_pages_states_and_refreshes_count",
       "tests/test_history_drawer.py::TestTheCountFollowsTakeSnapshot::test_the_trends_fragment_leaves_the_count_to_the_drawer"]),
-    # S10 C6: re-anchored -- the snapshot loop's first_ts went with it
+    # S10 C7: old -> new, retired snapshot-loop prose gives way to the disk-usage anchor.
     ("ledger_disk_usage_missing", ROUTES,
      '               disk_stats=disk_stats)',
      '               disk_stats=None)',
@@ -333,6 +334,17 @@ MUTATIONS.extend([
 ])
 
 
+def _assertion_red(output: str, returncode: int) -> bool:
+    # S10 C7: old -> new, reject mixed pytest errors while allowing captured application logs.
+    errors = re.findall(r"^E\s+([.\w]*(?:Error|Exception)|Failed):", output, re.M)
+    summary = (output.strip().splitlines() or [""])[-1]
+    return (returncode == 1
+            and bool(re.search(r"^E\s+(assert\b|AssertionError\b|Failed\b)", output, re.M))
+            and all(kind in ("AssertionError", "Failed") for kind in errors)
+            and not re.search(r"^ERROR collecting|^ERROR tests[\\/]", output, re.M)
+            and not re.search(r"\d+ errors?\b", summary))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
@@ -356,7 +368,7 @@ def main():
                    "--timeout=900", "--timeout-method=thread"]
             proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8")
             output = proc.stdout + proc.stderr
-            killed = proc.returncode == 1 and "AssertionError" in output and "ERROR collecting" not in output
+            killed = _assertion_red(output, proc.returncode)
             log = args.report.with_name(name + ".txt")
             log.parent.mkdir(parents=True, exist_ok=True)
             log.write_text(output, encoding="utf-8")

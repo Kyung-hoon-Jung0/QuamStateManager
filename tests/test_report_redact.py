@@ -94,6 +94,20 @@ class TestValuePatterns:
         out = red.redact_text(r"see D:\work\a b\c.json now")
         assert out == f"see {HIDDEN} now"
 
+    # S10 walk: "(d:\work\x\data) are not part" read "([hidden] are not part"
+    @pytest.mark.parametrize("text,want", [
+        (r"runs of a folder (d:\work\x\data_1) are not part.", f"runs of a folder ({HIDDEN}) are not part."),
+        (r"(C:\Program Files (x86)\app) x", f"({HIDDEN}) x"),
+        (r"(\\server\share\x) z", f"({HIDDEN}) z"),
+        ("(/home/u/d) x", f"({HIDDEN}) x"),
+        ("(http://h.example.com/a) y", f"({HIDDEN}) y"),
+        (r"saved in D:\a\b.", f"saved in {HIDDEN}."),
+        (r"D:\a\b, then more", f"{HIDDEN}, then more"),
+    ])
+    def test_a_path_closing_a_parenthesis_or_a_sentence_keeps_the_punctuation(self, red, text, want):
+        assert red.redact_text(text) == want
+        assert red.redact_html(f"<p>{text}</p>") == f"<p>{want}</p>"
+
 
 class TestLiterals:
     def test_a_blanked_value_is_hidden_wherever_it_is_repeated(self, red):

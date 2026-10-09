@@ -3995,6 +3995,28 @@ input.edit-input {
     padding: 0.3rem 0.8rem;
     border-top: 1px solid var(--pico-muted-border-color);
 }
+/* S10 walk: Pico stretches a bare <select> to 100%: the drawer's per-page
+   picker ran across the whole panel (1600x950). It sits at the toolbar's end,
+   sized to its options. */
+.history-toolbar select {
+    flex: 0 0 auto; width: auto; min-width: 4.5rem; margin: 0 0 0 auto;
+    height: auto; padding: 0.15rem 1.9rem 0.15rem 0.5rem; font-size: 0.85em;
+}
+#history-list .hub-notes { padding: 0.3rem 0.8rem 0; }
+/* S10 walk: the unreadable end state's one manual press, beside its words */
+.vh-wait .vh-try-again { margin: 0 0 0 0.5rem; }
+.hub-notes .vh-try-again { margin: 0 0 0.4rem; }
+.hp-snapshot-note, .sh-snapshot-note { margin: 0.3rem 0.8rem; font-size: 0.85em; }
+.sh-snapshot-note { margin: 0 0 0.4rem; }
+/* S10 walk: first / prev / page box / next / last */
+.history-pager { flex-wrap: wrap; justify-content: flex-start; }
+.history-pager .history-page-jump { margin-left: auto; }
+.history-pager button { margin: 0; }
+.history-page-jump { display: inline-flex; align-items: center; gap: 0.35rem; margin: 0; }
+.history-page-jump label { display: inline-flex; align-items: center; gap: 0.35rem;
+    margin: 0; white-space: nowrap; }
+.history-page-jump .history-page-input { width: 5.5rem; margin: 0; height: auto;
+    padding: 0.15rem 0.4rem; font-size: 0.9em; }
 
 /* ---------------------------------------------------------------- */
 /* Comparison table                                                  */
@@ -12453,7 +12475,7 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     border-left: 3px solid var(--pico-muted-border-color); padding: .1rem .4rem; }
 .vh-rename code { font-size: .7rem; }
 .vh-flag-renamed { color: var(--color-text-muted); border-style: dashed; }
-.vh-run_saved .vh-by, .vh-first_record .vh-by { color: var(--color-text-muted); }
+.vh-run_saved .vh-by, .vh-first_record .vh-by, .vh-run_uncertain_chip .vh-by { color: var(--color-text-muted); }
 .vh-chip { flex-wrap: wrap; max-width: 100%; }
 .vh-chip-who { flex: 1 0 100%; font-size: .6rem; line-height: 1.2; color: var(--color-text-muted);
     white-space: normal; text-align: left; }
@@ -13339,7 +13361,6 @@ td.vc-cell-takeable:focus-within .vc-take,
 .sv-quick-ord { font-family: var(--font-mono); font-size: 0.78rem;
     color: var(--pico-primary); }
 .sv-when { display: flex; flex-direction: column; line-height: 1.25; }
-.sv-id { font-family: var(--font-mono); font-size: 0.68rem; opacity: 0.6; }
 .sv-meta { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
     flex: 1 1 auto; min-width: 0; }
 .sv-trigger { font-size: 0.66rem; text-transform: uppercase;
@@ -13355,6 +13376,17 @@ td.vc-cell-takeable:focus-within .vc-take,
     max-width: 16rem; overflow: hidden; text-overflow: ellipsis;
     display: inline-block; vertical-align: middle; }
 .snap-src-unknown { border-style: dashed; }
+/* S10 walk: a listed row that is not this folder's says so on the row itself
+   (its title says why it is listed); the row is dimmed a step, never hidden. */
+.snap-foreign { font-size: 0.66rem; font-style: italic; color: var(--pico-muted-color);
+    white-space: nowrap; cursor: help; }
+.state-version-row.sv-foreign .sv-time, .sh-entry.sh-foreign .sh-time { opacity: 0.7; }
+/* S10 walk: the live-change tracker's baseline row -- a fixed badge (not a
+   label, not a pin: nothing on it can be edited or unpinned). */
+.snap-baseline { font-size: 0.66rem; color: var(--pico-primary);
+    border: 1px dashed var(--pico-primary); border-radius: 999px;
+    padding: 0 0.4rem; white-space: nowrap; display: inline-block;
+    vertical-align: middle; cursor: help; }
 .sv-exp, .sv-note { font-size: 0.72rem; }
 /* Compact per the customer: NOT right-pinned. The actions follow the date
    directly (they are what the row is reached for), and .sv-meta takes the

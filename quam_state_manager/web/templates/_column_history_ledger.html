@@ -79,7 +79,7 @@
 </div>
 <p class="ch-foot ch-chg-foot">
   each row's own change points, newest first (last {{ chip_cap }} shown)
-  &middot; from the change ledger ({{ ledger.events }} event{{ 's' if ledger.events != 1 }}: runs and SM writes)
+  &middot; from the change ledger ({{ ledger.events_text or ('%s event%s' % (ledger.events, '' if ledger.events == 1 else 's')) }})
   &middot; a run is named only when its own patch set the value
 </p>
 </div>

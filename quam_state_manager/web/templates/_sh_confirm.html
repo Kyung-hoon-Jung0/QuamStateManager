@@ -14,4 +14,7 @@
                is still accepted (and ignored) so callers stay valid. #}
             hx-target="{{ target | default('#state-history-detail') }}" hx-swap="innerHTML"
             >{{ action_label }}</button>
+    {#- S10 walk: a gate in the status corner waits for its answer; this closes it -#}
+    <button type="button" class="toast-x" aria-label="Dismiss"
+            onclick="this.closest('.toast').remove()">&times;</button>
 </div>

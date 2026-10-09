@@ -334,8 +334,12 @@ class TestDriftRoutes:
         assert d["ok"] and isinstance(d["count"], int) and d["count"] >= 0
 
     def test_view_marks_baseline_snapshot_in_timeline(self, tmp_path, live_folder):
-        """Cosmetic State-History integration: a snapshot matching the baseline
-        gets pinned + labelled so it reads as the baseline row."""
+        """Cosmetic State-History integration: the row holding the baseline
+        reads as the baseline row.
+
+        S10 walk: old -> new, a pinned + labelled snapshot -> a badge on the
+        listed row (a user met an "Unpin" they never made, moving between
+        rows); no snapshot is labelled or pinned for it any more."""
         client = _app_client(tmp_path)
         client.post("/load", data={"folder": str(live_folder)})
         # Take a snapshot of the current (baseline) live, then reset baseline so
@@ -344,7 +348,9 @@ class TestDriftRoutes:
         client.post("/state/baseline/reset")
         hm = HistoryManager(tmp_path / "_app_instance")
         snaps = hm.list_snapshots(str(live_folder))
-        assert any(s.label == LIVE_BASELINE_LABEL and s.pinned for s in snaps)
+        assert snaps and not any(s.label == LIVE_BASELINE_LABEL or s.pinned for s in snaps)
+        page = client.get("/state-history?body=1").get_data(as_text=True)
+        assert page.count('class="snap-baseline') == 1 and "Unpin" not in page
 
 
 # ---------------------------------------------------------------------------

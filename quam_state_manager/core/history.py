@@ -99,10 +99,14 @@ def _leaf_dirset_sig(snapshots: list["SnapshotMeta"]) -> str:
     joined = "\n".join(sorted(m.timestamp for m in snapshots))
     return hashlib.sha1(joined.encode("utf-8")).hexdigest()
 
-# Label + pin marker applied to the State History snapshot that matches the
-# current live-tracking baseline, so it shows as a pinned "baseline" row in the
-# timeline (prune-exempt). Purely cosmetic — the authoritative baseline is the
-# self-contained ``_baseline.json`` sidecar, never a snapshot pointer.
+# The label + pin an earlier version wrote onto the snapshot matching the
+# live-tracking baseline (purely cosmetic -- the authoritative baseline is the
+# self-contained ``_baseline.json`` sidecar, never a snapshot pointer). S10
+# walk: it is no longer written -- a user met a pin and an "Unpin" they never
+# made, moving between rows and disagreeing with the banner's baseline time.
+# The listings mark the baseline's row with a non-editable badge instead
+# (``routes._version_baseline``); a marker left on disk is released by the
+# next baseline move and is never shown as a user's label or pin.
 LIVE_BASELINE_LABEL = "Live-tracking baseline"
 # Sidecar file (one per chip dir) holding the live-tracking baseline content.
 _BASELINE_SIDECAR = "_baseline.json"
@@ -3414,43 +3418,29 @@ class HistoryManager:
             except OSError:
                 self.__dict__.setdefault("_baseline_cache", {}).pop(str(p), None)
         try:
-            self._mark_baseline_snapshot(path, state_hash)
+            self._release_baseline_markers(path)
         except Exception:   # noqa: BLE001 — cosmetic only
-            logger.debug("baseline snapshot marker failed for %s", path, exc_info=True)
+            logger.debug("baseline snapshot marker release failed for %s", path, exc_info=True)
         return {"captured_utc": record["captured_utc"], "state_hash": state_hash}
 
-    def _mark_baseline_snapshot(self, quam_state_path: Path, state_hash: str) -> None:
-        """Pin + label the snapshot whose content equals the baseline so it
-        reads as the baseline row in the State History timeline, and release
-        any *previous* baseline-labelled snapshot (so they don't pile up
-        pinned). Purely cosmetic — never creates a snapshot.
-        """
+    def _release_baseline_markers(self, quam_state_path: Path) -> None:
+        """S10 walk: release the label + pin an earlier version wrote onto this
+        folder's snapshot matching the baseline (``LIVE_BASELINE_LABEL``), so it
+        prunes normally again. Nothing is marked any more: the listings show the
+        baseline's row as a badge. Only SM's own marker is released -- a row the
+        user labelled never carries this label, and a row a user pinned or
+        labelled through the State History door no longer carries it either
+        (``routes.state_history_label`` takes the marker label off)."""
         snaps = self.list_snapshots(quam_state_path)
-        # docs/250: the marker is this FOLDER's -- another folder with the same
-        # chip name keeps its own baseline row, so neither matching nor
-        # releasing reaches a row this folder did not record
+        if not any(s.label == LIVE_BASELINE_LABEL for s in snaps):
+            return
+        # docs/250: the marker is this FOLDER's -- releasing never reaches a row
+        # another folder with the same chip name recorded
         srcs = self.snapshot_sources(quam_state_path, snaps)
-        snaps = [s for s in snaps
-                 if (srcs.get(s.timestamp) or {}).get("kind") in (SOURCE_THIS,
-                                                                   SOURCE_RUN)]
-        match = next((s for s in snaps if s.state_hash == state_hash), None)
         for s in snaps:
             if (s.label == LIVE_BASELINE_LABEL
-                    and (match is None or s.timestamp != match.timestamp)):
-                # Release a stale baseline marker: clear the label and unpin so
-                # it can be pruned normally again (only SM's own marker -- a row
-                # the user labelled never carries this label)
-                self.annotate_snapshot(quam_state_path, s.timestamp,
-                                       label=None, pinned=False)
-        # A row the user labelled or pinned is the user's: the cosmetic marker
-        # never replaces their label, and never takes over a pin a later
-        # release would then drop (a "known good" bookmark was lost this way)
-        users = match is not None and match.label != LIVE_BASELINE_LABEL and (
-            bool(match.label) or bool(match.pinned))
-        if match is not None and not users and (match.label != LIVE_BASELINE_LABEL
-                                                or not match.pinned):
-            self.annotate_snapshot(quam_state_path, match.timestamp,
-                                   label=LIVE_BASELINE_LABEL, pinned=True)
+                    and (srcs.get(s.timestamp) or {}).get("kind") in (SOURCE_THIS, SOURCE_RUN)):
+                self.annotate_snapshot(quam_state_path, s.timestamp, label=None, pinned=False)
 
     def live_drift(
         self, quam_state_path: str | Path, live_state: dict, live_wiring: dict,
@@ -5428,13 +5418,7 @@ class HistoryManager:
             cached = self._disk_stats_cache.get(key)
             if cached is not None and cached[0] == ver:
                 return cached[1]
-        # The persistent token reader would otherwise pin index.sqlite-wal at
-        # its high-water size and this walk would count it (verifier D1).
-        try:
-            from quam_state_manager.core import param_history_ram as _phr
-            _phr.settle_wal(hist_dir / "index.sqlite")
-        except Exception:   # noqa: BLE001 -- best effort; the walk still runs
-            pass
+        # S10 C7: old -> new, no snapshot token pool remains to settle before the disk walk.
         total_bytes = _dir_bytes(hist_dir) if hist_dir.is_dir() else 0
         result = {
             "snapshots": len(snapshots),
