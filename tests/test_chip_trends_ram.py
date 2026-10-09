@@ -42,30 +42,7 @@ def _family_input(conn):
         "LEFT JOIN leaf_cp c ON c.path_id=p.id GROUP BY p.id")]
 
 
-# S10 C7: old -> new, shared family derivation retains its independent cold oracle.
-@pytest.mark.parametrize("seed", range(4))
-def test_family_derivation_matches_cold_over_random_appends(seed):
-    rng = random.Random(seed)
-    rows = [(p, 1, ctr._alower(p), i) for i, p in enumerate(_PATHS)]
-    table = ctr.FamilyTable(rows, ("qubits", "qubit_pairs"))
-    for step in range(70):
-        changed = rng.sample(range(len(rows)), min(4, len(rows)))
-        added = {i: (rows[i][0], rng.randint(1, 5)) for i in changed}
-        for i, (_, n) in added.items():
-            p, old, low, pid = rows[i]
-            rows[i] = (p, old + n, low, pid)
-        p = f"qubit_pairs.q{step}-q99.extra_{step}"
-        new = [(p, 1, ctr._alower(p), len(rows))]
-        table = table.derive(added, new)
-        rows.extend(new)
-        cold = ctr.FamilyTable(rows, ("qubits", "qubit_pairs"))
-        assert table == cold
-        for query in _QUERIES:
-            assert table.query(query, limit=5) == cold.query(query, limit=5)
-
-
-
-# S10 C7: old -> new, retire a callerless snapshot reader.
+# S10 C7: old -> new, delete append derivation tests because only ledger grouping has callers.
 
 
 @pytest.fixture
@@ -469,21 +446,12 @@ def test_client_patch_selfcheck():
     assert re.search(r"ok \(\d+ assertions\)", r.stdout), r.stdout
 
 
-# ── a capture DERIVES the family table; anything else reads everything ──────
-
-_DERIVE_QUERIES = ["", "t1", "q1", "amplitude", "offset | fidelity", "qubit_pairs", "q1 t1",
-                   "interleaved", "zzz"]
-_DERIVE_PATTERNS = ("qubits.*.T1", "qubit_pairs.*.macros.*.fidelity.InterleavedRB",
-                    "qubits.*.*", "qubits.q1.*")
-
-
-# S10 C7: old -> new, snapshot SQL marks, deltas, pools and memo pins retire with their reader.
+# S10 C7: old -> new, retire unused append-test inputs and retain grouping order parity.
 
 def test_a_tie_is_ordered_like_the_sql_whatever_order_families_arrive_in(tmp_path):
     """Equal change counts AND equal tails under two scopes: the SQL keeps its
-    GROUP BY (scope, tail) order through a stable sort; a derived table
-    appends new families at the END, so the RAM query must not depend on
-    arrival order."""
+    GROUP BY (scope, tail) order through a stable sort, so the RAM query must
+    not depend on input row order."""
     conn = sqlite3.connect(str(tmp_path / "t.sqlite"), isolation_level=None)
     li.ensure_schema(conn)
     tie = ["qubits.q1.coupler.interaction_offset", "qubit_pairs.q1-q2.coupler.interaction_offset",

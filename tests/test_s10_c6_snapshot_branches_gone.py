@@ -44,7 +44,8 @@ DELETED = {
 
 
 def _shipped_text():
-    for p in PKG.rglob("*"):
+    # S10 C7: old -> new, tools share the package deletion contract.
+    for p in (p for root in (PKG, PKG.parent / "tools") for p in root.rglob("*")):
         if p.suffix in (".py", ".html", ".js", ".css") and "vendor" not in p.parts:
             yield p, p.read_text(encoding="utf-8", errors="replace")
 
@@ -54,7 +55,7 @@ def test_the_deleted_snapshot_branch_names_are_absent():
         assert not (PKG / "web" / "templates" / name).exists(), name
     shipped = list(_shipped_text())
     assert any(p.name == "app.js" for p, _ in shipped) and len(shipped) > 50, "nothing scanned"
-    hits = [f"{name} ({where}) in {p.relative_to(PKG)}"
+    hits = [f"{name} ({where}) in {p.relative_to(PKG.parent)}"
             for p, text in shipped
             for name, where in DELETED.items() if name in text]
     assert hits == [], hits

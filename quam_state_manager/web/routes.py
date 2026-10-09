@@ -33543,19 +33543,7 @@ def param_history():
         if index_error is None:
             index_error = "The trend index is busy (a save or import may be running). Reload in a moment."
 
-    # Final QA fix 3: give back the WAL a commit left while a persistent
-    # history reader (the Changes page's, Chip Status Trends') is open. Only
-    # the Changes route and a disk-stats miss used to do it, so the WAL stayed
-    # at its peak through any number of Trends requests. Non-blocking
-    # (timeout=0); a busy index is retried later, never waited on here.
-    if target_path:
-        try:
-            from quam_state_manager.core import param_history_ram as _phr
-            _hd = hm.history_dir_cached(target_path)
-            if _hd is not None:
-                _phr.settle_wal(_hd / "index.sqlite")
-        except Exception:   # noqa: BLE001 — a give-back never fails the page
-            logger.debug("param-history WAL settle skipped", exc_info=True)
+    # S10 C7: old -> new, ledger requests no longer settle an unopened snapshot pool.
 
     # Honest footprint line for the header ("N snapshots · X on disk") —
     # cached per (count, newest ts), so steady-state renders pay no walk.

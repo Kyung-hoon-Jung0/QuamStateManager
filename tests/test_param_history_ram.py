@@ -19,7 +19,6 @@ import pytest
 
 from quam_state_manager.core import history as H
 from quam_state_manager.core import leaf_index as LI
-from quam_state_manager.core import param_history_ram as PHR
 from quam_state_manager.core.differ import Differ
 from quam_state_manager.core.loader import QuamStore, flatten, merge_state_wiring
 from quam_state_manager.web import routes as R
@@ -69,7 +68,6 @@ def env(tmp_path):
     c = app.test_client()
     c.post("/load", data={"folder": str(live)})
     yield {"app": app, "client": c, "live": live, "hm": app.config["history_manager"]}
-    PHR.close_all()
 
 
 def _snap(env, state, **kw):
@@ -152,16 +150,7 @@ def _feed(env, qs=""):
 # one in tests/test_hub_incremental.py (TestSurfacesAfterAnEdit).
 
 
-def test_hist_token_moves_on_a_foreign_commit(env):
-    _snap(env, _state())
-    hm, live = env["hm"], env["live"]
-    hm._ensure_leaf_index_fresh(live)
-    t0 = PHR.hist_token(hm, live)
-    assert PHR.hist_token(hm, live) == t0
-    with sqlite3.connect(str(hm._history_dir(live) / "index.sqlite")) as c2:
-        c2.execute("UPDATE leaf_cp SET value = value + 1 WHERE snap_id = "
-                   "(SELECT MIN(snap_id) FROM leaf_cp)")
-    assert PHR.hist_token(hm, live) != t0
+# S10 C7: old -> new, delete token pool tests because production never opens it.
 
 
 # ── the drawer's snapshot-scan tier ─────────────────────────────────────────
@@ -389,25 +378,6 @@ def test_chip_histories_rows_equal_cold_over_random_events(tmp_path):
     assert hits >= 10, "the per-chip memo never served a row"
 
 
-def test_persistent_connections_are_bounded_and_never_reuse_a_token(tmp_path):
-    paths = []
-    for k in range(PHR._CONNS_MAX + 3):
-        p = tmp_path / f"i{k}.sqlite"
-        with sqlite3.connect(str(p)) as c:
-            c.execute("PRAGMA journal_mode=WAL")
-            c.execute("CREATE TABLE t (x)")
-        paths.append(p)
-    first = PHR.data_version(paths[0])
-    for p in paths[1:]:
-        PHR.data_version(p)
-    assert len(PHR._CONNS) <= PHR._CONNS_MAX          # evicted, handle closed
-    assert str(paths[0]) not in PHR._CONNS
-    with sqlite3.connect(str(paths[0])) as c:          # changed while nobody watched
-        c.execute("INSERT INTO t VALUES (1)")
-    assert PHR.data_version(paths[0]) != first         # a reopen is never an old token
-    PHR.close_all()
-
-
 def _wal_bytes(db: Path) -> int:
     w = db.with_name(db.name + "-wal")
     return w.stat().st_size if w.exists() else 0
@@ -422,52 +392,6 @@ def _fat_commit(db: Path, n: int = 3000) -> None:
     c.executemany("INSERT INTO fat VALUES (?)", [(os.urandom(1000),) for _ in range(n)])
     c.commit()
     c.close()
-
-
-def test_the_token_reader_does_not_pin_the_wal(tmp_path):
-    """Verifier D1: with the persistent token connection open, a writer's
-    close is never the last one, so SQLite never removed -wal and it stayed
-    at its high-water size for the life of the process."""
-    db = tmp_path / "index.sqlite"
-    with sqlite3.connect(str(db)) as c:
-        c.execute("PRAGMA journal_mode=WAL")
-        c.execute("CREATE TABLE t (x)")
-    t0 = PHR.data_version(db)
-    _fat_commit(db)
-    assert _wal_bytes(db) > 1_000_000                  # the pin is real
-    t1 = PHR.data_version(db)
-    assert t1 != t0                                    # the token still moves
-    assert _wal_bytes(db) == 0                         # and the WAL is given back
-    assert PHR.data_version(db) == t1                  # a checkpoint is not a commit
-    with sqlite3.connect(str(db)) as c:                # nothing was lost by it
-        assert c.execute("SELECT COUNT(*) FROM fat").fetchone()[0] == 3000
-    PHR.close_all()
-
-
-def test_disk_stats_does_not_count_a_pinned_wal(env):
-    """The number the verifier saw: 'MB on disk' on /param-history."""
-    _snap(env, _state())
-    hm, live = env["hm"], env["live"]
-    db = hm._history_dir(live) / "index.sqlite"
-    PHR.hist_token(hm, live)                           # the Changes page opened it
-    _fat_commit(db)
-    assert _wal_bytes(db) > 1_000_000
-    _snap(env, _state(random.Random(3)))               # a capture: the stats miss
-    stats = hm.history_disk_stats(live)
-    assert _wal_bytes(db) == 0
-    assert stats["bytes"] == H._dir_bytes(hm._history_dir(live))
-
-
-def _wal_db(tmp_path) -> Path:
-    db = tmp_path / "index.sqlite"
-    with sqlite3.connect(str(db)) as c:
-        c.execute("PRAGMA journal_mode=WAL")
-        c.execute("CREATE TABLE t (x)")
-    return db
-
-
-def _dv(conn: sqlite3.Connection) -> int:
-    return conn.execute("PRAGMA data_version").fetchone()[0]
 
 
 def test_trends_requests_give_the_wal_back_with_trends_readers_open(env):
@@ -500,84 +424,6 @@ def test_trends_requests_give_the_wal_back_with_trends_readers_open(env):
 
 
 # S10 C7: old -> new, retire a callerless snapshot reader.
-
-
-def _busy_give_back(db: Path):
-    """A commit the persistent connection has not seen yet, and a reader
-    holding a snapshot inside the WAL: its TRUNCATE comes back busy."""
-    PHR.data_version(db)
-    _fat_commit(db, 500)
-    r = sqlite3.connect(str(db), isolation_level=None)
-    r.execute("BEGIN")
-    r.execute("SELECT COUNT(*) FROM fat").fetchone()           # holds a read snapshot
-    _fat_commit(db, 1500)
-    t0 = time.perf_counter()
-    tok = PHR.data_version(db)
-    assert time.perf_counter() - t0 < 0.5                       # busy returns at once
-    assert _wal_bytes(db) > 1_000_000                          # it WAS busy
-    r.execute("COMMIT")
-    r.close()
-    return tok
-
-
-def test_a_busy_give_back_is_retried_by_the_next_read(tmp_path, monkeypatch):
-    """A checkpoint that came back busy used to be recorded as done, so the
-    WAL stayed at its peak until the NEXT commit. The next read retries it."""
-    monkeypatch.setattr(PHR, "_retry_later", lambda key: None)  # the read alone
-    db = _wal_db(tmp_path)
-    try:
-        tok = _busy_give_back(db)
-        assert PHR.data_version(db) == tok                     # no commit: the same token
-        assert _wal_bytes(db) == 0
-    finally:
-        PHR.close_all()
-
-
-def test_a_busy_give_back_is_retried_by_a_timer_when_no_read_comes(tmp_path, monkeypatch):
-    monkeypatch.setattr(PHR, "_RETRY_FIRST_S", 0.05)
-    db = _wal_db(tmp_path)
-    try:
-        tok = _busy_give_back(db)
-        deadline = time.time() + 5
-        while _wal_bytes(db) and time.time() < deadline:
-            time.sleep(0.02)
-        assert _wal_bytes(db) == 0
-        assert PHR.data_version(db) == tok                     # the retry moved no token
-        assert not PHR._RETRY_TIMERS and not PHR._RETRY_N      # and stopped
-    finally:
-        PHR.close_all()
-
-
-def test_an_empty_wal_is_never_truncated(tmp_path):
-    """A TRUNCATE of an EMPTY WAL still restarts the log and moves every other
-    connection's data_version (measured). Two SM processes on one chip would
-    answer each other's no-op give-back with one of their own on every read
-    -- every token moving, forever. An empty WAL is left alone."""
-    db = _wal_db(tmp_path)
-    try:
-        other = sqlite3.connect(f"file:{db.as_posix()}?mode=rw", uri=True,
-                                isolation_level=None, timeout=0)   # a second process's pool
-        PHR.data_version(db)
-        _fat_commit(db)
-        PHR.data_version(db)
-        assert _wal_bytes(db) == 0
-        other.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()   # its give-back of nothing
-        before = _dv(other)
-        PHR.data_version(db)                                   # sees a "commit"
-        assert _dv(other) == before                            # and does not answer it
-        other.close()
-    finally:
-        PHR.close_all()
-
-
-def test_settle_wal_never_opens_a_connection(tmp_path):
-    db = tmp_path / "index.sqlite"
-    with sqlite3.connect(str(db)) as c:
-        c.execute("PRAGMA journal_mode=WAL")
-        c.execute("CREATE TABLE t (x)")
-    PHR.close_all()
-    PHR.settle_wal(db)
-    assert str(db) not in PHR._CONNS
 
 
 # ── the parameter typeahead from RAM (PathRank) ─────────────────────────────

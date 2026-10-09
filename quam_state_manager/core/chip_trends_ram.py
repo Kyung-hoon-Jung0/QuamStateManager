@@ -87,13 +87,6 @@ class _Family:
         self.scope_l = _alower(self.scope)
         self.tail_l = _alower(self.tail)
 
-    def copy(self) -> "_Family":
-        """A copy whose member LIST is its own (the tuples are immutable)."""
-        f = _Family(self.scope, self.tail)
-        f.members = list(self.members)
-        f._sk = self._sk
-        return f
-
     @property
     def sort_key(self):
         # natural_key over every tail was the single largest build cost
@@ -109,16 +102,9 @@ class FamilyTable:
     same semantics as ``leaf_index.path_families`` (the pins compare the two
     row for row, order included)."""
 
-    def __init__(self, rows: Iterable[tuple], roots: tuple[str, ...],
-                 term: str | None = None):
-        """*rows*: ``(path, changes)``, ``(path, changes, ascii-lowered path)``
-        or ``(path, changes, lowered, path_id)`` -- only a table built from
-        rows that carry their path ids can be derived (:meth:`derive`).
-        *term*: the ASCII-lowered substring every row was pre-filtered by
-        (None = every indexed path); a derived table applies the same filter
-        to the rows it adds."""
+    def __init__(self, rows: Iterable[tuple], roots: tuple[str, ...]):
+        """Group path rows with counts and optional lowered paths and ids."""
         self.roots = tuple(roots)
-        self.term = term
         splitters = []
         for r in self.roots:
             if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(r or "")):
@@ -141,7 +127,6 @@ class FamilyTable:
         for f in fams.values():
             f.finish()
         self._fams = list(fams.values())
-        self._index = {(f.scope, f.tail): i for i, f in enumerate(self._fams)}
         # Parallel lists for the query's first pass: one list comprehension
         # per term over C-level `in` tests (the per-family Python loop cost
         # ~50 ms per keystroke over 22k families).
@@ -161,87 +146,7 @@ class FamilyTable:
                 return r, rest[:dot], rest[dot + 1:]
         return "", "", path
 
-    def derive(self, added: dict[int, tuple[str, int]],
-               new_rows: list[tuple[str, int, str, int]]) -> "FamilyTable":
-        """The table after an APPEND-ONLY index change, without re-reading or
-        re-grouping every path (RAM P1a: the first Trends request after a
-        capture re-read 180k paths -- 0.8 s alone, 16-22 s under the page's
-        concurrent polls, because every fetched row re-takes the GIL).
-
-        *added*: ``{path_id: (path, change points added)}`` for paths this
-        table already holds (``path`` only locates the family). *new_rows*:
-        ``(path, change points, lowered, path_id)`` for paths whose ids are
-        above every id this table holds, in id order. Copy-on-write: this
-        table is never modified (a request may still be reading it). The
-        result is the table ``FamilyTable(all rows)`` would build -- pinned
-        family by family. Raises ``LookupError`` when a changed path is not
-        where it must be; the caller then builds from scratch.
-        """
-        new = object.__new__(FamilyTable)
-        new.roots, new.term, new._splitters = self.roots, self.term, self._splitters
-        fams = list(self._fams)
-        index = self._index
-        copied: dict[int, _Family] = {}
-
-        def fam_for(scope: str, tail: str, create: bool) -> "_Family | None":
-            nonlocal index
-            i = index.get((scope, tail))
-            if i is None:
-                if not create:
-                    return None
-                if index is self._index:
-                    index = dict(index)
-                i = index[(scope, tail)] = len(fams)
-                f = _Family(scope, tail)
-                fams.append(f)
-                copied[i] = f
-                return f
-            f = copied.get(i)
-            if f is None:
-                f = copied[i] = fams[i] = fams[i].copy()
-            return f
-
-        term = self.term
-        for pid, (path, add) in added.items():
-            low = _alower(path)
-            if term is not None and term not in low:
-                continue
-            scope, _ent, tail = self._split(path, low)
-            f = fam_for(scope, tail, False)
-            if f is None:
-                raise LookupError(f"path id {pid} has no family in this table")
-            for k, m in enumerate(f.members):
-                if m[4] == pid:
-                    f.members[k] = (m[0], m[1], m[2], m[3] + int(add), pid)
-                    break
-            else:
-                raise LookupError(f"path id {pid} is not in its family")
-        n_new = 0
-        for path, changes, low, pid in new_rows:
-            if term is not None and term not in low:
-                continue
-            n_new += 1
-            scope, ent, tail = self._split(path, low)
-            fam_for(scope, tail, True).members.append((low, path, ent, int(changes or 0), pid))
-        for f in copied.values():
-            f.finish()
-        new._fams = fams
-        new._index = index
-        if copied:
-            blobs = list(self._blobs)
-            for i in sorted(copied):
-                if i < len(blobs):
-                    blobs[i] = copied[i].blob
-                else:
-                    blobs.append(copied[i].blob)
-            new._blobs = blobs
-        else:
-            new._blobs = self._blobs
-        new.n_paths = self.n_paths + n_new
-        new._qcache = OrderedDict()
-        new._qlock = threading.Lock()
-        return new
-
+    # S10 C7: old -> new, ledger family tables are rebuilt; append derivation has no caller.
     def _signature(self) -> tuple:
         return (self.roots, self.n_paths,
                 tuple((f.scope, f.tail, f.n, f.changes, f.blob) for f in self._fams))
@@ -326,7 +231,7 @@ class FamilyTable:
         # Ties (equal change count AND equal natural key, e.g. one tail under
         # two scopes) fall back to (scope, tail) -- the SQL's GROUP BY order,
         # which its stable sort keeps -- so the answer never depends on the
-        # order families were ADDED in (a derived table appends new ones).
+        # input row order.
         out.sort(key=lambda t: (-t[2], t[0].sort_key, t[0].scope, t[0].tail))
         if limit:
             out = out[:int(limit)]

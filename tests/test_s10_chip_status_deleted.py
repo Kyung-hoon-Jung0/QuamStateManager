@@ -31,11 +31,12 @@ _SURFACES = ("trends", "trends_paths", "metric_meta", "report_trends", "sparklin
 
 
 def _sources():
-    for f in sorted(_PKG.rglob("*")):
+    # S10 C7: old -> new, tools share the package deletion contract.
+    for f in sorted(p for root in (_PKG, _PKG.parent / "tools") for p in root.rglob("*")):
         if f.suffix not in (".py", ".html", ".js", ".css") or "vendor" in f.parts \
                 or "plotly" in f.name:
             continue
-        yield f.relative_to(_PKG).as_posix(), f.read_text(encoding="utf-8", errors="replace")
+        yield f.relative_to(_PKG.parent).as_posix(), f.read_text(encoding="utf-8", errors="replace")
 
 
 def test_the_chip_status_and_param_history_snapshot_paths_stay_deleted():
