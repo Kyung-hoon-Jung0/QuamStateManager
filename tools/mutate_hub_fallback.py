@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +44,8 @@ def main():
             try:
                 SOURCE.write_bytes(source.replace(anchor, replacement).encode("utf-8"))
                 for attempt in range(3):
-                    proc = subprocess.run(["conda", "run", "-n", "cqt", "python", "-m", "pytest", TEST,
+                    # the interpreter running this tool runs the pin (start it from the test env)
+                    proc = subprocess.run([sys.executable, "-m", "pytest", TEST,
                                            "-q", "-p", "no:cacheprovider", "--timeout=900", "--timeout-method=thread"],
                                           cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8")
                     output = proc.stdout + proc.stderr
