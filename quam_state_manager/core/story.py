@@ -808,7 +808,12 @@ def _read_json_dict(path: str) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _run_facts(folder: str, memo: dict | None = None) -> dict:
+def _facts_path(instance, folder: str) -> Path:
+    key = hashlib.sha1(os.path.normcase(os.path.normpath(folder)).encode("utf-8")).hexdigest()
+    return Path(instance) / "story_cache" / "facts" / key[:2] / f"{key}.json"
+
+
+def _run_facts(folder: str, memo: dict | None = None, instance=None) -> dict:
     """``node.json`` + ``data.json`` of a run folder, read the way the
     Datasets scanner reads them (one reading of targets, parameters and
     figures).
@@ -817,15 +822,20 @@ def _run_facts(folder: str, memo: dict | None = None) -> dict:
     twice in one build -- a run, then the same run as the next run's
     "previous" -- is stat'ed once, whichever way its path is spelled."""
     if memo is None:
-        return _read_run_facts(folder)
+        return _read_run_facts(folder, instance)
     key = os.path.normcase(os.path.normpath(folder))
     hit = memo.get(key)
     if hit is None:
-        hit = memo[key] = _read_run_facts(folder)
+        hit = memo[key] = _read_run_facts(folder, instance)
     return hit
 
 
-def _read_run_facts(folder: str) -> dict:
+def _read_run_facts(folder: str, instance=None) -> dict:
+    """S10 walk 2: also kept on disk under *instance* (``story_cache/facts``),
+    keyed by both files' (mtime, size): a run's ``data.json`` can hold
+    megabytes of raw data the card never shows (one archive: 1.5 GB over 3,521
+    runs, 17 s to decode), so it is decoded once per run, not once per
+    process. A rewritten file is read again."""
     node_p, data_p = os.path.join(folder, "node.json"), os.path.join(folder, "data.json")
     token = (_file_sig(node_p), _file_sig(data_p))
     with _RUN_FACTS_LOCK:
@@ -833,6 +843,16 @@ def _read_run_facts(folder: str) -> dict:
         if hit is not None and hit[0] == token:
             _RUN_FACTS.move_to_end(folder)
             return hit[1]
+    disk = _facts_path(instance, folder) if instance is not None and token != (None, None) else None
+    if disk is not None:
+        try:
+            kept = json.loads(disk.read_text(encoding="utf-8"))
+            if kept.get("token") == [list(t) if t else None for t in token] and isinstance(kept.get("facts"), dict):
+                with _RUN_FACTS_LOCK:
+                    _RUN_FACTS[folder] = (token, kept["facts"])
+                return kept["facts"]
+        except (OSError, ValueError):
+            pass
     from quam_state_manager.core.dataset import _calc_duration, _extract_figure_names
     from quam_state_manager.core.scanner import _with_pair_qubits, node_parameters
     node, payload = _read_json_dict(node_p), _read_json_dict(data_p)
@@ -852,10 +872,27 @@ def _read_run_facts(folder: str) -> dict:
         _RUN_FACTS[folder] = (token, facts)
         while len(_RUN_FACTS) > _RUN_FACTS_MAX:
             _RUN_FACTS.popitem(last=False)
+    if disk is not None:
+        try:
+            disk.parent.mkdir(parents=True, exist_ok=True)
+            disk.write_text(json.dumps({"token": token, "facts": facts}, default=str), encoding="utf-8")
+        except (OSError, TypeError, ValueError):
+            pass
     return facts
 
 
-def _hub_run(event, ds, memo=None):
+def _gate_now(wait) -> bool:
+    """``wait`` of a day build: True (compute every gate now), False (in the
+    background), or a ``time.monotonic()`` deadline (S10 walk 2, the report:
+    compute until then, the rest in the background)."""
+    if isinstance(wait, bool):
+        return wait
+    if isinstance(wait, float):
+        return time.monotonic() < wait
+    return bool(wait)
+
+
+def _hub_run(event, ds, memo=None, instance=None):
     """One run event plus what its folder says. A run Datasets holds (same
     folder) is read from the Datasets index in RAM; any other is read from its
     own folder, cached (docs/281: never a path resolve per run)."""
@@ -878,7 +915,7 @@ def _hub_run(event, ds, memo=None):
                "qubit_pairs": list(info.qubit_pairs or []), "outcomes": info.outcomes or {},
                "status": info.status, "figure_names": list(info.figure_names or [])}
     else:
-        run = dict(_run_facts(folder, memo))
+        run = dict(_run_facts(folder, memo, instance))
     run.update(run_id=event["run_id"], experiment_name=event["experiment"], folder_path=folder,
                instant_us=event["t_utc_us"], _hub=event, _from_ds=info is not None)
     if not run.get("qubits") and not run.get("qubit_pairs"):
@@ -977,7 +1014,7 @@ def _hub_gate(instance, run, ledger_key, compute, ds, wait):
                 return dict(got, folder_path=run["folder_path"], experiment_name=run["experiment_name"])
         return {k: v for k, v in run.items() if not k.startswith("_")}
 
-    if wait or compute is not None:
+    if compute is not None or _gate_now(wait):
         return _gate_store(token, path, (compute or _compute_gate)(full()))
     with _GATE_LOCK:
         _GATE_JOBS.setdefault(token, {"path": path, "full": full})
@@ -1310,7 +1347,8 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
     cards: list[dict] = []
     used: set[int] = set()
     facts_memo: dict = {}
-    day_runs = [(event, _hub_run(event, ds, facts_memo)) for event in reversed(hub_events) if event["kind"] == "run"]
+    day_runs = [(event, _hub_run(event, ds, facts_memo, instance_path))
+                for event in reversed(hub_events) if event["kind"] == "run"]
     root_keys: dict = {}
     # A number two folders hold names, in an older line, the run of the folder
     # Datasets showed when the line was written; otherwise no run at all.
@@ -1371,7 +1409,7 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
                     else ds.get_run(prev_id) if prev_id else None)
         elif previous.get(eid):
             prev_id, folder_prev = previous[eid]
-            prev = _run_facts(folder_prev, facts_memo)
+            prev = _run_facts(folder_prev, facts_memo, instance_path)
         fam_key, fam_label = _family_label(run.get("experiment_name") or "")
         shown_targets = _targets_today(targets, set(run.get("qubit_pairs") or []), rename,
                                        event.get("era"))
@@ -1438,7 +1476,11 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
         from quam_state_manager.core.value_history import folder_notes
         out["folder_notes"] = folder_notes(page["left_out"])
     out["unrecorded"] = _unrecorded_edits(instance_path, active_path, day, ledger)
-    _start_gates()
+    if not isinstance(gate_wait, float):
+        # S10 walk 2: a build given a deadline (the report) starts the
+        # background check itself once ALL its days are built -- a worker
+        # parsing saved states meanwhile slowed every later day of it
+        _start_gates()
     return out
 
 

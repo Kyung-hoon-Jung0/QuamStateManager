@@ -26,6 +26,14 @@ from functools import lru_cache
 from typing import Any, Iterable
 
 HIDDEN = "[hidden]"
+#: Internal: a span hidden in THIS pass, until the pass widens it to its whole
+#: token (two control characters no report text carries).
+_MARK = "\x00\x01"
+#: S10 walk 2: a hidden span never leaves part of a name ("20260929_[hidden]_x"
+#: still said most of it): the word characters around it go with it -- letters,
+#: digits, "_" and "-", and a "." BETWEEN two of them (a sentence's final "."
+#: stays outside).
+_WHOLE_TOKEN = re.compile(r"(?:[\w\-]|\.(?=[\w\-]|\x00\x01))*\x00\x01(?:[\w\-]|\.(?=[\w\-]))*")
 
 #: Words that make a key a network field (S2). A key is split into words on
 #: ``_ - .`` and camelCase; one of these words is enough.
@@ -104,11 +112,29 @@ def _replace_value_match(m: re.Match) -> str:
             value = value[:-1]
         else:
             break
-    return HIDDEN + tail
+    return _MARK + tail
 
 
 def _value_text(s: str) -> str:
     return _V_ALL.sub(_replace_value_match, s)
+
+
+def _whole_tokens(s: str) -> str:
+    """Every span hidden in this pass, widened to its whole token."""
+    return _WHOLE_TOKEN.sub(HIDDEN, s) if _MARK in s else s
+
+
+def _html_text(red: "Redactor", tok: str) -> str:
+    """S10 walk 2: V + L over a run of HTML TEXT, read as the text it shows:
+    an entity (``&#39;``, ``&quot;``, ``&amp;``) is one character, so a
+    hidden path never swallows the quote or bracket that closes it
+    ("'D:\\x\\state.json')" -> "'[hidden]')", not "'[hidden];)"). Text that
+    is not changed keeps its bytes."""
+    if "&" not in tok:
+        return red.redact_text(tok)
+    shown = _html.unescape(tok)
+    out = red.redact_text(shown)
+    return tok if out == shown else _html.escape(out, quote=False)
 
 
 def _literal_pattern(strings: Iterable[str]) -> str:
@@ -254,7 +280,7 @@ class Redactor:
         if not isinstance(s, str) or not s:
             return s
         match = _V_ALL.match(s)
-        if match and _replace_value_match(match) == HIDDEN:
+        if match and _replace_value_match(match) == _MARK:
             return HIDDEN
         out = self.redact_text(s)
         return out
@@ -266,7 +292,7 @@ class Redactor:
         hit = self._memo.get(s)
         if hit is not None:
             return hit
-        out = _value_text(self._apply_literals(s))
+        out = _whole_tokens(_value_text(self._apply_literals(s)))
         if len(self._memo) > self.MEMO_MAX:
             self._memo.clear()
         self._memo[s] = out
@@ -281,7 +307,7 @@ class Redactor:
                                      _html.escape(lit, quote=False))},
                           key=len, reverse=True)
             self._lit_re = re.compile(_literal_pattern(alts), re.I)
-        return self._lit_re.sub(HIDDEN, s)
+        return self._lit_re.sub(_MARK, s)
 
     # ---------------------------------------------------------------- layer S
     def redact_tree(self, obj: Any, *, _in_network: bool = False) -> Any:
@@ -347,7 +373,14 @@ class Redactor:
                 q = m.group(3)
                 quote = q[0] if q[0] in "\"'" else ""
                 value = q[1:-1] if quote else q
-                value = redact_css(value, self) if name == "style" else self.redact_text(value)
+                if name == "style":
+                    value = redact_css(value, self)
+                elif "&" in value:
+                    shown = _html.unescape(value)
+                    out = self.redact_text(shown)
+                    value = value if out == shown else _html.escape(out, quote=True)
+                else:
+                    value = self.redact_text(value)
                 return f"{m.group(1)}{m.group(2)}{quote}{value}{quote}"
             out = _ATTR.sub(one, tag)
         if len(self._tag_memo) > self.MEMO_MAX:
@@ -435,7 +468,7 @@ def html_pass(doc: str, red: "Redactor | None", *, on_script=None, on_tag=None,
                 else:
                     app("\n" if "\n" in tok else " ")
             else:
-                app(red.redact_text(tok) if red is not None else tok)
+                app(_html_text(red, tok) if red is not None else tok)
             continue
         if tok.startswith("<!--"):
             app("<!--" + red.redact_text(tok[4:-3]) + "-->" if red else tok)
@@ -467,7 +500,7 @@ def html_pass(doc: str, red: "Redactor | None", *, on_script=None, on_tag=None,
             if on_tag is not None:
                 head = on_tag(head)
             if red is not None:
-                head, body = red.redact_tag(head), red.redact_text(body)
+                head, body = red.redact_tag(head), _html_text(red, body)
             app(head + body + tail)
         else:
             if on_tag is not None:
