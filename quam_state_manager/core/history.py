@@ -5428,13 +5428,7 @@ class HistoryManager:
             cached = self._disk_stats_cache.get(key)
             if cached is not None and cached[0] == ver:
                 return cached[1]
-        # The persistent token reader would otherwise pin index.sqlite-wal at
-        # its high-water size and this walk would count it (verifier D1).
-        try:
-            from quam_state_manager.core import param_history_ram as _phr
-            _phr.settle_wal(hist_dir / "index.sqlite")
-        except Exception:   # noqa: BLE001 -- best effort; the walk still runs
-            pass
+        # S10 C7: old -> new, no snapshot token pool remains to settle before the disk walk.
         total_bytes = _dir_bytes(hist_dir) if hist_dir.is_dir() else 0
         result = {
             "snapshots": len(snapshots),

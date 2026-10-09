@@ -975,7 +975,8 @@ def test_removed_value_readers_are_absent():
                "scan_one_snapshot", "scan_field_series", "snap_files_sig")]
     names += ["CH_SERIES_" + part for part in ("RUNS", "EXAMINE")]
     names += ["_" + part + "_history.html" for part in ("field", "column")]
-    for path in package.rglob("*"):
+    # S10 C7: old -> new, tools must not retain removed value readers either.
+    for path in (p for root in (package, package.parent / "tools") for p in root.rglob("*")):
         if not path.is_file() or "vendor" in path.parts or path.name.startswith("plotly"):
             continue
         if path.suffix in (".py", ".html", ".js", ".css"):

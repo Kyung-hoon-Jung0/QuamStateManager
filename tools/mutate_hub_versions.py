@@ -317,9 +317,9 @@ MUTATIONS = [
      '                {% if false %}\n                <button type="button" class="btn-xs outline sv-diff" disabled', [BLOB]),
     ("panel_reason_hidden", PANEL, '{% if r.why_write %}<span class="sv-unavailable"',
      '{% if false %}<span class="sv-unavailable"', [REFUSE]),
-    # S10 C6: re-anchored -- the filter attribute is deleted; the mutation puts it back
+    # S10 C7: old -> new, assemble the retired filter attribute only when applying its mutation.
     ("panel_asks_to_refilter_forever", PANEL, '     data-source="ledger">',
-     '     data-changes="only" data-source="ledger">', [REFILTER]),
+     '     data-' + 'changes="only" data-source="ledger">', [REFILTER]),
     ("building_says_no_versions", PANEL,
      "    {% if not rows and ledger_versions is defined and ledger_versions and ledger_versions.mode in ('building', 'preparing') %}",
      "    {% if false %}", [BUILDING]),
@@ -399,6 +399,10 @@ def _red(log: str, pins: list[str]) -> tuple[bool, list[str]]:
     hit = [n for n in names if _bare(n) in targets]
     summary = log.strip().splitlines()[-1] if log.strip() else ""
     if re.search(r"\d+ errors?\b", summary):
+        return False, hit
+    # S10 C7: old -> new, mixed assertion/runtime failures no longer count as RED.
+    errors = re.findall(r"^E\s+([.\w]*(?:Error|Exception)|Failed):", log, re.M)
+    if any(kind not in ("AssertionError", "Failed") for kind in errors):
         return False, hit
     parts = re.split(r"^_+ (.+?) _+$", log, flags=re.M)
     asserted = False
