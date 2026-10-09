@@ -12664,6 +12664,8 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     display: flex; align-items: center; justify-content: center;
 }
 .ch-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+#hub-folder-modal { z-index: 9700; }
+#hub-folder-body { overflow: auto; min-height: 0; }
 .ch-card {
     position: relative; z-index: 1;
     background: var(--pico-card-background-color);

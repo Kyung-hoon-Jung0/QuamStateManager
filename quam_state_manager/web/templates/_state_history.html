@@ -49,7 +49,7 @@
    result/diff in #state-history-detail beside it is preserved. Lives outside
    #state-history-body so the swap can't remove this listener. #}
 <span hidden hx-get="/state-history?body=1"
-      hx-trigger="stateRestored from:body, stateHistoryChanged from:body"
+      hx-trigger="stateRestored from:body, stateHistoryChanged from:body, hubLinked from:body"
       hx-target="#state-history-body" hx-swap="innerHTML"></span>
 
 <div id="state-history-detail" class="sh-detail"></div>

@@ -3371,6 +3371,8 @@ window.trapFocus = function(container, onEscape) {
     }
     function onKey(e) {
         if (_trapContainerGone(container)) { detach(); return; }
+        var folderModal = document.getElementById('hub-folder-modal');
+        if (folderModal && !folderModal.contains(container)) return;
         if (e.key === "Escape" && onEscape) { e.preventDefault(); onEscape(); return; }
         if (e.key !== "Tab") return;
         var f = _focusableIn(container);
@@ -24160,12 +24162,12 @@ window.FieldHistory = (function () {
         document.body.appendChild(panel);
         document.addEventListener("mousedown", function (e) {
             if (panel.style.display === "none") return;
-            if (panel.contains(e.target)) return;
+            if (panel.contains(e.target) || e.target.closest("#hub-folder-modal")) return;
             if (e.target.closest && e.target.closest(".field-hist-btn, #fh-cellbtn")) return;
             close();
         });
         document.addEventListener("keydown", function (e) {
-            if (e.key === "Escape" && panel.style.display !== "none") close();
+            if (e.key === "Escape" && panel.style.display !== "none" && !document.getElementById("hub-folder-modal")) close();
         });
         // Singleton (ensurePanel runs once): a window shrink used to strand
         // the position:fixed panel fully off-screen — config.responsive
@@ -24228,6 +24230,11 @@ window.FieldHistory = (function () {
     // so (a [data-vh-retry] line, never a partial history) and this asks again
     // by itself -- only while the panel is open on the SAME path, and only for
     // the newest open (a stale retry never overwrites another field's panel).
+    document.addEventListener("hubLinked", function () {
+        if (panel && panel.style.display !== "none" && openPath) {
+            load(openAnchor, openPath, ++loadSeq);
+        }
+    });
     var loadSeq = 0;
     function load(anchor, path, seq, all, container) {
         var p = container || ensurePanel();
@@ -25334,6 +25341,7 @@ window.ColumnHistory = (function () {
     var overlay = null;
     var _paths = {};       // row_id → dot_path (as POSTed)
     var _label = "";
+    var _linkPayload = null;
 
     function _esc(s) {
         return (window.CSS && CSS.escape) ? CSS.escape(s) : s;
@@ -25406,11 +25414,17 @@ window.ColumnHistory = (function () {
         body.set("label", _label);
         body.set("unit", btn.getAttribute("data-unit") || "");
         body.set("paths", JSON.stringify(_paths));
+        _linkPayload = body.toString();
         _load(o, card, body.toString(), ++_loadSeq);
     }
 
     // docs/282: a [data-vh-retry] answer means the change ledger is still
     // being built -- ask again by itself while THIS open is still showing.
+    document.addEventListener("hubLinked", function () {
+        if (overlay && overlay.style.display !== "none" && _linkPayload) {
+            _load(overlay, overlay.querySelector(".ch-card"), _linkPayload, ++_loadSeq);
+        }
+    });
     var _loadSeq = 0;
     function _load(o, card, payload, seq) {
         fetch("/bulk/column-history", {
@@ -25602,6 +25616,7 @@ window.StateVersions = (function () {
                     // dismisses the panel, whose content their actions can
                     // stale).
                     if (e.target.closest && e.target.closest('#version-diff-overlay')) return;
+                    if (e.target.closest && e.target.closest('#hub-folder-modal')) return;
                     close();
                     document.removeEventListener('click', away);
                 });
@@ -25687,6 +25702,10 @@ window.StateVersions = (function () {
        stateHistoryChanged when the chip's history dir moved (a capture in
        ANOTHER window, the background EXP ingest, a prune). The topbar chip
        already refetches on this event; the open panel follows too. */
+    document.addEventListener('hubLinked', function () {
+        var p = panel();
+        if (p && !p.hidden) _debouncedRefetch();
+    });
     document.addEventListener('stateHistoryChanged', function () {
         var p = panel();
         if (!p || p.hidden) return;

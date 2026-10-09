@@ -1,0 +1,219 @@
+{
+  "pytest_options": [
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=900",
+    "--timeout-method=thread"
+  ],
+  "files": [
+    {
+      "file": "tests/test_agent_api.py",
+      "exit_code": 0,
+      "passed": 30,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 18.86
+    },
+    {
+      "file": "tests/test_agent_api_p3.py",
+      "exit_code": 0,
+      "passed": 49,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 21.33
+    },
+    {
+      "file": "tests/test_alignment_job.py",
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 18.48
+    },
+    {
+      "file": "tests/test_chip_metric_meta.py",
+      "exit_code": 0,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 22.07
+    },
+    {
+      "file": "tests/test_column_history.py",
+      "exit_code": 0,
+      "passed": 19,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 18.67
+    },
+    {
+      "file": "tests/test_history_drawer.py",
+      "exit_code": 0,
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 18.17
+    },
+    {
+      "file": "tests/test_hub_build.py",
+      "exit_code": 0,
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 10.46
+    },
+    {
+      "file": "tests/test_hub_chip_status.py",
+      "exit_code": 0,
+      "passed": 54,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 45.54
+    },
+    {
+      "file": "tests/test_hub_drawer.py",
+      "exit_code": 0,
+      "passed": 42,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 35.43
+    },
+    {
+      "file": "tests/test_hub_fallback_tripwire.py",
+      "exit_code": 0,
+      "passed": 27,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 21.03
+    },
+    {
+      "file": "tests/test_hub_incremental.py",
+      "exit_code": 0,
+      "passed": 51,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 43.0
+    },
+    {
+      "file": "tests/test_hub_link_folder.py",
+      "exit_code": 0,
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 31.75
+    },
+    {
+      "file": "tests/test_hub_query.py",
+      "exit_code": 0,
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 10.23
+    },
+    {
+      "file": "tests/test_hub_reader_reopen_token.py",
+      "exit_code": 0,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 11.05
+    },
+    {
+      "file": "tests/test_hub_record.py",
+      "exit_code": 0,
+      "passed": 89,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 132.51
+    },
+    {
+      "file": "tests/test_hub_rules.py",
+      "exit_code": 0,
+      "passed": 31,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 8.46
+    },
+    {
+      "file": "tests/test_hub_status_after_a_run.py",
+      "exit_code": 0,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 10.07
+    },
+    {
+      "file": "tests/test_hub_store.py",
+      "exit_code": 0,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 9.61
+    },
+    {
+      "file": "tests/test_hub_store_open_race.py",
+      "exit_code": 0,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 17.53
+    },
+    {
+      "file": "tests/test_hub_sync.py",
+      "exit_code": 0,
+      "passed": 95,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 40.37
+    },
+    {
+      "file": "tests/test_hub_unreadable_is_not_preparing.py",
+      "exit_code": 0,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 12.11
+    },
+    {
+      "file": "tests/test_hub_versions.py",
+      "exit_code": 0,
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 35.52
+    },
+    {
+      "file": "tests/test_param_history_changes.py",
+      "exit_code": 0,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 19.7
+    },
+    {
+      "file": "tests/test_state_history.py",
+      "exit_code": 0,
+      "passed": 33,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 30.82
+    },
+    {
+      "file": "tests/test_state_versions.py",
+      "exit_code": 0,
+      "passed": 89,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 54.54
+    },
+    {
+      "file": "tests/test_trends_routes.py",
+      "exit_code": 0,
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 15.63
+    }
+  ]
+}

@@ -41,9 +41,7 @@
   {% endif %}
 </p>
 {% endfor %}
-{% for n in notes %}
-<p class="vh-note vh-note-{{ n.level }}" data-note="{{ n.code }}">{{ n.text }}</p>
-{% endfor %}
+{% include '_hub_notes.html' %}
 {% if chart and chart|length >= 2 %}
 <div class="fh-chart" id="fh-chart" aria-label="Value trend"></div>
 <script id="fh-chart-data" type="application/json">{{ chart | tojson }}</script>

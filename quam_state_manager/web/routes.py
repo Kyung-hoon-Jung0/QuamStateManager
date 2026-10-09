@@ -3351,6 +3351,24 @@ def _hub_catch_up(folder) -> None:
         logger.debug("hub catch-up failed", exc_info=True)
 
 
+def _hub_root_key(p) -> str:
+    """The filesystem key used by every folder decision."""
+    try:
+        return path_match.fs_key(p) or os.path.normcase(os.path.abspath(p))
+    except (OSError, ValueError):
+        return os.path.normcase(os.path.abspath(p))
+
+
+def _hub_root_decision(chip_key, root, roots, decisions):
+    from quam_state_manager.core.history import _data_folder_name
+    explicit = decisions.get(f"{chip_key}::root:{_hub_root_key(root)}")
+    if explicit is not None:
+        return explicit
+    label = _data_folder_name(root)
+    labels = Counter(_data_folder_name(r) for r in roots)
+    return decisions.get(f"{chip_key}::{label}") if label and labels[label] == 1 else None
+
+
 def _hub_roots_for(ctx) -> list[tuple[str, str]]:
     """docs/275: THE data folders whose runs are synced into this chip's
     ledger -- ``hub_sync.roots_for_chip`` over what SM already knows about the
@@ -3374,13 +3392,7 @@ def _hub_roots_for(ctx) -> list[tuple[str, str]]:
       exactly one workspace root -- two roots that share a label are
       evidence for neither."""
     from quam_state_manager.core import hub_sync
-    from quam_state_manager.core.history import _data_folder_name, load_chip_decisions
-
-    def key(p: str) -> str:
-        try:
-            return path_match.fs_key(p) or os.path.normcase(os.path.abspath(p))
-        except (OSError, ValueError):
-            return os.path.normcase(os.path.abspath(p))
+    from quam_state_manager.core.history import load_chip_decisions
 
     declared = list(ctx.get("extras_data_roots") or [])
     scope = ctx.get("qualibrate_project")
@@ -3402,19 +3414,14 @@ def _hub_roots_for(ctx) -> list[tuple[str, str]]:
     if ws_roots:
         chip_dir = _hub_chip_dir(ctx["path"])
         decisions = load_chip_decisions(current_app.instance_path) if chip_dir is not None else {}
-        labels = Counter(_data_folder_name(r) for r in ws_roots)
 
         def decided(root: str) -> bool:
             if chip_dir is None:
                 return False
-            if decisions.get(f"{chip_dir.name}::root:{key(root)}") == "same":
-                return True
-            label = _data_folder_name(root)
-            return (bool(label) and labels[label] == 1
-                    and decisions.get(f"{chip_dir.name}::{label}") == "same")
+            return _hub_root_decision(chip_dir.name, root, ws_roots, decisions) == "same"
 
     return hub_sync.roots_for_chip(declared=declared, project_storage=storage, project_roots=recorded,
-                                   workspace_roots=ws_roots, decided_same=decided, key=key,
+                                   workspace_roots=ws_roots, decided_same=decided, key=_hub_root_key,
                                    shared_location=shared if storage != shared else None)
 
 
@@ -11957,7 +11964,8 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
         if pts:
             newest = None if pts[-1]["removed"] else pts[-1]["value"]
         current = vh.comparable(tgt) if tgt.get("has_current") else None
-        out["notes"][key] = vh.notes(st, res["ledger"], current=current, newest=newest)
+        out["notes"][key] = vh.notes(st, res["ledger"], current=current, newest=newest,
+                                   origin=ctx.get("origin") or "live")
     return out
 
 
@@ -18624,7 +18632,9 @@ def _hub_metric_meta(table) -> dict:
     led = ans["ledger"]
     return {"ok": True, "mode": "ledger", "newest": led.get("last"), "oldest": led.get("first"),
             "snapshots": led.get("events", 0), "updating": False, "q": q, "p": p, "snaps": {},
-            "notes": [n["text"] for n in table.notes]}
+            "notes": [n["text"] for n in table.notes],
+            **({"link": {"offer": True, "url": "/hub/link-folder"}}
+               if any(n["code"] == "no_folder_linked" for n in table.notes) else {})}
 
 
 def _legacy_topology_metric_meta():
@@ -19123,7 +19133,8 @@ def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0) -> dict:
     if res["mode"] in ("building", "preparing"):
         res["notes"] = [{"level": "info", "code": res["mode"], "text": _versions_wait_text(res)}]
         return res
-    notes = list(vh.notes(res.get("status"), {"has_runs": res.get("has_runs")}))
+    notes = list(vh.notes(res.get("status"), {"has_runs": res.get("has_runs")},
+                          origin=ctx.get("origin") or "live"))
     if res.get("pending"):
         n = res["pending"]
         notes.append({"level": "info", "code": "matching",
@@ -34492,6 +34503,108 @@ def param_history():
     )
 
 
+def _hub_root_contains(root_key, path_key):
+    base = root_key.rstrip("/\\")
+    return path_key == root_key or path_key.startswith(base + os.sep)
+
+
+def _hub_link_rows(ctx, chip_dir, workspace, alignment):
+    """Bucket evidence into the deepest workspace root, then filter offers."""
+    from quam_state_manager.core import hub_sync
+    from quam_state_manager.core.history import load_chip_decisions
+    roots = list(dict.fromkeys(str(r) for r in workspace.root_folders))
+    decisions = load_chip_decisions(current_app.instance_path)
+    registered = {_hub_root_key(r["path"]) for r in hub_sync.status(chip_dir).get("roots", [])}
+    rows = {_hub_root_key(r): {"path": r, "fs_key": _hub_root_key(r),
+                              "matches": 0, "other": 0, "unreadable": 0,
+                              "inside": _hub_root_contains(_hub_root_key(r), _hub_root_key(ctx["path"]))}
+            for r in roots}
+    groups = [("matches", alignment.get("aligned") or []),
+              ("other", alignment.get("renamed") or []),
+              ("unreadable", alignment.get("unknown") or [])]
+    groups.extend(("other", entries) for entries in (alignment.get("different_chip") or {}).values())
+    for bucket, entries in groups:
+        for entry in entries:
+            path = getattr(entry, "quam_state_path", None)
+            if not path:
+                continue
+            path_key = _hub_root_key(path)
+            holders = [k for k in rows if _hub_root_contains(k, path_key)]
+            if holders:
+                rows[max(holders, key=len)][bucket] += 1
+    candidates = [row for k, row in rows.items() if k not in registered
+                  and _hub_root_decision(chip_dir.name, row["path"], roots, decisions) != "different"
+                  and hub_sync._holds_runs(Path(row["path"]))]
+    return sorted(candidates, key=lambda row: (-row["matches"], row["fs_key"]))
+
+
+def _hub_link_context():
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return None, None, ("No live chip is open.", 409)
+    if (ctx.get("origin") or "live") != "live":
+        return None, None, ("read-only", 409)
+    chip_dir = _hub_chip_dir(ctx["path"])
+    if chip_dir is None:
+        return None, None, ("The chip history is unavailable.", 409)
+    expected = request.values.get("chip_key")
+    if (request.method == "POST" or expected) and expected != chip_dir.name:
+        return None, None, ("The open chip changed. Open the folder list again.", 409)
+    return ctx, chip_dir, None
+
+
+@bp.route("/hub/link-folder", methods=["GET", "POST"])
+def hub_link_folder():
+    from quam_state_manager.core import hub_sync
+    from quam_state_manager.core.history import save_chip_decision
+    ctx, chip_dir, error = _hub_link_context()
+    if error:
+        return error
+    ws = _ws()
+    roots = {_hub_root_key(r): str(r) for r in (ws.root_folders if ws else [])}
+    fs_key = request.form.get("fs_key", "")
+    root = request.form.get("root", "")
+    if request.method == "POST" and (fs_key not in roots or not root or _hub_root_key(root) != fs_key):
+        return "This folder is not a Datasets root.", 409
+    scan = (_alignment_jobs().request(_history(), Path(ctx["path"]), ws, wait_s=0.12)
+            if roots else {"state": "ready", "result": {}})
+    if scan["state"] != "ready":
+        if request.method == "POST":
+            return "The folder check is still running.", 409
+        return render_template("_hub_link_folder.html", scan=scan, chip_key=chip_dir.name)
+    rows = _hub_link_rows(ctx, chip_dir, ws, scan["result"]) if ws else []
+    if request.method == "POST":
+        if not any(row["fs_key"] == fs_key and row["matches"] >= 1 for row in rows):
+            return "No runs in this folder match the open chip.", 409
+        # The scan can yield to a concurrent chip activation.
+        _ctx_now, _dir_now, error = _hub_link_context()
+        if error:
+            return error
+        save_chip_decision(current_app.instance_path, chip_dir.name, f"root:{fs_key}", "same")
+        _hub_sync_open(ctx)
+        return "Folder linked.", 200, {"HX-Trigger": "hubLinked"}
+    linked = [{**r, "fs_key": _hub_root_key(r["path"])}
+              for r in hub_sync.status(chip_dir).get("roots", []) if "decided_same" in r.get("sources", [])]
+    return render_template("_hub_link_folder.html", scan=scan, rows=rows, linked=linked,
+                           chip_key=chip_dir.name)
+
+
+@bp.route("/hub/unlink-folder", methods=["POST"])
+def hub_unlink_folder():
+    from quam_state_manager.core import hub_sync
+    from quam_state_manager.core.history import save_chip_decision
+    ctx, chip_dir, error = _hub_link_context()
+    if error:
+        return error
+    fs_key = request.form.get("fs_key", "")
+    if not any(_hub_root_key(r["path"]) == fs_key and "decided_same" in r.get("sources", [])
+               for r in hub_sync.status(chip_dir).get("roots", [])):
+        return "Only a folder linked by a decision can be unlinked.", 409
+    save_chip_decision(current_app.instance_path, chip_dir.name, f"root:{fs_key}", "different")
+    _hub_sync_open(ctx)
+    return "Folder unlinked.", 200, {"HX-Trigger": "hubLinked"}
+
+
 def _alignment_jobs():
     """The app's one ``AlignmentJobs`` (RAM P7)."""
     from quam_state_manager.core.alignment_job import AlignmentJobs
@@ -34867,10 +34980,17 @@ def param_history_decide_chip():
     decision = (request.values.get("decision", "") or "").strip()
     if not chip_key or not data_folder or decision not in ("same", "different"):
         return jsonify({"error": "invalid params"}), 400
+    if data_folder.startswith("root:"):
+        data_folder = "root:" + _hub_root_key(data_folder[5:])
     try:
         save_chip_decision(current_app.instance_path, chip_key, data_folder, decision)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+    if decision == "same":
+        ctx = _active_ctx()
+        chip_dir = _hub_chip_dir(ctx["path"]) if ctx and ctx.get("type") == "quam" else None
+        if chip_dir is not None and chip_dir.name == chip_key:
+            _hub_sync_open(ctx)
     return jsonify({"ok": True, "chip_key": chip_key, "data_folder": data_folder, "decision": decision})
 
 

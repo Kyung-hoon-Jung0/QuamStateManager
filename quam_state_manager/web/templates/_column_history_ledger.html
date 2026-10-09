@@ -19,9 +19,7 @@
   <button type="button" class="ch-close" onclick="ColumnHistory.close()"
           title="Close (Esc)">&times;</button>
 </div>
-{% for n in notes %}
-<p class="vh-note vh-note-{{ n.level }}" data-note="{{ n.code }}">{{ n.text }}</p>
-{% endfor %}
+{% include '_hub_notes.html' %}
 {% if not rows %}
 <p class="ch-empty">Nothing to show for this column.</p>
 {% else %}
