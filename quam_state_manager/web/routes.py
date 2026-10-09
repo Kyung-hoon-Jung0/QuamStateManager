@@ -15321,6 +15321,9 @@ def _report_build_calibration_log(rc: _ReportCtx) -> str:
         ledger = log._ledger_context()
     except RuntimeError:
         ledger = None                 # each day then says the history is unavailable
+    except Exception:  # noqa: BLE001 -- S10 walk: each day says the ledger could not be read
+        logger.warning("report: the calibration log's ledger could not be read", exc_info=True)
+        ledger = None
     days, building = set(), None
     if ledger is not None and (ledger.store.directory / "ledger.sqlite").exists():
         try:
@@ -15335,6 +15338,9 @@ def _report_build_calibration_log(rc: _ReportCtx) -> str:
             building = hub_sync.status(ledger.store.directory)
         except ValueError:
             ledger = None             # no project zone: each day says so
+        except Exception:  # noqa: BLE001 -- S10 walk: a corrupt ledger: each day says it could not be read
+            logger.warning("report: the calibration log's ledger could not be read", exc_info=True)
+            ledger = None
     elif ledger is not None:
         building = hub_sync.status(ledger.store.directory)
     for file_day in log.journal_mod.list_days(current_app.instance_path, log._chip_name()):

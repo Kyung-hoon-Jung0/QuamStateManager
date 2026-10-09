@@ -381,14 +381,16 @@ def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
         # No history dir for the open chip: say so, never fall back to a
         # second history source and present it as the chip's.
         ledger, unavailable = None, f"{exc}, so runs and SM writes cannot be listed."
+    except Exception:  # noqa: BLE001 -- S10 walk: the every-surface unreadable note, never a 500
+        logger.warning("calibration log: the chip history could not be read", exc_info=True)
+        ledger, unavailable = None, _unreadable_note()
     key = r._folder_key(ds.folder_path) if ds is not None else None
     def uid_of(run):
         root = (run.get("_hub") or {}).get("root_path")
         run_key = r._folder_key(root) if root else key
         return f"{run_key}:{run['run_id']}" if run_key else None
     if unavailable:
-        data = story._empty_day(_chip_name(), day, {"state": "unavailable", "note": unavailable[:1].upper() + unavailable[1:]},
-                                current_app.instance_path)
+        data = _unavailable_day(day, unavailable)
     elif ledger is not None and not (ledger.store.directory / "ledger.sqlite").exists():
         from quam_state_manager.core import hub_sync
         st = hub_sync.status(ledger.store.directory)
@@ -399,15 +401,22 @@ def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
                                                     "so runs and SM writes cannot be listed."})
         data = story._empty_day(_chip_name(), day, history, current_app.instance_path)
     else:
-        data = story.build_day(current_app.instance_path, _chip_name(), day, ds=ds, active_path=active,
-                               ledger=ledger, agent_chip=_agent_chip_key(),
-                               events=_events(), uid_of=uid_of,
-                               # gates are checked in the background for a person; a test
-                               # app waits, so a page is the same page twice
-                               gate_wait=gate_wait or bool(current_app.config.get(
-                                   "JOURNAL_GATE_WAIT", current_app.testing)),
-                               int_of=_int_types() if ledger is not None else None,
-                               rename=r._rename_scope() if ledger is not None else None)
+        try:
+            data = story.build_day(current_app.instance_path, _chip_name(), day, ds=ds, active_path=active,
+                                   ledger=ledger, agent_chip=_agent_chip_key(),
+                                   events=_events(), uid_of=uid_of,
+                                   # gates are checked in the background for a person; a test
+                                   # app waits, so a page is the same page twice
+                                   gate_wait=gate_wait or bool(current_app.config.get(
+                                       "JOURNAL_GATE_WAIT", current_app.testing)),
+                                   int_of=_int_types() if ledger is not None else None,
+                                   rename=r._rename_scope() if ledger is not None else None)
+        except Exception:  # noqa: BLE001 -- S10 walk: an unreadable ledger never 500s the log
+            if ledger is None:
+                raise
+            logger.warning("calibration log: the ledger of %s could not be read",
+                           ledger.store.directory, exc_info=True)
+            data = _unavailable_day(day, _unreadable_note())
     data["lazy"] = bool(lazy_ok and len(data["cards"]) > LAZY_CARDS)
     data["paged"] = bool(lazy_ok and len(data["cards"]) > PAGE_CARDS)
     for order, c in enumerate(data["cards"]):
@@ -453,6 +462,17 @@ def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
             while len(days) > 4:
                 days.pop(next(iter(days)))
     return data
+
+
+def _unreadable_note() -> str:
+    """S10 walk: the words every history surface ends in when the chip's
+    change ledger cannot be read (``routes._VH_UNAVAILABLE_NOTES``)."""
+    return _r()._VH_UNAVAILABLE_NOTES["unreadable"]
+
+
+def _unavailable_day(day: str, note: str) -> dict:
+    return story._empty_day(_chip_name(), day, {"state": "unavailable", "note": note[:1].upper() + note[1:]},
+                            current_app.instance_path)
 
 
 def _agent_chip_key():
