@@ -6,6 +6,8 @@ Each mutation runs the pins it targets: a ``-k`` expression over
 tests/test_hub_no_roots_sync.py, or a list of pytest node ids.
 """
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import argparse
 import json
 import os
@@ -103,7 +105,6 @@ def main():
     args = parser.parse_args()
     results = []
     env = dict(os.environ, PYTHONUTF8="1", NODE_PATH="D:/work/statemanager/node_modules")
-    env.pop("HUB_FALLBACK_TRIPWIRE", None)
     env.pop("PYTEST_ADDOPTS", None)
     for name, rel, anchor, replacement, select in MUTATIONS:
         if args.only and name not in args.only:

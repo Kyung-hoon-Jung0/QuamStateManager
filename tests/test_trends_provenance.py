@@ -17,6 +17,8 @@ is minted only where it actually opens.
 
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 # Selfcheck examples use generic device names and lab keys.
 
 import json
@@ -121,8 +123,8 @@ def _charts(body: str) -> list[dict]:
     return json.loads(m.group(1)) if m else []
 
 
-def _snaps(body: str) -> dict:
-    m = re.search(r'id="topo-trends-snaps">(.*?)</script>', body, re.S)
+def _legacy_map(body: str) -> dict:
+    m = re.search(r'id="topo-trends-' r'snaps">(.*?)</script>', body, re.S)
     return json.loads(m.group(1)) if m else {}
 
 
@@ -170,7 +172,7 @@ class TestTheMapShape:
             _snap(env, _state(f01=6.0e9 + 4e6, t1=2.0e-5 + 4e-7, marker=i + 1))
         body = env["client"].get(
             "/topology/trends?metrics=f_01,T1").get_data(as_text=True)
-        snaps = _snaps(body)
+        snaps = _legacy_map(body)
         # S10 C3: a bounded snapshot map -> none at all: ledger points carry their own words.
         assert snaps == {}
         charts = _charts(body)
@@ -208,8 +210,8 @@ class TestTheMapShape:
         all_ts = {m.timestamp for m in env["hm"].list_snapshots(env["live"])}
         assert len(all_ts) > len(charted), "fixture must hold undrawn snapshots"
         # S10 C3: a filtered snapshot map -> none at all: ledger points carry their own words.
-        assert _snaps(body) == {}
-        assert set(_snaps(body)) <= charted, \
+        assert _legacy_map(body) == {}
+        assert set(_legacy_map(body)) <= charted, \
             "the map must not carry a snapshot nothing on the page can read"
         # S10 C5 (C3 review): ...and no series' attr carries a point it does not draw
         series = [s for c in _charts(body) for s in c["series"]]
@@ -225,7 +227,7 @@ class TestTheMapShape:
         body = env["client"].get(
             "/topology/trends?metrics=&path=qubits.qA1.not_a_leaf"
         ).get_data(as_text=True)
-        assert not _snaps(body), "no drawn point ⇒ no provenance to ship"
+        assert not _legacy_map(body), "no drawn point ⇒ no provenance to ship"
 
     def test_the_curated_tier_answers_for_a_snapshot_the_metas_lack(self, env):
         """The snapshot METAS are the source of truth (the only place that
@@ -368,7 +370,7 @@ class TestARunSnapshot:
         assert got["label"] == "#31 03_resonator_spectroscopy_single"
         assert got["sub"] == "its own patch set it", "a run says which run, never a why-sentence"
         assert got["uid"] == f"{routes_mod._folder_key(data_root)}:31"
-        assert _snaps(c.get("/topology/trends?metrics=f_01").get_data(as_text=True)) == {}
+        assert _legacy_map(c.get("/topology/trends?metrics=f_01").get_data(as_text=True)) == {}
 
     def test_the_uid_round_trips_through_the_dataset_resolver(self, env):
         """Clickable only when it actually opens: the uid the hover offers must

@@ -41,6 +41,7 @@ M = "TestModes::"
 F = "TestFaults::"
 J = "test_the_chip_status_selfcheck"
 
+# S10 C7: old -> new, foreign runs are gated by lanes and hover words by ledger attributes.
 MUTATIONS = [
     # -- one reader
     ("curated_value_wrong", HS,
@@ -90,8 +91,8 @@ MUTATIONS = [
      '    return bool(points) and all(p["provenance"] == "run_proven" for p in points)',
      '    return False',
      [W + "test_a_matrix_whose_every_change_is_patched_names_its_run"]),
-    ("foreign_chip_flag_ignored", VH,
-     '        if ev.get("flags", 0) & CHIP_UNCERTAIN:', '        if False:',
+    ("foreign_chip_flag_ignored", "quam_state_manager/core/hub_lanes.py",
+     '            if any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN:', '            if False:',
      [W + "test_a_run_of_another_chip_is_never_the_writer"]),
     ("every_change_row_claims_the_patch", RT,
      '                         "who": info["sub"] if ev.get("kind") == "run" else "",',
@@ -263,10 +264,10 @@ MUTATIONS = [
     ("js_lab_node_run_dropped", JS,
      "        if (e.load_id != null) lines.push('Run recorded by the lab’s node: #' + e.load_id);",
      "", [J]),
-    ("js_trends_words_lost", JS, '        if (info.provenance) {\n            return _esc(info.label)',
-     '        if (false) {\n            return _esc(info.label)', [J]),
-    ("js_trends_words_unescaped", JS, '            return _esc(info.label) + (info.sub',
-     '            return info.label + (info.sub', [J]),
+    ("js_trends_words_lost", JS, '        return _esc(info.label) + (info.sub',
+     '        return \'\' + (info.sub', [J]),
+    ("js_trends_words_unescaped", JS, '        return _esc(info.label) + (info.sub',
+     '        return info.label + (info.sub', [J]),
     ("js_drawer_words_lost", APP, '        if (p.label) {\n            return _phEsc(p.label)',
      '        if (false) {\n            return _phEsc(p.label)', [J]),
     ("js_drawer_restore_dropped", APP, "    if (data.ledger) triggers.push('restore');", "", [J]),
@@ -326,7 +327,7 @@ def main() -> None:
             if rel.endswith(".js"):
                 subprocess.run(["node", "--check", str(path)], check=True, capture_output=True)
             cmd = [sys.executable, "-m", "pytest", *[T + p for p in pins], "-q", "--tb=short",
-                   "-p", "no:cacheprovider", "--timeout=900", "--basetemp=" + str(args.basetemp)]
+                   "-p", "no:cacheprovider", "--timeout=900", "--timeout-method=thread", "--basetemp=" + str(args.basetemp)]
             proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
                                   errors="replace",
                                   env={**os.environ, "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1"})

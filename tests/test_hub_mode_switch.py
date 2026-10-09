@@ -9,13 +9,12 @@ import pytest
 
 from quam_state_manager.core import hub_sync, hub_versions, value_history
 from quam_state_manager.web import routes
-from tests.test_hub_fallback_tripwire import SURFACES, no_runs  # noqa: F401
-from tests.test_hub_drawer import chip_dir, chip_state, write_chip
+from tests.hub_surface_fixture import SURFACES, no_runs  # noqa: F401
+from tests.test_hub_drawer import chip_dir, chip_state, sm, write_chip  # noqa: F401
 
 
 @pytest.mark.parametrize("surface,url", SURFACES + [("report", "/chip-status/report/section/trends?redact=0")])
 def test_no_run_ledger_never_reads_snapshot_fallback(no_runs, monkeypatch, surface, url):
-    monkeypatch.setenv("HUB_FALLBACK_TRIPWIRE", "1")
     with no_runs["app"].app_context():
         answer = routes._value_history(routes._active_ctx(), {"value": "qubits.qA1.T1"})
     assert answer["mode"] == "ledger"
@@ -26,7 +25,6 @@ def test_no_run_ledger_never_reads_snapshot_fallback(no_runs, monkeypatch, surfa
     if surface not in ("trends_paths", "changes_paths", "version_count"):
         assert "/hub/link-folder" in body
         assert "No data folder is linked to this chip" in body
-    assert routes._hub_fallback_counts() == {}
     assert any(n["code"] == "no_folder_linked" and n["link"]["offer"]
                for n in answer["notes"]["value"])
 
@@ -37,7 +35,6 @@ def test_unreadable_is_terminal_on_every_surface(no_runs, monkeypatch, surface, 
         raise ValueError("corrupt ledger")
     monkeypatch.setattr(value_history, "read", broken)
     monkeypatch.setattr(hub_versions, "_version_token", broken)
-    monkeypatch.setenv("HUB_FALLBACK_TRIPWIRE", "1")
     response = no_runs["client"].get(url, headers={"HX-Request": "true"})
     body = response.get_data(as_text=True)
     assert response.status_code == 200
@@ -47,7 +44,6 @@ def test_unreadable_is_terminal_on_every_surface(no_runs, monkeypatch, surface, 
     if surface not in ("trends_paths", "changes_paths"):
         assert "could not be read (unreadable)" in body
         assert "Nothing older is shown in its place." in body
-    assert routes._hub_fallback_counts() == {}
 
 
 @pytest.mark.parametrize("trigger", ["manual", "auto", "save", "backup"])
@@ -469,7 +465,6 @@ def test_a_table_read_that_raises_is_terminal_never_a_500(no_runs, monkeypatch, 
             raise sqlite3.DatabaseError("database disk image is malformed")
     for name in ("part", "curated", "leaf_families", "path_rank"):
         monkeypatch.setattr(hub_status.LedgerTable, name, broken)
-    monkeypatch.setenv("HUB_FALLBACK_TRIPWIRE", "1")
     try:
         response = no_runs["client"].get(url, headers={"HX-Request": "true"})
     except Exception as exc:  # noqa: BLE001 -- any escape is the defect this pins
@@ -483,7 +478,6 @@ def test_a_table_read_that_raises_is_terminal_never_a_500(no_runs, monkeypatch, 
         assert "could not be read (unreadable)" in body
         assert "Nothing older is shown in its place." in body
         assert "load delay:" not in body and "data-eid=" not in body
-    assert routes._hub_fallback_counts() == {}
 
 
 @pytest.mark.parametrize("sync_on_open,expect", [(False, 0), (True, 1)])
@@ -502,3 +496,46 @@ def test_capture_keeps_the_testing_gate_for_a_chip_with_a_data_folder(no_runs, m
         ctx["hub_roots"] = [("D:/a/declared/archive", "extras")]
         assert routes._history().check_and_snapshot(ctx["path"], "manual", force=True)
     assert len(kicks) == expect
+
+# S10 C7: old -> new, live wait and count pins belong to mode selection.
+@pytest.mark.parametrize("url", [url for surface, url in SURFACES[:4]])
+@pytest.mark.parametrize("mode", ["building", "preparing"])
+def test_transient_modes_remain_successful(no_runs, monkeypatch, url, mode):
+    from quam_state_manager.core import hub_sync, ramcache
+    if mode == "building":
+        monkeypatch.setattr(hub_sync, "status", lambda directory: {"state": "building", "done": 0, "total": 1})
+    else:
+        from quam_state_manager.core import hub_versions, value_history
+        def warming(*args, **kwargs):
+            raise ramcache.Warming("test", "key", 0)
+        monkeypatch.setattr(value_history, "read", warming)
+        monkeypatch.setattr(hub_versions, "_version_token", warming)
+    response = no_runs["client"].get(url, headers={"HX-Request": "true"})
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("surface,url", [
+    ("trends", "/topology/trends?metrics=T1"),
+    ("sparklines", "/api/topology/sparklines/qA1"),
+])
+def test_a_ledger_becoming_unreadable_after_the_mode_check_is_terminal(sm, monkeypatch, surface, url):
+    from quam_state_manager.core import value_history
+    real = value_history.read
+    def unreadable(directory, targets, **kwargs):
+        if targets:
+            raise ValueError("unreadable value")
+        return real(directory, targets, **kwargs)
+    monkeypatch.setattr(value_history, "read", unreadable)
+    # S10 C3: old -> new, a table-time error ends unavailable without old rows.
+    response = sm["client"].get(url)
+    assert response.status_code == 200
+    assert 'data-vh-mode="unavailable"' in response.get_data(as_text=True)
+    assert "Nothing older is shown in its place." in response.get_data(as_text=True)
+
+
+def test_no_run_version_count_is_stable_under_app_context(no_runs):
+    with no_runs["app"].app_context():
+        # S10 C7: old -> new, count consistency survives removal of instrumentation.
+        count = routes._state_version_now(routes._active_ctx())["count"]
+        assert isinstance(count, int)
+        assert routes._state_version_now(routes._active_ctx())["count"] == count

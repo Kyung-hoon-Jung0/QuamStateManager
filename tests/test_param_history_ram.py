@@ -499,27 +499,7 @@ def test_trends_requests_give_the_wal_back_with_trends_readers_open(env):
         hub_index.close_readers()
 
 
-def test_a_give_back_inside_the_trends_token_never_moves_it_again(env):
-    """The truncate moves every OTHER connection's data_version (measured), so
-    a Trends token read on a connection of its own saw a later give-back (the
-    Changes page's) as a new commit: a whole-table rebuild plus a chip-version
-    bump for no change at all. The token now reads the ONE connection that
-    gives the WAL back."""
-    from quam_state_manager.core import chip_trends_ram as CTR
-    CTR.close_all()
-    try:
-        _snap(env, _state())
-        hm, live = env["hm"], env["live"]
-        db = hm._history_dir(live) / "index.sqlite"
-        t1 = CTR.token(hm, live)
-        _fat_commit(db)
-        t2 = CTR.token(hm, live)
-        assert t2 != t1                                        # the commit is seen
-        assert _wal_bytes(db) == 0                             # and given back inside the token
-        PHR.hist_token(hm, live)                               # the Changes page reads its token
-        assert CTR.token(hm, live) == t2                       # no phantom commit
-    finally:
-        CTR.close_all()
+# S10 C7: old -> new, retire a callerless snapshot reader.
 
 
 def _busy_give_back(db: Path):

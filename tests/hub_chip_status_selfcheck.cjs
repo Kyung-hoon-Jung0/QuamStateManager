@@ -1,3 +1,4 @@
+// S10 C7: old -> new, remove snapshot-only payloads and preserve ledger behavior.
 /* docs/283 (S8) jsdom selfcheck: what the shipped Chip Status / Param History
  * JS SAYS about a value read from the chip's change ledger.
  *
@@ -109,7 +110,7 @@ async function trends() {
   const w = csDom.window;
   w.document.body.insertAdjacentHTML('beforeend', '<div id="topo-trends"><div class="topo-trends-grid">'
     + '<div class="topo-trend-box" data-trend-metric="T1"><div id="topo-trend-0" class="topo-trend-chart"></div></div>'
-    + '</div><script id="topo-trends-snaps" type="application/json">{}</script></div>');
+    + '</div></div>');
   w.SnapTime = { axisValue: function () { return '2026-01-01T21:00:00'; },
                  label: function () { return 'test zone'; } };
   w.requirePlotly = function () { return w.Promise.resolve({}); };

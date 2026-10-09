@@ -87,16 +87,15 @@ const TOPO = {
   summary: {},
 };
 // the route's shape (GET /topology/metric-meta)
+// S10 C7: old -> new, metadata fixtures carry the ledger's proven writer.
 const META = {
-  ok: true, newest: '20260101_120000_000', snapshots: 4, updating: false,
+  ok: true, mode: 'ledger', newest: '20260101_120000_000', snapshots: 4, updating: false,
   q: {
-    T1: { q1: { ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 1, value: 2.0e-5 },
-          q2: { ts: '20251201_080000_000', run: null, trigger: 'manual', first: true, leaves: 1, value: 3.0e-5 },
-          q3: { ts: '20260101_110000_000', run: null, trigger: 'auto', first: false, leaves: 1, value: 1.4e-5 } },
+    T1: { q1: { ts: '20260101_120000_000', run: 31, provenance: 'run_proven', label: 'run #31', sub: '06 Ramsey', first: false, leaves: 1, value: 2.0e-5 },
+          q2: { ts: '20251201_080000_000', run: null, provenance: 'first_record', label: 'first recorded', sub: 'writer unknown', first: true, leaves: 1, value: 3.0e-5 },
+          q3: { ts: '20260101_110000_000', run: null, provenance: 'observed', label: 'observed', sub: 'writer unknown', first: false, leaves: 1, value: 1.4e-5 } },
   },
   p: { '2q:StandardRB:cz_SNZ': { 'q1-2': { load_id: 4085 } } },
-  snaps: { '20260101_120000_000': { run: 31, short: '06 Ramsey', why: null, uid: null },
-           '20260101_110000_000': { run: null, short: '', why: 'Modified externally', uid: null } },
 };
 
 let META_NOW = META;     // what the route answers now (Q1 moves it)
@@ -133,65 +132,57 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
   const NOW = Date.UTC(2026, 0, 2, 12, 0, 0);
 
   // ---- T: the pure rules
-  let d = MI.describe(META.q.T1.q1, { snaps: META.snaps, cur: 2.0e-5, now: NOW });
-  ok(/^Last measured: /.test(d.lines[0]) && d.lines.indexOf('Written by: run #31 \u00b7 06 Ramsey') >= 0,
-     'T1: a run-written change is "Last measured" + "Written by: run #31 \u00b7 06 Ramsey" -- ' + JSON.stringify(d.lines));
+  let d = MI.describe(META.q.T1.q1, { cur: 2.0e-5, now: NOW });
+  ok(/^Last changed: /.test(d.lines[0]) && d.lines.some(l => /Written by: run #31.*06 Ramsey/.test(l)),
+     'T1: a run-written change is "Last changed" + "Written by: run #31 \u00b7 06 Ramsey" -- ' + JSON.stringify(d.lines));
   ok(/^\d\d-\d\d \d\d:\d\d \u00b7 #31$/.test(d.tag) && !d.edited, 'T2: its tile line is an ABSOLUTE date + run -- ' + d.tag);
-  d = MI.describe(META.q.T1.q3, { snaps: META.snaps, cur: 1.4e-5, now: NOW });
-  ok(/^Last changed: /.test(d.lines[0]) && d.lines.indexOf('Written by: Modified externally') >= 0 && !/#/.test(d.tag),
+  d = MI.describe(META.q.T1.q3, { cur: 1.4e-5, now: NOW });
+  ok(/^Last changed: /.test(d.lines[0]) && d.lines.some(l => /Recorded: observed.*writer unknown/.test(l)) && !/#/.test(d.tag),
      'T3: no run -> "Last changed" + the why, never a run number -- ' + JSON.stringify(d));
-  d = MI.describe(META.q.T1.q2, { snaps: META.snaps, cur: 3.0e-5, now: NOW });
-  ok(/^Unchanged since/.test(d.lines[0]) && d.tag.charAt(0) === '\u2264', 'T4: a first row is "unchanged since history began", tile "\u2264date" -- ' + JSON.stringify(d));
-  d = MI.describe(META.q.T1.q1, { snaps: META.snaps, cur: 2.5e-5, now: NOW });
+  d = MI.describe(META.q.T1.q2, { cur: 3.0e-5, now: NOW });
+  ok(/^Unchanged since/.test(d.lines[0]) && d.tag.charAt(0) === '\u2264', 'T4: a first ledger row stays unchanged, tile "\u2264date" -- ' + JSON.stringify(d));
+  d = MI.describe(META.q.T1.q1, { cur: 2.5e-5, now: NOW });
   ok(d.edited && d.tag === 'not in history' && /^Not in this chip/.test(d.lines[0]),
      'T5: a value on screen that differs from history\u2019s says "not in history" -- ' + JSON.stringify(d));
-  d = MI.describe(META.q.T1.q1, { snaps: META.snaps, cur: 2.0e-5 * (1 + 1e-12), now: NOW });
+  d = MI.describe(META.q.T1.q1, { cur: 2.0e-5 * (1 + 1e-12), now: NOW });
   ok(!d.edited, 'T5b: a float-noise difference is not an edit');
-  // verifier D2 (2026-09-27): an entry the incomplete index cannot vouch for
-  // is "not dated" -- never "No change on record", never a date or a run
-  d = MI.describe({ incomplete: true, leaves: 0 }, { snaps: META.snaps, cur: 2.0e-5, now: NOW });
-  ok(d.tag === 'not indexed' && /^Not dated: /.test(d.lines[0]) && d.lines.length === 1 && !d.edited
-       && !/No change of this value/.test(d.lines.join(' ')),
-     'T5i: an incomplete-index entry says "not dated", nothing else -- ' + JSON.stringify(d));
+  // S10 C7: old -> new, incomplete snapshot-index dating has no ledger subject.
   // verifier P1 (2026-09-26): a subtree metric (readout fidelity from a
   // confusion matrix) has no one value; the server's matches_current flag is
   // what says the matrix on screen is one history never held
-  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 4,
-                    matches_current: false }, { snaps: META.snaps, cur: 0.9225, now: NOW });
+  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, provenance: 'run_proven', label: 'run #31', leaves: 4,
+                    matches_current: false }, { cur: 0.9225, now: NOW });
   ok(d.edited && d.tag === 'not in history',
      'T5c: a subtree whose leaves differ from history (matches_current=false) says "not in history" -- ' + JSON.stringify(d));
-  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 4,
-                    matches_current: true }, { snaps: META.snaps, cur: 0.9225, now: NOW });
-  ok(!d.edited && /^Last measured: /.test(d.lines[0]), 'T5d: ...and a matching subtree keeps its date');
+  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, provenance: 'run_proven', label: 'run #31', leaves: 4,
+                    matches_current: true }, { cur: 0.9225, now: NOW });
+  ok(!d.edited && /^Last changed: /.test(d.lines[0]), 'T5d: ...and a matching subtree keeps its date');
   // verifier P1: a value that APPEARED at a later snapshot (null before) is
   // its first record, never "unchanged since history began"
-  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 1,
-                    value: 2.0e-5, appeared: true }, { snaps: META.snaps, cur: 2.0e-5, now: NOW });
-  ok(/^First measured: /.test(d.lines[0]) && d.tag.charAt(0) !== '\u2264' && !/Unchanged/.test(d.lines.join(' ')),
+  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, provenance: 'run_proven', label: 'run #31', leaves: 1,
+                    value: 2.0e-5, appeared: true }, { cur: 2.0e-5, now: NOW });
+  ok(/^First recorded: /.test(d.lines[0]) && d.tag.charAt(0) !== '\u2264' && !/Unchanged/.test(d.lines.join(' ')),
      'T5e: an appeared value is "First measured", no \u2264 tag -- ' + JSON.stringify(d));
-  d = MI.describe({ ts: '20260101_110000_000', run: null, trigger: 'auto', first: false, leaves: 1,
-                    value: 1.4e-5, appeared: true }, { snaps: META.snaps, cur: 1.4e-5, now: NOW });
+  d = MI.describe({ ts: '20260101_110000_000', run: null, trigger: 'auto', first: false, provenance: 'observed', label: 'observed', leaves: 1,
+                    value: 1.4e-5, appeared: true }, { cur: 1.4e-5, now: NOW });
   ok(/^First recorded: /.test(d.lines[0]), 'T5f: ...and "First recorded" when no run wrote it');
-  // 2026-09-29 (lab-F-env: "an IRB point says its run is a flux short
-  // distortion experiment"): the snapshot's run only SAVED a state carrying
-  // the value. The server's writer check names the real writer, or says the
-  // run only captured it -- never "measured"/"Written by" that run.
-  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 1,
-                    value: 2.0e-5, writer: { captured: true } }, { snaps: META.snaps, cur: 2.0e-5, now: NOW });
+  // S10 C7: old -> new, saved and proven ledger runs replace writer guesses.
+  d = MI.describe({ ts: '20260101_120000_000', run: 31, first: false,
+                    value: 2.0e-5, provenance: 'run_saved', label: 'saved in #31', sub: 'writer not proven' },
+                  { cur: 2.0e-5, now: NOW });
   ok(/^Last changed: /.test(d.lines[0]) && !/Written by/.test(d.lines.join(' '))
-       && d.lines.some(function (l) { return /captured with run #31 · 06 Ramsey \(not the run that measured it\)/.test(l); })
-       && !/#31/.test(d.tag),
-     'W1: a captured-only value is "Last changed", names #31 only as the capturer, tile carries no run -- ' + JSON.stringify(d));
-  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 1,
-                    value: 2.0e-5, writer: { run: 12, short: '25 T1', uid: 'k:12' } },
-                  { snaps: META.snaps, cur: 2.0e-5, now: NOW });
-  ok(/^Last measured: /.test(d.lines[0]) && d.lines.indexOf('Written by: run #12 · 25 T1') >= 0
+       && /Recorded: saved in #31.*writer not proven/.test(d.lines.join(' ')),
+     'W1: a saved run is never named as writer');
+  d = MI.describe({ ts: '20260101_120000_000', run: 12, first: false,
+                    value: 2.0e-5, provenance: 'run_proven', label: 'run #12', sub: '25 T1' },
+                  { cur: 2.0e-5, now: NOW });
+  ok(/^Last changed: /.test(d.lines[0]) && /Written by: run #12.*25 T1/.test(d.lines.join(' '))
        && /#12$/.test(d.tag) && !/#31/.test(d.lines.join(' ') + d.tag),
-     'W2: a found writer replaces the capturer everywhere, tile included -- ' + JSON.stringify(d));
+     'W2: only the proven writer is named');
   d = MI.describe(null, {});
   ok(d.tag === '\u2014' && /^No change of this value/.test(d.lines[0]), 'T6: no entry -> the honest empty answer');
-  d = MI.describe(null, { updating: true });
-  ok(/updating/.test(d.lines[0]), 'T6b: ...or "updating" while the index is rebuilt');
+  d = MI.describe(null, { mode: 'preparing' });
+  ok(/Preparing/.test(d.lines[0]), 'T6b: ...or "updating" while the index is rebuilt');
   d = MI.describe({ load_id: 4085 }, {});
   ok(d.tag === '#4085' && /#4085/.test(d.lines.join(' ')), 'T7: the lab node\u2019s load_id is named when history has nothing -- ' + JSON.stringify(d));
   ok(MI.snapMs('20260101_000000') === Date.UTC(2026, 0, 1) && MI.snapMs('garbage') === null,
@@ -223,33 +214,33 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
      'D5: the summary line sits under the stat line, each tile gets its line -- ' + (line && line.textContent) + ' | ' + q1tag);
   // verifier follow-up: the panel line says "measured" only for a run-written
   // value; q3's value came from an auto snapshot, q2's predates history
-  ok(line && /1 measured in history/.test(line.textContent) && /1 recorded without a run/.test(line.textContent)
-       && /1 unchanged since history began/.test(line.textContent),
+  ok(line && /1 proven run write/.test(line.textContent) && /1 recorded change/.test(line.textContent)
+       && /1 first recorded, writer unknown/.test(line.textContent),
      'D5c: the panel line counts a run-less change as recorded, not measured -- ' + (line && line.textContent));
   const f01 = doc.querySelector('.topo-section[data-density-panel="f_01"]');
   ok(f01 && !f01.classList.contains('topo-meta-on'), 'D5b: only THAT panel turned on');
 
   // Q1 w7 final-QA P3: Take Snapshot moved Versions / Trends 18 -> 19 while
   // every meta line kept "history: 18 snapshots" until a hover after the TTL
-  ok(/history: 4 snapshots/.test(line.textContent), 'Q1a: (the line counts 4 snapshots) -- ' + line.textContent);
+  ok(/history: 4 recorded events/.test(line.textContent), 'Q1a: (the line counts 4 recorded events) -- ' + line.textContent);
   META_NOW = Object.assign({}, META, { snapshots: 5, newest: '20260101_130000_000' });
   const nQ1 = metaFetches(win);
   const statQ1 = t1.querySelector('.topo-metric-panel-stat');
   statQ1.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));   // a card up across the capture
   const cardQ1 = function () { return (doc.getElementById('cs-meta-pop') || {}).textContent || ''; };
-  ok(/history: 4 snapshots/.test(cardQ1()), 'Q1a2: (the panel card is up, saying 4 snapshots)');
+  ok(/history: 4 recorded events/.test(cardQ1()), 'Q1a2: (the panel card is up, saying 4 recorded events)');
   doc.body.dispatchEvent(new win.CustomEvent('stateHistoryChanged', { bubbles: true }));
   doc.body.dispatchEvent(new win.CustomEvent('stateHistoryChanged', { bubbles: true }));   // header + drift poll
   await tick(600);
-  ok(metaFetches(win) === nQ1 + 1 && /history: 5 snapshots/.test(line.textContent),
+  ok(metaFetches(win) === nQ1 + 1 && /history: 5 recorded events/.test(line.textContent),
      'Q1b: a capture re-fetches the metadata ONCE for a burst and repaints the line -- fetches +'
        + (metaFetches(win) - nQ1) + ' | ' + line.textContent);
-  ok(/history: 5 snapshots/.test(cardQ1()), 'Q1b2: ...and a card up at the time says the new count too -- ' + cardQ1().slice(-60));
+  ok(/history: 5 recorded events/.test(cardQ1()), 'Q1b2: ...and a card up at the time says the new count too -- ' + cardQ1().slice(-60));
   doc.querySelector('.topo-dashboard').dispatchEvent(new win.MouseEvent('mouseleave', { bubbles: false }));
   META_NOW = Object.assign({}, META, { snapshots: 6 });
   doc.dispatchEvent(new win.CustomEvent('sm:wc-moved', { detail: { seq: 'b', prev: 'a' } }));
   await tick(600);
-  ok(metaFetches(win) === nQ1 + 2 && /history: 6 snapshots/.test(line.textContent),
+  ok(metaFetches(win) === nQ1 + 2 && /history: 6 recorded events/.test(line.textContent),
      'Q1c: the working copy moving (sm:wc-moved) re-fetches too -- ' + line.textContent);
   META_NOW = META;
   {
@@ -282,7 +273,7 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
   const title0 = cell.getAttribute('title');
   cell.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
   const pop = doc.getElementById('cs-meta-pop');
-  ok(pop && /Last measured/.test(pop.textContent) && /q1/.test(pop.textContent) && !cell.hasAttribute('title'),
+  ok(pop && /Last changed/.test(pop.textContent) && /q1/.test(pop.textContent) && !cell.hasAttribute('title'),
      'D7a: hovering a tile shows the card (tile text + metadata) and parks the native tooltip -- ' + (pop && pop.textContent));
   doc.querySelector('.topo-dashboard').dispatchEvent(new win.MouseEvent('mouseleave', { bubbles: false }));
   ok(!doc.getElementById('cs-meta-pop') && cell.getAttribute('title') === title0,

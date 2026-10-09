@@ -772,14 +772,13 @@ document.addEventListener('toggle', function (evt) {
  * selected" / "View changes" / stage / restore / 409-gate all swap their result
  * into #state-history-detail — the LAST element on the page, below an up-to-40-entry
  * timeline — and htmx does NOT auto-scroll a swap without a show:/scroll: modifier,
- * so the user clicks and "nothing happens" (the canary). The Wiring-page history
- * drawer (#history-detail-area, a 42vh scroll box) has the same break. One delegated
- * handler scrolls a freshly-swapped, NON-EMPTY detail target into view. */
+ * so the user clicks and sees no detail. The delegated handler scrolls a
+ * freshly swapped, nonempty detail target into view. */
 document.addEventListener('htmx:afterSwap', function (evt) {
     var t = evt.detail && evt.detail.target;
     if (!t || !t.id || !t.innerHTML || t.innerHTML.trim() === '') return;
     if (t.id === 'state-history-detail') t.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    else if (t.id === 'history-detail-area') t.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // S10 C7: old -> new, only the active history pane needs scrolling.
 });
 
 /* Tray reflection (audit P1): after ANY swap that replaces #pending-tray — including
@@ -5632,7 +5631,7 @@ function _openDiffForSnapshots(tsA, tsB) {
 }
 
 /* State History page: pick exactly two snapshots and diff them. Reuses the
-   existing /api/history/compare endpoint; renders into the State History
+   active State History comparison; renders into the State History
    detail area. Idempotent init (the partial calls it on swap). */
 window.StateHistory = (function () {
     'use strict';

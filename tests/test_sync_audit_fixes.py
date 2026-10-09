@@ -61,7 +61,7 @@ class TestClientGuards:
     def test_p0_2_3_afterswap_scrolls_below_fold_detail(self):
         # the compare/detail result lands below the timeline → must scroll into view
         assert "state-history-detail" in _APP_JS and "scrollIntoView" in _APP_JS
-        assert "history-detail-area" in _APP_JS  # the wiring-page drawer sibling
+        # S10 C7: old -> new, the deleted drawer needs no scroll target pin.
 
     def test_p0_4_drift_event_bubbles_from_body(self):
         # a non-bubbling event on document never reaches the from:body listener

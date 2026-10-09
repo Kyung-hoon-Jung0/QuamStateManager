@@ -1233,10 +1233,7 @@ def leaf_series_on(conn: sqlite3.Connection, dot_paths, *,
     """The body of :meth:`HistoryManager.leaf_field_series_many` over a
     connection the CALLER owns (no freshness gate, no open/close).
 
-    Shared with ``core.chip_trends_ram``, which reads through one persistent
-    connection and runs the freshness gate once per history token instead of
-    once per request -- ONE implementation, so the cached series and the cold
-    one cannot drift apart.
+    S10 C7: old -> new, only the retained history reader owns this connection.
     """
     out: dict[str, list[tuple]] = {}
     newest = (conn.execute("SELECT MAX(ts) FROM leaf_snaps").fetchone()[0]
@@ -1287,12 +1284,6 @@ class HistoryManager:
         self._deferred_index_threads: list[threading.Thread] = []
         self._deferred_index_lock = threading.Lock()
         self._leaf_rebuild_lock = threading.Lock()
-        # RAM P1a: callbacks told (off the request path) that a chip's index
-        # just committed -- core/chip_trends_ram re-derives the Trends table
-        # there, so the first request after a capture finds it warm.
-        self._indexed_listeners: list = []
-        self._indexed_lock = threading.Lock()
-        self._indexed_pending: dict[str, bool] = {}
         self._leaf_rebuild_threads: dict[str, threading.Thread] = {}
         # index path -> monotonic time before which a FAILED background
         # repair is not retried (see _ensure_leaf_index_fresh).
@@ -1313,8 +1304,6 @@ class HistoryManager:
         self._hist_seq_names: dict[str, tuple[int, int]] = {}
         # history_seq_for's TTL memo of resolved chip dirs (see its docstring)
         self._hist_seq_dir_memo: dict[str, tuple[Path, float]] = {}
-        # snapshots_cached(): raw path -> (resolved list-cache key, when)
-        self._resolved_key_memo: dict[str, tuple[str, float]] = {}
         # docs/155 10h — the background sidecar verifier: last sweep start and
         # the live thread, per chip history dir. Bookkeeping only; nothing
         # waits on either outside the tests.
@@ -2686,7 +2675,6 @@ class HistoryManager:
                         # Summary caches must recompute with the new rows
                         # (_bump_chip_version takes the manager lock itself).
                         self._bump_chip_version(index_dir)
-                        self._fire_indexed(quam_state_path)
                     except Exception:
                         logger.warning(
                             "Deferred index of snapshot %s failed; "
@@ -2735,8 +2723,7 @@ class HistoryManager:
             # snapshots (its sources, its cut, whether another folder is
             # known): its cached list is stale now too
             self._invalidate_snapshot_lists_for(hist_dir)
-            if not defer_index:
-                self._fire_indexed(quam_state_path)
+            # S10 C7: old -> new, commits invalidate caches without an unused listener.
             # Invalidate param-history caches that depend on this chip dir.
             self._bump_chip_version(hist_dir)
 
@@ -4413,7 +4400,6 @@ class HistoryManager:
             try:
                 self._repair_leaf_index_if_needed(path)
                 healthy = self._leaf_repair_gate(path) is None
-                self._fire_indexed(path)
             except Exception:  # noqa: BLE001 - a daemon thread must not die loud
                 logger.warning("Background leaf rebuild failed", exc_info=True)
             finally:
@@ -5807,76 +5793,15 @@ class HistoryManager:
         self._hist_seq_dir_memo[key_src] = (hist_dir, time.time())
         return hist_dir
 
-    def snapshots_cached(self, quam_state_path: str | Path) -> list[SnapshotMeta]:
-        """:meth:`list_snapshots` without its per-call ``Path.resolve()``.
-
-        The resolved cache key is memoized per raw path for
-        ``_HIST_SEQ_RESOLVE_TTL_S`` (the precedent ``history_seq_for`` set: a
-        path's resolution changing under an open chip is a junction being
-        re-pointed, and a <=10 s-stale answer heals on the next tick). The
-        returned list IS the cache's object, so its identity changes exactly
-        when the cache entry is dropped and rebuilt -- which is what
-        ``core.chip_trends_ram`` keys on.
-        """
-        key_src = str(quam_state_path)
-        memo = self._resolved_key_memo.get(key_src)
-        now_t = time.time()
-        if memo is None or now_t - memo[1] >= _HIST_SEQ_RESOLVE_TTL_S:
-            try:
-                memo = (str(Path(quam_state_path).resolve()), now_t)
-            except OSError:
-                return self.list_snapshots(quam_state_path)
-            self._resolved_key_memo[key_src] = memo
-        with self._lock:
-            hit = self._snapshot_list_cache.get(memo[0])
-        return hit if hit is not None else self.list_snapshots(quam_state_path)
+    # S10 C7: old -> new, drop an accessor used only by the retired snapshot table.
 
     def add_captured_listener(self, fn) -> None:
         """Register fn(path, directory) after a successful snapshot capture."""
         self._captured_listeners.append(fn)
 
-    def add_indexed_listener(self, fn) -> None:
-        """Register ``fn(quam_state_path)``, called on a background thread
-        after a chip's index committed (a capture's rows, a leaf repair)."""
-        self._indexed_listeners.append(fn)
+    # S10 C7: old -> new, the snapshot index listener is retired.
 
-    def _fire_indexed(self, quam_state_path: str | Path) -> None:
-        """Run the indexed listeners for this chip on ONE daemon thread per
-        chip; a commit that lands while they run makes them run once more.
-        Never raises, never blocks the caller."""
-        if not self._indexed_listeners:
-            return
-        key = str(quam_state_path)
-        with self._indexed_lock:
-            if key in self._indexed_pending:
-                self._indexed_pending[key] = True
-                return
-            self._indexed_pending[key] = False
-
-        def run() -> None:
-            while True:
-                for fn in list(self._indexed_listeners):
-                    try:
-                        fn(key)
-                    except Exception:  # noqa: BLE001 - a listener must not kill the loop
-                        logger.debug("index listener failed", exc_info=True)
-                with self._indexed_lock:
-                    if self._indexed_pending.get(key):
-                        self._indexed_pending[key] = False
-                        continue
-                    self._indexed_pending.pop(key, None)
-                    return
-        try:
-            threading.Thread(target=run, daemon=True, name="index-listeners").start()
-        except Exception:  # noqa: BLE001
-            with self._indexed_lock:
-                self._indexed_pending.pop(key, None)
-
-    def leaf_index_updating_dir(self, hist_dir: Path) -> bool:
-        """:meth:`leaf_index_updating` for an already-resolved chip dir."""
-        key = str(Path(hist_dir) / "index.sqlite")
-        with self._leaf_rebuild_lock:
-            return key in self._leaf_rebuild_threads
+    # S10 C7: old -> new, drop an accessor used only by the retired snapshot table.
 
     def _enrich_run_fields(
         self, target_dir: Path, content_hash: str, entry: Any,

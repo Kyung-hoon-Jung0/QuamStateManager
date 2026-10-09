@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from quam_state_manager.core import chip_trends_ram as CTR
 from quam_state_manager.core import leaf_index as LI
 from quam_state_manager.core import param_history_ram as PHR
 
@@ -95,9 +94,8 @@ class _Threads:
 @pytest.fixture
 def fake_pool(monkeypatch):
     PHR.close_all()
-    CTR.close_all()
     # A deadlocking mutation cannot poison the next test's pool locks.
-    for module in (PHR, CTR):
+    for module in (PHR,):
         monkeypatch.setattr(module, "_CONNS", OrderedDict())
         monkeypatch.setattr(module, "_CONN_LOCK", threading.Lock())
     identities = {}
@@ -192,40 +190,7 @@ def test_read_error_and_eviction_do_not_deadlock(fake_pool, monkeypatch, tmp_pat
     assert str(path) not in PHR._CONNS
 
 
-@pytest.mark.parametrize("retirement", ["direct", "eviction", "shutdown"])
-def test_trends_retirement_waits_for_execute(fake_pool, monkeypatch, tmp_path, retirement):
-    _, made = fake_pool
-    hist = tmp_path / "history"
-    hist.mkdir()
-    (hist / "index.sqlite").touch()
-    ic = CTR._conn_for(hist)
-    c = made[0]
-    ic.lock = _EntryLock(c.retiring)
-    c.block = True
-    threads = _Threads()
-    threads.start(lambda: ic.run(lambda conn: conn.execute("SELECT 1").fetchone()))
-    try:
-        assert c.entered.wait(2)
-        if retirement == "direct":
-            retire = ic.close
-        elif retirement == "eviction":
-            monkeypatch.setattr(CTR, "_MAX_CONNS", 1)
-            other = tmp_path / "other"
-            other.mkdir()
-            (other / "index.sqlite").touch()
-            retire = lambda: CTR._conn_for(other)
-        else:
-            retire = CTR.close_all
-        threads.start(retire)
-        assert c.retiring.wait(2)
-        assert not c.closed_in_use and not c.closed.is_set(), "closed while executing"
-        acquired = CTR._CONN_LOCK.acquire(timeout=1)
-        assert acquired, "trends pool lock held during retirement"
-        CTR._CONN_LOCK.release()
-    finally:
-        c.release.set()
-        threads.join()
-    assert c.closed.is_set() and (7,) in threads.results
+# S10 C7: old -> new, retire a callerless snapshot reader.
 
 
 def test_warm_version_reuses_connection_and_replacement_changes_generation(tmp_path, monkeypatch):
@@ -326,7 +291,9 @@ def test_shared_connection_replacement_and_lru_stress(tmp_path):
             elif n == 1:
                 assert PHR.hist_token(hm, index)[0] == str(index.parent)
             else:
-                assert PHR.leaf_search(hm, index, "T1", limit=5) == expected
+                # S10 C7: old -> new, exercise the remaining token pool under churn.
+                token = PHR.data_version(index)
+                assert len(token) == 3 or token[0] in ("absent", "unreadable")
             counts[n] += 1
             time.sleep(0.001)
 
@@ -370,7 +337,7 @@ def test_shared_connection_replacement_and_lru_stress(tmp_path):
         assert counts == [80] * 4
         assert versions and any(overlap), "readers never overlapped index replacement"
         assert len(replacements) == 12 and len(set(replacements)) == 12
-        assert PHR.leaf_search(hm, index, "T1", limit=5) == expected
+        assert hm.leaf_search(None, "T1", limit=5) == expected
         with PHR._CONN_LOCK:
             assert len(PHR._CONNS) <= PHR._CONNS_MAX
     finally:

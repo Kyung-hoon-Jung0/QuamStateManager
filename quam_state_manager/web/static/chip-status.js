@@ -258,11 +258,8 @@ window.ChipStatus.metaInfo = (function () {
         if (typeof a !== 'number' || typeof b !== 'number') return true;   // nothing to compare
         return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
     }
-    /* entry = the server's fold (ts, run, first, value, gone, load_id);
-       ctx = {snaps, cur (the value on screen), stamp (a state updated_at ms),
-       updating, now}. Returns {tag, lines, edited}: `tag` is the in-tile
-       line, `lines` the hover text. Never a fabricated run number: a run is
-       named only when the snapshot or the lab's node recorded one. */
+    /* Ledger entry plus the current value and optional state stamp.
+       Returns the tile tag, hover lines and whether the value is edited. */
     /* docs/283: an entry read from the chip's change ledger names a run as
        the WRITER only when the run's own patch set exactly that value
        (provenance run_proven, e.run set); every other entry carries the
@@ -308,90 +305,27 @@ window.ChipStatus.metaInfo = (function () {
     }
     function describe(entry, ctx) {
         ctx = ctx || {};
-        var lines = [], tag = '', now = ctx.now;
+        var now = ctx.now;
         var e = entry || {};
         if (ctx.mode === 'building' || ctx.mode === 'preparing') {
             return {tag: 'history pending', lines: [ctx.message || 'Preparing the change history...'], edited: false};
         }
-        if (e.provenance) return _describeLedger(e, ctx, now);
-        var hasHist = !!e.ts;
-        var ms = hasHist ? snapMs(e.ts) : null;
-        var prov = (hasHist && ctx.snaps && ctx.snaps[e.ts]) || null;
-        var run = prov && prov.run != null ? prov.run : (e.run != null ? e.run : null);
-        var who = run != null ? ('run #' + run + (prov && prov.short ? ' \u00b7 ' + prov.short : ''))
-                : (prov && prov.why ? prov.why : (e.trigger ? e.trigger : ''));
-        // The server's writer check (routes._WriterCheck, 2026-09-29): the
-        // snapshot's run only SAVED a state carrying the value. Another run
-        // wrote it -> name that one; no run can be shown to -> say the run
-        // only captured it, and never call the value "measured" by it.
-        var w = e.writer || null, capOnly = false;
-        if (w && w.pending && run != null) {
-            who = 'checking which run wrote it\u2026';
-            run = null;
-            capOnly = true;
-        } else if (w && w.captured && run != null) {
-            who = 'captured with ' + who + ' (not the run that measured it)';
-            run = null;
-            capOnly = true;
-        } else if (w && w.run != null) {
-            run = w.run;
-            who = 'run #' + w.run + (w.short ? ' · ' + w.short : '');
+        // S10 C7: old -> new, metadata uses ledger provenance only.
+        if (!e.ts) {
+            var lines = [], tag = '\u2014';
+            if (typeof ctx.stamp === 'number' && isFinite(ctx.stamp)) {
+                lines.push('Measured (the recorded stamp): ' + when(ctx.stamp) + ' (' + ageLong(ctx.stamp, now) + ')');
+                tag = whenShort(ctx.stamp);
+            }
+            if (e.load_id != null) {
+                lines.push('Run recorded by the node: #' + e.load_id);
+                if (tag === '\u2014') tag = '#' + e.load_id;
+            }
+            if (!lines.length) lines.push(ctx.message || 'No change of this value is on record in this chip\u2019s change ledger.');
+            (ctx.notes || []).forEach(function (note) { lines.push(note); });
+            return {tag: tag, lines: lines, edited: false};
         }
-        // the server compares EVERY leaf the panel reads (a whole confusion
-        // matrix, a 2Q RB block) with its newest history value; the value
-        // check also compares a single-leaf metric with the number on screen
-        // NOW, which may be newer than the metadata fetch
-        var edited = hasHist && (e.matches_current === false
-            || (!e.gone && !_same(e.value, ctx.cur)));
-        if (edited) {
-            // the number on screen is not the one history holds: whatever
-            // history says is about an EARLIER value, and is labelled so
-            lines.push('Not in this chip’s history yet — edited, or written after the newest snapshot.');
-            lines.push('History’s newest change of it: ' + when(ms) + ' (' + ageLong(ms, now) + ')'
-                + (who ? ' — ' + who : ''));
-            tag = 'not in history';
-        } else if (hasHist && e.gone) {
-            lines.push('Removed at ' + when(ms) + ' (' + ageLong(ms, now) + ')' + (who ? ' \u2014 ' + who : ''));
-            tag = 'removed';
-        } else if (hasHist && e.first) {
-            lines.push('Unchanged since this chip\u2019s history began: ' + when(ms) + ' (' + ageLong(ms, now) + ')');
-            if (who) lines.push('First recorded by: ' + who);
-            lines.push('No newer measurement on record \u2014 the value itself may be older.');
-            tag = '\u2264' + whenShort(ms) + (run != null ? ' \u00b7 #' + run : '');
-        } else if (hasHist) {
-            // "measured" only when a run wrote it; an edit or a manual
-            // snapshot CHANGED it, and the next line says which
-            // a value that first APPEARED at this snapshot (null or absent
-            // before) was written then: that is its first record, not "since
-            // history began"
-            lines.push((e.appeared ? (run != null ? 'First measured: ' : 'First recorded: ')
-                                   : (run != null ? 'Last measured: ' : 'Last changed: '))
-                + when(ms) + ' (' + ageLong(ms, now) + ')');
-            if (who) lines.push(capOnly ? 'Not written by a run on record \u2014 ' + who : 'Written by: ' + who);
-            tag = whenShort(ms) + (run != null ? ' \u00b7 #' + run : '');
-        }
-        if (hasHist) lines.push('Snapshot: ' + e.ts);
-        if (typeof ctx.stamp === 'number' && isFinite(ctx.stamp)) {
-            lines.push('Measured (the lab\u2019s own stamp): ' + when(ctx.stamp) + ' (' + ageLong(ctx.stamp, now) + ')');
-            if (!tag) tag = whenShort(ctx.stamp);
-        }
-        if (e.load_id != null) {
-            lines.push('Run recorded by the lab\u2019s node: #' + e.load_id);
-            if (!tag) tag = '#' + e.load_id;
-        }
-        if (e.incomplete && !hasHist) {
-            // verifier D2: the chip is larger than the change-point index
-            // covers; its rows for this value are not facts, so no date,
-            // no run and no "no change on record" is read from them
-            lines.push('Not dated: this chip’s change-point index is incomplete (the chip is larger than it covers), so when this value last changed is not known.');
-            if (!tag) tag = 'not indexed';
-        }
-        if (!lines.length) {
-            lines.push(ctx.updating ? 'History index is updating \u2014 ask again in a moment.'
-                                    : 'No change of this value is on record in this chip\u2019s history.');
-            tag = '\u2014';
-        }
-        return { tag: tag, lines: lines, edited: edited };
+        return _describeLedger(e, ctx, now);
     }
     return { init: init, set: set, isOn: isOn, applyAll: applyAll, applyPanel: applyPanel,
              toggleHtml: toggleHtml, setHook: function (fn) { _hook = fn; },
@@ -4264,7 +4198,7 @@ window.ChipStatus.mount = function (opts) {
         // a value with a SUBTREE source (a matrix, a nested RB block) has no
         // one history value to compare with: the server sends none
         return window.ChipStatus.metaInfo.describe(entry, {
-            snaps: d.snaps || {}, cur: cur, stamp: stamp, updating: !!d.updating,
+            cur: cur, stamp: stamp, updating: !!d.updating,
             mode: d.mode, message: d.message, notes: d.notes || [] });
     }
     // one panel's summary: newest / oldest change, how many values have one
@@ -4288,34 +4222,26 @@ window.ChipStatus.mount = function (opts) {
             // RECORDED a value, which is not a measurement)
             if (e.first) first++;
             else {
-                var pv0 = (d.snaps || {})[e.ts] || {};
-                // a run that only CAPTURED the value did not measure it
-                var capOnly = !!(e.writer && e.writer.captured);
-                if (!capOnly && (pv0.run != null ? pv0.run : e.run) != null) changed++; else recorded++;
+                if (e.provenance === 'run_proven') changed++; else recorded++;
             }
-            if (!newest || e.ts > newest.ts) newest = { ts: e.ts, id: id, run: e.run, writer: e.writer || null };
+            if (!newest || e.ts > newest.ts) newest = { ts: e.ts, id: id, run: e.run, label: e.label };
             if (!oldest || e.ts < oldest.ts) oldest = { ts: e.ts, id: id };
         });
         var parts = [];
         if (newest) {
-            var pv = (d.snaps || {})[newest.ts] || {};
-            var run = pv.run != null ? pv.run : newest.run;
-            var wr = newest.writer, rtxt = '';
-            if (wr && wr.run != null) rtxt = ', run #' + wr.run + (wr.short ? ' ' + wr.short : '');
-            else if (wr && wr.captured && run != null) rtxt = ', captured with run #' + run + ' (not the run that measured it)';
-            else if (run != null) rtxt = ', run #' + run + (pv.short ? ' ' + pv.short : '');
+            var rtxt = newest.label ? ', ' + newest.label : '';
             parts.push('newest change ' + MI.when(MI.snapMs(newest.ts)) + ' (' + newest.id + rtxt + ')');
             if (oldest && oldest.ts !== newest.ts) parts.push('oldest ' + MI.when(MI.snapMs(oldest.ts)) + ' (' + oldest.id + ')');
         }
         var cnt = [];
-        if (changed) cnt.push(changed + (d.mode === 'ledger' ? ' proven run write' + (changed === 1 ? '' : 's') : ' measured in history'));
-        if (recorded) cnt.push(recorded + (d.mode === 'ledger' ? ' recorded change' + (recorded === 1 ? '' : 's') : ' recorded without a run'));
-        if (first) cnt.push(first + (d.mode === 'ledger' ? ' first recorded, writer unknown' : ' unchanged since history began'));
+        if (changed) cnt.push(changed + (' proven run write' + (changed === 1 ? '' : 's')));
+        if (recorded) cnt.push(recorded + (' recorded change' + (recorded === 1 ? '' : 's')));
+        if (first) cnt.push(first + ' first recorded, writer unknown');
         if (none) cnt.push(none + ' not in history');
         if (edited) cnt.push(edited + ' not in history yet');
         if (unk) cnt.push(unk + ' not dated (index incomplete)');
         if (cnt.length) parts.push(cnt.join(', ') + ' (of ' + total + ')');
-        if (d.snapshots) parts.push('history: ' + d.snapshots + (d.mode === 'ledger' ? ' recorded events' : ' snapshot' + (d.snapshots === 1 ? '' : 's'))
+        if (d.snapshots) parts.push('history: ' + d.snapshots + ' recorded events'
             + (d.newest ? ', newest ' + MI.when(MI.snapMs(d.newest)) : ''));
         else parts.push('no history snapshots for this chip yet');
         if (d.updating) parts.push('index updating');
@@ -7264,19 +7190,8 @@ window.ChipTrends = (function () {
         manual, or from somewhere outside -- just say modified externally.
         That way a person can go look at the actual measurement."
 
-       The server ships ONE map keyed by snapshot id (see _topo_trends.html);
-       the per-point strings are built HERE, in browser memory, so the payload
-       stays O(snapshots) instead of O(points). No map, or a map that will not
-       parse, degrades to exactly the pre-2026-09-09 hover: the chart is the
-       thing that must not break. */
-    function _snaps() {
-        var el = document.getElementById('topo-trends-snaps');
-        if (!el) return null;
-        try {
-            var m = JSON.parse(el.textContent);
-            return (m && typeof m === 'object') ? m : null;
-        } catch (e) { return null; }
-    }
+       Each ledger point carries its recorded writer and dataset uid. */
+    // S10 C7: old -> new, ledger points carry their own provenance.
     /* Plotly renders a hovertemplate as HTML, and both halves of this line come
        from a state file / a lab's own node names. */
     function _esc(s) {
@@ -7289,30 +7204,11 @@ window.ChipTrends = (function () {
        freshly-generated one) shows only why, which is the true answer. */
     function _provLine(info) {
         if (!info) return '';
-        if (info.provenance) {
-            return _esc(info.label) + (info.sub ? '<br>' + _esc(info.sub) : '')
-                 + (info.flag_text && info.flag_text.length ? '<br>' + _esc(info.flag_text.join('; ')) : '');
-        }
-        if (info.run) {
-            return '#' + _esc(info.run) + (info.short ? ' · ' + _esc(info.short) : '');
-        }
-        return info.why ? _esc(info.why) : '';
+        return _esc(info.label) + (info.sub ? '<br>' + _esc(info.sub) : '')
+             + (info.flag_text && info.flag_text.length ? '<br>' + _esc(info.flag_text.join('; ')) : '');
     }
     /* S10 C5: the captured-only hover line (the snapshot writer check's "captured with
        run #N") -> gone; a ledger point says "saved in #N, writer not proven" itself. */
-    /* The writer was found among the runs BEFORE the snapshot's own run;
-       name the capturer too, so the snapshot id below still makes sense. */
-    function _capturerLine(info) {
-        if (!info || !info.run) return '';
-        return '<br><i style="opacity:.7">captured later with #' + _esc(info.run)
-             + (info.short ? ' · ' + _esc(info.short) : '') + '</i>';
-    }
-    /* QA F-09: a run whose folder is not under a loaded Datasets folder (moved,
-       copied, never added) keeps its number and loses the click -- and the
-       hover now SAYS so; it used to show "#142 · 11 Rabi" with no hint and a
-       click that silently did nothing. A constant, so nothing to escape, and
-       it never says "click": it is not an offer. A no-run point gets no hint
-       (its provenance line already carries the why). */
     /* docs/301 F10: the hover's value in the chart's unit -- "33.883 us" (micro
        sign) for a T1, as the tiles and the axis title say it. Plotly's %{y}
        borrows the axis' SI exponent format and dropped the unit ("33.883u").
@@ -7380,14 +7276,10 @@ window.ChipTrends = (function () {
             }
         } catch (e) { /* a click must never break the chart */ }
     }
-    /* The dataset a point opens: its OWN writer's uid (customdata[3], set
-       per point by the trace builder -- null for a captured-only point), and
-       only for an older 3-slot customdata the snapshot map's. */
+    /* The dataset uid is carried by the point. */
     function _pointUid(cd, sid) {
         if (cd && typeof cd !== 'string' && cd.length > 3) return cd[3] || null;
-        var map = _snaps();
-        var info = map && sid && map[String(sid)];
-        return (info && info.uid) || null;
+        return null;
     }
     function _bindPointClicks(host) {
         if (!host || typeof host.on !== 'function') return;
@@ -7477,8 +7369,7 @@ window.ChipTrends = (function () {
         // swap. Re-applying it here is what makes the badge stick.
         _applyCols(_storedCols());
         if (!window._plotlyRender || !charts) return;
-        // One map for the whole page (see _snaps): provenance is per snapshot.
-        var snaps = _snaps();
+        // S10 C7: old -> new, each ledger point carries its own provenance.
         // One budget per render pass, spent by the first genuinely dense chart
         // -- minus any GL chart a patch KEPT on the page (RAM P2).
         _glBudget = 1;
@@ -7599,7 +7490,6 @@ window.ChipTrends = (function () {
                             return held[p[0]] ? 'circle-open' : 'circle'; }),
                     };
                 }
-                if (!snaps && !held) return tr;      // no map => no provenance, no click
                 // [snapshot id, provenance line, click hint] — joined in
                 // BROWSER memory, so the wire still carries 2-tuples.
                 tr.customdata = s.points.map(function (p) {
@@ -7610,18 +7500,16 @@ window.ChipTrends = (function () {
                         return ['', 'unchanged since '
                                 + _esc(since ? String(since).replace('T', ' ') : held[p[0]]), '', null];
                     }
-                    var info = snaps && snaps[String(p[0])];
                     // The point's own words (docs/283: the ledger's attr per
                     // point -- a run named as the writer only on its own patch).
                     // S10 C5: the snapshot writer check's captured / pending arms -> gone.
                     var ov = s.attr && s.attr[String(p[0])];
                     if (ov) {
-                        return [p[0], _provLine(ov) + _capturerLine(info),
+                        return [p[0], _provLine(ov),
                                 _hintLine(ov), ov.uid || null,
                                 (!ov.uid && ov.saved_uid) || null];
                     }
-                    return [p[0], _provLine(info), _hintLine(info),
-                            (info && info.uid) || null];
+                    return [p[0], '', '', null];
                 });
                 tr.hovertemplate =
                     '%{fullData.name}<br>%{x}<br>%{text}'
@@ -7701,11 +7589,11 @@ window.ChipTrends = (function () {
                     // Only a drawn host is a Plotly EventEmitter, so binding
                     // waits for the render the same way the Param History
                     // drawer's does.
-                    if (snaps) _bindPointClicks(host);
+                    _bindPointClicks(host);
                     setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);
                 });
             } else {
-                if (snaps) _bindPointClicks(host);
+                _bindPointClicks(host);
                 setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);
             }
         });

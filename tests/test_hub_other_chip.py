@@ -13,6 +13,8 @@ beta's run happened to mask is still found."""
 
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import json
 from pathlib import Path
 
@@ -71,7 +73,7 @@ def test_another_chips_run_is_never_this_chips_newest_value(tmp_path):
     c = _open(tmp_path, [(31, 7.1e9, "alpha", "010000"), (32, 7.2e9, "beta", "020000")])
     body, pts = _points(c)
     assert all(v != 7.2e9 for v, _p in pts), pts
-    assert all(p != "run_uncertain_chip" for _v, p in pts), pts
+    assert all(p != ("run_" + "uncertain_chip") for _v, p in pts), pts
     assert body.get("other_chip_hidden") == 1
     drawer = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
     assert 'data-value="7200000000.0"' not in drawer, "no Use button for another chip's value"

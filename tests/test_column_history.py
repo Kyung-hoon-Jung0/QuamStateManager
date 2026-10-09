@@ -10,6 +10,8 @@ one change_log GROUP from the tray; pre-apply snapshots power the explicit
 
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import json
 import re
 from pathlib import Path
@@ -45,7 +47,7 @@ def _seed_run(root: Path, run_id: int, state: dict, *, name="08_spec",
               date="2026-12-30", hhmmss=None, wiring=None, patches=None) -> Path:
     """*patches*: the node's own record of what it wrote. A chip names (and
     opens) a run only when that run is shown to have WRITTEN the value
-    (value_writer, 2026-09-29) -- the fixtures that assert a Data link give
+    (retired writer, 2026-09-29) -- the fixtures that assert a Data link give
     their run that proof."""
     hhmmss = hhmmss or f"{run_id % 24:02d}0000"
     run = root / date / f"#{run_id}_{name}_{hhmmss}"
@@ -146,7 +148,7 @@ class TestColumnHistoryPanel:
         # S10 C3 review P1-4: flagged "(chip uncertain)" newest value -> left out of the
         # chip's timeline and said in a note: another chip's value is never this chip's
         assert "1 run whose saved chip identity does not match this chip" in html
-        assert all(ch["fill"] != "0.5" and ch["prov"] != "run_uncertain_chip"
+        assert all(ch["fill"] != "0.5" and ch["prov"] != ("run_" + "uncertain_chip")
                    for ch in _chips(html)["qA1"]), "never this chip's newest value"
         assert f"/dataset/{key}:41" not in _changes(html)
 

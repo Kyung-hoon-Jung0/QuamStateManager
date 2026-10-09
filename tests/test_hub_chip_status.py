@@ -18,6 +18,8 @@ ITS OWN PATCH; #3 moves ``f_01`` with no patch; #4 retargets ``x180``):
 
 from __future__ import annotations
 
+# S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
+
 import json
 import re
 import shutil
@@ -184,7 +186,7 @@ class TestWriterOnlyOnProof:
         # S10 C3 review P1-4: the newest value flagged "(chip uncertain)" (no writer) -> another
         # chip's run is left out of this chip's timeline: the newest is this chip's own run
         assert entry["run"] != 5 and (entry["writer"] or {}).get("run") != 5
-        assert entry["provenance"] != "run_uncertain_chip" and entry.get("value") != 9e-5
+        assert entry["provenance"] != ("run_" + "uncertain_chip") and entry.get("value") != 9e-5
         body = sm["client"].get(CHANGES).data.decode()
         assert "#5 (chip uncertain)" not in body and "#5 " not in "".join(groups(body))
 

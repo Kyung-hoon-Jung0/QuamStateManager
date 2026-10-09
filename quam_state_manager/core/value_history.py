@@ -567,8 +567,7 @@ def provenance(ev: dict, proven: bool, held: bool = False, start: bool = False) 
         return "held_before_write"
     kind = ev.get("kind")
     if kind == "run":
-        if ev.get("flags", 0) & CHIP_UNCERTAIN:
-            return "run_uncertain_chip"
+        # S10 C7: old -> new, folder lanes exclude foreign runs before provenance.
         if proven:
             return "run_proven"
         if ev.get("base_hash") is None:

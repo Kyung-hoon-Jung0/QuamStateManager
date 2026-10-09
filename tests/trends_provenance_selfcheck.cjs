@@ -19,8 +19,7 @@
  *  - a click on a point with NO uid does nothing at all;
  *  - the hover line names "#<run> · <short>" for a run and the why-sentence
  *    otherwise, with the click hint only where a uid exists;
- *  - no snapshot map (absent or unparseable) => the pre-2026-09-09 behaviour,
- *    byte-for-byte: 2-tuple customdata, no click binding.
+ *  - a point without ledger attributes names no writer and opens no dataset.
  *
  * Run: node tests/trends_provenance_selfcheck.cjs   (driven by
  *      tests/test_trends_provenance.py)
@@ -55,21 +54,17 @@ const CHARTS = [{
                                      ['20260901_010100', 6.1e9],
                                      ['20260901_010200', 6.2e9]] }],
 }];
-const SNAPS = {
-  '20260901_010000': { run: null, node: '', short: '',
-                       why: 'Modified externally', uid: null },
-  '20260901_010100': { run: 34, node: '03_resonator_spectroscopy_single',
-                       short: '03 Res spec', why: null, uid: 'a1b2c3d4:34' },
-  '20260901_010200': { run: 99, node: '06_ramsey', short: '06 Ramsey',
-                       why: null, uid: null },
+// S10 C7: old -> new, each drawn point carries ledger provenance and its uid.
+CHARTS[0].series[0].attr = {
+  '20260901_010000': { provenance: 'observed', label: 'observed', sub: 'writer unknown' },
+  '20260901_010100': { provenance: 'run_proven', run: 34, label: 'run #34', sub: '03 Res spec', uid: 'a1b2c3d4:34' },
+  '20260901_010200': { provenance: 'run_proven', run: 99, label: 'run #99', sub: '06 Ramsey' },
 };
 
 /* One grid, one badge row, one chart host — the shape _wiring.html +
-   _topo_trends.html actually render. `snapsText` null omits the map element
-   entirely (the degrade case). */
+   _topo_trends.html actually render. ledger attributes carry point provenance. */
 function makeWorld(opts) {
   opts = opts || {};
-  const snapsText = ('snapsText' in opts) ? opts.snapsText : JSON.stringify(SNAPS);
   const html =
       '<!DOCTYPE html><html><body>'
     + '<div class="topo-section" data-topo-section="trends">'
@@ -85,8 +80,6 @@ function makeWorld(opts) {
     + '<div class="topo-trend-chart" id="topo-trend-0"></div></div>'
     + '</div>'
     + '<script type="application/json" id="topo-trends-data"></script>'
-    + (snapsText === null ? ''
-       : '<script type="application/json" id="topo-trends-snaps"></script>')
     + '</div></div>'
     + '<div id="table-pane"></div>'
     + '</body></html>';
@@ -96,9 +89,6 @@ function makeWorld(opts) {
   const win = dom.window;
   win.document.getElementById('topo-trends-data').textContent =
       JSON.stringify(opts.charts || CHARTS);
-  if (snapsText !== null) {
-    win.document.getElementById('topo-trends-snaps').textContent = snapsText;
-  }
   win._htmxCalls = [];
   win.htmx = { ajax: function () {
     win._htmxCalls.push(Array.prototype.slice.call(arguments));
@@ -261,17 +251,17 @@ world.push((function () {
   render(win);
   return drawn(win).then(function () {
     const tr = host(win).data[0];
-    ok(tr.customdata.length === 3 && tr.customdata[0].length === 4,
+    ok(tr.customdata.length === 3 && tr.customdata[0].length === 5,
        '3a customdata is joined in the browser: [id, provenance, hint, uid]');
-    ok(tr.customdata[0][1] === 'Modified externally',
+    ok(/observed.*writer unknown/.test(tr.customdata[0][1]),
        '3b a no-run point states WHY, in the customer\'s own words');
     ok(tr.customdata[0][2] === '',
        '3c ...and offers no click hint');
-    ok(tr.customdata[1][1] === '#34 · 03 Res spec',
+    ok(/run #34.*03 Res spec/.test(tr.customdata[1][1]),
        '3d a run point names the run and the NUMBERED node name');
     ok(/click to open the dataset/.test(tr.customdata[1][2]),
        '3e ...with the click hint, because it has a uid');
-    ok(tr.customdata[2][1] === '#99 · 06 Ramsey',
+    ok(/run #99.*06 Ramsey/.test(tr.customdata[2][1]),
        '3f a run whose folder is not a dataset root keeps its number...');
     // QA F-09: it used to lose the click SILENTLY -- no hint, no reason, and a
     // click that did nothing. The hover now says why, and never offers a click.
@@ -354,24 +344,17 @@ world.push((function () {
   });
 })());
 
-// ── 5) no map => exactly the old behaviour ─────────────────────────────────
+// S10 C7: old -> new, missing ledger attributes keep points inert without guessing.
 world.push((function () {
-  const none = makeWorld({ snapsText: null });
-  render(none);
-  const bad = makeWorld({ snapsText: '{not json' });
-  render(bad);
-  return drawn(none).then(function () { return drawn(bad); }).then(function () {
-    [['5a', none, 'no map element'], ['5b', bad, 'an unparseable map']].forEach(
-      function (row) {
-        const tag = row[0], win = row[1], what = row[2];
-        const tr = host(win).data[0];
-        ok(typeof tr.customdata[0] === 'string',
-           tag + ' with ' + what + ' the customdata stays the bare snapshot id');
-        ok(!/customdata\[/.test(tr.hovertemplate),
-           tag + "' the hovertemplate stays the pre-2026-09-09 one");
-        ok(((host(win).__handlers || {}).plotly_click || []).length === 0,
-           tag + '" nothing is clickable');
-      });
+  const charts = JSON.parse(JSON.stringify(CHARTS));
+  delete charts[0].series[0].attr;
+  const win = makeWorld({ charts: charts });
+  render(win);
+  return bound(win).then(function () {
+    const tr = host(win).data[0];
+    ok(tr.customdata.every(p => p[1] === '' && p[3] === null), '5a no attributes invent no writer or dataset');
+    fire(win, 'plotly_click', {points: [{customdata: tr.customdata[1]}]});
+    ok(win._htmxCalls.length === 0, '5b missing attributes leave the point inert');
   });
 })());
 
@@ -510,7 +493,7 @@ world.push((function () {
 })());
 
 // S10 C5: section 8 (the Param History drawer's snapshot writer check: unchanged /
-// captured / found writer) deleted -- its whole subject, the drawer's _WriterCheck arm,
+// captured / found writer) deleted -- its whole subject, the drawer's retired writer check arm,
 // is gone; the drawer's ledger points (label / sub / proven run) are pinned in
 // tests/test_hub_chip_status.py and tests/test_trends_provenance.py.
 
