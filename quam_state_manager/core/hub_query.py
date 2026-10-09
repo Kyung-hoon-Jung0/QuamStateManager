@@ -322,6 +322,11 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
                 rows = sorted(lane.seams[eid].values(), key=lambda r: r["path"])
                 events[eid]["changes"] = [_change(r) for r in rows]
                 events[eid]["n_changes"] = len(rows)
+        if foreign != "label":
+            # P0-1: a run's value the chip never kept is listed apart, and the
+            # run that still found the old value did not change it. A LISTING
+            # of saved states (Versions, State History) keeps every row.
+            witness_rows(conn, view, [events[eid] for eid in selected])
         next_cursor = _encode({"v": 1, "ledger": index.ledger_id, "zone": index.zone,
                                "filters": signature, "high": high,
                                "last": index.keys[selected[-1]]}) if more else None
@@ -449,13 +454,27 @@ def _target_names(text):
     return [str(v) for v in value] if isinstance(value, list) else []
 
 
-def _series(conn, index, path, limit=None, before=None):
+def _series(conn, index, path, limit=None, before=None, *, witness=True):
+    """``(event, old, new, op, proven)`` of holder *path*, oldest first.
+
+    P0-1 (``hub_witness``): a run change the chip never kept (contradicted,
+    with its witness's restoring row) is left out together with that row, so
+    the value stays the old one across both; every other judged run change
+    carries its verdict on the event dict (``_witness``). ``witness=False``
+    reads what each event SAVED (Column History's By run)."""
     if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 0):
         raise ValueError("series limit must be a nonnegative integer")
     pid = index.paths.get(path)
     if pid is None:
         return []
     ids = index.path_postings[pid]
+    verdicts = None
+    if witness:
+        from quam_state_manager.core import hub_witness
+        verdicts = hub_witness.of(conn, index)
+        drop = verdicts.drop(pid)
+        if drop:
+            ids = [eid for eid in ids if eid not in drop]
     if before is not None:
         # eid is insertion identity; the boundary is the event's canonical order.
         ids = [eid for eid in ids if index.positions[eid] <= before]
@@ -491,10 +510,73 @@ def _series(conn, index, path, limit=None, before=None):
                + ",".join("?" for _ in chunk) + ")")
         for row in conn.execute(sql, [pid, *chunk]):
             changes[row["eid"]] = row
+    if verdicts is not None:
+        for eid in ids:
+            code = verdicts.code(eid, pid)
+            if code is not None and eid in events:
+                events[eid]["_witness"] = code      # this call's own dict
     return [(events[eid], value(changes[eid]["old_num"], changes[eid]["old_txt"]),
              value(changes[eid]["num"], changes[eid]["txt"]),
              _OP_NAMES[changes[eid]["op"]], bool(changes[eid]["proven"])) for eid in ids
             if eid in changes]
+
+
+def not_kept(conn, index, path, rows=None):
+    """P0-1: the run changes of holder *path* the chip never kept (the rows
+    :func:`_series` leaves out), oldest first, as ``(event, old, new, op,
+    proven, witness event)`` -- the witness being the event that read the chip
+    and still found the old value (its own restoring row is the pair's other
+    half). *rows*: the holder's saved rows when the caller has read them
+    (``_series(..., witness=False)``)."""
+    from quam_state_manager.core import hub_witness
+    pid = index.paths.get(path)
+    if pid is None:
+        return []
+    pairs = hub_witness.of(conn, index).pairs.get(pid)
+    if not pairs:
+        return []
+    rows = _series(conn, index, path, witness=False) if rows is None else rows
+    rows = {r[0]["eid"]: r for r in rows if r[0]["eid"] in pairs}
+    wit = _events(conn, list(pairs.values()), index)
+    return [rows[eid] + (wit.get(pairs[eid]),) for eid in sorted(rows, key=index.positions.__getitem__)]
+
+
+def witness_rows(conn, index, events):
+    """P0-1 for a listing of events (the timeline): each event's ``changes``
+    split by the witness verdicts -- a contradicted run change moves to the
+    event's ``not_kept`` (with ``witness``: the event that read the chip and
+    still found the old value), and the witness's own restoring row is left
+    out (that event did not change the chip). Rows are matched to holders by
+    their path in this index."""
+    from quam_state_manager.core import hub_witness
+    v = hub_witness.of(conn, index)
+    if not v.pairs:
+        return
+    named: dict = {}
+    for ev in events:
+        changes = ev.get("changes")
+        if not changes:
+            continue
+        eid = ev["eid"]
+        kept, out = [], []
+        for c in changes:
+            pid = index.paths.get(c["path"])
+            pairs = v.pairs.get(pid) if pid is not None else None
+            if not pairs:
+                kept.append(c)
+                continue
+            if eid in pairs:
+                out.append((c, pairs[eid]))
+            elif v.restores(eid, pid) is None:
+                kept.append(c)
+        if len(kept) == len(changes):
+            continue
+        ev["changes"] = kept
+        if out:
+            need = [w for _c, w in out if w not in named]
+            named.update(_events(conn, need, index))
+            ev["not_kept"] = [dict(c, witness=hub_witness.describe(index, named.get(w), w))
+                              for c, w in out]
 
 
 def series(store, path, limit=None):

@@ -11522,6 +11522,61 @@ def _sides_in_one_era(sides: list) -> list:
     return [orig if m[0] is p[0] else m for orig, p, m in zip(sides, pairs, moved)]
 
 
+def _vh_touches(edited: set, tgt: dict) -> bool:
+    """Whether an unapplied edit of one of *edited* (dot-paths) can change
+    the value *tgt* reads: its path, its holder, a pointer hop on the way, or
+    an ancestor / descendant of one."""
+    names = {tgt.get("path"), tgt.get("holder_path")}
+    for hop in tgt.get("via") or ():
+        names.update((hop.get("from_path"), hop.get("to_path")))
+    names.discard(None)
+    for e in edited:
+        for n in names:
+            if e == n or e.startswith(n + ".") or n.startswith(e + "."):
+                return True
+    return False
+
+
+def _vh_live(ctx: dict, targets: dict) -> dict:
+    """P0-1: ``{key: the value the chip holds now}`` for the keys whose live
+    value SM knows without reading the live files -- the working copy's value
+    while the working copy is PROVEN to be the chip's content at that path:
+    the last live read (``ctx["sync_live"]``) found the live files equal to
+    the sync point, a stat shows they have not been written since, the sync
+    state is ``synced`` (or ``mine`` and the path has no unapplied edit).
+    Every other key is left out: the newest change no event has read back
+    then stays open (``hub_witness.live_tail``)."""
+    from quam_state_manager.core import value_history as vh
+    if not ctx or ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
+        return {}
+    facts, wc = ctx.get("sync_live"), ctx.get("working_copy")
+    if not facts or wc is None or facts.get("moved") is not False or facts.get("unreadable"):
+        return {}
+    try:
+        if facts.get("_key") != (safe_io.state_wiring_mtimes(wc.live_folder),
+                                 getattr(wc, "synced_live_hash", None)):
+            return {}            # written since the last read judged it
+        state = (_sync_view(ctx) or {}).get("state")
+    except Exception:  # noqa: BLE001 -- no sync facts: the chip's value is not known
+        return {}
+    if state not in ("synced", "mine"):
+        return {}
+    edited: set = set()
+    if state == "mine":
+        store = ctx.get("store")
+        edited = {getattr(c, "dot_path", None) for c in (getattr(store, "change_log", None) or [])}
+        edited.update((ctx.get("pending_reapply") or {}).keys())
+        edited.discard(None)
+    out = {}
+    for key, tgt in targets.items():
+        if not tgt.get("has_current") or (edited and _vh_touches(edited, tgt)):
+            continue
+        cur = vh.comparable(tgt)
+        if cur is not vh.ABSENT:
+            out[key] = cur
+    return out
+
+
 def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = None,
                    runs: int = 0, targets: dict | None = None, scope: dict | None = None) -> dict:
     """docs/282: the history of every path in *path_map* (``{key: dot_path}``).
@@ -11572,7 +11627,7 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     # reads each position in its own
     try:
         res = vh.read(chip_dir, targets, limit=limit, runs=runs,
-                      binding=_vh_binding(ctx, chip_dir),
+                      binding=_vh_binding(ctx, chip_dir), live=_vh_live(ctx, targets),
                       **(scope if scope is not None else _rename_scope(ctx, chip_dir)))
     except hub_sync.Building as exc:
         out.update(mode="building", status=getattr(exc, "status", None) or st)
@@ -11739,6 +11794,24 @@ def _vh_value_strings(value: Any, removed: bool) -> tuple[str, str, bool]:
     return _fh_display_string(value), _fh_fill_string(value), value is not None
 
 
+#: P0-1: what a point says when the chip may not have kept its value
+#: (``hub_witness``): ``(short, sentence)``
+_VH_WITNESS_TEXT = {
+    "open": ("no later run has read the chip yet",
+             "No later run has read the chip yet, so whether the chip kept this value is not "
+             "known."),
+    "remeasured": ("measured again before a run read the chip",
+                   "The next run that measured it saved another value before any run read the "
+                   "chip, so whether the chip ever held this value is not known."),
+    "differs": ("the next run read another value",
+                "The next run that read the chip found another value there, so whether the chip "
+                "kept this value is not known."),
+    "contradicted": ("not kept on the chip",
+                     "The next run that read the chip still found the earlier value: this value "
+                     "was saved in the run's own folder and never reached the chip."),
+}
+
+
 def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
     """One ledger point as every surface shows it (docs/282 §1.4): what the
     ledger can prove about who set it, and nothing more."""
@@ -11851,6 +11924,11 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
                   "this folder's own history began." if src.get("kind") == "other" and where else
                   " Recorded before this folder's own history began, from a folder that is not "
                   "recorded.")
+    wit = _VH_WITNESS_TEXT.get(p.get("witness") or "")
+    if wit is not None:
+        # P0-1: whether the chip kept a run's saved value is not proven
+        sub = f"{sub} \u00b7 {wit[0]}" if sub else wit[0]
+        title += " " + wit[1]
     flags = [_VH_FLAG_TEXT[f] for f in p["flags"] if f in _VH_FLAG_TEXT]
     display, fill, usable = _vh_value_strings(p["value"], p["removed"])
     return {**p, "label": label, "sub": sub, "title": title, "trigger": trigger, "uid": uid,
@@ -11917,6 +11995,38 @@ def _vh_via_view(ans: dict, key: str, uid_roots, uid_memo: dict) -> list[dict]:
     return out
 
 
+def _vh_not_kept_view(ans: dict, key: str) -> list[dict]:
+    """P0-1: the saved values the chip never kept (``value_history.read``'s
+    ``not_kept``), newest first, as one line each: the run that saved it, the
+    value, and what read the chip and still found the earlier one."""
+    from quam_state_manager.core import value_history as vh
+    out = []
+    for nk in reversed(ans["rows"][key].get("not_kept") or []):
+        by = nk.get("by") or {}
+        held = _vh_value_strings(by.get("value"), bool(by.get("removed")))[0]
+        kind = by.get("kind")
+        if kind == "live":
+            who, saw = "the chip", f"holds {held} now"
+        elif kind == "run":
+            ent = nk.get("entity")
+            who = f"#{by.get('run_id')}" if by.get("run_id") is not None else "the next run"
+            if ent and ent not in (by.get("targets") or ()):
+                who += f", which did not measure {ent},"
+            saw = f"still had {held}"
+        elif kind == "observed":
+            who, saw = "SM's snapshot of the chip", f"still had {held}"
+        else:
+            who, saw = "the next SM write", f"found {held} on the chip"
+        rid = nk.get("run_id")
+        out.append({"t": nk.get("t"), "eid": nk.get("eid"),
+                    "run": (f"run #{rid} {nk.get('experiment') or ''}".strip() if rid is not None
+                            else (nk.get("kind") or "an event")),
+                    "display": _vh_value_strings(nk.get("value"), bool(nk.get("removed")))[0],
+                    "who": who, "saw": saw, "witness_eid": by.get("eid"),
+                    "witness_t": vh.iso_z(by.get("t_us"))})
+    return out
+
+
 def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
     uid_roots, uid_memo = _uid_roots(), {}
     tgt = ans["targets"][key]
@@ -11935,6 +12045,7 @@ def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
             "via_since": row.get("via_since"), "notes": ans["notes"].get(key) or [],
             "renames": _vh_rename_view(row.get("renames") or [], tgt.get("holder")),
             "ledger": ans["ledger"], "chart": chart if len(chart) >= 2 else [],
+            "not_kept": _vh_not_kept_view(ans, key),
             "current_display": cur_display,
             "current_value": current if not isinstance(current, (dict, list)) else None}
 
@@ -11978,7 +12089,7 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
     pts = _vh_points_view(ans, key, uid_roots, uid_memo)
     keep = ("t", "value", "old", "op", "removed", "kind", "provenance", "proven", "label",
             "sub", "title", "run_id", "experiment", "actor", "src", "plan_id", "run_uid", "flags",
-            "undone", "before_via", "is_current", "uid", "recorded_as")
+            "undone", "before_via", "is_current", "uid", "recorded_as", "witness")
     return {"path": tgt["path"], "holder": tgt["holder_path"], "current": tgt.get("current"),
             "via": [{k: h[k] for k in ("from_path", "pointer", "to_path")} for h in tgt["via"]],
             "retargets": [{"from_path": v["from_path"], "pointer": v["pointer"],
@@ -11989,6 +12100,12 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
             "points": [{**{k: p.get(k) for k in keep},
                         **({"source": p["source"]} if p.get("source") else {})} for p in pts],
             "total": ans["rows"][key]["total"], "notes": ans["notes"].get(key) or [],
+            # P0-1: saved values the chip never kept, left out of points / in_force
+            "not_kept": [{"t": n.get("t"), "value": n.get("value"), "old": n.get("old"),
+                          "run_id": n.get("run_id"), "experiment": n.get("experiment"),
+                          "witness": {k: (n.get("by") or {}).get(k)
+                                      for k in ("kind", "run_id", "experiment", "value")}}
+                         for n in ans["rows"][key].get("not_kept") or []],
             "in_force": [{"t": e["t"], "value": e["value"], "removed": e["removed"],
                           "holder": e.get("holder"), "provenance": e["provenance"],
                           "run_id": e.get("run_id")} for e in ans["rows"][key]["effective"]],
@@ -12032,8 +12149,12 @@ def _vh_column_view(ans: dict, path_map: dict[str, str], *, label: str, unit: st
             v = r["values"].get(row_id)
             older = runs[i + 1]["values"].get(row_id) if i + 1 < len(runs) else None
             d, f, _u = _vh_value_strings(v, False)
+            kept = r.get("kept") or {}
             cells.append({"display": d, "fill": f, "has": v is not None and bool(f),
-                          "changed": i + 1 < len(runs) and not _vh_same(v, older)})
+                          "changed": i + 1 < len(runs) and not _vh_same(v, older),
+                          # P0-1: this run saved it; the chip held another value
+                          "not_kept": row_id in kept,
+                          "chip": _vh_value_strings(kept.get(row_id), False)[0] if row_id in kept else None})
         for n in ans["notes"].get(row_id) or []:
             if n["code"] != "current_differs":
                 notes_seen.setdefault(n["code"], n)
@@ -12044,6 +12165,7 @@ def _vh_column_view(ans: dict, path_map: dict[str, str], *, label: str, unit: st
             "editable": tgt.get("resolvable", False), "cells": cells,
             "chips": pts[:CH_MAX_CHIPS], "more": max(0, len(pts) - CH_MAX_CHIPS),
             "total": ans["rows"][row_id]["total"],
+            "not_kept_n": len(ans["rows"][row_id].get("not_kept") or ()),
             "differs": any(n["code"] == "current_differs" for n in ans["notes"].get(row_id) or []),
             "via": _vh_via_view(ans, row_id, uid_roots, uid_memo),
         })
@@ -17203,7 +17325,7 @@ def _hub_status_table(ctx):
     try:
         table = LedgerTable(ctx, ans, _vh_binding(ctx, ctx["hub_chip_dir"]),
                             _value_history, _vh_present, _uid_roots, roots_sig=roots_sig,
-                            scope=_rename_scope(ctx, ctx["hub_chip_dir"]))
+                            scope=_rename_scope(ctx, ctx["hub_chip_dir"]), live=_vh_live)
     except _ramcache.Warming as exc:
         from quam_state_manager.core import hub_sync
         ans["mode"] = "building" if isinstance(exc, hub_sync.Building) else "preparing"
@@ -33725,7 +33847,11 @@ def _hub_param_changes_data(table) -> dict:
     groups = []
     for ev in events:
         changes = [c for c in ev["changes"] if not low or c["path"].lower().startswith(low)]
-        if not changes:
+        # P0-1: what this run saved that the chip never kept (not a change)
+        unkept = [{"path": c["path"], "value": c["new"], "previous": c["old"], "op": c["op"],
+                   "witness": c.get("witness") or {}}
+                  for c in ev.get("not_kept") or () if not low or c["path"].lower().startswith(low)]
+        if not changes and not unkept:
             continue
         taken = undone.get(ev["eid"])
         rows = []
@@ -33776,7 +33902,8 @@ def _hub_param_changes_data(table) -> dict:
                        "trigger": None, "experiment": None, "label": label, "sub": sub,
                        "flags": flags, "uid": uid, "link_title": link,
                        "run_id": ev.get("run_id"), "total": len(changes),
-                       "shown": len(rows), "rows": rows})
+                       "shown": len(rows), "rows": rows, "not_kept": unkept[:shown_n],
+                       "not_kept_n": len(unkept)})
     stats = {"paths": len(table.paths), "rows": sum(table.counts.values()),
              "snapshots": table.snapshot_count(), "dirty": False}
     return {"groups": groups, "stats": stats, "prefix": prefix,

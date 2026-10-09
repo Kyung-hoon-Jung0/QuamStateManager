@@ -480,7 +480,8 @@ def test_missing_exact_entry_blob_is_said_on_that_card(world):
 def _rows_world(world):
     """A first state, then a run that sets/removes, a run that sets/adds, and
     an SM write whose recorded entries create and delete keys."""
-    world["add"]({"keep": 0})
+    # P0-1: old "gone" added by run #2 -> held from the first state, why: run #3 dropping what run #2 added is the restore pattern (never kept), not a removal
+    world["add"]({"keep": 0, "gone": 3})
     world["add"]({"keep": 0, "f": 5168000000.0, "off": -7.995537540056441e-05, "gone": 3})
     world["add"]({"keep": 0, "f": 5169000000.0, "off": -7.9e-05, "plan": "target"})
     eid = world["add"]({"keep": 0, "f": 5169000000.0, "off": -7.9e-05, "plan": "control"},

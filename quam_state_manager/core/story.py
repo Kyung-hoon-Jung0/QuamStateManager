@@ -1348,9 +1348,13 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
         flags = _flags_of(event)
         other_chip = any(f["key"] == "other-chip" for f in flags)
         rows = [] if (event.get("first") or other_chip) else event["changes"]
+        # P0-1: what the run saved in its own folder that the chip never kept
+        unkept = [] if (event.get("first") or other_chip) else (event.get("not_kept") or [])
         if int_of is not None:
             rows = [dict(r, old=_int_like(r.get("old"), r["path"], int_of),
                          new=_int_like(r.get("new"), r["path"], int_of)) for r in rows]
+            unkept = [dict(r, old=_int_like(r.get("old"), r["path"], int_of),
+                           new=_int_like(r.get("new"), r["path"], int_of)) for r in unkept]
         cards.append({
             "kind": "run", "run_id": rid, "uid": uid, "card_uid": card_uid,
             "ts": event["t_utc_us"] / 1e6, "time": _hub_clock(event["t_utc_us"], ledger),
@@ -1370,6 +1374,7 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
             # The event's exact rows vs the ledger state before it. The first
             # event with a state is the starting state: counted, not listed.
             "writes": rows,
+            "not_kept": unkept,
             "first_state_n": len(event["changes"]) if event.get("first") else None,
             "rows_hidden": len(event["changes"]) if other_chip and not event.get("first") else None,
             "flags": flags, "other_chip": other_chip,

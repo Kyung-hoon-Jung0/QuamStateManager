@@ -20,6 +20,12 @@
 <div class="jr-sec jr-run-changes"><b>Changed since the state before this run</b>
     <span class="muted">this run's saved state vs the chip history just before it</span>
     {{ change_list(c.writes) }}</div>
+{% endif %}{% if c.not_kept and not c.first_state_n %}{# P0-1: values the run saved in its own
+   folder that a later read of the chip did not find there -- never changes of the chip #}
+<div class="jr-sec jr-run-not-kept"><b>Saved in its own folder, not kept on the chip</b>
+    <span class="muted">the next run that read the chip still found the earlier value</span>
+    <ul class="jr-changes">{% for w in c.not_kept %}<li class="jr-not-kept"><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>
+    {{ before_after(w.old, w.new, w.op or 'set') }} <span class="jr-badge jr-not-kept-by" title="What read the chip and still found the earlier value">{% if w.witness.kind == 'run' and w.witness.run_id is not none %}#{{ w.witness.run_id }} still had the earlier value{% elif w.witness.kind == 'observed' %}SM's snapshot still had the earlier value{% else %}the earlier value stayed on the chip{% endif %}</span></li>{% endfor %}</ul></div>
 {% endif %}
 {%- endmacro %}
 

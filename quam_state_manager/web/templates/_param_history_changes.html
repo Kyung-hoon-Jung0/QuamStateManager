@@ -98,8 +98,21 @@
             <td class="ph-change-who">{% if r.who %}<span class="vh-sub">{{ r.who }}</span>{% endif %}{% if r.undone %} <span class="vh-flag">undone</span>{% endif %}</td>
           </tr>
         {% endfor %}
+        {% for r in g.not_kept %}
+          <tr class="ph-not-kept">
+            <td class="ph-change-path">
+              <button type="button" class="ph-path-btn"
+                      hx-get="/field/history?path={{ r.path | urlencode }}"
+                      hx-target="#inspector-pane" hx-swap="innerHTML"
+                      title="Open this parameter's full timeline">{{ r.path }}</button>
+            </td>
+            <td class="ph-change-new" colspan="3">{{ before_after(r.previous, r.value, r.op) }}</td>
+            <td class="ph-change-who"><span class="vh-flag" title="Saved in this run's own folder; the next run that read the chip still found the earlier value{% if r.witness.run_id is not none %} (#{{ r.witness.run_id }}){% endif %}">not kept on the chip</span></td>
+          </tr>
+        {% endfor %}
         </tbody>
       </table>
+      {% if g.not_kept_n > g.not_kept|length %}<div class="ph-change-rest"><span class="muted">&hellip; and {{ '{:,}'.format(g.not_kept_n - g.not_kept|length) }} more saved values not kept on the chip</span></div>{% endif %}
       {% if g.total > g.shown %}
       <div class="ph-change-rest">
         <button type="button" class="btn-xs outline"

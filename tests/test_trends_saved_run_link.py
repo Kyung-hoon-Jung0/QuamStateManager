@@ -41,7 +41,9 @@ def _saved_attr(series) -> dict:
 class TestTrendsPoint:
     def test_an_unproven_point_carries_the_saving_run_not_a_writer(self, sm):
         a = _saved_attr(_f01(sm))
-        assert a["label"].startswith("saved in #3") and a["sub"] == "writer not proven"
+        # P0-1: old "writer not proven" -> + the open label, why: every run of this fixture targets qA1, so nothing read the chip after #3
+        assert a["label"].startswith("saved in #3") and a["sub"] == \
+            "writer not proven \u00b7 no later run has read the chip yet"
         assert a.get("saved_uid") and a["saved_uid"].endswith(":3"), a
         assert "uid" not in a, "the writer field stays proof-only"
 

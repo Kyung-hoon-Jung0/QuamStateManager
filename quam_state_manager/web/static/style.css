@@ -12475,6 +12475,16 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .ph-change-who .vh-sub { display: inline; }
 tr.vh-undone .ba-new { text-decoration: line-through; }
 .vh-chip-via, .vh-more { font-size: .62rem; color: var(--color-text-muted); margin-right: .3rem; }
+/* P0-1: a run's saved value the chip never kept -- listed apart, never a change */
+.vh-not-kept { margin: .35rem 0 0; font-size: .7rem; color: var(--color-text-muted); }
+.vh-not-kept summary { cursor: pointer; }
+.vh-not-kept-list { margin: .2rem 0 0 1rem; padding: 0; }
+.vh-not-kept-list li { margin: .1rem 0; overflow-wrap: anywhere; }
+.vh-not-kept-list code { font-size: .68rem; }
+.ch-val.ch-not-kept code { text-decoration: line-through; color: var(--color-text-muted); }
+.ch-not-kept-flag { display: block; width: max-content; }
+tr.ph-not-kept .ba-new, li.jr-not-kept .ba-new { text-decoration: line-through; }
+.jr-run-not-kept { color: var(--color-text-muted); }
 
 /* inspector-row button — INSIDE the edit box (search-icon pattern), never a
    separate element beside it. .fh-host scopes this to the qubit/pair detail

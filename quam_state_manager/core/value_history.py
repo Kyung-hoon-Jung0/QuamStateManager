@@ -219,10 +219,13 @@ def _element(marker: Any, idx: int, blobs: _Blobs) -> Any:
     return arr[idx]
 
 
-def _raw_rows(conn, index, path: str, limit: int | None = None) -> list[tuple]:
+def _raw_rows(conn, index, path: str, limit: int | None = None, *, witness: bool = True) -> list[tuple]:
     """``(event, old, new, op, proven)`` oldest first, through S6a's reader.
-    An op whose side is absent decodes to None: the op tells absent from null."""
-    return hub_query._series(conn, index, path, limit)
+    An op whose side is absent decodes to None: the op tells absent from null.
+    P0-1: a change the chip never kept is left out with its witness's
+    restoring row (``hub_witness``); ``witness=False`` reads what each event
+    saved."""
+    return hub_query._series(conn, index, path, limit, witness=witness)
 
 
 def _side(op: str, which: str, value: Any) -> Any:
@@ -241,16 +244,46 @@ class _Rows:
     never from today's list length: a holder ``x.N`` whose parent ``x`` was a
     long-array holder at some time reads both, merged event by event."""
 
-    def __init__(self, conn, index):
+    def __init__(self, conn, index, *, witness: bool = True, shared: "_Rows | None" = None):
         self.conn, self.index = conn, index
-        self.blobs = _Blobs(conn)
+        #: P0-1: False reads what each event SAVED (By run), never the chip's series
+        self.witness = witness
+        if shared is None:
+            from quam_state_manager.core import hub_witness
+            self.verdicts = hub_witness.of(conn, index)
+            self.blobs = _Blobs(conn)
+            #: every row each plain holder SAVED, read once (the chip's series and
+            #: what each run saved are both derived from it)
+            self.saved_memo: dict[str, list] = {}
+        else:
+            self.verdicts, self.blobs, self.saved_memo = shared.verdicts, shared.blobs, shared.saved_memo
         self.memo: dict[str, list] = {}
+        self.nk_memo: dict[str, list] = {}
         self.pos_memo: dict[str, list] = {}
         self.eras: _Eras | None = None
         #: docs/298: while one key is derived, every holder spelling it ASKED
         #: about (found or not, and the long-array parent an element could be
         #: read from): the answer can change only through rows of these
         self.seen: set[str] | None = None
+
+    def saved_view(self) -> "_Rows":
+        """The same snapshot read as each event SAVED it (By run), sharing
+        every holder read with this one."""
+        out = _Rows(self.conn, self.index, witness=False, shared=self)
+        out.eras = self.eras
+        return out
+
+    def _read(self, holder: str, *, saved: bool = False) -> list[tuple]:
+        """A plain ledger holder's rows: every saved row (read once), or the
+        chip's series -- without the pairs the witness verdicts leave out
+        (``hub_witness``; ``hub_query._series`` applies the same drop)."""
+        got = self.saved_memo.get(holder)
+        if got is None:
+            got = self.saved_memo[holder] = _raw_rows(self.conn, self.index, holder, witness=False)
+        if saved or not self.witness:
+            return got
+        drop = self.verdicts.drop(self.index.paths.get(holder))
+        return [r for r in got if r[0]["eid"] not in drop] if drop else got
 
     def _see(self, holder: str | None) -> None:
         if self.seen is not None and holder is not None:
@@ -272,9 +305,19 @@ class _Rows:
             if parent and last.isdigit() and parent in self.index.paths:
                 self.memo[holder] = self._element(parent, int(last), holder)
             else:
-                self.memo[holder] = (_raw_rows(self.conn, self.index, holder)
-                                     if holder in self.index.paths else [])
+                self.memo[holder] = self._read(holder) if holder in self.index.paths else []
         return self.memo[holder]
+
+    def not_kept(self, holder: str | None) -> list[tuple]:
+        """P0-1: the holder's run changes the chip never kept, with their
+        witness (``hub_query.not_kept``)."""
+        self._see(holder)
+        if holder is None or holder not in self.index.paths:
+            return []
+        if holder not in self.nk_memo:
+            self.nk_memo[holder] = hub_query.not_kept(self.conn, self.index, holder,
+                                                      rows=self._read(holder, saved=True))
+        return self.nk_memo[holder]
 
     def positions(self, holder: str | None) -> list[int]:
         self._see(holder)
@@ -285,7 +328,7 @@ class _Rows:
     def _element(self, array: str, idx: int, own: str) -> list[tuple]:
         pos = self.index.positions
         by_event: dict[int, dict] = {}
-        for ev, old, new, op, proven in _raw_rows(self.conn, self.index, array):
+        for ev, old, new, op, proven in self._read(array):
             slot = by_event.setdefault(ev["eid"], {"ev": ev})
             marker = _side(op, "new", new)
             if isinstance(marker, dict) and "_hash" in marker:
@@ -294,7 +337,7 @@ class _Rows:
                 # the holder stopped being a long array here (gone, or a scalar)
                 slot["array"] = (_ABSENT, proven)
         if own in self.index.paths:
-            for ev, old, new, op, proven in _raw_rows(self.conn, self.index, own):
+            for ev, old, new, op, proven in self._read(own):
                 slot = by_event.setdefault(ev["eid"], {"ev": ev})
                 slot["own"] = (_side(op, "new", new), proven)
         out = []
@@ -713,13 +756,16 @@ _ERA_ROOT = "extras." + rename_lineage.EXTRAS_KEY
 
 class _KeyEntry:
     """One key's derived answer, the ledger state it was derived at
-    (:func:`_stamp`), the holder spellings the derivation asked about and
-    the events whose facts it read (sorted eids)."""
+    (:func:`_stamp`), the holder spellings the derivation asked about, the
+    events whose facts it read (sorted eids) and (P0-1) the witness verdicts
+    it was derived from (:func:`_verdict_sig` of the holders it asked about)."""
 
-    __slots__ = ("stamp", "row", "watched", "used", "serial", "nbytes")
+    __slots__ = ("stamp", "row", "watched", "used", "serial", "nbytes", "vsig")
 
-    def __init__(self, stamp: tuple, row: dict, watched: frozenset, used: array, serial: int):
+    def __init__(self, stamp: tuple, row: dict, watched: frozenset, used: array, serial: int,
+                 vsig: tuple = ()):
         self.stamp, self.row, self.watched, self.used, self.serial = stamp, row, watched, used, serial
+        self.vsig = vsig
         n = (len(row["points"]) + len(row["effective"])
              + sum(len(r["rows"]) for r in row["retargets"]))
         self.nbytes = 1024 + 1400 * n + 120 * len(watched) + 4 * len(used)
@@ -788,13 +834,23 @@ class _Reuse:
        between two others re-diffs the one after it: that is an in-place
        change of its rows, and rule 2 judges it.
 
+    5. (P0-1) the witness verdicts it was derived from are the same: the
+       pairs its holders' series leave out and their witnesses
+       (:func:`_verdict_sig`). An appended event never changes them (a pair
+       is decided by the events up to the next row of its holder); the
+       open / confirmed of a holder's NEWEST change does move with appended
+       events, so it is never part of a kept answer (:func:`_witnessed`
+       applies it on every read).
+
     Then every input of that key's derivation is what it was: its holders'
     rows, the events those rows belong to and their order (positions move
     when an event lands between, but no answer carries a position). The
     from-scratch answer at this state is the same answer."""
 
-    def __init__(self, conn, index, stamp: tuple):
+    def __init__(self, conn, index, stamp: tuple, verdicts=None):
         self.conn, self.index, self.stamp = conn, index, stamp
+        #: P0-1: the witness verdicts of this snapshot (rule 5)
+        self.verdicts = verdicts
         self._rewritten: dict[tuple, tuple] = {}
         self._tail: dict[int, int] = {}
         self._touched: dict[int, tuple] = {}
@@ -803,6 +859,11 @@ class _Reuse:
         old, now = entry.stamp, self.stamp
         if old == now:
             return True
+        if self.verdicts is not None and entry.vsig != _verdict_sig(self.index, self.verdicts,
+                                                                    entry.watched):
+            # P0-1 (rule 5): a pair the series leaves out came or went (a
+            # verdict moved -- an event's targets re-read in place, say)
+            return False
         lid, gen, _dv, mark, high, n, first, digest = old
         nlid, ngen, _ndv, nmark, nhigh, nn, nfirst, ndigest = now
         if mark is None or nmark is None or (lid, gen, mark[0]) != (nlid, ngen, nmark[0]):
@@ -850,13 +911,121 @@ def _canon(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=repr)
 
 
+def _pid_of(index, holder: str | None) -> int | None:
+    """The ledger holder a value row of *holder* is stored under: the holder
+    itself, or the long-array holder an element is read from."""
+    if holder is None:
+        return None
+    pid = index.paths.get(holder)
+    if pid is None:
+        parent, _, last = holder.rpartition(".")
+        if parent and last.isdigit():
+            pid = index.paths.get(parent)
+    return pid
+
+
+def _verdict_sig(index, verdicts, holders) -> tuple:
+    """P0-1: what a key's kept answer took from the witness verdicts -- the
+    pairs left out of each holder it asked about (``Verdicts.signature``)."""
+    out = []
+    for h in sorted(holders):
+        pid = index.paths.get(h)
+        if pid is not None:
+            sig = verdicts.signature(pid)
+            if sig:
+                out.append((h, sig))
+    return tuple(out)
+
+
+def _not_kept_point(index, ev: dict, old: Any, new: Any, op: str, proven: bool, wev: dict | None,
+                    roots: dict, holder: str, entity: str | None) -> dict:
+    """One saved value the chip never kept, as every surface lists it: the run
+    that saved it and the witness that still found the old value."""
+    from quam_state_manager.core import hub_witness
+    pt = _point(ev, old, new, op, proven, roots, {})
+    wit = hub_witness.describe(index, wev, (wev or {}).get("eid"))
+    wit["value"] = old
+    wit["removed"] = op == "add"
+    pt.update(witness=hub_witness.CONTRADICTED, by=wit, holder=holder, entity=entity)
+    return pt
+
+
+def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tuple[dict, tuple]:
+    """P0-1: *row* (a kept answer, never changed) with what depends on the
+    events after it -- ``(row, marks)``:
+
+    * every judged run point that is not plainly confirmed carries its
+      verdict (``witness``: ``open`` / ``remeasured`` / ``differs`` /
+      ``contradicted`` when its witness row is not adjacent);
+    * the live tail: the holder's newest change with no witness yet is
+      decided by the chip's value now (*live*, :data:`ABSENT` when not known)
+      -- equal, it is confirmed; else it was never kept: it leaves the points
+      and the in-force series and joins ``not_kept``, witnessed by the chip.
+
+    *marks* names every decision (a key's serial carries them)."""
+    from quam_state_manager.core import hub_witness
+    here = tgt["holder"]
+    marks: list = []
+
+    def mark(points, holder_of):
+        out = None
+        for i, p in enumerate(points):
+            if p["kind"] != "run" or p["provenance"] == "first_record":
+                continue         # the starting state is not a change a run claims
+            code = verdicts.code(p["eid"], _pid_of(index, holder_of(p)))
+            if code is None or code == hub_witness.CONFIRMED:
+                continue
+            if out is None:
+                out = list(points)
+            out[i] = dict(p, witness=code)
+            marks.append((p["eid"], code))
+        return out if out is not None else points
+
+    points = mark(row["points"], lambda p: p.get("recorded_as") or here)
+    effective = mark(row["effective"], lambda p: p.get("holder"))
+    kept_nk = row.get("not_kept") or []
+    not_kept = kept_nk
+    total = row["total"]
+    if points and live is not _ABSENT:
+        p = points[-1]
+        holder = p.get("recorded_as") or here
+        tail = verdicts.tail(_pid_of(index, holder))
+        if (tail is not None and tail[0] == p["eid"] and tail[1] == hub_witness.OPEN
+                and p["kind"] == "run" and not p["removed"]):
+            decided = hub_witness.live_tail(hub_witness.OPEN, p["value"], live, rules.same)
+            marks.append(("live", p["eid"], decided))
+            if decided == hub_witness.CONFIRMED:
+                points = points[:-1] + [{k: v for k, v in p.items() if k != "witness"}]
+                effective = [{k: v for k, v in e.items() if k != "witness"}
+                             if e["eid"] == p["eid"] and e["op"] != "via" else e for e in effective]
+            else:
+                points = points[:-1]
+                effective = [e for e in effective
+                             if not (e["eid"] == p["eid"] and e["op"] != "via"
+                                     and e.get("holder") == holder)]
+                total -= 1
+                gone = {k: v for k, v in p.items() if k != "witness"}
+                gone.update(witness=hub_witness.CONTRADICTED, holder=holder,
+                            by={"kind": "live", "value": live, "removed": False})
+                not_kept = list(kept_nk) + [gone]
+    if points is row["points"] and effective is row["effective"] and not_kept is kept_nk:
+        return row, ()
+    return dict(row, points=points, effective=effective, not_kept=not_kept, total=total), tuple(marks)
+
+
 def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[str, dict],
-            limit: int | None, *, record: bool = False) -> tuple[dict, dict, dict, dict]:
-    """``(answers, segments, asked, used)`` for *targets* -- each key's answer
-    as docs/282 defines it (unchanged), its alias segments (for By run) and,
-    with *record*, every holder spelling its derivation asked about and the
-    events whose facts it read. A key's answer depends only on its own
-    target: deriving a subset gives each key the answer it gets among all."""
+            limit: int | None, *, record: bool = False,
+            verdicts=None) -> tuple[dict, dict, dict, dict, dict]:
+    """``(answers, segments, asked, used, vsigs)`` for *targets* -- each key's
+    answer as docs/282 defines it, its alias segments (for By run) and, with
+    *record*, every holder spelling its derivation asked about, the events
+    whose facts it read and (P0-1) the witness verdicts it took
+    (:func:`_verdict_sig`). A key's answer depends only on its own target:
+    deriving a subset gives each key the answer it gets among all.
+
+    P0-1: the rows are the chip's (``hub_query._series`` leaves out a change
+    the chip never kept and its witness's restoring row); each answer also
+    lists those changes of its own holder (``not_kept``, oldest first)."""
     segs: dict[str, list] = {}
     hsegs: dict[str, list] = {}
     asked: dict[str, set] = {}
@@ -886,14 +1055,36 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
             got = cache.rows(hop["from"])
             hop_rows.setdefault(hop["from"], got)
     cache.seen = None
+    # P0-1: the holder's own saved values the chip never kept, era by era
+    nk_raw: dict[str, list] = {}
+    for key, tgt in targets.items():
+        cache.seen = asked[key] if record else None
+        got = []
+        hs = hsegs[key]
+        for i, (start, holder) in enumerate(hs):
+            end = hs[i + 1][0] if i + 1 < len(hs) else None
+            for row in cache.not_kept(holder):
+                at = index.positions[row[0]["eid"]]
+                if at >= start and (end is None or at < end):
+                    got.append((holder,) + row)
+        nk_raw[key] = got
+    cache.seen = None
     used: dict[str, array] = {}
+    vsigs: dict[str, tuple] = {}
     if record:
         # the events whose facts each answer read: every row of a holder it
-        # asked about, and every event a segment of it starts at
+        # asked about, every event a segment of it starts at, and every
+        # change the chip never kept with its witness
         for key in targets:
             eids = {r[0]["eid"] for h in asked[key] for r in cache.memo.get(h) or ()}
             eids.update(index.eids[p] for p, _h in segs[key] + hsegs[key] if 0 <= p < len(index.eids))
+            for _h, ev, *_mid, wev in nk_raw[key]:
+                eids.add(ev["eid"])
+                if wev is not None:
+                    eids.add(wev["eid"])
             used[key] = array("I", sorted(eids))
+            if verdicts is not None:
+                vsigs[key] = _verdict_sig(index, verdicts, asked[key])
     sm_eids = [r[0]["eid"] for rows in list(raw.values()) + list(eff.values()) + list(hop_rows.values())
                for r in rows if r[0]["kind"] in SM_KINDS]
     sm = _sm_info(conn, sm_eids)
@@ -933,8 +1124,17 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
                 since = start
             else:
                 break
+        def nk_point(h, ev, old, new, op, proven, wev):
+            at = index.positions[ev["eid"]]
+            if cache.eras is not None:
+                old = old if old is None else cache.eras.value(old, at, h)
+                new = new if new is None else cache.eras.value(new, at, h)
+            return _not_kept_point(index, ev, old, new, op, proven, wev, roots, h,
+                                   (verdicts.entity.get(index.paths.get(h)) if verdicts is not None
+                                    else None))
         out_rows[key] = {
             "points": pts, "total": total, "retargets": retargets,
+            "not_kept": [nk_point(*r) for r in nk_raw[key]],
             "effective": [dict(p, holder=_segment_at(segs[key], index.positions[p["eid"]]))
                           for p in points(eff[key])],
             "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
@@ -942,12 +1142,12 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
             "via_since": (iso_z(index.t[since]) if since is not None and 0 < since < len(index.eids)
                           else None),
             "renames": _rename_marks(hsegs[key], index, eras)}
-    return out_rows, segs, asked, used
+    return out_rows, segs, asked, used, vsigs
 
 
 def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
          runs: int = 0, binding=None, lineage: rename_lineage.Lineage | None = None,
-         era: tuple = ()) -> dict:
+         era: tuple = (), live: dict | None = None) -> dict:
     """Every target's history from ONE ledger read snapshot.
 
     ``targets``: ``{key: target(...)}``. ``limit``: keep the newest N change
@@ -965,6 +1165,16 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
     ``lineage`` / ``era``: the chip's rename lineage and the era today's
     paths are spelled in (docs/296). Each key then also answers ``renames``:
     every point where a rename changed the holder's name.
+
+    P0-1 (``hub_witness``): the series are the CHIP's -- a run's saved value
+    no later event found on the chip is left out with the witness row that
+    put the old value back, and listed in ``not_kept`` (each with ``by``:
+    what read the chip and still found the old value). A judged run point
+    that is not plainly confirmed carries ``witness``. ``live``: ``{key:
+    value the chip holds now}`` for the keys whose live value the caller
+    knows -- it decides the newest change no event has read back yet. By
+    run (``runs``) lists what each run SAVED (``values``) and, where that is
+    not the chip's value, the chip's (``kept``).
 
     docs/298: a key's answer is kept between reads (``_KEYS``) and served
     again for a later ledger state only when :class:`_Reuse` proves the
@@ -991,13 +1201,14 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
         # the scope as the read uses it: the lineage completed from the ledger
         # (the same for every caller that asks with the same records)
         scope = _scope_sig(eras.lineage, era) if memo else None
+        verdicts = cache.verdicts
         reused: dict[str, _KeyEntry] = {}
         slots: dict[str, tuple] = {}
         stamp = None
         if memo and targets:
             stamp = _stamp(conn, index)
             chip = hub_index._slot(chip_dir)
-            check = _Reuse(conn, index, stamp)
+            check = _Reuse(conn, index, stamp, verdicts)
             for key, tgt in targets.items():
                 # S10 C1.5: an answer is one folder's (its view's key)
                 slots[key] = (chip, target_sig(tgt), limit, scope) + (
@@ -1006,14 +1217,15 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                 if held is not None and check.holds(held[1]):
                     reused[key] = held[1]
         todo = {k: t for k, t in targets.items() if k not in reused}
-        derived, segs, asked, used = _derive(conn, index, cache, eras, roots, todo, limit, record=memo)
+        derived, segs, asked, used, vsigs = _derive(conn, index, cache, eras, roots, todo, limit,
+                                                    record=memo, verdicts=verdicts)
         if reused and ramcache._verify_on():
             # shadow mode (SM_RAM_VERIFY): every reused answer against a
             # from-scratch derivation at this very snapshot
             fresh = _Rows(conn, index)
             fresh.eras = cache.eras
-            again, _s, _a, _u = _derive(conn, index, fresh, eras, roots,
-                                        {k: targets[k] for k in reused}, limit)
+            again, _s, _a, _u, _v = _derive(conn, index, fresh, eras, roots,
+                                            {k: targets[k] for k in reused}, limit, verdicts=verdicts)
             for k, e in reused.items():
                 if _canon(again[k]) != _canon(e.row):
                     raise ramcache.StaleCacheError(f"value_history_keys: the kept answer for "
@@ -1026,14 +1238,25 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
             if e is not None:
                 out_rows[key], serials[key] = e.row, e.serial
                 if e.stamp != stamp:
-                    _KEYS.put(slots[key], stamp, _KeyEntry(stamp, e.row, e.watched, e.used, e.serial))
+                    _KEYS.put(slots[key], stamp, _KeyEntry(stamp, e.row, e.watched, e.used, e.serial,
+                                                           e.vsig))
                 else:
                     _KEYS.get_held(slots[key], stamp)          # LRU order only
                 continue
             out_rows[key], serials[key] = derived[key], next(_SERIAL)
             if memo:
-                entry = _KeyEntry(stamp, derived[key], frozenset(asked[key]), used[key], serials[key])
+                entry = _KeyEntry(stamp, derived[key], frozenset(asked[key]), used[key], serials[key],
+                                  vsigs.get(key, ()))
                 _KEYS.put(slots[key], stamp, entry, nbytes=entry.nbytes)
+        # P0-1: what moves with the events after an answer (the verdict of a
+        # holder's newest change, the chip's value now) -- applied on every
+        # read, never kept; a key's serial names the decisions it carries
+        live = live or {}
+        for key, tgt in targets.items():
+            row, marks = _witnessed(index, verdicts, tgt, out_rows[key], live.get(key, _ABSENT))
+            if marks:
+                out_rows[key] = row
+                serials[key] = (serials[key], hashlib.sha1(repr(marks).encode()).hexdigest()[:16])
 
         by_run: list[dict] = []
         left_out = 0
@@ -1058,16 +1281,24 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                 good.append(ev)
                 if len(good) >= runs:
                     break
+            # P0-1: By run is what each run SAVED; the chip's value where it differs
+            saved = cache.saved_view()
             for ev in good:
                 pos = index.positions[ev["eid"]]
                 values = {}
+                kept = {}
                 for key in targets:
                     # P0-3: the value in force through the path at this run
                     h = _segment_at(segs[key], pos)
-                    v = cache.fold(h, pos)
-                    if cache.eras is not None and v is not _ABSENT:
-                        v = cache.eras.value(v, pos, h)
+                    k = cache.fold(h, pos)
+                    # a holder with nothing left out saved what the chip held
+                    v = saved.fold(h, pos) if verdicts.drop(_pid_of(index, h)) else k
+                    if cache.eras is not None:
+                        v = v if v is _ABSENT else cache.eras.value(v, pos, h)
+                        k = k if k is _ABSENT else cache.eras.value(k, pos, h)
                     values[key] = None if v is _ABSENT else v
+                    if not _same_or_absent(v, k):
+                        kept[key] = None if k is _ABSENT else k
                 folder = None
                 if ev.get("root_id") is not None and ev.get("rel_path"):
                     base = roots.get(ev["root_id"])
@@ -1075,7 +1306,7 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                 by_run.append({"eid": ev["eid"], "t": iso_z(ev["t_utc_us"]),
                                "run_id": ev.get("run_id"), "experiment": ev.get("experiment"),
                                "folder": folder, "flags": _flags(int(ev.get("flags") or 0)),
-                               "values": values})
+                               "values": values, "kept": kept})
         if lane is not None:
             first_eid = lane.first
         else:

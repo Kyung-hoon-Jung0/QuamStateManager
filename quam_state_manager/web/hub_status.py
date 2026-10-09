@@ -263,13 +263,18 @@ class LedgerTable:
     a part that reads the state any other way says so (``narrow=False``)
     and is recomputed on every edit, as before."""
 
-    def __init__(self, ctx, answer, binding, read, present, roots, roots_sig=None, scope=None):
+    def __init__(self, ctx, answer, binding, read, present, roots, roots_sig=None, scope=None,
+                 live=None):
         """*roots*: the dataset roots a point's data link resolves against,
         or a callable returning them (resolved only when a part is computed);
         *roots_sig*: what names them in the cache token (their spelling);
         *scope*: the chip's rename lineage and today's era (docs/296) -- the
-        path list is then every recorded path in today's spelling."""
+        path list is then every recorded path in today's spelling;
+        *live*: ``live(ctx, targets) -> {key: the chip's value now}`` (P0-1,
+        ``routes._vh_live``) -- the read decides each path's newest open
+        change by it, so a part is valid while it reads the same."""
         self.ctx, self.answer, self.binding = ctx, answer, binding
+        self._live = live
         #: the read's own building / preparing answer, when one did not
         #: answer from the ledger (the surface waits on it)
         self.waiting: dict | None = None
@@ -372,6 +377,10 @@ class LedgerTable:
                 val = tuple(value_history.target_sig(self.target(p)) for p in arg)
             elif kind == "currents":
                 val = tuple(_current_sig(self.target(p)) for p in arg)
+            elif kind == "live":
+                # P0-1: the chip's value now, where SM knows it (the read's live tail)
+                got = self._live(self.ctx, {p: self.target(p) for p in arg}) if self._live else {}
+                val = tuple((p, _canon(got[p])) for p in arg if p in got)
             elif kind == "ctarget":
                 val = self.target(arg, container=True)["holder"]
             elif kind == "qubits":
@@ -453,6 +462,7 @@ class LedgerTable:
         ``currents`` fact itself."""
         paths = tuple(dict.fromkeys(paths))
         self.fact("targets", paths)
+        self.fact("live", paths)
         hit = self._series_memo.get(paths)
         if hit is not None:
             return hit
@@ -600,17 +610,25 @@ class LedgerTable:
         dates the qubit that id meant then, never today's holder of the
         name; a value with no name today is dropped."""
         def compute():
+            from quam_state_manager.core import hub_witness
             from quam_state_manager.core.hub_store import CHIP_UNCERTAIN
             where = (" FROM changes c JOIN events e ON e.eid = c.eid JOIN paths p ON p.pid = c.pid"
                      " WHERE e.kind = 'run' AND e.base_hash IS NOT NULL AND (e.flags & ?) = 0"
                      " AND (p.path LIKE 'qubits.%' OR p.path LIKE 'qubit_pairs.%')")
             with ledger_read(), hub_index.snapshot(self.binding) as (conn, index):
+                # P0-1: a run's value the chip never kept did not calibrate it,
+                # and the run that still found the old value did not either
+                verdicts = hub_witness.of(conn, index)
                 lane = getattr(index, "lane", None)
                 if lane is not None:
-                    rows = self._lane_change_times(conn, index, lane, where, CHIP_UNCERTAIN)
+                    rows = self._lane_change_times(conn, index, lane, where, CHIP_UNCERTAIN, verdicts)
                 elif self._lineage is None:
-                    rows = conn.execute("SELECT p.path, MAX(e.t_utc_us)" + where + " GROUP BY c.pid",
-                                        (CHIP_UNCERTAIN,)).fetchall()
+                    best: dict = {}
+                    for path, pid, eid, t in conn.execute("SELECT p.path, c.pid, e.eid, e.t_utc_us" + where,
+                                                          (CHIP_UNCERTAIN,)):
+                        if eid not in verdicts.drop(pid) and (path not in best or t > best[path]):
+                            best[path] = t
+                    rows = list(best.items())
                 else:
                     from quam_state_manager.core.hub_eras import Renamer, _with_era_rows
                     ren = Renamer(conn, index, self._lineage, self._era)
@@ -620,8 +638,10 @@ class LedgerTable:
                     def keep(now, t):
                         if now is not None and t is not None and (now not in best or t > best[now]):
                             best[now] = t
-                    for path, eid, t in conn.execute(
-                            "SELECT p.path, e.eid, e.t_utc_us" + where, (CHIP_UNCERTAIN,)):
+                    for path, pid, eid, t in conn.execute(
+                            "SELECT p.path, c.pid, e.eid, e.t_utc_us" + where, (CHIP_UNCERTAIN,)):
+                        if eid in verdicts.drop(pid):
+                            continue
                         if not ren.active:
                             keep(path, t)
                         elif ren.boundary_before(eid) is not None:
@@ -650,11 +670,11 @@ class LedgerTable:
             return out
         return self.part(("run_change_times",), compute)
 
-    def _lane_change_times(self, conn, index, lane, where, uncertain):
+    def _lane_change_times(self, conn, index, lane, where, uncertain, verdicts):
         """:meth:`run_change_times` through a folder view (S10 C1.5): only
         the lane's runs, each read by the lane's rows (a seam's own rows in
         place of the stored ones), its flags and first event as the lane
-        sees them."""
+        sees them -- and (P0-1) none the chip never kept."""
         from quam_state_manager.core.hub_store import CHIP_UNCERTAIN
         best: dict = {}
         ren = None
@@ -671,6 +691,8 @@ class LedgerTable:
 
         def keep(path, eid):
             t = runs.get(eid)
+            if t is not None and eid in verdicts.drop(index.paths.get(path)):
+                return
             now = ren.holder(path, ren.era_of(eid)) if ren is not None else path
             if t is not None and now is not None and (now not in best or t > best[now]):
                 best[now] = t

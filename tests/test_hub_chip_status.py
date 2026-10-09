@@ -113,7 +113,8 @@ class TestOneReader:
         held = s.get("held") or {}
         assert [v for ts, v in s["points"] if ts not in held] == [0.3, 0.25], \
             "x180_Gauss's value while x180 named it, then x180_DragCosine's"
-        assert s["attr"][s["points"][-1][0]]["sub"] == "writer not proven"
+        # P0-1: old "writer not proven" -> + the open label, why: every run of this fixture targets qA1, so nothing read the chip after #4
+        assert s["attr"][s["points"][-1][0]]["sub"] == "writer not proven \u00b7 no later run has read the chip yet"
 
     def test_the_typeahead_offers_numeric_families_of_the_ledger(self, sm):
         c = sm["client"]
@@ -142,7 +143,8 @@ class TestWriterOnlyOnProof:
         assert proven["run"] == 2 and proven["writer"]["run"] == 2
         assert proven["sub"] == "its own patch set it"
         assert unproven["run"] is None and unproven["writer"] is None
-        assert unproven["saved_run"] == 3 and unproven["sub"] == "writer not proven"
+        # P0-1: old "writer not proven" -> + the open label, why: no run that skipped qA1 read the chip after #3
+        assert unproven["saved_run"] == 3 and unproven["sub"] == "writer not proven \u00b7 no later run has read the chip yet"
         assert first["run"] is None and first["first"] and "writer unknown" in first["sub"]
 
     def test_a_matrix_is_proven_only_when_every_leaf_change_is(self, tmp_path):
@@ -159,7 +161,9 @@ class TestWriterOnlyOnProof:
             (matrix_state(moved), [patch(cm + ".1.1", 0.85, 0.9)]),
         ], matrix_state(moved))
         meta = env["client"].get(META).get_json()["q"]["assignment_fidelity"]["qA1"]
-        assert meta["run"] is None and meta["writer"] is None and meta["sub"] == "writer not proven", \
+        # P0-1: old "writer not proven" -> + the open label, why: the run is the newest event, nothing read the chip after it
+        assert meta["run"] is None and meta["writer"] is None and meta["sub"] == \
+            "writer not proven \u00b7 no later run has read the chip yet", \
             "one proven leaf never makes the run the writer of the whole matrix"
         s = series_of(env["client"].get("/topology/trends?metrics=assignment_fidelity"), "qA1")
         last = [p for p in s["points"] if p[0] not in (s.get("held") or {})][-1]
@@ -203,8 +207,10 @@ class TestWriterOnlyOnProof:
         html = sm["client"].get("/param-history/expand?qubit=qA1&prop=f_01").data.decode()
         data = json.loads(re.search(r'id="phd-data" type="application/json">(.*?)</script>',
                                     html, re.S).group(1))
+        # P0-1: old "writer not proven" -> + the open label, why: every run of this fixture targets qA1, so nothing read the chip after #3
         assert data["ledger"] and [(v["value"], v["sub"], v["uid"], v["run"]) for v in data["values"]] == [
-            (5.0e9, "ledger start; writer unknown", None, None), (5.1e9, "writer not proven", None, None)]
+            (5.0e9, "ledger start; writer unknown", None, None),
+            (5.1e9, "writer not proven \u00b7 no later run has read the chip yet", None, None)]
         html = sm["client"].get("/param-history/expand?qubit=qA1&prop=T1").data.decode()
         data = json.loads(re.search(r'id="phd-data" type="application/json">(.*?)</script>',
                                     html, re.S).group(1))
