@@ -51,20 +51,9 @@ MUTATIONS = [
      '            hub_answer["open_chip_path"] = _openable_folder_for_chip(hm, target_path)',
      '            hub_answer["open_chip_path"] = None',
      [TEST + "::test_archived_missing_ledger_offers_a_real_folder"]),
-    ("versions_old_renderer", TEMPLATES + "_state_versions.html",
-     "ledger_versions.mode in ('ledger', 'building', 'preparing', 'unavailable')",
-     "ledger_versions.mode == 'ledger'",
-     [TEST, "-k", "nonledger_versions"]),
-    ("state_history_old_renderer", TEMPLATES + "_state_history_body.html",
-     "ledger_versions.mode in ('ledger', 'building', 'preparing', 'unavailable')",
-     "ledger_versions.mode == 'ledger'",
-     [TEST, "-k", "nonledger_versions"]),
-    ("history_drawer_old_renderer", ROUTES,
-     '    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):\n'
-     '        total_pages = max(1, math.ceil(versions["total"] / per_page)) if per_page else 1',
-     '    if versions["mode"] == "ledger":\n'
-     '        total_pages = max(1, math.ceil(versions["total"] / per_page)) if per_page else 1',
-     [TEST, "-k", "nonledger_versions"]),
+    # S10 C6: versions_old_renderer / state_history_old_renderer retired -- the snapshot
+    # renderer they switched back to is deleted; legacy_rows_missing above still pins the rows.
+    # S10 C6: history_drawer_old_renderer retired -- the snapshot drawer is deleted.
 ]
 
 
@@ -73,20 +62,22 @@ MUTATIONS.extend([
      '            out["writes"] = summary["writes"]',
      '            out["writes"] = ()',
      [TEST, "-k", "bookmark_of_sm_write"]),
+    # S10 C6: re-anchored -- the version's hash is read inside the Diff's try now
     ("current_ledger_version_offers_pull", ROUTES,
      '        live_chash = _version_live_chash(ctx)\n'
      '        offers_pull = (why_write is None\n'
-     '                       and not (live_chash and hub_versions.event_info(chip_dir, timestamp).get("chash") == live_chash))',
+     '                       and not (live_chash and version_chash == live_chash))',
      '        offers_pull = why_write is None',
      ["tests/test_state_versions.py::TestVersionDiff::test_the_pull_note_appears_only_where_the_button_does"]),
+    # S10 C6: re-anchored -- "All" is capped at _HISTORY_DRAWER_ALL_CAP now
     ("drawer_ignores_page", ROUTES,
-     '    versions = _versions_read(_active_ctx(), snapshots, limit=per_page or 2**31 - 1,\n'
+     '    versions = _versions_read(_active_ctx(), snapshots, limit=per_page or _HISTORY_DRAWER_ALL_CAP,\n'
      '                              offset=(page - 1) * per_page)',
-     '    versions = _versions_read(_active_ctx(), snapshots, limit=per_page or 2**31 - 1,\n'
+     '    versions = _versions_read(_active_ctx(), snapshots, limit=per_page or _HISTORY_DRAWER_ALL_CAP,\n'
      '                              offset=0)',
      [TEST + "::test_ledger_drawer_pages_states_and_refreshes_count"]),
     ("drawer_all_is_one_row", ROUTES,
-     'limit=per_page or 2**31 - 1,', 'limit=per_page or 1,',
+     'limit=per_page or _HISTORY_DRAWER_ALL_CAP,', 'limit=per_page or 1,',
      [TEST + "::test_ledger_drawer_pages_states_and_refreshes_count"]),
     ("drawer_count_not_refreshed", TEMPLATES + "_history_panel_ledger.html",
      '<span id="history-count" hx-swap-oob="true">{{ lv.total }}</span>',
@@ -99,18 +90,20 @@ MUTATIONS.extend([
      "recorded event{{ '' if snapshots == 1 else 's' }}</span>"
      "<span id=\"history-count\" hx-swap-oob=\"true\">{{ snapshots }}</span>",
      [TEST + "::test_ledger_drawer_pages_states_and_refreshes_count",
-      "tests/test_history_drawer.py::TestTheCountFollowsTakeSnapshot::test_the_trends_fragment_carries_the_same_count"]),
+      "tests/test_history_drawer.py::TestTheCountFollowsTakeSnapshot::test_the_trends_fragment_leaves_the_count_to_the_drawer"]),
+    # S10 C6: re-anchored -- the snapshot loop's first_ts went with it
     ("ledger_disk_usage_missing", ROUTES,
-     '                   disk_stats=disk_stats, first_ts=None)',
-     '                   disk_stats=None, first_ts=None)',
+     '               disk_stats=disk_stats)',
+     '               disk_stats=None)',
      [TEST + "::test_ledger_state_history_keeps_snapshot_disk_usage"]),
     ("observed_annotations_dropped", ROUTES,
      '        annotations = annotations_by_event.get(ev["eid"], [])',
      '        annotations = []',
      [TEST, "-k", "keeps_bookmarks"]),
+    # S10 C6: re-anchored -- the snapshot arm is deleted; the mutation restores it
     ("snapshot_compare_old_equality", ROUTES,
-     '        if ts_list:  # S10 C3: every version uses the ledger comparison rule',
-     '        if versions:  # old snapshot comparison',
+     '        rows = hub_versions.compare_n(_sides_in_one_era(',
+     '        rows = (hub_versions.compare_n if versions else (lambda s: Differ().diff_n(s, ignore_keys=set())))(_sides_in_one_era(',
      [TEST + "::test_snapshot_compare_uses_the_ledger_equality_rule"]),
     ("table_error_becomes_wait", ROUTES,
      '        ans.update(mode="unavailable", reason="unreadable",\n'
@@ -133,8 +126,10 @@ MUTATIONS.extend([
      "{% elif not rows and (not ledger_versions or ledger_versions.mode == 'ledger') %}",
      "{% elif not rows %}",
      [TEST, "-k", "nonledger_empty_list"]),
+    # S10 C6: re-anchored -- the toolbar count is mode-dependent too now
     ("empty_state_history_denies_states", TEMPLATES + "_ledger_state_history.html",
-     "{% if lv.mode == 'ledger' %}", "{% if True %}",
+     "{% if lv.mode == 'ledger' %}\n<p class=\"muted\" style=\"padding:1rem\">No recorded states yet.",
+     "{% if True %}\n<p class=\"muted\" style=\"padding:1rem\">No recorded states yet.",
      [TEST, "-k", "nonledger_empty_list"]),
     ("empty_drawer_denies_states", TEMPLATES + "_history_panel_ledger.html",
      "{% if lv.mode == 'ledger' %}<p class=", "{% if True %}<p class=",
@@ -210,8 +205,9 @@ MUTATIONS.extend([
      '                 or False)',
      ["tests/test_chip_metric_meta.py::test_the_route_names_the_run_and_the_snapshot",
       "tests/test_chip_metric_meta.py::test_a_value_null_in_the_first_snapshot_is_never_since_history_began"]),
+    # S10 C6: re-anchored -- the chip dir is passed in (the listing reads it before res has it)
     ("bookmark_hash_waits_for_worker", ROUTES,
-     '            if digest is None and writes and res.get("chip_dir") is not None:',
+     '            if digest is None and writes and chip_dir is not None:',
      '            if False:',
      [TEST, "-k", "bookmark_of_sm_write"]),
     ("project_badge_dropped", TEMPLATES + "_ledger_state_history.html",

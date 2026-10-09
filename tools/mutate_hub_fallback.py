@@ -18,8 +18,8 @@ TEST = "tests/test_hub_fallback_tripwire.py"
 MUTATIONS = [
     ("drawer_call_removed", '    _hub_fallback_reached("drawer", ans["reason"])', "    pass"),
     # S10 C5: "trends_call_removed" retired -- the Trends snapshot arm and its tripwire call are deleted
-    ("versions_call_removed", '        _hub_fallback_reached("versions", versions["reason"])', "        pass"),
-    ("state_history_call_removed", '        _hub_fallback_reached("state_history", versions["reason"])', "        pass"),
+    # S10 C6: versions_call_removed / state_history_call_removed retired -- both call
+    # sites were deleted with the snapshot branches they guarded.
     ("counts_removed", '        _HUB_FALLBACK_REACHED[key] = _HUB_FALLBACK_REACHED.get(key, 0) + 1', "        pass"),
     ("tripwire_disabled", '    if os.environ.get("HUB_FALLBACK_TRIPWIRE") == "1" and current_app.testing:', "    if False:"),
     ("testing_gate_removed", '    if os.environ.get("HUB_FALLBACK_TRIPWIRE") == "1" and current_app.testing:',

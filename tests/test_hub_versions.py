@@ -23,6 +23,7 @@ import re
 import shutil
 import threading
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -513,7 +514,9 @@ def test_a_ledger_version_carries_no_label(env):
     assert r.status_code == 409
 
 
-def test_a_chip_without_a_ledger_keeps_the_old_path_labelled(tmp_path):
+# S10 C6: renamed from test_a_chip_without_a_ledger_keeps_the_old_path_labelled -- the
+# old path is deleted; a fresh chip gets a ledger and the link offer, which is what it pins
+def test_a_fresh_chip_lists_through_its_new_ledger_with_the_link_offer(tmp_path):
     from quam_state_manager.web.app import create_app
     live = tmp_path / "live"
     live.mkdir()
@@ -536,6 +539,9 @@ def test_a_building_ledger_draws_the_older_snapshots_and_says_so(env, monkeypatc
     assert 'data-source="ledger"' in panel and "being built (1 of 3 runs)" in panel
     assert "run #" not in text(panel)
     assert "No recorded versions" not in panel, "the runs being read are not denied"
+    # S10 C6: + the panel's own building line -- with the snapshot list deleted, a dropped
+    # branch fell through to an empty Compare list (mutation building_says_no_versions survived)
+    assert "No older snapshots to show meanwhile." in panel and 'id="sv-compare"' not in panel
     page = env.client.get("/state-history").get_data(as_text=True)
     assert "being built (1 of 3 runs)" in page and "run #1 scan" not in page
 
@@ -714,16 +720,21 @@ def test_the_workbench_compares_ledger_versions_under_the_one_rule(tmp_path):
 
 
 def test_the_ledger_panel_never_asks_the_browser_to_refilter(env):
-    """The client asks for the panel again while its ``data-changes`` differs
-    from the browser's changes-only choice (docs/132). Ledger rows are not
-    filtered, so a value there would ask again forever (found in the real
-    browser: 23 requests in 4 s while the panel stood open)."""
+    """The client used to ask for the panel again while its filter attribute
+    differed from the browser's changes-only choice (docs/132); a value on
+    ledger rows asked again forever (found in the real browser: 23 requests in
+    4 s while the panel stood open). The filter is gone (S10 C6): an old URL
+    still naming a mode gets the same rows and a root with no filter mark."""
+    # S10 C6: "no mark, or the mode asked" -> no mark at all and one answer, the filter is deleted
+    roots, rows = [], []
     for mode in ("only", "all"):
         body = env.client.get(f"/state/versions?changes={mode}").get_data(as_text=True)
         root = re.search(r'<div class="state-versions"[^>]*>', body).group(0)
+        assert re.findall(r'\sdata-([\w-]+)=', root) == ["source"], root
         assert 'data-source="ledger"' in root
-        m = re.search(r'data-changes="(\w+)"', root)
-        assert m is None or m.group(1) == mode, root
+        roots.append(root)
+        rows.append(re.findall(r'sv-check" value="([^"]+)"', body))
+    assert roots[0] == roots[1] and rows[0] == rows[1] and rows[0]
 
 
 def test_an_archive_lists_versions_but_offers_no_write_and_no_live_mark(env):
@@ -824,3 +835,177 @@ def test_the_report_trends_read_the_ledger(env):
            for xy in re.search(r'<polyline[^>]*points="([^"]+)"', fig).group(1).split()]
     assert any(a[1] == b[1] and b[0] == c[0] and b[1] != c[1]
                for a, b, c in zip(pts, pts[1:], pts[2:])), pts
+
+
+# ======================================================================
+# 5. S10 C6: the review of C3 on these surfaces
+# ======================================================================
+
+class _Tags(HTMLParser):
+    """Every start tag with its attributes and the text up to its end tag --
+    what a browser parses, not what a regex hopes."""
+
+    def __init__(self):
+        super().__init__()
+        self.tags, self._open = [], []
+
+    def handle_starttag(self, tag, attrs):
+        item = {"tag": tag, "attrs": dict(attrs), "text": ""}
+        self.tags.append(item)
+        self._open.append(item)
+
+    def handle_data(self, data):
+        if self._open:
+            self._open[-1]["text"] += data
+
+    def handle_endtag(self, tag):
+        while self._open:
+            if self._open.pop()["tag"] == tag:
+                break
+
+
+def _parsed(body: str) -> list[dict]:
+    p = _Tags()
+    p.feed(body)
+    return p.tags
+
+
+def _bookmark(env, label="known good", note=None):
+    """A labelled Param History snapshot of the live chip as it is now."""
+    with env.app.app_context():
+        hm = routes_mod._history()
+        meta = hm.check_and_snapshot(ctx_of(env)["path"], "manual", force=True)
+        hm.annotate_snapshot(ctx_of(env)["path"], meta.timestamp, label=label,
+                             **({"note": note} if note is not None else {}))
+    return meta.timestamp
+
+
+def _meta(env, ts):
+    with env.app.app_context():
+        return next(s for s in routes_mod._history().list_snapshots(ctx_of(env)["path"])
+                    if s.timestamp == ts)
+
+
+def test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline(env):
+    """C3's Pin on a State History ledger row posted only ``pinned``, and the
+    label door turned the missing label into "clear": a bookmark labelled
+    "known good" lost its label for good on one press. Its title also carried
+    ts_local's <span>, which cut the attribute short (the button read
+    '... UTC">Pin'). The press is replayed exactly as htmx sends it."""
+    ts = _bookmark(env, note="before cooldown")
+    body = env.client.get("/state-history?body=1&per_page=40", headers={"HX-Request": "true"}).get_data(as_text=True)
+    pins = [t for t in _parsed(body) if t["tag"] == "button"
+            and t["attrs"].get("hx-post", "").startswith(f"/state-history/{ts}/label")]
+    assert len(pins) == 1, "the row carrying the bookmark offers its Pin"
+    pin = pins[0]
+    assert pin["text"].strip() == "Pin", repr(pin["text"])
+    assert "<" not in pin["attrs"]["title"] and pin["attrs"]["title"].startswith("Keep the Param History snapshot of 20")
+    assert pin["attrs"]["hx-target"] == "#state-history-body", "an open diff beside the timeline survives"
+    vals = json.loads(pin["attrs"]["hx-vals"])
+    r = env.client.post(pin["attrs"]["hx-post"], data=vals, headers={"HX-Request": "true"})
+    assert r.status_code == 200
+    page = r.get_data(as_text=True)
+    assert "sh-timeline" in page and "table-header-row" not in page, "the timeline alone comes back"
+    after = _meta(env, ts)
+    assert (after.pinned, after.label, after.note) == (True, "known good", "before cooldown")
+    # the explicit door still clears: a label that IS sent empty
+    env.client.post(f"/state-history/{ts}/label", data={"label": ""}, headers={"HX-Request": "true"})
+    assert (_meta(env, ts).label, _meta(env, ts).pinned) == (None, True)
+
+
+@pytest.mark.parametrize("mode", ["unavailable", "building"])
+@pytest.mark.parametrize("url", ["/api/history", "/state/versions", "/state-history?body=1"])
+def test_an_unreadable_listing_says_the_older_rows_are_below(env, monkeypatch, url, mode):
+    """A listing in ``unavailable`` draws the Param History snapshots as older
+    rows (the mode table); C3 put the value drawer's "Nothing older is shown in
+    its place." right above them. Its counts called them "0 recorded states"
+    "from the change history" in every non-ledger mode (seen in Chrome)."""
+    stamps = [_bookmark(env, label=None) for _ in range(2)]
+
+    def broken(*a, **k):
+        raise ValueError("corrupt ledger")
+    if mode == "building":
+        monkeypatch.setattr(hub_sync, "status", lambda _d: {"state": "building", "done": 1, "total": 3})
+    else:
+        monkeypatch.setattr(hub_versions, "_version_token", broken)
+    body = env.client.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert all(s in body for s in stamps), "the older rows are listed"
+    assert "Nothing older is shown" not in body
+    assert "recorded state" not in text(body) and "From the change history" not in text(body)
+    assert re.search(r"\b2 older snapshots\b", text(body)), text(body)[:600]
+    if mode == "unavailable":
+        assert ("The change history could not be read (unreadable). Older Param History snapshots are "
+                "listed below.") in text(body)
+
+
+def test_a_bookmark_is_never_carried_by_a_later_row():
+    """``_version_annotations`` fell back to the EARLIEST candidate after the
+    snapshot when none was at or before it (its own docstring says "at or
+    before"): a bookmark taken right after a run, then an SM restore of that
+    same state later, put the label and its Pin on the restore row."""
+    from types import SimpleNamespace
+    live = "C:/chips/live"
+    bookmark = SimpleNamespace(timestamp="20260101_120000_000000", label="known good", note=None,
+                               pinned=False, state_hash="h1", source_path=live)
+    hm = SimpleNamespace(_source_owner=lambda p: (p.lower(), p) if p else None)
+    srcs = {bookmark.timestamp: {"kind": "this", "folder": None}}
+    t = hub_versions._snapshot_instant(bookmark.timestamp)
+    later = {"observed": (), "snapshot_chashes": {bookmark.timestamp: "c1"},
+             "writes": [(9, t + 5_000_000, "c1", live)]}
+    out, unattached = routes_mod._version_annotations(hm, later, [bookmark], srcs)
+    assert out == {} and unattached == {bookmark.timestamp}, "a later restore never takes it"
+    both = dict(later, writes=[(8, t - 1, "c1", live), (9, t + 5_000_000, "c1", live)])
+    out, unattached = routes_mod._version_annotations(hm, both, [bookmark], srcs)
+    assert out == {8: [bookmark]} and not unattached, "the newest write at or before it does"
+
+
+def test_an_unattached_bookmark_is_listed_as_its_own_older_row(tmp_path):
+    """The listing draws a bookmark that only a later row could carry as its
+    own older row: a snapshot right after run #2 (the ledger holds that state,
+    so it is no row of its own), an SM write, then a restore of run #2 through
+    SM. Its note stays on its own row, never on the restore."""
+    last = chip_state(t1=3.0e-5)
+    last["extras"]["data_folder"] = str(tmp_path / "data")
+    env = build_env(tmp_path, [chip_state(), last])
+    ts = _bookmark(env, label=None, note="before cooldown")
+    with HubStore(env.chip_dir) as store:
+        seen = store.conn.execute("SELECT outcome FROM observed_snapshots WHERE ts=?", (ts,)).fetchone()
+    assert seen is not None and seen[0] == "same_before", "the premise: run #2 already holds this state"
+    apply_edit(env, "qubits.qA1.T1", 9e-05)
+    r = env.client.post(f"/state-history/{env.refs[-1]}/restore-live?force_pending=1&force_align=1",
+                        headers={"X-SM-Actor": "tester"})
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    panel = env.client.get("/state/versions").get_data(as_text=True)
+    rows = panel.split('<li class="state-version-row')[1:]
+    restore = [row for row in rows if "restored by" in text(row)]
+    assert restore and all("before cooldown" not in row for row in restore), "a later restore never takes it"
+    mine = [row for row in rows if f'value="{ts}"' in row]
+    assert len(mine) == 1 and "before cooldown" in mine[0] and "older snapshot" in text(mine[0])
+    page = env.client.get("/state-history?per_page=40", headers={"HX-Request": "true"}).get_data(as_text=True)
+    entry = page.split(f'data-ts="{ts}"')[1].split('data-ts="')[0]
+    assert "before cooldown" in entry and f"/state-history/{ts}/label" in entry
+
+
+def test_the_drawers_all_is_capped_and_says_so(env, monkeypatch):
+    """"All" in the History drawer read and drew the chip's whole ledger
+    timeline (limit 2**31 - 1); it lists the newest few hundred and names
+    where every one is."""
+    monkeypatch.setattr(routes_mod, "_HISTORY_DRAWER_ALL_CAP", 2)
+    body = env.client.get("/api/history?per_page=0").get_data(as_text=True)
+    assert body.count('class="history-entry hp-ledger-row"') == 2
+    assert "All shows the newest 2 of 3;" in text(body) and 'hx-get="/state-history"' in body
+    monkeypatch.setattr(routes_mod, "_HISTORY_DRAWER_ALL_CAP", 500)
+    body = env.client.get("/api/history?per_page=0").get_data(as_text=True)
+    assert body.count('class="history-entry hp-ledger-row"') == 3 and "All shows the newest" not in body
+
+
+def test_a_version_diff_racing_a_lost_ledger_explains(env, monkeypatch):
+    """The per-row Diff read the version's content hash after its try block:
+    a ledger lost between the two reads answered 500."""
+    def gone(*a, **k):
+        raise hub_versions.Unavailable("The change history could not be read (gone).")
+    monkeypatch.setattr(hub_versions, "event_info", gone)
+    # a server error is the browser's 500, not an exception in the test
+    monkeypatch.setitem(env.app.config, "PROPAGATE_EXCEPTIONS", False)
+    r = env.client.get(f"/state/versions/{env.refs[0]}/diff")
+    assert r.status_code == 200 and "Diff failed" in r.get_data(as_text=True)

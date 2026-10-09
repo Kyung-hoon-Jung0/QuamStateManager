@@ -48,14 +48,8 @@ def _oob_count(html: str):
     return int(m.group(1)) if m else None
 
 
-def _labels(html: str) -> list[str]:
-    """The zero-diff label of each drawer row, newest first ('' for a row with
-    a real diff)."""
-    out = []
-    for row in html.split('class="history-entry"')[1:]:
-        m = re.search(r'<span class="muted"[^>]*>\((baseline|no changes|no diff recorded)\)</span>', row)
-        out.append(m.group(1) if m else "")
-    return out
+# S10 C6: zero-diff label parsers of the snapshot drawer/page -> removed, that markup is deleted
+# (the pins below assert the labels are absent from the ledger rows instead).
 
 
 def _capture_value(client, value):
@@ -91,7 +85,8 @@ class TestTheCountFollowsTakeSnapshot:
         html = client.post("/api/history/snapshot").get_data(as_text=True)
         assert html.count('data-ts="') == 1
 
-    def test_the_trends_fragment_carries_the_same_count(self, client):
+    # S10 C6: renamed from test_the_trends_fragment_carries_the_same_count -- it pins the opposite
+    def test_the_trends_fragment_leaves_the_count_to_the_drawer(self, client):
         client.post("/api/history/snapshot")
         client.post("/api/history/snapshot")
         html = client.get("/topology/trends").get_data(as_text=True)
@@ -160,20 +155,11 @@ class TestZeroDiffRowsSayWhatTheyAre:
         assert any(e.dot_path == "qubits.q1.f_01" and e.new_value == 6.3e9 for e in entries)
 
 
-def _sh_labels(html: str) -> list[str]:
-    """The zero-diff label of each State History page row, newest first."""
-    out = []
-    for row in re.split(r'<div class="sh-entry[" ]', html)[1:]:
-        row = row.split('<div class="sh-attribution">', 1)[0]
-        m = re.search(r'<span class="muted"[^>]*>\((baseline|no changes|no diff recorded)\)</span>', row)
-        out.append(m.group(1) if m else "")
-    return out
-
-
 class TestTheStateHistoryPageSaysTheSame:
     """Review follow-up: the drawer said "(no changes)" for a row the State
-    History page still called "(baseline)". Both now render one macro
-    (_snapshot_zero_label.html) over the same first-snapshot rule."""
+    History page still called "(baseline)". Both now read the same ledger
+    rows (S10 C6: the shared snapshot zero-diff macro is deleted with both
+    snapshot lists)."""
 
     def test_only_the_first_snapshot_is_the_baseline(self, client):
         client.post("/api/history/snapshot")

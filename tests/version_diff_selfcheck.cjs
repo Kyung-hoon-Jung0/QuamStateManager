@@ -274,31 +274,23 @@ function partial(ts, extra) {
         .classList.contains('active'),
        'and the previous page item is cleared');
 
-    // ---- 10. the changes-only filter mode rides every refetch ----------
-    ok(String(SV.setChanges).length > 0, 'setChanges is exported');
-    global.localStorage = window.localStorage;   // the memStore stub
-    var stored = {};
-    bridge('localStorage', { getItem: function (k) { return stored[k] || null; },
-                             setItem: function (k, v) { stored[k] = String(v); },
-                             removeItem: function (k) { delete stored[k]; } });
+    // ---- 10. paging asks for the page alone ------------------------------
+    // S10 C6: changes-only filter mode on every refetch -> no filter at all,
+    // the ledger lists one row per recorded state; a browser that stored an
+    // old choice (every key answers 'all' here) still gets the page alone.
+    ok(SV.setChanges === undefined, 'no changes-only filter toggle is exported');
+    bridge('localStorage', { getItem: function () { return 'all'; },
+                             setItem: function () {}, removeItem: function () {} });
     seen.length = 0;
     SV.more(80);
     await tick();
-    ok(seen.length === 1
-        && seen[0].indexOf('/state/versions?changes=only') === 0
-        && seen[0].indexOf('limit=80') > -1,
-       'paging carries the default changes=only mode: ' + seen[0]);
-    seen.length = 0;
-    stored['quam_versions_changes'] = 'all';
-    SV.more(40);
-    await tick();
-    ok(seen[0].indexOf('/state/versions?changes=all') === 0,
-       'a stored "all" choice rides the refetch: ' + seen[0]);
+    ok(seen.length === 1 && seen[0] === '/state/versions?limit=80',
+       'paging asks for the page alone: ' + seen[0]);
+    bridge('localStorage', memStore);
 
     // ---- 10b. the live refresh preserves an expanded page (docs/132
     // review: a bare refetch collapsed "Show more" back to 40 and silently
     // dropped Compare ticks beyond the first page) --------------------
-    delete stored['quam_versions_changes'];
     panel().hidden = false;
     var many = [];
     for (var i2 = 0; i2 < 50; i2++) {

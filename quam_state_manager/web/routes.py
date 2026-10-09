@@ -15479,8 +15479,8 @@ def wiring_view():
     history_count = len(_snaps)
     # docs/301 F14: the History (N) button counts what its drawer lists -- the
     # ledger's recorded states when the chip has one (it said 3 beside a
-    # State History of ~3,000)
-    _hv = {"mode": "unavailable", "reason": "unreadable"}
+    # State History of ~3,000); in the other modes the drawer lists every
+    # snapshot as an older row, so their count stands
     if store:
         try:
             _hv = _versions_read(_active_ctx(), _snaps, limit=1, lane_notes=False)
@@ -15490,8 +15490,6 @@ def wiring_view():
                 history_count = int(_hv.get("total") or 0)
         except Exception:  # noqa: BLE001 -- the snapshot count stands
             logger.debug("history count from the ledger failed", exc_info=True)
-        if _hv["mode"] == "fallback":
-            _hub_fallback_reached("history_count", _hv["reason"])
 
     # Health layer (Chip Status overhaul): the structural linter (port collisions,
     # dangling pointers, value-spec violations) — already used by the drag-drop
@@ -15554,62 +15552,35 @@ def wiring_view():
 # ======================================================================
 
 
-# History-panel default page size. At 500 snapshots the old show-all default
-# rendered every row on each panel open; 0 stays the EXPLICIT "All" choice
-# (user doctrine: every pager offers a user-selectable size including All).
-_HISTORY_PANEL_PER_PAGE = 50
-
-
+# Drawer page size; 0 stays the EXPLICIT "All" choice (user doctrine: every
+# pager offers a user-selectable size including All).
 _HISTORY_DRAWER_LEDGER_ROWS = 20
+# "All" in the drawer lists at most this many newest states and says so: on a
+# chip with thousands of runs it read and drew the whole ledger timeline into a
+# side drawer (S10 C6 review). State History pages through every one.
+_HISTORY_DRAWER_ALL_CAP = 500
 
 
 @bp.route("/api/history")
 def history_list():
-    """Return the history panel content with paginated snapshot list."""
+    """The Chip Status History drawer: the chip's newest recorded states."""
     store = _store()
     if not store:
         return render_template("_status.html", message="No state loaded", level="warning")
 
-    hm = _history()
-    snapshots = hm.list_snapshots(_active_path())
-    # docs/301 F14: a chip with a change ledger lists ITS newest recorded
-    # states -- what the State History page lists -- instead of the Param
-    # History snapshots alone, under the same title
+    snapshots = _history().list_snapshots(_active_path())
+    # docs/301 F14: the drawer lists what the State History page lists -- the
+    # change ledger's recorded states plus the older snapshots no event holds
+    # (every snapshot as an older row while the ledger cannot answer, under
+    # the mode's note). S10 C6: the snapshot-only drawer is gone.
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _HISTORY_DRAWER_LEDGER_ROWS, minimum=0)
-    versions = _versions_read(_active_ctx(), snapshots, limit=per_page or 2**31 - 1,
+    versions = _versions_read(_active_ctx(), snapshots, limit=per_page or _HISTORY_DRAWER_ALL_CAP,
                               offset=(page - 1) * per_page)
-    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):
-        total_pages = max(1, math.ceil(versions["total"] / per_page)) if per_page else 1
-        return render_template("_history_panel_ledger.html", ledger_versions=versions,
-                               page=page, total_pages=total_pages, per_page=per_page)
-
-    if versions["mode"] == "fallback":
-        _hub_fallback_reached("history_drawer", versions["reason"])
-    page = _int_arg("page", 1, minimum=1)
-    per_page = _int_arg("per_page", _HISTORY_PANEL_PER_PAGE, minimum=0)  # 0 = All (explicit)
-    page_items, total, current_page, total_pages = _paginate(snapshots, page, per_page)
-    # QA chipstatus-r2-15: only the chip's FIRST snapshot is a baseline. From
-    # the FULL newest-first list (not the page), the Versions panel's rule.
-    first_ts = snapshots[-1].timestamp if snapshots else None
-
-    # hist_chip_key + active_path power the additive "⇄ Compare…" deep link
-    # (docs/49 U1a — the in-panel Compare Selected stays verbatim)
-    try:
-        hist_chip_key = hm._key_for(Path(_active_path()))
-    except Exception:
-        hist_chip_key = ""
-    return render_template(
-        "_history_panel.html",
-        snapshots=page_items,
-        total=total,
-        page=current_page,
-        total_pages=total_pages,
-        per_page=per_page,
-        hist_chip_key=hist_chip_key,
-        active_path=_active_path(),
-        first_ts=first_ts,
-    )
+    total_pages = max(1, math.ceil(versions["total"] / per_page)) if per_page else 1
+    return render_template("_history_panel_ledger.html", ledger_versions=versions,
+                           page=page, total_pages=total_pages, per_page=per_page,
+                           all_cap=_HISTORY_DRAWER_ALL_CAP)
 
 
 @bp.route("/api/history/snapshot", methods=["POST"])
@@ -15718,55 +15689,25 @@ def state_history():
     snapshots = hm.list_snapshots(_active_path())
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _STATE_HISTORY_PER_PAGE, minimum=1)
-    # docs/284: the rows come from the chip's change ledger when it has one
-    # (runs, SM writes, observed states + older snapshots it does not cover)
+    # docs/284: the rows come from the chip's change ledger (runs, SM writes,
+    # observed states + older snapshots it does not cover); while it cannot
+    # answer, every snapshot as an older row under the mode's note. S10 C6:
+    # the snapshot-only timeline is gone.
     versions = _versions_read(_active_ctx(), snapshots, limit=per_page,
                               offset=(page - 1) * per_page)
-    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):
-        total = versions["total"]
-        total_pages = max(1, math.ceil(total / per_page))
-        try:
-            disk_stats = hm.history_disk_stats(_active_path())
-        except Exception:  # noqa: BLE001 -- storage stats never prevent a history read
-            disk_stats = None
-        ctx = _ctx(page="state_history", snapshots=[], ledger_versions=versions,
-                   total=total, current_page=min(page, total_pages),
-                   total_pages=total_pages, per_page=per_page,
-                   chip_origin=_active_origin(), hist_chip_key=versions["chip_key"],
-                   disk_stats=disk_stats, first_ts=None)
-        if request.args.get("body") == "1":
-            return render_template("_state_history_body.html", **ctx)
-        template = "_state_history.html" if _is_htmx() else "state_history.html"
-        return render_template(template, **ctx)
-    if versions["mode"] == "fallback":
-        _hub_fallback_reached("state_history", versions["reason"])
-    page_items, total, page, total_pages = _paginate(snapshots, page, per_page)
-    # QA chipstatus-r2-15: the drawer's zero-diff rule -- only the chip's FIRST
-    # snapshot (of the full newest-first list, not the page) is a baseline.
-    first_ts = snapshots[-1].timestamp if snapshots else None
-    try:
-        hist_chip_key = _history()._key_for(Path(_active_path()))
-    except Exception:
-        hist_chip_key = ""
+    total = versions["total"]
+    total_pages = max(1, math.ceil(total / per_page))
     # Honest footprint line for the header ("N snapshots · X on disk") —
     # cached per (count, newest ts), so steady-state renders pay no walk.
     try:
         disk_stats = hm.history_disk_stats(_active_path())
-    except Exception:   # noqa: BLE001 — a stats failure must never kill the page
+    except Exception:  # noqa: BLE001 -- storage stats never prevent a history read
         disk_stats = None
-    ctx = _ctx(
-        page="state_history",
-        snapshots=page_items,
-        total=total,
-        current_page=page,
-        total_pages=total_pages,
-        per_page=per_page,
-        chip_origin=_active_origin(),
-        hist_chip_key=hist_chip_key,
-        disk_stats=disk_stats,
-        first_ts=first_ts,
-        ledger_versions=versions,
-    )
+    ctx = _ctx(page="state_history", ledger_versions=versions,
+               total=total, current_page=min(page, total_pages),
+               total_pages=total_pages, per_page=per_page,
+               chip_origin=_active_origin(), hist_chip_key=versions["chip_key"],
+               disk_stats=disk_stats)
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body
     # without disturbing the detail/result pane beside it.
@@ -16196,11 +16137,14 @@ def state_history_label(timestamp: str):
         return render_template(
             "_status.html", level="warning",
             message="A change-history version carries no label or pin; only snapshots do."), 409
-    label = (request.values.get("label") or "").strip() or None
+    # A label that is NOT SENT is kept (a Pin press sends none and must never
+    # clear a bookmark -- S10 C6 review); a sent empty label still clears it.
+    label = request.values.get("label")
+    edit = {} if label is None else {"label": label.strip() or None}
     pinned = request.values.get("pinned")
     pinned_val = None if pinned is None else (pinned == "1")
     try:
-        hm.annotate_snapshot(_active_path(), timestamp, label=label, pinned=pinned_val)
+        hm.annotate_snapshot(_active_path(), timestamp, pinned=pinned_val, **edit)
     except Exception as exc:
         return render_template("_status.html",
                                message=f"Could not update snapshot: {exc}", level="error"), 400
@@ -18119,18 +18063,14 @@ def _state_version_now(ctx: dict | None) -> dict:
     # docs/301 F14: the chip counts what its panel lists -- the ledger's
     # recorded states when the chip has one (it said 5 over a list of ~3,000).
     # ``unmatched`` above stays a snapshot fact: it is what ``ts`` was read from.
-    _v = {"mode": "unavailable", "reason": "unreadable"}
+    # In the other modes the panel lists every snapshot as an older row, so
+    # their count stands.
     try:
         _v = _versions_read(ctx, snaps, limit=1, lane_notes=False)
         if _v["mode"] == "ledger":
             out["count"] = int(_v.get("total") or 0)
     except Exception:  # noqa: BLE001 -- the snapshot count stands
         logger.debug("version count from the ledger failed", exc_info=True)
-    # The Versions panel supplies its displayed count from its own rows; this
-    # helper supplies its current snapshot ID there.
-    if (_v["mode"] == "fallback" and (not has_request_context()
-            or request.endpoint != f"{bp.name}.state_versions_panel")):
-        _hub_fallback_reached("version_count", _v["reason"])
     # WHOSE version this is, stated rather than assumed. The hash above is of
     # ``ctx["path"]`` — the LIVE pair — so the id names what the chip is on,
     # not what SM is holding. With unapplied edits those are different states,
@@ -18164,6 +18104,16 @@ _STATE_VERSIONS_CAP = 150
 # ----------------------------------------------------------------------
 # docs/284: the Versions panel and State History on the change ledger
 # ----------------------------------------------------------------------
+
+def _versions_unavailable_text(reason: str, older: int) -> str:
+    """What a listing (Versions, State History, History drawer) says when the
+    change history cannot be read. Unlike a value surface it DOES list the
+    older Param History snapshots below its note, so while there are any it
+    may not say "nothing older is shown" (S10 C6 review)."""
+    if older:
+        return f"The change history could not be read ({reason}). Older Param History snapshots are listed below."
+    return _VH_UNAVAILABLE_NOTES[reason]
+
 
 def _versions_wait_text(res: dict) -> str:
     if res["mode"] == "preparing":
@@ -18206,17 +18156,17 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
     from quam_state_manager.core.hub_versions import OBSERVED_KIND
     hm = _history()
     path = Path(ctx["path"])
-    try:
-        srcs = hm.snapshot_sources(path, snapshots)
-    except Exception:  # noqa: BLE001 -- a label never breaks the list
-        srcs = {}
+    srcs = res.get("_srcs")
+    if srcs is None:
+        srcs = _version_sources(ctx, snapshots)
     roots = _uid_roots()
     # "on this now" names the LIVE chip's content; an archive (a run's own
     # saved state, opened read-only) has no live chip to point at
     live_chash = _version_live_chash(ctx) if (ctx.get("origin") or "live") == "live" else None
     current_seen = False
     rows = []
-    annotations_by_event = _version_annotations(hm, res, snapshots, srcs)
+    annotations_by_event = (res.get("_annotated")
+                            or _version_annotations(hm, res, snapshots, srcs, res.get("chip_dir")))[0]
     for item in res["rows"]:
         if item["legacy"]:
             m = item["snapshot"]
@@ -18293,11 +18243,20 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
     return rows
 
 
-def _version_annotations(hm, res: dict, snapshots, srcs: dict) -> dict:
-    """S10 C3: ``{eid: [SnapshotMeta]}`` -- the Param History snapshots whose
-    pin / label / note a ledger row carries, so a bookmark stays visible (and
-    can be unpinned) once its state is a ledger event rather than a snapshot
-    row of its own.
+def _version_sources(ctx, snapshots) -> dict:
+    """``HistoryManager.snapshot_sources`` for a listing ({} when it fails:
+    a label never breaks the list)."""
+    try:
+        return _history().snapshot_sources(Path(ctx["path"]), snapshots)
+    except Exception:  # noqa: BLE001 -- a label never breaks the list
+        return {}
+
+
+def _version_annotations(hm, res: dict, snapshots, srcs: dict, chip_dir=None) -> tuple[dict, frozenset]:
+    """S10 C3: ``({eid: [SnapshotMeta]}, unattached)`` -- the Param History
+    snapshots whose pin / label / note a ledger row carries, so a bookmark
+    stays visible (and can be unpinned) once its state is a ledger event
+    rather than a snapshot row of its own.
 
     * An observed event carries the snapshot it was imported from (its own
       Pin button).
@@ -18306,8 +18265,13 @@ def _version_annotations(hm, res: dict, snapshots, srcs: dict) -> dict:
       one Pin, never a hundred. It goes to the observed event of the same
       recorded content AND the same recorded folder (the newest one at or
       before it), else to an SM write of the same content written to the same
-      folder. Equal content in another folder never takes it: a label is
-      matched on what was recorded, never on what it says."""
+      folder (the newest one at or before it). Equal content in another
+      folder never takes it: a label is matched on what was recorded, never on
+      what it says.
+    * S10 C6 review: a row recorded AFTER the snapshot never takes it (a
+      later restore of that state is not where it was bookmarked). Such a
+      snapshot is returned in ``unattached``, which the listing draws as its
+      own older row."""
     from quam_state_manager.core.hub_versions import _snapshot_instant
     by_stamp = {m.timestamp: m for m in snapshots}
 
@@ -18335,25 +18299,31 @@ def _version_annotations(hm, res: dict, snapshots, srcs: dict) -> dict:
     for cands in writes.values():
         cands.sort()
     chashes = res.get("snapshot_chashes") or {}
+    chip_dir = chip_dir if chip_dir is not None else res.get("chip_dir")
+    unattached: set[str] = set()
     for m in snapshots:
         if m.timestamp in own or not (m.label or m.note or m.pinned):
             continue
-        cands = observed.get(folder_of(m)) if getattr(m, "state_hash", None) else None
-        at = m.timestamp
-        if not cands:
+        seen = observed.get(folder_of(m)) if getattr(m, "state_hash", None) else None
+        before = [c for c in seen or () if c[0] <= m.timestamp]
+        later = bool(seen)
+        if not before:
             owner = hm._source_owner(getattr(m, "source_path", None))
             digest = chashes.get(m.timestamp)
-            if digest is None and writes and res.get("chip_dir") is not None:
+            if digest is None and writes and chip_dir is not None:
                 # still pending in the background hasher: this one is needed now
                 from quam_state_manager.core.hub_versions import snapshot_chash
-                digest = snapshot_chash(res["chip_dir"], m.timestamp)
-            cands = writes.get((digest, owner[0])) if digest and owner else None
+                digest = snapshot_chash(chip_dir, m.timestamp)
+            wrote = writes.get((digest, owner[0])) if digest and owner else None
             at = _snapshot_instant(m.timestamp)
-        if not cands:
-            continue                  # not on a listed row: nothing to carry
-        before = [c for c in cands if c[0] <= at]
-        out.setdefault((before[-1] if before else cands[0])[1], []).append(m)
-    return out
+            before = [c for c in wrote or () if c[0] <= at]
+            later = later or bool(wrote)
+        if before:
+            out.setdefault(before[-1][1], []).append(m)
+        elif later:
+            unattached.add(m.timestamp)   # only a later row holds it: never guessed onto it
+        # else: not on a listed row, nothing to carry
+    return out, frozenset(unattached)
 
 
 _VERSION_UID_MEMO: "OrderedDict[tuple, str | None]" = OrderedDict()
@@ -18415,7 +18385,7 @@ def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0,
         out.update(hub_versions.legacy_rows(snapshots, limit=limit, offset=offset))
         out["rows"] = _version_rows(ctx, out, snapshots)
         out["notes"] = [{"level": "info", "code": "no_chip_dir",
-                         "text": _VH_UNAVAILABLE_NOTES["no_chip_dir"]}]
+                         "text": _versions_unavailable_text("no_chip_dir", out["total"])}]
         return out
     chip_dir = Path(chip_dir)
     try:
@@ -18429,13 +18399,24 @@ def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0,
         res.update(hub_versions.legacy_rows(snapshots, limit=limit, offset=offset))
     else:
         res = hub_versions.read(chip_dir, snapshots, binding=binding, limit=limit, offset=offset)
+        # S10 C6 review: a bookmark that only a LATER row could carry is never
+        # guessed onto it -- it is listed as its own older row instead
+        srcs = annotated = None
+        if res["mode"] == "ledger":
+            srcs = _version_sources(ctx, snapshots)
+            annotated = _version_annotations(_history(), res, snapshots, srcs, chip_dir)
+            if annotated[1] - res.get("older", frozenset()):
+                res = hub_versions.read(chip_dir, snapshots, binding=binding, limit=limit,
+                                        offset=offset, keep=annotated[1])
+                annotated = None    # the rows read again: _version_rows matches them afresh
+        res["_srcs"], res["_annotated"] = srcs, annotated
     if (res.get("reason") == "no_ledger" and not ctx.get("hub_no_folder")
             and (ctx.get("origin") or "live") == "live"):
         res["reason"] = "unreadable"
     res["chip_key"] = chip_dir.name
     res["chip_dir"] = chip_dir
     if res["mode"] in ("unavailable", "building", "preparing"):
-        text = (_VH_UNAVAILABLE_NOTES[res["reason"]] if res["mode"] == "unavailable"
+        text = (_versions_unavailable_text(res["reason"], res["total"]) if res["mode"] == "unavailable"
                 else _versions_wait_text(res))
         res["notes"] = [{"level": "info", "code": res["reason"] or res["mode"], "text": text}]
         res["rows"] = _version_rows(ctx, res, snapshots)
@@ -18539,139 +18520,37 @@ def state_versions_panel():
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
         return render_template("_state_versions.html", rows=[], ver=_state_version_now(None),
-                               chip_key="", total=0, visible_total=0,
-                               hidden_unchanged=0, changes_only=True,
-                               cap=_STATE_VERSIONS_CAP, archive=True)
-    hm = _history()
+                               chip_key="", total=0, cap=_STATE_VERSIONS_CAP, archive=True)
     path = Path(ctx["path"])
     try:
-        snaps = hm.list_snapshots(path)
+        snaps = _history().list_snapshots(path)
     except Exception:  # noqa: BLE001
         snaps = []
-    try:
-        chip_key = Path(hm.resolve_chip_dir(path)[0]).name
-    except Exception:  # noqa: BLE001
-        chip_key = ""
     ver = _state_version_now(ctx)
     limit = min(_int_arg("limit", 40, minimum=1), _STATE_VERSIONS_CAP)
-    # docs/284: on a chip with a change ledger the rows are its state-bearing
-    # events (+ the older snapshots it does not cover); any other answer draws
-    # the older snapshot path below, saying why
+    # docs/284: the rows are the change ledger's state-bearing events (+ the
+    # older snapshots it does not cover); while it cannot answer, every
+    # snapshot as an older row under the mode's note. S10 C6: the snapshot-only
+    # list, its changes-only filter and its snapshot quick diff are gone.
     versions = _versions_read(ctx, snaps, limit=limit)
-    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):
-        rows = versions["rows"]
-        quick = None
-        # "what just changed?" is asked of THIS folder (docs/250), between two
-        # versions that can be read
-        mine = [i for i, r in enumerate(rows)
-                if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked", "other_chip")
-                and not r["why_diff"] and not r["pending"]]
-        if len(mine) >= 2:
-            b_i, a_i = mine[0], mine[1]
-            try:
-                entries = _version_quick_entries(path, rows[a_i]["ts"], rows[b_i]["ts"])
-                quick = {"a_ts": rows[a_i]["when"], "b_ts": rows[b_i]["when"],
-                         "a_ord": a_i + 1, "b_ord": b_i + 1, "n": len(entries),
-                         "entries": entries if 0 < len(entries) <= 50 else None}
-            except Exception:  # noqa: BLE001 -- the list must render regardless
-                quick = None
-        return render_template("_state_versions.html", rows=rows, ver=ver,
-                               chip_key=versions["chip_key"], total=versions["total"],
-                               visible_total=versions["total"], hidden_unchanged=0,
-                               changes_only=False, cap=_STATE_VERSIONS_CAP, quick=quick,
-                               ledger_versions=versions,
-                               archive=(ctx.get("origin") or "live") != "live")
-    if versions["mode"] == "fallback":
-        _hub_fallback_reached("versions", versions["reason"])
-    # docs/132 — the changes-only filter (default ON: "users do not care about
-    # rows with no diff"). A row is hidden iff its capture-time diff_summary is a
-    # true zero AND nothing marks it as individually meaningful: pinned rows,
-    # EXP rows (their zeros mean NOT-COMPUTED on backfilled ones), the
-    # current row, and labeled/noted bookmarks always show. Filtered BEFORE
-    # the limit slice so a page of 40 is 40 rows the user cares about; the
-    # hidden count is stated, never silent.
-    changes_only = (request.args.get("changes") or "only") != "all"
-    roots = _uid_roots()
-    hidden_unchanged = 0
-    visible: list = []
-    # The chronologically FIRST snapshot has zeros because there was nothing
-    # earlier to diff against — the same zeros-mean-not-computed ambiguity
-    # the EXP exemption covers. Hiding the chip's original state as an
-    # "unchanged copy" was the docs/132 review's finding; snaps is
-    # newest-first, so the first-ever snapshot is the LAST element.
-    first_ts = snaps[-1].timestamp if snaps else None
-    for i, m in enumerate(snaps):
-        knd, knd_legacy = kind_for(m)
-        # w7 fq-sync P3b: a zero is only "unchanged" when it can be. A row
-        # captured with no prior records zeros too, and once a run ingest
-        # lands OLDER rows beneath it (the first Apply on a chip with a data
-        # folder), it is no longer the first -- hiding it made the quick-diff
-        # compare the Apply's own snapshot with a weeks-old run ("29049
-        # values differ" after one edit). When both hashes are known, a row
-        # whose content differs from the one right below it is not a copy of
-        # anything shown, whatever its zeros say.
-        below = snaps[i + 1] if i + 1 < len(snaps) else None
-        unlike_below = bool(below is not None and m.state_hash and below.state_hash
-                            and m.state_hash != below.state_hash)
-        if changes_only and knd != "exp" and not m.pinned \
-                and not m.label and not m.note \
-                and m.timestamp != ver["ts"] \
-                and m.timestamp != first_ts \
-                and not unlike_below \
-                and isinstance(m.diff_summary, dict) \
-                and m.diff_summary.get("total") == 0:
-            hidden_unchanged += 1
-            continue
-        visible.append((m, knd, knd_legacy))
-    # docs/250: one chip identity can span folders -- each row names the
-    # folder that recorded it when that is not this one
-    try:
-        srcs = hm.snapshot_sources(path, snaps)
-    except Exception:  # noqa: BLE001 -- a label never breaks the list
-        srcs = {}
-    rows = [{
-        "source": srcs.get(m.timestamp),
-        "ts": m.timestamp,
-        "trigger": m.trigger,
-        "kind": knd,
-        "kind_legacy": knd_legacy,
-        "label": m.label,
-        "note": m.note,
-        "pinned": bool(m.pinned),
-        "experiment": m.experiment_name,
-        "run_id": m.run_id,
-        # The clickable "After #run" chip's target (docs/132): folder-scoped
-        # uid when the run folder is inside a registered root, else the
-        # bare-run-id fallback route.
-        "run_uid": (_uid_for_run_ref(m.experiment_folder_path, m.run_id, roots)
-                    if m.run_id is not None else None),
-        "current": m.timestamp == ver["ts"],
-    } for m, knd, knd_legacy in visible[:limit]]
-    # docs/126: the ordinary question at this button is "what just changed?",
-    # and answering it used to cost tick-two + Compare. When the newest two
-    # versions differ by ≤ 50 leaves the panel now shows the table IMMEDIATELY
-    # (key | old → new, the docs/76 Δ); bigger diffs state their size and
-    # point at Compare. The tick-two flow stays for any other pairing.
+    rows = versions["rows"]
     quick = None
-    # docs/250: "what just changed?" is asked of THIS folder -- rows another
-    # folder with the same chip name recorded alongside it are skipped
+    # "what just changed?" is asked of THIS folder (docs/250), between two
+    # versions that can be read
     mine = [i for i, r in enumerate(rows)
-            if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked", "other_chip")]
+            if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked", "other_chip")
+            and not r["why_diff"] and not r["pending"]]
     if len(mine) >= 2:
         b_i, a_i = mine[0], mine[1]
         try:
-            entries = hm.diff_snapshots(path, rows[a_i]["ts"], rows[b_i]["ts"])
-            quick = {"a_ts": rows[a_i]["ts"], "b_ts": rows[b_i]["ts"],
-                     "a_ord": a_i + 1, "b_ord": b_i + 1,
-                     "n": len(entries),
+            entries = _version_quick_entries(path, rows[a_i]["ts"], rows[b_i]["ts"])
+            quick = {"a_ts": rows[a_i]["when"], "b_ts": rows[b_i]["when"],
+                     "a_ord": a_i + 1, "b_ord": b_i + 1, "n": len(entries),
                      "entries": entries if 0 < len(entries) <= 50 else None}
-        except Exception:  # noqa: BLE001 — the list must render regardless
+        except Exception:  # noqa: BLE001 -- the list must render regardless
             quick = None
     return render_template("_state_versions.html", rows=rows, ver=ver,
-                           chip_key=chip_key, total=len(snaps),
-                           visible_total=len(visible),
-                           hidden_unchanged=hidden_unchanged,
-                           changes_only=changes_only,
+                           chip_key=versions["chip_key"], total=versions["total"],
                            cap=_STATE_VERSIONS_CAP, quick=quick,
                            ledger_versions=versions,
                            archive=(ctx.get("origin") or "live") != "live")
@@ -18728,6 +18607,9 @@ def state_version_diff(timestamp: str):
             if chip_dir is None:
                 raise hub_versions.Unavailable("The chip's history folder cannot be resolved.")
             doc, why_write = hub_versions.diff_view(chip_dir, timestamp)
+            # inside the try: a ledger lost between two reads ends in the same
+            # message as the rest, never a 500 (S10 C6 review)
+            version_chash = hub_versions.event_info(chip_dir, timestamp).get("chash")
             entries = hub_versions.compare(*_sides_in_one_era([(doc, {}), ctx["store"]]))
         elif _rename_scope():
             entries = Differ().diff(*_sides_in_one_era([_version_side(path, timestamp), ctx.get("store")]),
@@ -18749,7 +18631,7 @@ def state_version_diff(timestamp: str):
         # ledger can hand over exactly (the door re-checks when pressed)
         live_chash = _version_live_chash(ctx)
         offers_pull = (why_write is None
-                       and not (live_chash and hub_versions.event_info(chip_dir, timestamp).get("chash") == live_chash))
+                       and not (live_chash and version_chash == live_chash))
     return render_template(
         "_version_diff.html",
         entries=entries[:300],
@@ -29888,15 +29770,12 @@ def diff_versions():
         # (docs/94) is exactly the difference a physicist opens this for, and
         # the 2-tick button on the same panel (the /diff workbench) already
         # reports it — the two must not disagree about the same two versions.
-        if ts_list:  # S10 C3: every version uses the ledger comparison rule
-            # docs/284: ledger versions (merged documents) and snapshots, under
-            # the one rule the 2-tick workbench uses with them (compare_equal)
-            rows = hub_versions.compare_n(_sides_in_one_era(
-                [(ledger_docs[ts][1], {}) if ts in ledger_docs else _version_side(path, ts)
-                 for ts in ts_list]))
-        else:
-            stores = _sides_in_one_era([_version_side(path, ts) for ts in ts_list])
-            rows = Differ().diff_n(stores, ignore_keys=set())
+        # docs/284: ledger versions (merged documents) and snapshots, under the
+        # one rule the 2-tick workbench uses with them (compare_equal). S10 C6:
+        # the snapshot-only Differ N-way arm is gone.
+        rows = hub_versions.compare_n(_sides_in_one_era(
+            [(ledger_docs[ts][1], {}) if ts in ledger_docs else _version_side(path, ts)
+             for ts in ts_list]))
     except Exception as exc:      # noqa: BLE001 — a pruned snapshot must explain, not 500
         return _fail(f"Compare failed: {exc}")
     try:

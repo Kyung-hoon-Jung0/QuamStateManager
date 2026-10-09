@@ -11,7 +11,7 @@
 <div class="sh-toolbar">
     <button id="sh-compare-btn" class="outline btn-sm" disabled
             onclick="StateHistory.compareSelected()">Compare 2 selected</button>
-    <small class="muted">{{ lv.events }} recorded state{{ 's' if lv.events != 1 }}{% if lv.legacy_total %} · {{ lv.legacy_total }} older snapshot{{ 's' if lv.legacy_total != 1 }}{% endif %}</small>
+    <small class="muted">{% if lv.mode == 'ledger' %}{{ lv.events }} recorded state{{ 's' if lv.events != 1 }}{% if lv.legacy_total %} · {{ lv.legacy_total }} older snapshot{{ 's' if lv.legacy_total != 1 }}{% endif %}{% else %}{{ lv.legacy_total }} older snapshot{{ 's' if lv.legacy_total != 1 }}{% endif %}</small>
 </div>
 
 <div class="sh-timeline">
@@ -46,12 +46,16 @@
 
     <div class="sh-entry-actions">
         {% if chip_origin == 'live' %}
+        {# A pin sends no label (the door keeps a label it is not sent) and
+           re-renders only this page of the timeline (body=1 into
+           #state-history-body), so an open diff in #state-history-detail
+           survives. The title is plain text: ts_local's span would break it. #}
         {% for m in r.annotations %}
         <button class="outline btn-sm"
-                hx-post="/state-history/{{ m.timestamp }}/label"
+                hx-post="/state-history/{{ m.timestamp }}/label?body=1&amp;page={{ current_page }}&amp;per_page={{ per_page }}"
                 hx-vals='{"pinned":"{{ 0 if m.pinned else 1 }}"}'
-                hx-target="#table-pane" hx-swap="innerHTML"
-                title="{{ 'Let retention remove' if m.pinned else 'Keep' }} the Param History snapshot of {{ m.timestamp | ts_local }}">{{ 'Unpin' if m.pinned else 'Pin' }}</button>
+                hx-target="#state-history-body" hx-swap="innerHTML"
+                title="{{ 'Let retention remove' if m.pinned else 'Keep' }} the Param History snapshot of {{ m.timestamp | format_ts_zone }}">{{ 'Unpin' if m.pinned else 'Pin' }}</button>
         {% endfor %}
         {% endif %}
         {% if not r.why_diff %}

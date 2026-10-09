@@ -90,9 +90,13 @@ class TestP1P2Followups:
     def test_pin_retarget_preserves_open_diff(self):
         # Pin re-renders only the timeline (body=1 → #state-history-body), not the whole
         # #table-pane, so an open compare/diff in #state-history-detail survives.
-        body = (_TPL / "_state_history_body.html").read_text(encoding="utf-8")
-        assert "/label?" in body and "&body=1" in body
-        assert 'hx-target="#state-history-body"' in body
+        # S10 C6: snapshot-loop Pin in _state_history_body.html -> the ledger row's Pin in
+        # _ledger_state_history.html, the snapshot loop is deleted and the ledger Pin owed this
+        body = (_TPL / "_ledger_state_history.html").read_text(encoding="utf-8")
+        pin = body[body.index('hx-post="/state-history/{{ m.timestamp }}/label'):]
+        pin = pin[:pin.index("</button>")]
+        assert "/label?body=1" in pin
+        assert 'hx-target="#state-history-body"' in pin and "#table-pane" not in pin
 
     def test_backfill_residual_gate(self):
         ph = (_TPL / "_param_history.html").read_text(encoding="utf-8")

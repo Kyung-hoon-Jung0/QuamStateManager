@@ -627,7 +627,8 @@ def _surfaces(env, path="qubits.qA1.T1") -> dict:
     for d in {day, datetime.now().strftime("%Y-%m-%d")}:
         out.setdefault("log", "")
         out["log"] += c.get(f"/journal/day?day={d}", headers={"HX-Request": "true"}).data.decode()
-    out["versions"] = c.get("/state/versions?changes=all").data.decode()
+    # S10 C6: "?changes=all" -> the plain panel URL, the changes-only filter is deleted
+    out["versions"] = c.get("/state/versions").data.decode()
     out["state_history"] = c.get("/state-history?body=1", headers={"HX-Request": "true"}).data.decode()
     out["history_drawer"] = c.get("/api/history").data.decode()
     return out
@@ -714,7 +715,8 @@ class TestSurfaces:
         b_observed = _ledger_rows(shared, "SELECT COUNT(*) FROM events WHERE kind='observed' AND live LIKE ?",
                                   ("%labB%",))[0][0]
         assert b_observed >= 1, "the premise: the ledger holds a state B's window observed"
-        html = shared["client"].get("/state/versions?changes=all&limit=50").data.decode()
+        # S10 C6: "?changes=all&limit=50" -> "?limit=50", the changes-only filter is deleted
+        html = shared["client"].get("/state/versions?limit=50").data.decode()
         rows_ = html.split('<li class="state-version-row')[1:]
         seen = [r for r in rows_ if "seen by SM" in r]
         assert any("from labB/quam_state" in r for r in seen), "B's observed row names B's folder"

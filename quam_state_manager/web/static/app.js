@@ -5621,28 +5621,9 @@ window._restoreHistoryPanelState = function() {
     }
 };
 
-window.selectHistoryEntry = function(checkbox) {
-    var checked = document.querySelectorAll(".history-compare-cb:checked");
-    if (checked.length > 2) {
-        checkbox.checked = false;
-        if (window.showToast) window.showToast("Pick exactly two snapshots to compare.", "info");
-        return;
-    }
-    var btn = document.getElementById("history-compare-btn");
-    if (btn) btn.disabled = (checked.length !== 2);
-};
-
-window.compareSelectedSnapshots = function() {
-    var checked = document.querySelectorAll(".history-compare-cb:checked");
-    if (checked.length !== 2) return;
-    // docs/84: "Compare selected" used to land on three different surfaces
-    // depending on which page you started from. It now always opens the diff
-    // workbench, which resolves the chip dir server-side.
-    _openDiffForSnapshots(checked[0].value, checked[1].value);
-};
-
-/* Two snapshot timestamps -> the diff workbench. HX-Redirect when htmx is
-   present (the response navigates), a plain location change otherwise. */
+/* Two version ids -> the diff workbench (docs/84: every "Compare selected"
+   lands there; the chip dir is resolved server-side). HX-Redirect when htmx
+   is present (the response navigates), a plain location change otherwise. */
 function _openDiffForSnapshots(tsA, tsB) {
     var url = "/diff/snapshots?ts_a=" + encodeURIComponent(tsA)
             + "&ts_b=" + encodeURIComponent(tsB);
@@ -25614,20 +25595,13 @@ window.StateVersions = (function () {
        must follow them. The tray swaps on every flush, so ride that (the
        docs/117 observation: every commit path ends in a tray swap), debounced;
        ticked rows survive the refresh exactly like more() preserves them. */
-    /* docs/132 — the changes-only filter mode. Server default is 'only'
-       (users don't care about unchanged copies); the choice persists per
-       browser and rides every refetch this module makes. */
-    function _changesMode() {
-        try { return localStorage.getItem('quam_versions_changes') || 'only'; }
-        catch (e) { return 'only'; }
-    }
+    /* S10 C6: the snapshot list's changes-only filter is gone (ledger rows
+       are one per recorded state), so the panel URL carries only the page. */
     function _versionsUrl(limit) {
-        var u = '/state/versions?changes=' + encodeURIComponent(_changesMode());
-        if (limit) u += '&limit=' + encodeURIComponent(limit);
-        return u;
+        return '/state/versions' + (limit ? '?limit=' + encodeURIComponent(limit) : '');
     }
-    /* One refetch used by paging, the filter toggle and both live-refresh
-       listeners — ticked rows always survive by value. */
+    /* One refetch used by paging and both live-refresh listeners — ticked
+       rows always survive by value. */
     function _refetch(limit) {
         if (!window.htmx) return;
         var keep = _checked();
@@ -25641,10 +25615,6 @@ window.StateVersions = (function () {
                 });
                 pick();
             });
-    }
-    function setChanges(mode) {
-        try { localStorage.setItem('quam_versions_changes', mode); } catch (e) {}
-        _refetch();
     }
     var _svLiveTimer = null;
     function _debouncedRefetch() {
@@ -25667,17 +25637,8 @@ window.StateVersions = (function () {
         var p = panel();
         if (!p || p.hidden) return;
         var t = evt.detail && evt.detail.target;
-        // The chip's own initial fill renders the server-default filter mode;
-        // if this browser chose 'all', reconcile once (data-changes carries
-        // the rendered mode, so this can never loop).
-        if (t && t.id === 'state-version-panel') {
-            var root = p.querySelector('.state-versions');
-            if (root && root.getAttribute('data-changes')
-                    && root.getAttribute('data-changes') !== _changesMode()) {
-                _refetch();
-            }
-            return;
-        }
+        // the panel's own fill is not a tray swap
+        if (t && t.id === 'state-version-panel') return;
         if (!document.querySelector('.auto-apply-pill.auto-apply-on')) return;
         var isTray = t && (t.id === 'pending-tray'
             || (t.querySelector && t.querySelector('#pending-tray')));
@@ -25948,7 +25909,7 @@ window.StateVersions = (function () {
     }
     return { toggle: toggle, close: close, pick: pick, compare: compare,
              more: more, diff: diff, closeDiff: closeDiff,
-             setChanges: setChanges, take: take, editTake: editTake };
+             take: take, editTake: editTake };
 })();
 
 /* ── the top bar's REAL height (docs/120 item 23) ─────────────────────────

@@ -33,6 +33,8 @@ CS = "quam_state_manager/core/compare_sources.py"
 PANEL = "quam_state_manager/web/templates/_state_versions.html"
 BODY = "quam_state_manager/web/templates/_state_history_body.html"
 LSH = "quam_state_manager/web/templates/_ledger_state_history.html"
+DRAWER = "quam_state_manager/web/templates/_history_panel_ledger.html"
+HIST = "quam_state_manager/core/history.py"
 
 ID = "test_a_version_id_is_checked_against_its_event_instant"
 DOC = "test_the_diff_document_is_the_ledgers_and_needs_no_archive_file"
@@ -54,7 +56,7 @@ RESTORE = "test_restore_live_keeps_every_gate_and_the_record"
 REFUSE = "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
 CHIP = "test_another_chips_version_is_refused"
 LABEL = "test_a_ledger_version_carries_no_label"
-NOLEDGER = "test_a_chip_without_a_ledger_keeps_the_old_path_labelled"
+NOLEDGER = "test_a_fresh_chip_lists_through_its_new_ledger_with_the_link_offer"  # S10 C6: renamed
 BUILDING = "test_a_building_ledger_draws_the_older_snapshots_and_says_so"
 DOORS = "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
 BLOB = "test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
@@ -62,7 +64,67 @@ FOLLOW = "test_the_list_follows_the_ledger_and_the_snapshot_list"
 PAGES = "test_state_history_pages_through_the_ledger_rows"
 REFILTER = "test_the_ledger_panel_never_asks_the_browser_to_refilter"
 ARCHIVE = "test_an_archive_lists_versions_but_offers_no_write_and_no_live_mark"
+ZONE = "test_a_ledger_rows_confirms_name_its_time_in_the_pages_zone"
 NAN = "test_the_workbench_compares_ledger_versions_under_the_one_rule"
+# S10 C6: the review of C3 on these surfaces
+PINLABEL = "test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline"
+UNAVAIL = "test_an_unreadable_listing_says_the_older_rows_are_below"
+CARRIED = "test_a_bookmark_is_never_carried_by_a_later_row"
+UNATTACHED = "test_an_unattached_bookmark_is_listed_as_its_own_older_row"
+CAP = "test_the_drawers_all_is_capped_and_says_so"
+RACE = "test_a_version_diff_racing_a_lost_ledger_explains"
+
+# S10 C6: the Diff's whole try block, from the version-hash read to the Pull check
+RACE_OLD = (
+    '            version_chash = hub_versions.event_info(chip_dir, timestamp).get("chash")\n'
+    '            entries = hub_versions.compare(*_sides_in_one_era([(doc, {}), ctx["store"]]))\n'
+    '        elif _rename_scope():\n'
+    '            entries = Differ().diff(*_sides_in_one_era([_version_side(path, timestamp), ctx.get("store")]),\n'
+    '                                    ignore_keys=set())\n'
+    '        else:\n'
+    '            entries = hm.diff_current(path, timestamp, current_store=ctx.get("store"),\n'
+    '                                      ignore_keys=set())\n'
+    '    except Exception as exc:  # noqa: BLE001 — a missing snapshot must explain, not 500\n'
+    '        return render_template("_status.html",\n'
+    '                               message=f"Diff failed: {exc}", level="error")\n'
+    '    # Whether the ROW this overlay describes actually offers ↑ Pull to Live\n'
+    '    # (the panel hides it on archives and on the current version) — so the\n'
+    '    # overlay never instructs the user to press a button that is not there.\n'
+    '    archive = (ctx.get("origin") or "live") != "live"\n'
+    '    offers_pull = (not archive\n'
+    '                   and timestamp != _state_version_now(ctx)["ts"])\n'
+    '    if offers_pull and is_version:\n'
+    '        # docs/284: the row offers Pull to Live only for a version the\n'
+    '        # ledger can hand over exactly (the door re-checks when pressed)\n'
+    '        live_chash = _version_live_chash(ctx)\n'
+    '        offers_pull = (why_write is None\n'
+    '                       and not (live_chash and version_chash == live_chash))'
+)
+RACE_NEW = (
+    '            version_chash = None\n'
+    '            entries = hub_versions.compare(*_sides_in_one_era([(doc, {}), ctx["store"]]))\n'
+    '        elif _rename_scope():\n'
+    '            entries = Differ().diff(*_sides_in_one_era([_version_side(path, timestamp), ctx.get("store")]),\n'
+    '                                    ignore_keys=set())\n'
+    '        else:\n'
+    '            entries = hm.diff_current(path, timestamp, current_store=ctx.get("store"),\n'
+    '                                      ignore_keys=set())\n'
+    '    except Exception as exc:  # noqa: BLE001 — a missing snapshot must explain, not 500\n'
+    '        return render_template("_status.html",\n'
+    '                               message=f"Diff failed: {exc}", level="error")\n'
+    '    # Whether the ROW this overlay describes actually offers ↑ Pull to Live\n'
+    '    # (the panel hides it on archives and on the current version) — so the\n'
+    '    # overlay never instructs the user to press a button that is not there.\n'
+    '    archive = (ctx.get("origin") or "live") != "live"\n'
+    '    offers_pull = (not archive\n'
+    '                   and timestamp != _state_version_now(ctx)["ts"])\n'
+    '    if offers_pull and is_version:\n'
+    '        # docs/284: the row offers Pull to Live only for a version the\n'
+    '        # ledger can hand over exactly (the door re-checks when pressed)\n'
+    '        live_chash = _version_live_chash(ctx)\n'
+    '        offers_pull = (why_write is None\n'
+    '                       and not (live_chash and hub_versions.event_info(chip_dir, timestamp).get("chash") == live_chash))'
+)
 
 MUTATIONS = [
     # -- references and the two documents
@@ -141,9 +203,10 @@ MUTATIONS = [
     ("summary_cached_regardless_of_the_snapshots", HV,
      '        key = (str(directory), _version_token(binding), tuple(s.timestamp for s in snapshots))',
      '        key = (str(directory), _version_token(binding))', [FOLLOW]),
+    # S10 C6: re-anchored -- older rows also take the kept bookmarks
     ("cached_rows_drawn_as_they_were", HV,
-     '            older = [s for s in snapshots if s.timestamp in summary["older"]]',
-     '            older = summary.setdefault("rows", [s for s in snapshots if s.timestamp in summary["older"]])',
+     '            older = [s for s in snapshots if s.timestamp in summary["older"] or s.timestamp in keep]',
+     '            older = summary.setdefault("rows", [s for s in snapshots if s.timestamp in summary["older"] or s.timestamp in keep])',
      [FOLLOW]),
     ("summary_cached_while_matching", HV, '                if not summary.get("pending"):', '                if True:',
      [MATCH]),
@@ -191,16 +254,19 @@ MUTATIONS = [
     ("restore_alignment_skipped_for_versions", RT,
      '            alignment = align(fingerprint_from_dicts(*_version_pair), fingerprint_of(path))',
      '            alignment = ALIGN_ALIGNED', [RESTORE]),
-    ("stage_writes_the_merged_document", RT, '        return hub_versions.exact_pair(chip_dir, timestamp)',
-     '        return hub_versions.document(chip_dir, timestamp), {}', [STAGE, RESTORE]),
+    # S10 C6: re-anchored -- the exact pair is now put in today's names (docs/296)
+    ("stage_writes_the_merged_document", RT, '        return _side_today(hub_versions.exact_pair(chip_dir, timestamp))',
+     '        return _side_today((hub_versions.document(chip_dir, timestamp), {}))', [STAGE, RESTORE]),
     # -- routes: the surfaces
-    # S10 C3: re-anchored -- every listing mode draws through the ledger templates now
+    # S10 C6: re-anchored -- the snapshot-only branches are deleted; the mutation now keeps
+    # only the older-snapshot rows of the one listing
     ("panel_keeps_the_snapshot_rows", RT,
-     '    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):\n        rows = versions["rows"]',
-     '    if False:\n        rows = versions["rows"]', [NAMES]),
+     '    rows = versions["rows"]\n    quick = None',
+     '    rows = [r for r in versions["rows"] if r["legacy"]]\n    quick = None', [NAMES]),
     ("history_page_keeps_the_snapshot_rows", RT,
-     '    if versions["mode"] in ("ledger", "building", "preparing", "unavailable"):\n        total = versions["total"]',
-     '    if False:\n        total = versions["total"]', [NAMES, PAGES]),
+     '    ctx = _ctx(page="state_history", ledger_versions=versions,',
+     '    ctx = _ctx(page="state_history", ledger_versions=dict(versions, rows=[r for r in versions["rows"] if r["legacy"]]),',
+     [NAMES, PAGES]),
     ("sm_write_without_its_actor", RT,
      '    else:\n        label = f"{verb} by {who}"\n    src = ev.get("src") or kind',
      '    else:\n        label = f"{verb}"\n    src = ev.get("src") or kind', [NAMES]),
@@ -220,7 +286,8 @@ MUTATIONS = [
     ("fallback_unlabelled", RT,
      '        res["notes"] = [{"level": "info", "code": res["reason"] or res["mode"], "text": text}]',
      '        res["notes"] = []', [BUILDING]),
-    ("version_diff_empty", RT, '            entries = hub_versions.compare((doc, {}), ctx["store"])',
+    # S10 C6: re-anchored -- both sides are put in one rename era first (docs/296)
+    ("version_diff_empty", RT, '            entries = hub_versions.compare(*_sides_in_one_era([(doc, {}), ctx["store"]]))',
      '            entries = []', [DIFF]),
     # S10 C3: re-anchored -- the overlay also withholds Pull for the version live holds
     ("pull_offered_for_any_version", RT, '        offers_pull = (why_write is None\n',
@@ -242,30 +309,79 @@ MUTATIONS = [
     ("workbench_refuses_a_version_id", CS, '                or not (_TS_STAMP_RE.match(ts_dir) or is_event)):',
      '                or not _TS_STAMP_RE.match(ts_dir)):', [DIFF]),
     # -- templates
+    # S10 C6: re-anchored -- Stage and Pull share one gate now that every row is a ledger row
     ("panel_stage_for_any_version", PANEL,
-     '{% if ledger_mode and not archive and not r.current and not r.why_write and not r.pending %}',
-     '{% if ledger_mode and not archive and not r.current and not r.pending %}', [REFUSE]),
+     '{% if not archive and not r.current and not r.why_write and not r.pending %}',
+     '{% if not archive and not r.current and not r.pending %}', [REFUSE]),
     ("panel_diff_never_disabled", PANEL, '                {% if r.why_diff %}\n                <button type="button" class="btn-xs outline sv-diff" disabled',
      '                {% if false %}\n                <button type="button" class="btn-xs outline sv-diff" disabled', [BLOB]),
     ("panel_reason_hidden", PANEL, '{% if r.why_write %}<span class="sv-unavailable"',
      '{% if false %}<span class="sv-unavailable"', [REFUSE]),
-    ("panel_asks_to_refilter_forever", PANEL, '{% if not ledger_mode %}data-changes=',
-     '{% if true %}data-changes=', [REFILTER]),
+    # S10 C6: re-anchored -- the filter attribute is deleted; the mutation puts it back
+    ("panel_asks_to_refilter_forever", PANEL, '     data-source="ledger">',
+     '     data-changes="only" data-source="ledger">', [REFILTER]),
     ("building_says_no_versions", PANEL,
      "    {% if not rows and ledger_versions is defined and ledger_versions and ledger_versions.mode in ('building', 'preparing') %}",
      "    {% if false %}", [BUILDING]),
+    # S10 C6: re-anchored -- the notes render through the one _hub_notes.html partial (C2)
     ("panel_notes_hidden", PANEL,
-     '    {% if ledger_versions is defined and ledger_versions %}{% for n in ledger_versions.notes %}\n    <p class="muted sv-ledger-note"',
-     '    {% if false %}{% for n in ledger_versions.notes %}\n    <p class="muted sv-ledger-note"', [BUILDING, NOLEDGER]),
+     "    {% if ledger_versions is defined and ledger_versions %}{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}",
+     "    {% if false %}{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}", [BUILDING, NOLEDGER]),
     ("history_notes_hidden", BODY,
-     '{% if ledger_versions is defined and ledger_versions %}{% for n in ledger_versions.notes %}\n<p class="muted sh-ledger-note"',
-     '{% if false %}{% for n in ledger_versions.notes %}\n<p class="muted sh-ledger-note"', [BUILDING]),
+     "{% with notes=ledger_versions.notes %}{% include '_hub_notes.html' %}{% endwith %}",
+     "{% with notes=[] %}{% include '_hub_notes.html' %}{% endwith %}", [BUILDING]),
     ("history_write_buttons_for_any_version", LSH,
      "{% if chip_origin == 'live' and not r.why_write and not r.pending %}",
      "{% if chip_origin == 'live' and not r.pending %}", [REFUSE]),
     ("history_diff_reason_hidden", LSH,
      '{% if r.why_diff %}<p class="sh-state-unavailable muted">{{ r.why_diff }}</p>{% endif %}',
      '{% if false %}<p class="sh-state-unavailable muted">{{ r.why_diff }}</p>{% endif %}', [BLOB]),
+    # -- S10 C6: the review of C3 (Pin keeps the label, honest unavailable
+    # wording, at-or-before bookmarks, a capped drawer "All", the Diff race)
+    ("pin_door_clears_a_label_not_sent", RT,
+     '    edit = {} if label is None else {"label": label.strip() or None}',
+     '    edit = {"label": (label or "").strip() or None}', [PINLABEL]),
+    ("annotate_clears_a_label_not_given", HIST,
+     '            if label is not _KEEP_LABEL:\n                data["label"] = label',
+     '            if True:\n                data["label"] = None if label is _KEEP_LABEL else label', [PINLABEL]),
+    ("pin_title_carries_a_span", LSH,
+     "the Param History snapshot of {{ m.timestamp | format_ts_zone }}",
+     "the Param History snapshot of {{ m.timestamp | ts_local }}", [PINLABEL]),
+    ("pin_redraws_the_whole_pane", LSH,
+     '                hx-target="#state-history-body" hx-swap="innerHTML"\n'
+     "                title=\"{{ 'Let retention remove' if m.pinned else 'Keep' }}",
+     '                hx-target="#table-pane" hx-swap="innerHTML"\n'
+     "                title=\"{{ 'Let retention remove' if m.pinned else 'Keep' }}", [PINLABEL]),
+    ("listing_denies_its_older_rows", RT,
+     '        text = (_versions_unavailable_text(res["reason"], res["total"]) if res["mode"] == "unavailable"',
+     '        text = (_VH_UNAVAILABLE_NOTES[res["reason"]] if res["mode"] == "unavailable"', [UNAVAIL]),
+    ("versions_foot_counts_older_as_recorded", PANEL,
+     "<span class=\"sv-kept-note\">{% if ledger_versions.mode == 'ledger' %}From the change history:",
+     "<span class=\"sv-kept-note\">{% if true %}From the change history:", [UNAVAIL]),
+    ("history_count_calls_older_recorded", LSH,
+     "<small class=\"muted\">{% if lv.mode == 'ledger' %}{{ lv.events }} recorded state",
+     "<small class=\"muted\">{% if true %}{{ lv.events }} recorded state", [UNAVAIL]),
+    ("drawer_count_calls_older_recorded", DRAWER,
+     "{{ lv.total }} {% if lv.mode == 'ledger' %}recorded state",
+     "{{ lv.total }} {% if true %}recorded state", [UNAVAIL]),
+    ("bookmark_guessed_onto_a_later_row", RT,
+     '            before = [c for c in wrote or () if c[0] <= at]',
+     '            before = list(wrote or ())[:1]', [CARRIED, UNATTACHED]),
+    ("unattached_bookmark_not_kept", RT,
+     '            if annotated[1] - res.get("older", frozenset()):', '            if False:', [UNATTACHED]),
+    ("kept_snapshot_not_listed", HV,
+     '            older = [s for s in snapshots if s.timestamp in summary["older"] or s.timestamp in keep]',
+     '            older = [s for s in snapshots if s.timestamp in summary["older"]]', [UNATTACHED]),
+    ("drawer_all_reads_everything", RT,
+     'limit=per_page or _HISTORY_DRAWER_ALL_CAP,', 'limit=per_page or 2**31 - 1,', [CAP]),
+    ("history_confirm_in_utc", LSH,
+     'hx-confirm="Load the version of {{ r.when | format_ts_zone }} as the working state?',
+     'hx-confirm="Load the version of {{ r.when | format_ts }} as the working state?', [ZONE]),
+    ("drawer_cap_unsaid", DRAWER,
+     "{% if per_page == 0 and lv.rows | length < lv.total %}", "{% if false %}", [CAP]),
+    ("version_hash_read_outside_the_try", RT,
+     RACE_OLD,
+     RACE_NEW, [RACE]),
 ]
 
 
