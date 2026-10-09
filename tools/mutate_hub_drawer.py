@@ -28,6 +28,7 @@ TPL = "quam_state_manager/web/templates/_field_history_ledger.html"
 CTPL = "quam_state_manager/web/templates/_column_history_ledger.html"
 HS = "quam_state_manager/core/hub_store.py"
 HI = "quam_state_manager/core/hub_index.py"
+HT = "quam_state_manager/web/hub_status.py"
 HB = "quam_state_manager/core/hub.py"
 SY = "quam_state_manager/core/hub_sync.py"
 JS = "quam_state_manager/web/static/app.js"
@@ -64,15 +65,16 @@ MUTATIONS = [
      '        plain, current, has_current = ft["resolved_path"], ft.get("resolved_value"), True',
      '        plain, current, has_current = dot_path, ft.get("resolved_value"), True',
      [A + "test_an_alias_reads_its_holder_and_says_via"]),
+    # S10 C4: stale anchors -> current ledger and retry code, keep assertion mutations.
     ("before_via_never_marked", VH,
-     '                p["before_via"] = _segment_at(segs[key], index.positions[p["eid"]]) != here',
-     '                p["before_via"] = False',
+     '            p["before_via"] = _segment_at(segs[key], at) != _segment_at(hsegs[key], at)',
+     '            p["before_via"] = False',
      [A + "test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked"]),
     ("pointer_to_object_reads_the_object", VH,
-     '            if not _long_list(val) and ptr is not None and ptr.get("is_pointer"):',
+     '            if not container and not _long_list(val) and ptr is not None and ptr.get("is_pointer"):',
      '            if False:',
      [A + "test_a_pointer_to_a_whole_object_shows_the_pointers_own_history"]),
-    ("unapplied_pointer_unsaid", VH, '                                  "unrecorded": latest != here})',
+    ("unapplied_pointer_unsaid", VH, '                              "unrecorded": latest != here})',
      '                                  "unrecorded": False})',
      [A + "test_an_alias_pointer_edited_but_not_applied_marks_every_row"]),
     ("actor_dropped", RT, '        return a[len("human:"):] or "a person"', '        return "a person"',
@@ -85,10 +87,10 @@ MUTATIONS = [
      '        if flags & UNDONE:\n            pts[i]["undone"] = "undone"\n            continue',
      '        if flags & UNDONE:\n            continue',
      [S + "test_an_apply_names_its_actor_and_an_undo_marks_it"]),
-    # S10 C3: re-anchored -- the wait template also ends an unavailable read
-    ("building_drawn_as_fallback", RT,
+    # S10 C4: fallback anchor -> terminal wait renderer, the snapshot branch is gone.
+    ("building_hidden_as_empty", RT,
      '    if ans["mode"] in ("building", "preparing", "unavailable"):\n        return render_template("_value_history_wait.html", ans=ans, surface="drawer",',
-     '    if ans["mode"] in ("preparing", "unavailable"):\n        return render_template("_value_history_wait.html", ans=ans, surface="drawer",',
+     '    if ans["mode"] == "building":\n        return render_template("_status.html", message="No change recorded", level="info")\n    if ans["mode"] in ("preparing", "unavailable"):\n        return render_template("_value_history_wait.html", ans=ans, surface="drawer",',
      [H + "test_a_building_ledger_says_so_and_shows_no_rows"]),
     ("building_read_called_preparing", RT,
      '        out.update(mode="building", status=getattr(exc, "status", None) or st)',
@@ -113,10 +115,10 @@ MUTATIONS = [
     # no_runs_value_fallback
     ("missing_ledger_not_checked", RT,
      '    if not (chip_dir / "ledger.sqlite").exists():', '    if False:',
-     [H + "test_a_chip_whose_ledger_holds_no_runs_gets_the_old_path_labelled"]),
+     ["test_a_missing_ledger_is_terminal_before_any_value_read"]),
     ("agent_second_implementation", AG,
      '        ans = r._value_history(ctx, {"value": dot}, limit=r._VH_DRAWER_LIMIT)',
-     '        ans = {"mode": "fallback", "fallback_note": None}',
+     '        ans = {"mode": "unavailable", "status": {}}',
      [O + "test_all_three_surfaces_answer_through_one_function",
       O + "test_the_agent_reads_the_same_points_in_the_same_words"]),
     ("agent_other_words", RT,
@@ -143,12 +145,12 @@ MUTATIONS = [
      '                var wait = null;',
      ["test_the_retry_selfcheck"]),
     ("js_drawer_retry_after_close", JS,
-     '                        if (p.style.display === "none") return;\n                        load(anchor, path, seq);',
-     '                        load(anchor, path, seq);',
+     '                        if (!current()) return;\n                        if (isPanel && p.style.display === "none") return;',
+     '',
      ["test_the_retry_selfcheck"]),
     ("js_drawer_stale_answer_lands", JS,
-     '                if (seq !== loadSeq || openPath !== path) return;\n                p.innerHTML = html;',
-     '                p.innerHTML = html;',
+     '                if (!current()) return;\n                replace(html);',
+     '                replace(html);',
      ["test_the_retry_selfcheck"]),
     ("writer_not_proven_only_on_hover", TPL,
      '<span class="vh-sub" title="{{ pt.title }}">{{ pt.sub }}</span>', '',
@@ -166,15 +168,15 @@ MUTATIONS = [
      ["tests/test_hub_query.py::test_pair_members_and_macro_targets_and_changed_segments",
       "tests/test_hub_query.py::test_macro_classifier_and_actor_class_and_family_are_distinct"]),
     # -- the review round (docs/282 "Review round") ------------------------------
-    ("p0_1_trends_reads_todays_holder", RT, '                for p in ans["rows"][dp]["effective"]]',
-     '                for p in ans["rows"][dp]["points"]]',
+    ("p0_1_trends_reads_todays_holder", HT, '                for p in ans["rows"][dp]["effective"]:',
+     '                for p in ans["rows"][dp]["points"]:',
      [RR + "test_p0_1_trends_draws_the_value_in_force_through_the_alias",
       E + "test_chip_trends_charts_an_alias_path_with_the_drawers_points"]),
     ("p0_1_no_via_row_at_a_retarget", VH,
      '        if not first_row_at_start and not _same_or_absent(running, at_start) and start in events:',
      '        if False:',
      [RM + "test_p0_1_after_a_return_trends_draws_each_holders_value_in_force"]),
-    ("p0_3_by_run_reads_todays_holder", VH, '                    v = cache.fold(_segment_at(segs[key], pos), pos)',
+    ("p0_3_by_run_reads_todays_holder", VH, '                    v = cache.fold(h, pos)',
      '                    v = cache.fold(targets[key]["holder"], pos)',
      [RR + "test_p0_3_by_run_shows_the_then_holders_value_for_an_alias_row",
       RR + "test_p0_3_and_p1_1_share_one_rule_after_a_return"]),
@@ -182,8 +184,8 @@ MUTATIONS = [
      '                if False:',
      [RR + "test_p0_2_by_run_leaves_out_a_run_of_another_chip"]),
     ("p1_1_newest_hop_row_decides", VH,
-     '                p["before_via"] = _segment_at(segs[key], index.positions[p["eid"]]) != here',
-     '                p["before_via"] = index.positions[p["eid"]] < (segs[key][-1][0] if segs[key] else 0)',
+     '            p["before_via"] = _segment_at(segs[key], at) != _segment_at(hsegs[key], at)',
+     '            p["before_via"] = at < (segs[key][-1][0] if segs[key] else 0)',
      [RR + "test_p1_1_before_via_marks_only_rows_the_alias_did_not_name"]),
     ("p1_1_mid_path_pointer_not_followed_at_the_time", VH,
      '        ptr = pointer_here() if cur else None', '        ptr = None',
@@ -224,18 +226,20 @@ MUTATIONS = [
      '            token = (reader.identity, ledger_id, version, high, journal_size)\n',
      '            token = (reader.identity, ledger_id, version, high, journal_size, zone)\n',
      [RM + "test_p2_3_every_zone_shares_one_index"]),
+    # S10 C4: skipped observation loop -> skipped imports, consume queued work before asserting.
     ("p1_2_snapshots_never_imported", SY,
-     '        if runs_settled and self.observed_source is not None:', '        if False:',
+     '                    self.counts["observed:" + attach_observed(store, snap)] += 1',
+     '                    self.counts["observed:skipped"] += 1',
      [RO + "test_p1_2_a_state_sm_saw_between_runs_is_in_the_history"]),
     ("p1_2_a_runs_early_save_imported", SY,
-     '    if succ is not None and not rules.diff(store.flat_of(succ), flat):',
+     '    if lsucc is not None and not rules.diff(store.flat_of(lsucc), flat):',
      '    if False:',
      [RM + "test_p1_2_a_runs_save_seen_early_stays_the_runs"]),
     ("p1_2_early_observation_kept", SY,
      '                self.counts["observed:dropped"] += drop_observed_runs(store)', '                pass',
      [RM + "test_p1_2_a_run_landing_after_its_own_early_observation_takes_it_back"]),
     ("p1_2_sm_copy_same_before_imported", SY,
-     '    if not rows:\n        return done("same_before")', '    if False:\n        return done("same_before")',
+     '    if not rules.diff(lpred_flat, flat):\n        return done("same_before")', '    if False:\n        return done("same_before")',
      [RO + "test_p1_2_an_sm_writes_own_snapshots_are_not_a_second_history"]),
     ("p1_2_observed_label_lost", RT, '        label = f"seen by SM ({trig} snapshot)"', '        label = "a run"',
      [RO + "test_p1_2_a_state_sm_saw_between_runs_is_in_the_history"]),
@@ -284,18 +288,22 @@ def run_one(name, rel, old, new, pins, python):
     path = ROOT / rel
     original = _apply(path, old, new)
     try:
-        cmd = [python, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", "--timeout=300",
+        cmd = [python, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", "--timeout=900", "--timeout-method=thread",
                *[p if p.startswith("tests/") else f"tests/test_hub_drawer.py::{p}" for p in pins]]
         env = {**os.environ, "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1"}
         t0 = time.perf_counter()
         r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, env=env, timeout=900)
         out = r.stdout + r.stderr
         bad = any(s in out for s in ("ERROR collecting", "SyntaxError", "ImportError", "errors during collection"))
-        asserted = "AssertionError" in out or "assert " in out or "FAIL:" in out
+        # S10 C4: traceback text -> assertion verdict, reject runtime and timeout failures.
+        failures = [ln for ln in out.splitlines() if ln.startswith("FAILED ")]
+        errors = re.findall(r"^E\s+(\w*(?:Error|Exception)|Failed):", out, re.M)
+        asserted = bool(re.search(r"^E\s+(?:AssertionError:|assert\b)", out, re.M))
+        asserted = asserted and all(kind == "AssertionError" for kind in errors)
         red = r.returncode == 1 and asserted and not bad
         # assertion evidence, with machine paths and user names scrubbed
-        tail = [_scrub(ln)[:240] for ln in out.splitlines()
-                if ln.startswith(("E ", "FAILED", "FAIL:"))][:4]
+        tail = ([_scrub(ln)[:240] for ln in out.splitlines() if ln.startswith("E ")][:2]
+                + [_scrub(ln)[:240] for ln in failures][:2])
         return {"name": name, "file": rel, "pins": pins, "red": red, "rc": r.returncode,
                 "seconds": round(time.perf_counter() - t0, 1), "evidence": tail}
     finally:
@@ -321,6 +329,9 @@ def main():
               "pins_targeted": pinned, "results": results}
     args.report.write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(f"{report['red']}/{report['mutations']} RED; {len(pinned)} pins targeted")
+    # S10 C4: report-only verdict -> failing exit, reject surviving or invalid mutations.
+    if report["red"] != report["mutations"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

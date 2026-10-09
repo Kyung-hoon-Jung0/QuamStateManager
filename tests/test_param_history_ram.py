@@ -200,32 +200,7 @@ def test_hist_token_moves_on_a_foreign_commit(env):
 
 # ── the drawer's snapshot-scan tier ─────────────────────────────────────────
 
-def test_scan_series_memo_revalidates_a_rewritten_snapshot(env):
-    rng = random.Random(3)
-    base = _state()
-    metas = [_snap(env, base)]
-    for _ in range(4):
-        base = _state(rng, base)
-        metas.append(_snap(env, base))
-    hm, live = env["hm"], env["live"]
-    snaps = hm.list_snapshots(live)
-
-    def series(dp):
-        return hm._scan_field_series(live, snaps, dp, 1000)[0]
-
-    first = series("qubits.q1.T1")
-    assert series("qubits.q1.T1") == first
-    # rewrite one snapshot on disk: its entry must be re-read
-    victim = hm._history_dir(live) / metas[2].timestamp / "state.json"
-    st = json.loads(victim.read_text(encoding="utf-8"))
-    st["qubits"]["q1"]["T1"] = 123.0
-    victim.write_text(json.dumps(st) + " ", encoding="utf-8")   # size moves too
-    again = series("qubits.q1.T1")
-    assert [v for ts, v, *_ in again if ts == metas[2].timestamp] == [123.0]
-    # a container value handed out is a copy: mutating it cannot poison the memo
-    sub = series("qubits.q2.xy.operations.x180_Drag")
-    sub[-1][1]["amplitude"] = "POISON"
-    assert series("qubits.q2.xy.operations.x180_Drag")[-1][1]["amplitude"] != "POISON"
+# S10 C4: old -> new, retire the removed snapshot-scan memo test.
 
 
 def test_alias_path_reads_the_leaf_it_names(env):

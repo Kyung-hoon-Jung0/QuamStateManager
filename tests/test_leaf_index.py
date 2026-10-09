@@ -82,7 +82,7 @@ class TestTheWalk:
         assert nums["qubits.qA1.confusion_matrix.1.0"] == 0.2
 
     def test_wiring_merges_but_state_wins_a_collision(self):
-        """Same rule as HistoryManager._scan_field_series, so a dot path means
+        """S10 C4: field scan -> index extraction, so a dot path means
         one thing in every tier."""
         nums, _k, _t = li.numeric_leaves({"a": {"x": 1}}, {"a": {"x": 2}, "b": {"y": 3}})
         assert nums["a.x"] == 1 and nums["b.y"] == 3
@@ -399,13 +399,15 @@ class TestThroughTheHistoryManager:
             {"network": {"host": "1.1.1.1"}, "ports": {"a": {"delay": 4}}}),
             encoding="utf-8")
 
-    def test_capture_populates_it_and_field_history_uses_it(self, hm, tmp_path):
+    def test_capture_populates_the_leaf_index(self, hm, tmp_path):
         live = tmp_path / "chip"
         for t1 in (1e-5, 2e-5, 3e-5):
             self._write(live, _chip(t1=t1))
             hm.check_and_snapshot(str(live), "manual", force=True)
-        out = hm.field_history(live, "qubits.qA1.xy.operations.x180.amplitude")
-        assert out["source"] == "leaf-index"
+        # S10 C4: drawer tier -> leaf reader, retain capture and repair coverage.
+        with hm._open_index(live) as conn:
+            out = li.series(conn, "qubits.qA1.xy.operations.x180.amplitude")
+        assert [row[1] for row in out] == [0.1]
         st = hm.leaf_stats(live)
         assert st["snapshots"] == 3 and st["rows"] > 0 and st["dirty"] is False
 
@@ -425,20 +427,22 @@ class TestThroughTheHistoryManager:
         for worker in workers:
             worker.join(10)
             assert not worker.is_alive()
-        out = hm.field_history(live, "qubits.qA1.xy.operations.x180.amplitude")
-        assert out["source"] == "leaf-index"
+        # S10 C4: drawer tier -> leaf reader, retain capture and repair coverage.
+        with hm._open_index(live) as conn:
+            out = li.series(conn, "qubits.qA1.xy.operations.x180.amplitude")
+        assert [row[1] for row in out] == [0.1]
         assert hm.leaf_stats(live)["snapshots"] == 2      # healed on read
 
-    def test_a_curated_property_still_answers_from_the_old_index(self, hm, tmp_path):
+    def test_a_curated_property_still_answers_for_calibration(self, hm, tmp_path):
         """The eleven tracked properties keep their tier — this feature adds a
         tier BELOW them and must not re-route what already worked."""
         live = tmp_path / "chip"
         for t1 in (1e-5, 2e-5):
             self._write(live, _chip(t1=t1))
             hm.check_and_snapshot(str(live), "manual", force=True)
-        out = hm.field_history(live, "qubits.qA1.T1")
-        assert out["source"] == "index"
-        assert [p["value"] for p in out["points"]] == [2e-5, 1e-5]
+        # S10 C4: drawer tier -> calibration column, the curated reader stays.
+        out = hm.column_history(live, {"q": "qubits.qA1.T1"})
+        assert [p[1] for p in out["q"]] == [1e-5, 2e-5]
 
     def test_the_feed_and_search_work_off_the_manager(self, hm, tmp_path):
         live = tmp_path / "chip"

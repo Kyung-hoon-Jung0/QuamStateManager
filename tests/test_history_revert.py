@@ -89,6 +89,7 @@ class TestTheLogStaysCollapsed:
         assert "'0' : '1'" in blk
 
 
+# S10 C4: snapshot template -> ledger template, retain Revert and delta contracts.
 class TestTheRevertButton:
     """(b) — the panel's primary action."""
 
@@ -122,8 +123,8 @@ class TestTheRevertButton:
         "not set" is not the same act as writing an empty string, and
         /field/edit would take the latter — so the row offers nothing, the way
         a suggestion that cannot work is never offered (docs/175)."""
-        t = (_TPL / "_field_history.html").read_text(encoding="utf-8")
-        assert "not pt.is_current and pt.fill" in t
+        t = (_TPL / "_field_history_ledger.html").read_text(encoding="utf-8")
+        assert "not pt.is_current and pt.usable and pt.fill" in t
 
     def test_the_revert_delta_renders_beside_the_button(self, env):
         """The customer's actual ask, in the rendered panel rather than in the
@@ -145,26 +146,26 @@ class TestTheRevertButton:
         """Source-level, because a chip with no snapshots renders no rows at
         all and the route pin above would skip. The row template is where the
         rule lives."""
-        t = (_TPL / "_field_history.html").read_text(encoding="utf-8")
-        i = t.index("{% if not pt.is_current and pt.fill %}")
+        t = (_TPL / "_field_history_ledger.html").read_text(encoding="utf-8")
+        i = t.index("{% if not pt.is_current and pt.usable and pt.fill %}")
         blk = t[i:t.index("{% endif %}", i)]
         assert "FieldHistory.revertTo(this)" in blk
-        assert 'data-path="{{ hist.dot_path }}"' in blk, \
+        assert 'data-path="{{ dot_path }}"' in blk, \
             "the button must carry its own path — the panel can be opened with no input"
 
     def test_the_current_row_offers_no_revert(self):
         """Reverting to the value you already have is a no-op that would still
         stage a tray row."""
-        t = (_TPL / "_field_history.html").read_text(encoding="utf-8")
+        t = (_TPL / "_field_history_ledger.html").read_text(encoding="utf-8")
         assert t.count("fh-revert\"") == 1
         i = t.index("fh-revert\"")
-        guard = t.rfind("{% if not pt.is_current and pt.fill %}", 0, i)
+        guard = t.rfind("{% if not pt.is_current and pt.usable and pt.fill %}", 0, i)
         assert guard != -1 and guard < i
 
     def test_use_is_still_there_and_says_what_it_does(self):
         """Revert stages; Use fills the box so you can adjust first. Two jobs,
         and the labels now say which is which."""
-        t = (_TPL / "_field_history.html").read_text(encoding="utf-8")
+        t = (_TPL / "_field_history_ledger.html").read_text(encoding="utf-8")
         assert "FieldHistory.useValue(this)" in t
         assert "without staging it" in t
 
@@ -172,9 +173,9 @@ class TestTheRevertButton:
         """The row already carried a delta, and it answers a DIFFERENT question
         (what this point introduced). The customer asked for the one beside the
         button: what reverting would do now."""
-        t = (_TPL / "_field_history.html").read_text(encoding="utf-8")
+        t = (_TPL / "_field_history_ledger.html").read_text(encoding="utf-8")
         assert "delta_pct(current_value, pt.value, 'fh-revert-delta')" in t,             "the revert delta must use the COMPACT variant — the full-precision "            "text buries the button in a 99px column (docs/186)"
-        assert "delta_chip(_prev.value, pt.value, 'fh-delta')" in t, \
+        assert "delta_chip(pt.prev_value, pt.value, 'fh-delta')" in t, \
             "the introduced-delta must survive — they are two different facts"
 
     def test_the_route_ships_the_current_value(self, env):
@@ -182,7 +183,7 @@ class TestTheRevertButton:
         assert html is not None
         import quam_state_manager.web.routes as routes_mod
         src = Path(routes_mod.__file__).read_text(encoding="utf-8")
-        assert "current_value=current," in src
+        assert '"current_value": current if not isinstance(current, (dict, list)) else None' in src
 
 
 class TestRevertGoesThroughTheOneDoor:

@@ -11424,27 +11424,7 @@ def _uid_for_run_ref(fp: Any, rid: Any, roots: list[tuple[Path, str]]) -> str | 
     return None
 
 
-# Immutable-run caches for the field-history runs tier (docs/20 v2 Step 6).
-# Runs are write-once after completion, so per-folder identity and per-
-# (folder, dot_path) values never go stale; both are size-bounded.
-_RUN_IDENT_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
-# audit-r10: run-fact caches hold ONLY chip-INDEPENDENT immutable facts —
-# the run's own declared name + entity sets, and per-path extraction results.
-# The include/exclude VERDICT is chip-relative and is re-derived on every
-# call from these facts + the CURRENTLY loaded chip; caching the verdict
-# (the pre-audit shape) leaked chip A's values into chip B's popover after
-# a chip switch (Use buttons and all) and suppressed B's own runs.
-_RUN_CHIP_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
-_RUN_VALUE_CACHE: "OrderedDict[tuple[str, str], tuple]" = OrderedDict()
-_RUN_CACHE_MAX = 4096
-
-
-def _trim_run_caches() -> None:
-    for cache in (_RUN_IDENT_CACHE, _RUN_CHIP_CACHE, _RUN_VALUE_CACHE):
-        while len(cache) > _RUN_CACHE_MAX:
-            cache.popitem(last=False)
-
-
+# S10 C4: run-scan caches -> ledger index, one shared value history.
 def _run_ts_stamp(run: Any) -> str:
     """RunInfo -> its Param History stamp (``YYYYMMDD_HHMMSS_NNN``): the dedup
     key against already-ingested snapshot rows and the runs tier's position
@@ -11480,324 +11460,9 @@ def _run_recency(run: Any) -> tuple:
             getattr(run, "date", "") or "", getattr(run, "time", "") or "")
 
 
-# RAM P8 (ram_design.md §1.4 "Runs-tier candidate index"): every workspace
-# run's snapshot-format stamp, sorted newest-first, per dataset store -- the
-# drawer and Column History used to re-derive it (one strptime + two
-# timezone conversions per run, 4,162 runs) on EVERY open. Keyed on the
-# store's identity + runs generation, read atomically under its scan lock
-# (which also closes F5: ``st.runs.values()`` raced a concurrent rescan).
-# Chip-relative verdicts are NOT cached here; they are re-derived per call.
-_RUN_CANDIDATES_MEMO = _ramcache.KeyedMemo(
-    "drawer.run_candidates", max_entries=16,
-    sizeof=lambda v: 64 + 120 * len(v))
-
-
-def _store_run_candidates(st: DatasetStore) -> list[tuple[str, Any]]:
-    with st._scan_lock:
-        gen = st.generation
-        runs = list(st.runs.values())
-
-    def compute():
-        out = [(_run_ts_stamp(run), run) for run in runs]
-        out.sort(key=lambda t: t[0], reverse=True)
-        return _ramcache.Keyed(out, gen)
-    return _RUN_CANDIDATES_MEMO.get(("store", st.instance_seq), gen, compute,
-                                    wait_s=30.0)
-
-
-def _runs_candidates(roots: list[Path]) -> list[tuple[str, Any, Path]]:
-    """``(ts, run, root)`` newest-first over *roots* (see the memo above)."""
-    merged: list[tuple[str, Any, Path]] = []
-    for root in roots:
-        st = _get_or_create_store(root, rescan=True)
-        if st is None:
-            continue
-        merged.extend((ts, run, root) for ts, run in _store_run_candidates(st))
-    merged.sort(key=lambda t: t[0], reverse=True)
-    return merged
-
-
-def _runs_field_series(ctx: dict, dot_path: str, *,
-                       max_runs: int = 60) -> tuple[list[tuple], int]:
-    """Direct-scan tier over the workspace runs' own quam_state copies.
-
-    Every run folder IS a timestamped state snapshot with perfect run
-    linkage — so the field timeline stays fresh (today's runs included)
-    independent of Param History ingestion. Chip attribution per run:
-    extras chip names when BOTH sides declare one (definitive), else
-    hardware-fingerprint alignment; the wiring.json network is a cheap
-    pre-gate so foreign chips usually cost one small read. Newest
-    ``max_runs`` runs are examined (honest cap); roots declared in
-    ``extras.data_folder`` scan first. Returns ``(series, examined)`` with
-    series rows ``(ts, value, "experiment", run_id, experiment, folder)``.
-    """
-    from quam_state_manager.core.history import (
-        ALIGN_ALIGNED, ChipFingerprint, _normalised_network, _walk_any_path,
-        align, extras_chip_name, fingerprint_from_dicts)
-    from quam_state_manager.core.pointer_resolver import (
-        is_pointer, is_self_ref, resolve_pointer)
-
-    store = ctx.get("store")
-    if store is None:
-        return [], 0
-    with store._lock:
-        loaded_name = extras_chip_name(store.state)
-        loaded_fp = fingerprint_from_dicts(store.state, store.wiring)
-
-    roots: list[Path] = []
-    seen_roots: set[str] = set()
-    for raw in (ctx.get("extras_data_roots") or []):
-        p = Path(raw)
-        k = str(p)
-        if k not in seen_roots:
-            seen_roots.add(k)
-            roots.append(p)
-    for cand in _dataset_candidate_folders(fast=True):
-        k = str(cand)
-        if k not in seen_roots:
-            seen_roots.add(k)
-            roots.append(Path(cand))
-
-    candidates = [(ts, run) for ts, run, _root in _runs_candidates(roots)]
-
-    series: list[tuple] = []
-    examined = 0
-    segs = dot_path.split(".")
-    for ts, run in candidates:
-        if examined >= max_runs:
-            break
-        folder = Path(getattr(run, "folder_path", "") or "")
-        qs = folder / "quam_state"
-        fkey = str(folder)
-        chip = _RUN_CHIP_CACHE.get(fkey)
-        # A cached chip-fact entry proves the run HAD quam_state (runs are
-        # write-once) — skip the stat. examined counts uniformly (cache hits
-        # included), so the newest-N window has one meaning warm or cold.
-        if chip is None and not (qs / "state.json").exists():
-            continue
-        examined += 1
-
-        run_net = _RUN_IDENT_CACHE.get(fkey)
-        wiring: Any = None
-        if run_net is None:
-            try:
-                wiring = safe_io.read_json(qs / "wiring.json")
-            except (OSError, ValueError):
-                wiring = {}
-            run_net = _normalised_network(
-                (wiring if isinstance(wiring, dict) else {}).get("network"))
-            _RUN_IDENT_CACHE[fkey] = run_net
-        # Cheap network pre-gate: a foreign chip usually stops here — but
-        # ONLY when the loaded chip is unnamed. A declared chip name is
-        # DEFINITIVE across a host move (the whole point of tier 1), so a
-        # named chip must read the run's state to compare names first.
-        if (not loaded_name and loaded_fp.network and run_net
-                and run_net != loaded_fp.network):
-            continue
-        state: Any = None
-        if chip is None:
-            try:
-                state = safe_io.read_json(qs / "state.json")
-            except (OSError, ValueError):
-                continue
-            if not isinstance(state, dict):
-                continue
-            chip = (extras_chip_name(state),
-                    frozenset((state.get("qubits") or {}).keys()),
-                    frozenset((state.get("qubit_pairs") or {}).keys()))
-            _RUN_CHIP_CACHE[fkey] = chip
-        run_name, run_qubits, run_pairs = chip
-        # Identity gate — re-derived EVERY call against the CURRENT chip
-        # (never cached: the verdict is chip-relative).
-        if loaded_name and run_name:
-            included = (run_name == loaded_name)
-        else:
-            run_fp = ChipFingerprint(
-                network=run_net, qubits=run_qubits, pairs=run_pairs)
-            included = align(loaded_fp, run_fp) == ALIGN_ALIGNED
-        if not included:
-            continue
-
-        vkey = (fkey, dot_path)
-        cached_val = _RUN_VALUE_CACHE.get(vkey)
-        if cached_val is not None:
-            value = cached_val[1]
-        else:
-            if state is None:
-                try:
-                    state = safe_io.read_json(qs / "state.json")
-                except (OSError, ValueError):
-                    continue
-                if not isinstance(state, dict):
-                    continue
-            merged = dict(state)
-            if segs and segs[0] not in merged:
-                if wiring is None:
-                    try:
-                        wiring = safe_io.read_json(qs / "wiring.json")
-                    except (OSError, ValueError):
-                        wiring = {}
-                if isinstance(wiring, dict):
-                    merged.update(wiring)
-            found, value = _walk_any_path(merged, segs)
-            if not found:
-                value = None
-            elif is_pointer(value) and not is_self_ref(value):
-                value = resolve_pointer(merged, value, tuple(segs))
-            _RUN_VALUE_CACHE[vkey] = (found, value)
-            _trim_run_caches()
-        series.append((ts, value, "experiment",
-                       getattr(run, "run_id", None),
-                       getattr(run, "experiment_name", None), fkey))
-    return series, examined
-
-
-def _runs_column_series(ctx: dict, path_map: dict[str, str], *,
-                        max_runs: int = 6, max_examine: int = 40,
-                        ) -> tuple[list[dict], int]:
-    """Vectorized runs tier for a grid COLUMN (docs/20 v2 Column History).
-
-    Same chip gates as :func:`_runs_field_series` (shared extras names are
-    definitive even across a host move — the network pre-gate only
-    short-circuits for unnamed loaded chips; else fingerprint alignment),
-    but each matching run's state.json is parsed ONCE and every row's value
-    extracted from it. Returns ``(runs newest-first, examined)`` where each
-    run is ``{run_id, experiment, ts, when, uid, values: {row_id: value}}``
-    — ``uid`` is direct (folder under its registered root), so the panel's
-    run links are always valid. Caps at ``max_runs`` MATCHING runs.
-    """
-    from quam_state_manager.core.history import (
-        ALIGN_ALIGNED, ChipFingerprint, _normalised_network, _walk_any_path,
-        align, extras_chip_name, fingerprint_from_dicts)
-    from quam_state_manager.core.pointer_resolver import (
-        is_pointer, is_self_ref, resolve_pointer)
-
-    store = ctx.get("store")
-    if store is None or not path_map:
-        return [], 0
-    with store._lock:
-        loaded_name = extras_chip_name(store.state)
-        loaded_fp = fingerprint_from_dicts(store.state, store.wiring)
-
-    roots: list[tuple[Path, str]] = []
-    seen_roots: set[str] = set()
-    for raw in (ctx.get("extras_data_roots") or []):
-        k = str(Path(raw))
-        if k not in seen_roots:
-            seen_roots.add(k)
-            roots.append((Path(raw), _folder_key(raw)))
-    for cand in _dataset_candidate_folders(fast=True):
-        k = str(cand)
-        if k not in seen_roots:
-            seen_roots.add(k)
-            roots.append((Path(cand), _folder_key(cand)))
-
-    rkeys = {str(root): rkey for root, rkey in roots}
-    candidates = [(ts, run, rkeys[str(root)])
-                  for ts, run, root in _runs_candidates([r for r, _k in roots])]
-
-    segs_by_row = {row: dp.split(".") for row, dp in path_map.items()}
-    out: list[dict] = []
-    examined = 0
-    for ts, run, rkey in candidates:
-        if len(out) >= max_runs or examined >= max_examine:
-            break
-        folder = Path(getattr(run, "folder_path", "") or "")
-        qs = folder / "quam_state"
-        fkey = str(folder)
-        chip = _RUN_CHIP_CACHE.get(fkey)
-        if chip is None and not (qs / "state.json").exists():
-            continue
-        examined += 1
-        run_net = _RUN_IDENT_CACHE.get(fkey)
-        wiring: Any = None
-        if run_net is None:
-            try:
-                wiring = safe_io.read_json(qs / "wiring.json")
-            except (OSError, ValueError):
-                wiring = {}
-            run_net = _normalised_network(
-                (wiring if isinstance(wiring, dict) else {}).get("network"))
-            _RUN_IDENT_CACHE[fkey] = run_net
-            _trim_run_caches()
-        if (not loaded_name and loaded_fp.network and run_net
-                and run_net != loaded_fp.network):
-            continue
-        # Gate from cached chip facts when possible — a known-foreign run
-        # skips the state parse entirely (verdict itself is never cached).
-        state: Any = None
-        if chip is None:
-            try:
-                state = safe_io.read_json(qs / "state.json")
-            except (OSError, ValueError):
-                continue
-            if not isinstance(state, dict):
-                continue
-            chip = (extras_chip_name(state),
-                    frozenset((state.get("qubits") or {}).keys()),
-                    frozenset((state.get("qubit_pairs") or {}).keys()))
-            _RUN_CHIP_CACHE[fkey] = chip
-            _trim_run_caches()
-        run_name, run_qubits, run_pairs = chip
-        if loaded_name and run_name:
-            if run_name != loaded_name:
-                continue
-        else:
-            run_fp = ChipFingerprint(
-                network=run_net, qubits=run_qubits, pairs=run_pairs)
-            if align(loaded_fp, run_fp) != ALIGN_ALIGNED:
-                continue
-        if state is None:
-            try:
-                state = safe_io.read_json(qs / "state.json")
-            except (OSError, ValueError):
-                continue
-            if not isinstance(state, dict):
-                continue
-
-        merged = dict(state)
-        if any(segs and segs[0] not in merged
-               for segs in segs_by_row.values()):
-            if wiring is None:
-                try:
-                    wiring = safe_io.read_json(qs / "wiring.json")
-                except (OSError, ValueError):
-                    wiring = {}
-            if isinstance(wiring, dict):
-                merged.update(wiring)
-        values: dict[str, Any] = {}
-        for row, segs in segs_by_row.items():
-            found, value = _walk_any_path(merged, segs)
-            if not found:
-                value = None
-            elif is_pointer(value) and not is_self_ref(value):
-                value = resolve_pointer(merged, value, tuple(segs))
-            values[row] = value
-        rid = getattr(run, "run_id", None)
-        out.append({
-            "run_id": rid,
-            "experiment": getattr(run, "experiment_name", None),
-            "ts": ts,
-            "when": (f"{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
-                     if len(ts) >= 13 else ts),
-            "uid": f"{rkey}:{int(rid)}" if rid is not None else None,
-            "folder": fkey,
-            "values": values,
-        })
-    return out, examined
-
-
 CH_MAX_CHIPS = 6       # per-row change-point chips shown in the Changes tab
 CH_BYRUN_COLS = 6      # run columns displayed in the By-run tab
-# The Changes series merges MORE runs than the By-run tab displays: a value
-# introduced by a run just outside the 6-column window would otherwise lose
-# its attribution to a later auto snapshot. Window = the cell popover's
-# newest-60 scan EXACTLY (live-verified: one busy day of newer runs pushed
-# the introducers out of a 24-run window while the cell popover still
-# attributed them). One parse per run serves every row, so the cost equals
-# one cell-popover open.
-CH_SERIES_RUNS = 60
-CH_SERIES_EXAMINE = 60
+# S10 C4: scan limits -> ledger point limits, no request-time run scan.
 
 
 # ----------------------------------------------------------------------
@@ -12428,8 +12093,8 @@ def bulk_column_history():
     ``paths`` = JSON ``{row_id: dot_path}`` — collected client-side from the
     rendered cells (both grids symmetric; paths feed READ-ONLY extraction
     only). One response renders BOTH tabs: **Changes** (default — per-row
-    change-point chips over the merged snapshot+runs series, so manual
-    applied edits (trigger "save") appear alongside run-set values, each chip
+    change-point chips from the ledger, so SM writes appear alongside
+    run-set values, each chip
     clickable to fill the grid cell and hover-revealing its run's Data link)
     and **By run** (the original rows × last-N-matching-runs table with the
     per-run 'Use all'). Staging stays user-explicit in both.
@@ -12457,207 +12122,19 @@ def bulk_column_history():
         return render_template("_status.html", message="no usable paths",
                                level="error"), 400
 
-    # docs/282: the same ledger read as the value drawer, every row from one
-    # read snapshot; the old two-tier path is the labelled fallback only.
+    # S10 C4: snapshot fallback -> shared ledger renderer, all modes are explicit.
     ans = _value_history(ctx, path_map, runs=CH_BYRUN_COLS)
     if ans["mode"] in ("building", "preparing", "unavailable"):
         return render_template("_value_history_wait.html", ans=ans, surface="column",
-                               message=_vh_wait_message(ans),
-                               label=label)
-    if ans["mode"] == "ledger":
-        return render_template("_column_history_ledger.html",
-                               **_vh_column_view(ans, path_map, label=label, unit=unit,
-                                                 grid=grid, col_key=col_key))
-    _hub_fallback_reached("column_history", ans["reason"])
-    view = _legacy_column_history(ctx, path_map)
-    return render_template(
-        "_column_history.html", label=label, unit=unit, grid=grid,
-        col_key=col_key, fallback_note=ans.get("fallback_note"), **view)
-
-
-def _legacy_column_history(ctx: dict, path_map: dict[str, str]) -> dict:
-    """Column History before the ledger (docs/20 v2 + r9): Param History's
-    curated tier or a 40-snapshot scan merged with a 60-run workspace scan.
-    docs/282 keeps it ONLY as the labelled fallback for a chip whose ledger
-    holds no runs yet; S10 deletes it. Returns the template's row/run args."""
-    store = ctx["store"]
-    from quam_state_manager.core.pointer_path import resolve_field_target
-
-    # QA F5: the cells hand over their ALIAS path (x180 amp is
-    # ``xy.operations.x180.amplitude`` where ``x180 == "#./x180_DragCosine"``),
-    # and both history tiers walk a path literally -- they stopped at the
-    # pointer string, so the most-edited columns showed no history at all.
-    # Read history at the leaf the alias names NOW (mid-path pointers
-    # followed; the leaf itself untouched, so the tiers' own per-snapshot
-    # leaf-pointer rule and "self-refs stay raw" still hold) -- the per-cell
-    # popover's data-resolved does the same. Unresolvable paths keep ``dp``.
-    with store._lock:
-        merged_now = store.merged
-    ft_by_row: dict[str, Any] = {}
-    hist_map: dict[str, str] = {}
-    for row_id, dp in path_map.items():
-        try:
-            ft = resolve_field_target(merged_now, dp)
-        except Exception:  # noqa: BLE001 — keeps editable=False semantics
-            ft = None
-        ft_by_row[row_id] = ft
-        leaf = ((ft.get("candidates") or [{}])[0].get("path")
-                if ft and ft.get("resolvable") else None)
-        hist_map[row_id] = leaf or dp
-
-    hm = _history()
-    snap_series = hm.column_history(ctx["path"], hist_map)
-    try:
-        runs_all, examined = _runs_column_series(
-            ctx, hist_map, max_runs=CH_SERIES_RUNS,
-            max_examine=CH_SERIES_EXAMINE)
-    except Exception:  # noqa: BLE001 — the panel must survive a bad root
-        logger.debug("column-history runs tier failed", exc_info=True)
-        runs_all, examined = [], 0
-    runs = runs_all[:CH_BYRUN_COLS]     # By-run tab shows the newest few
-
-    def _num_or_none(v):
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
-            return None
-        f = float(v)
-        return f if f == f and f not in (float("inf"), float("-inf")) else None
-
-    rows_out: list[dict[str, Any]] = []
-    uid_roots = _uid_roots()
-    _wc = _WriterCheck()
-    _wc.hint(path_map.values())
-    for row_id in sorted(path_map, key=natural_key):
-        dp = path_map[row_id]
-        current = None
-        editable = True
-        ft = ft_by_row.get(row_id)
-        if ft is None:
-            editable = False
-        elif ft.get("resolvable"):
-            current = ft.get("resolved_value")
-        # Merged series: snapshot tiers + run values, time-merged, then
-        # change-point collapsed (field_history's NaN-safe key rule). The
-        # snapshot-rows-first build + STABLE sort on ts alone reproduces
-        # field_history's (ts, rank) ordering — an ingested run's snapshot
-        # row wins over the direct run row at equal ts, so equal values
-        # dedup in the collapse. Do not change the build order or sort key
-        # (a full-tuple sort would also crash on None<str at slot 4/5).
-        # 7th slot = the run tier's ready uid (snapshot rows resolve via
-        # folder containment below). The series merges runs_all (wider than
-        # the By-run columns) so attribution matches the cell popover.
-        series = [t + (None,) for t in (snap_series.get(row_id) or [])]
-        for r in reversed(runs_all):                 # oldest-first append
-            series.append((r["ts"], r["values"].get(row_id), "experiment",
-                           r["run_id"], r["experiment"], r["folder"],
-                           r["uid"]))
-        series.sort(key=lambda t: t[0])
-
-        def _key(v):
-            if isinstance(v, float) and v != v:
-                return "\x00nan"
-            return v
-
-        collapsed: list[dict] = []
-        prev: Any = object()
-        for ts, value, trigger, rid, exp, folder, run_uid in series:
-            if _key(value) != prev:
-                collapsed.append({"value": value, "trigger": trigger or "auto",
-                                  "ts": ts, "run_id": rid, "experiment": exp,
-                                  "folder": folder, "uid": run_uid})
-            prev = _key(value)
-        spark_vals = [{"value": p["value"], "trigger": p["trigger"]}
-                      for p in collapsed
-                      if _num_or_none(p["value"]) is not None]
-        svg = ""
-        if len(spark_vals) >= 2:
-            try:
-                svg = hm.render_sparkline_svg_inner(
-                    spark_vals, current=_num_or_none(current))
-            except Exception:  # noqa: BLE001
-                svg = ""
-        # 'changed' marks a run whose value differs from the NEXT-OLDER run
-        # column (the moment this run introduced a new value).
-        cells = []
-        for i, r in enumerate(runs):                  # newest-first columns
-            v = r["values"].get(row_id)
-            older = (runs[i + 1]["values"].get(row_id)
-                     if i + 1 < len(runs) else None)
-            cells.append({
-                "display": _fh_display_string(v),
-                "fill": _fh_fill_string(v),
-                "has": v is not None,
-                "changed": i + 1 < len(runs) and v != older,
-            })
-        # Changes tab: this row's OWN change points, newest first. The oldest
-        # known value stays (a never-changed row still shows "this value
-        # since {when}"); deeper history falls off the cap naturally.
-        chips = []
-        _rev = list(reversed(collapsed))
-        for _ci, p in enumerate(_rev[:CH_MAX_CHIPS]):
-            ts = p["ts"]
-            # the run that WROTE this value, not the save that carried it
-            # (_WriterCheck, 2026-09-29); newest-first, so the previous
-            # change is the next entry
-            _ov = _wc.override(dp, p["value"], ts,
-                               _rev[_ci + 1]["ts"] if _ci + 1 < len(_rev) else None,
-                               p["run_id"], p["experiment"], p["folder"])
-            _cap = None
-            if _ov is not None and _ov.get("captured"):
-                p = dict(p, uid=None, folder=None)
-                _cap = "only"
-            elif _ov is not None:
-                _cap = {"run_id": p["run_id"], "experiment": p["experiment"]}
-                p = dict(p, run_id=_ov["run"], experiment=_ov["node"],
-                         uid=_ov["uid"], folder=None)
-            chips.append({
-                "captured_only": _cap == "only",
-                "captured_by": _cap if isinstance(_cap, dict) else None,
-                "display": _fh_display_string(p["value"]),
-                "fill": _fh_fill_string(p["value"]),
-                # RAW value (not the display string) so the Δ chip reports the
-                # stored type honestly — docs/76.
-                "raw": p["value"],
-                "has": p["value"] is not None,
-                # the raw stamp too, so the template can localize it
-                # (docs/201); `when` stays as the no-JS fallback
-                "ts": ts,
-                "when": (f"{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
-                         if len(ts) >= 13 else ts),
-                "trigger": p["trigger"],
-                "run_id": p["run_id"],
-                "experiment": p["experiment"],
-                "uid": p["uid"] or _uid_for_run_ref(p["folder"], p["run_id"],
-                                                    uid_roots),
-            })
-        if chips:
-            v0 = collapsed[-1]["value"]
-            chips[0]["is_current"] = (current is not None and v0 == current
-                                      and isinstance(v0, type(current)))
-        rows_out.append({
-            "id": row_id,
-            "dot_path": dp,
-            "svg": svg,
-            "current": _fh_display_string(current),
-            "current_fill": _fh_fill_string(current),
-            "editable": editable,
-            "cells": cells,
-            "chips": chips,
-        })
-
-    return {"rows": rows_out, "runs": runs, "examined": examined,
-            "matched": len(runs_all), "chip_cap": CH_MAX_CHIPS}
+                               message=_vh_wait_message(ans), label=label)
+    return render_template("_column_history_ledger.html",
+                           **_vh_column_view(ans, path_map, label=label, unit=unit,
+                                             grid=grid, col_key=col_key))
 
 
 @bp.route("/field/history", methods=["GET"])
 def field_history():
-    """Per-field value timeline popover (the 🕘 button on Live-Edit cells and
-    inspector rows). ``?path=<dot_path>`` → the ``_field_history.html`` panel:
-    value CHANGE points from Param History (SQLite index tier for tracked
-    props, capped snapshot scan for any other leaf), each row naming the
-    experiment/trigger that introduced the value, with a Use button (fills the
-    edit input — commit stays user-explicit) and, when the run folder sits
-    under a registered dataset root, a Data button that loads the run's detail
-    into #inspector-pane so value and data sit side by side."""
+    """Ledger change points with explicit Use, Revert and proven run links."""
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     if not ctx or ctx.get("type") != "quam" or store is None:
@@ -12667,125 +12144,15 @@ def field_history():
     if not dot_path:
         return render_template("_status.html", message="path required",
                                level="error"), 400
-    # docs/282: the chip's change ledger answers, through the one function
-    # Column History and the agent API read too. The old snapshot path below
-    # answers only when the chip has no ledger of its runs yet, labelled.
+    # S10 C4: snapshot fallback -> shared ledger renderer, all modes are explicit.
     show_all = request.args.get("all") == "1"
     ans = _value_history(ctx, {"value": dot_path},
                          limit=_VH_DRAWER_ALL_LIMIT if show_all else _VH_DRAWER_LIMIT)
     if ans["mode"] in ("building", "preparing", "unavailable"):
         return render_template("_value_history_wait.html", ans=ans, surface="drawer",
-                               message=_vh_wait_message(ans),
-                               dot_path=dot_path)
-    if ans["mode"] == "ledger":
-        return render_template("_field_history_ledger.html", show_all=show_all,
-                               **_vh_drawer_view(ans, "value", dot_path))
-    _hub_fallback_reached("drawer", ans["reason"])
-    hist, current, chart = _legacy_field_history(ctx, dot_path)
-    hist["fallback_note"] = ans.get("fallback_note")
-    return render_template("_field_history.html", hist=hist,
-                           current_display=_fh_display_string(current),
-                           # docs/186: the Revert button's delta is CURRENT ->
-                           # this value -- what the press would do -- not the
-                           # delta the point introduced when it happened.
-                           current_value=current,
-                           chart=chart)
-
-
-def _legacy_field_history(ctx: dict, dot_path: str) -> tuple[Any, Any, list]:
-    """The value drawer before the ledger (docs/20 v2 .. docs/250): Param
-    History snapshot tiers merged with a 60-run scan of the workspace runs,
-    run names checked by :class:`_WriterCheck`. docs/282 keeps it ONLY as the
-    labelled fallback for a chip whose ledger holds no runs yet; S10 deletes
-    it. Returns ``(hist, current, chart)``."""
-    store = ctx["store"]
-    # Runs tier (docs/20 v2): the workspace runs' own quam_state copies keep
-    # the timeline fresh independent of Param History ingestion — today's
-    # runs appear with a guaranteed Data link.
-    from quam_state_manager.core.pointer_path import resolve_field_target
-    current = None
-    hist_path = dot_path
-    try:
-        ft = resolve_field_target(store.merged, dot_path)
-        if ft.get("resolvable"):
-            current = ft.get("resolved_value")
-            # RAM P8 / F3: an ALIAS path (``xy.operations.x180.amplitude``
-            # where ``x180 == "#./x180_DragCosine"``) was walked literally by
-            # both history tiers: the leaf index never holds it, so the
-            # drawer fell to the snapshot SCAN -- 150 full state.json parses,
-            # 45 s on a 19 MB chip -- and still found nothing. Read history
-            # at the leaf the alias names NOW (mid-path pointers followed,
-            # the leaf itself untouched), the rule Column History already
-            # applies (QA F5).
-            leaf = (ft.get("candidates") or [{}])[0].get("path")
-            if leaf and ft.get("chain"):
-                hist_path = leaf
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        runs_series, _examined = _runs_field_series(ctx, hist_path)
-    except Exception:  # noqa: BLE001 — the popover must survive a bad root
-        logger.debug("field-history runs tier failed", exc_info=True)
-        runs_series = []
-    hist = _history().field_history(ctx["path"], hist_path,
-                                    extra_series=runs_series)
-    if not isinstance(hist, dict):
-        return hist, current, []
-    hist["dot_path"] = dot_path
-    hist["history_path"] = hist_path
-
-    roots = _uid_roots()
-    wc = _WriterCheck()
-    _pts = hist["points"]
-    for i, pt in enumerate(_pts):
-        value = pt["value"]
-        pt["fill"] = _fh_fill_string(value)
-        pt["display"] = _fh_display_string(value)
-        pt["is_current"] = (current is not None and value == current
-                            and isinstance(value, type(current)))
-        ts = pt.get("timestamp") or ""
-        pt["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
-                      if len(ts) >= 13 else ts)
-        pt["uid"] = _uid_for_run_ref(pt.get("experiment_folder_path"),
-                                     pt.get("run_id"), roots)
-        # The row's run must be the run that WROTE the value (2026-09-29),
-        # and Data must open that run -- never the run whose save merely
-        # carried it (_WriterCheck). Points are newest-first, so the
-        # previous change is the next row.
-        ov = wc.override(hist_path, value, ts,
-                         _pts[i + 1].get("timestamp") if i + 1 < len(_pts) else None,
-                         pt.get("run_id"), pt.get("experiment"),
-                         pt.get("experiment_folder_path"))
-        if ov is not None and ov.get("captured"):
-            pt["captured_only"] = True
-            pt["uid"] = None
-        elif ov is not None:
-            pt["captured_by"] = {"run_id": pt.get("run_id"),
-                                 "experiment": pt.get("experiment")}
-            pt["run_id"] = ov["run"]
-            pt["experiment"] = ov["node"]
-            pt["uid"] = ov["uid"]
-    # Mini trend chart payload (docs/20 v2 Step 7): the change points as a
-    # step series, finite numerics only (a text/list field simply gets no
-    # chart). Oldest-first for plotting.
-    chart: list[dict[str, Any]] = []
-    for pt in reversed(hist["points"]):
-        v = pt["value"]
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
-            continue
-        f = float(v)
-        if f != f or f in (float("inf"), float("-inf")):
-            continue
-        # docs/244: the INSTANT (ISO Z), never UTC digits passed off as a wall
-        # clock -- the rows beside it are shown in the viewer's zone, and the
-        # chart used to read the same points nine hours apart in Korea. The
-        # client puts it on the axis in that same zone (SnapTime.axisValue).
-        from quam_state_manager.core.timefmt import iso_z, to_utc
-        _t = to_utc(pt.get("timestamp") or pt.get("when"))
-        if _t is None:
-            continue
-        chart.append({"t": iso_z(_t), "v": f, "trigger": pt.get("trigger") or "auto"})
-    return hist, current, chart
+                               message=_vh_wait_message(ans), dot_path=dot_path)
+    return render_template("_field_history_ledger.html", show_all=show_all,
+                           **_vh_drawer_view(ans, "value", dot_path))
 
 
 def _editability_reason(store: QuamStore, target_path: str) -> str | None:
@@ -37511,8 +36878,9 @@ def _exp_entry_for_run(run: Any) -> Any:
     )
 
 
+# S10 C4: removed reader reference -> ingestion gate, preserve run matching.
 def _run_matches_open_chip(ctx: dict, qs_dir: Path) -> tuple[str, Any, Any]:
-    """The `_runs_field_series` identity gate for one run.
+    """The ingestion identity gate for one run.
 
     Returns ``(verdict, run_state, run_wiring)`` with verdict one of:
     ``"match"`` (state/wiring are the parsed dicts — reuse them, don't

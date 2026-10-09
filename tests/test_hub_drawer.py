@@ -190,8 +190,12 @@ class TestDrawerOnTheLedger:
         assert "?via=saved" in new["body"] and ">Run</button>" in new["body"]
 
     def test_strings_and_booleans_have_a_history_too(self, sm):
-        html = drawer(sm, "qubits.qA1.flag")
-        assert rows(html)[0]["value"] == "True"
+        # S10 C4: empty-row error -> explicit rows assertion, retain boolean and string history.
+        for leaf, value in (("flag", "True"), ("id", "qA1")):
+            html = drawer(sm, "qubits.qA1." + leaf)
+            points = rows(html)
+            assert points, html
+            assert points[0]["value"] == value
 
 
 # ======================================================================
@@ -338,7 +342,8 @@ class TestHonesty:
         assert r.status_code == 200
         assert "The value now is not the newest recorded one" in drawer(sm, "qubits.qA1.T1")
 
-    def test_a_chip_whose_ledger_holds_no_runs_gets_the_old_path_labelled(self, tmp_path):
+    # S10 C4: old path label -> ledger link offer, keep C3 behavior under its own name.
+    def test_a_chip_whose_ledger_holds_no_runs_offers_the_link(self, tmp_path):
         live = tmp_path / "chips" / "live"
         write_chip(live, chip_state(), None)
         app = make_app(tmp_path)
@@ -389,6 +394,8 @@ class TestOneImplementation:
         assert h["via"] == [{"from_path": "qubits.qA1.xy.operations.x180", "pointer": "#./x180_DragCosine",
                              "to_path": "qubits.qA1.xy.operations.x180_DragCosine"}]
         assert h["retargets"][0]["changes"][0]["old"] == "#./x180_Gauss"
+        # S10 C4: missing-key error -> explicit shape assertion, preserve the shared wording contract.
+        assert h["points"] and all("label" in p for p in h["points"])
         html = drawer(sm, "qubits.qA1.xy.operations.x180.amplitude")
         assert [(routes_mod._fh_display_string(p["value"]), p["label"], p["before_via"])
                 for p in h["points"]] == [
@@ -932,3 +939,46 @@ class TestReviewIncrementalIndex:
             assert builds, "a commit that changed an indexed event is a full build"
         finally:
             hub_index.close_readers()
+
+
+# S10 C4: missing snapshot substitute -> terminal ledger mode, do not open a reader.
+def test_a_missing_ledger_is_terminal_before_any_value_read(sm, tmp_path, monkeypatch):
+    from quam_state_manager.core import value_history
+    calls = []
+
+    def read(*args, **kwargs):
+        calls.append(args)
+        raise RuntimeError("unexpected ledger read")
+
+    monkeypatch.setattr(value_history, "read", read)
+    with sm["app"].test_request_context():
+        ctx = dict(routes_mod._active_ctx(), hub_chip_dir=str(tmp_path / "absent"),
+                   hub_no_folder=True)
+        ans = routes_mod._value_history(ctx, {"v": "qubits.qA1.T1"})
+    assert ans["mode"] == "unavailable" and ans["reason"] == "no_ledger"
+    assert not calls
+
+
+# S10 C4: old readers -> static absence pin, prevent snapshot paths from returning.
+def test_removed_value_readers_are_absent():
+    import ast
+    package = Path(__file__).resolve().parents[1] / "quam_state_manager"
+    names = ["_RUN_" + part for part in
+             ("IDENT_CACHE", "CHIP_CACHE", "VALUE_CACHE", "CACHE_MAX", "CANDIDATES_MEMO")]
+    names += ["_" + part for part in
+              ("trim_run_caches", "store_run_candidates", "runs_candidates",
+               "runs_field_series", "runs_column_series", "legacy_column_history",
+               "legacy_field_history", "SCAN_SERIES", "SCAN_SERIES_LOCK", "SCAN_SERIES_MAX",
+               "scan_one_snapshot", "scan_field_series", "snap_files_sig")]
+    names += ["CH_SERIES_" + part for part in ("RUNS", "EXAMINE")]
+    names += ["_" + part + "_history.html" for part in ("field", "column")]
+    for path in package.rglob("*"):
+        if not path.is_file() or "vendor" in path.parts or path.name.startswith("plotly"):
+            continue
+        if path.suffix in (".py", ".html", ".js", ".css"):
+            source = path.read_text(encoding="utf-8")
+            assert not [name for name in names if name in source], path
+    tree = ast.parse((package / "core" / "history.py").read_text(encoding="utf-8"))
+    manager = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "HistoryManager")
+    assert not any(isinstance(n, ast.FunctionDef) and n.name == "field_" + "history"
+                   for n in manager.body)

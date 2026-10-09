@@ -22,7 +22,6 @@ from __future__ import annotations
 import collections
 import base64
 import json
-import os
 import logging
 import re
 import threading
@@ -361,21 +360,14 @@ def field_history():
             return jsonify(ok=True, path=dot, source=ans["mode"], history=None,
                            note=r._vh_wait_message(ans),
                            building={"done": st.get("done"), "total": st.get("total")})
-        if ans["mode"] == "ledger":
-            return jsonify(ok=True, path=dot, source="ledger",
-                           history=_jsonable(r._vh_agent_view(ans, "value")),
-                           **({"link": {"offer": True, "url": "/hub/link-folder"}}
-                              if any(n["code"] == "no_folder_linked"
-                                     for n in ans["notes"].get("value", [])) else {}))
-        r._hub_fallback_reached("agent_field_history", ans["reason"])
-        data, _current, _chart = r._legacy_field_history(ctx, dot)
+        # S10 C4: snapshot fallback -> shared ledger answer, matching the drawer.
+        return jsonify(ok=True, path=dot, source="ledger",
+                       history=_jsonable(r._vh_agent_view(ans, "value")),
+                       **({"link": {"offer": True, "url": "/hub/link-folder"}}
+                          if any(n["code"] == "no_folder_linked"
+                                 for n in ans["notes"].get("value", [])) else {}))
     except Exception as exc:  # noqa: BLE001
-        if (current_app.testing and os.environ.get("HUB_FALLBACK_TRIPWIRE") == "1"
-                and isinstance(exc, RuntimeError) and str(exc).startswith("hub fallback reached:")):
-            raise
         return _err(f"field history unavailable: {exc}", 500)
-    return jsonify(ok=True, path=dot, source="snapshots", note=ans.get("fallback_note"),
-                   history=_jsonable(data))
 
 
 # ---------------------------------------------------------------- the runs

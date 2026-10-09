@@ -193,13 +193,14 @@ class TestTheCompactChipsCarryTheInstantToo:
             "these fetch+innerHTML loaders render a ts_local template without "
             f"applyLocalTimes, so the time stays invisible: {missing}")
 
+    # S10 C4: snapshot templates -> ledger templates, retain local timestamp rendering.
     def test_the_five_display_sites_no_longer_slice_digits(self):
         from pathlib import Path
         tpl_dir = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates"
         for name, needle in [
-            ("_column_history.html", "ch-chip-when"),
-            ("_column_history.html", "ch-run-when"),
-            ("_field_history.html", "fh-ts"),
+            ("_column_history_ledger.html", "ch-chip-when"),
+            ("_column_history_ledger.html", "ch-run-when"),
+            ("_field_history_ledger.html", "fh-ts"),
             ("_param_history_changes.html", "ph-change-when"),
         ]:
             html = (tpl_dir / name).read_text(encoding="utf-8")
