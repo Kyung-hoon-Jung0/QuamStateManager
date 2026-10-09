@@ -123,8 +123,10 @@ MUTATIONS.extend([
      "{% elif not rows and (not ledger_versions or ledger_versions.mode == 'ledger') %}",
      "{% elif not rows %}",
      [TEST, "-k", "nonledger_empty_list"]),
+    # S10 C6: re-anchored -- the toolbar count is mode-dependent too now
     ("empty_state_history_denies_states", TEMPLATES + "_ledger_state_history.html",
-     "{% if lv.mode == 'ledger' %}", "{% if True %}",
+     "{% if lv.mode == 'ledger' %}\n<p class=\"muted\" style=\"padding:1rem\">No recorded states yet.",
+     "{% if True %}\n<p class=\"muted\" style=\"padding:1rem\">No recorded states yet.",
      [TEST, "-k", "nonledger_empty_list"]),
     ("empty_drawer_denies_states", TEMPLATES + "_history_panel_ledger.html",
      "{% if lv.mode == 'ledger' %}<p class=", "{% if True %}<p class=",

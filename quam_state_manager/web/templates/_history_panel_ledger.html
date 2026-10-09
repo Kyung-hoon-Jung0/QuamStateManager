@@ -15,7 +15,7 @@
             hx-post="/api/history/snapshot"
             hx-target="#history-content"
             hx-swap="innerHTML">Take Snapshot</button>
-    <small class="muted hp-ledger-count">{{ lv.total }} recorded state{{ 's' if lv.total != 1 }}{% if lv.rows | length < lv.total %} &middot; {% if page == 1 %}newest {% endif %}{{ lv.rows | length }} shown{% endif %}</small>
+    <small class="muted hp-ledger-count">{{ lv.total }} {% if lv.mode == 'ledger' %}recorded state{{ 's' if lv.total != 1 }}{% else %}older snapshot{{ 's' if lv.total != 1 }}{% endif %}{% if lv.rows | length < lv.total %} &middot; {% if page == 1 %}newest {% endif %}{{ lv.rows | length }} shown{% endif %}</small>
     <select aria-label="States per page" name="per_page"
             hx-get="/api/history" hx-target="#history-content" hx-swap="innerHTML">
         {% for size in (20, 50, 100, 0) %}

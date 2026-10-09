@@ -913,20 +913,29 @@ def test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline(env
     assert (_meta(env, ts).label, _meta(env, ts).pinned) == (None, True)
 
 
+@pytest.mark.parametrize("mode", ["unavailable", "building"])
 @pytest.mark.parametrize("url", ["/api/history", "/state/versions", "/state-history?body=1"])
-def test_an_unreadable_listing_says_the_older_rows_are_below(env, monkeypatch, url):
+def test_an_unreadable_listing_says_the_older_rows_are_below(env, monkeypatch, url, mode):
     """A listing in ``unavailable`` draws the Param History snapshots as older
     rows (the mode table); C3 put the value drawer's "Nothing older is shown in
-    its place." right above them."""
+    its place." right above them. Its counts called them "0 recorded states"
+    "from the change history" in every non-ledger mode (seen in Chrome)."""
     stamps = [_bookmark(env, label=None) for _ in range(2)]
 
     def broken(*a, **k):
         raise ValueError("corrupt ledger")
-    monkeypatch.setattr(hub_versions, "_version_token", broken)
+    if mode == "building":
+        monkeypatch.setattr(hub_sync, "status", lambda _d: {"state": "building", "done": 1, "total": 3})
+    else:
+        monkeypatch.setattr(hub_versions, "_version_token", broken)
     body = env.client.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
     assert all(s in body for s in stamps), "the older rows are listed"
     assert "Nothing older is shown" not in body
-    assert "The change history could not be read (unreadable). Older Param History snapshots are listed below." in text(body)
+    assert "recorded state" not in text(body) and "From the change history" not in text(body)
+    assert re.search(r"\b2 older snapshots\b", text(body)), text(body)[:600]
+    if mode == "unavailable":
+        assert ("The change history could not be read (unreadable). Older Param History snapshots are "
+                "listed below.") in text(body)
 
 
 def test_a_bookmark_is_never_carried_by_a_later_row():

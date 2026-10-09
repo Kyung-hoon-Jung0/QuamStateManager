@@ -249,9 +249,12 @@
     {# docs/132 — the honesty line: what the list is read from, and where the
        full list lives. #}
     <div class="state-versions-foot muted">
-        <span class="sv-kept-note">From the change history: {{ ledger_versions.events }} recorded
+        {# while the change history cannot answer, every row is an older
+           snapshot: the foot may not say "0 recorded states" from it #}
+        <span class="sv-kept-note">{% if ledger_versions.mode == 'ledger' %}From the change history: {{ ledger_versions.events }} recorded
             state{{ '' if ledger_versions.events == 1 else 's' }}{% if ledger_versions.legacy_total %}
-            and {{ ledger_versions.legacy_total }} older snapshot{{ '' if ledger_versions.legacy_total == 1 else 's' }}{% endif %} — full list in
+            and {{ ledger_versions.legacy_total }} older snapshot{{ '' if ledger_versions.legacy_total == 1 else 's' }}{% endif %}{% else %}{{ ledger_versions.total }} older
+            snapshot{{ '' if ledger_versions.total == 1 else 's' }}{% endif %} — full list in
             <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
                hx-push-url="true" onclick="StateVersions.close()">State History</a>.</span>
     </div>

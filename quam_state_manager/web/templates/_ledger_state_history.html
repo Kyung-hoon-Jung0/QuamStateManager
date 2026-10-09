@@ -11,7 +11,7 @@
 <div class="sh-toolbar">
     <button id="sh-compare-btn" class="outline btn-sm" disabled
             onclick="StateHistory.compareSelected()">Compare 2 selected</button>
-    <small class="muted">{{ lv.events }} recorded state{{ 's' if lv.events != 1 }}{% if lv.legacy_total %} · {{ lv.legacy_total }} older snapshot{{ 's' if lv.legacy_total != 1 }}{% endif %}</small>
+    <small class="muted">{% if lv.mode == 'ledger' %}{{ lv.events }} recorded state{{ 's' if lv.events != 1 }}{% if lv.legacy_total %} · {{ lv.legacy_total }} older snapshot{{ 's' if lv.legacy_total != 1 }}{% endif %}{% else %}{{ lv.legacy_total }} older snapshot{{ 's' if lv.legacy_total != 1 }}{% endif %}</small>
 </div>
 
 <div class="sh-timeline">
