@@ -108,7 +108,7 @@
               <span class="vh-flag vh-flag-renamed" title="Recorded as {{ r.recorded_as }}, before a Re-generate rename">as {{ r.recorded_short }}</span>{% endif %}
             </td>
             <td class="ph-change-new" colspan="3">{{ before_after(r.previous, r.value, 'first' if r.is_first else r.op) }}</td>
-            <td class="ph-change-who">{% if r.who %}<span class="vh-sub">{{ r.who }}</span>{% endif %}{% if r.undone %} <span class="vh-flag">undone</span>{% endif %}</td>
+            <td class="ph-change-who">{% if r.who %}<span class="vh-sub">{{ r.who }}</span>{% endif %}{% if r.undone %} <span class="vh-flag">undone</span>{% endif %}{% if r.doubt %} <span class="vh-flag ph-doubt" title="{{ r.doubt[1] }}">{{ r.doubt[0] }}</span>{% endif %}</td>
           </tr>
         {% endfor %}
         {% for r in g.not_kept %}
@@ -120,7 +120,7 @@
                       title="Open this parameter's full timeline">{{ r.path }}</button>
             </td>
             <td class="ph-change-new" colspan="3">{{ before_after(r.previous, r.value, r.op) }}</td>
-            <td class="ph-change-who"><span class="vh-flag" title="Saved in this run's own folder; the next run that read the chip still found the earlier value{% if r.witness.run_id is not none %} (#{{ r.witness.run_id }}){% endif %}">not kept on the chip</span></td>
+            <td class="ph-change-who"><span class="vh-flag" title="{% if r.excursion %}Saved in this run's own folder; no later read of the chip confirmed it, and the value came back to what the chip held{% else %}Saved in this run's own folder; the next run that read the chip still found the earlier value{% endif %}{% if r.witness.run_id is not none %} (#{{ r.witness.run_id }}){% endif %}">{% if r.excursion %}never confirmed; the value came back{% else %}not kept on the chip{% endif %}</span></td>
           </tr>
         {% endfor %}
         </tbody>

@@ -459,7 +459,9 @@ def _series(conn, index, path, limit=None, before=None, *, witness=True):
 
     P0-1 (``hub_witness``): a run change the chip never kept (contradicted,
     with its witness's restoring row) is left out together with that row, so
-    the value stays the old one across both; every other judged run change
+    the value stays the old one across both -- and so is an excursion
+    (unconfirmed saves that came back exactly to the value the chip held,
+    with the save that came back); every other judged run change
     carries its verdict on the event dict (``_witness``). ``witness=False``
     reads what each event SAVED (Column History's By run)."""
     if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 0):
@@ -543,11 +545,15 @@ def not_kept(conn, index, path, rows=None):
 
 def witness_rows(conn, index, events):
     """P0-1 for a listing of events (the timeline): each event's ``changes``
-    split by the witness verdicts -- a contradicted run change moves to the
-    event's ``not_kept`` (with ``witness``: the event that read the chip and
-    still found the old value), and the witness's own restoring row is left
-    out (that event did not change the chip). Rows are matched to holders by
-    their path in this index."""
+    split by the witness verdicts (``hub_witness``) -- what is not chip
+    history moves to the event's ``not_kept``: a contradicted change (with
+    ``witness``: the event that read the chip and still found the old value)
+    and a point of an excursion (``excursion`` True; ``witness``: the save
+    that came back, ``held``: the value it came back to); the witness's own
+    restoring row and an excursion's return are left out (that event did not
+    change the chip). A change that stays but is not confirmed on the chip
+    carries ``doubt`` (its verdict) -- never a plain change. Rows are matched
+    to holders by their path in this index."""
     from quam_state_manager.core import hub_witness
     v = hub_witness.of(conn, index)
     v.prime({index.paths.get(c["path"]) for ev in events for c in ev.get("changes") or ()})
@@ -560,22 +566,29 @@ def witness_rows(conn, index, events):
         kept, out = [], []
         for c in changes:
             pid = index.paths.get(c["path"])
-            pairs = v.pairs_of(pid)
-            if not pairs:
-                kept.append(c)
-                continue
-            if eid in pairs:
-                out.append((c, pairs[eid]))
-            elif v.restores(eid, pid) is None:
-                kept.append(c)
-        if len(kept) == len(changes):
+            why = v.left_out_as(eid, pid)
+            if why == "contradicted":
+                out.append((c, v.pairs_of(pid)[eid], None))
+            elif why == "excursion":
+                back = next(r for _a, pts, r in v.excursions_of(pid) if eid in pts)
+                out.append((c, back, pid))
+            elif why is None:
+                code = v.code(eid, pid) if ev.get("kind") == "run" and not ev.get("first") else None
+                kept.append(dict(c, doubt=code) if code in hub_witness.UNCONFIRMED else c)
+        if len(kept) == len(changes) and all(a is b for a, b in zip(kept, changes)):
             continue
         ev["changes"] = kept
         if out:
-            need = [w for _c, w in out if w not in named]
+            need = [w for _c, w, _p in out if w not in named]
             named.update(_events(conn, need, index))
-            ev["not_kept"] = [dict(c, witness=hub_witness.describe(index, named.get(w), w))
-                              for c, w in out]
+            ev["not_kept"] = []
+            for c, w, pid in out:
+                row = dict(c, witness=hub_witness.describe(index, named.get(w), w))
+                if pid is not None:
+                    got = conn.execute("SELECT num, txt FROM changes WHERE pid=? AND eid=?",
+                                       (pid, w)).fetchone()
+                    row.update(excursion=True, held=value(got[0], got[1]) if got else None)
+                ev["not_kept"].append(row)
 
 
 def series(store, path, limit=None):

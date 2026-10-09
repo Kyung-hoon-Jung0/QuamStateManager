@@ -619,17 +619,11 @@ class LedgerTable:
                 # P0-1: a run's value the chip never kept did not calibrate it,
                 # and the run that still found the old value did not either
                 verdicts = hub_witness.of(conn, index).prime()
-                # ... nor did an excursion of unconfirmed saves that came back to
-                # the value the chip held (the value's "since", hub_witness.since)
-                cut = hub_witness.since_positions(conn, index, [
-                    pid for path, pid in index.paths.items()
-                    if path.startswith(("qubits.", "qubit_pairs."))])
 
                 def skip(pid, eid) -> bool:
-                    if pid is None:
-                        return False
-                    at = cut.get(pid)
-                    return eid in verdicts.drop(pid) or (at is not None and index.positions.get(eid, -1) > at)
+                    # ... nor did an excursion of unconfirmed saves that came back
+                    # (hub_witness.excursions): the verdicts' drop set, as everywhere
+                    return pid is not None and eid in verdicts.drop(pid)
                 lane = getattr(index, "lane", None)
                 if lane is not None:
                     rows = self._lane_change_times(conn, index, lane, where, CHIP_UNCERTAIN, skip)

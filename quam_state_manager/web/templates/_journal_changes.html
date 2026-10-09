@@ -7,7 +7,7 @@
 {# ``author``: the card's own who; an entry names its actor only when it differs. #}
 {% macro change_list(rows, actors=False, author=None) -%}
 <ul class="jr-changes">{% for w in rows %}<li{% if w.taken_back %} class="jr-taken-back"{% endif %}><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>{% if w.recorded_as %} <span class="jr-badge jr-recorded-as" title="Recorded as {{ w.recorded_as }}, before a Re-generate rename">as {{ w.recorded_short }}</span>{% endif %}
-    {{ before_after(w.old, w.new, w.op or 'set') }}{% if w.taken_back %} <span class="jr-badge jr-undone" title="a later undo took this value back">undone</span>{% endif %}{% if actors and w.actor and w.actor != author %} <span class="jr-author jr-author-{{ w.actor.split(':')[0] }}">{{ w.actor }}</span>{% endif %}</li>{% endfor %}</ul>
+    {{ before_after(w.old, w.new, w.op or 'set') }}{% if w.taken_back %} <span class="jr-badge jr-undone" title="a later undo took this value back">undone</span>{% endif %}{% if w.doubt and w.doubt in doubt_text %} <span class="jr-badge jr-doubt" title="{{ doubt_text[w.doubt][1] }}">{{ doubt_text[w.doubt][0] }}</span>{% endif %}{% if actors and w.actor and w.actor != author %} <span class="jr-author jr-author-{{ w.actor.split(':')[0] }}">{{ w.actor }}</span>{% endif %}</li>{% endfor %}</ul>
 {%- endmacro %}
 
 {# The run's own rows. The ledger's first event has no earlier state, so its
@@ -21,11 +21,18 @@
     <span class="muted">this run's saved state vs the chip history just before it</span>
     {{ change_list(c.writes) }}</div>
 {% endif %}{% if c.not_kept and not c.first_state_n %}{# P0-1: values the run saved in its own
-   folder that a later read of the chip did not find there -- never changes of the chip #}
+   folder that are not chip history -- never changes of the chip, never silent #}
+{%- set kept_out = c.not_kept | rejectattr('excursion') | list %}{% set came_back = c.not_kept | selectattr('excursion') | list %}{% if kept_out %}
 <div class="jr-sec jr-run-not-kept"><b>Saved in its own folder, not kept on the chip</b>
     <span class="muted">the next run that read the chip still found the earlier value</span>
-    <ul class="jr-changes">{% for w in c.not_kept %}<li class="jr-not-kept"><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>
+    <ul class="jr-changes">{% for w in kept_out %}<li class="jr-not-kept"><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>
     {{ before_after(w.old, w.new, w.op or 'set') }} <span class="jr-badge jr-not-kept-by" title="What read the chip and still found the earlier value">{% if w.witness.kind == 'run' and w.witness.run_id is not none %}#{{ w.witness.run_id }} still had the earlier value{% elif w.witness.kind == 'observed' %}SM's snapshot still had the earlier value{% else %}the earlier value stayed on the chip{% endif %}</span></li>{% endfor %}</ul></div>
+{%- endif %}{% if came_back %}
+<div class="jr-sec jr-run-not-kept jr-run-came-back"><b>Saved in its own folder, never confirmed on the chip</b>
+    <span class="muted">no later read of the chip confirmed these values, and the value came back to what the chip held</span>
+    <ul class="jr-changes">{% for w in came_back %}<li class="jr-not-kept"><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>
+    {{ before_after(w.old, w.new, w.op or 'set') }} <span class="jr-badge jr-not-kept-by" title="No later read of the chip confirmed this value, and the value came back exactly to what the chip held">never confirmed; the value came back{% if w.witness.run_id is not none %} at #{{ w.witness.run_id }}{% endif %}</span></li>{% endfor %}</ul></div>
+{%- endif %}
 {% endif %}
 {%- endmacro %}
 

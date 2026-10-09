@@ -768,6 +768,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
             return url_for("static", filename=filename)
 
     app.jinja_env.globals["asset_url"] = _asset_url
+    # P0-1: what a change not confirmed on the chip says, one wording everywhere
+    from quam_state_manager.core.hub_witness import DOUBT_TEXT
+    app.jinja_env.globals["doubt_text"] = DOUBT_TEXT
 
     # Diagnostics-list grouping: map a Finding category → display domain, and the
     # ordered domain list. Single source of truth in core.diagnostics, so every

@@ -222,6 +222,10 @@ def _small_day_fragment(world):
 
 
 def test_a_day_under_a_page_renders_exactly_as_before(world):
+    # P0-1: old -> new, why: the golden was re-written once -- this day's "w"
+    # goes 1 -> 2 -> 0 -> 1 with no later read of the chip confirming #2 or #3
+    # (an excursion: listed apart, not as changes), and every change that stays
+    # unconfirmed carries its verdict; the page's paging is unchanged
     html = _small_day_fragment(world)
     if os.environ.get("CALIBRATION_LOG_GOLDEN_WRITE") == "1":
         GOLDEN.write_text(html, encoding="utf-8", newline="\n")
