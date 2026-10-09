@@ -20,7 +20,9 @@ its *view* (:func:`build`, reached as ``LedgerIndex.for_folder``):
   wrote over). A seam's rows are ``hub_rules.diff`` of the two states the
   ledger rebuilds exactly (``HubStore.state_at``). At an SM seam the paths
   SM's entries wrote keep provenance ``sm``; every other path is
-  ``held_before_write``: this folder held it when SM wrote, writer unknown.
+  ``held_before_write``: this folder held it when SM wrote, writer unknown --
+  except at the lane's FIRST state (no lane predecessor), where those paths
+  are the folder's starting state: ``start`` rows, read as first recorded.
 * **flags** -- REVERTS_TO_EARLIER and OVERLAPS_SM_WRITE are facts of an
   order; a view recomputes them within its lane.
 
@@ -497,11 +499,15 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
             proven = 0
             if st is not None and st[7] and (st[3], st[4]) == (num, txt):
                 proven = 1           # carried as rediff_run carries it: same path, same new value
-            is_held = is_sm and st is None
+            # a path SM's entries did not write: held when SM wrote over it --
+            # or, at the lane's first state, simply what the folder started with
+            is_start = is_sm and st is None and pred is None
+            is_held = is_sm and st is None and pred is not None
             if is_held:
                 held.add(ch.path)
             out[pid] = {"path": ch.path, "pid": pid, "op": OPS[ch.op], "num": num, "txt": txt,
-                        "old_num": old_num, "old_txt": old_txt, "proven": proven, "held": is_held}
+                        "old_num": old_num, "old_txt": old_txt, "proven": proven, "held": is_held,
+                        "start": is_start}
         lane.seams[eid] = out
         if held:
             lane.held[eid] = held

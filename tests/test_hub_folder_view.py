@@ -40,7 +40,8 @@ from types import SimpleNamespace
 import pytest
 
 from quam_state_manager.core import (
-    history as hmod, hub, hub_index, hub_lanes, hub_rules as rules, hub_sync, safe_io, value_history as vh,
+    history as hmod, hub, hub_index, hub_lanes, hub_query, hub_rules as rules, hub_sync, safe_io,
+    value_history as vh,
     working_copy)
 from quam_state_manager.core.hub_store import OVERLAPS_SM_WRITE, REVERTS_TO_EARLIER, HubStore
 from quam_state_manager.web import routes as routes_mod
@@ -253,6 +254,53 @@ def test_a_single_folder_break_is_d5s_one_rule(lab):
     finally:
         hub_lanes.ON_BUILD.remove(built.append)
     assert built, "a break is a seam: a view is built"
+
+
+def _first_write_of_b(lab):
+    """B's history begins (its cut), then A writes (after B's cut: parallel,
+    outside B's lane), then B's first own event is an SM write. B's lane has
+    no predecessor, so the write's rows are B's whole starting state."""
+    lab.folder("labB", chip_state(f01=5.3e9))
+    lab.folder("labA", chip_state())
+    lab.write("labA", "qubits.qA1.T1", 2e-5)
+    lab.write("labB", "qubits.qA1.T1", 3e-5)
+
+
+def test_a_folders_first_sm_write_starts_its_history_as_first_recorded(lab):
+    """The paths a folder's FIRST SM write did not write are the folder's
+    starting state: first recorded, writer unknown -- never "held before
+    this write" (on a real chip that turned ~4,500 starting values into
+    held rows of one write)."""
+    _first_write_of_b(lab)
+    f01 = lab.points("labB", "qubits.qA1.f_01")
+    assert values(f01) == [5.3e9]
+    assert [p["provenance"] for p in f01] == ["first_record"]
+    t1 = lab.points("labB", "qubits.qA1.T1")
+    assert values(t1)[-1] == 3e-5 and t1[-1]["provenance"] == "sm", "the write's own entry stays SM's"
+    assert 2e-5 not in values(t1), "A's parallel write stays out of B's history"
+    # a later break in the same lane is still a held row (P3 is unchanged)
+    lab.outside("labB", "qubits.qA1.f_01", 5.35e9)
+    lab.write("labB", "qubits.qA1.T1", 4e-5)
+    f01 = lab.points("labB", "qubits.qA1.f_01")
+    assert [p["provenance"] for p in f01] == ["first_record", "held_before_write"]
+
+
+def test_the_changes_feed_and_label_say_first_recorded_at_a_folders_first_write(lab):
+    _first_write_of_b(lab)
+    view = lab.view("labB")
+    page = hub_query.timeline(lab.binding(view), limit=50)
+    first = [e for e in page["events"] if e.get("first")]
+    assert len(first) == 1 and first[0]["kind"] == "sm_apply"
+    rows_ = {c["path"]: c for c in first[0]["changes"]}
+    assert rows_["qubits.qA1.f_01"].get("start") and not rows_["qubits.qA1.f_01"].get("held")
+    assert not rows_["qubits.qA1.T1"].get("start"), "the write's own entry is not a start row"
+    pt = vh._point(first[0], None, 5.3e9, "add", False, {}, {},
+                   held=bool(rows_["qubits.qA1.f_01"].get("held")),
+                   start=bool(rows_["qubits.qA1.f_01"].get("start")))
+    info = routes_mod._vh_present(pt, [], {})
+    assert pt["provenance"] == "first_record"
+    assert info["label"] == "first recorded" and "run" not in info["label"]
+    assert "writer unknown" in info["sub"]
 
 
 # ======================================================================

@@ -40,6 +40,9 @@ def _change(row):
     if isinstance(row, dict) and row.get("held"):
         # S10 C1.5: this folder held the value when SM wrote; writer unknown
         out["held"] = True
+    if isinstance(row, dict) and row.get("start"):
+        # the folder's starting state at its first SM write: first recorded
+        out["start"] = True
     return out
 
 
@@ -479,6 +482,9 @@ def _series(conn, index, path, limit=None, before=None):
                     # this folder held it when SM wrote: the write is not
                     # its writer
                     events[eid] = dict(events[eid], _held=True)
+                elif row.get("start"):
+                    # the folder's starting state: first recorded, writer unknown
+                    events[eid] = dict(events[eid], _start=True)
     for start in range(0, len(stored), 500):
         chunk = stored[start:start + 500]
         sql = ("SELECT * FROM changes WHERE pid=? AND eid IN ("

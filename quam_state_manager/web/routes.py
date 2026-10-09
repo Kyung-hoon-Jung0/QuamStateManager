@@ -12136,6 +12136,13 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
             if key not in uid_memo:
                 uid_memo[key] = _uid_for_run_ref(p.get("folder"), rid, uid_roots)
             saved_uid = uid_memo[key]
+    elif prov == "first_record" and p.get("kind") != "run":
+        # the folder's history starts at an SM write: the paths it did not write
+        label = "first recorded"
+        sub = "folder history start; writer unknown"
+        title = ("This folder's history begins at this SM write; the value was already set "
+                 "then and the write did not set it. Who set it is not recorded.")
+        trigger = "auto"
     elif prov == "first_record":
         label = f"first recorded in {run}"
         sub = "ledger start; writer unknown"
@@ -35079,7 +35086,7 @@ def _hub_param_changes_data(table) -> dict:
         rows = []
         for c in changes[:shown_n]:
             pt = vh._point(ev, c["old"], c["new"], c["op"], c["proven"], roots, sm,
-                           held=bool(c.get("held")))
+                           held=bool(c.get("held")), start=bool(c.get("start")))
             if taken is not None and (taken is vh.ALL_PATHS or c["path"] in taken):
                 pt["undone"] = "undone"
             info = _vh_present(pt, table.roots, table.uid_memo)

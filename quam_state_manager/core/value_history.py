@@ -553,13 +553,16 @@ def _flags(bits: int) -> list[str]:
     return [name for bit, name in FLAG_NAMES if bits & bit]
 
 
-def provenance(ev: dict, proven: bool, held: bool = False) -> str:
+def provenance(ev: dict, proven: bool, held: bool = False, start: bool = False) -> str:
     """What the ledger can say about who set a row (docs/282 §1.4).
 
     S10 C1.5: ``held_before_write`` -- a row of an SM write that SM's entries
     did not write: the open folder held that value when SM wrote over it
     (an outside edit, or another folder's history before this one's), so who
-    set it is not known."""
+    set it is not known. At the folder's FIRST state such a row is
+    ``first_record``: what the folder started with, not a change."""
+    if start or ev.get("_start"):
+        return "first_record"
     if held or ev.get("_held"):
         return "held_before_write"
     kind = ev.get("kind")
@@ -579,7 +582,7 @@ def provenance(ev: dict, proven: bool, held: bool = False) -> str:
 
 
 def _point(ev: dict, old: Any, new: Any, op: str, proven: bool, roots: dict,
-           sm: dict, held: bool = False) -> dict:
+           sm: dict, held: bool = False, start: bool = False) -> dict:
     flags = int(ev.get("flags") or 0)
     folder = None
     if ev.get("root_id") is not None and ev.get("rel_path"):
@@ -591,7 +594,7 @@ def _point(ev: dict, old: Any, new: Any, op: str, proven: bool, roots: dict,
         "eid": ev["eid"], "ord": ev["ord"], "t_us": ev["t_utc_us"], "t": iso_z(ev["t_utc_us"]),
         "kind": ev["kind"], "op": op, "value": new, "old": old,
         "removed": op == "gone", "was_absent": op == "add",
-        "proven": bool(proven), "provenance": provenance(ev, proven, held),
+        "proven": bool(proven), "provenance": provenance(ev, proven, held, start),
         "run_id": ev.get("run_id"), "experiment": ev.get("experiment"),
         "folder": folder, "status": ev.get("status"),
         "actor": ev.get("actor"), "src": ev.get("src"), "plan_id": ev.get("plan_id"),
