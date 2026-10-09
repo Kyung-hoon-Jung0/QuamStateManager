@@ -6,6 +6,8 @@ the loaded chip's token -- no confirm, and the server's expect_chip gate
 passed too. Pinned against the REAL app.js by ``tests/pinned_apply_selfcheck.cjs``."""
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import shutil
 import subprocess
 from pathlib import Path

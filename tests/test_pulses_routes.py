@@ -1920,7 +1920,7 @@ class TestGateSlotFillFollowsTheChipLayout:
 
 
 class TestNoIqPulseOnASingleChannel:
-    """2026-09-27 (measured on the KRS 5Q chip): an IQ waveform on a single
+    """2026-09-27 (measured on the lab-F 5Q chip): an IQ waveform on a single
     (LF) channel makes quam's generate_config() raise ``Waveform type 'IQ'
     not allowed for SingleChannel`` for the WHOLE machine."""
 
@@ -2062,7 +2062,7 @@ class TestANewClassReprobesTheEnv:
 
 
 class TestALabClassIsCheckedByItsOwnCode:
-    """2026-09-27 (measured on the KRS 5Q chip): GaussianNZTwoFluxPulse's own
+    """2026-09-27 (measured on the lab-F 5Q chip): GaussianNZTwoFluxPulse's own
     waveform code refuses a flat_length under 12 sigma of its filter, and a
     pulse SM wrote with such values made generate_config() raise for the
     WHOLE chip. The create runs the class's own code first."""
@@ -2114,7 +2114,7 @@ class TestALabClassIsCheckedByItsOwnCode:
 
 
 def test_the_create_press_says_it_is_waiting(slot_client):
-    """2026-09-27: a lab class's own-code check takes 9-30 s on the KRS chips;
+    """2026-09-27: a lab class's own-code check takes 9-30 s on the lab-F chips;
     the press disables its button and says why it waits."""
     html = slot_client.get("/pulse/new").data.decode()
     form = html.split('class="pulse-create-form"')[1].split(">")[0]

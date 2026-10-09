@@ -300,7 +300,7 @@ _REAL_ROOT = "<quam-states>"
 
 @pytest.mark.skipif(not os.path.isdir(_REAL_ROOT), reason="real quam_states folder absent")
 @pytest.mark.parametrize(
-    "chip", ["LabA", "LabA_CR", "deviceB", "variantb", "examplechip9q_repro", "CR_state"])
+    "chip", ["lab-A", "lab-A_CR", "deviceB", "variantb", "examplechip9q_repro", "CR_state"])
 def test_real_chips_no_crash(chip):
     import json
     sp = os.path.join(_REAL_ROOT, chip, "state.json")
@@ -310,9 +310,9 @@ def test_real_chips_no_crash(chip):
     cols, path_map = _derive(state)
     secs = _sections(cols)
     # invariants that must hold on the real flagship chips
-    if chip in ("LabA", "LabA_CR", "deviceB"):
+    if chip in ("lab-A", "lab-A_CR", "deviceB"):
         assert "Coupler" not in secs, f"{chip}: coupler is null on all pairs → no band"
-    # CR_state is the fixed-frequency cross-resonance flagship (LabA_CR's slot is
+    # CR_state is the fixed-frequency cross-resonance flagship (lab-A_CR's slot is
     # now a flux-tunable CZ chip, so the CR invariant moved to the dedicated chip).
     if chip == "CR_state":
         assert "Cross Resonance" in secs and "ZZ Drive" not in secs
@@ -429,13 +429,13 @@ class TestCouplerPortChain:
 # ── natural order (customer rule 2026-09-09) ─────────────────────────────────
 
 def _state_double_digit_lab() -> dict:
-    """A lab whose qubits are numbered q1..q10 (AS_10TQ9TC is one, on disk),
+    """A lab whose qubits are numbered q1..q10 (lab-A is one, on disk),
     carrying the two shapes real chips actually put NUMBERS into a pair's
     template path:
 
     * ``macros.<gate>.spectator_qubits_control.<qubit id>.<leaf>`` and
       ``…spectator_qubits_phase_shift.<qubit id>`` — verbatim from the
-      KRISS / arbel chips, where the segment is a qubit id;
+      lab-F / lab-G chips, where the segment is a qubit id;
     * ``extras.<group>.confusion_<n>q`` — the n-qubit joint readout matrices,
       which reach 3q/4q/5q today and count past 9 on a bigger group.
     """

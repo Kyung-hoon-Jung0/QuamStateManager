@@ -1,6 +1,6 @@
 """Tests for the waveform DAC-range linter (core/diagnostics._waveform_findings).
 
-This is the check that catches the real LabA crash:
+This is the check that catches the real lab-A crash:
 ``Constant waveform 'qA6.resonator.readout.wf.I' sample (1.2056…) is outside of
 the valid range ([-1.0, 1.0])`` — fully in-process, no generate_config().
 

@@ -1,3 +1,4 @@
+const { labPath } = require('./lab_map.cjs');
 /* Ctrl+Z as a WRITE PATH, part 2: the refusals that must change nothing.
  *
  *  K — the live file moved out of band, then Ctrl+Z: the door's staleness gate
@@ -14,7 +15,7 @@ const OUT = process.argv[2] || 'undo2.json';
 const CDP = process.argv[3] || '9462';
 const BASE = process.argv[4] || 'http://127.0.0.1:5462';
 const PHASES = (process.argv[5] || 'K,L').split(',').map(s => s.trim());
-const SP = 'C:/Users/KyunghoonJung/AppData/Local/Temp/claude/D--work-statemanager/dd0fa2c3-e492-405d-8783-2c62cd30ba4a/scratchpad';
+const SP = labPath('lab-P', 'scratch');
 const CHIP = SP + '/chip_5462/quam_state';
 const CHIPB = SP + '/chip_5462b/quam_state';
 const SHOTDIR = OUT.replace(/[^\\/]*$/, '');

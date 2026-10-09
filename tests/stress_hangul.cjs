@@ -20,7 +20,7 @@ const fs = require('fs');
 const OUT = process.argv[2];
 const CDP = process.argv[3];
 const BASE = process.argv[4];
-const NAMES = ['kyunghoon', '정경훈', 'kyunghoon 🙂', 'a%b'];
+const NAMES = ['user-a', '\uac00\uac01\uac02', 'user-a 🙂', 'a%b'];
 const results = [];
 const errors = [];
 function ok(n, c, d) { results.push({ name: n, pass: !!c, detail: d === undefined ? null : d }); }
@@ -100,7 +100,7 @@ async function main() {
   // the strip is on the read path, not only on the input.
   await send('Page.navigate', { url: BASE + '/agent' });
   await sleep(2500);
-  await ev(`localStorage.setItem('quam_actor_name','정경훈'); 1`);
+  await ev(`localStorage.setItem('quam_actor_name','\uac00\uac01\uac02'); 1`);
   await send('Page.navigate', { url: BASE + '/agent' });
   await sleep(4500);
   const legacy = await ev(`(function(){

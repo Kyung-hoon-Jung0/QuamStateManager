@@ -103,7 +103,7 @@ def _card_env(html: str, project: str) -> str:
 # ------------------------------------------------------------ the memory
 class TestTheMemory:
     def test_labels_come_from_the_path_alone(self):
-        assert project_env.label(r"D:\miniconda3\envs\KRISS_CZ\python.exe") == "KRISS_CZ"
+        assert project_env.label(r"D:\miniconda3\envs\lab-F-env\python.exe") == "lab-F-env"
         assert project_env.label(r"C:\labs\qpu\.venv\Scripts\python.exe") == "qpu (.venv)"
         assert project_env.label("/opt/labs/qpu/.venv/bin/python") == "qpu (.venv)"
         assert project_env.label(None) == ""

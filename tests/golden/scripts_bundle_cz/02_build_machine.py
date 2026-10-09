@@ -300,7 +300,7 @@ def _apply_pulses(machine, vals):
 
     ``vals`` is now per-qubit: ``{qid: {x180_length, x180_amplitude, drag_alpha,
     drag_detuning, saturation_length, saturation_amplitude}}``. Real device
-    states show per-qubit calibration (e.g. LabA' eight distinct DRAG α
+    states show per-qubit calibration (e.g. lab-A' eight distinct DRAG α
     values across nine qubits), so the wizard stores per-qubit values; an
     empty per-qubit override falls back to QUAM defaults
     (x180_length=40, x180_amplitude=0.1, alpha=0, detuning=0). The wizard's

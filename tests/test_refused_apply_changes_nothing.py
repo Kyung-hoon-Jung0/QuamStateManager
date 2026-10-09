@@ -242,7 +242,7 @@ class TestATouchIsNotAConflict:
             res = agent_api._stage_writes(
                 env["app"], str(ctx["path"]),
                 [{"path": "qubits.qA1.T1", "new": 3.0e-5, "old": 2.0e-5}],
-                "approved:ap-touch", "by_claude", None, True, presser="human:kim")
+                "approved:ap-touch", "by_claude", None, True, presser="human:user-c")
         assert res["applied"] is True, res
         assert _live_doc(env)["qubits"]["qA1"]["T1"] == 3.0e-5
 
@@ -538,7 +538,7 @@ class TestARefusedApprovalLeavesNoDrift:
                 env["app"], str(ctx["path"]),
                 [{"path": "qubits.qA1.resonator.RF_frequency", "new": 7126300123.4,
                   "old": 7126044234}],
-                "approved:ap-drift", "by_claude", None, True, presser="human:kim")
+                "approved:ap-drift", "by_claude", None, True, presser="human:user-c")
         assert res["applied"] is False, res
         v = ctx["store"].get_value("qubits.qA1.resonator.RF_frequency")
         assert v == 7126044234 and type(v) is int, repr(v)

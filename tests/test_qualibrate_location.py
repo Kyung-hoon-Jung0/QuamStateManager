@@ -224,12 +224,10 @@ class TestLocateRoutes:
         cards = unpinned["client"].get("/landing/projects").get_data(as_text=True)
         assert "alpha" in cards and "beta" in cards
 
-    def test_use_location_rejected_when_env_pinned(self, tmp_path, monkeypatch):
-        # An env var that RESOLVES to a config outranks a choice (docs/63 §B).
-        # One that resolves to nothing no longer does -- that was the on-site
-        # dead end, pinned the other way in TestUnreadableEnv. (This used to
-        # ride conftest's pin at a NONEXISTENT path, i.e. it asserted the
-        # dead end itself.)
+    def test_use_location_adopted_over_a_resolving_env(self, tmp_path, monkeypatch):
+        # On-site fix: refused -> adopted. A conda env pins QUALIBRATE_CONFIG_FILE
+        # (`conda env config vars`), so refusing whenever the env resolved made
+        # the picker a dead end on every launch from that env (TestChoiceOverEnv).
         envcfg = _mini_tree(tmp_path / "envside")
         monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(envcfg / "config.toml"))
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
@@ -237,9 +235,10 @@ class TestLocateRoutes:
         body = app.test_client().post(
             "/qualibrate/use-location",
             data={"path": str(cfg)}).get_data(as_text=True)
-        assert "environment variable" in body
-        assert qc.config_source()["source"] == "env"
-        assert not (tmp_path / "_inst" / "qualibrate_location.json").exists()
+        assert "outranks a chosen folder" not in body
+        assert qc.config_source()["source"] == "override"
+        assert qc._config_dir() == cfg
+        assert (tmp_path / "_inst" / "qualibrate_location.json").exists()
 
     def test_use_default_clears_the_choice(self, unpinned):
         cfg = _mini_tree(unpinned["tmp"])
@@ -463,12 +462,142 @@ class TestUnreadableEnv:
         assert qc.config_source()["source"] == "override"
         assert (unpinned["inst"] / "qualibrate_location.json").exists()
 
-    def test_use_location_still_refused_when_env_resolves(
-            self, unpinned, monkeypatch):
+    def test_use_location_wins_when_env_resolves(self, unpinned, monkeypatch):
+        # On-site fix: refused -> adopted (the refusal was the reported bug;
+        # TestChoiceOverEnv pins the whole journey).
         envcfg = _mini_tree(unpinned["tmp"] / "envside")
         monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(envcfg / "config.toml"))
         other = _mini_tree(unpinned["tmp"] / "otherside")
-        body = unpinned["client"].post(
-            "/qualibrate/use-location", data={"path": str(other)}
-        ).get_data(as_text=True)
-        assert "outranks a chosen folder" in body
+        r = unpinned["client"].post(
+            "/qualibrate/use-location", data={"path": str(other)},
+            headers={"HX-Request": "true"})
+        assert "outranks a chosen folder" not in r.get_data(as_text=True)
+        assert r.headers.get("HX-Refresh") == "true"
+        assert qc._config_dir() == other
+
+
+def _named_tree(base: Path, names: tuple, active: str | None = None) -> Path:
+    """A valid config tree whose projects carry the given names, each with
+    its own chip (so the cards and Open tell two trees apart)."""
+    cfg = base / "cfg"
+    active = active or names[0]
+    chips = {}
+    for n in names:
+        chip = base / "chips" / n
+        chip.mkdir(parents=True, exist_ok=True)
+        (chip / "state.json").write_text('{"qubits": {}}', encoding="utf-8")
+        (chip / "wiring.json").write_text("{}", encoding="utf-8")
+        chips[n] = chip
+    _write(cfg / "config.toml",
+           f'[qualibrate]\nproject = "{active}"\nversion = 5\n\n'
+           f'[quam]\nstate_path = "{chips[active].as_posix()}"\nversion = 3\n')
+    for n in names:
+        _write(cfg / "projects" / n / "config.toml",
+               f'[quam]\nstate_path = "{chips[n].as_posix()}"\n')
+    return cfg
+
+
+class TestChoiceOverEnv:
+    """CRITICAL, customer on-site: the lab's conda env pins
+    QUALIBRATE_CONFIG_FILE at one config tree. The user picked ANOTHER tree on
+    the landing; Check recognised it, but "Use this location" was refused
+    (the env outranked any choice), so the project cards below kept listing
+    the env tree's projects and no project of the chosen tree could be
+    opened. An explicit choice now outranks the env value it was made
+    against -- and only that value, so another env's pin is never hijacked."""
+
+    @pytest.fixture
+    def pinned(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+        env_cfg = _named_tree(tmp_path / "envtree", ("envproj", "envother"))
+        chosen = _named_tree(tmp_path / "chosen", ("pickone", "picktwo"))
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(env_cfg))
+        inst = tmp_path / "_inst"
+        app = create_app(testing=True, instance_path=str(inst))
+        return {"app": app, "c": app.test_client(), "inst": inst,
+                "env_cfg": env_cfg, "chosen": chosen, "tmp": tmp_path}
+
+    def _use(self, pinned):
+        return pinned["c"].post("/qualibrate/use-location",
+                                data={"path": str(pinned["chosen"])},
+                                headers={"HX-Request": "true"})
+
+    def test_cards_list_the_chosen_tree_after_use(self, pinned):
+        before = pinned["c"].get("/landing/projects").get_data(as_text=True)
+        assert "envproj" in before and "pickone" not in before
+        r = self._use(pinned)
+        assert r.status_code == 200 and r.headers.get("HX-Refresh") == "true"
+        cards = pinned["c"].get("/landing/projects").get_data(as_text=True)
+        assert "pickone" in cards and "picktwo" in cards
+        assert "envproj" not in cards
+        subnav = pinned["c"].get("/qualibrate/subnav").get_data(as_text=True)
+        assert "pickone" in subnav and "envproj" not in subnav
+        memo = json.loads((pinned["inst"] / "qualibrate_location.json")
+                          .read_text(encoding="utf-8"))
+        assert memo["env_at_choice"] == str(pinned["env_cfg"])
+
+    def test_a_project_of_the_chosen_tree_opens(self, pinned):
+        import sys
+        self._use(pinned)
+        r = pinned["c"].post("/qualibrate/open",
+                             data={"project": "picktwo", "python": sys.executable})
+        assert r.status_code == 302, r.get_data(as_text=True)[:300]
+        assert r.headers["Location"].endswith("/qubits")
+
+    def test_landing_says_which_env_was_outranked(self, pinned):
+        self._use(pinned)
+        body = pinned["c"].get("/?landing=1").get_data(as_text=True)
+        assert str(pinned["chosen"]) in body
+        assert "the folder chosen here is used instead" in body
+        assert str(pinned["env_cfg"]) in body
+        page = pinned["c"].get("/qualibrate", headers={"HX-Request": "true"}
+                               ).get_data(as_text=True)
+        assert "the folder chosen here is used instead" in page
+
+    def test_restart_under_the_same_env_keeps_the_choice(self, pinned):
+        self._use(pinned)
+        qc.set_dir_override(None)                    # process death
+        app2 = create_app(testing=True, instance_path=str(pinned["inst"]))
+        assert qc._config_dir() == pinned["chosen"]
+        cards = app2.test_client().get("/landing/projects").get_data(as_text=True)
+        assert "pickone" in cards and "envproj" not in cards
+
+    def test_restart_under_another_env_keeps_that_envs_pin(self, pinned, monkeypatch):
+        self._use(pinned)
+        other_env = _named_tree(pinned["tmp"] / "otherenv", ("otherproj",))
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(other_env))
+        qc.set_dir_override(None)
+        app2 = create_app(testing=True, instance_path=str(pinned["inst"]))
+        assert qc.config_source()["source"] == "env"
+        assert qc._config_dir() == other_env
+        cards = app2.test_client().get("/landing/projects").get_data(as_text=True)
+        assert "otherproj" in cards and "pickone" not in cards
+
+    def test_a_memo_from_before_keeps_the_env_first(self, pinned):
+        # a memo written before env_at_choice existed: the old order stands
+        safe_io.atomic_write_json(
+            pinned["inst"] / "qualibrate_location.json",
+            {"config_dir": str(pinned["chosen"]),
+             "config_file": str(pinned["chosen"] / "config.toml")})
+        qc.set_dir_override(None)
+        create_app(testing=True, instance_path=str(pinned["inst"]))
+        assert qc.config_source()["source"] == "env"
+        assert qc._config_dir() == pinned["env_cfg"]
+
+    def test_reset_goes_back_to_the_env(self, pinned):
+        self._use(pinned)
+        pinned["c"].post("/qualibrate/use-default-location",
+                         headers={"HX-Request": "true"})
+        assert qc.config_source()["source"] == "env"
+        cards = pinned["c"].get("/landing/projects").get_data(as_text=True)
+        assert "envproj" in cards and "pickone" not in cards
+
+    def test_the_trees_are_never_written(self, pinned):
+        def snap(root: Path) -> dict:
+            return {str(p): (p.stat().st_mtime_ns, p.read_bytes())
+                    for p in sorted(root.rglob("*")) if p.is_file()}
+        before = (snap(pinned["chosen"]), snap(pinned["env_cfg"]))
+        self._use(pinned)
+        pinned["c"].get("/landing/projects")
+        pinned["c"].get("/?landing=1")
+        assert (snap(pinned["chosen"]), snap(pinned["env_cfg"])) == before

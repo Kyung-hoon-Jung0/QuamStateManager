@@ -4,7 +4,7 @@ Customer, 2026-09-05: *"SM says the type is wrong. It cannot know that I
 introduced this key on purpose — but I must be able to tell it, and after that
 the check should pass it as healthy."*
 
-Measured on their 20-qubit chip with a real probe of the `cqt` env: four
+Measured on their 20-qubit chip with a real probe of the `lab-B` env: four
 error-severity findings covering 24 places, a red banner on every page load,
 and the only action offered on any of them was "Go to field".
 

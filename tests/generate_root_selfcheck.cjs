@@ -1,5 +1,5 @@
 // docs/176 — the four Generate-wizard defects found while trying to build the
-// KRISS 5Q chip in the environment that lab actually runs (conda KRISS_CZ,
+// lab-F 5Q chip in the environment that lab actually runs (conda lab-F-env,
 // which imports their own quam_config).
 //
 // Every one of these was measured in a real browser first; this harness
@@ -127,7 +127,7 @@ const ROOTS = [
     qubits_type: 'typing.Dict[str, quam_builder.FluxTunableTransmon]'
   },
   {
-    // QA generate-r2-28: the cqt lab's real root holds a Union.
+    // QA generate-r2-28: the lab-B lab's real root holds a Union.
     path: 'quam_config.union_quam.Quam', importable: true, holds_qdac: true,
     qubits_type: 'typing.Dict[str, typing.Union[quam_builder.architecture.' +
       'superconducting.qubit.flux_tunable_transmon.FluxTunableTransmon, ' +

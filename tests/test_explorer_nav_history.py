@@ -11,6 +11,8 @@ the REAL template renders.
 """
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import json
 import shutil
 import subprocess

@@ -8,6 +8,8 @@ chart script under jsdom.
 """
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import shutil
 import subprocess
 from pathlib import Path

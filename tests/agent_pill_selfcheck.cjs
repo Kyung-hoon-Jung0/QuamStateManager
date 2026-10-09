@@ -39,8 +39,8 @@ const now = Date.now() / 1000;
   ok(D({ state: 'waiting', waiting: 3 }).text === 'Agent: waiting for approval (3)', 'waiting counts');
   ok(D({ state: 'limited', limited_resets: '14:50' }).text === 'Agent: limited · resets 14:50', 'limited names the reset');
   ok(/human ran 12_T1 · 5m ago/.test(D({ state: 'human-ran', human_ran: { node: '12_T1', ts: now - 300 } }).text), 'human-ran is past tense');
-  const res = D({ state: 'between', session: { owner: '이OO', until: now + 3600, stopped: true } });
-  ok(/reserved by 이OO until \d\d:\d\d · STOPPED/.test(res.title), 'the reservation and a Stop show in the title: ' + res.title);
+  const res = D({ state: 'between', session: { owner: '\uac01OO', until: now + 3600, stopped: true } });
+  ok(/reserved by \uac01OO until \d\d:\d\d · STOPPED/.test(res.title), 'the reservation and a Stop show in the title: ' + res.title);
 
   window.AgentPill.render({ state: 'running', running: { node: 'x', since: now }, session: { owner: '김OO', until: now + 60 } });
   const el = document.getElementById('agent-pill');

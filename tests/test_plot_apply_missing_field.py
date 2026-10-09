@@ -45,33 +45,33 @@ def client(tmp_path):
 
 class TestActiveTokenNamesTheChipLikeTheTopbar:
     def test_standalone_folder_is_named_after_itself_not_its_parent(self, client, tmp_path):
-        live = _chip(tmp_path / "chip" / "260907_KRS_5Q")
+        live = _chip(tmp_path / "chip" / "lab-F")
         client.post("/load", data={"folder": str(live)})
         j = client.get("/chip/active-token").get_json()
         assert j["loaded"] is True
-        assert j["name"] == "260907_KRS_5Q", j["name"]      # was "chip"
+        assert j["name"] == "lab-F", j["name"]      # was "chip"
 
     def test_generic_container_parent_is_never_the_name(self, client, tmp_path):
-        live = _chip(tmp_path / "quam_states" / "KRS_5Q")
+        live = _chip(tmp_path / "quam_states" / "chipX_5Q")
         client.post("/load", data={"folder": str(live)})
-        assert client.get("/chip/active-token").get_json()["name"] == "KRS_5Q"
+        assert client.get("/chip/active-token").get_json()["name"] == "chipX_5Q"
 
     def test_declared_chip_name_is_shown_too(self, client, tmp_path):
-        live = _chip(tmp_path / "chip" / "260907_KRS_5Q",
-                     extras={"chip_name": "KRISS_CZ"})
+        live = _chip(tmp_path / "chip" / "lab-F",
+                     extras={"chip_name": "lab-F-env"})
         client.post("/load", data={"folder": str(live)})
         name = client.get("/chip/active-token").get_json()["name"]
-        assert "260907_KRS_5Q" in name and "KRISS_CZ" in name, name
+        assert "lab-F" in name and "lab-F-env" in name, name
 
 
 class TestRunSideNameReadsTheLadder:
     def test_a_runs_declared_chip_name_wins_over_the_data_folder_label(self, tmp_path):
         from quam_state_manager.web import routes as R
-        qs = _chip(tmp_path / "KRISS_CZ_260906" / "2026-09-07" / "#9_res_spec_014634"
-                   / "quam_state", extras={"chip_name": "IQCC_QOP37_1Q"})
+        qs = _chip(tmp_path / "lab-F-run" / "2026-09-07" / "#9_res_spec_014634"
+                   / "quam_state", extras={"chip_name": "lab-K"})
         token, name = R._run_chip_identity(qs)
         assert token
-        assert name == "IQCC_QOP37_1Q", name              # was "KRISS_CZ_260906"
+        assert name == "lab-K", name              # was "lab-F-run"
 
     def test_undeclared_run_keeps_the_path_label(self, tmp_path):
         from quam_state_manager.web import routes as R

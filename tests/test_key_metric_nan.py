@@ -35,7 +35,7 @@ def _run(exp: str, fit: dict) -> RunInfo:
 
 
 class TestKeyMetricNeverNan:
-    def test_the_kriss_vs_flux_shape_reads_blank(self):
+    def test_the_lab_F_vs_flux_shape_reads_blank(self):
         # the reported run shape: no "frequency" key, the first numeric is NaN
         r = _run("06_resonator_spectroscopy_vs_flux",
                  {"q1": {"success": False, "resonator_frequency": float("nan"),

@@ -364,7 +364,7 @@ class TestTwoPinsOnOneOutputAreNamed:
     the allocator and came back as "NotEnoughChannelsException ... add a FEM".
     Inside one allocate_wiring call the wirer blocks a channel once a line took
     it, so two pinned lines on one output can never build -- measured on the
-    KRS 5Q rig for drive/drive, flux/flux, drive onto the feedline output and
+    lab-F 5Q rig for drive/drive, flux/flux, drive onto the feedline output and
     drive onto the TWPA pump. A feedline is ONE line (run_build uses its first
     member's pin); CR / ZZ lines share the control's xy port by design
     (cr_port_mode=shared_xy) and are never flagged.
@@ -772,7 +772,7 @@ class TestEnvDiscovery:
         monkeypatch.setattr(config_generator, "find_conda_executable", lambda: "conda")
         fake_json = json.dumps({"envs": [
             "C:/ProgramData/miniconda3",
-            "C:/Users/x/.conda/envs/LabA",
+            "C:/Users/x/.conda/envs/lab-A",
         ]})
         monkeypatch.setattr(
             config_generator, "_run_command",
@@ -781,9 +781,9 @@ class TestEnvDiscovery:
         envs = discover_envs()
         names = [e["name"] for e in envs]
         assert "miniconda3" in names
-        assert "LabA" in names
-        laba = next(e for e in envs if e["name"] == "LabA")
-        assert laba["python"].lower().endswith(("python.exe", "python"))
+        assert "lab-A" in names
+        lab_A = next(e for e in envs if e["name"] == "lab-A")
+        assert lab_A["python"].lower().endswith(("python.exe", "python"))
 
     def test_discover_envs_no_conda(self, monkeypatch):
         monkeypatch.setattr(config_generator, "find_conda_executable", lambda: None)
@@ -808,7 +808,7 @@ class TestEnvDiscoveryCache:
         monkeypatch.setattr(
             config_generator, "_envs_from_environments_txt", lambda: [])
 
-    def _fake_conda(self, monkeypatch, calls, envs=("C:/envs/LabA",)):
+    def _fake_conda(self, monkeypatch, calls, envs=("C:/envs/lab-A",)):
         monkeypatch.setattr(config_generator, "find_conda_executable", lambda: "conda")
 
         def run(args, timeout=60):
@@ -836,9 +836,9 @@ class TestEnvDiscoveryCache:
         """The key is the registry + every env's PARENT dir; touching the dir
         an env lives in (what creating/removing one does) must re-scan."""
         envs_dir = tmp_path / "envs"
-        (envs_dir / "LabA").mkdir(parents=True)
+        (envs_dir / "lab-A").mkdir(parents=True)
         calls = []
-        self._fake_conda(monkeypatch, calls, envs=(str(envs_dir / "LabA"),))
+        self._fake_conda(monkeypatch, calls, envs=(str(envs_dir / "lab-A"),))
         discover_envs()
         discover_envs()
         assert len(calls) == 1
@@ -850,7 +850,7 @@ class TestEnvDiscoveryCache:
         # failed 2 runs in 3 while the cache behaved exactly as designed.
         import time as _time
         _time.sleep(0.3)
-        (envs_dir / "LabB").mkdir()          # a new env appears
+        (envs_dir / "lab-B").mkdir()          # a new env appears
         discover_envs()
         assert len(calls) == 2, "a changed envs directory must re-scan"
 
@@ -863,11 +863,11 @@ class TestEnvDiscoveryCache:
         def run(args, timeout=60):
             calls.append(list(args))
             return (1, "", "boom") if len(calls) == 1 else (
-                0, json.dumps({"envs": ["C:/envs/LabA"]}), "")
+                0, json.dumps({"envs": ["C:/envs/lab-A"]}), "")
 
         monkeypatch.setattr(config_generator, "_run_command", run)
         assert discover_envs() == []
-        assert [e["name"] for e in discover_envs()] == ["LabA"]
+        assert [e["name"] for e in discover_envs()] == ["lab-A"]
         assert len(calls) == 2
 
 
@@ -886,7 +886,7 @@ class TestEnvironmentsTxtDiscovery:
         return home
 
     def test_environments_txt_found_without_conda(self, monkeypatch, tmp_path):
-        env_a = tmp_path / "envs" / "labA"
+        env_a = tmp_path / "envs" / "lab-A"
         (env_a / "bin").mkdir(parents=True)
         (env_a / "bin" / "python").write_text("", encoding="utf-8")
         # blank line + duplicate + surrounding whitespace all tolerated
@@ -895,7 +895,7 @@ class TestEnvironmentsTxtDiscovery:
         monkeypatch.setattr(config_generator, "find_conda_executable", lambda: None)
 
         envs = discover_envs()
-        assert [e["name"] for e in envs] == ["labA"]
+        assert [e["name"] for e in envs] == ["lab-A"]
         assert envs[0]["path"] == str(env_a)
         assert envs[0]["python"] == str(env_a / "bin" / "python")
 
@@ -1009,8 +1009,8 @@ class TestProbeEnv:
 class TestSelectedEnv:
     def test_selected_env_roundtrip(self, tmp_path):
         assert get_selected_env(tmp_path) is None
-        set_selected_env(tmp_path, "C:/envs/LabA/python.exe")
-        assert get_selected_env(tmp_path) == "C:/envs/LabA/python.exe"
+        set_selected_env(tmp_path, "C:/envs/lab-A/python.exe")
+        assert get_selected_env(tmp_path) == "C:/envs/lab-A/python.exe"
 
     def test_get_selected_env_missing_file(self, tmp_path):
         assert get_selected_env(tmp_path) is None

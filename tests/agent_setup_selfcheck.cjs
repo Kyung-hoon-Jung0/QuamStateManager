@@ -53,7 +53,7 @@ global.fetch = window.fetch = function (url, opts) {
     else { limitsNow = Object.assign({}, limitsNow, { mode: body.mode, max_writes_per_plan: +body.max_writes_per_plan, human_recent_min: +body.human_recent_min, stop_by: body.stop_by, webhook_url: body.webhook_url, max_delta: JSON.parse(body.max_delta) }); resp = { ok: true, limits: limitsNow }; }
   }
   else if (/\/api\/agent\/limits$/.test(url)) resp = { ok: true, chip: 'chipA', limits: limitsNow, modes: ['auto', 'ask-writes', 'ask-all'] };
-  else if (/\/setup\/test/.test(url)) resp = { ok: true, backend: 'claude', elapsed_s: 12.3, done: true, failed: false, answer: 'PJ_10082026 is open: 20 qubits.', tools: ['mcp__sm__sm_status'] };
+  else if (/\/setup\/test/.test(url)) resp = { ok: true, backend: 'claude', elapsed_s: 12.3, done: true, failed: false, answer: 'lab-J is open: 20 qubits.', tools: ['mcp__sm__sm_status'] };
   return Promise.resolve({ status: code, json: function () { return Promise.resolve(resp); } });
 };
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'agent-setup.js'), 'utf8'), { filename: 'agent-setup.js' });
@@ -188,7 +188,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   status.record.tested = { claude: { ok: true, elapsed_s: 12.3 } };
   A.test('claude');
   await tick(30);
-  ok(/answered in 12\.3 s/.test(document.getElementById('as-test').textContent) && /PJ_10082026 is open: 20 qubits\./.test(document.getElementById('as-test').textContent), 'the test shows the time and the answer verbatim');
+  ok(/answered in 12\.3 s/.test(document.getElementById('as-test').textContent) && /lab-J is open: 20 qubits\./.test(document.getElementById('as-test').textContent), 'the test shows the time and the answer verbatim');
   /* docs/191 A04: showing it is not the same as the user SEEING it. A
      successful test is what marks the section done, and `sec` collapses a done
      section -- so the answer arrived and the section shut over it in the same

@@ -2158,7 +2158,7 @@ def _maybe_warm_generated_config(ctx, inst) -> None:
 #: w9/labwarm: the pre-warm's in-process step (the class map, a store-lock
 #: walk) waits at most this long for a quiet server, then goes: what follows
 #: is a SUBPROCESS -- no GIL, no lock -- and every second it waits is a second
-#: the first check waits (measured on krs5: the chip-open page loads kept the
+#: the first check waits (measured on lab-F-5q: the chip-open page loads kept the
 #: server "busy" ~14 s under load, and a +15 s check found no worker yet).
 _LAB_PREWARM_QUIET_MAX_S = 3.0
 
@@ -2591,8 +2591,8 @@ def _chip_display_name(path: str | Path) -> str:
     """The most human-meaningful chip name for *path*.
 
     A standalone chip folder holds ``state.json`` directly and is named after
-    the chip (``.../quam_states/LabA`` → ``LabA``); only when the folder
-    itself is a generic container (``.../LabA/quam_state``) do we fall back
+    the chip (``.../quam_states/lab-A`` → ``lab-A``); only when the folder
+    itself is a generic container (``.../lab-A/quam_state``) do we fall back
     to :func:`chip_name_for`, which understands the qualibration layout. This
     avoids the confusing ``quam_states`` label the raw parent-name gave."""
     p = Path(path)
@@ -7409,19 +7409,14 @@ def qualibrate_locate_candidates():
 @bp.route("/qualibrate/use-location", methods=["POST"])
 def qualibrate_use_location():
     """Adopt a config directory: persist the choice (instance memo only —
-    the chosen tree is never written) + install the process-wide override."""
-    # Refuse only when the env-pinned location actually RESOLVES to a config.
-    # A QUALIBRATE_CONFIG_FILE naming a file that is not there (customer,
-    # on-site: a stale `set` copied from a config's own header comment) must
-    # not turn the picker into a dead end -- then the user's explicit click
-    # wins (qualibrate_config resolves override-over-unreadable-env).
-    if qualibrate_config.env_pins_config():
-        return render_template(
-            "_qualibrate_locate_result.html", result=None, suggestions=[],
-            message=("An environment variable (QUALIBRATE_CONFIG_FILE / "
-                     "QUALIBRATE_CONFIG_DIR) pins the config location for "
-                     "this process and outranks a chosen folder — unset it "
-                     "and restart SM, or point it at the right place."))
+    the chosen tree is never written) + install the process-wide override.
+
+    The explicit click wins even over an env var that resolves to a config
+    (customer, on-site: the conda env pinned QUALIBRATE_CONFIG_FILE, so the
+    choice was refused and the landing kept listing the env's projects). The
+    env value it was made against is stored as ``env_at_choice``: after a
+    restart the choice outranks that same env again, but never a different
+    one (another conda env keeps its own pin)."""
     p = _normalize_config_input(request.form.get("path") or "")
     res = _classify_config_location(p)
     if not res["has_config"]:
@@ -7431,8 +7426,9 @@ def qualibrate_use_location():
     # is kept for back-compat + display. set_dir_override handles file-or-dir.
     safe_io.atomic_write_json(
         _qualibrate_location_file(),
-        {"config_dir": res["path"], "config_file": res["config_file"]})
-    qualibrate_config.set_dir_override(res["config_file"])
+        {"config_dir": res["path"], "config_file": res["config_file"],
+         "env_at_choice": qualibrate_config.env_raw()})
+    qualibrate_config.set_dir_override(res["config_file"], beats_env=True)
     logger.info("qualibrate config location chosen: %s", res["config_file"])
     if _is_htmx():
         resp = make_response()
@@ -8824,7 +8820,7 @@ def bulk_edit():
     else:
         p_ent = _pair_grid_entry(store, modified)
         pair_columns, pair_groups, pair_rows = p_ent["grid"]
-    # docs/141 4ad: and it is virtualized the same way. On the PJ 20Q chip this
+    # docs/141 4ad: and it is virtualized the same way. On the device 20Q chip this
     # table was 1.49 MB of a 2.81 MB document — 53%, the largest single block
     # left after §4n — while the qubit grid beside it had been slimmed to a
     # third. Same planner, same gates, same macro: `core/bulk_virt` needed no
@@ -21337,7 +21333,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "delete_lab_check": delete_lab_check,
         # w9/labwarm: the lab worker's state AT RENDER -- the first word the
         # lab indicators say before their own status poll answers (a busy
-        # server answered that poll 1.2 s late on krs5: the step said
+        # server answered that poll 1.2 s late on lab-F-5q: the step said
         # "Checking..." first, then "Preparing..."); corrected by the poll
         "lab_worker_state": (_lab_worker_state()
                              if (delete_lab_check or unknown_class) else None),
@@ -22197,7 +22193,7 @@ def pulse_create_form():
         # wrote carried its slot pulse INLINE, on no channel: quam_builder's
         # CZGate.apply() plays `moving_qubit.z.play(flux_pulse_qubit_label)`,
         # a name no channel had, and generate_config() never saw the pulse
-        # (measured on the KRS 5Q chip, pulse_lab_check.py). New CZ gates
+        # (measured on the lab-F 5Q chip, pulse_lab_check.py). New CZ gates
         # come from the Gaussian CZ builder, which writes the channel ops.
         info["new_gates"] = []
         pairs_info[pair_name] = info
@@ -22771,7 +22767,7 @@ def api_pulse_create():
             "_status.html", level="error",
             message=(f"Unknown target kind {target_kind!r} "
                      "(expected qubit, pair or pair_channel)")), 400
-    # 2026-09-27 (measured on the KRS 5Q chip): a LAB class validates its own
+    # 2026-09-27 (measured on the lab-F 5Q chip): a LAB class validates its own
     # values inside its waveform code -- GaussianNZTwoFluxPulse refuses a
     # flat_length under 12 sigma of its filter -- and generate_config() then
     # raised for the WHOLE chip, so no node could compile. SM cannot know a
@@ -22881,7 +22877,7 @@ def _lab_unavailable_note(python_path, qclass, rec) -> str:
 def _lab_edit_refusal(store, dot_path: str, write_path: str, value) -> str | None:
     """The error a LAB class's own code raises for a /pulse/edit, or None.
 
-    2026-09-27 (verifier, KRS 5Q): the create path ran the class's own check,
+    2026-09-27 (verifier, lab-F 5Q): the create path ran the class's own check,
     the edit path did not -- ``flat_length=4`` typed into an existing
     ``GaussianNZTwoFluxPulse`` committed, and after Apply generate_config()
     raised for the WHOLE chip. One door with /field/edit(-batch): see
@@ -24331,7 +24327,7 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
     _dropped = env_field_filter(template, spec.key)
     if env_dropped_out is not None:
         env_dropped_out.extend(_dropped)
-    # 2026-09-27 (measured, KRS 5Q): an IQ waveform on a single (LF) channel
+    # 2026-09-27 (measured, lab-F 5Q): an IQ waveform on a single (LF) channel
     # makes quam's generate_config() raise for the WHOLE machine -- every
     # node would stop compiling. Refuse it here, where it is one pulse.
     if _channel_single(chan_obj) and _template_is_iq(spec.iq, template, spec.key):
@@ -24388,7 +24384,7 @@ def api_pulse_delete():
         return render_template("_status.html", message="Invalid pulse path",
                                level="error"), 400
 
-    # Verifier 3 (KRS 5Q): a lab gate plays its channel op BY NAME
+    # Verifier 3 (lab-F 5Q): a lab gate plays its channel op BY NAME
     # (CZGateTwoFlux: qubit_control.z.play(pulse.id)) -- no pointer names it,
     # so used_by was empty and the delete went through; every CZ node on the
     # pair then failed. The gate's own apply() is asked, as on every door.
@@ -32501,8 +32497,8 @@ def _compare_source_label(p: str | Path) -> str:
 def _dedupe_compare_labels(labels: list[str], paths: list[str]) -> list[str]:
     """Disambiguate colliding labels with the shortest distinguishing path suffix.
 
-    Two sources that still produce the same label (e.g. ``rootA/LabA`` and
-    ``rootB/LabA``) get ``LabA (rootA)`` / ``LabA (rootB)``: the longest
+    Two sources that still produce the same label (e.g. ``rootA/lab-A`` and
+    ``rootB/lab-A``) get ``lab-A (rootA)`` / ``lab-A (rootB)``: the longest
     common trailing path suffix is stripped, then the shortest suffix of the
     remaining parent chain that makes every member of the collision group
     unique is appended. Identical resolved paths (the same folder added
@@ -33412,7 +33408,7 @@ def _hub_basket(refs: list[str], live_paths: set[str]):
             "error": None, "transient": False,
         })
         sources.append(src)
-    # Same-named flat chips (two "LabA" folders under different roots)
+    # Same-named flat chips (two "lab-A" folders under different roots)
     # would render identical labels — disambiguate with the shortest
     # distinguishing path suffix (the P0 honest-label rule, carried over).
     valid_rows = [r for r in rows if r["error"] is None]
@@ -34694,7 +34690,7 @@ def param_history():
     #
     # The chip selector lists ONLY:
     #   - active_chips: the currently-loaded chip (path-derived from quam_state).
-    #     Workspace top-level folders (e.g. data/LabB_1Q/) DO NOT define chips
+    #     Workspace top-level folders (e.g. data/lab-B_1Q/) DO NOT define chips
     #     here — they're data sources whose alignment with the loaded chip is
     #     determined by network fingerprint, surfaced via the alignment banner.
     #   - archived_chips: chips with on-disk history that aren't currently
@@ -38097,7 +38093,7 @@ def _ingest_after_steps(app) -> list:
 
     def workspace_sidebar(roots: list[str]) -> None:
         # the sidebar's rescan (the first /workspace/tree or /tree/poll after
-        # a run used to pay it: 1.85-5.2 s measured on KH)
+        # a run used to pay it: 1.85-5.2 s measured on lab-I)
         ws = app.config.get("workspace")
         if ws is None:
             return

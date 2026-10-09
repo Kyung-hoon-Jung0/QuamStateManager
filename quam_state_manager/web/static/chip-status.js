@@ -3499,7 +3499,7 @@ window.ChipStatus.mount = function (opts) {
         if (!container) return;
 
         // ── Collect RB data from edges, grouped by RB type then gate ──
-        // Normalize the metric name: LabA labels interleaved RB "IRB" and stores
+        // Normalize the metric name: lab-A labels interleaved RB "IRB" and stores
         // StandardRB as a nested dict whose fidelity is average_gate_fidelity (the
         // canonical `value` is set server-side in _extract_pair_gate_fidelities).
         // Fall back to average_gate_fidelity here too so a value always lands.

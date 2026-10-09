@@ -160,9 +160,9 @@ def test_search_and_author_filter_the_whole_day_with_its_totals(paged, monkeypat
     html = _get(paged, f"/journal/day?day={DAY}&q=%231%20qA1&reuse=1")
     assert _rows(html) == ["card-1"] and "jr-window-n" not in html
     # the author filter, the same way
-    story.claim_run(paged["inst"], "chipX", 1, author="human:bob")
-    story.claim_run(paged["inst"], "chipX", 2, author="human:bob")
-    html = _get(paged, f"/journal/day?day={DAY}&author=human:bob")
+    story.claim_run(paged["inst"], "chipX", 1, author="human:user-b")
+    story.claim_run(paged["inst"], "chipX", 2, author="human:user-b")
+    html = _get(paged, f"/journal/day?day={DAY}&author=human:user-b")
     assert _rows(html) == ["card-1", "card-2"] and 'Runs <span class="jr-sec-count">2</span>' in html
     # no match anywhere: the empty line, not a window
     html = _get(paged, f"/journal/day?day={DAY}&q=nothing-matches&reuse=1")
@@ -345,7 +345,7 @@ def client_fixture():
     def build(*args, **kwargs):
         cards = [{"kind": "run", "run_id": i, "node": "scan", "family_label": "scan", "family_short": "scan",
                   "targets": [f"qA{1 + i % 2}"], "time": f"12:{i:02d}:00", "ts": 1_000_000.0 + 60 * i,
-                  "author": "human:alice", "certainty": "claimed", "outcome": "ok", "gate": None, "writes": [],
+                  "author": "human:user-a", "certainty": "claimed", "outcome": "ok", "gate": None, "writes": [],
                   "params_diff": [], "because": "", "figure": None, "uid": None, "plan_id": None, "note": "",
                   "duration_s": 1, "folder": "data", "journal": []} for i in range(1, 11)]
         return {"day": day, "chip": "chipX", "cards": cards, "loose": [], "unassigned": [],

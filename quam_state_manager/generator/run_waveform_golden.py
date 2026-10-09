@@ -1,7 +1,7 @@
 """Dump ground-truth waveforms from the real quam library (golden generator).
 
 Standalone script in the ``run_generate_config.py`` mold: it is executed by a
-user-selected QM-stack interpreter (the ``LabC`` conda env) and is NEVER
+user-selected QM-stack interpreter (the ``lab-C`` conda env) and is NEVER
 imported by the State Manager process. For every case in
 ``tests/waveform_matrix.py`` it instantiates the real quam pulse class, calls
 ``calculate_waveform()``, and writes the results + derived properties to

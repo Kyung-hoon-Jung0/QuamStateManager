@@ -2,7 +2,7 @@
  *
  * Queue item 6 (customer, 2026-09-25: "it slips a little" -- every run switch moved
  * the detail a little, so every run needed re-scrolling). Measured in real
- * Chrome on the KH rig, 32 consecutive switches, three mechanisms:
+ * Chrome on the lab-I rig, 32 consecutive switches, three mechanisms:
  *
  *  1. The remembered place was RE-DERIVED from wherever the last restore
  *     landed. One run whose section was too short to honour the offset (a
@@ -39,7 +39,7 @@
  * see. Where it fell in the margin between two per-qubit blocks while the
  * visible line was already inside the next one, the chain stopped at the
  * section, and a neighbour run whose first block was taller put the reader's
- * block 102 px off (6 of 6 visits on the KH rig). The line is measured on
+ * block 102 px off (6 of 6 visits on the lab-I rig). The line is measured on
  * each run's own header, so a header that wraps to another height moves it.
  *
  * A line that falls in a GAP -- between two sibling landmarks with nothing

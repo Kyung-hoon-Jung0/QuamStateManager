@@ -1,7 +1,7 @@
 """docs/138 — a 2Q RB number is per-Clifford or per-gate, and they differ.
 
 Measured on the customer's real chip
-(`CQT/data/2026-08-19/#2259_30_cz_iswap_flux_bootstrap_052751`):
+(`lab-B/data/2026-08-19/#2259_30_cz_iswap_flux_bootstrap_052751`):
 
     StandardRB          0.9671621994719876   = 1 - EPC   (per CLIFFORD)
     StandardRB_alpha    0.9562162659626501   = decay base, not a fidelity
@@ -14,6 +14,8 @@ fed it — on a pair with a perfectly good measured CZ gate fidelity.
 """
 
 from __future__ import annotations
+
+from tests.archive_roots import lab_archive
 
 import json
 import threading
@@ -102,7 +104,7 @@ class TestEachRowSaysWhatItMeasures:
     def test_the_levels(self):
         assert _rb_level("StandardRB") == "clifford"
         assert _rb_level("InterleavedRB") == "gate"
-        assert _rb_level("IRB") == "gate"            # LabA's name
+        assert _rb_level("IRB") == "gate"            # lab-A's name
         assert _rb_level("Bell_State") == "state"
 
     def test_alpha_is_a_decay_parameter_not_a_fidelity(self):
@@ -168,8 +170,7 @@ class TestTheEdgeUsesTheGateNumber:
 
 from quam_state_manager.core import rb_gate_fidelity as RGF   # noqa: E402
 
-_REAL_RUN = Path(r"D:\work\Customer_Codes\CQT\data\2026-08-19"
-                 r"\#2271_37a_two_qubit_standard_rb_054106")
+_REAL_RUN = lab_archive("lab-B") / "2026-08-19" / "#2271_37a_two_qubit_standard_rb_054106"
 
 
 class TestPairKeySpelling:

@@ -253,7 +253,7 @@ class TestTheGrantEndsWithThePlan:
         assert c.post(f"/api/agent/plans/{pid}/cancel", json={}, headers=HUMAN).get_json()["plan"]["status"] == "cancelled"
         assert not _armed(c)
         j = _journal(c, inst)
-        line = next(ln for ln in j.splitlines() if "cancelled by human:kyunghoon" in ln)
+        line = next(ln for ln in j.splitlines() if "cancelled by human:user-a" in ln)
         assert "disarmed" in line, "the cancel line says the arming ended (one press, one line)"
 
 
@@ -267,7 +267,7 @@ class TestTheGrantEndsWithTheSession:
         p = c.get(f"/api/agent/plans/{pid}").get_json()["plan"]
         assert p["status"] in ("stopped", "stopping") and p["steps"][0]["status"] == "cancelled", p
         j = _journal(c, inst)
-        line = next(ln for ln in j.splitlines() if "session ended by human:kyunghoon" in ln)
+        line = next(ln for ln in j.splitlines() if "session ended by human:user-a" in ln)
         assert "disarmed" in line, line
         assert _run(c, _in_app(c, inst), plan_id=pid, step=0).get_json()["refused"] == "no_start_token"
 
@@ -315,7 +315,7 @@ class TestTheGrantEndsWithTheSession:
     def test_stop_says_it_disarmed_in_its_one_line(self, c, inst):
         _run_plan(c)
         assert c.post("/api/agent/session/stop", json={"mode": "now"}, headers=HUMAN).get_json()["ok"]
-        line = next(ln for ln in _journal(c, inst).splitlines() if "Stop (now) pressed by human:kyunghoon" in ln)
+        line = next(ln for ln in _journal(c, inst).splitlines() if "Stop (now) pressed by human:user-a" in ln)
         assert "disarmed (plan `/run 05_power_rabi qA1`)" in line, line
         assert not _armed(c)
 
@@ -595,6 +595,6 @@ class TestStopBy:
             pid = _run_plan(c)
             c.post(f"/api/agent/plans/{pid}/cancel", json={}, headers=HUMAN)
             _armed(c)
-            assert seen == [(pid, f"plan `/run 05_power_rabi qA1` was cancelled by human:kyunghoon")], seen
+            assert seen == [(pid, f"plan `/run 05_power_rabi qA1` was cancelled by human:user-a")], seen
         finally:
             agent_grant.ON_END.pop()

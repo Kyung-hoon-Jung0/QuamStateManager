@@ -150,8 +150,8 @@ class TestGoldenPathsClassifiedStore:
     def test_paths_exist_per_chip_and_the_exclusion_is_recorded(self):
         g = _ROOT / "tests" / "golden" / "calib_paths" / _FAM
         chips = sorted(p.name for p in g.iterdir() if p.is_dir())
-        assert chips == ["AS_10TQ9TC", "CQT"]
-        as9 = json.loads((g / "AS_10TQ9TC" / "2026-08-09.json").read_text(encoding="utf-8"))
+        assert chips == ["lab-A", "lab-B"]
+        as9 = json.loads((g / "lab-A" / "2026-08-09.json").read_text(encoding="utf-8"))
         assert as9["schema"] == "smgolden/v2"
         assert any("#8" == e["run"] for e in as9.get("exclusions", [])), \
             "the spur-lock false accept must be excluded from the answer key"
@@ -211,8 +211,8 @@ class TestExemplarImages:
     def test_both_pilot_chips_are_represented(self):
         chips = {r["chip"] for r in self._index()["rendered"]}
         # docs/135 naming doctrine: shipped knowledge carries lab KEYS, never
-        # customer names (tests/golden/calib_paths/lab_keys.json is the
-        # internal provenance map)
+        # customer names (SM_LAB_MAP holds the
+        # external provenance map)
         assert chips == {"lab-A", "lab-B"}, \
             "a manual taught from one chip is a manual about that chip"
 
@@ -223,55 +223,27 @@ class TestExemplarImages:
 
 
 class TestNoCustomerNamesShipped:
-    """docs/135 naming doctrine (user-directed, binding): shipped knowledge
-    artifacts — packs, judge packs, exemplar filenames — carry lab KEYS,
-    never a customer name. The names below live in this TEST (not shipped);
-    the provenance map is tests/golden/calib_paths/lab_keys.json."""
+    """Shipped knowledge and code must carry no confidential names.
 
-    NAMES = ("CQT", "AS_10TQ9TC", "IQCC", "KRISS", "SNU",
-             "Novera", "HorizonQuantum")
+    The guard stores only digests; local provenance lives in SM_LAB_MAP.
+    """
 
     def test_shipped_knowledge_carries_no_lab_name(self):
-        import re
-        from pathlib import Path
-        root = Path(__file__).resolve().parents[1] / "quam_state_manager"
-        # substring match on purpose (strictest); HorizonQuantum rather
-        # than bare Horizon, which would flag the English word horizontal
-        pat = re.compile("|".join(self.NAMES),
-                         re.IGNORECASE)
-        offenders = []
-        for base in (root / "knowledge", root / "core" / "autofit" / "judge_packs"):
-            for f in sorted(base.rglob("*")):
-                if f.suffix.lower() in (".json", ".md", ".txt"):
-                    if pat.search(f.read_text(encoding="utf-8")):
-                        offenders.append(str(f))
-                elif f.suffix.lower() == ".png" and pat.search(f.name):
-                    offenders.append(str(f))
-        assert not offenders, offenders[:10]
+        from tests.name_guard import assert_clean
+        root = _ROOT / "quam_state_manager"
+        files = [file for base in (root / "knowledge", root / "core" / "autofit" / "judge_packs")
+                 for file in base.rglob("*")
+                 if file.suffix.lower() in (".json", ".md", ".txt", ".png")]
+        assert_clean(files)
 
     def test_shipped_code_carries_no_lab_name(self):
-        """docs/138: the docs/135 scrub reached pack data; this clause
-        reaches shipped CODE (comments included). Word-boundary match so
-        identifiers like isNumeric never flag; vendor bundles excluded."""
-        import re
-        from pathlib import Path
-        root = Path(__file__).resolve().parents[1] / "quam_state_manager"
+        """Scan code, comments, templates, and styles; exclude vendor bundles."""
+        from tests.name_guard import assert_clean
+        root = _ROOT / "quam_state_manager"
         vendor = ("plotly", "htmx", "split", "pico")
-        pat = re.compile(r"(?<![A-Za-z0-9_])("
-                         + "|".join(self.NAMES)
-                         + r")(?![A-Za-z0-9])", re.IGNORECASE)
-        offenders = []
-        # docs/202 §8: templates and stylesheets ship too. A Jinja comment
-        # naming a customer chip sat in `_pulse_detail.html` while this pin
-        # scanned only .py/.js -- invisible to the browser, not to anyone who
-        # opens the installed package.
         files = list(root.rglob("*.py")) + list(
             (root / "web" / "templates").rglob("*.html")) + [
-            f for f in (root / "web" / "static").rglob("*")
-            if f.suffix in (".js", ".css")
-            and not any(v in f.name.lower() for v in vendor)]
-        for f in sorted(files):
-            text = f.read_text(encoding="utf-8", errors="replace")
-            for m in pat.finditer(text):
-                offenders.append(f"{f.name}: {m.group(0)}")
-        assert not offenders, offenders[:10]
+            file for file in (root / "web" / "static").rglob("*")
+            if file.suffix in (".js", ".css")
+            and not any(value in file.name.lower() for value in vendor)]
+        assert_clean(files)

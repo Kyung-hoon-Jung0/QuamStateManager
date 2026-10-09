@@ -9,6 +9,8 @@ hint, and the Datasets table (free text, scopes, negation, tight binding).
 Per-surface additivity: a no-pipe query answers exactly as before the grammar
 landed. Skips without node + jsdom.
 """
+
+# Selfcheck examples use generic device names and lab keys.
 import shutil
 import subprocess
 from pathlib import Path

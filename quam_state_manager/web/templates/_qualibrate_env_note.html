@@ -1,0 +1,14 @@
+{# Why a chosen config folder is read instead of the one the environment
+   names (qualibrate_config.config_source): either the env held no config, or
+   the user chose another folder over it. Context: qualibrate_source. #}
+{% if qualibrate_source and qualibrate_source.source == 'override' and qualibrate_source.env_ignored %}
+{% if qualibrate_source.env_outranked %}
+<p class="muted locate-result locate-env-note">This process's QUALIBRATE_CONFIG_FILE / _DIR points at
+    <code>{{ qualibrate_source.env_ignored }}</code> &mdash; the folder chosen here is used instead.
+    Reset to go back to it.</p>
+{% else %}
+<p class="muted locate-result locate-warn">QUALIBRATE_CONFIG_FILE / _DIR points at
+    <code>{{ qualibrate_source.env_ignored }}</code> but no config was found there
+    &mdash; using the chosen location instead. Fix or unset the variable to let it apply.</p>
+{% endif %}
+{% endif %}

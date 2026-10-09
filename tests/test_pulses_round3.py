@@ -314,7 +314,7 @@ class TestTheGateNameBoxIsWired:
         """2026-09-27: "+ new gate" was withdrawn from the create form -- the
         gate it wrote carried its slot pulse on no channel, so quam_builder's
         CZGate.apply() played a name the moving qubit's z did not have
-        (measured with pulse_lab_check.py on the KRS 5Q chip). An old page
+        (measured with pulse_lab_check.py on the lab-F 5Q chip). An old page
         still posting it is refused, taken or free name alike, and nothing
         is written."""
         ctx = next(iter(pairs_client._app.config["contexts"].values()))
@@ -337,7 +337,7 @@ class TestRosterArithmetic:
 
     @staticmethod
     def _roster():
-        """The shape the KRISS_CZ env really returns: catalog types, aliases
+        """The shape the lab-F-env env really returns: catalog types, aliases
         for catalog types, base classes and deprecated spellings."""
         fields = {"length": {"type": {"base": "int"}, "default": 100},
                   "amplitude": {"type": {"base": "float"}}}
@@ -470,7 +470,7 @@ def _fields(*names, length_ref=False):
 
 
 def _inventory() -> dict:
-    """The shape the KRISS_CZ chip really probes to: classes the LAB wrote, a
+    """The shape the lab-F-env chip really probes to: classes the LAB wrote, a
     lab GATE MACRO beside them, and the chip root."""
     return {
         _LAB + "SNZTwoFluxPulse": {

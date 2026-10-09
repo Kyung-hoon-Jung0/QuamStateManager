@@ -360,7 +360,7 @@ ok(holdN > 150, 'E: (fixture) enough holdable switches to mean something: ' + ho
 ok(overwrites === 0, 'E: an untouched intent never drifted from the reader\'s own capture: ' + overwrites);
 
 // ── I: the reading line is the sticky header's bottom edge ──────────────
-// The verifier's KH repro, 1600x950, Results tab: the pane top (hidden under
+// The verifier's lab-I repro, 1600x950, Results tab: the pane top (hidden under
 // the 61 px header) sat in the margin between q1 and q2 while the visible
 // line was already inside q2; the neighbour run's q1 was 102 px taller.
 function lineY() {
@@ -700,7 +700,7 @@ const tpl = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
 // the intent, and the next run that has T lands on T at the same place --
 // unless the reader acted on C (a scroll, a tab press: even Full View, the
 // tab C already shows). A run opened into a pane that showed no run (after
-// a close) is a fresh open: Full View at the top (KH rig: 194 px down).
+// a close) is a fresh open: Full View at the top (lab-I rig: 194 px down).
 {
     const app3 = app.replace(/\r/g, '');
     const sl = (a, b, from) => { const s = app3.indexOf(a, from || 0); const e = app3.indexOf(b, s);
@@ -838,7 +838,7 @@ const tpl = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
         // a close, then an open: fresh -- not the intent, not the emptied pane's stale offset
         swap(KB);
         readerAt('interactive', 'f3', 55);
-        pane.innerHTML = '';                       // closeInspector(); Chrome kept the old offset (KH: 194)
+        pane.innerHTML = '';                       // closeInspector(); Chrome kept the old offset (lab-I: 194)
         ok(scrollTop > 0, '(fixture) the emptied pane still holds the old offset');
         swap(KA);
         ok(shown() === 'full' && pane.scrollTop === 0, 'K6: open after a close lands on Full View at the top, got ' + shown() + '@' + pane.scrollTop);

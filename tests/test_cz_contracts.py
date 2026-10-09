@@ -16,8 +16,8 @@ import pytest
 h5py = pytest.importorskip("h5py")
 
 _example_lab3 = Path("<dataset-root>/example_lab3")
-_LabA_CR = Path("<dataset-root>/example_lab_cr")
-_LabC = Path("<install-root>")
+_lab_A_CR = Path("<dataset-root>/example_lab_cr")
+_lab_C = Path("<install-root>")
 
 
 def _clickable(folder: Path, key_prefix: str = ""):
@@ -165,12 +165,12 @@ class TestCZGoldens:
             assert _stage(t, fitted) == pytest.approx(new, abs=1e-9)
 
 
-@pytest.mark.skipif(not _LabC.is_dir(), reason="LabC archive absent")
-class TestCZGoldensLabC:
+@pytest.mark.skipif(not _lab_C.is_dir(), reason="lab-C archive absent")
+class TestCZGoldenslab_C:
 
     def test_20d_leakage_amp_click(self):
         """#1283 (20d PALEA): optimal_amplitude == coupler amp patch."""
-        hits = sorted((_LabC / "dataset").rglob("#1283_cz_20d_cz_leakage_amplification_palea*"))
+        hits = sorted((_lab_C / "dataset").rglob("#1283_cz_20d_cz_leakage_amplification_palea*"))
         if not hits:
             pytest.skip("golden missing")
         folder = hits[0]
@@ -189,14 +189,14 @@ class TestCZGoldensLabC:
         menu used to gate raw_and_fit on fitted_control alone, advertising a
         tile whose build then KeyError'd (registry-caught → missing figure).
         Now: every advertised interactive tile must actually build."""
-        root = _LabC / "2026-03-03"
+        root = _lab_C / "2026-03-03"
         folders = sorted(root.glob("#100??_21_cz_phase_compensation_*"))
         if not folders:
             pytest.skip("old-schema 21 runs absent")
         from quam_state_manager.core.dataset import DatasetStore
         from quam_state_manager.core.interactive_plots import (
             build_interactive_figure, list_interactive_figures)
-        store = DatasetStore(_LabC)
+        store = DatasetStore(_lab_C)
         by_path = {str(r.folder_path): r for r in store.runs.values()}
         checked = 0
         for folder in folders:
@@ -222,7 +222,7 @@ class TestCZGoldensLabC:
         recipe read the NESTED parameters["model"] which DatasetStore flattens
         away, so the baked detuning was always None and the user clicked the
         visual minimum of the WRONG curve into decouple_offset)."""
-        folder = _LabC / "dataset" / "2026-06-03" / "#100_1Q_24_zz_off_jazz_142436"
+        folder = _lab_C / "dataset" / "2026-06-03" / "#100_1Q_24_zz_off_jazz_142436"
         if not folder.is_dir():
             pytest.skip("golden missing")
         from quam_state_manager.core.dataset import DatasetStore
@@ -251,7 +251,7 @@ class TestCZGoldensLabC:
 
     def test_zz_off_jazz_increment(self):
         """An exact-increment zz run: pre + optimal == patch value."""
-        cands = sorted(_LabC.rglob("#*zz_off_jazz*"))
+        cands = sorted(_lab_C.rglob("#*zz_off_jazz*"))
         checked = 0
         for folder in cands:
             patches = _patches(folder)

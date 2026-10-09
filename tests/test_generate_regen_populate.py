@@ -8,6 +8,8 @@ cells never clobbered), scripts export defaults ON with the path following
 the output folder until touched, and the populate band column stores INT
 1..3. Skips without node + jsdom.
 """
+
+# Selfcheck examples use generic device names and lab keys.
 import shutil
 import subprocess
 from pathlib import Path

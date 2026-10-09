@@ -141,19 +141,19 @@ def _chip(folder: Path) -> Path:
 @pytest.fixture
 def proj(tmp_path, monkeypatch, any_project_env_chosen):
     cfg = tmp_path / ".qualibrate"
-    chip = _chip(tmp_path / "chips" / "arbel_chip")
-    storage = tmp_path / "data" / "arbel_data"
+    chip = _chip(tmp_path / "chips" / "lab-G_chip")
+    storage = tmp_path / "data" / "lab-G_data"
     storage.mkdir(parents=True)
     _write(cfg / "config.toml", f'''
 [qualibrate]
-project = "arbel"
+project = "lab-G"
 version = 5
 
 [quam]
 state_path = "{chip.as_posix()}"
 version = 3
 ''')
-    _write(cfg / "projects" / "arbel" / "config.toml",
+    _write(cfg / "projects" / "lab-G" / "config.toml",
            f'[qualibrate.storage]\nlocation = "{storage.as_posix()}"\n'
            f'[quam]\nstate_path = "{chip.as_posix()}"\n')
     monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
@@ -173,7 +173,7 @@ def _data_path_in(html: str) -> str:
 
 
 def test_an_open_project_publishes_its_data_folder(proj):
-    r = proj["c"].post("/qualibrate/open", data={"project": "arbel"})
+    r = proj["c"].post("/qualibrate/open", data={"project": "lab-G"})
     assert r.status_code == 302
     html = proj["c"].get("/qubits").get_data(as_text=True)
     assert Path(_data_path_in(html)) == proj["storage"]

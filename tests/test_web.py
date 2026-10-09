@@ -3232,7 +3232,7 @@ class TestParamHistoryMultiChip:
             }), encoding="utf-8")
 
         for run_id, when in [(20, "130000")]:
-            run = ws_root / "LabB_1Q" / "2026-04-30" / f"#{run_id}_beta_{when}"
+            run = ws_root / "lab-B_1Q" / "2026-04-30" / f"#{run_id}_beta_{when}"
             qs = run / "quam_state"
             qs.mkdir(parents=True, exist_ok=True)
             (qs / "state.json").write_text(json.dumps({
@@ -3280,9 +3280,9 @@ class TestParamHistoryMultiChip:
         }), encoding="utf-8")
 
         ws_root = self._make_workspace_with_two_chips(tmp_path)
-        # Add only the LabB_1Q half so workspace is misaligned with loaded chip
+        # Add only the lab-B_1Q half so workspace is misaligned with loaded chip
         client.post("/load", data={"folder": str(loaded_dir)})
-        client.post("/workspace/add", data={"folder": str(ws_root / "LabB_1Q")})
+        client.post("/workspace/add", data={"folder": str(ws_root / "lab-B_1Q")})
 
         # docs/142 C: the page renders from SQLite alone; the banner lives in
         # the lazy alignment fragment the page's slot fetches after paint.

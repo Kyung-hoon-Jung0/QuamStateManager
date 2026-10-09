@@ -18808,7 +18808,7 @@ window.DatasetTrends = (function () {
 
     /* ---- the y range: a few extreme values must not flatten the rest ----
        [derived, a display heuristic -- no paper; its thresholds were set
-       against the KH_202608_CZ archive, 508 series: see the pin in
+       against the lab-I archive, 508 series: see the pin in
        tests/trends_view_selfcheck.cjs, section I.]
        A failed fit can report T1 = 68 ms next to 49 runs at 3-30 us; Plotly's
        autorange then puts those 49 inside one pixel row and the trend is
@@ -19474,7 +19474,7 @@ function _dsShownTab(pane) {
 // module's own restore. Input alone is not a move -- a click on a blank spot
 // of a clamped run (the pane sits at its end, short of the intent) used to
 // mark the run as "moved", and the next switch re-captured the intent from
-// that clamped landing: -2626 px on the verifier's KH repro (#4110 -> #4111
+// that clamped landing: -2626 px on the verifier's lab-I repro (#4110 -> #4111
 // -> click -> #4110). Input still ENDS the pin: the reader is acting here,
 // so nothing should scroll under them.
 (function() {
@@ -19789,7 +19789,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // a qubit inspector, the first open) is a fresh open too: Full View at
     // the top. It used to replay the last intent (a run switch the reader
     // never made) or, with none captured, keep the emptied pane's stale
-    // offset -- Full View opened 194 px down on the KH rig after a close.
+    // offset -- Full View opened 194 px down on the lab-I rig after a close.
     var fromRun = _dsScroll.fromRun;
     _dsScroll.fromRun = undefined;
     if (fromRun === false) freshOpen = true;
@@ -19842,7 +19842,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // Full View stays the landing tab for a fresh open (above) and for a run
     // that has no such tab (State N/A, no HDF5 → no Interactive) -- at its
     // top, WITHOUT touching the intent: the next run that has the tab gets
-    // the reader's place back (w8/dstab, measured on the KH rig), unless the
+    // the reader's place back (w8/dstab, measured on the lab-I rig), unless the
     // reader scrolled or picked a tab on this one (see the capture above).
     window._dsActiveTab = 'full';
     var it = _dsScroll.intent;

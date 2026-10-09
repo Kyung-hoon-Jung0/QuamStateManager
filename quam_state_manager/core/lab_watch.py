@@ -392,7 +392,7 @@ def _gate_pulses(merged, watch: LabWatch, mp: str, mac_segs: list[str],
     An inline or pointed pulse is ALSO played by name: ``CZGateTwoFlux``
     plays ``qubit_control.z.play(get_pulse_name(pulse))`` -- the pulse's
     ``id`` -- so the channel op of that name is on the route too (verifier 3,
-    KRS 5Q: deleting ``qubits.q2.z.operations.cz_GNZ_flux_pulse_q2_q3`` went
+    lab-F 5Q: deleting ``qubits.q2.z.operations.cz_GNZ_flux_pulse_q2_q3`` went
     through and every CZ node on the pair failed at program build)."""
     plays: set[str] = set()
     names: list[tuple[str, str, str | None]] = []   # (holder, name, pulse path)

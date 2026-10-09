@@ -118,7 +118,7 @@ class TestClosedForm:
         assert np.allclose(y[:4], [0.5, 0.3, 0.2, 0.0])
 
     def test_real_chip_numbers(self):
-        # KRS q1's port (the real customer values, copied): the DC limit is
+        # lab-F q1's port (the real customer values, copied): the DC limit is
         # sum(FIR)/A_dc and the full-rate step settles onto it
         ff = [0.5173869923748633, 0.3791747071886605, 0.14943410284208183, 0.02643336106350454]
         pf, _ = _pf([(-0.0418, 1.6), (-0.0216, 56.8)], ff=ff)

@@ -65,9 +65,9 @@
   },
   {
    "case": "S1",
-   "exemplar": "lab-C_gilboa/#3/qA1",
-   "file": "exemplars/S1/lab-C_gilboa_3_qA1.png",
-   "chip": "lab-C_gilboa",
+   "exemplar": "lab-O/#3/qA1",
+   "file": "exemplars/S1/lab-O_3_qA1.png",
+   "chip": "lab-O",
    "run": "#3",
    "qubit": "qA1",
    "markers_drawn": [

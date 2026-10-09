@@ -158,62 +158,62 @@ class TestCompareSourceLabels:
     def test_flat_chip_folder_uses_its_own_name(self, tmp_path):
         """state.json directly in <root>/<chip>/ → label = chip, not root."""
         from quam_state_manager.web.routes import _compare_source_label
-        qs = _write_quam(tmp_path / "quam_states" / "LabA")
-        assert _compare_source_label(str(qs)) == "LabA"
+        qs = _write_quam(tmp_path / "quam_states" / "lab-A")
+        assert _compare_source_label(str(qs)) == "lab-A"
 
     def test_live_quam_state_folder_uses_chip_name(self, tmp_path):
         from quam_state_manager.web.routes import _compare_source_label
-        qs = _write_quam(tmp_path / "LabA" / "quam_state")
-        assert _compare_source_label(str(qs)) == "LabA"
+        qs = _write_quam(tmp_path / "lab-A" / "quam_state")
+        assert _compare_source_label(str(qs)) == "lab-A"
 
     def test_archive_run_label_has_chip_run_and_timestamp(self, tmp_path):
         from quam_state_manager.web.routes import _compare_source_label
         qs = _write_quam(
-            tmp_path / "LabA" / "2026-02-19" / "#12_08_ramsey_163045" / "quam_state")
-        assert _compare_source_label(str(qs)) == "LabA #12 · 2026-02-19 16:30:45"
+            tmp_path / "lab-A" / "2026-02-19" / "#12_08_ramsey_163045" / "quam_state")
+        assert _compare_source_label(str(qs)) == "lab-A #12 · 2026-02-19 16:30:45"
 
     def test_two_same_named_chips_get_distinguishing_suffix(self, tmp_path):
         """The headline P0 case: same chip name under two different parents."""
         from quam_state_manager.web.routes import _dedupe_compare_labels
-        a = _write_quam(tmp_path / "labA" / "LabA")
-        b = _write_quam(tmp_path / "labB" / "LabA")
-        labels = _dedupe_compare_labels(["LabA", "LabA"], [str(a), str(b)])
+        a = _write_quam(tmp_path / "lab-A" / "lab-A")
+        b = _write_quam(tmp_path / "lab-B" / "lab-A")
+        labels = _dedupe_compare_labels(["lab-A", "lab-A"], [str(a), str(b)])
         assert len(set(labels)) == 2
-        assert labels[0] == "LabA (labA)"
-        assert labels[1] == "LabA (labB)"
+        assert labels[0] == "lab-A (lab-A)"
+        assert labels[1] == "lab-A (lab-B)"
 
     def test_dedup_leaves_noncolliding_labels_alone(self, tmp_path):
         from quam_state_manager.web.routes import _dedupe_compare_labels
-        a = _write_quam(tmp_path / "labA" / "LabA")
-        b = _write_quam(tmp_path / "labB" / "deviceC")
-        labels = _dedupe_compare_labels(["LabA", "deviceC"], [str(a), str(b)])
-        assert labels == ["LabA", "deviceC"]
+        a = _write_quam(tmp_path / "lab-A" / "lab-A")
+        b = _write_quam(tmp_path / "lab-B" / "deviceC")
+        labels = _dedupe_compare_labels(["lab-A", "deviceC"], [str(a), str(b)])
+        assert labels == ["lab-A", "deviceC"]
 
     def test_dedup_same_folder_added_twice_stays_identical(self, tmp_path):
         """Identical resolved paths are genuinely the same source — honest."""
         from quam_state_manager.web.routes import _dedupe_compare_labels
-        a = _write_quam(tmp_path / "labA" / "LabA")
-        labels = _dedupe_compare_labels(["LabA", "LabA"], [str(a), str(a)])
-        assert labels == ["LabA", "LabA"]
+        a = _write_quam(tmp_path / "lab-A" / "lab-A")
+        labels = _dedupe_compare_labels(["lab-A", "lab-A"], [str(a), str(a)])
+        assert labels == ["lab-A", "lab-A"]
 
     def test_dedup_three_way_collision(self, tmp_path):
         from quam_state_manager.web.routes import _dedupe_compare_labels
-        paths = [str(_write_quam(tmp_path / d / "x" / "LabA"))
+        paths = [str(_write_quam(tmp_path / d / "x" / "lab-A"))
                  for d in ("a", "b")]
-        paths.append(str(_write_quam(tmp_path / "a" / "y" / "LabA")))
-        labels = _dedupe_compare_labels(["LabA"] * 3, paths)
+        paths.append(str(_write_quam(tmp_path / "a" / "y" / "lab-A")))
+        labels = _dedupe_compare_labels(["lab-A"] * 3, paths)
         assert len(set(labels)) == 3
 
     def test_hub_basket_renders_distinct_labels(self, client, tmp_path):
         """End-to-end: two flat same-named chips render two distinct labels
         (P4: the surface is the hub basket; same dedup rule)."""
-        a = _write_quam(tmp_path / "labA" / "LabA", f_01=6.25e9)
-        b = _write_quam(tmp_path / "labB" / "LabA", f_01=6.30e9)
+        a = _write_quam(tmp_path / "lab-A" / "lab-A", f_01=6.25e9)
+        b = _write_quam(tmp_path / "lab-B" / "lab-A", f_01=6.30e9)
         resp = client.get(f"/compare-hub?src=ws:{a}&src=ws:{b}&bucket=1")
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "LabA (labA)" in html
-        assert "LabA (labB)" in html
+        assert "lab-A (lab-A)" in html
+        assert "lab-A (lab-B)" in html
 
     def test_extract_run_id_prefers_hash_marker(self):
         """Chip names with digits (examplechip9q) must not shadow the run id."""

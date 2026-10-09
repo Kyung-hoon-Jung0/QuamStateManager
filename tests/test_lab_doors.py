@@ -641,7 +641,7 @@ OP_T = "qubits.q2.z.operations.czl_q2t"
 
 
 class TestAnOpTheGatePlaysByNameIsOnItsRoute:
-    """Verifier 3 (KRS 5Q): CZGateTwoFlux holds its pulses inline and plays
+    """Verifier 3 (lab-F 5Q): CZGateTwoFlux holds its pulses inline and plays
     them BY NAME on the pair's own z lines; deleting or renaming that channel
     op went through every door and every CZ node on the pair then failed."""
 
@@ -787,7 +787,7 @@ def _real_draw(monkeypatch, python_path):
 
 
 class TestALabCheckThatCannotRunSaysSo:
-    """Verifier 4 (KRS 5Q): with the env's python gone (or the worker timed
+    """Verifier 4 (lab-F 5Q): with the env's python gone (or the worker timed
     out / crashed) a gate-breaking edit and a by-name op delete returned 200
     with no word at all -- the user thought the gate had been asked."""
 

@@ -75,7 +75,7 @@ w.XPathEvaluator.prototype.createExpression = function () {
 w.fetch = function (url) {
   url = String(url);
   let body = {};
-  if (url.indexOf('/chip/active-token') === 0) body = { loaded: true, token: 't', name: 'LabA', path: '/c' };
+  if (url.indexOf('/chip/active-token') === 0) body = { loaded: true, token: 't', name: 'lab-A', path: '/c' };
   else if (url.indexOf('/neighbor') !== -1) body = { uid: KEY + ':' + (RUN - 2), run_id: RUN - 2 };
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
 };

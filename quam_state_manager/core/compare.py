@@ -430,7 +430,7 @@ def build_snapshot(store: QuamStore, content_hash_: str,
             flat_resolved[key] = value
             continue
         if isinstance(resolved, str) and resolved.startswith("#./"):
-            # #/ chain terminating on a self-ref (4 on LabA) → derived (A6).
+            # #/ chain terminating on a self-ref (4 on lab-A) → derived (A6).
             ptr_kind[key] = kind
             ft = resolve_field_target(merged, key)
             derived[key] = ft["resolved_path"] if ft["resolvable"] else None
@@ -632,7 +632,7 @@ def auto_map_qubits(snap_a: ComparisonSnapshot,
 
     auto-CONFIRM only when (1) the smaller grid set is 100 % contained in the
     larger AND (2) the induced pairing is name-consistent wherever a name
-    exists on both chips (catches variantb⊂LabA crossed names AND dihedral
+    exists on both chips (catches variantb⊂lab-A crossed names AND dihedral
     mirrors).  Degenerate/collinear grids distrust the grid entirely.
     Fallback: exact-NAME intersection (never positional zip).  Everything
     else: ``suggested`` (explicit confirm required) or ``manual-needed``.
@@ -674,7 +674,7 @@ def auto_map_qubits(snap_a: ComparisonSnapshot,
                         unmatched_b=sorted(b_names - set(pairs.values()),
                                            key=_nat_key),
                         confidence=conf)
-                # variantb⊂LabA: confident-WRONG grid map → distrust → names.
+                # variantb⊂lab-A: confident-WRONG grid map → distrust → names.
 
     inter = a_names & b_names
     conf["intersection"] = len(inter)
@@ -1580,7 +1580,7 @@ def _readout_fidelity(store: QuamStore, name: str) -> float | None:
 
 
 def canonical_pair_fidelity(store: QuamStore, pair: str) -> dict | None:
-    """2Q fidelity canonicalisation (the LabB incident).
+    """2Q fidelity canonicalisation (the lab-B incident).
 
     Follows the active-gate alias (``macros.cz → cz_unipolar`` /
     ``macros.cr``), prefers nested ``StandardRB.average_gate_fidelity``;
@@ -1859,7 +1859,7 @@ class MappingStore:
     """Confirmed qubit-map persistence under the instance dir (injectable).
 
     Key = ``(network_token, anchor_min, anchor_max)`` — the network token
-    hashes ONLY ``fp.network`` (the whole LabA/deviceB/745-run family shares
+    hashes ONLY ``fp.network`` (the whole lab-A/deviceB/745-run family shares
     one), and the anchors (workspace chip key / folder label / user alias)
     disambiguate within it.  Anchors are stored sorted (lexicographically
     smallest first, per the N-way amendment) with the mapping oriented

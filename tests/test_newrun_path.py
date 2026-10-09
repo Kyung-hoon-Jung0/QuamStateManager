@@ -224,7 +224,7 @@ class TestEntryGrandparents:
         import random
         from types import SimpleNamespace
         rng = random.Random(7)
-        bases = [tmp_path, tmp_path / "KH", Path(tmp_path.anchor), Path("rel") / "x",
+        bases = [tmp_path, tmp_path / "lab-I", Path(tmp_path.anchor), Path("rel") / "x",
                  Path(r"\server\share\data")]
         entries = []
         for _ in range(400):
@@ -245,9 +245,9 @@ class TestEntryGrandparents:
             os.path.dirname = lambda x: calls.append(x) or real_dn(x)
             assert R._entry_grandparents(entries) == want
             assert calls == []
-            new = SimpleNamespace(folder_path=tmp_path / "KH" / "d9" / "#1_new",
+            new = SimpleNamespace(folder_path=tmp_path / "lab-I" / "d9" / "#1_new",
                                   is_standalone=False)
-            assert R._entry_grandparents(entries + [new]) == want | {tmp_path / "KH"}
+            assert R._entry_grandparents(entries + [new]) == want | {tmp_path / "lab-I"}
             assert len(calls) == 2              # only the new run's path
         finally:
             os.path.dirname = real_dn

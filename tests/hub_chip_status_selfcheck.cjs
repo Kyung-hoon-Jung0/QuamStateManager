@@ -84,11 +84,11 @@ ok(edited.edited && edited.tag === 'not in history',
 ok(edited.lines[0].indexOf('Not in this chip’s change ledger yet') === 0,
    '1i ...and the hover says so first');
 
-const lab = MI.describe({ ts: stamp, provenance: 'sm', label: 'applied by alice',
+const lab = MI.describe({ ts: stamp, provenance: 'sm', label: 'applied by user-a',
   sub: 'SM write (apply-to-live)', matches_current: true, load_id: 77, undone: 'undone',
   flags: ['run folder deleted'] }, { stamp: Date.parse(stamp) });
 const lt = lab.lines.join('\n');
-ok(lt.indexOf('Written by: applied by alice') >= 0, '1j an SM write names its actor and kind');
+ok(lt.indexOf('Written by: applied by user-a') >= 0, '1j an SM write names its actor and kind');
 ok(lt.indexOf('Run recorded by the lab’s node: #77') >= 0, '1k the lab node\'s run still shows');
 ok(lt.indexOf('Measured (the lab’s own stamp)') >= 0, '1l the lab\'s own stamp still shows');
 ok(lt.indexOf('A later undo took this write back.') >= 0 && lt.indexOf('run folder deleted') >= 0,
@@ -160,7 +160,7 @@ async function drawer() {
       sub: 'ledger start; writer unknown', flags: [], uid: null, run: null },
     { timestamp: '20260101_120020_e2', value: 3e-5, trigger: 'experiment', label: '#2 <scan>',
       sub: 'its own patch set it', flags: [], uid: 'root:2', run: 2, node: 'scan' },
-    { timestamp: '20260101_120030_e3', value: 4e-5, trigger: 'restore', label: 'restored by alice',
+    { timestamp: '20260101_120030_e3', value: 4e-5, trigger: 'restore', label: 'restored by user-a',
       sub: 'SM write (restore-live)', flags: [], uid: null, run: null },
   ] }, null);
   await until(function () { return chart.__renders === 1 && (chart.__handlers.plotly_click || []).length; },

@@ -220,13 +220,13 @@ class TestXrefEditThroughV2:
             assert row[2] in ALL_KINDS
 
 
-_LabA = "<quam-states>/example_lab"
+_lab_A = "<quam-states>/example_lab"
 
 
-@pytest.mark.skipif(not os.path.isdir(_LabA), reason="real LabA chip not present")
+@pytest.mark.skipif(not os.path.isdir(_lab_A), reason="real lab-A chip not present")
 class TestRealChipCompleteness:
-    def test_laba_total_matches_flatten_and_reaches_chip_level(self):
-        store = QuamStore(_LabA)
+    def test_lab_A_total_matches_flatten_and_reaches_chip_level(self):
+        store = QuamStore(_lab_A)
         rows, summary = build_all_values_rows(store)
         assert summary["total"] == len(flatten(store.merged))
         assert sum(summary["by_kind"].values()) == summary["total"]

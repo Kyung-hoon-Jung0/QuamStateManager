@@ -24,6 +24,8 @@ stranded by a Re-generate hydrate hands its outcome to the plain draft.
 Skips when node or jsdom is unavailable (the selfcheck exits 2 for a missing
 jsdom). Install once with ``npm install``.
 """
+
+# Selfcheck examples use generic device names and lab keys.
 import shutil
 import subprocess
 from pathlib import Path

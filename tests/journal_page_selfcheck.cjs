@@ -58,11 +58,11 @@ window.JournalPage.init();   // what htmx:afterSwap does on the real page (jsdom
   ok(document.getElementById('jr-day').value === '2026-09-05' && document.getElementById('jr-day-pick').value === '2026-09-05', 'day() sets both fields');
   ok(submits.length === 1 && submits[0][0] === 'jr-filters' && submits[0][1] === 'submit', 'day() submits the filter form (htmx)');
 
-  document.querySelector('.jr-who').value = '박OO';
+  document.querySelector('.jr-who').value = '\uac00OO';
   window.JournalPage.claim(document.querySelector('.claim-btn'));
   await new Promise(r => setTimeout(r, 5));
-  ok(posts.length === 1 && posts[0].url === '/journal/claim' && posts[0].body.run_id === '2' && posts[0].body.who === '박OO' && posts[0].body.note === 'n', 'claim POSTs run, who, note');
-  ok(window.localStorage.getItem('quam_actor_name') === '박OO', 'the name is remembered for next time (docs/173 S8: one key across the app)');
+  ok(posts.length === 1 && posts[0].url === '/journal/claim' && posts[0].body.run_id === '2' && posts[0].body.who === '\uac00OO' && posts[0].body.note === 'n', 'claim POSTs run, who, note');
+  ok(window.localStorage.getItem('quam_actor_name') === '\uac00OO', 'the name is remembered for next time (docs/173 S8: one key across the app)');
   ok(submits.length === 2, 'and the body re-fetches after a claim');
 
   const text = window.JournalPage.copyDigest(document.createElement('button'));

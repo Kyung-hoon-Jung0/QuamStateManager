@@ -105,7 +105,7 @@ def test_new_only_leaf_kept_as_default():
 def test_pair_id_reconciliation_by_membership():
     # The builder may name a pair (qA2-A1) differently from the source (qA2-qA1)
     # while both reference the same qubits — merge must align on MEMBERSHIP and
-    # adopt the source id, else every pair value orphans (real LabA bug).
+    # adopt the source id, else every pair value orphans (real lab-A bug).
     old = {"qubit_pairs": {"qA2-qA1": {
         "qubit_control": "#/qubits/qA2", "qubit_target": "#/qubits/qA1",
         "detuning": 12.5e6, "macros": {"cz": {"amplitude": 0.1}}}}}
@@ -122,7 +122,7 @@ def test_pair_id_reconciliation_by_membership():
 def test_twpas_preserved_when_rebuild_drops_them():
     # quam_builder can't build TWPAs, so every rebuild emits an empty twpas dict.
     # A missing TWPA is a builder gap, NOT a user removal -> the OLD twpas must be
-    # grafted back wholesale (real LabA: 156 leaves would otherwise be lost).
+    # grafted back wholesale (real lab-A: 156 leaves would otherwise be lost).
     old = {"twpas": {"twpa1": {"frequency": 8e9, "gain": 20.0, "power": -5}},
            "active_twpa_names": ["twpa1"]}
     new = {"twpas": {}, "active_twpa_names": []}      # what build_quam produces
@@ -229,10 +229,10 @@ class TestGraftNetworkSettings:
     and what the wizard wrote (host / cluster / port) is never overwritten."""
 
     OLD = {"network": {"host": "10.1.1.6", "cluster_name": "c_old", "port": 80,
-                       "qmm_class": "iqcc_cloud_client.CloudQuantumMachinesManager",
-                       "qmm_settings": {"backend": "arbel"},
+                       "qmm_class": "generic_cloud_client.CloudQuantumMachinesManager",
+                       "qmm_settings": {"backend": "lab-G"},
                        "use_custom_qmm": True,
-                       "quantum_computer_backend": "arbel"}}
+                       "quantum_computer_backend": "lab-G"}}
 
     def test_absent_keys_are_carried_and_named(self):
         new = {"wiring": {}, "network": {"host": "10.9.9.9", "cluster_name": "c_new",
@@ -241,8 +241,8 @@ class TestGraftNetworkSettings:
         assert got == ["qmm_class", "qmm_settings", "quantum_computer_backend",
                        "use_custom_qmm"]
         net = new["network"]
-        assert net["qmm_class"] == "iqcc_cloud_client.CloudQuantumMachinesManager"
-        assert net["qmm_settings"] == {"backend": "arbel"}
+        assert net["qmm_class"] == "generic_cloud_client.CloudQuantumMachinesManager"
+        assert net["qmm_settings"] == {"backend": "lab-G"}
         assert net["use_custom_qmm"] is True
         # the wizard's step-2 values win, a build-written port None included
         assert net["host"] == "10.9.9.9" and net["cluster_name"] == "c_new"
@@ -252,7 +252,7 @@ class TestGraftNetworkSettings:
         new = {"network": {"host": "h"}}
         graft_network_settings(self.OLD, new)
         new["network"]["qmm_settings"]["backend"] = "x"
-        assert self.OLD["network"]["qmm_settings"]["backend"] == "arbel"
+        assert self.OLD["network"]["qmm_settings"]["backend"] == "lab-G"
 
     def test_no_old_network_is_a_noop(self):
         for old in (None, {}, {"network": {}}, {"network": None}):
@@ -579,7 +579,7 @@ STOCK_RO = "quam.components.pulses.SquareReadoutPulse"
 
 
 def test_a_class_substitution_is_recorded():
-    """The customer case (KRS_5Q, 2026-09-18): the chip's readout pulse is the
+    """The customer case (chipX_5Q, 2026-09-18): the chip's readout pulse is the
     lab's OWN class declaring weights_real/weights_imag/ringdown_length, and a
     rebuild produces the stock SquareReadoutPulse -- because the build spec has
     no slot for a per-pulse class, so reconstruct_spec cannot carry it. The
@@ -830,7 +830,7 @@ def _merge_ports(old, new):
 
 class TestADeclaredPortNothingUsesIsCarried:
     def test_the_customer_case_port_8_on_a_fem_the_rebuild_keeps(self):
-        """KRS_5Q: ports 3/1..3/7 wired, 3/8 declared (band 3, -11 dBm, LO 7.6
+        """chipX_5Q: ports 3/1..3/7 wired, 3/8 declared (band 3, -11 dBm, LO 7.6
         GHz) and pointed at by nothing. The rebuild has 3/1..3/7."""
         old = _chip_with_ports({3: [1, 8]}, refs=[(3, 1)])
         old[0]["ports"]["mw_outputs"]["con1"]["3"]["8"]["upconverter_frequency"] = 7.6e9

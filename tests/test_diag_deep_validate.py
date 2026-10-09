@@ -39,7 +39,7 @@ import re
 
 from quam_state_manager.web.app import create_app
 
-_ENV = "/labs/conda/envs/cqt/python.exe"
+_ENV = "/labs/conda/envs/lab-B/python.exe"
 
 
 def _deep_client(tmp_path, monkeypatch, result, ok=True, error=None):
@@ -78,7 +78,7 @@ def test_deep_success_is_a_verdict_not_the_viewer_controls(tmp_path, monkeypatch
     body = _flat(r)
     assert "Quam.load() + generate_config() succeeded" in body
     assert "diag-env-deep-ok" in body
-    assert ">cqt</code>" in body                       # the env, by name
+    assert ">lab-B</code>" in body                       # the env, by name
     assert "quam&nbsp;0.6.0" in body and "qm&nbsp;1.4.0" in body
     assert "<time datetime=" in body                  # local time, ISO kept
     assert "Regenerate" not in body and "config.json" not in body
@@ -93,7 +93,7 @@ def test_deep_failure_says_failed_with_the_reason(tmp_path, monkeypatch):
     assert r.status_code == 502                       # the swap allowance keeps it
     body = _flat(r)
     assert "Quam.load() / generate_config() failed" in body
-    assert "diag-env-deep-err" in body and ">cqt</code>" in body
+    assert "diag-env-deep-err" in body and ">lab-B</code>" in body
     assert "Could not load QUAM machine" in body and "Traceback: boom" in body
     assert "Regenerate" not in body
 

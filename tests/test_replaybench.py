@@ -23,7 +23,7 @@ import pytest
 
 import sys as _sys  # noqa: E402
 _sys.path.insert(0, str(Path(__file__).parent))   # the house idiom (cr_fixtures)
-from archive_roots import lab_archive  # noqa: E402
+from tests.archive_roots import lab_archive  # noqa: E402
 
 from quam_state_manager.core.autofit import knowledge
 from quam_state_manager.core.autofit import mapcases as MC
@@ -216,21 +216,21 @@ class TestScoring:
 class TestOnTheRealArchives:
     """Anchored on maps whose shape was confirmed by a human reader."""
 
-    AS = lab_archive("AS_10TQ9TC") / "2026-08-10"
-    CQT = Path(r"D:\work\Customer_Codes\CQT\data\2026-08-13")
+    lab_A = lab_archive("lab-A") / "2026-08-10"
+    lab_B = (lab_archive("lab-B") / "2026-08-13")
 
-    @pytest.mark.skipif(not AS.exists(), reason="AS archive absent")
+    @pytest.mark.skipif(not lab_A.exists(), reason="lab-A archive absent")
     def test_a_textbook_flux_arch_is_read_as_one(self):
-        folder = next(self.AS.glob("#308_06_resonator_spectroscopy_vs_flux_*"))
+        folder = next(self.lab_A.glob("#308_06_resonator_spectroscopy_vs_flux_*"))
         sig = MC.signal_for(_FAM_FLUX, folder, "q7")
         assert sig.key in (MC.CURVE_ARCH, MC.CURVE_FULL_SWING), sig.reasons
         assert sig.measured["coverage"] >= 0.9
 
-    @pytest.mark.skipif(not CQT.exists(), reason="CQT archive absent")
+    @pytest.mark.skipif(not lab_B.exists(), reason="lab-B archive absent")
     def test_a_parabola_fitted_onto_noise_is_read_as_empty(self):
         """The node drew a parabola and marked two sweet spots on a map that
         carries no ridge at all — the exact shape the loop must refuse."""
-        folder = next(self.CQT.glob("#13_09_qubit_spectroscopy_vs_flux_*"))
+        folder = next(self.lab_B.glob("#13_09_qubit_spectroscopy_vs_flux_*"))
         sig = MC.signal_for("qubit_spectroscopy_vs_flux", folder, "q2",
                             fit={"success": True})
         assert sig.key == MC.CURVE_EMPTY, sig.reasons
@@ -238,11 +238,11 @@ class TestOnTheRealArchives:
 
 
 _KEYS = _ROOT / "tests" / "golden" / "calib_paths"
-_ARCHIVES = {"CQT": Path(r"D:\work\Customer_Codes\CQT\data"),
-             "AS_10TQ9TC": lab_archive("AS_10TQ9TC"),
-             "SNU_1Q": lab_archive("SNU_1Q"),
-             "IQCC_QOP37": lab_archive("IQCC_QOP37"),
-             "KRISS_CR": lab_archive("KRISS_CR")}
+_ARCHIVES = {"lab-B": (lab_archive("lab-B")),
+             "lab-A": lab_archive("lab-A"),
+             "lab-E": lab_archive("lab-E"),
+             "lab-C": lab_archive("lab-C"),
+             "lab-D": lab_archive("lab-D")}
 _NODES = {"qubit_spectroscopy": "08_qubit_spectroscopy",
           "qubit_spectroscopy_vs_flux": "09_qubit_spectroscopy_vs_flux",
           "resonator_spectroscopy_vs_flux": "06_resonator_spectroscopy_vs_flux",
@@ -289,7 +289,7 @@ def _score_all():
 
 
 @pytest.mark.skipif(not (_KEYS / "qubit_spectroscopy").exists()
-                    or not _ARCHIVES["CQT"].exists(),
+                    or not _ARCHIVES["lab-B"].exists(),
                     reason="answer keys or archives are not on this machine")
 class TestTheFourFamilyBenchmarkDoesNotRegress:
     """Headline numbers of the docs/131 benchmark, pinned as a FLOOR.
@@ -463,7 +463,7 @@ class TestAbcRetag:
 
 
 @pytest.mark.skipif(not (_KEYS / "qubit_spectroscopy").exists()
-                    or not _ARCHIVES["CQT"].exists(),
+                    or not _ARCHIVES["lab-B"].exists(),
                     reason="answer keys or archives are not on this machine")
 class TestTwoTierBenchmark:
     """docs/136 floors for the doctrine measurement. Bars sit BELOW the
@@ -783,7 +783,7 @@ def _score_joint(rule: str = "recency"):
     return rows
 
 
-@pytest.mark.skipif(not _JOINT.exists() or not _ARCHIVES["CQT"].exists(),
+@pytest.mark.skipif(not _JOINT.exists() or not _ARCHIVES["lab-B"].exists(),
                     reason="joint answer keys or archives are not on this machine")
 class TestTheJointBenchmark:
     """Both node types replayed as one session, scored against keys written

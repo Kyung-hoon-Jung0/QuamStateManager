@@ -19,9 +19,9 @@ class TestStore:
 
     def test_save_validates_and_journals_a_mode_change_with_who(self, tmp_path):
         lim = limits.save(tmp_path, "c", {"mode": "auto", "stop_by": "07:00", "max_delta": {"power_rabi": "0.05"}},
-                          who="human:이OO")
+                          who="human:\uac01OO")
         assert lim["mode"] == "auto" and lim["stop_by"] == "07:00" and lim["max_delta"] == {"power_rabi": 0.05}
-        assert "mode ask-writes -> auto (set by human:이OO)" in journal.read(tmp_path, "c")
+        assert "mode ask-writes -> auto (set by human:\uac01OO)" in journal.read(tmp_path, "c")
         limits.save(tmp_path, "c", {"max_writes_per_plan": 5}, who="x")
         assert journal.read(tmp_path, "c").count("mode ") == 1, "only a MODE change is journaled"
         assert limits.load(tmp_path, "c")["mode"] == "auto", "reload keeps it"
@@ -114,11 +114,11 @@ class TestTheRoute:
         c = create_app(testing=True, instance_path=str(tmp_path / "inst")).test_client()
         d = c.get("/api/agent/limits").get_json()
         assert d["limits"]["mode"] == "ask-writes" and "auto" in d["modes"]
-        r = c.post("/api/agent/limits", json={"mode": "auto", "max_delta": {"ramsey": 2e6}}, headers={**_H, "X-SM-Actor": "박OO"})
+        r = c.post("/api/agent/limits", json={"mode": "auto", "max_delta": {"ramsey": 2e6}}, headers={**_H, "X-SM-Actor": "\uac00OO"})
         assert r.status_code == 200 and r.get_json()["limits"]["mode"] == "auto"
         assert c.post("/api/agent/limits", json={"stop_by": "9pm"}, headers=_H).status_code == 400
         assert c.post("/api/agent/limits", data={"max_delta": "{bad"}, headers=_H).status_code == 400
-        assert "set by human:박OO" in journal.read(tmp_path / "inst", "chip")
+        assert "set by human:\uac00OO" in journal.read(tmp_path / "inst", "chip")
 
 
 class TestTheRouteAndTheGateAgree:
@@ -147,7 +147,7 @@ class TestTheRouteAndTheGateAgree:
         key, name = ident["chip_key"], ident["name"]
         assert key != name, "the fixture must make the records key differ from the display name"
         r = c.post("/api/agent/limits", json={"human_recent_min": 1, "mode": "auto"},
-                   headers={**_H, "X-SM-Actor": "박OO"})
+                   headers={**_H, "X-SM-Actor": "\uac00OO"})
         assert r.status_code == 200 and r.get_json()["limits"]["human_recent_min"] == 1
         gate = limits.load(inst, key)                       # exactly what run_node / check_gates read
         assert gate["human_recent_min"] == 1 and gate["mode"] == "auto"
@@ -161,8 +161,8 @@ class TestTheRouteAndTheGateAgree:
         c.post("/load", data={"folder": str(chip)})
         ident = c.get("/api/agent/chip").get_json()
         key, name = ident["chip_key"], ident["name"]
-        c.post("/api/agent/limits", json={"mode": "ask-all"}, headers={**_H, "X-SM-Actor": "박OO"})
-        assert "mode ask-writes -> ask-all (set by human:박OO)" in journal.read(inst, name)
+        c.post("/api/agent/limits", json={"mode": "ask-all"}, headers={**_H, "X-SM-Actor": "\uac00OO"})
+        assert "mode ask-writes -> ask-all (set by human:\uac00OO)" in journal.read(inst, name)
         assert "mode ask-writes" not in journal.read(inst, key), "the journal is for people: the display name, not the key"
 
     def test_save_journals_under_journal_chip_when_given(self, tmp_path):

@@ -504,7 +504,7 @@ class QueryEngine:
         if p is None:
             return None
 
-        # ``coupler`` is often present-but-``null`` (LabA pairs have no coupler
+        # ``coupler`` is often present-but-``null`` (lab-A pairs have no coupler
         # wiring at all) — the dict default only applies to a missing key, so the
         # type guard is what prevents a 500 on every pair click. CR pairs have no
         # coupler; fall back to the cross-resonance drive port so the shared
@@ -1045,7 +1045,7 @@ class QueryEngine:
 
         for qname, qw in wiring_qubits.items():
             # `or {}` (not `.get(k, {})`): a channel key present with a JSON null
-            # value returns None, and real data has it (LabA_CR pairs carry
+            # value returns None, and real data has it (lab-A_CR pairs carry
             # "coupler": null; nulling a channel in Explorer produces it too). The
             # subsequent .get() on None crashed the whole diagram → blank rack.
             q = (root.get("qubits") or {}).get(qname) or {}
@@ -1451,7 +1451,7 @@ def _cm_diag(confusion_matrix: Any, idx: int) -> float | None:
 _RB_LEVEL = {
     "StandardRB": "clifford",
     "InterleavedRB": "gate",
-    "IRB": "gate",                      # LabA's name for the same thing
+    "IRB": "gate",                      # lab-A's name for the same thing
     "Bell_State": "state",
 }
 
@@ -1730,7 +1730,7 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                         entry[k] = v
                 # Canonical scalar so the UI has one fidelity value regardless of
                 # schema: older data stored a bare float (caught by the elif
-                # below), newer LabA data nests e.g. StandardRB.average_gate_fidelity
+                # below), newer lab-A data nests e.g. StandardRB.average_gate_fidelity
                 # or Bell_State.Fidelity. Without this, downstream readers of
                 # ``gf.value`` (2Q RB panels, Overview tiles) skip every pair.
                 if "value" not in entry:

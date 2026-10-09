@@ -859,7 +859,7 @@ class TestWorkspaceAlignmentScan:
 
         # Two chip-B experiments (different host) — also unique state per run
         for run_id, when in [(20, "130000"), (21, "131000")]:
-            run = ws_root / "LabB_1Q" / "2026-04-30" / f"#{run_id}_beta_{when}"
+            run = ws_root / "lab-B_1Q" / "2026-04-30" / f"#{run_id}_beta_{when}"
             qs = run / "quam_state"
             _write_quam_state(qs, {
                 "qubits": {q: {"id": q, "T1": run_id * 1e-6} for q in ("q0", "q1")},
@@ -899,7 +899,7 @@ class TestWorkspaceAlignmentScan:
         assert scan["counts"]["aligned"] == 3       # 3 chip-A experiments
         assert scan["counts"]["renamed"] == 1       # 1 same-host renamed
         assert scan["counts"]["different_chip"] == 2  # 2 chip-B experiments
-        assert "LabB_1Q" in scan["different_chip"]
+        assert "lab-B_1Q" in scan["different_chip"]
 
     def test_backfill_routes_different_chip_to_native_dir(self, hm, tmp_path):
         """different_chip groups are auto-routed to their own chip dir
@@ -916,9 +916,9 @@ class TestWorkspaceAlignmentScan:
         # Loaded chip dir gets the 3 aligned entries
         assert report["ingested"] == 3
         assert report["skipped_renamed"] == 1
-        # 'different_chip' (host=10.9.9.99, "LabB_1Q") goes to its own dir
-        assert "LabB_1Q" in report["other_chips"]
-        assert report["other_chips"]["LabB_1Q"]["ingested"] == 2
+        # 'different_chip' (host=10.9.9.99, "lab-B_1Q") goes to its own dir
+        assert "lab-B_1Q" in report["other_chips"]
+        assert report["other_chips"]["lab-B_1Q"]["ingested"] == 2
         # Nothing left "skipped" after routing — they were ingested elsewhere
         assert report["skipped_different"] == 0
 
@@ -934,7 +934,7 @@ class TestWorkspaceAlignmentScan:
         assert report["ingested"] == 4              # 3 aligned + 1 renamed
         assert report["skipped_renamed"] == 0
         # different_chip still routed to its own dir
-        assert report["other_chips"]["LabB_1Q"]["ingested"] == 2
+        assert report["other_chips"]["lab-B_1Q"]["ingested"] == 2
 
     def test_progress_cb_fires_per_entry_across_chip_groups(self, hm, tmp_path):
         """progress_cb should tick monotonically as entries are processed,
@@ -976,12 +976,12 @@ class TestWorkspaceAlignmentScan:
         hm.backfill_from_workspace(loaded, ws)
 
         # The OTHER chip's dir should now be populated and queryable
-        # via extract_property_history with chip_key=LabB_1Q.
-        other_dir = hm._root / "LabB_1Q"
+        # via extract_property_history with chip_key=lab-B_1Q.
+        other_dir = hm._root / "lab-B_1Q"
         assert other_dir.is_dir()
         # Use the same path-trick the route uses to query a non-loaded chip
-        synth_labb_path = Path("/__chip_key__") / "LabB_1Q" / "quam_state"
-        rows = hm.extract_property_history(synth_labb_path, ["T1"])
+        synth_lab_B_path = Path("/__chip_key__") / "lab-B_1Q" / "quam_state"
+        rows = hm.extract_property_history(synth_lab_B_path, ["T1"])
         # 2 different_chip entries → 2 snapshots → 2 timestamps with values
         timestamps_seen = {p["timestamp"] for r in rows for p in r["values"]}
         assert len(timestamps_seen) == 2
@@ -1288,9 +1288,9 @@ class TestContentHashDedup:
     def test_data_folder_name_extracts_label(self, tmp_path):
         from quam_state_manager.core.history import _data_folder_name
         # Standard qualibration layout
-        p = tmp_path / "LabB" / "graphs" / "data" / "LabB_1Q" / "2026-04-30" / "#1_x_120000" / "quam_state"
+        p = tmp_path / "lab-B" / "graphs" / "data" / "lab-B_1Q" / "2026-04-30" / "#1_x_120000" / "quam_state"
         p.mkdir(parents=True)
-        assert _data_folder_name(p) == "LabB_1Q"
+        assert _data_folder_name(p) == "lab-B_1Q"
         # Path without 'data' segment
         p2 = tmp_path / "ExampleChip" / "quam_state"
         p2.mkdir(parents=True)
@@ -1528,15 +1528,15 @@ class TestMigrationV2Fingerprint:
         instance = tmp_path / "instance"
         history = instance / "history"
 
-        # Pre-existing chip dir for LabB (will be the matching target for
+        # Pre-existing chip dir for lab-B (will be the matching target for
         # any snapshot whose host=10.1.1.6 and qubits=qA0..qA1).
-        labb_dir = history / "LabB_1Q"
-        labb_dir.mkdir(parents=True)
-        self._make_snap(labb_dir, "20260101_000000_001",
+        lab_B_dir = history / "lab-B_1Q"
+        lab_B_dir.mkdir(parents=True)
+        self._make_snap(lab_B_dir, "20260101_000000_001",
                          host="10.1.1.6", qubits=["qA0", "qA1"],
-                         source_path="/labb/sample")
+                         source_path="/lab-B/sample")
 
-        # A "ExampleChip_1Q" dir polluted with LabB snapshots — buggy v1 sent
+        # A "ExampleChip_1Q" dir polluted with lab-B snapshots — buggy v1 sent
         # them here because source_path lied.
         nov_dir = history / "ExampleChip_1Q"
         nov_dir.mkdir(parents=True)
@@ -1544,7 +1544,7 @@ class TestMigrationV2Fingerprint:
         self._make_snap(nov_dir, "20260430_120000_001",
                          host="192.168.88.254", qubits=["q0", "q1"],
                          source_path="/wrong/source/ExampleChip 1Q/quam_state")
-        # Mis-attributed LabB snapshot (host=10.1.1.6, qA0..qA1) but
+        # Mis-attributed lab-B snapshot (host=10.1.1.6, qA0..qA1) but
         # source_path lies and points at a ExampleChip path
         self._make_snap(nov_dir, "20260430_130000_002",
                          host="10.1.1.6", qubits=["qA0", "qA1"],
@@ -1555,8 +1555,8 @@ class TestMigrationV2Fingerprint:
 
         # The ExampleChip snapshot stays in ExampleChip_1Q
         assert (nov_dir / "20260430_120000_001").is_dir()
-        # The LabB snapshot moves to LabB_1Q
-        assert (labb_dir / "20260430_130000_002").is_dir()
+        # The lab-B snapshot moves to lab-B_1Q
+        assert (lab_B_dir / "20260430_130000_002").is_dir()
         # Original mis-attributed location is no longer there
         assert not (nov_dir / "20260430_130000_002").exists()
 
@@ -1592,15 +1592,15 @@ class TestMigrationV2Fingerprint:
 
         instance = tmp_path / "instance"
         history = instance / "history"
-        labb_dir = history / "LabB_1Q"
-        labb_dir.mkdir(parents=True)
-        self._make_snap(labb_dir, "20260101_000000_001",
+        lab_B_dir = history / "lab-B_1Q"
+        lab_B_dir.mkdir(parents=True)
+        self._make_snap(lab_B_dir, "20260101_000000_001",
                          host="10.1.1.6", qubits=["qA0", "qA1"],
-                         source_path="/labb/sample")
+                         source_path="/lab-B/sample")
 
         nov_dir = history / "ExampleChip_1Q"
         nov_dir.mkdir(parents=True)
-        # Layout the LabB-misattributed snap with an alphabetically-earlier
+        # Layout the lab-B-misattributed snap with an alphabetically-earlier
         # timestamp so it sorts FIRST in any naive scan, hiding the real
         # ExampleChip snap.
         self._make_snap(nov_dir, "20260101_000000_001",
@@ -1611,7 +1611,7 @@ class TestMigrationV2Fingerprint:
                          source_path="/wrong/ExampleChip/path")
 
         # Force reverse-iterdir for an extra paranoid check: the
-        # misattributed LabB snap is yielded first in every iterdir.
+        # misattributed lab-B snap is yielded first in every iterdir.
         real_iterdir = _RealPath.iterdir
 
         def reversed_iterdir(self):
@@ -1623,8 +1623,8 @@ class TestMigrationV2Fingerprint:
         assert report["status"] == "migrated"
         # Real ExampleChip snap stays where it is.
         assert (nov_dir / "20260430_120000_999").is_dir()
-        # Misattributed LabB snap (timestamp 20260101_...) collides with the
-        # genuine LabB snap of the same timestamp -> skipped, not synthesised
+        # Misattributed lab-B snap (timestamp 20260101_...) collides with the
+        # genuine lab-B snap of the same timestamp -> skipped, not synthesised
         # away. Either way it must NOT remain orphaned in nov_dir.
         assert not (nov_dir / "20260101_000000_001").exists() or \
             report["skipped"] >= 1
@@ -1708,18 +1708,18 @@ class TestMigrationV2Fingerprint:
     def test_v2_tiebreak_purity_wins(self, tmp_path):
         """When two dirs both contain a snap for the same fingerprint,
         the dir with the higher *purity ratio* (this-fp-count / total-
-        snaps-in-dir) wins. A clean ``LabB_1Q`` (1/1=1.0) outranks a
+        snaps-in-dir) wins. A clean ``lab-B_1Q`` (1/1=1.0) outranks a
         polluted ``ExampleChip_1Q`` (1/2=0.5) even though both have the same
-        absolute count of LabB snaps."""
+        absolute count of lab-B snaps."""
         from quam_state_manager.core.history import (
             ChipFingerprint, _build_fingerprint_index,
         )
         history = tmp_path / "history"
-        labb_dir = history / "LabB_1Q"
-        labb_dir.mkdir(parents=True)
-        self._make_snap(labb_dir, "20260101_000000_001",
+        lab_B_dir = history / "lab-B_1Q"
+        lab_B_dir.mkdir(parents=True)
+        self._make_snap(lab_B_dir, "20260101_000000_001",
                          host="10.1.1.6", qubits=["qA0", "qA1"],
-                         source_path="/labb")
+                         source_path="/lab-B")
 
         nov_dir = history / "ExampleChip_1Q"
         nov_dir.mkdir(parents=True)
@@ -1731,7 +1731,7 @@ class TestMigrationV2Fingerprint:
                          source_path="/examplechip")
 
         index = _build_fingerprint_index(history)
-        labb_fp = ChipFingerprint(
+        lab_B_fp = ChipFingerprint(
             network=(("host", "10.1.1.6"), ("cluster_name", "C")),
             qubits=frozenset({"qA0", "qA1"}),
             pairs=frozenset(),
@@ -1741,9 +1741,9 @@ class TestMigrationV2Fingerprint:
             qubits=frozenset({"q0", "q1"}),
             pairs=frozenset(),
         )
-        assert index[labb_fp] == "LabB_1Q", (
-            f"purity tie-break failed: LabB fp routed to {index[labb_fp]!r}, "
-            "expected LabB_1Q (purity 1.0 vs ExampleChip_1Q's 0.5)"
+        assert index[lab_B_fp] == "lab-B_1Q", (
+            f"purity tie-break failed: lab-B fp routed to {index[lab_B_fp]!r}, "
+            "expected lab-B_1Q (purity 1.0 vs ExampleChip_1Q's 0.5)"
         )
         assert index[nov_fp] == "ExampleChip_1Q"
 
@@ -1945,8 +1945,8 @@ class TestSaveChipDecisionAtomic:
         )
 
         # Seed a real decision.
-        save_chip_decision(tmp_path, "chipA", "LabB_1Q", "same")
-        assert load_chip_decisions(tmp_path) == {"chipA::LabB_1Q": "same"}
+        save_chip_decision(tmp_path, "chipA", "lab-B_1Q", "same")
+        assert load_chip_decisions(tmp_path) == {"chipA::lab-B_1Q": "same"}
 
         # If a write somehow left a partial file behind, load returns {}
         # — atomic_write_json eliminates that scenario in production.
@@ -1964,7 +1964,7 @@ class TestSaveChipDecisionAtomic:
 
         monkeypatch.setattr(histmod.safe_io, "atomic_write_json", boom)
         with pytest.raises(OSError):
-            save_chip_decision(tmp_path, "chipA", "LabB_1Q", "same")
+            save_chip_decision(tmp_path, "chipA", "lab-B_1Q", "same")
 
     def test_save_uses_atomic_write_json(self, tmp_path, monkeypatch):
         """Sanity-check that the implementation goes through safe_io —
@@ -1981,9 +1981,9 @@ class TestSaveChipDecisionAtomic:
             real(path, data)
 
         monkeypatch.setattr(histmod.safe_io, "atomic_write_json", spy)
-        save_chip_decision(tmp_path, "chipA", "LabB_1Q", "same")
+        save_chip_decision(tmp_path, "chipA", "lab-B_1Q", "same")
         assert calls, "save_chip_decision did not call safe_io.atomic_write_json"
-        assert calls[0][1] == {"chipA::LabB_1Q": "same"}
+        assert calls[0][1] == {"chipA::lab-B_1Q": "same"}
 
 
 # ---------------------------------------------------------------------------

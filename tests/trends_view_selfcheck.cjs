@@ -214,7 +214,7 @@ async function view(body, opts) {
 
   // I. a few extreme values must not flatten the rest (the y range)
   {
-    // 49 values in 3k..30k and two failed fits at 68M / 23M (the KH_202608_CZ
+    // 49 values in 3k..30k and two failed fits at 68M / 23M (the lab-I
     // 25_T1 q1 shape): the axis is the rest's, the two sit on the top edge.
     const n = 51, v = [];
     for (let i = 0; i < n; i++) v.push(3000 + ((i * 7919) % 27000));

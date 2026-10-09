@@ -371,7 +371,7 @@ def test_fsync_dir_missing_dir_is_noop(tmp_path):
 
 # ---------------------------------------------------------------------------
 # Customer, on-site 2026-09-09: `qsm serve` logged
-#   listing cache save for ...\KH_202608_CZ failed
+#   listing cache save for ...\lab-I failed
 #   LiveFileError: Could not write ...\workspace_cache\ws_....json after 3
 #   attempts: [WinError 2] The system cannot find the file specified
 # The temp file was named `<file>.tmp` for everyone, so two writers of the SAME

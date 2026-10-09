@@ -1,5 +1,5 @@
 /* w8 pulsehint -- "Don't see your pulse class?" under the create form's class
- * list, in real headless Chrome over CDP, on a rig serving a COPY of the KRS
+ * list, in real headless Chrome over CDP, on a rig serving a COPY of the lab-F
  * 5Q chip whose server has a scratch lab package on PYTHONPATH (the env probe
  * subprocess inherits it; never a customer folder).
  *

@@ -21,7 +21,7 @@ from quam_state_manager.web import callers
 from quam_state_manager.web.app import create_app
 
 _H = {"Origin": "http://localhost"}
-KIM = {**_H, "X-SM-Actor": "Kim"}
+user_c = {**_H, "X-SM-Actor": "user-c"}
 CLAUDE = {**_H, "X-SM-Agent": "claude"}
 
 
@@ -94,10 +94,10 @@ class TestTheWindowsProof:
                                   ("/api/agent/plans/nope/mode", {"mode": "auto"}),
                                   ("/api/agent/limits", {"mode": "auto"}),
                                   ("/api/agent/journal/root", {"root": str(Path(app.instance_path) / "elsewhere")}),
-                                  ("/journal/claim", {"run_id": 1, "who": "Kim"}),
+                                  ("/journal/claim", {"run_id": 1, "who": "user-c"}),
                                   ("/journal/adopt", {}),
                                   ("/api/agent/setup/journal", {"root": str(Path(app.instance_path) / "x")})):
-            r = c.post(method_path, json=body, headers=KIM)
+            r = c.post(method_path, json=body, headers=user_c)
             assert r.status_code == 403 and r.get_json()["refused"] == "no_window_proof", method_path
         assert not (agent_session.load(app.instance_path, key) or {}).get("start_token")
         assert limits.load(app.instance_path, key)["mode"] == "ask-writes"
@@ -108,32 +108,32 @@ class TestTheWindowsProof:
         _window(c)
         # docs/253: the session-wide Arm is gone -- the gate lets the person through and the route
         # itself answers that arming is per plan (a refused window would be 403 no_window_proof)
-        r = c.post("/api/agent/session/arm", json={}, headers=KIM)
+        r = c.post("/api/agent/session/arm", json={}, headers=user_c)
         assert r.status_code == 409 and r.get_json()["refused"] == "arm_is_per_plan", r.get_json()
-        assert c.post("/api/agent/limits", json={"max_writes_per_plan": 20}, headers=KIM).status_code == 200
+        assert c.post("/api/agent/limits", json={"max_writes_per_plan": 20}, headers=user_c).status_code == 200
         # the gate let them through; the route answers for itself
-        assert c.post("/api/agent/approvals/nope/approve", json={}, headers=KIM).status_code == 404
-        assert c.post("/api/agent/plans/nope/start", json={}, headers=KIM).status_code == 404
+        assert c.post("/api/agent/approvals/nope/approve", json={}, headers=user_c).status_code == 404
+        assert c.post("/api/agent/plans/nope/start", json={}, headers=user_c).status_code == 404
 
     def test_a_proof_from_another_process_is_not_this_ones(self, app, c):
         c.set_cookie("sm_person", "a-secret-from-yesterdays-sm", domain="localhost")
-        r = c.post("/api/agent/session/arm", json={}, headers=KIM)
+        r = c.post("/api/agent/session/arm", json={}, headers=user_c)
         assert r.status_code == 403 and "reload the page" in r.get_json()["error"]
         c.set_cookie("sm_person_5112", app.config["SM_PERSON_SECRET"], domain="localhost")
         c.delete_cookie("sm_person", domain="localhost")
-        assert c.post("/api/agent/session/arm", json={}, headers=KIM).status_code == 403, \
+        assert c.post("/api/agent/session/arm", json={}, headers=user_c).status_code == 403, \
             "the other port's cookie is the other window's"
 
     @pytest.mark.parametrize("path,body", [
         ("/api/agent/session/arm", {}), ("/api/agent/plans/nope/cancel", {}),
         ("/api/agent/plans/nope/start", {}), ("/api/agent/approvals/nope/reject", {}),
         ("/api/agent/limits", {"mode": "auto"}), ("/api/agent/journal/root", {"root": ""}),
-        ("/journal/claim", {"run_id": 1, "who": "Kim"}), ("/api/agent/setup/connect", {"backend": "claude"}),
+        ("/journal/claim", {"run_id": 1, "who": "user-c"}), ("/api/agent/setup/connect", {"backend": "claude"}),
         ("/api/agent/setup/context", {"answers": {}}),
     ])
     def test_an_agent_with_the_cookie_is_still_an_agent(self, c, path, body):
         _window(c)
-        r = c.post(path, json=body, headers={**CLAUDE, "X-SM-Actor": "Kim"})
+        r = c.post(path, json=body, headers={**CLAUDE, "X-SM-Actor": "user-c"})
         assert r.status_code == 403 and r.get_json()["refused"] == "person_only", path
 
     def test_every_gated_endpoint_exists_and_takes_a_post(self, app):
@@ -146,7 +146,7 @@ class TestTheWindowsProof:
         monkeypatch.setenv("SM_DISABLE_ENV_WARMUP", "1")
         a = create_app(testing=False, instance_path=str(tmp_path / "prod"))
         cl = a.test_client()
-        h = {"Origin": "http://localhost", "X-SM-Actor": "Kim"}
+        h = {"Origin": "http://localhost", "X-SM-Actor": "user-c"}
         assert cl.post("/api/agent/limits", json={"mode": "auto"}, headers=h).status_code == 403
         cl.get("/journal", headers={"Origin": "http://localhost"})
         r = cl.post("/api/agent/limits", json={"mode": "ask-all"}, headers=h)
@@ -158,7 +158,7 @@ class TestTheAgentHeaderIsRefusedEvenWithoutProofChecks:
     still refused on the person's routes that had no check of their own."""
 
     @pytest.mark.parametrize("path,body", [
-        ("/api/agent/plans/nope/cancel", {}), ("/journal/claim", {"run_id": 1, "who": "Kim"}),
+        ("/api/agent/plans/nope/cancel", {}), ("/journal/claim", {"run_id": 1, "who": "user-c"}),
         ("/api/agent/journal/root", {"root": ""}), ("/api/agent/limits", {"mode": "auto"}),
         ("/api/agent/setup/journal", {"root": "x"}), ("/journal/adopt", {}),
     ])
@@ -190,16 +190,16 @@ class TestLimitsAreThePersons:
         _window(c)
         name = _name(c)
         r = c.post("/api/agent/limits", json={"human_recent_min": 5, "max_writes_per_plan": 50,
-                                              "webhook_url": self.SECRET_HOOK, "mode": "auto"}, headers=KIM)
+                                              "webhook_url": self.SECRET_HOOK, "mode": "auto"}, headers=user_c)
         assert r.status_code == 200
         text = journal.read(app.instance_path, name)
-        assert "mode ask-writes -> auto (set by human:Kim)" in text
+        assert "mode ask-writes -> auto (set by human:user-c)" in text
         assert ("limits max_writes_per_plan 200 -> 50; human_recent_min 30 -> 5; "
-                "webhook_url (none) -> https://hooks.slack.com/... (set by human:Kim)") in text, text
+                "webhook_url (none) -> https://hooks.slack.com/... (set by human:user-c)") in text, text
         assert "s3cr3tT0ken" not in text, "a webhook URL carries its own secret; the journal is a person's vault"
-        c.post("/api/agent/limits", json={"human_recent_min": 5}, headers=KIM)
+        c.post("/api/agent/limits", json={"human_recent_min": 5}, headers=user_c)
         assert journal.read(app.instance_path, name).count("human_recent_min") == 1, "no change, no line"
-        c.post("/api/agent/limits", json={"webhook_url": "https://bot:t0kenInUserinfo@hooks.example:8443/x"}, headers=KIM)
+        c.post("/api/agent/limits", json={"webhook_url": "https://bot:t0kenInUserinfo@hooks.example:8443/x"}, headers=user_c)
         text = journal.read(app.instance_path, name)
         assert "t0kenInUserinfo" not in text and "-> https://hooks.example:8443/..." in text
 
@@ -220,16 +220,16 @@ class TestTheJournalMovesWithItsHistory:
         _line(inst, name, "re-ran ramsey", "2026-10-02")
         _line(inst, "OtherChip", "other fridge", "2026-10-02")
         vault = tmp_path / "vault"
-        r = c.post("/api/agent/journal/root", json={"root": str(vault)}, headers=KIM)
+        r = c.post("/api/agent/journal/root", json={"root": str(vault)}, headers=user_c)
         assert r.status_code == 200 and Path(r.get_json()["root"]) == vault
         assert sorted(r.get_json()["carried"]) == sorted([journal._safe_key(name), "OtherChip"])
         assert "yesterday's T1 looked low" in journal.read(inst, name, "2026-10-01")
         assert "re-ran ramsey" in journal.read(inst, name, "2026-10-02")
         assert "other fridge" in journal.read(inst, "OtherChip", "2026-10-02")
         today = journal.read(inst, name)
-        assert f"journal folder moved here from {old} by human:Kim" in today
+        assert f"journal folder moved here from {old} by human:user-c" in today
         left = (old / journal._safe_key(name) / (datetime.now().strftime("%Y-%m-%d") + ".md")).read_text(encoding="utf-8")
-        assert f"journal folder moved to {vault} by human:Kim" in left, "the old folder says where the log went"
+        assert f"journal folder moved to {vault} by human:user-c" in left, "the old folder says where the log went"
         assert (old / journal._safe_key(name) / "2026-10-01.md").exists(), "copied, never moved away"
         page = c.get("/journal?day=2026-10-01").get_data(as_text=True)
         assert "looked low" in page, "the Calibration log shows the history after the move"
@@ -239,9 +239,9 @@ class TestTheJournalMovesWithItsHistory:
         inst, name = app.instance_path, _name(c)
         a = journal.root(inst)
         _line(inst, name, "line one", "2026-10-01")
-        c.post("/api/agent/journal/root", json={"root": str(tmp_path / "b")}, headers=KIM)
+        c.post("/api/agent/journal/root", json={"root": str(tmp_path / "b")}, headers=user_c)
         _line(inst, name, "line two, written in b", "2026-10-01")
-        c.post("/api/agent/journal/root", json={"root": str(a)}, headers=KIM)
+        c.post("/api/agent/journal/root", json={"root": str(a)}, headers=user_c)
         text = journal.read(inst, name, "2026-10-01")
         assert text.count("line one") == 1 and text.count("line two, written in b") == 1, text
 
@@ -249,14 +249,14 @@ class TestTheJournalMovesWithItsHistory:
         _window(c)
         inst, name = app.instance_path, _name(c)
         _line(inst, name, "from before setup", "2026-10-01")
-        r = c.post("/api/agent/setup/journal", json={"root": str(tmp_path / "vault2")}, headers=KIM)
+        r = c.post("/api/agent/setup/journal", json={"root": str(tmp_path / "vault2")}, headers=user_c)
         assert r.status_code == 200 and r.get_json()["carried"]
         assert "from before setup" in journal.read(inst, name, "2026-10-01")
 
     def test_the_same_folder_again_is_not_a_move(self, app, c):
         _window(c)
         inst, name = app.instance_path, _name(c)
-        c.post("/api/agent/journal/root", json={"root": ""}, headers=KIM)
+        c.post("/api/agent/journal/root", json={"root": ""}, headers=user_c)
         assert "moved" not in journal.read(inst, name)
 
     def test_an_agent_cannot_move_it(self, app, c, tmp_path):
@@ -284,8 +284,8 @@ class TestTheJournalDoorSignsLines:
         assert "`unverified` forged" in journal.read(app.instance_path, _name(c))
 
     def test_an_agent_cannot_claim_a_run_for_a_person(self, app, c):
-        """A-09: with the agent header, /journal/claim said "run by human:Kim"."""
-        r = c.post("/journal/claim", json={"run_id": 7, "who": "Kim"}, headers=CLAUDE)
+        """A-09: with the agent header, /journal/claim said "run by human:user-c"."""
+        r = c.post("/journal/claim", json={"run_id": 7, "who": "user-c"}, headers=CLAUDE)
         assert r.status_code == 403 and not story.load_claims(app.instance_path, _name(c))
 
 

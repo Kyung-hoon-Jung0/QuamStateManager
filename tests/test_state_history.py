@@ -19,7 +19,7 @@ from quam_state_manager.web.app import create_app
 
 
 def _make_live(tmp_path, f01=6.0e9):
-    live = tmp_path / "live" / "LabA"
+    live = tmp_path / "live" / "lab-A"
     live.mkdir(parents=True)
     state = {"qubits": {"q1": {"id": "q1", "f_01": f01, "xy": {"operations": {}}}},
              "qubit_pairs": {}, "active_qubit_names": ["q1"]}
@@ -387,7 +387,7 @@ class TestActivateQuamIdentity:
     def test_symlink_and_real_path_share_one_context(self, app, tmp_path):
         from quam_state_manager.web import routes
         live = _make_live(tmp_path)
-        alias = tmp_path / "live" / "LabA-alias"
+        alias = tmp_path / "live" / "lab-A-alias"
         try:
             alias.symlink_to(live)
         except OSError:

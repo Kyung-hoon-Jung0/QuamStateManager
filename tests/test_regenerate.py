@@ -697,16 +697,16 @@ class TestTheQaRegenerateFixesEndToEnd:
 
 
 def test_the_network_block_keeps_its_custom_qmm_settings(tmp_path, monkeypatch):
-    """QA regenerate-r2-17: the source wiring.network carries an IQCC cloud QMM
+    """QA regenerate-r2-17: the source wiring.network carries an lab-C cloud QMM
     (qmm_class / qmm_settings / use_custom_qmm) the wizard never shows; the
     build writes host/cluster/port only. The rebuild must carry the rest, keep
     the wizard's host, name what it carried, and keep the sidecar valid."""
     from quam_state_manager.core import regen_spec
     state = {"qubits": {"q1": {"f_01": 5.1e9}}, "active_qubit_names": ["q1"]}
     old_net = {"host": "10.1.1.6", "cluster_name": "c",
-               "qmm_class": "iqcc_cloud_client.CloudQuantumMachinesManager",
-               "qmm_settings": {"backend": "arbel"}, "use_custom_qmm": True,
-               "quantum_computer_backend": "arbel"}
+               "qmm_class": "generic_cloud_client.CloudQuantumMachinesManager",
+               "qmm_settings": {"backend": "lab-G"}, "use_custom_qmm": True,
+               "quantum_computer_backend": "lab-G"}
     (tmp_path / "old").mkdir()
     (tmp_path / "old" / "state.json").write_text(json.dumps(state))
     (tmp_path / "old" / "wiring.json").write_text(json.dumps(
@@ -728,7 +728,7 @@ def test_the_network_block_keeps_its_custom_qmm_settings(tmp_path, monkeypatch):
     assert out["merge"]["network_carried"] == [
         "qmm_class", "qmm_settings", "quantum_computer_backend", "use_custom_qmm"]
     net = json.loads((tmp_path / "new" / "wiring.json").read_text())["network"]
-    assert net["use_custom_qmm"] is True and net["qmm_settings"] == {"backend": "arbel"}
+    assert net["use_custom_qmm"] is True and net["qmm_settings"] == {"backend": "lab-G"}
     assert net["qmm_class"] == old_net["qmm_class"]
     assert net["host"] == "h2" and net["port"] is None          # the wizard's values
     # the sidecar hash covers the carried wiring: a later reconstruct still
@@ -742,8 +742,8 @@ def test_a_moved_chip_does_not_keep_the_cloud_routing(tmp_path, monkeypatch):
     host) -- the source's cloud-QMM keys are held back and NAMED; with the
     same host they still carry."""
     old_net = {"host": "10.1.1.6", "cluster_name": "c",
-               "qmm_class": "iqcc_cloud_client.CloudQuantumMachinesManager",
-               "qmm_settings": {"backend": "arbel"}, "use_custom_qmm": True}
+               "qmm_class": "generic_cloud_client.CloudQuantumMachinesManager",
+               "qmm_settings": {"backend": "lab-G"}, "use_custom_qmm": True}
     (tmp_path / "old").mkdir()
     (tmp_path / "old" / "state.json").write_text(json.dumps({"qubits": {"q1": {}}}))
     (tmp_path / "old" / "wiring.json").write_text(json.dumps(

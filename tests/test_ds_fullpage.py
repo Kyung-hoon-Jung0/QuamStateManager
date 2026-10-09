@@ -9,6 +9,8 @@ htmx) on the markup the REAL template renders here.
 """
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import json
 import shutil
 import subprocess

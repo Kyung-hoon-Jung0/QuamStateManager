@@ -37,34 +37,14 @@ _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-# Where each chip's archive lives on this workstation. An exemplar id names a
-# LAB KEY (lab-A, lab-B, ...), never a name and never a path — the docs/134
-# naming doctrine: shipped knowledge carries no customer name, and neither
-# may this shipped module. The key -> name mapping and any extra archive
-# roots live OUTSIDE the package in tests/golden/calib_paths/lab_keys.json
-# ("archives" maps a key to explicit roots; otherwise the key's NAME is
-# looked up as a directory under the local dataset root). A missing map or
-# root simply skips those exemplars (loudly).
-_LABMAP = _REPO / "tests" / "golden" / "calib_paths" / "lab_keys.json"
-_DATASET = Path(r"D:\work\dataset")
+# Exemplar provenance uses lab keys. Actual archive roots live in SM_LAB_MAP.
+# Missing maps or archives skip those exemplars with the existing diagnostics.
+from quam_state_manager.core.lab_map import archive_roots, load_map
 
-ARCHIVE_ROOTS: dict[str, list[Path]] = {}
-try:
-    _lm = json.loads(_LABMAP.read_text(encoding="utf-8"))
-except (OSError, ValueError):
-    _lm = {}
-for _key, _name in _lm.items():
-    if not str(_key).startswith("lab-") or not isinstance(_name, str):
-        continue
-    _cand = _DATASET / _name
-    if _cand.exists():
-        ARCHIVE_ROOTS[_key] = [_cand]
-for _key, _roots in (_lm.get("archives") or {}).items():
-    if isinstance(_roots, list):
-        _have = [Path(r) for r in _roots if Path(r).exists()]
-        if _have:
-            ARCHIVE_ROOTS.setdefault(_key, []).extend(
-                r for r in _have if r not in ARCHIVE_ROOTS.get(_key, []))
+ARCHIVE_ROOTS: dict[str, list[Path]] = {
+    key: [path for path in archive_roots(key) if path.exists()]
+    for key in load_map() if key.startswith("lab-")
+}
 
 # node-name prefixes that belong to each family (a run number alone is NOT a
 # key — see find_run)

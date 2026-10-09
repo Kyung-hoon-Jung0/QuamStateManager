@@ -35,7 +35,7 @@ import pytest
 from quam_state_manager.core import pulse_index, pulse_structure as ps
 from quam_state_manager.web.app import create_app
 from tests.test_pulse_locations import (CPL, PUMP, QC, SLOT, SPEC, XY2,  # noqa: F401
-                                        _golden)
+                                        _chip_path, _golden)
 from tests.test_pulse_locations import _state as _loc_state
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -101,10 +101,10 @@ class TestAPulseIsWhatThePulsesPageLists:
 
     @pytest.mark.parametrize("chip", sorted(_golden()["chips"]))
     def test_real_chips(self, chip):
-        if not (Path(chip) / "state.json").is_file():
+        if not (_chip_path(chip) / "state.json").is_file():
             pytest.skip("real chip not on this machine")
         from quam_state_manager.core.loader import QuamStore
-        m = QuamStore(chip).merged
+        m = QuamStore(_chip_path(chip)).merged
         assert _places(m) == _rows(m)
 
     def test_a_hypothetical_value_is_judged_where_it_would_sit(self):

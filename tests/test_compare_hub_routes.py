@@ -1098,14 +1098,14 @@ class TestFinalAuditHardening:
     def test_result_columns_use_deduped_labels(self, env, tmp_path):
         """Two flat same-named chips must be distinguishable in the summary
         headers / cards too, not just the basket."""
-        x = _write_quam(tmp_path / "dl" / "rootA" / "LabA", f_01=6.25e9)
-        y = _write_quam(tmp_path / "dl" / "rootB" / "LabA", f_01=6.35e9)
+        x = _write_quam(tmp_path / "dl" / "rootA" / "lab-A", f_01=6.25e9)
+        y = _write_quam(tmp_path / "dl" / "rootB" / "lab-A", f_01=6.35e9)
         app = create_app(testing=True, instance_path=str(tmp_path / "_dl"))
         c = app.test_client()
         r = c.get(f"/compare-hub?src=ws:{x}&src=ws:{y}&bucket=3")
         html = r.data.decode()
-        assert "LabA (rootA)" in html
-        assert "LabA (rootB)" in html
+        assert "lab-A (rootA)" in html
+        assert "lab-A (rootB)" in html
 
 
 class TestTheHubSaysWhatItDropped:

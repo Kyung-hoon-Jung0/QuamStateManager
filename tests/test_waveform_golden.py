@@ -2,14 +2,14 @@
 
 ``tests/golden/waveform_golden.json`` is produced by
 ``quam_state_manager/generator/run_waveform_golden.py`` running in the
-user's QM-stack env (conda ``LabC``). Regenerate from WSL with::
+user's QM-stack env (conda ``lab-C``). Regenerate from WSL with::
 
     <qm-env>/python \
         quam_state_manager/generator/run_waveform_golden.py \
         --out 'D:\\work\\state-manager\\tests\\golden'
 
 The comparison runs on every test invocation (golden file is committed);
-the live-regeneration test additionally runs the dump script when the LabC
+the live-regeneration test additionally runs the dump script when the lab-C
 interpreter is present, catching quam version drift.
 """
 
@@ -31,12 +31,12 @@ from waveform_matrix import CASES  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).parent / "golden" / "waveform_golden.json"
 # Classes that postdate the legacy golden's env (quam 0.5.0a3) live in their
-# own file, generated from the modern cqt env (quam 0.6.0 / quam_builder 0.4):
-#   <cqt>/python quam_state_manager/generator/run_waveform_golden.py \
+# own file, generated from the modern lab-B env (quam 0.6.0 / quam_builder 0.4):
+#   <lab-B>/python quam_state_manager/generator/run_waveform_golden.py \
 #       --out tests/golden --out-name waveform_golden_qb04.json \
 #       --only-keys CosineBipolarPulse
 GOLDEN_QB04_PATH = Path(__file__).parent / "golden" / "waveform_golden_qb04.json"
-LabC_PYTHON = Path("<qm-env>/python")
+lab_C_PYTHON = Path("<qm-env>/python")
 
 RTOL = 1e-9
 ATOL = 1e-12
@@ -174,10 +174,10 @@ def test_payload_layer_matches_raw(case, golden):
             assert payload["q"] is None
 
 
-@pytest.mark.skipif(not LabC_PYTHON.exists(),
-                    reason="LabC env interpreter not available")
+@pytest.mark.skipif(not lab_C_PYTHON.exists(),
+                    reason="lab-C env interpreter not available")
 def test_live_regeneration_matches_committed(tmp_path):
-    """Re-run the dump script in the LabC env; fresh output must equal the
+    """Re-run the dump script in the lab-C env; fresh output must equal the
     committed golden (catches quam/qualang_tools version drift)."""
     script = (Path(__file__).parents[1]
               / "quam_state_manager" / "generator" / "run_waveform_golden.py")
@@ -189,7 +189,7 @@ def test_live_regeneration_matches_committed(tmp_path):
     # --skip-keys: the legacy env predates the qb04-only classes (their golden
     # is waveform_golden_qb04.json, generated from the modern env instead).
     proc = subprocess.run(
-        [str(LabC_PYTHON), _win(script), "--out", _win(tmp_path),
+        [str(lab_C_PYTHON), _win(script), "--out", _win(tmp_path),
          "--skip-keys", "CosineBipolarPulse"],
         capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert proc.returncode == 0, proc.stderr

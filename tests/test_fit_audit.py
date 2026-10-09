@@ -1,6 +1,8 @@
 """Fit-Auditor (gate-migration triage, docs/50) — driver + engine unit tests,
-plus a §6-③ anchor integration test (auto-skipped without the LabB venv + archive).
+plus a §6-③ anchor integration test (auto-skipped without the lab-B venv + archive).
 """
+
+from tests.archive_roots import lab_path
 import json
 import os
 from pathlib import Path
@@ -18,7 +20,7 @@ from quam_state_manager.generator import run_fit_audit as ENG
 @pytest.mark.parametrize("node_name,expected", [
     ("1Q_05_resonator_spectroscopy_vs_power", "resonator_spectroscopy_vs_power"),
     ("05b_resonator_spectroscopy_vs_power", "resonator_spectroscopy_vs_power"),
-    # the REAL LabB/LabA resonator node names carry an _iq suffix — must alias,
+    # the REAL lab-B/lab-A resonator node names carry an _iq suffix — must alias,
     # else the whole second pilot family silently drops from the backlog.
     ("05b_resonator_spectroscopy_vs_power_iq", "resonator_spectroscopy_vs_power"),
     ("1Q_05b_resonator_spectroscopy_vs_power_iq", "resonator_spectroscopy_vs_power"),
@@ -380,17 +382,17 @@ def test_verdict_endpoint_204_without_args():
 
 
 # ---------------------------------------------------------------------------
-# §6-③ ANCHOR integration test (opt-in: needs the LabB venv + LabA archive)
+# §6-③ ANCHOR integration test (opt-in: needs the lab-B venv + lab-A archive)
 # ---------------------------------------------------------------------------
 
-_VENV = "<work-root>/LabA/naive_code/qualibration_graphs/superconducting/.venv/bin/python"
-_SRC = "<work-root>/Customer_Codes/LabB/qualibration_graphs/superconducting"
+_VENV = "<work-root>/lab-A/naive_code/qualibration_graphs/superconducting/.venv/bin/python"
+_SRC = str(lab_path("lab-N", "audit_source"))
 _RVP = "<dataset-root>/example_lab/2026-05-22/#176_1Q_05_resonator_spectroscopy_vs_power_020954"
 _QS298 = "<dataset-root>/example_lab/2026-05-29/#298_1Q_08_qubit_spectroscopy_020445"
 _QS236 = "<dataset-root>/example_lab/2026-05-28/#236_1Q_08_qubit_spectroscopy_225436"
 
 _have_env = os.path.exists(_VENV) and os.path.isdir(_SRC)
-anchor = pytest.mark.skipif(not _have_env, reason="LabB venv / hardened source tree absent")
+anchor = pytest.mark.skipif(not _have_env, reason="lab-B venv / hardened source tree absent")
 
 
 @anchor

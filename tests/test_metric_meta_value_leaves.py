@@ -62,11 +62,11 @@ def test_an_sm_edit_of_a_sibling_leaf_does_not_author_the_rb_value(tmp_path):
     s2 = rb_state(agf=0.995, alpha=0.96, epg=0.005)
     c = load(tmp_path, [(rb_state(), None), (s2, FULL_RB)], s2)
     assert c.post("/field/edit", data={"dot_path": f"{RB}.alpha", "value": "0.97"}).status_code == 200
-    assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "alice"}).status_code == 200
+    assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "user-a"}).status_code == 200
     e = c.get(META).get_json()["p"]["2q:StandardRB:cz"][PAIR]
     d = drawer_newest(c, f"{RB}.average_gate_fidelity")
     assert e["eid"] == d["eid"] and e["provenance"] == d["provenance"] == "run_proven"
-    assert e["run"] == 2 and "alice" not in str(e.get("label")), e
+    assert e["run"] == 2 and "user-a" not in str(e.get("label")), e
 
 
 def test_a_run_that_moved_only_alpha_is_not_the_writer_of_the_rb_value(tmp_path):
@@ -84,7 +84,7 @@ def test_an_f_row_edit_moves_only_the_panels_that_read_it(tmp_path):
     p2 = [patch(f"{GEF}.0.0", 0.95, 0.9), patch(f"{GEF}.0.1", 0.03, 0.05), patch(f"{GEF}.0.2", 0.02, 0.05)]
     c = load(tmp_path, [(gef_state(cm1), None), (gef_state(cm2), p2)], gef_state(cm2))
     assert c.post("/field/edit", data={"dot_path": f"{GEF}.2.2", "value": "0.7"}).status_code == 200
-    assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "alice"}).status_code == 200
+    assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "user-a"}).status_code == 200
     q = c.get(META).get_json()["q"]
     g, f, a = q["ro_fidelity_gef_g"]["qA1"], q["ro_fidelity_gef_f"]["qA1"], q["assignment_fidelity_gef"]["qA1"]
     assert g["eid"] == drawer_newest(c, f"{GEF}.0.0")["eid"] and g["run"] == 2, g

@@ -1,6 +1,6 @@
 """Every surface that maps a value to a run names the run that WROTE it.
 
-Customer report 2026-09-29 (KRISS_CZ): *"one IRB point says its run is a flux
+Customer report 2026-09-29 (lab-F-env): *"one IRB point says its run is a flux
 short distortion experiment -- how can that be? T1 points also point to runs
 that are not T1."* And, on the click: *"wrong information is the worst."* A
 history snapshot names the run whose SAVE it copied; that save carries every
@@ -194,7 +194,7 @@ class TestParamHistoryDrawer:
 
 class TestAColdArchiveNeverBlocksNorGuesses:
     """A cold first answer parses a run's 1.6 MB state per check (5.6 s for
-    the default Trends open on the real KRISS_CZ chip). Past the budget the
+    the default Trends open on the real lab-F-env chip). Past the budget the
     rest is checked in the background: those points are PENDING -- no run
     named, nothing opened -- the section carries the re-fetch note, the
     partial fragment is not memoised, and the re-fetch has the answers."""

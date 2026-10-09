@@ -1,7 +1,7 @@
 """Tests for core/pulse_index.py — enumeration, used_by reverse refs, and
 pointer rewriting for duplicate/rename.
 
-The fixture mirrors the shapes observed in the real LabA state file:
+The fixture mirrors the shapes observed in the real lab-A state file:
 ``#../`` family refs, ``#./`` aliases, absolute pointers to qubit props,
 ``#./default_integration_weights`` runtime refs, pair macros with implicit-
 class flux pulses, ``None`` coupler slots, and gate-level ``cz`` aliases.

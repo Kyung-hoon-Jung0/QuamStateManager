@@ -2,7 +2,7 @@
 
 On a 1366x768 laptop at 125% (1093x614) the grid's first row opened at
 y=737, below the fold. Three Pico style leaks inside /bulk cost ~120 px at
-every width (measured in real Chrome on the KRS 5Q chip copy, first-row top
+every width (measured in real Chrome on the lab-F 5Q chip copy, first-row top
 before -> after: 1707x768 626 -> 503, 1280x620 721 -> 570, 1093x614
 737 -> 578, 1024x640 743 -> 584):
 

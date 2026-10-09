@@ -1,7 +1,7 @@
 """w9/labwarm -- the lab-code worker is started BEFORE the first lab check.
 
 The first lab edit/delete check after a server start paid the worker's spawn
-and imports (5-12 s on the KRS 5Q chip, ~12 s big30x) while the user watched
+and imports (5-12 s on the lab-F 5Q chip, ~12 s big30x) while the user watched
 a cell. Now:
 
 1. PREWARM (core/lab_waveform.prewarm): a chip that carries a lab class the
@@ -17,7 +17,7 @@ a cell. Now:
 4. The UI's state: ``worker_state`` -> ready / starting / cold / no-env, what
    "Preparing your lab code... (first check after start)" is decided on.
 
-The subprocess pins run the REAL worker script under this interpreter (the cqt
+The subprocess pins run the REAL worker script under this interpreter (the lab-B
 env carries quam); they skip where quam is absent.
 """
 

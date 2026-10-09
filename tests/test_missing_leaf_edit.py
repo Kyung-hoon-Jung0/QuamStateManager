@@ -34,7 +34,7 @@ _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 
 def _state():
     """Two qubits behind ONE pointer hop each; only qA1's port has lo_mode —
-    the real shape (KRISS_CR: 4 of N mw_input ports carry it)."""
+    the real shape (lab-D: 4 of N mw_input ports carry it)."""
     return {
         "qubits": {
             "qA1": {"id": "qA1", "f_01": 5.0e9, "resonator": {

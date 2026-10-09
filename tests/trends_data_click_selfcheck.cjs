@@ -27,7 +27,7 @@ function ok(c, m) { if (c) console.log('ok - ' + m); else { console.error('FAIL:
   const W = H.world();
   const p = H.payload(6, [{ q: 'q1', m: 'opt_amp', v: [0.1, 0.2, 0.3, 0.25, 0.15, 0.2] },
                           { q: 'q2', m: 'opt_amp', v: [0.4, null, 0.5, 0.45, 0.4, 0.41] }]);
-  p.runs = p.runs.map((r, i) => [3268 + i, r[1], 'kh:' + (3268 + i)]);
+  p.runs = p.runs.map((r, i) => [3268 + i, r[1], 'lab-I:' + (3268 + i)]);
   W.answers.push({ body: p });
   W.mount();
   await H.until(() => W.draws.length >= 2 && W.draws.every((d) => d.el.__handlers.plotly_click));
@@ -35,7 +35,7 @@ function ok(c, m) { if (c) console.log('ok - ' + m); else { console.error('FAIL:
   const el = W.w.document.getElementById('trend-chart-0');
   const data = el.data || [];
   const dataTrace = data.find((t) => /^q1 \/ opt_amp$/.test(t.name));
-  const want = ['kh:3268', 'kh:3269', 'kh:3270', 'kh:3271', 'kh:3272', 'kh:3273'];
+  const want = ['lab-I:3268', 'lab-I:3269', 'lab-I:3270', 'lab-I:3271', 'lab-I:3272', 'lab-I:3273'];
   ok(dataTrace && JSON.stringify(dataTrace.customdata) === JSON.stringify(want),
      'the data trace carries each run uid as customdata (' + JSON.stringify(dataTrace && dataTrace.customdata) + ')');
   ok(data[0] && !data[0].customdata, 'fixture: a statistics trace (no uid) is drawn before the data trace');
@@ -44,8 +44,8 @@ function ok(c, m) { if (c) console.log('ok - ' + m); else { console.error('FAIL:
 
   const clicks = () => W.ajax.filter((a) => /^\/dataset\//.test(a.url));
   const click = (evt) => el.__handlers.plotly_click.forEach((fn) => fn(evt));
-  click({ points: [{ curveNumber: 0, customdata: undefined }, { curveNumber: 3, customdata: 'kh:3270' }] });
-  ok(clicks().length === 1 && clicks()[0].verb === 'GET' && clicks()[0].url === '/dataset/kh:3270',
+  click({ points: [{ curveNumber: 0, customdata: undefined }, { curveNumber: 3, customdata: 'lab-I:3270' }] });
+  ok(clicks().length === 1 && clicks()[0].verb === 'GET' && clicks()[0].url === '/dataset/lab-I:3270',
      'a click opens the run the data point names, past the statistics point (' + JSON.stringify(clicks()) + ')');
   ok(clicks().length === 1 && clicks()[0].opts.target === '#inspector-pane' && clicks()[0].opts.source === '#inspector-pane',
      'in the inspector pane, never #table-pane (docs/204) (' + JSON.stringify(clicks()[0] && clicks()[0].opts) + ')');

@@ -1,7 +1,7 @@
 """docs/173 S9: SM captures a qualibrate node's proposed state on its own
 subprocess boundary.
 
-Found on the real KRISS arbel cloud (docs/173 §11): a qualibrate node NEVER
+Found on the real lab-F lab-G cloud (docs/173 §11): a qualibrate node NEVER
 rewrites the state.json at QUAM_STATE_PATH. Its ``record_state_updates()`` either
 applies the calibration to the in-memory machine and records nothing
 (interactive_only=True, the customer default) or reverts the machine and records

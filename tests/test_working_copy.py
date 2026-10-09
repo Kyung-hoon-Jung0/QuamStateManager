@@ -509,7 +509,7 @@ def test_reconcile_legacy_meta_upgraded_when_live_unchanged(tmp_path):
 
 
 def test_reconcile_legacy_diverged_is_stale(tmp_path):
-    # The user's exact LabA case: legacy meta, live replaced with a
+    # The user's exact lab-A case: legacy meta, live replaced with a
     # different chip, working copy holds the old one. A legacy meta cannot
     # prove the working copy is edit-free -> kept + stale (prompt), never
     # silently replaced.

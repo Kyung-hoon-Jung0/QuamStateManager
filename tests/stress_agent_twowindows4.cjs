@@ -84,8 +84,8 @@ async function main() {
   const B = await makeConn('ws://127.0.0.1:' + CDP + '/devtools/page/' + tB, 'B', errors);
   const land = async (C) => { await C.send('Page.navigate', { url: BASE + '/' }); return await C.until('!!document.querySelector("#agent-home .ag-root .ag-cards")', 30000); };
   await land(A); await land(B);
-  await A.ev('AgentPanel.setActor("Kyunghoon"); 1');
-  await B.ev('AgentPanel.setActor("Minji"); 1');
+  await A.ev('AgentPanel.setActor("user-a"); 1');
+  await B.ev('AgentPanel.setActor("user-b"); 1');
   const visExpr = '({hidden:document.hidden, vis:document.visibilityState, focus:document.hasFocus()})';
   const vA = await A.ev(visExpr), vB = await B.ev(visExpr);
   note('visibility', { A: vA, B: vB });
@@ -99,7 +99,7 @@ async function main() {
   for (let i = 0; i < 3; i++) {
     const q = 'q' + (11 + i);
     const t0 = Date.now();
-    const pid = await mkPlan('Kyunghoon', '/run 02a_fake_resonator ' + q);
+    const pid = await mkPlan('user-a', '/run 02a_fake_resonator ' + q);
     if (!/^pl-/.test(pid)) { note('plan_failed', pid); break; }
     const cardSel = '#agent-home [data-card=\'plan:' + pid + '\']';
     const card = await B.until('!!document.querySelector("' + cardSel + '")', 45000, 60);
@@ -111,7 +111,7 @@ async function main() {
     const modeMs = Date.now() - t1;
     await sleep(1200);
     const t2 = Date.now();
-    await A.ev('fetch("/api/agent/plans/' + pid + '/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"Kyunghoon"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})');
+    await A.ev('fetch("/api/agent/plans/' + pid + '/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"user-a"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})');
     const cancelled = await B.until('(function(){var c=document.querySelector("' + cardSel + '"); return c && /cancelled/.test(c.textContent);})()', 45000, 60);
     const cancelMs = Date.now() - t2;
     trials.push({ plan: pid, card_ms: card.v ? cardMs : null, mode_ms: mode.v ? modeMs : null, cancel_ms: cancelled.v ? cancelMs : null });

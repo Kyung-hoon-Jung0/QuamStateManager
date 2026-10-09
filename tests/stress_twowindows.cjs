@@ -135,15 +135,15 @@ async function main() {
   /* ═════════ A — the name box, and how fast a card crosses ═════════ */
   if (PHASE === 'A') {
     ok('both windows have a name box', await A.ev(`!!document.querySelector("${ACTOR}")`) && await B.ev(`!!document.querySelector("${ACTOR}")`));
-    await A.typeInto(ACTOR, 'Kyunghoon');
-    ok("A's name is kept", (await A.ev('localStorage.getItem("quam_actor_name")')) === 'Kyunghoon');
+    await A.typeInto(ACTOR, 'user-a');
+    ok("A's name is kept", (await A.ev('localStorage.getItem("quam_actor_name")')) === 'user-a');
 
     // SM is English-only for this box BY DECISION. Verify the strip IS what happens.
-    await B.typeInto(ACTOR, '민지 Minji');
+    await B.typeInto(ACTOR, '\uac00\uac01 user-b');
     const bBox = await B.ev(`document.querySelector("${ACTOR}").value`);
     const bStored = await B.ev('localStorage.getItem("quam_actor_name")');
     note('B_box_after_hangul', bBox); note('B_stored_after_hangul', bStored);
-    ok('a non-ASCII name is stripped to its ASCII part (by design)', bStored === 'Minji', { box: bBox, stored: bStored });
+    ok('a non-ASCII name is stripped to its ASCII part (by design)', bStored === 'user-b', { box: bBox, stored: bStored });
     ok('…and the BOX shows what was stored (no silent divergence)', bBox === bStored, { box: bBox, stored: bStored });
 
     await B.typeInto(TA, '큐비트 측정해줘');
@@ -151,8 +151,8 @@ async function main() {
     ok('the composer accepts Hangul (only the NAME box is ASCII-only)', /[가-힣]/.test(String(taVal)), taVal);
     await B.ev(`(function(){var e=document.querySelector("${TA}"); e.value=''; e.dispatchEvent(new Event('input',{bubbles:true})); return 1;})()`);
 
-    const cases = [['empty', ''], ['a quote', 'Kim "Danny" Lee'], ['a backslash', 'LAB\\kyunghoon'],
-                   ['200 characters', 'X'.repeat(200)], ['a newline', 'Kyung\nhoon'], ['only Hangul', '민지']];
+    const cases = [['empty', ''], ['a quote', 'user-c "quoted" label'], ['a backslash', 'LAB\\user-a'],
+                   ['200 characters', 'X'.repeat(200)], ['a newline', 'Kyung\nhoon'], ['only Hangul', '\uac00\uac01']];
     const nameRows = [];
     for (const [label, v] of cases) {
       await B.ev(`AgentPanel.setActor(${JSON.stringify(v)}); 1`);
@@ -172,9 +172,9 @@ async function main() {
     ok('a 200-character name is recorded whole, so the feed must live with it',
        String((nameRows.find(x => x.label === '200 characters') || {}).created_by || '').length > 150,
        String((nameRows.find(x => x.label === '200 characters') || {}).created_by || '').length);
-    await B.ev('AgentPanel.setActor("Minji"); 1');
-    await B.ev(`(function(){var e=document.querySelector("${ACTOR}"); e.value="Minji"; return 1;})()`);
-    await A.ev('AgentPanel.setActor("Kyunghoon"); 1');
+    await B.ev('AgentPanel.setActor("user-b"); 1');
+    await B.ev(`(function(){var e=document.querySelector("${ACTOR}"); e.value="user-b"; return 1;})()`);
+    await A.ev('AgentPanel.setActor("user-a"); 1');
 
     await cleanPlans();
     await sleep(1200);
@@ -194,18 +194,18 @@ async function main() {
     ok('…inside 5 s', seenB.v && seenB.ms < 5000, seenB.ms);
     const origin = await B.ev(`(function(){var e=document.querySelector("${CARDS} [data-card='plan:${pid}'] .ag-plan-head"); return e? e.textContent.replace(/\\s+/g," ").trim() : null;})()`);
     note('B_card_origin_text', origin);
-    ok('the card B sees names WHO made it', /Kyunghoon/.test(String(origin)), origin);
+    ok('the card B sees names WHO made it', /user-a/.test(String(origin)), origin);
     await A.shot(OUT + '_A01_made_card.png'); await B.shot(OUT + '_B01_sees_card.png');
     note('final_plan_id', pid);
   }
 
   /* ═════════ M — the plan MODE: A changes it, B is watching ═════════ */
   if (PHASE === 'M') {
-    await A.ev('AgentPanel.setActor("Kyunghoon"); 1'); await B.ev('AgentPanel.setActor("Minji"); 1');
+    await A.ev('AgentPanel.setActor("user-a"); 1'); await B.ev('AgentPanel.setActor("user-b"); 1');
     await cleanPlans();
     const trials = [];
     for (let round = 1; round <= 2; round++) {
-      const mk = await api('/api/agent/plans', { run_line: '/run 02a_fake_resonator q' + (13 + round) }, 'Kyunghoon');
+      const mk = await api('/api/agent/plans', { run_line: '/run 02a_fake_resonator q' + (13 + round) }, 'user-a');
       const pid = mk.body.plan.id;
       const sel = `${CARDS} [data-card='plan:${pid}'] .ag-mode select`;
       await A.until(`!!document.querySelector("${sel}")`, 40000, 80);
@@ -227,7 +227,7 @@ async function main() {
     ok('B still showed the OLD mode a second later, twice', trials.every(t => t.B_shows_at_1s === 'ask-writes'), trials.map(t => t.B_shows_at_1s));
     ok('B catches up inside 5 s', trials.every(t => t.B_got && t.B_ms < 5000), trials.map(t => t.B_ms));
     const t1 = Date.now();
-    const mk2 = await api('/api/agent/plans', { run_line: '/run 09a_fake_rabi q2' }, 'Kyunghoon');
+    const mk2 = await api('/api/agent/plans', { run_line: '/run 09a_fake_rabi q2' }, 'user-a');
     const p2 = mk2.body.plan.id;
     const wake = await B.until(`!!document.querySelector("${CARDS} [data-card='plan:${p2}']")`, 45000, 80);
     note('B_sees_new_card_ms', wake.ms);
@@ -237,9 +237,9 @@ async function main() {
 
   /* ═════════ C — both press the same thing at the same moment ═════════ */
   if (PHASE === 'C') {
-    await A.ev('AgentPanel.setActor("Kyunghoon"); 1'); await B.ev('AgentPanel.setActor("Minji"); 1');
+    await A.ev('AgentPanel.setActor("user-a"); 1'); await B.ev('AgentPanel.setActor("user-b"); 1');
     await cleanPlans();
-    const mk = await api('/api/agent/plans', { run_line: '/run 02a_fake_resonator q9' }, 'Kyunghoon');
+    const mk = await api('/api/agent/plans', { run_line: '/run 02a_fake_resonator q9' }, 'user-a');
     const pid = mk.body.plan.id; note('plan_id', pid);
     const sel = `${CARDS} [data-card='plan:${pid}'] .ag-mode select`;
     await A.until(`!!document.querySelector("${sel}")`, 40000, 80);
@@ -254,15 +254,15 @@ async function main() {
     ok('two simultaneous mode presses leave ONE mode', serverMode === 'auto' || serverMode === 'ask-all', serverMode);
     const jr = await api('/api/agent/journal'); const L = JSON.stringify(jr.body);
     note('mode_lines', { auto: (L.match(/mode set to auto/g) || []).length, askall: (L.match(/mode set to ask-all/g) || []).length });
-    ok('the log names BOTH people who pressed', /Kyunghoon/.test(L) && /Minji/.test(L));
+    ok('the log names BOTH people who pressed', /user-a/.test(L) && /user-b/.test(L));
     const aSees = await A.until(`(document.querySelector("${sel}")||{}).value === ${JSON.stringify(serverMode)}`, 45000, 200);
     const bSees = await B.until(`(document.querySelector("${sel}")||{}).value === ${JSON.stringify(serverMode)}`, 45000, 200);
     note('converge', { A: aSees.ms, B: bSees.ms });
     ok('both windows end up on the mode the server holds', !!aSees.v && !!bSees.v, { A: aSees.ms, B: bSees.ms });
 
     const c = await Promise.all([
-      A.ev(`fetch("/api/agent/plans/${pid}/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"Kyunghoon"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})`),
-      B.ev(`fetch("/api/agent/plans/${pid}/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"Minji"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})`),
+      A.ev(`fetch("/api/agent/plans/${pid}/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"user-a"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})`),
+      B.ev(`fetch("/api/agent/plans/${pid}/cancel",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"user-b"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})`),
     ]);
     note('double_cancel_statuses', c);
     await sleep(1200);
@@ -276,8 +276,8 @@ async function main() {
     note('approval_fixture', aid);
     if (aid) {
       const d = await Promise.all([
-        A.ev(`fetch("/api/agent/approvals/${aid}/approve",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"Kyunghoon"},body:"{}",credentials:"same-origin"}).then(function(r){return r.json().then(function(j){return r.status+"|"+(j.error||(j.approval||{}).status||"");});})`),
-        B.ev(`fetch("/api/agent/approvals/${aid}/reject",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"Minji"},body:"{}",credentials:"same-origin"}).then(function(r){return r.json().then(function(j){return r.status+"|"+(j.error||(j.approval||{}).status||"");});})`),
+        A.ev(`fetch("/api/agent/approvals/${aid}/approve",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"user-a"},body:"{}",credentials:"same-origin"}).then(function(r){return r.json().then(function(j){return r.status+"|"+(j.error||(j.approval||{}).status||"");});})`),
+        B.ev(`fetch("/api/agent/approvals/${aid}/reject",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"user-b"},body:"{}",credentials:"same-origin"}).then(function(r){return r.json().then(function(j){return r.status+"|"+(j.error||(j.approval||{}).status||"");});})`),
       ]);
       note('approve_vs_reject', d);
       const ap = (await api('/api/agent/approvals')).body;
@@ -287,16 +287,16 @@ async function main() {
       const L3 = JSON.stringify((await api('/api/agent/journal')).body);
       const line = (L3.match(/(approved|rejected)[^\\]{0,120}/g) || []).slice(-3);
       note('approval_log_lines', line);
-      ok('the Calibration log names WHO decided the approval', /(approved|rejected)[^\\]{0,120}(Kyunghoon|Minji)/.test(L3), line);
+      ok('the Calibration log names WHO decided the approval', /(approved|rejected)[^\\]{0,120}(user-a|user-b)/.test(L3), line);
     }
     await A.shot(OUT + '_A30_after_races.png'); await B.shot(OUT + '_B30_after_races.png');
   }
 
   /* ═════════ O — observer is per WINDOW ═════════ */
   if (PHASE === 'O') {
-    await A.ev('AgentPanel.setActor("Kyunghoon"); 1'); await B.ev('AgentPanel.setActor("Minji"); 1');
+    await A.ev('AgentPanel.setActor("user-a"); 1'); await B.ev('AgentPanel.setActor("user-b"); 1');
     await cleanPlans();
-    const mk = await api('/api/agent/plans', { run_line: '/run 02a_fake_resonator q5' }, 'Kyunghoon');
+    const mk = await api('/api/agent/plans', { run_line: '/run 02a_fake_resonator q5' }, 'user-a');
     const pid = mk.body.plan.id;
     const card = `${CARDS} [data-card='plan:${pid}']`;
     await A.until(`!!document.querySelector("${card}")`, 40000, 80);
@@ -339,7 +339,7 @@ async function main() {
     await A.click('#agent-home .ag-root .ag-observer input'); await sleep(700);
     const back = await doors(A);
     ok('unticking gives A its doors back', back.start === true, back);
-    const srvGate = await A.ev(`fetch("/api/agent/plans/${pid}/mode",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"Kyunghoon"},body:JSON.stringify({mode:"ask-all"}),credentials:"same-origin"}).then(function(r){return r.status;})`);
+    const srvGate = await A.ev(`fetch("/api/agent/plans/${pid}/mode",{method:"POST",headers:{"Content-Type":"application/json","X-SM-Actor":"user-a"},body:JSON.stringify({mode:"ask-all"}),credentials:"same-origin"}).then(function(r){return r.status;})`);
     note('server_accepts_from_any_window', srvGate);
     ok('observer is a WINDOW guard, not a server permission (its own tooltip says so)', srvGate === 200, srvGate);
     await api('/api/agent/plans/' + pid + '/cancel', {}, 'cleanup');
@@ -347,7 +347,7 @@ async function main() {
 
   /* ═════════ E — A stages an edit elsewhere; does B know? ═════════ */
   if (PHASE === 'E') {
-    await A.ev('AgentPanel.setActor("Kyunghoon"); 1'); await B.ev('AgentPanel.setActor("Minji"); 1');
+    await A.ev('AgentPanel.setActor("user-a"); 1'); await B.ev('AgentPanel.setActor("user-b"); 1');
     const trayOf = async (C) => C.ev(`(function(){var t=document.getElementById("pending-tray"); if(!t) return null; return {n:t.getAttribute("data-change-count"), txt:(t.textContent||"").replace(/\\s+/g," ").trim().slice(0,140)};})()`);
     note('A_tray_before', await trayOf(A)); note('B_tray_before', await trayOf(B));
     await A.send('Page.navigate', { url: BASE + '/bulk' });
@@ -382,9 +382,9 @@ async function main() {
 
   /* ═════════ X — one window closes mid-flow ═════════ */
   if (PHASE === 'X') {
-    await A.ev('AgentPanel.setActor("Kyunghoon"); 1'); await B.ev('AgentPanel.setActor("Minji"); 1');
+    await A.ev('AgentPanel.setActor("user-a"); 1'); await B.ev('AgentPanel.setActor("user-b"); 1');
     await cleanPlans();
-    const mk = await api('/api/agent/plans', { run_line: '/run 09a_fake_rabi q11' }, 'Kyunghoon');
+    const mk = await api('/api/agent/plans', { run_line: '/run 09a_fake_rabi q11' }, 'user-a');
     const pid = mk.body.plan.id;
     const card = `${CARDS} [data-card='plan:${pid}']`;
     await B.until(`!!document.querySelector("${card}")`, 40000, 80);
@@ -396,7 +396,7 @@ async function main() {
     const headTxt = await B.ev(`(function(){var e=document.querySelector("${card} .ag-plan-head"); return e? e.textContent.replace(/\\s+/g," ").trim():null;})()`);
     note('B_card_after_A_closed', headTxt);
     ok("A's card survives A's window closing (it is server state)", stillThere === true);
-    ok('…and it still names its author', /Kyunghoon/.test(String(headTxt)), headTxt);
+    ok('…and it still names its author', /user-a/.test(String(headTxt)), headTxt);
     const errsB = errors.filter(e => e.who === 'B');
     note('B_console_errors_after_close', errsB.length);
     ok('B sees no error when the other window goes', errsB.filter(e => !/EvalError/.test(e.text)).length === 0, errsB.slice(0, 3));

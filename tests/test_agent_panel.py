@@ -112,7 +112,7 @@ class TestFeed:
         assert _wait(lambda: any(k["kind"] == "answer" for k in _feed(c)["cards"]))
         d = _feed(c)
         kinds = [k["kind"] for k in d["cards"]]
-        assert kinds[0] == "user" and d["cards"][0]["text"] == "hello there agent" and d["cards"][0]["who"] == "human:kyunghoon"
+        assert kinds[0] == "user" and d["cards"][0]["text"] == "hello there agent" and d["cards"][0]["who"] == "human:user-a"
         ans = [k for k in d["cards"] if k["kind"] == "answer"][0]
         assert ans["text"] == "answer 1: hello there agent" and "<p>answer 1: hello there agent</p>" in ans["html"]
         assert "tool" in kinds and [k for k in d["cards"] if k["kind"] == "tool"][0]["tool"] == "mcp__sm__sm_status"
@@ -165,18 +165,18 @@ class TestPlans:
         # mode on the card
         assert c.post(f"/api/agent/plans/{pid}/mode", json={"mode": "auto"}, headers=HUMAN).get_json()["plan"]["mode"] == "auto"
         assert c.post(f"/api/agent/plans/{pid}/mode", json={"mode": "nope"}, headers=HUMAN).status_code == 400
-        assert "mode set to auto by human:kyunghoon" in _journal(c, inst), "docs/173 S8: a mode change is a journal line"
+        assert "mode set to auto by human:user-a" in _journal(c, inst), "docs/173 S8: a mode change is a journal line"
         # THE click. docs/253 (D-09): the agent that proposed it drives it -- a terminal agent here
         # (no in-app session value) -- so SM's in-app agent is NOT started or told as well
         d = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).get_json()
         assert d["ok"] and d["session_started"] is False and d["pre_ts"] and d["driver"]["kind"] == "terminal"
         p = d["plan"]
-        assert p["status"] == "running" and p["started_by"] == "human:kyunghoon" and p["mode"] == "auto"
+        assert p["status"] == "running" and p["started_by"] == "human:user-a" and p["mode"] == "auto"
         rec = agent_session.load(str(inst), chip)
         assert rec["start_token"] and rec["plan_id"] == pid and rec["mode"] == "auto", "Start arms; the session carries the plan's mode"
         assert rec["grant"]["plan_id"] == pid, "the arming is FOR this plan"
         assert limits.load(str(inst), chip)["mode"] == "ask-writes", "review R1-M4: the chip's default never changes"
-        assert "STARTED by human:kyunghoon (mode auto" in _journal(c, inst)
+        assert "STARTED by human:user-a (mode auto" in _journal(c, inst)
         assert "driven by by_claude in a terminal" in _journal(c, inst)
         # the snapshot the plan can be reverted to, labelled
         with app.app_context():
@@ -220,7 +220,7 @@ class TestPlans:
         pid = r["plan"]["id"]
         d = c.post(f"/api/agent/plans/{pid}/cancel", json={}, headers=HUMAN).get_json()
         assert d["plan"]["status"] == "cancelled" and d["plan"]["steps"][0]["status"] == "cancelled"
-        assert "cancelled by human:kyunghoon" in _journal(c, inst)
+        assert "cancelled by human:user-a" in _journal(c, inst)
         assert c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).status_code == 409
         assert c.get("/api/agent/plans/nope").status_code == 404
         # a running plan closes on Stop: "Stopped by <who>", pending steps cancelled
@@ -229,7 +229,7 @@ class TestPlans:
         assert c.post(f"/api/agent/plans/{pid2}/start", json={}, headers=HUMAN).get_json()["ok"]
         assert c.post("/api/agent/session/stop", json={"mode": "now"}, headers=HUMAN).get_json()["ok"]
         p = c.get(f"/api/agent/plans/{pid2}").get_json()["plan"]
-        assert p["status"] == "stopped" and p["ended_by"] == "human:kyunghoon" and p["note"] == "stop now"
+        assert p["status"] == "stopped" and p["ended_by"] == "human:user-a" and p["note"] == "stop now"
         assert p["steps"][0]["status"] == "cancelled"
         assert c.get("/api/agent/chip").get_json()["plan"]["status"] == "stopped"
 
@@ -309,11 +309,11 @@ class TestHome:
 
     def test_home_without_a_chip_is_the_landing_with_the_current_project_button(self, app, monkeypatch):
         from quam_state_manager.core import qualibrate_config
-        monkeypatch.setattr(qualibrate_config, "tray_status", lambda: {"config_exists": True, "active": "PJ_10082026",
+        monkeypatch.setattr(qualibrate_config, "tray_status", lambda: {"config_exists": True, "active": "lab-J",
                                                                        "state_raw": None, "state_native": None, "state_exists": False})
         html = app.test_client().get("/").get_data(as_text=True)
         assert 'id="agent-home"' not in html and 'class="landing-projects"' in html
-        assert "Open QUAlibrate's current project: PJ_10082026" in html and 'name="project" value="PJ_10082026"' in html
+        assert "Open QUAlibrate's current project: lab-J" in html and 'name="project" value="lab-J"' in html
         assert 'id="agent-popover"' in html, "the floating panel is on every page"
 
     def test_the_floats_home_link_is_a_plain_navigation(self, c):

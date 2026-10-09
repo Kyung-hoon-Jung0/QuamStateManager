@@ -34,7 +34,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 20));
   const note = () => (box.parentNode.querySelector('.ag-actor-note') || {});
   const form = box.closest('form');
   ok(form && form.classList.contains('ag-composer'), 'precondition: the box sits inside the composer form');
-  type('정경훈');
+  type('\uac00\uac01\uac02');
   ok(localStorage.getItem('quam_actor_name') === '', 'precondition: storage holds nothing for a Hangul name');
   ok(/English letters only/.test(note().textContent || '') && /human/.test(note().textContent || '') && !note().hidden,
      'the box says it will record a plain human: ' + note().textContent);

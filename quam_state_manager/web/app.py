@@ -515,6 +515,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # can't inherit a previous app's choice.
     from quam_state_manager.core import qualibrate_config as _qcfg
     chosen = None
+    beats_env = False
     try:
         loc_file = Path(app.instance_path) / "qualibrate_location.json"
         if loc_file.exists():
@@ -525,10 +526,15 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
                    if isinstance(data, dict) else None)
             if isinstance(val, str) and val.strip():
                 chosen = val
+                # The choice outranks the env value it was made against, and
+                # only that one: another conda env's pin still wins. A memo
+                # from before the key existed keeps the old order (env first).
+                beats_env = ("env_at_choice" in data
+                             and data.get("env_at_choice") == _qcfg.env_raw())
     except Exception:  # noqa: BLE001 — a corrupt memo must never block startup
         logging.getLogger(__name__).warning(
             "Could not read qualibrate_location.json", exc_info=True)
-    _qcfg.set_dir_override(chosen)
+    _qcfg.set_dir_override(chosen, beats_env=beats_env)
 
     # Phase 4 §1 — register the XSS-safe JSON filter as `script_json`,
     # used by every template that embeds a JSON payload inside a

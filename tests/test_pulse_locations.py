@@ -251,15 +251,26 @@ def _golden():
     return json.loads(_GOLDEN.read_text(encoding="utf-8"))
 
 
+def _chip_path(key: str) -> Path:
+    """A golden chip key: "lab-X:<field>" resolves through the external lab map
+    (tests run anywhere; the real folder exists only on the verification
+    machine), anything else is a plain path."""
+    if key.startswith("lab-") and ":" in key:
+        from quam_state_manager.core.lab_map import lab_path
+        lab, field = key.split(":", 1)
+        return lab_path(lab, field)
+    return Path(key)
+
+
 @pytest.mark.parametrize("chip", sorted(_golden()["chips"]))
 def test_real_chip_whitelist_identity_golden(chip):
     """The (path, owner, channel, op, gate, alias, used_by) sequence of the
     whitelisted rows equals what the pre-change enumerator produced."""
-    if not (Path(chip) / "state.json").is_file():
+    if not (_chip_path(chip) / "state.json").is_file():
         pytest.skip("real chip not on this machine")
     from quam_state_manager.core.loader import QuamStore
     g = _golden()
-    rows = [r for r in pulse_index.list_pulses(QuamStore(chip).merged)
+    rows = [r for r in pulse_index.list_pulses(QuamStore(_chip_path(chip)).merged)
             if not r["found"]]
     ident = [[r[k] for k in g["keys"]] for r in rows]
     assert len(rows) == g["chips"][chip]["n"]

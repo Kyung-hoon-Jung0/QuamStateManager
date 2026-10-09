@@ -6,6 +6,8 @@ the two must agree. The original is kept here verbatim as the reference.
 """
 from __future__ import annotations
 
+from tests.archive_roots import lab_archive, lab_path
+
 import math
 import random
 from pathlib import Path
@@ -124,7 +126,7 @@ def test_dotted_keys_and_deep_port_paths():
                  _ref_build(doc, wiring_keys={"wiring"}))
 
 
-_REAL = Path(r"D:\work\Customer_Codes\quam_states\260907_KRS_5Q")
+_REAL = lab_path("lab-F")
 
 
 @pytest.mark.skipif(not (_REAL / "state.json").exists(), reason="real chip absent")

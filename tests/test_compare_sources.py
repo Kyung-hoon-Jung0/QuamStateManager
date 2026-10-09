@@ -118,12 +118,12 @@ class TestErrorTaxonomy:
 
 class TestResolveFolders:
     def test_flat_folder(self, tmp_path):
-        folder = _write_full(tmp_path / "quam_states" / "LabA")
+        folder = _write_full(tmp_path / "quam_states" / "lab-A")
         pool = cs.SourcePool()
         src = cs.resolve_source(f"ws:{folder}", pool)
         assert src.origin == "workspace"
-        assert src.chip_name == "LabA"
-        assert src.label == "LabA"
+        assert src.chip_name == "lab-A"
+        assert src.label == "lab-A"
         assert src.snapshot_ts == ""
         assert src.wiring_missing is False
         state, wiring = _state(), _wiring()
@@ -131,19 +131,19 @@ class TestResolveFolders:
         assert pool.get(src.content_hash) is not None
 
     def test_live_quam_state_layout(self, tmp_path):
-        folder = _write_full(tmp_path / "LabA" / "quam_state")
+        folder = _write_full(tmp_path / "lab-A" / "quam_state")
         src = cs.resolve_source(f"ws:{folder}", cs.SourcePool())
-        assert src.chip_name == "LabA"
-        assert src.label == "LabA"
+        assert src.chip_name == "lab-A"
+        assert src.label == "lab-A"
 
     def test_archive_run_label_and_ts(self, tmp_path):
         folder = _write_full(
-            tmp_path / "LabA" / "2026-02-19" / "#12_ramsey_163045" / "quam_state")
+            tmp_path / "lab-A" / "2026-02-19" / "#12_ramsey_163045" / "quam_state")
         src = cs.resolve_source(f"run:{folder}", cs.SourcePool())
         assert src.origin == "run_archive"
-        assert src.label == "LabA #12 · 2026-02-19 16:30:45"
+        assert src.label == "lab-A #12 · 2026-02-19 16:30:45"
         assert src.snapshot_ts == "2026-02-19 16:30:45"
-        assert src.chip_name == "LabA"
+        assert src.chip_name == "lab-A"
 
     def test_missing_wiring_tolerated(self, tmp_path):
         folder = _write(tmp_path / "stateonly", _state(), wiring=None)
@@ -163,8 +163,8 @@ class TestResolveFolders:
         routes copy is the shim the hub UI phase will re-point here)."""
         from quam_state_manager.web.routes import _compare_source_label
         cases = [
-            _write_full(tmp_path / "quam_states" / "LabA"),
-            _write_full(tmp_path / "LabA2" / "quam_state"),
+            _write_full(tmp_path / "quam_states" / "lab-A"),
+            _write_full(tmp_path / "lab-A2" / "quam_state"),
             _write_full(tmp_path / "chipY" / "2026-03-10" / "#7_rabi_153000"
                         / "quam_state"),
         ]
@@ -175,18 +175,18 @@ class TestResolveFolders:
 class TestResolveHistory:
     def test_hist_snapshot(self, tmp_path):
         root = tmp_path / "history"
-        folder = _write_full(root / "LabA" / "20260405_125430_123456")
-        src = cs.resolve_source("hist:LabA/20260405_125430_123456",
+        folder = _write_full(root / "lab-A" / "20260405_125430_123456")
+        src = cs.resolve_source("hist:lab-A/20260405_125430_123456",
                                 cs.SourcePool(), history_root=root)
         assert src.origin == "history"
-        assert src.chip_name == "LabA"
+        assert src.chip_name == "lab-A"
         assert src.snapshot_ts == "2026-04-05 12:54:30"
         assert "history" in src.label
         assert src.path == str(folder)
 
     def test_hist_needs_root(self):
         with pytest.raises(cs.SourcePermanentError):
-            cs.resolve_source("hist:LabA/20260405_125430", cs.SourcePool())
+            cs.resolve_source("hist:lab-A/20260405_125430", cs.SourcePool())
 
     def test_hist_malformed_ref(self, tmp_path):
         with pytest.raises(cs.SourcePermanentError):
@@ -195,7 +195,7 @@ class TestResolveHistory:
 
     def test_hist_missing_snapshot_permanent(self, tmp_path):
         with pytest.raises(cs.SourcePermanentError):
-            cs.resolve_source("hist:LabA/20990101_000000", cs.SourcePool(),
+            cs.resolve_source("hist:lab-A/20990101_000000", cs.SourcePool(),
                               history_root=tmp_path)
 
     def test_hist_traversal_shaped_ref_rejected(self, tmp_path):
@@ -206,9 +206,9 @@ class TestResolveHistory:
             "hist:../../etc/20260101_000000",       # chip_key with /
             "hist:..\\..\\etc/20260101_000000",     # chip_key with \
             "hist:../20260101_000000",              # chip_key = ..
-            "hist:LabA/..",                         # ts not stamp-shaped
-            "hist:LabA/20260101_000000\\..",        # ts with a \ tail
-            "hist:LabA/20260101_000000extra",       # ts with a suffix
+            "hist:lab-A/..",                         # ts not stamp-shaped
+            "hist:lab-A/20260101_000000\\..",        # ts with a \ tail
+            "hist:lab-A/20260101_000000extra",       # ts with a suffix
         ]
         for bad in bads:
             with pytest.raises(cs.SourcePermanentError):
@@ -217,8 +217,8 @@ class TestResolveHistory:
     def test_hist_bare_v1_stamp_still_resolves(self, tmp_path):
         # v1 snapshot dirs have no microsecond tail — the guard must accept them.
         root = tmp_path / "history"
-        _write_full(root / "LabA" / "20260405_125430")
-        src = cs.resolve_source("hist:LabA/20260405_125430",
+        _write_full(root / "lab-A" / "20260405_125430")
+        src = cs.resolve_source("hist:lab-A/20260405_125430",
                                 cs.SourcePool(), history_root=root)
         assert src.origin == "history"
 
@@ -231,7 +231,7 @@ class TestResolveHistory:
 class TestNetworkToken:
     def test_network_only_hash(self):
         """Same network + different qubit names ⇒ SAME network token but
-        different full fingerprint token (the LabA-family A1 case)."""
+        different full fingerprint token (the lab-A-family A1 case)."""
         fp1 = fingerprint_from_dicts(_state(), _wiring("10.1.1.6"))
         s2 = {"qubits": {"qZ9": {"id": "qZ9"}}, "qubit_pairs": {}}
         fp2 = fingerprint_from_dicts(s2, _wiring("10.1.1.6"))
@@ -344,10 +344,10 @@ class TestWorkingOrigin:
         store = self._store()
         pool = cs.SourcePool()
         src = cs.resolve_source(
-            "working:/live/LabA/quam_state", pool,
+            "working:/live/lab-A/quam_state", pool,
             working_lookup=lambda p: store)
         assert src.origin == "working"
-        assert src.chip_name == "LabA"
+        assert src.chip_name == "lab-A"
         assert "working" in src.label
         entry = pool.get(src.content_hash)
         assert entry.state is not store.state

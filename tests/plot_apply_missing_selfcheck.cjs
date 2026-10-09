@@ -43,7 +43,7 @@ window.fetch = function (url, opts) {
             return Promise.resolve({ ok: false, error: "Key 'qA1' not found while navigating 'x'" }); } });
     }
     let body = {};
-    if (url.indexOf('/chip/active-token') === 0) body = { loaded: true, token: 'tokA', name: 'LabA', path: '/c/LabA' };
+    if (url.indexOf('/chip/active-token') === 0) body = { loaded: true, token: 'tokA', name: 'lab-A', path: '/c/lab-A' };
     else if (url.indexOf('/field/peek') === 0) body = peek;
     return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve(body); } });
 };

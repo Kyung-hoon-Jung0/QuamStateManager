@@ -71,10 +71,10 @@ try {
   claimBox.className = 'jr-claim';
   claimBox.setAttribute('data-run', '5');
   claimBox.setAttribute('data-uid', 'abc123:5');
-  claimBox.innerHTML = '<input class="jr-who" value="carol"><input class="jr-note-in" value=""><button class="b">Save</button>';
+  claimBox.innerHTML = '<input class="jr-who" value="user-c"><input class="jr-note-in" value=""><button class="b">Save</button>';
   d.body.appendChild(claimBox);
   w.JournalPage.claim(claimBox.querySelector('.b'));
   assert.equal(posts.length, 1); checks++;
-  assert.deepEqual(posts[0].body, { run_id: '5', uid: 'abc123:5', who: 'carol', note: '' }, 'the claim carries the card'); checks++;
+  assert.deepEqual(posts[0].body, { run_id: '5', uid: 'abc123:5', who: 'user-c', note: '' }, 'the claim carries the card'); checks++;
   console.log(`all checks passed (${checks} checks)`);
 } finally { w.close(); }

@@ -32,7 +32,7 @@ def _iw(state, wiring):
 
 
 def _make_live(tmp_path, f01=6.0e9):
-    live = tmp_path / "live" / "LabA"
+    live = tmp_path / "live" / "lab-A"
     live.mkdir(parents=True)
     state = {"qubits": {"q1": {"id": "q1", "f_01": f01, "xy": {"operations": {}}}},
              "qubit_pairs": {}, "active_qubit_names": ["q1"]}
@@ -218,7 +218,7 @@ class TestInstrumentWiringCluster:
     on real hardware shapes (CR gates, null channels, OPX+/Octave, input LO)."""
 
     def test_null_channel_does_not_crash(self):
-        # A JSON null channel (real LabA_CR pairs carry "coupler": null) must not
+        # A JSON null channel (real lab-A_CR pairs carry "coupler": null) must not
         # crash get_instrument_wiring into a blank rack.
         r = _iw(
             {"qubits": {}, "qubit_pairs": {"p1": {"coupler": None}}},

@@ -1,9 +1,9 @@
 """docs/174 (amended) -- the node subprocess strips class-default root keys so
 the scratch SM adopts matches the chip's own schema and never diverges live.
 
-Found on the real KRISS arbel chain: ``machine.save()`` writes back EVERY field
+Found on the real lab-F lab-G chain: ``machine.save()`` writes back EVERY field
 the quam class declares, so it adds top-level ROOT keys the customer's
-state.json never had (the KRISS class's ``flux_crosstalk_max_v`` /
+state.json never had (the lab-F class's ``flux_crosstalk_max_v`` /
 ``require_flux_crosstalk_dc`` / ``twpa_ext``). The first docs/174 fix only
 cancelled these in SM's DIFF -- but SM's post-run adopt copies the scratch's FULL
 state into the working copy (byte-identical, then to live), so the phantom roots
@@ -15,7 +15,7 @@ top-level key that the chip did not originally have AND the node's
 ``quam_config.my_quam.Quam`` (a node saving materialized 3 root defaults; after
 the strip the scratch matched the pristine chip schema and the next node did not
 refuse). These tests operate on files only (no quam/env needed) so they run in
-the plain ``cqt`` suite.
+the plain ``lab-B`` suite.
 """
 
 from __future__ import annotations
@@ -206,9 +206,9 @@ def test_config_pinned_to_scratch_repoints_state_path(tmp_path):
     cfg.write_text(
         '[qualibrate.storage]\n'
         'type = "local_storage"\n'
-        'location = "D:/data/KRISS"\n'
+        'location = "D:/data/lab-F"\n'
         '[quam]\n'
-        'state_path = "D:/live/kriss"\n'
+        'state_path = "D:/live/lab-F"\n'
         '[quam.serialization]\n'
         'action = "serialize"\n', encoding="utf-8")
     scratch = tmp_path / "agent_runs" / "k" / "quam_state"
@@ -218,7 +218,7 @@ def test_config_pinned_to_scratch_repoints_state_path(tmp_path):
     assert Path(out) != cfg                      # a NEW file, original untouched
     text = Path(out).read_text(encoding="utf-8")
     assert f'state_path = "{str(scratch).replace(chr(92), "/")}"' in text
-    assert 'location = "D:/data/KRISS"' in text  # storage.location left alone
+    assert 'location = "D:/data/lab-F"' in text  # storage.location left alone
     assert text.count("state_path =") == 1       # only the one key rewritten
 
 

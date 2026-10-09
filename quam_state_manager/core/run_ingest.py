@@ -4,7 +4,7 @@ P3's "after a new run <= 30 ms" target cannot do without).
 
 Without it, the first Trends request after a run landed paid the store's
 incremental rescan itself: one ``stat`` per run component in the newest date
-directory -- about 150 ms on the KH archive's 680-run day, measured in
+directory -- about 150 ms on the lab-I archive's 680-run day, measured in
 process, and 0.7-2 s in the browser where the page's own polls queued on the
 same scan lock.
 

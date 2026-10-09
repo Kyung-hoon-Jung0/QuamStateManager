@@ -1,7 +1,7 @@
 """QA F4 -- the Datasets title row wraps instead of pushing its controls off
 the pane.
 
-Measured in real Chrome on the QA rig (KRISS + KH folders, 4,161 runs): at
+Measured in real Chrome on the QA rig (lab-F + lab-I folders, 4,161 runs): at
 1366x768 the search box, '?', Properties and Rescan sat past the pane's
 clientWidth (scrollWidth 1278 vs 1045, a sideways scrollbar); at 1600x950 the
 search box was 102 px wide and Rescan hung off the right edge. Three causes:

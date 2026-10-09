@@ -4,7 +4,7 @@
 
 ``HistoryManager.scan_workspace_alignment`` reads and fingerprints every
 workspace run's quam_state the first time it meets it -- 60 s measured on the
-4,121-run KH archive, inside the ``/param-history/alignment`` request. Its
+4,121-run lab-I archive, inside the ``/param-history/alignment`` request. Its
 result cache is already validated on read (workspace token + the loaded
 chip's fingerprint), so what changes here is only WHO pays for a miss:
 

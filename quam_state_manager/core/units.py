@@ -9,7 +9,7 @@ QUAM stores quantities in **mixed** units by QM convention, and storage is
     ``depletion_time``) in **nanoseconds** (stored as integers)
   - amplitudes are **dimensionless**; flux offsets / ``phi0_voltage`` in **volts**
 
-Verified against real data in ``quam_states/{LabA,deviceB,variantb}/state.json``.
+Verified against real data in ``quam_states/{lab-A,deviceB,variantb}/state.json``.
 
 Two display strategies live here:
 

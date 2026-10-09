@@ -377,7 +377,7 @@ async function main() {
   await sleep(300);
   ok('an HTML payload in the actor name does not execute',
      !(await ev(`!!window.__xss`)), await ev(`(document.querySelector('#agent-home #ag-actor-list')||{}).innerHTML`));
-  ok('Hangul is accepted by the field and stored', (await actorSet('정경훈')) === '정경훈');
+  ok('Hangul is accepted by the field and stored', (await actorSet('\uac00\uac01\uac02')) === '\uac00\uac01\uac02');
 
   /* ── 7b. …but does the PANEL still work with that name? ─────────────
      api() puts the actor name in an X-SM-Actor request header. A header value
@@ -390,21 +390,21 @@ async function main() {
     const banner = await ev(`(function(){var n=document.querySelector('#agent-home .ag-unreachable'); return n? n.textContent : null;})()`);
     return { name: name.slice(0, 24), viaPanel: JSON.parse(viaPanel), viaFetch: viaFetch, banner: banner };
   };
-  const pAscii = await actorProbe('kyunghoon');
+  const pAscii = await actorProbe('user-a');
   ok('an ASCII actor name leaves the panel reachable', pAscii.viaPanel.unreachable === false, pAscii);
   const pLong = await actorProbe('N'.repeat(200));
   ok('a 200-character ASCII actor name leaves the panel reachable', pLong.viaPanel.unreachable === false, pLong);
   const pQuote = await actorProbe('a"b\'c\\d');
   ok('a quote/backslash actor name leaves the panel reachable', pQuote.viaPanel.unreachable === false, pQuote);
-  const pHan = await actorProbe('정경훈');
+  const pHan = await actorProbe('\uac00\uac01\uac02');
   ok('a HANGUL actor name leaves the panel reachable',
      pHan.viaPanel.unreachable === false, pHan);
-  const pEmoji = await actorProbe('kyunghoon 🙂');
+  const pEmoji = await actorProbe('user-a 🙂');
   ok('an emoji in the actor name leaves the panel reachable',
      pEmoji.viaPanel.unreachable === false, pEmoji);
   // if it broke: does a /run still reach the server?
   if (pHan.viaPanel.unreachable) {
-    await ev(`AgentPanel.setActor('정경훈'); 1`);
+    await ev(`AgentPanel.setActor('\uac00\uac01\uac02'); 1`);
     const nBefore = (await feed()).json.live.plans.length;
     await clearToasts();
     await typeIn(R, '/run 11_power_rabi q4', true);
@@ -422,13 +422,13 @@ async function main() {
      JSON.parse(recovered).unreachable === false, recovered);
 
   // persistence across a real reload (with a name that works)
-  await ev(`AgentPanel.setActor('kyunghoon'); 1`);
+  await ev(`AgentPanel.setActor('user-a'); 1`);
   await send('Page.navigate', { url: BASE + '/agent' });
   await sleep(3500);
   await ev(INSTALL);
   await until(`!!document.querySelector('#agent-home .ag-actor')`, 10000);
   ok('the actor name is still in the box after a full page load',
-     (await ev(`(document.querySelector('#agent-home .ag-actor')||{}).value`)) === 'kyunghoon',
+     (await ev(`(document.querySelector('#agent-home .ag-actor')||{}).value`)) === 'user-a',
      await ev(`(document.querySelector('#agent-home .ag-actor')||{}).value`));
   const recents = await ev(`localStorage.getItem('quam_actor_recents')`);
   ok('…and the recents list is capped at 8', (JSON.parse(recents || '[]')).length <= 8, recents);

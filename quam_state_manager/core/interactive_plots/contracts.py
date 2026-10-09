@@ -8,8 +8,7 @@ module bakes those formulas into affine coefficients server-side at figure
 build time, so the client stays dumb: ``update = scale·clicked + offset`` (the
 existing ``clickable`` schema; dBm→amp keeps its named non-affine transform).
 
-Grounded in a line-level anatomy of the LabB customer nodes
-(<work-root>\\Customer_Codes\\LabB\\qualibration_graphs\\superconducting):
+Grounded in a line-level anatomy of the lab's analysis repository:
 
   * 03 res spec / 08 qubit spec — ASSIGN absolute Hz (f_01 = RF = clicked).
   * 05b res spec vs power — INCREMENT semantics: ``f_01 += shift`` where
@@ -26,7 +25,7 @@ Grounded in a line-level anatomy of the LabB customer nodes
     value (the run's snapshot is saved AFTER update_state — when node.json
     ``patches`` exist, ``patches[].old`` holds the run-time value; when
     patches are null — the common case, updates usually declined — the
-    snapshot IS the run-time value). Empirically proven on LabA #60/#33.
+    snapshot IS the run-time value). Empirically proven on lab-A #60/#33.
 
 ``RF_at_run`` is recovered from the DATASET itself
 (``full_freq[q][0] − detuning[0]``) — correct even when the live chip has

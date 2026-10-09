@@ -92,12 +92,12 @@ class TestPrecedence:
         assert d["state"] == "running", d
 
     def test_a_recorded_worker_pid_keeps_a_long_node_alive(self, client, app):
-        agent_session.save(app.instance_path, _key(client), backend="codex", owner="이OO", pid=os.getpid())
+        agent_session.save(app.instance_path, _key(client), backend="codex", owner="\uac01OO", pid=os.getpid())
         _ev(client, hook_event_name="PreToolUse", tool_name="Bash", tool_use_id="t", summary="python 12_T1.py",
             ts=time.time() - 40 * 60)
         d = _now(client)
         assert d["state"] == "running", "a 40-minute T1 with a live pid is running, not stalled"
-        assert d["session"]["owner"] == "이OO" and d["session"]["alive"] is True
+        assert d["session"]["owner"] == "\uac01OO" and d["session"]["alive"] is True
 
     def test_waiting_and_limited_outrank_everything(self, client, app, monkeypatch):
         _ev(client, hook_event_name="PreToolUse", tool_name="Bash", tool_use_id="t", summary="python 12_T1.py")
@@ -184,7 +184,7 @@ class TestTheWake:
         w = run_watch.RunWatcher()
         app.config["run_watcher"] = w
         before = w.tick
-        r = client.post("/api/agent/limits", json={"mode": "auto"}, headers={**_H, "X-SM-Actor": "박OO"})
+        r = client.post("/api/agent/limits", json={"mode": "auto"}, headers={**_H, "X-SM-Actor": "\uac00OO"})
         assert r.status_code == 200 and w.tick == before + 1
 
 
@@ -192,15 +192,15 @@ class TestSessionAndStop:
     def test_stop_is_recorded_before_anything_is_killed(self, client, app):
         assert client.post("/api/agent/session/stop", json={}, headers=_H).status_code == 409
         agent_session.save(app.instance_path, _key(client), backend="claude", owner="김OO", pid=1)
-        r = client.post("/api/agent/session/stop", json={"mode": "now"}, headers={**_H, "X-SM-Actor": "박OO"})
+        r = client.post("/api/agent/session/stop", json={"mode": "now"}, headers={**_H, "X-SM-Actor": "\uac00OO"})
         assert r.status_code == 200
         rec = agent_session.load(app.instance_path, _key(client))
-        assert rec["agent_stop"]["mode"] == "now" and rec["agent_stop"]["who"] == "human:박OO"
+        assert rec["agent_stop"]["mode"] == "now" and rec["agent_stop"]["who"] == "human:\uac00OO"
         assert agent_session.stopped(rec)
         s = client.get("/api/agent/session").get_json()["session"]
         assert s["stopped"] is True and s["owner"] == "김OO"
         from quam_state_manager.core import journal
-        assert "Stop (now) pressed by human:박OO" in journal.read(app.instance_path, "chip")
+        assert "Stop (now) pressed by human:\uac00OO" in journal.read(app.instance_path, "chip")
 
 
 class TestThePillFitsANarrowWindow:

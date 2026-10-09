@@ -1,7 +1,7 @@
 """2Q CZ-family 2-D maps — contract-faithful interactive reproductions.
 
 Covers the CZ amplitude/leakage/SNZ/JAZZ/coupler-zero nodes whose decision
-variable IS a plotted axis (per the LabB anatomy):
+variable IS a plotted axis (per the lab-B anatomy):
 
   * 20c/20d leakage amplification (+PALEA)  → coupler_flux_pulse.amplitude = x
   * 33b/33c JAZZ-N / JAZZ2-N                → flux_pulse_qubit.amplitude  = x(V)
@@ -316,7 +316,7 @@ def _snz_map(bundle, key, pname):
     if _is_updating_snz(bundle) and absolute and tpe.size:
         # flat_length is state-derived (snapshot), not click-derived: a
         # constant target (scale 0) staged alongside — honest via provenance.
-        # ALL targets are routed through the run's `operation` (the LabB
+        # ALL targets are routed through the run's `operation` (the lab-B
         # 38_2/39_2 update_state writes to the macro the run actually swept) —
         # read path and staged path always agree.
         op = contracts.run_operation(bundle, default="cz_SNZ")

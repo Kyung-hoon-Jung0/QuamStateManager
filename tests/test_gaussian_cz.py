@@ -14,6 +14,8 @@ The customer's ``add_gaussian_cz_macros.py`` as an SM feature. Three layers:
   until overwrite=1, archives refuse, and — the docs/98-grade proof — the
   result still ``Quam.load()``s in the customer env.
 """
+
+from tests.archive_roots import lab_archive, lab_path
 import json
 import shutil
 import subprocess
@@ -24,7 +26,7 @@ import pytest
 
 from quam_state_manager.core import gaussian_cz
 
-_REAL = Path("D:/work/Customer_Codes/PJ_10082026/quam_state")
+_REAL = lab_path("lab-J")
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 
@@ -335,7 +337,7 @@ class TestQuamLoadRoundTrip:
 
 
 class TestBarePulseRecognized:
-    """docs/126 follow-up (found while verifying the CQT XEB run #2560): the
+    """docs/126 follow-up (found while verifying the lab-B XEB run #2560): the
     bare ``quam.components.pulses.Pulse`` is a DIGITAL-MARKER-ONLY pulse —
     quam's own waveform is None — and real chips carry 11 of them as the QDAC
     trigger pulses (docs/119). SM used to brand them "Unrecognized pulse

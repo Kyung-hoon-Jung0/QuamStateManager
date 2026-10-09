@@ -6,6 +6,8 @@ absent, pinning the exact numbers that round measured.
 """
 from __future__ import annotations
 
+from tests.archive_roots import lab_archive, lab_path
+
 from pathlib import Path
 
 import pytest
@@ -150,7 +152,7 @@ class TestConclude:
         assert len(cand["resonator_frequency"]) == 3
 
 
-_DAY = Path(r"D:\work\Customer_Codes\CQT\data\2026-08-13")
+_DAY = lab_archive("lab-B") / "2026-08-13"
 
 
 @pytest.mark.skipif(not _DAY.exists(), reason="pilot archive not on this machine")

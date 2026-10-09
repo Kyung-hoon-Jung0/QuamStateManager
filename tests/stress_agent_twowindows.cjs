@@ -113,8 +113,8 @@ async function main() {
   ok('the two windows have SEPARATE storage (two machines, not two tabs)', isoB === null, { B_sees: isoB });
 
   /* 1. names */
-  const NAME_A = '정경훈';   // Hangul, deliberately
-  const NAME_B = 'Minji';
+  const NAME_A = '\uac00\uac01\uac02';   // Hangul, deliberately
+  const NAME_B = 'user-b';
   await A.typeInto('#agent-home .ag-actor', NAME_A);
   const aStored = await A.ev('localStorage.getItem("quam_actor_name")');
   const aBox = await A.ev('document.querySelector("#agent-home .ag-actor").value');
@@ -191,7 +191,7 @@ async function main() {
   ok('the OTHER window is untouched by it', aCtl.start > 0 && aCtl.cancel > 0 && !aCtl.modeDisabled && aCtl.observing === 0, aCtl);
   await B.shot(OUT.replace(/\.json$/, '_03_B_observer.png'));
   await A.shot(OUT.replace(/\.json$/, '_04_A_normal.png'));
-  const obsTry = await B.ev('fetch("/api/agent/plans/' + planId + '/mode",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"Minji"},body:JSON.stringify({mode:"auto"}),credentials:"same-origin"}).then(function(r){return r.status;})');
+  const obsTry = await B.ev('fetch("/api/agent/plans/' + planId + '/mode",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"user-b"},body:JSON.stringify({mode:"auto"}),credentials:"same-origin"}).then(function(r){return r.status;})');
   note('observer_is_client_side_only', { status_from_observer_window: obsTry });
   await B.ev('AgentPanel.setObserver(false); 1'); await sleep(600);
   fs.writeFileSync(OUT, JSON.stringify({ results, notes, errors }, null, 1));
@@ -218,7 +218,7 @@ async function main() {
   fs.writeFileSync(OUT, JSON.stringify({ results, notes, errors }, null, 1));
 
   /* 7. hostile names */
-  const nameCases = [['empty', ''], ['quote+backslash', 'a"b\\c'], ['200 chars', 'N'.repeat(200)], ['hangul', '김민지']];
+  const nameCases = [['empty', ''], ['quote+backslash', 'a"b\\c'], ['200 chars', 'N'.repeat(200)], ['hangul', '김\uac00\uac01']];
   const nameOut = [];
   for (const c of nameCases) {
     await A.ev('AgentPanel.setActor(' + JSON.stringify(c[1]) + '); 1');
@@ -235,7 +235,7 @@ async function main() {
   note('name_cases', nameOut);
 
   /* 8. the Calibration log */
-  await A.ev('AgentPanel.setActor("Kyunghoon"); 1');
+  await A.ev('AgentPanel.setActor("user-a"); 1');
   await A.ev('AgentPanel.setPlanMode("' + planId + '","ask-all"); 1');
   await sleep(1800);
   await A.send('Page.navigate', { url: BASE + '/journal' });
@@ -244,7 +244,7 @@ async function main() {
   const log = await A.ev('document.body.textContent.replace(/\\s+/g," ")');
   note('journal_excerpt', (log || '').slice(0, 3000));
   ok('the Calibration log records the plan', /plan/.test(log || ''), (log || '').slice(0, 200));
-  ok('and names a person for it', /by human:|Kyunghoon|typed by/i.test(log || ''), null);
+  ok('and names a person for it', /by human:|user-a|typed by/i.test(log || ''), null);
   await A.shot(OUT.replace(/\.json$/, '_06_journal.png'));
   await A.send('Page.navigate', { url: BASE + '/' });
   await A.until('!!document.querySelector("#agent-home .ag-root .ag-cards")', 25000);
@@ -252,7 +252,7 @@ async function main() {
 
   /* 9. both cancel at the same moment */
   const mk = (who) => 'fetch("/api/agent/plans/' + planId + '/cancel",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json","X-SM-Actor":"' + who + '"},body:"{}",credentials:"same-origin"}).then(function(r){return r.status;})';
-  const [s1, s2] = await Promise.all([A.ev(mk('Kyunghoon')), B.ev(mk('Minji'))]);
+  const [s1, s2] = await Promise.all([A.ev(mk('user-a')), B.ev(mk('user-b'))]);
   note('double_cancel_status', { A: s1, B: s2 });
   await sleep(2000);
   const jt = await A.ev('fetch("/api/agent/journal",{headers:{Accept:"application/json"}}).then(function(r){return r.json();}).then(function(j){return JSON.stringify(j).slice(0,8000);})');

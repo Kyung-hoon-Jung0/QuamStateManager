@@ -182,11 +182,11 @@ function cell(win, group, rid, field) {
   ok(r.ok, 'B7: 7.3+7.9 GHz solvable');
   ok(r.lo >= 7.5e9 - 1 && r.lo <= 7.7e9 + 1, 'B7: LO in [7.5, 7.7] GHz (got ' + r.lo + ')');
 
-  // B8: real-fleet shape (LabA bank A): 6 resonators, span ~0.63 GHz.
+  // B8: real-fleet shape (lab-A bank A): 6 resonators, span ~0.63 GHz.
   const bank = [7.156e9, 7.221e9, 7.294e9, 7.366e9, 7.439e9, 7.516e9]
     .map(function (rf) { return { rf: rf, needHole: true }; });
   r = T.solveLoWindow(bank);
-  ok(r.ok, 'B8: LabA-shaped bank solvable');
+  ok(r.ok, 'B8: lab-A-shaped bank solvable');
   bank.forEach(function (e) {
     const IF = Math.abs(e.rf - r.lo);
     ok(IF >= HOLE - 1 && IF <= 0.4e9 + 1, 'B8: ' + e.rf + ' IF=' + IF / 1e6 + ' MHz valid');

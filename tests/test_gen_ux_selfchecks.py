@@ -37,6 +37,8 @@
 
 Skips without node + jsdom.
 """
+
+# Selfcheck examples use generic device names and lab keys.
 import shutil
 import subprocess
 from pathlib import Path

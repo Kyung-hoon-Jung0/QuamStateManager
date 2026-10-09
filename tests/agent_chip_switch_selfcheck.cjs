@@ -22,10 +22,10 @@ const ap = { id: 'ap-old', kind: 'writes', node: '17_T1', targets: ['q7'], creat
            { path: 'qubits.q7.T2ramsey', old: 1e-5, new: 2e-5, now: 1e-5, now_known: true }] };
 const plan = { id: 'pl-old', status: 'draft', title: 'power rabi on q1..q30', steps: [], created: now };
 const feeds = {
-  A: { ok: true, chip: 'KRS_QA_30Q', chip_key: 'KRS_QA_30Q-aaaa', qubits: 30, last: 3, agent_seq: 1,
+  A: { ok: true, chip: 'LAB_QA_30Q', chip_key: 'LAB_QA_30Q-aaaa', qubits: 30, last: 3, agent_seq: 1,
        cards: [{ n: 3, kind: 'say', role: 'agent', text: 'hello from the 30Q chip', ts: now }],
        session: {}, file: {}, now: { state: 'waiting', waiting: 1 }, live: { approvals: [ap], plans: [plan], runs: [] } },
-  B: { ok: true, chip: '260907_KRS_5Q', chip_key: '260907_KRS_5Q-bbbb', qubits: 5, last: 0, agent_seq: 2,
+  B: { ok: true, chip: 'lab-F', chip_key: 'lab-F-bbbb', qubits: 5, last: 0, agent_seq: 2,
        cards: [], session: {}, file: {}, now: { state: 'idle' }, live: { approvals: [], plans: [], runs: [] } },
 };
 let cur = 'A';
@@ -44,7 +44,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 30));
   await tick(80);
   const head = () => document.querySelector('#agent-home .ag-chip').textContent + ' ' + document.querySelector('#agent-home .ag-qubits').textContent;
   const apCard = () => document.querySelector('[data-card="approval:ap-old"]');
-  ok(/KRS_QA_30Q 30 qubits/.test(head()), 'precondition: the heading names the 30Q chip: ' + head());
+  ok(/LAB_QA_30Q 30 qubits/.test(head()), 'precondition: the heading names the 30Q chip: ' + head());
   ok(!!apCard(), 'precondition: the 30Q approval card is on screen');
   ok(/hello from the 30Q chip/.test(document.querySelector('#agent-home .ag-cards').textContent), 'precondition: the 30Q chat card too');
   ok(!!document.querySelector('[data-card="plan:pl-old"]'), 'precondition: the 30Q plan card too');
@@ -59,7 +59,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 30));
   cur = 'B';
   document.dispatchEvent(new window.CustomEvent('sm:agent-changed', { detail: { agent_seq: 2 } }));
   await tick(120);
-  ok(/260907_KRS_5Q 5 qubits/.test(head()), 'the heading names the chip now open: ' + head());
+  ok(/lab-F 5 qubits/.test(head()), 'the heading names the chip now open: ' + head());
   ok(!apCard(), 'the old chip\'s approval card (with its Write to chip) is gone');
   ok(!/hello from the 30Q chip/.test(document.querySelector('#agent-home .ag-cards').textContent), 'the old chip\'s chat is gone');
   ok(!document.querySelector('[data-card="plan:pl-old"]'), 'the old chip\'s plan card is gone');

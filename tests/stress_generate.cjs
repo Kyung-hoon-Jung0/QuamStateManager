@@ -1,3 +1,4 @@
+const { labPath } = require('./lab_map.cjs');
 /* Generate Config wizard (/generate) — hostile-user stress in real headless
  * Chrome over CDP.
  *
@@ -195,8 +196,8 @@ async function main() {
   ok('…and at least one of them probes usable (has the QM stack)',
      (envPick || []).some(r => r.state === 'ok'), (envPick || []).map(r => r.state));
   const usable = (envPick || []).filter(r => r.state === 'ok');
-  // Choose the cqt env if present (it has the customer QM stack), else any usable one.
-  const chosen = usable.find(r => /[\\/]cqt[\\/]/i.test(r.py || '')) || usable[0] || (envPick || [])[0];
+  // Choose the lab-B env if present (it has the customer QM stack), else any usable one.
+  const chosen = usable.find(r => (r.py || '').replace(/\\/g, '/').toLowerCase() === labPath('lab-B', 'python').replace(/\\/g, '/').toLowerCase()) || usable[0] || (envPick || [])[0];
   // Clear whatever the auto-pick chose, so the CLICK is what is under test.
   // NB: the row is found by ATTRIBUTE COMPARISON, not a CSS attribute
   // selector — a Windows path's backslashes are CSS escapes and

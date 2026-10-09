@@ -1435,7 +1435,7 @@ class DatasetStore:
         # its files are completed INSIDE the run folder, which moves no date
         # dir's mtime, so a closed gate froze it "incomplete" -- out of every
         # Trends view and the Datasets table -- until some unrelated run
-        # landed. Measured on the KH rig: a run copied while the run-watch
+        # landed. Measured on the lab-I rig: a run copied while the run-watch
         # tick rescanned stayed missing from /trends/series. The bet stays
         # bounded by ``_retry_incomplete`` (an unchanging broken folder
         # leaves ``_incomplete_paths``), so this cannot keep the gate open

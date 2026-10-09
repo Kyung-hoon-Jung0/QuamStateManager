@@ -294,7 +294,7 @@ def test_populate_pair_key_wiring_fallback_and_raw_name():
 # --- r16 adaptive loading (docs/72): ports-union, null channels, qubit union ---
 
 def _customer17q_shaped():
-    """Mini replica of the LabD-17Q customer shape: ports live in STATE.json,
+    """Mini replica of the lab-D-17Q customer shape: ports live in STATE.json,
     wiring carries only wiring.qubits + network, slot 7 has exactly one user."""
     state = {
         "qubits": {"q1": {}, "q2": {}},
@@ -334,7 +334,7 @@ def _fems_of(spec):
 
 def test_ports_inventory_unions_into_fems():
     # slot 7's ONLY user is q2.z — delete q2 from wiring and the FEM must
-    # survive via the state ports inventory (the LabD-17Q slot-7 report).
+    # survive via the state ports inventory (the lab-D-17Q slot-7 report).
     state, wiring = _customer17q_shaped()
     del wiring["wiring"]["qubits"]["q2"]
     r = reconstruct_spec(state, wiring)

@@ -113,7 +113,7 @@ def world(tmp_path, monkeypatch):
         monkeypatch.setattr(routes, "_display_zone", lambda: {"zone": "America/New_York"})
         previous = {}
 
-        def add(doc, *, kind="run", actor="human:alice", src="apply", flags=0,
+        def add(doc, *, kind="run", actor="human:user-a", src="apply", flags=0,
                 undoes=None, instant=f"{DAY}T12:00:00-04:00", node="scan", run_id=None):
             nonlocal previous
             rank = store.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] + 1
@@ -149,7 +149,7 @@ def test_run_exact_rows_without_snapshot(world):
     assert cards[1]["writes"] == [
         {"path": "enabled", "old": None, "new": True, "op": "add", "proven": False},
         {"path": "v", "old": 1, "new": 2, "op": "set", "proven": False}]
-    assert cards[1]["author"] == "human:alice"
+    assert cards[1]["author"] == "human:user-a"
     body = world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True)
     card = _card_html(body, 'id="card-2"')
     assert 'data-path="v"' in card and _ba("1.0", "2.0") in card
@@ -343,7 +343,7 @@ def test_report_same_day_function_redaction_and_exclusion(world, monkeypatch):
     assert "127.0.0.1" not in on and "127.0.0.1" in off
     for literal in ("host.example.internal", "C:/private/archive"):
         assert literal not in on and literal in off
-    assert "human:alice" in on and "Applied to the chip" in on and "value" in on
+    assert "human:user-a" in on and "Applied to the chip" in on and "value" in on
     shell = '<html><head><title>Report</title></head><body>' + on + '</body></html>'
     included = client.post("/chip-status/report/finalize", json={
         "html": shell, "sections": ["calibration_log"], "redact": True},
@@ -354,7 +354,7 @@ def test_report_same_day_function_redaction_and_exclusion(world, monkeypatch):
                          headers={"Origin": "http://localhost"})
     assert result.status_code == 400 and "not checked: calibration_log" in result.get_json()["error"]
     excluded = client.get("/chip-status/report?sections=overview").get_data(as_text=True)
-    assert 'data-rep-sec="calibration_log" data-rep-lazy' in excluded and "human:alice" not in excluded
+    assert 'data-rep-sec="calibration_log" data-rep-lazy' in excluded and "human:user-a" not in excluded
     clean = client.post("/chip-status/report/finalize", json={
         "html": '<html><head><title>Report</title></head><body></body></html>', "sections": [], "redact": True},
         headers={"Origin": "http://localhost"})
@@ -371,14 +371,14 @@ def test_report_refreshes_after_ledger_change(world):
 
 def test_sm_original_entries_retain_each_actor(world):
     eid = world["add"]({"v": 2}, kind="sm_apply")
-    original = [{"path": "values.0", "old": 1, "new": 2, "by": "human:alice"},
+    original = [{"path": "values.0", "old": 1, "new": 2, "by": "human:user-a"},
                 {"path": "values.1", "old": 3, "new": 4, "by": "by_agent"}]
     world["store"].conn.execute("UPDATE sm_events SET entries=?,entries_n=? WHERE eid=?",
                                  (gzip.compress(json.dumps(original).encode()), 2, eid))
     world["store"].conn.commit()
     card = world["build"]()["cards"][0]
     assert [(e["path"], e["actor"], e["old"], e["new"]) for e in card["entries"]] == [
-        ("values.0", "human:alice", 1, 2), ("values.1", "by_agent", 3, 4)]
+        ("values.0", "human:user-a", 1, 2), ("values.1", "by_agent", 3, 4)]
 
 
 def test_hub_preserves_gates_figures_claims_and_multiline_answers(world):
@@ -389,7 +389,7 @@ def test_hub_preserves_gates_figures_claims_and_multiline_answers(world):
     (folder / "node.json").write_text(json.dumps({"metadata": {"run_start": f"{DAY}T12:00:00-04:00"},
         "data": {"parameters": {"model": {"qubits": ["qA1"]}}, "outcomes": {"qA1": "successful"}}}))
     (folder / "data.json").write_text(json.dumps({"figures": {"figure-a": "figure-a.png"}}))
-    story.claim_run(world["inst"], "chipX", 1, author="human:alice", note="the claim note")
+    story.claim_run(world["inst"], "chipX", 1, author="human:user-a", note="the claim note")
     journal.append(world["inst"], "chipX", "first answer\nsecond answer", kind="agent", run_id=1,
                    when=datetime.fromisoformat(f"{DAY}T12:00:00"))
     calls = []
@@ -401,7 +401,7 @@ def test_hub_preserves_gates_figures_claims_and_multiline_answers(world):
     card = build()["cards"][0]
     # figure names as the Datasets scanner names them (what /dataset/<uid>/fig/ serves)
     assert card["gate"]["verdict"] == "pass" and card["figures"] == ["figures.figure-a"]
-    assert card["author"] == "human:alice" and card["note"] == "the claim note"
+    assert card["author"] == "human:user-a" and card["note"] == "the claim note"
     assert card["journal"][0]["text"] == "first answer\nsecond answer"
     assert build()["cards"][0]["gate"] == card["gate"] and calls == [1]
 
@@ -435,7 +435,7 @@ def test_large_sm_entries_load_from_primary_blob(world):
 def test_plan_step_recovered_from_durable_plan(world):
     from quam_state_manager.core import agent_plans
     plan = agent_plans.add(world["inst"], "chipX", title="the plan", steps=[{"node": "scan", "targets": ["qA1"]}],
-                           mode="ask-writes", created_by="human:alice")
+                           mode="ask-writes", created_by="human:user-a")
     agent_plans.step_update(world["inst"], "chipX", plan["id"], 0, run_key="agent-a")
     end = datetime.fromisoformat(f"{DAY}T12:00:00-04:00").timestamp()
     story.record_agent_run(world["inst"], {"key": "agent-a", "chip": "chipX", "node": "scan", "actor": "by_agent",
@@ -484,11 +484,11 @@ def _rows_world(world):
     world["add"]({"keep": 0, "f": 5168000000.0, "off": -7.995537540056441e-05, "gone": 3})
     world["add"]({"keep": 0, "f": 5169000000.0, "off": -7.9e-05, "plan": "target"})
     eid = world["add"]({"keep": 0, "f": 5169000000.0, "off": -7.9e-05, "plan": "control"},
-                       kind="sm_apply", actor="human:alice")
-    entries = [{"path": "plan", "old": "target", "new": "control", "by": "human:alice"},
-               {"path": "added.key", "new": "target", "created": True, "by": "human:alice"},
+                       kind="sm_apply", actor="human:user-a")
+    entries = [{"path": "plan", "old": "target", "new": "control", "by": "human:user-a"},
+               {"path": "added.key", "new": "target", "created": True, "by": "human:user-a"},
                {"path": "removed.key", "old": 4, "deleted": True, "by": "by_agent"},
-               {"path": "off", "old": -7.995537540056441e-05, "new": -7.9e-05, "by": "human:alice"}]
+               {"path": "off", "old": -7.995537540056441e-05, "new": -7.9e-05, "by": "human:user-a"}]
     world["store"].conn.execute("UPDATE sm_events SET entries=?,entries_n=? WHERE eid=?",
                                 (gzip.compress(json.dumps(entries).encode()), len(entries), eid))
     world["store"].conn.commit()
@@ -828,18 +828,18 @@ def test_claims_and_numbered_lines_belong_to_one_card(world, tmp_path):
     root_b = world["store"].register_root(tmp_path / "archive-b", "-04:00")
     _, flat = _run_event(world, {"v": 1}, clock="12:00:00", run_id=5)
     _run_event(world, {"v": 2}, clock="13:00:00", run_id=5, root=root_b, prev=flat)
-    story.claim_run(world["inst"], "chipX", 5, author="human:bob")
+    story.claim_run(world["inst"], "chipX", 5, author="human:user-b")
     journal.append(world["inst"], "chipX", "about the fifth run", run_id=5, when=datetime(2026, 10, 4, 3, 0, 0))
     data = world["build"]()
     runs = [c for c in data["cards"] if c["kind"] == "run"]
     assert [c["author"] for c in runs] == ["unknown", "unknown"]
     assert not any(c["journal"] for c in runs) and [e["text"] for e in data["loose"]] == ["about the fifth run"]
     uid_b = runs[1]["card_uid"]
-    r = world["client"].post("/journal/claim", json={"run_id": 5, "uid": uid_b, "who": "carol"},
+    r = world["client"].post("/journal/claim", json={"run_id": 5, "uid": uid_b, "who": "user-c"},
                              headers={"Origin": "http://localhost"})
     assert r.status_code == 200
     runs = [c for c in world["build"]()["cards"] if c["kind"] == "run"]
-    assert [c["author"] for c in runs] == ["unknown", "human:carol"]
+    assert [c["author"] for c in runs] == ["unknown", "human:user-c"]
     html = world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True)
     assert f'data-uid="{uid_b}"' in html
 
@@ -856,10 +856,10 @@ def test_a_bare_number_claim_names_the_run_of_the_datasets_folder(world, tmp_pat
               qubits=["qA1"], qubit_pairs=[], outcomes={}, status="", figure_names=[], time="13:00:00")
     ds = NS(runs={5: info}, folder_path=str(tmp_path / "archive-b"),
             get_previous_same_experiment_id=lambda rid: None, get_run=lambda rid: None)
-    story.claim_run(world["inst"], "chipX", 5, author="human:bob")
+    story.claim_run(world["inst"], "chipX", 5, author="human:user-b")
     runs = [c for c in story.build_day(world["inst"], "chipX", DAY, ds=ds, ledger=world["ctx"],
                                        with_gates=False)["cards"] if c["kind"] == "run"]
-    assert [c["author"] for c in runs] == ["unknown", "human:bob"]
+    assert [c["author"] for c in runs] == ["unknown", "human:user-b"]
 
 
 def test_report_hides_past_network_values_and_actor_hosts(world):
@@ -1075,7 +1075,7 @@ def test_a_partly_undone_write_marks_the_rows_taken_back(world):
     import gzip
     world["add"]({"a": 1, "b": 1})
     eid = world["add"]({"a": 2, "b": 2}, kind="sm_apply", flags=PARTLY_UNDONE)
-    entries = [{"path": "a", "old": 1, "new": 2, "by": "human:alice"}, {"path": "b", "old": 1, "new": 2, "by": "human:alice"}]
+    entries = [{"path": "a", "old": 1, "new": 2, "by": "human:user-a"}, {"path": "b", "old": 1, "new": 2, "by": "human:user-a"}]
     world["store"].conn.execute("UPDATE sm_events SET entries=?,entries_n=? WHERE eid=?",
                                 (gzip.compress(json.dumps(entries).encode()), 2, eid))
     world["store"].conn.commit()
@@ -1114,14 +1114,14 @@ def test_plain_words_on_cards_one_who_and_values_vs_writes(world):
     # P3: compact English, one "who" per card, "N writes (M values)"
     import gzip
     world["add"]({"a": 1, "b": 1})
-    eid = world["add"]({"a": 2, "b": 3, "c": 4}, kind="sm_apply", src="keep_mine", actor="human:alice")
-    entries = [{"path": "a", "old": 1, "new": 2, "by": "human:alice"},
-               {"path": "b", "old": 1, "new": 3, "by": "human:alice"},
+    eid = world["add"]({"a": 2, "b": 3, "c": 4}, kind="sm_apply", src="keep_mine", actor="human:user-a")
+    entries = [{"path": "a", "old": 1, "new": 2, "by": "human:user-a"},
+               {"path": "b", "old": 1, "new": 3, "by": "human:user-a"},
                {"path": "c", "new": 4, "created": True, "by": "by_agent"}]
     world["store"].conn.execute("UPDATE sm_events SET entries=?,entries_n=? WHERE eid=?",
                                 (gzip.compress(json.dumps(entries).encode()), 3, eid))
     world["store"].conn.commit()
-    world["add"]({"a": 2, "b": 3, "c": 5, "d": 1}, kind="sm_apply", actor="human:alice")
+    world["add"]({"a": 2, "b": 3, "c": 5, "d": 1}, kind="sm_apply", actor="human:user-a")
     html = world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True)
     card = _card_html(html, f'id="write-event-{eid}"')
     assert "Kept mine, overwrote live: 3 values</span>" in card

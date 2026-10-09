@@ -131,7 +131,7 @@ _GENERIC_STATE_DIRS = frozenset({"quam_state", "quam_states", "quam-state", "sta
 def chip_label(path: str | Path) -> str:
     """A short human chip name for the /workbench bar.
 
-    Uses the folder's OWN name (e.g. ``quam_states/LabA`` → ``LabA``) unless
+    Uses the folder's OWN name (e.g. ``quam_states/lab-A`` → ``lab-A``) unless
     that name is a generic state-container (``quam_state``/``state``/…), in which
     case it falls back to :func:`history.chip_name_for` (which derives the chip
     from the ``<chip>/quam_state`` and per-experiment layouts).

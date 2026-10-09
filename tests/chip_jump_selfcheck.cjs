@@ -80,7 +80,7 @@ function edge(a, b) {
   return { pair_id: a + '-' + b, source: a, target: b, has_cz: true, gate_kind: 'cz',
            gate_fidelities: [{ metric: 'StandardRB', gate: 'cz_SNZ', level: 'gate', value: 0.93 }] };
 }
-// the KRISS shape: a 5-qubit chain
+// the lab-F shape: a 5-qubit chain
 const CHAIN = { nodes: ['0,0', '1,0', '2,0', '3,0', '4,0'].map((l, i) => node('q' + (i + 1), l)),
                 edges: [edge('q1', 'q2'), edge('q2', 'q3'), edge('q3', 'q4'), edge('q4', 'q5')] };
 

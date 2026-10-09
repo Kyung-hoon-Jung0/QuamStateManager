@@ -43,6 +43,7 @@
         <div class="qualibrate-locate-body">
             {% include '_qualibrate_locate.html' %}
             {% if listing.source == 'sm-override' %}
+            {% include '_qualibrate_env_note.html' %}
             <form hx-post="/qualibrate/use-default-location" class="locate-use-form"
                   hx-confirm="Forget the chosen folder and go back to the default/env resolution?">
                 <button type="submit" class="btn-sm">Reset to default location</button>

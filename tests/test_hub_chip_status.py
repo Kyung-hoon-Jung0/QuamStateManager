@@ -214,15 +214,15 @@ class TestSmWrites:
     def test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked(self, sm):
         c = sm["client"]
         assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "4.5e-5"}).status_code == 200
-        assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "alice"}).status_code == 200
+        assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "user-a"}).status_code == 200
         entry = c.get(META).get_json()["q"]["T1"]["qA1"]
-        assert entry["actor"] == "human:alice" and entry["kind"] == "sm_apply"
-        assert entry["label"] == "applied by alice" and entry["run"] is None
-        assert c.post("/undo", headers={"X-SM-Actor": "alice"}).status_code == 200
+        assert entry["actor"] == "human:user-a" and entry["kind"] == "sm_apply"
+        assert entry["label"] == "applied by user-a" and entry["run"] is None
+        assert c.post("/undo", headers={"X-SM-Actor": "user-a"}).status_code == 200
         attrs = series_of(c.get(TRENDS), "qA1")["attr"].values()
-        assert any(a["label"] == "applied by alice (undone)" for a in attrs)
-        assert any(a["label"] == "undo by alice" for a in attrs)
-        assert "applied by alice (undone)" in c.get(CHANGES).data.decode()
+        assert any(a["label"] == "applied by user-a (undone)" for a in attrs)
+        assert any(a["label"] == "undo by user-a" for a in attrs)
+        assert "applied by user-a (undone)" in c.get(CHANGES).data.decode()
 
     def test_a_partly_undone_write_marks_only_the_row_taken_back(self, sm):
         c = sm["client"]
@@ -249,9 +249,9 @@ class TestSmWrites:
         c = env["client"]
         assert c.post("/field/edit", data={"dot_path": "qubits.qA1.resonator.confusion_matrix.1.1",
                                            "value": "0.7"}).status_code == 200
-        assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "alice"}).status_code == 200
+        assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "user-a"}).status_code == 200
         entry = c.get(META).get_json()["q"]["assignment_fidelity"]["qA1"]
-        assert entry["kind"] == "sm_apply" and entry["label"] == "applied by alice"
+        assert entry["kind"] == "sm_apply" and entry["label"] == "applied by user-a"
 
 
 # ======================================================================
@@ -274,7 +274,7 @@ class TestGrid:
     def test_the_source_filter_keeps_every_run_event_and_maps_sm_writes(self, sm, monkeypatch):
         c = sm["client"]
         assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "4.5e-5"}).status_code == 200
-        assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "alice"}).status_code == 200
+        assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "user-a"}).status_code == 200
         got = self._cells(sm, monkeypatch, GRID + "&props=T1&triggers=experiment")
         vals = [v for v in got["cells"]["qA1", "T1"]["values"] if not v.get("held")]
         assert [v["point"]["run_id"] for v in vals] == [1, 2], \

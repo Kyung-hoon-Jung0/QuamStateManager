@@ -8,6 +8,8 @@ budget the worst-case coherent sum), the reference example (saturation
 (a lone resonator's LO must NOT sit on its RF — the legacy midpoint did),
 and that manual mode is byte-for-byte unchanged. Skips without node + jsdom.
 """
+
+# Selfcheck examples use generic device names and lab keys.
 import shutil
 import subprocess
 from pathlib import Path

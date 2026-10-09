@@ -501,7 +501,7 @@ function jsonResponse(body, status) {
             oc: {}, metric: '', bm: false, tags: [], status: 'successful', dur: 1, note: '',
             parent: null, hs: false, sm: {}, pm: {}, f });
         const rows = [];
-        for (let i = 30; i >= 10; i--) rows.push(mk('kh', i, '2026-08-01', '01:00:00'));   // pos 0..20
+        for (let i = 30; i >= 10; i--) rows.push(mk('lab-I', i, '2026-08-01', '01:00:00'));   // pos 0..20
         rows.push(mk('kr', 4, '2026-08-02', '02:00:00'));
         const BAND = '<span class="ds-digest-date">2026-08-02</span>'
             + '<span class="ds-digest-item">1 run</span><span class="ds-digest-ok">all OK</span>';
@@ -531,7 +531,7 @@ function jsonResponse(body, status) {
             ok(pill && pill.hidden === false && w.DatasetVirtual.getRow('kr:5') == null,
                'F2 fixture: the kr:5 arrival is held and announced');
             pill.click();
-            // kr:5 sorts at list position 21 (ids 30..10 of kh come first).
+            // kr:5 sorts at list position 21 (ids 30..10 of lab-I come first).
             // One row of headroom: 100 + 21*32 - 32 = 740.
             ok(g.writes.length > 0 && g.writes[g.writes.length - 1] === 740,
                `the pill scrolls to where the arrival sorts (scrollTop ${g.writes[g.writes.length - 1]}, want 740 -- 0 was the bug)`);
@@ -568,7 +568,7 @@ function jsonResponse(body, status) {
         // (d) an arrival already on screen from the very top keeps the old
         //     scroll-to-top (the header, digest and filters stay in view)
         {
-            const TOP_ROW = mk('kr', 40, '2026-08-20', '08:00:00');   // id 40 > every kh id -> pos 0
+            const TOP_ROW = mk('kr', 40, '2026-08-20', '08:00:00');   // id 40 > every lab-I id -> pos 0
             const { w } = boot(() => jsonResponse({ updated: [TOP_ROW], vanished: [], now: 8000 }),
                                undefined, { rows, band: BAND });
             const g = geometry(w);
@@ -586,7 +586,7 @@ function jsonResponse(body, status) {
             const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
                                undefined, { rows, band: BAND });
             geometry(w);
-            w.DatasetVirtual.toggleFolder('kh');
+            w.DatasetVirtual.toggleFolder('lab-I');
             pump(w);
             await wait(40);
             const band = w.document.querySelector('.ds-digest-band');

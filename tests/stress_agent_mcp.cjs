@@ -8,9 +8,10 @@
 'use strict';
 const { spawn } = require('child_process');
 
-const PY = process.env.SM_PY || 'D:\\miniconda3\\envs\\cqt\\python.exe';
+const { labPath } = require('./lab_map.cjs');
+const PY = process.env.SM_PY || labPath('lab-B', 'python');
 const REPO = 'D:\\work\\statemanager-agent';
-const S = 'C:\\Users\\KyunghoonJung\\AppData\\Local\\Temp\\claude\\D--work-statemanager\\dd0fa2c3-e492-405d-8783-2c62cd30ba4a\\scratchpad';
+const S = labPath('lab-P', 'scratch');
 const INST = S + '\\inst_5433';
 
 class Mcp {

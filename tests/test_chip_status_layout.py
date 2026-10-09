@@ -16,6 +16,8 @@ harness (chip_density_selfcheck.cjs) pins the per-panel size behaviour.
 """
 from __future__ import annotations
 
+# Selfcheck examples use generic device names and lab keys.
+
 import json
 import re
 import shutil
