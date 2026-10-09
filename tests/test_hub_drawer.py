@@ -577,12 +577,15 @@ class TestReviewRound:
         run(sm["data"], 5, foreign)
         with sm["app"].app_context():
             hub_sync.on_roots_moved([str(sm["data"])])
-        assert "(chip uncertain)" in drawer(sm, "qubits.qA1.T1"), "the drawer itself names it uncertain"
+        # S10 C3 review P1-4: the drawer listed it flagged "(chip uncertain)" -> it is left
+        # out of the chip's timeline, and the drawer says so
+        d = drawer(sm, "qubits.qA1.T1")
+        assert "(chip uncertain)" not in d and "does not match this chip" in d
         html = column(sm, {"qA1": "qubits.qA1.T1"})
         byrun = html.split("ch-view-byrun")[1]
         assert ">#5</" not in byrun and 'data-fill="9e-05"' not in byrun, \
             "a run of another chip is never offered as this chip's saved value (nor Use all)"
-        assert "1 run of an uncertain chip identity is left out" in byrun
+        assert "1 run whose saved chip identity does not match this chip" in html
 
     def test_p1_1_before_via_marks_only_rows_the_alias_did_not_name(self, aba):
         html = drawer(aba, self.ALIAS)

@@ -10,8 +10,11 @@ its *view* (:func:`build`, reached as ``LedgerIndex.for_folder``):
   recorded BEFORE this folder's own history began (docs/250's cut: the copy
   source, the old path of a move), labelled with their folder; runs under a
   data root linked to it. Another folder's events after the cut, an unknown
-  folder's after the cut and runs under no linked root are left out of every
-  value answer and COUNTED (``Lane.left_out``); listings keep them, labelled.
+  folder's after the cut, runs under no linked root and runs whose saved chip
+  identity disagrees with the chip's (``CHIP_UNCERTAIN``: another chip's run
+  is never this chip's value) are left out of every value answer and COUNTED
+  (``Lane.left_out``); listings keep them, labelled -- except another chip's
+  run, which ``hub_versions`` never offers as a version (the note says it).
 * **seams** -- a stored row is a diff against the GLOBAL predecessor. In a
   view an event's rows are its difference from the previous event of the SAME
   lane, so the stored rows are used unless the event is a seam: (i) its
@@ -53,7 +56,7 @@ from typing import Any
 
 from quam_state_manager.core import hub_rules as rules
 from quam_state_manager.core.hub_store import (
-    OPS, OVERLAPS_SM_WRITE, REVERTS_TO_EARLIER, SM_KINDS, HubStore, _persist_number)
+    CHIP_UNCERTAIN, OPS, OVERLAPS_SM_WRITE, REVERTS_TO_EARLIER, SM_KINDS, HubStore, _persist_number)
 
 #: hub.DERIVED / hub_versions.DERIVED: an SM write whose state is its placed
 #: predecessor plus its entries -- at a seam it shows its entries only
@@ -64,6 +67,7 @@ OBSERVED_KIND = "observed"
 PARALLEL = "parallel"          # another folder's, after this folder's own history began
 UNKNOWN = "unknown"            # a folder that cannot be shown, after the cut
 UNLINKED = "unlinked"          # a run under no data root linked to this folder
+OTHER_CHIP = "other_chip"      # a run whose saved chip identity disagrees with the chip's
 
 
 @dataclass(frozen=True)
@@ -115,7 +119,7 @@ class Lane:
     seams: dict = field(default_factory=dict)   # {eid: {pid: row dict}}
     derived: set = field(default_factory=set)   # DERIVED SM writes at a seam (entries shown)
     src: dict = field(default_factory=dict)     # {eid: source entry}: every event not this folder's own
-    hidden: dict = field(default_factory=dict)  # {eid: PARALLEL | UNKNOWN | UNLINKED}
+    hidden: dict = field(default_factory=dict)  # {eid: PARALLEL | UNKNOWN | UNLINKED | OTHER_CHIP}
     patch: dict = field(default_factory=dict)   # {eid: {column: value}} where the lane differs
     held: dict = field(default_factory=dict)    # {eid: {path}}: the held_before_write paths
     first: int | None = None                    # the lane's first event that has a state
@@ -375,7 +379,12 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
             continue
         if f["kind"] == "run":
             rids = locs.get(eid) or ([f["root_id"]] if f["root_id"] is not None else [])
-            if any(linked(r) for r in rids):
+            if any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN:
+                # its saved state names another chip (or none): never this chip's value
+                path = roots.get(rids[0]) if rids else None
+                out[eid] = (False, {"kind": OTHER_CHIP, "folder": path, "label": source_folder_label(path),
+                                    "lineage": OTHER_CHIP})
+            elif any(linked(r) for r in rids):
                 out[eid] = (True, None)
             else:
                 path = roots.get(rids[0]) if rids else None
@@ -461,7 +470,7 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
         if entry is not None:
             lane.src[eid] = entry
         if not in_lane:
-            lane.hidden[eid] = (UNLINKED if entry["kind"] == UNLINKED
+            lane.hidden[eid] = (entry["kind"] if entry["kind"] in (UNLINKED, OTHER_CHIP)
                                 else UNKNOWN if entry["kind"] == "unknown" else PARALLEL)
 
     # seams: rows within the lane
@@ -568,10 +577,12 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
     # what was left out, counted and named
     folders: dict[str, dict] = {}
     unlinked_roots: dict[str, dict] = {}
-    counts = {PARALLEL: 0, UNKNOWN: 0, UNLINKED: 0}
+    counts = {PARALLEL: 0, UNKNOWN: 0, UNLINKED: 0, OTHER_CHIP: 0}
     for eid, why in lane.hidden.items():
         counts[why] += 1
         entry = lane.src.get(eid) or {}
+        if why == OTHER_CHIP:
+            continue
         if why == UNLINKED:
             r = unlinked_roots.setdefault(entry.get("folder") or "", {"path": entry.get("folder"),
                                                                      "label": entry.get("label"), "runs": 0})
@@ -583,7 +594,7 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
             r["events"] += 1
     earlier = sum(1 for e, s in lane.src.items() if e in keep and s["lineage"] == "earlier")
     lane.left_out = {"parallel": counts[PARALLEL], "unknown": counts[UNKNOWN],
-                     "unlinked": counts[UNLINKED], "earlier": earlier,
+                     "unlinked": counts[UNLINKED], "other_chip": counts[OTHER_CHIP], "earlier": earlier,
                      "folders": sorted(folders.values(), key=lambda r: (-r["events"], r["folder"] or "")),
                      "roots": sorted(unlinked_roots.values(), key=lambda r: (-r["runs"], r["path"] or "")),
                      "seams": len(lane.seams) + len(lane.derived), "derived": len(lane.derived),

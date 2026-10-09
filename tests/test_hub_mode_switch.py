@@ -468,3 +468,21 @@ def test_a_table_read_that_raises_is_terminal_never_a_500(no_runs, monkeypatch, 
         assert "Nothing older is shown in its place." in body
         assert "load delay:" not in body and "data-eid=" not in body
     assert routes._hub_fallback_counts() == {}
+
+
+@pytest.mark.parametrize("sync_on_open,expect", [(False, 0), (True, 1)])
+def test_capture_keeps_the_testing_gate_for_a_chip_with_a_data_folder(no_runs, monkeypatch,
+                                                                      sync_on_open, expect):
+    """C3 review P2: a TESTING app syncs inline, so a capture on a chip whose
+    declared data folder is a real archive must not ingest it unless the test
+    asked (_hub_sync_open's gate); a chip with no data folder is kicked
+    regardless (test_capture_promptly_reaches_observed_ledger)."""
+    app = no_runs["app"]
+    app.config["HUB_SYNC_ON_OPEN"] = sync_on_open
+    kicks = []
+    monkeypatch.setattr(hub_sync, "kick", lambda cs: kicks.append(cs))
+    with app.app_context():
+        ctx = routes._active_ctx()
+        ctx["hub_roots"] = [("D:/a/declared/archive", "extras")]
+        assert routes._history().check_and_snapshot(ctx["path"], "manual", force=True)
+    assert len(kicks) == expect

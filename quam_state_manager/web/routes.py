@@ -3545,6 +3545,13 @@ def install_hub_capture_refresh(app) -> None:
             owner, current = hm._source_owner(str(Path(path).resolve())), hm._source_owner(ctx["path"])
             if owner is None or current is None or owner[0] != current[0]:
                 return
+            # _hub_sync_open's TESTING gate: a TESTING app syncs inline, so a
+            # capture on a chip whose declared data folder is a real archive
+            # must not ingest it unless the test asked (a chip with no data
+            # folder reads only its own snapshots: kicked regardless)
+            if (app.config.get("TESTING") and not app.config.get("HUB_SYNC_ON_OPEN")
+                    and ctx.get("hub_roots")):
+                return
             cs = hub_sync.sync_for(directory)
             with cs.lock:
                 cs.observe_wanted = True
@@ -12360,7 +12367,8 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
             "ledger": ans["ledger"],
             # S10 C1.5: what this folder's view left out (docs/250's count)
             **({"parallel_hidden": int(left.get("parallel") or 0) + int(left.get("unknown") or 0),
-                "unlinked_hidden": int(left.get("unlinked") or 0)}
+                "unlinked_hidden": int(left.get("unlinked") or 0),
+                "other_chip_hidden": int(left.get("other_chip") or 0)}
                if (left := ans["ledger"].get("left_out")) else {})}
 
 
@@ -19501,7 +19509,7 @@ def state_versions_panel():
         # "what just changed?" is asked of THIS folder (docs/250), between two
         # versions that can be read
         mine = [i for i, r in enumerate(rows)
-                if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked")
+                if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked", "other_chip")
                 and not r["why_diff"] and not r["pending"]]
         if len(mine) >= 2:
             b_i, a_i = mine[0], mine[1]
@@ -19593,7 +19601,7 @@ def state_versions_panel():
     # docs/250: "what just changed?" is asked of THIS folder -- rows another
     # folder with the same chip name recorded alongside it are skipped
     mine = [i for i, r in enumerate(rows)
-            if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked")]
+            if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked", "other_chip")]
     if len(mine) >= 2:
         b_i, a_i = mine[0], mine[1]
         try:

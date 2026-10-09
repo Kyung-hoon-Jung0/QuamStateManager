@@ -320,19 +320,19 @@ class TestRunCacheChipIndependence:
         declare_root(c, root)
         h1 = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
         assert 'data-value="7100000000.0"' in h1
-        # S10 C3: foreign rows discarded by a scan -> flagged ledger evidence, never a proven writer.
-        points_a = c.get("/api/agent/field-history?path=qubits.qA1.f_01").get_json()["history"]["points"]
-        foreign_a = [p for p in points_a if p["value"] == 7.2e9]
-        assert foreign_a and all(p["provenance"] == "run_uncertain_chip" and not p.get("uid") for p in foreign_a)
-        assert "chip uncertain" in h1
+        # S10 C3 review P1-4: foreign rows shown flagged "(chip uncertain)" -> left out of
+        # the chip's timeline, counted (the old "A never appears in B" restored)
+        hist_a = c.get("/api/agent/field-history?path=qubits.qA1.f_01").get_json()["history"]
+        assert not any(p["value"] == 7.2e9 for p in hist_a["points"]) and hist_a["other_chip_hidden"] == 1
+        assert "chip uncertain" not in h1 and 'data-value="7200000000.0"' not in h1
         assert c.post("/load", data={"folder": str(live_b)}).status_code in (200, 302)
         declare_root(c, root)
         h2 = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
         assert 'data-value="7200000000.0"' in h2, "B's own run suppressed by A's cache"
-        points_b = c.get("/api/agent/field-history?path=qubits.qA1.f_01").get_json()["history"]["points"]
-        foreign_b = [p for p in points_b if p["value"] == 7.1e9]
-        assert foreign_b and all(p["provenance"] == "run_uncertain_chip" and not p.get("uid") for p in foreign_b)
-        assert "chip uncertain" in h2
+        hist_b = c.get("/api/agent/field-history?path=qubits.qA1.f_01").get_json()["history"]
+        assert not any(p["value"] == 7.1e9 and p["kind"] == "run" for p in hist_b["points"])
+        assert hist_b["other_chip_hidden"] == 1
+        assert "chip uncertain" not in h2
 
 
 class TestUidDeepestRoot:

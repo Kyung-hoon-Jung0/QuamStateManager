@@ -201,7 +201,8 @@ async function trendPoint(b, entity, want) {
     const ch = await b.ev("document.querySelector('.ph-changes').textContent.replace(/\\s+/g,' ')");
     ok(/run #7 07_T1/.test(ch) && /its own patch set it/.test(ch) && /writer not proven/.test(ch),
        'run #7: qA1 T1 "its own patch set it", qA3 T1 "writer not proven"');
-    ok(/#8 \(chip uncertain\)/.test(ch) && /not named as writer/.test(ch), 'the foreign-chip run is "chip uncertain", not a writer');
+    // S10 C3 review P1-4: another chip's run is left out of this chip's timeline
+    ok(!/#8 /.test(ch) && !/chip uncertain/.test(ch), 'the foreign-chip run is not one of this chip\'s changes');
     await b.shot(path.join(SHOTS, '08_changes.png'));
 
     // 5. Back, reload

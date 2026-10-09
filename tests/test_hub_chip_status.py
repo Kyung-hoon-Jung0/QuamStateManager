@@ -178,11 +178,12 @@ class TestWriterOnlyOnProof:
         with sm["app"].app_context():
             hub_sync.on_roots_moved([str(sm["data"])])
         entry = sm["client"].get(META).get_json()["q"]["T1"]["qA1"]
-        assert entry["run"] is None and entry["writer"] is None
-        assert entry["provenance"] == "run_uncertain_chip" and "chip uncertain" in entry["label"]
+        # S10 C3 review P1-4: the newest value flagged "(chip uncertain)" (no writer) -> another
+        # chip's run is left out of this chip's timeline: the newest is this chip's own run
+        assert entry["run"] != 5 and (entry["writer"] or {}).get("run") != 5
+        assert entry["provenance"] != "run_uncertain_chip" and entry.get("value") != 9e-5
         body = sm["client"].get(CHANGES).data.decode()
-        assert "#5 (chip uncertain)" in groups(body)[0] and "/dataset/" not in body.split(
-            '<div class="ph-change-group">')[1], "no data link for a run of another chip"
+        assert "#5 (chip uncertain)" not in body and "#5 " not in "".join(groups(body))
 
     def test_changes_name_the_writer_per_row(self, sm):
         g = groups(sm["client"].get(CHANGES).data.decode())

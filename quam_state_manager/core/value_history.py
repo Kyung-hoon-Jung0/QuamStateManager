@@ -1231,6 +1231,12 @@ def folder_notes(left_out: dict | None) -> list[dict]:
                             + (f" ({where})" if where else "") + (" is" if unlinked == 1 else " are")
                             + " not part of this folder's timeline.",
                     "roots": roots})
+    other_chip = int(lo.get("other_chip") or 0)
+    if other_chip:
+        out.append({"level": "info", "code": "other_chip",
+                    "text": _plural(other_chip, "run", "runs") + " whose saved chip identity does not "
+                            "match this chip's " + ("is" if other_chip == 1 else "are")
+                            + " not part of this chip's timeline."})
     derived = int(lo.get("derived") or 0)
     if derived:
         out.append({"level": "info", "code": "derived_seam",
