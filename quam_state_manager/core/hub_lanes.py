@@ -379,6 +379,12 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
             continue
         if f["kind"] == "run":
             rids = locs.get(eid) or ([f["root_id"]] if f["root_id"] is not None else [])
+            if not rids and str(f["rel_path"] or "").startswith("snapshot:"):
+                # S10 walk: a run imported from its Param History capture (its
+                # run folder is gone) is part of every folder's timeline of the
+                # chip, as that capture was (Param History's run lineage)
+                out[eid] = (True, None)
+                continue
             if any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN:
                 # its saved state names another chip (or none): never this chip's value
                 path = roots.get(rids[0]) if rids else None

@@ -50,8 +50,8 @@ MUTATIONS = [
     # S10 walk: re-pointed -- the archived chip with no ledger is built from its snapshots;
     # the Open offer rides its notes (archive_open) where a folder opens as the chip
     ("archived_open_offer_missing", ROUTES,
-     '    open_path = _openable_folder_for_chip(hm, target_path)\n    short = ',
-     '    open_path = None\n    short = ',
+     '    open_path = _openable_folder_for_chip(hm, target_path)\n    if open_path:\n        out.append(',
+     '    open_path = None\n    if open_path:\n        out.append(',
      [TEST + "::test_archived_missing_ledger_offers_a_real_folder"]),
     # S10 C6: versions_old_renderer / state_history_old_renderer retired -- the snapshot
     # renderer they switched back to is deleted; legacy_rows_missing above still pins the rows.
@@ -222,21 +222,17 @@ MUTATIONS.extend([
 MUTATIONS.extend([
     # S10 walk: re-pointed -- the notes are collected in ``out`` now
     ("c5_p1_no_note", ROUTES,
-     '    events = int(ledger.get("events") or 0)\n    out: list[dict] = []',
-     '    events = int(ledger.get("events") or 0)\n    return []\n    out: list[dict] = []',
+     '    from quam_state_manager.core import hub_sync\n    out: list[dict] = []\n    try:\n'
+     '        directory = hm.history_dir_cached(target_path)',
+     '    from quam_state_manager.core import hub_sync\n    return []\n    out: list[dict] = []\n    try:\n'
+     '        directory = hm.history_dir_cached(target_path)',
      ['tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open']),
     # S10 walk: c5_p1_nothing_case_lost retired -- an archived ledger holding nothing is
     # built from the chip's snapshots now, or ends unavailable before any note
     # (tests/test_archived_chip_build.py, tools/mutate_archived_chip_build.py)
-    # S10 walk: re-pointed -- the shortfall is one ``short`` test now
-    ("c5_p1_runs_case_lost", ROUTES,
-     '    short = bool((total and not events) or (runs and not ledger.get("has_runs")))',
-     '    short = bool(total and not events)',
-     ['tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open']),
-    ("c5_p1_note_always", ROUTES,
-     '    short = bool((total and not events) or (runs and not ledger.get("has_runs")))',
-     '    short = bool((total and not events) or runs)',
-     ['tests/test_s10_c5_review.py::test_an_archived_ledger_holding_its_runs_says_nothing_more']),
+    # S10 walk: c5_p1_runs_case_lost / c5_p1_note_always retired -- an archived ledger
+    # short of its run captures is filled from them now, never only said
+    # (tests/test_archived_chip_build.py, tools/mutate_archived_chip_build.py)
     ("c5_p1_grid_drops_it", ROUTES,
      '                [] if is_loaded_chip else _archive_ledger_notes(hm, target_path, hub_answer["ledger"])),',
      '                []),',
@@ -249,10 +245,10 @@ MUTATIONS.extend([
      '{% if note.open_chip_path %}',
      '{% if False %}',
      ['tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open']),
-    # S10 walk: re-pointed -- the offer is looked up once for every note
+    # S10 walk: re-pointed -- the offer is its own note now
     ("c5_p1_no_open_offer", ROUTES,
-     '    open_path = _openable_folder_for_chip(hm, target_path)\n    short = ',
-     '    open_path = None\n    short = ',
+     '    open_path = _openable_folder_for_chip(hm, target_path)\n    if open_path:\n        out.append(',
+     '    open_path = None\n    if open_path:\n        out.append(',
      ['tests/test_s10_c5_review.py::test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open']),
     ("c5_p2_trends_catches_all", ROUTES,
      '    except LedgerUnreadable:  # S10 C5 (C3 review P2): any error -> a failed ledger read only\n        return _hub_surface_wait(_hub_table_failed("trends"), "trends")',

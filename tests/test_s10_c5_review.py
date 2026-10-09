@@ -14,7 +14,9 @@ from __future__ import annotations
 
 # S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
 
+import html
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -75,12 +77,12 @@ def test_an_archived_ledger_short_of_its_captures_says_so_and_offers_to_open(tmp
                                                                "qubit": "qA1", "prop": "T1"},
                         headers={"HX-Request": "true"}).get_data(as_text=True)
     for body in (grid, drawer):
-        note = _note(body)
-        # S10 walk: an empty archived ledger -> built from its 1 snapshot that is not a run;
-        # the note then says what it lacks (runs) and how to add them, never "build its ledger"
-        assert "3 run captures of this chip that its change ledger does not" in note, note
-        assert "Open this chip, then link the folder its runs are saved in." in note, note
-        assert ('data-note="archive_built"' in body) == empty_ledger
+        # S10 walk: "short of its captures, says so" -> the shortfall is filled from those
+        # captures (runs whose folders are gone are imported as runs); the note says from what
+        built = re.search(r'data-note="archive_built"[^>]*>([^<]*)<', body)
+        assert built and html.unescape(built.group(1)) == (
+            "History built from 3 run captures whose folders are gone and 1 state SM saw."), body[:600]
+        assert not _note(body) and 'data-note="archive_open"' in body
         assert f'name="folder" value="{live}">Open this chip</button>' in body
         assert 'data-vh-mode="unavailable"' not in body
 

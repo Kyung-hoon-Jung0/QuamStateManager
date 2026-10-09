@@ -8,16 +8,24 @@ After S10 every surface reads the change ledger, and a chip that never had one
 Pins, on generic synthetic chips in ``tmp_path`` (each mutation-checked):
 
 * the journey: viewing such a chip builds its ledger from its own Param
-  History snapshots -- each one that is not a run becomes an ``observed``
-  event ("seen by SM", writer unknown); a run's saved copy stays out -- and
-  the grid, its sparkline, the cell drawer and Changes show those values with
-  that provenance; no live or data folder is written;
+  History snapshots -- a snapshot that is not a run becomes an ``observed``
+  event ("seen by SM", writer unknown) -- and the grid, its sparkline, the
+  cell drawer and Changes show those values with that provenance; no live or
+  data folder is written;
+* its run captures are its run history: a run whose folder is still on disk
+  is read from its data folder (a true run event: its own patch proves the
+  value), a run whose folder is gone is imported from its capture ("saved in
+  #N", writer not proven, run folder deleted), and only the run folders the
+  captures name are read (another chip's run beside them never is); the
+  archived grid then holds, for every parameter, the very value points the
+  pre-S10 Param History grid held for the same snapshots
+  (``HistoryManager.extract_property_history``, that grid's code path);
 * the build runs off the request thread: the first answer is "being built",
-  counted in snapshots, and asks again by itself; a build cut short (the
-  process ended) is resumed, never read as complete;
+  counted in runs and then in snapshots, and asks again by itself; a build
+  cut short (the process ended) is resumed, never read as complete; a build
+  of an older kind (no runs) is resumed with them;
 * snapshots that cannot be read end ``unavailable`` in plain words, with no
-  Try again and no rebuild loop; a chip whose snapshots are all run captures
-  says so, and builds nothing;
+  Try again and no rebuild loop;
 * "Open this chip" stays offered wherever a folder on disk opens as the chip
   (grid and cell drawer alike), including when its captures are SM's own
   capture of the live folder after adopting a run (``auto``, kind ``exp``,
@@ -43,6 +51,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.core import hub, hub_sync
+from quam_state_manager.core.scanner import ExperimentEntry
 from quam_state_manager.web import routes
 from tests.test_hub_drawer import WIRING, _inline, chip_state, make_app  # noqa: F401
 
@@ -68,44 +77,115 @@ def _snap(hm, folder: Path, state: dict, trigger: str, **kw):
     return meta
 
 
+def _open_other(app, tmp_path):
+    other = tmp_path / "chips" / "open"
+    _write(other, chip_state(name="other"), {"network": {"host": "127.0.0.2", "cluster_name": "C2"}})
+    client = app.test_client()
+    assert client.post("/load", data={"folder": str(other)}).status_code in (200, 302)
+    return client
+
+
 def _archived(tmp_path, *, keep_live: bool = False, corrupt: bool = False,
               runs_only: bool = False, name: str = "device") -> dict:
     """An instance whose Param History captured chip *name* before it had a
     ledger (the chip is never opened here), then another chip opened. Its
     captures: its first state (manual, T1 1e-5), an outside edit SM saw (auto,
-    2e-5), a run's saved copy (experiment, 9e-5: never imported) and SM's own
-    capture of the live folder after adopting a run (auto, kind exp, 3e-5).
-    ``runs_only``: only run captures. ``corrupt``: the non-run captures'
-    files are unreadable. ``keep_live``: the chip's live folder stays."""
+    2e-5), a run's saved copy whose run folder is gone (experiment #7, 9e-5)
+    and SM's own capture of the live folder after adopting a run (auto, kind
+    exp, 3e-5). ``runs_only``: only run captures (#7, #8). ``corrupt``: no
+    snapshot's files can be read. ``keep_live``: the chip's live folder stays."""
     app = make_app(tmp_path, sync=False)
     live = tmp_path / "chips" / "archived"
     run_dir = tmp_path / "runs" / "2026-01-01" / "#7_scan_120000"
     with app.app_context():
         hm = routes._history()
-        own = []
         if not runs_only:
-            own.append(_snap(hm, live, chip_state(t1=1.0e-5, name=name), "manual", kind="manual"))
-            own.append(_snap(hm, live, chip_state(t1=2.0e-5, name=name), "auto"))
+            _snap(hm, live, chip_state(t1=1.0e-5, name=name), "manual", kind="manual")
+            _snap(hm, live, chip_state(t1=2.0e-5, name=name), "auto")
         _snap(hm, live, chip_state(t1=9.0e-5, name=name), "experiment", kind="exp", run_id=7,
               experiment_name="scan", experiment_folder_path=str(run_dir))
         if runs_only:
             _snap(hm, live, chip_state(t1=8.0e-5, name=name), "experiment", kind="exp", run_id=8,
-                  experiment_name="scan", experiment_folder_path=str(run_dir.parent / "#8_scan"))
+                  experiment_name="scan", experiment_folder_path=str(run_dir.parent / "#8_scan_120100"))
         else:
-            own.append(_snap(hm, live, chip_state(t1=3.0e-5, name=name), "auto", kind="exp"))
+            _snap(hm, live, chip_state(t1=3.0e-5, name=name), "auto", kind="exp")
         directory = Path(hm.resolve_chip_dir(str(live))[0])
         hm._join_deferred_index()
-    other = tmp_path / "chips" / "open"
-    _write(other, chip_state(name="other"), {"network": {"host": "127.0.0.2", "cluster_name": "C2"}})
-    client = app.test_client()
-    assert client.post("/load", data={"folder": str(other)}).status_code in (200, 302)
+        stamps = [m.timestamp for m in hm.list_snapshots(str(live))]
+    client = _open_other(app, tmp_path)
     if corrupt:
-        for meta in own:
-            (directory / meta.timestamp / "state.json").write_text("{not json", encoding="utf-8")
+        for ts in stamps:
+            (directory / ts / "state.json").write_text("{not json", encoding="utf-8")
     if not keep_live:
         shutil.rmtree(live)
     assert not (directory / "ledger.sqlite").exists()
     return {"app": app, "client": client, "live": live, "dir": directory, "key": directory.name}
+
+
+def _run_folder(data: Path, rid: int, minute: int, t1: float, *, name: str = "device"):
+    """A run folder of the standard layout whose own patch sets qA1.T1, and
+    the scanner entry Param History ingests it from (its own instant)."""
+    day, stamp = "2026-01-01", f"2026-01-01T12:{minute:02d}:00+00:00"
+    folder = data / day / f"#{rid}_scan_12{minute:02d}00"
+    state = chip_state(t1=t1, name=name)
+    (folder / "quam_state").mkdir(parents=True)
+    (folder / "quam_state" / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (folder / "quam_state" / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
+    node = {"created_at": stamp, "id": rid, "metadata": {"name": "scan", "status": "finished"},
+            "data": {"parameters": {"model": {"qubits": ["qA1"]}}},
+            "patches": [{"op": "replace", "path": "/quam/qubits/qA1/T1", "value": t1}]}
+    (folder / "node.json").write_text(json.dumps(node), encoding="utf-8")
+    entry = ExperimentEntry(folder_path=folder, quam_state_path=folder / "quam_state", run_id=rid,
+                            experiment_name="scan", timestamp=stamp, status="finished",
+                            qubits=["qA1"], qubit_pairs=[], outcomes={}, parent_ids=[],
+                            date_str=day, is_standalone=False)
+    return folder, entry, state
+
+
+GONE = (4, 5, 9, 10, 14)
+
+
+def _with_runs(tmp_path, *, rewrite: int | None = None) -> dict:
+    """A 30-snapshot archived chip with runs: #1-#12 ingested by Param History
+    from their run folders (T1 k us, each run's own patch sets it); #13 and
+    #14 first captured by SM in the live folder, then stamped by their run's
+    ingest (docs/200); 16 states SM saw (T1 101-116 us). The folders of #4,
+    #5, #9, #10 and #14 are gone since. Beside them in the same data folder
+    lies a run of ANOTHER chip (#99), earlier than all of them. Every
+    snapshot changes qA1.T1; qA2.T1 never changes. ``rewrite``: that run
+    saved again after Param History captured it (T1 + 0.5 us, its patch too):
+    the capture held a save the run replaced."""
+    app = make_app(tmp_path, sync=False)
+    live, data = tmp_path / "chips" / "archived", tmp_path / "data"
+    folders = {99: _run_folder(data, 99, 0, 7.7e-3, name="another")[0]}
+    with app.app_context():
+        hm = routes._history()
+        _write(live, chip_state(t1=0.5e-6))
+        for k in range(1, 13):
+            folders[k], entry, _state = _run_folder(data, k, k, k * 1e-6)
+            assert hm.ingest_run(str(live), entry)["ingested"] == 1
+            if k == rewrite:                            # the run's final save, after the capture
+                again = chip_state(t1=(k + 0.5) * 1e-6)
+                (folders[k] / "quam_state" / "state.json").write_text(json.dumps(again), encoding="utf-8")
+                node = json.loads((folders[k] / "node.json").read_text(encoding="utf-8"))
+                node["patches"][0]["value"] = (k + 0.5) * 1e-6
+                (folders[k] / "node.json").write_text(json.dumps(node), encoding="utf-8")
+        for k in (13, 14):
+            folders[k], entry, state = _run_folder(data, k, k, k * 1e-6)
+            _write(live, state)                         # the run wrote the live folder
+            assert hm.check_and_snapshot(str(live), "auto", kind="exp", force=True) is not None
+            assert hm.ingest_run(str(live), entry)["enriched"] == 1   # SM's capture, stamped
+        for i in range(16):
+            _snap(hm, live, chip_state(t1=(101 + i) * 1e-6), ("manual", "auto", "save")[i % 3])
+        directory = Path(hm.resolve_chip_dir(str(live))[0])
+        hm._join_deferred_index()
+        assert len(hm.list_snapshots(str(live))) == 30
+    for k in GONE:
+        shutil.rmtree(folders[k])
+    client = _open_other(app, tmp_path)
+    shutil.rmtree(live)
+    return {"app": app, "client": client, "live": live, "dir": directory, "key": directory.name,
+            "data": data}
 
 
 def _grid(env, **q) -> str:
@@ -115,9 +195,9 @@ def _grid(env, **q) -> str:
     return r.get_data(as_text=True)
 
 
-def _drawer(env) -> tuple[str, dict]:
+def _drawer(env, qubit: str = "qA1", prop: str = "T1") -> tuple[str, dict]:
     r = env["client"].get("/param-history/expand", query_string={
-        "chip_key": env["key"], "qubit": "qA1", "prop": "T1"}, headers=HX)
+        "chip_key": env["key"], "qubit": qubit, "prop": prop}, headers=HX)
     assert r.status_code == 200, r.data[:400]
     body = r.get_data(as_text=True)
     m = re.search(r'<script id="phd-data" type="application/json">(.*?)</script>', body, re.S)
@@ -150,6 +230,26 @@ def _tree_sig(folder: Path) -> dict:
             for p in sorted(folder.rglob("*"))}
 
 
+def _pre_s10(env, qubit: str, prop: str = "T1") -> list:
+    """The values the pre-S10 Param History grid drew for one cell, oldest
+    first: its code path (``extract_property_history`` over the snapshot
+    index, unchanged since f0a94b93) on the same snapshots."""
+    with env["app"].app_context():
+        hm = routes._history()
+        rows = hm.extract_property_history(routes._path_for_chip_key(env["key"]), [prop],
+                                           qubit_filter=[qubit])
+    (row,) = [r for r in rows if r["qubit"] == qubit]
+    return [v["value"] for v in row["values"]]
+
+
+def _collapsed(values: list) -> list:
+    out: list = []
+    for v in values:
+        if not out or out[-1] != v:
+            out.append(v)
+    return out
+
+
 # ======================================================================
 # 1. the journey: no ledger -> built from the snapshots -> values shown
 # ======================================================================
@@ -159,53 +259,59 @@ def test_an_archived_chip_with_no_ledger_shows_its_snapshots_values(tmp_path):
     grid = _grid(env)
     assert 'data-vh-mode="unavailable"' not in grid and "could not be read" not in grid
     assert (env["dir"] / "ledger.sqlite").is_file()
-    # the grid: three states SM saw, never the run's saved copy
-    assert "3 recorded changes shown (3 events in the change ledger)" in _t(grid)
+    # the grid: three states SM saw and the run whose folder is gone, from its capture
+    assert "4 recorded changes shown (4 events in the change ledger)" in _t(grid)
     spark = _cell(grid, "qA1", "T1")
     dots = re.findall(r'<circle class="hs-pt (hs-pt-\w+)" cx="[\d.]+" cy="[\d.]+" r="1.4"/>', spark)
-    assert dots == ["hs-pt-manual", "hs-pt-auto", "hs-pt-auto"], spark
+    assert len(dots) == 4, spark
     # the cell drawer: each value with its provenance
     _body, row = _drawer(env)
     pts = [(v["value"], v["provenance"], v["label"], v["sub"]) for v in row["values"]]
     assert pts == [(1.0e-5, "observed", "seen by SM (manual snapshot)", "writer unknown"),
                    (2.0e-5, "observed", "seen by SM (auto snapshot)", "writer unknown"),
+                   (9.0e-5, "run_saved", "saved in #7 scan", "writer not proven"),
                    (3.0e-5, "observed", "seen by SM (auto snapshot)", "writer unknown")], pts
+    assert row["values"][2]["flags"] == ["run folder deleted"]
     assert all(v["run"] is None and v["uid"] is None for v in row["values"])
     # Changes: the archived chip's own events, its chip kept on every link
     page = env["client"].get("/param-history/changes", query_string={"chip_key": env["key"]},
                              headers=HX).get_data(as_text=True)
     assert "seen by SM (auto snapshot)" in page and "qubits.qA1.T1" in page
-    assert "9e-05" not in page and "9.0e-05" not in page
+    assert "run #7 scan" in page and "writer not proven" in page
     assert f"chip_key={env['key']}" in page and "/field/history?path=" not in page
     found = env["client"].get("/param-history/param-search",
                               query_string={"q": "qA1.T1", "chip_key": env["key"]}).get_json()
     assert [(r["path"], r["changes"]) for r in found["results"]
-            if r["path"] == "qubits.qA1.T1"] == [("qubits.qA1.T1", 3)], found
-    # what was built is said: from its 3 snapshots that are not runs; the run
-    # capture is not in it and cannot be added (no folder opens as the chip)
+            if r["path"] == "qubits.qA1.T1"] == [("qubits.qA1.T1", 4)], found
+    # what it was built from is said; no folder opens as the chip, so no Open
     assert 'data-note="archive_built"' in grid
-    assert "Built from this chip's 3 Param History snapshots that are not a run" in _t(grid)
-    assert "1 run capture of this chip that its change ledger does not" in _t(grid)
-    assert "so its runs cannot be added here" in _t(grid) and "Open this chip" not in grid
+    assert ("History built from 1 run capture whose folder is gone and 3 states SM saw."
+            in _t(grid)), _t(grid)
+    assert "Open this chip" not in grid and "run capture of this chip" not in _t(grid)
     # the build is finished and recorded as one from snapshots
-    assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == [("done",)]
-    kinds = _ledger(env, "SELECT kind, COUNT(*) FROM events GROUP BY kind")
-    assert kinds == [("observed", 3)], kinds
+    assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == [("done:runs",)]
+    kinds = _ledger(env, "SELECT kind, src, COUNT(*) FROM events GROUP BY kind, src ORDER BY kind")
+    assert kinds == [("observed", "param_history:auto", 2), ("observed", "param_history:manual", 1),
+                     ("run", "param_history:run_capture", 1)], kinds
 
 
 def test_the_build_reads_and_never_writes_the_live_folder(tmp_path):
     env = _archived(tmp_path, keep_live=True)
     before = _tree_sig(env["live"])
     grid = _grid(env)
-    assert "3 recorded changes shown" in _t(grid)
+    assert "4 recorded changes shown" in _t(grid)
     assert _tree_sig(env["live"]) == before
     # the live folder still opens as this chip: Open stays offered beside the values
     assert f'name="folder" value="{env["live"]}">Open this chip</button>' in grid
-    assert "Open this chip, then link the folder its runs are saved in." in grid
+    assert "Open this chip to keep it current." in grid
     # opened live, the folder keeps the ledger: no longer one built from snapshots alone
-    assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == [("done",)]
+    assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == [("done:runs",)]
     assert env["client"].post("/load", data={"folder": str(env["live"])}).status_code in (200, 302)
     assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == []
+    # and the run imported from its capture stays part of that folder's timeline
+    # (as the capture was in Param History), never "a data folder not linked"
+    page = env["client"].get("/field/history", query_string={"path": "qubits.qA1.T1"}).get_data(as_text=True)
+    assert "saved in #7 scan" in page and "not part of this folder" not in page, _t(page)[:600]
 
 
 def test_a_snapshot_whose_files_are_gone_is_counted_as_unreadable(tmp_path):
@@ -216,16 +322,16 @@ def test_a_snapshot_whose_files_are_gone_is_counted_as_unreadable(tmp_path):
                if not routes._is_run_snapshot(m)]
     (env["dir"] / own[-1].timestamp / "state.json").unlink()
     grid = _grid(env)
-    note = re.search(r'data-note="archive_built"[^>]*>([^<]*)<', grid).group(1)
-    assert "Built from this chip&#39;s 3 Param History snapshots" in note
-    assert "1 could not be read and is left out." in html.unescape(note), note
-    assert "2 recorded changes shown" in _t(grid)
+    note = html.unescape(re.search(r'data-note="archive_built"[^>]*>([^<]*)<', grid).group(1))
+    assert "1 run capture whose folder is gone and 2 states SM saw." in note, note
+    assert "1 snapshot could not be read and is left out." in note, note
+    assert "3 recorded changes shown" in _t(grid)
 
 
 def test_an_index_still_being_prepared_is_a_wait_never_a_grid_with_no_qubit(tmp_path, monkeypatch):
     from quam_state_manager.core import hub_index, ramcache
     env = _archived(tmp_path)
-    assert "3 recorded changes shown" in _t(_grid(env))
+    assert "4 recorded changes shown" in _t(_grid(env))
     real = hub_index.snapshot
     calls = []
 
@@ -252,7 +358,146 @@ def test_the_archived_heading_and_picker_name_the_chip_by_its_display_name(tmp_p
 
 
 # ======================================================================
-# 2. off the request thread, counted in snapshots, resumed when cut short
+# 2. the run captures are the run history: real runs first, then captures
+# ======================================================================
+
+def test_the_archived_grid_holds_every_value_point_the_pre_s10_grid_held(tmp_path):
+    env = _with_runs(tmp_path)
+    data_before = _tree_sig(env["data"])
+    grid = _grid(env)
+    assert "30 recorded changes shown (30 events in the change ledger)" in _t(grid), _t(grid)[-500:]
+    # a parameter that changes at every snapshot: as many points, the same values, in order
+    pre = _pre_s10(env, "qA1")
+    _body, row = _drawer(env, "qA1")
+    assert len(pre) == 30
+    assert [v["value"] for v in row["values"]] == pre
+    # one that never changes: the same values (the ledger draws each change once)
+    _body, row2 = _drawer(env, "qA2")
+    assert _collapsed([v["value"] for v in row2["values"]]) == _collapsed(_pre_s10(env, "qA2"))
+    # each point says what it was: a run read from its folder (its own patch set the
+    # value), a run from its capture (writer not proven, folder deleted), a state SM saw
+    by_value = {round(v["value"] * 1e6): v for v in row["values"]}
+    for k in range(1, 15):
+        v = by_value[k]
+        if k in GONE:
+            assert (v["provenance"], v["label"], v["sub"]) == (
+                "run_saved", f"saved in #{k} scan", "writer not proven"), v
+            assert v["flags"] == ["run folder deleted"], v
+        else:
+            assert (v["provenance"], v["label"], v["sub"]) == (
+                "run_proven", f"#{k} scan", "its own patch set it"), v
+    assert all(by_value[k]["provenance"] == "observed" for k in range(101, 117))
+    # only the run folders the captures name were read: another chip's run never is
+    assert _ledger(env, "SELECT COUNT(*) FROM events WHERE run_id=99") == [(0,)]
+    assert 7700 not in by_value
+    # the note says what the history was built from
+    assert ("History built from 9 runs in their data folders, 5 run captures whose folders "
+            "are gone, and 16 states SM saw." in _t(grid)), _t(grid)
+    # read only: the data folder is untouched; the ledger keeps its invariants
+    assert _tree_sig(env["data"]) == data_before
+    with hub.Hub.for_chip(env["dir"]).ledger() as store:
+        assert hub_sync.verify(store)["problems"] == []
+
+
+def _is_subsequence(short: list, long: list) -> bool:
+    it = iter(long)
+    return all(any(x == y for y in it) for x in short)
+
+
+def test_a_run_saved_again_after_its_capture_keeps_both_saves(tmp_path):
+    """Param History captured run #6's saved state, then the run saved again
+    (its final save) before its folder was read here: the history keeps the
+    captured value (what SM copied from the run folder) and the run's final
+    one after it -- nothing the pre-S10 grid drew is missing."""
+    env = _with_runs(tmp_path, rewrite=6)
+    _grid(env)
+    pre = _pre_s10(env, "qA1")
+    _body, row = _drawer(env, "qA1")
+    got = [v["value"] for v in row["values"]]
+    assert len(pre) == 30 and len(got) == 31
+    assert _is_subsequence(pre, got), (pre, got)
+    at = got.index(6.0e-6)
+    assert row["values"][at]["label"] == "seen by SM (experiment snapshot)", row["values"][at]
+    assert (got[at + 1], row["values"][at + 1]["label"]) == (6.5e-6, "#6 scan")
+
+
+def test_runs_build_in_the_background_and_resume_after_a_restart(tmp_path, monkeypatch):
+    env = _with_runs(tmp_path)
+    queued = _queued_only(monkeypatch)
+    first = _grid(env)
+    assert queued and 'data-vh-mode="building"' in first
+    assert _one_slice(env) is True
+    second = _grid(env)
+    assert 'data-vh-mode="building"' in second
+    assert re.search(r"being built \(\d+ of 9 runs\)", _t(second)), _t(second)
+    for _ in range(4):
+        _one_slice(env)
+    assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == [("running",)]
+    # the process ends mid-build: its RAM goes, the ledger file stays
+    hub.Hub.for_chip(env["dir"]).release()
+    hub_sync._SYNCS.pop(hub_sync._norm(env["dir"]))
+    monkeypatch.undo()                                 # the next process (inline here)
+    grid = _grid(env)
+    assert "30 recorded changes shown (30 events in the change ledger)" in _t(grid), _t(grid)[-500:]
+    _body, row = _drawer(env, "qA1")
+    assert [v["value"] for v in row["values"]] == _pre_s10(env, "qA1")
+
+
+def test_a_build_of_an_older_kind_is_resumed_with_its_runs(tmp_path, monkeypatch):
+    """A ledger an earlier build made from the states SM saw alone (no runs,
+    its marker "done") is not read as complete: the next view adds the runs."""
+    env = _with_runs(tmp_path)
+    real = routes._hub_archive_sources
+
+    def states_only(hm, target_path, chip_dir):
+        snaps, _setup = real(hm, target_path, chip_dir)
+        return (lambda: [s for s in snaps() if not s.get("run") and s["trigger"] != "experiment"]), None
+    monkeypatch.setattr(routes, "_hub_archive_sources", states_only)
+    assert "16 recorded changes shown" in _t(_grid(env))
+    monkeypatch.undo()
+    with hub.Hub.for_chip(env["dir"]).ledger() as store:
+        with hub_sync.txn(store):
+            store.set_meta(hub_sync.ARCHIVE_BUILD, "done")      # the older build's marker
+    hub.Hub.for_chip(env["dir"]).release()
+    hub_sync._SYNCS.pop(hub_sync._norm(env["dir"]))
+    grid = _grid(env)
+    assert "30 recorded changes shown (30 events in the change ledger)" in _t(grid), _t(grid)[-500:]
+
+
+def test_a_run_the_ledger_holds_is_never_added_twice_and_a_live_open_reads_its_whole_folder(tmp_path):
+    """A chip opened live before ingested runs #1 and #2 from its data folder;
+    Param History captured both. Then #1's folder was deleted and a run #3
+    landed beside #2 that Param History never captured. Viewed archived, its
+    ledger is not given #1 a second time from its capture, and #3 is not read
+    (only the folders the captures name are); opened live again, the chip
+    reads its whole data folder once more (#3 lands)."""
+    from tests.test_hub_drawer import write_chip
+    data, live = tmp_path / "data", tmp_path / "chips" / "live"
+    f1, e1, _s1 = _run_folder(data, 1, 1, 1.0e-6)
+    f2, e2, _s2 = _run_folder(data, 2, 2, 2.0e-6)
+    write_chip(live, chip_state(t1=2.0e-6), data)
+    app = make_app(tmp_path)                        # syncs the data folder on open
+    client = app.test_client()
+    assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    with app.app_context():
+        hm = routes._history()
+        directory = Path(hm.resolve_chip_dir(str(live))[0])
+        for entry in (e1, e2):
+            assert hm.ingest_run(str(live), entry)["ingested"] == 1
+    env = {"app": app, "client": client, "dir": directory, "key": directory.name}
+    assert _ledger(env, "SELECT run_id FROM events WHERE kind='run' ORDER BY run_id") == [(1,), (2,)]
+    _open_other(app, tmp_path)
+    shutil.rmtree(f1)
+    _run_folder(data, 3, 3, 3.0e-6)
+    grid = _grid(env)
+    assert 'data-note="archive_built"' in grid
+    assert _ledger(env, "SELECT run_id, COUNT(*) FROM events WHERE kind='run' GROUP BY run_id")         == [(1, 1), (2, 1)]
+    assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    assert _ledger(env, "SELECT run_id, COUNT(*) FROM events WHERE kind='run' GROUP BY run_id")         == [(1, 1), (2, 1), (3, 1)]
+
+
+# ======================================================================
+# 3. off the request thread, counted, resumed when cut short
 # ======================================================================
 
 def _queued_only(monkeypatch) -> list:
@@ -279,14 +524,14 @@ def test_the_build_runs_in_the_background_and_says_so(tmp_path, monkeypatch):
     assert "being built from this chip's Param History snapshots" in _t(first)
     assert "Try again" not in first and "history-cell" not in first
     assert '<strong class="ph-archive-name">Test chip 7</strong>' in first
-    assert _one_slice(env) is True                    # one snapshot looked at, two to go
+    assert _one_slice(env) is True                    # one snapshot looked at, three to go
     second = _grid(env)
     assert 'data-vh-mode="building"' in second
-    assert "(1 of 3)" in _t(second), _t(second)
+    assert "(1 of 4)" in _t(second), _t(second)
     while _one_slice(env):
         pass
     done = _grid(env)
-    assert "3 recorded changes shown" in _t(done) and 'data-vh-mode=' not in done
+    assert "4 recorded changes shown" in _t(done) and 'data-vh-mode=' not in done
 
 
 def test_a_build_cut_short_is_resumed_never_read_as_complete(tmp_path, monkeypatch):
@@ -300,12 +545,12 @@ def test_a_build_cut_short_is_resumed_never_read_as_complete(tmp_path, monkeypat
     hub_sync._SYNCS.pop(hub_sync._norm(env["dir"]))
     monkeypatch.undo()                                 # the next process (inline here)
     grid = _grid(env)
-    assert "3 recorded changes shown" in _t(grid), _t(grid)[-400:]
-    assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == [("done",)]
+    assert "4 recorded changes shown" in _t(grid), _t(grid)[-400:]
+    assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == [("done:runs",)]
 
 
 # ======================================================================
-# 3. end states in plain words: no Try again, no rebuild loop
+# 4. end states in plain words: no Try again, no rebuild loop
 # ======================================================================
 
 def test_unreadable_snapshots_end_unavailable_in_plain_words(tmp_path):
@@ -313,30 +558,30 @@ def test_unreadable_snapshots_end_unavailable_in_plain_words(tmp_path):
     for _ in range(2):                                 # a second view: the same end, no rebuild
         grid = _grid(env)
         assert 'data-vh-mode="unavailable"' in grid and 'data-vh-reason="snapshots_unreadable"' in grid
-        assert ("None of this chip's 3 Param History snapshots that are not a run could be read, "
-                "so its change history cannot be built from them.") in _t(grid)
+        assert ("None of this chip's 4 Param History snapshots could be read, so its change "
+                "history cannot be built from them.") in _t(grid)
         assert "Try again" not in grid and "load delay:" not in grid and "history-cell" not in grid
         assert f'name="folder" value="{env["live"]}">Open this chip</button>' in grid
         assert _ledger(env, "SELECT outcome, COUNT(*) FROM observed_snapshots GROUP BY outcome") \
-            == [("unreadable", 3)]
+            == [("unreadable", 4)]
     body, _row = _drawer(env)
-    assert "None of this chip's 3 Param History snapshots" in _t(body)
+    assert "None of this chip's 4 Param History snapshots" in _t(body)
     assert "Open this cell again in a moment" not in body
     assert f'name="folder" value="{env["live"]}">Open this chip</button>' in body
 
 
 def test_snapshots_that_cannot_be_listed_end_once_per_process(tmp_path, monkeypatch):
-    """The projector could not list the snapshots (their sources unreadable):
-    the build ends with nothing looked at. This process says so and never
-    builds again on every view (a loop of "being built"); a new process
-    tries once more."""
+    """The projector could not list the snapshots: the build ends with nothing
+    looked at. This process says so and never builds again on every view (a
+    loop of "being built"); a new process tries once more."""
     env = _archived(tmp_path)
-    with env["app"].app_context():
-        hm = routes._history()
+    real = routes._hub_archive_sources
 
-    def broken(*a, **k):
-        raise OSError("the history folder cannot be read")
-    monkeypatch.setattr(hm, "snapshot_sources", broken)
+    def unlistable(hm, target_path, chip_dir):
+        def snaps():
+            raise OSError("the history folder cannot be read")
+        return snaps, real(hm, target_path, chip_dir)[1]
+    monkeypatch.setattr(routes, "_hub_archive_sources", unlistable)
     grid = _grid(env)
     assert 'data-vh-reason="snapshots_unreadable"' in grid and "Try again" not in grid
     queued = _queued_only(monkeypatch)
@@ -345,18 +590,17 @@ def test_snapshots_that_cannot_be_listed_end_once_per_process(tmp_path, monkeypa
     monkeypatch.undo()                                 # readable again, in a new process
     hub.Hub.for_chip(env["dir"]).release()
     hub_sync._SYNCS.pop(hub_sync._norm(env["dir"]))
-    assert "3 recorded changes shown" in _t(_grid(env))
+    assert "4 recorded changes shown" in _t(_grid(env))
 
 
-def test_a_chip_whose_snapshots_are_all_runs_builds_nothing_and_says_why(tmp_path):
+def test_a_chip_whose_snapshots_are_all_runs_shows_those_runs(tmp_path):
     env = _archived(tmp_path, runs_only=True)
     grid = _grid(env)
-    assert 'data-vh-reason="no_snapshots"' in grid
-    assert "All 2 of this chip's Param History snapshots are captures of runs." in _t(grid)
-    assert "Try again" not in grid and "load delay:" not in grid
-    assert not (env["dir"] / "ledger.sqlite").exists()
-    body, _row = _drawer(env)
-    assert "All 2 of this chip's Param History snapshots are captures of runs." in _t(body)
+    assert "2 recorded changes shown" in _t(grid)
+    assert "History built from 2 run captures whose folders are gone." in _t(grid)
+    _body, row = _drawer(env)
+    assert [(v["value"], v["label"]) for v in row["values"]] == [
+        (9.0e-5, "first recorded in #7"), (8.0e-5, "saved in #8 scan")]
 
 
 def test_no_ledger_offers_no_try_again(tmp_path):
@@ -368,7 +612,7 @@ def test_no_ledger_offers_no_try_again(tmp_path):
 
 
 # ======================================================================
-# 4. S10 final review: SM's capture of the live folder after adopting a run
+# 5. S10 final review: SM's capture of the live folder after adopting a run
 # ======================================================================
 
 @pytest.mark.parametrize("drop_ledger", [False, True])
@@ -410,14 +654,14 @@ def test_an_adopt_capture_is_the_live_folder_never_a_run(tmp_path, drop_ledger):
 
 
 # ======================================================================
-# 5. S10 final review: only a wait says wait
+# 6. S10 final review: only a wait says wait
 # ======================================================================
 
 def test_a_grid_read_that_fails_says_so_and_a_bug_is_a_real_error(tmp_path, monkeypatch, caplog):
     from quam_state_manager.core import ramcache
     from quam_state_manager.web.hub_status import LedgerUnreadable
     env = _archived(tmp_path)
-    assert "3 recorded changes shown" in _t(_grid(env))
+    assert "4 recorded changes shown" in _t(_grid(env))
 
     def unreadable(*a, **k):
         raise LedgerUnreadable("DatabaseError: database disk image is malformed")

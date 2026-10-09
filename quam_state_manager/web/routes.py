@@ -3456,17 +3456,13 @@ def _is_run_snapshot(meta) -> bool:
                 or getattr(meta, "experiment_folder_path", None))
 
 
-def _hub_observed_source(ctx, chip_dir, *, strict_files: bool = True):
+def _hub_observed_source(ctx, chip_dir):
     """docs/282 review P1-2: what the run sync imports as ``observed`` events
     -- this chip's Param History snapshots that are NOT runs (``auto`` /
     ``manual`` / ``save`` / ``backup`` / ``restore`` captures: states SM itself
     saw), of this folder's own timeline (never a parallel folder's, docs/250).
     Runs come from the data folders; a snapshot of a run is never imported.
-    Called on the projector thread: no request context is used.
-
-    ``strict_files=False`` (S10 walk, an archived chip's build): a snapshot
-    whose saved pair is missing is offered too, so it is counted as one that
-    could not be read instead of being passed over in silence."""
+    Called on the projector thread: no request context is used."""
     from quam_state_manager.core import hub_sync
     from quam_state_manager.core.history import LINEAGE_PARALLEL
     hm = _history()
@@ -3488,8 +3484,7 @@ def _hub_observed_source(ctx, chip_dir, *, strict_files: bool = True):
                 continue
             t_us = hub_sync.snapshot_instant_us(m.timestamp)
             folder = base / m.timestamp
-            if t_us is None or (strict_files and not ((folder / "state.json").is_file()
-                                                      and (folder / "wiring.json").is_file())):
+            if t_us is None or not (folder / "state.json").is_file() or not (folder / "wiring.json").is_file():
                 continue
             # S10 C1.5: the folder the observed state stands for (its
             # snapshot's recorded source; None when it cannot be shown)
@@ -3497,6 +3492,112 @@ def _hub_observed_source(ctx, chip_dir, *, strict_files: bool = True):
                         "actor": getattr(m, "actor", None), "live": src.get("folder")})
         return out
     return source
+
+
+def _archive_run_root(meta) -> Path | None:
+    """S10 walk: the data root of the run folder a run capture names, when
+    that folder is still on disk in the run layout
+    (``<root>/<YYYY-MM-DD>/#<id>_<name>_<HHMMSS>`` with its saved pair) --
+    its run is then read from there, as a live chip's catch-up reads it --
+    else None (the capture stands for the run)."""
+    from quam_state_manager.core import hub_build
+    raw = getattr(meta, "experiment_folder_path", None)
+    if not raw:
+        return None
+    folder = Path(str(raw))
+    try:
+        if not (hub_build._RUN.fullmatch(folder.name) and hub_build._DAY.fullmatch(folder.parent.name)):
+            return None
+        state, wiring = hub_build.state_paths(folder)
+        if not (state.is_file() and wiring.is_file()):
+            return None
+    except (OSError, ValueError):
+        return None
+    return folder.parent.parent
+
+
+def _hub_archive_sources(hm, target_path, chip_dir):
+    """S10 walk: what an ARCHIVED chip's build reads -- ``(snapshots, setup)``,
+    both called on the projector thread (no request context).
+
+    Its run captures ARE its run history (no live folder ingests its runs):
+    * a run whose folder is still on disk is read from its data folder --
+      *setup* names those data roots and, per root, the run folders the
+      captures name (only those are read: another chip's runs in the same
+      data folder never enter this chip's history); the run sync ingests them
+      exactly as a live chip's catch-up does (true run events, targets,
+      patches, provenance);
+    * a run whose folder is gone is imported from its capture as that run
+      (``run`` items: one per run, its run-folder capture first);
+    * every other snapshot is a state SM saw (``observed``) -- including SM's
+      own capture of the live folder that a run's ingest later stamped with
+      that run, and a capture of a run folder still on disk: one equal to
+      the run's save is left out by the observed import (that save, seen a
+      moment early), one the run rewrote after it was taken (a save made
+      mid-run, replaced by the run's final one) stays -- Param History drew
+      it, so the history keeps it, before the run's final save.
+    A snapshot whose saved pair is missing is offered too: it is counted as
+    one that could not be read, never passed over in silence."""
+    from quam_state_manager.core import hub_sync
+    from quam_state_manager.core.history import _source_key
+    base = Path(chip_dir)
+
+    def item(m, srcs) -> dict | None:
+        t_us = hub_sync.snapshot_instant_us(m.timestamp)
+        if t_us is None:
+            return None
+        return {"ts": m.timestamp, "t_us": t_us, "trigger": m.trigger, "dir": str(base / m.timestamp),
+                "actor": getattr(m, "actor", None), "live": (srcs.get(m.timestamp) or {}).get("folder")}
+
+    def snapshots() -> list[dict]:
+        metas = hm.list_snapshots(target_path)
+        try:
+            srcs = hm.snapshot_sources(target_path, metas)
+        except Exception:  # noqa: BLE001 -- no folder can be shown: none recorded
+            srcs = {}
+        out: list[dict] = []
+        runs: dict = {}
+        for m in metas:
+            it = item(m, srcs)
+            if it is None:
+                continue
+            if not _is_run_snapshot(m):
+                out.append(it)
+                continue
+            own = m.trigger == "experiment"          # a capture of the run's own folder
+            if _archive_run_root(m) is not None:
+                # the run is read from its folder; the capture is still what
+                # SM saw (the live folder, or the run folder when it was
+                # copied): one equal to the run's save is left out as that
+                # save seen a moment early, one the run rewrote since stays
+                out.append(it)
+                continue
+            raw = getattr(m, "experiment_folder_path", None)
+            key = (("folder", _source_key(str(raw))) if raw
+                   else ("run", m.run_id, m.experiment_name or "", m.timestamp))
+            runs.setdefault(key, []).append((not own, m.timestamp, it, m))
+        for caps in runs.values():
+            caps.sort(key=lambda c: (c[0], c[1]))     # its own folder's capture, then the earliest
+            _live, _ts, it, m = caps[0]
+            out.append(dict(it, live=None, run={"run_id": m.run_id, "experiment": m.experiment_name,
+                                                "folder": getattr(m, "experiment_folder_path", None)}))
+            out.extend(c[2] for c in caps[1:] if c[0])   # a live capture: what SM saw there
+        return out
+
+    def setup() -> dict:
+        metas = hm.list_snapshots(target_path)
+        roots: dict = {}
+        only: dict = {}
+        for m in metas:
+            if _is_run_snapshot(m):
+                root = _archive_run_root(m)
+                if root is not None:
+                    k = hub_sync._norm(root)
+                    roots.setdefault(k, str(root))
+                    folder = Path(str(m.experiment_folder_path))
+                    only.setdefault(k, set()).add(f"{folder.parent.name}/{folder.name}")
+        return {"roots": [(r, "archive_run_capture") for r in roots.values()], "only": only}
+    return snapshots, setup
 
 
 def _hub_sync_open(ctx) -> None:
@@ -11476,14 +11577,11 @@ _VH_UNAVAILABLE_NOTES = {
 }
 # S10 walk: an archived chip whose history cannot be built from its snapshots
 _VH_UNAVAILABLE_NOTES.update({
-    "no_snapshots": ("This chip's Param History holds only captures of runs. Runs reach its "
-                     "change history only from their data folder, so there is nothing to "
-                     "build it from here."),
     "snapshots_unreadable": ("This chip's Param History snapshots could not be read, so its "
                              "change history cannot be built from them."),
 })
 #: S10 walk: end states a Try again cannot change (the same files answer the same)
-_VH_FINAL_REASONS = frozenset({"no_ledger", "no_snapshots", "snapshots_unreadable"})
+_VH_FINAL_REASONS = frozenset({"no_ledger", "snapshots_unreadable"})
 
 
 def _rename_scope(ctx: dict | None = None, chip_dir=None) -> dict:
@@ -33091,9 +33189,15 @@ def _hub_archive_ensure(hm, target_path, directory: Path) -> tuple[str, str] | N
     ``building`` mode and its progress); a build that stopped part way is
     resumed. A ledger that holds events is read as it is.
 
+    S10 walk (follow-up): its RUN captures are its run history -- runs whose
+    folder is still on disk are read from their data folder, the others from
+    their capture (:func:`_hub_archive_sources`) -- so nothing the pre-S10
+    Param History grid drew for the chip is missing. A ledger a live open
+    made gets the same pass once (marked :data:`hub_sync.ARCHIVE_DONE`; a
+    live open clears the mark): it adds what that ledger does not hold.
+
     Returns None (read on: the ledger, or "being built") or ``(reason, text)``
-    for an end state: ``no_snapshots`` (every snapshot is a run capture) or
-    ``snapshots_unreadable`` (none could be read)."""
+    for the end state ``snapshots_unreadable`` (nothing could be read)."""
     from quam_state_manager.core import hub_sync
 
     def building() -> bool:
@@ -33105,13 +33209,16 @@ def _hub_archive_ensure(hm, target_path, directory: Path) -> tuple[str, str] | N
         peek = hub_sync.archive_peek(directory)
     except Exception:  # noqa: BLE001 -- a ledger that cannot be opened: the read says so
         return None
-    # nothing in it: never built from its snapshots -- or built, but its
-    # snapshots could not even be listed then (tried again once per process,
-    # never in a loop: this process's own try ends it)
+    # Built from its snapshots already: read it -- unless the build looked at
+    # nothing (its snapshots could not even be listed then: tried again once
+    # per process, never in a loop -- this process's own try ends it). Any
+    # other ledger -- none, one a live open made (it may lack the run
+    # captures of folders gone since, or another folder's states), a build
+    # cut short or of an older kind -- gets the build: it adds only what the
+    # ledger does not hold yet (each snapshot is looked at once)
     empty = peek is not None and not peek["events"]
     unlisted = empty and not peek["looked"] and hub_sync.registered_for(directory) is None
-    wanted = (peek is None or peek["build"] == "running"
-              or (empty and (peek["build"] is None or unlisted)))
+    wanted = peek is None or peek["build"] != hub_sync.ARCHIVE_DONE or unlisted
     if wanted:
         try:
             snaps = hm.list_snapshots(target_path)
@@ -33121,30 +33228,18 @@ def _hub_archive_ensure(hm, target_path, directory: Path) -> tuple[str, str] | N
             return "snapshots_unreadable", _VH_UNAVAILABLE_NOTES["snapshots_unreadable"]
         if not snaps:
             return None                  # no history at all: the read says so (no_ledger)
-        runs = sum(1 for m in snaps if _is_run_snapshot(m))
-        if runs == len(snaps):
-            if peek is not None and peek["events"]:
-                return None
-            n = len(snaps)
-            return "no_snapshots", (
-                (f"All {n} of this chip's Param History snapshots are captures of runs. " if n > 1
-                 else "This chip's one Param History snapshot is a capture of a run. ")
-                + "Runs reach its change history only from their data folder, so there is "
-                "nothing to build it from here.")
-        hub_sync.build_archived(directory, _hub_observed_source(
-            {"path": target_path}, directory, strict_files=False))
+        hub_sync.build_archived(directory, *_hub_archive_sources(hm, target_path, directory))
         if building():
             return None
         try:
             peek = hub_sync.archive_peek(directory)
         except Exception:  # noqa: BLE001
             return None
-    if peek is not None and peek["build"] == "done" and not peek["events"]:
+    if peek is not None and peek["build"] == hub_sync.ARCHIVE_DONE and not peek["events"]:
         n = peek["looked"]
         if n:
-            text = (f"None of this chip's {n} Param History snapshot{'' if n == 1 else 's'} that "
-                    f"{'is' if n == 1 else 'are'} not a run could be read, so its change "
-                    "history cannot be built from them.")
+            text = (f"None of this chip's {n} Param History snapshot{'' if n == 1 else 's'} could "
+                    "be read, so its change history cannot be built from them.")
         else:
             text = _VH_UNAVAILABLE_NOTES["snapshots_unreadable"]
         return "snapshots_unreadable", text
@@ -33202,6 +33297,37 @@ def _openable_folder_for_chip(hm, target_path, *, tries: int = 6) -> str | None:
     return None
 
 
+def _plural_of(n: int, one: str, many: str) -> str:
+    return f"{n:,} {one if n == 1 else many}"
+
+
+def _archive_built_note(peek: dict) -> dict:
+    """S10 walk: what an archived chip's history was built from -- runs read
+    from their data folders, runs from captures whose run folder is gone,
+    states SM saw -- and how many snapshots could not be read."""
+    parts = []
+    n = int(peek.get("runs_in_folders") or 0)
+    if n:
+        parts.append("1 run in its data folder" if n == 1 else f"{n:,} runs in their data folders")
+    n = int(peek.get("runs_from_captures") or 0)
+    if n:
+        parts.append("1 run capture whose folder is gone" if n == 1
+                     else f"{n:,} run captures whose folders are gone")
+    n = int(peek.get("observed") or 0)
+    if n:
+        parts.append(_plural_of(n, "state", "states") + " SM saw")
+    if not parts:
+        parts.append("nothing that could be read")
+    text = "History built from " + (
+        ", ".join(parts[:-1]) + (", and " if len(parts) > 2 else " and ") + parts[-1]
+        if len(parts) > 1 else parts[0]) + "."
+    bad = int((peek.get("outcomes") or {}).get("unreadable", 0))
+    if bad:
+        text += (f" {_plural_of(bad, 'snapshot', 'snapshots')} could not be read and "
+                 f"{'is' if bad == 1 else 'are'} left out.")
+    return {"level": "warning" if bad else "info", "code": "archive_built", "text": text}
+
+
 def _archive_chip_names(hm, chip_key: str) -> dict:
     """S10 walk: ``{"key", "display"}`` of an archived chip -- its declared
     name (the alias registry) first, its history folder name second."""
@@ -33213,74 +33339,29 @@ def _archive_chip_names(hm, chip_key: str) -> dict:
 
 
 def _archive_ledger_notes(hm, target_path, ledger: dict) -> list[dict]:
-    """S10 C5 (C3 review P1): an ARCHIVED chip's ledger is read as it is, and
-    it may hold less than Param History holds of the chip -- nothing at all
-    (a chip not opened since the ledger existed), or no runs while Param
-    History holds captures of runs (runs reach a ledger only from a data
-    folder linked to the chip). Either is said, never shown as an empty
-    history, with the one press that builds the ledger: open the chip
-    (:func:`_openable_folder_for_chip`). When the ledger holds both, only the
-    Open offer is said (where a folder opens as the chip), else ``[]``.
-
-    S10 walk: a ledger built from the chip's own snapshots
-    (:func:`_hub_archive_ensure`) says so first, with how many of them could
-    not be read, and keeps the Open offer wherever a folder opens as the chip."""
-    try:
-        snaps = hm.list_snapshots(target_path)
-    except Exception:  # noqa: BLE001 -- Param History unreadable: nothing to compare with
-        return []
+    """S10 C5 (C3 review P1), reworked by the S10 walk: what an ARCHIVED
+    chip's history says beside it. Its ledger is built from its own Param
+    History snapshots (:func:`_hub_archive_ensure`), so it no longer holds
+    less than Param History holds -- the note says what it was built from
+    (runs in their data folders, run captures whose folders are gone, states
+    SM saw) and how many snapshots could not be read; and wherever a folder on
+    disk opens as the chip, "Open this chip" is offered (S10 final review:
+    never "no folder opens" while one does). ``[]`` when there is nothing to
+    say."""
     from quam_state_manager.core import hub_sync
-    total = len(snaps)
-    runs = sum(1 for m in snaps if _is_run_snapshot(m))
-    events = int(ledger.get("events") or 0)
     out: list[dict] = []
-    # S10 walk: a ledger built from the chip's own snapshots says so -- and
-    # how many of them could not be read
     try:
         directory = hm.history_dir_cached(target_path)
         peek = hub_sync.archive_peek(directory) if directory is not None else None
     except Exception:  # noqa: BLE001 -- nothing more to say
         peek = None
-    built = bool(peek and peek.get("build"))
-    # S10 final review: the Open offer stands wherever a folder on disk opens
-    # as this chip -- never "no folder opens" while one does
+    if peek and peek.get("build"):
+        out.append(_archive_built_note(peek))
     open_path = _openable_folder_for_chip(hm, target_path)
-    short = bool((total and not events) or (runs and not ledger.get("has_runs")))
-    if built:
-        n = int(peek["looked"])
-        bad = int(peek["outcomes"].get("unreadable", 0))
-        text = (f"Built from this chip's {n} Param History snapshot{'' if n == 1 else 's'} that "
-                f"{'is' if n == 1 else 'are'} not a run: states SM saw, writer unknown.")
-        if bad:
-            text += f" {bad} could not be read and {'is' if bad == 1 else 'are'} left out."
-        note = {"level": "warning" if bad else "info", "code": "archive_built", "text": text}
-        out.append(note)
-    if not short:
-        if open_path:
-            # no shortfall to say: the offer stands on its own
-            out.append({"level": "info", "code": "archive_open", "open_chip_path": open_path,
-                        "text": "This chip is not open, so its history is not kept current here. "
-                                "Open this chip to keep it current."})
-        return out
-    if total and not events:
-        text = (f"This chip's change ledger holds nothing yet, while Param History holds "
-                f"{total} capture{'' if total == 1 else 's'} of it"
-                + (f" ({runs} from runs)" if runs else "") + ".")
-    else:
-        text = (f"Param History holds {runs} run capture{'' if runs == 1 else 's'} of this chip "
-                "that its change ledger does not: the ledger holds no runs (runs reach it only "
-                "from a data folder linked to the chip).")
-    if events:
-        # S10 walk: the ledger holds the states SM saw; what it lacks is runs
-        text += (" Open this chip, then link the folder its runs are saved in." if open_path
-                 else " No folder on disk opens as this chip now, so its runs cannot be added here.")
-    elif open_path:
-        text += " Open this chip to build its ledger" + (
-            ", then link the folder its runs are saved in." if runs else ".")
-    else:
-        text += " No folder on disk opens as this chip now, so its ledger cannot be built here."
-    out.append({"level": "warning", "code": "archive_short", "text": text,
-                "open_chip_path": open_path})
+    if open_path:
+        out.append({"level": "info", "code": "archive_open", "open_chip_path": open_path,
+                    "text": "This chip is not open, so its history is not kept current here. "
+                            "Open this chip to keep it current."})
     return out
 
 
