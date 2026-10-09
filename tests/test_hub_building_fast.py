@@ -207,16 +207,19 @@ class TestProgressPhases:
         cs = hub_sync.open_chip(chip, [(str(data), "declared")], kick=False)
         st0 = cs.status()
         assert st0["state"] == "building"
-        assert hub_sync.progress_words(st0) == ": looking for run folders"
+        # S10 walk (N8): ": looking for run folders" -> the step it is on (each step counts its own work)
+        assert hub_sync.progress_words(st0) == ": step 1 of 2, looking for run folders"
         with HubStore(chip) as st:
             first = _slices_until(cs, st, lambda s: s["phase"] == "reading")
             assert first["total"] == 5 and first["looked"] >= 1
-            assert hub_sync.progress_words(first) == f": looking through run folders ({first['looked']} of 5)"
+            assert hub_sync.progress_words(first) == (
+                f": step 1 of 2, looking through run folders ({first['looked']} of 5)")
             later = _slices_until(cs, st, lambda s: s["looked"] > first["looked"])
             assert later["looked"] > first["looked"], "the count stood still while folders were read"
             ing = _slices_until(cs, st, lambda s: s["phase"] in ("ingesting", "matching"))
             assert ing["phase"] == "ingesting", "a first build is not a match of a moved folder"
-            assert hub_sync.progress_words(ing) == f" ({ing['done']} of 5 runs)"
+            # S10 walk (N8): " (n of 5 runs)" -> its own step, so the count never reads as going down
+            assert hub_sync.progress_words(ing) == f": step 2 of 2, adding runs ({ing['done']} of 5)"
             while cs.run_slice(st, None):
                 pass
         assert cs.status()["state"] == "ready"
@@ -243,8 +246,9 @@ class TestProgressPhases:
         with HubStore(chip) as st:
             m = _slices_until(cs, st, lambda s: s["phase"] in ("ingesting", "matching"))
             assert m["phase"] == "matching", m["phase"]
+            # S10 walk (N8): the step it is on, before the phase's own count
             assert hub_sync.progress_words(m) == (
-                f": matching a new data folder's runs to the runs recorded ({m['done']} of 5)")
+                f": step 2 of 2, matching a new data folder's runs to the runs recorded ({m['done']} of 5)")
             while cs.run_slice(st, None):
                 pass
             runs = {r["eid"]: dict(r) for r in st.conn.execute("SELECT * FROM events WHERE kind='run'")}
@@ -263,15 +267,20 @@ class TestProgressPhases:
                 assert runs[eid]["state_hash"] == rules.state_hash(*hub_build.read_pair(new / rel))
         assert hub_sync.status(chip)["state"] == "ready"
 
+    # S10 walk (N8): a status that names its steps (data folders, the states SM saw) says
+    # which step it is on -- "1864 of 3521" then "925 of 3521" read as a count going down
     @pytest.mark.parametrize("phase,extra,words", [
-        ("idle", {"total": 0, "roots": [{"path": "x"}]}, "being built: looking for run folders."),
-        ("reading", {"total": 40, "looked": 7}, "being built: looking through run folders (7 of 40)."),
+        ("idle", {"total": 0}, "being built: step 1 of 3, looking for run folders."),
+        ("reading", {"total": 40, "looked": 7}, "being built: step 1 of 3, looking through run folders (7 of 40)."),
         ("matching", {"total": 40, "done": 12},
-         "being built: matching a new data folder's runs to the runs recorded (12 of 40)."),
-        ("ingesting", {"total": 40, "done": 12}, "being built (12 of 40 runs)."),
+         "being built: step 2 of 3, matching a new data folder's runs to the runs recorded (12 of 40)."),
+        ("ingesting", {"total": 40, "done": 12}, "being built: step 2 of 3, adding runs (12 of 40)."),
+        ("observing", {"total": 40, "done": 40, "observed_done": 5, "observed_total": 9},
+         "being built: step 3 of 3, importing the states SM saw (5 of 9)."),
     ])
     def test_every_surface_says_the_same_phase(self, building, monkeypatch, phase, extra, words):
-        st = dict({"state": "building", "phase": phase, "done": 0}, **extra)
+        st = dict({"state": "building", "phase": phase, "done": 0, "roots": [{"path": "x"}],
+                   "observes": True}, **extra)
         monkeypatch.setattr(hub_sync, "status", lambda _d: st)
         c = building["client"]
         for name in ("drawer", "column", "trends", "param_history", "changes"):
@@ -282,10 +291,12 @@ class TestProgressPhases:
         versions = said(c.get("/state/versions", headers=HX).data.decode())
         assert words[:-1] + ". Until it is complete" in versions, versions[:400]
         short = said(c.get("/journal/day", headers=HX).data.decode())
-        want = {"idle": "building the history: looking for run folders",
-                "reading": "building the history: looking through run folders (7/40)",
-                "matching": "building the history: matching a new data folder's runs to the runs recorded (12/40)",
-                "ingesting": "building the history (12/40)"}[phase]
+        want = {"idle": "building the history: step 1 of 3, looking for run folders",
+                "reading": "building the history: step 1 of 3, looking through run folders (7/40)",
+                "matching": "building the history: step 2 of 3, matching a new data folder's runs to "
+                            "the runs recorded (12/40)",
+                "ingesting": "building the history: step 2 of 3, adding runs (12/40)",
+                "observing": "building the history: step 3 of 3, importing the states SM saw (5/9)"}[phase]
         assert want in short, short[:400]
         report = said(c.get("/chip-status/report/section/calibration_log?redact=0").data.decode())
         assert want + ": days that hold only runs" in report, report[:400]
