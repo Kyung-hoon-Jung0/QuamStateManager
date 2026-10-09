@@ -808,3 +808,16 @@ four kinds of chip (docs/301).
   SM had none of them, so its agent API answered "no manual" for every family;
   the wheel test now builds from a clean copy and checks every pack file.
 
+
+## v1.1.2 (2026-10-09)
+
+- **Config location over a pinned env (on-site)**: a conda env that pins
+  `QUALIBRATE_CONFIG_FILE` (`conda env config vars`) made "Use this location"
+  refuse every other config folder, so the landing's project cards and the
+  sidebar kept listing the env's projects and no project of the chosen folder
+  could be opened. An explicit choice now outranks the env value it was made
+  against; it is stored with that value, so a restart under the same env keeps
+  it and a different env keeps its own pin. The landing and the Projects page
+  say which env location the choice outranks; Reset goes back to it.
+- Customer, lab and chip names removed from code, tests and comments (the
+  real names live in an external lab map).

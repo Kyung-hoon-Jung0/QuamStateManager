@@ -51,29 +51,41 @@ except ModuleNotFoundError:  # pragma: no cover - older interpreters
 # SM-side config-location override (docs/63 §B): chosen in the UI when the
 # default/env locations hold no config (e.g. qualibrate lives in a WSL distro
 # while SM runs native Windows). Set from instance/qualibrate_location.json at
-# app creation and by the /qualibrate/use-location route. Deliberately BELOW
-# both env vars: an environment variable is deployment-level intent (and the
-# test suite's isolation relies on it winning).
+# app creation and by the /qualibrate/use-location route. BELOW both env vars
+# by default (the test suite's isolation relies on the env winning) -- unless
+# the user chose it in the UI while that very env value was set
+# (``_override_beats_env``). A conda env routinely pins QUALIBRATE_CONFIG_FILE
+# (``conda env config vars``), so "env always wins" refused every explicit
+# "Use this location" and the landing kept listing the env's projects.
 _dir_override: Path | None = None
+# True when the override was chosen explicitly against the env value this
+# process runs with: then it outranks that env. Recorded with the choice
+# (``env_at_choice``) so a choice made under one env never hijacks another.
+_override_beats_env: bool = False
 # When the chosen/typed location is a custom-named root config FILE (a lab that
 # keeps e.g. ``.qualibrate_config.toml`` instead of ``config.toml``), remember
 # its basename so every ROOT read hits the real file, not a hardcoded name.
 _file_override: Path | None = None
 
 
-def set_dir_override(value: str | Path | None) -> None:
+def set_dir_override(value: str | Path | None, *, beats_env: bool = False) -> None:
     """Install (or clear, with None) the UI-chosen config location.
 
     Accepts a DIRECTORY **or** a direct ``.toml`` FILE (qualibrate's own
     ``QUALIBRATE_CONFIG_FILE`` is dir-or-file too). A file value pins that
     exact file as the root config and its parent as the config dir, so a
     custom-named root config (``.qualibrate_config.toml``) is honored instead
-    of being silently replaced by ``<dir>/config.toml``."""
-    global _dir_override, _file_override
+    of being silently replaced by ``<dir>/config.toml``.
+
+    ``beats_env``: the choice outranks a resolving env location (the user
+    picked it in the UI while that env was set -- see ``_override_beats_env``)."""
+    global _dir_override, _file_override, _override_beats_env
     if not value:
         _dir_override = None
         _file_override = None
+        _override_beats_env = False
         return
+    _override_beats_env = bool(beats_env)
     p = Path(value)
     if p.suffix == ".toml" or (p.exists() and p.is_file()):
         _file_override = p
@@ -112,6 +124,14 @@ def _discover_root_name(d: Path, preferred: str | None) -> str:
     return preferred or "config.toml"
 
 
+def env_raw() -> str | None:
+    """The env value that names a config location for this process, verbatim
+    (``QUALIBRATE_CONFIG_FILE``, else the legacy ``QUALIBRATE_CONFIG_DIR``);
+    None when neither is set. Stored with a UI choice as ``env_at_choice``."""
+    return (os.environ.get("QUALIBRATE_CONFIG_FILE")
+            or os.environ.get("QUALIBRATE_CONFIG_DIR") or None)
+
+
 def _env_location() -> tuple[Path, str | None] | None:
     """``(dir, preferred_name)`` from QUAlibrate's own variable --
     ``QUALIBRATE_CONFIG_FILE`` is dir-OR-file (qualibrate_config/vars.py: a
@@ -131,10 +151,9 @@ def _env_location() -> tuple[Path, str | None] | None:
 
 def env_pins_config() -> bool:
     """True when an env var names a location whose root config actually
-    EXISTS -- only then does it outrank a UI choice (docs/63 §B: an env var is
-    deployment-level intent). An env pointing at nothing (a stale ``set``
-    copied from a config's own header comment) must not turn the picker into
-    a dead end where 'Use this location' is refused with no way out."""
+    EXISTS -- only then does it outrank a stored UI choice made under another
+    env value (docs/63 §B: an env var is deployment-level intent). A choice
+    the user makes NOW always wins (``set_dir_override(beats_env=True)``)."""
     loc = _env_location()
     if loc is None:
         return False
@@ -147,8 +166,12 @@ def _resolved_source() -> tuple[str, Path, str]:
     name can never come from two different sources. A RESOLVING env wins; an
     env that resolves to nothing still beats the default (isolation) but
     yields to an explicit UI choice; then the UI choice; then
-    ``~/.qualibrate``. Returns ``(source, dir, root_name)`` with source in
-    ``env`` | ``override`` | ``default``."""
+    ``~/.qualibrate``. A choice made in the UI against the current env
+    (``_override_beats_env``) is first of all. Returns ``(source, dir,
+    root_name)`` with source in ``env`` | ``override`` | ``default``."""
+    if _dir_override is not None and _override_beats_env:
+        preferred = _file_override.name if _file_override is not None else None
+        return "override", _dir_override, _discover_root_name(_dir_override, preferred)
     loc = _env_location()
     if loc is not None:
         d, preferred = loc
@@ -183,12 +206,15 @@ def config_source() -> dict[str, Any]:
     """Where the config dir comes from: ``{"dir": str, "source":
     "env" | "override" | "default"}`` -- surfaced in the UI so a user can see
     WHY a given tree is (not) being read. ``env_ignored`` names the env
-    location when it was set but held no config and a UI choice took over."""
+    location when it was set but a UI choice took over; ``env_outranked`` is
+    True when that env DID hold a config (the user chose another one over
+    it), False when it held none."""
     src, d, _name = _resolved_source()
     out: dict[str, Any] = {"dir": str(d), "source": src}
     loc = _env_location()
     if src != "env" and loc is not None:
         out["env_ignored"] = str(loc[0])
+        out["env_outranked"] = env_pins_config()
     return out
 
 

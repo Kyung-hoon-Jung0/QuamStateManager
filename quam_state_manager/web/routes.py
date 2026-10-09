@@ -7327,19 +7327,14 @@ def qualibrate_locate_candidates():
 @bp.route("/qualibrate/use-location", methods=["POST"])
 def qualibrate_use_location():
     """Adopt a config directory: persist the choice (instance memo only —
-    the chosen tree is never written) + install the process-wide override."""
-    # Refuse only when the env-pinned location actually RESOLVES to a config.
-    # A QUALIBRATE_CONFIG_FILE naming a file that is not there (customer,
-    # on-site: a stale `set` copied from a config's own header comment) must
-    # not turn the picker into a dead end -- then the user's explicit click
-    # wins (qualibrate_config resolves override-over-unreadable-env).
-    if qualibrate_config.env_pins_config():
-        return render_template(
-            "_qualibrate_locate_result.html", result=None, suggestions=[],
-            message=("An environment variable (QUALIBRATE_CONFIG_FILE / "
-                     "QUALIBRATE_CONFIG_DIR) pins the config location for "
-                     "this process and outranks a chosen folder — unset it "
-                     "and restart SM, or point it at the right place."))
+    the chosen tree is never written) + install the process-wide override.
+
+    The explicit click wins even over an env var that resolves to a config
+    (customer, on-site: the conda env pinned QUALIBRATE_CONFIG_FILE, so the
+    choice was refused and the landing kept listing the env's projects). The
+    env value it was made against is stored as ``env_at_choice``: after a
+    restart the choice outranks that same env again, but never a different
+    one (another conda env keeps its own pin)."""
     p = _normalize_config_input(request.form.get("path") or "")
     res = _classify_config_location(p)
     if not res["has_config"]:
@@ -7349,8 +7344,9 @@ def qualibrate_use_location():
     # is kept for back-compat + display. set_dir_override handles file-or-dir.
     safe_io.atomic_write_json(
         _qualibrate_location_file(),
-        {"config_dir": res["path"], "config_file": res["config_file"]})
-    qualibrate_config.set_dir_override(res["config_file"])
+        {"config_dir": res["path"], "config_file": res["config_file"],
+         "env_at_choice": qualibrate_config.env_raw()})
+    qualibrate_config.set_dir_override(res["config_file"], beats_env=True)
     logger.info("qualibrate config location chosen: %s", res["config_file"])
     if _is_htmx():
         resp = make_response()
