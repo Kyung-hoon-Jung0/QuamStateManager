@@ -128,7 +128,7 @@ class TestValuePatterns:
 
 
 class TestWholeTokens:
-    """S10 walk 2: the report title read "20260929_[hidden]_kriss" -- a folder or chip
+    """S10 walk 2: the report title kept most of a folder name around "[hidden]" -- a folder or chip
     name is hidden as a WHOLE token, never in part (generic synthetic names here)."""
 
     @pytest.fixture
