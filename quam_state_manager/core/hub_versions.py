@@ -78,10 +78,8 @@ class NotReady(Unavailable):
 
 def building_text(status: dict | None) -> str:
     """What a door says while the ledger catches up (S7's wording)."""
-    st = status or {}
-    done, total = st.get("done"), st.get("total")
-    return ("The change history is being built"
-            + (f" ({done or 0} of {total} runs)" if total else "")
+    from quam_state_manager.core import hub_sync
+    return ("The change history is being built" + hub_sync.progress_words(status)
             + "; try again when it is complete.")
 
 

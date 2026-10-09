@@ -50,6 +50,19 @@ def _gaussian_window(*args, **kwargs):
     from scipy.signal.windows import gaussian as _f
     return _f(*args, **kwargs)
 
+
+def preload_scipy() -> None:
+    """Import the scipy modules the functions above use (a no-op once they
+    are loaded). A caller that synthesizes while holding a lock calls this
+    first, so a cold import never runs under that lock (S10 walk: the first
+    lint held the chip's state lock through it). No scipy: nothing to do --
+    the synthesis that needs it reports its own failure as before."""
+    try:
+        import scipy.ndimage  # noqa: F401
+        import scipy.signal.windows  # noqa: F401
+    except ImportError:
+        pass
+
 from quam_state_manager.core.pulse_catalog import (
     PULSE_CATALOG,
     PulseSpec,

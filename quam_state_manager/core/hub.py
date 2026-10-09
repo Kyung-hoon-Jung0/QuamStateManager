@@ -886,15 +886,21 @@ class _Projector:
             self.__dict__.setdefault("_sync_queued", set()).discard(os.path.normcase(str(hub.dir)))
         more = False
         try:
-            # a user's request goes first; bounded (0.5 s), so a busy server
-            # only delays the slice and a new run still lands within about
-            # one watcher tick (the RunIngest rule, RAM P7)
-            FOREGROUND.wait_idle(quiet_s=0.05, max_s=0.5)
+            # a user's request goes first, briefly: the slice waits for a
+            # quiet moment at most BUSY_PAUSE_S (S10 walk (perf): it waited up
+            # to 0.5 s and then did ONE item, so a busy server -- a page's
+            # first lint, a Datasets scan, a dozen surfaces at once -- held a
+            # 3,500-run catch-up at a few runs a second for as long as it was
+            # busy; now the two share the interpreter)
+            FOREGROUND.wait_idle(quiet_s=0.05, max_s=hub_sync.BUSY_PAUSE_S)
             with hub.ledger(keep=True) as store:
-                # a user's request that arrives mid-slice ends it after the
-                # current item (docs/275 review: deep archives)
+                # a user's request that arrives mid-slice ends it once the
+                # slice has worked BUSY_QUANTUM_S (docs/275 review: deep
+                # archives -- a request never waits behind a whole slice)
+                start = time.monotonic()
                 more = hub_sync.run(hub.dir, store, hub_sync.SLICE_S,
-                                    should_yield=lambda: FOREGROUND.active > 0)
+                                    should_yield=lambda: (FOREGROUND.active > 0 and time.monotonic() - start
+                                                          >= hub_sync.BUSY_QUANTUM_S))
             self.__dict__.setdefault("_sync_fails", {}).pop(os.path.normcase(str(hub.dir)), None)
         except Exception as exc:  # noqa: BLE001
             logger.warning("hub run sync failed for %s", hub.dir, exc_info=True)

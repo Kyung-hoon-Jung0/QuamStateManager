@@ -72,8 +72,16 @@ logger = logging.getLogger(__name__)
 
 #: One background slice of work; then the projector takes queued SM lines and
 #: requests get the interpreter back (docs/275 "budget per tick"). A slice also
-#: ends early, after any item, as soon as a user's request is in flight.
+#: ends early, after any item, as soon as its ``should_yield`` says so (the
+#: projector's: a user's request is in flight and BUSY_QUANTUM_S was worked).
 SLICE_S = 0.25
+#: S10 walk (perf): while a user's request is in flight the projector shares
+#: the interpreter instead of stopping -- a slice works at least this long
+#: before it yields, and waits at most BUSY_PAUSE_S for a quiet moment before
+#: the next one (about half the time each; most of a run's ingestion is file
+#: reads, hashing and SQLite, which release the interpreter anyway)
+BUSY_QUANTUM_S = 0.05
+BUSY_PAUSE_S = 0.05
 #: A kick in inline mode (tests, the CLI) works this long on the caller's thread.
 INLINE_BUDGET_S = 120.0
 #: Rewrites of a root's newest runs (by run id) are stat-checked on every light tick.
@@ -317,6 +325,10 @@ class RootState:
     #: S10 walk: an archived chip's build reads only the run folders its run
     #: captures name (``YYYY-MM-DD/#N_name_HHMMSS``); None: every run of the root
     only: set | None = None
+    #: S10 walk (perf): a data folder new to a ledger that already holds runs
+    #: (a moved, renamed or copied folder, or a second one): its runs are
+    #: matched to the runs recorded -- the progress says so ("matching")
+    adopting: bool = False
 
     def hint(self, extra: Counter | None = None) -> str | None:
         votes = self.votes + extra if extra else self.votes
@@ -356,6 +368,12 @@ class ChipSync:
         self.phase = "idle"
         self.done = 0
         self.total = 0
+        # S10 walk (perf): progress that moves before the first run lands --
+        # run folders looked at (their node.json read) in this burst, and the
+        # known run folders stat-checked by the opening sweep
+        self.looked = 0
+        self.sweep_done = 0
+        self.sweep_total = 0
         self.counts: Counter = Counter()
         self.errors: deque = deque(maxlen=20)
         self.last_slice_ms = 0.0
@@ -492,6 +510,9 @@ class ChipSync:
             "phase": self.phase,
             "done": self.done,
             "total": self.total,
+            "looked": self.looked,
+            "sweep_done": self.sweep_done,
+            "sweep_total": self.sweep_total,
             "roots": [{"path": str(rs.path), "sources": list(rs.sources), "runs": len(rs.known),
                        "deferred": sorted(rs.deferred), "readable": rs.readable,
                        "failed": sorted(rs.failed)} for rs in roots],
@@ -593,6 +614,10 @@ class ChipSync:
             "SELECT e.t_utc_us, e.run_id, l.rel_path FROM locations l JOIN events e USING(eid) "
             "WHERE l.root_id=? ORDER BY e.t_utc_us DESC, e.run_id DESC LIMIT 1", (rs.root_id,)).fetchone()
         rs.newest = (row[0], row[1] or 0, row[2]) if row else None
+        # S10 walk (perf): nothing of this folder is recorded yet, but runs of
+        # another folder are -- its runs are matched to those (progress words)
+        rs.adopting = not rs.known and store.conn.execute(
+            "SELECT 1 FROM locations WHERE root_id<>? LIMIT 1", (rs.root_id,)).fetchone() is not None
 
     # -- one slice -------------------------------------------------------
 
@@ -621,6 +646,7 @@ class ChipSync:
             if self.phase == "ready":
                 self.done = self.total = 0          # a new burst of work
                 self.obs_done = self.obs_total = 0
+                self.looked = self.sweep_done = self.sweep_total = 0
         if self._bind(store):
             full = True
         if self.archive and store.meta(ARCHIVE_BUILD) != "running":
@@ -672,6 +698,7 @@ class ChipSync:
                 self._check(store, rs, rel)
             finally:
                 self.in_hand -= 1
+                self.sweep_done += 1
             steps += 1
         if self.sweep and not self.unread and not self.ready_cands:
             self.phase = "sweeping"
@@ -715,6 +742,8 @@ class ChipSync:
             self.phase = "ready"
             self.ready = True
             self.sweep_initial = False
+            for rs in list(self.roots.values()):
+                rs.adopting = False         # its runs are in: matched from now on
         self.last_slice_ms = (time.perf_counter() - t0) * 1000.0
         return more
 
@@ -786,12 +815,15 @@ class ChipSync:
                 continue
             if full:
                 self.sweep.extend((rs, rel) for rel in rs.known)
+                self.sweep_total += len(rs.known)
                 rs.sweep_cursor = 0
             else:
                 picks = self._newest_runs(rs) if _norm(rs.path) in dirty else []
                 if listing:
                     picks += self._sweep_chunk(rs)
-                self.sweep.extend((rs, rel) for rel in dict.fromkeys(picks))
+                picks = list(dict.fromkeys(picks))
+                self.sweep.extend((rs, rel) for rel in picks)
+                self.sweep_total += len(picks)
         self.total += added               # each queued item counts once in "n/N"
         if full:
             self.last_full = time.monotonic()
@@ -879,6 +911,7 @@ class ChipSync:
 
     def _read(self, rs: RootState, rel: str, rewrite: bool) -> None:
         folder = rs.path / rel
+        self.looked += 1
         try:
             sig = file_sig(folder)
             run = hub_build.run_of(folder)
@@ -918,7 +951,11 @@ class ChipSync:
         for c in self.ready_cands:
             mine = (c.run.instant, c.run.run_id, c.rel)
             self.pending_max[id(c.root)] = max(self.pending_max.get(id(c.root), mine), mine)
-        self.phase = "ingesting"
+        # S10 walk (perf): a data folder new to this ledger is matched to the
+        # runs it holds (a run with the same identity and saved-state hash is
+        # re-pointed, never ingested again) -- the progress names that
+        self.phase = ("matching" if any(c.root.adopting and not c.rewrite for c in self.ready_cands)
+                      else "ingesting")
 
     def _is_newest(self, cand: Cand) -> bool:
         """No later run of the same folder is known (ingested or pending): an
@@ -2097,6 +2134,35 @@ def require_ready(chip_dir) -> dict:
     if st["state"] == "building":
         raise Building(chip_dir, st)
     return st
+
+
+def progress_words(st: dict | None, *, short: bool = False) -> str:
+    """S10 walk (perf): what the build is doing NOW, appended to "The change
+    history is being built" (``short``: to the Calibration log's "building
+    the history", with ``n/N`` counts). From the first second: looking for
+    run folders -> looking through them (n of N, their node.json read) ->
+    matching a new data folder's runs to the runs recorded (n of N) or n of N
+    runs -> checking the known run folders for changes. A status with no
+    phase (or ``ingesting``) says what it always said: `` (n of N runs)``."""
+    st = st or {}
+    phase = st.get("phase")
+    done, total = st.get("done") or 0, st.get("total") or 0
+
+    def count(n, of):
+        return f"{n}/{of}" if short else f"{n} of {of}"
+    if phase == "reading" and total:
+        return f": looking through run folders ({count(min(st.get('looked') or 0, total), total)})"
+    if phase == "matching" and total:
+        return f": matching a new data folder's runs to the runs recorded ({count(done, total)})"
+    if phase in ("idle", "listing", "reading") and not total and st.get("roots"):
+        return ": looking for run folders"
+    if phase == "sweeping" and not total:
+        swept = st.get("sweep_total") or 0
+        return (": checking the known run folders for changes"
+                + (f" ({count(min(st.get('sweep_done') or 0, swept), swept)})" if swept else ""))
+    if total:
+        return f" ({done}/{total})" if short else f" ({done} of {total} runs)"
+    return ""
 
 
 # ----------------------------------------------------------------------

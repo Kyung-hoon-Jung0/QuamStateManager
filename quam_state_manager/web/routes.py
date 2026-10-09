@@ -11726,16 +11726,26 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     keyed on exactly what it resolved (docs/298); else resolved here.
     """
     from quam_state_manager.core import hub_sync, value_history as vh
-    if targets is None:
-        store = ctx["store"]
-        with store._lock:
-            merged = store.merged
-        targets = {k: vh.target(merged, dp) for k, dp in path_map.items()}
-    out: dict[str, Any] = {"mode": "unavailable", "reason": None, "targets": targets,
+    out: dict[str, Any] = {"mode": "unavailable", "reason": None, "targets": targets or {},
                            "status": None, "fallback_note": None, "notes": {}, "rows": {},
                            "runs": [], "ledger": {}}
 
+    def resolved() -> dict:
+        # S10 walk (perf): the paths are resolved in the chip's state only for
+        # an answer that reads them -- never to say "building" or "preparing"
+        # (a first lint holds the state lock for seconds on a cold chip, and
+        # every surface used to wait for it just to say "building")
+        nonlocal targets
+        if targets is None:
+            store = ctx["store"]
+            with store._lock:
+                merged = store.merged
+            targets = {k: vh.target(merged, dp) for k, dp in path_map.items()}
+            out["targets"] = targets
+        return targets
+
     def unavailable(reason: str, note: str | None = None) -> dict:
+        resolved()
         out.update(mode="unavailable", reason=reason,
                    unavailable_note=note or _VH_UNAVAILABLE_NOTES[reason])
         return out
@@ -11765,6 +11775,7 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
         return unavailable("no_ledger" if readonly else "unreadable")
     # docs/296: today's paths are spelled in today's rename era; the ledger
     # reads each position in its own
+    resolved()
     try:
         res = vh.read(chip_dir, targets, limit=limit, runs=runs,
                       binding=_vh_binding(ctx, chip_dir), live=_vh_live(ctx, targets),
@@ -12089,21 +12100,24 @@ def _vh_wait_message(ans: dict) -> str:
                 or _VH_UNAVAILABLE_NOTES["unreadable"])
     if ans["mode"] == "preparing":
         return "Preparing the change history…"
+    from quam_state_manager.core import hub_sync
     st = ans.get("status") or {}
     done, total = st.get("done"), st.get("total")
     # S10 walk: once the runs are in, the states SM saw are imported -- that
     # work is counted in snapshots, never as "N of N runs" standing still
     seen_done, seen_total = st.get("observed_done") or 0, st.get("observed_total") or 0
+    # S10 walk (perf): what the build is doing now, from its first second
+    # (looking for / through run folders, matching a new data folder, n of N runs)
+    words = hub_sync.progress_words(st)
     if total and ((done or 0) < total or not seen_total):
-        return (f"The change history is being built ({done or 0} of {total} runs). "
-                "It shows here when it is complete.")
+        return f"The change history is being built{words}. It shows here when it is complete."
     if seen_total:
         return (f"The change history is being built from this chip's Param History snapshots "
                 f"({min(seen_done, seen_total)} of {seen_total}). It shows here when it is complete.")
     if st.get("archive"):
         return ("The change history is being built from this chip's Param History snapshots. "
                 "It shows here when it is complete.")
-    return "The change history is being built. It shows here when it is complete."
+    return f"The change history is being built{words}. It shows here when it is complete."
 
 
 def _vh_numeric(v: Any) -> float | None:
@@ -12407,6 +12421,10 @@ def bulk_column_history():
     try:
         path_map_raw = json.loads(request.form.get("paths") or "{}")
     except ValueError:
+        return render_template("_status.html", message="bad paths payload",
+                               level="error"), 400
+    if not isinstance(path_map_raw, dict):
+        # S10 walk: a JSON list here was a 500 (``.items()`` of a list)
         return render_template("_status.html", message="bad paths payload",
                                level="error"), 400
     path_map: dict[str, str] = {
@@ -17625,15 +17643,16 @@ def _hub_surface_wait(ans, surface):
     """docs/283: "being built (n of N runs)" / "Preparing the change
     history..." in S7's words, asking again by itself (no rows, never a
     partial answer)."""
+    words = dict(ans=ans, surface=surface, message=_vh_wait_message(ans),
+                 open_chip_path=ans.get("open_chip_path"),
+                 retry=ans.get("reason") not in _VH_FINAL_REASONS,
+                 archive_chip=ans.get("archive_chip"))
     if surface == "trends" or _is_htmx():
-        template = "_hub_surface_wait.html"
-    else:
-        template = "hub_surface_wait.html"
-    return render_template(template, **_ctx(page="param_history", ans=ans, surface=surface,
-                                          message=_vh_wait_message(ans),
-                                          open_chip_path=ans.get("open_chip_path"),
-                                          retry=ans.get("reason") not in _VH_FINAL_REASONS,
-                                          archive_chip=ans.get("archive_chip")))
+        # S10 walk (perf): the fragment is the wait line alone -- no page
+        # shell, so none of the shell's reads of the chip's state (each under
+        # its lock) stands between a request and "being built"
+        return render_template("_hub_surface_wait.html", **words)
+    return render_template("hub_surface_wait.html", **_ctx(page="param_history", **words))
 
 
 def _topology_trends_html(hm, path: Path, store, qubits: list[str],
@@ -18229,10 +18248,8 @@ def _versions_wait_text(res: dict) -> str:
     if res["mode"] == "preparing":
         return ("Preparing the change history… until it is ready, this list shows the "
                 "older snapshot history.")
-    st = res.get("status") or {}
-    done, total = st.get("done"), st.get("total")
-    return ("The change history is being built"
-            + (f" ({done or 0} of {total} runs)" if total else "")
+    from quam_state_manager.core import hub_sync
+    return ("The change history is being built" + hub_sync.progress_words(res.get("status"))
             + ". Until it is complete, this list shows the older snapshot history.")
 
 

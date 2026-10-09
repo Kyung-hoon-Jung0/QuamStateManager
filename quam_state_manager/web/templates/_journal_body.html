@@ -4,7 +4,7 @@
 {% set s = story %}
 {% set history = s.history|default({'state': 'ready'}) %}
 {% if history.state == 'building' %}
-<p class="jr-note warn jr-history-status" hx-get="/journal/day?day={{ s.day }}&amp;q={{ s.filters.q|urlencode }}&amp;author={{ s.filters.author|urlencode }}" hx-trigger="every 2s" hx-target="#jr-body" hx-swap="innerHTML">building the history ({{ history.done or 0 }}/{{ history.total or 0 }})</p>
+<p class="jr-note warn jr-history-status" hx-get="/journal/day?day={{ s.day }}&amp;q={{ s.filters.q|urlencode }}&amp;author={{ s.filters.author|urlencode }}" hx-trigger="every 2s" hx-target="#jr-body" hx-swap="innerHTML">building the history{{ history|hub_progress }}</p>
 {% elif history.state == 'degraded' %}
 <div class="jr-note warn jr-history-status">History is incomplete. Unreadable folders or runs:
     <ul>{% for folder in history.unreadable %}<li>{{ folder }}</li>{% endfor %}

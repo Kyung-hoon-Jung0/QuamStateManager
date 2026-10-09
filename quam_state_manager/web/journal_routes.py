@@ -372,8 +372,8 @@ def _view(base: dict, f: dict, window: dict) -> dict:
 
 
 def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
+    from quam_state_manager.core import hub_sync
     r = _r()
-    ds = r._dataset_store()
     active = r._active_path()
     try:
         ledger, unavailable = _ledger_context(), None
@@ -384,6 +384,16 @@ def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
     except Exception:  # noqa: BLE001 -- S10 walk: the every-surface unreadable note, never a 500
         logger.warning("calibration log: the chip history could not be read", exc_info=True)
         ledger, unavailable = None, _unreadable_note()
+    # S10 walk (perf): while the ledger is being built the day is the building
+    # line alone, decided HERE from the build's status -- the data folders are
+    # never indexed just to say so (3-9 s of Datasets scanning per answer on a
+    # 3,500-run folder, and the catch-up stalled behind it)
+    building = None
+    if ledger is not None and not unavailable:
+        st = hub_sync.status(ledger.store.directory)
+        if st.get("state") == "building":
+            building = dict(st, state="building")
+    ds = None if building is not None else r._dataset_store()
     key = r._folder_key(ds.folder_path) if ds is not None else None
     def uid_of(run):
         root = (run.get("_hub") or {}).get("root_path")
@@ -391,8 +401,9 @@ def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
         return f"{run_key}:{run['run_id']}" if run_key else None
     if unavailable:
         data = _unavailable_day(day, unavailable)
+    elif building is not None:
+        data = story._empty_day(_chip_name(), day, building, current_app.instance_path)
     elif ledger is not None and not (ledger.store.directory / "ledger.sqlite").exists():
-        from quam_state_manager.core import hub_sync
         st = hub_sync.status(ledger.store.directory)
         # building -> say so and refresh; no sync at all -> say so once (a
         # page that polls a ledger nobody builds polls forever)

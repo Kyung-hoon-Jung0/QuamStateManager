@@ -4,11 +4,11 @@
    a session that named no chip are not this chip's and are left out. #}
 {% from '_journal_changes.html' import change_list, run_changes, undo_links %}
 <h2>Calibration log</h2>
-{% if building %}<p>building the history ({{ building.done or 0 }}/{{ building.total or 0 }}): days that hold only runs or SM writes are not listed yet, so this log is incomplete.</p>{% endif %}
+{% if building %}<p>building the history{{ building|hub_progress }}: days that hold only runs or SM writes are not listed yet, so this log is incomplete.</p>{% endif %}
 {% for s in days %}
 <h3>{{ s.day }}</h3>
 {% if s.history.state == 'building' %}
-<p>building the history ({{ s.history.done or 0 }}/{{ s.history.total or 0 }})</p>
+<p>building the history{{ s.history|hub_progress }}</p>
 {% elif s.history.state == 'unavailable' %}<p>{{ s.history.note }}</p>
 {% else %}
 {% if s.history.state == 'degraded' %}
