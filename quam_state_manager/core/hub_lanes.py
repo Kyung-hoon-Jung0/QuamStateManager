@@ -72,6 +72,8 @@ PARALLEL = "parallel"          # another folder's, after this folder's own histo
 UNKNOWN = "unknown"            # a folder that cannot be shown, after the cut
 UNLINKED = "unlinked"          # a run under no data root linked to this folder
 OTHER_CHIP = "other_chip"      # a run whose saved chip identity disagrees with the chip's
+#: how many of another chip's runs a lane keeps by name for its note
+OTHER_CHIP_NAMED = 10
 
 
 @dataclass(frozen=True)
@@ -326,11 +328,42 @@ def _facts(conn) -> dict[int, dict]:
     for row in conn.execute(
             "SELECT e.eid, e.kind, e.t_utc_us, e.root_id, e.rel_path, e.status, e.state_hash, "
             f"{chash} AS chash, e.shape_hash, e.error, e.flags, e.run_start_us, e.base_hash, "
-            "s.base_chash, e.t_src FROM events e LEFT JOIN sm_events s USING(eid)"):
+            "s.base_chash, e.t_src, e.run_id FROM events e LEFT JOIN sm_events s USING(eid)"):
         out[row[0]] = {"eid": row[0], "kind": row[1], "t": row[2], "root_id": row[3], "rel_path": row[4],
                        "status": row[5], "state_hash": row[6], "chash": row[7], "shape_hash": row[8],
                        "error": row[9], "flags": row[10], "run_start_us": row[11], "base_hash": row[12],
-                       "base_chash": row[13], "t_src": row[14]}
+                       "base_chash": row[13], "t_src": row[14], "run_id": row[15]}
+    return out
+
+
+def _seps(path: str) -> str:
+    return path.replace("/", "\\") if os.sep == "\\" else path
+
+
+def spelled_roots(conn, roots: dict) -> dict:
+    """S10 walk: ``{root_id: the data root as its runs were read}``. The
+    ``roots`` table keeps ``normcase(resolve())`` -- lowercased on Windows,
+    a key, not what a person typed; a run's ``state_ref`` is its folder as
+    listed under the root as declared, and its ``rel_path`` the part below
+    the root, so the root's own spelling is what precedes it. The stored
+    path when no run says (or the spelling is not the same folder)."""
+    out = dict(roots)
+    for rid, path in roots.items():
+        try:
+            row = conn.execute("SELECT state_ref, rel_path FROM events WHERE root_id=? AND kind='run' "
+                               "AND state_ref IS NOT NULL AND rel_path IS NOT NULL ORDER BY eid DESC LIMIT 1",
+                               (rid,)).fetchone()
+        except Exception:  # noqa: BLE001 -- a display spelling never breaks a view
+            continue
+        if not row or not path:
+            continue
+        raw = str(row[0]).rstrip("/\\")
+        rel = _seps(str(row[1]).strip("/\\"))
+        if not rel or len(raw) <= len(rel) or root_key(_seps(raw[-len(rel):])) != root_key(rel):
+            continue
+        base = raw[:-len(rel)].rstrip("/\\")          # the characters as read, separators included
+        if base and root_key(_seps(base)) == root_key(_seps(str(path)).rstrip("/\\")):
+            out[rid] = base
     return out
 
 
@@ -402,6 +435,7 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
         LINEAGE_EARLIER, LINEAGE_PARALLEL, SOURCE_OTHER, SOURCE_THIS, SOURCE_UNKNOWN, _source_key,
         classify_source, source_folder_label, source_stamp)
     roots = {r[0]: r[1] for r in conn.execute("SELECT root_id, path FROM roots")}
+    shown = spelled_roots(conn, roots)          # S10 walk: what a note prints
     links: dict[int, set] = {}
     for rid, folder in _table_rows(conn, "SELECT root_id, folder FROM root_links"):
         links.setdefault(rid, set()).add(folder)
@@ -439,13 +473,13 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
             if (any(linked(r) for r in rids) and int(f["flags"] or 0) & CHIP_UNCERTAIN
                     and declares_another_chip(conn, index.ledger_id, f, chip)):
                 # its saved state declares another chip: never this chip's value
-                path = roots.get(rids[0]) if rids else None
+                path = shown.get(rids[0]) if rids else None
                 out[eid] = (False, {"kind": OTHER_CHIP, "folder": path, "label": source_folder_label(path),
                                     "lineage": OTHER_CHIP})
             elif any(linked(r) for r in rids):
                 out[eid] = (True, None)
             else:
-                path = roots.get(rids[0]) if rids else None
+                path = shown.get(rids[0]) if rids else None
                 out[eid] = (False, {"kind": UNLINKED, "folder": path, "label": source_folder_label(path),
                                     "lineage": UNLINKED})
             continue
@@ -635,11 +669,18 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
     # what was left out, counted and named
     folders: dict[str, dict] = {}
     unlinked_roots: dict[str, dict] = {}
+    other_runs: list[dict] = []
     counts = {PARALLEL: 0, UNKNOWN: 0, UNLINKED: 0, OTHER_CHIP: 0}
     for eid, why in lane.hidden.items():
         counts[why] += 1
         entry = lane.src.get(eid) or {}
         if why == OTHER_CHIP:
+            # S10 walk: the note names them (run, folder; a run whose saved
+            # state could not be read says so)
+            f = facts.get(eid) or {}
+            other_runs.append({"run_id": f.get("run_id"), "folder": entry.get("folder"),
+                               "label": entry.get("label"), "unreadable": bool(f.get("error")),
+                               "t": f.get("t") or 0})
             continue
         if why == UNLINKED:
             r = unlinked_roots.setdefault(entry.get("folder") or "", {"path": entry.get("folder"),
@@ -655,6 +696,8 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
                      "unlinked": counts[UNLINKED], "other_chip": counts[OTHER_CHIP], "earlier": earlier,
                      "folders": sorted(folders.values(), key=lambda r: (-r["events"], r["folder"] or "")),
                      "roots": sorted(unlinked_roots.values(), key=lambda r: (-r["runs"], r["path"] or "")),
+                     # newest first, a few: the count above says how many in all
+                     "other_chip_runs": sorted(other_runs, key=lambda r: -r["t"])[:OTHER_CHIP_NAMED],
                      "seams": len(lane.seams) + len(lane.derived), "derived": len(lane.derived),
                      "held": sum(len(v) for v in lane.held.values())}
 

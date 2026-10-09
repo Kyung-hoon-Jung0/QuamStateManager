@@ -15326,6 +15326,9 @@ def _report_build_calibration_log(rc: _ReportCtx) -> str:
         ledger = log._ledger_context()
     except RuntimeError:
         ledger = None                 # each day then says the history is unavailable
+    except Exception:  # noqa: BLE001 -- S10 walk: each day says the ledger could not be read
+        logger.warning("report: the calibration log's ledger could not be read", exc_info=True)
+        ledger = None
     days, building = set(), None
     if ledger is not None and (ledger.store.directory / "ledger.sqlite").exists():
         try:
@@ -15340,6 +15343,9 @@ def _report_build_calibration_log(rc: _ReportCtx) -> str:
             building = hub_sync.status(ledger.store.directory)
         except ValueError:
             ledger = None             # no project zone: each day says so
+        except Exception:  # noqa: BLE001 -- S10 walk: a corrupt ledger: each day says it could not be read
+            logger.warning("report: the calibration log's ledger could not be read", exc_info=True)
+            ledger = None
     elif ledger is not None:
         building = hub_sync.status(ledger.store.directory)
     for file_day in log.journal_mod.list_days(current_app.instance_path, log._chip_name()):
@@ -17958,7 +17964,10 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
             "pinned": any(m.pinned for m in annotations), "annotations": annotations,
             "experiment": experiment, "run_id": run_id, "run_uid": run_uid,
             "source": source, "current": current, "flags": flags,
-            "why_diff": item["why_diff"], "why_write": item["why_write"], "pending": False})
+            "why_diff": item["why_diff"], "why_write": item["why_write"], "pending": False,
+            # S10 walk: the state's content hash (the quick diff skips a row
+            # holding the same state as the one it compares from)
+            "chash": ev.get("chash")})
     return rows
 
 
@@ -18233,6 +18242,31 @@ def _version_quick_entries(path, ref_a: str, ref_b: str) -> list:
     return entries
 
 
+#: how many older rows the quick diff looks through for a different state
+_VERSION_QUICK_TRIES = 6
+
+
+def _version_quick_pair(path, rows: list, mine: list) -> tuple[int, int, list]:
+    """S10 walk: ``(a_i, b_i, entries)`` -- the newest readable row of this
+    folder against the newest older one that holds a DIFFERENT state (a row
+    with the same content hash, or that compares equal, is skipped; within
+    ``_VERSION_QUICK_TRIES`` rows, else the row just below it, 0 changes)."""
+    b_i = mine[0]
+    own = rows[b_i].get("chash")
+    fallback = None
+    for a_i in mine[1:1 + _VERSION_QUICK_TRIES]:
+        if own and rows[a_i].get("chash") == own:
+            if fallback is None:
+                fallback = (a_i, b_i, [])
+            continue
+        entries = _version_quick_entries(path, rows[a_i]["ts"], rows[b_i]["ts"])
+        if entries:
+            return a_i, b_i, entries
+        if fallback is None:
+            fallback = (a_i, b_i, entries)
+    return fallback if fallback is not None else (mine[1], b_i, [])
+
+
 @bp.route("/state/versions")
 def state_versions_panel():
     """The version list the chip opens: when each was recorded, what produced
@@ -18261,9 +18295,8 @@ def state_versions_panel():
             if (r["source"] or {}).get("lineage") not in ("parallel", "unlinked", "other_chip")
             and not r["why_diff"] and not r["pending"]]
     if len(mine) >= 2:
-        b_i, a_i = mine[0], mine[1]
         try:
-            entries = _version_quick_entries(path, rows[a_i]["ts"], rows[b_i]["ts"])
+            a_i, b_i, entries = _version_quick_pair(path, rows, mine)
             quick = {"a_ts": rows[a_i]["when"], "b_ts": rows[b_i]["when"],
                      "a_ord": a_i + 1, "b_ord": b_i + 1, "n": len(entries),
                      "entries": entries if 0 < len(entries) <= 50 else None}
@@ -33480,19 +33513,75 @@ def _hub_link_rows(ctx, chip_dir, workspace, alignment):
               ("other", alignment.get("renamed") or []),
               ("unreadable", alignment.get("unknown") or [])]
     groups.extend(("other", entries) for entries in (alignment.get("different_chip") or {}).values())
+    # S10 walk: a run the chip's ledger flags CHIP_UNCERTAIN is another chip's
+    # here too (the folder view's other_chip note leaves it out by that rule),
+    # also when the scan has no state of it to align -- so the dialog and the
+    # note agree. The scan's own "another chip" stays (never moved back).
+    ledger_runs = _hub_link_ledger_runs(chip_dir)
+    counted: set = set()
+
+    def add(path_key, bucket):
+        holders = [k for k in rows if _hub_root_contains(k, path_key)]
+        if holders:
+            rows[max(holders, key=len)][bucket] += 1
     for bucket, entries in groups:
         for entry in entries:
             path = getattr(entry, "quam_state_path", None)
             if not path:
                 continue
-            path_key = _hub_root_key(path)
-            holders = [k for k in rows if _hub_root_contains(k, path_key)]
-            if holders:
-                rows[max(holders, key=len)][bucket] += 1
+            folder = getattr(entry, "folder_path", None)
+            run_key = _hub_run_key(str(folder)) if folder else None
+            if run_key in ledger_runs:
+                counted.add(run_key)
+            add(_hub_root_key(path), "other" if ledger_runs.get(run_key) else bucket)
+    for run_key, uncertain in ledger_runs.items():
+        if uncertain and run_key not in counted:
+            add(run_key, "other")                   # e.g. a run with no saved state to align
     candidates = [row for k, row in rows.items() if k not in registered
                   and _hub_root_decision(chip_dir.name, row["path"], roots, decisions) != "different"
                   and hub_sync._holds_runs(Path(row["path"]))]
     return sorted(candidates, key=lambda row: (-row["matches"], row["fs_key"]))
+
+
+def _hub_run_key(path: str) -> str:
+    """A run folder's spelling for matching against the ledger (no file
+    system access): the ledger's root key rule (``hub_lanes.root_key``)."""
+    from quam_state_manager.core.hub_lanes import root_key
+    return root_key(os.path.normpath(path))
+
+
+def _hub_link_ledger_runs(chip_dir) -> dict:
+    """S10 walk: ``{run folder key: CHIP_UNCERTAIN}`` for every run the
+    chip's ledger holds whose folder is still there; ``{}`` when the ledger
+    cannot be read (the scan's own buckets then stand)."""
+    from quam_state_manager.core import hub_lanes, hub_versions
+    from quam_state_manager.core.hub_store import CHIP_UNCERTAIN, SOURCE_GONE
+    if chip_dir is None or not (Path(chip_dir) / "ledger.sqlite").is_file():
+        return {}
+    out: dict = {}
+    try:
+        with hub_versions._ledger(chip_dir) as store:
+            # the folder view's rule (hub_lanes.declares_another_chip): only a run whose
+            # saved state DECLARES another chip is another chip's -- the note and the
+            # dialog then agree
+            facts = chip = None
+            for eid, root, rel, flags in store.conn.execute(
+                    "SELECT e.eid, r.path, COALESCE(l.rel_path, e.rel_path), e.flags FROM events e "
+                    "LEFT JOIN locations l USING(eid) JOIN roots r ON r.root_id=COALESCE(l.root_id, e.root_id) "
+                    "WHERE e.kind='run'"):
+                if not rel or int(flags or 0) & SOURCE_GONE:
+                    continue
+                other = False
+                if int(flags or 0) & CHIP_UNCERTAIN:
+                    if facts is None:
+                        facts, chip = hub_lanes._facts(store.conn), hub_lanes._ledger_identity(store.conn)
+                    f = facts.get(eid)
+                    other = bool(f) and hub_lanes.declares_another_chip(store.conn, str(chip_dir), f, chip)
+                out[_hub_run_key(os.path.join(root, rel))] = other
+    except Exception:  # noqa: BLE001 -- the dialog then counts by the scan alone
+        logger.warning("link dialog: the ledger of %s could not be read", chip_dir, exc_info=True)
+        return {}
+    return out
 
 
 def _hub_link_context():
