@@ -127,7 +127,7 @@ window.AgentPanel = (function () {
   function grantTitle(g) {
     if (!g) return "a person's Start armed a plan: the agent may run its steps, nothing else";
     return "armed by " + (g.by || "a person") + " " + fmtClock(g.at) + " for plan " + (g.title || g.plan_id) +
-      " (" + (g.steps || 0) + " step(s)) -- its own steps only; it ends when the plan ends";
+      " (" + (g.steps || 0) + " step(s)) — its own steps only; it ends when the plan ends";
   }
   // docs/173 S8: the name picker in front of the keyboard. One key, `quam_actor_name`,
   // is the person the door records (armed by / Stop by / mode by / "I ran it"). Empty =
@@ -566,12 +566,12 @@ window.AgentPanel = (function () {
     if (st !== "running" || !p || p.status === "running" || p.status === "stopping" || p.status === "draft") return { st: st, title: title };
     var ended = "the plan was " + p.status + " while this step ran";
     var r = s.run_key ? S.runs[s.run_key] : null;
-    if (r && (r.status === "starting" || r.status === "running")) return { st: "running", title: "running -- its run goes on; " + ended };
+    if (r && (r.status === "starting" || r.status === "running")) return { st: "running", title: "running — its run goes on; " + ended };
     if (r) {
       var o = r.status === "ended" ? ((r.result || {}).status || "ended") : r.status;
-      return { st: o, title: o + " -- how its run ended; " + ended };
+      return { st: o, title: o + " — how its run ended; " + ended };
     }
-    return { st: "stopped", title: "stopped -- " + ended + "; its run is no longer listed" };
+    return { st: "stopped", title: "stopped — " + ended + "; its run is no longer listed" };
   }
   function stepBadge(s, p) {
     var x = stepState(s, p);
@@ -870,7 +870,7 @@ window.AgentPanel = (function () {
     }
     // C-22: "today 0 events" beside approvals that wait read as "nothing happened" -- a zero count is not said
     var counts = [];
-    if (d.events_today) counts.push("today " + d.events_today + " events");
+    if (d.events_today) counts.push("today " + Number(d.events_today).toLocaleString('en-US') + " events");
     if (d.failures_today) counts.push('<span class="ag-err">' + d.failures_today + " failed</span>");
     // docs/272 (C-12): "waiting N" leads to the approval cards, where they are decided
     if (d.waiting) counts.push('<a class="ag-waiting-link" href="' + APPROVALS_URL + '" hx-get="/agent" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="' + APPROVALS_URL + '"' +

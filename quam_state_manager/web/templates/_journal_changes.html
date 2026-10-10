@@ -23,15 +23,15 @@
 {% endif %}{% if c.not_kept and not c.first_state_n %}{# P0-1: values the run saved in its own
    folder that are not chip history -- never changes of the chip, never silent #}
 {%- set kept_out = c.not_kept | rejectattr('excursion') | list %}{% set came_back = c.not_kept | selectattr('excursion') | list %}{% if kept_out %}
-<div class="jr-sec jr-run-not-kept"><b>Saved in its own folder, not kept on the chip</b>
-    <span class="muted">the next run that read the chip still found the earlier value</span>
+<div class="jr-sec jr-run-not-kept"><b>Saved in its own folder, {{ witness_words.not_kept }}</b>
+    <span class="muted">the next state recorded after this run still had the earlier value; whether the chip held these values at any time is not known</span>
     <ul class="jr-changes">{% for w in kept_out %}<li class="jr-not-kept"><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>
-    {{ before_after(w.old, w.new, w.op or 'set') }} <span class="jr-badge jr-not-kept-by" title="What read the chip and still found the earlier value">{% if w.witness.kind == 'run' and w.witness.run_id is not none %}#{{ w.witness.run_id }} still had the earlier value{% elif w.witness.kind == 'observed' %}SM's snapshot still had the earlier value{% else %}the earlier value stayed on the chip{% endif %}</span></li>{% endfor %}</ul></div>
+    {{ before_after(w.old, w.new, w.op or 'set') }} <span class="jr-badge jr-not-kept-by" title="The next recorded state, which still had the earlier value">{% if w.witness.kind == 'run' and w.witness.run_id is not none %}#{{ w.witness.run_id }} still had the earlier value{% elif w.witness.kind == 'observed' %}SM's snapshot still had the earlier value{% else %}the next recorded state had the earlier value{% endif %}</span></li>{% endfor %}</ul></div>
 {%- endif %}{% if came_back %}
-<div class="jr-sec jr-run-not-kept jr-run-came-back"><b>Saved in its own folder, never confirmed on the chip</b>
-    <span class="muted">no later read of the chip confirmed these values, and the value came back to what the chip held</span>
+<div class="jr-sec jr-run-not-kept jr-run-came-back"><b>Saved in its own folder, {{ witness_words.excursion }}</b>
+    <span class="muted">nothing confirmed these values before the saved value came back exactly to what it was before</span>
     <ul class="jr-changes">{% for w in came_back %}<li class="jr-not-kept"><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>
-    {{ before_after(w.old, w.new, w.op or 'set') }} <span class="jr-badge jr-not-kept-by" title="No later read of the chip confirmed this value, and the value came back exactly to what the chip held">never confirmed; the value came back{% if w.witness.run_id is not none %} at #{{ w.witness.run_id }}{% endif %}</span></li>{% endfor %}</ul></div>
+    {{ before_after(w.old, w.new, w.op or 'set') }} <span class="jr-badge jr-not-kept-by" title="Nothing confirmed this value before the saved value came back exactly to what it was before">{{ witness_words.excursion }}{% if w.witness.run_id is not none %} (#{{ w.witness.run_id }}){% endif %}</span></li>{% endfor %}</ul></div>
 {%- endif %}
 {% endif %}
 {%- endmacro %}

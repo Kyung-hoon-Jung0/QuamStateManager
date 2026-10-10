@@ -32,8 +32,8 @@
     {% if s.counts.failed %}<span class="jr-stat jr-stat-bad"><b>{{ '{:,}'.format(s.counts.failed) }}</b> failed</span>{% endif %}
     {% if s.counts.gate_fail %}<span class="jr-stat jr-stat-bad">gate fail <b>{{ '{:,}'.format(s.counts.gate_fail) }}</b></span>{% endif %}
     {% set n_cards = s.counts.write_cards if s.counts.write_cards is defined else s.counts.writes %}
-    <span class="jr-stat"><b>{{ n_cards }}</b> write{{ 's' if n_cards != 1 }}{% if s.counts.write_cards is defined and s.counts.writes != n_cards %} ({{ s.counts.writes }} values){% endif %}</span>
-    {% if s.counts.other_chip %}<span class="jr-stat jr-stat-bad" title="runs whose saved state may be another chip's, not counted above"><b>{{ s.counts.other_chip }}</b> maybe another chip's</span>{% endif %}
+    <span class="jr-stat"><b>{{ '{:,}'.format(n_cards) }}</b> write{{ 's' if n_cards != 1 }}{% if s.counts.write_cards is defined and s.counts.writes != n_cards %} ({{ '{:,}'.format(s.counts.writes) }} values){% endif %}</span>
+    {% if s.counts.other_chip %}<span class="jr-stat jr-stat-bad" title="runs whose saved state may be another chip's, not counted above"><b>{{ '{:,}'.format(s.counts.other_chip) }}</b> maybe another chip's</span>{% endif %}
     {% if s.counts.biggest_write %}<span class="jr-stat muted">largest Δ <code class="jr-path" data-path="{{ s.counts.biggest_write.path }}">{{ s.counts.biggest_write.path }}</code>
         {{ before_after(s.counts.biggest_write.old, s.counts.biggest_write.new) }}</span>{% endif %}
     <span id="jr-since" class="jr-since" hidden></span>
@@ -43,7 +43,7 @@
 <p class="jr-note jr-gates-pending" data-gates-day="{{ s.day }}">Checking {{ s.gates_pending }} gate{{ 's' if s.gates_pending != 1 }} in the background; this day refreshes when they are done.</p>
 {% endif %}
 {% if s.unrecorded %}
-<p class="jr-note jr-unrecorded">SM's undo journal holds {{ s.unrecorded.n }} edit{{ 's' if s.unrecorded.n != 1 }} from this day made before the chip history recorded SM writes ({% if s.unrecorded.since %}it records them from {{ s.unrecorded.since }}{% else %}none recorded yet{% endif %}). Whether they reached the chip was not recorded; any that did show in the next run's changes.</p>
+<p class="jr-note jr-unrecorded">SM's undo journal holds {{ '{:,}'.format(s.unrecorded.n) }} edit{{ 's' if s.unrecorded.n != 1 }} from this day made before the chip history recorded SM writes ({% if s.unrecorded.since %}it records them from {{ s.unrecorded.since }}{% else %}none recorded yet{% endif %}). Whether they reached the chip was not recorded; any that did show in the next run's changes.</p>
 {% endif %}
 {% if s.no_dataset %}
 <p class="jr-note warn">No dataset folder is open in SM, so runs cannot be listed — open the chip's data folder on the Datasets page. Journal lines still show below.</p>
@@ -53,7 +53,7 @@
 
 {% if s.unassigned %}
 <div class="jr-unassigned jr-line-group">
-    <b class="jr-line-count" data-suffix="from a session that named no chip.">{{ s.unassigned|length }} journal line{{ 's' if s.unassigned|length != 1 }} from a session that named no chip.</b>
+    <b class="jr-line-count" data-suffix="from a session that named no chip.">{{ '{:,}'.format(s.unassigned|length) }} journal line{{ 's' if s.unassigned|length != 1 }} from a session that named no chip.</b>
     <span class="muted">SM never guesses which chip they belong to.</span>
     <button type="button" class="btn-sm outline" onclick="JournalPage.adopt('{{ s.day }}')">Move them under {{ s.chip }}</button>
     <ul class="jr-unassigned-list">{% for e in s.unassigned %}<li class="muted" data-jr-search="{{ e.search_hay }}" data-jr-author="{{ e.kind }}">{{ e.time }} · {{ e.text }}</li>{% endfor %}
@@ -86,7 +86,7 @@
 
 {% if s.loose %}
 {% set line_suffix = 'with run attachments unavailable' if history.state in ('building', 'unavailable') else 'not attached to a run' %}
-<details class="jr-card jr-loose jr-line-group"><summary><span class="jr-family jr-line-count" data-suffix="{{ line_suffix }}">{{ s.loose|length }} journal line{{ 's' if s.loose|length != 1 }} {{ line_suffix }}</span></summary>
+<details class="jr-card jr-loose jr-line-group"><summary><span class="jr-family jr-line-count" data-suffix="{{ line_suffix }}">{{ '{:,}'.format(s.loose|length) }} journal line{{ 's' if s.loose|length != 1 }} {{ line_suffix }}</span></summary>
     <ul class="jr-lines">{% for e in s.loose %}<li data-jr-search="{{ e.search_hay }}" data-jr-author="{{ e.kind }}"><span class="jr-time">{{ e.time }}</span> <span class="jr-author jr-author-{{ e.kind.split(':')[0] }}">{{ e.kind }}</span> {{ e.text }}{% if e.because %} <i class="muted">— {{ e.because }}</i>{% endif %}</li>{% endfor %}</ul>
 </details>
 {% endif %}

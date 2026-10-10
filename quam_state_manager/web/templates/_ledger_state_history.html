@@ -5,7 +5,7 @@
    action goes through the doors the snapshot rows use, gates and all; a
    version the ledger cannot hand over exactly says why instead of offering
    them. Included by _state_history_body.html. #}
-{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag %}
+{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag, version_flags %}
 {% from '_version_count.html' import version_count %}
 {% from '_history_pager.html' import history_pager %}
 {% set lv = ledger_versions %}
@@ -30,7 +30,7 @@
         {% else %}
         <strong class="sh-event sh-event-{{ r.badge | replace(' ', '-') }}" title="{{ r.hover }}">{{ r.title }}</strong>
         <span class="muted sh-event-sub">{{ r.sub }}</span>
-        {% for f in r.flags %}<span class="sv-flag">{{ f }}</span>{% endfor %}
+        {{ version_flags(r) }}
         {% endif %}
         {# docs/63 project lens, on the snapshots this row carries (S10 C3) #}
         {% for p in (r.annotations or []) | map(attribute='project') | select | unique %}<span class="sh-project-badge" title="Captured while scoped to qualibrate project &quot;{{ p }}&quot;">&#9879; {{ p }}</span>{% endfor %}

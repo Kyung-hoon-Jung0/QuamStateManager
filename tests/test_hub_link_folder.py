@@ -64,7 +64,8 @@ def test_candidate_bucketing_and_ranking(env):
     keys = re.findall(r'data-root="([^"]+)"', html)
     assert keys == [routes._hub_root_key(r) for r in (env.b, env.a, env.zero)]
     assert "2 runs match this chip, 0 belong to other chips, 0 unreadable" in html
-    assert "0 runs match this chip, 1 belong to other chips, 0 unreadable" in html
+    # S10 walk (round 4): "1 belong to other chips" -> "1 belongs to another chip" (grouped, singular)
+    assert "0 runs match this chip, 1 belongs to another chip, 0 unreadable" in html
     zero_row = html.split(f'data-root="{routes._hub_root_key(env.zero)}"')[1].split('class="hub-folder-row"')[0]
     assert 'hx-post="/hub/link-folder"' not in zero_row
 
@@ -289,7 +290,8 @@ def test_no_roots_offer_on_html_surfaces(env, surface):
     html = response.get_data(as_text=True)
     assert 'data-note="no_folder_linked"' in html
     assert "Link a data folder..." in html and 'hx-get="/hub/link-folder"' in html
-    assert "SM&#39;s own writes" in html and "the states SM saw -- no runs" in html
+    # S10 walk: "SM saw -- no runs." -> "SM saw, and no runs." (no ASCII double hyphen in UI text)
+    assert "SM&#39;s own writes" in html and "the states SM saw, and no runs." in html
 
 
 @pytest.mark.parametrize("surface", ["agent", "meta"])
@@ -299,7 +301,8 @@ def test_json_surfaces_offer_a_read_url(env, surface):
     assert response.status_code == 200
     data = response.get_json()
     assert data["link"] == {"offer": True, "url": "/hub/link-folder"}
-    assert "the states SM saw -- no runs" in json.dumps(data)
+    # S10 walk: "SM saw -- no runs." -> "SM saw, and no runs." (no ASCII double hyphen in UI text)
+    assert "the states SM saw, and no runs." in json.dumps(data)
     assert env.client.post("/api/agent/hub/link-folder", data=payload(env)).status_code == 404
 
 

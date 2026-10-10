@@ -226,7 +226,9 @@ class TestPercent:
 
     def test_tiny_changes_are_not_rounded_to_a_lying_zero(self):
         # 1e-5 % would print as "+0%" under a naive .3f
-        assert compute(1.0, 1.0000001)["pct_text"] == "+1.00e-05%"
+        # S10 walk: "+1.00e-05%" -> "+1e-05%" -- one percent rule (3 significant digits,
+        # trailing zeros dropped like a delta's), so "-0.005%" no longer sits beside "+0.625%"
+        assert compute(1.0, 1.0000001)["pct_text"] == "+1e-05%"
 
 
 class TestStoredAsTextIsHonest:
@@ -319,7 +321,33 @@ _PARITY_CASES = [
     [0.4374739, 0.389751], [0.3530008549275264, 0.3531], [5078705034.109805, 5078701397.0],
     [0, 9.999995e-05], [0, 0.000123456789], [0, 123456789.123456], [0.1234567891234, 0.98765432198765],
     [2e15, 5e15], [0, -9.9999995e-07], [1.23456789e-12, 0], [999999.5, 0], [0, 0.0001],
+    # S10 walk (P2-6): the one percent rule -- sub-1, tiny, carries, >= 1000
+    [6000000000.0, 5999668948.0], [3.312345678901234e-05, 3.3378e-05], [1.0, 1.0000000801],
+    [1.0, 1.09995], [1.0, 1.9995], [1.0, 13.345], [3.0, 2.99999997], [0.5, 1000.0],
 ]
+
+# S10 walk (P2-6): percent changes rendered by ValueDelta.formatPercent alone
+_PCT_CASES = [-0.00512, 0.625, 7.5e-07, -7.5e-07, 15.3, -25.0, 1234.5, 9.995, 99.95, 0.0001,
+              9.999e-05, 0.00012345, 1e20, 100.0, 0.0, 33.333333333333336, -66.66666666666667,
+              0.1, 0.15, 2.5e-10, 123456789.0]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+def test_js_percent_matches_python_character_for_character():
+    """S10 walk (P2-6): ONE percent rule, the same on both sides."""
+    with tempfile.TemporaryDirectory() as td:
+        cases_path = Path(td) / "cases.json"
+        cases_path.write_text(json.dumps(_PCT_CASES), encoding="utf-8")
+        r = subprocess.run(
+            ["node", str(_ROOT / "tests" / "value_delta_parity.cjs"), str(cases_path), "percent"],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=120)
+    if r.returncode == 2 or "Cannot find module 'jsdom'" in (r.stderr or ""):
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    js = json.loads(r.stdout)
+    mismatches = [f"{p!r}: py={format_percent(p)!r} js={got!r}"
+                  for p, got in zip(_PCT_CASES, js) if format_percent(p) != got]
+    assert not mismatches, "JS/Python percent drift:\n" + "\n".join(mismatches)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")

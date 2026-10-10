@@ -163,11 +163,11 @@ def move_root(instance_path, folder: str | None, *, who: str, chip: str | None =
     for key, c in sorted(chips.items()):
         n = len(carried.get(key, []))
         try:
-            append(instance_path, c, f"journal folder moved to {new} by {who} -- "
+            append(instance_path, c, f"journal folder moved to {new} by {who} — "
                    f"{n} day file(s) of this chip carried over", kind="sm", root_dir=old)
         except (OSError, ValueError):
             pass                                      # the old folder may be gone; the new one still says
-        append(instance_path, c, f"journal folder moved here from {old} by {who} -- "
+        append(instance_path, c, f"journal folder moved here from {old} by {who} — "
                f"{n} day file(s) of this chip carried over", kind="sm")
     return {"root": new, "moved": True, "from": old, "carried": carried,
             "days": sum(len(v) for v in carried.values())}

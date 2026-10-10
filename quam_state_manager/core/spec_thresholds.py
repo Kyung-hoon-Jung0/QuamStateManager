@@ -86,7 +86,7 @@ def band_problem(key: str, warn: float, fail: float, direction: str) -> str | No
                     "for a lower-is-better metric")
     elif fail > warn:
         return (f"{key}: fail ({fail:g}) must not be above warn ({warn:g}) "
-                "for a higher-is-better metric -- the warn band could never be reached")
+                "for a higher-is-better metric — the warn band could never be reached")
     return None
 
 

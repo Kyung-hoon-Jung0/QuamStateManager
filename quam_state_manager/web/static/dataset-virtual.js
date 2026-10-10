@@ -1084,7 +1084,7 @@
         }
         band.appendChild(span('ds-digest-date', latest || '\u2014'));
         band.appendChild(span('ds-digest-item',
-            total + ' run' + (total === 1 ? '' : 's')));
+            _grp(total) + ' run' + (total === 1 ? '' : 's')));
         var qs = Object.keys(qfail).sort(function (x, y) {
             // Count desc; ties by NATURAL qubit order (q2 before q10 — a tie is
             // the normal case here, one failure each).
@@ -1307,7 +1307,7 @@
             || (state.selectedExps && state.selectedExps.size > 0)
             || (state.qubitFilter && state.qubitFilter.size > 0);
         var msg = active
-            ? ('Showing ' + state.visible.length + ' of ' + state.rows.length)
+            ? ('Showing ' + _grp(state.visible.length) + ' of ' + _grp(state.rows.length))
             : '';
         if (state.unknownScopes.length > 0) {
             // Surface typos like `foo:bar` so the user knows the scope was unrecognized
@@ -1607,6 +1607,8 @@
        landed run (either page) left it stale until F5. A row counts where
        the server counts it: every row on Datasets, a tagged one on
        Collections. */
+    /* a count as every surface shows one: grouped ("5,678") */
+    function _grp(n) { return Number(n).toLocaleString('en-US'); }
     function _inHead(row) {
         return !!row && !(state.collections && !(row.tags && row.tags.length));
     }
@@ -1626,16 +1628,17 @@
                 var rq = r.q || [];
                 for (var j = 0; j < rq.length; j++) if (!qs[rq[j]]) { qs[rq[j]] = 1; nq++; }
             }
+            // S10 walk: the server writes grouped counts ("5,678 runs"); so does this
             headSmall.textContent = headSmall.textContent
-                .replace(/^\(\d+ runs/, '(' + runs + ' runs')
-                .replace(/, \d+ types, \d+ qubits\)/, ', ' + ne + ' types, ' + nq + ' qubits)');
+                .replace(/^\([\d,]+ runs/, '(' + _grp(runs) + ' runs')
+                .replace(/, [\d,]+ types, [\d,]+ qubits\)/, ', ' + _grp(ne) + ' types, ' + _grp(nq) + ' qubits)');
             return;
         }
         // A date tab (or Datasets): the header counts every date, the table
         // one -- step the run count by what changed, never recount.
         if (!delta) return;
-        headSmall.textContent = headSmall.textContent.replace(/^\((\d+) runs/, function (m0, n) {
-            return '(' + Math.max(0, Number(n) + delta) + ' runs';
+        headSmall.textContent = headSmall.textContent.replace(/^\(([\d,]+) runs/, function (m0, n) {
+            return '(' + _grp(Math.max(0, Number(n.replace(/,/g, '')) + delta)) + ' runs';
         });
     }
 
@@ -1915,7 +1918,7 @@
             var headSmall = document.querySelector('.table-header-row h2 > small');
             var live = 0;
             for (var hc = 0; hc < state.rows.length; hc++) if (_inHead(state.rows[hc])) live++;
-            if (headSmall) headSmall.textContent = headSmall.textContent.replace(/^\(\d+ runs/, '(' + live + ' runs');
+            if (headSmall) headSmall.textContent = headSmall.textContent.replace(/^\([\d,]+ runs/, '(' + _grp(live) + ' runs');
         } else if (changed) {
             _headCountAdjust(headDelta);   // QA F2 (review)
         }

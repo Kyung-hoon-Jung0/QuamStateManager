@@ -10,7 +10,7 @@
             title="First page (newest)"{% if page <= 1 %} disabled{% endif %}>&laquo; First</button>
     <button class="outline btn-sm" hx-get="{{ q }}{{ page - 1 }}" hx-target="{{ target }}" hx-swap="{{ swap }}"
             title="Previous page (newer)"{% if page <= 1 %} disabled{% endif %}>&lsaquo; Prev</button>
-    <span class="muted history-page-of">Page {{ page }} / {{ total_pages }}</span>
+    <span class="muted history-page-of">Page {{ '{:,}'.format(page) }} / {{ '{:,}'.format(total_pages) }}</span>
     <button class="outline btn-sm" hx-get="{{ q }}{{ page + 1 }}" hx-target="{{ target }}" hx-swap="{{ swap }}"
             title="Next page (older)"{% if page >= total_pages %} disabled{% endif %}>Next &rsaquo;</button>
     <button class="outline btn-sm" hx-get="{{ q }}{{ total_pages }}" hx-target="{{ target }}" hx-swap="{{ swap }}"

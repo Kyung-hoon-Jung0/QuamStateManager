@@ -618,10 +618,14 @@ class TestReviewRound:
         assert [r["value"] for r in rows(html)] == ["0.15", "0.12", "0.1"]
         assert '<details class="vh-not-kept vh-excursions">' in html, "the pointer's move is listed apart"
         listed = text(html.split('<details class="vh-not-kept vh-excursions">', 1)[1].split("</details>", 1)[0])
-        assert "Saved by run #2 (scan): #./x180_Gauss" in listed and "returned to #./x180_DragCosine" in listed
+        # S10 walk (round 4, P2-3): raw pointers -> the value in force through x180, the
+        # pulse as context; "returned to" -> "came back to" (a save, what the records prove)
+        assert "Saved by run #2 (scan): 0.3 via x180_Gauss" in listed, listed
+        assert "came back to 0.15 via x180_DragCosine (#3 scan)" in listed, listed
+        assert "#./" not in listed, "never a raw pointer where a value is meant"
         j = aba["client"].get("/api/agent/field-history", query_string={"path": self.ALIAS}).get_json()
         assert {p["value"]: p["before_via"] for p in j["history"]["points"]} == {0.15: False, 0.12: False, 0.1: False}
-        assert j["history"]["excursions"][0]["values"] == ["#./x180_Gauss"]
+        assert j["history"]["excursions"][0]["values"] == ["0.3 via x180_Gauss"]   # S10 walk round 4 (P2-3)
 
     def test_p0_3_and_p1_1_share_one_rule_after_a_return(self, aba):
         html = column(aba, {"qA1": self.ALIAS})

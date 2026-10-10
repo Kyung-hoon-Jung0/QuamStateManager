@@ -3,14 +3,14 @@
 {% if hub_notes %}{% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}{% endif %}
 {% if rows %}
 <div class="topo-popup-section topo-spark-section">
-    <div class="topo-popup-section-title">Trends &middot; {{ snapshots }} {% if ledger %}recorded event{% else %}snapshot{% endif %}{{ 's' if snapshots != 1 }}</div>
+    <div class="topo-popup-section-title">Trends &middot; {{ '{:,}'.format(snapshots or 0) }} {% if ledger %}recorded event{% else %}snapshot{% endif %}{{ 's' if snapshots != 1 }}</div>
     {% for r in rows %}
-    <div class="topo-spark-row" title="{{ r.label }}{% if r.n %} &mdash; {{ r.n }} points{% endif %}">
+    <div class="topo-spark-row" title="{{ r.label }}{% if r.n %} &mdash; {{ '{:,}'.format(r.n) }} points{% endif %}">
         <span class="topo-prop-label">{{ r.abbr }}</span>
         <span class="topo-spark-delta{% if r.good is true %} good{% elif r.good is false %} bad{% endif %}" data-trend="{{ r.trend or 'flat' }}"
               title="the last change: newest value vs the previous different value">
             {%- if r.trend and r.delta_pct is not none -%}
-                {{ '▲' if r.trend == 'up' else '▼' }}{{ '%+.1f'|format(r.delta_pct) }}%
+                {{ '▲' if r.trend == 'up' else '▼' }}{{ r.delta_pct | pct_change }}
             {%- else -%}–{%- endif -%}
         </span>
         <svg class="history-cell-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{{ r.svg_inner|safe }}</svg>

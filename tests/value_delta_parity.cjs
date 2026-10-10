@@ -52,6 +52,15 @@ window.fetch = global.fetch = function () {
 window.eval(fs.readFileSync(
     path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'app.js'), 'utf8'));
 
+// S10 walk: `percent` mode -- each case is ONE number (a percent change),
+// rendered by ValueDelta.formatPercent (the one percent rule)
+if (process.argv[3] === 'percent') {
+    process.stdout.write(JSON.stringify(cases.map(function (p) {
+        return window.ValueDelta.formatPercent(p);
+    })));
+    process.exit(0);
+}
+
 const out = cases.map(function (pair) {
     const d = window.ValueDelta.compute(pair[0], pair[1]);
     if (!d) return null;

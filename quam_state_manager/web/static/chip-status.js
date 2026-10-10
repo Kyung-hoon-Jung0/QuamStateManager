@@ -4262,7 +4262,8 @@ window.ChipStatus.mount = function (opts) {
         if (edited) cnt.push(edited + ' not in history yet');
         if (unk) cnt.push(unk + ' not dated (index incomplete)');
         if (cnt.length) parts.push(cnt.join(', ') + ' (of ' + total + ')');
-        if (d.snapshots) parts.push('history: ' + d.snapshots + ' recorded events'
+        // S10 walk: a count shown is grouped ("3,552 recorded events")
+        if (d.snapshots) parts.push('history: ' + Number(d.snapshots).toLocaleString('en-US') + ' recorded events'
             + (d.newest ? ', newest ' + MI.when(MI.snapMs(d.newest)) : ''));
         else parts.push('no recorded events in this chip\u2019s change ledger yet');
         if (d.updating) parts.push('index updating');

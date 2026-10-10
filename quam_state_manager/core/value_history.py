@@ -1137,6 +1137,13 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
     sm_eids = [r[0]["eid"] for rows in list(raw.values()) + list(eff.values()) + list(hop_rows.values())
                for r in rows if r[0]["kind"] in SM_KINDS]
     sm = _sm_info(conn, sm_eids)
+    saved_memo: list = []
+
+    def saved_rows() -> "_Rows":
+        """What each event SAVED (one view per derive, shared reads)."""
+        if not saved_memo:
+            saved_memo.append(cache.saved_view())
+        return saved_memo[0]
 
     def points(rows):
         pts = [_point(ev, old, new, op, proven, roots, sm) for ev, old, new, op, proven in rows]
@@ -1173,6 +1180,33 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
                 since = start
             else:
                 break
+        hop_from = {hop["from"] for hop in tgt.get("via") or ()}
+
+        def through(h, eid):
+            """S10 walk (round 4, P2-3): a save of a POINTER the path follows
+            (*h*, one of its hops) shown as what it meant -- the value in force
+            through the path as event *eid* SAVED it (``holder_at`` on the saved
+            rows) and the name the pointer gave (``{"value", "via"}``); None
+            for the path's own holder, or when the saved state does not reach
+            a value."""
+            if h not in hop_from or eid is None or eid not in index.positions:
+                return None
+            pos = index.positions[eid]
+            saved = saved_rows()
+            holder, consulted = holder_at(saved, tgt["path"], pos)
+            if record:
+                asked[key].update(consulted)
+                if holder is not None:
+                    asked[key].add(holder)
+            if holder is None or holder == h or not saved.has(holder):
+                return None
+            v = saved.fold(holder, pos)
+            if v is _ABSENT or isinstance(v, (dict, list)):
+                return None
+            ptr = saved.fold(h, pos)
+            name = ptr.rstrip("/").rsplit("/", 1)[-1] if isinstance(ptr, str) else None
+            return {"value": v, "via": name or holder.rsplit(".", 2)[-2]}
+
         def exc_point(h, anchor, pts, back):
             """One excursion: what the chip held (the anchor's value), the
             saves that left it and were never confirmed, the save that came
@@ -1183,21 +1217,27 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
                 ev, _old, new, op, _proven = r
                 return {"eid": ev["eid"], "t": iso_z(ev["t_utc_us"]), "t_us": ev["t_utc_us"],
                         "run_id": ev.get("run_id"), "experiment": ev.get("experiment"),
-                        "kind": ev.get("kind"), "value": None if op == "gone" else new}
+                        "kind": ev.get("kind"), "value": None if op == "gone" else new,
+                        "in_force": through(h, ev["eid"])}
             pid = index.paths.get(h)
             return {"holder": h, "anchor": brief(anchor), "back": brief(back),
                     "points": [dict(_point(*r, roots, {}),
                                     witness=(verdicts.code(r[0]["eid"], pid) if verdicts is not None
-                                             else None)) for r in pts]}
+                                             else None),
+                                    in_force=through(h, r[0]["eid"])) for r in pts]}
 
         def nk_point(h, ev, old, new, op, proven, wev):
             at = index.positions[ev["eid"]]
             if cache.eras is not None:
                 old = old if old is None else cache.eras.value(old, at, h)
                 new = new if new is None else cache.eras.value(new, at, h)
-            return _not_kept_point(index, ev, old, new, op, proven, wev, roots, h,
-                                   (verdicts.entity(index.paths.get(h)) if verdicts is not None
-                                    else None))
+            pt = _not_kept_point(index, ev, old, new, op, proven, wev, roots, h,
+                                 (verdicts.entity(index.paths.get(h)) if verdicts is not None
+                                  else None))
+            # S10 walk (round 4, P2-3): a pointer's save, as the value it meant
+            pt["in_force"] = through(h, ev["eid"])
+            pt["by"]["in_force"] = through(h, (wev or {}).get("eid"))
+            return pt
         # P0-1: a point of the value in force where a pointer the path follows
         # moved (a row of that pointer the chip kept) is a retarget
         moved = set()
@@ -1565,7 +1605,7 @@ def unreadable_runs_note(unreadable: dict | None) -> list[dict]:
     if not n:
         return []
     named = [f"#{rid}" + (f" in {label}" if label else "") for rid, label in unreadable.get("named") or ()]
-    more = f" and {n - len(named)} more" if n > len(named) else ""
+    more = f" and {n - len(named):,} more" if n > len(named) else ""
     return [{"level": "info", "code": "unreadable_runs",
              "text": _plural(n, "run", "runs") + (" has" if n == 1 else " have")
                      + " no readable saved state, so " + ("it holds" if n == 1 else "they hold")
@@ -1710,7 +1750,7 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
                     "folder not linked to it. Link the folder its runs are saved in.")
         else:
             text = ("No data folder is linked to this chip, so this history holds SM's own "
-                    "writes and the states SM saw -- no runs. Link the folder its runs are saved in.")
+                    "writes and the states SM saw, and no runs. Link the folder its runs are saved in.")
         out.append({"level": "info", "code": "no_folder_linked", "text": text,
                     "link": {"offer": True, "url": "/hub/link-folder"}})
     out.extend(folder_notes(ledger.get("left_out"), listing))

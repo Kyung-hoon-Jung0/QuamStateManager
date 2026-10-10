@@ -1137,9 +1137,13 @@ def _sync_view(ctx=None) -> dict | None:
         refused = None
     # a refused apply stashes the edits it saved (pending_reapply) and clears
     # the change log -- they are still the user's unapplied edits
-    paths = [getattr(c, "dot_path", None) for c in log]
-    seen = set(paths)
-    paths += [p for p in (ctx.get("pending_reapply") or {}) if p not in seen]
+    # S10 walk r4 (P2-5): one count of the user's unapplied edits -- the FIELDS
+    # that will change on the chip. Two commits to one field are one edit
+    # there: the top bar said "2 unapplied edits / Apply 2" and the apply that
+    # followed "Written to live · 1 edit" (the replay writes one value per
+    # path). The change log keeps every commit (undo, the consent count).
+    paths = sync_status.edit_fields([getattr(c, "dot_path", None) for c in log],
+                                    ctx.get("pending_reapply") or {})
     return sync_status.view(
         facts=facts,
         flag_moved=bool(ctx.get("live_diverged")),
@@ -4311,7 +4315,7 @@ def _replay_updates(modifier, updates: dict) -> dict:
                                 "dot_path": dot_path,
                                 "error": ("the live chip now reaches this field "
                                           "through a link it did not have when "
-                                          "you edited it -- kept the live chip"),
+                                          "you edited it — kept the live chip"),
                             })
                             continue  # skip applied += 1
                         target_path = dot_path
@@ -7714,7 +7718,7 @@ def _env_required_response(name: str, missing: str | None):
     other surface (sidebar Projects, the Config Manager page, a plain form
     post) is sent to the landing with the picker already open there."""
     msg = (f"Choose the Python environment for {name} first"
-           + (f" -- {missing} no longer exists." if missing else "."))
+           + (f" — {missing} no longer exists." if missing else "."))
     if _is_htmx() and request.form.get("from") == "landing":
         resp = make_response("")
         resp.headers["HX-Reswap"] = "none"
@@ -12104,7 +12108,7 @@ def _vh_wait_message(ans: dict) -> str:
         return f"The change history is being built{words}. It shows here when it is complete."
     if seen_total:
         return (f"The change history is being built from this chip's Param History snapshots "
-                f"({min(seen_done, seen_total)} of {seen_total}). It shows here when it is complete.")
+                f"({min(seen_done, seen_total):,} of {seen_total:,}). It shows here when it is complete.")
     if st.get("archive"):
         return ("The change history is being built from this chip's Param History snapshots. "
                 "It shows here when it is complete.")
@@ -12174,15 +12178,31 @@ def _vh_via_view(ans: dict, key: str, uid_roots, uid_memo: dict) -> list[dict]:
     return out
 
 
+def _vh_through(p: dict | None, value: Any, removed: bool = False) -> str:
+    """S10 walk (round 4, P2-3): a saved value of a POINTER the path follows,
+    as the value it meant -- "0.3 via x180_Gauss" (the value in
+    force through the path, the pulse the pointer named as context); the
+    plain display when it is the path's own value (``value_history``'s
+    ``in_force``)."""
+    f = (p or {}).get("in_force")
+    if f:
+        return f"{_vh_value_strings(f['value'], False)[0]} via {f['via']}"
+    return _vh_value_strings(value, removed)[0]
+
+
 def _vh_not_kept_view(ans: dict, key: str) -> list[dict]:
-    """P0-1: the saved values the chip never kept (``value_history.read``'s
-    ``not_kept``), newest first, as one line each: the run that saved it, the
-    value, and what read the chip and still found the earlier one."""
+    """P0-1: the saved values the next recorded state did not carry
+    (``value_history.read``'s ``not_kept``), newest first, as one line each:
+    the run that saved it, the value, and the recorded state that still had
+    the earlier one. S10 walk (round 4): ``says`` is what the records prove
+    (``hub_witness.WORDS``), never what the chip held -- a run's saved state
+    is the state it started from, which need not be the live chip's."""
     from quam_state_manager.core import value_history as vh
+    from quam_state_manager.core.hub_witness import WORDS
     out = []
     for nk in reversed(ans["rows"][key].get("not_kept") or []):
         by = nk.get("by") or {}
-        held = _vh_value_strings(by.get("value"), bool(by.get("removed")))[0]
+        held = _vh_through(by, by.get("value"), bool(by.get("removed")))
         kind = by.get("kind")
         if kind == "live":
             who, saw = "the chip", f"holds {held} now"
@@ -12200,9 +12220,9 @@ def _vh_not_kept_view(ans: dict, key: str) -> list[dict]:
         out.append({"t": nk.get("t"), "eid": nk.get("eid"),
                     "run": (f"run #{rid} {nk.get('experiment') or ''}".strip() if rid is not None
                             else (nk.get("kind") or "an event")),
-                    "display": _vh_value_strings(nk.get("value"), bool(nk.get("removed")))[0],
-                    "who": who, "saw": saw, "witness_eid": by.get("eid"),
-                    "witness_t": vh.iso_z(by.get("t_us"))})
+                    "display": _vh_through(nk, nk.get("value"), bool(nk.get("removed"))),
+                    "who": who, "saw": saw, "says": f"{WORDS['not_kept']} ({who} {saw})",
+                    "witness_eid": by.get("eid"), "witness_t": vh.iso_z(by.get("t_us"))})
     return out
 
 
@@ -12222,20 +12242,23 @@ def _vh_runs_text(skipped: list[dict]) -> str:
 def _vh_excursion_view(ans: dict, key: str) -> list[dict]:
     """P0-1: the excursions of the value (``value_history.read``'s
     ``excursions``), newest first, one line each: the runs that saved other
-    values no later read of the chip confirmed, and the value it came back
-    to."""
+    values nothing confirmed before the saved value came back, and the value
+    it came back to (a SAVE: what the records prove, not the chip)."""
+    from quam_state_manager.core.hub_witness import WORDS
     out = []
     for ex in reversed(ans["rows"][key].get("excursions") or []):
         pts = ex["points"]
         back = ex.get("back") or {}
-        held = _vh_value_strings(back.get("value"), back.get("value") is None)[0]
+        held = _vh_through(back, back.get("value"), back.get("value") is None)
         who = (f"#{back['run_id']} {back.get('experiment') or ''}".strip() if back.get("run_id") is not None
                else (back.get("kind") or "the next event"))
         exps = sorted({p.get("experiment") for p in pts if p.get("experiment")})
         out.append({"t": pts[0]["t"] if pts else None, "eid": pts[0]["eid"] if pts else None,
                     "runs": _vh_runs_text(pts) + (f" ({', '.join(exps)})" if exps else ""),
-                    "saved": [_vh_value_strings(p["value"], p["removed"])[0] for p in pts],
-                    "held": held, "who": who, "n": len(pts)})
+                    "saved": [_vh_through(p, p["value"], p["removed"]) for p in pts],
+                    "held": held, "who": who, "n": len(pts),
+                    # S10 walk (round 4): the drawer's own sentence (hub_witness.WORDS)
+                    "says": f"{WORDS['excursion']} to {held} ({who})"})
     return out
 
 
@@ -12314,14 +12337,20 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
                         **({"source": p["source"]} if p.get("source") else {})} for p in pts],
             "total": len(ans["rows"][key]["effective"]), "notes": ans["notes"].get(key) or [],
             # P0-1: saves no later read of the chip confirmed, whose value came back
-            "excursions": [{"runs": e["runs"], "values": e["saved"], "held": e["held"], "back": e["who"]}
+            # (S10 walk round 4: with the drawer's own sentence, ``says``)
+            "excursions": [{"runs": e["runs"], "values": e["saved"], "held": e["held"], "back": e["who"],
+                            "says": e["says"]}
                            for e in _vh_excursion_view(ans, key)],
-            # P0-1: saved values the chip never kept, left out of points / in_force
+            # P0-1: saved values the next recorded state did not carry, left out of
+            # points / in_force -- each with the drawer's own sentence (``says``:
+            # what the records prove, never what the chip held)
             "not_kept": [{"t": n.get("t"), "value": n.get("value"), "old": n.get("old"),
                           "run_id": n.get("run_id"), "experiment": n.get("experiment"),
                           "witness": {k: (n.get("by") or {}).get(k)
-                                      for k in ("kind", "run_id", "experiment", "value")}}
-                         for n in ans["rows"][key].get("not_kept") or []],
+                                      for k in ("kind", "run_id", "experiment", "value")},
+                          "says": said}
+                         for n, said in zip(ans["rows"][key].get("not_kept") or [],
+                                            [v["says"] for v in reversed(_vh_not_kept_view(ans, key))])],
             "in_force": [{"t": e["t"], "value": e["value"], "removed": e["removed"],
                           "holder": e.get("holder"), "provenance": e["provenance"],
                           "run_id": e.get("run_id")} for e in ans["rows"][key]["effective"]],
@@ -12972,7 +13001,7 @@ def field_create():
                        else "[[1, 2], [3, 4]]" if _chosen.startswith("matrix")
                        else "[5]" if hint.spec.get("base") == "list" else None)
                 raise _tp.TypeMismatchError(
-                    f"{dot_path}: you chose {_chosen} -- {_msg}. "
+                    f"{dot_path}: you chose {_chosen} — {_msg}. "
                     + (f"Type it as JSON (e.g. {_eg}) or pick 'infer'."
                        if _eg else "Pick the type the value has, or 'infer'."),
                     path=dot_path, expected=hint, got=type(parsed).__name__)
@@ -14641,7 +14670,7 @@ def pair_add_gate(name: str):
         return render_template(
             "_status.html", level="error",
             message=(f"{gate_type} writes its flux pulses into the gate "
-                     f"({', '.join(_psc.paths[:3])}) -- a new pulse. Pulses are "
+                     f"({', '.join(_psc.paths[:3])}) — a new pulse. Pulses are "
                      "added on the Pulses page: + New pulse -> \"Gaussian CZ from "
                      "cz_flattop\" builds the gate with its channel ops, or use "
                      "your lab's gate script.")), 409
@@ -15169,7 +15198,7 @@ def chip_status_report_finalize():
         m = re.search(r'data-rep-redact="([01])"', tag)
         if not m or m.group(1) != str(int(redact)):
             return jsonify(ok=False, error="a section was built under a different "
-                                           "redaction setting -- reload the page"), 409
+                                           "redaction setting — reload the page"), 409
     labels = [_cr.SECTION_BY_KEY[s].label for s in sections]
     doc = re.sub(r'(<ul class="rep-contents"[^>]*>).*?(</ul>)',
                  lambda m: m.group(1) + "".join(f"<li>{_html_escape(x)}</li>" for x in labels)
@@ -20144,7 +20173,7 @@ def _zline_payload(store, line: str, model: str = "sum", op: str = "",
         payload = synth_for_operation(store, f"{line}.operations.{op}")
         samples = payload.get("i") if payload.get("ok") else None
         if payload.get("ok") and payload.get("iq"):
-            out["pulse_note"] = f"{op} is an IQ pulse; a flux line plays one channel -- not drawn."
+            out["pulse_note"] = f"{op} is an IQ pulse; a flux line plays one channel — not drawn."
         elif not payload.get("ok") or not samples:
             out["pulse_note"] = (f"SM cannot draw {op}: "
                                  f"{payload.get('error') or 'no samples'}.")
@@ -20152,7 +20181,7 @@ def _zline_payload(store, line: str, model: str = "sum", op: str = "",
             out["pulse_note"] = (f"{op} is {len(samples)} samples long; pulses over "
                                  f"{zf.MAX_PULSE_SAMPLES} samples are not drawn.")
         elif any(v is None for v in samples):
-            out["pulse_note"] = f"{op} has non-finite samples -- not drawn."
+            out["pulse_note"] = f"{op} has non-finite samples — not drawn."
         else:
             tok = (pf.key(), model, tuple(float(v) for v in samples))
             out["pulse"] = memo((line, "pulse", op), tok,
@@ -20850,7 +20879,7 @@ def pulse_edit():
                 return render_template(
                     "_status.html",
                     message=("That pointer resolves to a container, not a value "
-                             "-- point at a leaf (e.g. .../amplitude)"),
+                             "— point at a leaf (e.g. .../amplitude)"),
                     level="error"), 400
             # a dangling re-link of a LAB field is refused by the lab check
             # (the class could never accept "nothing"); resolvable: drawn
@@ -21169,7 +21198,7 @@ def api_pulse_lab_waveform():
                 return jsonify({"ok": True, "results": [{
                     "qclass": qclass, "ok": False, "reason": "unknown-class",
                     "error": (f"{qclass} is not a pulse class SM has read from "
-                              "the selected environment -- name its module on "
+                              "the selected environment — name its module on "
                               "the env strip first"),
                     "plot": {"ok": False}}]})
             if spec is not None:
@@ -21370,7 +21399,7 @@ def api_manual():
             selected = None
         if selected:
             data["note"] = ("Class documentation for the selected environment is loading in the "
-                            "background -- the QM docs entries are shown now.")
+                            "background — the QM docs entries are shown now.")
     return jsonify({"ok": True, **data})
 
 
@@ -22245,7 +22274,7 @@ def _lab_class_refusal(store, spec, fields: dict, qclass: str | None,
 def _lab_unavailable_note(python_path, qclass, rec) -> str:
     """The warning for a check the selected env could not run at all."""
     return (f"The selected environment ({python_path}) cannot import "
-            f"{qclass}, so your class's own check was skipped -- the value "
+            f"{qclass}, so your class's own check was skipped — the value "
             "was written unchecked. Select the lab's environment in Generate "
             f"Config to have it checked. ({str(rec.get('error') or '')[:200]})")
 
@@ -22512,7 +22541,7 @@ def _lab_resolve_in_batch(store, pointer: str, wp: str, writes):
         return None
 
 
-_LAB_NO_ENV = ("no Python environment is selected -- pick the lab's env in "
+_LAB_NO_ENV = ("no Python environment is selected — pick the lab's env in "
                "Generate Config")
 
 
@@ -22827,12 +22856,12 @@ def _lab_relink_refusal(store, wp: str, pointer: str, resolved, aff) -> str | No
     op, field = direct[0]
     if resolved is None or is_pointer(resolved):
         return (f"{pointer} does not resolve to a value, so {field} of "
-                f"{op} would have none -- point it at an existing leaf. "
+                f"{op} would have none — point it at an existing leaf. "
                 "Nothing was written.")
     if isinstance(resolved, (dict, list)) and not isinstance(cur, (dict, list)):
         kind = "a dict" if isinstance(resolved, dict) else "a list"
         return (f"{pointer} is {kind}, but {field} of {op} holds a single "
-                "value -- point it at a leaf. Nothing was written.")
+                "value — point it at a leaf. Nothing was written.")
     return None
 
 
@@ -23107,7 +23136,7 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
                 notes.append(
                     f"Your gate {short} ({mp}) fails its own apply() on the "
                     f"chip as it will be: {a_err[:300]}"
-                    + (f" -- the chip could not load while {fill_gate} had an "
+                    + (f" — the chip could not load while {fill_gate} had an "
                        "empty slot, so nothing had checked it" if fill_gate
                        else ""))
             continue
@@ -23123,7 +23152,7 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
             elif a_err:
                 notes.append(
                     f"This edit could not be checked against your gate "
-                    f"{short} ({mp}): it already fails its own apply() -- "
+                    f"{short} ({mp}): it already fails its own apply() — "
                     f"{b_err[:300]}")
             continue      # did not apply before the edit either: not ours
         if not a_err:
@@ -23133,7 +23162,7 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
         if follow:
             info["follow"] = follow
             f0 = follow[0]
-            err += (f" -- {mp} plays both pulses: set {f0['dot_path']} "
+            err += (f" — {mp} plays both pulses: set {f0['dot_path']} "
                     f"(now {_fmt_msg_val(f0['current'])}) to "
                     f"{_fmt_msg_val(f0['value'])} too, both in one batch")
         return (f"your gate {short} ({mp}) refused it in its "
@@ -23190,15 +23219,15 @@ def _lab_cfg_verdict(store, cfg: dict, before: dict, after: dict, info: dict,
                                      | set(cfg["orphans"]))
         tail = (" Delete them together in one batch, or re-point them first."
                 if info["delete_also"] else "")
-        return ((f"your chip's generate_config() fails after this: {a_err} -- "
+        return ((f"your chip's generate_config() fails after this: {a_err} — "
                  f"{what or 'the removed part is still needed'}.{tail}")[:1200],
                 sorted(cfg["rows"]))
     if b_err and a_err:
         notes.append("This edit could not be checked against your chip's "
-                     f"generate_config(): it already fails -- {b_err[:300]}"
+                     f"generate_config(): it already fails — {b_err[:300]}"
                      + (f" ({what})" if what else ""))
     elif what:
-        notes.append(f"{what} -- your chip still loads and generate_config() "
+        notes.append(f"{what} — your chip still loads and generate_config() "
                      "passes, so the delete went through.")
     return None
 
@@ -23424,10 +23453,10 @@ def _lab_follow_payload(path, value, info) -> list[dict] | None:
 def _lab_refusal_text(message: str) -> str:
     if message.startswith("your chip's generate_config()"):
         return ("Your chip's own generate_config() refused this (run in the "
-                f"selected environment) -- nothing was changed: {message}")
+                f"selected environment) — nothing was changed: {message}")
     who = "gate" if message.startswith("your gate ") else "pulse class"
     return (f"Your {who} refused this value (its own code, run in "
-            f"the selected environment) -- nothing was written: {message}")
+            f"the selected environment) — nothing was written: {message}")
 
 
 def _lab_edit_refused(message: str):
@@ -23981,10 +24010,10 @@ def api_pulse_delete_together():
         return jsonify(ok=False, error=(
             "Not part of a pulse's Delete together: " + ", ".join(outsiders[:5])
             + (f" and {len(outsiders) - 5} more" if len(outsiders) > 5 else "")
-            + " -- only pulses, a lab gate and its fields go together here.")), 400
+            + " — only pulses, a lab gate and its fields go together here.")), 400
     if not holds_pulse:
         return jsonify(ok=False, error=(
-            "Nothing in this set is a pulse -- delete it where it lives "
+            "Nothing in this set is a pulse — delete it where it lives "
             "(Live edit - Json Tree view).")), 400
     payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
                "group": pj.get("group") or "new",
@@ -24013,7 +24042,7 @@ def api_pulse_delete_together_offer():
     if not present:
         return render_template(
             "_status.html", level="info",
-            message=f"{main} is not on this chip any more -- nothing to delete.")
+            message=f"{main} is not on this chip any more — nothing to delete.")
     if "." not in main:
         return render_template(
             "_status.html", level="warning",
@@ -24024,7 +24053,7 @@ def api_pulse_delete_together_offer():
     if not lab:
         return render_template(
             "_status.html", level="info",
-            message=(f"{main} can be deleted on its own now -- nothing else "
+            message=(f"{main} can be deleted on its own now — nothing else "
                      "has to go with it."))
     subject = None if main == pulse else "the path you deleted in the Json Tree"
     return _pulse_delete_refused_html(store, main, lab[0], info, subject=subject)
@@ -24214,7 +24243,7 @@ def api_pulse_copy():
             or not pulse_index.has_path(real_src)):
         return render_template(
             "_status.html", level="error",
-            message=(f"{src or '(empty)'} is not a pulse on this chip -- pick "
+            message=(f"{src or '(empty)'} is not a pulse on this chip — pick "
                      "one from the list (an operation of a channel, or a gate "
                      "slot holding a pulse)")), 400
     kept: list[str] = []
@@ -24228,7 +24257,7 @@ def api_pulse_copy():
         if not isinstance(ops, dict):
             return render_template(
                 "_status.html", level="error",
-                message=(f"{chan_label} has no operations dict -- this channel "
+                message=(f"{chan_label} has no operations dict — this channel "
                          "cannot hold pulses")), 400
         if op_name in ops:
             return render_template(
@@ -24252,14 +24281,14 @@ def api_pulse_copy():
     logger.info("pulse copy %s -> %s (materialized: %s)", src, dst, notes)
     msg = f"Copied {src.rsplit('.', 1)[-1]} to {chan_label} as {op_name}"
     if notes:
-        msg += (" -- written as values (no matching link on the target): "
+        msg += (" — written as values (no matching link on the target): "
                 + ", ".join(notes))
     if kept:
-        msg += (" -- still LINKED to another entity (editing these on the copy "
+        msg += (" — still LINKED to another entity (editing these on the copy "
                 "changes the source there too; unlink them to make the copy "
                 "independent): " + ", ".join(kept))
     if dropped:
-        msg += (" -- dropped " + ", ".join(dropped)
+        msg += (" — dropped " + ", ".join(dropped)
                 + " (it named the source; the copy is named by its key)")
     return _pulse_mutation_response(_render_pulse_detail(dst, status_msg=msg))
 
@@ -24858,7 +24887,7 @@ def save():
 
     toast = render_template(
         "_status.html",
-        message=f"Saved {count} change(s) to the working state",
+        message=f"Saved {count:,} change(s) to the working state",
         level="success",
     )
     tray = _tray_html()
@@ -24922,7 +24951,7 @@ def _agent_undo_refusal(store, presser: str | None = None) -> dict | None:
     log = store.change_log or []
     if not log:
         return {"refused": "journal", "paths": [],
-                "message": ("the tray is empty -- an agent's undo never walks the "
+                "message": ("the tray is empty — an agent's undo never walks the "
                             "applied history (that would write the live chip). "
                             "Ask the person to Ctrl+Z in the SM window if an "
                             "applied value must go back.")}
@@ -24930,7 +24959,7 @@ def _agent_undo_refusal(store, presser: str | None = None) -> dict | None:
     if isinstance(gid, str) and gid.startswith(undo_journal.GID_PREFIX):
         return {"refused": "journal", "paths": [log[-1].dot_path],
                 "message": ("the top of the tray is a staged step of the applied "
-                            "history (a person's Ctrl+Z) -- an agent never undoes it.")}
+                            "history (a person's Ctrl+Z) — an agent never undoes it.")}
     group = [log[-1]] if gid is None else []
     if gid is not None:
         for e in reversed(log):
@@ -24945,13 +24974,13 @@ def _agent_undo_refusal(store, presser: str | None = None) -> dict | None:
         return {"refused": "agent_group",
                 "paths": [e.dot_path for e in other][:20],
                 "actor": str(getattr(other[0], "actor", "")),
-                "message": (f"the newest staged edit is {str(getattr(other[0], 'actor', 'by_another agent'))[3:]}'s -- "
+                "message": (f"the newest staged edit is {str(getattr(other[0], 'actor', 'by_another agent'))[3:]}'s — "
                             "an agent undoes only its own rows. Use undo_mine, or leave it to that agent or the person.")}
     if human:
         return {"refused": "human_group",
                 "paths": [e.dot_path for e in human][:20],
                 "actor": str(getattr(human[0], "actor", "human")),
-                "message": ("the newest staged edit is a person's -- an agent never "
+                "message": ("the newest staged edit is a person's — an agent never "
                             "undoes it. Use undo_mine for your own rows, or ask the "
                             "person in the SM window.")}
     return None
@@ -25095,9 +25124,9 @@ def undo():
     anchor = entries[-1]
     n = len(entries)
     if groups > 1:
-        message = f"Undone: {groups} actions, {n} changes ({anchor.dot_path} …)"
+        message = f"Undone: {groups:,} actions, {n:,} changes ({anchor.dot_path} …)"
     elif n > 1:
-        message = f"Undone: {n} changes ({anchor.dot_path} …)"
+        message = f"Undone: {n:,} changes ({anchor.dot_path} …)"
     elif anchor.deleted:
         message = f"Undone: {anchor.dot_path} restored"
     elif anchor.created:
@@ -25278,7 +25307,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
     anchor = uents[-1]
     head = "Undone → live" if live else "Undone (staged)"
     if n > 1:
-        message = f"{head}: {n} changes ({anchor['path']} …)"
+        message = f"{head}: {n:,} changes ({anchor['path']} …)"
     elif anchor.get("deleted"):
         message = f"{head}: {anchor['path']} restored"
     elif anchor.get("created"):
@@ -25652,7 +25681,7 @@ def _live_redo_response(fw: list, why: str | None, n_req: int, *, consumed: int 
     anchor = fw[0]
     n = len(fw)
     if n > 1:
-        message = f"Redone → live: {n} changes ({anchor.dot_path} …)"
+        message = f"Redone → live: {n:,} changes ({anchor.dot_path} …)"
     elif anchor.deleted:
         message = f"Redone → live: {anchor.dot_path} removed"
     elif anchor.created:
@@ -25728,7 +25757,7 @@ def redo():
         _redo_mark(ctx, store)
         anchor = entries[-1]
         n = len(entries)
-        message = (f"Redone: un-staged {n} change(s) ({anchor.dot_path} …)"
+        message = (f"Redone: un-staged {n:,} change(s) ({anchor.dot_path} …)"
                    if n > 1 else f"Redone: un-staged {anchor.dot_path}")
         return _redo_response(message, [
             _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
@@ -25893,9 +25922,9 @@ def redo():
     total = sum(len(f) for f in all_fents)
     anchor = fents[0]
     if len(all_fents) > 1:
-        message = f"Redone: {len(all_fents)} actions, {total} changes ({anchor['path']} …)"
+        message = f"Redone: {len(all_fents):,} actions, {total:,} changes ({anchor['path']} …)"
     elif n > 1:
-        message = f"Redone: {n} changes ({anchor['path']} …)"
+        message = f"Redone: {n:,} changes ({anchor['path']} …)"
     elif anchor["deleted"]:
         message = f"Redone: {anchor['path']} removed"
     elif anchor["created"]:
@@ -26014,7 +26043,7 @@ def _lab_restore_warning(store, indices=None, *, writes=None) -> str | None:
             others.append(dp)
     tail = (" Discard " + ", ".join(dict.fromkeys(others)) + " too, or edit it,"
             " to keep the pulse consistent." if others else "")
-    return ("Reverted -- but the combination this restores is one your "
+    return ("Reverted — but the combination this restores is one your "
             f"pulse class / gate refuses: {got[0]}.{tail}")[:900]
 
 
@@ -26174,7 +26203,7 @@ def discard_all():
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
         "cellsReverted": {
-            "message": (f"Discarded all: {total} change(s) — "
+            "message": (f"Discarded all: {total:,} change(s) — "
                         "Ctrl+Shift+Z restores them one by one"),
             "entries": [
                 _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
@@ -27011,6 +27040,8 @@ def state_review():
         staged_rows=staged_rows,
         mixed=mixed,
         unsaved=len(log),
+        # S10 walk r4 (P2-5): the top bar's count -- fields, not commits
+        unapplied_fields=(sv or {}).get("unapplied"),
         change_sig=_change_log_sig(store),
         working_dirty=bool(ctx.get("working_dirty")),
         staged_base=bool(ctx.get("staged_base")),
@@ -28531,7 +28562,7 @@ def _apply_stale_refusal(ctx, store, _auto):
         return jsonify(ok=False, conflict="stale_live", pending=_n,
                        live_diverged=bool(ctx.get("live_diverged")),
                        message="the live files' content changed since SM last synced; "
-                               "nothing was written and nothing changed in SM -- "
+                               "nothing was written and nothing changed in SM — "
                                f"{_kept}. Take live needs an empty tray (undo yours "
                                "first), or let a human merge"), 409
     # docs/255: the edits are still in the tray (or, for a staged version,
@@ -28640,7 +28671,7 @@ def state_apply_to_live():
                 if not str(getattr(c, "actor", "human")).startswith("by_")]
         if _hum:
             return jsonify(ok=False, conflict="human_groups", paths=_hum[:50],
-                           message="the tray holds a person's staged edits; an agent never applies them -- "
+                           message="the tray holds a person's staged edits; an agent never applies them — "
                                    "ask the human to apply or discard in the SM window"), 409
         # docs/254 A-08: ...nor another agent's -- each agent presses for its own rows
         _me = _request_actor()
@@ -28650,7 +28681,7 @@ def state_apply_to_live():
             _named = ", ".join(w[3:] if w.startswith("by_") else w for w in _who)
             return jsonify(ok=False, conflict="agent_groups", paths=[c.dot_path for c in _oth][:50], actors=_who,
                            message=f"the tray holds rows staged by {_named}; an agent applies only its "
-                                   "own rows -- that agent applies them, or a person does in the SM window"), 409
+                                   "own rows — that agent applies them, or a person does in the SM window"), 409
         _lk = _agent_edit_lock_refusal(ctx)
     else:
         _lk = _agent_edit_lock_refusal(ctx)
@@ -29325,7 +29356,11 @@ def topology_sparklines(qubit: str):
         last = fin[-1] if fin else None
         prev = next((v for v in reversed(fin[:-1]) if v != last), None)
         delta = (last - prev) if prev is not None else None
-        delta_pct = (delta / abs(prev) * 100) if (delta is not None and prev) else None
+        # S10 walk: the percent the drawer shows for the same change (value_delta's
+        # exact difference), printed by the one percent rule in the template
+        from quam_state_manager.core import value_delta as _vd
+        _dd = _vd.compute(prev, last) if prev is not None else None
+        delta_pct = _dd["pct"] if _dd else None
         meta = chip_health.metric_meta(prop)
         good = None
         if delta not in (None, 0) and meta["direction"] in ("higher", "lower"):
@@ -29812,7 +29847,7 @@ def _diff_figures_payload(srcs: list) -> dict:
             if n not in order:
                 order.append(n)
     if not order:
-        return {"ok": False, "unavailable": "No figures on any side -- "
+        return {"ok": False, "unavailable": "No figures on any side — "
                 + "; ".join(f"{c['slot'].upper()}: {c['why']}" for c in cols),
                 "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
     matched = [n for n in order if seen[n] >= 2] if len(cols) >= 2 else []
@@ -30887,7 +30922,7 @@ def workspace_add():
                                message=f"Folder not found: {folder}"), 400
     if not _p.is_dir():
         return render_template("_status.html", level="error",
-                               message=f"Not a folder: {folder} -- choose the folder that holds the runs"), 400
+                               message=f"Not a folder: {folder} — choose the folder that holds the runs"), 400
 
     ws = _ws()
     try:
@@ -31968,12 +32003,12 @@ def _trend_stores_in_todays_names(stores: list, labels: list[str]):
     bits = []
     if moved:
         n = len(moved)
-        bits.append(f"{n} run{'s' if n != 1 else ''} from before a qubit rename"
+        bits.append(f"{n:,} run{'s' if n != 1 else ''} from before a qubit rename"
                     + (f" ({renamed})" if renamed else "")
                     + f" {'is' if n == 1 else 'are'} shown under today's qubit names.")
     if dropped:
         bits.append("Not shown: " + ", ".join(dropped)
-                    + " -- saved under qubit names that cannot be carried into today's names.")
+                    + " — saved under qubit names that cannot be carried into today's names.")
     return out_s, out_l, (" ".join(bits) or None)
 
 
@@ -32044,7 +32079,7 @@ def compare():
     # honest server-side floor for a hand-built request.
     if n < 2 or n > _DIFF_MAX_SOURCES:
         msg = ("Tick at least two runs to diff." if n < 2 else
-               f"{n} runs ticked -- the diff reads up to {_DIFF_MAX_SOURCES} "
+               f"{n:,} runs ticked: the diff reads up to {_DIFF_MAX_SOURCES} "
                f"side by side; untick {n - _DIFF_MAX_SOURCES}.")
         if _is_htmx():
             resp = make_response(render_template("_status.html", message=msg, level="warning"))
@@ -32322,11 +32357,11 @@ def trend():
         return resp
 
     if len(paths_raw) < 2:
-        return _refuse("Select at least 2 experiments -- tick two or more runs in the list to trend them.")
+        return _refuse("Select at least 2 experiments — tick two or more runs in the list to trend them.")
 
     stores, _contexts, labels, all_qubit_names = _load_compare_stores(paths_raw)
     if len(stores) < 2:
-        return _refuse("Need at least 2 valid stores -- fewer than two of the ticked runs could be read.")
+        return _refuse("Need at least 2 valid stores — fewer than two of the ticked runs could be read.")
     # docs/296: the qubits offered are today's names
     stores, labels, rename_note = _trend_stores_in_todays_names(stores, labels)
     if rename_note is not None:
@@ -34313,6 +34348,10 @@ def _hub_link_rows(ctx, chip_dir, workspace, alignment):
     # here too (the folder view's other_chip note leaves it out by that rule),
     # also when the scan has no state of it to align -- so the dialog and the
     # note agree. The scan's own "another chip" stays (never moved back).
+    # S10 walk (round 4): likewise a run the ledger holds with no readable
+    # saved state is "unreadable" here (the panel's rule, hub_lanes: an error
+    # event or no state) -- the scan has no state of it, so it counted it
+    # nowhere while the panel said "1 more run ... no readable saved state".
     ledger_runs = _hub_link_ledger_runs(chip_dir)
     counted: set = set()
 
@@ -34329,10 +34368,10 @@ def _hub_link_rows(ctx, chip_dir, workspace, alignment):
             run_key = _hub_run_key(str(folder)) if folder else None
             if run_key in ledger_runs:
                 counted.add(run_key)
-            add(_hub_root_key(path), "other" if ledger_runs.get(run_key) else bucket)
-    for run_key, uncertain in ledger_runs.items():
-        if uncertain and run_key not in counted:
-            add(run_key, "other")                   # e.g. a run with no saved state to align
+            add(_hub_root_key(path), ledger_runs.get(run_key) or bucket)
+    for run_key, bucket in ledger_runs.items():
+        if bucket and run_key not in counted:
+            add(run_key, bucket)                    # e.g. a run with no saved state to align
     candidates = [row for k, row in rows.items() if k not in registered
                   and _hub_root_decision(chip_dir.name, row["path"], roots, decisions) != "different"
                   and hub_sync._holds_runs(Path(row["path"]))]
@@ -34347,8 +34386,10 @@ def _hub_run_key(path: str) -> str:
 
 
 def _hub_link_ledger_runs(chip_dir) -> dict:
-    """S10 walk: ``{run folder key: CHIP_UNCERTAIN}`` for every run the
-    chip's ledger holds whose folder is still there; ``{}`` when the ledger
+    """S10 walk: ``{run folder key: bucket}`` for every run the chip's ledger
+    holds whose folder is still there -- ``"other"`` (its saved state declares
+    another chip), ``"unreadable"`` (no readable saved state: the panel's rule,
+    ``hub_lanes``'s unlinked count), else ``None``; ``{}`` when the ledger
     cannot be read (the scan's own buckets then stand)."""
     from quam_state_manager.core import hub_lanes, hub_versions
     from quam_state_manager.core.hub_store import CHIP_UNCERTAIN, SOURCE_GONE
@@ -34361,19 +34402,22 @@ def _hub_link_ledger_runs(chip_dir) -> dict:
             # saved state DECLARES another chip is another chip's -- the note and the
             # dialog then agree
             facts = chip = None
-            for eid, root, rel, flags in store.conn.execute(
-                    "SELECT e.eid, r.path, COALESCE(l.rel_path, e.rel_path), e.flags FROM events e "
-                    "LEFT JOIN locations l USING(eid) JOIN roots r ON r.root_id=COALESCE(l.root_id, e.root_id) "
-                    "WHERE e.kind='run'"):
+            for eid, root, rel, flags, error, state_hash in store.conn.execute(
+                    "SELECT e.eid, r.path, COALESCE(l.rel_path, e.rel_path), e.flags, e.error, e.state_hash "
+                    "FROM events e LEFT JOIN locations l USING(eid) "
+                    "JOIN roots r ON r.root_id=COALESCE(l.root_id, e.root_id) WHERE e.kind='run'"):
                 if not rel or int(flags or 0) & SOURCE_GONE:
                     continue
-                other = False
-                if int(flags or 0) & CHIP_UNCERTAIN:
+                bucket = None
+                if error or not state_hash:
+                    bucket = "unreadable"           # hub_lanes._has_state, the panel's rule
+                elif int(flags or 0) & CHIP_UNCERTAIN:
                     if facts is None:
                         facts, chip = hub_lanes._facts(store.conn), hub_lanes._ledger_identity(store.conn)
                     f = facts.get(eid)
-                    other = bool(f) and hub_lanes.declares_another_chip(store.conn, str(chip_dir), f, chip)
-                out[_hub_run_key(os.path.join(root, rel))] = other
+                    if f and hub_lanes.declares_another_chip(store.conn, str(chip_dir), f, chip):
+                        bucket = "other"
+                out[_hub_run_key(os.path.join(root, rel))] = bucket
     except Exception:  # noqa: BLE001 -- the dialog then counts by the scan alone
         logger.warning("link dialog: the ledger of %s could not be read", chip_dir, exc_info=True)
         return {}
@@ -38493,7 +38537,7 @@ def dataset_apply_selected_preview(uid):
     if store is None:
         return jsonify(ok=False, error=_NO_CHIP_MSG), 409
     if (ctx.get("origin") or "live") != "live":
-        return jsonify(ok=False, error="The open chip is a read-only archive -- open your chip to apply into it"), 409
+        return jsonify(ok=False, error="The open chip is a read-only archive — open your chip to apply into it"), 409
     snap = safe_io.read_json(qs / f"{which}.json")
 
     # flatten the selection to leaves (a list is one leaf); a selected path
@@ -38567,7 +38611,7 @@ def dataset_apply_selected_preview(uid):
                 continue
             if is_pointer(new):
                 row["status"] = "skip"
-                row["reason"] = ("a reference (pointer) differs -- change it in "
+                row["reason"] = ("a reference (pointer) differs — change it in "
                                  "Live edit - Json Tree view")
                 rows.append(row)
                 continue
@@ -43661,7 +43705,7 @@ def chip_profile_set():
     if (ctx.get("origin") or "live") != "live":
         return render_template(
             "_status.html", level="warning",
-            message="Read-only archive -- open the live chip to declare "
+            message="Read-only archive — open the live chip to declare "
                     "its profile"), 409
     sets: dict[str, str] = {}
     for f in cp.FIELDS:
@@ -43686,7 +43730,7 @@ def chip_profile_set():
         if not changed:
             return render_template(
                 "_status.html", level="info",
-                message="Profile unchanged -- nothing staged")
+                message="Profile unchanged — nothing staged")
         if not isinstance(extras, dict):
             modifier.create_subtree("extras", {"sm_profile": changed})
         elif not isinstance(prof, dict):
@@ -43704,7 +43748,7 @@ def chip_profile_set():
     n = len(changed)
     body = render_template(
         "_status.html", level="success",
-        message=f"{n} profile answer{'s' if n != 1 else ''} staged -- "
+        message=f"{n} profile answer{'s' if n != 1 else ''} staged — "
                 "Save + Apply to live makes them travel with the chip")
     return make_response(body + _tray_oob())
 

@@ -671,12 +671,12 @@ window.SidebarTypeahead = (function () {
                     // Nothing to choose. Enter (or a click) finishes the token;
                     // Tab still leaves `key=` for a value of your own.
                     var whole = PV ? PV(d.k, d.v[0][0]) : (d.k + '=' + d.v[0][0]);
-                    it.meta = '= ' + d.v[0][0] + ' · ' + d.n + ' runs';
+                    it.meta = '= ' + d.v[0][0] + ' · ' + Number(d.n).toLocaleString('en-US') + ' runs';
                     if (whole) { it.wholeInsert = whole; it.wholeFire = true; }
                 } else {
-                    it.meta = nv + ' values · '
+                    it.meta = Number(nv).toLocaleString('en-US') + ' values · '
                             + (d.num ? d.min + ' … ' + d.max + ' · ' : '')
-                            + d.n + ' runs';
+                            + Number(d.n).toLocaleString('en-US') + ' runs';
                 }
                 return it;
             });
@@ -742,7 +742,7 @@ window.SidebarTypeahead = (function () {
             var head = {
                 kind: 'param',
                 label: d.k + ' ' + op + ' ' + stem,
-                meta: covered.length + ' of ' + d.v.length + ' values · ' + runs + ' runs',
+                meta: Number(covered.length).toLocaleString('en-US') + ' of ' + Number(d.v.length).toLocaleString('en-US') + ' values · ' + Number(runs).toLocaleString('en-US') + ' runs',
                 insert: tok, fire: true
             };
             if (!covered.length) {
@@ -753,19 +753,19 @@ window.SidebarTypeahead = (function () {
             for (var j = 0; j < covered.length && rows.length < 8; j++) {
                 rows.push({
                     kind: 'param',
-                    label: covered[j][0], meta: covered[j][1] + ' runs',
+                    label: covered[j][0], meta: Number(covered[j][1]).toLocaleString('en-US') + ' runs',
                     insert: PV ? PV(d.k, covered[j][0]) : (d.k + '=' + covered[j][0]),
                     fire: true
                 });
             }
             return { items: rows,
-                     note: d.more ? ('…and ' + d.more + ' more values not listed') : '' };
+                     note: d.more ? ('…and ' + Number(d.more).toLocaleString('en-US') + ' more values not listed') : '' };
         }
         var rr = window.Typeahead.rank(d._vals, stem, 'sb-vals:' + vocab.v + ':' + d.k);
         var cc = window.Typeahead.compose(rr, function (val) {
             return {
                 kind: 'param',
-                label: val, meta: d._counts[val] + ' runs',
+                label: val, meta: Number(d._counts[val]).toLocaleString('en-US') + ' runs',
                 insert: PV ? PV(d.k, val) : (d.k + '=' + val), fire: true
             };
         });
@@ -776,7 +776,7 @@ window.SidebarTypeahead = (function () {
            because nobody types a syntax they do not know exists. */
         var shown = cc.items.filter(function (x) { return !x.note; }).length;
         var total = d.v.length + (d.more || 0);
-        var note = shown < total ? (shown + ' of ' + total + ' values') : '';
+        var note = shown < total ? (Number(shown).toLocaleString('en-US') + ' of ' + Number(total).toLocaleString('en-US') + ' values') : '';
         if (d.num) {
             if (!d.more) note += (note ? ' · ' : '') + d.min + ' … ' + d.max;
             note += (note ? ' · ' : '') + 'type >= <= or 100..1000 for a range';
@@ -862,7 +862,7 @@ window.TagVocab = (function () {
                     label: d.t,
                     insert: tok,
                     fire: true,
-                    meta: d.n === 1 ? '#' + runs[i] : d.n + ' runs'
+                    meta: d.n === 1 ? '#' + runs[i] : Number(d.n).toLocaleString('en-US') + ' runs'
                 });
             }
         });

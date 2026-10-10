@@ -377,6 +377,50 @@ def spelled_roots(conn, roots: dict) -> dict:
     return out
 
 
+def _now_first(eid: int, rids: list, gone: set) -> list:
+    """S10 walk (N5): *rids* (the roots run *eid* is recorded under) ordered
+    so the folder it is under NOW comes first -- a location not found gone
+    first, then the root registered last. In place; returned."""
+    rids.sort(key=lambda r: ((eid, r) in gone, -(r or 0)))
+    return rids
+
+
+def now_folders(conn, eids) -> dict[int, tuple[str, str]]:
+    """S10 walk (round 4): ``{eid: (data root as spelled, rel_path)}`` -- the
+    folder each run of *eids* is under NOW (:func:`_now_first`, the rule a
+    folder view names a moved run by), for the runs recorded under more than
+    one data root. A run with one location is not in the answer: its event's
+    own root is where it is. Never raises (a display rule): ``{}``."""
+    ids = [int(e) for e in eids if e is not None]
+    if not ids:
+        return {}
+    try:
+        locs: dict[int, dict] = {}
+        gone: set = set()
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            for eid, rid, rel, sig in conn.execute(
+                    "SELECT l.eid, l.root_id, l.rel_path, f.sig FROM locations l LEFT JOIN run_files f "
+                    "ON f.root_id=l.root_id AND f.rel_path=l.rel_path WHERE l.eid IN ("
+                    + ",".join("?" for _ in chunk) + ")", chunk):
+                locs.setdefault(eid, {})[rid] = rel
+                if sig == "gone":
+                    gone.add((eid, rid))
+        many = {eid: by for eid, by in locs.items() if len(by) > 1}
+        if not many:
+            return {}
+        roots = {r[0]: r[1] for r in conn.execute("SELECT root_id, path FROM roots")}
+        shown = spelled_roots(conn, roots)
+    except Exception:  # noqa: BLE001 -- a display rule never breaks a view
+        return {}
+    out = {}
+    for eid, by in many.items():
+        rid = _now_first(eid, list(by), gone)[0]
+        if shown.get(rid):
+            out[eid] = (str(shown[rid]), by[rid])
+    return out
+
+
 def _table_rows(conn, sql: str, args=()) -> list:
     try:
         return conn.execute(sql, args).fetchall()
@@ -462,7 +506,7 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
     # found gone first, then the root registered last -- never the one it left
     for eid, rids in locs.items():
         if len(rids) > 1:
-            rids.sort(key=lambda r, e=eid: ((e, r) in gone, -(r or 0)))
+            _now_first(eid, rids, gone)
 
     def linked(rid) -> bool:
         path = roots.get(rid)

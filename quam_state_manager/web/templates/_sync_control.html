@@ -62,7 +62,10 @@
         data-arm-label="&#8593; Confirm"
         hx-post="/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML"
         hx-trigger="armed" hx-disabled-elt="this"
-        hx-vals='{"seen_changes": "{{ _n }}", "seen_sig": "{{ change_sig | default('') }}"}'
+        {#- S10 walk r4 (P2-5): _n counts FIELDS now; the consent gate compares
+            change-log ENTRIES (two commits to one field are two), so it is sent
+            the tray's entry count -#}
+        hx-vals='{"seen_changes": "{{ change_count | default(_n) }}", "seen_sig": "{{ change_sig | default('') }}"}'
         data-after-request="clearUndo"
         onclick="SyncPanel.arm(this, event)"
         title="Writes this staged version over the live chip (unchanged since you synced, backed up first). Press twice: the second press (Confirm) writes it">&#8593; Apply</button>

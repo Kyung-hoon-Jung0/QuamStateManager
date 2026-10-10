@@ -226,6 +226,9 @@ def test_a_day_under_a_page_renders_exactly_as_before(world):
     # goes 1 -> 2 -> 0 -> 1 with no later read of the chip confirming #2 or #3
     # (an excursion: listed apart, not as changes), and every change that stays
     # unconfirmed carries its verdict; the page's paging is unchanged
+    # S10 walk (round 4): re-written once more -- the excursion section's words
+    # "never confirmed on the chip ... came back to what the chip held" -> what the
+    # records prove ("not confirmed before the value came back"), nothing else
     html = _small_day_fragment(world)
     if os.environ.get("CALIBRATION_LOG_GOLDEN_WRITE") == "1":
         GOLDEN.write_text(html, encoding="utf-8", newline="\n")
