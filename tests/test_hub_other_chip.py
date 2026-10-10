@@ -19,6 +19,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from quam_state_manager.web.app import create_app
 from tests.ledger_fixture import declare_root
 
@@ -37,7 +39,7 @@ def _write_chip(folder: Path, state: dict) -> None:
     (folder / "wiring.json").write_text(json.dumps(_WIRING), encoding="utf-8")
 
 
-def _seed_run(root: Path, run_id: int, state: dict, hhmmss: str) -> None:
+def _seed_run(root: Path, run_id: int, state: dict, hhmmss: str, patches=None) -> None:
     run = root / "2026-07-29" / f"#{run_id}_08_qubit_spectroscopy_{hhmmss}"
     run.mkdir(parents=True)
     (run / "node.json").write_text(json.dumps({
@@ -46,15 +48,16 @@ def _seed_run(root: Path, run_id: int, state: dict, hhmmss: str) -> None:
                      "run_end": f"2026-07-29T{hhmmss[:2]}:{hhmmss[2:4]}:01"},
         "data": {"parameters": {"model": {"qubits": ["qA1"]}}, "outcomes": {}},
         "id": run_id, "parents": [], "created_at": f"2026-07-29T{hhmmss[:2]}:{hhmmss[2:4]}:00",
+        "patches": patches or [],
     }), encoding="utf-8")
     (run / "data.json").write_text("{}", encoding="utf-8")
     _write_chip(run / "quam_state", state)
 
 
-def _open(tmp_path, runs):
+def _open(tmp_path, runs, patches=None):
     root = tmp_path / "data"
     for rid, f01, chip, hhmmss in runs:
-        _seed_run(root, rid, _state(f01, chip), hhmmss)
+        _seed_run(root, rid, _state(f01, chip), hhmmss, (patches or {}).get(rid))
     live = tmp_path / "chips" / "a"
     _write_chip(live, _state(7.1e9, "alpha"))
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
@@ -86,16 +89,23 @@ def test_another_chips_run_is_never_this_chips_newest_value(tmp_path):
     assert "7200000000" not in trends and "7.2e9" not in trends and "7.2e+09" not in trends
 
 
-def test_a_change_another_chips_run_masked_is_still_found(tmp_path):
+@pytest.mark.parametrize("patch_value", [7.2e9, 7.3e9, None])
+def test_a_change_another_chips_run_masked_is_still_found(tmp_path, patch_value):
     """alpha 7.1e9 -> beta's run 7.2e9 -> alpha's own run saves 7.2e9. The
     stored row of alpha's second run is empty (beta held 7.2e9 before it);
     alpha's view re-diffs it against alpha's previous state."""
+    patches = [] if patch_value is None else [
+        {"op": "replace", "path": "/quam/qubits/qA1/f_01", "value": patch_value}]
     c = _open(tmp_path, [(31, 7.1e9, "alpha", "010000"), (32, 7.2e9, "beta", "020000"),
-                         (33, 7.2e9, "alpha", "030000")])
+                         (33, 7.2e9, "alpha", "030000")], patches={33: patches})
     body, pts = _points(c)
     # the agent API lists points newest first
     assert [v for v, _p in pts] == [7.2e9, 7.1e9], pts
     assert body["points"][0]["run_id"] == 33, "alpha's own run set it, not beta's"
+    # v1.3.0: unproven -> own patch proof at a seam, because a masked row has no stored proof.
+    assert pts[0][1] == ("run_proven" if patch_value == 7.2e9 else "run_saved")
+    drawer = c.get("/field/history?path=qubits.qA1.f_01").get_data(as_text=True)
+    assert ("its own patch set it" in drawer) == (patch_value == 7.2e9)
 
 
 def test_the_listing_says_the_run_was_left_out(tmp_path):

@@ -56,6 +56,7 @@ from bisect import bisect_left, bisect_right
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from quam_state_manager.core import hub_rules as rules
@@ -240,6 +241,33 @@ _FLATS: "OrderedDict[tuple, dict]" = OrderedDict()
 _FLATS_MAX = 8
 _SEAMS: "OrderedDict[tuple, list]" = OrderedDict()
 _SEAMS_MAX = 20000
+_NODES: "OrderedDict[tuple, dict | None]" = OrderedDict()
+
+
+def _seam_node(ledger_id: str, f: dict) -> dict | None:
+    """Read a seam run's own patches once, exactly as ingest does."""
+    from quam_state_manager.core.hub_build import read_node
+    folder = f.get("state_ref")
+    if not folder:
+        return None
+    try:
+        stat = (Path(folder) / "node.json").stat()
+        sig = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        sig = None
+    key = (_ev_key(ledger_id, f), folder, sig)
+    with _LOCK:
+        if key in _NODES:
+            _NODES.move_to_end(key)
+            return _NODES[key]
+    node, error = read_node(Path(folder))
+    # only the patches prove anything; keep no other node metadata in RAM
+    value = {"patches": node.get("patches")} if error is None else None
+    with _LOCK:
+        _NODES[key] = value
+        while len(_NODES) > _SEAMS_MAX:
+            _NODES.popitem(last=False)
+    return value
 
 
 def _ev_key(ledger_id: str, f: dict) -> tuple:
@@ -283,6 +311,7 @@ def clear_caches() -> None:
     with _LOCK:
         _FLATS.clear()
         _SEAMS.clear()
+        _NODES.clear()
 
 
 def _stored(num, txt):
@@ -328,11 +357,11 @@ def _facts(conn) -> dict[int, dict]:
     for row in conn.execute(
             "SELECT e.eid, e.kind, e.t_utc_us, e.root_id, e.rel_path, e.status, e.state_hash, "
             f"{chash} AS chash, e.shape_hash, e.error, e.flags, e.run_start_us, e.base_hash, "
-            "s.base_chash, e.t_src, e.run_id FROM events e LEFT JOIN sm_events s USING(eid)"):
+            "s.base_chash, e.t_src, e.run_id, e.state_ref FROM events e LEFT JOIN sm_events s USING(eid)"):
         out[row[0]] = {"eid": row[0], "kind": row[1], "t": row[2], "root_id": row[3], "rel_path": row[4],
                        "status": row[5], "state_hash": row[6], "chash": row[7], "shape_hash": row[8],
                        "error": row[9], "flags": row[10], "run_start_us": row[11], "base_hash": row[12],
-                       "base_chash": row[13], "t_src": row[14], "run_id": row[15]}
+                       "base_chash": row[13], "t_src": row[14], "run_id": row[15], "state_ref": row[16]}
     return out
 
 
@@ -656,6 +685,12 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
             continue
         rows = _seam_diff(reader, ledger_id, pred, f)
         is_sm = f["kind"] in SM_KINDS
+        own_proof = None
+        if f["kind"] == "run":
+            from quam_state_manager.core.hub_build import _proven
+            node = _seam_node(ledger_id, f)
+            if node is not None:
+                own_proof = _proven(node, rows, _flat(reader, ledger_id, f))
         out: dict[int, dict] = {}
         held = set()
         for ch in rows:
@@ -670,6 +705,8 @@ def _make(index, view, conn, facts, cls, lane_eids, seam_pred, first, roots):
             proven = 0
             if st is not None and st[7] and (st[3], st[4]) == (num, txt):
                 proven = 1           # carried as rediff_run carries it: same path, same new value
+            if own_proof is not None:
+                proven = int(ch.path in own_proof)
             # a path SM's entries did not write: held when SM wrote over it --
             # or, at the lane's first state, simply what the folder started with
             is_start = is_sm and st is None and pred is None
