@@ -310,3 +310,56 @@ def test_the_prewarm_probe_reads_the_index_thread(monkeypatch):
     assert hub.index_prewarm_busy() is True
     monkeypatch.setattr(hub, "_PREWARM_THREAD", None)
     assert hub.index_prewarm_busy() is False
+
+
+def test_the_datasets_delta_poll_yields_to_a_catch_up_only(ws_app, monkeypatch):
+    """The page's own delta poll finishes a cold index -- but stops at the next
+    chunk while a history catch-up builds (it reports partial; the next poll
+    continues), and a user's other request never stops it."""
+    app, c, data = ws_app
+    for rid in range(41, 41 + 3 * dataset._YIELD_CHUNK):
+        _run(data, rid, date="2026-09-02")
+    with app.app_context():
+        with dataset.yielding_scan(lambda: True, chunk=8):
+            st = routes_mod._get_or_create_store(data, rescan=False)
+    assert st.scan_truncated and st.run_count == 8
+    total = 40 + 3 * dataset._YIELD_CHUNK
+    from quam_state_manager.core.run_ingest import FOREGROUND
+    monkeypatch.setattr(hub_sync, "catching_up", lambda: True)
+    got = c.get("/datasets/changes-since?ts=0").get_json()
+    assert got["partial"] and st.run_count == 8 + dataset._YIELD_CHUNK, st.run_count
+    monkeypatch.setattr(hub_sync, "catching_up", lambda: False)
+    FOREGROUND.enter()                       # another request in flight: not a reason
+    try:
+        got = c.get("/datasets/changes-since?ts=0").get_json()
+    finally:
+        FOREGROUND.exit()
+    assert not got["partial"] and st.run_count == total and not st.scan_truncated, st.run_count
+
+
+def test_the_datasets_render_shows_what_is_indexed_while_a_catch_up_builds(ws_app, monkeypatch):
+    app, c, data = ws_app
+    for rid in range(41, 41 + 3 * dataset._YIELD_CHUNK):
+        _run(data, rid, date="2026-09-02")
+    with app.app_context():
+        with dataset.yielding_scan(lambda: True, chunk=8):
+            st = routes_mod._get_or_create_store(data, rescan=False)
+    assert st.run_count == 8
+    monkeypatch.setattr(hub_sync, "catching_up", lambda: True)
+    assert c.get("/datasets").status_code == 200
+    assert st.scan_truncated and st.run_count == 8 + dataset._YIELD_CHUNK, st.run_count
+    monkeypatch.setattr(hub_sync, "catching_up", lambda: False)
+    assert c.get("/datasets").status_code == 200
+    assert not st.scan_truncated and st.run_count == 40 + 3 * dataset._YIELD_CHUNK
+
+
+def test_the_new_run_poll_on_every_page_builds_under_the_yield(tmp_path, monkeypatch):
+    data = _archive(tmp_path / "data", 2 * dataset._YIELD_CHUNK)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/workspace/add", data={"folder": str(data)}).status_code in (200, 302)
+    app.config.pop("dataset_store_lru", None)
+    monkeypatch.setattr(routes_mod, "_background_scan_should_yield", lambda: True)
+    assert c.get("/datasets/poll").status_code == 200
+    st = next(s for s in app.config["dataset_store_lru"].values() if s.folder_path == data)
+    assert st.scan_truncated and st.run_count == dataset._YIELD_CHUNK, st.run_count

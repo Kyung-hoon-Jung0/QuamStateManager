@@ -36215,16 +36215,25 @@ def _dataset_store_light() -> DatasetStore | None:
     return ds
 
 
+def _catch_up_should_yield() -> bool:
+    """v1.3.0 (perf, A1): a live write, a history catch-up building, or a
+    caught-up chip's read index being prepared wants the interpreter. The
+    Datasets page's own scans -- its render (newest dates first) and the delta
+    poll that finishes a cold index -- yield to these: measured with the page
+    opened right after a cold chip open, its polls' 8 s scans held the catch-up
+    at 66-90 s against ~16 s with no page open (21-30 s once they yield). A
+    user's other request never stops them (the person is on that page)."""
+    from quam_state_manager.core import hub as _hub, hub_sync as _hub_sync
+    return _bg_gate.busy() or _hub_sync.catching_up() or _hub.index_prewarm_busy()
+
+
 def _background_scan_should_yield() -> bool:
     """v1.3.0 (perf, A1): a background Datasets scan (the long poll building a
     store, the index warmer finishing one) stops at its next chunk while the
-    interpreter is wanted elsewhere: a user's request in flight, a live
-    write, a history catch-up building, or a caught-up chip's read index
-    being prepared. The Datasets page's own scans never ask."""
-    from quam_state_manager.core import hub as _hub, hub_sync as _hub_sync
+    interpreter is wanted elsewhere: a user's request in flight, or anything
+    ``_catch_up_should_yield`` names."""
     from quam_state_manager.core.run_ingest import FOREGROUND
-    return (FOREGROUND.active > 0 or _bg_gate.busy() or _hub_sync.catching_up()
-            or _hub.index_prewarm_busy())
+    return FOREGROUND.active > 0 or _catch_up_should_yield()
 
 
 def _dataset_index_warmer(app):
@@ -36932,8 +36941,13 @@ def _datasets_view(view_mode: str):
     # per file operation, 2,655 runs). The panel now shows what is indexed
     # inside the budget and SAYS so (`scan_partial`); the delta poll already
     # carries the continuation (docs/105 #4) and fills the rest in.
-    active = _active_dataset_stores(
-        deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S)
+    # v1.3.0 (perf, A1): while a history catch-up builds, the first screen is
+    # what is indexed already plus one chunk (newest dates first) -- the
+    # catch-up is not held for this scan; the delta poll fills the rest in.
+    from quam_state_manager.core.dataset import yielding_scan
+    with yielding_scan(_catch_up_should_yield):
+        active = _active_dataset_stores(
+            deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S)
     # A deep link from a qubit/pair inspector: /datasets?q=q7. SM does not
     # INTERPRET the token — it hands the string to the search box and lets the
     # grammar dataset-virtual.js already ships do the filtering, which is the
@@ -37487,6 +37501,7 @@ def datasets_changes_since():
         names = None
     if names is not None and not names.active:
         names = None
+    from quam_state_manager.core.dataset import yielding_scan
     for fol in active:
         if time.monotonic() >= deadline:
             skipped += 1
@@ -37496,8 +37511,11 @@ def datasets_changes_since():
             # docs/105 #4: the budget now reaches INSIDE the folder — the
             # date-dir walk itself stops at the deadline and reports partial,
             # instead of one huge folder blowing past the client's abort.
-            delta = fol["store"].changes_since(ts, date=date,
-                                               deadline=deadline)
+            # v1.3.0 (perf, A1): and a history catch-up stops its parse at
+            # the next chunk (reported partial: the next poll continues).
+            with yielding_scan(_catch_up_should_yield):
+                delta = fol["store"].changes_since(ts, date=date,
+                                                   deadline=deadline)
             owned = names is not None and names.owns(fol["store"].folder_path)
             for row in delta.get("updated", []):
                 row["f"] = fol["key"]
@@ -38067,9 +38085,14 @@ def datasets_poll():
     # 60s poll — skip the token stat-walk. docs/170: and BOUND the rescan; a
     # background poll continuing a cold build unbounded held the scan lock
     # for the whole remaining walk, and the user's own Datasets click queued
-    # behind it.
-    active = _active_dataset_stores(fast=True,
-                                    deadline=time.monotonic() + _POLL_BUDGET_S)
+    # behind it. v1.3.0 (perf, A1): every page sends this poll at load, so on a
+    # cold open its 8 s of 32-worker parsing ran beside the user's click and
+    # the history catch-up -- it now yields like the long poll (the newest
+    # dates, where a new run lands, are read first either way).
+    from quam_state_manager.core.dataset import yielding_scan
+    with yielding_scan(_background_scan_should_yield):
+        active = _active_dataset_stores(fast=True,
+                                        deadline=time.monotonic() + _POLL_BUDGET_S)
     # docs/167: the sync pill carries a COUNT, not a stream of events, so the
     # client sends the stamp it last ACKNOWLEDGED and gets back how many runs
     # have landed since. Counted in the walk that was already happening — no
