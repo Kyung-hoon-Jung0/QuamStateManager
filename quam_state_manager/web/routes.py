@@ -31480,7 +31480,8 @@ def _is_system_path(p: Path, for_mkdir: bool = False) -> bool:
     import platform
     try:
         resolved = p.resolve()
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError: a NUL byte or an over-long path -- unresolvable, so protected
         return True
     if platform.system() == "Windows":
         parts = tuple(part.casefold() for part in resolved.parts)

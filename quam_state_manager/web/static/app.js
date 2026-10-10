@@ -3156,6 +3156,37 @@ window.openFolderInExplorer = function(folderPath) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Undo what htmx registered for the elements under `root` before a script
+ * (not htmx) removes them: htmx's own swaps run this cleanup (deInitNode:
+ * clear the trigger timeout, remove every trigger listener it added), a bare
+ * `innerHTML = ""` does not. v1.3.0 stability sweep: an
+ * `hx-trigger="... from:body"` inside the closed inspector kept its listener
+ * on <body>, and through it the whole closed pane -- ~15,000 DOM nodes and
+ * ~1,250 listeners retained per inspector close, measured in Chrome.
+ * Mirrors htmx 2.0.4's deInitNode; tests/htmx_release_selfcheck.cjs pins it
+ * against the bundled htmx.
+ */
+window.releaseHtmxWithin = function(root) {
+    if (!root || !root.querySelectorAll) return;
+    var els = root.querySelectorAll("*");
+    for (var i = 0; i < els.length; i++) {
+        var data = els[i]["htmx-internal-data"];
+        if (!data) continue;
+        if (data.timeout) clearTimeout(data.timeout);
+        var infos = data.listenerInfos;
+        if (infos) {
+            for (var k = 0; k < infos.length; k++) {
+                var li = infos[k];
+                if (li && li.on) {
+                    try { li.on.removeEventListener(li.trigger, li.listener); } catch (e) {}
+                }
+            }
+            data.listenerInfos = null;
+        }
+    }
+};
+
+/**
  * Close the inspector panel by clearing its content and dispatching
  * a custom "inspector-closed" event.  The Split.js lifecycle manager
  * in base.html listens for this event and recalculates the layout
@@ -3182,6 +3213,7 @@ window.closeInspector = function() {
     var hadFocus = !!(act && act !== document.body && pane.contains(act));
     var dsRoot = pane.querySelector("#ds-detail-root");
     var openUid = dsRoot ? dsRoot.getAttribute("data-uid") : null;
+    window.releaseHtmxWithin(pane);
     pane.innerHTML = "";
     document.body.dispatchEvent(new Event("inspector-closed"));
     if (hadFocus && openUid) {

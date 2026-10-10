@@ -41,7 +41,7 @@ def viewport_px(hint: Any) -> int:
     absent or unreadable."""
     try:
         v = int(float(str(hint).strip()))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # "1e400" / "inf" overflow int()
         return DEFAULT_VIEWPORT_PX
     if v <= 0:
         return DEFAULT_VIEWPORT_PX
