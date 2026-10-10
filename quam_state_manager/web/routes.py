@@ -54,6 +54,7 @@ from flask import (
     send_file,
     url_for,
 )
+from quam_state_manager.web.request_body import BadBody, json_object, json_text
 from markupsafe import Markup, escape
 from werkzeug.utils import secure_filename
 
@@ -5167,9 +5168,9 @@ def type_fix_apply():
             error=("This chip was opened from a dataset run archive "
                    "(read-only). Load it from its live folder to repair.")), 409
 
-    payload = request.get_json(silent=True) or {}
+    payload = json_object()
     want = [str(p) for p in (payload.get("paths") or [])]
-    sig = (payload.get("sig") or "").strip()
+    sig = json_text(payload, "sig")
     if not want:
         return jsonify(ok=False, error="Nothing selected."), 400
 
@@ -7375,7 +7376,7 @@ def _resolve_root_config(p: Path) -> Path:
     try:
         tomls = sorted(f for f in p.iterdir()
                        if f.suffix == ".toml" and f.is_file())
-    except OSError:
+    except (OSError, ValueError):       # ValueError: a NUL byte / an over-long path
         tomls = []
     if len(tomls) == 1:
         return tomls[0]
@@ -9114,7 +9115,7 @@ def bulk_phys():
     store = _store()
     if not store:
         return jsonify({"ok": False, "error": "no chip loaded"}), 409
-    body = request.get_json(silent=True) or {}
+    body = json_object()
     want_chip = body.get("chip")
     if want_chip:
         ident = _active_chip_identity()
@@ -19905,7 +19906,7 @@ def pulses_vids():
 
 
 def _pulse_vt_paths_arg(cap: int) -> list[str]:
-    body = request.get_json(silent=True) or {}
+    body = json_object()
     paths = body.get("paths") if isinstance(body, dict) else None
     if not isinstance(paths, list):
         return []
@@ -21024,9 +21025,9 @@ def api_pulse_synth():
     """Stateless live-preview synthesis. NEVER mutates; always 200 with
     ``ok``/``error`` inside (the client keeps the last good plot)."""
     store = _store()
-    payload_in = request.get_json(silent=True) or {}
-    path = (payload_in.get("path") or "").strip()
-    qclass = (payload_in.get("qclass") or "").strip()
+    payload_in = json_object()
+    path = json_text(payload_in, "path")
+    qclass = json_text(payload_in, "qclass")
     params = payload_in.get("params") or {}
     if not isinstance(params, dict):
         return jsonify({"ok": False, "error": "params must be an object"})
@@ -21161,7 +21162,7 @@ def api_pulse_lab_waveform():
     in the selected env (~2-6 s) for the pulses not already in RAM. Always
     200; every failure is a named reason, never an empty plot."""
     store = _store()
-    body = request.get_json(silent=True) or {}
+    body = json_object()
     from quam_state_manager.core import lab_waveform
     params = body.get("params") or {}
     if not isinstance(params, dict):
@@ -21179,7 +21180,7 @@ def api_pulse_lab_waveform():
                 rec = recs.get(p) or {"ok": False, "error": "not drawn"}
                 results.append({"path": p, **_lab_result(rec)})
         else:
-            qclass = (body.get("qclass") or "").strip()
+            qclass = json_text(body, "qclass")
             if not qclass:
                 return jsonify({"ok": False, "error": "need paths or qclass"})
             try:
@@ -21245,7 +21246,7 @@ def api_pulse_compare():
     store = _store()
     if not store:
         return jsonify({"ok": False, "error": "No state loaded"})
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     paths = data.get("paths") or []
     if not isinstance(paths, list) or len(paths) < 2:
         return jsonify({"ok": False, "error": "Select at least 2 pulses."})
@@ -28160,6 +28161,12 @@ def state_sync():
                 ctx["working_dirty"] = False  # edits unsaved in the change log, not saved
     except FileNotFoundError:
         return jsonify({"status": "error", "message": "Live state folder not found"}), 404
+    except safe_io.LiveFileError as exc:
+        # v1.3.0: a live file another program is saving right now (it does not
+        # parse yet, or it is locked) is a moment, not a crash -- the read
+        # already retried. Nothing was pulled; sync never writes the live chip.
+        return jsonify({"status": "error", "transient": True,
+                        "message": _live_unreadable_message(exc)}), 409
     except (OSError, ValueError) as exc:
         return jsonify({"status": "error", "message": str(exc)}), 500
 
@@ -28194,6 +28201,13 @@ def state_sync():
                    if backup else None),
         **_sync_patch(ctx, _pre_leaves),
     })
+
+
+def _live_unreadable_message(exc) -> str:
+    """What Take live says when the live files cannot be read this moment."""
+    return (f"The live chip could not be read just now ({exc}). Another program "
+            "is probably saving it. Nothing was pulled and the live chip was not "
+            "changed - retry in a moment.")
 
 
 #: w7 fq-sync: how long a live-write door waits for the chip's lint before it
@@ -30961,6 +30975,12 @@ def workspace_add():
 @bp.route("/workspace/remove", methods=["POST"])
 def workspace_remove():
     folder = request.form.get("folder", "").strip()
+    if folder:
+        try:
+            Path(folder).resolve()
+        except (OSError, ValueError):   # a NUL byte / an over-long path: no folder by that name
+            return render_template("_status.html", message="Not a folder path.",
+                                   level="error"), 400
     ws = _ws()
     # QA datasets-r2-26: which data folders this press takes away -- the
     # candidate-set DIFF (the root's own key and its runs' grandparent keys;
@@ -31293,10 +31313,12 @@ def disk_reclaim():
     REFUSED by name -- answering "done" to a caller who asked to delete
     `history` would be a lie about the thing the guard exists to protect."""
     from quam_state_manager.core import instance_disk
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     names = data.get("names")
     if not isinstance(names, list):
         names = [n for n in (request.form.get("names") or "").split(",") if n]
+    if not all(isinstance(n, str) for n in names):
+        raise BadBody("'names' must be a list of folder names.")
     out = instance_disk.reclaim(current_app.instance_path, names)
     if out["removed"]:
         # the listing cache was one of them; drop the in-process handles that
@@ -31310,7 +31332,7 @@ def disk_reclaim():
 def disk_settings():
     """The limit, and the "not now" that comes back when it grows further."""
     from quam_state_manager.core import instance_disk
-    data = request.get_json(silent=True) or request.form or {}
+    data = json_object(lambda: request.form)
     kw = {}
     if data.get("limit_gb") not in (None, ""):
         try:
@@ -31811,7 +31833,7 @@ def open_folder():
 
     try:
         path = Path(raw).resolve()  # resolve() collapses '..' so traversal can't escape
-    except OSError:
+    except (OSError, ValueError):   # ValueError: a NUL byte / an over-long path
         return jsonify({"ok": False, "error": "Invalid path"}), 400
 
     # Containment: path must equal or sit under a registered workspace root.
@@ -38534,7 +38556,7 @@ def dataset_apply_selected_preview(uid):
     if not resolved:
         return jsonify(ok=False, error="Run not found"), 404
     ds, run_id, _ = resolved
-    body = request.get_json(silent=True) or {}
+    body = json_object()
     which = body.get("file") or "state"
     paths = body.get("paths")
     if which not in ("state", "wiring") or not isinstance(paths, list) or not paths:
@@ -39607,7 +39629,7 @@ def generate_import_port_csv():
     into the wizard prefill payload — instruments, qubits, grid, directed
     pairs, port pins. The client reads the file via FileReader and posts the
     text; validation failures come back as a structured error list (400)."""
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     text = data.get("text")
     if not isinstance(text, str) or not text.strip():
         return jsonify({"ok": False, "errors": ["empty CSV"]}), 400
@@ -39645,7 +39667,7 @@ def generate_presets_save():
     An existing slug without ``overwrite`` returns ``needs_confirm`` — the
     same confirm-round-trip idiom as /generate/build's stray-JSON gate.
     """
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     name = data.get("name") or ""
     sections = data.get("sections") or {}
     try:
@@ -39687,7 +39709,7 @@ def generate_presets_delete(slug: str):
     return jsonify({"ok": True})
 
 
-@bp.route("/generate/probe")
+@bp.route("/generate/probe", methods=["GET", "POST"])
 def generate_probe():
     """Probe one interpreter for the QM stack (qualang_tools/quam_builder/quam).
 
@@ -39695,10 +39717,19 @@ def generate_probe():
     ``<instance>/config_generator_probe_cache.json`` keyed on the
     interpreter's mtime. Repeated wizard visits skip the subprocess
     spawn when nothing changed.
+
+    v1.3.0: a GET runs only an interpreter SM discovered or the person already
+    chose -- any page can make the browser send a GET, and this one spawns
+    the path it names. A path the person TYPED is probed by POST (the
+    origin-checked press of the custom-path field).
     """
-    python_path = _unquote_path(request.args.get("python"))   # QA generate-r2-21
+    src = request.form if request.method == "POST" else request.args
+    python_path = _unquote_path(src.get("python"))   # QA generate-r2-21
     if not python_path:
         return jsonify({"error": "No interpreter path given."}), 400
+    if request.method == "GET" and not _interpreter_known(python_path):
+        return jsonify({"python": None, "versions": {}, "usable": False, "missing": [],
+                        "resolved": None, "error": _UNKNOWN_INTERPRETER}), 403
     # r15 (docs/71): accept a venv/conda FOLDER (or a project folder holding
     # a .venv) and resolve it to the interpreter file server-side.
     resolved = config_generator.resolve_python_interpreter(python_path)
@@ -39729,7 +39760,7 @@ def generate_select_env():
     discovered conda envs. Validates the path points at a real file before
     persisting (a bad path would otherwise fail every later subprocess with a
     confusing error)."""
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     python_path = _unquote_path(data.get("python"))   # QA generate-r2-21
     if not python_path:
         return jsonify({"ok": False, "error": "No interpreter path given."}), 400
@@ -39809,7 +39840,7 @@ def generate_capabilities():
     (warnings) — plus the full env capability inventory. ``force`` re-probes
     (for editable installs whose version string didn't change).
     """
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     spec = data.get("spec") or {}
     force = bool(data.get("force"))
     python_path = config_generator.get_selected_env(current_app.instance_path)
@@ -39859,7 +39890,7 @@ def _flavor_findings_for_folder(folder, manifest) -> list[dict]:
 @bp.route("/generate/allocate", methods=["POST"])
 def generate_allocate():
     """Dry-run channel allocation for a spec; returns the port assignment."""
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     spec = data.get("spec")
 
     errors = config_generator.validate_spec(spec)
@@ -39875,6 +39906,8 @@ def generate_allocate():
                    or config_generator.get_selected_env(current_app.instance_path))
     if not python_path:
         return jsonify({"ok": False, "error": "No environment selected."}), 400
+    if not _interpreter_known(python_path):     # v1.3.0: a found or chosen env only
+        return jsonify({"ok": False, "error": _UNKNOWN_INTERPRETER}), 403
 
     work_dir = Path(tempfile.mkdtemp(prefix="quamgen_alloc_"))
     try:
@@ -39884,6 +39917,25 @@ def generate_allocate():
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
     return jsonify(outcome)
+
+
+_UNKNOWN_INTERPRETER = (
+    "This interpreter is not one State Manager found or you chose. Pick it "
+    "from the environment list, or enter it as a custom path and press Use, "
+    "then try again.")
+
+
+def _interpreter_known(python_path: str) -> bool:
+    """v1.3.0: may a request that is not the person's own choosing press run
+    *python_path*? (found by SM, the selected env, a project's env, or the
+    Experiment Runner's saved interpreter -- config_generator.known_interpreter)"""
+    also = []
+    try:
+        also.append(scheduler.load_settings(_sched_inst()).get("env_python"))
+    except Exception:  # noqa: BLE001 -- an unreadable Runner file only narrows the set
+        pass
+    return config_generator.known_interpreter(
+        python_path, current_app.instance_path, also=also)
 
 
 def _unquote_path(raw) -> str:
@@ -40212,10 +40264,10 @@ def generate_build():
     best-effort: an emission failure lands in ``scripts_error``, never
     fails the build itself.
     """
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     spec = data.get("spec")
-    output_path = (data.get("output_path") or "").strip()
-    scripts_dir = (data.get("scripts_dir") or "").strip()
+    output_path = json_text(data, "output_path")
+    scripts_dir = json_text(data, "scripts_dir")
 
     errors = config_generator.validate_spec(spec)
     if errors:
@@ -40346,10 +40398,10 @@ def generate_build():
 def regenerate_reconstruct():
     """Reconstruct a build spec from an existing chip (the loaded chip by
     default, or an explicit ``folder``) to pre-fill the Re-generate wizard."""
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     # Prefer the WORKING COPY (like the Config Viewer's _ctx_path), so a
     # reconstruct carries the user's in-app edits instead of the stale live files.
-    explicit = (data.get("folder") or "").strip()
+    explicit = json_text(data, "folder")
     folder = explicit or _ctx_path()
     if not folder:
         return jsonify({"ok": False, "error": "No chip loaded and no folder given."}), 400
@@ -40554,12 +40606,12 @@ def regenerate_build():
     """Rebuild an existing chip from an (edited) spec into a NEW folder, then
     merge the source chip's calibrated values back on. Returns the build outcome
     with a ``merge`` transparency block (carried / grafted / residual_lost)."""
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     spec = data.get("spec")
-    output_path = (data.get("output_path") or "").strip()
+    output_path = json_text(data, "output_path")
     # Working copy (see regenerate_reconstruct) so the value-merge carries in-app
     # edits, not the stale live files.
-    source_folder = (data.get("source_folder") or "").strip() or _ctx_path()
+    source_folder = json_text(data, "source_folder") or _ctx_path()
     # Populate-protect inputs (docs/72): the wizard's hydration-time populate
     # snapshot + explicitly-touched cells. Absent ⇒ legacy merge behavior.
     populate_baseline = data.get("populate_baseline")
@@ -40572,7 +40624,7 @@ def regenerate_build():
     populate_filled = data.get("populate_filled")
     if not isinstance(populate_filled, list):
         populate_filled = None
-    scripts_dir = (data.get("scripts_dir") or "").strip() or None
+    scripts_dir = json_text(data, "scripts_dir") or None
     # QA regenerate-r2-18: the wizard's export checkbox. Absent (an older
     # client) keeps today's behaviour; an explicit false writes no bundle.
     scripts_enabled = data.get("scripts_enabled") is not False
@@ -40850,8 +40902,8 @@ def generate_preview_config():
     no trip to the Config Viewer, no second Regenerate. The result is also
     stashed so a subsequent /generate/load seeds the new store's cache.
     """
-    data = request.get_json(silent=True) or {}
-    folder = (data.get("path") or "").strip()
+    data = json_object()
+    folder = json_text(data, "path")
     if not folder:
         return jsonify({"ok": False, "error": "No folder given."}), 400
     folder_path = Path(folder)
@@ -40993,8 +41045,8 @@ def generate_export_config():
 @bp.route("/generate/load", methods=["POST"])
 def generate_load():
     """Activate a generated quam_state folder as the live context."""
-    data = request.get_json(silent=True) or {}
-    folder = (data.get("path") or "").strip()
+    data = json_object()
+    folder = json_text(data, "path")
     if not folder:
         return jsonify({"ok": False, "error": "No folder given."}), 400
     try:
@@ -41248,7 +41300,7 @@ def config_preview():
         return render_template(
             "_status.html", message="Dropped config is too large to preview", level="error",
         ), 413
-    payload = request.get_json(silent=True) or {}
+    payload = json_object()
     config = payload.get("config")
     label = str(payload.get("label") or "config.json")
     if not isinstance(config, dict):
@@ -42557,7 +42609,7 @@ def scheduler_settings():
     if request.method == "GET":
         return jsonify(scheduler.load_settings(inst))
 
-    data = request.get_json(silent=True) or request.form.to_dict() or {}
+    data = json_object(request.form.to_dict)
     patch = _sched_settings_patch(data)
     # Refuse mid-run changes to the hardware/chip-affecting settings: the worker
     # re-reads settings before every item, so un-ticking Dry run (or re-pointing
@@ -42577,11 +42629,17 @@ def scheduler_settings():
     return jsonify({"ok": True, "settings": scheduler.save_settings(inst, patch)})
 
 
-@bp.route("/scheduler/effective-config", methods=["GET"])
+@bp.route("/scheduler/effective-config", methods=["GET", "POST"])
 def scheduler_effective_config():
-    """Read the chosen env's effective qualibrate config (subprocess)."""
+    """Read the chosen env's effective qualibrate config (subprocess).
+
+    v1.3.0: a GET runs only the saved interpreter or one SM found / the
+    person chose; the Runner's typed path comes by POST (origin-checked)."""
     inst = _sched_inst()
-    python_path = (request.args.get("python") or "").strip()
+    src = request.form if request.method == "POST" else request.args
+    python_path = (src.get("python") or "").strip()
+    if python_path and request.method == "GET" and not _interpreter_known(python_path):
+        return jsonify({"ok": False, "error": _UNKNOWN_INTERPRETER}), 403
     if not python_path:
         python_path = scheduler.load_settings(inst).get("env_python") or ""
     if not python_path:
@@ -42596,9 +42654,15 @@ def _gather_preflight(inst: str, data: dict) -> dict:
     """Run the identity/safety checks that gate a run (shared by the preflight
     route and the Strict gate inside /scheduler/start)."""
     settings = scheduler.load_settings(inst)
-    cal = (data.get("calibrations_folder") or settings.get("calibrations_folder") or "").strip()
-    env_python = (data.get("env_python") or settings.get("env_python") or "").strip()
-    target = (data.get("quam_state_path") or settings.get("quam_state_path") or "").strip()
+    cal = (json_text(data, "calibrations_folder")
+           or str(settings.get("calibrations_folder") or "").strip())
+    env_python = json_text(data, "env_python") or str(settings.get("env_python") or "").strip()
+    target = (json_text(data, "quam_state_path")
+              or str(settings.get("quam_state_path") or "").strip())
+    if env_python and not _interpreter_known(env_python):
+        # v1.3.0: never run an interpreter nobody chose; the Runner saves its
+        # field before a run, so this refuses only a path that was not saved
+        raise BadBody(_UNKNOWN_INTERPRETER)
 
     ctx_type = _context_type()
     open_folder = _active_path() if ctx_type == "quam" else None
@@ -42660,15 +42724,15 @@ def _gather_preflight(inst: str, data: dict) -> dict:
 def scheduler_preflight():
     """Run the identity/safety checks that gate a future run (Strict policy)."""
     inst = _sched_inst()
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     return jsonify(_gather_preflight(inst, data))
 
 
 @bp.route("/scheduler/register-storage", methods=["POST"])
 def scheduler_register_storage():
     """Register a qualibrate storage/dataset folder as an SM workspace root."""
-    data = request.get_json(silent=True) or {}
-    folder = (data.get("folder") or "").strip()
+    data = json_object()
+    folder = json_text(data, "folder")
     if not folder:
         return jsonify({"ok": False, "error": "No folder given."}), 400
     ws = _ws()
@@ -42773,13 +42837,15 @@ def scheduler_scan_params():
     """
     inst = _sched_inst()
     settings = scheduler.load_settings(inst)
-    data = request.get_json(silent=True) or {}
-    folder = (data.get("folder") or settings.get("calibrations_folder") or "").strip()
-    env = (data.get("env_python") or settings.get("env_python") or "").strip()
+    data = json_object()
+    folder = json_text(data, "folder") or str(settings.get("calibrations_folder") or "").strip()
+    env = json_text(data, "env_python") or str(settings.get("env_python") or "").strip()
     if not folder:
         return jsonify({"ok": False, "error": "No calibrations folder set."}), 400
     if not env:
         return jsonify({"ok": False, "error": "No env selected."}), 400
+    if not _interpreter_known(env):             # v1.3.0: a found or chosen env only
+        return jsonify({"ok": False, "error": _UNKNOWN_INTERPRETER}), 403
     # The parameter-scan cache keys on (env, folder) and knows nothing about
     # chips, so it stays instance-level rather than being rebuilt per scope.
     return jsonify(scheduler.scan_params(
@@ -42788,9 +42854,9 @@ def scheduler_scan_params():
 
 @bp.route("/scheduler/queue/add", methods=["POST"])
 def scheduler_queue_add():
-    data = request.get_json(silent=True) or {}
-    file = (data.get("file") or "").strip()
-    name = (data.get("name") or "").strip()
+    data = json_object()
+    file = json_text(data, "file")
+    name = json_text(data, "name")
     if not file or not name:
         return jsonify({"ok": False, "error": "file and name are required"}), 400
     info = {
@@ -42825,8 +42891,8 @@ def scheduler_queue_add():
 def scheduler_queue_mutate(action: str):
     """remove / toggle / targets / reorder / duplicate / expand / clear-finished."""
     inst = _sched_inst()
-    data = request.get_json(silent=True) or {}
-    item_id = (data.get("id") or "").strip()
+    data = json_object()
+    item_id = json_text(data, "id")
     if action in ("remove", "toggle", "targets", "params", "duplicate", "expand") and not item_id:
         return jsonify({"ok": False, "error": "id is required"}), 400
     if action == "remove":
@@ -42870,8 +42936,8 @@ def scheduler_presets():
              "created_at": p.get("created_at"), "n_items": len(p.get("items") or [])}
             for p in scheduler.list_presets(inst)
         ]})
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
+    data = json_object()
+    name = json_text(data, "name")
     if not name:
         return jsonify({"ok": False, "error": "name is required"}), 400
     preset = scheduler.save_preset(inst, name)
@@ -42880,7 +42946,7 @@ def scheduler_presets():
 
 @bp.route("/scheduler/presets/<preset_id>/load", methods=["POST"])
 def scheduler_preset_load(preset_id: str):
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     mode = "replace" if data.get("mode") == "replace" else "append"
     state, warnings = scheduler.load_preset(_sched_inst(), preset_id, mode=mode)
     if state is None:
@@ -43067,7 +43133,7 @@ def _scheduler_refresh_hook(app, instance_path, folder, item_id, status) -> None
 @bp.route("/scheduler/start", methods=["POST"])
 def scheduler_start():
     inst = _sched_inst()
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     # Persist the POSTed settings BEFORE the preflight + start, so the values the
     # Strict gate validates are exactly the ones the worker reads from disk. The
     # text fields are debounce-saved (400ms), so a Start that beats the debounce —
@@ -43266,7 +43332,7 @@ def autofit_ai_set():
     "leave it alone", so a user changing the model does not wipe a key they
     typed last week; to clear a key they send api_key=CLEAR."""
     from quam_state_manager.core.autofit import auditor as af_auditor
-    data = request.get_json(silent=True) or request.form.to_dict()
+    data = json_object(request.form.to_dict)
     patch: dict = {}
     for k in ("provider", "model", "base_url", "claude_bin"):
         if k in data:
@@ -43332,7 +43398,7 @@ def autofit_resolve():
     the pre-Run step→file table (docs/56 §7b-D)."""
     from quam_state_manager.core.autofit import plan as af_plan
 
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     try:
         p = _autofit_plan_from_request(data)
     except af_plan.PlanError as exc:
@@ -43353,7 +43419,7 @@ def autofit_resolve():
 def _autofit_plan_from_request(data: dict):
     from quam_state_manager.core.autofit import plan as af_plan
 
-    preset = (data.get("preset") or "").strip()
+    preset = json_text(data, "preset")
     if preset:
         p = af_plan.preset_plan(preset)
         raw = p.as_dict()
@@ -43380,7 +43446,7 @@ def autofit_start():
 
     inst = _sched_inst()
     autofit_engine = _autofit_engine_mod()
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     start_lock = _autofit_start_lock(inst)
     if not start_lock.acquire(blocking=False):
         return jsonify({"ok": False,
@@ -43824,8 +43890,11 @@ def dataset_autofit_diagnose_fig(uid, name):
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", uid)
     base = (Path(current_app.instance_path) / "autofit" / "diagnose"
             / safe).resolve()
-    target = (base / name).resolve()
-    if not str(target).startswith(str(base)) or not target.is_file() \
+    try:
+        target = (base / name).resolve()
+    except (OSError, ValueError):       # a NUL byte / an over-long name
+        return "not found", 404
+    if not target.is_relative_to(base) or not target.is_file() \
             or target.suffix != ".png":
         return "not found", 404
     from flask import send_file
@@ -43845,7 +43914,7 @@ def autofit_diagnose_rows():
     from quam_state_manager.core.autofit import families as af_families
     from quam_state_manager.core.autofit import power_rows as af_power
 
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     fam = af_families.FAMILIES.get(str(data.get("family") or ""))
     target = str(data.get("target") or "")
     fresh = data.get("fresh") or {}

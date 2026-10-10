@@ -676,7 +676,10 @@ class Workspace:
 
     def remove_root(self, path: str | Path) -> None:
         """Remove a root folder and evict all its cached stores."""
-        path = Path(path).expanduser().resolve()
+        try:
+            path = Path(path).expanduser().resolve()
+        except (OSError, ValueError):   # a NUL byte / an over-long path: never registered
+            return
         with self._lock:
             registered = self._find_registered_root(path)
             if registered is None:

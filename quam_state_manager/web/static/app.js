@@ -4254,6 +4254,16 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 }
                 return;
             }
+            if (data.status === "error" && data.transient) {
+                // v1.3.0: the live files were mid-save (unreadable for a
+                // moment). Nothing happened; the person retries. The automatic
+                // merge retries on its own next tick, without a toast.
+                if (!expectChip && window.showToast) {
+                    window.showToast(data.message || "The live chip could not be read "
+                                     + "just now - retry in a moment.", "warning");
+                }
+                return;
+            }
             if (data.status === "error") {
                 window.showToast("Sync failed: " + (data.message || "unknown error"), "error");
                 return;

@@ -243,7 +243,9 @@
         if (!raw) { if (status) status.textContent = 'Enter an interpreter or venv-folder path.'; return; }
         if (status) status.textContent = 'checking…';
         var mine = _seq;
-        fetch('/generate/probe?python=' + encodeURIComponent(raw))
+        // v1.3.0: a TYPED path is probed by POST (a GET runs only a found / chosen env)
+        fetch('/generate/probe', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                                  body: 'python=' + encodeURIComponent(raw)})
             .then(function (r) { return r.json(); })
             .then(function (info) {
                 if (mine !== _seq) return;

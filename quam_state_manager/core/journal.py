@@ -76,6 +76,10 @@ def set_root(instance_path, folder: str | None) -> Path:
     cfg = settings(instance_path)
     if folder and folder.strip():
         target = Path(folder.strip()).expanduser()
+        if not target.is_absolute():
+            # v1.3.0: a relative folder lands wherever the server process was
+            # started (its cwd), never where the person meant
+            raise ValueError("the journal folder must be an absolute path")
         target.mkdir(parents=True, exist_ok=True)
         cfg["root"] = str(target)
     else:

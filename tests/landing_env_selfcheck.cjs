@@ -58,8 +58,10 @@ function world(opts) {
   const w = dom.window;
   const log = [];
   const hold = {};
-  w.fetch = function (url) {
+  w.fetch = function (url, o) {
     log.push(url);
+    // v1.3.0: a typed path is probed by POST, its python in the body
+    if (o && o.method === 'POST' && url === '/generate/probe') { log.push('POST probe ' + o.body); url = url + '?' + o.body; }
     if (url.indexOf('/generate/envs') === 0) {
       const ans = { json: () => Promise.resolve({ envs: [
         { name: 'A', python: 'C:\\envs\\A\\python.exe', kind: 'conda' },
@@ -145,6 +147,9 @@ function click(W, sel) { W.d.querySelector(sel).dispatchEvent(new W.w.MouseEvent
     await until(() => W.posts.length);
     ok(W.posts[0] && W.posts[0].o.values.python === 'C:\\typed\\Scripts\\python.exe' && W.posts[0].o.values.project === 'beta',
        'a typed folder is probed and its RESOLVED interpreter is saved');
+    // v1.3.0: the typed path is probed by POST (a GET probe runs only a found / chosen env)
+    ok(W.log.indexOf('POST probe python=' + encodeURIComponent('C:\\typed')) >= 0,
+       'the typed path is probed by POST, its path in the body');
   }
   // 5: a stale answer never renders
   {

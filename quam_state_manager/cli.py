@@ -163,6 +163,10 @@ def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
     there). Otherwise this runs under waitress, a production WSGI server, so
     that warning doesn't show for normal ``qsm serve``/``qsm browser`` use.
     """
+    # v1.3.0: the app answers only to loopback names unless told otherwise;
+    # the host it is served on is one it must answer to.
+    from quam_state_manager.web.app import allow_bind_host
+    allow_bind_host(flask_app, host)
     if debug:
         flask_app.run(host=host, port=port, debug=True)
         return

@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
+from quam_state_manager.web.request_body import json_object, json_text
 
 import quam_state_manager
 from quam_state_manager.core import agent_backend as ab
@@ -170,7 +171,7 @@ def _spec(chip: str | None = None, url: str | None = None) -> dict:
 def connect():
     """Register SM with a CLI: mcp (both), hooks (claude), allow rules (claude,
     in the calibrations folder). ``apply`` absent = PREVIEW only."""
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     backend = str(data.get("backend") or "claude").lower()
     if backend not in ab.BACKENDS:
         return _err("backend must be claude or codex")
@@ -238,7 +239,7 @@ def connect():
 
 @setup_bp.route("/disconnect", methods=["POST"])
 def disconnect():
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     backend = str(data.get("backend") or "claude").lower()
     if backend not in ab.BACKENDS:
         return _err("backend must be claude or codex")
@@ -277,13 +278,17 @@ def journal_setup():
     """The journal's home: the folder beside the project data (suggested),
     or any folder the lab names. Mandatory (docs/173): an empty root falls
     back to the instance, and the page keeps asking."""
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     inst = current_app.instance_path
     root = str(data.get("root") or "").strip()
     if not root:
         return _err("root required (the suggested folder is beside the data folder)")
     chip = aa._chip_name() if _r()._active_path() else None
     try:
+        if not Path(root).expanduser().is_absolute():
+            # v1.3.0: refused BEFORE the mkdir below -- a relative folder is made
+            # in the server's working directory, outside every SM folder
+            raise ValueError("the journal folder must be an absolute path")
         Path(root).mkdir(parents=True, exist_ok=True)
         # docs/252 (D-08 / C-15): the same move as /api/agent/journal/root -- the day
         # files come along, and both folders say where the log went
@@ -326,8 +331,8 @@ def context_post():
     store = r._store()
     if store is None:
         return _err("open a chip first", 409)
-    data = request.get_json(silent=True) or {}
-    cal = data.get("folder") or _cal_folder()
+    data = json_object()
+    cal = json_text(data, "folder") or _cal_folder()
     if not cal or not Path(cal).is_dir():
         return _err("no calibrations folder (set it in the run environment first)", 409)
     answers = data.get("answers") if isinstance(data.get("answers"), dict) else {}
@@ -357,7 +362,7 @@ def test_call():
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     backend = str(data.get("backend") or "claude").lower()
     if backend not in ab.BACKENDS:
         return _err("backend must be claude or codex")

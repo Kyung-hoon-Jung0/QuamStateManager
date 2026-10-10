@@ -224,7 +224,8 @@ class TestFolderAcceptingRoutes:
         monkeypatch.setattr(cg, "_run_command", no_spawn)
         empty = tmp_path / "empty"
         empty.mkdir()
-        r = client.get("/generate/probe", query_string={"python": str(empty)})
+        # v1.3.0: GET -> POST, a typed path is probed by the origin-checked POST
+        r = client.post("/generate/probe", data={"python": str(empty)})
         body = r.get_json()
         assert r.status_code == 200, body
         assert body["usable"] is False and body["resolved"] is None
@@ -235,7 +236,8 @@ class TestFolderAcceptingRoutes:
     def test_probe_resolves_folders_and_echoes(self, client, tmp_path):
         venv = tmp_path / "v"
         interp = _mk_interp(venv, "win")
-        r = client.get("/generate/probe", query_string={"python": str(venv)})
+        # v1.3.0: GET -> POST, a typed path is probed by the origin-checked POST
+        r = client.post("/generate/probe", data={"python": str(venv)})
         body = r.get_json()
         assert r.status_code == 200
         assert body.get("resolved") == str(interp)
@@ -245,7 +247,8 @@ class TestFolderAcceptingRoutes:
     def test_a_quoted_copy_as_path_is_unquoted(self, client, tmp_path):
         venv = tmp_path / "qv"
         interp = _mk_interp(venv, "win")
-        r = client.get("/generate/probe", query_string={"python": f'"{interp}"'})
+        # v1.3.0: GET -> POST, a typed path is probed by the origin-checked POST
+        r = client.post("/generate/probe", data={"python": f'"{interp}"'})
         assert r.status_code == 200 and r.get_json().get("resolved") == str(interp)
         r = client.post("/generate/select-env", json={"python": f'"{venv}"'})
         body = r.get_json()

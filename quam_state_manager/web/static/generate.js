@@ -784,7 +784,9 @@
     var python = input && unquotePath(input.value);
     if (!python) { if (status) status.textContent = "Enter an interpreter or venv-folder path."; return; }
     if (status) status.textContent = "checking…";
-    fetch("/generate/probe?python=" + encodeURIComponent(python))
+    // v1.3.0: a TYPED path is probed by POST -- a GET probe runs only an env
+    // SM found or the person already chose (any page can send a GET)
+    fetch("/generate/probe", {method: "POST", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: "python=" + encodeURIComponent(python)})
       .then(function (r) { return r.json(); })
       .then(function (info) {
         if (info && info.usable) {
