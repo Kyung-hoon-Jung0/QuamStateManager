@@ -54,6 +54,13 @@ window.eval(fs.readFileSync(
 
 // S10 walk: `percent` mode -- each case is ONE number (a percent change),
 // rendered by ValueDelta.formatPercent (the one percent rule)
+// v1.3.0: blank null -> explicit null/absence, with compact value parity.
+if (process.argv[3] === 'value') {
+    process.stdout.write(JSON.stringify(cases.map(function (v) {
+        return window.ValueDelta.formatValue(v && v.absent === true ? undefined : v);
+    })));
+    process.exit(0);
+}
 if (process.argv[3] === 'percent') {
     process.stdout.write(JSON.stringify(cases.map(function (p) {
         return window.ValueDelta.formatPercent(p);

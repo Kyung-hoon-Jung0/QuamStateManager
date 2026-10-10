@@ -7574,6 +7574,16 @@ window.ValueDelta = (function () {
         return (p.mant < 0n ? "-" : "+") + compactMagnitude(p.mant, p.scale, PCT_SIG_DIGITS);
     }
 
+    // A value beside a delta follows the same compact number rule.
+    function formatValue(value) {
+        if (value === undefined) return "(absent)";
+        if (value === null) return "null";
+        if (typeof value !== "number") return String(value);
+        var p = parse(value);
+        if (!p) return String(value);
+        return (p.mant < 0n ? "-" : "") + compactMagnitude(p.mant, p.scale);
+    }
+
     /* {delta, text, pct, pct_text, dir, coerced, title} | null */
     function compute(oldValue, newValue) {
         var a = parse(oldValue), b = parse(newValue);
@@ -7632,7 +7642,7 @@ window.ValueDelta = (function () {
     }
 
     return { compute: compute, chipHtml: chipHtml, paint: paint,
-             formatDelta: formatDelta, formatPercent: formatPercent, parse: parse };
+             formatDelta: formatDelta, formatPercent: formatPercent, formatValue: formatValue, parse: parse };
 })();
 
 /* ------------------------------------------------------------------ */
@@ -20928,7 +20938,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     var layout = {
         margin: {l: 50, r: 15, t: 10, b: 50},
         xaxis: {title: '', tickfont: {size: 10}},
-        yaxis: {title: data.property, tickfont: {size: 10},
+        yaxis: {title: data.property, automargin: true, tickfont: {size: 10},
                 tickformat: _numFmt.tickformat,
                 exponentformat: _numFmt.exponentformat,
                 range: _flat || undefined, autorange: _flat ? false : true},
@@ -24379,7 +24389,7 @@ window.FieldHistory = (function () {
             // rather than spelled again -- this chart had reached the
             // right answer on its own, which is how a rule ends up with
             // three copies that can drift apart.
-            yaxis: Object.assign({ tickfont: { size: 9 } },
+            yaxis: Object.assign({ automargin: true, tickfont: { size: 9 } },
                 (window.PlotTheme && PlotTheme.axisNumberFormat)
                     ? PlotTheme.axisNumberFormat() : {}),
             showlegend: false,

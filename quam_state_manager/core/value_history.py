@@ -1762,9 +1762,12 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
                             "saved and not in this history yet."})
     if state == "idle":
         last = ledger.get("last_run") or ledger.get("last")
-        out.append({"level": "info", "code": "idle",
+        from quam_state_manager.core.timefmt import local_text, to_utc
+        instant = to_utc(last)
+        shown = local_text(instant) if instant is not None else last
+        out.append({"level": "info", "code": "idle", "after": last,
                     "text": "The ledger is not being kept current in this window"
-                            + (f"; runs after {last} may be missing." if last else ".")})
+                            + (f"; runs after {shown} may be missing." if last else ".")})
     elif not st.get("roots") and state in ("ready", "degraded") and ledger.get("has_runs"):
         out.append({"level": "info", "code": "no_folder",
                     "text": "No data folder is linked to this chip now; newer runs may be missing."})

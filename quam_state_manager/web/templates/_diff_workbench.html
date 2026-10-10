@@ -246,9 +246,9 @@
               data-value='{{ _tv | tojson }}' data-create="1"
               {% if not _pv_absent and json_attr_safe(_pv) %}data-prev='{{ _pv | tojson }}'{% endif %}{% endif %}>
             <td class="diff-list-path"><code>{{ r.path }}</code></td>
-            <td class="diff-list-a">{% if r.kind == 'added' %}<span class="muted">—</span>{% else %}<code{% if _take_from == 'a' and not _absent %} class="sv-take-src"{% endif %}>{{ r.a | groupdigits }}</code>{% endif %}</td>
+            <td class="diff-list-a">{% if r.kind == 'added' %}<span class="muted">(absent)</span>{% else %}<code{% if _take_from == 'a' and not _absent %} class="sv-take-src"{% endif %}>{{ "null" if r.a is none else (r.a | groupdigits) }}</code>{% endif %}</td>
             <td class="diff-list-arrow">&rarr;</td>
-            <td class="diff-list-b">{% if r.kind == 'removed' %}<span class="muted">—</span>{% else %}<code{% if _take_from == 'b' and not _absent %} class="sv-take-src"{% endif %}>{{ r.b | groupdigits }}</code>{% endif %}</td>
+            <td class="diff-list-b">{% if r.kind == 'removed' %}<span class="muted">(absent)</span>{% else %}<code{% if _take_from == 'b' and not _absent %} class="sv-take-src"{% endif %}>{{ "null" if r.b is none else (r.b | groupdigits) }}</code>{% endif %}</td>
             <td class="diff-list-delta">
               {%- if r.kind == 'changed' %}{{ delta_chip(r.a, r.b) }}
               {%- else %}<span class="tree-sidetag tree-tag-{{ r.kind }}">{{ r.kind }}</span>{% endif -%}

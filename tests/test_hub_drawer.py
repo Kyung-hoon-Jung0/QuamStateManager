@@ -147,14 +147,17 @@ def rows(html: str) -> list[dict]:
     for m in _ROW.finditer(html):
         body = m.group("body")
         val = re.search(r'<td class="fh-val"[^>]*><code>([^<]*)</code>', body).group(1)
-        by = re.search(r'<span class="fh-exp vh-by" title="([^"]*)">([^<]*)</span>', body)
+        # v1.3.0: plain labels -> labels with wbr, preserving the same visible writer text.
+        by = re.search(r'<span class="fh-exp vh-by" title="([^"]*)">((?:[^<]|<wbr>)*)</span>', body)
         out.append({"cls": m.group("cls"), "prov": m.group("prov"), "value": val,
-                    "label": by.group(2), "title": by.group(1),
+                    "label": by.group(2).replace("<wbr>", ""), "title": by.group(1),
                     "data": "fh-data" in body, "body": body})
     return out
 
 
 def text(html: str) -> str:
+    # v1.3.0: wrap markers -> no extra text, so a run's word segments remain whole.
+    html = html.replace("<wbr>", "")
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
 
 

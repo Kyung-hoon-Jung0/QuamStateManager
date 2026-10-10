@@ -543,7 +543,7 @@
             cells.forEach(function (cell) { cell.classList.remove('cell-best', 'cell-worst'); });
             if (nums.length < 2) { stat.textContent = ''; return; }
             var mn = Math.min.apply(null, nums), mx = Math.max.apply(null, nums);
-            stat.textContent = 'min ' + _grp(mn) + ' · max ' + _grp(mx);
+            stat.textContent = 'min ' + (window.ValueDelta ? window.ValueDelta.formatValue(mn) : _grp(mn)) + ' · max ' + (window.ValueDelta ? window.ValueDelta.formatValue(mx) : _grp(mx));
             if (mn !== mx) cells.forEach(function (cell) {
                 var n = _num(cell.value);
                 if (n === mx) cell.classList.add('cell-best');

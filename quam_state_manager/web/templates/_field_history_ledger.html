@@ -66,7 +66,7 @@
         {% for f in pt.flag_text %}<span class="vh-flag">{{ f }}</span>{% endfor %}{{ source_badge(pt.source, 'fh-srcfolder') }}
       </td>
       <td class="fh-ts">{{ pt.t | ts_local(short=True) }}</td>
-      <td class="fh-src"><span class="fh-exp vh-by" title="{{ pt.title }}">{{ pt.label }}</span><span class="vh-sub" title="{{ pt.title }}">{{ pt.sub }}</span></td>
+      <td class="fh-src"><span class="fh-exp vh-by" title="{{ pt.title }}">{%- for ch in pt.label -%}{{ ch }}{% if ch in "_- " %}<wbr>{% endif %}{%- endfor -%}</span><span class="vh-sub" title="{{ pt.title }}">{{ pt.sub }}</span></td>
       <td class="fh-act">
         {% if not pt.is_current and pt.usable and pt.fill %}
         <button type="button" class="fh-revert" data-value="{{ pt.fill }}"

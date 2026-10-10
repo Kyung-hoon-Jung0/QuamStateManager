@@ -12488,7 +12488,7 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     white-space: normal; text-align: left; }
 .vh-chip-by { font-size: .6rem; color: var(--color-text-muted); }
 /* the provenance is the point of the row: it wraps, never ellipsizes away */
-.vh-table .fh-src { white-space: normal; overflow: visible; max-width: none; overflow-wrap: anywhere; }
+.vh-table .fh-src { white-space: normal; overflow: visible; max-width: none; overflow-wrap: normal; word-break: normal; }
 /* the ledger table gives the provenance column room (it carries a second line) */
 .vh-table th:nth-child(1) { width: 31%; }
 .vh-table th:nth-child(2) { width: 17%; }
@@ -13289,7 +13289,7 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
 .sv-kind-manual { color: var(--trigger-manual);
     border-color: var(--trigger-manual); }
 .sv-kind-backup { color: var(--pico-muted-color);
-    border-color: var(--pico-muted-border-color); }
+    border: 1px solid var(--pico-muted-color); }
 /* Pre-kind snapshots: the mapping is a likely reading, not a record — the
    chip is muted and the tooltip says so. */
 .sv-kind-legacy { opacity: 0.6; border-style: dashed; }

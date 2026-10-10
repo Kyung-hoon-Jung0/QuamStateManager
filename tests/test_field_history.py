@@ -163,7 +163,8 @@ class TestRunsTier:
         assert r.status_code == 200
         html = r.data.decode()
         assert 'data-value="5320000000.0"' in html
-        assert "06_ramsey" in html and "#32" in html
+        # v1.3.0: plain run names -> natural wrap markers, with identical visible text.
+        assert "06_ramsey" in html.replace("<wbr>", "") and "#32" in html
         key = routes_mod._folder_key(data_root)
         assert f'hx-get="/dataset/{key}:32?via=saved"' in html, \
             "a saved-run link carries its unproven context"

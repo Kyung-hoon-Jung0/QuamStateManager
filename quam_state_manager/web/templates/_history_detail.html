@@ -32,14 +32,12 @@
         <td><span class="diff-type-badge diff-type-{{ e.change_type }}">{{ e.change_type }}</span></td>
         <td><code class="dot-path">{{ e.dot_path }}</code></td>
         <td class="diff-val">
-            {% if e.old_value is none %}<span class="muted">-</span>
-            {% elif e.old_value is number %}{{ e.old_value | sigval }}
-            {% else %}{{ e.old_value }}{% endif %}
+            {% if e.change_type == 'added' %}<span class="muted">(absent)</span>
+            {% else %}{{ e.old_value | sigval }}{% endif %}
         </td>
         <td class="diff-val">
-            {% if e.new_value is none %}<span class="muted">-</span>
-            {% elif e.new_value is number %}{{ e.new_value | sigval }}
-            {% else %}{{ e.new_value }}{% endif %}
+            {% if e.change_type == 'removed' %}<span class="muted">(absent)</span>
+            {% else %}{{ e.new_value | sigval }}{% endif %}
         </td>
         <td class="diff-val">{{ render_delta(e.old_value, e.new_value) }}</td>
     </tr>

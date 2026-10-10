@@ -384,6 +384,27 @@ def test_js_mirror_matches_python_character_for_character():
     assert not mismatches, "JS/Python Δ drift:\n" + "\n".join(mismatches)
 
 
+# v1.3.0: blank null -> null and (absent), so presence stays distinct on screen.
+def test_js_value_display_matches_python_including_null_and_absence():
+    from quam_state_manager.core.value_delta import ABSENT, format_value
+    cases = [None, {"absent": True}, True, False, "square", "", 0, -0.24,
+             0.000005509247852422442, 0.4374739, 5078705034.109805, 9.999995e-5,
+             1e15, -1.23456789e-12]
+    with tempfile.TemporaryDirectory() as td:
+        file = Path(td) / "values.json"
+        file.write_text(json.dumps(cases), encoding="utf8")
+        result = subprocess.run(["node", str(_ROOT / "tests" / "value_delta_parity.cjs"),
+                                 str(file), "value"], capture_output=True, text=True,
+                                encoding="utf8", cwd=_ROOT, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = [format_value(ABSENT if v == {"absent": True} else v) for v in cases]
+    assert expected[:2] == ["null", "(absent)"]
+    assert json.loads(result.stdout) == expected
+    assert compute(ABSENT, None) is None and compute(None, ABSENT) is None
+    assert describe(ABSENT, None) == "(absent) → null"
+    assert describe(None, ABSENT) == "null → (absent)"
+
+
 # ---------------------------------------------------------------------------
 # Wiring pins — every surface the user named, plus the ones swept with them
 # ---------------------------------------------------------------------------

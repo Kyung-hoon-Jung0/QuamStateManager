@@ -1621,7 +1621,7 @@
             cells.forEach(function (cell) { var n = _num(cell.value); if (n !== null) nums.push(n); });
             if (nums.length < 2) { stat.textContent = ''; return; }
             var mn = Math.min.apply(null, nums), mx = Math.max.apply(null, nums);
-            stat.textContent = 'min ' + _grp(mn) + ' · max ' + _grp(mx);
+            stat.textContent = 'min ' + (window.ValueDelta ? window.ValueDelta.formatValue(mn) : _grp(mn)) + ' · max ' + (window.ValueDelta ? window.ValueDelta.formatValue(mx) : _grp(mx));
             // Colour the extreme cells, mirroring the /table comparison view
             // (max=cell-best, min=cell-worst) — these mark extremes, not quality.
             if (mn !== mx) cells.forEach(function (cell) {

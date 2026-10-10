@@ -172,14 +172,19 @@ def format_delta_exact(d: Decimal) -> str:
     return ("-" if d < 0 else "+") + _format_magnitude(-d if d < 0 else d)
 
 
+ABSENT = object()
+
+
 def format_value(value: Any) -> str:
     """A before/after VALUE beside a delta, by the delta's own rule (the State
     History diff printed ``4.374739e-01 -> 3.897510e-01`` beside a plain
     ``-0.04772291024636856``). A non-number is returned as written."""
+    if value is ABSENT:
+        return "(absent)"
     if isinstance(value, bool):
         return "true" if value else "false"
     if not isinstance(value, (int, float)):
-        return "" if value is None else str(value)
+        return "null" if value is None else str(value)
     d = as_decimal(value)
     if d is None:
         return str(value)
@@ -287,8 +292,8 @@ def describe(old: Any, new: Any) -> str:
     """One-line ``old → new (Δ …)`` for tooltips/toasts. Never raises."""
     from quam_state_manager.core.units import group_digits
 
-    left = "null" if old is None else group_digits(old)
-    right = "null" if new is None else group_digits(new)
+    left = format_value(old) if old is None or old is ABSENT else group_digits(old)
+    right = format_value(new) if new is None or new is ABSENT else group_digits(new)
     info = compute(old, new)
     tail = ""
     if info:

@@ -32,6 +32,10 @@ try {
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
 const GRID_VIRT_JS = fs.readFileSync(path.join(STATIC, 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(path.join(STATIC, 'bulk-edit.js'), 'utf8');
+// v1.3.0: raw header numbers -> compact values, using the page's shared rule.
+const APP_JS = fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8');
+const VD_START = APP_JS.indexOf('window.ValueDelta =');
+const VALUE_DELTA_JS = APP_JS.slice(VD_START, APP_JS.indexOf('\n})();', VD_START) + 6);
 const PAIR_JS = fs.readFileSync(path.join(STATIC, 'pair-edit.js'), 'utf8');
 
 let fails = 0, asserts = 0;
@@ -112,6 +116,7 @@ function world() {
     return Promise.resolve({ status: 400, ok: false,
       json: function () { return Promise.resolve({ ok: false, results: results }); } });
   };
+  win.eval(VALUE_DELTA_JS);
   new win.Function(GRID_VIRT_JS).call(win);
   new win.Function(BULK_JS).call(win);
   new win.Function(PAIR_JS).call(win);
@@ -123,8 +128,7 @@ function world() {
                              editable: true, kind: 'scalar', maxlen: 12 }]);
   return win;
 }
-// (the page's digit grouping is app.js's _groupDigits, not loaded here --
-// the header renders String(n), which is all these checks need)
+// Headers use the shared compact formatter loaded above.
 const stat = (win, table, key) =>
   win.document.querySelector('#' + table + ' [data-col-stats="' + key + '"]').textContent;
 const inp = (win, dp) => win.document.querySelector('.bulk-cell[data-dot-path="' + dp + '"]');
@@ -138,12 +142,20 @@ function escapeOn(win, cell) {
   {
     const win = world();
     win.BulkEdit.recomputeStats();          // the page's own mount-time numbers
-    ok(/max 4895431254\.5$/.test(stat(win, 'bulk-table', 'f01')),
+    ok(stat(win, 'bulk-table', 't1') === 'min 1.1349e-05 \u00b7 max 1.35e-05',
+       'A7: tiny header values use the delta notation and significant digits');
+    win.BulkEdit.revertPaths([{ dot_path: 'qubits.q3.T1',
+      old_value_str: '0.000005509247852422442', old_value_disp: '0.000005509247852422442', old_kind: 'num' }]);
+    ok(stat(win, 'bulk-table', 't1') === 'min 5.50925e-06 \u00b7 max 1.35e-05',
+       'A7: the reported narrow-grid value rounds to six significant digits');
+    ok(inp(win, 'qubits.q3.T1').value === '0.000005509247852422442',
+       'A7: compact headers preserve the exact editable value');
+    ok(/max 4,895,431,255$/.test(stat(win, 'bulk-table', 'f01')),
        'precondition: the header max is q1 (' + stat(win, 'bulk-table', 'f01') + ')');
     const r = win.BulkEdit.revertPaths([{ dot_path: 'qubits.q1.f_01',
       old_value_str: '4895431254.262516', old_value_disp: '4,895,431,254.262516', old_kind: 'num' }]);
     ok(r.patched === 1, 'the repaint landed in the q1 cell');
-    ok(/max 4895431254\.262516$/.test(stat(win, 'bulk-table', 'f01')),
+    ok(/max 4,895,431,254$/.test(stat(win, 'bulk-table', 'f01')),
        'F9: after the repaint the header max is the value the cell now shows (got '
        + stat(win, 'bulk-table', 'f01') + ')');
     // a repaint that makes q1 the SMALLEST moves the extreme colouring too
@@ -152,7 +164,7 @@ function escapeOn(win, cell) {
     ok(inp(win, 'qubits.q1.f_01').classList.contains('cell-worst')
        && inp(win, 'qubits.q3.f_01').classList.contains('cell-best'),
        'F9: the cell-best / cell-worst marks follow the repaint');
-    ok(/^min 4600000000 · max 4800000000$/.test(stat(win, 'bulk-table', 'f01')),
+    ok(/^min 4,600,000,000 · max 4,800,000,000$/.test(stat(win, 'bulk-table', 'f01')),
        'F9: min and max both re-derived (got ' + stat(win, 'bulk-table', 'f01') + ')');
     ok(stat(win, 'bulk-table', 't1') !== '', 'an untouched column keeps its numbers');
   }
@@ -161,10 +173,10 @@ function escapeOn(win, cell) {
   {
     const win = world();
     win.BulkPairEdit.recomputeStats();
-    ok(/max 9000000$/.test(stat(win, 'bulk-pair-table', 'det')), 'precondition: pair header max');
+    ok(/max 9,000,000$/.test(stat(win, 'bulk-pair-table', 'det')), 'precondition: pair header max');
     win.BulkPairEdit.revertPaths([{ dot_path: 'qubit_pairs.q1-2.detuning',
       old_value_str: '6000000', old_value_disp: '6,000,000', old_kind: 'num' }]);
-    ok(/^min 5000000 · max 7000000$/.test(stat(win, 'bulk-pair-table', 'det')),
+    ok(/^min 5,000,000 · max 7,000,000$/.test(stat(win, 'bulk-pair-table', 'det')),
        'F9: the pair grid header follows its repaint (got ' + stat(win, 'bulk-pair-table', 'det') + ')');
   }
 
@@ -173,7 +185,7 @@ function escapeOn(win, cell) {
     const win = world();
     win.BulkEdit.recomputeStats();
     const before = stat(win, 'bulk-table', 't1');
-    ok(/^min 0\.000011349/.test(before), 'precondition: q3 is the T1 min (' + before + ')');
+    ok(/^min 1\.1349e-05/.test(before), 'precondition: q3 is the T1 min (' + before + ')');
     const c = inp(win, 'qubits.q3.T1');
     const tr = c.closest('tr');
     const slot = tr.querySelector('.bulk-row-error');
@@ -184,7 +196,7 @@ function escapeOn(win, cell) {
     await tick(20);
     ok(!slot.hidden && /expected a number/.test(slot.textContent),
        'the refusal is shown on the row (' + slot.textContent + ')');
-    ok(!/^min 0\.000011349/.test(stat(win, 'bulk-table', 't1')),
+    ok(!/^min 1\.1349e-05/.test(stat(win, 'bulk-table', 't1')),
        'precondition: the failed commit recomputed the header WITHOUT q3 (the bug\'s setup)');
     escapeOn(win, c);
     ok(c.value === '0.000011349', 'Escape restores the committed value');

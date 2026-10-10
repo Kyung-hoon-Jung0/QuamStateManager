@@ -1,6 +1,6 @@
 <div class="hub-notes" data-hub-url="{{ request.full_path.rstrip('?') }}">
 {% for note in notes or [] %}
-<p class="vh-note vh-note-{{ note.level }}{% if note.code == 'other_folders' %} fh-other-note{% endif %}" data-note="{{ note.code }}" data-code="{{ note.code }}">{{ note.text }}</p>
+<p class="vh-note vh-note-{{ note.level }}{% if note.code == 'other_folders' %} fh-other-note{% endif %}" data-note="{{ note.code }}" data-code="{{ note.code }}">{% if note.code == 'idle' and note.after %}The ledger is not being kept current in this window; runs after {{ note.after | ts_local }} may be missing.{% else %}{{ note.text }}{% endif %}</p>
 {% if retry and note.code in ('unreadable', 'no_ledger', 'no_chip_dir') %}
 {#- S10 walk: every surface that ends on "the change history could not be read"
     offers the same one manual press (Trends / Param History did, the listings

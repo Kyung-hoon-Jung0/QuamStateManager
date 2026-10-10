@@ -85,11 +85,11 @@
         <code class="dot-path" title="{{ e.dot_path }}">{%- if _parts | length == 2 -%}<span class="dp-dirs">{{ _parts[0] }}.</span><span class="dp-leaf">{{ _parts[1] }}</span>{%- else -%}<span class="dp-leaf">{{ e.dot_path }}</span>{%- endif -%}</code>
       </div>
       <div class="review-row-vals">
-        {% if e.old_value is none %}<span class="muted review-old">-</span>
-        {% else %}<span class="review-old sv-take-src" title="this version: {{ e.old_value | groupdigits }}">{{ e.old_value | groupdigits }}</span>{% endif %}
+        {% if e.change_type == 'added' %}<span class="muted review-old">(absent)</span>
+        {% else %}<span class="review-old sv-take-src" title="this version: {{ "null" if e.old_value is none else (e.old_value | groupdigits) }}">{{ "null" if e.old_value is none else (e.old_value | groupdigits) }}</span>{% endif %}
         <span class="review-arrow" aria-hidden="true">&rarr;</span>
-        {% if e.new_value is none %}<span class="muted">-</span>
-        {% else %}<span class="review-now" title="now (working state): {{ e.new_value | groupdigits }}">{{ e.new_value | groupdigits }}</span>
+        {% if e.change_type == 'removed' %}<span class="muted">(absent)</span>
+        {% else %}<span class="review-now" title="now (working state): {{ "null" if e.new_value is none else (e.new_value | groupdigits) }}">{{ "null" if e.new_value is none else (e.new_value | groupdigits) }}</span>
         {{ delta_chip(e.old_value, e.new_value, 'review-delta') }}
         {% endif %}
         {% if _takeable %}
