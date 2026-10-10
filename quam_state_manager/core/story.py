@@ -389,7 +389,8 @@ def gate_for_run(instance_path, run: dict, *, folder_key: str, compute: Callable
     """``{verdict, reason, family, anchor, rev}``; cached per (run, GATES_REV).
     ``verdict`` is pass / suspect / fail, or ``unknown`` with the reason when
     the run carries no state to anchor on or no family applies."""
-    cache = Path(instance_path) / "story_cache" / folder_key / f"{int(run['run_id'])}.json"
+    stable = _gate_inputs(run)
+    cache = _gate_path(instance_path, stable)
     try:
         c = json.loads(cache.read_text(encoding="utf-8"))
         if c.get("rev") == GATES_REV:
@@ -960,8 +961,23 @@ _GATE_WAKE = threading.Event()
 _GATE_THREAD: threading.Thread | None = None
 
 
-def _gate_path(instance, ledger_key, eid, digest) -> Path:
-    return Path(instance) / "story_cache" / f"hub-{ledger_key}" / f"{eid}-{digest}.json"
+def _gate_inputs(run) -> tuple:
+    """Gate revision and every input file's (mtime, size), without decoding."""
+    folder = _norm_folder(run.get("folder_path"))
+    files = ("node.json", "data.json", os.path.join("quam_state", "state.json"),
+             "state.json", "ds_raw.h5")
+    signatures = tuple(_file_sig(os.path.join(folder, name)) for name in files)
+    # Synthetic or unavailable folders still distinguish the known run facts.
+    fallback = None if signatures[0] is not None and signatures[1] is not None else json.dumps(
+        [run.get(k) for k in ("parameters", "outcomes", "qubits", "qubit_pairs", "fit_results")],
+        sort_keys=True, default=str)
+    return folder, GATES_REV, run.get("experiment_name"), signatures, fallback
+
+
+def _gate_path(instance, inputs) -> Path:
+    folder_key = hashlib.sha1(inputs[0].encode("utf-8")).hexdigest()
+    digest = hashlib.sha1(repr(inputs[1:]).encode("utf-8")).hexdigest()
+    return Path(instance) / "story_cache" / "gates" / folder_key[:2] / f"{folder_key}-{digest}.json"
 
 
 def _gate_store(token, path, value) -> dict:
@@ -1005,22 +1021,19 @@ def gates_pending() -> int:
 
 def _hub_gate(instance, run, ledger_key, compute, ds, wait):
     """The deterministic gate of one run event, anchored on its own saved
-    state. RAM, then disk (one folder per ledger, keyed by event + state),
+    state. RAM, then disk (keyed by run folder and input file signatures),
     then computed: synchronously when ``wait`` (the report) or a test passes
     ``compute``; otherwise in the background, and the card says it is being
     checked (docs/281: a 551-run day no longer waits on 200 state files)."""
     global _GATE_THREAD
-    fact = run["_hub"]
-    stable = (fact["eid"], fact.get("state_hash"), GATES_REV,
-              json.dumps([run.get("parameters"), run.get("outcomes")], sort_keys=True, default=str))
-    token = (str(instance), ledger_key, compute) + stable
+    stable = _gate_inputs(run)
+    token = (str(instance), compute) + stable
     with _HUB_GATES_LOCK:
         hit = _HUB_GATES.get(token)
         if hit is not None:
             _HUB_GATES.move_to_end(token)
             return hit
-    digest = hashlib.sha1(repr(stable).encode()).hexdigest()[:12]
-    path = _gate_path(instance, ledger_key, fact["eid"], digest)
+    path = _gate_path(instance, stable)
     if compute is None:
         try:
             cached = json.loads(path.read_text(encoding="utf-8"))
@@ -1032,6 +1045,12 @@ def _hub_gate(instance, run, ledger_key, compute, ds, wait):
             pass
 
     def full():
+        # Read current file facts even when the Datasets index predates an edit.
+        if stable[3][0] is not None and stable[3][1] is not None:
+            current = dict(run, **_run_facts(run["folder_path"], instance=instance))
+            if not current.get("qubits") and not current.get("qubit_pairs"):
+                current.update(qubits=run.get("qubits") or [], qubit_pairs=run.get("qubit_pairs") or [])
+            return current
         # the gate reads fit results too: the Datasets record when it holds the run
         if run.get("_from_ds") and ds is not None and hasattr(ds, "get_run"):
             got = ds.get_run(int(run["run_id"]))
