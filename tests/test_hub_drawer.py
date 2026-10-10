@@ -5,8 +5,8 @@ Pins, on generic synthetic chips and run folders in ``tmp_path``:
 * one implementation: the value drawer, Column History and the agent API all
   answer through ``routes._value_history`` and say the same words;
 * an alias path resolves to its holder through the one resolver; the answer
-  names the hop (``via``) and its retargets, and marks rows from before the
-  alias named that holder;
+  names the hop (``via``) and its retargets, and draws the value in force
+  through it at each change (a retarget is a change; P0-1 round 3);
 * a run is named as the writer of a value only when the ledger proves it (its
   own patch); every other row says what is known;
 * SM writes show actor and kind; an undone write is marked;
@@ -199,7 +199,7 @@ class TestDrawerOnTheLedger:
 
 
 # ======================================================================
-# 2. aliases: one resolver, via + retargets, rows from before the alias
+# 2. aliases: one resolver, via + retargets, the value in force through the alias
 # ======================================================================
 
 class TestAliases:
@@ -207,6 +207,10 @@ class TestAliases:
         html = drawer(sm, "qubits.qA1.resonator.operations.readout.amplitude")
         assert "via <code>readout</code> &rarr; <code>readout_square</code>" in html
         assert [r["value"] for r in rows(html)] == ["0.05"]
+        # S10 mut: the value of the holder the pointer names now, recorded: neither "not
+        # recorded yet" nor read "via" another holder
+        assert "this pointer is not recorded yet" not in html
+        assert "via readout_square" not in text(rows(html)[0]["body"])
 
     def test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked(self, sm):
         html = drawer(sm, "qubits.qA1.xy.operations.x180.amplitude")
@@ -404,7 +408,8 @@ class TestOneImplementation:
         # S10 C4: missing-key error -> explicit shape assertion, preserve the shared wording contract.
         assert h["points"] and all("label" in p for p in h["points"])
         html = drawer(sm, "qubits.qA1.xy.operations.x180.amplitude")
-        assert [(routes_mod._fh_display_string(p["value"]), p["label"], p["before_via"])
+        # S10 mut: old -> new, before_via (always False since P0-1 round 3) is gone: no row says it
+        assert [(routes_mod._fh_display_string(p["value"]), p["label"], "before_via" in p)
                 for p in h["points"]] == [
             (r["value"], r["label"], "vh-before-via" in r["cls"]) for r in rows(html)]
         # P0-1: old -> new, why: [0.25, 0.2, 0.1] (DragCosine's own) -> the value
@@ -447,6 +452,27 @@ class TestElementsAndTrends:
         assert [r["value"] for r in rows(drawer(env, "qubits.qA1.wave.3"))] == ["7", "0"]
         assert [r["value"] for r in rows(drawer(env, "qubits.qA1.wave.5"))] == ["1", "0"]
         assert [r["value"] for r in rows(drawer(env, "qubits.qA1.wave.7"))] == ["0"]
+
+    def test_another_elements_save_is_never_judged_as_this_elements_change(self, tmp_path):
+        """S10 mut: #3 changes element 5 only, and element 3 was then changed on
+        the chip outside SM. Element 3's newest change is #2's: #3's save of the
+        array is no change of element 3, so the chip's value now never makes #3
+        a save "not kept on the chip" -- the value now is said to be unrecorded."""
+        data, live = tmp_path / "data", tmp_path / "chips" / "live"
+        w = [0.0] * 20
+        run(data, 1, chip_state(wave=w))
+        run(data, 2, chip_state(wave=w[:3] + [7.0] + w[4:]))                       # element 3
+        run(data, 3, chip_state(wave=w[:3] + [7.0] + w[4:5] + [1.0] + w[6:]))     # element 5 only
+        write_chip(live, chip_state(wave=w[:3] + [9.0] + w[4:5] + [1.0] + w[6:]), data)
+        app = make_app(tmp_path)
+        c = app.test_client()
+        c.post("/load", data={"folder": str(live)})
+        with app.test_request_context():
+            routes_mod._sync_live_refresh(routes_mod._active_ctx())   # the chip's value now is known
+        html = drawer({"app": app, "client": c}, "qubits.qA1.wave.3")
+        assert [r["value"] for r in rows(html)] == ["7", "0"]
+        assert "not kept on the chip" not in text(html), "#3 did not change element 3"
+        assert 'data-note="current_differs"' in html
 
     def test_chip_trends_charts_an_alias_path_with_the_drawers_points(self, sm):
         p = "qubits.qA1.xy.operations.x180.amplitude"
@@ -620,7 +646,8 @@ class TestReviewRound:
         listed = text(html.split('<details class="vh-not-kept vh-excursions">', 1)[1].split("</details>", 1)[0])
         assert "Saved by run #2 (scan): #./x180_Gauss" in listed and "returned to #./x180_DragCosine" in listed
         j = aba["client"].get("/api/agent/field-history", query_string={"path": self.ALIAS}).get_json()
-        assert {p["value"]: p["before_via"] for p in j["history"]["points"]} == {0.15: False, 0.12: False, 0.1: False}
+        # S10 mut: old -> new, before_via (always False since P0-1 round 3) is gone: no row says it
+        assert {p["value"]: "before_via" in p for p in j["history"]["points"]} == {0.15: False, 0.12: False, 0.1: False}
         assert j["history"]["excursions"][0]["values"] == ["#./x180_Gauss"]
 
     def test_p0_3_and_p1_1_share_one_rule_after_a_return(self, aba):
@@ -812,6 +839,32 @@ class TestReviewObserved:
         assert kinds[-1] == "sm_apply", f"nothing after the SM write: its save copy is not an event ({kinds})"
         assert "same_before" in outcomes, outcomes
 
+    def test_p1_2_a_state_saved_again_with_the_same_values_is_no_event(self, sm):
+        """S10 mut: another program saves the chip again without changing a
+        value (40 written as 40.0). Its bytes and content hash differ from the
+        state SM last recorded, its values do not: the snapshot SM takes of it
+        is recorded as looked at and adds no "seen by SM" event."""
+        import sqlite3
+        live = sm["live"]
+
+        def look():
+            with sm["app"].app_context():
+                assert routes_mod._history().check_and_snapshot(str(live), "auto", force=True)
+                hub_sync.on_roots_moved([str(sm["data"])])
+            con = sqlite3.connect(f"{(chip_dir(sm) / 'ledger.sqlite').resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                return ([k for (k,) in con.execute("SELECT kind FROM events ORDER BY ord")],
+                        [o for (o,) in con.execute("SELECT outcome FROM observed_snapshots ORDER BY ts")])
+            finally:
+                con.close()
+        kinds, _ = look()                        # the open chip as SM sees it
+        raw = (live / "state.json").read_text(encoding="utf-8")
+        assert raw.count('"length": 40}') == 2
+        (live / "state.json").write_text(raw.replace('"length": 40}', '"length": 40.0}'), encoding="utf-8")
+        again, outcomes = look()
+        assert again == kinds, f"the same values saved again are no event ({kinds} -> {again})"
+        assert outcomes[-1] == "same_before", outcomes
+
 
 class TestReviewMore:
     ALIAS = "qubits.qA1.xy.operations.x180.amplitude"
@@ -826,6 +879,31 @@ class TestReviewMore:
         # #2); #2's move of x180 to Gauss was never confirmed and came back at #3
         # (an excursion), so the chip's value in force stayed DragCosine's
         assert truth == [0.1, 0.3, 0.15] and pts == [0.1, 0.12, 0.15], (pts, truth)
+
+    def test_p0_1_a_retarget_alone_changes_the_value_in_force(self, tmp_path):
+        """S10 mut: x180 moves from Gauss to DragCosine at #2 and neither
+        amplitude changes there: the value in force changes at #2 all the same
+        (DragCosine's own row is from #1, before x180 named it) -- the drawer,
+        Column History and Trends draw that retarget."""
+        data, live = tmp_path / "data", tmp_path / "chips" / "live"
+        run(data, 1, chip_state(alias="#./x180_Gauss"))                     # Gauss 0.3, DragCosine 0.1
+        run(data, 2, chip_state(alias="#./x180_DragCosine"))                # only the pointer moves
+        run(data, 3, chip_state(alias="#./x180_DragCosine", f01=5.1e9))     # a later run reads the chip
+        write_chip(live, chip_state(alias="#./x180_DragCosine", f01=5.1e9), data)
+        app = make_app(tmp_path)
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+        env = {"app": app, "client": c}
+        got = rows(drawer(env, self.ALIAS))
+        assert [r["value"] for r in got] == ["0.1", "0.3"], got
+        assert "x180 &rarr; x180_DragCosine" in got[0]["body"], "the retarget is the change"
+        assert "via x180_Gauss" in got[1]["body"]
+        changes = column(env, {"qA1": self.ALIAS}).split("ch-view-byrun")[0]
+        assert re.findall(r'data-provenance="[^"]+".*?<code>([^<]*)</code>', changes, re.S) == ["0.1", "0.3"]
+        html = c.get("/topology/trends", query_string={"path": self.ALIAS}).data.decode()
+        charts = json.loads(re.search(r'id="topo-trends-data">(.*?)</script>', html, re.S).group(1))
+        series = [s for ch in charts for s in ch["series"] if s["entity"] == "qA1"][0]
+        assert [v for ts, v in series["points"] if ts not in (series.get("held") or {})] == [0.3, 0.1]
 
     def test_p2_3_every_zone_shares_one_index(self, sm):
         from types import SimpleNamespace

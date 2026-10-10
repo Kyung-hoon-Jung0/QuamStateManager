@@ -49,7 +49,8 @@ MUTATIONS = [
     ("progress_not_in_snapshots", ROUTES,
      "    if seen_total:\n        return (f\"The change history is being built from this chip's",
      "    if False:\n        return (f\"The change history is being built from this chip's",
-     "build_runs_in_the_background"),
+     # S10 mut: + the phase-switch pin (the observing step says its count through progress_words)
+     "build_runs_in_the_background or snapshot_count_stays_while_a_slice_relists"),
     ("snapshot_total_not_counted", SYNC,
      "        self.obs_total += len(fresh)\n", "",
      "build_runs_in_the_background"),

@@ -333,6 +333,21 @@ def test_note_condition(state, roots, runs, origin, offer):
     assert any(n["code"] == "no_folder_linked" for n in notes) is offer
 
 
+@pytest.mark.parametrize("state,roots,runs,origin,said", [
+    ("ready", [], True, "live", True), ("degraded", [], True, "live", True),
+    ("ready", [], True, "archive", True), ("building", [], True, "live", False),
+    ("idle", [], True, "live", False), ("ready", [{"path": "data"}], True, "live", False),
+    ("ready", [], False, "live", False)])
+def test_a_history_with_runs_and_no_folder_now_says_newer_runs_may_be_missing(state, roots, runs, origin, said):
+    # S10 mut: a history holding runs whose sync has no data folder now (an archived chip, a
+    # Versions listing after an unlink) says so under its own code, never as another note
+    notes = value_history.notes({"state": state, "roots": roots}, {"has_runs": runs}, origin=origin)
+    got = [n for n in notes if "newer runs may be missing" in n["text"]]
+    assert got == ([{"level": "info", "code": "no_folder",
+                     "text": "No data folder is linked to this chip now; newer runs may be missing."}]
+                   if said else []), notes
+
+
 def test_modal_focus_and_refresh_selfcheck():
     result = subprocess.run(["node", "tests/hub_link_folder_selfcheck.cjs"], capture_output=True,
                             text=True, encoding="utf-8", timeout=60)

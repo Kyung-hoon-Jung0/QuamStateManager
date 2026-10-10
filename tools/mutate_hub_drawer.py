@@ -73,12 +73,11 @@ MUTATIONS = [
     ("alias_read_literally", VH,
      '        plain, current, has_current = ft["resolved_path"], ft.get("resolved_value"), True',
      '        plain, current, has_current = dot_path, ft.get("resolved_value"), True',
-     [A + "test_an_alias_reads_its_holder_and_says_via"]),
+     # S10 mut: + the agent pin (its holder) -- the named pin now also says what the drawer shows
+     [A + "test_an_alias_reads_its_holder_and_says_via",
+      O + "test_the_agent_reads_the_same_points_in_the_same_words"]),
     # S10 C4: stale anchors -> current ledger and retry code, keep assertion mutations.
-    ("before_via_never_marked", VH,
-     '            p["before_via"] = _segment_at(segs[key], at) != _segment_at(hsegs[key], at)',
-     '            p["before_via"] = False',
-     [A + "test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked"]),
+    # ("before_via_never_marked" retired, S10 mut: before_via was dead since P0-1 round 3 and is deleted)
     ("pointer_to_object_reads_the_object", VH,
      '            if not container and not _long_list(val) and ptr is not None and ptr.get("is_pointer"):',
      '            if False:',
@@ -147,7 +146,9 @@ MUTATIONS = [
      '            if (value is _ABSENT and new is _ABSENT) or (\n'
      '                    value is not _ABSENT and new is not _ABSENT and rules.same(value, new)):',
      '            if (value is _ABSENT and new is _ABSENT):',
-     [E + "test_an_element_of_a_long_array_changes_" + "only_when_it_does"]),
+     # S10 mut: + the live-tail pin -- the drawn series dedupes again, the newest-change judgement does not
+     [E + "test_an_element_of_a_long_array_changes_" + "only_when_it_does",
+      E + "test_another_elements_save_is_never_judged_as_this_elements_change"]),
     # ("trends_alias_unread" retired: docs/283 (S8) moved Chip Status Trends onto the
     # change ledger and removed _trend_alias_series; its mutations live in S8's tools)
     ("js_drawer_no_retry", JS,
@@ -185,7 +186,10 @@ MUTATIONS = [
     ("p0_1_no_via_row_at_a_retarget", VH,
      '        if not first_row_at_start and not _same_or_absent(running, at_start) and start in events:',
      '        if False:',
-     [RM + "test_p0_1_after_a_return_trends_draws_each_holders_value_in_force"]),
+     # S10 mut: + a retarget alone (the aba return is an excursion since round 3) and the rename case
+     [RM + "test_p0_1_after_a_return_trends_draws_each_holders_value_in_force",
+      RM + "test_p0_1_a_retarget_alone_changes_the_value_in_force",
+      "tests/test_rename_history.py::test_a_value_the_rebuild_changed_is_a_change_of_that_qubit"]),
     # S10 C7: fold call -> saved and kept holder selection, read today instead of then.
     ('p0_3_by_run_reads_todays_holder', VH,
      (
@@ -206,10 +210,7 @@ MUTATIONS = [
      '                    and declares_another_chip(conn, index.ledger_id, f, chip)):',
      '            if False:',
      [RR + "test_p0_2_by_run_leaves_out_a_run_of_another_chip"]),
-    ("p1_1_newest_hop_row_decides", VH,
-     '            p["before_via"] = _segment_at(segs[key], at) != _segment_at(hsegs[key], at)',
-     '            p["before_via"] = at < (segs[key][-1][0] if segs[key] else 0)',
-     [RR + "test_p1_1_before_via_marks_only_rows_the_alias_did_not_name"]),
+    # ("p1_1_newest_hop_row_decides" retired, S10 mut: before_via was dead since P0-1 round 3 and is deleted)
     ("p1_1_mid_path_pointer_not_followed_at_the_time", VH,
      '        ptr = pointer_here() if cur else None', '        ptr = None',
      [RR + "test_p1_1_before_via_marks_only_rows_the_alias_did_not_name",
@@ -230,9 +231,7 @@ MUTATIONS = [
      '                          "changed": i + 1 < len(runs) and not _vh_same(v, older),',
      '                          "changed": i + 1 < len(runs) and v != older,',
      [RR + 'test_p3_nan_in_by_run_is_not_a_change']),
-    ("p3_before_via_only_by_opacity", CTPL,
-     "{% if p.before_via %}<span class=\"vh-chip-bv\">", "{% if False %}<span class=\"vh-chip-bv\">",
-     [RR + "test_p3_column_history_says_before_via_in_text"]),
+    # ("p3_before_via_only_by_opacity" retired, S10 mut: the before-via chip text is deleted with before_via)
     ("p2_1_grid_sends_the_resolved_holder", JS,
      '                open(cellBtn, input.dataset.dotPath || input.dataset.resolved || "", input);',
      '                open(cellBtn, input.dataset.resolved || input.dataset.dotPath || "", input);',
@@ -265,7 +264,9 @@ MUTATIONS = [
      [RM + "test_p1_2_a_run_landing_after_its_own_early_observation_takes_it_back"]),
     ("p1_2_sm_copy_same_before_imported", SY,
      '    if not rules.diff(lpred_flat, flat):\n        return done("same_before")', '    if False:\n        return done("same_before")',
-     [RO + "test_p1_2_an_sm_writes_own_snapshots_are_not_a_second_history"]),
+     # S10 mut: + same values saved again (the content-hash shortcut answers the SM copy first)
+     [RO + "test_p1_2_an_sm_writes_own_snapshots_are_not_a_second_history",
+      RO + "test_p1_2_a_state_saved_again_with_the_same_values_is_no_event"]),
     ("p1_2_observed_label_lost", RT, '        label = f"seen by SM ({trig} snapshot)"', '        label = "a run"',
      [RO + "test_p1_2_a_state_sm_saw_between_runs_is_in_the_history"]),
     ("p2_3_extend_keeps_a_moved_event", HI,

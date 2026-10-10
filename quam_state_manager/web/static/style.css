@@ -12472,12 +12472,8 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     border: 1px solid var(--pico-muted-border-color); border-radius: .5rem;
     color: var(--color-text-muted); white-space: nowrap; }
 .vh-undone .fh-val code, .vh-chip.vh-undone code { text-decoration: line-through; }
-/* review P3: said in text on the row / chip; the dimming never hides a current value */
-.vh-before-via:not(.fh-current) td { opacity: .7; }
-.vh-chip-bv { font-size: .58rem; color: var(--color-warning-text); }
 /* the drawer's flags wrap inside the value cell, never over the When column */
 .vh-table .fh-val .vh-flag { white-space: normal; max-width: 100%; }
-.vh-flag-bv { color: var(--color-warning-text); }
 /* docs/296: a Re-generate rename -- the qubit's older rows under its old name */
 .vh-rename { margin: 0 0 .3rem; font-size: .7rem; color: var(--color-text-muted);
     border-left: 3px solid var(--pico-muted-border-color); padding: .1rem .4rem; }

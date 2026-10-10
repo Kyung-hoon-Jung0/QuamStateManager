@@ -12,9 +12,9 @@ Paths (DESIGN 3.2): the ledger keys a value by the literal holder where it is
 stored. A requested alias path (``...operations.x180.amplitude`` where ``x180``
 is ``"#./x180_DragCosine"``) is resolved ONCE, now, to its holder; the answer
 carries ``via`` (every pointer hop) and ``retargets`` (every ledger row of each
-hop's pointer holder). A value row older than the row that gave a hop its
-current pointer is marked ``before_via``: the alias did not name this holder
-then. Nothing is stitched across a retarget.
+hop's pointer holder). The value in force through the path (``effective``)
+reads, at each change, the holder the path named at that time
+(:func:`holder_at`); a retarget that changed the value is a change of its own.
 
 Renames (docs/296): a qubit renamed by Re-generate is the same qubit. The
 ledger keeps each event's paths as that event's state spelled them, and each
@@ -660,7 +660,6 @@ def _point(ev: dict, old: Any, new: Any, op: str, proven: bool, roots: dict,
         "run_uid": info.get("run_uid"), "undoes": bool(info.get("undoes")),
         "flags": _flags(flags),
         "undone": None,
-        "before_via": False,
         # S10 C1.5: another folder's event in this folder's view (recorded
         # before this folder's own history began): the folder it came from
         **({"source": ev["_source"]} if ev.get("_source") is not None else {}),
@@ -1149,11 +1148,8 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
         pts = points(raw[key])
         here = tgt["holder"]
         for p in pts:
-            # P1-1: one rule -- the holder the path named AT this row
-            # (docs/296: the holder as spelled in that row's rename era)
-            at = index.positions[p["eid"]]
-            p["before_via"] = _segment_at(segs[key], at) != _segment_at(hsegs[key], at)
-            was = _segment_at(hsegs[key], at)
+            # docs/296: the holder as spelled in that row's rename era
+            was = _segment_at(hsegs[key], index.positions[p["eid"]])
             p["recorded_as"] = was if was != here else None
         total = len(pts)
         if limit is not None and len(pts) > limit:
@@ -1167,12 +1163,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
                               # the chip's pointer now names a holder the
                               # ledger never saw this path name (not applied)
                               "unrecorded": latest != here})
-        since = None
-        for start, holder in reversed(segs[key]):
-            if holder == _segment_at(hsegs[key], start):
-                since = start
-            else:
-                break
+
         def exc_point(h, anchor, pts, back):
             """One excursion: what the chip held (the anchor's value), the
             saves that left it and were never confirmed, the save that came
@@ -1217,8 +1208,6 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
             "effective": [in_force(p) for p in points(eff[key])],
             "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
                           "holder": h} for s, h in segs[key]],
-            "via_since": (iso_z(index.t[since]) if since is not None and 0 < since < len(index.eids)
-                          else None),
             "renames": _rename_marks(hsegs[key], index, eras)}
     return out_rows, segs, asked, used, vsigs
 
@@ -1235,8 +1224,8 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
     context to use (``hub_index.context``), so this read shares its index
     with every other reader of the chip.
 
-    Each key's answer: ``points`` (the holder's own change rows, each marked
-    ``before_via`` when the path did not name that holder at the time),
+    Each key's answer: ``points`` (the holder's own change rows, each with
+    ``recorded_as`` where a rename spelled the holder otherwise then),
     ``effective`` (the value in force through the path at each change -- the
     rows of whichever holder it named then), ``retargets`` (the hops' rows).
 

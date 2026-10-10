@@ -12254,7 +12254,7 @@ def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
     cur_display = _vh_value_strings(current, False)[0] if tgt.get("has_current") else "—"
     return {"dot_path": dot_path, "tgt": tgt, "points": pts, "total": len(row["effective"]),
             "via": _vh_via_view(ans, key, uid_roots, uid_memo),
-            "via_since": row.get("via_since"), "notes": ans["notes"].get(key) or [],
+            "notes": ans["notes"].get(key) or [],
             "renames": _vh_rename_view(row.get("renames") or [], tgt.get("holder")),
             "ledger": ans["ledger"], "chart": chart if len(chart) >= 2 else [],
             "not_kept": _vh_not_kept_view(ans, key),
@@ -12302,7 +12302,7 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
     pts = _vh_points_view(ans, key, uid_roots, uid_memo)
     keep = ("t", "value", "old", "op", "removed", "kind", "provenance", "proven", "label",
             "sub", "title", "run_id", "experiment", "actor", "src", "plan_id", "run_uid", "flags",
-            "undone", "before_via", "is_current", "uid", "recorded_as", "witness", "retarget")
+            "undone", "is_current", "uid", "recorded_as", "witness", "retarget")
     return {"path": tgt["path"], "holder": tgt["holder_path"], "current": tgt.get("current"),
             "via": [{k: h[k] for k in ("from_path", "pointer", "to_path")} for h in tgt["via"]],
             "retargets": [{"from_path": v["from_path"], "pointer": v["pointer"],

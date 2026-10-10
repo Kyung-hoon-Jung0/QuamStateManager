@@ -542,6 +542,21 @@ def test_the_build_runs_in_the_background_and_says_so(tmp_path, monkeypatch):
     assert "4 recorded changes shown" in _t(done) and 'data-vh-mode=' not in done
 
 
+def test_the_snapshot_count_stays_while_a_slice_relists(tmp_path, monkeypatch):
+    """S10 mut: mid-import the build is in another phase for a moment (a
+    slice that starts by listing again: no step words then) -- the page
+    still counts the snapshots, never drops to a message with no number."""
+    env = _archived(tmp_path)
+    _queued_only(monkeypatch)
+    _grid(env)
+    assert _one_slice(env) is True                    # one snapshot looked at, three to go
+    st = dict(hub_sync.status(env["dir"]), phase="listing")
+    assert not st["roots"] and st["observes"] and hub_sync.progress_words(st) == ""
+    for archive in (True, False):                     # an archived chip, a folderless open one
+        msg = routes._vh_wait_message({"mode": "building", "status": dict(st, archive=archive)})
+        assert "Param History snapshots (1 of 4)" in msg, msg
+
+
 def test_a_build_cut_short_is_resumed_never_read_as_complete(tmp_path, monkeypatch):
     env = _archived(tmp_path)
     _queued_only(monkeypatch)

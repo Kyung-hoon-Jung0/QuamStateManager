@@ -435,3 +435,60 @@ def test_the_wal_switch_waits_for_another_window_creating_the_ledger(tmp_path):
     finally:
         release.set()
         t.join(10)
+
+
+def test_two_windows_completing_an_older_ledgers_schema_add_each_column_once(tmp_path, monkeypatch):
+    """A ledger from before a column was added, opened by two windows at once:
+    the window that found the column missing must not add it after the other
+    window did ("duplicate column name" failed that window's open). The check
+    and the ALTER are one write transaction, so the second window finds the
+    schema complete. Forced: window A stops right before its ALTER until
+    window B's open has finished (or 2 s pass)."""
+    chip = tmp_path / "chip"
+    with hub_store_mod.HubStore(chip):
+        pass
+    con = sqlite3.connect(str(chip / "ledger.sqlite"), isolation_level=None)
+    con.execute("ALTER TABLE sm_events DROP COLUMN jpos")     # a ledger from before the column
+    con.close()
+    at_alter, b_done = threading.Event(), threading.Event()
+    real = hub_store_mod.HubStore._create_schema
+
+    def create_schema(self):
+        if threading.current_thread().name == "window-a":
+            def hold(action, *_args):
+                if action == sqlite3.SQLITE_ALTER_TABLE and not at_alter.is_set():
+                    at_alter.set()
+                    b_done.wait(2.0)
+                return sqlite3.SQLITE_OK
+            self.conn.set_authorizer(hold)
+        return real(self)
+    monkeypatch.setattr(hub_store_mod.HubStore, "_create_schema", create_schema)
+    opened: dict = {}
+
+    def window():
+        name = threading.current_thread().name
+        try:
+            with hub_store_mod.HubStore(chip):
+                opened[name] = "opened"
+        except Exception as exc:  # noqa: BLE001 -- the failure is what this pin reports
+            opened[name] = f"{type(exc).__name__}: {exc}"
+        finally:
+            if name == "window-b":
+                b_done.set()
+    a = threading.Thread(target=window, name="window-a")
+    a.start()
+    try:
+        assert at_alter.wait(30), "window A never reached its ALTER"
+        b = threading.Thread(target=window, name="window-b")
+        b.start()
+        b.join(60)
+    finally:
+        b_done.set()
+        a.join(60)
+    assert opened == {"window-a": "opened", "window-b": "opened"}, f"a window failed to open: {opened}"
+    con = sqlite3.connect(str(chip / "ledger.sqlite"))
+    try:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(sm_events)")]
+    finally:
+        con.close()
+    assert cols.count("jpos") == 1, cols

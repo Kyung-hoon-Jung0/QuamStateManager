@@ -134,9 +134,9 @@ async function openCellHistory(b, dotPath, tag, colKey) {
   const bv = await b.ev(`(function(){var p=document.getElementById('field-history-panel');
       return [...p.querySelectorAll('tr.vh-row')].map(r=>[r.classList.contains('vh-before-via'), [...r.querySelectorAll('.vh-flag')].map(f=>f.textContent).join('|')])})()`);
   console.log(JSON.stringify(bv));
-  ok(bv && bv.some(r => r[0] && /before readout pointed here/.test(r[1])),
-     'alias cell: the change made while readout named another holder says so in text');
-  ok(bv && bv.length > 1 && bv.some(r => !r[0]), 'alias cell: rows from while readout named this holder are not marked');
+  // S10 mut: old -> new, P0-1 round 3 shows the value in force: no row is "before readout pointed here"
+  ok(bv && bv.length > 0 && bv.every(r => !r[0] && !/pointed here/.test(r[1])),
+     'alias cell: every row is the value in force through readout; none is marked before it');
   await b.shot(path.join(SHOTS, '4_alias_drawer.png'));
   await b.key('Escape', 'Escape', 27);
   await sleep(250);
@@ -153,7 +153,8 @@ async function openCellHistory(b, dotPath, tag, colKey) {
   ok(ac && /via readout\s*→\s*readout_square/.test(ac.via), 'alias column: Column History names the hop (via readout → readout_square)');
   ok(ac && al && JSON.stringify(ac.vals) === JSON.stringify(al.rows.map(r => r[0])),
      'alias column: Column History shows the same points as the drawer for qA1 (' + (ac && ac.vals.join(', ')) + ')');
-  ok(ac && ac.bv > 0, 'alias column: the marked change says "before readout pointed here" in text, not only by opacity');
+  // S10 mut: old -> new, P0-1 round 3 shows the value in force: no chip is "before readout pointed here"
+  ok(ac && ac.bv === 0, 'alias column: no chip is marked "before readout pointed here"');
   await b.shot(path.join(SHOTS, '4b_alias_column.png'));
   // P0-2 / P0-3: By run -- the value IN FORCE at each run through the alias, and no foreign run
   await clickSel(b, '.ch-overlay .ch-tab[data-view="byrun"]');
