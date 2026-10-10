@@ -477,6 +477,43 @@ def test_cli_output_strings_are_ascii():
     assert not offenders, offenders
 
 
+class TestLegacyCodepageOutput:
+    """v1.3.0 B3: `qsm show qA1 > out.txt` on a Korean Windows (stdout redirected,
+    so encoded cp949, which has no micro sign) died with UnicodeEncodeError on the
+    first microsecond value. Run in a real subprocess: CliRunner's stream is
+    UTF-8 and cannot reach this."""
+
+    @staticmethod
+    def _run(args, cwd):
+        import os
+        import subprocess
+        import sys
+        env = dict(os.environ)
+        env.pop("PYTHONUTF8", None)
+        env["PYTHONIOENCODING"] = "cp949"
+        env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
+        env["LOCALAPPDATA"] = str(Path(cwd) / "appdata")
+        return subprocess.run([sys.executable, "-X", "utf8=0", "-m", "quam_state_manager.cli", *args],
+                              capture_output=True, cwd=str(cwd), env=env, timeout=300)
+
+    def test_a_microsecond_table_survives_a_cp949_stdout(self, synth_folder):
+        r = self._run(["show", "qA1", "-f", str(synth_folder), "--section", "coherence"], synth_folder)
+        out = r.stdout.decode("cp949")
+        assert r.returncode == 0, r.stderr.decode("cp949", "replace")[-600:]
+        row = next(line for line in out.splitlines() if "T2ramsey" in line)
+        assert "1.50 us" in row, row
+
+    def test_json_stays_lossless_on_a_cp949_stdout(self, synth_folder):
+        state = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+        note = "set at 1.5 \u00b5s \u2014 \ud55c"
+        state["qubits"]["qA1"]["note_text"] = note
+        (synth_folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        r = self._run(["search", "note_text", "-f", str(synth_folder), "--json"], synth_folder)
+        assert r.returncode == 0, r.stderr.decode("cp949", "replace")[-600:]
+        got = json.loads(r.stdout.decode("cp949"))
+        assert [x["value"] for x in got["results"] if x["dot_path"] == "qubits.qA1.note_text"] == [note]
+
+
 class TestVersionStringsAgree:
     """`pyproject.toml` and `__init__.py` must declare the SAME version.
 
@@ -514,3 +551,16 @@ class TestVersionStringsAgree:
         text = (self._root() / "CHANGELOG.md").read_text(encoding="utf-8")
         assert ("## v%s " % v) in text or ("## v%s\n" % v) in text, (
             "CHANGELOG.md has no '## v%s' heading" % v)
+
+    def test_the_mcp_server_reports_the_package_version(self):
+        """v1.3.0 B3: the MCP server's ``serverInfo.version`` was a third
+        hand-edited copy of the version; it now follows the package's."""
+        import os
+        import subprocess
+        import sys
+        code = ("import quam_state_manager as q; q.__version__ = '9.8.7'; "
+                "from quam_state_manager import mcp; print(mcp.SERVER['version'])")
+        env = dict(os.environ, PYTHONPATH=str(self._root()))
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120)
+        assert r.returncode == 0, r.stderr[-600:]
+        assert r.stdout.strip().splitlines()[-1] == "9.8.7"

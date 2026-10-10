@@ -78,9 +78,9 @@ def _day_arg() -> str:
 
 
 def _today():
-    from zoneinfo import ZoneInfo
+    from quam_state_manager.core import project_time
     zone = (_r()._display_zone() or {}).get("zone")
-    return datetime.now(ZoneInfo(zone) if zone else None).strftime("%Y-%m-%d")
+    return datetime.now(project_time.tzinfo_for(zone)).strftime("%Y-%m-%d")
 
 
 def _ledger_context():

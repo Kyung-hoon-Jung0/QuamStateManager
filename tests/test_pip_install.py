@@ -122,3 +122,16 @@ def test_wheel_install_serves_a_page(tmp_path):
     want = sorted(str(f.relative_to(src)) for f in src.rglob("*") if f.is_file())
     got = sorted(str(f.relative_to(shipped)) for f in shipped.rglob("*") if f.is_file())
     assert want and got == want, (len(want), len(got), sorted(set(want) - set(got))[:5])
+    # v1.3.0 B3: every tracked file of the package ships, not only the packs --
+    # a data file a new feature reads at run time fails here, whichever
+    # package-data / MANIFEST.in rule left it out
+    try:
+        tracked = subprocess.run(["git", "ls-files", "quam_state_manager"], cwd=_REPO, capture_output=True,
+                                 text=True, encoding="utf-8", timeout=60).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        tracked = []
+    if tracked:
+        shipped_all = {f.relative_to(site).as_posix() for f in (site / "quam_state_manager").rglob("*")
+                       if f.is_file() and "__pycache__" not in f.parts}
+        missing = sorted(set(tracked) - shipped_all)
+        assert not missing, (len(missing), missing[:10])

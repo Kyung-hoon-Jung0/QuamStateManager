@@ -16,7 +16,6 @@ import sqlite3
 import sys
 import threading
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from quam_state_manager.core import hub_sync, project_time, search_query
 from quam_state_manager.core.hub_store import segments
@@ -183,7 +182,7 @@ class LedgerIndex:
         views = self.__dict__.setdefault("_views", {})
         view = views.get(zone)
         if view is None:
-            tz = ZoneInfo(zone)
+            tz = project_time.tzinfo_for(zone)
             days: dict[str, set] = {}
             for eid, t in zip(self.eids, self.t):
                 day = (_EPOCH + timedelta(microseconds=t)).astimezone(tz).date().isoformat()

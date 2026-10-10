@@ -641,9 +641,9 @@ def _empty_day(chip, day, history, instance_path=None):
 
 
 def _hub_clock(instant, ledger, fmt="%H:%M:%S"):
+    from quam_state_manager.core import project_time
     from quam_state_manager.core.hub_index import _binding
-    from zoneinfo import ZoneInfo
-    return datetime.fromtimestamp(instant / 1e6, ZoneInfo(_binding(ledger)[1])).strftime(fmt)
+    return datetime.fromtimestamp(instant / 1e6, project_time.tzinfo_for(_binding(ledger)[1])).strftime(fmt)
 
 
 def entry_op(row: Mapping) -> str:

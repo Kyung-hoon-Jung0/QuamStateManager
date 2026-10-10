@@ -20,9 +20,12 @@ Usage::
 
 from __future__ import annotations
 
+import codecs
 import json as _json
 import math
 import re
+import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +89,57 @@ def _main_callback(
     ),
 ) -> None:
     """Top-level callback so --version works without a subcommand."""
+    _never_fail_on_encoding()
     return
+
+
+# v1.3.0 B3: a redirected or piped stdout on a legacy-codepage Windows (cp949
+# on Korean Windows) has no micro sign, so `qsm show qA1 > out.txt` died with
+# UnicodeEncodeError on the first "us" value. A character the stream cannot
+# encode now becomes a short ASCII stand-in (micro sign -> "u": one column, so
+# the table stays aligned), else its compatibility form when that encodes,
+# else "?".
+_ASCII_STAND_IN = {"\u00b5": "u", "\u03bc": "u", "\u03a9": "Ohm", "\u00b0": "deg", "\u00b1": "+/-",
+                   "\u00d7": "x", "\u2192": "->", "\u2190": "<-", "\u2026": "...", "\u2014": "-",
+                   "\u2013": "-", "\u0394": "d", "\u2264": "<=", "\u2265": ">=", "\u00b7": "."}
+_ENCODE_FALLBACK = "quam_state_manager.cli.fallback"
+
+
+def _stand_in(ch: str, encoding: str) -> str:
+    for alt in (_ASCII_STAND_IN.get(ch, ""), unicodedata.normalize("NFKC", ch)):
+        if alt and alt != ch:
+            try:
+                alt.encode(encoding)
+                return alt
+            except (UnicodeEncodeError, LookupError):
+                continue
+    return "?"
+
+
+def _encode_fallback(exc: UnicodeError) -> tuple[str, int]:
+    if not isinstance(exc, UnicodeEncodeError):
+        raise exc
+    return "".join(_stand_in(c, exc.encoding) for c in exc.object[exc.start:exc.end]), exc.end
+
+
+def _stream_is_utf(stream) -> bool:
+    enc = (getattr(stream, "encoding", None) or "").lower().replace("-", "").replace("_", "")
+    return enc.startswith("utf")
+
+
+def _never_fail_on_encoding() -> None:
+    """Make stdout/stderr substitute what their codepage cannot encode instead of raising."""
+    try:
+        codecs.lookup_error(_ENCODE_FALLBACK)
+    except LookupError:
+        codecs.register_error(_ENCODE_FALLBACK, _encode_fallback)
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None or _stream_is_utf(stream) or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(errors=_ENCODE_FALLBACK)
+        except (ValueError, OSError, AttributeError):
+            continue
 
 
 def _json_dump(payload: Any) -> None:
@@ -97,7 +150,8 @@ def _json_dump(payload: Any) -> None:
             return str(o)
         return repr(o)
 
-    typer.echo(_json.dumps(payload, default=_default, ensure_ascii=False))
+    # v1.3.0 B3: escaped (lossless, still valid JSON) when stdout is not UTF-8
+    typer.echo(_json.dumps(payload, default=_default, ensure_ascii=not _stream_is_utf(sys.stdout)))
 
 _SECTION_KEYS: dict[str, list[str]] = {
     "frequency": ["f_01", "f_12", "anharmonicity", "chi", "xy_RF_frequency", "readout_frequency", "readout_RF_frequency"],

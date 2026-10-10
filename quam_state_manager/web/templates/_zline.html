@@ -4,7 +4,7 @@
    and every refusal live in core/zline_filters.py; zline.js only draws. #}
 <div id="zline-root" class="zline-root" data-selected="{{ selected }}">
 <div class="table-header-row">
-    <h2>Z-line distortion <small class="muted">({{ rows | length }} flux line{{ '' if rows|length == 1 else 's' }})</small></h2>
+    <h2>Z-line distortion{% if not missing %} <small class="muted">({{ rows | length }} flux line{{ '' if rows|length == 1 else 's' }})</small>{% endif %}</h2>
 </div>
 <p class="muted zline-lede">
     What the port's output filters do to a flux pulse: the <strong>exponential</strong> (IIR) and
@@ -12,7 +12,9 @@
     A model of the documented filter, not a replay of the firmware.
 </p>
 
-{% if rows %}
+{% if missing %}
+<p class="muted zline-missing" role="status" style="text-align:center;padding:2rem">{{ missing }}</p>
+{% elif rows %}
 <table id="zline-table" class="data-table zline-table" role="grid">
     <thead>
         <tr>

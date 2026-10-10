@@ -45,8 +45,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-import h5py
 import numpy as np
+
+try:
+    import h5py
+except ImportError:   # v1.3.0 B3: NetCDF files still read (scipy); HDF5 ones say why not
+    h5py = None
 
 from quam_state_manager.core.dataset import _h5_lock_for
 from quam_state_manager.core.loader import natural_key
@@ -460,6 +464,8 @@ def _open_reader(h5_path: Path):
         finally:
             r.close()
     else:
+        if h5py is None:
+            raise ModuleNotFoundError("No module named 'h5py'", name="h5py")
         with h5py.File(h5_path, "r") as f:
             yield _H5Reader(f)
 
@@ -518,6 +524,9 @@ def probe_file(h5_path: Path) -> dict:
                                                 else v)
     except OSError as exc:
         return {"ok": False, "error": f"Cannot open the data file: {exc}", "vars": []}
+    except ImportError as exc:
+        return {"ok": False, "vars": [], "error": f"Reading this file needs {exc.name or 'h5py'}, "
+                                                  "which cannot be imported in this Python environment."}
     except Exception as exc:   # noqa: BLE001 — never-crash contract
         logger.warning("ndview probe failed for %s", h5_path, exc_info=True)
         return {"ok": False, "error": f"Unreadable data file ({type(exc).__name__})", "vars": []}
