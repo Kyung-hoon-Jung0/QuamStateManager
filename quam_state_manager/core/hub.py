@@ -997,6 +997,13 @@ def set_prewarm(value: bool) -> None:
     PREWARM = bool(value)
 
 
+def index_prewarm_busy() -> bool:
+    """v1.3.0 (perf, A1): the read index of a chip whose ledger just caught up
+    is being built (the first drawer waits for it): background work yields."""
+    with _PREWARM_LOCK:
+        return _PREWARM_THREAD is not None
+
+
 def _prewarm_soon(dirs) -> None:
     global _PREWARM_THREAD
     with _PREWARM_LOCK:

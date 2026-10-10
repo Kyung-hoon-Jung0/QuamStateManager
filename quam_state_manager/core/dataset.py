@@ -18,10 +18,11 @@ import threading
 import time as _time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace as _dc_replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator
 
 from quam_state_manager.core import dir_sample
 from quam_state_manager.core import run_time as _run_time
@@ -65,6 +66,34 @@ _STORE_CACHE_V = 3
 _STORE_CACHE_DEBOUNCE_S = 30.0
 
 _SCAN_PARSE_WORKERS = min(32, (os.cpu_count() or 4) * 4)
+# Runs parsed between two deadline checks of a bounded scan (docs/142).
+_SCAN_CHUNK = 256
+
+# v1.3.0 (perf, A1): a BACKGROUND caller's yield point. The parse pool above is
+# sized for I/O latency (a share), but the parse itself holds the interpreter:
+# a cold 3,500-run scan is ~12 s of it whatever the worker count (measured 1 to
+# 32 workers on a local disk), and the history catch-up that ran beside it took
+# ~22 s instead of ~9 s. A caller that is not a person waiting on the Datasets
+# page (the global long poll building a store, the index warmer finishing one)
+# scans under ``yielding_scan``: the parse runs in small chunks and stops --
+# exactly as at a deadline, so the next scan continues it -- as soon as
+# ``should_yield()`` says the interpreter is wanted elsewhere. Thread-local:
+# a foreground request's scan never sees another thread's setting.
+_SCAN_YIELD = threading.local()
+_YIELD_CHUNK = 64
+
+
+@contextmanager
+def yielding_scan(should_yield: Callable[[], bool],
+                  chunk: int = _YIELD_CHUNK) -> Iterator[None]:
+    """Scans on THIS thread stop at their next chunk once ``should_yield()``
+    is true (at least one chunk is always parsed, so every call progresses)."""
+    prev = getattr(_SCAN_YIELD, "v", None)
+    _SCAN_YIELD.v = (should_yield, max(1, int(chunk)))
+    try:
+        yield
+    finally:
+        _SCAN_YIELD.v = prev
 
 # Phase 4 §4 — whitelist for the HDF5 ``which`` query parameter. Without
 # this, a crafted ``?which=../somewhere`` joined into ``f"{which}.h5"``
@@ -1014,14 +1043,16 @@ class DatasetStore:
             # so the next scan's date-dir check falls through and re-offers
             # exactly them (the standard truncation-continuation semantics).
             results = []
+            yld = getattr(_SCAN_YIELD, "v", None)
             with ThreadPoolExecutor(max_workers=workers) as ex:
-                if deadline is None:
+                if deadline is None and yld is None:
                     results = list(ex.map(_parse_one, to_parse))
                 else:
-                    CHUNK = 256
+                    CHUNK = yld[1] if yld is not None else _SCAN_CHUNK
                     done = 0
                     for i in range(0, len(to_parse), CHUNK):
-                        if _time.monotonic() >= deadline and done:
+                        if done and ((deadline is not None and _time.monotonic() >= deadline)
+                                     or (yld is not None and yld[0]())):
                             truncated = True
                             break
                         chunk = to_parse[i:i + CHUNK]

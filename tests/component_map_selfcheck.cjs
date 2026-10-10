@@ -59,7 +59,9 @@ function makeWorld(bodyHtml) {
   const win = dom.window;
   win._htmxCalls = [];
   win.htmx = { ajax: function () { win._htmxCalls.push(Array.prototype.slice.call(arguments)); } };
-  win.fetch = function () {
+  win._fetchUrls = [];
+  win.fetch = function (url) {
+    win._fetchUrls.push(String(url));
     return win.Promise.resolve({ ok: true, json: function () { return win.Promise.resolve(JSON.parse(JSON.stringify(TOPO))); } });
   };
   new win.Function(TOPO_JS + '\n;\n' + CMAP_JS).call(win);
@@ -279,6 +281,10 @@ async function checkComponentMap() {
 
   const body = doc.querySelector('.cmap-body');
   ok(!!body.querySelector('svg.cm-svg'), 'mount fetches /api/topology and renders the layout');
+  // v1.3.0 (perf): the map asks for the layout alone -- never the Chip Status
+  // enrichment whose RB run lookup scans the Datasets index on a cold open
+  ok(win._fetchUrls.length === 1 && win._fetchUrls[0] === '/api/topology?layout=1',
+     'the map requests the structure-only topology (got ' + JSON.stringify(win._fetchUrls) + ')');
 
   // map -> table: hovering a stone lights its row
   const stone = body.querySelector('[data-cm="q:qA1"]');
