@@ -26,6 +26,23 @@
 {%- for f in r.flags or [] %}<span class="sv-flag{% if cls %} {{ cls }}{% endif %}">{{ f }}</span>{% endfor -%}
 {%- endmacro %}
 
+{% macro version_label(r, query, target) -%}
+{%- for m in r.annotations or [] %}
+<span class="version-label-edit">
+    <button type="button" class="outline btn-xs" data-version-label-open
+            title="Label the snapshot of {{ m.timestamp | format_ts_zone }}">Label</button>
+    <form hidden class="version-label-form"
+          hx-post="/state-history/{{ m.timestamp }}/label?{{ query }}"
+          hx-target="{{ target }}" hx-swap="innerHTML">
+        <input type="text" name="label" maxlength="80" value="{{ m.label or '' }}"
+               aria-label="Version label" title="Enter saves; Escape cancels; empty clears">
+        <button type="submit" class="outline btn-xs">Save</button>
+        <button type="button" class="outline btn-xs" data-version-label-cancel>Cancel</button>
+    </form>
+</span>
+{%- endfor %}
+{%- endmacro %}
+
 {# S10 walk: a LISTING keeps another folder's rows (docs/250); each such row says
    it is not this folder's, and its title says why it is listed at all. #}
 {% macro foreign_tag(r, cls='') -%}

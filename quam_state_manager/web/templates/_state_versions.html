@@ -1,5 +1,5 @@
 {% from '_delta_macros.html' import delta_chip %}
-{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag, version_flags %}
+{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag, version_flags, version_label %}
 {% from '_version_count.html' import version_count %}
 {# docs/120 item 10 — the version list the top-bar chip opens.
 
@@ -121,7 +121,7 @@
                were right-pinned across a 46rem panel, which put ~20rem of
                nothing between the two things the row is used for. Ordered
                here rather than by CSS `order` so tab order matches what the
-               eye sees: checkbox -> Diff -> Pull to Live -> next row. #}
+               eye sees: checkbox -> Diff -> Pull to Live -> metadata. #}
             <span class="sv-row-actions">
                 {# Read-only preview FIRST (docs/128, customer): what this
                    version holds against NOW, one click, nothing written —
@@ -222,6 +222,7 @@
                 {% if r.pinned %}<span class="sv-pin" title="Pinned — exempt from pruning">&#128204;</span>{% endif %}
                 {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
                 {% if r.label %}<span class="sv-label">{{ r.label }}</span>{% endif %}
+                {{ version_label(r, 'listing=versions&limit=' ~ (rows | length), '#state-version-panel') }}
                 {% if r.experiment and r.run_id is none %}<span class="sv-exp muted">after {{ r.experiment }}</span>{% endif %}
                 {% if r.note %}<span class="sv-note muted">{{ r.note }}</span>{% endif %}
             </span>

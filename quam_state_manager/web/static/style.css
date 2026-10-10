@@ -11241,6 +11241,10 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .sh-note { font-size: 0.82em; color: var(--pico-muted-color); margin: 0.1rem 0 0 1.4rem; white-space: pre-wrap; }
 .sh-entry-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 0.4rem 0 0 1.4rem; }
 .sh-entry-actions button { margin: 0; }
+.version-label-edit { display: inline-flex; align-items: center; max-width: 100%; min-width: 0; }
+.version-label-form { display: inline-flex; gap: 0.25rem; align-items: center; flex-wrap: wrap; max-width: 100%; margin: 0; }
+.version-label-edit [hidden] { display: none !important; }
+.version-label-form input { width: 12rem; max-width: 40vw; min-width: 0; flex: 1 1 8rem; margin: 0; padding: 0.15rem 0.3rem; font-size: 0.8rem; }
 .sh-restore-live { border-color: #c62828; }
 .sh-detail { margin: 0.5rem; }
 

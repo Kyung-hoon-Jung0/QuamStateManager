@@ -5489,14 +5489,20 @@ window.ChipStatus.mount = function (opts) {
     // Chip health summary — broken? (diagnostics) · stale? (recency) ·
     // in spec? (verdict vs thresholds). Built from topo.summary + thresholds.
     // ══════════════════════════════════════════════════════════════════
-    function _daysAgo(ms) { return ms ? Math.floor((Date.now() - ms) / 86400000) : null; }
+    function _daysAgo(ms) {
+        if (!ms) return null;
+        // metaInfo.when uses SnapTime's project zone, like the row's timestamp.
+        function day(t) {
+            return Date.parse(window.ChipStatus.metaInfo.when(t).slice(0, 10) + 'T00:00:00Z');
+        }
+        return (day(Date.now()) - day(ms)) / 86400000;
+    }
     function _ageLabel(ms) {
         var d = _daysAgo(ms);
         if (d === null) return '—';
         if (d <= 0) return 'today';
         if (d === 1) return 'yesterday';
-        if (d < 30) return d + ' days ago';
-        var mo = Math.round(d / 30); return mo + (mo === 1 ? ' month' : ' months') + ' ago';
+        return d + ' days ago';
     }
     function _ageClass(ms) {
         var d = _daysAgo(ms);

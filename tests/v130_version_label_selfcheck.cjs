@@ -1,0 +1,56 @@
+/* Inline editing against the real Flask-rendered macro and shipped script. */
+'use strict';
+const assert = require('assert/strict');
+const fs = require('fs');
+const path = require('path');
+const { JSDOM } = require('jsdom');
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const dom = new JSDOM('<!DOCTYPE html><html><body>' + html + '</body></html>',
+  { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
+const win = dom.window;
+const root = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
+win.fetch = () => new Promise(() => {});
+win.Function(fs.readFileSync(path.join(root, 'app.js'), 'utf8')).call(win);
+win.Function(fs.readFileSync(path.join(root, 'version-label.js'), 'utf8')).call(win);
+const form = [...win.document.querySelectorAll('.version-label-form')]
+  .find(el => el.getAttribute('hx-post') === process.argv[3]);
+assert.ok(form, 'snapshot label form rendered');
+const editor = form.closest('.version-label-edit');
+const open = editor.querySelector('[data-version-label-open]');
+const input = form.elements.label;
+let sent = [], outerEscapes = 0;
+form.addEventListener('submit', e => {
+  e.preventDefault();
+  sent.push([...new win.FormData(form).entries()]);
+});
+win.document.addEventListener('keydown', e => { if (e.key === 'Escape') outerEscapes++; });
+const key = name => input.dispatchEvent(new win.KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true }));
+assert.ok(form.hidden);
+open.focus();
+open.click();
+assert.equal(form.hidden, false);
+assert.equal(open.hidden, true);
+assert.equal(win.document.activeElement, input);
+assert.equal(input.maxLength, 80);
+input.value = 'after';
+key('Enter');
+assert.deepEqual(sent, [[['label', 'after']]], 'Enter saves only the label');
+sent = [];
+input.value = 'discard';
+key('Escape');
+assert.deepEqual(sent, [], 'Escape never saves');
+assert.equal(outerEscapes, 0, 'Escape stays in the inline editor');
+assert.equal(form.hidden, true);
+assert.equal(open.hidden, false);
+assert.equal(input.value, 'before');
+assert.equal(win.document.activeElement, open);
+open.click();
+input.value = '';
+key('Enter');
+assert.deepEqual(sent, [[['label', '']]], 'Empty is sent explicitly to clear');
+editor.querySelector('[data-version-label-cancel]').click();
+assert.equal(form.hidden, true);
+assert.equal(win.document.activeElement, open);
+assert.equal(input.value, 'before');
+dom.window.close();
+console.log('Inline label: Enter, Escape, clear, cancel, focus passed');
