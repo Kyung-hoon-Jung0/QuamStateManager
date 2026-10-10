@@ -25594,6 +25594,16 @@ window.ColumnHistory = (function () {
         } catch (e) { return null; }
     }
 
+    // v1.3.0: the grid shows a number grouped ("5,075,187,484.52453") and the
+    // history fills it plain ("5075187484.52453") -- one value, two spellings.
+    // Compared as exact decimals (ValueDelta), else as text, so a click on the
+    // value the cell already holds never marks the cell edited.
+    function _sameAsCell(cellText, fill) {
+        if (cellText === fill) return true;
+        var d = window.ValueDelta ? window.ValueDelta.compute(cellText, fill) : null;
+        return !!(d && d.dir === "same");
+    }
+
     function _fill(input, value) {
         input.value = value;
         input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -25610,7 +25620,7 @@ window.ColumnHistory = (function () {
             if (window.showToast) showToast(row + ": cell is not editable here");
             return;
         }
-        if (input.value === v) {
+        if (_sameAsCell(input.value, v)) {
             if (window.showToast) showToast(row + ": already this value");
             return;
         }
@@ -25635,7 +25645,7 @@ window.ColumnHistory = (function () {
             var v = td.getAttribute("data-fill");
             var input = row ? _gridInput(row) : null;
             if (!input || input.readOnly) { skipped++; return; }
-            if (input.value === v) return;          // already there — no-op
+            if (_sameAsCell(input.value, v)) return;   // already there — no-op
             cells.push({ dp: input.dataset.dotPath, prev: input.value, next: v });
             _fill(input, v);
             filled++;

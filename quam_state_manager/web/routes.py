@@ -7803,6 +7803,8 @@ def load():
 
     _remember_load_path(folder)
     _maybe_auto_add_workspace_root(folder)
+    # v1.3.0: "Re-open" on a page reloaded after a restart lands back on that page
+    landing = _safe_next(request.form.get("next")) or url_for("main.explorer")
 
     # HX-Redirect forces a full client navigation so base.html re-renders with a
     # FRESH chip-identity tray + origin badge. A plain redirect would be
@@ -7811,9 +7813,9 @@ def load():
     # live-vs-archive safety trap. Mirrors /dataset/<uid>/load-state.
     if _is_htmx():
         resp = make_response()
-        resp.headers["HX-Redirect"] = url_for("main.explorer")
+        resp.headers["HX-Redirect"] = landing
         return resp
-    return redirect(url_for("main.explorer"))
+    return redirect(landing)
 
 
 # ======================================================================
@@ -9861,6 +9863,37 @@ def _undo_next_preview(ctx, changes) -> dict | None:
         what = (f"{a.get('path')} {_fmt_msg_val(a.get('new'))} → "
                 f"{_fmt_msg_val(a.get('old'))}")
     return {"path": a.get("path"), "what": what, "n": len(ents), "live": live}
+
+
+def _resume_offer() -> dict | None:
+    """v1.3.0: the chip that was open before SM restarted (the last State Load),
+    offered back when NO chip is open now and its folder still holds a
+    state.json -- what a page reloaded after a restart needs, instead of
+    "load a chip" or "open the data folder"."""
+    if _active_ctx():
+        return None
+    try:
+        data = _load_session()
+        path = data.get("last_quam_state_path")
+        if not isinstance(path, str) or not path or not (Path(path) / "state.json").is_file():
+            return None
+        return {"path": path, "name": _chip_display_name(Path(path))}
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _safe_next(raw) -> str | None:
+    """A same-site page path to land on after /load, or None."""
+    nxt = str(raw or "").strip()
+    if (not nxt.startswith("/") or nxt.startswith("//") or "\\" in nxt
+            or len(nxt) > 2000 or nxt.split("?", 1)[0] in ("/load", "/")):
+        return None
+    return nxt
+
+
+@bp.app_context_processor
+def _resume_offer_context():
+    return {"resume_offer": _resume_offer}
 
 
 @bp.app_context_processor
@@ -31491,6 +31524,69 @@ def _has_experiment_descendant(root: Path, max_depth: int = 4) -> bool:
     return False
 
 
+#: v1.3.0: how long the folder browser waits for a network share to answer.
+#: Windows blocks a file call on an unreachable share for 20-60 s, holding
+#: the request (and a server thread) the whole time.
+_NET_PROBE_BUDGET_S = 4.0
+#: how long a share's last answer is reused before it is asked again
+_NET_PROBE_TTL_S = 10.0
+_NET_PROBES: dict[str, dict] = {}
+_NET_PROBE_LOCK = threading.Lock()
+
+
+def _net_probe(root: str) -> bool:
+    """The blocking question itself (a seam for tests)."""
+    return os.path.isdir(root)
+
+
+def _network_root(p: Path) -> str | None:
+    """The share root of a UNC path (``\\\\host\\share``) or a mapped network
+    drive (``Z:\\``), else None. Never touches the network."""
+    s = str(p)
+    if s.startswith(("\\\\", "//")):
+        parts = [x for x in re.split(r"[\\/]+", s) if x]
+        return ("\\\\" + parts[0] + "\\" + parts[1]) if len(parts) >= 2 else None
+    if os.name == "nt" and len(s) >= 2 and s[1] == ":" and s[0].isalpha():
+        root = s[0].upper() + ":\\"
+        try:
+            import ctypes
+            if ctypes.windll.kernel32.GetDriveTypeW(root) == 4:      # DRIVE_REMOTE
+                return root
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def _network_reachable(root: str, budget_s: float | None = None) -> bool:
+    """Does the share *root* answer within *budget_s*? The question runs on a
+    daemon thread: past the budget the request answers "not reachable" while
+    the thread waits out the OS. One question per share at a time (a share
+    still being asked counts as unreachable), and an answer is reused for
+    ``_NET_PROBE_TTL_S``."""
+    budget = _NET_PROBE_BUDGET_S if budget_s is None else budget_s
+    now = time.monotonic()
+    with _NET_PROBE_LOCK:
+        rec = _NET_PROBES.get(root)
+        if rec is not None and not rec["done"]:
+            return False
+        if rec is not None and now - rec["at"] < _NET_PROBE_TTL_S:
+            return rec["ok"]
+        rec = {"done": False, "ok": False, "at": now, "ev": threading.Event()}
+        _NET_PROBES[root] = rec
+
+    def ask():
+        try:
+            ok = bool(_net_probe(root))
+        except Exception:  # noqa: BLE001
+            ok = False
+        rec["ok"], rec["at"], rec["done"] = ok, time.monotonic(), True
+        rec["ev"].set()
+
+    threading.Thread(target=ask, name="sm-net-probe", daemon=True).start()
+    rec["ev"].wait(budget)
+    return rec["done"] and rec["ok"]
+
+
 def _is_system_path(p: Path, for_mkdir: bool = False) -> bool:
     """Check if path points to a protected system directory.
 
@@ -31543,10 +31639,13 @@ def browse_directory():
 
     if not raw:
         if platform.system() == "Windows":
+            # v1.3.0: a mapped network drive is listed without touching it --
+            # exists() on a disconnected one blocks the request for the OS's
+            # SMB timeout; opening it then asks with a time budget
             dirs = [
                 f"{d}:\\"
                 for d in string_mod.ascii_uppercase
-                if Path(f"{d}:\\").exists()
+                if _network_root(Path(f"{d}:\\")) or Path(f"{d}:\\").exists()
             ]
             return jsonify({"path": "", "dirs": dirs, "has_quam_state": False, "parent": ""})
         # POSIX: an empty path lands in the user's home — a "/" root listing
@@ -31566,6 +31665,13 @@ def browse_directory():
             p = Path(raw).expanduser()
         except RuntimeError:            # "~" with no resolvable home
             p = Path(raw)
+
+    # v1.3.0: a network path is asked with a time budget BEFORE any file call
+    net_root = _network_root(p)
+    if net_root and not _network_reachable(net_root):
+        return jsonify({"path": raw, "dirs": [], "has_quam_state": False, "parent": "",
+                        "error": (f"Network share not reachable: {net_root} (no answer within "
+                                  f"{_NET_PROBE_BUDGET_S:g} s). Check the connection, then Retry.")})
 
     # docs/149: a FILE path (a picked config.toml, a recalled file entry)
     # lists its PARENT folder -- the file exists, so the ancestor-walk's

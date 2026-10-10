@@ -46,7 +46,14 @@
 <p class="jr-note jr-unrecorded">SM's undo journal holds {{ '{:,}'.format(s.unrecorded.n) }} edit{{ 's' if s.unrecorded.n != 1 }} from this day made before the chip history recorded SM writes ({% if s.unrecorded.since %}it records them from {{ s.unrecorded.since }}{% else %}none recorded yet{% endif %}). Whether they reached the chip was not recorded; any that did show in the next run's changes.</p>
 {% endif %}
 {% if s.no_dataset %}
+{% set _ro = resume_offer() if resume_offer is defined else None %}
+{% if _ro %}
+{# v1.3.0: after a restart no chip is open -- the fix is re-opening it, not the Datasets page #}
+<div class="jr-note warn">No chip is open in SM (it was restarted or the chip was closed), so runs cannot be listed. Journal lines still show below.
+{% include "_resume_offer.html" %}</div>
+{% else %}
 <p class="jr-note warn">No dataset folder is open in SM, so runs cannot be listed — open the chip's data folder on the Datasets page. Journal lines still show below.</p>
+{% endif %}
 {% endif %}
 
 {% endif %}

@@ -6,7 +6,10 @@
 {% if no_workspace %}
 <div class="welcome" style="max-width:600px;margin:2rem auto">
     <h2>{{ page_title }}</h2>
-    <p>Add a data folder in the <strong>Workspace</strong> panel (left sidebar) to browse experiment runs.</p>
+    {% set _ro = resume_offer() if resume_offer is defined else None %}
+    {% if _ro %}<p>No chip is open (SM was restarted or the chip was closed). Re-open it to see its runs:</p>
+    {% include "_resume_offer.html" %}{% endif %}
+    <p>{% if _ro %}Or add{% else %}Add{% endif %} a data folder with <strong>Dataset Load</strong> in the left sidebar to browse experiment runs.</p>
     <p class="muted">The data folder should contain date-formatted subfolders (e.g. 2026-03-03/) with experiment run folders inside.</p>
 </div>
 {% else %}
