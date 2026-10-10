@@ -16,6 +16,7 @@ from __future__ import annotations
 # S10 C7: old -> new, remove callerless snapshot hooks and retain ledger behavior.
 
 import json
+import re
 from pathlib import Path
 
 from quam_state_manager.web.app import create_app
@@ -141,7 +142,9 @@ def test_a_nameless_chip_that_gained_a_qubit_keeps_its_own_runs(tmp_path):
     assert (7.2e9, "run_uncertain_chip") in pts, pts
     assert not body.get("other_chip_hidden")
     drawer = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
-    assert "#32 (chip uncertain)" in drawer and "not named as writer" in drawer
+    # v1.3.0: old -> new, run names carry <wbr> break hints (A6): compare the visible text
+    seen = re.sub(r"<[^>]+>", "", drawer)
+    assert "#32 (chip uncertain)" in seen and "not named as writer" in seen
     assert 'data-note="other_chip"' not in drawer
 
 

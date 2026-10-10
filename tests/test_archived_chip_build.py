@@ -313,7 +313,8 @@ def test_the_build_reads_and_never_writes_the_live_folder(tmp_path):
     # and the run imported from its capture stays part of that folder's timeline
     # (as the capture was in Param History), never "a data folder not linked"
     page = env["client"].get("/field/history", query_string={"path": "qubits.qA1.T1"}).get_data(as_text=True)
-    assert "saved in #7 scan" in page and "not part of this folder" not in page, _t(page)[:600]
+    # v1.3.0: old -> new, the "Set by" cell may carry <wbr> break hints (A6): compare the visible text
+    assert "saved in #7 scan" in _t(page) and "not part of this folder" not in page, _t(page)[:600]
 
 
 def test_a_snapshot_whose_files_are_gone_is_counted_as_unreadable(tmp_path):
