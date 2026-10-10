@@ -110,7 +110,7 @@
         <label class="pulse-retarget-label" title="Rewrite inbound pointers to follow the new name">
             <input type="checkbox" name="retarget" value="1" checked> re-point
             {{ used_by | length }} reference(s){% if played_by_name %}
-            (played by name by {% for ref in played_by_name %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %} -- a rename is asked of that gate){% endif %}
+            (played by name by {% for ref in played_by_name %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %} &mdash; a rename is asked of that gate){% endif %}
         </label>
         <button class="btn-sm" type="submit">Rename</button>
         <button class="btn-sm outline" type="button"

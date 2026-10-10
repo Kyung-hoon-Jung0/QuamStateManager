@@ -816,7 +816,8 @@ def test_show_all_drawer_discloses_the_newest_points_cap(env, monkeypatch, total
     assert body.count('class="vh-row ') == 5000
     footer = re.search(r'<p class="fh-foot vh-foot">(.*?)</p>', body, re.S).group(1)
     assert f"newest 5,000 of {total:,} shown" in text(footer)
-    assert f"{total - 5000} older not shown" in text(footer)
+    # S10 walk (round 4, P2-7): "1123 older not shown" -> "1,123": every count grouped
+    assert f"{total - 5000:,} older not shown" in text(footer)
     assert 'class="fh-show-all"' not in body
 
 

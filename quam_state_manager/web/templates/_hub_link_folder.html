@@ -1,13 +1,13 @@
 {% if scan.state != 'ready' %}
 <div hx-get="{{ url_for('main.hub_link_folder', chip_key=chip_key) }}"
      hx-trigger="every 1s" hx-target="this" hx-swap="outerHTML" role="status">
-  checking {{ scan.done or 0 }} of {{ scan.total or 0 }} runs
+  checking {{ '{:,}'.format(scan.done or 0) }} of {{ '{:,}'.format(scan.total or 0) }} runs
 </div>
 {% else %}
 {% for row in rows %}
 <div class="hub-folder-row" data-root="{{ row.fs_key }}" data-matches="{{ row.matches }}">
   <p><code>{{ row.path }}</code></p>
-  <p>{{ row.matches }} runs match this chip, {{ row.other }} belong to other chips, {{ row.unreadable }} unreadable</p>
+  <p>{{ '{:,}'.format(row.matches) }} {{ 'run matches' if row.matches == 1 else 'runs match' }} this chip, {{ '{:,}'.format(row.other) }} {{ 'belongs to another chip' if row.other == 1 else 'belong to other chips' }}, {{ '{:,}'.format(row.unreadable) }} unreadable</p>
   {% if row.inside %}<p>this chip's state folder is inside it</p>{% endif %}
   {% if row.matches >= 1 %}
   <form hx-post="/hub/link-folder" hx-target="#hub-folder-body">

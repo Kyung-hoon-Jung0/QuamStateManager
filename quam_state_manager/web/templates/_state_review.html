@@ -27,6 +27,10 @@
 {%- set _nl = live_total | default(0) -%}
 {%- set _ne = external_total | default(0) -%}
 {%- set _nm = unsaved -%}
+{#- S10 walk r4 (P2-5): the number a sentence SAYS is the fields that will change
+    on the chip (the top bar's count, Apply's "Written to live · N"); _nm, the
+    change-log entries, stays the consent count the apply gates compare -#}
+{%- set _nf = unapplied_fields if (unapplied_fields is defined and unapplied_fields is not none) else _nm -%}
 <div class="state-review sync-panel" data-sync-state="{{ _st }}" data-sync-sig="{{ _sv.sig | default('') }}"
      data-conflicts="{{ _nc }}"
      {#- docs/120/179: the change set THIS panel showed. Keep mine's forced push
@@ -54,10 +58,10 @@
     {%- if _archive -%}
       This is run{% if _ai and _ai.run_label %} {{ _ai.run_label }}{% endif %}'s frozen quam_state, opened read-only &mdash; nothing here syncs to a live chip.{% if not (_ai and _ai.return_path) %} Load a chip folder (State Load) to edit one.{% endif %}
     {%- elif read_error -%}
-      {{ read_error }} Nothing is taken or written while it cannot be read{% if _nm %}; your {{ _nm }} unapplied edit{{ 's' if _nm != 1 }} {{ 'are' if _nm != 1 else 'is' }} safe{% endif %}. SM checks it again on every poll (a save in progress usually settles within seconds).
+      {{ read_error }} Nothing is taken or written while it cannot be read{% if _nm %}; your {{ _nf }} unapplied edit{{ 's' if _nf != 1 }} {{ 'are' if _nf != 1 else 'is' }} safe{% endif %}. SM checks it again on every poll (a save in progress usually settles within seconds).
     {%- else -%}
       {%- if _nl %}The live chip changed {{ _nl }} value{{ 's' if _nl != 1 }} since SM last synced{% else %}The live chip has not changed since SM last synced{% endif -%}
-      {%- if _nm %}; you have {{ _nm }} unapplied edit{{ 's' if _nm != 1 }}{% elif working_dirty %}; you have a saved or staged version that is not on the live chip{% endif -%}
+      {%- if _nm %}; you have {{ _nf }} unapplied edit{{ 's' if _nf != 1 }}{% elif working_dirty %}; you have a saved or staged version that is not on the live chip{% endif -%}
       {%- if _nc %}; {{ _nc }} field{{ 's' if _nc != 1 }} {{ 'are' if _nc != 1 else 'is' }} in both{% endif -%}
       . {% if _nl or _nm or working_dirty %}Nothing has been written yet.{% elif total == 0 %}No differences &mdash; what you see matches the live chip.{% else %}Nothing to do.{% endif %}
       <span class="sp-when muted">checked {{ checked_at | ts_local }}</span>
@@ -124,7 +128,7 @@
     {% endif %}
     {% if mine_rows %}
     <tbody class="sp-group sp-group-mine">
-      <tr class="sp-group-head"><td colspan="5">Your unapplied edits ({{ mine_rows | length }}) <small class="muted sp-delta-dir">&Delta; = your edit &minus; live chip</small></td></tr>
+      <tr class="sp-group-head"><td colspan="5">Your unapplied edits ({% set _mf = mine_rows | map(attribute='path') | unique | list | length %}{{ _mf }}{% if mine_rows | length > _mf %} field{{ 's' if _mf != 1 }}, {{ mine_rows | length }} changes{% endif %}) <small class="muted sp-delta-dir">&Delta; = your edit &minus; live chip</small></td></tr>
       {% for r in mine_rows %}
       <tr class="sp-row sp-row-mine tray-change-item" data-group-id="{{ r.gid or '' }}" data-path="{{ r.path }}">
         <td class="sp-path"><code class="tray-change-path" title="{{ r.path }}">{{ r.path.split('.') | map('e') | join('.<wbr>' | safe) }}</code></td>
@@ -175,7 +179,7 @@
     <button type="button" class="sp-choice sp-choice-primary btn-sync primary"
             onclick="doStateSync('apply', false, false, null, {informed: true})">
       <span class="sp-choice-label">&#8593; Apply to live</span>
-      <span class="sp-choice-what">Writes your {{ _nm }} edit{{ 's' if _nm != 1 }} to the live chip.</span>
+      <span class="sp-choice-what">Writes your {{ _nf }} edit{{ 's' if _nf != 1 }} to the live chip.</span>
       <span class="sp-lost">Lost: nothing (the live chip is backed up first).</span></button>
     {% endif %}
     {% if _can_merge %}
@@ -205,21 +209,21 @@
     {% if _nl > 0 or _nm > 0 or working_dirty %}
     {% set _loses = (_nm > 0 or working_dirty) %}
     <button type="button" class="sp-choice btn-sync outline sp-take{% if _loses %} sync-arm{% endif %}"
-            {% if _loses %}data-arm-label="Press again to discard {% if _nm %}{{ _nm }} edit{{ 's' if _nm != 1 }}{% else %}the staged version{% endif %} and take live"{% endif %}
+            {% if _loses %}data-arm-label="Press again to discard {% if _nm %}{{ _nf }} edit{{ 's' if _nf != 1 }}{% else %}the staged version{% endif %} and take live"{% endif %}
             onclick="{% if _loses %}SyncPanel.arm(this, event, function(){ doStateSync('discard', true); }){% else %}doStateSync('discard'){% endif %}">
       <span class="sp-choice-label">&#8595; Take live</span>
       <span class="sp-choice-what">Replaces what you see with the live chip. The live chip is not written.</span>
-      <span class="sp-lost">{% if _nm %}Lost: your {{ _nm }} unapplied edit{{ 's' if _nm != 1 }} &mdash; a backup is kept first; ↶ Bring back (History) restores {{ 'them' if _nm != 1 else 'it' }}.{% elif working_dirty %}Lost: the staged version &mdash; a backup is kept first (History, State History).{% else %}Lost: nothing.{% endif %}</span></button>
+      <span class="sp-lost">{% if _nm %}Lost: your {{ _nf }} unapplied edit{{ 's' if _nf != 1 }} &mdash; a backup is kept first; ↶ Bring back (History) restores {{ 'them' if _nf != 1 else 'it' }}.{% elif working_dirty %}Lost: the staged version &mdash; a backup is kept first (History, State History).{% else %}Lost: nothing.{% endif %}</span></button>
     {% endif %}
     {% if _nm > 0 %}
     <button type="button" class="sp-choice btn-sync outline sync-arm sp-discard-all"
-            data-arm-label="Press again to discard {{ _nm }} edit{{ 's' if _nm != 1 }}"
+            data-arm-label="Press again to discard {{ _nf }} edit{{ 's' if _nf != 1 }}"
             hx-post="/discard_all" hx-target="#pending-tray" hx-swap="outerHTML" hx-trigger="armed"
             data-after-request="syncPanelRefresh"
             onclick="SyncPanel.arm(this, event)">
-      <span class="sp-choice-label">Discard my {{ _nm }} edit{{ 's' if _nm != 1 }}</span>
+      <span class="sp-choice-label">Discard my {{ _nf }} edit{{ 's' if _nf != 1 }}</span>
       <span class="sp-choice-what">Keeps what SM last synced; the live chip is not touched.</span>
-      <span class="sp-lost">Lost: your {{ _nm }} edit{{ 's' if _nm != 1 }}; Ctrl+Shift+Z brings them back one by one.</span></button>
+      <span class="sp-lost">Lost: your {{ _nf }} edit{{ 's' if _nf != 1 }}; Ctrl+Shift+Z brings them back one by one.</span></button>
     <button type="button" class="sp-choice btn-sync outline btn-save"
             hx-post="/save" hx-target="#pending-tray" hx-swap="outerHTML" hx-disabled-elt="this"
             data-after-request="syncPanelRefresh">

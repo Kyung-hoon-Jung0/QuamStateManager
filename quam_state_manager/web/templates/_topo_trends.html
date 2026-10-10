@@ -50,7 +50,7 @@
             <div class="topo-trend-suggest" id="topo-trend-suggest" hidden></div>
         </span>
         {% if snapshots is defined %}
-        <span class="muted topo-trends-count">{{ snapshots }} recorded event{{ '' if snapshots == 1 else 's' }}</span>
+        <span class="muted topo-trends-count">{{ '{:,}'.format(snapshots or 0) }} recorded event{{ '' if snapshots == 1 else 's' }}</span>
         {# S10 C3: a ledger's Trends counts recorded EVENTS, the History (N) button
            counts what its drawer lists (docs/301 F14) -- never written from here.
            S10 C5: the snapshot arm's "snapshot" count and History (N) out-of-band write -> gone. #}
@@ -70,7 +70,7 @@
             <button type="button" class="topo-trend-chip topo-trend-badge{% if p.active %} active{% endif %}"
                     data-trend-path="{{ p.path }}" aria-pressed="{{ 'true' if p.active else 'false' }}"
                     title="{{ p.path }}"
-                    onclick="ChipTrends.togglePath(this.getAttribute('data-trend-path'))">{{ p.label }}{% if p.n %}<span class="muted"> · {{ p.n }}</span>{% endif %}</button>
+                    onclick="ChipTrends.togglePath(this.getAttribute('data-trend-path'))">{{ p.label }}{% if p.n %}<span class="muted"> · {{ '{:,}'.format(p.n) }}</span>{% endif %}</button>
         {% endfor %}
         </span>
         {# The badge row caps too, and a cap that quietly drops families is
@@ -117,7 +117,7 @@
                pinned row for row against ChipTrends.suggest() by
                test_trends_all_entities.py::test_the_two_row_renderers_agree. #}
             {% if c.matches %}
-            <p class="muted topo-trend-empty topo-trend-unmatched"><code>{{ c.typed }}</code> is not one parameter &mdash; it matches {{ c.n_matches }} recorded parameter{{ '' if c.n_matches == 1 else 's' }}{% if c.n_matches > c.matches|length %} (the {{ c.matches|length }} that changed most below){% endif %}. Pick one to chart it:</p>
+            <p class="muted topo-trend-empty topo-trend-unmatched"><code>{{ c.typed }}</code> is not one parameter &mdash; it matches {{ '{:,}'.format(c.n_matches) }} recorded parameter{{ '' if c.n_matches == 1 else 's' }}{% if c.n_matches > c.matches|length %} (the {{ c.matches|length }} that changed most below){% endif %}. Pick one to chart it:</p>
             <div class="topo-trend-matches">
             {% for m in c.matches %}
                 <button type="button" class="topo-trend-sug" data-path="{{ m.path }}" title="{{ m.path }}"

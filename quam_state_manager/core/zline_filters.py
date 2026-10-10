@@ -314,7 +314,7 @@ def _parse_port_filter(port: Any) -> tuple[PortFilter | None, list[dict]]:
             exps.append((1.0, h))
             notes.append(_note("warn", "hp_ideal",
                                f"high_pass_filter = {h:g} ns: on QOP >= 3.5 the ideal high-pass "
-                               "compensation integrates (A_dc = 0) -- a step output keeps rising and a "
+                               "compensation integrates (A_dc = 0) — a step output keeps rising and a "
                                "pulse that is not net-zero leaves a residual. (QOP <= 3.4 adds a 0.5 s "
                                "decay; the cascade model draws that.)"))
 

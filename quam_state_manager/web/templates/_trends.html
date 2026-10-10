@@ -27,7 +27,7 @@
 <div class="trends-filters">
     <label>Experiment:
         <select id="trend-exp-select" onchange="loadTrendData()">
-            <option value="">-- Select experiment --</option>
+            <option value="">Select an experiment</option>
             {% for exp in experiments %}
             <option value="{{ exp }}">{{ exp }}</option>
             {% endfor %}

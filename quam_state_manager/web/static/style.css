@@ -4822,10 +4822,13 @@ html.topbar-hidden .topo-subnav {
 .topo-recency.fail { color: var(--color-error-text); }
 .topo-popup-recency { text-align: right; border-top: none; margin-top: 2px; padding-top: 0; }
 /* Param-History trend sparklines inside the qubit "…more" popup. */
-.topo-spark-section .topo-spark-row { display: grid; grid-template-columns: 4.2em 4.6em 1fr; gap: 0.4rem; align-items: center; padding: 1px 0; }
+/* S10 walk (round 4): the delta column fits the one percent rule's longest form
+   (an arrow and "+1.23e-07%", 11 monospace characters) on ONE line; it wrapped
+   after the "e-" */
+.topo-spark-section .topo-spark-row { display: grid; grid-template-columns: 4.2em 5.8em 1fr; gap: 0.4rem; align-items: center; padding: 1px 0; }
 .topo-spark-section .topo-prop-label { color: var(--pico-muted-color); }
 .topo-spark-section .history-cell-spark { height: 22px; width: 100%; }
-.topo-spark-delta { font-family: monospace; font-size: 0.82em; text-align: right; color: var(--pico-muted-color); }
+.topo-spark-delta { font-family: monospace; font-size: 0.82em; text-align: right; color: var(--pico-muted-color); white-space: nowrap; }
 .topo-spark-delta.good { color: var(--color-success-text, #2e7d32); }
 .topo-spark-delta.bad { color: var(--color-error-text); }
 @keyframes topo-popup-in {
@@ -13264,7 +13267,11 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
    chip's border visually collided with Diff/Pull and the row read as
    twisted. A touch more vertical padding keeps the sv-current outline off
    the chip's border. */
+/* S10 walk r4 (P2-13): the row wraps rather than overflow the panel -- when
+   the date and the actions leave less than .sv-meta's 8rem basis, the meta
+   moves under them instead of pushing a horizontal scrollbar onto the panel. */
 .state-version-row { display: flex; align-items: center; gap: 0.5rem;
+    flex-wrap: wrap;
     padding: 0.28rem 0.25rem; border-radius: 0.25rem; }
 .state-version-row:hover { background: var(--pico-card-sectioning-background-color, transparent); }
 .state-version-row.sv-current { outline: 1px solid var(--pico-primary); }
@@ -13370,8 +13377,11 @@ td.vc-cell-takeable:focus-within .vc-take,
 .sv-quick-ord { font-family: var(--font-mono); font-size: 0.78rem;
     color: var(--pico-primary); }
 .sv-when { display: flex; flex-direction: column; line-height: 1.25; }
+/* S10 walk r4 (P2-13): every badge, label and note fits the column (a long
+   token breaks rather than pushing past the panel's edge) */
 .sv-meta { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
-    flex: 1 1 auto; min-width: 0; }
+    flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; }
+:where(.sv-meta > *) { max-width: 100%; min-width: 0; }   /* zero specificity: a child's own cap (.sv-run 8.5rem, .snap-src 16rem) still wins */
 .sv-trigger { font-size: 0.66rem; text-transform: uppercase;
     letter-spacing: 0.04em; opacity: 0.75; }
 .sv-now { font-size: 0.66rem; color: var(--pico-primary); }
@@ -13382,7 +13392,7 @@ td.vc-cell-takeable:focus-within .vc-take,
 .snap-src { font-size: 0.66rem; color: var(--pico-muted-color);
     border: 1px solid var(--pico-muted-border-color, var(--pico-form-element-border-color));
     border-radius: 999px; padding: 0 0.4rem; white-space: nowrap;
-    max-width: 16rem; overflow: hidden; text-overflow: ellipsis;
+    max-width: min(16rem, 100%); overflow: hidden; text-overflow: ellipsis;
     display: inline-block; vertical-align: middle; }
 .snap-src-unknown { border-style: dashed; }
 /* S10 walk: a listed row that is not this folder's says so on the row itself
@@ -13392,9 +13402,15 @@ td.vc-cell-takeable:focus-within .vc-take,
 .state-version-row.sv-foreign .sv-time, .sh-entry.sh-foreign .sh-time { opacity: 0.7; }
 /* S10 walk: the live-change tracker's baseline row -- a fixed badge (not a
    label, not a pin: nothing on it can be edited or unpinned). */
+/* S10 walk r4 (P2-13): it was `white-space: nowrap` -- 70 characters ("...,
+   set 2026-10-10 07:50:24 (UTC+9)") that could not wrap, so on a row whose
+   date and actions (After-chip, Stage, Pull) left the meta column narrow it
+   ran past the panel: a horizontal scrollbar and the badge's text cut at the
+   edge. It wraps inside the meta column now (radius sized for two lines). */
 .snap-baseline { font-size: 0.66rem; color: var(--pico-primary);
-    border: 1px dashed var(--pico-primary); border-radius: 999px;
-    padding: 0 0.4rem; white-space: nowrap; display: inline-block;
+    border: 1px dashed var(--pico-primary); border-radius: 0.6rem;
+    padding: 0 0.4rem; white-space: normal; max-width: 100%;
+    overflow-wrap: anywhere; display: inline-block;
     vertical-align: middle; cursor: help; }
 .sv-exp, .sv-note { font-size: 0.72rem; }
 /* Compact per the customer: NOT right-pinned. The actions follow the date

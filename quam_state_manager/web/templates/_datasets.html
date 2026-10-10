@@ -25,7 +25,7 @@
 {% if digest and digest.total %}
 <div class="ds-digest-band">
     <span class="ds-digest-date">{{ digest.date }}</span>
-    <span class="ds-digest-item">{{ digest.total }} run{{ 's' if digest.total != 1 }}</span>
+    <span class="ds-digest-item">{{ '{:,}'.format(digest.total) }} run{{ 's' if digest.total != 1 }}</span>
     {# QA datasets-r2-18: "all OK" only when NOTHING failed -- a finished run
        whose fit failed is not OK -- and every chip is scoped to the band's
        day + ties the outcome to ITS target (outcome:<q>=fail), so a click
@@ -48,7 +48,7 @@
 </div>
 {% endif %}
 <div class="table-header-row">
-    <h2 class="ds-head-title">{{ page_title }} <small class="muted">({{ total }} runs{% if stats %}, {{ stats.experiment_types }} types, {{ stats.unique_qubits | length }} qubits{% endif %})</small>
+    <h2 class="ds-head-title">{{ page_title }} <small class="muted">({{ '{:,}'.format(total or 0) }} runs{% if stats %}, {{ '{:,}'.format(stats.experiment_types or 0) }} types, {{ '{:,}'.format(stats.unique_qubits | length) }} qubits{% endif %})</small>
         {# docs/126 ⑥ — the times' basis, stated where they are read: SM shows
            the run folders' own timestamps verbatim (the acquisition PC's
            local clock) and never converts them. #}

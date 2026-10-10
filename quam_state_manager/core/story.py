@@ -725,12 +725,15 @@ _ERR_NOT_JSON = re.compile(r"Expecting |JSONDecodeError|Extra data|Unterminated|
 _ERR_QUOTED_PATH = re.compile(r"'([^']*[\\/][^']*)'")
 
 
-def read_error_text(error: Any) -> str:
+def read_error_text(error: Any, moved: tuple[str, str] | None = None) -> str:
     """S10 walk: why a run's saved state could not be read, in plain words.
     The ledger keeps the OS's own text (``[WinError 3] The system cannot find
     the path specified: 'D:\\\\work\\\\...\\\\state.json'``, the path in Python's
     repr with doubled backslashes); a card says what happened and names the
-    file as the user's own file browser spells it."""
+    file as the user's own file browser spells it. *moved*: ``(the run folder
+    the ledger read it in, the folder it is under now)`` -- the file is named
+    where it is now (S10 walk round 4, the N5 rule), never in the folder the
+    runs left."""
     err = str(error or "")
     if _ERR_MISSING.search(err):
         why = "the file is missing"
@@ -744,7 +747,20 @@ def read_error_text(error: Any) -> str:
     if not paths:
         return why
     path = paths[-1].replace("\\\\", "\\")
+    if moved:
+        path = _under_now(path, *moved)
     return f"{why}: {path}"
+
+
+def _under_now(path: str, was: str, now: str) -> str:
+    """*path* (a file in run folder *was*) in run folder *now*; *path* as
+    it is when it is not under *was*. String-only (no file system access)."""
+    w, p = os.path.normpath(str(was)).rstrip("\\/"), os.path.normpath(str(path))
+    if not w or not now:
+        return path
+    if os.path.normcase(p) != os.path.normcase(w) and not os.path.normcase(p).startswith(os.path.normcase(w) + os.sep):
+        return path
+    return os.path.normpath(str(now)).rstrip("\\/") + p[len(w):]
 
 
 def _flags_of(event: Mapping) -> list[dict]:
@@ -754,9 +770,12 @@ def _flags_of(event: Mapping) -> list[dict]:
     out = []
     if event.get("error"):
         # S10 walk: plain words, the path as the user's file browser spells it
-        # (the card printed the raw OS text with doubled backslashes)
+        # (the card printed the raw OS text with doubled backslashes); round 4:
+        # in the folder the run is under NOW (``_now_folder``, hub_lanes.now_folders)
+        moved = ((os.path.join(event.get("root_path") or "", event.get("rel_path") or ""), event["_now_folder"])
+                 if event.get("_now_folder") else None)
         out.append({"key": "no-state", "label": "no state",
-                    "note": f"Its saved state could not be read: {read_error_text(event['error'])}.",
+                    "note": f"Its saved state could not be read: {read_error_text(event['error'], moved)}.",
                     "title": str(event["error"])})
     elif flags & hs.CHIP_UNCERTAIN:
         out.append({"key": "other-chip", "label": "other chip?",
@@ -895,8 +914,10 @@ def _gate_now(wait) -> bool:
 def _hub_run(event, ds, memo=None, instance=None):
     """One run event plus what its folder says. A run Datasets holds (same
     folder) is read from the Datasets index in RAM; any other is read from its
-    own folder, cached (docs/281: never a path resolve per run)."""
-    folder = os.path.join(event["root_path"] or "", event["rel_path"] or "")
+    own folder, cached (docs/281: never a path resolve per run). S10 walk
+    (round 4): a run recorded under more than one data root is read from the
+    folder it is under now (``_now_folder``, the N5 rule)."""
+    folder = event.get("_now_folder") or os.path.join(event["root_path"] or "", event["rel_path"] or "")
     info = None
     runs = getattr(ds, "runs", None) if ds is not None else None
     if isinstance(runs, Mapping):
@@ -1313,6 +1334,28 @@ def _targets_today(targets, pairs, rename, era) -> list[str] | None:
     return out if out != list(targets) else None
 
 
+def _mark_now_folders(ledger, events) -> None:
+    """S10 walk (round 4): each run event recorded under more than one data
+    root (a moved or copied folder) carries ``_now_folder`` -- the folder it
+    is under NOW (``hub_lanes.now_folders``, the rule every folder note names
+    it by), so its card reads and names that folder, never the one it left.
+    The card's identity (``card_uid``) stays the ledger's own root."""
+    from quam_state_manager.core import hub_index, hub_lanes
+    runs = [e for e in events if e.get("kind") == "run"]
+    if not runs:
+        return
+    try:
+        with hub_index.snapshot(ledger) as (conn, _index):
+            now = hub_lanes.now_folders(conn, [e["eid"] for e in runs])
+    except Exception:  # noqa: BLE001 -- a display rule never breaks the day
+        logger.debug("calibration log: the runs' current folders could not be read", exc_info=True)
+        return
+    for e in runs:
+        got = now.get(e["eid"])
+        if got is not None:
+            e["_now_folder"] = os.path.join(got[0], got[1])
+
+
 def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of, gate_compute,
                    with_gates, ledger, agent_chip, gate_wait=False, int_of=None, rename=None) -> dict:
     from quam_state_manager.core import hub_query, hub_sync
@@ -1347,6 +1390,7 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
     cards: list[dict] = []
     used: set[int] = set()
     facts_memo: dict = {}
+    _mark_now_folders(ledger, hub_events)
     day_runs = [(event, _hub_run(event, ds, facts_memo, instance_path))
                 for event in reversed(hub_events) if event["kind"] == "run"]
     root_keys: dict = {}

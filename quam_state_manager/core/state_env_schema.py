@@ -483,7 +483,7 @@ def probe_catalog(python_path: str, class_paths: list[str], instance_path=None, 
     broken = {r: v for r, v in roots.items() if isinstance(v, str) and v.startswith("error")}
     result.update(ok=True, catalog=cat, roots=roots, partial=bool(broken))
     if broken:
-        result["error"] = "partial catalogue -- " + "; ".join(f"{r}: {v[7:]}" for r, v in broken.items())
+        result["error"] = "partial catalogue — " + "; ".join(f"{r}: {v[7:]}" for r, v in broken.items())
         return result
     if instance_path is not None:
         with _cache_lock:

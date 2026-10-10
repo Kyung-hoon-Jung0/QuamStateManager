@@ -97,7 +97,8 @@ def test_the_link_dialog_counts_another_chips_run_as_the_note_does(tmp_path):
     c = _open(tmp_path, [(31, 7.1e9, "alpha", "010000"), (32, 7.2e9, "beta", "020000")])
     _copy_open(tmp_path, c, tmp_path / "data")
     html = c.get("/hub/link-folder").get_data(as_text=True)
-    assert "1 runs match this chip, 1 belong to other chips, 0 unreadable" in html, _text(html)
+    # S10 walk (round 4): "1 runs match ..., 1 belong to other chips" -> grouped, singular
+    assert "1 run matches this chip, 1 belongs to another chip, 0 unreadable" in html, _text(html)
 
 
 def test_the_unlinked_note_prints_the_root_as_spelled(tmp_path):

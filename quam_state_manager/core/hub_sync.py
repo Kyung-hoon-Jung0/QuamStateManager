@@ -2174,7 +2174,8 @@ def progress_words(st: dict | None, *, short: bool = False) -> str:
     done, total = st.get("done") or 0, st.get("total") or 0
 
     def count(n, of):
-        return f"{n}/{of}" if short else f"{n} of {of}"
+        # S10 walk: a count is grouped ("1,234 of 5,678"), like every count shown
+        return f"{n:,}/{of:,}" if short else f"{n:,} of {of:,}"
     steps = (2 if st.get("roots") else 0) + (1 if st.get("observes") else 0)
     if steps:
         def step(k, what, n=None, of=None):
@@ -2210,7 +2211,7 @@ def progress_words(st: dict | None, *, short: bool = False) -> str:
         return (": checking the known run folders for changes"
                 + (f" ({count(min(st.get('sweep_done') or 0, swept), swept)})" if swept else ""))
     if total:
-        return f" ({done}/{total})" if short else f" ({done} of {total} runs)"
+        return f" ({done:,}/{total:,})" if short else f" ({done:,} of {total:,} runs)"
     return ""
 
 

@@ -226,7 +226,7 @@
                 root.removeAttribute('data-loading');
                 if (!d.ok) {
                     clearFor(root, line, (d.error || 'failed')
-                        + ' -- the chip may have changed since this table was drawn; reload the page to refresh it.');
+                        + ' — the chip may have changed since this table was drawn; reload the page to refresh it.');
                     return;
                 }
                 if (title) title.textContent = shortLine(line) + (d.port_path ? '  ·  ' + d.port_path.replace('ports.analog_outputs.', '').split('.').join('/') : '');

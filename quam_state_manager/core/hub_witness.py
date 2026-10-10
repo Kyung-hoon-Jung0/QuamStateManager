@@ -18,8 +18,8 @@ event that READ THE CHIP without re-measuring p's entity --
 
 A run that targets p's entity AND changes p first ends the walk with no
 witness (a re-measurement: its value is the next claim) -- unless that
-re-measurement is itself contradicted (its value never reached the chip, so
-it did not replace R's): the walk passes it and its restoring row, and that
+re-measurement is itself contradicted (its value is not in the next recorded
+state, so it did not replace R's): the walk passes it and its restoring row, and that
 row is R's witness [derived; measured on the same backups: 455 of 458 such
 changes were live]. A run that targets the entity without changing p is
 passed over. A pair target covers the pair id and both of its qubits. A
@@ -31,8 +31,14 @@ the 297 proven changes was live). These two refinements are the default
 Verdicts (``verdicts(index, conn)``, keyed ``(eid, pid)``):
 
 * ``confirmed``   -- W carries ``new`` at p;
-* ``contradicted`` -- W carries ``old`` at p: the value was never on the chip
-  (or was undone before anything read it). W's own row ``new -> old`` is its
+* ``contradicted`` -- W carries ``old`` at p: the next recorded state does
+  not carry the value. That is all it proves about the chip: a run's saved
+  state is the state it STARTED from plus its own results, and a lab's runs
+  need not start from the live file (on one chip two lines of runs were
+  interleaved, each saving its own line's value, while the live file held one
+  value throughout; elsewhere a value was live for a while and the lab put the
+  old one back before W). So no surface says the value never reached the
+  chip, or was not on it when W ran (:data:`WORDS`). W's own row ``new -> old`` is its
   RESTORING row (:meth:`Verdicts.restores`); the pair is left out of every
   value series (the value simply stays ``old`` across them -- exact, since W
   carries old). The restoring row keeps its own verdict in the mapping;
@@ -100,9 +106,24 @@ DOUBT_TEXT = {
               "The next event that read the chip (a run that did not measure it, a state SM saw, or "
               "an SM write) found another value there, so whether the chip kept this value is not "
               "known."),
-    CONTRADICTED: ("not kept on the chip",
-                   "The next event that read the chip still found the earlier value: this value was "
-                   "saved in the run's own folder and never reached the chip."),
+    CONTRADICTED: ("not in the next recorded state",
+                   "The next state recorded after it (a run that did not measure it, a state SM saw, "
+                   "or an SM write) still had the earlier value. Whether the chip held this value at "
+                   "any time is not known."),
+}
+
+#: S10 walk (round 4): the names of the saved values that are not the chip's
+#: history, one name per list on every surface (the value drawer's heading,
+#: items and footer, Column History, the Calibration log card, Param History
+#: Changes, the agent). Each says only what the RECORDS prove, never what the
+#: chip held: the next recorded state still had the earlier value (a lab's
+#: backups showed some of these values live, before that state was recorded
+#: or while another line of runs recorded it), or the saved value came back
+#: before anything confirmed it. ``unconfirmed`` names a count of both lists.
+WORDS = {
+    "not_kept": "not in the next recorded state",
+    "excursion": "not confirmed before the value came back",
+    "unconfirmed": "not confirmed on the chip",
 }
 
 #: the event classes that read the chip (the ``witnesses`` argument)

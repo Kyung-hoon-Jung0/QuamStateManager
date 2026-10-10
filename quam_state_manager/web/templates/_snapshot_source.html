@@ -17,6 +17,15 @@
 {%- endif -%}
 {%- endmacro %}
 
+{# S10 walk (round 4): what happened to a listed state later ("undone later",
+   "reverted later", "returns to an earlier state", routes._version_rows) --
+   ONE renderer for every listing of the ledger's states (Versions, State
+   History, the Chip Status History drawer), so no listing drops a flag
+   another one shows. #}
+{% macro version_flags(r, cls='') -%}
+{%- for f in r.flags or [] %}<span class="sv-flag{% if cls %} {{ cls }}{% endif %}">{{ f }}</span>{% endfor -%}
+{%- endmacro %}
+
 {# S10 walk: a LISTING keeps another folder's rows (docs/250); each such row says
    it is not this folder's, and its title says why it is listed at all. #}
 {% macro foreign_tag(r, cls='') -%}

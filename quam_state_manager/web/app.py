@@ -606,6 +606,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.filters["delta_describe"] = _value_delta.describe
     # S10 walk: a before/after value beside a delta, by the delta's own rule
     app.jinja_env.filters["sigval"] = _value_delta.format_value
+    # S10 walk: a percent CHANGE by the one percent rule (value_delta.format_percent,
+    # mirrored by ValueDelta.formatPercent) -- never a template's own "%+.1f"
+    app.jinja_env.filters["pct_change"] = _value_delta.percent_change
 
     # `phys_amp` — the TRUE physical output behind an amplitude leaf (docs/109):
     # MW channel -> dBm via P = FSP + 20·log10|amp| (the FSP-compensation
@@ -769,8 +772,11 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
 
     app.jinja_env.globals["asset_url"] = _asset_url
     # P0-1: what a change not confirmed on the chip says, one wording everywhere
-    from quam_state_manager.core.hub_witness import DOUBT_TEXT
+    from quam_state_manager.core.hub_witness import DOUBT_TEXT, WORDS as _WITNESS_WORDS
     app.jinja_env.globals["doubt_text"] = DOUBT_TEXT
+    # S10 walk (round 4): one name per list of saved values that are not the
+    # chip's history (hub_witness.WORDS), on every surface
+    app.jinja_env.globals["witness_words"] = _WITNESS_WORDS
 
     # Diagnostics-list grouping: map a Finding category → display domain, and the
     # ordered domain list. Single source of truth in core.diagnostics, so every

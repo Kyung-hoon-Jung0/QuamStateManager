@@ -1203,7 +1203,7 @@ def copy_pulse_to(merged: dict, src_path: str, dst_path: str, *,
     if cls is not None and not is_pulse_class(cls):
         what = str(cls).rsplit(".", 1)[-1] or repr(cls)
         raise ValueError(
-            f"{src_path} is not a pulse (it is {what}) -- only a pulse can be "
+            f"{src_path} is not a pulse (it is {what}) — only a pulse can be "
             "copied into a channel's operations")
     src_segs = real.split(".")
     dst_segs = dst_path.split(".")

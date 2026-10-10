@@ -221,11 +221,12 @@ async function search(w, q) {
                                               row(3, 'rabi', [])],            // re-emitted, already held
                           vanished: ['f1:2'] });
     const w = boot('datasets', [row(3, 'rabi', []), row(2, 'rabi', []), row(1, 'ramsey', [])], f,
-                   head('4160 runs, 67 types, 7 qubits'));
+                   // S10 walk: "4160 runs" -> "4,160 runs" -- the server groups the count, and the step keeps it grouped
+                   head('4,160 runs, 67 types, 7 qubits'));
     await tick();
     w.document.dispatchEvent(new w.Event('visibilitychange'));
     await tick(80);
-    ok(f.served() === 1 && headTxt(w) === '(4161 runs, 67 types, 7 qubits)',
+    ok(f.served() === 1 && headTxt(w) === '(4,161 runs, 67 types, 7 qubits)',
        'datasets: two runs landed, one vanished, one re-emitted -> +1: ' + headTxt(w));
   }
   {

@@ -277,7 +277,7 @@ def ntp_text(status: dict) -> str:
             out += f", off by {span_text(ntp['offset_s'])}"
         return out
     if synced is False:
-        return "Time sync: OFF -- " + (_short_detail(ntp.get("detail")) or "this PC's clock is not synchronized")
+        return "Time sync: OFF — " + (_short_detail(ntp.get("detail")) or "this PC's clock is not synchronized")
     short = _short_detail(ntp.get("detail"))
     return "Time sync: unknown" + (f" ({short})" if short else "")
 
@@ -804,7 +804,7 @@ def answer_skew(inst, project: str, choice: str, skew_s: float) -> dict:
         rec = _project(data, project)
         summ = summarize(rec["clock"]["witnesses"])
         if summ["class"] != "ask" or not same_skew(skew_s, summ["skew_s"]):
-            raise ValueError("the measured skew changed -- ask again")
+            raise ValueError("the measured skew changed — ask again")
         now = time.time()
         for a in rec["clock"]["answers"]:
             if a.get("until_us") is None:

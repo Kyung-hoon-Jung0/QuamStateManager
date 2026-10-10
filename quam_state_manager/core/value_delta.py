@@ -132,21 +132,21 @@ def _strip_frac_zeros(s: str) -> str:
     return s
 
 
-def compact_magnitude(mag: Decimal) -> str:
-    """A NON-NEGATIVE exact decimal as the screen shows it: SIG_DIGITS
-    significant digits, half-up (never fewer than its integer digits),
-    trailing zeros dropped, grouped fixed-point in [1e-4, 1e15), else
+def compact_magnitude(mag: Decimal, sig: int = SIG_DIGITS) -> str:
+    """A NON-NEGATIVE exact decimal as the screen shows it: *sig* (default
+    SIG_DIGITS) significant digits, half-up (never fewer than its integer
+    digits), trailing zeros dropped, grouped fixed-point in [1e-4, 1e15), else
     exponential (``1.48964e-06``, ``2.42e-07``). Rounds the exact digits
     (``quantize``), never a float: the JS mirror rounds the same digits."""
     if mag == 0:
         return "0"
     adj = mag.adjusted()                    # mag in [10^adj, 10^(adj+1))
     if mag >= _SCI_HIGH or mag < _COMPACT_LOW:
-        q = mag.quantize(Decimal(1).scaleb(adj - SIG_DIGITS + 1), rounding=ROUND_HALF_UP)
+        q = mag.quantize(Decimal(1).scaleb(adj - sig + 1), rounding=ROUND_HALF_UP)
         adj = q.adjusted()                  # a carry (9.999995 -> 10) moves it up
         mant = _strip_frac_zeros(format(q.scaleb(-adj), "f"))
         return f"{mant}e{'-' if adj < 0 else '+'}{abs(adj):02d}"
-    decimals = max(0, SIG_DIGITS - (adj + 1))
+    decimals = max(0, sig - (adj + 1))
     q = mag.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
     s = format(q, "f")
     if "." in s:
@@ -186,28 +186,39 @@ def format_value(value: Any) -> str:
     return ("-" if d < 0 else "") + compact_magnitude(-d if d < 0 else d)
 
 
-def format_percent(pct: float) -> str:
-    """Percent with magnitude-appropriate precision (mirrored in JS).
+#: S10 walk: the significant digits of a percent CHANGE on screen. One rule for
+#: every percent (the delta's :func:`compact_magnitude` with fewer digits): the
+#: old magnitude ladder printed "-0.005%" (one digit) beside "+0.625%" (three),
+#: and the hero popup's own "%+.1f" printed "+0.0%" for a nonzero change.
+PCT_SIG_DIGITS = 3
 
+
+def format_percent(pct: float) -> str:
+    """A signed percent change, without the ``%`` (mirrored in JS,
+    ``ValueDelta.formatPercent``): :data:`PCT_SIG_DIGITS` significant digits,
+    half-up on the shortest decimal spelling of the float, never fewer than
+    its integer digits, grouped fixed-point in [1e-4, 1e15) and exponential
+    outside -- ``-0.00512``, ``+0.625``, ``+15.3``, ``+1,235``, ``+7.5e-07``.
+    A nonzero change never reads as ``+0`` / ``+0.0``; ``0`` is ``0``.
     Deliberately NOT ``%g``: JavaScript has no ``%g`` and the two would drift.
-    A change too small for the fixed form is shown in exponential rather than
-    rounded to a lying ``+0%``.
     """
-    a = abs(pct)
-    if a and a < 0.001:
-        return _pad_exp(f"{pct:+.2e}")
-    if a >= 100:
-        digits = 0
-    elif a >= 10:
-        digits = 1
-    elif a >= 1:
-        digits = 2
-    else:
-        digits = 3
-    s = f"{pct:+.{digits}f}"
-    if digits:                      # 1.500 -> 1.5, 2.00 -> 2
-        s = s.rstrip("0").rstrip(".")
-    return s
+    d = as_decimal(pct) if isinstance(pct, (int, float)) else None
+    if d is None:
+        return ""
+    if d == 0:
+        return "0"
+    return ("-" if d < 0 else "+") + compact_magnitude(-d if d < 0 else d, PCT_SIG_DIGITS)
+
+
+def percent_change(pct: Any) -> str:
+    """The Jinja ``pct_change`` filter: a percent change (a number in percent
+    units) as :func:`format_percent` writes it, with the ``%`` -- ``""`` for
+    a non-number (the caller's own placeholder stands)."""
+    if pct is None or isinstance(pct, bool) or not isinstance(pct, (int, float)):
+        return ""
+    if isinstance(pct, float) and not math.isfinite(pct):
+        return ""
+    return format_percent(pct) + "%"
 
 
 def compute(old: Any, new: Any) -> Optional[dict]:

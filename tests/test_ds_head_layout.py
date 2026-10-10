@@ -59,9 +59,10 @@ def test_the_title_wraps_between_its_segments_not_inside_them():
     assert 'class="ds-head-title"' in h2
     assert re.search(r"white-space:\s*nowrap", _rule(".ds-head-title > small"))
     # the run-count contract dataset-virtual.js rewrites
-    # (`.table-header-row h2 > small`, /^\(\d+ runs/) is kept
+    # (`.table-header-row h2 > small`, /^\([\d,]+ runs/) is kept
+    # S10 walk: "({{ total }} runs" -> "({{ '{:,}'.format(total or 0) }} runs" -- the count is grouped
     assert re.search(r'<h2 class="ds-head-title">\{\{ page_title \}\} '
-                     r'<small class="muted">\(\{\{ total \}\} runs', row)
+                     r"<small class=\"muted\">\(\{\{ '\{:,\}'\.format\(total or 0\) \}\} runs", row)
 
 
 def test_the_column_menu_opens_leftward_inside_the_pane():

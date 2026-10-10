@@ -428,7 +428,7 @@ def refusal_message(ch: Change) -> str:
                          f"{_names(ch.replaced)}")
         what = f"this edit of {ch.path} would " + " and ".join(parts)
     return (f"{what}. {where} (it checks what the pulse is used by, and asks "
-            "your lab's code) -- here you can change a pulse's fields.")
+            "your lab's code) — here you can change a pulse's fields.")
 
 
 def goto_url(path: str, *, together: str | None = None) -> str:

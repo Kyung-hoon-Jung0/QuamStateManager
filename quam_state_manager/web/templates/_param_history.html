@@ -33,8 +33,8 @@
        that doesn't exist would be a lie. #}
     {% if disk_stats and disk_stats.snapshots %}
     <p class="muted history-disk-line" style="margin:0;font-size:0.85em">
-      {{ disk_stats.snapshots }} snapshot{{ 's' if disk_stats.snapshots != 1 }} ·
-      {{ disk_stats.bytes | filesizeformat }} on disk{% if disk_stats.prune_active %} · retention: newest {{ disk_stats.max_snapshots }} kept, oldest auto-pruned{% endif %}
+      {{ '{:,}'.format(disk_stats.snapshots) }} snapshot{{ 's' if disk_stats.snapshots != 1 }} ·
+      {{ disk_stats.bytes | filesizeformat }} on disk{% if disk_stats.prune_active %} · retention: newest {{ '{:,}'.format(disk_stats.max_snapshots) }} kept, oldest auto-pruned{% endif %}
     </p>
     {% endif %}
   </div>
@@ -96,11 +96,11 @@
            hx-get="/param-history?chip_key={{ chip.key }}"
            hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
            class="phf-chip phf-chip-chip{% if is_active %} active{% endif %}{% if is_loaded %} chip-loaded{% endif %}"
-           title="{% if chip.workspace_only %}Workspace folder, no history yet{% else %}{{ chip.snapshot_count }} snapshots · latest {{ chip.latest_timestamp }}{% endif %}"
+           title="{% if chip.workspace_only %}Workspace folder, no history yet{% else %}{{ '{:,}'.format(chip.snapshot_count) }} snapshots · latest {{ chip.latest_timestamp }}{% endif %}"
            style="text-decoration:none">
           {% if is_loaded %}<span class="chip-loaded-dot" title="Currently loaded">●</span>{% endif %}
           {{ chip.name or chip.key }}
-          {% if chip.snapshot_count %}<span class="phf-chip-count">{{ chip.snapshot_count }}</span>{% endif %}
+          {% if chip.snapshot_count %}<span class="phf-chip-count">{{ '{:,}'.format(chip.snapshot_count) }}</span>{% endif %}
         </a>
       {% endfor %}
     </div>
@@ -113,7 +113,7 @@
     <div class="alignment-banner alignment-orange chip-decision-banner"
          data-chip-key="{{ pd.chip_key }}"
          data-data-folder="{{ pd.data_folder }}">
-      ❓ <strong>Workspace folder <code>{{ pd.data_folder }}</code> has {{ pd.count }} experiment{{ 's' if pd.count != 1 }}.</strong>
+      ❓ <strong>Workspace folder <code>{{ pd.data_folder }}</code> has {{ '{:,}'.format(pd.count) }} experiment{{ 's' if pd.count != 1 }}.</strong>
       The wiring matches the current chip <code>{{ pd.chip_key }}</code> but the folder name differs.
       Same chip, or a different chip from the same setup?
       <button type="button" class="alignment-action outline btn-sm"
@@ -155,8 +155,8 @@
   {# user a concrete list of what failed and a Retry button.            #}
   {% if last_backfill_failures %}
   <div class="alignment-banner alignment-orange backfill-failures-banner">
-    ⚠️ <strong>{{ last_backfill_attempted - (last_backfill_failures | length) }} of {{ last_backfill_attempted }}</strong>
-    experiments imported &mdash; <strong>{{ last_backfill_failures | length }}</strong> skipped.
+    ⚠️ <strong>{{ '{:,}'.format(last_backfill_attempted - (last_backfill_failures | length)) }} of {{ '{:,}'.format(last_backfill_attempted) }}</strong>
+    experiments imported &mdash; <strong>{{ '{:,}'.format(last_backfill_failures | length) }}</strong> skipped.
     <details style="margin-top:0.35rem">
       <summary>Show skipped experiments</summary>
       <ul class="backfill-failures-list">
@@ -189,7 +189,7 @@
           <span class="archive-name"><strong class="archive-display">{{ chip.display or chip.key }}</strong>
             {%- if chip.display and chip.display != chip.key %} <code class="archive-key" title="History folder">{{ chip.key }}</code>{% endif %}</span>
           <span class="archive-meta">
-            {{ chip.snapshot_count }} snapshots
+            {{ '{:,}'.format(chip.snapshot_count) }} snapshots
             {% if chip.latest_timestamp %}
               · latest <code>{{ chip.latest_timestamp | ts_local }}</code>
             {% endif %}
@@ -222,7 +222,7 @@
       {# no workspace experiments yet — no banner #}
     {% elif c.aligned == c.total %}
       <div class="alignment-banner alignment-green">
-        ✓ All {{ c.total }} workspace experiments are for chip <code>{{ loaded_chip_key }}</code>.
+        ✓ All {{ '{:,}'.format(c.total) }} workspace experiments are for chip <code>{{ loaded_chip_key }}</code>.
       </div>
     {% elif c.aligned == 0 and c.different_chip > 0 %}
       <div class="alignment-banner alignment-red">
@@ -246,7 +246,7 @@
       {% endif %}
       {% if c.different_chip > 0 %}
         <div class="alignment-banner alignment-yellow">
-          {{ c.aligned }} of {{ c.total }} experiments are for <code>{{ loaded_chip_key }}</code>.
+          {{ '{:,}'.format(c.aligned) }} of {{ '{:,}'.format(c.total) }} experiments are for <code>{{ loaded_chip_key }}</code>.
           {{ c.different_chip }} are for other chips:
           {% for other_chip, entries in alignment.different_chip.items() %}
             <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
@@ -422,14 +422,14 @@
   {% endif %}
   <div class="param-history-summary">
     {# S10 C5: the snapshot arm's "snapshots match" summary -> gone, the grid reads the ledger only. #}
-    <strong>{{ summary.window_count }}</strong> recorded change{{ '' if summary.window_count == 1 else 's' }} shown
-    {% if summary.total %}<span class="muted">({{ summary.total }} event{{ '' if summary.total == 1 else 's' }} in the change ledger)</span>{% endif %}
+    <strong>{{ '{:,}'.format(summary.window_count or 0) }}</strong> recorded change{{ '' if summary.window_count == 1 else 's' }} shown
+    {% if summary.total %}<span class="muted">({{ '{:,}'.format(summary.total) }} event{{ '' if summary.total == 1 else 's' }} in the change ledger)</span>{% endif %}
     {% if summary.by_trigger %}
       &nbsp;|&nbsp;
       {% for tk in ['save','manual','auto','experiment','restore'] %}
         {% if tk in summary.by_trigger %}
           <span class="trigger-pill trigger-pill-{{ tk }}">
-            {{ TRIGGER_LABELS[tk] }}: {{ summary.by_trigger[tk] }}
+            {{ TRIGGER_LABELS[tk] }}: {{ '{:,}'.format(summary.by_trigger[tk]) }}
           </span>
         {% endif %}
       {% endfor %}
@@ -466,13 +466,13 @@
            data-importable="{{ importable_count }}">
         <div class="phc-title">No history imported yet for this chip.</div>
         <div class="phc-subtitle">
-          <strong>{{ importable_count }}</strong>
+          <strong>{{ '{:,}'.format(importable_count) }}</strong>
           experiment{{ '' if importable_count == 1 else 's' }}
           in workspace match this chip and are ready to ingest.
         </div>
         <button type="button" class="phc-primary"
                 onclick="paramHistoryImportFromCta(this)">
-          Import {{ importable_count }} experiment{{ '' if importable_count == 1 else 's' }}
+          Import {{ '{:,}'.format(importable_count) }} experiment{{ '' if importable_count == 1 else 's' }}
         </button>
         <div class="phc-hint muted">
           One-time setup. After this, new experiments will be picked up
@@ -484,7 +484,7 @@
         {% if summary.total %}
           <p><strong>No data matches your filters.</strong></p>
           <p class="muted">
-            The index has {{ summary.total }} snapshot{{ '' if summary.total == 1 else 's' }} for this state folder,
+            The index has {{ '{:,}'.format(summary.total) }} snapshot{{ '' if summary.total == 1 else 's' }} for this state folder,
             but none match the current Date / Source / Property / Qubit selection.
             Try clicking <em>Reset filters</em> above, or expanding the date range to <em>All</em>.
           </p>

@@ -50,7 +50,7 @@
 {% if not points %}
 <p class="fh-empty">
   No change of this value is recorded in the change ledger
-  ({{ ledger.events }} event{{ 's' if ledger.events != 1 }}{% if ledger.first %} since {{ ledger.first | ts_local(short=True) }}{% endif %}).
+  ({{ '{:,}'.format(ledger.events) }} event{{ 's' if ledger.events != 1 }}{% if ledger.first %} since {{ ledger.first | ts_local(short=True) }}{% endif %}).
 </p>
 {% else %}
 <table class="fh-table vh-table">
@@ -86,7 +86,7 @@
             proven to have measured it -#}
         <button type="button" class="fh-data fh-data-saved" hx-get="/dataset/{{ pt.saved_uid }}?via=saved"
                 hx-target="#inspector-pane" hx-swap="innerHTML"
-                title="Open the run whose saved state first carries this value -- not proven to be the run that measured it">Run</button>
+                title="Open the run whose saved state first carries this value; not proven to be the run that measured it">Run</button>
         {% endif %}
       </td>
     </tr>
@@ -95,30 +95,32 @@
 </table>
 {% endif %}
 {% if excursions %}
-{# P0-1: saves no later read of the chip confirmed, whose value came back
-   EXACTLY to what the chip held: not chip history, never silent #}
+{# P0-1: saves nothing confirmed before the saved value came back EXACTLY
+   to what it was before: not chip history, never silent. S10 walk (round 4):
+   the words say what the records prove (hub_witness.WORDS) #}
 <details class="vh-not-kept vh-excursions">
-  <summary>{{ '{:,}'.format(excursions|sum(attribute='n')) }} saved value{{ 's' if excursions|sum(attribute='n') != 1 }} no later read of the chip confirmed</summary>
+  <summary>{{ '{:,}'.format(excursions|sum(attribute='n')) }} saved value{{ 's' if excursions|sum(attribute='n') != 1 }} {{ witness_words.excursion }}</summary>
   <ul class="vh-not-kept-list">
   {% for ex in excursions %}
     <li data-eid="{{ ex.eid }}">
       <span class="fh-ts">{{ ex.t | ts_local(short=True) }}</span>
-      Saved by {{ ex.runs }}: <code>{{ ex.saved | join(', ') }}</code> &mdash; no later read of the chip confirmed {{ 'it' if ex.n == 1 else 'them' }}, and the chip's value returned to <code>{{ ex.held }}</code> ({{ ex.who }})
+      Saved by {{ ex.runs }}: <code>{{ ex.saved | join(', ') }}</code> &mdash; {{ witness_words.excursion }} to <code>{{ ex.held }}</code> ({{ ex.who }})
     </li>
   {% endfor %}
   </ul>
 </details>
 {% endif %}
 {% if not_kept %}
-{# P0-1: what each run saved that the chip never kept -- left out of the
-   rows above, never silently #}
+{# P0-1: what each run saved that the next recorded state did not carry --
+   left out of the rows above, never silently. S10 walk (round 4): the words
+   say only that (hub_witness.WORDS), never what the chip held. #}
 <details class="vh-not-kept">
-  <summary>{{ '{:,}'.format(not_kept|length) }} saved value{{ 's' if not_kept|length != 1 }} not kept on the chip</summary>
+  <summary>{{ '{:,}'.format(not_kept|length) }} saved value{{ 's' if not_kept|length != 1 }} {{ witness_words.not_kept }}</summary>
   <ul class="vh-not-kept-list">
   {% for nk in not_kept %}
-    <li data-eid="{{ nk.eid }}" data-witness="{{ nk.witness_eid if nk.witness_eid is not none else '' }}">
+    <li data-eid="{{ nk.eid }}" data-witness="{{ nk.witness_eid if nk.witness_eid is not none else '' }}" data-witness-t="{{ nk.witness_t or '' }}">
       <span class="fh-ts">{{ nk.t | ts_local(short=True) }}</span>
-      Saved by {{ nk.run }}: <code>{{ nk.display }}</code> &mdash; not kept on the chip ({{ nk.who }} {{ nk.saw }})
+      Saved by {{ nk.run }}: <code>{{ nk.display }}</code> &mdash; {{ nk.says }}
     </li>
   {% endfor %}
   </ul>
@@ -128,11 +130,11 @@
   {% if show_all and total > points|length %}
   newest {{ '{:,}'.format(points|length) }} of {{ '{:,}'.format(total) }} shown
   {% else %}
-  {{ points|length }}{% if total > points|length %} of {{ total }}{% endif %} change point{{ 's' if total != 1 }}
+  {{ '{:,}'.format(points|length) }}{% if total > points|length %} of {{ '{:,}'.format(total) }}{% endif %} change point{{ 's' if total != 1 }}
   {% endif %}
-  &middot; from the change ledger ({{ ledger.events_text or ('%s event%s' % (ledger.events, '' if ledger.events == 1 else 's')) }}){% if total > points|length %} &middot; {{ total - points|length }} older not shown{% endif %}{% if not_kept %} &middot; {{ '{:,}'.format(not_kept|length) }} saved value{{ 's' if not_kept|length != 1 }} not kept on the chip (listed above){% endif %}{% if excursions %} &middot; {{ '{:,}'.format(excursions|sum(attribute='n')) }} never confirmed and came back (listed above){% endif %}
+  &middot; from the change ledger ({{ ledger.events_text or ('{:,} event{}'.format(ledger.events, '' if ledger.events == 1 else 's')) }}){% if total > points|length %} &middot; {{ '{:,}'.format(total - points|length) }} older not shown{% endif %}{% if not_kept %} &middot; {{ '{:,}'.format(not_kept|length) }} saved value{{ 's' if not_kept|length != 1 }} {{ witness_words.not_kept }} (listed above){% endif %}{% if excursions %} &middot; {{ '{:,}'.format(excursions|sum(attribute='n')) }} saved value{{ 's' if excursions|sum(attribute='n') != 1 }} {{ witness_words.excursion }} (listed above){% endif %}
   {#- docs/301 F15: the older points were named but unreachable -#}
   {% if total > points|length and not show_all %}<button type="button" class="fh-show-all"
       data-path="{{ dot_path }}" onclick="FieldHistory.showAll(this)"
-      title="Load every change point of this value">Show all {{ total }}</button>{% endif %}
+      title="Load every change point of this value">Show all {{ '{:,}'.format(total) }}</button>{% endif %}
 </p>

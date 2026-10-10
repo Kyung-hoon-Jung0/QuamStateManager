@@ -402,11 +402,16 @@ class TestTheSurfaces:
         assert "5,200,000,000" not in " ".join(rows), "no Revert / Use offers a value the chip never held"
         assert '<details class="vh-not-kept">' in html, "what was left out is listed, never silent"
         listed = text(html.split('<details class="vh-not-kept">', 1)[1].split("</details>", 1)[0])
-        assert "1 saved value not kept on the chip" in listed
-        assert ("Saved by run #4 scan: 5,200,000,000.0 \u2014 not kept on the chip "
+        # S10 walk (round 4): "not kept on the chip" -> "not in the next recorded state":
+        # the witness proves what the next RECORDED state held, not what the chip held (a
+        # lab's backups showed some of these values live; a run starts from its own state)
+        assert "1 saved value not in the next recorded state" in listed
+        assert ("Saved by run #4 scan: 5,200,000,000.0 \u2014 not in the next recorded state "
                 "(#5, which did not measure qA1, still had 5,000,000,000.0)") in listed
         foot = text(html.split('class="fh-foot vh-foot"', 1)[1])
-        assert "1 saved value not kept on the chip" in foot
+        assert "1 saved value not in the next recorded state (listed above)" in foot
+        assert "not kept" not in text(html) and "never reached" not in html, \
+            "no word claims more than the next read of the chip proves"
 
     def test_a_kept_value_reads_as_before(self, sm):
         rows = rows_of(drawer(sm, "qubits.qA1.T1"))
@@ -420,7 +425,8 @@ class TestTheSurfaces:
         html = drawer(env, "qubits.qA2.T1", poll=True)       # the live files read equal to the copy
         rows = rows_of(html)
         assert rows[0].split()[0] == "2.2e-05" and "saved in #3" in rows[0] and "current" in rows[0], rows
-        assert "not kept on the chip (the chip holds 2.2e-05 now)" in text(html)
+        # S10 walk (round 4): old -> new wording (what the read proves, see above)
+        assert "not in the next recorded state (the chip holds 2.2e-05 now)" in text(html)
 
     def test_unproven_live_leaves_the_newest_open(self, sm):
         rows = rows_of(drawer(sm, "qubits.qA2.T1"))
@@ -434,12 +440,15 @@ class TestTheSurfaces:
         chips = html.split('class="ch-view ch-view-changes"', 1)[1].split('class="ch-view ch-view-byrun"', 1)[0]
         # P0-1: old -> new, why: "1 not kept on the chip" -> "1 saved value not on
         # the chip": the count now also holds excursions (never confirmed, came back)
-        assert "5,200,000,000" not in chips and "1 saved value not on the chip" in text(chips)
+        # S10 walk (round 4): -> "not confirmed on the chip": true of both lists it counts
+        assert "5,200,000,000" not in chips and "1 saved value not confirmed on the chip" in text(chips)
         byrun = html.split('class="ch-view ch-view-byrun"', 1)[1]
         cells = re.findall(r'<td class="ch-val[^"]*".*?</td>', byrun, re.S)
         marked = [text(c) for c in cells if "ch-not-kept" in c]
-        assert len(marked) == 1 and "5,200,000,000" in marked[0] and "not kept on the chip" in marked[0], \
-            "By run is what each run saved; the value the chip never held is marked"
+        # S10 walk (round 4): "not kept on the chip" -> "not confirmed on the chip"
+        assert len(marked) == 1 and "5,200,000,000" in marked[0] and "not confirmed on the chip" in marked[0], \
+            "By run is what each run saved; the value no read of the chip confirmed is marked"
+        assert "not kept" not in html
 
     def test_the_calibration_log_lists_it_apart(self, sm):
         with sm["app"].test_request_context():
@@ -456,8 +465,10 @@ class TestTheSurfaces:
             html = sm["app"].jinja_env.from_string(
                 "{% from '_journal_changes.html' import run_changes %}{{ run_changes(c) }}").render(
                 c={"writes": [], "not_kept": by_run[4]["not_kept"], "first_state_n": None})
-        assert "Saved in its own folder, not kept on the chip" in html
+        # S10 walk (round 4): old -> new wording (what the next read proves)
+        assert "Saved in its own folder, not in the next recorded state" in html
         assert "#5 still had the earlier value" in text(html)
+        assert "not kept" not in html and "stayed on the chip" not in html
 
     def test_the_story_card_carries_it(self, sm, monkeypatch):
         with sm["app"].test_request_context():
@@ -477,7 +488,9 @@ class TestTheSurfaces:
                   for g in html.split('<div class="ph-change-group">')[1:] if re.search(r"run #(\d+)", g)}
         assert "qubits.qA1.f_01" not in groups["5"], "#5 never changed qA1's f_01"
         assert "4" in groups, "run #4's group lists what it saved that the chip never kept"
-        assert "ph-not-kept" in groups["4"] and "not kept on the chip" in text(groups["4"])
+        # S10 walk (round 4): old -> new wording (what the next read proves)
+        assert "ph-not-kept" in groups["4"] and "not in the next recorded state" in text(groups["4"])
+        assert "not kept" not in html
 
     def test_the_metric_meta_and_trends(self, sm):
         meta = sm["client"].get("/topology/metric-meta").get_json()["q"]["f_01"]["qA1"]
@@ -501,6 +514,35 @@ class TestTheSurfaces:
             view = routes._vh_agent_view(ans, "v")
         assert [p["value"] for p in view["points"]] == [A]
         assert [(n["value"], n["run_id"], n["witness"]["run_id"]) for n in view["not_kept"]] == [(B, 4, 5)]
+
+    def test_the_agent_says_what_the_next_read_proves(self, sm):
+        # S10 walk (round 4): the agent reads the drawer's own sentence -- the witness
+        # proves what the next RECORDED state held, nothing about the chip
+        j = sm["client"].get("/api/agent/field-history", query_string={"path": "qubits.qA1.f_01"}).get_json()
+        assert [n["says"] for n in j["history"]["not_kept"]] == [
+            "not in the next recorded state (#5, which did not measure qA1, still had 5,000,000,000.0)"]
+        short, sentence = hub_witness.DOUBT_TEXT[hub_witness.CONTRADICTED]
+        assert short == hub_witness.WORDS["not_kept"] == "not in the next recorded state"
+        assert "never reached" not in sentence and "is not known" in sentence
+
+    def test_no_surface_claims_the_value_never_reached_the_chip(self):
+        # S10 walk (round 4): every surface reads the list names from hub_witness.WORDS;
+        # the phrases that claimed more than the next read proves are gone from the UI
+        root = Path(routes.__file__).parent
+        files = [root / "templates" / n for n in (
+            "_field_history_ledger.html", "_column_history_ledger.html", "_journal_changes.html",
+            "_param_history_changes.html")] + [root / "routes.py"]
+        phrases = ("not kept on the chip", "never reached the chip", "never confirmed and came back",
+                   "never confirmed on the chip", "stayed on the chip")
+        phrases += ("the chip's value returned", "came back to what the chip held",
+                    "no later read of the chip confirmed")
+        for f in files:
+            body = f.read_text(encoding="utf-8")
+            for phrase in phrases:
+                code = [ln for ln in body.splitlines() if phrase in ln and not ln.lstrip().startswith("#")]
+                assert not code, f"{f.name}: {phrase!r} in {code[:1]}"
+        said = [t for pair in hub_witness.DOUBT_TEXT.values() for t in pair] + list(hub_witness.WORDS.values())
+        assert not [t for t in said for phrase in phrases if phrase in t]
 
 
 # ======================================================================
@@ -672,11 +714,18 @@ class TestTheExcursionOnTheSurfaces:
             "no Revert / Use offers a value no read of the chip confirmed"
         assert '<details class="vh-not-kept vh-excursions">' in html
         listed = text(html.split('<details class="vh-not-kept vh-excursions">', 1)[1].split("</details>", 1)[0])
-        assert "2 saved values no later read of the chip confirmed" in listed
-        assert ("Saved by runs #4-#5 (scan): 3.3e-05, 3.4e-05 \u2014 no later read of the chip confirmed "
-                "them, and the chip's value returned to 3e-05 (#6 scan)") in listed, listed
+        # S10 walk (round 4): "no later read of the chip confirmed ... the chip's value
+        # returned to" -> what the records prove (the return is a SAVE; a lab's backups held
+        # an excursion's value live while the drawer said the chip's value had returned)
+        assert "2 saved values not confirmed before the value came back" in listed
+        assert ("Saved by runs #4-#5 (scan): 3.3e-05, 3.4e-05 \u2014 not confirmed before the value came "
+                "back to 3e-05 (#6 scan)") in listed, listed
         foot = text(html.split('class="fh-foot vh-foot"', 1)[1])
-        assert "2 change points" in foot and "2 never confirmed and came back" in foot, foot
+        # S10 walk (round 4): "2 never confirmed and came back" -> the list's one name,
+        # the heading's (one list, one name)
+        assert "2 change points" in foot, foot
+        assert "2 saved values not confirmed before the value came back (listed above)" in foot, foot
+        assert "never confirmed" not in text(html)
 
     def test_the_metric_meta_trends_and_the_calibration_age(self, chain):
         meta = chain["client"].get("/topology/metric-meta").get_json()["q"]["T1"]["qA1"]
@@ -699,15 +748,18 @@ class TestTheExcursionOnTheSurfaces:
         html = r.data.decode()
         chips = html.split('class="ch-view ch-view-changes"', 1)[1].split('class="ch-view ch-view-byrun"', 1)[0]
         assert "3.3e-05" not in chips and "3.4e-05" not in chips
-        assert "2 saved values not on the chip" in text(chips)
+        # S10 walk (round 4): "not on the chip" -> "not confirmed on the chip" (both lists)
+        assert "2 saved values not confirmed on the chip" in text(chips)
         assert "vh-since-chip" not in html
         with chain["app"].test_request_context():
             ans = routes._value_history(routes._active_ctx(), {"v": "qubits.qA1.T1"})
             view = routes._vh_agent_view(ans, "v")
         assert [p["value"] for p in view["points"]] == [3e-5, 1e-5] and view["points"][0]["is_current"]
         assert view["points"][0]["run_id"] == 2
+        # S10 walk (round 4): + "says", the drawer's own sentence (one wording)
         assert view["excursions"] == [{"runs": "runs #4-#5 (scan)", "values": ["3.3e-05", "3.4e-05"],
-                                       "held": "3e-05", "back": "#6 scan"}]
+                                       "held": "3e-05", "back": "#6 scan",
+                                       "says": "not confirmed before the value came back to 3e-05 (#6 scan)"}]
 
     def test_the_calibration_log_and_param_history_changes(self, chain):
         with chain["app"].test_request_context():
@@ -725,7 +777,9 @@ class TestTheExcursionOnTheSurfaces:
         groups = {re.search(r"run #(\d+)", g).group(1): g
                   for g in html.split('<div class="ph-change-group">')[1:] if re.search(r"run #(\d+)", g)}
         assert "6" not in groups or "qubits.qA1.T1" not in groups["6"]
-        assert "never confirmed; the value came back" in text(groups["4"])
+        # S10 walk (round 4): the list's one name (old: "never confirmed; the value came back")
+        assert "not confirmed before the value came back" in text(groups["4"])
+        assert "never confirmed" not in html
 
 
 # ======================================================================

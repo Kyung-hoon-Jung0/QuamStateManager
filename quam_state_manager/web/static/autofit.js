@@ -65,7 +65,7 @@
       $("ai-model").value = d.model || "";
       $("ai-base-url").value = d.base_url || "";
       $("ai-claude-bin").value = d.claude_bin || "";
-      $("ai-api-key").placeholder = d.has_api_key ? "a key is saved -- leave blank to keep it, type CLEAR to remove it" : "paste an API key";
+      $("ai-api-key").placeholder = d.has_api_key ? "a key is saved — leave blank to keep it, type CLEAR to remove it" : "paste an API key";
       aiShowFor(d.provider || "off");
       var cc = d.claude_code || {};
       $("ai-status").textContent = (d.provider === "claude_code" && !cc.available)

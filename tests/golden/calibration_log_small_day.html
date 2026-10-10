@@ -148,10 +148,10 @@
     <ul class="jr-changes"><li><code class="jr-path" data-path="v">v</code>
     <span class="ba-old">1.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">2.0</span><span class="val-delta delta-up" title="difference: +1 (+100%)">+1 <span class="val-delta-pct">(+100%)</span></span> <span class="jr-badge jr-doubt" title="The next event that read the chip (a run that did not measure it, a state SM saw, or an SM write) found another value there, so whether the chip kept this value is not known.">the next read of the chip found another value</span></li></ul></div>
 
-<div class="jr-sec jr-run-not-kept jr-run-came-back"><b>Saved in its own folder, never confirmed on the chip</b>
-    <span class="muted">no later read of the chip confirmed these values, and the value came back to what the chip held</span>
+<div class="jr-sec jr-run-not-kept jr-run-came-back"><b>Saved in its own folder, not confirmed before the value came back</b>
+    <span class="muted">nothing confirmed these values before the saved value came back exactly to what it was before</span>
     <ul class="jr-changes"><li class="jr-not-kept"><code class="jr-path" data-path="w">w</code>
-    <span class="ba-old">1.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">2.0</span><span class="val-delta delta-up" title="difference: +1 (+100%)">+1 <span class="val-delta-pct">(+100%)</span></span> <span class="jr-badge jr-not-kept-by" title="No later read of the chip confirmed this value, and the value came back exactly to what the chip held">never confirmed; the value came back at #4</span></li></ul></div>
+    <span class="ba-old">1.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">2.0</span><span class="val-delta delta-up" title="difference: +1 (+100%)">+1 <span class="val-delta-pct">(+100%)</span></span> <span class="jr-badge jr-not-kept-by" title="Nothing confirmed this value before the saved value came back exactly to what it was before">not confirmed before the value came back (#4)</span></li></ul></div>
 
             
             <div class="jr-sec"><b>Because</b>
@@ -205,10 +205,10 @@
     <ul class="jr-changes"><li><code class="jr-path" data-path="v">v</code>
     <span class="ba-old">2.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">3.0</span><span class="val-delta delta-up" title="difference: +1 (+50%)">+1 <span class="val-delta-pct">(+50%)</span></span> <span class="jr-badge jr-doubt" title="The next event that read the chip (a run that did not measure it, a state SM saw, or an SM write) found another value there, so whether the chip kept this value is not known.">the next read of the chip found another value</span></li></ul></div>
 
-<div class="jr-sec jr-run-not-kept jr-run-came-back"><b>Saved in its own folder, never confirmed on the chip</b>
-    <span class="muted">no later read of the chip confirmed these values, and the value came back to what the chip held</span>
+<div class="jr-sec jr-run-not-kept jr-run-came-back"><b>Saved in its own folder, not confirmed before the value came back</b>
+    <span class="muted">nothing confirmed these values before the saved value came back exactly to what it was before</span>
     <ul class="jr-changes"><li class="jr-not-kept"><code class="jr-path" data-path="w">w</code>
-    <span class="ba-old">2.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">0.0</span><span class="val-delta delta-down" title="difference: -2 (-100%)">-2 <span class="val-delta-pct">(-100%)</span></span> <span class="jr-badge jr-not-kept-by" title="No later read of the chip confirmed this value, and the value came back exactly to what the chip held">never confirmed; the value came back at #4</span></li></ul></div>
+    <span class="ba-old">2.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">0.0</span><span class="val-delta delta-down" title="difference: -2 (-100%)">-2 <span class="val-delta-pct">(-100%)</span></span> <span class="jr-badge jr-not-kept-by" title="Nothing confirmed this value before the saved value came back exactly to what it was before">not confirmed before the value came back (#4)</span></li></ul></div>
 
             
             <div class="jr-sec"><b>Because</b>

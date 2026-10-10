@@ -578,7 +578,7 @@
             + 'times are shown: corrected from ' + from + ' on, labelled “corrected”, the recorded time kept '
             + 'beside it. SM asks again only if the difference changes.'));
         var x = button('Later', 'secondary outline pt-later', function () { _asking = false; hide(d); },
-                       { 'data-pt-choice': 'later', title: 'Close -- the question stays on Diagnostics' });
+                       { 'data-pt-choice': 'later', title: 'Close — the question stays on Diagnostics' });
         row.appendChild(x);
         dlgOf(d).addEventListener('close', function () { _asking = false; }, { once: true });
         show(d);

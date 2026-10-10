@@ -72,6 +72,23 @@ def fmt_value(v: Any) -> str:
     return s if len(s) <= 80 else s[:77] + "..."
 
 
+def edit_fields(log_paths: Iterable[str | None], stash: Iterable[str] = ()) -> list[str | None]:
+    """S10 walk r4 (P2-5): the user's unapplied edits as the chip will see
+    them -- one entry per FIELD, first-seen order: the change-log paths
+    (several commits to one field are one edit to the chip) plus a refused
+    apply's stash (``pending_reapply``) paths the log no longer holds.
+
+    This is what Apply replays (``_capture_change_log_as_updates`` merged with
+    the stash keeps one value per path), so "N unapplied edits", "Apply N" and
+    "Written to live · N edits" count the same thing. The change log itself
+    keeps every commit: undo needs them, and the consent gate
+    (``seen_changes`` / ``data-change-count``) compares log entries."""
+    out = list(dict.fromkeys(log_paths))
+    seen = set(out)
+    out += [p for p in stash if p not in seen]
+    return out
+
+
 def derive_state(*, archive: bool, unreadable: bool, refused: bool,
                  live_moved: bool, conflicts: int, unapplied: int,
                  working_dirty: bool) -> str:

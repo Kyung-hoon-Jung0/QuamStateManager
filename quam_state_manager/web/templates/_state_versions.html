@@ -1,5 +1,5 @@
 {% from '_delta_macros.html' import delta_chip %}
-{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag %}
+{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag, version_flags %}
 {% from '_version_count.html' import version_count %}
 {# docs/120 item 10 — the version list the top-bar chip opens.
 
@@ -68,7 +68,7 @@
             <b>Since the previous version</b>
             <span class="sv-quick-ord">#{{ quick.a_ord or 2 }} → #{{ quick.b_ord or 1 }}</span>
             <span class="muted">{{ quick.a_ts | ts_local }} → {{ quick.b_ts | ts_local }} ·
-                {{ quick.n }} change{{ '' if quick.n == 1 else 's' }}</span>
+                {{ '{:,}'.format(quick.n) }} change{{ '' if quick.n == 1 else 's' }}</span>
         </div>
         {% if quick.entries %}
         <table class="sv-quick-table">
@@ -85,7 +85,7 @@
             {% endfor %}
         </table>
         {% elif quick.n %}
-        <p class="muted sv-quick-big">{{ quick.n }} values differ — too many for
+        <p class="muted sv-quick-big">{{ '{:,}'.format(quick.n) }} values differ — too many for
             a glance; tick the two versions below and Compare for the full view.</p>
         {% endif %}
     </div>
@@ -210,7 +210,7 @@
                 <span class="sv-event sv-event-{{ r.badge | replace(' ', '-') }}" title="{{ r.hover }}">{{ r.title }}</span>
                 {% endif %}
                 <span class="muted sv-event-sub">{{ r.sub }}</span>
-                {% for f in r.flags %}<span class="sv-flag">{{ f }}</span>{% endfor %}
+                {{ version_flags(r) }}
                 {% if r.why_write %}<span class="sv-unavailable" title="{{ r.why_write }}">{{ r.why_write }}</span>{% endif %}
                 {% if r.why_diff and r.why_diff != r.why_write %}<span class="sv-unavailable" title="{{ r.why_diff }}">{{ r.why_diff }}</span>{% endif %}
                 {% else %}
@@ -240,7 +240,7 @@
         <button type="button" class="btn-xs outline"
                 onclick="StateVersions.more({{ rows | length + 40 }})">Show 40 more</button>
         <button type="button" class="btn-xs outline"
-                onclick="StateVersions.more({{ cap }})">{{ 'All ' ~ total if total <= cap else 'Newest ' ~ cap }}</button>
+                onclick="StateVersions.more({{ cap }})">{{ 'All ' ~ '{:,}'.format(total) if total <= cap else 'Newest ' ~ '{:,}'.format(cap) }}</button>
         {% if total > cap %}
         <span class="muted sv-cap-note">of {{ '{:,}'.format(total) }} — open
             <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"

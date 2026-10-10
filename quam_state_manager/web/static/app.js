@@ -3987,7 +3987,7 @@ function _runSyncPressesInTurn(calls) {
         if (i >= calls.length) return;
         if (window._applyInFlight) {
             if (++tries > 200) {
-                if (window.showToast) window.showToast("A sync you pressed did not run -- "
+                if (window.showToast) window.showToast("A sync you pressed did not run — "
                     + "another write was still in flight. Press it again.", "warning");
                 return;
             }
@@ -7530,18 +7530,19 @@ window.ValueDelta = (function () {
         }
         return groupInt(intPart) + (frac ? "." + frac : "");
     }
-    function compactMagnitude(mant, scale) {
+    function compactMagnitude(mant, scale, sig) {
         if (mant === 0n) return "0";
+        if (sig === undefined) sig = SIG_DIGITS;
         var digits = (mant < 0n ? -mant : mant).toString();
         var expo = digits.length - scale;
         if (expo >= SCI_HIGH_EXP || expo <= COMPACT_LOW_EXP) {
-            var r = roundKeep(digits, SIG_DIGITS);
-            var e = expo - 1 + (r.digits.length > Math.min(digits.length, SIG_DIGITS) ? 1 : 0);
+            var r = roundKeep(digits, sig);
+            var e = expo - 1 + (r.digits.length > Math.min(digits.length, sig) ? 1 : 0);
             var m = r.digits.replace(/0+$/, "");
             return m.charAt(0) + (m.length > 1 ? "." + m.slice(1) : "")
                  + "e" + (e < 0 ? "-" : "+") + (Math.abs(e) < 10 ? "0" : "") + Math.abs(e);
         }
-        var decimals = Math.max(0, SIG_DIGITS - expo);
+        var decimals = Math.max(0, sig - expo);
         if (scale > decimals) {
             var r2 = roundKeep(digits, expo + decimals);
             return fixedString(r2.digits, scale - r2.dropped);
@@ -7559,15 +7560,19 @@ window.ValueDelta = (function () {
         return (mant < 0n ? "-" : "+") + formatMagnitude(mant, scale);
     }
 
+    /* S10 walk: ONE rule for a percent change, exactly as
+       core.value_delta.format_percent -- PCT_SIG_DIGITS significant digits of
+       the shortest spelling, half-up, never fewer than the integer digits,
+       the delta's notation thresholds ("-0.00512", "+0.625", "+7.5e-07").
+       The old magnitude ladder printed "-0.005" beside "+0.625". */
+    var PCT_SIG_DIGITS = 3;
     function formatPercent(pct) {
-        var a = Math.abs(pct);
-        if (a && a < 0.001) return padExp(sign(pct) + Math.abs(pct).toExponential(2));
-        var digits = a >= 100 ? 0 : (a >= 10 ? 1 : (a >= 1 ? 2 : 3));
-        var s = sign(pct) + Math.abs(pct).toFixed(digits);
-        if (digits) s = s.replace(/0+$/, "").replace(/\.$/, "");
-        return s;
+        if (typeof pct !== "number") return "";
+        var p = parse(pct);
+        if (!p) return "";
+        if (p.mant === 0n) return "0";
+        return (p.mant < 0n ? "-" : "+") + compactMagnitude(p.mant, p.scale, PCT_SIG_DIGITS);
     }
-    function sign(v) { return v < 0 ? "-" : "+"; }
 
     /* {delta, text, pct, pct_text, dir, coerced, title} | null */
     function compute(oldValue, newValue) {
@@ -20605,6 +20610,11 @@ function paramHistoryOpenDrawer(qubit, prop) {
             n.textContent = s.textContent;
             s.parentNode.replaceChild(n, s);
         });
+        // S10 walk r4 (P2-11): the scroll below ran on the one-line "Loading…"
+        // placeholder, so the drawer that replaced it (header + a 340px chart)
+        // opened below a 21-row grid with only its title on screen. Bring the
+        // LOADED drawer into view ('nearest': no jump when it is already there).
+        drawer.scrollIntoView({behavior: 'smooth', block: 'nearest'});
     });
     drawer.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }

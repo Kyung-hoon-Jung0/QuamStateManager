@@ -969,7 +969,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                     and pre_mt != (wc.synced_state_mtime, wc.synced_wiring_mtime)
                     and live_moved(wc)):
                 raise StaleLiveError(
-                    "The live state files changed while preparing to apply -- refusing "
+                    "The live state files changed while preparing to apply — refusing "
                     "to overwrite an out-of-band write."
                 )
             try:
@@ -985,7 +985,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             if now_hash != expect_live_hash:
                 raise StaleLiveError(
                     "The live state files changed after the overwrite was confirmed "
-                    "-- refusing to replace values the confirm did not name.")
+                    "— refusing to replace values the confirm did not name.")
 
         # S4 (docs/271): write-ahead. Every refusal is behind us; the journal
         # line is durable before the chip is touched. Base = what the chip
@@ -1018,7 +1018,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                     moved = False
                 if moved:
                     err = StaleLiveError(
-                        "The live state files changed while SM recorded this write -- "
+                        "The live state files changed while SM recorded this write — "
                         "refusing to overwrite an out-of-band write.")
                     rec.failed(err)
                     raise err
@@ -1057,7 +1057,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             if not verified:
                 raise safe_io.LiveFileError(
                     f"Apply verification FAILED: {wc.live_folder} does not contain "
-                    "the just-written content -- another program wrote the live files "
+                    "the just-written content — another program wrote the live files "
                     "during the apply (or the path is redirected). Re-sync to see "
                     "what the live chip holds now; your edits are still in the "
                     "working copy."

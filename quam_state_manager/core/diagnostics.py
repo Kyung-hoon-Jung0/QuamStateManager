@@ -229,7 +229,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("warning", "Config value bounds", "Mixer correction ∈ [−2, 2−2⁻¹⁶], integration-weight magnitude ≤ 2048 with a mult-of-4 duration, time-tagging thresholds in signed-12-bit range."),
     ]),
     ("other", [
-        ("warning", "Change history complete", "Every write SM made to this chip is in its change history. A recorded write the history could not take in is kept with its error (the writes after it still are) and named here -- the chip itself is unaffected (docs/271)."),
+        ("warning", "Change history complete", "Every write SM made to this chip is in its change history. A recorded write the history could not take in is kept with its error (the writes after it still are) and named here — the chip itself is unaffected (docs/271)."),
     ]),
 ]
 

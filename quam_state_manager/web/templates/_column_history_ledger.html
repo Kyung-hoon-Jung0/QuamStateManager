@@ -69,8 +69,8 @@
           {% endif %}
         </span>
         {% else %}<span class="ch-nochips">—</span>{% endfor %}
-        {% if row.more %}<span class="vh-more" title="Older change points of this row: open its value drawer (&#128344;) and press Show all">+{{ row.more }} older</span>{% endif %}
-        {% if row.not_kept_n %}<span class="vh-more vh-not-kept-n" title="Values a run saved in its own folder that the next read of the chip did not find there: left out of this row's changes. Its value drawer (&#128344;) lists them.">{{ row.not_kept_n }} saved value{{ 's' if row.not_kept_n != 1 }} not on the chip</span>{% endif %}
+        {% if row.more %}<span class="vh-more" title="Older change points of this row: open its value drawer (&#128344;) and press Show all">+{{ '{:,}'.format(row.more) }} older</span>{% endif %}
+        {% if row.not_kept_n %}<span class="vh-more vh-not-kept-n" title="Values a run saved in its own folder that are not this row's chip history: {{ witness_words.not_kept }}, or {{ witness_words.excursion }}. Left out of this row's changes; its value drawer (&#128344;) lists them.">{{ '{:,}'.format(row.not_kept_n) }} saved value{{ 's' if row.not_kept_n != 1 }} {{ witness_words.unconfirmed }}</span>{% endif %}
       </td>
     </tr>
   {% endfor %}
@@ -79,7 +79,7 @@
 </div>
 <p class="ch-foot ch-chg-foot">
   each row's own change points, newest first (last {{ chip_cap }} shown)
-  &middot; from the change ledger ({{ ledger.events_text or ('%s event%s' % (ledger.events, '' if ledger.events == 1 else 's')) }})
+  &middot; from the change ledger ({{ ledger.events_text or ('{:,} event{}'.format(ledger.events, '' if ledger.events == 1 else 's')) }})
   &middot; a run is named only when its own patch set the value
 </p>
 </div>
@@ -118,10 +118,10 @@
       {% for c in row.cells %}
       <td class="ch-val{% if c.changed %} ch-changed{% endif %}{% if not c.has %} ch-missing{% endif %}{% if c.not_kept %} ch-not-kept{% endif %}"
           data-run-index="{{ loop.index0 }}"
-          {% if c.has %}title="{{ c.fill }}{% if c.not_kept %} &mdash; saved by this run, not kept on the chip (the chip held {{ c.chip }}){% endif %} — click to fill {{ row.id }}'s cell (Enter there stages it)"
+          {% if c.has %}title="{{ c.fill }}{% if c.not_kept %} &mdash; saved by this run, {{ witness_words.unconfirmed }} (the chip's history holds {{ c.chip }} here){% endif %} — click to fill {{ row.id }}'s cell (Enter there stages it)"
           data-row="{{ row.id }}" data-fill="{{ c.fill }}"
           onclick="ColumnHistory.useValue(this)"{% endif %}>
-        {% if c.has %}<code>{{ c.display }}</code>{% else %}—{% endif %}{% if c.not_kept %}<span class="vh-flag ch-not-kept-flag">not kept on the chip</span>{% endif %}
+        {% if c.has %}<code>{{ c.display }}</code>{% else %}—{% endif %}{% if c.not_kept %}<span class="vh-flag ch-not-kept-flag">{{ witness_words.unconfirmed }}</span>{% endif %}
       </td>
       {% endfor %}
     </tr>
@@ -130,8 +130,8 @@
 </table>
 </div>
 <p class="ch-foot">
-  the newest {{ runs|length }} run{{ 's' if runs|length != 1 }} of this chip in the change ledger, each row's value as that run saved it (through its alias, when it has one; a value the chip did not keep is marked)
-  {% if runs_left_out %}&middot; {{ runs_left_out }} run{{ 's' if runs_left_out != 1 }} of an uncertain chip identity {{ 'is' if runs_left_out == 1 else 'are' }} left out{% endif %}
+  the newest {{ '{:,}'.format(runs|length) }} run{{ 's' if runs|length != 1 }} of this chip in the change ledger, each row's value as that run saved it (through its alias, when it has one; a value {{ witness_words.unconfirmed }} is marked)
+  {% if runs_left_out %}&middot; {{ '{:,}'.format(runs_left_out) }} run{{ 's' if runs_left_out != 1 }} of an uncertain chip identity {{ 'is' if runs_left_out == 1 else 'are' }} left out{% endif %}
   &middot; a highlighted cell differs from the previous run's saved value (which run wrote it is in the Changes tab)
 </p>
 </div>
