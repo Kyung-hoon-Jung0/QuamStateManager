@@ -25645,7 +25645,7 @@ window.ColumnHistory = (function () {
             var v = td.getAttribute("data-fill");
             var input = row ? _gridInput(row) : null;
             if (!input || input.readOnly) { skipped++; return; }
-            if (_sameAsCell(input.value, v)) return;   // already there — no-op
+            if (_sameAsCell(input.value, v)) return;   // already there: no-op
             cells.push({ dp: input.dataset.dotPath, prev: input.value, next: v });
             _fill(input, v);
             filled++;

@@ -48,8 +48,16 @@
        it is disarmed at the config level rather than per-surface — every current
        and future render-during-swap site is covered at once. Must precede the
        htmx <script> tag: htmx reads this meta once, at load.
-       Pinned by tests/settle_config_selfcheck.cjs. #}
-    <meta name="htmx-config" content='{"attributesToSettle":["width","height"]}'>
+       Pinned by tests/settle_config_selfcheck.cjs.
+       v1.3.0 A5: historyCacheSize 0 -- htmx keeps no localStorage page
+       snapshots. It stored the whole body before every pushed navigation; Live
+       State Edit's ~5.6 M characters failed the quota on every same-page push
+       (htmx:historyCacheError x85-138 a session, a multi-MB JSON.stringify per
+       retry, every other cached page dropped). Back/Forward now ask the server
+       (HX-History-Restore-Request -> the full page, routes._is_htmx), which
+       also never shows a stale value. Pinned by
+       tests/v130_history_cache_selfcheck.cjs. #}
+    <meta name="htmx-config" content='{"attributesToSettle":["width","height"],"historyCacheSize":0}'>
     <script src="{{ url_for('static', filename='htmx.min.js') }}"></script>
     <script src="{{ url_for('static', filename='split.min.js') }}"></script>
     {# The one query grammar (space=AND, standalone |=OR) — must precede every

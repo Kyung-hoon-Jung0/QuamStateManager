@@ -113,7 +113,7 @@ def setup_page():
     """The setup page (docs/173 §3.5): a shell; agent-setup.js renders it."""
     from flask import render_template
     r = _r()
-    tmpl = "_agent_setup.html" if request.headers.get("HX-Request") else "base.html"
+    tmpl = "_agent_setup.html" if r._is_htmx() else "base.html"   # a history restore gets the page
     return render_template(tmpl, **r._ctx(page="agent_setup"))
 
 
