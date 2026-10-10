@@ -323,6 +323,27 @@ def test_browse_expands_tilde(client, monkeypatch, tmp_path):
     assert "missing" not in body
 
 
+@pytest.mark.parametrize("raw", [
+    "a\x00b",
+    pytest.param("C:\\" + "x" * 40000, marks=pytest.mark.skipif(
+        sys.platform != "win32", reason="Windows refuses an over-long path in stat()")),
+], ids=["nul", "overlong"])
+def test_an_unresolvable_path_is_protected_and_never_500(raw, tmp_path):
+    # v1.3.0 stability sweep: a NUL byte or an over-long path raised ValueError
+    # out of Path.resolve() -> 500, against the route's "never a 500" contract
+    from quam_state_manager.web.routes import _is_system_path
+    try:
+        got = _is_system_path(Path(raw))
+    except ValueError as e:
+        got = "raised " + str(e)
+    assert got is True
+    app = create_app(testing=True, instance_path=str(tmp_path / "inst2"))
+    app.config["PROPAGATE_EXCEPTIONS"] = False
+    r = app.test_client().get("/browse", query_string={"path": raw})
+    assert r.status_code == 200
+    assert r.get_json()["dirs"] == []
+
+
 @posix_only
 class TestSystemPathBoundary:
     """The old str.startswith block also caught siblings (C:\\Windows_backup);

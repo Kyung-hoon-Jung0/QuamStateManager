@@ -1201,7 +1201,10 @@ def probe_selected_env(
     needs to confirm the user's already-chosen env is QM-capable doesn't
     pay the cost of probing every other env on the machine.
     """
-    return probe_envs([python_path], instance_path=instance_path).get(python_path, probe_env(python_path))
+    # v1.3.0: dict.get(k, probe_env(...)) evaluated its default eagerly -- a
+    # second subprocess probe on EVERY call, cache hit or not
+    got = probe_envs([python_path], instance_path=instance_path)
+    return got[python_path] if python_path in got else probe_env(python_path)
 
 
 # --- selected-env persistence ---------------------------------------------

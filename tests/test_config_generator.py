@@ -1419,6 +1419,28 @@ class TestProbeEnvsCaching:
         assert first[str(fake_py)]["usable"] is True
         assert second[str(fake_py)].get("cached") is True
 
+    def test_selected_env_probe_spawns_nothing_on_a_cache_hit(self, tmp_path, monkeypatch):
+        # v1.3.0 stability sweep: probe_selected_env passed probe_env(...) as the
+        # dict.get DEFAULT, which Python evaluates eagerly -- every /generate/probe
+        # (the landing's per-env check) spawned a probe subprocess on a cache hit
+        from quam_state_manager.core import config_generator as cg
+
+        fake_py = tmp_path / "envA" / "bin" / "python"
+        fake_py.parent.mkdir(parents=True)
+        fake_py.write_text("#!/bin/bash\necho", encoding="utf-8")
+        calls = []
+
+        def fake_probe(path):
+            calls.append(path)
+            return {"python": "3.11", "versions": {}, "usable": True, "missing": [], "error": None}
+
+        monkeypatch.setattr(cg, "probe_env", fake_probe)
+        cg.probe_envs([str(fake_py)], instance_path=tmp_path)
+        assert len(calls) == 1
+        res = cg.probe_selected_env(str(fake_py), instance_path=tmp_path)
+        assert res.get("cached") is True
+        assert len(calls) == 1, f"a cache hit spawned {len(calls) - 1} extra probe(s)"
+
     def test_mtime_change_invalidates_cache(self, tmp_path, monkeypatch):
         import os, time as _time
         from quam_state_manager.core import config_generator as cg

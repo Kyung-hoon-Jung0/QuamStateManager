@@ -79,6 +79,15 @@ class TestPlan:
     def test_the_viewport_hint_is_clamped_and_defaults_wide(self, hint, expect):
         assert bulk_virt.viewport_px(hint) == expect
 
+    @pytest.mark.parametrize("hint", ["1e400", "inf", "-inf", "nan"])
+    def test_an_overflowing_viewport_hint_defaults_wide(self, hint):
+        # v1.3.0 stability sweep: GET /bulk?vw=1e400 answered 500 (int(inf) overflows)
+        try:
+            got = bulk_virt.viewport_px(hint)
+        except (OverflowError, ValueError) as e:
+            got = "raised " + type(e).__name__
+        assert got == bulk_virt.DEFAULT_VIEWPORT_PX
+
     def test_a_wider_viewport_never_adds_cold_columns(self):
         cols = _cols(120)
         a = bulk_virt.plan(cols, 20, 800)
