@@ -208,7 +208,8 @@ async function post(b, url, form) {
       await sleep(400);
       const c1 = await center(b, sel);
       await hover(b, c1[0], c1[1]);
-      card = await waitFor(b, `(function(){var p=document.getElementById('cs-meta-pop');var t=p&&p.textContent||'';return t.indexOf('${Q}')===0?t:'';})()`, 5000);
+      // journey race: the meta is fetched on the first hover; wait past the card's placeholder line
+      card = await waitFor(b, `(function(){var p=document.getElementById('cs-meta-pop');var t=p&&p.textContent||'';return t.indexOf('${Q}')===0&&!/Loading when this was measured/.test(t)?t:'';})()`, 15000);
       if (!card) { await b.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await sleep(600); }
     }
     ok(/Not in this chip.s change ledger yet/.test(card || ''), 'the meta says the value on screen is not in the ledger: ' + (card || '').slice(0, 200));

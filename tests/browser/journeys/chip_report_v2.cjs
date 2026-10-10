@@ -95,7 +95,8 @@ async function openOffline(file) {
   rec('J1b real clicks change the selection and the URL', st.checked.indexOf('raw') >= 0 && st.checked.indexOf('diagnostics') < 0
       && /raw/.test(decodeURIComponent(st.url)) && st.diagHidden, st);
   rec('J1c the panel says what is in and out of the file', /Not in the file:.*Diagnostics/.test(st.will) && /Raw state tree/.test(st.will), st.will);
-  rec('J1d the calibration log cannot be checked', st.cal === true);
+  // docs/281: old "the calibration log cannot be checked" -> it reads the chip ledger now: offered, off by default
+  rec('J1d the calibration log can be checked, and is off by default', st.cal === false && st.checked.indexOf('calibration_log') < 0, st.checked);
   await p.shot(path.join(OUT, 'j1_panel.png'));
 
   // ---- J2: a REAL download, opened from disk with the network off

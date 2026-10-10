@@ -115,11 +115,20 @@ async function trendPoint(b, entity, want) {
       }, "(function(){var t=(document.querySelector('.hoverlayer')||{}).textContent||'';return /qA2/.test(t)?t:'';})()");
       ok(/writer not proven/.test(hv || ''), 'its hover SAYS writer not proven: ' + (hv || '').slice(0, 120));
       await b.shot(path.join(SHOTS, '02_trends_unproven_hover.png'));
-      const before = await b.ev("(document.getElementById('inspector-pane')||{}).textContent||''");
+      // docs/301 F9: old "a click on it opens nothing" -> it opens the run that SAVED it,
+      // and that run says it is not proven to have measured it
       await b.click(unp.x, unp.y);
+      const savedRun = await waitFor(b, `(function(){var p=document.getElementById('inspector-pane');
+        var t=((p||{}).textContent||'').replace(/\\s+/g,' ');var n=p&&p.querySelector('.ds-provenance-note');
+        var w=n?n.textContent.replace(/\\s+/g,' '):'';
+        return /#6/.test(t)&&/06_T1/.test(t)&&/writer is not proven/.test(w)?w:'';})()`, 20000);
+      ok(!!savedRun, 'a click on it opens run #6, the run that saved it, which says its writer is not proven: '
+         + (savedRun || '').slice(0, 90));
+      // a person closes the run with its x before going on with the chart
+      await clickSel(b, '#inspector-pane .inspector-close');
+      ok(!!(await waitFor(b, "!document.querySelector('#inspector-pane #ds-detail-root')", 10000)),
+         'its x closes the run');
       await sleep(800);
-      ok((await b.ev("(document.getElementById('inspector-pane')||{}).textContent||''")) === before,
-         'a click on it opens nothing');
     }
     // a proven point: its hover names the run, a click opens it
     const pr = await trendPoint(b, 'qA1', "function(c){return !!c[3];}");

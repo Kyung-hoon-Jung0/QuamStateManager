@@ -51,7 +51,8 @@ const hover = (p, x, y) => p.send('Input.dispatchMouseEvent', { type: 'mouseMove
       await p.sleep(400); await hover(p, c.x, c.y); await p.sleep(400);
       const card = await until(p, `(function(){var e=document.getElementById('cs-meta-pop'); return e? e.innerText : null;})()`,
                                v => !!v && !/Loading when/.test(v), META_MAX);
-      rec('M1b hovering a tile shows the metadata card', !!card && /(Last measured|Last changed|Unchanged since|No change|Run recorded|Not in this chip|Not dated)/.test(card), card);
+      // S10 C5: old card lines only -> also "First recorded" (a value that appeared then, not a change)
+      rec('M1b hovering a tile shows the metadata card', !!card && /(Last measured|Last changed|First recorded|Unchanged since|No change|Run recorded|Not in this chip|Not dated)/.test(card), card);
       const parked = await p.ev(`(function(){var c=document.querySelector('.topo-section[data-density-panel="f_01"] .heatmap-cell[data-meta-title]'); return !!c && !c.hasAttribute('title');})()`);
       rec('M1c the native tooltip is parked while the card is up (no double tooltip)', parked);
       await p.shot(`${SHOTS}/m1_tile_hover.png`);
