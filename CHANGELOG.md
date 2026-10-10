@@ -834,12 +834,16 @@ four kinds of chip (docs/301).
   background the first time it is viewed.
 - **Values the chip never kept**: a run that saved its own fit result which never reached the live chip
   no longer shows as the chip's value. Checked against a lab's timestamped live backups: the rule is
-  98.9% / 96.2% precise; such values are listed as "not kept on the chip", and "since" is when the value's
-  stay on the chip began.
+  98.9% / 96.2% precise; such values are listed apart ("not in the next recorded state", or "not confirmed
+  before the value came back"), unconfirmed changes are labelled, and "since" / "last changed" is when the
+  value's stay on the chip began. A pointer-followed value is the value in force through the pointer.
 - Another chip's run in a linked folder is left out only when its saved state declares another chip;
   the user's Apply is listed once; the lists, counts and notes agree; the Calibration log never returns
   500 on an unreadable history; a user's bookmark is never overwritten by the live-tracking marker.
 - First open after a data folder moved: surfaces answer at once with progress that names its phase; the
   catch-up is about 3x faster.
+- One compact rule for deltas and percents; every count grouped; edit counts are fields; the topbar keeps
+  its labels with edits staged; an archived chip's grid shows its newest recorded values; a redacted
+  report hides whole names and keeps punctuation; Revert last apply says what it restored.
 - Fixed two missing imports (the overnight grant watch; autofit figure generation) and added a guard
   against undefined names.

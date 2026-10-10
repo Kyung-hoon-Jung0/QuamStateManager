@@ -68,13 +68,26 @@ chip and saves the old value again. Measured against the lab's 1,404 timestamped
 held).
 
 `core/hub_witness.py` decides each run change by the first later event that READ THE CHIP without
-re-measuring that qubit (a run not targeting it, a state SM saw, an SM write): it carries the new value ->
-confirmed; it carries the old value -> not kept on the chip. Replayed by the shipped code on the real
-ledger: confirmed 98.9% precise (14,183 / 165), not-kept 96.2% (1,372 / 54). Not-kept changes and the
-read that restored the old value leave every value series; the drawer lists them ("Saved by run #3313 ...
-not kept on the chip (#3314, which did not measure qA1, still had ...)"); "since" is where the value's
-stay on the chip began (an unconfirmed excursion that returned to the same value is skipped and named).
-For three parameters checked by hand against the backups, every surface now gives the true date.
+re-measuring that qubit, within the same rename era (a run not targeting it, a state SM saw, an SM
+write): it carries the new value -> confirmed; it carries the old value -> not in the next recorded state.
+Replayed by the shipped code on the real ledger: confirmed 98.9% precise (14,183 / 165), not-in-the-next-
+state 96.2% (1,372 / 54). Such changes and the read that restored the old value leave every value series;
+the drawer lists them ("Saved by run #3313 ... not in the next recorded state (#3314, which did not
+measure qA1, still had ...)"). The wording says only what the record proves: on a lab whose runs chain
+from each other rather than from the live file, a value can have been on the chip briefly; the claim
+"the next recorded state still had the old value" was checked true for all 709 run witnesses.
+
+An **excursion** -- unconfirmed saves that come back exactly to the value the chip held, the return
+being a save the chip is known to hold (or the chip's current value) -- is not chip history either: it
+leaves every series and is listed apart ("not confirmed before the value came back"); an unconfirmed
+return closes nothing (a real pointer move that stayed live was being dropped). A pointer-followed value
+is the value in force through the pointer; a retarget is a change judged the same way. A change that stays
+unconfirmed is shown, labelled ("changed again before the chip was read", "no later run has read the chip
+yet"), never as a plain change. The "current" badge, "since", "last changed" and calibration age are where
+the value's stay on the chip began. Against the lab's backups, 51 of 521 shown rows are still contradicted
+by a backup -- every one labelled as unconfirmed (removing that class would also drop real history: 37
+contradicted vs 78 held in the measurement); qA1 T1 reads since #58 and f_01 since #3312 on every surface,
+as the backups say.
 
 ### First open after a data folder moved
 
