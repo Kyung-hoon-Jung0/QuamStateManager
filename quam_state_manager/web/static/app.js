@@ -3453,7 +3453,7 @@ document.addEventListener("showToast", function (e) {
     window.showToast(String(msg), (d && typeof d === "object" && d.level) || "info");
 });
 
-window.showToast = function(message, level) {
+window.showToast = function(message, level, ms) {
     var bar = document.getElementById("status-bar");
     if (!bar) return;
     var div = document.createElement("div");
@@ -3463,10 +3463,31 @@ window.showToast = function(message, level) {
     p.textContent = message;
     div.appendChild(p);
     bar.appendChild(div);
-    var duration = (level === "error" || level === "warning") ? 6000 : 3500;
+    var duration = ms > 0 ? ms : ((level === "error" || level === "warning") ? 6000 : 3500);
     setTimeout(function() { div.style.opacity = "0"; }, duration);
     setTimeout(function() { div.remove(); }, duration + 500);
 };
+
+/* v1.3.0: a tray notice meant as information (an Apply cut off by a restart
+   whose edits are on disk, _pending_tray.html data-toast) is read as a toast,
+   long enough to read -- inline it squeezed the one-row top bar. Shown once:
+   the element goes after it is shown (the server pops the notice anyway). */
+window.TrayNoticeToast = (function () {
+    function show(root) {
+        var scope = (root && root.querySelectorAll) ? root : document;
+        Array.prototype.forEach.call(scope.querySelectorAll(".tray-recovery-notice[data-toast]"), function (n) {
+            var text = (n.textContent || "").trim();
+            var level = n.getAttribute("data-toast") || "info";
+            if (n.parentNode) n.parentNode.removeChild(n);
+            if (text && window.showToast) window.showToast(text, level, 15000);
+        });
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { show(document); });
+    else show(document);
+    document.addEventListener("htmx:afterSwap", function () { show(document); });
+    document.addEventListener("htmx:oobAfterSwap", function () { show(document); });
+    return { show: show };
+})();
 
 /* docs/301 F7: a server toast that lands in #status-bar OUT OF BAND (the
  * apply and save answers ride hx-swap-oob beside the tray) was never faded:

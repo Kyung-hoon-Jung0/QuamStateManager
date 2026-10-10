@@ -112,7 +112,8 @@ def test_the_tray_renders_the_information_without_an_error_role(tmp_path):
         __import__("pathlib").Path(pending_tray.__file__).resolve().parents[1] / "web" / "templates"))
     tpl = ('{% if tray_recovery_notice is defined %}{% set _recovery_notice = tray_recovery_notice() %}'
            '{% if _recovery_notice is mapping %}<div role="status" class="tray-recovery-notice '
-           'tray-recovery-{{ _recovery_notice.level }}">{{ _recovery_notice.text }}</div>'
+           'tray-recovery-{{ _recovery_notice.level }}" data-toast="{{ _recovery_notice.level }}" '
+           'hidden>{{ _recovery_notice.text }}</div>'
            '{% elif _recovery_notice %}<div role="alert" class="status-error tray-recovery-notice '
            'tray-recovery-error">{{ _recovery_notice }}</div>{% endif %}{% endif %}')
     src = (__import__("pathlib").Path(app.template_folder) / "_pending_tray.html").read_text(encoding="utf-8")
@@ -121,4 +122,6 @@ def test_the_tray_renders_the_information_without_an_error_role(tmp_path):
         info = render_template_string(tpl, tray_recovery_notice=lambda: {"level": "info", "text": "on live"})
         err = render_template_string(tpl, tray_recovery_notice=lambda: "lost")
     assert 'role="status"' in info and "tray-recovery-info" in info and "status-error" not in info
+    # information rides a toast (app.js TrayNoticeToast), never the one-row top bar
+    assert 'data-toast="info"' in info and " hidden>" in info
     assert 'role="alert"' in err and "status-error" in err
