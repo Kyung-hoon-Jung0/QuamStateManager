@@ -144,13 +144,13 @@ def test_delta_is_the_last_change_when_the_series_then_stays_flat(tmp_path):
     c = _series_client(tmp_path, [2.0e-5, 3.0e-5, 3.0e-5])
     trend, text = _t1_delta(c.get("/api/topology/sparklines/qA1").get_data(as_text=True))
     assert trend == "up", (trend, text)
-    assert text == "▲+50.0%", text
+    assert text == "▲+50%", text   # S10 walk round 4: old -> new, one compact percent rule (3 significant digits)
 
 
 def test_delta_does_not_walk_past_the_last_change(tmp_path):
     c = _series_client(tmp_path, [2.0e-5, 3.0e-5, 3.0e-5, 3.3e-5])
     trend, text = _t1_delta(c.get("/api/topology/sparklines/qA1").get_data(as_text=True))
-    assert (trend, text) == ("up", "▲+10.0%"), (trend, text)
+    assert (trend, text) == ("up", "▲+10%"), (trend, text)   # S10 walk round 4: one compact percent rule
 
 
 def test_a_series_that_never_changed_stays_flat(tmp_path):
@@ -169,4 +169,4 @@ def test_delta_is_exact_when_the_sparkline_is_thinned(tmp_path):
     c = _series_client(tmp_path, zig + [2.0e-5, 2.2e-5, 2.2e-5, 2.2e-5])
     body = c.get("/api/topology/sparklines/qA1").get_data(as_text=True)
     trend, text = _t1_delta(body)
-    assert (trend, text) == ("up", "▲+10.0%"), (trend, text)
+    assert (trend, text) == ("up", "▲+10%"), (trend, text)   # S10 walk round 4: one compact percent rule
