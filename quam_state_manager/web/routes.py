@@ -3433,19 +3433,22 @@ def _hub_roots_for(ctx) -> list[tuple[str, str]]:
 
 
 def _hub_live_identity(ctx) -> dict | None:
-    """The open chip's identity in the S3 ledger form (``hub_build``'s one
-    identity function), so a run of another chip in a synced folder is
-    flagged -- seeded only from a chip that DECLARES a name. A nameless
-    chip's hardware fingerprint changes as the chip does (a qubit added, a
-    controller moved); its ledger takes the identity from its own archive,
-    exactly as the offline builder does (docs/275 review)."""
+    """The open chip's identity in the ledger form (``hub_build.identity_of``),
+    named or NAMELESS: the live state the user opened is this chip by
+    definition, so a run of another chip in a synced folder is judged against
+    it -- never the other way round (v1.3.0 A9: a nameless chip's ledger used
+    to take its identity from the first run ingested, another chip's when the
+    folder is shared). A chip changes as it lives (a qubit added, its
+    controller reached at another address); ``hub_build.identity_disagrees``
+    compares a nameless identity part by part, so its own history stays its
+    own. None only for a state with no identity at all (no name, controller
+    or qubit): its ledger then takes the first identified run's."""
     from quam_state_manager.core import hub_build
     store = ctx.get("store")
     if store is None:
         return None
     with store._lock:
-        ident = hub_build._chip_identity(store.state, store.wiring, Path(ctx["path"]))
-    return ident if ident and ident.get("name") else None
+        return hub_build.identity_of(store.state, store.wiring, Path(ctx["path"]))
 
 
 def _is_run_snapshot(meta) -> bool:

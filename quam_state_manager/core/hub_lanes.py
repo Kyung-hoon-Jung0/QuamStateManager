@@ -14,9 +14,9 @@ its *view* (:func:`build`, reached as ``LedgerIndex.for_folder``):
   DECLARES another chip (a different declared name, or the same name with no
   qubit in common -- another chip's run is never this chip's value) are left
   out of every value answer and COUNTED. A run flagged ``CHIP_UNCERTAIN`` for
-  any other reason (no name on one side and the hardware fingerprint differs:
-  a nameless chip that gained a qubit, say) stays, shown and never named as
-  the writer
+  any other reason (not both sides declare a name: a nameless run on another
+  controller -- this chip before a move, or another chip -- or a named run of
+  a chip that declares none, say) stays, shown and never named as the writer
   (``Lane.left_out``); listings keep them, labelled -- except another chip's
   run, which ``hub_versions`` never offers as a version (the note says it).
 * **seams** -- a stored row is a diff against the GLOBAL predecessor. In a
@@ -452,12 +452,13 @@ def declares_another_chip(conn, ledger_id: str, f: dict, chip: dict | None) -> b
     """True when run *f*'s saved state DECLARES another chip than the ledger's:
     both sides name a chip and the names differ, or they share the name but no
     qubit (docs/275's rule, ``hub_build.identity_disagrees``, restricted to what
-    a declaration proves). A run whose identity is only uncertain -- no name on
-    one side, so the hardware fingerprint decided, and fingerprints change as a
-    chip does -- is not another chip's. An unreadable run declares nothing."""
+    a declaration proves). A run whose identity is only uncertain -- not both
+    sides declare a name, so nothing declared proves another chip -- is not
+    another chip's. An unreadable run declares nothing."""
     if not chip or not chip.get("name") or not _has_state(f) or f.get("error"):
         return False
-    key = (ledger_id, f["eid"], f.get("state_hash"))
+    # v1.3.0 A9: a verdict is made against one seed; a new seed is asked again
+    key = (ledger_id, json.dumps(chip, sort_keys=True, default=str), f["eid"], f.get("state_hash"))
     with _LOCK:
         hit = _DECLARED.get(key)
     if hit is not None:

@@ -131,20 +131,24 @@ def _open_nameless(tmp_path, runs, live_state):
 
 
 def test_a_nameless_chip_that_gained_a_qubit_keeps_its_own_runs(tmp_path):
-    """No declared name: the hardware fingerprint decided "uncertain" (a qubit was
-    added), which proves no other chip -- the run stays, shown and never named as
-    the writer, as before the lane rule."""
+    """No declared name, and a qubit was added on the same controller: the run is
+    the chip's own -- shown, never hidden as another chip's. (A nameless run the
+    rule leaves uncertain stays shown and is never named as the writer:
+    tests/test_hub_nameless_identity.py.)"""
     two = ("qA1", "qA2")
     c = _open_nameless(tmp_path, [(31, _nameless_state(7.1e9), "010000"),
                                   (32, _nameless_state(7.2e9, two), "020000")],
                        _nameless_state(7.2e9, two))
     body, pts = _points(c)
-    assert (7.2e9, "run_uncertain_chip") in pts, pts
+    # v1.3.0: old -> new, #32 was "chip uncertain" (the seed was the first run, #31,
+    # and a qubit added changed the fingerprint) -> the chip's own run (A9: the seed
+    # is the open chip; one controller and a shared qubit is the same chip)
+    assert (7.2e9, "run_saved") in pts and (7.2e9, "run_uncertain_chip") not in pts, pts
     assert not body.get("other_chip_hidden")
     drawer = c.get("/field/history?path=qubits.qA1.f_01").data.decode()
     # v1.3.0: old -> new, run names carry <wbr> break hints (A6): compare the visible text
     seen = re.sub(r"<[^>]+>", "", drawer)
-    assert "#32 (chip uncertain)" in seen and "not named as writer" in seen
+    assert "#32" in seen and "(chip uncertain)" not in seen
     assert 'data-note="other_chip"' not in drawer
 
 
