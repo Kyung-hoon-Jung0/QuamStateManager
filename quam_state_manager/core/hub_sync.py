@@ -1994,6 +1994,26 @@ ARCHIVE_DONE = "done:runs"
 ROOT_SPELLING = "root_spelled:"
 
 
+def catching_up() -> bool:
+    """v1.3.0 (perf, A1): is any chip's ledger being built right now -- an open
+    chip's catch-up or an archived chip's first build? Background work that
+    competes for the one interpreter (the Datasets index finishing a cold
+    scan) waits while it is: run beside it, a 3,500-run index scan more than
+    doubled a catch-up. Lock-free, RAM only (the ``status()`` predicate without
+    its report); a chip whose last slice failed for good is not counted."""
+    for cs in registered():
+        if not cs.syncable or not (cs.active or cs.archive):
+            continue
+        if cs.slice_error is not None and not cs.slice_error_transient:
+            continue
+        pending = (len(cs.unread) + len(cs.read) + len(cs.ready_cands) + cs.in_hand
+                   + len(cs.observe_queue))
+        if (not cs.ready or cs.full_wanted or cs.dirty or pending
+                or (cs.sweep_initial and cs.sweep)):
+            return True
+    return False
+
+
 def registered_for(chip_dir) -> ChipSync | None:
     """The chip's sync in this process, or None (never creates one)."""
     with _SYNCS_LOCK:

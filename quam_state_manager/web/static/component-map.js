@@ -271,7 +271,11 @@ window.ComponentMap = (function () {
     function load() {
       root._cmapLoaded = true;
       var mine = _active;
-      fetch("/api/topology", { cache: "no-store" })
+      // v1.3.0 (perf): the map draws structure only, so it asks for the
+      // layout alone -- the per-gate RB derivation (a Datasets index lookup,
+      // a cold scan of the whole archive on a first open) and the ledger's
+      // calibration ages are Chip Status numbers this map never shows
+      fetch("/api/topology?layout=1", { cache: "no-store" })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (topo) {
           if (_active !== mine || !body.isConnected) return;   // superseded by a newer swap

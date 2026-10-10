@@ -382,6 +382,28 @@ def _ds():
         return None
 
 
+#: v1.3.0 (perf, A1): the live strip's state (``_now_state``) is polled by
+#: every page. Its two archive reads -- "a person ran a node" and a node's
+#: typical length -- take the store as it is (``routes._dataset_store(light=
+#: True)``): never a store built, never a cold scan finished, on its request.
+#: On a cold chip open that read parsed ~3,500 runs on a request thread while
+#: the history catch-up shared the interpreter with it. The run gate's own
+#: human check (``run_node``) still reads the full store.
+_STRIP = threading.local()
+
+
+def _strip_ds():
+    """The store for a live-strip read: light inside ``_now_state``, else ``_ds()``."""
+    if not getattr(_STRIP, "light", False):
+        return _ds()
+    r = _r()
+    try:
+        return r._dataset_store(light=True)
+    except Exception:  # noqa: BLE001
+        logger.debug("dataset store unavailable", exc_info=True)
+        return None
+
+
 def _uid(ds, run) -> str | None:
     r = _r()
     try:
@@ -1212,8 +1234,10 @@ def _end_grant(why: str, *, driver_kind: str | None = None, after_run: bool = Tr
 
 def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | None:
     """The newest run folder with no agent origin inside the window: a person
-    (or a session SM cannot see) is on the OPX. A FACT, past tense."""
-    ds = _ds()
+    (or a session SM cannot see) is on the OPX. A FACT, past tense.
+
+    v1.3.0 (perf, A1): read light when the live strip asks (``_strip_ds``)."""
+    ds = _strip_ds()
     if ds is None:
         return None
     try:
@@ -1341,7 +1365,17 @@ def _ended_by_sm(sid) -> bool:
 
 def _now_state() -> dict:
     """The pill's one state, in the precedence order of docs/173 §3.1:
-    waiting > limited > stalled > failed > running > between > human-ran > idle."""
+    waiting > limited > stalled > failed > running > between > human-ran > idle.
+    Its archive reads are light (``_strip_ds``, v1.3.0 perf A1)."""
+    prev = getattr(_STRIP, "light", False)
+    _STRIP.light = True
+    try:
+        return _now_state_read()
+    finally:
+        _STRIP.light = prev
+
+
+def _now_state_read() -> dict:
     from quam_state_manager.core import agent_plans, agent_session, story
     from quam_state_manager.core.agent_runs import run_mode
     _reconcile_grant()                                # docs/253: never show a grant that ended
@@ -1503,7 +1537,7 @@ def _typical_duration(node: str | None) -> float | None:
     """The family's typical run length from the archive -- for 'usually ~N min'."""
     if not node:
         return None
-    ds = _ds()
+    ds = _strip_ds()
     if ds is None:
         return None
     try:

@@ -35120,6 +35120,12 @@ def api_topology():
     engine = _engine()
     if not engine:
         return jsonify({"error": "No state loaded"}), 400
+    if request.args.get("layout") == "1":
+        # v1.3.0 (perf): the component map's structure-only drawing. No
+        # per-gate RB derivation (its run lookup built and scanned the whole
+        # Datasets index on a cold open, starving the history catch-up) and
+        # no ledger calibration ages: the map shows neither.
+        return jsonify(engine.get_topology())
     return jsonify(_topology_for_chip_status(engine))
 
 
@@ -36079,6 +36085,10 @@ def _get_or_create_store(folder: Path, rescan: bool = True, *,
     kept one and the others were discarded after paying in full (two parallel
     3 s scans of the same folder, measured). Now one thread builds and the
     rest wait for it and share the result.
+
+    v1.3.0 (perf, A1): a store whose first scan stopped part way is handed to
+    the index warmer, which finishes it off the request threads
+    (``_dataset_index_warmer``).
     """
     lru = _dataset_store_lru()
     cached = lru.get(folder)
@@ -36106,16 +36116,28 @@ def _get_or_create_store(folder: Path, rescan: bool = True, *,
         lru.move_to_end(folder)
         while len(lru) > _DATASET_STORE_LRU_MAX:
             lru.popitem(last=False)
+    if ds.scan_truncated:
+        _kick_dataset_index_warmer()
     return ds
 
 
-def _dataset_store() -> DatasetStore | None:
+def _dataset_store(*, light: bool = False) -> DatasetStore | None:
     """Get or auto-create DatasetStore from workspace roots.
 
     Tries all candidate data folders and picks the one with the most runs.
     Never caches a store that found 0 runs — returns None instead so the
     caller can show a helpful "add workspace" message.
+
+    ``light`` (v1.3.0 perf, A1): for the live strip, which polls on every page.
+    Never builds a store and never finishes a cold scan on the request thread
+    (on a cold chip open its unbounded rescan parsed ~3,500 runs while the
+    chip's history catch-up shared the interpreter: ~22 s instead of ~9 s);
+    a store still filling is answered as it is (its newest dates were read
+    first) and left to the index warmer; a finished one gets a short bounded
+    look for a run that just landed.
     """
+    if light:
+        return _dataset_store_light()
     ds = current_app.config.get("dataset_store")
     if ds:
         # Active store known: refresh it incrementally and return.
@@ -36162,6 +36184,79 @@ def _dataset_store() -> DatasetStore | None:
 
     current_app.config["dataset_store"] = best_ds
     return best_ds
+
+
+#: v1.3.0 (perf, A1): the live strip's look for a just-landed run in a store
+#: whose index is complete (``_dataset_store(light=True)``).
+_LIGHT_SCAN_BUDGET_S = 0.25
+
+
+def _dataset_store_light() -> DatasetStore | None:
+    """``_dataset_store(light=True)``: an existing store only, never a cold
+    build or its continuation on this thread."""
+    ds = current_app.config.get("dataset_store")
+    if ds is None:
+        lru = _dataset_store_lru()
+        try:
+            cands = set(_dataset_candidate_folders(fast=True))
+        except Exception:  # noqa: BLE001 -- no workspace: nothing to answer
+            return None
+        built = [s for f, s in list(lru.items()) if f in cands and s.run_count > 0]
+        if not built:
+            return None
+        ds = max(built, key=lambda s: s.run_count)
+    if ds.scan_truncated:
+        _kick_dataset_index_warmer()
+        return ds
+    try:
+        ds.rescan_if_stale(deadline=time.monotonic() + _LIGHT_SCAN_BUDGET_S)
+    except Exception:  # noqa: BLE001
+        logger.exception("light rescan failed for %s", getattr(ds, "folder_path", ds))
+    return ds
+
+
+def _background_scan_should_yield() -> bool:
+    """v1.3.0 (perf, A1): a background Datasets scan (the long poll building a
+    store, the index warmer finishing one) stops at its next chunk while the
+    interpreter is wanted elsewhere: a user's request in flight, a live
+    write, a history catch-up building, or a caught-up chip's read index
+    being prepared. The Datasets page's own scans never ask."""
+    from quam_state_manager.core import hub as _hub, hub_sync as _hub_sync
+    from quam_state_manager.core.run_ingest import FOREGROUND
+    return (FOREGROUND.active > 0 or _bg_gate.busy() or _hub_sync.catching_up()
+            or _hub.index_prewarm_busy())
+
+
+def _dataset_index_warmer(app):
+    """The one index warmer per app (``core/dataset_warm``): it finishes every
+    store the app holds that is still filling, in the interpreter's quiet
+    moments. It builds none: what it finishes is what a cold build (the long
+    poll's, a page's) started -- the same stores the live strip's unbounded
+    rescan used to finish, now off the request threads."""
+    from quam_state_manager.core import dataset_warm
+    w = app.config.get("dataset_index_warmer")
+    if w is not None:
+        return w
+
+    def stores() -> list[DatasetStore]:
+        lru = app.config.get("dataset_store_lru") or {}
+        return [s for s in list(lru.values()) if s.scan_truncated]
+
+    w = dataset_warm.IndexWarmer(stores, _background_scan_should_yield)
+    app.config["dataset_index_warmer"] = w
+    return w
+
+
+def _kick_dataset_index_warmer() -> None:
+    """Start (or wake) the index warmer. A testing app runs none unless the
+    test asks for it (``DATASET_INDEX_WARM``): no thread behind a test's back."""
+    try:
+        app = current_app._get_current_object()
+    except RuntimeError:
+        return
+    if app.testing and not app.config.get("DATASET_INDEX_WARM"):
+        return
+    _dataset_index_warmer(app).kick()
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -37688,7 +37783,12 @@ def datasets_wait():
         # open tab, to compute a run table nobody reads. `rescan=False` also
         # keeps a folder that has not yet yielded a run in the watched set,
         # which is the one folder a watcher most wants to be watching.
-        active = _active_dataset_stores(fast=True, rescan=False)
+        # v1.3.0 (perf, A1): this poll runs on every page; a store it builds
+        # here (a cold scan) stops at its next chunk when a request, a write
+        # or a history catch-up wants the interpreter -- the warmer finishes it
+        from quam_state_manager.core.dataset import yielding_scan
+        with yielding_scan(_background_scan_should_yield):
+            active = _active_dataset_stores(fast=True, rescan=False)
         w.set_roots([f["path"] for f in active if f.get("path")])
         # docs/263: what is there now, so the first run that lands after
         # this is an arrival (a root's first look is never one)
