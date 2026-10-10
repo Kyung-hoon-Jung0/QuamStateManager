@@ -406,9 +406,13 @@ class TestKeptAnswers:
         # P0-1: old -> new, why: 7.7e-5 was a point of the series; #3 re-measured
         # qA2 and #4 saved 2e-5 back before anything read the chip -- an
         # excursion, so the re-derived row is listed apart, never dropped silently
+        # P0-1 (s10-x): old -> new, why: #4's save back is itself unconfirmed (the
+        # newest change, nothing read the chip after it) and closes nothing: the
+        # re-derived row is a point of the series again, labelled
         row = b["rows"]["b"]
-        assert 7.7e-5 in [p["value"] for e in row["excursions"] for p in e["points"]]
-        assert 7.7e-5 not in [p["value"] for p in row["points"]]
+        assert [(p["value"], p.get("witness")) for p in row["points"] if p["value"] == 7.7e-5] == \
+            [(7.7e-5, "remeasured")]
+        assert row["excursions"] == []
         with from_scratch():
             assert canon(b) == canon(history(sm, T1))
         assert b["serials"]["b"] != a["serials"]["b"]

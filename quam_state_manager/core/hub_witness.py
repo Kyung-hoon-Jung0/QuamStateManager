@@ -55,11 +55,15 @@ function). Only run changes are judged: an SM write is exact and an observed
 state is the live content; the ledger's first state is not a change.
 
 **Excursions** (:func:`excursions`, [derived]): a stretch of unconfirmed
-saves after a value the chip held that comes back EXACTLY to it is not chip
-history either -- on the same backups 400 of 434 such saves (92 %) were never
-live, while 1,208 of 1,212 returns were. Its saves and its return leave every
-value series with the contradicted pairs (:meth:`Verdicts.drop`), so every
-"current", "since" and "last changed" is :func:`since`.
+saves after a value the chip held that comes back EXACTLY to it, through a
+save the chip is known to hold, is not chip history either -- on the same
+backups 372 of the 396 such saves that changed the value (94 %) were never
+live, while 1,054 of 1,056 returns were. An unconfirmed save of the held value
+closes nothing: the lab's backups show such a save (a pointer moved back)
+that never reached the live file, so the move before it was real. Its saves
+and its return leave every value series with the contradicted pairs
+(:meth:`Verdicts.drop`), so every "current", "since" and "last changed" is
+:func:`since`.
 
 **Renames** (docs/295-296): a value is read only in the rename era it was
 saved in -- a walk ends at the next era, and no excursion spans one.
@@ -302,6 +306,8 @@ class Verdicts(Mapping):
         self._entity: dict[int, str | None] = {}
         #: pid -> [(anchor eid, [eids of the excursion], eid of the return)]
         self._excursions: dict[int, list] = {}
+        #: pid -> the excursion its newest change closes if the chip holds it now
+        self._tail_exc: dict[int, tuple] = {}
         self._drop: dict[int, frozenset] = {}
         self._back: dict[int, dict] = {}
         self._sig: dict[int, str] = {}
@@ -456,6 +462,16 @@ class Verdicts(Mapping):
                 found.append((g[a][1], [g[x][1] for x in pts], g[r][1]))
         if found:
             self._excursions[pid] = found
+        # the excursion the newest change would close if the chip holds its
+        # value now (it has no read yet): a reader with the chip's value
+        # decides it (value_history's live tail)
+        g = groups[-1] if groups else []
+        if g and g[-1][1] == last_eid and judged[last_i] and codes.get(last_eid) == OPEN:
+            marked = [(x[3], codes.get(x[1]) if judged[x[0]] else None) for x in g]
+            marked[-1] = (marked[-1][0], CONFIRMED)
+            for a, pts, r in excursions(marked, _equal):
+                if r == len(g) - 1:
+                    self._tail_exc[pid] = (g[a][1], [g[x][1] for x in pts], g[r][1])
         self._newest[pid] = (last_eid, codes.get(last_eid) if judged[last_i] else None)
 
     # ------------------------------------------------------------- Mapping
@@ -509,6 +525,14 @@ class Verdicts(Mapping):
         *pid*: every excursion (:func:`excursions`) of its series."""
         return (self._excursions.get(pid) or []) if self._ensure(pid) else []
 
+    def tail_excursion(self, pid: int | None) -> tuple | None:
+        """``(anchor eid, [eids of its points], eid of the return)``: the
+        excursion *pid*'s newest change closes when the chip holds its value
+        now -- the change has no read yet (``open``), so only a reader that
+        knows the chip's value decides it (``value_history``'s live tail).
+        Never part of :meth:`drop`."""
+        return self._tail_exc.get(pid) if self._ensure(pid) else None
+
     def drop(self, pid: int | None) -> frozenset:
         """The eids of *pid*'s rows a value series leaves out -- they are not
         chip history: every contradicted change that has its restoring row,
@@ -555,8 +579,9 @@ class Verdicts(Mapping):
         if got is None:
             pairs = sorted((self._pairs.get(pid) or {}).items())
             exc = self._excursions.get(pid) or []
-            got = self._sig[pid] = (hashlib.sha1(repr((pairs, exc)).encode()).hexdigest()[:16]
-                                    if pairs or exc else "")
+            tail = self._tail_exc.get(pid)
+            got = self._sig[pid] = (hashlib.sha1(repr((pairs, exc, tail)).encode()).hexdigest()[:16]
+                                    if pairs or exc or tail else "")
         return got
 
     def tail(self, pid: int | None) -> tuple | None:
@@ -679,15 +704,22 @@ def excursions(seq, same) -> list[tuple[int, list[int], int]]:
     points that are all unconfirmed (:data:`UNCONFIRMED`: no later read of the
     chip confirmed them) after an ANCHOR -- the newest point before it that is
     not unconfirmed (a confirmed save, a state SM saw, an SM write, the first
-    state) -- that comes back EXACTLY (*same*) to the anchor's value. The
-    chip held the anchor's value across it: the excursion's points and the
+    state) -- that comes back EXACTLY (*same*) to the anchor's value through a
+    point that is itself NOT unconfirmed: the chip is known to hold that value
+    again, and held it across the stretch. The excursion's points and the
     point that came back leave the value series (the value stays the
-    anchor's -- exact), and are listed apart. A stretch that never comes back,
-    or a confirmed point inside it, is no excursion: its points stay, labelled.
-    Returns ``[(anchor index, [excursion indices], return index)]``.
+    anchor's -- exact), and are listed apart. An unconfirmed save of the
+    anchor's value closes nothing (the chip may never have held it: on the
+    lab's backups, a pointer moved back by a save that never reached the live
+    file); a stretch that never comes back through a known value, or a
+    confirmed point of another value inside it, is no excursion: its points
+    stay, labelled. Returns ``[(anchor index, [excursion indices], return
+    index)]``. (A return that is the newest change, with no read yet, is
+    decided by the chip's value now: :meth:`Verdicts.tail_excursion`.)
 
-    Measured against the lab's own live backups (replay harness): 400 of the
-    434 points this leaves out were never on the chip (module docstring)."""
+    Measured against the lab's own live backups (replay harness): 372 of the
+    396 points this leaves out that change the value were never on the chip
+    (module docstring)."""
     out: list[tuple[int, list[int], int]] = []
     anchor = None
     i, n = 0, len(seq)
@@ -695,13 +727,10 @@ def excursions(seq, same) -> list[tuple[int, list[int], int]]:
         if seq[i][1] in UNCONFIRMED and anchor is not None:
             v = seq[anchor][0]
             k, found = i + 1, None
-            while k < n:
-                if same(seq[k][0], v):
-                    found = k
-                    break
-                if seq[k][1] not in UNCONFIRMED:
-                    break
-                k += 1
+            while k < n and seq[k][1] in UNCONFIRMED:
+                k += 1                   # an unconfirmed save, whatever its value, closes nothing
+            if k < n and same(seq[k][0], v):
+                found = k
             if found is not None:
                 out.append((anchor, list(range(i, found)), found))
                 i = found + 1

@@ -640,19 +640,20 @@ class TestReviewRound:
         # every row is in force and none is before-via; the move is listed apart
         html = drawer(aba, self.ALIAS)
         got = {r["value"]: "vh-before-via" in r["cls"] for r in rows(html)}
-        assert got == {"0.15": False, "0.12": False, "0.1": False}, got
-        assert [r["value"] for r in rows(html)] == ["0.15", "0.12", "0.1"]
-        assert '<details class="vh-not-kept vh-excursions">' in html, "the pointer's move is listed apart"
-        listed = text(html.split('<details class="vh-not-kept vh-excursions">', 1)[1].split("</details>", 1)[0])
-        # S10 walk (round 4, P2-3): raw pointers -> the value in force through x180, the
-        # pulse as context; "returned to" -> "came back to" (a save, what the records prove)
-        assert "Saved by run #2 (scan): 0.3 via x180_Gauss" in listed, listed
-        assert "came back to 0.15 via x180_DragCosine (#3 scan)" in listed, listed
-        assert "#./" not in listed, "never a raw pointer where a value is meant"
+        # P0-1 (s10-x): old -> new, why: #2's move to Gauss left the series as an
+        # excursion closed by #3's move back. #3 is itself unconfirmed (the
+        # newest move, nothing read the chip after it), and an unconfirmed save
+        # closes nothing (on the lab's backups such a move back never reached
+        # the live file): Gauss's 0.3 is shown, labelled, and nothing is listed apart
+        assert got == {"0.15": False, "0.3": False, "0.1": False}, got
+        got_rows = rows(html)
+        assert [r["value"] for r in got_rows] == ["0.15", "0.3", "0.1"]
+        assert "x180 &rarr; x180_Gauss" in got_rows[1]["body"] and "changed again before the chip was read" in got_rows[1]["body"]
+        assert '<details class="vh-not-kept vh-excursions">' not in html
         j = aba["client"].get("/api/agent/field-history", query_string={"path": self.ALIAS}).get_json()
         # S10 mut: old -> new, before_via (always False since P0-1 round 3) is gone: no row says it
-        assert {p["value"]: "before_via" in p for p in j["history"]["points"]} == {0.15: False, 0.12: False, 0.1: False}
-        assert j["history"]["excursions"][0]["values"] == ["0.3 via x180_Gauss"]   # S10 walk round 4 (P2-3)
+        assert {p["value"]: "before_via" in p for p in j["history"]["points"]} == {0.15: False, 0.3: False, 0.1: False}
+        assert j["history"]["excursions"] == []
 
     def test_p0_3_and_p1_1_share_one_rule_after_a_return(self, aba):
         html = column(aba, {"qA1": self.ALIAS})
@@ -879,10 +880,10 @@ class TestReviewMore:
         series = [s for c in charts for s in c["series"] if s["entity"] == "qA1"][0]
         pts = [v for ts, v in series["points"] if ts not in (series.get("held") or {})]
         truth = [_truth_through_alias(f, self.ALIAS) for f in _runs_of(aba)]
-        # P0-1: old -> new, why: pts == what each run saved through x180 (0.3 at
-        # #2); #2's move of x180 to Gauss was never confirmed and came back at #3
-        # (an excursion), so the chip's value in force stayed DragCosine's
-        assert truth == [0.1, 0.3, 0.15] and pts == [0.1, 0.12, 0.15], (pts, truth)
+        # P0-1 (s10-x): old -> new, why: [0.1, 0.12, 0.15] (#2's move to Gauss
+        # left out as an excursion) -> what each run saved: #3's move back is
+        # unconfirmed and closes nothing, so #2's move stays, labelled
+        assert truth == [0.1, 0.3, 0.15] and pts == truth, (pts, truth)
 
     def test_p0_1_a_retarget_alone_changes_the_value_in_force(self, tmp_path):
         """S10 mut: x180 moves from Gauss to DragCosine at #2 and neither

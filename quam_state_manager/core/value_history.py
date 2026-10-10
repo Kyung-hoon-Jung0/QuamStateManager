@@ -333,6 +333,19 @@ class _Rows:
         return [(by_eid.get(a), [by_eid[e] for e in pts if e in by_eid], by_eid.get(r))
                 for a, pts, r in got]
 
+    def tail_excursion(self, holder: str | None) -> tuple | None:
+        """P0-1: the excursion the holder's newest change closes if the chip
+        holds its value now (``Verdicts.tail_excursion``), with its rows."""
+        self._see(holder)
+        if holder is None or holder not in self.index.paths:
+            return None
+        got = self.verdicts.tail_excursion(self.index.paths[holder])
+        if not got:
+            return None
+        a, pts, r = got
+        by_eid = {x[0]["eid"]: x for x in self._read(holder, saved=True)}
+        return (by_eid.get(a), [by_eid[e] for e in pts if e in by_eid], by_eid.get(r))
+
     def positions(self, holder: str | None) -> list[int]:
         self._see(holder)
         if holder not in self.pos_memo:
@@ -991,10 +1004,16 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
     pointers = [_pid_of(index, hop["from"]) for hop in tgt.get("via") or ()]
 
     def code_at(p, holder):
-        if p.get("op") == "via":
+        if p.get("op") == "via" or p.get("retarget"):
             # a retarget: the verdict of the pointer that moved at this event
             codes = [verdicts.code(p["eid"], pid) for pid in pointers]
-            return next((c for c in codes if c is not None), None)
+            moved = next((c for c in codes if c is not None), None)
+            if p.get("op") == "via":
+                return moved
+            # ... which the new holder's own change at the same event cannot
+            # make more certain than the move it is read through
+            if moved is not None and moved != hub_witness.CONFIRMED:
+                return moved
         return verdicts.code(p["eid"], _pid_of(index, holder))
 
     def mark(points, holder_of):
@@ -1016,6 +1035,7 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
     kept_nk = row.get("not_kept") or []
     not_kept = kept_nk
     total = row["total"]
+    excursions = row.get("excursions") or []
     if points and live is not _ABSENT:
         p = points[-1]
         holder = p.get("recorded_as") or here
@@ -1028,6 +1048,18 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
                 points = points[:-1] + [{k: v for k, v in p.items() if k != "witness"}]
                 effective = [{k: v for k, v in e.items() if k != "witness"}
                              if e["eid"] == p["eid"] and e["op"] != "via" else e for e in effective]
+                # ... and it came back to the value the chip held before an
+                # unconfirmed stretch: that stretch is an excursion after all
+                te = row.get("tail_excursion")
+                if te and te["holder"] == holder and (te["back"] or {}).get("eid") == p["eid"]:
+                    gone = {x["eid"] for x in te["points"]} | {p["eid"]}
+                    points = [x for x in points
+                              if not (x["eid"] in gone and (x.get("recorded_as") or here) == holder)]
+                    effective = [e for e in effective
+                                 if not (e["eid"] in gone and e["op"] != "via" and e.get("holder") == holder)]
+                    total -= len(gone)
+                    excursions = list(row.get("excursions") or []) + [te]
+                    marks.append(("tail-excursion", p["eid"]))
             else:
                 points = points[:-1]
                 effective = [e for e in effective
@@ -1040,7 +1072,8 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
                 not_kept = list(kept_nk) + [gone]
     if points is row["points"] and effective is row["effective"] and not_kept is kept_nk:
         return row, ()
-    return dict(row, points=points, effective=effective, not_kept=not_kept, total=total), tuple(marks)
+    return (dict(row, points=points, effective=effective, not_kept=not_kept, total=total,
+                 excursions=excursions), tuple(marks))
 
 
 def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[str, dict],
@@ -1090,6 +1123,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
     # the changes the chip never kept, and the excursions that came back
     nk_raw: dict[str, list] = {}
     exc_raw: dict[str, list] = {}
+    tail_raw: dict[str, tuple] = {}
     for key, tgt in targets.items():
         cache.seen = asked[key] if record else None
         got, exc = [], []
@@ -1114,6 +1148,10 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
         got.sort(key=lambda r: index.positions[r[1]["eid"]])
         exc.sort(key=lambda r: index.positions[r[2][0][0]["eid"]] if r[2] else 0)
         nk_raw[key], exc_raw[key] = got, exc
+        # the one the holder's newest change closes if the chip holds it now
+        te = cache.tail_excursion(tgt["holder"])
+        if te is not None and te[1] and te[2] is not None:
+            tail_raw[key] = (tgt["holder"],) + te
     cache.seen = None
     used: dict[str, array] = {}
     vsigs: dict[str, tuple] = {}
@@ -1128,7 +1166,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
                 eids.add(ev["eid"])
                 if wev is not None:
                     eids.add(wev["eid"])
-            for _h, anchor, pts, back in exc_raw[key]:
+            for _h, anchor, pts, back in exc_raw[key] + ([tail_raw[key]] if key in tail_raw else []):
                 eids.update(r[0]["eid"] for r in pts + [x for x in (anchor, back) if x is not None])
             used[key] = array("I", sorted(eids))
             if verdicts is not None:
@@ -1234,17 +1272,19 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
         for hop in tgt.get("via") or ():
             moved.update(cache.positions(hop["from"]))
 
-        def in_force(p):
+        def in_force(p, i):
             at = index.positions[p["eid"]]
             out = dict(p, holder=_segment_at(segs[key], at))
-            if at in moved and p["provenance"] != "first_record":
+            # (the series' first point is where the pointer began, not a move)
+            if at in moved and i and p["provenance"] != "first_record":
                 out["retarget"] = True
             return out
         out_rows[key] = {
             "points": pts, "total": total, "retargets": retargets,
             "not_kept": [nk_point(*r) for r in nk_raw[key]],
             "excursions": [exc_point(*r) for r in exc_raw[key]],
-            "effective": [in_force(p) for p in points(eff[key])],
+            **({"tail_excursion": exc_point(*tail_raw[key])} if key in tail_raw else {}),
+            "effective": [in_force(p, i) for i, p in enumerate(points(eff[key]))],
             "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
                           "holder": h} for s, h in segs[key]],
             "renames": _rename_marks(hsegs[key], index, eras)}

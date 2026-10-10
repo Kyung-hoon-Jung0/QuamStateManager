@@ -79,6 +79,11 @@ def q(*ids):
     return {"qubits": list(ids)}
 
 
+def index_first(store):
+    """The eid of the ledger's first event."""
+    return store.conn.execute("SELECT MIN(eid) FROM events").fetchone()[0]
+
+
 def judged(store, **kw):
     conn = sqlite3.connect(f"file:{(store.dir / 'ledger.sqlite').as_posix()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
@@ -213,10 +218,13 @@ class TestTheRule:
         assert v.code(r, pid[F]) == hub_witness.REMEASURED and not v.pairs_of(pid[F])
         v0, _ = judged(led, unknown_targets="none")
         assert v0.code(r, pid[F]) == hub_witness.CONFIRMED, "read as naming nothing it would vouch for qA1"
-        # P0-1: old -> new, why: r and w stayed in the series; r was never
-        # confirmed and w came back exactly to the value before it -- an
-        # excursion, not a contradiction (w is still never r's witness)
-        assert (v.left_out_as(r, pid[F]), v.left_out_as(w, pid[F])) == ("excursion", "returns")
+        # P0-1: old -> new, why: r and w left the series as an excursion; w
+        # came back to the earlier value but is itself unconfirmed (the newest
+        # change, nothing read the chip after it), and an unconfirmed save
+        # closes nothing -- both stay, labelled; only the chip's value now can
+        # close it (the tail excursion, decided by value_history's live tail)
+        assert (v.left_out_as(r, pid[F]), v.left_out_as(w, pid[F])) == (None, None)
+        assert v.tail_excursion(pid[F]) == (index_first(led), [r], w)
         assert v.witness_of(r, pid[F]) is None
 
     def test_runs_alone_as_witnesses(self, led):
@@ -605,8 +613,27 @@ class TestTheExcursionRule:
         assert _since([("X", None), ("A", C_), ("B", R_), ("C", C_)]) == (3, [])
 
     def test_every_excursion_back_to_the_value(self):
-        assert _exc([("A", C_), ("B", R_), ("A", R_), ("C", D_), ("A", C_)]) == [(0, [1], 2), (0, [3], 4)]
-        assert _since([("A", C_), ("B", R_), ("A", R_), ("C", D_), ("A", C_)]) == (0, [1, 3])
+        assert _exc([("A", C_), ("B", R_), ("A", C_), ("C", D_), ("A", C_)]) == [(0, [1], 2), (0, [3], 4)]
+        assert _since([("A", C_), ("B", R_), ("A", C_), ("C", D_), ("A", C_)]) == (0, [1, 3])
+        # P0-1: old -> new, why: the unconfirmed A at 2 closed an excursion of
+        # its own; an unconfirmed save closes nothing, so the stretch runs on
+        # to the confirmed A at 4 -- one excursion
+        assert _exc([("A", C_), ("B", R_), ("A", R_), ("C", D_), ("A", C_)]) == [(0, [1, 2, 3], 4)]
+        assert _since([("A", C_), ("B", R_), ("A", R_), ("C", D_), ("A", C_)]) == (0, [1, 2, 3])
+
+    def test_an_unconfirmed_return_closes_nothing(self):
+        """A lab's backups: a pointer moved to pulse b (unconfirmed), moved
+        back to pulse a by a save that never reached the live file
+        (unconfirmed), then to b again (confirmed). The save of a is not the
+        chip coming back: nothing leaves."""
+        assert _exc([("a", None), ("b", R_), ("a", R_), ("b", C_)]) == []
+        assert _exc([("a", C_), ("b", R_), ("a", O_)]) == [], "the newest, unread: not closed here"
+        assert _exc([("a", C_), ("b", R_), ("a", D_), ("x", C_)]) == []
+        assert _since([("a", None), ("b", R_), ("a", R_), ("b", C_)]) == (3, [])
+
+    def test_a_confirmed_return_still_closes_it(self):
+        assert _exc([("a", None), ("b", R_), ("a", C_)]) == [(0, [1], 2)]
+        assert _exc([("a", C_), ("b", R_), ("a", None)]) == [(0, [1], 2)], "a state SM saw is known"
 
     def test_the_anchor_is_a_value_the_chip_held(self):
         assert _exc([("A", R_), ("B", R_), ("A", R_)]) == [], "nothing confirmed to come back to"
@@ -666,6 +693,70 @@ class TestTheExcursionRule:
         r58, r1, r2, r3 = self._chain(led, confirm_inside=True)
         row = vh.read(led.dir, {"f": vh.target(doc(f=B, f2=3.0), F)})["rows"]["f"]
         assert [p["eid"] for p in row["points"]][-4:] == [r58, r1, r2, r3] and row["excursions"] == []
+
+    def test_an_unconfirmed_return_keeps_every_point_labelled(self, led):
+        """The shape a lab's backups showed: r1 moves the value (re-measured
+        before any read), r2 measures the qubit without moving it, r3 moves it
+        back (re-measured: it never reached the chip), r4 moves it again
+        (confirmed). The move at r1 is a real change: nothing leaves."""
+        a = led.add(doc(f=A), targets=q("qA1"))
+        r1 = led.add(doc(f=B), targets=q("qA1"))
+        led.add(doc(f=B, ph=0.6), targets={"qubit_pairs": ["qA1-qA2"]})
+        r3 = led.add(doc(f=A, ph=0.6), targets=q("qA1"))
+        r4 = led.add(doc(f=B, ph=0.6), targets=q("qA1"))
+        led.add(doc(f=B, f2=2.0, ph=0.6), targets=q("qA2"))     # confirms r4
+        v, pid = judged(led)
+        assert [v.code(e, pid[F]) for e in (r1, r3, r4)] == [R_, R_, C_]
+        assert v.excursions_of(pid[F]) == [] and v.drop(pid[F]) == frozenset()
+        row = vh.read(led.dir, {"f": vh.target(doc(f=B, f2=2.0, ph=0.6), F)})["rows"]["f"]
+        assert [(p["eid"], p["value"], p.get("witness")) for p in row["points"]] == \
+            [(a, A, None), (r1, B, R_), (r3, A, R_), (r4, B, None)]
+        assert row["excursions"] == []
+
+    @pytest.mark.parametrize("live,left", [(A, True), (None, False), (C, False)])
+    def test_the_chip_now_decides_a_return_nobody_read_yet(self, led, live, left):
+        """The newest save comes back to the value before an unconfirmed
+        stretch; no read followed it. The chip's value now decides: equal --
+        the stretch was an excursion (left out, listed); unknown -- every
+        save stays, labelled; another value -- the return was never kept."""
+        a = led.add(doc(f=A), targets=q("qA1"))
+        led.add(doc(f=A, f2=2.0), targets=q("qA2"))
+        r1 = led.add(doc(f=B, f2=2.0), targets=q("qA1"))
+        r2 = led.add(doc(f=A, f2=2.0), targets=q("qA1"))
+        v, pid = judged(led)
+        assert v.excursions_of(pid[F]) == [] and v.tail_excursion(pid[F]) == (a, [r1], r2)
+        tgt = {"f": vh.target(doc(f=A, f2=2.0), F)}
+        row = vh.read(led.dir, tgt, live=({"f": live} if live is not None else None))["rows"]["f"]
+        eids = [p["eid"] for p in row["points"]]
+        if left:
+            assert eids == [a] and [p["eid"] for p in row["effective"]] == [a]
+            assert [([x["eid"] for x in e["points"]], e["back"]["eid"]) for e in row["excursions"]] == [([r1], r2)]
+            assert row["total"] == 1
+        elif live is None:
+            assert eids == [a, r1, r2] and row["excursions"] == []
+            assert [p.get("witness") for p in row["points"]] == [None, R_, O_]
+        else:
+            assert eids == [a, r1] and row["excursions"] == [], "the return never reached the chip"
+            assert [n["eid"] for n in row["not_kept"]] == [r2]
+
+    def test_a_retarget_is_as_certain_as_the_move(self, led):
+        """A pointer moves at r2 (re-measured: r3 moves it again before any
+        read) while the new holder's own value also changes there (confirmed
+        on its own). The value in force changed at r2 only if the move
+        reached the chip: the point carries the move's verdict."""
+        def ro(to, b=0.2, c=0.3, f2=1.0):
+            return {"qubits": {"qA1": {"ro": "#./" + to, "ro_a": {"amp": 0.1}, "ro_b": {"amp": b},
+                                       "ro_c": {"amp": c}},
+                               "qA2": {"f": f2}}}
+        led.add(ro("ro_a"), kind="observed")                    # where the pointer began: no move
+        r2 = led.add(ro("ro_b", b=0.25), targets=q("qA1"))
+        r3 = led.add(ro("ro_c", b=0.25), targets=q("qA1"))
+        led.add(ro("ro_c", b=0.25, f2=2.0), targets=q("qA2"))
+        v, pid = judged(led)
+        assert v.code(r2, pid["qubits.qA1.ro"]) == R_ and v.code(r2, pid["qubits.qA1.ro_b.amp"]) == C_
+        row = vh.read(led.dir, {"x": vh.target(ro("ro_c", b=0.25, f2=2.0), "qubits.qA1.ro.amp")})["rows"]["x"]
+        assert [(p["value"], p.get("retarget", False), p.get("witness")) for p in row["effective"]] == \
+            [(0.1, False, None), (0.25, True, R_), (0.3, True, None)], row["effective"]
 
     def test_coming_back_to_another_value_keeps_every_point(self, led):
         r58, r1, r2, r3 = self._chain(led, back=5.5e9)

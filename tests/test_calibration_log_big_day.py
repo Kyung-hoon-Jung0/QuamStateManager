@@ -229,6 +229,10 @@ def test_a_day_under_a_page_renders_exactly_as_before(world):
     # S10 walk (round 4): re-written once more -- the excursion section's words
     # "never confirmed on the chip ... came back to what the chip held" -> what the
     # records prove ("not confirmed before the value came back"), nothing else
+    # P0-1 (s10-x): old -> new, why: re-written once more -- #4's save of 1 is
+    # itself unconfirmed (the next read found another value), and an
+    # unconfirmed save closes nothing: w's changes at #2-#4 are listed as
+    # changes again, each with its verdict; nothing else moved
     html = _small_day_fragment(world)
     if os.environ.get("CALIBRATION_LOG_GOLDEN_WRITE") == "1":
         GOLDEN.write_text(html, encoding="utf-8", newline="\n")
