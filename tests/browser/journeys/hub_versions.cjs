@@ -132,8 +132,11 @@ async function fullText(b, url) {
     ok(src === 'ledger', 'its rows come from the change ledger (data-source=' + src + ')');
     const words = await b.ev("document.getElementById('state-version-panel').innerText");
     ok(/run #\d+/.test(words), 'rows name runs (run #N + node)');
-    ok(/uncertain chip identity/.test(words), 'runs of another chip identity are not listed, and a note says so');
-    ok(/From the change history: \d+ recorded state/.test(words), 'the foot says where the list comes from');
+    // S10: old "N runs of an uncertain chip identity" -> the note names the runs whose saved chip identity differs
+    ok(/run(s)? whose saved chip identity does not match this chip.s (is|are) not listed: #\d+/.test(words),
+       'runs of another chip identity are not listed, and a note says so (naming them)');
+    // S10: old "From the change history: N recorded states" -> the one count line, "N versions (k older snapshots)"
+    ok(/From the change history: \d+ versions?\b/.test(words), 'the foot says where the list comes from');
     await b.shot(path.join(SHOTS, '01_versions.png'));
 
     // 2. Diff a version against now (the third row: an older run)

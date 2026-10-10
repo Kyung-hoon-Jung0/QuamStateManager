@@ -163,12 +163,17 @@ async function openCellHistory(b, dotPath, tag, colKey) {
      var heads=[...c.querySelectorAll('th.ch-run')].map(h=>(h.querySelector('a,span')||{}).textContent.trim());
      var tr=c.querySelector('tr[data-row="qA1"]');
      var cells=tr?[...tr.querySelectorAll('td.ch-val')].map(td=>td.getAttribute('data-fill')):[];
-     return {heads:heads, cells:cells, foot:(c.querySelector('.ch-foot')||{}).textContent.replace(/\\s+/g,' ')}})()`);
+     var notes=[...document.querySelectorAll('.ch-overlay .ch-card .vh-note[data-code="other_chip"]')].filter(n=>n.offsetParent).map(n=>n.textContent.replace(/\\s+/g,' '));
+     return {heads:heads, cells:cells, foot:(c.querySelector('.ch-foot')||{}).textContent.replace(/\\s+/g,' '), notes:notes}})()`);
   console.log(JSON.stringify(abr));
   const at = (run) => abr && abr.cells[abr.heads.indexOf(run)];
   ok(abr && abr.heads.indexOf('#9') < 0 && abr.heads.indexOf('#8') >= 0,
      'alias By run: the run of another chip identity is not a column (' + (abr && abr.heads.join(' ')) + ')');
-  ok(abr && /1 run of an uncertain chip identity is left out/.test(abr.foot), 'alias By run: the footer says one run was left out');
+  // S10: old footer "1 run of an uncertain chip identity is left out" -> a run that DECLARES another
+  // chip is not in this chip's timeline at all; the card says so once, in its other_chip note
+  ok(abr && abr.notes.length === 1 && /1 run whose saved chip identity does not match this chip.s is not part of this chip.s timeline: #9\b/.test(abr.notes[0])
+     && !/uncertain chip identity/.test(abr.foot),
+     'alias By run: the card says once that run #9 (another chip) is left out: ' + (abr && abr.notes.join(' | ')));
   ok(abr && at('#7') && at('#8') && Math.abs(parseFloat(at('#7')) - parseFloat(at('#8'))) > 1e-4,
      'alias By run: run #7 shows the value the alias named THEN, not the current holder (' + (abr && at('#7')) + ' vs ' + (abr && at('#8')) + ')');
   await b.shot(path.join(SHOTS, '4c_alias_byrun.png'));
