@@ -53,6 +53,14 @@ identity from its own archive, as the offline builder does. Two names decide; on
 chips with no qubit in common is two chips (`hub_build.identity_disagrees`). An existing ledger
 keeps its stored identity.
 
+> **Amended in v1.3.0 (A9).** A nameless chip's ledger no longer takes its identity from its first
+> ingested run: in a shared data folder whose oldest run is another chip's, that chip became the
+> seed, the open chip's own runs were flagged and the other chip's looked like its own. The open
+> chip's live identity now seeds every ledger, named or not, and a stored seed that differs is
+> replaced on the next open with every run judged again (`hub_build.reseed`). A nameless identity
+> is compared part by part (`hub_build.identity_disagrees`: the controller by cluster name, else
+> host; on one controller a shared qubit is the same chip); the docstring there is the rule.
+
 `/qualibrate/open` registers the chip's folders again after it pins the project: when several
 projects share one `state_path`, the activation before the pin cannot know which one it is.
 

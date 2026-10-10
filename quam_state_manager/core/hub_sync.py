@@ -350,6 +350,8 @@ class ChipSync:
         self.lock = threading.RLock()
         self.roots: dict[str, RootState] = {}
         self.identity: dict | None = None
+        #: v1.3.0 A9: (ledger id, identity) the ledger's seed was last made equal to
+        self.seed_checked: tuple | None = None
         self.ledger_id: str | None = None
         self.active = True
         self.full_wanted = True
@@ -568,10 +570,20 @@ class ChipSync:
             self.ready_cands.clear()
             self.sweep.clear()
             self.ready = False
-        if self.identity and store.meta("chip_identity") is None:
-            with txn(store):
-                if store.meta("chip_identity") is None:
-                    store.set_meta("chip_identity", json_bytes(self.identity).decode("utf-8"))
+        if self.identity:
+            # v1.3.0 A9: the chip the user opened IS the ledger's chip. A seed
+            # that differs (a v1.2.0 ledger seeded from whichever run came
+            # first, another chip's in a shared folder; a chip that changed)
+            # is replaced and every run judged again -- once per ledger file
+            # and opened identity, so two windows never trade it back and
+            # forth on every slice
+            want = json_bytes(self.identity).decode("utf-8")
+            if self.seed_checked != (lid, want):
+                if store.meta("chip_identity") != want:
+                    with txn(store):
+                        if store.meta("chip_identity") != want:
+                            hub_build.reseed(store, self.identity)
+                self.seed_checked = (lid, want)
         for rs in list(self.roots.values()):
             if rs.root_id is None:
                 self._register(store, rs)
@@ -1652,7 +1664,7 @@ def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str
 
 #: S10 walk: the ``src`` of a run event imported from a Param History capture
 #: of the run (its run folder is gone): the run's saved state, no location
-RUN_CAPTURE_SRC = "param_history:run_capture"
+RUN_CAPTURE_SRC = hub_build.RUN_CAPTURE_SRC
 
 
 def attach_captured_run(store: HubStore, snap: dict, *, in_txn: bool = False) -> str:
@@ -1942,6 +1954,7 @@ def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | No
         cs.links_due = True
     if identity:
         cs.identity = identity
+        cs.seed_checked = None     # v1.3.0 A9: every open checks the ledger's seed once
     if observed is not None:
         cs.observed_source = observed
     cs.request(full=True)
