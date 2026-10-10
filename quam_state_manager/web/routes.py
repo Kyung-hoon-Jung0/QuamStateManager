@@ -16481,6 +16481,9 @@ def state_history_label(timestamp: str):
     # A label that is NOT SENT is kept (a Pin press sends none and must never
     # clear a bookmark -- S10 C6 review); a sent empty label still clears it.
     label = request.values.get("label")
+    if label is not None and len(label) > 80:
+        return render_template("_status.html", message="Label must be 80 characters or fewer.",
+                               level="warning"), 400
     edit = {} if label is None else {"label": label.strip() or None}
     if label is None:
         # S10 walk: a press on a row an earlier version marked as the
@@ -16500,6 +16503,11 @@ def state_history_label(timestamp: str):
     except Exception as exc:
         return render_template("_status.html",
                                message=f"Could not update snapshot: {exc}", level="error"), 400
+    listing = request.args.get("listing")
+    if listing == "versions":
+        return state_versions_panel()
+    if listing == "drawer":
+        return history_list()
     return state_history()
 
 
@@ -29406,7 +29414,8 @@ def export_report():
     report = report_card.build_report(engine, chip_name=chip, diag_findings=diag_findings,
                                       thresholds=thresholds,
                                       thresholds_source=spec["summary"],
-                                      generated_at=datetime.now().astimezone())
+                                      generated_at=datetime.now().astimezone(
+                                          _report_tz((_display_zone() or {}).get("zone"))))
 
     fmt = (request.args.get("format") or "md").lower()
     if fmt == "csv":

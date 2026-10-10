@@ -70,7 +70,8 @@ def _outliers(entities: list[dict], key: str,
 def _days_ago(epoch_ms, now: datetime):
     if not epoch_ms:
         return None
-    return (now.timestamp() * 1000 - epoch_ms) / 86_400_000.0
+    recorded = datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc)
+    return (now.date() - recorded.astimezone(now.tzinfo).date()).days
 
 
 def build_report(engine, *, chip_name: str, generated_at: datetime | None = None,
@@ -81,7 +82,7 @@ def build_report(engine, *, chip_name: str, generated_at: datetime | None = None
     ``thresholds_source`` names whose bands these are (the route passes
     spec_thresholds.resolve's own summary, QA F-14); without one the card
     says only what it can know -- custom bands were given, or none were."""
-    now = generated_at or datetime.now(timezone.utc)
+    now = generated_at or datetime.now().astimezone()
     th = thresholds or chip_health.DEFAULT_THRESHOLDS
     topo = engine.get_topology()
     nodes, edges, summ = topo["nodes"], topo["edges"], topo["summary"]
@@ -198,7 +199,7 @@ def _age(days):
     if days is None:
         return "no timestamp"
     d = int(days)
-    return "today" if d <= 0 else (f"{d} day ago" if d == 1 else f"{d} days ago")
+    return "today" if d <= 0 else ("yesterday" if d == 1 else f"{d} days ago")
 
 
 def render_markdown(r: dict) -> str:

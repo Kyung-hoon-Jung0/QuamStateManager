@@ -2,9 +2,9 @@
    ledger. It used to list only the Param History snapshots (3 on a chip
    whose State History page lists ~3,000 runs and SM writes) under the same
    "State History" title. It now lists the newest recorded states of the SAME
-   ledger the State History page reads, read-only, and sends the user there to
+   ledger the State History page reads, with snapshot labels, and links there to
    compare, load or restore one. #}
-{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag, version_flags %}{% from '_version_count.html' import version_count %}{% from '_history_pager.html' import history_pager %}{% set lv = ledger_versions %}
+{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag, version_flags, version_label %}{% from '_version_count.html' import version_count %}{% from '_history_pager.html' import history_pager %}{% set lv = ledger_versions %}
 {#- S10 walk: the History (N) button shows the one count in every mode (it is
     what this drawer lists); an ellipsis while the change history catches up -#}
 <span id="history-count" hx-swap-oob="true">{% if lv.mode in ('building', 'preparing') %}&hellip;{% else %}{{ '{:,}'.format(lv.total or 0) }}{% endif %}</span>
@@ -49,6 +49,7 @@
     {% if r.label %}<div class="sh-label">{{ r.label }}</div>{% endif %}
     {% if r.note %}<div class="sh-note">{{ r.note }}</div>{% endif %}
     {% if r.pinned %}<span class="sh-pin-badge" title="Pinned snapshot">&#128204;</span>{% endif %}
+    {{ version_label(r, 'listing=drawer&page=' ~ page ~ '&per_page=' ~ per_page, '#history-content') }}
 </div>
 {% else %}
 {% if lv.mode == 'ledger' %}<p class="muted" style="padding: 0.5rem;">No recorded states yet.</p>{% endif %}

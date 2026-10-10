@@ -5,7 +5,7 @@
    action goes through the doors the snapshot rows use, gates and all; a
    version the ledger cannot hand over exactly says why instead of offering
    them. Included by _state_history_body.html. #}
-{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag, version_flags %}
+{% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag, version_flags, version_label %}
 {% from '_version_count.html' import version_count %}
 {% from '_history_pager.html' import history_pager %}
 {% set lv = ledger_versions %}
@@ -47,6 +47,7 @@
     {% if r.why_write and r.why_write != r.why_diff %}<p class="sh-state-unavailable muted">{{ r.why_write }}</p>{% endif %}
 
     <div class="sh-entry-actions">
+        {{ version_label(r, 'body=1&page=' ~ current_page ~ '&per_page=' ~ per_page, '#state-history-body') }}
         {% if chip_origin == 'live' %}
         {# A pin sends no label (the door keeps a label it is not sent) and
            re-renders only this page of the timeline (body=1 into

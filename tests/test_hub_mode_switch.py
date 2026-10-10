@@ -454,8 +454,16 @@ def test_plain_copies_of_one_state_carry_one_pin(no_runs, url):
         "the observed row carries the snapshot it was imported from, only"
     body = no_runs["client"].get(url).get_data(as_text=True)
     if url == "/state-history?body=1":
-        # S10 C6: '/label"' -> '/label?body=1', the Pin now redraws only the timeline
-        assert body.count("/label?body=1") == 1 and f"/state-history/{stamps[0]}/label?" in body
+        # v1.3.0: one label URL -> one Pin and one Label form, the snapshot now offers both.
+        from tests.test_hub_versions import _parsed
+        tags = _parsed(body)
+        controls = [t for t in tags if t["attrs"].get("hx-post", "").startswith(
+            f"/state-history/{stamps[0]}/label?body=1")]
+        pins = [t for t in controls if t["tag"] == "button"]
+        labels = [t for t in controls if t["tag"] == "form"]
+        assert len(pins) == len(labels) == 1
+        assert pins[0]["text"].strip() == "Pin"
+        assert labels[0]["attrs"]["hx-target"] == "#state-history-body"
 
 
 @pytest.mark.parametrize("url", ["/topology/trends?metrics=T1", "/topology/metric-meta",

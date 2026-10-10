@@ -1,0 +1,170 @@
+[
+  {
+    "name": "A14 Python elapsed periods",
+    "file": "quam_state_manager/core/report_card.py",
+    "pin": "calendar_age_in_display_zone",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A14 Python yesterday wording",
+    "file": "quam_state_manager/core/report_card.py",
+    "pin": "calendar_age_in_display_zone",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A14 export ignores project zone",
+    "file": "quam_state_manager/web/routes.py",
+    "pin": "report_export_uses_project_zone",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A14 JS elapsed periods",
+    "file": "quam_state_manager/web/static/chip-status.js",
+    "pin": "js-age",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A14 JS uses UTC calendar",
+    "file": "quam_state_manager/web/static/chip-status.js",
+    "pin": "js-age",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A14 JS month wording",
+    "file": "quam_state_manager/web/static/chip-status.js",
+    "pin": "js-age",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 missing snapshot controls",
+    "file": "quam_state_manager/web/templates/_snapshot_source.html",
+    "pin": "label_set_clear_and_pin_untouched",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 ledger gets a control",
+    "file": "quam_state_manager/web/templates/_snapshot_source.html",
+    "pin": "ledger_without_snapshot_has_no_label_control",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 editing touches pin",
+    "file": "quam_state_manager/web/routes.py",
+    "pin": "label_set_clear_and_pin_untouched",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 label is ignored",
+    "file": "quam_state_manager/web/routes.py",
+    "pin": "label_set_clear_and_pin_untouched",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 empty label does not clear",
+    "file": "quam_state_manager/web/routes.py",
+    "pin": "label_set_clear_and_pin_untouched",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 server length limit relaxed",
+    "file": "quam_state_manager/web/routes.py",
+    "pin": "label_length_limit_and_missing_label_keeps_bookmark",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 missing label clears bookmark",
+    "file": "quam_state_manager/web/routes.py",
+    "pin": "label_length_limit_and_missing_label_keeps_bookmark",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 Versions receives wrong listing",
+    "file": "quam_state_manager/web/routes.py",
+    "pin": "label_set_clear_and_pin_untouched",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 drawer receives wrong listing",
+    "file": "quam_state_manager/web/routes.py",
+    "pin": "label_set_clear_and_pin_untouched",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 input length limit removed",
+    "file": "quam_state_manager/web/templates/_snapshot_source.html",
+    "pin": "label_set_clear_and_pin_untouched",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 form sends pin",
+    "file": "quam_state_manager/web/templates/_snapshot_source.html",
+    "pin": "label_set_clear_and_pin_untouched",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 editor starts open",
+    "file": "quam_state_manager/web/templates/_snapshot_source.html",
+    "pin": "inline_label_keyboard_from_flask_render",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 Enter does not save",
+    "file": "quam_state_manager/web/static/version-label.js",
+    "pin": "inline_label_keyboard_from_flask_render",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 Escape does not cancel",
+    "file": "quam_state_manager/web/static/version-label.js",
+    "pin": "inline_label_keyboard_from_flask_render",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 Escape leaks to drawer",
+    "file": "quam_state_manager/web/static/version-label.js",
+    "pin": "inline_label_keyboard_from_flask_render",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 cancel keeps discarded text",
+    "file": "quam_state_manager/web/static/version-label.js",
+    "pin": "inline_label_keyboard_from_flask_render",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 cancel loses keyboard focus",
+    "file": "quam_state_manager/web/static/version-label.js",
+    "pin": "inline_label_keyboard_from_flask_render",
+    "assertion_failure": true,
+    "restored": true
+  },
+  {
+    "name": "A17 merged copies keep one Pin and one Label",
+    "file": "quam_state_manager/web/templates/_snapshot_source.html",
+    "pin": "test_hub_mode_switch::test_plain_copies_of_one_state_carry_one_pin",
+    "assertion_failure": true,
+    "restored": true
+  }
+]
