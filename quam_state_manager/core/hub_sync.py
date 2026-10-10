@@ -1552,6 +1552,29 @@ def snapshot_instant_us(ts: str) -> int | None:
     return int(d.timestamp()) * 1_000_000 + us
 
 
+def _same_after_by_hash(lpred, lsucc, pred, succ, chash) -> bool:
+    """v1.3.0 (perf): may an observed snapshot whose content hash equals its
+    successor's be settled ``same_after`` without building a flat?
+
+    The flat path answers ``same_before`` first when the snapshot's flat equals
+    its predecessor's, so the hash may decide only when that cannot happen:
+    the successor is a run or observed event (its rows are a flat diff, never
+    an SM write's entries), it is the snapshot's GLOBAL successor and the
+    predecessor its global predecessor (one lane: no other folder's event in
+    between), and its own rows against that predecessor are not empty -- equal
+    content to the successor then means a flat that differs from the
+    predecessor. Anything else takes the flat path, unchanged."""
+    if lsucc is None or not chash or lsucc["chash"] != chash:
+        return False
+    if succ is None or lsucc["eid"] != succ["eid"] or succ["kind"] in SM_KINDS:
+        return False
+    if (lpred is None) != (pred is None) or (pred is not None and lpred["eid"] != pred["eid"]):
+        return False
+    if succ["error"] is not None or not succ["n_changes"]:
+        return False
+    return succ["base_hash"] == (pred["state_hash"] if pred is not None else None)
+
+
 def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str:
     """docs/282 review P1-2: one Param History snapshot that is not a run --
     a state SM itself observed (an ``auto`` capture after an outside edit, a
@@ -1584,7 +1607,6 @@ def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str
         if not isinstance(state, dict) or not isinstance(wiring, dict):
             raise ValueError("not a state/wiring pair")
         doc = rules.merged(state, wiring)
-        flat = rules.flatten(doc)
     except (OSError, ValueError) as exc:
         logger.debug("hub sync: snapshot %s unreadable: %s", snap["ts"], exc)
         return done("unreadable")
@@ -1604,6 +1626,17 @@ def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str
         # S10 walk: the same content as the lane's newest state (an SM
         # write's own save copy): settled by the content hash, no flat built
         return done("same_before")
+    if _same_after_by_hash(lpred, lsucc, pred, succ, chash):
+        # v1.3.0 (perf): the next event's own state seen a moment early (a
+        # run's save captured by SM -- most of an archived chip's snapshots),
+        # settled by the content hash with no flat built: three flattens and
+        # two state rebuilds per snapshot were most of that chip's first view
+        return done("same_after")
+    try:
+        flat = rules.flatten(doc)
+    except ValueError as exc:
+        logger.debug("hub sync: snapshot %s unreadable: %s", snap["ts"], exc)
+        return done("unreadable")
     lpred_flat = store.flat_of(lpred) if lpred is not None else {}
     if not rules.diff(lpred_flat, flat):
         return done("same_before")

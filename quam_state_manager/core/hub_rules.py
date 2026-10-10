@@ -8,9 +8,12 @@ JSON extensions NaN and Infinity. No file access, logging, or database work.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,10 +37,60 @@ def _hash_scalar(value: Any) -> Any:
     return value
 
 
+@functools.lru_cache(maxsize=1 << 16)
 def _segment(key: str) -> str:
+    # v1.3.0 (perf): memoized -- a chip's states repeat the same few thousand
+    # keys, and this ran ~3.5 million times in one archived chip's build
     if not isinstance(key, str):
         raise TypeError("JSON object keys must be strings")
     return key.replace("\\", "\\\\").replace(".", "\\.") if key else "\\e"
+
+
+#: v1.3.0 (perf): a long scalar list's S2 hash, memoized by the list's values.
+#: Consecutive saved states repeat the same long arrays (integration weights,
+#: waveform samples); their canonical JSON + SHA-1 was most of a flatten (21 ms
+#: of a 1.6 MB state, 31 arrays) and an archived chip's build flattens ~2,400
+#: states. The key is the tuple of values, and only lists of plain int / float /
+#: str / None are memoized: for those, Python equality implies the same
+#: canonical text (1 == 1.0 -> "1", 0.0 == -0.0 -> "0", NaN never equal), so a
+#: hit is exactly the hash a recomputation gives. A bool is never in a key
+#: (True == 1, but "true" != "1"). Bounded by entries and by elements held.
+_ARRAY_MEMO_TYPES = frozenset({int, float, str, type(None)})
+_ARRAY_MEMO_MAX = 1024
+_ARRAY_MEMO_MAX_ELEMENTS = 500_000
+_ARRAY_MEMO: OrderedDict = OrderedDict()
+_ARRAY_MEMO_LOCK = threading.Lock()
+_array_memo_elements = 0
+
+
+#: The element types a JSON scalar list is made of (the plain-type fast path
+#: of flatten's "no dict or list inside" test; anything else takes the
+#: original isinstance walk).
+_SCALAR_TYPES = _ARRAY_MEMO_TYPES | {bool}
+
+
+def _array_hash(value: list, types: set) -> str:
+    """The S2 hash of a long scalar list (canonical JSON of its hash scalars);
+    ``types``: the set of its element types."""
+    global _array_memo_elements
+    key = tuple(value) if types <= _ARRAY_MEMO_TYPES else None
+    if key is not None:
+        with _ARRAY_MEMO_LOCK:
+            got = _ARRAY_MEMO.get(key)
+            if got is not None:
+                _ARRAY_MEMO.move_to_end(key)
+                return got
+    digest = hashlib.sha1(_json([_hash_scalar(v) for v in value]).encode("utf-8")).hexdigest()
+    if key is not None and len(key) <= _ARRAY_MEMO_MAX_ELEMENTS:
+        with _ARRAY_MEMO_LOCK:
+            if key not in _ARRAY_MEMO:
+                _ARRAY_MEMO[key] = digest
+                _array_memo_elements += len(key)
+                while (len(_ARRAY_MEMO) > _ARRAY_MEMO_MAX
+                       or _array_memo_elements > _ARRAY_MEMO_MAX_ELEMENTS):
+                    old, _ = _ARRAY_MEMO.popitem(last=False)
+                    _array_memo_elements -= len(old)
+    return digest
 
 
 def flatten(doc: Any) -> dict[str, Any]:
@@ -54,9 +107,10 @@ def flatten(doc: Any) -> dict[str, Any]:
             for key, child in value.items():
                 walk(child, parts + (_segment(key),))
         elif isinstance(value, list):
-            if len(value) > 16 and all(not isinstance(v, (dict, list)) for v in value):
-                payload = _json([_hash_scalar(v) for v in value]).encode("utf-8")
-                out[".".join(parts)] = {"_array": len(value), "_hash": hashlib.sha1(payload).hexdigest()}
+            types = set(map(type, value)) if len(value) > 16 else None
+            if types is not None and (types <= _SCALAR_TYPES
+                                      or all(not isinstance(v, (dict, list)) for v in value)):
+                out[".".join(parts)] = {"_array": len(value), "_hash": _array_hash(value, types)}
             else:
                 for index, child in enumerate(value):
                     walk(child, parts + (str(index),))
@@ -112,25 +166,32 @@ def _pointer(value: Any) -> bool:
     return isinstance(value, str) and value.startswith(("#/", "#../", "#./"))
 
 
+#: Leaf types for which ``==`` between two values of the SAME type implies
+#: ``same`` (diff's fast path; NaN is never ``==`` and takes ``same``).
+_PLAIN = frozenset({str, int, float, bool, type(None)})
+
+
 def diff(before_flat: dict[str, Any], after_flat: dict[str, Any]) -> list[Change]:
-    """Sorted add/gone/set rows, or retarget when two pointer strings change."""
+    """Sorted add/gone/set rows, or retarget when two pointer strings change.
+
+    v1.3.0 (perf): only the changed paths are sorted (a state's ~4,000 paths
+    were sorted on every diff) and an unchanged plain leaf skips ``same``."""
     rows = []
-    for path in sorted(before_flat.keys() | after_flat.keys()):
-        old_present, new_present = path in before_flat, path in after_flat
-        old, new = before_flat.get(path), after_flat.get(path)
-        if old_present and new_present and same(old, new):
-            continue
-        if not old_present:
-            op = "add"
-        elif not new_present:
-            op = "gone"
-        elif _pointer(old) and _pointer(new):
-            op = "retarget"
+    for path, old in before_flat.items():
+        if path in after_flat:
+            new = after_flat[path]
+            if type(old) is type(new) and type(old) in _PLAIN and old == new:
+                continue
+            if same(old, new):
+                continue
+            op = "retarget" if _pointer(old) and _pointer(new) else "set"
+            rows.append(Change(path, op, *_encoded(old), *_encoded(new)))
         else:
-            op = "set"
-        old_num, old_txt = _encoded(old) if old_present else (None, None)
-        num, txt = _encoded(new) if new_present else (None, None)
-        rows.append(Change(path, op, old_num, old_txt, num, txt))
+            rows.append(Change(path, "gone", *_encoded(old), None, None))
+    for path, new in after_flat.items():
+        if path not in before_flat:
+            rows.append(Change(path, "add", None, None, *_encoded(new)))
+    rows.sort(key=lambda r: r.path)
     return rows
 
 
