@@ -14653,6 +14653,13 @@ html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap
 .sp-hist-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-size: .78rem; }
 .sp-hist-row .btn-sm { width: auto; margin: 0; font-size: .74rem; padding: .1rem .5rem; }
 .sp-history .applied-log { margin: 0; }
+/* SB-05: inside the sync panel the list is IN FLOW -- the floating dropdown
+   drew its rows over the panel text below it. Expanding pushes that text down. */
+.sp-history .applied-log { display: block; }
+.sp-history .applied-log-list {
+    position: static; min-width: 0; max-width: none;
+    margin-top: .25rem; box-shadow: none;
+}
 .sp-gloss { font-size: .7rem; margin: .3rem 0 0; }
 
 /* ---- a cell older than the live chip: blue left rule + "live now …" ---- */
