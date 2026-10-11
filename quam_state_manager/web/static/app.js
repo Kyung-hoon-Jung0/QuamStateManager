@@ -3453,7 +3453,7 @@ document.addEventListener("showToast", function (e) {
     window.showToast(String(msg), (d && typeof d === "object" && d.level) || "info");
 });
 
-window.showToast = function(message, level) {
+window.showToast = function(message, level, ms) {
     var bar = document.getElementById("status-bar");
     if (!bar) return;
     var div = document.createElement("div");
@@ -3463,10 +3463,31 @@ window.showToast = function(message, level) {
     p.textContent = message;
     div.appendChild(p);
     bar.appendChild(div);
-    var duration = (level === "error" || level === "warning") ? 6000 : 3500;
+    var duration = ms > 0 ? ms : ((level === "error" || level === "warning") ? 6000 : 3500);
     setTimeout(function() { div.style.opacity = "0"; }, duration);
     setTimeout(function() { div.remove(); }, duration + 500);
 };
+
+/* v1.3.0: a tray notice meant as information (an Apply cut off by a restart
+   whose edits are on disk, _pending_tray.html data-toast) is read as a toast,
+   long enough to read -- inline it squeezed the one-row top bar. Shown once:
+   the element goes after it is shown (the server pops the notice anyway). */
+window.TrayNoticeToast = (function () {
+    function show(root) {
+        var scope = (root && root.querySelectorAll) ? root : document;
+        Array.prototype.forEach.call(scope.querySelectorAll(".tray-recovery-notice[data-toast]"), function (n) {
+            var text = (n.textContent || "").trim();
+            var level = n.getAttribute("data-toast") || "info";
+            if (n.parentNode) n.parentNode.removeChild(n);
+            if (text && window.showToast) window.showToast(text, level, 15000);
+        });
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { show(document); });
+    else show(document);
+    document.addEventListener("htmx:afterSwap", function () { show(document); });
+    document.addEventListener("htmx:oobAfterSwap", function () { show(document); });
+    return { show: show };
+})();
 
 /* docs/301 F7: a server toast that lands in #status-bar OUT OF BAND (the
  * apply and save answers ride hx-swap-oob beside the tray) was never faded:
@@ -4251,6 +4272,16 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                     // r16 ⑥: a declined confirm used to end SILENTLY — the
                     // click looked accepted while nothing happened.
                     window.showToast("Cancelled — nothing was changed.", "info");
+                }
+                return;
+            }
+            if (data.status === "error" && data.transient) {
+                // v1.3.0: the live files were mid-save (unreadable for a
+                // moment). Nothing happened; the person retries. The automatic
+                // merge retries on its own next tick, without a toast.
+                if (!expectChip && window.showToast) {
+                    window.showToast(data.message || "The live chip could not be read "
+                                     + "just now - retry in a moment.", "warning");
                 }
                 return;
             }
@@ -25621,6 +25652,16 @@ window.ColumnHistory = (function () {
         } catch (e) { return null; }
     }
 
+    // v1.3.0: the grid shows a number grouped ("5,075,187,484.52453") and the
+    // history fills it plain ("5075187484.52453") -- one value, two spellings.
+    // Compared as exact decimals (ValueDelta), else as text, so a click on the
+    // value the cell already holds never marks the cell edited.
+    function _sameAsCell(cellText, fill) {
+        if (cellText === fill) return true;
+        var d = window.ValueDelta ? window.ValueDelta.compute(cellText, fill) : null;
+        return !!(d && d.dir === "same");
+    }
+
     function _fill(input, value) {
         input.value = value;
         input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -25637,7 +25678,7 @@ window.ColumnHistory = (function () {
             if (window.showToast) showToast(row + ": cell is not editable here");
             return;
         }
-        if (input.value === v) {
+        if (_sameAsCell(input.value, v)) {
             if (window.showToast) showToast(row + ": already this value");
             return;
         }
@@ -25662,7 +25703,7 @@ window.ColumnHistory = (function () {
             var v = td.getAttribute("data-fill");
             var input = row ? _gridInput(row) : null;
             if (!input || input.readOnly) { skipped++; return; }
-            if (input.value === v) return;          // already there — no-op
+            if (_sameAsCell(input.value, v)) return;   // already there: no-op
             cells.push({ dp: input.dataset.dotPath, prev: input.value, next: v });
             _fill(input, v);
             filled++;

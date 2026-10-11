@@ -3,9 +3,15 @@
    swaps in a small chip looks like nothing happened). Centered + persistent. #}
 <div class="pane-empty" role="status">
     <div class="pane-empty-icon" aria-hidden="true">📂</div>
-    <h3 class="pane-empty-title">{{ title or "No chip loaded" }}</h3>
+    {% set _ro = resume_offer() if resume_offer is defined else None %}
+    <h3 class="pane-empty-title">{{ title or ("No chip is open" if _ro else "No chip loaded") }}</h3>
+    {% if _ro %}
+    {# v1.3.0: a page reloaded after SM restarted -- the fix is the chip that was open #}
+    <p class="pane-empty-hint">SM was restarted or the chip was closed. Re-open it to view {{ page or "this page" }}:</p>
+    {% include "_resume_offer.html" %}
+    {% endif %}
     <p class="pane-empty-hint">
-        {% if page %}Load a chip to view {{ page }}.{% else %}Load a chip to get started.{% endif %}
+        {% if _ro %}Or open another chip.{% elif page %}Load a chip to view {{ page }}.{% else %}Load a chip to get started.{% endif %}
         {# docs/104 #6: said "Workspace panel" long after that panel was renamed —
            the one instruction every pre-load click renders. #}
         <br>Pick a state folder with <strong>State Load</strong> in the left sidebar,

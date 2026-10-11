@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
+from quam_state_manager.web.request_body import json_object
 
 import quam_state_manager
 from quam_state_manager.core import agent_backend as ab
@@ -401,7 +402,7 @@ def start():
     if bad:
         return bad
     key = aa._chip_key()
-    data = request.get_json(silent=True) or request.form.to_dict()
+    data = json_object(request.form.to_dict)
     inst = current_app.instance_path
     actor = _r()._request_actor()
     name = str(data.get("backend") or _setup().get("default_backend") or "claude").lower()
@@ -473,7 +474,7 @@ def send():
     chip, bad = _chip_or_409()
     if bad:
         return bad
-    data = request.get_json(silent=True) or request.form.to_dict()
+    data = json_object(request.form.to_dict)
     text = str(data.get("text") or "").strip()
     if not text:
         return _err("text required")
@@ -656,7 +657,7 @@ def clear():
     chip, bad = _chip_or_409()
     if bad:
         return bad
-    data = request.get_json(silent=True) or request.form.to_dict()
+    data = json_object(request.form.to_dict)
     keep = str(data.get("keep", "1")).lower() not in ("0", "false", "no", "")
     expect = data.get("since_n")
     try:
@@ -808,8 +809,8 @@ def events():
     the page polls it on every wake. Text events carry their text; tool
     events their summary/failed/error -- the card renderer (S6) reads these."""
     chip = aa._chip_name() if _r()._active_path() else None
-    after = int(request.args.get("after") or 0)
-    limit = max(1, min(int(request.args.get("limit") or 200), aa._EVENT_RING))
+    after = request.args.get("after", default=0, type=int)
+    limit = max(1, min(request.args.get("limit", default=200, type=int), aa._EVENT_RING))
     from quam_state_manager.core import agent_conversation as conv_mod
     conv = conv_mod.load(current_app.instance_path, chip) if chip else None
     with aa._events_lock:
@@ -828,7 +829,7 @@ def ask():
     chip, bad = _chip_or_409()
     if bad:
         return bad
-    data = request.get_json(silent=True) or request.form.to_dict()
+    data = json_object(request.form.to_dict)
     text = str(data.get("text") or "").strip()
     if not text:
         return _err("text required")

@@ -759,7 +759,8 @@
     var python = inp ? inp.value.trim() : "";
     if (!python) { if (out) out.textContent = "Enter a python path first."; return; }
     if (out) out.textContent = "Probing…";
-    fetchJSON("/generate/probe?python=" + encodeURIComponent(python)).then(function (p) {
+    // v1.3.0: a TYPED path is probed by POST (a GET runs only a found / chosen env)
+    fetchJSON("/generate/probe", {method: "POST", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: "python=" + encodeURIComponent(python)}).then(function (p) {
       if (!out) return;
       if (p && p.usable) {
         var v = p.versions || {};
@@ -786,7 +787,8 @@
     var out = el("sched-config-out");
     if (!python) { if (out) out.innerHTML = '<p class="sched-warn">Select an environment first.</p>'; return; }
     this.busy(true);
-    fetchJSON("/scheduler/effective-config?python=" + encodeURIComponent(python)).then(function (r) {
+    // v1.3.0: POST -- the field may hold a path typed a moment ago (not yet saved)
+    fetchJSON("/scheduler/effective-config", {method: "POST", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: "python=" + encodeURIComponent(python)}).then(function (r) {
       self.busy(false);
       if (!out) return;
       out.innerHTML = self.renderConfig(r);

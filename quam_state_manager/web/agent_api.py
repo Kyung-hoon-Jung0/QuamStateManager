@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
+from quam_state_manager.web.request_body import json_object, json_text
 
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core.loader import natural_key
@@ -431,7 +432,7 @@ def runs():
     ds = _ds()
     if not ds:
         return jsonify(ok=True, count=0, runs=[], note="no dataset folder is open in SM")
-    n = max(1, min(int(request.args.get("n") or 20), 500))
+    n = max(1, min(request.args.get("n", default=20, type=int), 500))
     query = (request.args.get("experiment") or "").strip()
     grps = groups(query)
     qubit = request.args.get("qubit") or None
@@ -700,7 +701,7 @@ def note_set():
     path = r._active_path()
     if not path:
         return _err("no chip loaded", 409)
-    data = request.get_json(silent=True) or request.form.to_dict()
+    data = json_object(request.form.to_dict)
     subject = _note_subject(r._store(), str(data.get("subject") or "").strip())
     text = str(data.get("text") or "")
     if not subject:
@@ -754,7 +755,7 @@ def journal_append():
     stamped from the caller, never from the payload: a request without the
     bridge header cannot claim to be the agent, and the agent cannot claim to
     be the human."""
-    data = request.get_json(silent=True) or request.form.to_dict()
+    data = json_object(request.form.to_dict)
     kind = str(data.get("kind") or "agent")
     needs_reason = kind == "agent"
     if request.headers.get("X-SM-Agent"):
@@ -798,10 +799,10 @@ def journal_root():
     if request.method == "POST":
         # docs/252 (D-08 / C-15): a person's press only (callers.PERSON_ONLY); the
         # day files come along and the move is journaled in both folders
-        data = request.get_json(silent=True) or request.form.to_dict()
+        data = json_object(request.form.to_dict)
         r = _r()
         try:
-            moved = journal_mod.move_root(current_app.instance_path, data.get("root"), who=r._request_actor(),
+            moved = journal_mod.move_root(current_app.instance_path, json_text(data, "root"), who=r._request_actor(),
                                           chip=_chip_name() if r._active_path() else None)
             root = moved["root"]
         except (OSError, ValueError) as exc:
@@ -1563,7 +1564,7 @@ def limits_route():
     from quam_state_manager.web import routes as r
     chip, key = _chip_name(), _chip_key()      # records by KEY (what run_node reads), journal by NAME
     if request.method == "POST":
-        data = request.get_json(silent=True) or request.form.to_dict()
+        data = json_object(request.form.to_dict)
         if "max_delta" in data and isinstance(data["max_delta"], str):
             try:
                 data["max_delta"] = json.loads(data["max_delta"] or "{}")
@@ -1609,7 +1610,7 @@ def session_stop():
     anything else; S4 adds the process kill for 'now'."""
     from quam_state_manager.core import agent_session
     from quam_state_manager.web import routes as r
-    data = request.get_json(silent=True) or request.form.to_dict()
+    data = json_object(request.form.to_dict)
     mode = "now" if str(data.get("mode") or "") == "now" else "after_run"
     key = _chip_key()
     before = agent_session.load(current_app.instance_path, key)
@@ -1656,7 +1657,7 @@ def session_stop():
 
 @agent_bp.route("/events")
 def events_list():
-    n = max(1, min(int(request.args.get("n") or 50), _EVENT_RING))
+    n = max(1, min(request.args.get("n", default=50, type=int), _EVENT_RING))
     with _events_lock:
         ev = list(_events())[-n:]
     return jsonify(ok=True, count=len(ev), events=ev)
@@ -2111,7 +2112,7 @@ def run_node():
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     node = str(data.get("node") or "").strip()
     if not node:
         return _err("node required")
@@ -2366,7 +2367,7 @@ def approvals_decide(aid: str, verb: str):
     actor = r._request_actor()
     if actor.startswith("by_"):
         return _err("only a person decides an approval", 403)
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     inst, chip = current_app.instance_path, _chip_key()
     writes = data.get("writes") if isinstance(data.get("writes"), list) else None
     with _lock_for("approve"):                   # review R3-3: two presses are one decision
@@ -2895,7 +2896,7 @@ def plans_add():
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     inst, chip, name = current_app.instance_path, _chip_key(), _chip_name()
     actor = r._request_actor()
     store = r._store()
@@ -3003,7 +3004,7 @@ def plan_mode(pid: str):
         return _err("open a chip first", 409)
     if r._request_actor().startswith("by_"):
         return _err("a person chooses the plan's mode", 403)   # review R1 minor
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     inst, chip = current_app.instance_path, _chip_key()
     rec = agent_plans.get(inst, chip, pid)
     if rec is None:
@@ -3063,7 +3064,7 @@ def _plan_start_locked(pid, actor, inst, chip, name):
         return _err(f"plan is {rec.get('status')}", 409)
     if agent_plans.running(inst, chip):
         return _err("another plan is running on this chip", 409)
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     lim = limits.load(inst, chip)
     mode = rec.get("mode") or lim.get("mode")
     if mode not in limits.MODES:

@@ -704,10 +704,56 @@ def _store_hash(store) -> str:
         return working_copy.content_hash(store.state, store.wiring)
 
 
+#: v1.3.0: how many refused recovery files are kept beside a chip's working
+#: copy (newest first). Each one was named in a notice when it was kept.
+KEEP_UNRECOVERED = 5
+
+
+def _where_rows_are(ctx, rows, applied, base_hash) -> str:
+    """After a refused restore, where the checkpoint's rows ended up (v1.3.0).
+
+    ``"live"`` -- the working files hold the recorded base plus every row AND
+    the live chip holds that same content (an Apply finished its live write
+    before SM stopped); ``"working"`` -- only the working files hold them
+    (staged, not on the live chip); ``""`` -- the rows are not on disk. Proven
+    by content hash in both directions (:func:`_holds_rows`), never assumed."""
+    if not rows or not isinstance(base_hash, str) or not base_hash:
+        return ""
+    try:
+        store, wc = ctx["store"], ctx["working_copy"]
+        disk_hash = _store_hash(store)
+        if disk_hash == base_hash or not _holds_rows(
+                store, rows[applied:], rows[:applied], base_hash, disk_hash):
+            return ""
+        try:
+            live_hash = working_copy.live_content_hash(wc)
+        except Exception:  # noqa: BLE001 -- an unreadable live chip proves nothing
+            live_hash = None
+        return "live" if live_hash == disk_hash else "working"
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _prune_unrecovered(path: Path, keep: int = KEEP_UNRECOVERED) -> None:
+    """Keep the newest *keep* refused recovery files of this sidecar; older
+    ones go (each was named in the notice shown when it was kept)."""
+    try:
+        found = sorted(path.parent.glob(f"{path.stem}.unrecovered-*.json"),
+                       key=lambda f: f.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    for old in found[keep:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
 def _restore(ctx, p: _Persister) -> None:
     store, wc = ctx["store"], ctx["working_copy"]
     path = sidecar_path(wc)
     paths = []
+    rows, applied, base_hash = None, 0, None
     try:
         if not path.exists():
             return
@@ -777,10 +823,32 @@ def _restore(ctx, p: _Persister) -> None:
         except OSError:
             fp = None
     except Exception as exc:
+        where = _where_rows_are(ctx, rows, applied if type(applied) is int else 0, base_hash)
+        if where:
+            # v1.3.0: nothing was lost -- an Apply was cut off after the rows
+            # reached the working files (and maybe the live chip). Say what is
+            # true, and drop the checkpoint: its content is on disk.
+            n = len(rows)
+            shown = ", ".join(dict.fromkeys(paths)) or "unnamed rows"
+            if where == "live":
+                text = (f"SM stopped while applying {n} edit{'s' if n != 1 else ''} "
+                        f"({shown}). They had already reached the live chip, so "
+                        "nothing needed restoring.")
+            else:
+                text = (f"SM stopped while applying {n} edit{'s' if n != 1 else ''} "
+                        f"({shown}). They are kept in the working copy (staged) and "
+                        "were not written to the live chip - press Apply to write them.")
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            ctx["_tray_recovery_notice"] = {"level": "info", "text": text}
+            return
         retained = path.with_name(f"{path.stem}.unrecovered-{uuid.uuid4().hex[:8]}.json")
         try:
             os.replace(path, retained)
             retention = f"Recovery file retained at {retained}."
+            _prune_unrecovered(path)
         except OSError as retain_exc:
             retention = (f"Recovery file left at {path}; could not rename it: "
                          f"{retain_exc}.")

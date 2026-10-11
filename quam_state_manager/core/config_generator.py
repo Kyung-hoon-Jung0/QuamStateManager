@@ -833,6 +833,48 @@ def resolve_python_interpreter(path_str: str) -> str | None:
     return None
 
 
+def interpreter_key(path_str) -> str | None:
+    """A comparable form of an interpreter path: the resolved interpreter
+    FILE (a venv folder names its python), absolute, case-folded the way the
+    OS compares. ``None`` for something that is not a path at all."""
+    if not path_str or not isinstance(path_str, str):
+        return None
+    try:
+        resolved = resolve_python_interpreter(path_str) or path_str
+        return os.path.normcase(os.path.abspath(resolved))
+    except (OSError, ValueError):       # a NUL byte / an over-long path
+        return None
+
+
+def known_interpreter(python_path, instance_path, also=()) -> bool:
+    """May SM run *python_path* on a request that is not the person's own
+    choosing press (v1.3.0)? Only when it is an interpreter SM discovered
+    itself (:func:`discover_envs`) or one the person already chose: the
+    selected env, a project's remembered env, or a path in *also* (e.g. the
+    Experiment Runner's saved interpreter). Decided by comparing paths --
+    nothing is spawned for the path in question (env discovery runs SM's own
+    conda listing, memoized)."""
+    key = interpreter_key(python_path)
+    if key is None:
+        return False
+    chosen = [get_selected_env(instance_path), *also]
+    try:
+        from quam_state_manager.core import project_env
+        memo = project_env.load(instance_path)
+        chosen += [r.get("python") for r in (memo.get("projects") or {}).values()
+                   if isinstance(r, dict)]
+        chosen.append((memo.get("last_used") or {}).get("python"))
+    except Exception:  # noqa: BLE001 -- an unreadable memo only narrows the set
+        pass
+    if any(interpreter_key(c) == key for c in chosen if c):
+        return True
+    try:
+        found = discover_envs()
+    except Exception:  # noqa: BLE001
+        found = []
+    return any(interpreter_key(e.get("python")) == key for e in found)
+
+
 def discover_uv_venvs() -> list[dict]:
     """Discover uv/venv interpreters via the qualibrate projects (r15, docs/71).
 
@@ -1122,7 +1164,7 @@ def _env_signature(python_path: str) -> str | None:
     """
     try:
         pstat = Path(python_path).stat()
-    except OSError:
+    except (OSError, ValueError):       # ValueError: a NUL byte / an over-long path
         return None
     parts = [str(pstat.st_mtime_ns)]
     sp = _site_packages_for(python_path)

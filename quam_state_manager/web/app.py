@@ -98,6 +98,92 @@ def _script_json_filter(value) -> Markup:
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
+# ----------------------------------------------------------------------
+# v1.3.0 -- Host allowlist (DNS rebinding).
+#
+# A page on another site can make its own domain resolve to 127.0.0.1 and
+# then talk to this server as SAME-ORIGIN: the Origin/Referer check below
+# compares against the request's own Host, so it passes. What such a request
+# cannot fake is the Host header -- it carries the attacker's domain. So the
+# server answers only to loopback names, the host it was told to bind to,
+# and names the operator lists in SM_ALLOWED_HOSTS (comma separated).
+# ----------------------------------------------------------------------
+
+ALLOWED_HOSTS_ENV = "SM_ALLOWED_HOSTS"
+_WILDCARD_BINDS = frozenset({"", "0.0.0.0", "::", "[::]"})
+
+
+def host_name(host_header: str | None) -> str:
+    """The name part of a Host header: lower-case, no port, no brackets."""
+    h = (host_header or "").strip().lower()
+    if h.startswith("["):                      # [::1]:5050
+        end = h.find("]")
+        return h[1:end] if end > 0 else h[1:]
+    if h.count(":") == 1:                      # name:port (a bare IPv6 has more)
+        h = h.split(":", 1)[0]
+    return h.rstrip(".")
+
+
+def is_loopback_host(name: str) -> bool:
+    """True for ``localhost`` and every loopback address (127.0.0.0/8, ::1)."""
+    if name == "localhost":
+        return True
+    import ipaddress
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
+def _machine_names() -> set[str]:
+    """This PC's own names and addresses -- what a LAN client may type when
+    the server listens on every interface."""
+    import socket
+    names: set[str] = set()
+    try:
+        hn = socket.gethostname()
+        names.update({hn, socket.getfqdn()})
+        names.update(socket.gethostbyname_ex(hn)[2])
+        for info in socket.getaddrinfo(hn, None):
+            names.add(str(info[4][0]).split("%", 1)[0])
+    except OSError:
+        pass
+    return {host_name(n) for n in names if n}
+
+
+def allow_bind_host(app, host: str | None) -> None:
+    """Let *app* answer to the host it is served on (``qsm serve --host``).
+
+    A loopback bind adds nothing; a wildcard bind (0.0.0.0 / ::) adds this
+    PC's own names and addresses; any other bind adds that name."""
+    allowed = app.config.setdefault("SM_ALLOWED_HOSTS", set())
+    h = (host or "").strip().lower()
+    if h in _WILDCARD_BINDS:
+        allowed.update(_machine_names())
+        return
+    name = host_name(h)
+    if name and not is_loopback_host(name):
+        allowed.add(name)
+
+
+def _env_allowed_hosts() -> set[str]:
+    raw = os.environ.get(ALLOWED_HOSTS_ENV, "")
+    return {host_name(p) for p in raw.split(",") if p.strip()}
+
+
+def _host_allowlist_check():
+    """Refuse a request whose Host is not one this server answers to (403),
+    before any route runs."""
+    name = host_name(request.host)
+    if is_loopback_host(name) or name in current_app.config.get("SM_ALLOWED_HOSTS", ()):
+        return None
+    shown = name[:80] or "(none)"
+    return (f"Host '{shown}' is not served here. This State Manager answers to "
+            f"localhost / 127.0.0.1; to reach it under another name, start it "
+            f"with --host <name> or list the name in {ALLOWED_HOSTS_ENV}.",
+            403, {"Content-Type": "text/plain; charset=utf-8"})
+
+
 def _csrf_origin_check():
     """Reject cross-origin mutations.
 
@@ -808,6 +894,10 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # response headers. Both are wired at the app level (not the
     # blueprint) so every route, including any future blueprints, is
     # covered.
+    # v1.3.0: the Host allowlist runs FIRST -- a DNS-rebound request passes
+    # the origin check (its Origin names the same rebound host).
+    app.config["SM_ALLOWED_HOSTS"] = _env_allowed_hosts()
+    app.before_request(_host_allowlist_check)
     app.before_request(_csrf_origin_check)
     app.before_request(_record_own_port)
     app.after_request(_add_security_headers)

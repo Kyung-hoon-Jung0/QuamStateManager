@@ -443,6 +443,30 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     await flush(40);
     ok(syncCalls.length === 1, 'Cancel pulls nothing (one POST, no retry)');
 
+    /* v1.3.0: the live state.json was unreadable for a moment (another program
+       mid-save). The server answers 409 transient; the person is told to retry
+       (a warning, not "Sync failed"), and the automatic merge stays quiet. */
+    {
+        const _tt = [], _rt = window.showToast;
+        window.showToast = function (m, l) { _tt.push([String(m), l]); };
+        syncCalls.length = 0;
+        syncQueue = [{ status: 'error', transient: true,
+                       message: 'The live chip could not be read just now (x). Nothing was pulled - retry in a moment.' }];
+        window.doStateSync('discard');
+        await flush(40);
+        ok(syncCalls.length === 1 && _tt.length === 1 && _tt[0][1] === 'warning'
+           && /retry in a moment/.test(_tt[0][0]) && !/Sync failed/.test(_tt[0][0]),
+           'a transient refusal says retry, as a warning, once (got: ' + JSON.stringify(_tt) + ')');
+        _tt.length = 0; syncCalls.length = 0;
+        syncQueue = [{ status: 'error', transient: true, message: 'm' }];
+        window.doStateSync('discard', false, false, 'chip-token');
+        await flush(40);
+        ok(syncCalls.length === 1 && _tt.length === 0,
+           'the automatic merge retries on its own, without a toast (got: ' + JSON.stringify(_tt) + ')');
+        window.showToast = _rt;
+        syncCalls.length = 0;
+    }
+
     /* ── 2. stateRestored bridge ──────────────────────────────────────── */
     ajaxCalls.length = 0;
     let inspectorClosed = 0;

@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from urllib.parse import urlencode
 
 from flask import Blueprint, current_app, jsonify, make_response, render_template, request
+from quam_state_manager.web.request_body import json_object, json_text
 from markupsafe import Markup
 
 from quam_state_manager.core import journal as journal_mod
@@ -633,7 +634,7 @@ def journal_raw():
 @journal_bp.route("/journal/claim", methods=["POST"])
 def journal_claim():
     """A person says who ran a run (or corrects it) and leaves a note."""
-    data = request.get_json(silent=True) or request.form.to_dict()
+    data = json_object(request.form.to_dict)
     try:
         run_id = int(data.get("run_id"))
     except (TypeError, ValueError):
@@ -691,8 +692,8 @@ def _run_when(run_id: int):
 def journal_adopt():
     """Move the day's 'unassigned' lines (a session that named no chip)
     under this chip. A person's decision, never automatic."""
-    data = request.get_json(silent=True) or request.form.to_dict()
-    day = (data.get("day") or "").strip() or datetime.now().strftime("%Y-%m-%d")
+    data = json_object(request.form.to_dict)
+    day = json_text(data, "day") or datetime.now().strftime("%Y-%m-%d")
     # docs/191 H05: this day reached `day_file` for BOTH the read and the
     # unlink, so `../../victim` moved a file's lines onto itself and deleted it.
     if not journal_mod.is_day(day):

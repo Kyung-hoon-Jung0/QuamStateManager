@@ -1,0 +1,7 @@
+{# v1.3.0: one button that re-opens the chip that was open before SM restarted,
+   and lands back on this page. `_ro` is resume_offer() (routes._resume_offer). #}
+<form class="resume-offer" method="post" action="/load" hx-post="/load" hx-target="#table-pane">
+    <input type="hidden" name="folder" value="{{ _ro.path }}">
+    <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') if request.full_path else request.path }}">
+    <button type="submit" class="btn-sm resume-offer-btn" title="{{ _ro.path }}">Re-open {{ _ro.name }}</button>
+</form>

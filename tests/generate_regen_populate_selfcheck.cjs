@@ -372,12 +372,17 @@ const SPEC = {
      ' / ' + (msg.hidden ? '' : msg.textContent));
 
   // the custom interpreter is probed unquoted
+  // v1.3.0: old -> new, the typed path rides a POST body (a GET probe runs
+  // only an env SM found or the person chose)
   const urls = [];
-  win.fetch = function (u) { urls.push(String(u)); return new win.Promise(function () {}); };
+  win.fetch = function (u, o) {
+    urls.push(String(u) + ' ' + ((o && o.method) || 'GET') + ' ' + ((o && o.body) || ''));
+    return new win.Promise(function () {});
+  };
   const ci = win.document.getElementById('gen-env-custom-path');
   ci.value = '"D:\\miniconda3\\envs\\lab-B\\python.exe"';
   G.useCustomEnv();
-  const want = '/generate/probe?python=' +
+  const want = '/generate/probe POST python=' +
     encodeURIComponent('D:\\miniconda3\\envs\\lab-B\\python.exe');
   ok(urls.indexOf(want) >= 0, 'P11: the interpreter is probed without its quotes — got ' +
      JSON.stringify(urls));
