@@ -41,6 +41,10 @@ class StaleLiveError(Exception):
     """Applying to live would clobber an out-of-band change to the live files."""
 
 
+class EmptyStateError(ValueError):
+    """An absent or empty document cannot be written as the chip state."""
+
+
 # ----------------------------------------------------------------------
 # Content hashing — the durable "did the live files really change / does
 # the working copy really hold edits" signal. Mtimes alone cannot tell a
@@ -900,7 +904,10 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             try:
                 live_hash = live_content_hash(wc)
                 fp0 = working_fingerprint(wc)
-                if working_content_hash(wc) == live_hash:
+                _wpair = doc_cache.read_pair(wc.working_folder, mode="hash")
+                if not _wpair.state:
+                    raise EmptyStateError("An empty state cannot be applied to the live chip")
+                if _wpair.content_hash() == live_hash:
                     st_mt, wi_mt = safe_io.state_wiring_mtimes(wc.live_folder)
                     fp = fp0 if working_fingerprint(wc) == fp0 else None
                     # Advance the sync point to what live ALREADY holds. Meta
@@ -936,6 +943,8 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     except OSError:
         fp_before = None
     _wpair = doc_cache.read_pair(wc.working_folder, mode="hash")
+    if not _wpair.state:
+        raise EmptyStateError("An empty state cannot be applied to the live chip")
     state_b, wiring_b = _wpair.state_bytes, _wpair.wiring_bytes
     try:
         written_fp = fp_before if working_fingerprint(wc) == fp_before else None

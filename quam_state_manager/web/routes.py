@@ -3956,6 +3956,11 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
     list is what the ✎ editor does)."""
     if before is None:
         return None
+    if not before:
+        # Recreating a document has no prior state that Ctrl+Z can restore.
+        return {"id": uuid.uuid4().hex[:12], "ts": time.time(), "entries": [],
+                "meta": {"src": src, "wholesale": True, "no_previous_state": True,
+                         "owner_pid": os.getpid()}}
     try:
         store = ctx["store"]
         # docs/271: a door that knows what it is writing (restore-live writes
@@ -25478,6 +25483,10 @@ def _undo_journal_step(ctx, n_req: int = 1):
         return _tray_html()
 
     unit = units[cursor - 1]
+    if (unit.get("meta") or {}).get("no_previous_state"):
+        return render_template(
+            "_status.html", level="warning",
+            message="the chip had no state before this write; nothing to restore"), 409
     uents = list(reversed(unit.get("entries") or []))   # staging order (LIFO)
     if not uents:
         # skip an empty unit -- RAM only, as docs/107: the chip still holds
@@ -28575,6 +28584,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     wc = ctx["working_copy"]
     saver = ctx["saver"]
     _auto = _auto_apply_state(ctx)   # QA liveedit-r2-17: label what LANDS
+    if not store.state:
+        return jsonify(status="error", message="An empty state cannot be applied to the live chip"), 409
 
     # Re-stash exactly the edits now in the change log, so save()'s clear can't
     # lose them if the apply below hits a fresh conflict. Pin to the CAPTURED ctx
@@ -28982,6 +28993,10 @@ def state_apply_to_live():
     store = ctx["store"]
     saver = ctx["saver"]
     force = request.values.get("force") == "1"
+    if not store.state:
+        return render_template(
+            "_status.html", level="warning",
+            message="An empty state cannot be applied to the live chip"), 409
     # QA correctness-r2-09: "Keep mine" hands back the live content hash its
     # confirm counted; a forced push is held to it (absent -> unchanged).
     expect_live_hash = (request.values.get("expect_live_hash") or None) if force else None
