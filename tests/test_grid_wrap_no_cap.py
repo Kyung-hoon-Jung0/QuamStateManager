@@ -1,7 +1,16 @@
-"""Live State Edit grid wraps have natural height.
+"""A Live-Edit grid wrap has no height of its own (docs/230).
 
-Each wrap owns horizontal scrolling. A height cap would create a second
-vertical scroller or let later grid sections overlap its rows."""
+docs/141 4q made every grid wrap ``overflow: visible`` so ``#table-pane`` is
+the one scroller. A later, equal-specificity rule still capped the PAIR wrap at
+``calc(100vh - 240px)``: on a chip with more pairs than fit (32 on the
+customer's 21-qubit chip) the rows spilled out of the capped wrap, and the
+next grid (TWPAs) was laid over them -- measured in real Chrome, the TWPA
+section started at y=2151 inside a pair table spanning y=1675..3031.
+
+A visible overflow and a height cap can never coexist on these wraps: any
+``max-height``/``height`` other than none/auto on a ``*table-wrap`` selector
+of the Live-Edit grids is exactly that bug again.
+"""
 from __future__ import annotations
 
 import re
@@ -32,10 +41,9 @@ def test_no_grid_wrap_is_height_capped():
     assert not bad, "a Live-Edit grid wrap is height-capped while overflow is visible: " + "; ".join(bad)
 
 
-def test_the_wrap_owns_horizontal_scrolling():
+def test_the_wrap_is_still_overflow_visible():
     # the premise of the pin above: if the wraps ever scroll again, a cap is
     # legitimate and this file must be revisited, not silently kept green
     rules = dict((s, b) for s, b in _rules(CSS.read_text(encoding="utf-8")))
     body = rules.get(".bulk-table-wrap", "")
-    # v1.3.0: visible overflow -> horizontal scrolling; uncapped height still prevents row overlap.
-    assert re.search(r"overflow-x\s*:\s*auto", body), body
+    assert re.search(r"overflow\s*:\s*visible", body), body

@@ -55,10 +55,10 @@
         _pgv = window.GridVirt.create({
             table: table,
             rows: _rows,
-            // Each grid owns horizontal scrolling; the pane owns vertical scrolling.
+            // docs/141 4q: #table-pane is the ONE scroller for both grids
             scroller: function (t) {
-                return t.closest('.bulk-table-wrap')
-                    || document.getElementById('table-pane') || t.parentElement;
+                return document.getElementById('table-pane')
+                    || t.closest('.bulk-table-wrap') || t.parentElement;
             },
             styleId: P + '-virt-width-style',
             noteId: P + '-virt-note',

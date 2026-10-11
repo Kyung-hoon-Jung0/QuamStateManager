@@ -1,7 +1,13 @@
-"""One vertical pane scroller with independent horizontal grid scrollers.
+"""docs/141 §4q — ONE vertical scroller on Live State Edit and Chip Status.
 
-Uncapped grid heights keep all rows in the pane flow. Header tracking keeps
-the grid headers visible as the pane scrolls vertically."""
+Users had two bars: the grid (and the topology map) scrolled inside itself
+while #table-pane scrolled the page, so they scrolled the grid to its end
+only to scroll the page again. Now #table-pane is the only vertical
+scroller: the bulk wrap is a max-content frame (no overflow, no height cap),
+the topology hero grows to its map, the sticky header / row head / apply
+column anchor to the pane (its padding subtracted), the top scrollbar proxy
+is gone, and cold-column hydration listens to the pane's scroll.
+"""
 from __future__ import annotations
 
 import json
@@ -27,8 +33,7 @@ def _rule(selector: str) -> str:
 class TestOneScroller:
     def test_the_bulk_wrap_is_a_frame_not_a_scroller(self):
         r = _rule(".bulk-table-wrap")
-        # v1.3.0: pane-wide frame -> grid horizontal scroller, with no vertical height cap.
-        assert "overflow-x: auto" in r and "max-height: none" in r and "width: 100%" in r
+        assert "overflow: visible" in r and "max-height: none" in r and "width: max-content" in r
         assert "calc(100vh" not in r
 
     def test_the_topology_hero_has_no_inner_vertical_scroll(self):
@@ -37,11 +42,10 @@ class TestOneScroller:
         assert "82vh" not in r
 
     def test_the_sticky_parts_anchor_to_the_pane(self):
-        # v1.3.0: pane padding anchors -> grid edges and pane-driven vertical header tracking.
-        assert "top: var(--bulk-sticky-top, 0px)" in _rule(".bulk-table thead th")
-        assert "calc(var(--bulk-grouphead-h, 1.7rem) + var(--bulk-sticky-top, 0px))" in _rule(".bulk-table .bulk-head-row th")
-        assert "left: 0" in _rule(".bulk-corner, .bulk-rowhead")
-        assert "right: 0" in _rule(".bulk-apply-col")
+        assert "top: calc(-1 * var(--table-pane-pad-v, 0px))" in _rule(".bulk-table thead th")
+        assert "calc(var(--bulk-grouphead-h, 1.7rem) - var(--table-pane-pad-v, 0px))" in _rule(".bulk-table .bulk-head-row th")
+        assert "left: calc(-1 * var(--table-pane-pad-h, 0px))" in _rule(".bulk-corner, .bulk-rowhead")
+        assert "right: calc(-1 * var(--table-pane-pad-h, 0px))" in _rule(".bulk-apply-col")
         assert "--table-pane-pad-v:" in CSS and "--table-pane-pad-h:" in CSS
 
     def test_the_rows_between_the_grids_stay_put_sideways(self):
@@ -128,8 +132,7 @@ class TestOneScroller:
 
     def test_hydration_listens_to_the_pane(self):
         assert "function _scrollerOf(t) {" in JS
-        # v1.3.0: pane hydration listener -> grid listener, matching its horizontal scrollbar.
-        assert "return t.closest('.bulk-table-wrap') || document.getElementById('table-pane') || t.parentElement;" in JS
+        assert "return document.getElementById('table-pane') || t.closest('.bulk-table-wrap') || t.parentElement;" in JS
         # docs/141 4ad: the hydration core moved to grid-virt.js; the qubit
         # grid hands it the scroller, which is what this pin is about.
         i = JS.index("window.GridVirt.create({")
