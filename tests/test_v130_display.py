@@ -41,7 +41,7 @@ def client(tmp_path):
         entries = [SimpleNamespace(change_type=kind, dot_path=kind,
                                    old_value=None, new_value=None)
                    for kind in ("added", "removed", "modified")]
-        return render_template(surface + ".html", entries=entries,
+        return render_template(surface + ".html", entries=entries, tracked=True,
                                timestamp=STAMP, ts=STAMP, total=3,
                                summary=dict(added=1, removed=1, modified=1, total=3))
 
@@ -66,7 +66,8 @@ def test_first_state_card_is_consistent(client):
     assert "identity does not match" in other[0]["note"]
 
 
-@pytest.mark.parametrize("surface", ["_history_detail", "_version_diff", "_diff"])
+# v1.3.0 A12 browser check: + the State History live-drift table, which printed "-" for both
+@pytest.mark.parametrize("surface", ["_history_detail", "_version_diff", "_diff", "_live_drift"])
 def test_added_removed_null_and_absence_in_diff_rows(client, surface):
     body = client.get("/_display/" + surface).get_data(as_text=True)
     for kind, expected in (("added", ["(absent)", "null"]),

@@ -144,8 +144,13 @@ ok(/%\{text\}/.test(tr.hovertemplate) && tr.text[0] === '33.883 \u00b5s', 'with 
   s9.w.ChipTrends.render([{metric: 'T1', unit: 's', series: [{entity: 'qA1',
     points: [['20260809_030000', 3e-5], ['20260810_030000', 2e-5], ['20260810_200000', 2e-5]],
     held: {'20260810_200000': '20260810_030000'}}]}]);
-  ok(!s9.layout.xaxis.range && !(s9.layout.annotations || []).some(a => /held to/.test(a.text)),
-     'a short held tail leaves the axis alone');
+  // v1.3.0: old -> new, "no range" -> the view's whole window (A3: every chart of a view
+  // opens on ONE window, so a chart can no longer be left to its own autorange)
+  const r9 = s9.layout.xaxis.range;
+  const x9 = s9.traces[0].x.map(x => Date.parse(x + 'Z'));
+  ok(Array.isArray(r9) && Date.parse(r9[0] + 'Z') < x9[0] && Date.parse(r9[1] + 'Z') > x9[2]
+     && !(s9.layout.annotations || []).some(a => /held to/.test(a.text)),
+     'a short held tail: the whole span, held point included, and no held-to note: ' + r9);
 }
 
 console.log(n + ' client assertions passed');

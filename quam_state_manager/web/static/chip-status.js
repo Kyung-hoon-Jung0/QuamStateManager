@@ -7119,6 +7119,11 @@ window.ChipTrends = (function () {
        an id that does not parse returns null and keeps its raw label rather
        than being placed at a fabricated instant. */
     var _TS_RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/;
+    /* v1.3.0 A3: one render pass reads each stamp up to three times (the view
+       window, the axis type, the trace) and every qubit of a chart shares the
+       same stamps, so the pass memoizes the zone conversion (render() owns
+       the memo; the zone cannot change inside one pass). */
+    var _isoPass = null;
     function _iso(ts) {
         /* The stamp is UTC, and this used to hand Plotly its digits with no
            zone marker at all -- which a date axis reads as the browser's own
@@ -7128,7 +7133,12 @@ window.ChipTrends = (function () {
            the only spelling that puts that zone's clock on a Plotly axis (an
            instant with `Z` renders as UTC). Same refusal to guess: an id that
            does not parse returns null and the chart falls back wholesale. */
-        if (window.SnapTime) return window.SnapTime.axisValue(ts);
+        if (window.SnapTime) {
+            if (!_isoPass) return window.SnapTime.axisValue(ts);
+            var k = String(ts);
+            if (!(k in _isoPass)) _isoPass[k] = window.SnapTime.axisValue(ts);
+            return _isoPass[k];
+        }
         var m = _TS_RE.exec(String(ts == null ? '' : ts));
         if (!m) return null;
         return m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6];
@@ -7145,29 +7155,80 @@ window.ChipTrends = (function () {
        autoscales). The axis values are zone-shifted naive ISO strings; they
        are measured here as UTC-wall milliseconds and the range is written
        back in the same naive spelling. */
-    function _focusOnChanges(layout, series, axisType) {
-        if (axisType !== 'date') return;
+    /* v1.3.0 A3: ONE time window for the whole view. Each chart used to pick
+       its own x range -- Plotly's autorange over its own points, or the F29
+       focus above on its own change points -- so on one page T1 spanned the
+       whole history while a gate-fidelity chart with three change points
+       opened on one hour "held to" its last point, and nothing lined up when
+       read down the page. The window is now decided ONCE per render over
+       every date chart of the view (the rename marks included, as autorange
+       counted them), and every chart opens on it: a chart with few points
+       shows them at their true time inside it. The F29 focus is decided on
+       the union -- the view's held tail against the span of ALL its change
+       points -- and each chart that holds a line beyond the window says until
+       when, from its OWN newest held point, so the note stays true. */
+    var HOUR_MS = 3600e3;
+    function _ms(x) {
+        return x ? Date.parse(String(x).replace(' ', 'T') + 'Z') : NaN;
+    }
+    // the same naive spelling the points use: a number would be read
+    // through the browser's zone and land a zone offset away
+    function _naive(t) { return new Date(t).toISOString().slice(0, 19); }
+    function _viewWindow(charts, marks) {
         var lo = Infinity, hi = -Infinity, heldHi = -Infinity;
+        var allLo = Infinity, allHi = -Infinity;
+        (charts || []).forEach(function (c) {
+            if (!c || !c.series || !c.series.length || _axisFor(c.series) !== 'date') return;
+            c.series.forEach(function (s) {
+                var held = s.held || {};
+                s.points.forEach(function (p) {
+                    var t = _ms(_iso(p[0]));
+                    if (!isFinite(t)) return;
+                    if (t < allLo) allLo = t;
+                    if (t > allHi) allHi = t;
+                    if (held[p[0]]) { if (t > heldHi) heldHi = t; return; }
+                    if (t < lo) lo = t;
+                    if (t > hi) hi = t;
+                });
+            });
+        });
+        if (!isFinite(allLo)) return null;
+        var win;
+        if (isFinite(lo) && isFinite(heldHi) && heldHi > hi
+                && heldHi - hi > Math.max(2 * (hi - lo), HOUR_MS)) {
+            var pad = Math.max((hi - lo) * 0.05, HOUR_MS / 2);
+            win = { lo: lo - pad, hi: hi + pad, focus: true };
+        } else {
+            (marks || []).forEach(function (m) {
+                var t = _ms(m.x);
+                if (!isFinite(t)) return;
+                if (t < allLo) allLo = t;
+                if (t > allHi) allHi = t;
+            });
+            // a little room so an edge marker is not cut in half
+            var span = allHi - allLo;
+            var pad2 = span > 0 ? span * 0.02 : HOUR_MS / 2;
+            win = { lo: allLo - pad2, hi: allHi + pad2, focus: false };
+        }
+        win.range = [_naive(win.lo), _naive(win.hi)];
+        win.key = win.range.join('/') + (win.focus ? '/focus' : '');
+        return win;
+    }
+    function _applyWindow(layout, series, win) {
+        if (!win) return;
+        layout.xaxis.range = win.range.slice();
+        layout.xaxis.autorange = false;
+        if (!win.focus) return;
+        var heldHi = -Infinity;
         series.forEach(function (s) {
             var held = s.held || {};
             s.points.forEach(function (p) {
-                var x = _iso(p[0]);
-                var t = x ? Date.parse(String(x).replace(' ', 'T') + 'Z') : NaN;
-                if (!isFinite(t)) return;
-                if (held[p[0]]) { if (t > heldHi) heldHi = t; return; }
-                if (t < lo) lo = t;
-                if (t > hi) hi = t;
+                if (!held[p[0]]) return;
+                var t = _ms(_iso(p[0]));
+                if (t > heldHi) heldHi = t;
             });
         });
-        if (!isFinite(lo) || !isFinite(heldHi) || heldHi <= hi) return;
-        var span = hi - lo, HOUR = 3600e3;
-        if (heldHi - hi <= Math.max(2 * span, HOUR)) return;
-        var pad = Math.max(span * 0.05, HOUR / 2);
-        // the same naive spelling the points use: a number would be read
-        // through the browser's zone and land a zone offset away
-        var naive = function (t) { return new Date(t).toISOString().slice(0, 19); };
-        layout.xaxis.range = [naive(lo - pad), naive(hi + pad)];
-        layout.xaxis.autorange = false;
+        if (!(heldHi > win.hi)) return;      // nothing of this chart runs past the window
         var until = new Date(heldHi).toISOString().slice(0, 10);
         layout.annotations = (layout.annotations || []).concat([{
             x: 1, xref: 'paper', y: 1, yref: 'paper', xanchor: 'right', yanchor: 'top',
@@ -7380,11 +7441,52 @@ window.ChipTrends = (function () {
             return { x: (ST && ST.axisValue && ST.axisValue(r.t)) || r.t, words: r.words || '' };
         });
     }
+    function _markNotes(marks) {
+        return marks.map(function (m) {
+            // inside the plot, right of the mark: the 8 px top margin
+            // (and the hover mode bar) would hide it above
+            return { x: m.x, xref: 'x', y: 1, yref: 'paper', yanchor: 'top', xanchor: 'left',
+                     xshift: 3, showarrow: false, text: 'renamed', font: { size: 9 },
+                     hovertext: 'Renamed in Re-generate: ' + m.words };
+        });
+    }
+    /* v1.3.0 A3: a kept chart onto a new view window -- the axis range and
+       the notes only (Plotly.relayout: no recalc of its data, which is what
+       RAM P2 keeps a toggle from paying). Plotly takes a chart's "initial"
+       range at its FIRST draw only, so after this a double-click would reset
+       to the OLD window; the new one is recorded as initial, the way Plotly's
+       own saveRangeInitial does for a fresh plot. False = draw it again. */
+    function _rewindow(host, series, cWin, marks) {
+        var P = window.Plotly;
+        if (!cWin || !P || typeof P.relayout !== 'function' || !host || !host._fullLayout) return false;
+        var lx = { xaxis: {}, annotations: _markNotes(marks || []) };
+        _applyWindow(lx, series, cWin);
+        var upd = { 'xaxis.range': lx.xaxis.range, 'xaxis.autorange': false,
+                    annotations: lx.annotations };
+        var initial = function () {
+            try {
+                var ax = host._fullLayout && host._fullLayout.xaxis;
+                if (ax && ax.range) {
+                    ax._rangeInitial0 = ax.range[0];
+                    ax._rangeInitial1 = ax.range[1];
+                    ax._autorangeInitial = ax.autorange;
+                }
+            } catch (e) { /* only the double-click target */ }
+        };
+        try {
+            var pr = P.relayout(host, upd);
+            if (pr && typeof pr.then === 'function') pr.then(initial, function () {});
+            else initial();
+        } catch (e) { return false; }
+        return true;
+    }
     function render(charts, opts) {
         var release = hold();
         var draws = [];
+        _isoPass = Object.create(null);
         try { return _render(charts, opts, draws); }
         finally {
+            _isoPass = null;
             if (draws.length) Promise.all(draws).then(release, release);
             else release();
         }
@@ -7408,6 +7510,9 @@ window.ChipTrends = (function () {
             });
         }
         var _tzNow = _tzKey();
+        // v1.3.0 A3: the view's ONE time window, decided before any chart draws
+        var _marks = _renameMarks();
+        var win = _viewWindow(charts, _marks);
         charts.forEach(function (c, idx) {
             // docs/122 item 4: the host id is POSITIONAL, so a response from an
             // older generation would draw into whatever now sits at that index.
@@ -7425,9 +7530,21 @@ window.ChipTrends = (function () {
             var host = (box && box.querySelector('.topo-trend-chart'))
                     || document.getElementById('topo-trend-' + idx);
             if (!host || !c.series || !c.series.length) return;
-            // RAM P2: a box _apply kept is already this exact chart.
-            if (keep && box && keep[_boxKey(box)]) return;
+            var axisType = _axisFor(c.series);
+            var cWin = axisType === 'date' ? win : null;
+            var xKey = cWin ? cWin.key : '';
+            // RAM P2: a box _apply kept is already this exact chart -- and, since
+            // v1.3.0 A3, on this view's window; a kept chart whose window moved
+            // (a toggled chart widened it) moves its axis only, never redraws.
+            if (keep && box && keep[_boxKey(box)]) {
+                if (box.getAttribute('data-trend-xwin') === xKey) return;
+                if (_rewindow(host, c.series, cWin, _marks)) {
+                    box.setAttribute('data-trend-xwin', xKey);
+                    return;
+                }
+            }
             if (box) box.setAttribute('data-trend-tz', _tzNow);
+            if (box) box.setAttribute('data-trend-xwin', xKey);
             // WebGL is EARNED BY NODE COUNT, and only while contexts remain.
             //
             // The first cut gated on `series.length > 8` — the qubit count —
@@ -7450,7 +7567,6 @@ window.ChipTrends = (function () {
             var nodes = c.series.length * longest;
             var dense = nodes > GL_MIN_NODES && _glBudget > 0;
             if (dense) _glBudget--;
-            var axisType = _axisFor(c.series);
             // A parameter that has NOT moved is the common case on a healthy
             // chip, and Plotly's autorange for a set of identical small values
             // spans zero: readout_amplitude = 0.00447 chip-wide drew a flat
@@ -7589,21 +7705,15 @@ window.ChipTrends = (function () {
             // backgrounds) stands.
             // docs/296: a Re-generate rename -- each line is one qubit on both
             // sides; the dotted mark says its name changed there
-            var marks = axisType === 'date' ? _renameMarks() : [];
+            var marks = axisType === 'date' ? _marks : [];
             if (marks.length) {
                 layout.shapes = marks.map(function (m) {
                     return { type: 'line', xref: 'x', yref: 'paper', x0: m.x, x1: m.x, y0: 0, y1: 1,
                              line: { dash: 'dot', width: 1, color: '#888' } };
                 });
-                layout.annotations = marks.map(function (m) {
-                    // inside the plot, right of the mark: the 8 px top margin
-                    // (and the hover mode bar) would hide it above
-                    return { x: m.x, xref: 'x', y: 1, yref: 'paper', yanchor: 'top', xanchor: 'left',
-                             xshift: 3, showarrow: false, text: 'renamed', font: { size: 9 },
-                             hovertext: 'Renamed in Re-generate: ' + m.words };
-                });
+                layout.annotations = _markNotes(marks);
             }
-            _focusOnChanges(layout, c.series, axisType);
+            _applyWindow(layout, c.series, cWin);
             if (window.PlotTheme && window.PlotTheme.houseLayout) {
                 layout = window.PlotTheme.houseLayout(layout);
             }
