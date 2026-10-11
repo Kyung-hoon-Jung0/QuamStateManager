@@ -246,18 +246,21 @@ def pulse_peak(merged: dict, amp_path: str, alias_path: str | None = None) -> di
             # read nor part of the cache key
             continue
         if is_pointer(fval):
+            # read the way quam reads it (core/pulse_refs, v1.3.0): a key the
+            # target does not store is its class's default, another pulse's
+            # runtime length its computed value (PU-03: such a pulse got no
+            # volts line at all)
+            from .pulse_refs import read as _read_ref
             try:
-                ft = resolve_field_target(merged, f"{ppath}.{fname}")
+                r = _read_ref(merged, ppath.split("."), fval)
             except Exception:
-                ft = {}
-            if ft.get("resolvable") and ft.get("resolved_path"):
-                rp = ft["resolved_path"]
-                v = ft.get("resolved_value")
-                if v is None:
-                    _found, v = _walk(merged, rp.split("."))
-                out["reads"].append(rp)
-                params[fname] = v
+                r = None
+            if r is not None and r.ok:
+                out["reads"].extend(x for x in r.reads if x not in out["reads"])
+                params[fname] = r.value
             else:
+                if r is not None:
+                    out["reads"].extend(x for x in r.reads if x not in out["reads"])
                 # left as the pointer: synthesize() classifies it -- an error
                 # only where the field shapes the waveform
                 params[fname] = fval

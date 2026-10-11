@@ -607,7 +607,9 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
     """Drawings for ``[(qclass, params), ...]`` in the same order.
 
     Every entry is ``{"ok", "error", "i", "q", "iq", "kind", "length",
-    "canonical", "dropped", "warnings", "cached"}``. Hits are served from RAM;
+    "canonical", "dropped", "warnings", "refs", "cached"}`` (``refs``: the
+    values the class's own code gave the reference questions among the
+    params, ``core/pulse_refs``). Hits are served from RAM;
     the misses of one call share ONE subprocess. With ``spawn=False`` a miss
     answers ``{"ok": False, "reason": "not-drawn"}`` (a list render may never
     wait on a subprocess). *background*: a batch nobody waits on (it does not
@@ -667,7 +669,7 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
                         "ok", "error", "i", "q", "iq", "kind", "length",
                         "canonical", "dropped", "warnings", "macros",
                         "load_failed", "reason", "config_ran",
-                        "config_error")}
+                        "config_error", "refs")}
                     if rec.get("reason"):
                         # "this env cannot run the class" is not an answer
                         # about these fields: never cached, asked again

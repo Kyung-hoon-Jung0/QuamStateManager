@@ -13,11 +13,13 @@ Two parts.
    every parameter the inspector shows is the value the chip copy resolves
    to (an int shows no ``.0``, a reference shows its target's value).
 
-2. PINS of the defects the full-chip run found (``xfail(strict=True)``,
-   one id each; synthetic chip, no env needed): the values SM hands a
-   pulse class, the config op SM calls a slot's ground truth, the length
-   column of a class SM cannot synthesize. The rig harness that ran every
-   pulse of the chip lives outside the repository.
+2. PINS of the defects the full-chip run found (one id each, PU-01..09;
+   synthetic chip, no env needed): the values SM hands a pulse class, the
+   config op SM calls a slot's ground truth, the length column of a class
+   SM cannot synthesize. They were strict xfails until v1.3.0 fixed them
+   (core/pulse_refs: references read the way quam reads them); now they
+   pass. The rig harness that ran every pulse of the chip lives outside the
+   repository.
 
 Env override for part 1: ``SM_LAB_TRUTH_PYTHON`` (a python executable).
 """
@@ -254,9 +256,7 @@ def test_every_sampled_pulse_is_drawn_like_the_class_draws_it(lab_chip):
             j = c.post("/api/pulse/synth", json={"path": path}).get_json()
             if j.get("ok") or j.get("reason") != "unknown_class":
                 bad.append((path, "a lab class drawn by SM's catalog", j.get("error")))
-        if qclass.startswith(_CATALOG_HOMES) and any(
-                isinstance(v, (list, dict)) for v in params.values()):
-            continue                 # PU-06 below: a catalog class loses its list fields
+        # v1.3.0: a catalog class keeps its list fields too (PU-06, fixed)
         lab = c.post("/api/pulse/lab-waveform", json={"paths": [path]}).get_json()
         rec = (lab.get("results") or [{}])[0]
         if not rec.get("ok"):
@@ -308,7 +308,9 @@ def test_the_row_length_is_the_class_length(lab_chip):
     c, bad = lab_chip["client"], []
     for path, qclass, _p in lab_chip["sample"]:
         if not qclass.startswith(_CATALOG_HOMES):
-            continue                 # PU-05 below: a lab class shows '-'
+            # v1.3.0 (PU-05, fixed): a lab class's row shows the length its
+            # own code reported, once it has drawn the pulse
+            c.post("/api/pulse/lab-waveform", json={"paths": [path]})
         txt = c.get("/pulse/row", query_string={"path": path}).get_data(as_text=True)
         cells = [re.sub(r"<[^>]+>", "", t).strip() for t in re.findall(r"<td[^>]*>(.*?)</td>", txt, re.S)]
         want = lab_chip["truth"][path]["length"]
@@ -421,7 +423,7 @@ def _sent(c, rec, path):
     return rec.items[-1][1]
 
 
-@pytest.mark.xfail(strict=True, reason="PU-01: a reference the JSON cannot follow reaches the class as its raw string")
+# PU-01 (fixed in v1.3.0): was a strict xfail
 @pytest.mark.parametrize("path", ["qubits.q1.z.operations.czl_q1_q2",
                                   "qubit_pairs.q1-q2.macros.czl.flux_pulse_qubit"])
 def test_pu01_the_class_never_receives_a_raw_reference(syn, path):
@@ -432,7 +434,7 @@ def test_pu01_the_class_never_receives_a_raw_reference(syn, path):
     assert not raw, raw
 
 
-@pytest.mark.xfail(strict=True, reason="PU-07: a catalog-class pulse drawn by its class gets the raw reference too")
+# PU-07 (fixed in v1.3.0): was a strict xfail
 def test_pu07_the_cosine_bipolar_chain_reaches_the_class_as_a_number(syn):
     c, rec = syn
     params = _sent(c, rec, "qubits.q1.z.operations.cb_chain")
@@ -447,14 +449,14 @@ def test_a_lab_class_list_field_reaches_the_class(syn):
     assert params.get("samples") == [0.1, 0.2, 0.3, 0.4], params
 
 
-@pytest.mark.xfail(strict=True, reason="PU-06: a catalog class drawn by its own code loses its list fields")
+# PU-06 (fixed in v1.3.0): was a strict xfail
 def test_pu06_a_catalog_class_list_field_reaches_the_class(syn):
     c, rec = syn
     params = _sent(c, rec, "qubits.q1.z.operations.park")
     assert params.get("waveform_I") == [0.1, 0.2, 0.3, 0.4], params
 
 
-@pytest.mark.xfail(strict=True, reason="PU-02: a reference quam resolves is labelled 'Unresolvable pointer'")
+# PU-02 (fixed in v1.3.0): was a strict xfail
 def test_pu02_a_class_default_reference_is_not_called_unresolvable(syn):
     c, _rec = syn
     path = "qubits.q1.z.operations.czl_q1_q2"
@@ -464,14 +466,14 @@ def test_pu02_a_class_default_reference_is_not_called_unresolvable(syn):
     assert 'title="Unresolvable pointer"' not in row
 
 
-@pytest.mark.xfail(strict=True, reason="PU-03: the preview refuses a reference to another pulse's runtime length")
+# PU-03 (fixed in v1.3.0): was a strict xfail
 def test_pu03_preview_follows_a_reference_to_a_runtime_length(syn):
     c, _rec = syn
     j = c.post("/api/pulse/synth", json={"path": "qubits.q1.z.operations.cb_chain"}).get_json()
     assert j["ok"], j.get("error")
 
 
-@pytest.mark.xfail(strict=True, reason="PU-05: the Length column of a class SM cannot synthesize is '-'")
+# PU-05 (fixed in v1.3.0): was a strict xfail
 def test_pu05_row_length_is_the_length_the_class_reports(syn):
     c, _rec = syn
     path = "qubits.q1.z.operations.czl_q1_q2"
@@ -492,7 +494,7 @@ def _gt_config(*ops):
     return cfg
 
 
-@pytest.mark.xfail(strict=True, reason="PU-04: a slot's ground truth is matched to another pair's op by name")
+# PU-04 (fixed in v1.3.0): was a strict xfail
 def test_pu04_a_slot_ground_truth_is_never_another_pairs_op(syn):
     from quam_state_manager.web import routes
     c, _rec = syn
@@ -505,7 +507,7 @@ def test_pu04_a_slot_ground_truth_is_never_another_pairs_op(syn):
     assert elem is None or elem.split(".")[0] in ("q1", "q2"), elem
 
 
-@pytest.mark.xfail(strict=True, reason="PU-09: the not-matched text promises a regenerate that cannot match")
+# PU-09 (fixed in v1.3.0): was a strict xfail
 def test_pu09_not_matched_does_not_promise_a_regenerate(syn):
     c, _rec = syn
     store = next(iter(c._app.config["contexts"].values()))["store"]
@@ -522,7 +524,7 @@ def test_pu09_not_matched_does_not_promise_a_regenerate(syn):
     assert j.get("ok") or "Regenerating the config settles" not in (j.get("error") or ""), j
 
 
-@pytest.mark.xfail(strict=True, reason="PU-08: a constant whose length does not resolve is drawn over 16 samples, silently")
+# PU-08 (fixed in v1.3.0): was a strict xfail
 def test_pu08_a_constant_whose_length_does_not_resolve_is_not_drawn_silently():
     pytest.importorskip("quam.components.pulses")
     sys.path.insert(0, str(_SCRIPT.parent))
@@ -533,3 +535,230 @@ def test_pu08_a_constant_whose_length_does_not_resolve_is_not_drawn_silently():
     res = rpw._draw_one("quam.components.pulses.SquarePulse",
                         {"length": "#./inferred_total_length", "amplitude": 0.3}, 1000)
     assert not res["ok"] or res["warnings"], res
+
+
+# ---------------------------------------------------------------------------
+# part 3: the fixes, end to end (v1.3.0)
+# ---------------------------------------------------------------------------
+
+def test_pu02_a_class_default_reference_shows_the_default_and_an_edit_keeps_the_link(syn):
+    """When the env's probe knows the default, the box shows it; a value-mode
+    edit writes it AT the target (the slot), so the mirror stays a mirror."""
+    from quam_state_manager.core import pulse_catalog
+    c, _rec = syn
+    pulse_catalog.apply_chip_classes({LABC: {
+        "importable": True, "canonical": LABC, "bases": ["quam.components.pulses.Pulse"],
+        "fields": {"amplitude": {"type": {"base": "float"}, "has_default": False},
+                   "flat_length": {"type": {"base": "int"}, "has_default": False},
+                   "unipolar": {"type": {"base": "bool"}, "has_default": True,
+                                "default": False, "default_repr": None},
+                   "tail_length": {"type": {"base": "float"}, "has_default": True}}}})
+    # a background probe of the selected env (this interpreter, which cannot
+    # import the synthetic lab package) must not swap the inventory mid-test
+    hold = pytest.MonkeyPatch()
+    hold.setattr(pulse_catalog, "apply_chip_classes", lambda classes: None)
+    try:
+        _pu02_default_through_mirror(c)
+    finally:
+        hold.undo()
+
+
+def _pu02_default_through_mirror(c):
+    path = "qubits.q1.z.operations.czl_q1_q2"
+    txt = c.get("/pulse/detail", query_string={"path": path}).get_data(as_text=True)
+    row = txt[txt.index(f'data-copy="{path}.unipolar"'):]
+    row = row[:row.index("</tr>")]
+    assert 'value="False"' in row and "class default" in row, row[:600]
+    assert 'value="#/' not in row
+    r = c.post("/pulse/edit", data={"path": path, "dot_path": f"{path}.unipolar",
+                                    "mode": "value", "value": "true"})
+    assert r.status_code == 200, r.get_data(as_text=True)[:400]
+    store = next(iter(c._app.config["contexts"].values()))["store"]
+    assert store.get_value("qubit_pairs.q1-q2.macros.czl.flux_pulse_qubit.unipolar") is True
+    assert store.get_value(f"{path}.unipolar") == SLOT + "/unipolar"   # still linked
+
+
+def test_pu03_a_computed_reference_is_shown_as_its_value_not_edited_through(syn):
+    c, _rec = syn
+    path = "qubits.q1.z.operations.cb_chain"
+    txt = c.get("/pulse/detail", query_string={"path": path}).get_data(as_text=True)
+    row = txt[txt.index(f'data-copy="{path}.smoothing_length"'):]
+    row = row[:row.index("</tr>")]
+    # czb's own length: ceil((8 + 4 + 0) / 4) * 4 = 12
+    assert 'data-ref-how="computed">12' in row, row[:600]
+    assert 'name="value"' not in row                  # no box writing through it
+    assert "Unresolvable pointer" not in row
+    # the row Length is the class's: ceil((40 + 12 + 0) / 4) * 4 = 52
+    rtxt = c.get("/pulse/row", query_string={"path": path}).get_data(as_text=True)
+    cells = [re.sub(r"<[^>]+>", "", t).strip() for t in re.findall(r"<td[^>]*>(.*?)</td>", rtxt, re.S)]
+    assert cells[6] == "52", cells
+
+
+def test_pu05_the_length_cell_says_why_before_the_class_has_drawn(syn):
+    c, _rec = syn
+    path = "qubits.q1.z.operations.czl_q1_q2"
+    from quam_state_manager.core import lab_waveform
+
+    def not_drawn(py, items, spawn=True, **_kw):
+        return [{"ok": False, "reason": "not-drawn", "error": "not drawn yet"} for _ in items]
+    mp = pytest.MonkeyPatch()
+    mp.setattr(lab_waveform, "draw", not_drawn)
+    try:
+        txt = c.get("/pulse/row", query_string={"path": path}).get_data(as_text=True)
+    finally:
+        mp.undo()
+    cell = re.findall(r"<td[^>]*>.*?</td>", txt, re.S)[6]
+    assert re.sub(r"<[^>]+>", "", cell).strip() == "-"
+    assert "computed by the class" in cell and "own code" in cell, cell
+
+
+def test_pu09_a_slot_with_an_exact_copy_in_the_config_matches_that_copy(syn):
+    from quam_state_manager.web import routes
+    c, _rec = syn
+    store = next(iter(c._app.config["contexts"].values()))["store"]
+    slot = "qubit_pairs.q1-q2.macros.czl.flux_pulse_target"
+    sp = "#/" + slot.replace(".", "/")
+    store.merged["qubits"]["q2"]["z"]["operations"]["czl_q2_q1"] = {
+        "__class__": LABC, "length": "#./inferred_length",
+        "amplitude": sp + "/amplitude", "flat_length": sp + "/flat_length", "id": "x"}
+    cfg = _gt_config(("q2.z", "czl_q2_q1", 60, 0.2), ("q5.z", "czl_q5_q2", 60, 0.9))
+    assert routes._config_op_for_pulse_path(cfg, slot, store.merged) == ("q2.z", "czl_q2_q1")
+    got = routes._slot_config_match(cfg, slot, store.merged)
+    assert got["mirror"] == "qubits.q2.z.operations.czl_q2_q1"
+    # an op of the SAME name on the slot's own line that is NOT a copy (its
+    # own literal amplitude) is another pulse: never matched (PU-04)
+    store.merged["qubits"]["q2"]["z"]["operations"]["czl_q2_q1"]["amplitude"] = 0.21
+    assert routes._config_op_for_pulse_path(cfg, slot, store.merged) == (None, None)
+    # and the not-matched sentence offers a regenerate only for a copy the
+    # config predates
+    store.merged["qubits"]["q2"]["z"]["operations"]["czl_q2_q1"]["amplitude"] = sp + "/amplitude"
+    store.generated_config = _gt_config(("q5.z", "czl_q5_q2", 60, 0.9))
+    store.generated_config_meta = {"at": "now"}
+    j = c.get("/api/pulse/ground-truth", query_string={"path": slot}).get_json()
+    assert j["status"] == "not-matched" and j["mirror"] == "qubits.q2.z.operations.czl_q2_q1"
+    assert "Regenerate to include it" in j["error"]
+
+
+LAB2_MOD = "smlab_twoline.flux"
+LAB2 = LAB2_MOD + ".TwoLinePulse"
+LAB2_SRC = '''"""A synthetic two-line CZ flux pulse: a lab class SM does not transcribe."""
+import math
+import numpy as np
+from quam.components.pulses import Pulse
+from quam.core import quam_dataclass
+
+
+@quam_dataclass
+class TwoLinePulse(Pulse):
+    amplitude: float
+    flat_length: int
+    unipolar: bool = False
+    lobe3_max_v: float = 0.05
+    tail_length: int = 0
+    length: int = "#./inferred_length"
+
+    @property
+    def lobe3_length(self) -> int:
+        if self.unipolar is not True:
+            return 0
+        return 4 * math.ceil(abs(self.amplitude) * self.flat_length / self.lobe3_max_v / 4)
+
+    @property
+    def inferred_length(self) -> int:
+        return self.flat_length + int(self.tail_length) + self.lobe3_length
+
+    def waveform_function(self):
+        core = [self.amplitude] * self.flat_length
+        if self.unipolar is True:
+            n = self.lobe3_length
+            core += [-self.amplitude * self.flat_length / n] * n
+        return np.array(core + [0.0] * int(self.tail_length))
+'''
+
+
+def _two_line_state():
+    slot = "#/qubit_pairs/q1-q2/macros/cz2/flux_pulse_qubit"
+    mirror = {"__class__": LAB2, "length": "#./inferred_length",
+              "amplitude": slot + "/amplitude", "flat_length": slot + "/flat_length",
+              "unipolar": slot + "/unipolar", "tail_length": slot + "/tail_length"}
+    return {
+        "__class__": "labpkg.root.Quam",
+        "qubits": {
+            "q1": {"id": "q1", "xy": {"operations": {}},
+                   "z": {"operations": {"cz2_q1_q2": mirror}}},
+            "q2": {"id": "q2", "xy": {"operations": {}}, "z": {"operations": {}}},
+        },
+        "qubit_pairs": {"q1-q2": {
+            "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2",
+            "macros": {"cz2": {
+                "__class__": "quam_builder.architecture.superconducting.custom_gates.CZGate",
+                "flux_pulse_qubit": {"__class__": LAB2, "length": "#./inferred_length",
+                                     "amplitude": 0.2, "flat_length": 16,
+                                     "tail_length": "#../flux_pulse_target/lobe3_length"},
+                "flux_pulse_target": {"__class__": LAB2, "length": "#./inferred_length",
+                                      "amplitude": -0.1, "flat_length": 16,
+                                      "unipolar": True}}}}},
+    }
+
+
+@pytest.fixture
+def two_line(tmp_path, monkeypatch):
+    """A lab package on PYTHONPATH, its class drawn by the REAL worker script
+    in this interpreter (no stand-in): the edit check runs the class's code."""
+    pytest.importorskip("quam.components.pulses")
+    from quam_state_manager.core import config_generator, lab_waveform, pulse_catalog
+    from quam_state_manager.web.app import create_app
+    from tests.test_pulses_routes import _make_wiring
+    root = tmp_path / "labpkg"
+    pkg = root / "smlab_twoline"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "flux.py").write_text(LAB2_SRC, encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(root))
+    lab_waveform.shutdown_workers()
+    lab_waveform.MEMO.clear()
+    with lab_waveform._SLOT_LOCK:
+        lab_waveform._SLOT_FILES.clear()
+    pulse_catalog.apply_env_overlay(None)
+    pulse_catalog.apply_chip_classes(None)
+    folder = tmp_path / "chip"
+    folder.mkdir()
+    (folder / "state.json").write_text(json.dumps(_two_line_state()), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(_make_wiring()), encoding="utf-8")
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: sys.executable)
+    app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(folder)}).status_code in (200, 302)
+    c._app = app
+    yield c
+    lab_waveform.shutdown_workers()
+    lab_waveform.MEMO.clear()
+    pulse_catalog.apply_chip_classes(None)
+
+
+def test_pu01_a_two_line_gate_is_drawn_by_its_class_and_its_edits_commit(two_line):
+    """The control line's tail is the target line's lobe-3 length -- a
+    property only the lab's class computes. The class gets the number its
+    own code computes (never the reference string, which made int() raise
+    and every edit of the gate a refusal)."""
+    c = two_line
+    want_tail = 4 * -(-int(0.1 * 16 / 0.05) // 4)               # 32
+    for path in ("qubits.q1.z.operations.cz2_q1_q2",
+                 "qubit_pairs.q1-q2.macros.cz2.flux_pulse_qubit"):
+        j = c.post("/api/pulse/lab-waveform", json={"paths": [path]}).get_json()
+        rec = j["results"][0]
+        assert rec["ok"], (path, rec.get("error"))
+        assert rec["plot"]["length"] == 16 + want_tail
+        ys = rec["plot"]["traces"][0]["y"]
+        assert ys[:16] == [0.2] * 16 and ys[16:] == [0.0] * want_tail
+    slot = "qubit_pairs.q1-q2.macros.cz2.flux_pulse_qubit"
+    r = c.post("/pulse/edit", data={"path": slot, "dot_path": slot + ".amplitude",
+                                    "mode": "value", "value": "0.25"})
+    assert r.status_code == 200, r.get_data(as_text=True)[:600]
+    store = next(iter(c._app.config["contexts"].values()))["store"]
+    assert store.get_value(slot + ".amplitude") == 0.25
+    tgt = "qubit_pairs.q1-q2.macros.cz2.flux_pulse_target"
+    r = c.post("/pulse/edit", data={"path": tgt, "dot_path": tgt + ".amplitude",
+                                    "mode": "value", "value": "-0.12"})
+    assert r.status_code == 200, r.get_data(as_text=True)[:600]
+    assert store.get_value(tgt + ".amplitude") == -0.12

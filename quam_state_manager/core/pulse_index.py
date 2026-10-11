@@ -216,13 +216,16 @@ def _short_class(qclass: str | None, spec: PulseSpec | None) -> str:
 
 
 def _resolved_scalar(merged: dict, field_path: str, raw: Any) -> Any:
-    """Resolve a pointer-valued scalar for display; raw value on failure."""
+    """A pointer-valued field's value for display, read the way quam reads
+    it (core/pulse_refs: a key the target does not store is its class's
+    default, another pulse's runtime length is its computed value); the
+    stored text when it cannot be read -- the row then shows '-'."""
     if not is_pointer(raw):
         return raw
-    target = resolve_field_target(merged, field_path)
-    if target.get("resolvable"):
-        return target.get("resolved_value")
-    return raw
+    from quam_state_manager.core.pulse_refs import read
+    segs = field_path.split(".")
+    r = read(merged, segs[:-1], raw)
+    return r.value if r.ok else raw
 
 
 def _row_for_pulse(merged: dict, path: str, body: Any, *,
@@ -333,6 +336,13 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
         # a fractional length is impossible too, and `resolve_length` int()s it
         # away -- 100.5 would otherwise render as a perfectly ordinary 100
         or (isinstance(_raw_len, float) and not _raw_len.is_integer()))
+    if row["length"] is None and spec is None and isinstance(qclass, str):
+        # PU-05: a class SM does not synthesize computes its own length; the
+        # cell says so until that code has drawn the pulse (the route then
+        # shows the length it reported)
+        row["length_why"] = ("This pulse class is the lab's own: its length is "
+                             "computed by the class's own code, which has not "
+                             "drawn this pulse at its current values yet")
     amp = resolved.get("amplitude")
     row["amplitude"] = amp if isinstance(amp, (int, float)) and not isinstance(amp, bool) else None
 
@@ -899,6 +909,19 @@ class PulseIndex:
                 continue
             seen.add(x)
             frontier.extend(self._holders_touching(x))
+            # v1.3.0 (core/pulse_refs): a reference can read a pulse WHOLE --
+            # another pulse's computed length (``#/.../slot/length`` ->
+            # ``#./inferred_total_length``) is arithmetic over every field of
+            # that pulse, and a key it does not store is its class's default.
+            # So a write anywhere in a pulse is seen by every row pointing
+            # into that pulse, not only by one pointing at the written key.
+            segs = x.split(".")
+            for n in range(len(segs) - 1, 0, -1):
+                cand = ".".join(segs[:n])
+                if cand in self._pos:
+                    if cand not in seen:
+                        frontier.append(cand)
+                    break
         roots: set[str] = set()
         for x in seen:
             segs = x.split(".")

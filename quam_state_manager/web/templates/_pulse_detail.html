@@ -209,11 +209,15 @@
         here is NOT evidence the pulse is new -- and these are exactly the
         pulses this CTA was built for (docs/189). Saying "newer than the cached
         config" about an object the chip has always carried is a claim SM
-        cannot support. #}SM could not match this gate&#39;s flux pulse to an
-        entry in the cached config &mdash; regenerating settles whether the
-        config is simply older.
+        cannot support. v1.3.0 (PU-09): nor can "regenerating settles it" be
+        said of a slot with no exact copy among the channel operations -- no
+        config ever carries it. #}{% if truth_mirror %}This gate&#39;s pulse is
+        played through <code>{{ truth_mirror }}</code>, an exact copy the
+        cached config does not carry yet.
         <button type="button" class="btn-sm"
-                onclick="PulsesPage.regenerateThenVerify(this)">Regenerate</button>{% else %}SM
+                onclick="PulsesPage.regenerateThenVerify(this)">Regenerate</button>{% else %}This
+        pulse is not a channel operation and no channel operation is an exact
+        copy of it, so no generated config carries its waveform.{% endif %}{% else %}SM
         has no in-process synthesizer for this class, and the generated config
         carries no waveform for it either.{% endif %}</span>
     {% endif %}
