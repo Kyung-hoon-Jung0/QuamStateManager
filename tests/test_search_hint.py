@@ -82,7 +82,9 @@ class TestEveryBoxUsesIt:
         hint = search_query.search_hint()
         for url in ("/", "/datasets", "/diff"):
             html = client.get(url).data.decode()
-            assert hint in html, f"{url} renders no search hint"
+            # v1.3.0: the hint is now the bare word "Search", which every page
+            # contains anyway -- so the pin reads the placeholder attribute.
+            assert f'placeholder="{hint}"' in html, f"{url} renders no search hint"
 
     def test_the_exempt_pickers_are_still_only_three(self):
         """The exemption is a list, not a loophole: if one of these grows into
@@ -94,9 +96,9 @@ class TestEveryBoxUsesIt:
         assert found == self.PICKERS
 
     def test_a_scoped_box_names_its_scopes(self):
-        """The Datasets box really has tag:/is:, so it says so — after the
-        grammar, never instead of it. Pinned on the template because the box
-        renders only once a dataset folder is configured."""
+        """The Datasets box really has tag:/is:, so it says so (v1.3.0: the
+        grammar itself moved to the title). Pinned on the template because the
+        box renders only once a dataset folder is configured."""
         html = (_TPL / "_datasets.html").read_text(encoding="utf-8")
         i = html.index("search_hint('tag:', 'is:')")
         assert "search_title(" in html[i:i + 400]

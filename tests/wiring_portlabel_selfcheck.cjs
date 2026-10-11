@@ -164,6 +164,29 @@ entries.forEach(function (e) {
        w.toFixed(1) + ' <= ' + (2 * e.r));
 });
 
+/* v1.3.0: a multiplexed INPUT feedline (radius 17, five members -> two rows
+   of 9px sub-circles) is where the chord fit alone would give 6px. It never
+   drops below the old fixed 7px and still fits its sub-circle. */
+const longHost = window.document.createElement('div');
+longHost.id = 'iw-host-long';
+window.document.body.appendChild(longHost);
+window.renderInstrumentWiring('iw-host-long', { controllers: { con1: { max_output_port: 8, fems: {
+    '3': { type: 'mw-fem', output_ports: {}, input_ports: { '1': [1, 2, 3, 4, 5].map(function (i) {
+        return { label: 'qLongFeed' + i + '.rr_in', role: 'rr_in', element: 'qLongFeed' + i };
+    }) } } } } } }, {}, null);
+const longFeed = [];
+longHost.querySelectorAll('g.iw-port-circle').forEach(function (g) {
+    const c = g.querySelector('circle'), t = g.querySelector('text');
+    if (c && t) longFeed.push({ r: parseFloat(c.getAttribute('r')), label: t.textContent,
+                                fs: parseFloat(t.getAttribute('font-size')) });
+});
+ok(longFeed.length === 5, 'five long-name feedline sub-circles (got ' + longFeed.length + ')');
+ok(longFeed.every(function (e) { return e.fs >= 7; }),
+   'long feedline labels never drop below 7px (got ' + longFeed.map(function (e) { return e.fs; }).join(',') + ')');
+ok(longFeed.every(function (e) { return 0.62 * e.label.length * e.fs <= 2 * e.r + 0.1; }),
+   'long feedline labels still fit their sub-circles (' + longFeed.map(function (e) {
+       return e.label + '@' + e.fs + '/r' + e.r; }).join(', ') + ')');
+
 /* 4. Drag-drop DOM contract (generate_dragghost_selfcheck depends on it). */
 const port1 = svg.querySelector('g.iw-port[data-con="con1"][data-slot="3"][data-port="1"][data-io="output"]');
 ok(!!port1, 'iw-port group carries data-con/slot/port/io');

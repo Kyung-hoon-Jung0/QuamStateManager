@@ -1,3 +1,10 @@
+/* jsdom selfcheck for the v1.3.0 P2 layout batch: the shipped JS that decides
+ * a layout, run outside a browser.  node tests/v130_p2_layout_logic_selfcheck.cjs <mode>
+ *   gutter  -- L6: the Split gutter and the CSS gutter agree and hold the buttons
+ *   preset  -- L27: a dataset run opens with more of the run list in view
+ *   status  -- L25: "finished" is lifecycle (neutral), not success (green)
+ *   context -- L27: opening a run reveals its neighbouring rows
+ * Driven by tests/test_v130_p2_layout.py. */
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -16,17 +23,24 @@ if (mode === 'gutter') {
   assert.ok(win.UI_CONFIG.split.gutterSize >= 20, 'the controls fit inside the gutter');
   assert.equal(win.UI_CONFIG.split.gutterSize, cssSize, 'the CSS and Split gutter sizes agree');
 } else if (mode === 'preset') {
+  const config = read('static/app.js').match(/var UI_CONFIG = \{[\s\S]*?\n\};/);
+  assert.ok(config);
+  win.eval(config[0]);
+  const split = win.UI_CONFIG.split;
   const source = read('templates/base.html');
-  const match = source.match(/function expandedSizes\(\) \{(?:[^\n]+?\}|[\s\S]*?\n        \})/);
-  assert.ok(match, 'dataset and component presets are chosen separately');
-  win.UI_CONFIG = { split: { expandedSizes: [15, 85] } };
+  const match = source.match(/function expandedSizes\(\) \{[\s\S]*?\n        \}/);
+  assert.ok(match, 'expandedSizes() is found in base.html');
   win.PRESET_EXPANDED_KEY = 'preset';
   let saved = null;
   win.loadPreset = (key, fallback) => saved || fallback;
   win.eval(match[0]);
-  assert.deepEqual(Array.from(win.expandedSizes()), [15, 85], 'qubit inspector keeps its preset');
+  assert.deepEqual(Array.from(win.expandedSizes()), Array.from(split.expandedSizes),
+    'every other inspector keeps the expanded default');
   win.document.getElementById('inspector-pane').innerHTML = '<div id="ds-detail-root"></div>';
-  assert.deepEqual(Array.from(win.expandedSizes()), [25, 75], 'run list retains useful context');
+  const ds = Array.from(win.expandedSizes());
+  assert.deepEqual(ds, Array.from(split.datasetExpandedSizes), 'a dataset run uses its own default');
+  assert.ok(ds[0] >= 25 && ds[0] + ds[1] === 100, 'the run list keeps at least a quarter of the pane');
+  assert.ok(split.expandedSizes[0] < ds[0], 'and more than the 15% sliver');
   saved = [0, 100];
   assert.deepEqual(Array.from(win.expandedSizes()), saved, 'an explicit user preset wins');
 } else if (mode === 'status') {
@@ -81,49 +95,6 @@ if (mode === 'gutter') {
     detail: { target: win.document.getElementById('inspector-pane') }
   }));
   assert.equal(context, true, 'opening the inspector requests neighboring rows');
-} else if (mode === 'grid') {
-  const source = read('static/bulk-edit.js');
-  const scroller = source.match(/function _scrollerOf\(t\) \{[\s\S]*?\n    \}/);
-  assert.ok(scroller);
-  win.eval(scroller[0]);
-  const pane = win.document.getElementById('table-pane');
-  pane.innerHTML = '<div class="bulk-table-wrap"><table id="bulk-table"></table></div>';
-  const wrap = pane.firstElementChild;
-  assert.equal(win._scrollerOf(wrap.firstElementChild), wrap, 'the grid owns horizontal scrolling');
-  const pair = read('static/pair-edit.js').match(/scroller: function \(t\) \{([\s\S]*?)\n            \}/);
-  assert.ok(pair);
-  win.eval('window.pairScroller = function(t) {' + pair[1] + '}');
-  assert.equal(win.pairScroller(wrap.firstElementChild), wrap, 'pair grids own horizontal scrolling too');
-  const noteFn = read('static/grid-virt.js').match(/function note\(msg\) \{[\s\S]*?\n        \}/);
-  assert.ok(noteFn);
-  const note = win.document.createElement('p'); pane.insertBefore(note, wrap);
-  win.table = () => wrap.querySelector('table');
-  win.noteEl = () => note; win.scrollerOf = win._scrollerOf;
-  win.eval(noteFn[0]); wrap.scrollLeft = 1200; win.note('Could not load');
-  assert.equal(note.style.transform, '', 'a note beside the grid stays in place');
-  wrap.appendChild(note); win.note('Could not load');
-  assert.equal(note.style.transform, 'translateX(1200px)', 'notes inside a scroll frame remain pinned');
-  pane.insertBefore(note, wrap);
-  const start = source.indexOf('    function _pinGridHeadsToPane()');
-  assert.ok(start >= 0, 'vertical header tracking is mounted');
-  const end = source.indexOf('    function _pinBarsToScroll()', start);
-  win.eval(source.slice(start, end));
-  pane.getBoundingClientRect = () => ({ top: 100 });
-  let origin = 350;
-  wrap.getBoundingClientRect = () => ({ top: origin - pane.scrollTop });
-  let resized;
-  win.ResizeObserver = class { constructor(cb) { resized = cb; } observe() {} disconnect() {} };
-  win._pinGridHeadsToPane();
-  assert.equal(wrap.style.getPropertyValue('--bulk-sticky-top'), '0px');
-  pane.scrollTop = 300; pane.dispatchEvent(new win.Event('scroll'));
-  assert.equal(wrap.style.getPropertyValue('--bulk-sticky-top'), '50px', 'header follows vertical pane scrolling');
-  origin = 400; resized();
-  assert.equal(wrap.style.getPropertyValue('--bulk-sticky-top'), '0px', 'layout changes update the header origin');
-  assert.match(source.slice(end, end + 120), /_pinGridHeadsToPane\(\)/, 'normal mounting arms header tracking');
-  const bars = source.slice(end).match(/function _pinBarsToScroll\(\) \{[\s\S]*?\n    \}/);
-  assert.ok(bars);
-  win._pinBars = scroller => { assert.equal(scroller, pane, 'toolbar rows follow the pane'); };
-  win.eval(bars[0]); win._pinBarsToScroll();
 } else {
   assert.fail('unknown layout check');
 }

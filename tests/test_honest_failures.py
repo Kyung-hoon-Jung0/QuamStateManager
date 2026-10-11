@@ -293,5 +293,5 @@ class TestClockVisibleAtRest:
         block = css.split(".field-hist-btn {", 1)[1].split("}", 1)[0]
         assert "opacity: 0;" not in block, \
             "the value-history clock must be discoverable at rest (docs/114)"
-        # v1.3.0: faint .3 -> discoverable .7 resting opacity for value-history clocks.
-        assert "opacity: .7" in block
+        # v1.3.0: faint .3 -> .6, the lowest resting opacity that clears 3:1 in both themes.
+        assert "opacity: .6" in block

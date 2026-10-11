@@ -98,7 +98,7 @@
     --table-pane-pad-h:      1rem;    /* left/right padding inside the upper content pane */
     --inspector-pane-pad-v:  0.5rem;  /* top/bottom padding inside the lower detail pane (qubit detail, dataset detail…) */
     --inspector-pane-pad-h:  1rem;    /* left/right padding inside the lower detail pane */
-    --split-gutter-size:     24px;     /* Keep the drag handle height in sync with UI_CONFIG.split.gutterSize. */
+    --split-gutter-size:     24px;    /* height of the drag handle between panes (v1.3.0: 6px -> 24px, room for its buttons) -- keep in sync with UI_CONFIG.split.gutterSize */
 
     /* ── INSPECTOR TOGGLE BUTTON (on the gutter drag handle) ──────── */
     --inspector-toggle-w:    32px;    /* width of the expand/collapse arrow button */
@@ -1801,7 +1801,8 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .browser-quam-badge {
     padding: 0.25rem 0.8rem;
     font-size: 0.78em; font-weight: 600;
-    color: var(--pico-primary);
+    /* v1.3.0: primary text on the primary-focus tint was 2.97:1 (light) */
+    color: var(--pico-color);
     background: var(--pico-primary-focus);
     border-bottom: 1px solid var(--pico-muted-border-color);
 }
@@ -2224,6 +2225,9 @@ body.exp-list-compact .entry-name wbr { display: none; }
     font-size: 0.8em; line-height: 1; border-radius: 4px;
     transition: transform 0.12s ease, color 0.12s ease, background 0.12s ease;
 }
+/* v1.3.0: the toggle sits in the pane's top-right corner; the Instrument
+   Wiring header ends in a button there ("Modify wiring..."), so it keeps
+   the toggle's width clear */
 .iw-header { padding-right: 1.8rem; }
 .pageheader-toggle:hover, .pageheader-toggle:focus {
     color: var(--pico-contrast); background: var(--pico-card-background-color); outline: none;
@@ -2243,6 +2247,9 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 
 #inspector-pane {
     overflow-y: auto;
+    /* v1.3.0: a tab short enough to lose the scrollbar (Prev State) no
+       longer shifts its content 15 px sideways */
+    scrollbar-gutter: stable;
     padding: var(--inspector-pane-pad-v) var(--inspector-pane-pad-h);
     min-height: 0;
 }
@@ -5558,11 +5565,16 @@ table code { font-size: 0.88em; }
 .tree-toolbar .tree-depth-group { display: flex; gap: 0.2rem; align-items: center; }
 .tree-toolbar .tree-depth-label { font-size: 0.78em; color: var(--pico-muted-color); }
 
+/* v1.3.0: the buttons wrapped their labels onto two lines at 1280 px; they
+   stay one line and the note takes (and wraps in) the room that is left. */
 .ds-state-action-bar {
-    display: flex; align-items: center; gap: .75rem;
+    display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
     padding: .5rem 1rem;
     border-bottom: 1px solid var(--pico-muted-border-color);
 }
+
+.ds-state-action-bar > button { flex: none; white-space: nowrap; }
+.ds-state-action-bar > small { flex: 1 1 16rem; }
 
 /* Interactive tab: column-count toolbar + responsive figure grid. The grid
    column count is driven by the --ds-cols custom property (set inline + by
@@ -6436,6 +6448,13 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
 /* Figures tab: 2-column info row (fit results left, parameters right) */
 .fig-info-row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; padding: .5rem; margin-bottom: .5rem; }
 .fig-info-col { overflow: auto; max-height: 400px; border: 1px solid var(--pico-muted-border-color); border-radius: 4px; }
+/* v1.3.0: a nested result renders as a tall tree; vertically centred, its
+   property name sat far below the tree's top and the tree read unlabelled */
+.dataset-detail .prop-table td { vertical-align: top; }
+/* ...and a tree with one long line (a lobe's note) set the Value column to
+   its full width, so the whole tab scrolled sideways (1,273 px table in a
+   919 px pane, measured); the tree scrolls inside its cell instead */
+.dataset-detail .prop-table td.col-val > .json-tree { contain: inline-size; }
 .ds-inline-tree { max-height: 200px; overflow: auto; }
 .figure-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .75rem; padding: .5rem; }
 .figure-card { border: 1px solid var(--pico-muted-border-color); border-radius: 4px; overflow: hidden; }
@@ -6748,6 +6767,8 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
     padding: 0.5rem 0; flex-wrap: wrap;
 }
 .trends-filters label { font-size: 0.88em; display: flex; align-items: center; gap: 0.4rem; }
+/* v1.3.0: the padding shorthand dropped Pico's right padding, so the select's
+   chevron was drawn over its text; 1.8rem keeps the chevron's lane */
 .trends-filters select { font-size: 0.88em; padding: 0.2rem 1.8rem 0.2rem 0.4rem; margin: 0; max-width: 280px; }
 .trends-section { margin-bottom: 1.5rem; }
 .trends-section h3 { font-size: 1em; margin-bottom: 0.5rem; }
@@ -7808,6 +7829,10 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 .trigger-dot-auto        { background: var(--trigger-auto); }
 .trigger-dot-experiment  { background: var(--trigger-experiment); }
 .trigger-dot-restore     { background: var(--trigger-manual); }
+/* v1.3.0: on an ACTIVE (primary-filled) source chip the blue and green
+   dots vanished into the fill; a ring in the chip's own text colour keeps
+   every hue readable in both themes. */
+.phf-chip.active .trigger-dot { box-shadow: 0 0 0 1.5px var(--pico-primary-inverse); }
 
 .param-history-empty {
     padding: 2rem; text-align: center;
@@ -9976,7 +10001,10 @@ button.diag-badge { cursor: pointer; }
    the 20 px UI scale, no horizontal scroll). */
 .diag-loc { font-size: 0.82rem; word-break: normal; overflow-wrap: anywhere; }
 .diag-loc-cell { min-width: 10rem; }
-.diag-results .diag-table th:nth-child(3), .diag-results .diag-table td:nth-child(3) { min-width: 16rem; }
+/* v1.3.0: at 1280 px the nowrap action buttons took the row and squeezed
+   the Issue text to a narrow column; the issue gets a floor and the
+   buttons stack in a fixed column instead. */
+.diag-results .diag-issue-cell { min-width: 16rem; }
 .diag-results .diag-action { white-space: normal; width: 12rem; }
 .diag-detail { font-size: 0.78rem; margin-top: 0.15rem; }
 .diag-detail code { overflow-wrap: anywhere; }
@@ -10507,6 +10535,12 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
 .landing-cta { display: flex; gap: .5rem; flex-wrap: wrap; margin: .8rem 0 .4rem; }
 .landing-cta-open { font-weight: 600; }
 .help-page { max-width: 60rem; }
+/* v1.3.0: the help page borrows .welcome (centred) for the shared manual
+   body, which centred its intro line under a LEFT title and pushed the
+   subtitle to the far right. One alignment: left, subtitle on the title's
+   baseline. The no-config Welcome page keeps its centred hero. */
+.help-page.welcome { text-align: left; }
+.help-page > .table-header-row { justify-content: flex-start; align-items: baseline; }
 .help-shortcuts { margin-top: 1.5rem; }
 .help-sc-grid { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; align-items: baseline; }
 .help-sc-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .6rem; }
@@ -10896,7 +10930,9 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-spark-lab { display: inline-flex; align-items: center; }
 .pulse-spark-lab .spark-i,
 .pulse-spark-lab .spark-q { stroke-dasharray: 3 2; }
-.pulse-alias-target { font-family: var(--font-mono); font-size: 0.8em; }
+/* v1.3.0: nowrap, so the table's auto layout gives the Waveform column the
+   width of "-> x90_DragCosine" instead of wrapping it while Class stays wide */
+.pulse-alias-target { font-family: var(--font-mono); font-size: 0.8em; white-space: nowrap; }
 /* Multi-select checkboxes + compare bar */
 .pulse-sel-col { width: 28px; padding: 2px 4px !important; text-align: center; }
 .pulse-sel-col input[type="checkbox"] { margin: 0; }
@@ -11575,7 +11611,10 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     border-color: var(--pico-primary); color: var(--pico-primary);
     font-weight: 600; background: var(--pico-card-background-color);
 }
-.ndv-vars { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+/* v1.3.0: one column grid, not a ragged flex wrap of content-width cards;
+   a fixed track minimum lets a long dims line ellipsize inside its card */
+.ndv-vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+            gap: 0.35rem; margin-bottom: 0.5rem; }
 .ndv-var-card {
     display: inline-flex; align-items: baseline; gap: 0.1rem 0.4rem;
     flex-wrap: wrap;   /* r13: the dims line wraps to its own row */
@@ -12572,13 +12611,17 @@ form.inline-edit.fh-host .edit-input { padding-right: 1.5rem; }
     margin: 0; width: auto; font-size: .9rem; line-height: 1;
     /* docs/114 (#16): visible at REST — an invisible affordance is an
        undiscoverable feature (it was opacity:0 until row hover). tabindex
-       stays -1 by design: Tab hops between EDIT cells (docs/64 pins). */
-    opacity: .3;
+       stays -1 by design: Tab hops between EDIT cells (docs/64 pins).
+       v1.3.0: at .3 the glyph measured 1.7-2.1:1 against its row (light;
+       2.3-2.7 dark), too faint to find. .6 is the lowest step that clears
+       3:1 for a UI glyph in both themes (3.3-4.0 light, 4.9-5.8 dark, read
+       off real-Chrome pixels at 1280 px); the row-hover step stays above. */
+    opacity: .6;
     transition: opacity .12s; display: inline-block;
 }
 tr:hover .field-hist-btn,
 form.inline-edit.fh-host:focus-within .field-hist-btn,
-.field-hist-btn:focus-visible { opacity: .55; }
+.field-hist-btn:focus-visible { opacity: .85; }
 .field-hist-btn:hover { opacity: 1; }
 
 /* bulk-grid shared cell button — r11: anchored INSIDE the focused cell's td
@@ -13055,6 +13098,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     margin: 0.4rem 0;
 }
 .diff-side { display: flex; align-items: center; gap: 0.35rem; margin: 0; flex: 1 1 20rem; }
+/* v1.3.0: right padding = the chevron's lane (see .trends-filters select) */
 .diff-side select { margin: 0; font-size: 0.88em; padding: 0.25rem 1.8rem 0.25rem 0.5rem; height: auto; }
 .diff-side-tag {
     font-weight: 700; font-size: 0.8em; padding: 0.1rem 0.4rem; border-radius: 4px;
@@ -13301,14 +13345,23 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
 .state-versions-actions { display: flex; align-items: center; gap: 0.5rem;
     margin-bottom: 0.35rem; }
 .sv-hint { font-size: 0.72rem; }
-/* Override the enclosing navigation flex layout and share row columns. */
+/* display set explicitly -- the panel lives inside the topbar <nav>, and
+   Pico's `nav ul { display:flex }` reaches nested lists, which laid the
+   version rows out HORIZONTALLY with a scrollbar (bug report).
+   v1.3.0 (L19): block -> grid, three columns every row shares (pick+date,
+   actions, metadata), so the Diff/Stage/Pull buttons and the metadata start
+   at the same x on every row instead of wherever each row's date ended. */
 .state-versions-list { list-style: none; margin: 0; padding: 0; display: grid;
     grid-template-columns: max-content max-content minmax(0, 1fr); }
+/* Pico's `nav ul:first-of-type` / `:last-of-type` (0,1,2) give this list
+   -10px side margins, which beat the margin: 0 above -- the rows ran 10 px
+   past the panel on each side (measured at 1280 px). */
+.state-versions .state-versions-list { margin: 0; }
 /* The panel lives inside the topbar <nav>, so Pico's `nav li :where(a)`
    reaches every anchor in these rows with its NEGATIVE nav-link margins
    (-10px all round) — the After-chip's real bounding box overlapped Diff
    and Pull by 2px while the flex gap said 8 (docs/132 r2, measured). Same
-   Pico-nav-reach family as the display:block fix above. :where() in Pico's
+   Pico-nav-reach family as the display fix above. :where() in Pico's
    selector has zero specificity, so one class-level rule wins. */
 .state-versions a { margin: 0; }
 /* center, not baseline (customer, 2026-08-22 r2): the two-line After-chip
@@ -13316,12 +13369,16 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
    chip's border visually collided with Diff/Pull and the row read as
    twisted. A touch more vertical padding keeps the sv-current outline off
    the chip's border. */
-/* Share desktop row columns; stack the content on narrow viewports. */
+/* v1.3.0 (L19): each row is a subgrid of the list's three columns. The
+   metadata column is minmax(0, 1fr), so a narrow panel squeezes the meta
+   (which wraps inside) rather than pushing a horizontal scrollbar onto the
+   panel (S10 walk r4, P2-13); below 800 px the rows go back to the
+   wrapping flex row, where the meta moves under the date and actions. */
 .state-version-row { display: grid; align-items: center; gap: 0.5rem;
-    grid-template-columns: subgrid; grid-column: 1 / -1;
+    grid-template-columns: subgrid; grid-column: 1 / -1; min-width: 0;
     padding: 0.28rem 0.25rem; border-radius: 0.25rem; }
+/* Pico's nav list-item marker would occupy the first grid cell */
 .state-version-row::before { content: none; }
-.state-version-row { min-width: 0; }
 .sv-meta .sv-event-sub { flex-basis: 100%; }
 @media (max-width: 800px) {
     .state-versions-list { display: block; }
