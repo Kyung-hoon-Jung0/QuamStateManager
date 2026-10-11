@@ -249,8 +249,14 @@ class Saver:
         entries. Under the store lock. A failed state swap drops the wiring
         tmp too; a failed wiring swap leaves the new state, exactly as the
         sequential write did -- and the log intact."""
+        from quam_state_manager.core.loader import file_digest
+        # Remember our bytes, even if another process replaces the files later.
+        sb, wb = safe_io.scan_bytes(s_tmp), safe_io.scan_bytes(w_tmp)
+        digest = file_digest(sb, wb) if sb is not None and wb is not None else None
         safe_io._replace_state_or_drop_wiring_tmp(s_tmp, state_path, w_tmp)
         safe_io._replace_into_place(w_tmp, wiring_path)
+        if state_path.parent == self.store.folder_path:
+            self.store.working_digest = digest
         if clear is None:
             self.last_cleared = list(self.store.change_log)
             self.store.change_log.clear()

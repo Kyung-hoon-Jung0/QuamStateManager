@@ -86,6 +86,14 @@ def run(tmp: Path, rounds: int = 5, *, parent_path: str = "qubits.q1.T1",
     if fault == "child_forces":
         body = body.replace('headers={"Accept": "application/json"}',
                             'data={"force": "1"}, headers={"Accept": "application/json"}')
+        # v1.3.0: force alone bypassed safety -> also disable the shared-copy gate to plant the fault.
+        body = body.replace('c = app.test_client()',
+                            'from quam_state_manager.web import routes\n'
+                            'routes._shared_working_changed = lambda ctx: False\n'
+                            'c = app.test_client()')
+    shared_gate = routes._shared_working_changed
+    if fault == "child_forces":
+        routes._shared_working_changed = lambda ctx: False
     env = dict(os.environ, PYTHONUTF8="1")
     proc = subprocess.Popen([sys.executable, "-c", body], cwd=str(ROOT), env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -158,6 +166,7 @@ def run(tmp: Path, rounds: int = 5, *, parent_path: str = "qubits.q1.T1",
                 out.append(f"I10 round {r}: both processes' presses landed "
                            f"({[w.get('src') for w in writes]})")
     finally:
+        routes._shared_working_changed = shared_gate
         try:
             proc.wait(timeout=60)
         except subprocess.TimeoutExpired:

@@ -318,8 +318,7 @@ def test_a_planted_fault_turns_the_harness_red(tmp_path, monkeypatch, name):
 def test_two_processes_pressing_apply_together(tmp_path):
     from tests.state_model import two_process
     bad = two_process.run(tmp_path, rounds=int(os.environ.get("SM_STATE_MODEL_2P_ROUNDS", "4")))
-    if bad and not STRICT and all(b.startswith(KNOWN_2P) for b in bad):
-        pytest.xfail("recorded finding: " + bad[0])
+    # v1.3.0: tolerate SU-10 via xfail -> require no lost edits, shared-copy ownership is guarded.
     assert not bad, bad
 
 

@@ -45,6 +45,16 @@ class EmptyStateError(ValueError):
     """An absent or empty document cannot be written as the chip state."""
 
 
+class WorkingCopyChangedError(Exception):
+    """Another process replaced the working files this press meant to apply."""
+
+
+SHARED_WORKING_MSG = (
+    "Another SM window/process changed the shared working copy. Nothing was applied; "
+    "your edits remain in the tray. Take live before applying from this window."
+)
+
+
 # ----------------------------------------------------------------------
 # Content hashing — the durable "did the live files really change / does
 # the working copy really hold edits" signal. Mtimes alone cannot tell a
@@ -873,6 +883,9 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
 
     if record is None:
         record = hub.guard_unrecorded(wc.live_folder)
+    expected_fp = getattr(record, "expect_fp", None)
+    if expected_fp is not None and working_fingerprint(wc) != expected_fp:
+        raise WorkingCopyChangedError(SHARED_WORKING_MSG)
     if not force:
         # docs/255: the CONTENT decides (live_moved). mtime unchanged is still
         # confirmed by content hash (coarse filesystem mtime granularity, or an
@@ -951,6 +964,8 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     except OSError:
         written_fp = None
     applied_hash = _wpair.content_hash()
+    if expected_fp is not None and written_fp != expected_fp:
+        raise WorkingCopyChangedError(SHARED_WORKING_MSG)
     if record is not None:
         # the heavy part, BEFORE the re-check: nothing here widens the window
         record.prepare(post_state=(state_b, wiring_b), post_hash=applied_hash,

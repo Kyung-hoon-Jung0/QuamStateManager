@@ -1618,16 +1618,15 @@ print(json.dumps(out))
         p2 = hub.Pending(chip, "sm_apply", "human:a", "apply",
                          entries=[{"path": "qubits.qA1.T1", "old": 9e-5, "new": 9.5e-5}],
                          units=["u2"], expect_fp=mine)
-        working_copy.apply_to_live(wc, record=p2)
-        ev = hub.Hub.for_chip(chip).events()[-1]
-        assert p2.foreign_bytes and ev["units"] == []
-        assert ev["entries"] == [{"path": "qubits.qA2.T1", "old": 3e-5, "new": 4.4e-5}]
-        with HubStore(chip) as st:
-            eid = st.conn.execute("SELECT eid FROM sm_events WHERE sm_id=?", (p2.id,)).fetchone()[0]
-            doc = st.state_at(eid)
+        # v1.3.0: apply foreign bytes by content -> refuse, the press must keep its own edit.
+        before = (live / "state.json").read_bytes()
+        with pytest.raises(working_copy.WorkingCopyChangedError):
+            working_copy.apply_to_live(wc, record=p2)
+        assert (live / "state.json").read_bytes() == before
+        assert len(hub.Hub.for_chip(chip).events()) == 1
         disk = json.loads((live / "state.json").read_text())
-        assert doc["qubits"]["qA1"]["T1"] == disk["qubits"]["qA1"]["T1"] == 9e-5
-        assert doc["qubits"]["qA2"]["T1"] == disk["qubits"]["qA2"]["T1"] == 4.4e-5
+        assert disk["qubits"]["qA1"]["T1"] == 9e-5
+        assert disk["qubits"]["qA2"]["T1"] == 3e-5
 
     def test_the_autofit_writer_records_what_it_wrote_when_its_files_were_replaced(self, tmp_path,
                                                                                     monkeypatch):
@@ -1650,10 +1649,12 @@ print(json.dumps(out))
         h = writer.ChipHandle(store=store, modifier=Modifier(store), saver=Saver(store), wc=wc,
                               build_lock=threading.RLock(), live_path=str(live), hub_dir=chip,
                               hub_plan="autofit:p1")
-        assert writer.apply_rows(h, [{"path": "qubits.qA1.T1", "value": 7.0e-5}], apply_live=True,
-                                 label="t1").ok
-        ev = hub.Hub.for_chip(chip).events()[-1]
-        assert ev["entries"] == [{"path": "qubits.qA2.T1", "old": 3e-5, "new": 4.4e-5}]
+        # v1.3.0: record a foreign save -> refuse, a plan may only write its own saved bytes.
+        out = writer.apply_rows(h, [{"path": "qubits.qA1.T1", "value": 7.0e-5}], apply_live=True,
+                                label="t1")
+        assert not out.ok and "window/process" in out.error
+        assert not hub.Hub.for_chip(chip).events()
+        assert json.loads((live / "state.json").read_text())["qubits"]["qA2"]["T1"] == 3e-5
 
     def test_a_press_whose_saved_files_were_replaced_records_what_it_wrote(self, env, monkeypatch):
         """The same through the Apply door: between the press's save and the
@@ -1672,13 +1673,13 @@ print(json.dumps(out))
         monkeypatch.setattr(routes_mod, "_press_save", save_then_other_window_saves)
         _edit(env, "qubits.qA1.T1", "3.5e-5")
         before = _live_doc(env)
-        assert c.post("/state/apply-to-live").status_code == 200
+        # v1.3.0: apply another window's bytes -> refuse 409, keep this press's rows in the tray.
+        response = c.post("/state/apply-to-live")
+        assert response.status_code == 409
         after = _live_doc(env)
-        e = _events(env)[-1]
-        assert e["units"] == []
-        assert {x["path"] for x in e["entries"]} == _disk_diff_paths(before, after) == {"qubits.qA2.T1"}
-        got, doc = _ledger_rows(env, e["id"])
-        assert got == _full_rows(before, after) and _same_doc(doc, after)
+        assert _same_doc(before, after) and not _events(env)
+        assert [(e.dot_path, e.new_value) for e in _ctx(env)["store"].change_log] == [
+            ("qubits.qA1.T1", 3.5e-5)]
 
     # ---- P0-2: one journal, many processes ---------------------------------
     def test_concurrent_processes_append_without_loss_or_tearing(self, tmp_path):
