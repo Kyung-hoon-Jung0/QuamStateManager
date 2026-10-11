@@ -26475,7 +26475,14 @@ window.TopbarFit = (function () {
                 s.textContent = 'reverted';
                 el.replaceWith(s);
             }
-            if (window.SyncPanel && window.SyncPanel.refresh) window.SyncPanel.refresh();
+            // An armed Auto-Sync pushes the staged inverse right after this
+            // answer: re-read once that write has landed, or the panel shows the
+            // revert as an unapplied edit (measured in the browser).
+            var tries = 0;
+            (function again() {
+                if (window._applyInFlight && tries++ < 50) { setTimeout(again, 100); return; }
+                if (window.SyncPanel && window.SyncPanel.refresh) window.SyncPanel.refresh();
+            })();
         },
         dropApplyConflict: function (el, ev) {
             if (!(ev && ev.detail && ev.detail.successful)) return;

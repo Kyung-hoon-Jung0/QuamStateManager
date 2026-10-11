@@ -50,14 +50,21 @@ let b2 = btn('u2');
 b2.dispatchEvent(new window.CustomEvent('htmx:afterRequest', { bubbles: true, detail: { successful: false } }));
 ok(btn('u2') && refreshed === 0, 'a refused revert keeps the x and does not re-read the panel');
 
-// a landed revert
+(async function () {
+// a landed revert while the armed Auto-Sync flush is still writing it
+window._applyInFlight = true;
 const b1 = btn('u1');
 b1.dispatchEvent(new window.CustomEvent('htmx:afterRequest', { bubbles: true, detail: { successful: true } }));
 const row = window.document.querySelector('.applied-log-row[data-unit-id="u1"]');
 ok(!btn('u1'), 'the reverted row no longer offers its x');
 ok(row.classList.contains('al-reverted') && /reverted/.test(row.textContent), 'the row says reverted');
-ok(refreshed === 1, 'the sync panel is re-read from the server');
+await new Promise(function (r) { setTimeout(r, 250); });
+ok(refreshed === 0, 'the panel waits while the flush is writing (it would show the revert as unapplied)');
+window._applyInFlight = false;
+await new Promise(function (r) { setTimeout(r, 250); });
+ok(refreshed === 1, 'the sync panel is re-read from the server once the write landed');
 
 if (fails) { console.error(fails + ' of ' + n + ' checks failed'); process.exit(1); }
 console.log('all checks passed (' + n + ')');
 process.exit(0);
+})();

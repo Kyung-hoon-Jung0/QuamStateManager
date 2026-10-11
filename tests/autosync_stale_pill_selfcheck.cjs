@@ -59,5 +59,15 @@ agree.xhr._smSeq = 1;   // older than the disarm
 const sw3 = fire('htmx:beforeSwap', { xhr: agree.xhr, target: tray(), serverResponse: OFF, shouldSwap: true });
 ok(sw3.shouldSwap === true && calls.length === 0, 'an older answer that agrees with the pill is untouched');
 
-if (fails) { console.error(fails + ' of ' + n + ' checks failed'); process.exit(1); }
-console.log('all checks passed (' + n + ')');
+// SB-07: an auto flush while the sync panel is open re-reads the panel once it landed
+(async function () {
+  let refreshed = 0;
+  w.SyncPanel = { isOpen: function () { return true; }, refresh: function () { refreshed++; } };
+  calls.length = 0;
+  tray().outerHTML = '<div id="pending-tray" data-auto-apply="1" data-change-count="1" data-working-dirty="0"></div>';
+  await new Promise(function (r) { setTimeout(r, 50); });
+  ok(calls.indexOf('POST /state/apply-to-live') >= 0, 'precondition: the armed session flushed the staged inverse');
+  ok(refreshed === 1, 'the open sync panel is re-read after the flush (got ' + refreshed + ')');
+  if (fails) { console.error(fails + ' of ' + n + ' checks failed'); process.exit(1); }
+  console.log('all checks passed (' + n + ')');
+})();

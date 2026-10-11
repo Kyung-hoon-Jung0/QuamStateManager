@@ -54,6 +54,12 @@
         var done = function () {
             window._applyInFlight = false;
             if (_queued) { _queued = false; setTimeout(flush, 0); }
+            // SB-07: an open sync panel follows the write (an applied-log x
+            // staged an inverse that this flush just pushed; without this the
+            // panel kept showing it as an unapplied edit)
+            else if (window.SyncPanel && window.SyncPanel.isOpen && window.SyncPanel.isOpen()) {
+                window.SyncPanel.refresh();
+            }
         };
         try {
             var p = window.htmx.ajax('POST', '/state/apply-to-live', {

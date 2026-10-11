@@ -39,13 +39,13 @@ def _run_selfcheck(name: str, min_ok: int):
 
 def test_stale_tray_answer_never_paints_auto_sync_on_again():
     """SB-08: Turn off, then an older tray answer -- the pill stays off."""
-    _run_selfcheck("autosync_stale_pill_selfcheck.cjs", 4)
+    _run_selfcheck("autosync_stale_pill_selfcheck.cjs", 6)
 
 
 
 def test_applied_log_revert_marks_the_row_and_rereads_the_panel():
     """SB-07: after the applied-log x lands, the row offers no second x."""
-    _run_selfcheck("applied_log_revert_selfcheck.cjs", 4)
+    _run_selfcheck("applied_log_revert_selfcheck.cjs", 5)
 
 
 def test_applied_log_in_the_sync_panel_is_in_flow():
