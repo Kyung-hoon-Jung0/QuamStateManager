@@ -13911,6 +13911,9 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 # values pass through — the modifier gate is the backstop).
                 parsed = (_parse_for_target(modifier.store, target_path, raw_value)
                           if isinstance(raw_value, str) else raw_value)
+                _cno = _container_pointer_refusal(modifier.store, target_path, parsed)
+                if _cno:
+                    raise ValueError(_cno)    # SU-11: the grid's own door too
                 try:
                     entry = modifier.set_value(target_path, parsed, _defer_hooks=True,
                                                group_id=_batch_gid)

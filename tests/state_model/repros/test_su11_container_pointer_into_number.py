@@ -25,3 +25,13 @@ def test_a_leaf_pointer_still_lands(tmp_path):
     chip = Chip(tmp_path)
     r = chip.c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "#/qubits/q2/T1"})
     assert r.status_code == 200 and r.get_json()["ok"], r.get_data(as_text=True)[:300]
+
+
+def test_the_grid_batch_door_refuses_it_too(tmp_path):
+    """Found in the browser: the Live Edit grid commits through /field/edit-batch."""
+    chip = Chip(tmp_path)
+    r = chip.c.post("/field/edit-batch", json={"updates": [{"dot_path": "qubits.q1.T1", "value": "#/qubits"}]})
+    body = r.get_json() or {}
+    assert not body.get("ok"), body
+    assert "container" in (body.get("results") or [{}])[0].get("error", ""), body
+    assert chip.log() == [], "nothing staged"
