@@ -17,6 +17,8 @@ from __future__ import annotations
 import re
 import shutil
 
+from tools.trends_oracle.html_checks import saved_writer_is_not_proven
+
 from quam_state_manager.core import hub_sync
 from tests.test_hub_chip_status import series_of
 from tests.test_hub_drawer import _inline, chip_dir, drawer, sm  # noqa: F401 -- fixtures
@@ -69,6 +71,14 @@ class TestTheOpenedRunSaysSo:
         body = sm["client"].get(f"/dataset/{uid}?via=saved", headers={"HX-Request": "true"})
         assert body.status_code == 200
         assert NOTE in flat(body.data.decode())
+
+    def test_oracle_checks_the_rendered_saved_note_and_never_accepts_a_writer_claim(self, sm):
+        uid = _saved_attr(_f01(sm))["saved_uid"]
+        body = sm["client"].get(f"/dataset/{uid}?via=saved", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert saved_writer_is_not_proven(body)
+        assert not saved_writer_is_not_proven(body.replace("writer is not\n    proven", "writer is proven"))
+        assert not saved_writer_is_not_proven(body.replace("this run&rsquo;s saved state is the first to carry it", "this run measured it"))
+        assert not saved_writer_is_not_proven(sm["client"].get(f"/dataset/{uid}", headers={"HX-Request": "true"}).get_data(as_text=True))
 
     def test_a_plain_open_has_no_note(self, sm):
         uid = _saved_attr(_f01(sm))["saved_uid"]

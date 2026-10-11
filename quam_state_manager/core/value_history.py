@@ -516,7 +516,17 @@ def alias_segments(rows: _Rows, dot_path: str) -> list[tuple[int, str | None]]:
     whole ledger, one entry per change. Breakpoints are the rows of every
     holder the walk consulted, iterated to a fixed point (a node that becomes
     a pointer later is consulted from then on)."""
+    return alias_inputs(rows, dot_path)[0]
+
+
+def alias_inputs(rows: _Rows, dot_path: str) -> tuple[list, set, bool]:
+    """:func:`alias_segments` with what it read: ``(segments, watched,
+    crossed)`` -- every holder the walk consulted at any position (the
+    fixed point), and whether the walk ever consulted a holder other than
+    the one it named (a pointer on the way: the path's value is then a
+    COMPOSITE of those holders, v1.3.0 TR-02)."""
     watched: set[str] = set()
+    crossed = False
     points = {0}
     if rows.eras is not None:
         points.update(rows.eras.boundaries)
@@ -525,6 +535,8 @@ def alias_segments(rows: _Rows, dot_path: str) -> list[tuple[int, str | None]]:
         grew = False
         for pos in sorted(points):
             holder, consulted = holder_at(rows, dot_path, pos)
+            if not crossed and consulted - {holder}:
+                crossed = True
             new = consulted - watched
             if new:
                 watched |= new
@@ -534,7 +546,7 @@ def alias_segments(rows: _Rows, dot_path: str) -> list[tuple[int, str | None]]:
             if not segments or segments[-1][1] != holder:
                 segments.append((pos, holder))
         if not grew:
-            return segments
+            return segments, watched, crossed
 
 
 def _segment_at(segments: list, pos: int) -> str | None:
@@ -767,7 +779,8 @@ def target_sig(tgt: dict) -> tuple:
     NOW (``current``) is not part of it: no row of the answer depends on it."""
     return (tgt["path"], tgt["holder"], tgt["holder_path"],
             tuple((h["from"], h["from_path"], h["pointer"], h["to"], h["to_path"])
-                  for h in tgt.get("via") or ()))
+                  for h in tgt.get("via") or ())) + (
+        (("composite", tuple(tgt["composite"]), tgt.get("compose_name")),) if tgt.get("composite") else ())
 
 
 def _scope_sig(lineage, era) -> tuple:
@@ -789,15 +802,18 @@ class _KeyEntry:
     events whose facts it read (sorted eids) and (P0-1) the witness verdicts
     it was derived from (:func:`_verdict_sig` of the holders it asked about)."""
 
-    __slots__ = ("stamp", "row", "watched", "used", "serial", "nbytes", "vsig")
+    __slots__ = ("stamp", "row", "watched", "used", "serial", "nbytes", "vsig", "comp")
 
     def __init__(self, stamp: tuple, row: dict, watched: frozenset, used: array, serial: int,
-                 vsig: tuple = ()):
+                 vsig: tuple = (), comp: tuple | None = None):
         self.stamp, self.row, self.watched, self.used, self.serial = stamp, row, watched, used, serial
         self.vsig = vsig
+        #: v1.3.0 TR-02: a composite's ``(rows by eid, entities, judgement signature)``
+        self.comp = comp
         n = (len(row["points"]) + len(row["effective"])
              + sum(len(r["rows"]) for r in row["retargets"]))
-        self.nbytes = 1024 + 1400 * n + 120 * len(watched) + 4 * len(used)
+        self.nbytes = (1024 + 1400 * n + 120 * len(watched) + 4 * len(used)
+                       + (400 * len(comp[0]) if comp else 0))
 
     def uses(self, eids) -> bool:
         used = self.used
@@ -933,6 +949,16 @@ class _Reuse:
             touched, moved = self._touched[high]
             if moved or not entry.watched.isdisjoint(touched):
                 return False
+        if entry.comp is not None:
+            # v1.3.0 TR-02 (rule 5 for a composite): the same rows, judged
+            # now, say the same -- every verdict, pair, fold and excursion
+            rows_e, ents, sig = entry.comp
+            pos = self.index.positions
+            if any(r[0] not in pos for r in rows_e) or self.verdicts is None:
+                return False
+            rows = sorted((pos[eid], eid, old, new, proven) for eid, old, new, proven in rows_e)
+            if composite_sig(self.verdicts.judge(rows, ents)) != sig:
+                return False
         return True
 
 
@@ -964,6 +990,296 @@ def _verdict_sig(index, verdicts, holders) -> tuple:
             if sig:
                 out.append((h, sig))
     return tuple(out)
+
+
+# ----------------------------------------------------------------------
+# composites (v1.3.0 TR-02)
+# ----------------------------------------------------------------------
+
+#: the token of "no walk yet" (before the ledger's first event)
+_NO_WALK = ("\x00none",)
+
+
+def _tok(v: Any) -> Any:
+    """*v* as a hashable token: two tokens are equal exactly when the values
+    are the same under ``hub_rules.same`` (recursive; NaN agrees with NaN,
+    ``1 == 1.0``, a bool is never a number)."""
+    if v is _ABSENT:
+        return ("\x00absent",)
+    if isinstance(v, bool):
+        return ("b", v)
+    if isinstance(v, (int, float)):
+        return ("nan",) if isinstance(v, float) and v != v else ("n", v)
+    if isinstance(v, str):
+        return ("s", v)
+    if v is None:
+        return ("null",)
+    if isinstance(v, dict):
+        return ("d", tuple(sorted((str(k), _tok(x)) for k, x in v.items())))
+    if isinstance(v, list):
+        return ("l", tuple(_tok(x) for x in v))
+    return ("o", repr(v))
+
+
+def composite_target(key_path: str, input_paths, compose, name: str, parts: dict) -> dict:
+    """v1.3.0 TR-02: a target whose value is ``compose([the value of each
+    input path])`` -- a derived metric of several leaves (a readout
+    fidelity of a confusion matrix's elements). :func:`read` judges it as
+    ONE holder whose value is the tuple of its inputs, so every point it
+    shows is the metric of one state an event saved. *parts*: each input
+    path's :func:`target` now (the live tail reads the chip's value of
+    each); *name* names *compose* in the answer's cache key."""
+    return {"path": key_path, "holder": holder_spelling(key_path), "holder_path": key_path, "via": [],
+            "current": None, "has_current": False, "resolvable": False, "array": None, "element": None,
+            "composite": tuple(input_paths), "compose": compose, "compose_name": name, "parts": parts}
+
+
+def _first_value(vals: list) -> Any:
+    return vals[0]
+
+
+def saved_view(cache: "_Rows") -> "_Rows":
+    """*cache*'s snapshot as each event SAVED it, one view per cache."""
+    got = getattr(cache, "_saved_view", None)
+    if got is None:
+        got = cache._saved_view = cache.saved_view()
+    return got
+
+
+def _ever_pointer(cache: "_Rows", segs: list) -> bool:
+    """Did a holder the path named ever SAVE a pointer string? (a leaf
+    pointer the chip's series left out still made the path a composite in
+    the state that saved it)"""
+    for _s, h in segs:
+        if h is not None and h in cache.index.paths:
+            if any(isinstance(r[2], str) and is_pointer(r[2]) for r in cache._read(h, saved=True)):
+                return True
+    return False
+
+
+def _composite_rows(saved: "_Rows", index, paths: list[str], compose, extra_events) -> dict:
+    """The composite's rows over what each event SAVED: one row per event at
+    which the tuple of its inputs changed -- for each input path, the
+    pointers its walk consulted with their values, the holder it named and
+    that holder's value (``holder_at`` at that position). Every value it
+    shows is ``compose`` of one saved state. A row is proven only when no
+    pointer moved and every value that changed has a proven row there
+    (a several-leaf value is written by an event only when every leaf is).
+
+    Returns ``{"rows": [(position, eid, old token, new token, proven)],
+    "meta": [{"ev", "old", "new", "moved", "holder"}], "holders"}``."""
+    eras = saved.eras
+    n = len(index.eids)
+    holders: set[str] = set()
+    cand: set[int] = set()
+    for p in paths:
+        segs_p, watched_p, _crossed = alias_inputs(saved, p)
+        holders |= set(watched_p) | {h for _s, h in segs_p if h is not None}
+        cand.update(s for s, _h in segs_p)
+    bounds = set(eras.boundaries) if eras is not None else set()
+    cand |= bounds
+    at_rows: dict[tuple, tuple] = {}
+    ev_at: dict[int, dict] = {}
+    for h in holders:
+        for row, p in zip(saved.rows(h), saved.positions(h)):
+            at_rows[(h, p)] = row
+            ev_at.setdefault(p, row[0])
+            cand.add(p)
+
+    def walk(pos):
+        out = []
+        for p in paths:
+            holder, consulted = holder_at(saved, p, pos)
+            value = saved.fold(holder, pos) if holder is not None else _ABSENT
+            ptrs = tuple((h, _tok(saved.fold(h, pos))) for h in sorted(consulted - {holder}))
+            out.append((ptrs, holder, _tok(value), value))
+        return out
+
+    def values(ws, pos):
+        return [w[3] if eras is None or w[3] is _ABSENT else eras.value(w[3], pos, w[1]) for w in ws]
+
+    order = sorted(p for p in cand if 0 <= p < n)
+    rows: list[tuple] = []
+    meta: list[dict] = []
+    if order and order[0] > 0:
+        prev = walk(order[0] - 1)
+        prev_tok, prev_shown = tuple(w[:3] for w in prev), compose(values(prev, order[0] - 1))
+    else:
+        prev, prev_tok, prev_shown = None, _NO_WALK, _ABSENT
+    for pos in order:
+        ws = walk(pos)
+        tok = tuple(w[:3] for w in ws)
+        if tok == prev_tok:
+            continue
+        moved, proven = False, True
+        for k, w in enumerate(ws):
+            pw = prev[k] if prev is not None else None
+            if pw is not None and w[:3] == pw[:3]:
+                continue
+            if pw is None or w[0] != pw[0] or w[1] != pw[1]:
+                moved = True                  # a pointer on the way moved (a retarget)
+            row = at_rows.get((w[1], pos))
+            if row is None or not row[4]:
+                proven = False
+        vals = values(ws, pos)
+        new_shown = compose(vals)
+        named = ws[0][1] if len(ws) == 1 else None
+        meta.append({"ev": ev_at.get(pos), "old": prev_shown, "new": new_shown,
+                     # a rename moves every spelling at once: not a retarget
+                     "moved": moved and pos not in bounds,
+                     "holder": named,
+                     # S10 walk (round 4, P2-3): the pulse a pointer named, as context
+                     "via": (named.rsplit(".", 2)[-2] if named and ws[0][0] and named.count(".") >= 2
+                             else None),
+                     # what the live tail compares: each input's holder and value
+                     "names": [w[1] for w in ws], "vals": vals})
+        rows.append((pos, index.eids[pos], prev_tok, tok, proven and not moved))
+        prev, prev_tok, prev_shown = ws, tok, new_shown
+    missing = [index.eids[r[0]] for r, m in zip(rows, meta) if m["ev"] is None]
+    if missing:
+        got = extra_events(missing)
+        for r, m in zip(rows, meta):
+            if m["ev"] is None:
+                m["ev"] = got.get(r[1])
+    keep = [k for k, m in enumerate(meta) if m["ev"] is not None]
+    return {"rows": [rows[k] for k in keep], "meta": [meta[k] for k in keep], "holders": holders,
+            "compose": compose}
+
+
+def composite_sig(judgement) -> str:
+    """What a composite's answer took from its judgement -- every row's
+    verdict, the pairs, the fold, the excursions and the tail excursion: a
+    kept answer is valid while a judgement of the same rows says the same
+    (``_Reuse`` rule 5 for a composite)."""
+    return hashlib.sha1(repr((sorted(judgement.codes.items()), sorted(judgement.pairs.items()),
+                              sorted(judgement.folded), judgement.excursions,
+                              judgement.tail_excursion)).encode()).hexdigest()[:16]
+
+
+def _composite_answer(comp: dict, judgement, tgt: dict, index, roots: dict, points) -> dict:
+    """The composite's answer fields (``effective``, ``not_kept``,
+    ``excursions``) from its rows and its judgement (``hub_witness.Verdicts
+    .judge``): a row leaves only by the composite's own verdict; a kept row
+    is a point when the value it shows changed; a judged run point that is
+    not confirmed carries its verdict. ``composite`` keeps what the live
+    tail needs on every read (:func:`_witnessed`): the newest row's verdict,
+    each input's holder and value there, and the excursion it would close."""
+    from quam_state_manager.core import hub_witness
+    rows, meta = comp["rows"], comp["meta"]
+    here = tgt["holder"]
+    drop = judgement.drop()
+    by_eid = {r[1]: (r, m) for r, m in zip(rows, meta)}
+    ents = sorted({e for e in (hub_witness.entity_of(h) for h in comp["holders"]) if e is not None})
+    entity = ents[0] if len(ents) == 1 else None
+
+    def raw(m, proven):
+        old, new = m["old"], m["new"]
+        op = "add" if old is _ABSENT else ("gone" if new is _ABSENT else "set")
+        return (m["ev"], None if old is _ABSENT else old, None if new is _ABSENT else new, op, proven)
+
+    eff_raw, eff_meta = [], []
+    running: Any = _ABSENT
+    for r, m in zip(rows, meta):
+        if r[1] in drop:
+            continue
+        new = m["new"]
+        if _same_or_absent(running, new):
+            continue
+        eff_raw.append(raw(dict(m, old=running), r[4]))
+        eff_meta.append(m)
+        running = new
+    effective = points(eff_raw)
+    for i, (p, m) in enumerate(zip(effective, eff_meta)):
+        p["holder"] = m["holder"] or here
+        if m["moved"] and i and p["provenance"] != "first_record":
+            p["retarget"] = True
+        code = judgement.code(p["eid"])
+        if (p["kind"] == "run" and p["provenance"] != "first_record" and code is not None
+                and code != hub_witness.CONFIRMED):
+            p["witness"] = code
+
+    def in_force(m):
+        """S10 walk (round 4, P2-3): a save read through a pointer, as the
+        value it meant with the pulse the pointer named (``_vh_through``)."""
+        if not m.get("via") or m["new"] is _ABSENT or isinstance(m["new"], (dict, list)):
+            return None
+        return {"value": m["new"], "via": m["via"]}
+
+    def brief(eid):
+        if eid is None or eid not in by_eid:
+            return None
+        _r, m = by_eid[eid]
+        ev = m["ev"]
+        return {"eid": eid, "t": iso_z(ev["t_utc_us"]), "t_us": ev["t_utc_us"],
+                "run_id": ev.get("run_id"), "experiment": ev.get("experiment"), "kind": ev.get("kind"),
+                "value": None if m["new"] is _ABSENT else m["new"], "in_force": in_force(m)}
+
+    def exc_point(a, pts, back):
+        return {"holder": here, "anchor": brief(a), "back": brief(back),
+                "points": [dict(_point(*raw(by_eid[e][1], by_eid[e][0][4]), roots, {}),
+                                witness=judgement.code(e), in_force=in_force(by_eid[e][1]))
+                           for e in pts if e in by_eid]}
+
+    not_kept = []
+    for c in sorted(judgement.pairs, key=lambda e: by_eid[e][0][0]):
+        r, m = by_eid[c]
+        if _same_or_absent(m["old"], m["new"]):
+            continue                     # no change of the value shown: nothing to list
+        w = judgement.pairs[c]
+        pt = _not_kept_point(index, *raw(m, r[4]), by_eid[w][1]["ev"] if w in by_eid else None,
+                             roots, m["holder"] or here, entity)
+        pt["in_force"] = in_force(m)
+        pt["by"]["in_force"] = in_force(by_eid[w][1]) if w in by_eid else None
+        not_kept.append(pt)
+    excursions = [exc_point(*e) for e in judgement.excursions]
+    newest = judgement.newest
+    tail = None
+    if newest is not None and newest[0] in by_eid:
+        m = by_eid[newest[0]][1]
+        te = judgement.tail_excursion
+        tail = {"eid": newest[0], "code": newest[1], "names": list(m["names"]),
+                "vals": [None if v is _ABSENT else v for v in m["vals"]],
+                "absent": [v is _ABSENT for v in m["vals"]],
+                "excursion": exc_point(*te) if te else None,
+                "excursion_eids": sorted(set(te[1]) | {te[2]}) if te else []}
+    return {"effective": effective, "not_kept": not_kept, "excursions": excursions,
+            "composite": {"inputs": len(comp["meta"][0]["vals"]) if comp["meta"] else 1, "newest": tail}}
+
+
+def _composite_live(tgt: dict, row: dict, effective: list, not_kept: list, excursions: list,
+                    live: Any, marks: list):
+    """The live tail of a composite (``_witnessed``): its newest change, with
+    no event that read the chip after it yet (``open``), is decided by the
+    chip's value now of every input -- the same holder, and the same value,
+    for each: confirmed (plain, and the excursion it closes leaves); else it
+    leaves and joins ``not_kept``, witnessed by the chip."""
+    from quam_state_manager.core import hub_witness
+    tail = (row.get("composite") or {}).get("newest")
+    if (live is _ABSENT or not tail or tail["code"] != hub_witness.OPEN or not effective
+            or effective[-1]["eid"] != tail["eid"] or effective[-1]["kind"] != "run"
+            or effective[-1]["removed"]):
+        return None
+    parts = tgt.get("parts")
+    names = [parts[p]["holder"] for p in tgt["composite"]] if parts is not None else [tgt["holder"]]
+    held = tuple(live) if parts is not None else (live,)
+    mine = [_ABSENT if a else v for v, a in zip(tail["vals"], tail["absent"])]
+    same = (len(held) == len(mine) and names == tail["names"]
+            and all(_same_or_absent(a, b) for a, b in zip(held, mine)))
+    p = effective[-1]
+    marks.append(("live", p["eid"], hub_witness.CONFIRMED if same else hub_witness.CONTRADICTED))
+    if same:
+        effective = effective[:-1] + [{k: v for k, v in p.items() if k != "witness"}]
+        if tail["excursion"] is not None:
+            gone = set(tail["excursion_eids"])
+            effective = [x for x in effective if x["eid"] not in gone]
+            excursions = list(excursions) + [tail["excursion"]]
+            marks.append(("tail-excursion", p["eid"]))
+        return effective, not_kept, excursions
+    gone = {k: v for k, v in p.items() if k != "witness"}
+    shown = held[0] if parts is None else tgt["compose"](list(held))
+    gone.update(witness=hub_witness.CONTRADICTED, holder=p.get("holder") or tgt["holder"],
+                by={"kind": "live", "value": shown, "removed": False})
+    return effective[:-1], list(not_kept) + [gone], excursions
 
 
 def _not_kept_point(index, ev: dict, old: Any, new: Any, op: str, proven: bool, wev: dict | None,
@@ -1031,6 +1347,19 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
         return out if out is not None else points
 
     points = mark(row["points"], lambda p: p.get("recorded_as") or here)
+    if row.get("composite"):
+        # v1.3.0 TR-02: the in-force series and what it left out are the
+        # composite's own (``_composite_answer``, its verdicts in them); here
+        # the holder's own rows are marked, and the live tail decides the
+        # composite's newest open change
+        got = _composite_live(tgt, row, row["effective"], row.get("not_kept") or [],
+                              row.get("excursions") or [], live, marks)
+        if got is None and points is row["points"]:
+            return row, tuple(marks)
+        out = dict(row, points=points)
+        if got is not None:
+            out["effective"], out["not_kept"], out["excursions"] = got
+        return out, tuple(marks)
     effective = mark(row["effective"], lambda p: p.get("holder"))
     kept_nk = row.get("not_kept") or []
     not_kept = kept_nk
@@ -1078,8 +1407,8 @@ def _witnessed(index, verdicts, tgt: dict, row: dict, live: Any = _ABSENT) -> tu
 
 def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[str, dict],
             limit: int | None, *, record: bool = False,
-            verdicts=None) -> tuple[dict, dict, dict, dict, dict]:
-    """``(answers, segments, asked, used, vsigs)`` for *targets* -- each key's
+            verdicts=None) -> tuple[dict, dict, dict, dict, dict, dict]:
+    """``(answers, segments, asked, used, vsigs, composites)`` for *targets* -- each key's
     answer as docs/282 defines it, its alias segments (for By run) and, with
     *record*, every holder spelling its derivation asked about, the events
     whose facts it read and (P0-1) the witness verdicts it took
@@ -1088,13 +1417,24 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
 
     P0-1: the rows are the chip's (``hub_query._series`` leaves out a change
     the chip never kept and its witness's restoring row); each answer also
-    lists those changes of its own holder (``not_kept``, oldest first)."""
+    lists those changes of its own holder (``not_kept``, oldest first).
+
+    v1.3.0 TR-02: a COMPOSITE -- a path read through a pointer, or a
+    :func:`composite_target` -- is judged as one holder whose value is the
+    tuple of its inputs (``_composite_rows``, ``hub_witness.Verdicts.judge``):
+    its in-force series, ``not_kept`` and ``excursions`` are the composite's
+    own, never a fold of inputs each filtered by its own verdict. Such an
+    answer carries ``composite`` (what its live tail needs); ``composites``
+    holds, per such key, its rows and its judgement's signature, so a kept
+    answer is served again only while the same rows are judged the same."""
+    from quam_state_manager.core import hub_witness
     segs: dict[str, list] = {}
     hsegs: dict[str, list] = {}
     asked: dict[str, set] = {}
+    crossed: dict[str, bool] = {}
     for key, tgt in targets.items():
         cache.seen = asked.setdefault(key, set()) if record else None
-        segs[key] = alias_segments(cache, tgt["path"])
+        segs[key], _watched, crossed[key] = alias_inputs(cache, tgt["path"])
         # the holder itself, followed across renames (docs/296)
         hsegs[key] = (cache.eras.holder_segments(tgt["holder_path"]) if cache.eras is not None
                       else [(0, tgt["holder"])])
@@ -1153,6 +1493,28 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
         if te is not None and te[1] and te[2] is not None:
             tail_raw[key] = (tgt["holder"],) + te
     cache.seen = None
+    # v1.3.0 TR-02: the composites, over what each event SAVED
+    comps: dict[str, dict] = {}
+    judgements: dict = {}
+    for key, tgt in targets.items():
+        if verdicts is None:
+            break
+        if tgt.get("composite"):
+            paths, compose = list(tgt["composite"]), tgt["compose"]
+        elif crossed[key] or _ever_pointer(cache, segs[key]):
+            paths, compose = [tgt["path"]], _first_value
+        else:
+            continue
+        saved = saved_view(cache)
+        saved.seen = asked[key] if record else None
+        if not tgt.get("composite") and not alias_inputs(saved, tgt["path"])[2]:
+            saved.seen = None
+            continue                 # no pointer on the way in any saved state: a plain path
+        comps[key] = _composite_rows(saved, index, paths, compose,
+                                     lambda eids: hub_query._events(conn, eids, index))
+        saved.seen = None
+        judgements[key] = verdicts.judge(comps[key]["rows"],
+                                         frozenset(hub_witness.entity_of(h) for h in comps[key]["holders"]))
     used: dict[str, array] = {}
     vsigs: dict[str, tuple] = {}
     if record:
@@ -1168,19 +1530,22 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
                     eids.add(wev["eid"])
             for _h, anchor, pts, back in exc_raw[key] + ([tail_raw[key]] if key in tail_raw else []):
                 eids.update(r[0]["eid"] for r in pts + [x for x in (anchor, back) if x is not None])
+            comp = comps.get(key)
+            if comp is not None:
+                # v1.3.0 TR-02: the composite's own rows and the reads that judged them
+                eids.update(r[1] for r in comp["rows"])
+                eids.update(judgements[key].witness.values())
             used[key] = array("I", sorted(eids))
             if verdicts is not None:
                 vsigs[key] = _verdict_sig(index, verdicts, asked[key])
     sm_eids = [r[0]["eid"] for rows in list(raw.values()) + list(eff.values()) + list(hop_rows.values())
                for r in rows if r[0]["kind"] in SM_KINDS]
+    sm_eids += [m["ev"]["eid"] for comp in comps.values() for m in comp["meta"] if m["ev"]["kind"] in SM_KINDS]
     sm = _sm_info(conn, sm_eids)
-    saved_memo: list = []
 
     def saved_rows() -> "_Rows":
         """What each event SAVED (one view per derive, shared reads)."""
-        if not saved_memo:
-            saved_memo.append(cache.saved_view())
-        return saved_memo[0]
+        return saved_view(cache)
 
     def points(rows):
         pts = [_point(ev, old, new, op, proven, roots, sm) for ev, old, new, op, proven in rows]
@@ -1189,6 +1554,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
 
     hops = {path: points(rows) for path, rows in hop_rows.items()}
     out_rows: dict[str, dict] = {}
+    comp_keep: dict[str, tuple] = {}
     for key, tgt in targets.items():
         pts = points(raw[key])
         here = tgt["holder"]
@@ -1288,7 +1654,15 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
             "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
                           "holder": h} for s, h in segs[key]],
             "renames": _rename_marks(hsegs[key], index, eras)}
-    return out_rows, segs, asked, used, vsigs
+        comp = comps.get(key)
+        if comp is not None:
+            ents = frozenset(hub_witness.entity_of(h) for h in comp["holders"])
+            judgement = judgements[key]
+            out_rows[key].update(_composite_answer(comp, judgement, tgt, index, roots, points))
+            out_rows[key].pop("tail_excursion", None)
+            comp_keep[key] = (tuple((r[1], r[2], r[3], r[4]) for r in comp["rows"]), ents,
+                              composite_sig(judgement))
+    return out_rows, segs, asked, used, vsigs, comp_keep
 
 
 def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
@@ -1363,15 +1737,15 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                 if held is not None and check.holds(held[1]):
                     reused[key] = held[1]
         todo = {k: t for k, t in targets.items() if k not in reused}
-        derived, segs, asked, used, vsigs = _derive(conn, index, cache, eras, roots, todo, limit,
-                                                    record=memo, verdicts=verdicts)
+        derived, segs, asked, used, vsigs, comps = _derive(conn, index, cache, eras, roots, todo, limit,
+                                                           record=memo, verdicts=verdicts)
         if reused and ramcache._verify_on():
             # shadow mode (SM_RAM_VERIFY): every reused answer against a
             # from-scratch derivation at this very snapshot
             fresh = _Rows(conn, index)
             fresh.eras = cache.eras
-            again, _s, _a, _u, _v = _derive(conn, index, fresh, eras, roots,
-                                            {k: targets[k] for k in reused}, limit, verdicts=verdicts)
+            again, _s, _a, _u, _v, _c = _derive(conn, index, fresh, eras, roots,
+                                                {k: targets[k] for k in reused}, limit, verdicts=verdicts)
             for k, e in reused.items():
                 if _canon(again[k]) != _canon(e.row):
                     raise ramcache.StaleCacheError(f"value_history_keys: the kept answer for "
@@ -1385,14 +1759,14 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                 out_rows[key], serials[key] = e.row, e.serial
                 if e.stamp != stamp:
                     _KEYS.put(slots[key], stamp, _KeyEntry(stamp, e.row, e.watched, e.used, e.serial,
-                                                           e.vsig))
+                                                           e.vsig, e.comp))
                 else:
                     _KEYS.get_held(slots[key], stamp)          # LRU order only
                 continue
             out_rows[key], serials[key] = derived[key], next(_SERIAL)
             if memo:
                 entry = _KeyEntry(stamp, derived[key], frozenset(asked[key]), used[key], serials[key],
-                                  vsigs.get(key, ()))
+                                  vsigs.get(key, ()), comps.get(key))
                 _KEYS.put(slots[key], stamp, entry, nbytes=entry.nbytes)
         # P0-1: what moves with the events after an answer (the verdict of a
         # holder's newest change, the chip's value now) -- applied on every

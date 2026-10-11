@@ -71,7 +71,9 @@ held).
 re-measuring that qubit, within the same rename era (a run not targeting it, a state SM saw, an SM
 write): it carries the new value -> confirmed; it carries the old value -> not in the next recorded state.
 Replayed by the shipped code on the real ledger: confirmed 98.9% precise (14,183 / 165), not-in-the-next-
-state 96.2% (1,372 / 54). Such changes and the read that restored the old value leave every value series;
+state 96.2% (1,372 / 54). Such changes and the read that restored the old value leave every value series
+-- the read only when it carries no change against the series it would enter; a read that does carry one
+(the last restoring row of a chain of contradicted changes) stays, with its own verdict (v1.3.0 TR-01);
 the drawer lists them ("Saved by run #3313 ... not in the next recorded state (#3314, which did not
 measure qA1, still had ...)"). The wording says only what the record proves: on a lab whose runs chain
 from each other rather than from the live file, a value can have been on the chip briefly; the claim
@@ -81,7 +83,10 @@ An **excursion** -- unconfirmed saves that come back exactly to the value the ch
 being a save the chip is known to hold (or the chip's current value) -- is not chip history either: it
 leaves every series and is listed apart ("not confirmed before the value came back"); an unconfirmed
 return closes nothing (a real pointer move that stayed live was being dropped). A pointer-followed value
-is the value in force through the pointer; a retarget is a change judged the same way. A change that stays
+is the value in force through the pointer; a retarget is a change judged the same way. A value made of
+several inputs (a path read through a pointer, a readout fidelity of a confusion matrix) is judged as ONE
+holder whose value is the tuple of its inputs as each event saved them, so every number shown is the value
+of one saved state (v1.3.0 TR-02). A change that stays
 unconfirmed is shown, labelled ("changed again before the chip was read", "no later run has read the chip
 yet"), never as a plain change. The "current" badge, "since", "last changed" and calibration age are where
 the value's stay on the chip began. Against the lab's backups, 51 of 521 shown rows are still contradicted

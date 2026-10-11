@@ -39,9 +39,13 @@ Verdicts (``verdicts(index, conn)``, keyed ``(eid, pid)``):
   value throughout; elsewhere a value was live for a while and the lab put the
   old one back before W). So no surface says the value never reached the
   chip, or was not on it when W ran (:data:`WORDS`). W's own row ``new -> old`` is its
-  RESTORING row (:meth:`Verdicts.restores`); the pair is left out of every
-  value series (the value simply stays ``old`` across them -- exact, since W
-  carries old). The restoring row keeps its own verdict in the mapping;
+  RESTORING row (:meth:`Verdicts.restores`); the change is left out of every
+  value series, and so is the read that restored the old value, when that
+  read carries no change against the series it would enter (the value simply
+  stays ``old`` across them -- exact); a read that does carry one stays, with
+  its own verdict (v1.3.0 TR-01: in a chain of contradicted changes the last
+  restoring row puts back a value the series no longer holds). The restoring
+  row keeps its own verdict in the mapping;
 * ``open``        -- the newest change of p with no witness yet (a reader with
   the chip's value now decides it: :func:`live_tail`);
 * ``remeasured``  -- the walk ended at a run that measured the entity again
@@ -300,6 +304,8 @@ class Verdicts(Mapping):
         self._witness: dict[tuple, int] = {}
         #: pid -> {eid of a contradicted change: eid of its restoring row}
         self._pairs: dict[int, dict[int, int]] = {}
+        #: pid -> the restoring rows that leave the series (they carry no change)
+        self._folded: dict[int, frozenset] = {}
         #: pid -> (eid, code) of its newest row (code None: not a run change)
         self._newest: dict[int, tuple] = {}
         #: the entity each judged holder belongs to
@@ -374,20 +380,76 @@ class Verdicts(Mapping):
             self._lanes[entity] = got
         return got
 
+    def _lane_for(self, ents: tuple) -> array:
+        """:meth:`_lane_of` for the entities of a composite's inputs: every
+        capable event but a run that targets ANY of them (conservative)."""
+        if len(ents) <= 1:
+            return self._lane_of(ents[0] if ents else None)
+        key = frozenset(ents)
+        got = self._lanes.get(key)
+        if got is None:
+            kinds, targets = self._kinds, self._targets
+            got = array("I", (i for i in self._every
+                              if not (kinds[i] == RUN and any(e in targets[i] for e in ents))))
+            self._lanes[key] = got
+        return got
+
     def _judge(self, pid: int, seq: list) -> None:
         """THE rule for one holder's rows (oldest first)."""
         if not seq:
             return
-        index, judged, kinds, targets = self.index, self._judged, self._kinds, self._targets
-        refined = self.refined
+        judged = self._judged
         last_i, last_eid = seq[-1][0], seq[-1][1]
         if not any(judged[r[0]] for r in seq):
             self._newest[pid] = (last_eid, None)
             return
         ent = self._entity[pid] = self._entity_of(pid)
-        wit = self._lane_of(ent)
         codes = self._codes.setdefault(pid, {})
+        pairs, witness = self._walk(seq, (ent,) if ent is not None else (), self._lane_of(ent), codes)
+        for eid, w in witness.items():
+            self._witness[(eid, pid)] = w
+        if pairs:
+            self._pairs[pid] = pairs
+        folded, found, tail = self._settle(seq, codes, pairs)
+        if folded:
+            self._folded[pid] = folded
+        if found:
+            self._excursions[pid] = found
+        if tail is not None:
+            self._tail_exc[pid] = tail
+        self._newest[pid] = (last_eid, codes.get(last_eid) if judged[last_i] else None)
+
+    def judge(self, seq: list, entities) -> "Judgement":
+        """THE rule over a COMPOSITE holder (v1.3.0 TR-02): a value made of
+        several inputs (a confusion matrix's elements, a path read through a
+        pointer) judged as ONE holder whose value is the tuple of its inputs.
+        *seq*: its rows oldest first, ``(position, eid, old tuple, new
+        tuple, proven)`` -- one row per event that changed the tuple, each
+        tuple a token equal to another exactly when every input is the same
+        value; *entities*: the inputs' entities (the lane leaves out a run
+        that targets any of them). The walk, the pairs, the fold and the
+        excursions are the leaf rule's own (:meth:`_walk`, :meth:`_settle`),
+        so a shown number is never made of parts judged apart."""
+        codes: dict[int, str] = {}
+        if not seq:
+            return Judgement(codes, {}, {}, frozenset(), [], None, None)
+        ents = tuple(sorted({e for e in entities if e is not None}))
+        pairs, witness = self._walk(seq, ents, self._lane_for(ents), codes)
+        folded, found, tail = self._settle(seq, codes, pairs)
+        last_i, last_eid = seq[-1][0], seq[-1][1]
+        newest = (last_eid, codes.get(last_eid) if self._judged[last_i] else None)
+        return Judgement(codes, pairs, witness, folded, found, tail, newest)
+
+    def _walk(self, seq: list, ents: tuple, wit: array, codes: dict) -> tuple[dict, dict]:
+        """The verdict of every judged row of *seq* (written into *codes*):
+        ``(pairs, witness)`` -- ``{eid of a contradicted change: eid of its
+        restoring row}`` and ``{eid: eid of the event that read the chip}``.
+        *ents*: the entities a run re-measures when it targets one of them;
+        *wit*: the positions that can read the chip for them."""
+        index, judged, kinds, targets = self.index, self._judged, self._kinds, self._targets
+        refined = self.refined
         pairs: dict[int, int] = {}
+        witness: dict[int, int] = {}
         # newest first: a re-measurement's own verdict is known before the
         # walk of an earlier change reaches it
         for k in range(len(seq) - 1, -1, -1):
@@ -415,7 +477,7 @@ class Verdicts(Mapping):
                     wrow = kk
                     break
                 t2 = targets[i2]
-                if kinds[i2] == RUN and t2 is not None and (t2 is EVERY or (ent is not None and ent in t2)):
+                if kinds[i2] == RUN and t2 is not None and (t2 is EVERY or any(e in t2 for e in ents)):
                     if not (refined and seq[kk][1] in pairs):
                         code = REMEASURED    # measured again before anything read the chip
                         break
@@ -426,53 +488,85 @@ class Verdicts(Mapping):
                     code = OPEN
                 else:
                     held = seq[wrow][3] if wrow is not None else seq[last][3]
-                    self._witness[(eid, pid)] = index.eids[w]
+                    witness[eid] = index.eids[w]
                     if held == new:
                         code = CONFIRMED
                     elif held == old:
                         code = CONTRADICTED
                         if wrow is not None and wrow == k + 1 and seq[wrow][2] == new:
-                            # W's own row is new -> old right after R: the pair
-                            # leaves the series together, the fold stays exact
+                            # W's own row is new -> old right after R: R leaves
+                            # the series (W's row with it when it carries no
+                            # change: :meth:`_settle`)
                             pairs[eid] = seq[wrow][1]
                     else:
                         code = DIFFERS
             codes[eid] = code
-        if pairs:
-            self._pairs[pid] = pairs
+        return pairs, witness
+
+    def _era_groups(self, rows: list) -> list[list]:
+        """*rows* (oldest first) split era by era (docs/295-296): no pair,
+        fold or excursion spans a rename."""
+        if self._era_end is None:
+            return [rows]
+        groups, cur, until = [], [], -1
+        for r in rows:
+            if cur and r[0] >= until:
+                groups.append(cur)
+                cur = []
+            if not cur:
+                until = self._era_end[r[0]]
+            cur.append(r)
+        if cur:
+            groups.append(cur)
+        return groups
+
+    def _settle(self, seq: list, codes: dict, pairs: dict) -> tuple[frozenset, list, tuple | None]:
+        """What leaves *seq*'s value series besides the contradicted changes
+        (``pairs``): ``(folded, excursions, tail excursion)``.
+
+        v1.3.0 TR-01, the fold: a restoring row leaves only when it carries no
+        change -- its value equals the value in force in the filtered series
+        just before it (era by era). In a chain R1 (a -> b), W1 = R2 (b -> a),
+        W2 (a -> b) every Ri leaves and W2 stays (it puts back b, which the
+        series no longer holds), with its own verdict: W2 read the chip
+        without re-measuring the value, so its value is the chip's under the
+        rule's own premise, and it is plain only when its next reader
+        confirmed it. A value a run merely saved (an Ri) never re-enters."""
+        judged = self._judged
+        gone = set(pairs)
+        restoring = set(pairs.values())
+        folded = set()
+        for group in self._era_groups(seq):
+            running = group[0][2]            # in force before the group's first row
+            for r in group:
+                if r[1] in gone:
+                    continue
+                if r[1] in restoring and r[3] == running:
+                    gone.add(r[1])
+                    folded.add(r[1])
+                    continue
+                running = r[3]               # a kept row (a restoring one too) moves it
         # excursions of the series the pairs leave: unconfirmed saves that came
         # back EXACTLY to the value the chip held before them
-        gone = set(pairs) | set(pairs.values())
         kept = [r for r in seq if r[1] not in gone]
-        groups = [kept]
-        if self._era_end is not None:
-            groups, cur, until = [], [], -1
-            for r in kept:                   # era by era: no excursion spans a rename
-                if cur and r[0] >= until:
-                    groups.append(cur)
-                    cur = []
-                if not cur:
-                    until = self._era_end[r[0]]
-                cur.append(r)
-            if cur:
-                groups.append(cur)
+        groups = self._era_groups(kept)
         found = []
         for g in groups:
             for a, pts, r in excursions([(x[3], codes.get(x[1]) if judged[x[0]] else None) for x in g], _equal):
                 found.append((g[a][1], [g[x][1] for x in pts], g[r][1]))
-        if found:
-            self._excursions[pid] = found
         # the excursion the newest change would close if the chip holds its
         # value now (it has no read yet): a reader with the chip's value
         # decides it (value_history's live tail)
+        tail = None
+        last_i, last_eid = seq[-1][0], seq[-1][1]
         g = groups[-1] if groups else []
         if g and g[-1][1] == last_eid and judged[last_i] and codes.get(last_eid) == OPEN:
             marked = [(x[3], codes.get(x[1]) if judged[x[0]] else None) for x in g]
             marked[-1] = (marked[-1][0], CONFIRMED)
             for a, pts, r in excursions(marked, _equal):
                 if r == len(g) - 1:
-                    self._tail_exc[pid] = (g[a][1], [g[x][1] for x in pts], g[r][1])
-        self._newest[pid] = (last_eid, codes.get(last_eid) if judged[last_i] else None)
+                    tail = (g[a][1], [g[x][1] for x in pts], g[r][1])
+        return frozenset(folded), found, tail
 
     # ------------------------------------------------------------- Mapping
     def __getitem__(self, key):
@@ -536,13 +630,14 @@ class Verdicts(Mapping):
     def drop(self, pid: int | None) -> frozenset:
         """The eids of *pid*'s rows a value series leaves out -- they are not
         chip history: every contradicted change that has its restoring row,
-        and that row; every point of an excursion, and its return."""
+        and that row when it carries no change (:meth:`_settle`'s fold);
+        every point of an excursion, and its return."""
         if not self._ensure(pid):
             return frozenset()
         got = self._drop.get(pid)
         if got is None:
             pairs = self._pairs.get(pid) or {}
-            out = set(pairs) | set(pairs.values())
+            out = set(pairs) | self._folded.get(pid, frozenset())
             for _a, pts, r in self._excursions.get(pid) or ():
                 out.update(pts)
                 out.add(r)
@@ -552,15 +647,15 @@ class Verdicts(Mapping):
     def left_out_as(self, eid: int, pid: int | None) -> str | None:
         """Why row (eid, pid) leaves the series: ``"contradicted"`` (saved,
         and the next read of the chip still found the old value),
-        ``"restores"`` (that read's own row), ``"excursion"`` (saved, never
-        confirmed, and the value came back), ``"returns"`` (the row that came
-        back) -- or None (it stays)."""
+        ``"restores"`` (that read's own row, when it carries no change),
+        ``"excursion"`` (saved, never confirmed, and the value came back),
+        ``"returns"`` (the row that came back) -- or None (it stays)."""
         if eid not in self.drop(pid):
             return None
         pairs = self._pairs.get(pid) or {}
         if eid in pairs:
             return "contradicted"
-        if self.restores(eid, pid) is not None:
+        if eid in self._folded.get(pid, ()):
             return "restores"
         for _a, pts, r in self._excursions.get(pid) or ():
             if eid in pts:
@@ -580,13 +675,43 @@ class Verdicts(Mapping):
             pairs = sorted((self._pairs.get(pid) or {}).items())
             exc = self._excursions.get(pid) or []
             tail = self._tail_exc.get(pid)
-            got = self._sig[pid] = (hashlib.sha1(repr((pairs, exc, tail)).encode()).hexdigest()[:16]
+            folded = sorted(self._folded.get(pid) or ())
+            got = self._sig[pid] = (hashlib.sha1(repr((pairs, exc, tail, folded)).encode()).hexdigest()[:16]
                                     if pairs or exc or tail else "")
         return got
 
     def tail(self, pid: int | None) -> tuple | None:
         """``(eid, code)`` of *pid*'s newest row, or None."""
         return self._newest.get(pid) if self._ensure(pid) else None
+
+
+class Judgement:
+    """:meth:`Verdicts.judge`'s answer for one composite holder: the same
+    facts :class:`Verdicts` keeps per leaf holder, for the composite's rows."""
+
+    __slots__ = ("codes", "pairs", "witness", "folded", "excursions", "tail_excursion", "newest", "_drop")
+
+    def __init__(self, codes: dict, pairs: dict, witness: dict, folded: frozenset, found: list,
+                 tail: tuple | None, newest: tuple | None):
+        self.codes, self.pairs, self.witness = codes, pairs, witness
+        self.folded, self.excursions, self.tail_excursion = folded, found, tail
+        #: ``(eid, code)`` of the newest row (code None: not a judged run change)
+        self.newest = newest
+        out = set(pairs) | set(folded)
+        for _a, pts, r in found:
+            out.update(pts)
+            out.add(r)
+        self._drop = frozenset(out)
+
+    def code(self, eid: int) -> str | None:
+        return self.codes.get(eid)
+
+    def drop(self) -> frozenset:
+        """The rows a value series leaves out (:meth:`Verdicts.drop`'s rule)."""
+        return self._drop
+
+    def restores(self, eid: int) -> int | None:
+        return next((c for c, w in self.pairs.items() if w == eid), None)
 
 
 def _event_facts(conn, index) -> dict[int, tuple]:

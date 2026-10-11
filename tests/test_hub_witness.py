@@ -966,3 +966,80 @@ def test_a_walk_ends_at_the_rename(tmp_path):
     b = history(env, "qubits.q1.T1")["rows"]["k"]["points"]
     assert [(p["value"], p["run_id"], p.get("witness")) for p in a] == [(1e-5, 1, None), (3e-5, 2, O_)], a
     assert [(p["value"], p["run_id"], p.get("witness")) for p in b] == [(1e-5, 1, None), (4e-5, 2, O_)], b
+
+
+# ======================================================================
+# 7. v1.3.0 (FIX-TR, TR-01): the fold -- a restoring row leaves only when it
+#    carries no change; no verdict moves
+# ======================================================================
+
+#: P11: the verdicts the shipped build (785f6d4f) gives the two chain ledgers below,
+#: as (row position, holder, verdict), and what its series left out (row positions)
+_CHAIN_GOLDEN = [(1, "qubits.qA1.f", "contradicted"), (2, "qubits.qA1.f", "contradicted"),
+                 (2, "qubits.qA2.f", "remeasured"), (3, "qubits.qA1.f", "confirmed"),
+                 (3, "qubits.qA2.f", "remeasured"), (4, "qubits.qA2.f", "remeasured"),
+                 (5, "qubits.qA2.f", "confirmed"), (6, "qubits.qA1.f", "open")]
+_TAIL_GOLDEN = [(1, "qubits.qA1.f", "contradicted"), (2, "qubits.qA1.f", "contradicted"),
+                (2, "qubits.qA2.f", "remeasured"), (3, "qubits.qA1.f", "open"),
+                (3, "qubits.qA2.f", "open")]
+_SHIPPED_DROP = [1, 2, 3]
+
+
+def _chain_ledger(led, tail: bool) -> list[int]:
+    """A (qA1), B (qA1), A (qA2), B (qA2), [B, B (qA2), C (qA1)] -- two lines of runs flipping
+    qA1's value; *tail*: the chain is the newest thing that happened."""
+    eids = [led.add(doc(f=A), targets=q("qA1")), led.add(doc(f=B), targets=q("qA1")),
+            led.add(doc(f=A, f2=2.0), targets=q("qA2")), led.add(doc(f=B, f2=3.0), targets=q("qA2"))]
+    if not tail:
+        eids += [led.add(doc(f=B, f2=4.0), targets=q("qA2")), led.add(doc(f=B, f2=5.0), targets=q("qA2")),
+                 led.add(doc(f=C, f2=5.0), targets=q("qA1"))]
+    return eids
+
+
+@pytest.mark.parametrize("tail,golden", [(False, _CHAIN_GOLDEN), (True, _TAIL_GOLDEN)])
+def test_fold_drop_changes_no_verdict(led, tail, golden):
+    """The fold changes what leaves a series, never a verdict: every (change, verdict) equals the
+    shipped build's, so the measured precision of ``confirmed`` / ``contradicted`` cannot move;
+    only the chain's last restoring row (row 3, which puts back B) now stays."""
+    eids = _chain_ledger(led, tail)
+    v, pid = judged(led)
+    pos = {e: i for i, e in enumerate(eids)}
+    names = {p: n for n, p in pid.items()}
+    assert sorted((pos[e], names[p], c) for (e, p), c in dict(v).items()) == golden
+    assert sorted(pos[e] for e in v.pairs_of(pid[F])) == [1, 2], "the pairs are the shipped ones"
+    dropped = sorted(pos[e] for e in v.drop(pid[F]))
+    assert dropped == [1, 2] and dropped != _SHIPPED_DROP, dropped
+    assert v.left_out_as(eids[3], pid[F]) is None and v.left_out_as(eids[2], pid[F]) == "contradicted"
+    assert series(led, F)[:2] == [(eids[0], A), (eids[3], B)], "the series ends on the recorded B"
+
+
+def test_a_chain_never_crosses_a_rename_era(tmp_path):
+    """#2 saves qubit A's f_01 (then q1) and nothing reads the chip in its era; the rebuild at #3
+    names A q0 and B q1, and B's value under q1 equals A's old one exactly. #3 is another
+    era: it is no witness of #2 and its row on the holder q1 never pairs with #2's -- a pair (and
+    the fold after it) restarts at the rename. A's history keeps #2, labelled."""
+    from tests.test_rename_history import REC, history
+    from tests.test_rename_history import state as rstate
+    data, live = tmp_path / "data", tmp_path / "chips" / "live"
+    steps = [(rstate({"q1": 5.0e9, "q2": 6.0e9}), ["q1", "q2"]),
+             (rstate({"q1": 5.1e9, "q2": 6.0e9}), ["q1"]),
+             (rstate({"q0": 5.0e9, "q1": 5.0e9}, [REC]), ["q0"])]
+    for rid, (st, targets) in enumerate(steps, start=1):
+        run_folder(data, rid, st, targets)
+    write_chip(live, steps[-1][0], data)
+    app = make_app(tmp_path)
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    a = history({"app": app}, "qubits.q0.f_01")["rows"]["k"]["points"]
+    assert [(p["value"], p["run_id"]) for p in a][:2] == [(5.0e9, 1), (5.1e9, 2)], a
+    assert a[1].get("witness") == O_, "no read in its era: open, never contradicted across the rename"
+    led_dir = sorted((tmp_path / "_inst" / "history").glob("*/ledger.sqlite"))[0].parent
+    conn = sqlite3.connect(f"file:{(led_dir / 'ledger.sqlite').as_posix()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        index = hub_index.build_index(conn)
+        v = hub_witness.verdicts(index, conn)
+        assert v.pairs_of(index.paths["qubits.q1.f_01"]) == {}, "no pair spans the rename"
+    finally:
+        conn.close()
+        hub_index.close_readers()

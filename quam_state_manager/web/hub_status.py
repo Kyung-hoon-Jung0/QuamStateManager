@@ -11,8 +11,10 @@ Param History renderers already draw, so the renderers are unchanged.
 Two display calculations live here, and neither is a history reader:
 
 * a derived readout fidelity (the mean of a confusion matrix's diagonal) is
-  folded from the matrix ELEMENTS' in-force series, event by event, through
-  the same formula the snapshot index used;
+  the formula the snapshot index used, over ONE saved matrix at a time: the
+  read judges the matrix ELEMENTS as one composite holder
+  (``value_history.composite_target``, v1.3.0 TR-02), never a refold of
+  elements each filtered by its own verdict;
 * the Param History Source filter needs every ledger event as one of its five
   sources (:func:`source_of`).
 """
@@ -245,6 +247,30 @@ def meta_paths(store) -> tuple:
     return qpaths, ppaths, loads
 
 
+def _derived_key(base: str, prop: str) -> str:
+    """The answer key of a derived metric over the matrix at *base*."""
+    return f"{base}#{prop}"
+
+
+def _fidelity_of(formula, leaf: str, paths):
+    """``compose`` of a derived readout fidelity (v1.3.0 TR-02): the
+    snapshot index's own formula over ONE saved matrix -- the elements
+    *paths* (``<leaf>.<i>.<j>``) as one event saved them; an element that
+    was not there (or null) is left out of the matrix, as before."""
+    cells = []
+    for dp in paths:
+        i, j = dp[len(leaf) + 1:].split(".")
+        cells.append((int(i), int(j)))
+
+    def compose(vals):
+        held = {ij: (None if v is value_history.ABSENT else v) for ij, v in zip(cells, vals)}
+        present = [ij for ij, v in held.items() if v is not None]
+        size = 1 + max((max(i, j) for i, j in present), default=-1)
+        matrix = [[held.get((i, j)) for j in range(size)] for i in range(size)]
+        return formula(matrix) if size else None
+    return compose
+
+
 class LedgerTable:
     """The Trends table interface (the methods the
     renderers call) over the chip's ledger.
@@ -322,6 +348,9 @@ class LedgerTable:
         self._facts_now: dict = {}
         self._recorders: list[dict] = []
         self._series_memo: dict = {}
+        #: v1.3.0 TR-03: ``{eid: run folder}`` -- where each run of the answers
+        #: read in this request is now (``routes._vh_now_folders``)
+        self._now: dict = {}
         self._meta = None
 
         def paths():
@@ -449,10 +478,15 @@ class LedgerTable:
         return got.value
 
     # ---------------------------------------------------------- the read
-    def series_many(self, paths):
+    def series_many(self, paths, composites=None):
         """S7's answer for *paths* (``_value_history``). Raises
         ``ramcache.Warming`` when the read did not answer from the ledger
         (building / preparing): never an empty answer.
+
+        *composites*: ``{key: (base path, input paths, compose, name)}`` --
+        values derived from several paths, each judged as one composite
+        holder (``value_history.composite_target``; v1.3.0 TR-02), answered
+        under *key*. Their input paths are recorded as facts like *paths*.
 
         docs/298: not kept here -- ``value_history.read`` keeps each path's
         answer and serves it again while the ledger proves it unchanged; this
@@ -461,13 +495,22 @@ class LedgerTable:
         the notes. A part that compares with a path's value NOW records the
         ``currents`` fact itself."""
         paths = tuple(dict.fromkeys(paths))
+        comps = composites or {}
         self.fact("targets", paths)
         self.fact("live", paths)
-        hit = self._series_memo.get(paths)
+        inputs = tuple(dict.fromkeys(p for _b, ps, _c, _n in comps.values() for p in ps))
+        if inputs:
+            self.fact("targets", inputs)
+            self.fact("live", inputs)
+        memo_key = (paths, tuple(sorted((k, v[3]) for k, v in comps.items())))
+        hit = self._series_memo.get(memo_key)
         if hit is not None:
             return hit
         tgts = {p: self.target(p) for p in paths}
-        ans = self.read(self.ctx, {p: p for p in paths}, targets=tgts, scope=self.scope)
+        for key, (base, ps, compose, name) in comps.items():
+            tgts[key] = value_history.composite_target(base, ps, compose, name,
+                                                       {p: self.target(p) for p in ps})
+        ans = self.read(self.ctx, {k: tgts[k]["path"] for k in tgts}, targets=tgts, scope=self.scope)
         if ans["mode"] != "ledger":
             # never kept: a building / preparing answer is not a value. S7's
             # FALLBACK (an unreadable ledger, no runs) keeps its own mode -- it
@@ -477,7 +520,8 @@ class LedgerTable:
                 ans["mode"] = "preparing"
             self.waiting = ans
             raise ramcache.Warming("hub_status", self.directory, 0)
-        self._series_memo[paths] = ans
+        self._now.update(ans.get("now") or {})
+        self._series_memo[memo_key] = ans
         return ans
 
     def point(self, p):
@@ -486,7 +530,7 @@ class LedgerTable:
         10,000-run chart carries 10,000 of them), so no field rides along
         that nothing reads, and an empty one is left out (``uid`` only on
         proof, ``flag_text`` only when there is a flag)."""
-        view = self.present(p, self.roots, self.uid_memo)
+        view = self.present(p, self.roots, self.uid_memo, now=self._now)
         info = {"label": view["label"], "sub": view["sub"], "provenance": view["provenance"]}
         if view.get("flag_text"):
             info["flag_text"] = view["flag_text"]
@@ -514,7 +558,8 @@ class LedgerTable:
         if serials is None:
             return build()
         slot = (self.directory, str(self.ctx.get("path") or "")) + tuple(what)
-        return _ROWS.get(slot, (serials, tuple(paths), self.roots_sig), build, wait_s=_WAIT_S)
+        return _ROWS.get(slot, (serials, tuple(paths), self.roots_sig, ans.get("now_sig") or ""), build,
+                         wait_s=_WAIT_S)
 
     # ---------------------------------------- chip_trends_ram's interface
     def snapshot_count(self):
@@ -741,7 +786,7 @@ class LedgerTable:
 
     def _curated(self, props):
         qubits = sorted(self.fact("qubits"), key=natural_key)
-        wanted, cells = [], {}
+        wanted, cells, comps = [], {}, {}
         for q in qubits:
             for prop in props:
                 if prop in _VALUE_PATHS:
@@ -751,11 +796,15 @@ class LedgerTable:
                 elif prop in _DERIVED_FIDELITY_PROPS:
                     base, paths = self._matrix_paths(q, _DERIVED_FIDELITY_PROPS[prop][0])
                     if paths:
-                        cells[q, prop] = (base, paths)
-                        wanted.extend(paths)
-        if not wanted:
+                        # v1.3.0 TR-02: the matrix is ONE composite holder
+                        key = _derived_key(base, prop)
+                        cells[q, prop] = (base, [key])
+                        comps[key] = (base, tuple(paths),
+                                      _fidelity_of(_DERIVED_FIDELITY_PROPS[prop][1], base, paths),
+                                      prop)
+        if not wanted and not comps:
             return []
-        ans = self.series_many(wanted)
+        ans = self.series_many(wanted, comps)
         newest = self._newest(ans)
         out = []
         for (q, prop), (leaf, paths) in cells.items():
@@ -778,47 +827,19 @@ class LedgerTable:
 
     def _curated_row(self, ans, prop, leaf, paths):
         """``(values, attrs)`` of one (qubit, property): every change point
-        with its words (no held point: that one names the newest event)."""
-        from quam_state_manager.core import hub_rules
+        with its words (no held point: that one names the newest event).
+
+        v1.3.0 TR-02: a derived fidelity is the in-force series of ONE
+        composite holder (``paths`` holds its answer key): every point is
+        the formula of the matrix one event saved, kept or left out by the
+        matrix's own verdict -- never a refold of elements each filtered by
+        its own."""
         values, attrs = [], {}
-        if prop in _VALUE_PATHS:
-            for p in ans["rows"][leaf]["effective"]:
-                key, info = self.point(p)
-                attrs[key] = info
-                values.append({"timestamp": key, "value": None if p["removed"] else p["value"],
-                               "point": p, "trigger": source_of(p)})
-            return values, attrs
-        # the snapshot index's own formula over the matrix ELEMENTS'
-        # in-force series, refolded at every event that moved one
-        formula = _DERIVED_FIDELITY_PROPS[prop][1]
-        events: dict = {}
-        for dp in paths:
-            for p in ans["rows"][dp]["effective"]:
-                events.setdefault((p["ord"], p["eid"]), []).append((dp, p))
-        held: dict = {}
-        previous = value_history.ABSENT
-        for ev in sorted(events):
-            changed = events[ev]
-            for dp, p in changed:
-                held[dp] = None if p["removed"] else p["value"]
-            present = [(i, j) for i in range(_MAX_MATRIX) for j in range(_MAX_MATRIX)
-                       if held.get(f"{leaf}.{i}.{j}") is not None]
-            size = 1 + max((max(i, j) for i, j in present), default=-1)
-            matrix = [[held.get(f"{leaf}.{i}.{j}") for j in range(size)]
-                      for i in range(size)]
-            value = formula(matrix) if size else None
-            same = (previous is not value_history.ABSENT and (
-                (previous is None and value is None)
-                or (previous is not None and value is not None
-                    and hub_rules.same(previous, value))))
-            if same:
-                continue
-            p = representative([c for _dp, c in changed])
+        for p in ans["rows"][leaf if prop in _VALUE_PATHS else paths[0]]["effective"]:
             key, info = self.point(p)
             attrs[key] = info
-            values.append({"timestamp": key, "value": value, "point": p,
-                           "trigger": source_of(p)})
-            previous = value
+            values.append({"timestamp": key, "value": None if p["removed"] else p["value"],
+                           "point": p, "trigger": source_of(p)})
         return values, attrs
 
     # ----------------------------------------------------- param search
