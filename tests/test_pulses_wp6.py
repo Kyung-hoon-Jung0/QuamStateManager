@@ -85,6 +85,12 @@ def test_undefined_marker_is_refused_before_staging(client, mode):
 @pytest.mark.parametrize("value", ["CUSTOM", "null", "[[1, 0]]"])
 def test_defined_marker_or_inline_samples_or_none_are_allowed(client, value):
     st = _marker_setup(client, ("ON", "CUSTOM"))
+    if value.startswith("["):
+        # v1.3.0: samples over text -> samples over null, matching the actual supported marker type.
+        st.get_value(MARKER_OP)["digital_marker"] = None
+        st.mutation_seq += 1
+        from quam_state_manager.web import routes
+        st.generated_config_meta["basis_hash"] = routes._config_state_hash(st)
     r = client.post("/pulse/edit", data={"path": MARKER_OP, "dot_path": MARKER_OP + ".digital_marker",
                                          "mode": "value", "value": value})
     assert r.status_code == 200, r.data[:300]
@@ -200,3 +206,21 @@ def test_a_refused_explicit_link_action_does_not_offer_a_value_batch(lab, mode):
     assert r.status_code == 400 and b"flat_length differ" in r.data
     assert r.headers.get("X-Lab-Refusal") is None
     assert _v(c, FL_C) == 32 and not st.change_log
+
+
+@pytest.mark.parametrize("value", ["1", "false"])
+@pytest.mark.parametrize("mode", ["value", "literal"])
+def test_marker_validation_checks_the_name_that_would_be_written(client, value, mode):
+    st = _marker_setup(client)
+    r = client.post("/pulse/edit", data={"path": MARKER_OP, "dot_path": MARKER_OP + ".digital_marker",
+                                         "mode": mode, "value": value})
+    assert r.status_code == 400 and b"not defined by this chip" in r.data
+    assert not st.change_log and st.get_value(MARKER_OP + ".digital_marker") == "ON"
+
+
+def test_a_defined_numeric_marker_name_uses_the_existing_text_coercion(client):
+    st = _marker_setup(client, ("ON", "1"))
+    r = client.post("/pulse/edit", data={"path": MARKER_OP, "dot_path": MARKER_OP + ".digital_marker",
+                                         "mode": "value", "value": "1"})
+    assert r.status_code == 200, r.data[:300]
+    assert st.get_value(MARKER_OP + ".digital_marker") == "1"

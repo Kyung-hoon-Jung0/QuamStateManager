@@ -21183,6 +21183,16 @@ def pulse_edit():
                 from quam_state_manager.core import pulse_refs
                 ref = pulse_refs.read(store.merged, dot_path.split(".")[:-1], raw_value.strip())
                 candidate = ref.value if ref.ok else None
+            elif mode == "literal":
+                resolved = resolve_field_target(store.merged, dot_path).get("resolved_value")
+                if isinstance(resolved, str):
+                    candidate = str(candidate)
+            else:
+                marker_target = resolve_field_target(store.merged, dot_path)
+                if marker_target.get("resolvable"):
+                    candidate = modifier._checked_value(
+                        marker_target["resolved_path"], marker_target["resolved_value"],
+                        candidate, coerce=True, enforce=True)
             marker_names = _pulse_marker_names(store)
             if isinstance(candidate, str) and not is_pointer(candidate) and marker_names is not None and candidate not in marker_names:
                 return render_template("_status.html", level="error",
