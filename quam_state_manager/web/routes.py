@@ -25666,6 +25666,26 @@ def _undo_journal_step(ctx, n_req: int = 1):
             or cursor <= 0 or cursor > len(units)):
         return _tray_html()
 
+    # SU-19: a unit a Take live / stage / restore discarded is in effect
+    # nowhere -- its inverse would stage a change that is not there (and a
+    # created subtree's inverse delete 409ed on every press). Walk past it,
+    # RAM only like an empty unit, and say so.
+    _skipped = 0
+    while cursor > 0 and (units[cursor - 1].get("meta") or {}).get("discarded"):
+        cursor -= 1
+        _skipped += 1
+    _skip_note = (f" (skipped {_skipped} dropped step{'s' if _skipped != 1 else ''}"
+                  " -- no longer in effect)") if _skipped else ""
+    if _skipped:
+        ctx["undo_cursor"] = cursor
+        if cursor <= 0:
+            resp = make_response(_tray_html())
+            resp.headers["HX-Trigger"] = json.dumps({"cellsReverted": {
+                "message": "Nothing to undo" + _skip_note, "entries": [],
+                "level": "info", "requested": n_req, "consumed": 0,
+                "stopped": "exhausted"}})
+            return resp
+
     unit = units[cursor - 1]
     if (unit.get("meta") or {}).get("no_previous_state"):
         return render_template(
@@ -25808,6 +25828,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
     elif drift:
         message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
 
+    message += _skip_note
     live_undo_seq = None
     if live:
         # QA F1 (windows): another window showing this value is told, once,

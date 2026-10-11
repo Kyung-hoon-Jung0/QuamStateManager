@@ -16,7 +16,6 @@ import pytest
 from tests.state_model.repros._rig import Chip
 
 
-@pytest.mark.xfail(strict=True, reason="SU-19: the walk does not skip discarded units")
 def test_ctrl_z_after_take_live_skips_the_dropped_save(tmp_path):
     chip = Chip(tmp_path)
     chip.edit("qubits.q2.T1", "3.3e-05")
@@ -31,3 +30,5 @@ def test_ctrl_z_after_take_live_skips_the_dropped_save(tmp_path):
     r = chip.c.post("/undo")
     assert r.status_code == 200, r.get_data(as_text=True)[-300:]
     assert chip.live_state()["qubits"]["q2"]["T1"] != 3.3e-05, "Ctrl+Z did not reach the applied unit"
+    msg = (chip.trigger(r).get("cellsReverted") or {}).get("message", "")
+    assert "skipped 1 dropped step" in msg, msg
