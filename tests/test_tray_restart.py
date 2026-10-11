@@ -75,14 +75,15 @@ def test_restart_restores_rows_values_flags_and_undo(tmp_path):
     assert not pending_tray.sidecar_path(after["working_copy"]).exists()
 
 
-@pytest.mark.parametrize("changed", ["live", "working", "corrupt"])
+# v1.3.0: live/working/corrupt -> working/corrupt, live drift keeps verified rows.
+@pytest.mark.parametrize("changed", ["working", "corrupt"])
 def test_restart_refuses_entire_restore_and_names_paths_once(tmp_path, changed):
     instance, live, first, _ = _staged(tmp_path)
     wc = _ctx(first)["working_copy"]
     if changed == "corrupt":
         pending_tray.sidecar_path(wc).write_text("{interrupted", encoding="utf-8")
     else:
-        folder = live if changed == "live" else wc.working_folder
+        folder = wc.working_folder
         state = json.loads((folder / "state.json").read_text())
         state["qubits"]["q1"]["f_01"] = 5300000000
         (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")

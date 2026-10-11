@@ -109,6 +109,10 @@ class TestP1P2Followups:
         from quam_state_manager.core.history import HistoryManager
         hm = HistoryManager(tmp_path / "instance")
         chip = tmp_path / "data" / "chipA" / "quam_state"
+        # v1.3.0: absent files -> readable empty chip, identity needs verified content.
+        chip.mkdir(parents=True)
+        (chip / "state.json").write_text('{"qubits": {}}', encoding="utf-8")
+        (chip / "wiring.json").write_text('{}', encoding="utf-8")
         assert hm.indexed_run_ids(chip) == set()      # fresh chip → empty
         conn = hm._open_index(chip)
         for ts, rid in [("20260101_000000", 7), ("20260101_000001", 9)]:

@@ -193,7 +193,7 @@ class Modifier:
             entry = ChangeEntry(
                 dot_path=dot_path,
                 old_value=None,
-                new_value=written,
+                new_value=copy.deepcopy(written),
                 source_file=source_file,
                 created=True,
                 group_id=group_id,

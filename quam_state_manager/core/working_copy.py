@@ -41,6 +41,32 @@ class StaleLiveError(Exception):
     """Applying to live would clobber an out-of-band change to the live files."""
 
 
+class EmptyStateError(ValueError):
+    """An absent or empty document cannot be written as the chip state."""
+
+
+class WorkingCopyChangedError(Exception):
+    """Another process replaced the working files this press meant to apply."""
+
+
+class LiveStateMissingError(FileNotFoundError):
+    """An unforced apply cannot recreate a missing live state or folder."""
+
+
+def missing_live_message(wc: WorkingCopy) -> str | None:
+    if not wc.live_folder.is_dir():
+        return "The live chip folder is missing. Nothing was applied."
+    if not (wc.live_folder / "state.json").is_file():
+        return "The live chip state file is missing. Nothing was applied."
+    return None
+
+
+SHARED_WORKING_MSG = (
+    "Another SM window/process changed the shared working copy. Nothing was applied; "
+    "your edits remain in the tray. Take live before applying from this window."
+)
+
+
 # ----------------------------------------------------------------------
 # Content hashing — the durable "did the live files really change / does
 # the working copy really hold edits" signal. Mtimes alone cannot tell a
@@ -823,6 +849,15 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     return state, wiring
 
 
+def _check_working_bytes(record, pair) -> None:
+    """The payload must be the bytes the caller's own store loaded or saved."""
+    expected = getattr(record, "expect_digest", None)
+    if expected is not None:
+        from quam_state_manager.core.loader import file_digest
+        if file_digest(pair.state_bytes, pair.wiring_bytes) != expected:
+            raise WorkingCopyChangedError(SHARED_WORKING_MSG)
+
+
 def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                   expect_live_hash: str | None = None, record=None) -> None:
     """Push the working copy's state + wiring to the live folder.
@@ -867,8 +902,14 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     """
     from quam_state_manager.core import hub, xlock
 
+    missing = missing_live_message(wc) if not force else None
+    if missing:
+        raise LiveStateMissingError(missing)
     if record is None:
         record = hub.guard_unrecorded(wc.live_folder)
+    expected_fp = getattr(record, "expect_fp", None)
+    if expected_fp is not None and working_fingerprint(wc) != expected_fp:
+        raise WorkingCopyChangedError(SHARED_WORKING_MSG)
     if not force:
         # docs/255: the CONTENT decides (live_moved). mtime unchanged is still
         # confirmed by content hash (coarse filesystem mtime granularity, or an
@@ -900,9 +941,15 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             try:
                 live_hash = live_content_hash(wc)
                 fp0 = working_fingerprint(wc)
-                if working_content_hash(wc) == live_hash:
+                _wpair = doc_cache.read_pair(wc.working_folder, mode="hash")
+                _check_working_bytes(record, _wpair)
+                if not _wpair.state:
+                    raise EmptyStateError("An empty state cannot be applied to the live chip")
+                if _wpair.content_hash() == live_hash:
                     st_mt, wi_mt = safe_io.state_wiring_mtimes(wc.live_folder)
                     fp = fp0 if working_fingerprint(wc) == fp0 else None
+                    if expected_fp is not None and fp != expected_fp:
+                        raise WorkingCopyChangedError(SHARED_WORKING_MSG)
                     # Advance the sync point to what live ALREADY holds. Meta
                     # first, exactly like the write path below: a failed meta
                     # write must never leave memory ahead of disk.
@@ -936,12 +983,17 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     except OSError:
         fp_before = None
     _wpair = doc_cache.read_pair(wc.working_folder, mode="hash")
+    _check_working_bytes(record, _wpair)
+    if not _wpair.state:
+        raise EmptyStateError("An empty state cannot be applied to the live chip")
     state_b, wiring_b = _wpair.state_bytes, _wpair.wiring_bytes
     try:
         written_fp = fp_before if working_fingerprint(wc) == fp_before else None
     except OSError:
         written_fp = None
     applied_hash = _wpair.content_hash()
+    if expected_fp is not None and written_fp != expected_fp:
+        raise WorkingCopyChangedError(SHARED_WORKING_MSG)
     if record is not None:
         # the heavy part, BEFORE the re-check: nothing here widens the window
         record.prepare(post_state=(state_b, wiring_b), post_hash=applied_hash,
@@ -977,6 +1029,9 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             except OSError:
                 pre_mt = None
 
+        missing = missing_live_message(wc) if not force else None
+        if missing:
+            raise LiveStateMissingError(missing)
         if expect_live_hash is not None:
             try:
                 now_hash = live_content_hash(wc)

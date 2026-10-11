@@ -801,8 +801,11 @@ def _restore(ctx, p: _Persister) -> None:
             raise ValueError("the recovery mutation sequence is invalid")
         if doc["synced_live_hash"] != wc.synced_live_hash:
             raise ValueError("the working-copy sync point changed")
-        if working_copy.live_content_hash(wc) != doc["synced_live_hash"]:
-            raise ValueError("the live chip changed or its old values cannot be verified")
+        try:
+            live_hash = working_copy.live_content_hash(wc)
+        except (OSError, ValueError):
+            live_hash = None
+        live_moved = live_hash != doc["synced_live_hash"]
         disk_hash = _store_hash(store)
         if disk_hash == base_hash:
             state, wiring = _replay(*_copy_docs(store), rows[applied:], rows[:applied])
@@ -869,6 +872,14 @@ def _restore(ctx, p: _Persister) -> None:
         if key in flags:
             ctx[key] = flags[key]
     ctx["wiring_json"] = wiring_json
+    if live_moved:
+        ctx["live_diverged"] = True
+        shown = ", ".join(dict.fromkeys(paths))
+        ctx["_tray_recovery_notice"] = {
+            "level": "warning",
+            "text": (f"Recovered {len(rows)} unapplied edit{'s' if len(rows) != 1 else ''} "
+                     f"({shown}). The live chip changed or could not be verified; "
+                     "these edits may collide with it. Review them before applying.")}
     index = getattr(store, "search_index", None)
     if index is not None and getattr(index, "built", True):
         from .search_index import LazySearchIndex

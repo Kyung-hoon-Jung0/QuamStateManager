@@ -915,7 +915,8 @@ def _sync_live_refresh(ctx) -> None:
         sig = _change_log_sig(store)
     prev = ctx.get("sync_live") or {}
     key = (live_mt, getattr(wc, "synced_live_hash", None))
-    if prev.get("_key") == key:
+    if (prev.get("_key") == key
+            and time.time() - prev.get("checked_at", 0) < _LIVE_HASH_RECHECK_S):
         # Nothing on the live side moved. Only a known live move can make the
         # user's own edit set matter (a collision is an overlap WITH a move).
         if not (prev.get("moved") and prev.get("_sig") != sig):
@@ -3291,11 +3292,13 @@ def _hub_pending(ctx, src: str, *, log=None, wholesale: bool = False, kind: str 
             return out
     else:
         entries = [_he.entry_of(e) for e in log]
-    expect_fp = (press or {}).get("saved_fp") if (press or {}).get("saved") else None
+    expect_fp = ((press or {}).get("saved_fp") if (press or {}).get("saved")
+                 else (press or {}).get("fp0"))
     return _hub.Pending(_hub_chip_dir(ctx["path"]), kind, who, src, entries=entries,
                         plan_id=plan, run_uid=run_uid, undoes=undoes, units=units, ref=ref,
                         fragments=_hub.store_fragments(store, after=after, holder=before_ref),
-                        expect_fp=expect_fp)
+                        expect_fp=expect_fp,
+                        expect_digest=store.working_digest if press is not None else None)
 
 
 def _hub_discard_saved_units(ctx) -> None:
@@ -3748,6 +3751,41 @@ def _hub_saved_units(ctx) -> list[str]:
 # decided, so a refusal has nothing to take out of it.
 
 
+def _shared_working_changed(ctx) -> bool:
+    """Only the bytes this process loaded or last saved belong to its store."""
+    from quam_state_manager.core.loader import _pair_bytes_digest
+    store, wc = ctx["store"], ctx["working_copy"]
+    return store.working_digest is None or _pair_bytes_digest(wc.working_folder) != store.working_digest
+
+
+_SHARED_WORKING_SAVE_MSG = (
+    "Another SM window/process changed the shared working copy. Nothing was saved; "
+    "your edits remain in the tray. Take live before saving from this window."
+)
+
+
+def _shared_working_refusal(message: str | None = None):
+    message = message or working_copy.SHARED_WORKING_MSG
+    if request.headers.get("Accept", "").startswith("application/json"):
+        return jsonify(ok=False, status="error", conflict="shared_working_copy",
+                       message=message), 409
+    return render_template("_status.html", level="warning", message=message), 409
+
+
+def _press_keep_tray(ctx, press) -> None:
+    """Restore this save's cleared rows without overwriting another writer's files."""
+    store = ctx["store"]
+    with store._lock:
+        held = {id(e) for e in store.change_log}
+        store.change_log[:0] = [e for e in press.get("cleared", []) if id(e) not in held]
+    ctx["working_dirty"] = press["dirty"]
+    ctx["pending_reapply"] = press["reapply"]
+    if press["has_orig"]:
+        ctx["pending_reapply_orig"] = press["reapply_orig"]
+    else:
+        ctx.pop("pending_reapply_orig", None)
+
+
 def _press_begin(ctx) -> dict:
     """What a live-write press changes in SM before it knows whether the chip
     accepts it, captured BEFORE the re-apply stash and the save: the dirty
@@ -3772,7 +3810,10 @@ def _press_save(ctx, press: dict) -> None:
     the working pair's exact bytes + stat fingerprint, and the change log it
     clears with the store's mutation counter. Raises what the save raises."""
     store, wc = ctx["store"], ctx["working_copy"]
-    with _active_wc_lock(ctx):
+    from quam_state_manager.core import xlock
+    with _active_wc_lock(ctx), xlock.held(xlock.live_lock_path(wc.working_folder)):
+        if _shared_working_changed(ctx):
+            raise working_copy.WorkingCopyChangedError(working_copy.SHARED_WORKING_MSG)
         try:
             snap = working_copy.read_working_bytes(wc)
         except (OSError, ValueError):
@@ -3838,6 +3879,8 @@ def _press_undo(ctx, press: dict) -> bool:
                         or any(s[1] != e.dot_path for s, e in zip(steps, log))):
                     return False
                 working_copy.restore_working_bytes(wc, snap)
+                from quam_state_manager.core.loader import _pair_bytes_digest
+                store.working_digest = _pair_bytes_digest(wc.working_folder)
                 store.change_log[:0] = pre
     except Exception:  # noqa: BLE001 -- the save then stands, honestly
         logger.warning("putting a refused press's save back failed", exc_info=True)
@@ -3956,6 +3999,11 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
     list is what the ✎ editor does)."""
     if before is None:
         return None
+    if not before:
+        # Recreating a document has no prior state that Ctrl+Z can restore.
+        return {"id": uuid.uuid4().hex[:12], "ts": time.time(), "entries": [],
+                "meta": {"src": src, "wholesale": True, "no_previous_state": True,
+                         "owner_pid": os.getpid()}}
     try:
         store = ctx["store"]
         # docs/271: a door that knows what it is writing (restore-live writes
@@ -25203,6 +25251,12 @@ def save():
         return render_template("_status.html", message="No unsaved changes", level="info")
 
     count = len(store.change_log)
+    # Two processes on one instance share the working files: a save over bytes
+    # this process did not load or write would silently replace the other
+    # process's saved draft. Checked under the locks below; a refusal puts the
+    # stash back, so nothing moves.
+    wc = ctx.get("working_copy")
+    _press = _press_begin(ctx)
     # Stash the edits before save() clears the change log, so a later pull can
     # re-apply or stage them even though they're no longer "unsaved".
     with store._lock:
@@ -25212,8 +25266,15 @@ def save():
         # Build lock: the save writes the working folder's state/wiring pair —
         # the same files a concurrent _activate_quam reconcile auto-sync
         # rewrites. Serialise so the two can't interleave on the .tmp files.
-        with _active_wc_lock(ctx):
+        from quam_state_manager.core import xlock
+        with _active_wc_lock(ctx), (xlock.held(xlock.live_lock_path(wc.working_folder))
+                                    if wc is not None else contextlib.nullcontext()):
+            if wc is not None and _shared_working_changed(ctx):
+                raise working_copy.WorkingCopyChangedError(_SHARED_WORKING_SAVE_MSG)
             saver.save()
+    except working_copy.WorkingCopyChangedError:
+        _press_keep_tray(ctx, _press)
+        return _shared_working_refusal(_SHARED_WORKING_SAVE_MSG)
     except Exception as e:
         return render_template("_status.html", message=f"Save failed: {e}", level="error"), 500
     # docs/271: saved, not on the chip -- the press that lands them stamps
@@ -25543,6 +25604,10 @@ def _undo_journal_step(ctx, n_req: int = 1):
         return _tray_html()
 
     unit = units[cursor - 1]
+    if (unit.get("meta") or {}).get("no_previous_state"):
+        return render_template(
+            "_status.html", level="warning",
+            message="the chip had no state before this write; nothing to restore"), 409
     uents = list(reversed(unit.get("entries") or []))   # staging order (LIFO)
     if not uents:
         # skip an empty unit -- RAM only, as docs/107: the chip still holds
@@ -28476,9 +28541,11 @@ def state_sync():
             # edits themselves, which "↶ Bring back" replays on top of the new
             # live. Only when there is something to lose.
             backup = None
+            _pulled = working_copy.sync_from_live(wc)
+            # The store still holds the pre-pull view until the rebuild.
+            # A refused read must publish neither a version nor a replay map.
             if mode == "discard" and (pending or ctx.get("working_dirty")):
                 backup = _take_live_backup(ctx, store, pending)
-            _pulled = working_copy.sync_from_live(wc)
             try:
                 ctx["_pulled_docs"] = (_pulled, safe_io._pair_fingerprint(
                     Path(wc.working_folder)))
@@ -28640,6 +28707,14 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     wc = ctx["working_copy"]
     saver = ctx["saver"]
     _auto = _auto_apply_state(ctx)   # QA liveedit-r2-17: label what LANDS
+    if not store.state:
+        return jsonify(status="error", message="An empty state cannot be applied to the live chip"), 409
+    if _shared_working_changed(ctx):
+        return jsonify(status="error", conflict="shared_working_copy",
+                       message=working_copy.SHARED_WORKING_MSG), 409
+    missing = working_copy.missing_live_message(wc) if not force else None
+    if missing:
+        return jsonify(status="error", conflict="missing_live", message=missing), 409
 
     # Re-stash exactly the edits now in the change log, so save()'s clear can't
     # lose them if the apply below hits a fresh conflict. Pin to the CAPTURED ctx
@@ -28657,6 +28732,10 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     if store.change_log:
         try:
             _press_save(ctx, _press)
+        except working_copy.WorkingCopyChangedError:
+            _press_keep_tray(ctx, _press)
+            return jsonify(status="error", conflict="shared_working_copy",
+                           message=working_copy.SHARED_WORKING_MSG), 409
         except OSError as exc:
             logger.warning(
                 "pull-apply save failed with %d unsaved entries: %s",
@@ -28690,7 +28769,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
-                ctx["path"], "auto", kind="backup", actor=_request_actor(),
+                ctx["path"], "auto", kind="backup", actor=_request_actor(), check_content=True,
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
@@ -28741,6 +28820,13 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                 _before_tree = _live_merged_tree(wc)
                 _bref["tree"] = _before_tree
             working_copy.apply_to_live(wc, force=force, record=_pend)
+    except working_copy.LiveStateMissingError as exc:
+        _refused_after_save()
+        return jsonify(status="error", conflict="missing_live", message=str(exc)), 409
+    except working_copy.WorkingCopyChangedError:
+        _press_keep_tray(ctx, _press)
+        return jsonify(status="error", conflict="shared_working_copy",
+                       message=working_copy.SHARED_WORKING_MSG), 409
     except working_copy.StaleLiveError:
         # docs/255: nothing was written, so nothing changes -- the save this
         # press made is put back (the edits stay in the tray, the stash as it
@@ -28862,10 +28948,9 @@ def _live_files_present(wc) -> bool:
 
 
 _UNBACKED_OVERWRITE_MSG = (
-    "Nothing was written — SM could not back up the live chip first (its "
-    "files could not be read: a save in progress, or a UTF-8 BOM), and "
-    "without that backup the overwrite could not be undone. Retry once the "
-    "other program has finished saving.")
+    "Nothing was written — SM could not back up the current live state in "
+    "history. Without that backup the overwrite could not be undone. "
+    "Retry after checking that the live files can be read and history can be written.")
 
 
 _LIVE_MOVED_DURING_CONFIRM_MSG = (
@@ -29047,6 +29132,17 @@ def state_apply_to_live():
     store = ctx["store"]
     saver = ctx["saver"]
     force = request.values.get("force") == "1"
+    if not store.state:
+        return render_template(
+            "_status.html", level="warning",
+            message="An empty state cannot be applied to the live chip"), 409
+    if _shared_working_changed(ctx):
+        return _shared_working_refusal()
+    missing = working_copy.missing_live_message(wc) if not force else None
+    if missing:
+        if request.headers.get("Accept", "").startswith("application/json"):
+            return jsonify(ok=False, conflict="missing_live", message=missing), 409
+        return render_template("_status.html", level="warning", message=missing), 409
     # QA correctness-r2-09: "Keep mine" hands back the live content hash its
     # confirm counted; a forced push is held to it (absent -> unchanged).
     expect_live_hash = (request.values.get("expect_live_hash") or None) if force else None
@@ -29096,6 +29192,9 @@ def state_apply_to_live():
     if store.change_log:
         try:
             _press_save(ctx, _press)
+        except working_copy.WorkingCopyChangedError:
+            _press_keep_tray(ctx, _press)
+            return _shared_working_refusal()
         except OSError as exc:
             # Narrow except (Phase 2 finding §5.1). The change_log is still
             # populated, so a retry after the user clears the file lock will
@@ -29145,7 +29244,7 @@ def state_apply_to_live():
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
-                ctx["path"], "auto", kind="backup", actor=_request_actor(),
+                ctx["path"], "auto", kind="backup", actor=_request_actor(), check_content=True,
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
@@ -29242,6 +29341,14 @@ def state_apply_to_live():
             working_copy.apply_to_live(
                 wc, force=force, record=_pend,
                 **({"expect_live_hash": expect_live_hash} if expect_live_hash else {}))
+    except working_copy.LiveStateMissingError as exc:
+        _refused_after_save()
+        if request.headers.get("Accept", "").startswith("application/json"):
+            return jsonify(ok=False, conflict="missing_live", message=str(exc)), 409
+        return render_template("_status.html", level="warning", message=str(exc)), 409
+    except working_copy.WorkingCopyChangedError:
+        _press_keep_tray(ctx, _press)
+        return _shared_working_refusal()
     except working_copy.StaleLiveError:
         if expect_live_hash is not None and _auto is None:
             # QA correctness-r2-09: the tight re-check inside apply_to_live --
@@ -29382,7 +29489,11 @@ def state_apply_to_live():
         if _post_snap is not None:
             resp.call_on_close(lambda: _spawn_post_apply_snapshot(*_post_snap))
         return resp
-    if _crash:
+    if _pend.skipped:
+        toast = render_template(
+            "_status.html", level="info",
+            message="The live chip already holds this state; nothing was applied.")
+    elif _crash:
         toast = render_template(
             "_status.html", level="warning",
             message="Applied to the live chip — ⚠ " + _crash["sentence"])
@@ -43026,6 +43137,12 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     "main.pair_add_gate",
     "main.pulse_edit", "main.api_pulse_create", "main.api_pulse_delete",
     "main.api_pulse_duplicate", "main.api_pulse_rename",
+    # Every staging door shares the store saved by the plan's next write.
+    "main.pair_gate_inspector_switch", "main.api_pulse_copy",
+    "main.api_pulse_gaussian_cz", "main.api_pulse_delete_together",
+    "main.type_fix_apply", "main.auto_apply_revert",
+    "main.state_take_live_restore", "main.chip_profile_set", "main.app_reload",
+    "agent.undo_mine", "agent.run_node", "agent.approvals_decide", "agent.plan_start",
     # state-history writers (stage -> working copy, restore-live -> live files)
     "main.state_history_stage", "main.state_history_restore_live",
     # working-copy / live writers
@@ -43092,7 +43209,7 @@ def _loaded_autofit_engine():
     return mod
 
 
-@bp.before_request
+@bp.before_app_request
 def _scheduler_lock_guard():
     """409 chip-mutating / QM-subprocess routes while the Scheduler is running.
 

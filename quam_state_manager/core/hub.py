@@ -488,11 +488,12 @@ class Pending:
                  entries: list | Callable | None = None, plan_id: str | None = None,
                  run_uid: str | None = None, undoes: Any = None, units: list | Callable | None = None,
                  ref: dict | None = None, fragments: Callable | None = None,
-                 expect_fp: Any = None):
+                 expect_fp: Any = None, expect_digest: str | None = None):
         self.chip_dir = Path(chip_dir) if chip_dir is not None else None
         # the working pair's stat fingerprint right after the door's own save:
         # the bytes the write reads must be those (see prepare)
         self.expect_fp = expect_fp
+        self.expect_digest = expect_digest
         self.foreign_bytes = False
         self.kind, self.actor, self.src = kind, actor, src
         self.entries, self.plan_id, self.run_uid = entries, plan_id, run_uid

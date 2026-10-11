@@ -195,6 +195,7 @@ class QuamStore:
         # been edited, undone or reloaded since (every in-memory change bumps
         # it). ``None`` until a file load (``from_dicts`` never has one).
         self.file_digest: str | None = None
+        self.working_digest: str | None = None
         self.loaded_seq: int | None = None
         self._load()
         self.loaded_seq = self.mutation_seq
@@ -232,6 +233,7 @@ class QuamStore:
         self._pointer_cache_lock = threading.Lock()
         self._validate = False
         self.file_digest = None
+        self.working_digest = None
         self.loaded_seq = None
         self._merge()
         self._clear_pointer_cache()
@@ -275,6 +277,7 @@ class QuamStore:
             except safe_io.LiveFileError as exc:
                 raise ValueError(str(exc)) from exc
             self.file_digest = file_digest(sb, wb)
+        self.working_digest = self.file_digest
         self.loaded_seq = None      # set by the caller once the counter settles
 
         self._merge()
@@ -492,6 +495,7 @@ class QuamStore:
         self._clear_pointer_cache()
         self.file_digest = (_pair_bytes_digest(self.folder_path)
                             if digest is None or digest is _UNSET else digest)
+        self.working_digest = self.file_digest
         if self._validate:
             self._validate_pointers()
         self.loaded_seq = self.mutation_seq

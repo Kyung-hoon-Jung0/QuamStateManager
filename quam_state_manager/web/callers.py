@@ -52,6 +52,7 @@ COOKIE_PREFIX = "sm_person"
 #: endpoint -> what the press is, in the words the refusal uses. POST only:
 #: the GETs of the same routes are reads.
 PERSON_ONLY = {
+    "main.settings_undo_live": "changing whether Ctrl+Z writes live",
     "agent.session_arm": "arming the agent",
     "agent.approvals_decide": "deciding an approval",
     "agent.plan_start": "starting a plan",

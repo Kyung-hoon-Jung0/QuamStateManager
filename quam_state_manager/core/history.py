@@ -887,6 +887,7 @@ class ChipIdentity:
     name: str | None                       # tier 1 (extras), validated
     fingerprint: ChipFingerprint | None    # tier 2
     path_name: str                         # tier 3 (legacy chip_name_for)
+    readable: bool = True
 
     @property
     def source(self) -> str:
@@ -913,17 +914,10 @@ def identity_of(quam_state_path: str | Path) -> ChipIdentity:
     identity keying must follow what is captured — a staged-but-unapplied
     name change takes effect at the first post-apply capture, never before."""
     p = Path(quam_state_path)
-    state: Any = None
-    wiring: Any = {}
     try:
-        state = safe_io.read_json(p / "state.json")
+        state, wiring = safe_io.read_state_wiring(p)
     except (OSError, ValueError):
-        state = None
-    if state is not None:
-        try:
-            wiring = safe_io.read_json(p / "wiring.json")
-        except (OSError, ValueError):
-            wiring = {}
+        return ChipIdentity(None, None, chip_name_for(p), readable=False)
     return identity_from_dicts(state, wiring, p)
 
 
@@ -2040,7 +2034,7 @@ class HistoryManager:
         with self._lock:
             if self._alias_cache is not None and self._alias_cache[0] == mt:
                 return self._alias_cache[1]
-        data: dict = {"version": 1, "names": {}, "dirs": {}}
+        data: dict = {"version": 1, "names": {}, "dirs": {}, "paths": {}}
         if mt != -1:
             try:
                 raw = safe_io.read_json(path)
@@ -2051,6 +2045,8 @@ class HistoryManager:
                 dirs = raw.get("dirs")
                 data["names"] = names if isinstance(names, dict) else {}
                 data["dirs"] = dirs if isinstance(dirs, dict) else {}
+                paths = raw.get("paths")
+                data["paths"] = paths if isinstance(paths, dict) else {}
         with self._lock:
             self._alias_cache = (mt, data)
         return data
@@ -2088,7 +2084,18 @@ class HistoryManager:
             "claimed_at": datetime.now().isoformat(timespec="seconds"),
         }
         dirs[dir_key] = {"display": display}
-        self._save_aliases({"version": 1, "names": names, "dirs": dirs})
+        self._save_aliases(dict(data, names=names, dirs=dirs))
+
+    def _remember_chip_path(self, path: Path, result: tuple) -> None:
+        """Keep the last readable routing decision across context rebuilds."""
+        with self._lock:
+            data = self._load_aliases()
+            key = str(path.resolve())
+            entry = {"dir": result[1], "source": result[2]}
+            paths = dict(data.get("paths") or {})
+            if paths.get(key) != entry:
+                paths[key] = entry
+                self._save_aliases(dict(data, paths=paths))
 
     def display_name_for_dir(self, dir_key: str) -> str | None:
         """The declared chip name behind a canonical dir key, if any."""
@@ -2099,6 +2106,9 @@ class HistoryManager:
 
     def _cached_identity(self, path: Path) -> ChipIdentity:
         """Mtime-cached :func:`identity_of` (the `_cached_fingerprint` twin)."""
+        if "__chip_key__" in path.parts:
+            # History links carry an explicit key, without live files.
+            return ChipIdentity(None, None, chip_name_for(path))
         key = str(path)
         try:
             st_mt = (path / "state.json").stat().st_mtime
@@ -2113,6 +2123,8 @@ class HistoryManager:
             if cached is not None and cached[0] == st_mt and cached[1] == wir_mt:
                 return cached[2]
         ident = identity_of(path)
+        if not ident.readable:
+            raise OSError("Chip identity could not be read")
         with self._lock:
             self._identity_cache[key] = (st_mt, wir_mt, ident)
         return ident
@@ -2156,7 +2168,18 @@ class HistoryManager:
             memo = self._chip_dir_memo.get(key_s)
             if memo is not None and memo[0] == token:
                 return memo[1]
-        result = self._resolve_chip_dir_uncached(path)
+        try:
+            result = self._resolve_chip_dir_uncached(path)
+        except OSError:
+            # A torn read is no evidence of a rename or a chip swap.
+            if memo is not None:
+                return memo[1]
+            entry = (self._load_aliases().get("paths") or {}).get(str(path.resolve()))
+            if isinstance(entry, dict) and entry.get("dir"):
+                dir_key = str(entry["dir"])
+                return self._root / dir_key, dir_key, entry.get("source", "path"), None
+            raise
+        self._remember_chip_path(path, result)
         with self._lock:
             self._chip_dir_memo[key_s] = (token, result)
         return result
@@ -2171,7 +2194,9 @@ class HistoryManager:
         an mtime-granularity-equal rewrite would even defeat the identity
         cache). No memo: captures are rare and the dicts are in hand."""
         ident = identity_from_dicts(state, wiring, Path(quam_state_path))
-        return self._resolve_from_ident(ident)
+        result = self._resolve_from_ident(ident)
+        self._remember_chip_path(Path(quam_state_path), result)
+        return result
 
     def _resolve_chip_dir_uncached(
         self, path: Path,
@@ -2470,6 +2495,7 @@ class HistoryManager:
         trigger: str = "auto",
         *,
         force: bool = False,
+        check_content: bool = False,
         experiment_name: str | None = None,
         run_id: int | None = None,
         experiment_folder_path: str | None = None,
@@ -2486,6 +2512,9 @@ class HistoryManager:
         mapping to :func:`kind_for`.
 
         Returns the new ``SnapshotMeta``, or ``None`` if nothing changed.
+
+        ``check_content=True`` bypasses the mtime shortcut while retaining
+        content deduplication, for backups before an explicit live write.
 
         ``defer_index=True`` moves ONLY the SQLite param-history indexing to a
         background thread; the snapshot files + meta.json are still written
@@ -2509,7 +2538,7 @@ class HistoryManager:
             key = str(path.resolve())
             last_mt = self._last_mtime.get(key)
 
-            if not force and last_mt is not None and current_mt == last_mt:
+            if not force and not check_content and last_mt is not None and current_mt == last_mt:
                 return None
 
             ts = _ts_stamp()
@@ -7357,8 +7386,8 @@ def migrate_legacy_histories_v2(instance_path: str | Path) -> dict[str, Any]:
 
     Snapshots that already live in their correct chip dir are left in
     place. Snapshots that need to move are relocated and their SQLite
-    rows merged into the destination index. Empty source dirs (after
-    everything is moved out) are removed.
+    rows merged into the destination index. Source dirs are retained: their
+    journals, ledgers and pruned-snapshot index rows are independent history.
 
     Idempotent — gated by ``instance/migrated_v2.flag``.
     """
@@ -7422,14 +7451,11 @@ def migrate_legacy_histories_v2(instance_path: str | Path) -> dict[str, Any]:
             except Exception:
                 logger.warning("v2 SQLite merge failed for %s", target_key, exc_info=True)
 
-        # If src_dir is now empty of snapshot subfolders, remove it.
+        # No snapshot folders does not mean no history: journals, ledgers,
+        # pruned rows and a failed index merge must remain recoverable.
         remaining = [s for s in src_dir.iterdir() if s.is_dir()]
         if not remaining:
-            try:
-                shutil.rmtree(src_dir, ignore_errors=True)
-                cleared_dirs.append(src_dir.name)
-            except Exception:
-                pass
+            logger.debug("Retained source history directory %s", src_dir)
 
     # Invalidate any pre-existing ``_hashes.json`` sidecars (Phase 3 §2.3
     # interplay): the migration has moved snapshots between dirs, so any
@@ -7476,7 +7502,8 @@ def migrate_index_attribution_v3(instance_path: str | Path) -> dict[str, Any]:
     so they are not provably foreign. Timestamps whose folder exists in two
     or more dirs are skipped (ambiguous). Copy-then-delete ordering keeps a
     crash midway idempotent: ``INSERT OR IGNORE`` dedups on re-run, and the
-    flag is only written at the end.
+    flag is only written at the end. Source rows are deleted only when every
+    column matches the saved destination row; conflicting values stay intact.
 
     Idempotent — gated by ``instance/migrated_v3.flag``.
     """
@@ -7549,12 +7576,19 @@ def migrate_index_attribution_v3(instance_path: str | Path) -> dict[str, Any]:
                 _merge_index_for_timestamps(src_idx, target_idx, ts_list)
                 conn = sqlite3.connect(str(src_idx), timeout=10.0)
                 try:
+                    conn.execute("ATTACH DATABASE ? AS copied", (str(target_idx),))
+                    same_row = " AND ".join(
+                        f"saved.{col} IS param_history.{col}"
+                        for col in _CP_COLS.split(", "))
+                    verified = (
+                        " AND EXISTS (SELECT 1 FROM copied.param_history AS saved WHERE "
+                        + same_row + ")")
                     conn.execute("BEGIN IMMEDIATE")
                     for i in range(0, len(ts_list), 500):
                         chunk = ts_list[i:i + 500]
                         conn.execute(
                             "DELETE FROM param_history WHERE timestamp IN (%s)"
-                            % ",".join("?" * len(chunk)), chunk)
+                            % ",".join("?" * len(chunk)) + verified, chunk)
                     _cp_invalidate(conn)      # docs/142b: deletes -> cp rebuilt
                     conn.execute("COMMIT")
                 finally:
