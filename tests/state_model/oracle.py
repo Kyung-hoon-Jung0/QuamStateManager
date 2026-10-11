@@ -900,10 +900,20 @@ def _eq(a: Any, b: Any) -> bool:
     return same(a, b)
 
 
-def _entries_between(a: dict, b: dict) -> list[Entry]:
-    """Leaf entries taking document ``a`` to ``b`` (for wholesale units)."""
-    out = []
-    for p, (va, vb) in sorted(leaf_diff(a, b).items()):
-        out.append(Entry(p, None if va is MISSING else va, None if vb is MISSING else vb,
-                         created=va is MISSING, deleted=vb is MISSING))
+def _entries_between(a: dict, b: dict, prefix: str = "") -> list[Entry]:
+    """Entries taking document ``a`` to ``b`` (for wholesale units), as a tree
+    difference: a key only one side holds is ONE created/deleted entry for its
+    whole subtree (applying it back leaves no empty container), dicts recurse,
+    anything else is a leaf set."""
+    out: list[Entry] = []
+    for k in sorted(set(a) | set(b)):
+        path = f"{prefix}.{k}" if prefix else str(k)
+        if k not in a:
+            out.append(Entry(path, None, copy.deepcopy(b[k]), created=True))
+        elif k not in b:
+            out.append(Entry(path, copy.deepcopy(a[k]), None, deleted=True))
+        elif isinstance(a[k], dict) and isinstance(b[k], dict):
+            out.extend(_entries_between(a[k], b[k], path))
+        elif not same(a[k], b[k]):
+            out.append(Entry(path, copy.deepcopy(a[k]), copy.deepcopy(b[k])))
     return out
