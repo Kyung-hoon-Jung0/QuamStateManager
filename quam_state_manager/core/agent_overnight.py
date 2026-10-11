@@ -40,6 +40,7 @@ from pathlib import Path
 from quam_state_manager.core import agent_plans, approvals
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core import limits as limits_mod
+from quam_state_manager.core import safe_io
 
 logger = logging.getLogger(__name__)
 
@@ -388,11 +389,27 @@ def envelope_record(env: dict) -> dict:
 
 # ------------------------------------------------------------------ the morning summary
 
+def _what_of(verdict, cls) -> str | None:
+    """The failure's own words from a gate verdict -- ``gate_verdicts`` writes
+    ``"<class>: <what>"``, and the class has its own column -- so the summary
+    reads the same whether the run's meta.json or only the plan step was read."""
+    why = (verdict or {}).get("why")
+    if isinstance(why, str) and cls and why.startswith(f"{cls}: "):
+        return why[len(cls) + 2:]
+    return why
+
+
 def _meta(instance_path, run_key: str | None) -> dict:
     if not run_key:
         return {}
+    # v1.3.0: share-delete read with the transient retry -- a plain open that
+    # lands on the run worker's atomic replace of meta.json read nothing, and
+    # the summary then fell back to another record's wording of the failure
+    path = Path(instance_path) / "agent_runs" / str(run_key) / "meta.json"
+    if not path.exists():
+        return {}                      # never written: no retry ladder to wait out
     try:
-        d = json.loads((Path(instance_path) / "agent_runs" / str(run_key) / "meta.json").read_text(encoding="utf-8"))
+        d = safe_io.read_json(path, attempts=3)
         return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -486,7 +503,7 @@ def summary(instance_path, key: str, *, plan_id: str | None = None, live_folder=
             if str((v or {}).get("why") or "").startswith("fit:"):
                 cls = "fit_failed"
             failures.append({"step": s.get("i"), "node": s.get("node"), "target": t, "class": cls,
-                             "what": (res.get("failure") or {}).get("what") or (v or {}).get("why"),
+                             "what": (res.get("failure") or {}).get("what") or _what_of(v, cls),
                              "why": (v or {}).get("why"), "run_id": s.get("run_id"), "at": s.get("ended")})
     held = []
     for a in approvals.load(instance_path, key):

@@ -704,3 +704,22 @@ def test_overnight_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 20, r.stdout
+
+
+def test_a_summary_names_a_failure_the_same_without_the_runs_meta(c, inst, monkeypatch):
+    """v1.3.0: the summary read the run's meta.json with a plain open; one that
+    landed on the worker's atomic replace read nothing, and the failure then
+    read "host_unreachable: QM host ..." instead of "QM host ...". Whichever
+    record the summary reads, the words are the failure's own."""
+    _night(c, inst, monkeypatch)
+    want = c.get("/api/agent/summary").get_json()["failures"]
+    gone = 0
+    for meta in (inst / "agent_runs").glob("*/meta.json"):
+        if "host_unreachable" in meta.read_text(encoding="utf-8"):
+            meta.unlink()
+            gone += 1
+    assert gone, "the failed run's meta.json was found"
+    got = c.get("/api/agent/summary").get_json()["failures"]
+    assert [(f["target"], f["class"], f["what"]) for f in got] == \
+        [(f["target"], f["class"], f["what"]) for f in want]
+    assert got[0]["what"] == "QM host unreachable at 127.0.0.1:1"
