@@ -110,15 +110,20 @@ def same(a: Any, b: Any) -> bool:
     return a == b
 
 
-def leaves(doc: Any, prefix: str = "") -> dict[str, Any]:
-    """Every leaf (scalars and empty containers) by dot path."""
+def leaves(doc: Any, prefix: str = "", *, empty_dicts: bool = True) -> dict[str, Any]:
+    """Every leaf (scalars and empty containers) by dot path. With
+    ``empty_dicts=False`` an empty dict is no leaf: an emptied container and
+    a removed key then read alike (journal effects compare that way, as SM
+    records a subtree delete without the container it leaves empty)."""
     out: dict[str, Any] = {}
     if isinstance(doc, dict) and doc:
         for k, v in doc.items():
-            out.update(leaves(v, f"{prefix}.{k}" if prefix else str(k)))
+            out.update(leaves(v, f"{prefix}.{k}" if prefix else str(k), empty_dicts=empty_dicts))
     elif isinstance(doc, list) and doc:
         for i, v in enumerate(doc):
-            out.update(leaves(v, f"{prefix}.{i}" if prefix else str(i)))
+            out.update(leaves(v, f"{prefix}.{i}" if prefix else str(i), empty_dicts=empty_dicts))
+    elif isinstance(doc, dict) and not empty_dicts:
+        pass
     else:
         out[prefix] = doc
     return out
@@ -171,8 +176,10 @@ class Entry:
 
 
 def effect_of(path: str, old: Any, new: Any) -> dict[str, tuple[Any, Any]]:
-    lo = {f"{path}.{k}" if k else path: v for k, v in leaves(old).items()} if old is not MISSING else {}
-    ln = {f"{path}.{k}" if k else path: v for k, v in leaves(new).items()} if new is not MISSING else {}
+    lo = ({f"{path}.{k}" if k else path: v for k, v in leaves(old, empty_dicts=False).items()}
+          if old is not MISSING else {})
+    ln = ({f"{path}.{k}" if k else path: v for k, v in leaves(new, empty_dicts=False).items()}
+          if new is not MISSING else {})
     out = {}
     for p in set(lo) | set(ln):
         a, b = lo.get(p, MISSING), ln.get(p, MISSING)
@@ -261,6 +268,9 @@ class Model:
         self.push_armed = False
         self.pull_armed = False
         self.notes: list = []        # recorded-finding notes the harness drains per step
+        self.merge_tries = 0         # Auto-Sync merges since the last landed write
+        self.touched = False         # live mtimes moved since the sync point (content or not)
+        self.typefixed: set[str] = set()   # fields whose type a type-fix assigned
 
     # -- facts ---------------------------------------------------------
     def readable(self) -> bool:
@@ -380,8 +390,12 @@ class Model:
             _, seg = self.R.pop()
             is_jrn = bool(seg) and str(seg[0].gid or "").startswith("jrn:")
             for e in seg:
+                e = copy.deepcopy(e)
+                if not e.created:
+                    now = get(self.W, e.path)
+                    e.old = None if now is MISSING else copy.deepcopy(now)
                 apply_entry(self.W, e, True)
-                self.T.append(copy.deepcopy(e))
+                self.T.append(e)
             if is_jrn:
                 self.cursor = max(self.cursor - 1, 0)
             done += 1
@@ -470,6 +484,7 @@ class Model:
         self.stash, self.stash_orig, self.stash_gid = {}, {}, {}
         self.staged_doc = None
         self.land_count += 1
+        self.touched = False
         self.R.clear()
         self._journal_reset()
 
@@ -500,11 +515,16 @@ class Model:
         out = []
         for p in fields:
             old, new = get(self.L, p), get(target, p)
-            if _eq(old, new):
+            if old is MISSING and new is MISSING:
                 continue
             out.append(Entry(p, None if old is MISSING else old, None if new is MISSING else new,
                              gid=self._gids.get(p), created=old is MISSING, deleted=new is MISSING))
         return out
+
+    def replay_fields(self) -> list[str]:
+        """The replay map's order: the stash's fields, then the log's new ones."""
+        out = list(self.stash)
+        return out + [p for p in dict.fromkeys(self.tray_paths()) if p not in self.stash]
 
     def reapply(self, *, force: bool) -> Outcome:
         if not self.readable():
@@ -512,7 +532,7 @@ class Model:
         if self.dirty and (self.staged or not self.stash) and not force:
             return Outcome("needs_confirm")
         target = self.replay_target()
-        fields = self.fields()
+        fields = self.replay_fields()
         self._gids = {p: self._gid_of(p) for p in fields}
         self._adopt_live()
         self.W = target
@@ -525,7 +545,7 @@ class Model:
         ents = []
         for p, v in self.backup:
             cur = get(self.W, p)
-            if not _eq(cur, v):
+            if not (cur is MISSING and v is MISSING):
                 ents.append(Entry(p, None if cur is MISSING else cur, None if v is MISSING else v,
                                   gid="replay", created=cur is MISSING, deleted=v is MISSING))
         self.backup = None
@@ -574,7 +594,7 @@ class Model:
             self.stash, self.stash_orig, self.stash_gid = {}, {}, {}
             self.staged_doc = None
             self.land_count += 1
-            self.R.clear()
+            self.touched = False
             return Outcome("converged", kind)
         if wholesale is not None:
             units = ([wholesale] + units) if wholesale_below else (units + [wholesale])
@@ -589,7 +609,7 @@ class Model:
         self.stash, self.stash_orig, self.stash_gid = {}, {}, {}
         self.staged_doc = None
         self.land_count += 1
-        self.R.clear()
+        self.touched = False
         return Outcome("landed", kind, writes_live=True, events=1, extra={"before": before})
 
     def apply(self, *, force: bool = False, expect_fresh: bool | None = None,
@@ -614,13 +634,13 @@ class Model:
             if not pending and not self.moved() and self.L is not GONE:
                 return Outcome("noop", "nothing to apply")
         else:
-            if not pending:
+            if self.L is UNREADABLE or (not pending and self.moved() and not same(self.L, self.W)):
                 # the staleness preflight runs before "nothing to apply"
-                if self.moved() and not same(self.L, self.W):
-                    if html:
-                        self.refused_at = digest(self.B)
-                        self.refused_land = self.land_count
-                    return Outcome("refused", "stale_live")
+                if html:
+                    self.refused_at = digest(self.B)
+                    self.refused_land = self.land_count
+                return Outcome("refused", "live unreadable" if self.L is UNREADABLE else "stale_live")
+            if not pending:
                 return Outcome("noop", "nothing to apply")
             if not self.readable():
                 return Outcome("refused", "live unreadable")
@@ -636,12 +656,21 @@ class Model:
         if self.staged and self.staged_doc is not None:
             wholesale = Unit(entries=_entries_between(self.L, self.Ws), kind="wholesale")
             self._dup_note("Apply after a stage", wholesale)
+        elif force and self.L is GONE:
+            ents = [Entry(k, None, copy.deepcopy(v), created=True) for k, v in self.Ws.items()]
+            wholesale = Unit(entries=ents, kind="wholesale") if ents else None
         elif force and self.readable():
             # the overwritten live content, up to the working copy the tray
             # edits sit on (the edits are their own units above it). SU-04:
             # SM records it whether or not live moved, so saved edits that
             # already have their own unit are journaled a second time.
-            ents = _entries_between(self.L, self.Ws)
+            # the value under the tray's leaf edits (a staged subtree add or
+            # delete is not taken back: SM's base keeps it as staged)
+            base = copy.deepcopy(self.W)
+            for e in reversed(self.T):
+                if not (e.created or e.deleted):
+                    apply_entry(base, e, False)
+            ents = _entries_between(self.L, base)
             wholesale = Unit(entries=ents, kind="wholesale") if ents else None
             self._dup_note("Keep mine", wholesale)
         return self._land(kind="keep_mine" if force else "apply", wholesale=wholesale,
@@ -656,6 +685,7 @@ class Model:
         self.dirty = self.staged = False
         self.stash, self.stash_orig, self.stash_gid = {}, {}, {}
         self.land_count += 1
+        self.touched = False
         return Outcome("converged")
 
     def merge_apply(self, *, picks: dict | None = None, check: bool = True,
@@ -679,13 +709,14 @@ class Model:
             open_ = [p for p in self.conflicts() if p not in (picks or {})]
             if open_:
                 return Outcome("collision", extra={"paths": open_})
-        if not self.moved() and not picks and not self.stash and not self.dirty and not self.staged:
+        if (not self.moved() and not self.touched and not picks and not self.stash
+                and not self.dirty and not self.staged):
             # fast path: nothing to pull
             if not self.T:
                 return Outcome("noop", "nothing to apply")
             return self._land(kind="apply")
         target = self.replay_target(picks)
-        fields = [p for p in self.fields() if (picks or {}).get(p) != "live"]
+        fields = [p for p in self.replay_fields() if (picks or {}).get(p) != "live"]
         self._gids = {p: self._gid_of(p) for p in fields}
         self._adopt_live()
         self.W = target
@@ -712,6 +743,7 @@ class Model:
             self.staged_doc = None
             self.last_apply_pre = before
             self.land_count += 1
+            self.touched = False
             self.R.clear()
             return Outcome("converged", "restore", extra={"before": before})
         self.T = []
@@ -725,6 +757,7 @@ class Model:
         self.Ws = copy.deepcopy(doc)
         self.B = copy.deepcopy(doc)
         self.land_count += 1
+        self.touched = False
         self.R.clear()
         return Outcome("landed", "restore", writes_live=True, events=1, extra={"before": before})
 
@@ -738,6 +771,11 @@ class Model:
             self.R.append(("jrn_live", self.cursor))
             return Outcome("noop", "empty unit")
         log_was_empty = not self.T
+        if any(e.path in self.typefixed and isinstance(e.old, str) and not isinstance(e.new, str)
+               for e in unit.entries):
+            self.notes.append(("K:SU-14", "Ctrl+Z cannot walk past a type-fix: staging the old text "
+                                          "into the now-typed field fails (409), every later press too"))
+            return Outcome("refused", "type assignment")
         drift = any(not _eq(get(self.W, p), new) for p, (_old, new) in unit.effect().items())
         inv = [Entry(e.path, e.new, e.old, gid=f"jrn:{id(unit)}", created=e.deleted, deleted=e.created)
                for e in reversed(unit.entries)]
@@ -763,8 +801,10 @@ class Model:
                 self.T.append(e)
             self.cursor -= 1
             return Outcome("staged", why)
-        if not self.readable() or self.moved():
-            # the door refused: the walk is rolled back, the refusal is shown
+        if not self.readable():
+            return Outcome("rolled_back", "live unreadable")
+        if self.moved():
+            # the door refused (stale): the walk is rolled back, the refusal is shown
             self.refused_at = digest(self.B)
             self.refused_land = self.land_count
             return Outcome("rolled_back", "changed since")
@@ -774,6 +814,9 @@ class Model:
         self.cursor -= 1
         self.pcursor = self.cursor
         self.R.append(("jrn_live", self.cursor))
+        if self.W == {}:
+            self.notes.append(("K:SU-13", "one Ctrl+Z wrote an EMPTY state to the live chip "
+                                          "(the undone unit 'created' every top-level key)"))
         if same(self.L, self.W):
             self.Ws = copy.deepcopy(self.W)
             return Outcome("live", extra={"before": before, "unit": self.cursor, "noop_write": True})
@@ -781,6 +824,7 @@ class Model:
         self.Ws = copy.deepcopy(self.W)
         self.B = copy.deepcopy(self.W)
         self.land_count += 1
+        self.touched = False
         return Outcome("live", writes_live=True, events=1, extra={"before": before, "unit": self.cursor})
 
     def walk_redo_live(self, idx: int) -> Outcome:
@@ -788,6 +832,10 @@ class Model:
         unit = self.J[idx]
         if any(not _eq(get(self.W, p), old) for p, (old, _new) in unit.effect().items()):
             return Outcome("refused", "moved since")
+        if self.readable() and self.moved() and not (self.T or self.dirty or self.stash or self.staged):
+            self.refused_at = digest(self.B)
+            self.refused_land = self.land_count
+            return Outcome("refused", "moved")
         if self.T or self.dirty or self.stash or self.staged or not self.readable() or self.moved():
             return Outcome("refused", "not at sync point")
         before = copy.deepcopy(self.L)
@@ -801,6 +849,7 @@ class Model:
         self.Ws = copy.deepcopy(self.W)
         self.B = copy.deepcopy(self.W)
         self.land_count += 1
+        self.touched = False
         return Outcome("live", writes_live=True, events=1, extra={"before": before})
 
     def restart(self) -> list[str]:
@@ -826,6 +875,7 @@ class Model:
     # -- outside the app ---------------------------------------------------
     def outside(self, doc: Any) -> None:
         self.L = copy.deepcopy(doc)
+        self.touched = True
 
 
 def _eq(a: Any, b: Any) -> bool:

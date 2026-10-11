@@ -113,7 +113,7 @@ def check_step(rig: Rig, step: Step, pre: dict) -> list[tuple[str, str]]:
     # --- I8: one chip, one ledger: the history dir never moves -----------------
     cd = rig.chip_dir()
     if cd != rig.chip_dir0:
-        out.append(("I8", f"the chip's history dir moved from {rig.chip_dir0.name} to {cd.name} "
+        out.append(("K:SU-06", f"the chip's history dir moved from {rig.chip_dir0.name} to {cd.name} "
                           f"after {step.name}: later writes go to a second ledger"))
         rig.chip_dir0 = cd
 
@@ -220,12 +220,18 @@ def check_step(rig: Rig, step: Step, pre: dict) -> list[tuple[str, str]]:
     if not 0 <= pcur <= len(units):
         out.append(("I5", f"persisted cursor {pcur} outside [0, {len(units)}]"))
     rc = ctx.get("undo_cursor")
-    if rc != m.cursor:
+    # units whose net effect is nothing change no value anywhere; SM may keep
+    # one (a replay that re-staged a value equal to live) -- compare the rest,
+    # and each cursor as the count of value-changing units below it
+    sm_all = [_unit_effect(u) for u in units]
+    md_all = [u.effect() for u in m.J]
+    sm_eff = [e for e in sm_all if e]
+    md_eff = [e for e in md_all if e]
+    below = lambda effs, c: sum(1 for e in effs[:max(0, c or 0)] if e)
+    if below(sm_all, rc) != below(md_all, m.cursor):
         out.append(("I5", f"RAM cursor {rc} != model {m.cursor}"))
-    if pcur != m.pcursor:
+    if below(sm_all, pcur) != below(md_all, m.pcursor):
         out.append(("I5", f"persisted cursor {pcur} != model {m.pcursor}"))
-    sm_eff = [_unit_effect(u) for u in units]
-    md_eff = [u.effect() for u in m.J]
     if len(sm_eff) != len(md_eff):
         out.append(("I5", f"journal has {len(sm_eff)} units, model {len(md_eff)}"))
     else:
@@ -254,7 +260,8 @@ def check_step(rig: Rig, step: Step, pre: dict) -> list[tuple[str, str]]:
 
     # --- I6: the pre-apply snapshot ----------------------------------------------
     if (exp.kind == "landed" and step.obs == "landed" and step.name in ("APPLY", "MERGE", "RESTORE_LIVE")
-            and not m.push_armed and "before" in exp.extra):
+            and not m.push_armed and "before" in exp.extra
+            and not isinstance(exp.extra["before"], O._Sentinel)):
         la = ctx.get("last_apply") or {}
         ts = la.get("pre_ts")
         if not ts:

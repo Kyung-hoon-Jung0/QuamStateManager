@@ -542,6 +542,7 @@ class Rig:
             return st
         st.obs = "staged" if r.status_code == 200 and new else "refused"
         for e in new:
+            self.model.typefixed.add(e.path)
             if not isinstance(e.old, str) or isinstance(e.new, str):
                 st.notes.append(("I11", f"type-fix {e.path}: {e.old!r} -> {e.new!r}"))
             elif not math.isclose(float(e.old), float(e.new)):
@@ -734,6 +735,8 @@ class Rig:
         st.status = r.status_code
         st.exp = self.model.save()
         st.obs = "saved" if "Saved" in r.get_data(as_text=True) else "noop"
+        if self.model.push_armed and st.obs == "saved":
+            self._flush(st)
         self.saved_unit_ids += [u.get("id") for u in self.journal()[0] if u.get("id") not in u0]
         self.pending_saved += [u.get("id") for u in self.journal()[0] if u.get("id") not in u0]
         self._saw("a", r.get_data(as_text=True))
@@ -815,6 +818,8 @@ class Rig:
         st.obs = "staged_doc" if r.status_code == 200 else ("needs_confirm" if r.status_code == 409 else str(r.status_code))
         if st.exp.kind == "needs_confirm":
             st.refusal = True
+        if m.push_armed and st.obs == "staged_doc":
+            self._flush(st)                       # the session pushes a dirty working copy too
         st.args_ts = ts
         return st
 
@@ -1006,7 +1011,8 @@ class Rig:
         trig = _trigger(r)
         moved = m.moved()
         if moved and not (m.readable() and O.same(m.L, m.W)):
-            if m.pull_armed:
+            if m.pull_armed and m.merge_tries < 3 and not (m.dirty or m.staged):
+                m.merge_tries += 1
                 st.flush = "stale_merge"
                 m.refused_at = O.digest(m.B)
                 if "autoSyncMerge" in trig:
@@ -1014,6 +1020,8 @@ class Rig:
                                                            "check_collisions": "1"})
                     body = r2.get_json(silent=True) or {}
                     o = m.merge_apply(check=True)
+                    if o.kind in ("landed", "converged"):
+                        m.merge_tries = 0
                     st.exp = o
                     st.obs = ("landed" if body.get("status") == "ok" and body.get("hub_event") else
                               body.get("status") or str(r2.status_code))
@@ -1032,8 +1040,12 @@ class Rig:
                     st.notes.append(("I12", "a refused armed flush did not disarm the session"))
         else:
             o = m.apply(html=True)
+            if o.kind in ("landed", "converged"):
+                m.merge_tries = 0
             st.exp = o
             st.obs = _classify_apply(r, html, {})
+            if st.obs == "noop" and "autoApplyApplied" in trig:
+                st.obs = "landed"
         self._saw("a", html)
 
     def poll_autopull(self) -> Step | None:
@@ -1106,6 +1118,7 @@ class Rig:
             self.live_by_harness = kind != "resave"
             m.outside(doc)
         elif kind == "touch":
+            m.touched = True
             if self.live.exists():
                 for n in ("state.json", "wiring.json"):
                     p = self.live / n
@@ -1237,7 +1250,8 @@ def _trigger(r) -> dict:
 
 def _classify_apply(r, html: str, body: dict) -> str:
     if r.status_code == 200 and "pending-tray-conflict" not in (html or "") and not body.get("conflict"):
-        if "Applied to the live chip" in (html or "") or body.get("ok"):
+        if ("Applied to the live chip" in (html or "") or body.get("ok")
+                or "autoApplyApplied" in (r.headers.get("HX-Trigger") or "")):
             return "landed"
         return "noop"
     if body.get("status") == "unseen_changes":
