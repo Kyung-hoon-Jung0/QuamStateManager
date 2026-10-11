@@ -984,40 +984,55 @@ def synth_for_operation(store, op_path: str, *,
             return _payload_error(f"not a pulse dict: {op_path}")
 
         snapshot = copy.deepcopy(raw_op)
-        # Resolve pointer-valued params relative to the real operation path.
+        # Every reference read the way quam reads it -- on the object, so a
+        # key the target does not store is its class's default and a runtime
+        # property of another pulse is that pulse's computed value
+        # (core/pulse_refs, v1.3.0). Two parameter sets come out: the one
+        # SM's own synthesis draws (``resolved_params``) and the one the
+        # pulse's own class receives in the selected env (``lab_params``:
+        # containers kept, a property only another pulse's class knows handed
+        # to that class as a question -- never a raw reference string).
+        from quam_state_manager.core import pulse_refs
+        obj_segs = actual_path.split(".")
         resolved_params: dict[str, Any] = {}
+        lab_params: dict[str, Any] = {}
+        lab_errors: dict[str, str] = {}
         pointer_fields: dict[str, dict] = {}
         for fname, fval in snapshot.items():
             if fname == "__class__":
                 continue
-            if isinstance(fval, str) and fval.startswith(("#/", "#./", "#../")):
-                target = resolve_field_target(store.merged, f"{actual_path}.{fname}")
-                info = {
-                    "pointer": fval,
-                    "resolved": bool(target.get("resolvable")),
-                    "target_path": target.get("resolved_path"),
-                }
-                pointer_fields[fname] = info
-                if target.get("resolvable"):
-                    rv = target.get("resolved_value")
-                    if rv is None:
-                        # containers come back nulled (_scalar) — re-fetch
-                        try:
-                            rv = store.get_value(target["resolved_path"])
-                        except (KeyError, TypeError, ValueError, IndexError):
-                            rv = None
-                    resolved_params[fname] = rv
-                else:
-                    # leave the raw pointer in place; synthesize() will
-                    # classify it (error only when shape-relevant)
-                    resolved_params[fname] = fval
-            else:
+            if not pulse_refs.is_ref(fval):
                 resolved_params[fname] = fval
+                lab_params[fname] = fval
+                continue
+            r = pulse_refs.read(store.merged, obj_segs, fval, lab=True)
+            pointer_fields[fname] = {
+                "pointer": fval,
+                "resolved": r.ok,
+                "target_path": r.target,
+                "how": r.how,
+                "reason": r.reason,
+            }
+            if r.ok:
+                resolved_params[fname] = r.value
+                lab_params[fname] = r.value
+                continue
+            # left as the reference for SM's own synthesis, which classifies
+            # it (an error only where the field shapes the waveform)
+            resolved_params[fname] = fval
+            if r.how == "self":
+                lab_params[fname] = fval        # the class resolves it on itself
+            elif r.how == "lab" and r.lab is not None:
+                lab_params[fname] = {pulse_refs.LAB_REF_KEY: r.lab}
+            else:
+                lab_errors[fname] = r.reason or "it cannot be read"
 
     # ---- outside the lock ----
     if overrides:
         for key, value in overrides.items():
             resolved_params[key] = value
+            lab_params[key] = value
+            lab_errors.pop(key, None)
 
     qclass = snapshot.get("__class__")
     spec, how = infer_spec_ex(snapshot, context_slot=context_slot)
@@ -1028,6 +1043,8 @@ def synth_for_operation(store, op_path: str, *,
         payload.update({"path": op_path, "alias_of": alias_of,
                         "pointer_fields": pointer_fields,
                         "resolved_params": resolved_params,
+                        "lab_params": lab_params,
+                        "lab_errors": lab_errors,
                         "qclass": qclass,
                         # docs/189 -- a MACHINE-READABLE reason. "this class is
                         # not in SM's catalog" and "this class is, but a
@@ -1045,15 +1062,37 @@ def synth_for_operation(store, op_path: str, *,
     # synthesize() sees list/dict-valued unknowns too.
     payload = synthesize(spec.key, resolved_params, max_samples=max_samples,
                          class_match=how)
+    _name_unread_references(payload, pointer_fields)
     payload.update({
         "path": op_path,
         "alias_of": alias_of,
         "pointer_fields": pointer_fields,
         "resolved_params": {k: v for k, v in resolved_params.items()
                             if not isinstance(v, (list, dict))},
+        # PU-06: the class's own code gets EVERY field, a list or a dict too
+        # (WaveformPulse's samples) -- the filter above is the display's
+        "lab_params": lab_params,
+        "lab_errors": lab_errors,
         "qclass": qclass or spec.qclass,
     })
     return payload
+
+
+def _name_unread_references(payload: dict, pointer_fields: dict) -> None:
+    """A field synthesis refused because its reference could not be read
+    says WHY (core/pulse_refs), not only that it is a pointer -- e.g. "its
+    class's own code supplies it" vs "the target does not exist"."""
+    pe = payload.get("param_errors") or {}
+    first = next(iter(pe), None)
+    for name, msg in list(pe.items()):
+        info = pointer_fields.get(name) or {}
+        if info.get("resolved") or not info.get("reason"):
+            continue
+        if not str(msg).startswith("unresolved pointer"):
+            continue
+        pe[name] = f"pointer {info['pointer']} cannot be read here: {info['reason']}"
+        if name == first:
+            payload["error"] = f"{name}: {pe[name]}"
 
 
 # ---------------------------------------------------------------------------

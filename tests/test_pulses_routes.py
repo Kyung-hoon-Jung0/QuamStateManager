@@ -828,6 +828,14 @@ class TestPulseGroundTruth:
         assert abs(data["comparison"]["max_delta"] - 0.01) < 1e-12
 
     def test_pair_gate_name_matching(self, loaded_client, app):
+        # v1.3.0: name heuristic -> exact copy (PU-04: a name that merely
+        # mentions a pair qubit matched another pair's pulse); the slot now
+        # matches the config op of a channel operation proven to BE it --
+        # here qA2.z's entry, every field a pointer into the slot
+        slot = "#/qubit_pairs/qA1-qA2/macros/cz_unipolar/flux_pulse_qubit"
+        _store_of(app).merged["qubits"]["qA2"] = {"id": "qA2", "z": {"operations": {
+            "cz_unipolar_pulse_qA1": {"amplitude": slot + "/amplitude",
+                                      "length": slot + "/length"}}}}
         config = {
             "elements": {
                 "qA2.z": {"operations": {
@@ -847,6 +855,7 @@ class TestPulseGroundTruth:
         ).get_json()
         assert data["ok"]
         assert data["operation"] == "cz_unipolar_pulse_qA1"
+        assert data["mirror"] == "qubits.qA2.z.operations.cz_unipolar_pulse_qA1"
         assert data["comparison"]["match"] is True  # constant 0.05 × 100
 
     def test_unmatched_op_404(self, loaded_client, app):

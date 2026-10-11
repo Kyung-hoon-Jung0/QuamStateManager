@@ -41,6 +41,13 @@
                 <span class="ptr-inline pointer-badge"
                       title="Resolves to {{ p.target_path }} (container value — edit at the target)">{{ p.raw }}</span>
                 {% endif %}
+                {% elif p.is_pointer and not p.ref_editable %}
+                {# v1.3.0 (PU-02): a value its class computes -- another pulse's
+                   inferred length, a lab class's own property. Shown, labelled,
+                   never edited THROUGH the reference (there is no stored value
+                   to write); unlink / re-link below stay the explicit doors. #}
+                <em class="ref-read-value" data-ref-how="{{ p.ref_how }}">{% if p.ref_known %}{{ p.value }}{% else %}&mdash;{% endif %}
+                    <span class="ref-note muted" title="{{ p.ref_reason or '' }}">({{ p.ref_note or p.ref_how }})</span></em>
                 {% else %}
                 <form class="inline-edit pulse-edit-form" hx-post="/pulse/edit"
                       hx-target="#inspector-pane" hx-swap="innerHTML"{% if sec.synth_unknown_class %}
@@ -54,12 +61,18 @@
                     {% for vp in view_paths %}<input type="hidden" name="view_paths" value="{{ vp }}">{% endfor %}
                     <input type="text" name="value" autocomplete="off" class="edit-input"
                            data-param="{{ p.key }}" data-kind="{{ p.kind }}"
-                           {% if p.is_pointer and p.target_path %}data-target-path="{{ p.target_path }}"{% endif %}
+                           {% if p.is_pointer and p.target_path and p.ref_how in ('stored', 'default') %}data-target-path="{{ p.target_path }}"{% endif %}
                            data-unit="{{ p.unit }}"
                            data-synth="{{ 1 if p.synth else 0 }}"
-                           data-committed="{{ p.value if p.value is not none else '' }}"
-                           value="{{ p.value if p.value is not none else '' }}"
-                           aria-label="{{ p.key }}">
+                           {#- v1.3.0 (PU-02): a reference nothing can read shows an
+                               empty box (the reference itself is on the badge),
+                               never the raw string as if it were the value -#}
+                           {% set _shown = '' if (p.is_pointer and not p.ref_known) else p.value %}
+                           data-committed="{{ _shown if _shown is not none else '' }}"
+                           value="{{ _shown if _shown is not none else '' }}"
+                           {% if p.is_pointer and not p.ref_known %}placeholder="unresolved"{% endif %}
+                           aria-label="{{ p.key }}">{% if p.ref_note %}
+                    <span class="ref-note muted" title="{{ p.ref_reason or '' }}">{{ p.ref_note }}</span>{% endif %}
                 </form>
                 {% if sec.synth_unknown_class %}{# 2026-09-27: an edit of a lab
                    class's pulse is first run through the class's own code in
@@ -100,11 +113,12 @@
                         hx-vals='{"path": {{ sec.path | tojson }}, "dot_path": {{ p.dot_path | tojson }}, "mode": "pointer", "value": {{ p.prev_link | tojson }}, "view_main": {{ main_path | tojson }}, "view_paths": {{ view_paths | tojson }}}'
                         hx-target="#inspector-pane" hx-swap="innerHTML">re-link</button>
                 {% endif %}
-                {% if p.is_pointer %}
-                <span class="ptr-inline pointer-badge {% if not p.resolved %}pointer-dangling{% endif %}"
-                      title="{% if p.resolved %}Resolves to {{ p.target_path }}{% else %}Unresolvable pointer{% endif %}">{{ p.raw }}</span>
+                {% endif %}
+                {% if p.is_pointer and not p.is_list and not p.is_runtime %}
+                <span class="ptr-inline pointer-badge {% if p.ref_how == 'unknown' %}pointer-dangling{% endif %}"
+                      title="{% if p.ref_how == 'stored' %}Resolves to {{ p.target_path }}{% elif p.ref_how == 'unknown' %}Unresolvable pointer &mdash; {{ p.ref_reason or 'its target does not exist' }}{% else %}{{ p.ref_reason or ('Resolves to ' ~ (p.target_path or '')) }}{% endif %}">{{ p.raw }}</span>
                 <span class="ptr-actions">
-                    {% if p.resolved %}
+                    {% if p.ref_known %}
                     <button type="button" class="ptr-act btn-sm outline"
                             title="Break the link — replace the pointer with the literal value {{ p.value }}"
                             hx-post="/pulse/edit"
@@ -117,13 +131,14 @@
                             onclick="PulsesPage.startLinkEdit(this, {{ p.dot_path | tojson | forceescape }}, {{ p.raw | tojson | forceescape }})">re-link</button>
                 </span>
                 {% endif %}
-                {% endif %}
             </td>
         </tr>
-        {% if p.is_pointer and p.target_path and not p.is_runtime and p.target_path != p.dot_path %}
+        {% if p.is_pointer and p.target_path and not p.is_runtime and p.target_path != p.dot_path and p.ref_how in ('stored', 'default') %}
         <tr class="ptr-impact-row"><td colspan="2">
-            <span class="ptr-impact">edits follow the pointer &mdash; write at
-                <code>{{ p.target_path }}</code>{% if p.shared_by %}; also used by
+            <span class="ptr-impact">{% if p.ref_how == 'default' %}edits follow the pointer &mdash;
+                <code>{{ p.target_path }}</code> is not stored yet (its class default is shown); an
+                edit writes it there{% else %}edits follow the pointer &mdash; write at
+                <code>{{ p.target_path }}</code>{% endif %}{% if p.shared_by %}; also used by
                 <strong>{{ p.shared_by | join(', ') }}</strong>{% endif %}</span>
         </td></tr>
         {% endif %}

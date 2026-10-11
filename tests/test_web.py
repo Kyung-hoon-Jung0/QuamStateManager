@@ -7817,8 +7817,14 @@ class TestConfigOpShortPairIdR16:
 
     def _run(self, pair_name):
         from quam_state_manager.web.routes import _config_op_for_pulse_path
+        # v1.3.0: name heuristic -> exact copy (PU-04); the slot is matched
+        # through q1.z's entry that points into it, never by a name
+        slot = f"#/qubit_pairs/{pair_name}/macros/cz_unipolar/flux_pulse_qubit"
         state = {"qubit_pairs": {pair_name: {
-            "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2"}}}
+            "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2",
+            "macros": {"cz_unipolar": {"flux_pulse_qubit": {"amplitude": 0.1, "length": 40}}}}},
+            "qubits": {"q1": {"z": {"operations": {"cz_unipolar_pulse_q1_q2": {
+                "amplitude": slot + "/amplitude", "length": slot + "/length"}}}}}}
         config = {"elements": {
             "q1.z": {"operations": {"cz_unipolar_pulse_q1_q2": {}}},
             # decoy: contains the bare token "2" but neither member name

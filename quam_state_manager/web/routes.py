@@ -10725,8 +10725,15 @@ def _pulse_edit_is_noop(store, dot_path: str, parsed) -> bool:
         if is_pointer(cur):
             t = resolve_field_target(store.merged, dot_path)
             if not t.get("resolvable"):
-                return False          # dangling: let the write land
-            cur = t.get("resolved_value")
+                # v1.3.0: a field its object does not store reads as its
+                # class default -- typing that default back is no edit
+                from quam_state_manager.core import pulse_refs
+                r = pulse_refs.read(store.merged, dot_path.split(".")[:-1], cur)
+                if not (r.ok and r.how == "default"):
+                    return False          # dangling: let the write land
+                cur = r.value
+            else:
+                cur = t.get("resolved_value")
     except (KeyError, TypeError, ValueError, IndexError):
         return False
     if isinstance(cur, bool) != isinstance(parsed, bool):
@@ -19808,7 +19815,7 @@ _PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
                    "op_name", "alias_target", "iq", "readout", "found", "location",
                    "class_match", "unmodeled", "qclass", "class_short",
                    "length_implausible", "length_stored", "length", "amplitude",
-                   "used_by")
+                   "used_by", "length_why", "length_from_lab", "length_from_config")
 
 
 def _pulse_vt_sig(row: dict) -> tuple:
@@ -20674,6 +20681,17 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                     and entry.dot_path.startswith(actual_path + ".")):
                 prev_links[entry.dot_path] = ov
 
+    # the values the class's own code gave a "lab" reference (another pulse's
+    # runtime property) when it last drew these exact fields -- a RAM hit only
+    lab_refs: dict = {}
+    if any((i or {}).get("how") == "lab" for i in pointer_fields.values()):
+        try:
+            _lr = lab_drawings_for_paths(store, [path], spawn=False).get(path) or {}
+            if _lr.get("ok"):
+                lab_refs = dict(_lr.get("refs") or {})
+        except Exception:  # noqa: BLE001 -- never an error page for a value note
+            logger.debug("lab refs lookup failed for %s", path, exc_info=True)
+
     param_rows = []
     for fname, fval in body.items():
         if fname == "__class__":
@@ -20703,8 +20721,31 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                 if isinstance(refetched, (list, dict)):
                     is_container = True
                     display = refetched
+        # v1.3.0 (PU-02): a reference is read the way quam reads it
+        # (core/pulse_refs). A STORED target is edited in place; a key its
+        # object does not store is shown as its class's default and an edit
+        # creates it there; a value a class computes (another pulse's
+        # inferred length, a lab class's property) is shown, never edited
+        # through the reference; and one nothing can answer says why --
+        # never the raw reference standing in the value box.
+        ref_how = (ptr_info or {}).get("how") if is_ptr else None
+        ref_reason = (ptr_info or {}).get("reason") if is_ptr else None
+        ref_known = bool(ptr_info and ptr_info.get("resolved"))
+        if is_ptr and ref_how == "lab" and fname in lab_refs:
+            display, ref_known = lab_refs[fname], True
+        ref_note = None
+        if ref_how == "default":
+            ref_note = "class default"
+        elif ref_how == "computed":
+            ref_note = "computed"
+        elif ref_how == "lab":
+            ref_note = ("from your class's own code" if ref_known
+                        else "computed by your class's own code")
+        elif ref_how == "self":
+            ref_note = "computed by this pulse's own class"
         shared_by: list[str] = []
-        if is_ptr and ptr_info and ptr_info.get("resolved") and ptr_info.get("target_path"):
+        if (is_ptr and ptr_info and ptr_info.get("resolved") and ptr_info.get("target_path")
+                and ref_how == "stored"):
             shared_by = [p for p in pulse_index.used_by(ptr_info["target_path"])
                          if p != f"{actual_path}.{fname}"
                          and not p.startswith(f"{actual_path}.")]
@@ -20717,6 +20758,13 @@ def _pulse_section_ctx(store, pulse_index, path: str):
             "is_runtime": is_runtime,
             "resolved": bool(ptr_info and ptr_info.get("resolved")),
             "target_path": ptr_info.get("target_path") if ptr_info else None,
+            # how the reference was read, and whether a value-mode edit
+            # follows it: only to a stored value or a declared default
+            "ref_how": ref_how,
+            "ref_reason": ref_reason,
+            "ref_note": ref_note,
+            "ref_known": ref_known,
+            "ref_editable": (not is_ptr) or ref_how in ("stored", "default"),
             "shared_by": shared_by,
             "unit": spec_param.unit if spec_param else "",
             "kind": spec_param.kind if spec_param else "",
@@ -20821,6 +20869,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "plot_config_at": truth.get("at") if plot_source == "config" else None,
         "plot_config_stale": bool(truth.get("stale")) if plot_source == "config" else False,
         "truth_status": truth.get("status") if unknown_class else None,
+        "truth_mirror": truth.get("mirror") if unknown_class else None,
         # docs/218: ask the class's own code for this pulse once the page is
         # up -- unless it already drew these exact field values
         "needs_lab": bool(unknown_class and plot_source != "lab"
@@ -21012,9 +21061,15 @@ def pulse_edit():
                 return _lab_edit_refused(_lab_no)
             elif is_pointer(raw_current):
                 target = resolve_field_target(store.merged, dot_path)
+                _dflt = _pulse_ref_default_target(store, dot_path, raw_current)
                 if target.get("resolvable"):
                     # the leaf IS a pointer — write at its resolved target
                     modifier.set_value(target["resolved_path"], parsed)
+                elif _dflt:
+                    # v1.3.0 (PU-02): the pointer names a field its object does
+                    # not store (the page showed its class default) -- the edit
+                    # follows the pointer and writes it THERE, keeping the link
+                    modifier.create_subtree(_dflt, parsed)
                 else:
                     # dangling pointer: the old value's str type is
                     # meaningless — write the typed literal uncoerced
@@ -21131,14 +21186,21 @@ def api_pulse_synth():
 
 def _lab_params_for_path(store, path: str, overrides=None):
     """``(qclass, params, error)`` for drawing *path* with the lab's own class:
-    the pulse's fields with every pointer resolved the way ``synth_for_operation``
-    resolves them for SM's own synthesis (one resolver, never a second one)."""
+    the pulse's fields read the way ``synth_for_operation`` reads them for SM's
+    own synthesis (one reader, core/pulse_refs, never a second one) -- every
+    field, containers too, and never a raw reference string: a value only
+    another pulse's class knows reaches the drawing as a question for that
+    class, and a field nothing can answer is named instead of drawn wrong."""
     from quam_state_manager.core.waveform_synth import synth_for_operation
     payload = synth_for_operation(store, path, overrides=overrides or None)
     qclass = payload.get("qclass")
     if not qclass:
         return None, None, payload.get("error") or "this pulse names no class"
-    params = {k: v for k, v in (payload.get("resolved_params") or {}).items()
+    errs = payload.get("lab_errors") or {}
+    if errs:
+        name, why = next(iter(errs.items()))
+        return qclass, None, f"{name}: {why}"
+    params = {k: v for k, v in (payload.get("lab_params") or {}).items()
               if k != "__class__"}
     return qclass, params, None
 
@@ -21194,7 +21256,10 @@ def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None,
             ov = _coerce_lab_overrides(store, path, ov)
         qclass, params, err = _lab_params_for_path(store, path, ov)
         if err:
-            out[path] = {"ok": False, "error": err}
+            # a field nothing can answer: not drawn, and -- like a check that
+            # cannot run -- never a refusal of the user's edit (``reason``)
+            out[path] = {"ok": False, "error": err,
+                         "reason": "unreadable" if qclass else None}
             continue
         items.append((qclass, params))
         owners.append(path)
@@ -23500,8 +23565,24 @@ def _pulse_edit_write_path(store, dot_path: str, raw_current, target_path: str) 
     if is_pointer(raw_current):
         from quam_state_manager.core.pointer_path import resolve_field_target
         t = resolve_field_target(store.merged, dot_path)
-        return t["resolved_path"] if t.get("resolvable") else dot_path
+        if t.get("resolvable"):
+            return t["resolved_path"]
+        return _pulse_ref_default_target(store, dot_path, raw_current) or dot_path
     return target_path
+
+
+def _pulse_ref_default_target(store, dot_path: str, raw) -> str | None:
+    """The field a pointer at *dot_path* names when its object does not store
+    it and the page shows that field's class default (core/pulse_refs) -- the
+    place a value-mode edit creates it. None for anything else."""
+    from quam_state_manager.core import pulse_refs
+    if not pulse_refs.is_ref(raw):
+        return None
+    try:
+        r = pulse_refs.read(store.merged, dot_path.split(".")[:-1], raw)
+    except Exception:  # noqa: BLE001
+        return None
+    return r.target if (r.ok and r.how == "default" and r.target) else None
 
 
 def _lab_follow_payload(path, value, info) -> list[dict] | None:
@@ -24509,11 +24590,14 @@ def _config_op_for_pulse_path(config: dict, path: str,
     Qubit ops are exact: ``qubits.<q>.<ch>.operations.<op>`` → element
     ``<q>.<ch>``, operation ``<op>``. Pair drive-channel ops map through the
     channel's own ``id`` in *state* (quam-builder names the element after it:
-    ``cr_q1_q2`` / ``zz_q1_q2`` — dot-less keys). Pair-gate flux pulses are
-    registered by quam-builder on the CONTROL qubit's z element under generated
-    names like ``cz_unipolar_pulse_qA1`` / ``cz_SNZ_flux_pulse_qA2-qA1`` — we
-    scan all elements for op names starting with the gate name and disambiguate
-    by pair/qubit hints; ambiguous or missing → (None, None).
+    ``cr_q1_q2`` / ``zz_q1_q2`` -- dot-less keys). A pair-gate flux slot is
+    not a channel operation: the config carries it only through a channel
+    operation that is an exact copy of it (a qubit's ``z.operations`` entry
+    such as ``cz_unipolar_pulse_qA1`` whose fields point into the slot) --
+    :func:`_slot_config_match`; none in the config -> (None, None). v1.3.0
+    (PU-04): this used to scan every element for an op name that starts with
+    the gate name and mentions a pair qubit, which matched another pair's
+    pulse on another qubit's line.
     """
     m = _PULSE_PATH_RES[0].match(path)
     if m:
@@ -24534,43 +24618,119 @@ def _config_op_for_pulse_path(config: dict, path: str,
     m = _PULSE_PATH_RES[1].match(path)
     if not m:
         return _config_op_for_found_path(config, path, state)
-    parts = path.split(".")
-    pair_name, gate, slot = parts[1], parts[3], parts[4]
-    # r16 0-1: derive members from the pair's REFS (cr_semantics doctrine —
-    # never split the id: "q1-2" yields the bare token "2", which as a
-    # substring hint matched nearly every op name → multi-candidate → the
-    # Config-Viewer link silently vanished). Fallback re-prefixes short
-    # tokens and drops bare digits from the hint set.
-    _pair_obj = ((state or {}).get("qubit_pairs") or {}).get(pair_name)
-    _eps = cr_semantics.pair_endpoints(_pair_obj)
-    pair_qubits = [q for q in _eps if q]
-    if not pair_qubits:
-        pair_qubits = [(t if t[:1].isalpha() else f"q{t}")
-                       for t in pair_name.split("-") if t]
-    wants_coupler = slot == "coupler_flux_pulse"
+    got = _slot_config_match(config, path, state)
+    return got["element"], got["operation"]
 
-    candidates: list[tuple[str, str]] = []
-    for elem_key, elem in (config.get("elements") or {}).items():
-        ops = elem.get("operations") if isinstance(elem, dict) else None
-        if not isinstance(ops, dict):
+
+_MISSING_FIELD = object()
+
+
+def _slot_field(merged: dict, segs: list, body: dict, key: str):
+    """``(known, value)`` of field *key* of the pulse *body* at *segs*, read
+    the way quam reads it (core/pulse_refs): a key it does not store is its
+    class's default."""
+    from quam_state_manager.core import pulse_refs
+    raw = body.get(key, _MISSING_FIELD)
+    r = pulse_refs.read(merged, segs, f"#./{key}" if raw is _MISSING_FIELD else raw)
+    return r.ok, r.value
+
+
+def _is_exact_copy(merged: dict, op_path: str, op_body, slot_path: str, slot_body) -> bool:
+    """Whether the channel operation at *op_path* is the SAME pulse as the
+    pair-gate slot at *slot_path* -- proven from the state, never from a
+    name (PU-04): an alias of the slot itself, or the same class with every
+    field a pointer to the slot's same field, the same literal (or the same
+    self-reference) as the slot's, or the same value read the way quam reads
+    it. ``id`` names the pulse and does not shape it."""
+    from quam_state_manager.core import pulse_refs
+    slot_ptr = "#/" + slot_path.replace(".", "/")
+    if isinstance(op_body, str):
+        return op_body.rstrip("/") == slot_ptr
+    if not isinstance(op_body, dict) or not isinstance(slot_body, dict):
+        return False
+    if op_body.get("__class__") != slot_body.get("__class__"):
+        return False
+    op_segs, slot_segs = op_path.split("."), slot_path.split(".")
+    for k in (set(op_body) | set(slot_body)) - {"__class__", "id"}:
+        ov = op_body.get(k, _MISSING_FIELD)
+        sv = slot_body.get(k, _MISSING_FIELD)
+        if ov == f"{slot_ptr}/{k}":
             continue
-        for op_name in ops:
-            if not op_name.startswith(gate):
+        if (ov is not _MISSING_FIELD and sv is not _MISSING_FIELD
+                and type(ov) is type(sv) and ov == sv
+                and (not pulse_refs.is_ref(ov) or ov.startswith("#./"))):
+            continue
+        ok1, v1 = _slot_field(merged, op_segs, op_body, k)
+        ok2, v2 = _slot_field(merged, slot_segs, slot_body, k)
+        if not (ok1 and ok2 and type(v1) is type(v2) and v1 == v2):
+            return False
+    return True
+
+
+def _slot_copies(merged: dict, slot_path: str) -> list[str]:
+    """The channel operations that are exact copies of the pair-gate slot at
+    *slot_path* (:func:`_is_exact_copy`): every op that points into the slot,
+    and the op named by the slot's ``id`` on a qubit's channel (the name a
+    gate plays), checked field by field."""
+    try:
+        slot_body = _walk_path(merged, slot_path.split("."))[1]
+    except Exception:  # noqa: BLE001
+        return []
+    if not isinstance(slot_body, dict):
+        return []
+    slot_ptr = "#/" + slot_path.replace(".", "/")
+    sid = slot_body.get("id")
+    out = []
+    for qn, q in ((merged or {}).get("qubits") or {}).items():
+        if not isinstance(q, dict):
+            continue
+        for ch in ("xy", "z", "resonator", "xy_detuned"):
+            ops = (q.get(ch) or {}).get("operations") if isinstance(q.get(ch), dict) else None
+            if not isinstance(ops, dict):
                 continue
-            is_coupler = "coupler" in op_name
-            if is_coupler != wants_coupler:
-                continue
-            # prefer ops that mention the pair (or one of its qubits)
-            if pair_name in op_name or any(q in op_name for q in pair_qubits):
-                candidates.append((elem_key, op_name))
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(candidates) > 1:
-        # several matches (multi-neighbor gates) — prefer one naming the pair
-        exact = [c for c in candidates if pair_name in c[1]]
-        if len(exact) == 1:
-            return exact[0]
-    return None, None
+            for op, body in ops.items():
+                if isinstance(body, str):
+                    near = body.rstrip("/") == slot_ptr
+                elif isinstance(body, dict):
+                    near = (op == sid) or any(
+                        isinstance(v, str) and v.startswith(slot_ptr + "/")
+                        for v in body.values())
+                else:
+                    near = False
+                op_path = f"qubits.{qn}.{ch}.operations.{op}"
+                if near and _is_exact_copy(merged, op_path, body, slot_path, slot_body):
+                    out.append(op_path)
+    return out
+
+
+def _slot_config_match(config: dict, path: str, state: dict | None) -> dict:
+    """Where the generated config carries the pair-gate slot at *path*:
+    ``{"element", "operation", "mirror", "copies"}``. A macro slot is not a
+    channel operation, so the config has it only through a channel operation
+    that is an exact copy of it (:func:`_slot_copies`) -- matched exactly or
+    not at all, never by a name that merely mentions a pair qubit (PU-04:
+    that matched another pair's pulse on another line). With several copies
+    in the config (all the same pulse), the one named by the slot's ``id``
+    -- the name the gate plays -- is preferred."""
+    copies = _slot_copies(state or {}, path)
+    elements = (config or {}).get("elements") or {}
+    hits = []
+    for op_path in copies:
+        parts = op_path.split(".")
+        elem, op = f"{parts[1]}.{parts[2]}", parts[4]
+        ops = (elements.get(elem) or {}).get("operations") if isinstance(elements.get(elem), dict) else None
+        if isinstance(ops, dict) and op in ops:
+            hits.append((elem, op, op_path))
+    if hits:
+        try:
+            sid = _walk_path(state or {}, path.split("."))[1].get("id")
+        except Exception:  # noqa: BLE001
+            sid = None
+        hits.sort(key=lambda h: (h[1] != sid, h[2]))
+        elem, op, op_path = hits[0]
+        return {"element": elem, "operation": op, "mirror": op_path, "copies": copies}
+    return {"element": None, "operation": None, "mirror": copies[0] if copies else None,
+            "copies": copies}
 
 
 def _config_op_for_found_path(config: dict, path: str,
@@ -24620,13 +24780,30 @@ def _pulse_fallback_spark(store, path, row) -> None:
         logger.debug("lab sparkline lookup failed for %s", path, exc_info=True)
         rec = {}
     if rec.get("ok"):
+        _pulse_row_lab_length(row, rec)
         row["spark_svg"] = sparkline_svg(lab_waveform.payload_for_plot(rec))
         row["spark_from_lab"] = bool(row["spark_svg"])
         row["spark_at"] = None
         if row["spark_svg"]:
             return
-    row["spark_svg"], row["spark_at"] = _pulse_truth_spark(store, path)
+    row["spark_svg"], row["spark_at"], cfg_len = _pulse_truth_spark(store, path)
     row["spark_from_config"] = bool(row["spark_svg"])
+    if row.get("length") is None and isinstance(cfg_len, int):
+        # PU-05: until the class's own code has drawn it, the length the
+        # lab's own generate_config() gave this pulse -- only from a config
+        # NOT older than the chip's content (a stale one is no answer)
+        row["length"] = cfg_len
+        row["length_from_config"] = True
+
+
+def _pulse_row_lab_length(row, rec) -> None:
+    """PU-05: the Length cell of a class SM does not synthesize is the length
+    its OWN code reported for these exact field values (a RAM hit), never '-'
+    when that answer is in hand."""
+    n = rec.get("length")
+    if row.get("length") is None and isinstance(n, int) and not isinstance(n, bool):
+        row["length"] = n
+        row["length_from_lab"] = True
 
 
 #: rows per background ask of the sparkline warm (see _warm_lab_sparks)
@@ -24684,8 +24861,9 @@ def _warm_lab_sparks(store, paths) -> None:
 def _pulse_truth_spark(store, path):
     """A sparkline for a class SM cannot synthesize, from the lab's own config.
 
-    Returns ``(svg, generated_at)`` or ``(None, None)``. Never raises: a missing
-    or unreadable config simply means no thumbnail, exactly as before.
+    Returns ``(svg, generated_at, length)`` or ``(None, None, None)``;
+    ``length`` only from a config not older than the chip's content. Never
+    raises: a missing or unreadable config simply means no thumbnail.
 
     The config is generated ONCE in the background when the chip is opened
     (docs/189 part 2) and cached as one dict, so this is a dictionary lookup --
@@ -24697,15 +24875,17 @@ def _pulse_truth_spark(store, path):
         truth = _pulse_truth_lookup(store, path)
     except Exception:       # noqa: BLE001 -- a thumbnail is never worth an error page
         logger.debug("lab sparkline lookup failed for %s", path, exc_info=True)
-        return None, None
+        return None, None, None
     if truth.get("status") != "ok":
-        return None, None
+        return None, None, None
     traces = truth.get("traces") or []
     ys_i = next((t.get("y") for t in traces if t.get("name") == "I"), None)
     ys_q = next((t.get("y") for t in traces if t.get("name") == "Q"), None)
     if not ys_i:
-        return None, None
-    return sparkline_svg({"ok": True, "i": ys_i, "q": ys_q}), truth.get("at")
+        return None, None, None
+    raw_y = (truth.get("raw_i") or {}).get("y")
+    n = len(raw_y) if isinstance(raw_y, list) and raw_y and not truth.get("stale") else None
+    return sparkline_svg({"ok": True, "i": ys_i, "q": ys_q}), truth.get("at"), n
 
 
 def _pulse_truth_lookup(store, path):
@@ -24729,16 +24909,25 @@ def _pulse_truth_lookup(store, path):
     if cfg is None:
         return {"status": "absent"}
 
-    elem_or_prefix, op_name = _config_op_for_pulse_path(cfg, path, store.merged)
+    mirror = None
+    if _PULSE_PATH_RES[1].match(path):
+        # v1.3.0 (PU-04/PU-09): a pair-gate slot is in the config only through
+        # an exact copy registered as a channel operation -- matched exactly
+        # or answered "not matched", never another pulse found by its name
+        got = _slot_config_match(cfg, path, store.merged)
+        elem_or_prefix, op_name, mirror = got["element"], got["operation"], got["mirror"]
+    else:
+        elem_or_prefix, op_name = _config_op_for_pulse_path(cfg, path, store.merged)
     if op_name is None:
-        # docs/190 F49: only the pair-GATE branch guesses. The qubit and
-        # pair-drive branches read the op name straight off the path, so a miss
-        # there really does mean the config has never heard of this pulse.
-        # A discovered slot outside an `operations` dict (docs/217) is never
-        # guessed either: SM could not match it, which is not "absent".
-        return {"status": "not-matched" if (_PULSE_PATH_RES[1].match(path)
-                                             or path.split(".")[-2:-1] != ["operations"])
-                else "not-found"}
+        # docs/190 F49: the qubit and pair-drive branches read the op name
+        # straight off the path, so a miss there really does mean the config
+        # has never heard of this pulse. A pair-gate slot, or a discovered
+        # slot outside an `operations` dict (docs/217), is not a channel
+        # operation: SM could not match it, which is not "absent". ``mirror``
+        # names the exact copy the config predates, when there is one.
+        if _PULSE_PATH_RES[1].match(path) or path.split(".")[-2:-1] != ["operations"]:
+            return {"status": "not-matched", "mirror": mirror}
+        return {"status": "not-found"}
 
     # The qubit-op matcher returns op_name straight from the path without
     # consulting the config, so an op the config has never heard of would
@@ -24780,6 +24969,7 @@ def _pulse_truth_lookup(store, path):
         "raw_q": truth_q,
         "element": truth.get("element"),
         "operation": op_name,
+        "mirror": mirror,
         "stale": _config_stale(store),
         "at": meta.get("at"),
         "unsaved_at_generate": bool(meta.get("unsaved_at_generate")),
@@ -24801,12 +24991,30 @@ _TRUTH_STATUS_ERROR = {
     # matching ids, while the message told the user they had "likely been
     # created/renamed after the config was generated". Two situations, two
     # remedies, and only one of them was ever stated.
-    "not-matched": ("SM could not match this pair-gate pulse to an entry in the "
-                    "cached config. A gate's flux pulses are registered there "
-                    "under generated names, so this can mean the config predates "
-                    "the pulse OR simply that the generated name is not one SM "
-                    "recognises. Regenerating the config settles which."),
+    # v1.3.0 (PU-09): the old sentence ended "Regenerating the config settles
+    # which" -- but a slot with no exact copy among the channel operations is
+    # not in ANY generated config, so a regenerate cannot change the answer.
+    # The regenerate offer now comes only with a copy the config predates
+    # (_truth_not_matched_text).
+    "not-matched": ("SM could not match this pulse to an entry in the cached "
+                    "config. It is not a channel operation, so the config "
+                    "carries it only through a channel operation that is an "
+                    "exact copy of it (every field the same, or a pointer to "
+                    "it), and this chip has none -- there is no config "
+                    "waveform to compare it with."),
 }
+
+
+def _truth_not_matched_text(found: dict) -> str:
+    """The not-matched sentence for *found*: with an exact copy the cached
+    config predates, the honest remedy (regenerate); without one, none."""
+    mirror = found.get("mirror")
+    if mirror:
+        return ("SM could not match this pulse to an entry in the cached "
+                f"config: it is played through {mirror}, an exact copy of it, "
+                "which the cached config does not carry -- the config predates "
+                "that operation. Regenerate to include it.")
+    return _TRUTH_STATUS_ERROR["not-matched"]
 
 
 @bp.route("/api/pulse/ground-truth")
@@ -24827,7 +25035,10 @@ def api_pulse_ground_truth():
     if status == "absent":
         return jsonify({"ok": False, "status": status,
                         "error": _TRUTH_STATUS_ERROR[status]}), 409
-    if status in ("not-found", "not-matched"):
+    if status == "not-matched":
+        return jsonify({"ok": False, "status": status, "mirror": found.get("mirror"),
+                        "error": _truth_not_matched_text(found)}), 404
+    if status == "not-found":
         return jsonify({"ok": False, "status": status,
                         "error": _TRUTH_STATUS_ERROR[status]}), 404
     if status == "no-trace":
@@ -24874,6 +25085,8 @@ def api_pulse_ground_truth():
         "plot": {"ok": True, "traces": found["traces"]},
         "element": found.get("element"),
         "operation": found.get("operation"),
+        # a pair-gate slot: the exact copy whose config entry this is
+        "mirror": found.get("mirror"),
         "meta": {"at": found.get("at"), "stale": stale,
                  "unsaved_at_generate": found.get("unsaved_at_generate")},
         "comparison": comparison,

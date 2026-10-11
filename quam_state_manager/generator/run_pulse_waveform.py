@@ -94,10 +94,50 @@ def _is_process_state_warning(message: str) -> bool:
     return any(s in message for s in _PROCESS_STATE_WARNINGS)
 
 
+#: a parameter of this shape is a QUESTION, not a value (SM's
+#: ``core/pulse_refs.LAB_REF_KEY``): ``{"@sm_ref": {"qclass", "params",
+#: "attr"}}`` -- build that pulse with its own class and read ``attr`` from it.
+#: It is how a reference to another pulse's runtime property (a lab class's
+#: ``lobe3_length``) or to a default only the class knows reaches the class
+#: being drawn: quam answers it on the object, and so does this.
+LAB_REF_KEY = "@sm_ref"
+
+
+def _is_question(value) -> bool:
+    return isinstance(value, dict) and set(value) == {LAB_REF_KEY}
+
+
+def _answer(question: dict, depth: int = 0):
+    """The value a reference question asks for, read from the target pulse
+    built by its OWN class (its own questions answered first). Raises with a
+    sentence naming what could not be read."""
+    if depth > 20:
+        raise ValueError("the references go round in a loop")
+    qclass = question.get("qclass")
+    attr = question.get("attr")
+    if not isinstance(qclass, str) or not isinstance(attr, str):
+        raise ValueError("a malformed reference question")
+    cls = _import_class(qclass)
+    fields = {f.name for f in dataclasses.fields(cls) if f.init}         if dataclasses.is_dataclass(cls) else None
+    kwargs = {}
+    for k, v in (question.get("params") or {}).items():
+        if fields is not None and k not in fields:
+            continue
+        kwargs[k] = _answer(v[LAB_REF_KEY], depth + 1) if _is_question(v) else v
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        obj = cls(**kwargs)
+        value = getattr(obj, attr)
+    if isinstance(value, str) and value.startswith("#"):
+        raise ValueError(f"{cls.__name__}.{attr} does not resolve ({value})")
+    return value
+
+
 def _draw_one(qclass: str, params: dict, max_samples: int) -> dict:
     res = {"ok": False, "canonical": None, "i": [], "q": None, "iq": False,
            "kind": None, "length": None, "dropped": [], "warnings": [],
-           "error": None}
+           "error": None, "refs": {}}
     try:
         cls = _import_class(qclass)
     except BaseException as exc:  # noqa: BLE001 -- SystemExit from a lab import too
@@ -124,6 +164,19 @@ def _draw_one(qclass: str, params: dict, max_samples: int) -> dict:
     fields = {f.name: f for f in dataclasses.fields(cls) if f.init}
     kwargs = {k: v for k, v in (params or {}).items()
               if k in fields and k != "__class__"}
+    for k, v in list(kwargs.items()):
+        if not _is_question(v):
+            continue
+        q = v[LAB_REF_KEY]
+        try:
+            kwargs[k] = _answer(q)
+        except BaseException as exc:  # noqa: BLE001 -- named, never a raw string passed on
+            res["error"] = (f"{k}: could not read {q.get('attr')} of "
+                            f"{str(q.get('qclass')).rsplit('.', 1)[-1]}: "
+                            f"{type(exc).__name__}: {exc}")
+            return res
+        if isinstance(kwargs[k], (bool, int, float, str)) or kwargs[k] is None:
+            res["refs"][k] = kwargs[k]
     res["dropped"] = sorted(k for k in (params or {})
                             if k not in fields and k != "__class__")
     missing = [n for n, f in fields.items()
@@ -164,10 +217,20 @@ def _draw_one(qclass: str, params: dict, max_samples: int) -> dict:
     import numpy as np
     arr = np.asarray(wf)
     if arr.ndim == 0:
-        # a constant waveform: quam hands the config a single number
-        n = length if length and length > 0 else 16
+        # a constant waveform: quam hands the config a single number, and the
+        # LENGTH is what makes it samples. One that does not resolve (a
+        # ``#./inferred_total_length`` on a class without that property) has
+        # none to draw -- 16 invented samples were drawn here, silently (PU-08)
+        if not length or length <= 0:
+            try:
+                shown = pulse.length
+            except Exception as exc:  # noqa: BLE001
+                shown = f"{type(exc).__name__}: {exc}"
+            res["error"] = (f"its length does not resolve ({shown!r}), so this "
+                            "constant waveform has no samples to draw")
+            return res
         res["kind"] = "constant"
-        arr = np.full(min(n, max_samples), arr.item())
+        arr = np.full(min(length, max_samples), arr.item())
     elif arr.ndim != 1:
         res["error"] = f"unsupported waveform shape {arr.shape}"
         return res
