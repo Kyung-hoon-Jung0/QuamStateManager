@@ -578,6 +578,11 @@ class DatasetStore:
         self._cache_timer: threading.Timer | None = None
         self._cache_saved = False
         self.cache_hit_runs = 0
+        # v1.3.0 (dsperf): True once a walk has finished. Until then a
+        # parsed run is the first index being built (an archive of runs
+        # that were there already), not a run that landed or changed:
+        # the delta poll ships those rows, but they are not run arrivals.
+        self.index_complete = False
         self._load_store_cache()
         self._last_scan_truncated = self._scan(
             deadline=_time.monotonic() + _COLD_SCAN_BUDGET_S)
@@ -692,6 +697,23 @@ class DatasetStore:
             return (st.st_mtime_ns, st.st_size)
         except OSError:
             return (None, None)
+
+    @staticmethod
+    def _list_names_only(date_entry: Path, dates_set: set, experiments_set: set) -> None:
+        """A date dir a yielding scan stopped short of (see ``_scan``): its
+        name and its runs' experiment names, from one directory listing --
+        no per-run stat, nothing parsed, no fingerprint recorded."""
+        if not _DATE_FOLDER_RE.match(date_entry.name):
+            return
+        try:
+            with os.scandir(date_entry) as it:
+                for e in it:
+                    m = _RUN_FOLDER_RE.match(e.name)
+                    if m and e.is_dir():
+                        experiments_set.add(m.group(2))
+        except OSError:
+            return
+        dates_set.add(date_entry.name)
 
     def _parse_run_folder(
         self, run_entry: Path, date_str: str, run_id: int, time_str: str,
@@ -916,7 +938,23 @@ class DatasetStore:
         # docs/142: newest-first. Under a deadline the walk must spend its
         # budget on the dates the table actually shows first; ascending order
         # spent it on the oldest month and truncated before today.
+        # v1.3.0 (dsperf): a YIELDING scan parses one chunk once the
+        # interpreter is wanted elsewhere, so walking every date dir still
+        # unread (3 stats per run: ~13,000 on a cold 3,500-run index, 0.4 s
+        # of interpreter on a local disk) bought one 64-run chunk per call --
+        # measured on every delta poll, render and warmer step while a history
+        # catch-up ran. Once the walk holds a chunk to parse and should_yield()
+        # says so, it stops walking (truncated: the next scan continues,
+        # newest dates first as before). The remaining dirs are only listed by
+        # name, so the date tabs and experiment chips stay what a full walk
+        # would give.
+        yld_walk = getattr(_SCAN_YIELD, "v", None)
+        walk_cut = False
+        walked = 0
         for date_entry in sorted(root.iterdir(), reverse=True):
+            if walk_cut:
+                self._list_names_only(date_entry, dates_set, experiments_set)
+                continue
             if deadline is not None and _time.monotonic() >= deadline:
                 truncated = True
                 break
@@ -973,6 +1011,13 @@ class DatasetStore:
                 if deadline is not None and _time.monotonic() >= deadline:
                     cut_mid_dir = truncated = True
                     break
+                # v1.3.0 (dsperf): the yield cut, per run like the deadline's
+                # (one busy day is ~1,500 stats); asked every 8th run
+                walked += 1
+                if (yld_walk is not None and not walked & 7
+                        and len(to_parse) >= yld_walk[1] and yld_walk[0]()):
+                    cut_mid_dir = truncated = walk_cut = True
+                    break
                 if not run_entry.is_dir():
                     continue
                 m = _RUN_FOLDER_RE.match(run_entry.name)
@@ -1007,6 +1052,9 @@ class DatasetStore:
                     folder_fp, node_fp, data_fp,
                 ))
             if cut_mid_dir:
+                if walk_cut:    # the rest of this dir and the next: names only
+                    self._list_names_only(date_entry, dates_set, experiments_set)
+                    continue
                 break           # its runs found so far still parse below
             # Record the date dir's mtime + run-path set so the next scan can
             # skip it if untouched. Only safe to short-circuit once all its
@@ -1154,6 +1202,7 @@ class DatasetStore:
         self._run_ids_sorted = sorted(self.runs.keys())
         if not truncated:
             self._last_mtime = pre_walk_mtime
+            self.index_complete = True
             # docs/171: a COMPLETE walk that changed something (or the first
             # one this cache has seen) is what the next session should start
             # from. A truncated walk never is -- its un-walked dirs would be
@@ -1645,7 +1694,7 @@ class DatasetStore:
     # ------------------------------------------------------------------
 
     def changes_since(self, ts: float, date: str | None = None,
-                      deadline: float | None = None) -> dict:
+                      deadline: float | None = None, *, rescan: bool = True) -> dict:
         """Return rows added/updated since ``ts`` plus run_ids that vanished.
 
         Used by the JS auto-poll to merge deltas into the in-memory row store
@@ -1660,12 +1709,17 @@ class DatasetStore:
         """
         scan_ok = True
         _t0 = _time.perf_counter()
-        self._last_scan_truncated = False
-        try:
-            self.rescan_if_stale(deadline=deadline)
-        except Exception:
-            scan_ok = False
-            logger.exception("changes_since: incremental rescan failed")
+        # v1.3.0 (dsperf): ``rescan=False`` reports what is indexed without
+        # scanning (a store still building its first index while a history
+        # catch-up runs, routes.datasets_changes_since); ``partial`` then says
+        # what the last scan said.
+        if rescan:
+            self._last_scan_truncated = False
+            try:
+                self.rescan_if_stale(deadline=deadline)
+            except Exception:
+                scan_ok = False
+                logger.exception("changes_since: incremental rescan failed")
         scan_ms = (_time.perf_counter() - _t0) * 1000.0
         updated = []
         # Snapshot under the scan lock so a concurrent worker rescan can't
