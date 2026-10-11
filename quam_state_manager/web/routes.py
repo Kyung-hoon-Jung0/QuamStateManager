@@ -3757,12 +3757,18 @@ def _shared_working_changed(ctx) -> bool:
     return store.working_digest is None or _pair_bytes_digest(wc.working_folder) != store.working_digest
 
 
-def _shared_working_refusal():
+_SHARED_WORKING_SAVE_MSG = (
+    "Another SM window/process changed the shared working copy. Nothing was saved; "
+    "your edits remain in the tray. Take live before saving from this window."
+)
+
+
+def _shared_working_refusal(message: str | None = None):
+    message = message or working_copy.SHARED_WORKING_MSG
     if request.headers.get("Accept", "").startswith("application/json"):
         return jsonify(ok=False, status="error", conflict="shared_working_copy",
-                       message=working_copy.SHARED_WORKING_MSG), 409
-    return render_template("_status.html", level="warning",
-                           message=working_copy.SHARED_WORKING_MSG), 409
+                       message=message), 409
+    return render_template("_status.html", level="warning", message=message), 409
 
 
 def _press_keep_tray(ctx, press) -> None:
@@ -25179,6 +25185,12 @@ def save():
         return render_template("_status.html", message="No unsaved changes", level="info")
 
     count = len(store.change_log)
+    # Two processes on one instance share the working files: a save over bytes
+    # this process did not load or write would silently replace the other
+    # process's saved draft. Checked under the locks below; a refusal puts the
+    # stash back, so nothing moves.
+    wc = ctx.get("working_copy")
+    _press = _press_begin(ctx)
     # Stash the edits before save() clears the change log, so a later pull can
     # re-apply or stage them even though they're no longer "unsaved".
     with store._lock:
@@ -25188,8 +25200,15 @@ def save():
         # Build lock: the save writes the working folder's state/wiring pair —
         # the same files a concurrent _activate_quam reconcile auto-sync
         # rewrites. Serialise so the two can't interleave on the .tmp files.
-        with _active_wc_lock(ctx):
+        from quam_state_manager.core import xlock
+        with _active_wc_lock(ctx), (xlock.held(xlock.live_lock_path(wc.working_folder))
+                                    if wc is not None else contextlib.nullcontext()):
+            if wc is not None and _shared_working_changed(ctx):
+                raise working_copy.WorkingCopyChangedError(_SHARED_WORKING_SAVE_MSG)
             saver.save()
+    except working_copy.WorkingCopyChangedError:
+        _press_keep_tray(ctx, _press)
+        return _shared_working_refusal(_SHARED_WORKING_SAVE_MSG)
     except Exception as e:
         return render_template("_status.html", message=f"Save failed: {e}", level="error"), 500
     # docs/271: saved, not on the chip -- the press that lands them stamps
