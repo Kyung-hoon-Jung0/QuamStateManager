@@ -20983,6 +20983,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
             # earlier this session — drives the "re-link to previous" chip
             "prev_link": (None if is_ptr
                           else prev_links.get(f"{actual_path}.{fname}")),
+            "marker_note": _pulse_marker_note(store) if fname == "digital_marker" else None,
         })
 
     # docs/217: a discovered op in an `operations` dict renames like a qubit
@@ -21174,6 +21175,17 @@ def pulse_edit():
     # held from the lab check to the write (see _lab_hold)
     _lab_rel = _lab_hold(store, _lab_paths)
     try:
+        if dot_path.rsplit(".", 1)[-1] == "digital_marker":
+            candidate = _parse_value(raw_value)
+            if mode == "pointer":
+                from quam_state_manager.core import pulse_refs
+                ref = pulse_refs.read(store.merged, dot_path.split(".")[:-1], raw_value.strip())
+                candidate = ref.value if ref.ok else None
+            marker_names = _pulse_marker_names(store)
+            if isinstance(candidate, str) and not is_pointer(candidate) and marker_names is not None and candidate not in marker_names:
+                return render_template("_status.html", level="error",
+                    message=f"Digital marker {candidate!r} is not defined by this chip. "
+                            f"Defined markers: {', '.join(sorted(marker_names)) or '(none)'}. Nothing was written."), 400
         if mode == "pointer":
             value = raw_value.strip()
             if not value.startswith(("#/", "#./", "#../")):
@@ -21318,6 +21330,25 @@ def pulse_edit():
         view_paths = [p_ for p_ in view_paths if p_ != view_main]
         resp = _render_pulse_detail(path, paths=view_paths or None)
     return _lab_toast(_pulse_mutation_response(resp, paths=_touched))
+
+
+def _pulse_marker_names(store) -> set[str] | None:
+    """QUAM's root/template code defines marker names in the generated
+    config, not in pulse digital_marker strings. Never infer declarations
+    from those uses or trust a config whose state basis is unknown/stale."""
+    cfg = store.generated_config
+    if not isinstance(cfg, dict) or not store.generated_config_meta or _config_stale(store):
+        return None
+    markers = cfg.get("digital_waveforms")
+    return set(markers) if isinstance(markers, dict) else None
+
+
+def _pulse_marker_note(store) -> str:
+    names = _pulse_marker_names(store)
+    if names is None:
+        return ("Marker names cannot be determined from this state. Generate a current "
+                "config to check them; edits are allowed without this check.")
+    return "Defined markers: " + (", ".join(sorted(names)) or "(none)")
 
 
 def _lab_toast(resp):
