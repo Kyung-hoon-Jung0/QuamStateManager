@@ -9,8 +9,6 @@ is not isolated (a plain torn + repair + Apply keeps its target).
 Contract: I6 / docs/65 -- every Apply takes (or content-matches) a pre-apply
 snapshot and ``last_apply.pre_ts`` names it.
 """
-import pytest
-
 from tests.state_model.ops import Rig
 
 OPS = [
@@ -57,11 +55,11 @@ def _replay(tmp_path, monkeypatch, seed, ops):
     assert rig.snapshot_doc(la["pre_ts"]) == before
 
 
-@pytest.mark.xfail(strict=True, reason="SU-16: the pre-apply backup is lost after the missing folder")
+# v1.3.0: xfail -> pass, an unreadable live read no longer reroutes the backup (SU-06).
 def test_an_apply_after_a_missing_live_folder_keeps_its_revert_target(tmp_path, monkeypatch):
     _replay(tmp_path, monkeypatch, 1479, OPS_GONE)
 
 
-@pytest.mark.xfail(strict=True, reason="SU-16: the pre-apply backup is lost after the torn read")
+# v1.3.0: xfail -> pass, closed by SU-06 (backup routing) and SU-17 (refused Take live), each alone.
 def test_an_apply_after_a_torn_read_keeps_its_revert_target(tmp_path, monkeypatch):
     _replay(tmp_path, monkeypatch, 1222, OPS)
