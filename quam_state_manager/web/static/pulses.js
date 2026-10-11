@@ -2151,6 +2151,15 @@ window.PulsesPage = (function () {
         showRow(arm.path, false);
     });
 
+    document.addEventListener('htmx:beforeSwap', function (evt) {
+        var d = evt.detail, xhr = d && d.xhr;
+        if (d && d.target && d.target.id === 'inspector-pane' && xhr && xhr.status === 404
+                && xhr.getResponseHeader('X-Pulse-Missing') === '1') {
+            d.shouldSwap = true;
+            d.isError = false;
+        }
+    });
+
     // docs/190 F33: a refused commit (400) leaves the typed text in place so
     // the typo can be fixed where it was made -- but the field must SAY it was
     // refused, not only the toast. Cleared on the next keystroke.

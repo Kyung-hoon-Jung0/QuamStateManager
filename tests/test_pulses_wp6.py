@@ -114,3 +114,17 @@ def test_an_empty_defined_marker_set_refuses_names(client):
     r = client.post("/pulse/edit", data={"path": MARKER_OP, "dot_path": MARKER_OP + ".digital_marker",
                                          "mode": "value", "value": "OFF"})
     assert r.status_code == 400 and b"(none)" in r.data
+
+
+def test_redone_delete_returns_an_honest_inspector(client):
+    r = client.post("/api/pulse/delete", data={"path": MARKER_OP, "confirm": "1"})
+    assert r.status_code == 200, r.data[:300]
+    assert client.post("/undo").status_code == 200
+    assert client.get("/pulse/detail", query_string={"path": MARKER_OP}).status_code == 200
+    assert client.post("/redo").status_code == 200
+    r = client.get("/pulse/detail", query_string={"path": MARKER_OP})
+    assert r.status_code == 404
+    assert r.headers.get("X-Pulse-Missing") == "1"
+    assert b"This pulse no longer exists" in r.data
+    assert b"Deleted saturation" in r.data
+    assert b"pulse-edit-form" not in r.data and b"pulse-detail-plot" not in r.data

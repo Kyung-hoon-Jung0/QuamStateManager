@@ -35,6 +35,17 @@ w.eval(fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/la
     assert.equal(reverted.length, 1);
     assert.equal(reverted[0].entries.length, 2, 'both fields repaint through the undo event');
     assert.equal(w.document.querySelector('.lab-check-follow'), null);
-    console.log('7 assertions passed');
+    w._debounce = () => {};
+    w.eval(fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/pulses.js'), 'utf8'));
+    const pane = w.document.getElementById('inspector-pane');
+    const missing = { target: pane, xhr: { status: 404, getResponseHeader: () => '1' },
+        shouldSwap: false, isError: true };
+    w.document.dispatchEvent(new w.CustomEvent('htmx:beforeSwap', { detail: missing }));
+    assert.equal(missing.shouldSwap, true, 'a missing-pulse response replaces the stale inspector');
+    assert.equal(missing.isError, false, 'the honest missing state is handled');
+    const other = { target: pane, xhr: { status: 404, getResponseHeader: () => null }, shouldSwap: false };
+    w.document.dispatchEvent(new w.CustomEvent('htmx:beforeSwap', { detail: other }));
+    assert.equal(other.shouldSwap, false, 'an ordinary 404 keeps its normal handling');
+    console.log('10 assertions passed');
     w.close();
 })().catch(err => { console.error(err); w.close(); process.exitCode = 1; });

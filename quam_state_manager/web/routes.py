@@ -20820,9 +20820,11 @@ def _pulse_section_ctx(store, pulse_index, path: str):
 
     row = pulse_index.row(path)
     if row is None:
-        return render_template("_status.html",
-                               message=f"Pulse not found: {path}",
-                               level="error"), 404
+        resp = make_response(render_template("_status.html",
+            message=f"Deleted {path.rsplit('.', 1)[-1]}. This pulse no longer exists.",
+            level="warning"))
+        resp.headers["X-Pulse-Missing"] = "1"
+        return resp, 404
 
     from quam_state_manager.core.pulse_catalog import (
         infer_spec_ex, unmodeled_fields)
