@@ -146,3 +146,29 @@ def test_config_delete_refusal_names_the_delete():
     from quam_state_manager.web.routes import _lab_refusal_text
     text = _lab_refusal_text("your chip's generate_config() fails: missing operation", action="delete")
     assert "refused this delete" in text and "missing operation" in text
+
+
+@pytest.mark.parametrize("undone", [False, True])
+def test_same_pointer_relink_records_nothing_and_keeps_real_undo(lab, undone):
+    c, fake = lab
+    st = _store(c)
+    op = "qubits.q1.z.operations.czl_q1"
+    field = op + ".amplitude"
+    pointer = st.get_value(field)
+    target = G + ".flux_pulse_qubit.amplitude"
+    assert c.post("/pulse/edit", data={"path": op, "dot_path": field,
+                                       "mode": "value", "value": "0.2"}).status_code == 200
+    if undone:
+        assert c.post("/undo").status_code == 200
+    before = json.dumps(st.merged, sort_keys=True)
+    sequence, log_size = st.mutation_seq, len(st.change_log)
+    calls = len(fake.gate_calls)
+    r = c.post("/pulse/edit", data={"path": op, "dot_path": field,
+                                    "mode": "pointer", "value": "  " + pointer + "  "})
+    assert r.status_code == 200, r.data[:300]
+    assert st.mutation_seq == sequence and len(st.change_log) == log_size
+    assert json.dumps(st.merged, sort_keys=True) == before
+    assert len(fake.gate_calls) == calls, "an unchanged link needs no gate check"
+    assert "pulses-rows-changed" not in r.headers.get("HX-Trigger", "")
+    assert c.post("/redo" if undone else "/undo").status_code == 200
+    assert st.get_value(target) == (0.2 if undone else 0.15)

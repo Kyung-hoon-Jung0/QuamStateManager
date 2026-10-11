@@ -21188,7 +21188,9 @@ def pulse_edit():
                 return render_template("_status.html", level="error",
                     message=f"Digital marker {candidate!r} is not defined by this chip. "
                             f"Defined markers: {', '.join(sorted(marker_names)) or '(none)'}. Nothing was written."), 400
-        if mode == "pointer":
+        if mode == "pointer" and store.get_value(dot_path) == raw_value.strip():
+            _noop_edit = True
+        elif mode == "pointer":
             value = raw_value.strip()
             if not value.startswith(("#/", "#./", "#../")):
                 return render_template(
