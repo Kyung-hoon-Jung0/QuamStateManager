@@ -41,6 +41,11 @@ function boot() {
   for (const name of ['app.js', 'topo-graph.js', 'chip-status.js']) w.eval(fs.readFileSync('quam_state_manager/web/static/' + name, 'utf8'));
   w._plotlyRender = (host) => { s.renders.push(host.closest('.topo-trend-box').getAttribute('data-trend-metric'));
                                 host._fullLayout = {}; host.data = [{type: 'scatter'}]; return Promise.resolve(); };
+  // v1.3.0 A3: a kept chart onto a moved view window is a relayout, not a redraw
+  s.relayouts = [];
+  w.Plotly = {relayout: (host, upd) => {
+    s.relayouts.push([host.closest('.topo-trend-box').getAttribute('data-trend-metric'), upd]);
+    return Promise.resolve(); }};
   // the first build: what the section's lazy htmx swap + inline script do
   s.first = (html) => {
     const host = w.document.getElementById('topo-trends');
@@ -96,6 +101,9 @@ s.next = {html: frag([{metric: 'T1', kind: 'qubit', sig: 'a2', pts: [['20260101_
                       {metric: 'T2echo', kind: 'qubit', sig: 'b1'}])};
 w.ChipTrends.reload();
 ok(s.renders.join() === 'T1', 'only the chart whose signature changed is redrawn: ' + s.renders);
+ok(s.relayouts.length === 1 && s.relayouts[0][0] === 'T2echo'
+   && (r => Date.parse(r[1] + 'Z') - Date.parse(r[0] + 'Z') > 1.5 * 86400e3)(s.relayouts[0][1]['xaxis.range']),
+   'the kept chart moves onto the window T1 widened, without a redraw: ' + JSON.stringify(s.relayouts));
 
 // P5: the same (metric) with a different KIND is a different chart
 s.renders = [];
