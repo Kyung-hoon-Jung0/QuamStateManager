@@ -187,3 +187,16 @@ def test_container_refusal_keeps_the_reason_and_names_the_kind(client, kind, doo
     assert "resolves to a container" in text and "not a value" in text
     assert "is a " + kind in text
     assert not st.change_log
+
+
+@pytest.mark.parametrize("mode", ["pointer", "literal"])
+def test_a_refused_explicit_link_action_does_not_offer_a_value_batch(lab, mode):
+    c, fake = lab
+    st = _store(c)
+    st.merged["shared_flat_length"] = 40
+    st.state["shared_flat_length"] = 40
+    r = c.post("/pulse/edit", data={"path": G + ".flux_pulse_qubit", "dot_path": FL_C,
+                                    "mode": mode, "value": "#/shared_flat_length" if mode == "pointer" else "40"})
+    assert r.status_code == 400 and b"flat_length differ" in r.data
+    assert r.headers.get("X-Lab-Refusal") is None
+    assert _v(c, FL_C) == 32 and not st.change_log

@@ -23854,7 +23854,7 @@ def _lab_edit_refused(message: str, path=None, value=None):
     resp = make_response(render_template(
         "_status.html", level="error",
         message=_lab_refusal_text(message)), 400)
-    if path:
+    if path and request.form.get("mode", "value") == "value":
         resp.headers["X-Lab-Refusal"] = json.dumps({
             "lab_refused": True, "error": _lab_refusal_text(message),
             "lab_follow": _lab_follow_payload(path, value, getattr(g, "lab_info", None))})
