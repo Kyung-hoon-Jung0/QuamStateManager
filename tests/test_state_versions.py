@@ -948,6 +948,23 @@ class TestCompactRows:
         block = css[i:css.index("}", i)]
         assert "min-width" in block
 
+    def test_the_quick_diff_values_wrap_inside_the_panel(self):
+        """v1.3.0 B2: a nowrap value cell pushed old -> new -> delta past the
+        narrow panel's right edge. The cell may wrap; its pieces wrap as
+        units and a long value breaks inside itself."""
+        css = self._css()
+        i = css.index(".sv-q-vals {")
+        block = css[i:css.index("}", i)]
+        assert "nowrap" not in block
+        j = css.index(".sv-q-vals .sv-q-old,")
+        piece = css[j:css.index("}", j)]
+        for cls in (".sv-q-new", ".sv-q-add", ".sv-q-del", ".val-delta"):
+            assert cls in piece
+        assert "inline-block" in piece and "overflow-wrap: anywhere" in piece
+        tpl = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+               / "templates" / "_state_versions.html").read_text(encoding="utf-8")
+        assert '<span class="sv-q-new">\u2192 <b>{{ e.new_value }}</b></span>' in tpl
+
 
 def _hm_of(client):
     return client.application.config["history_manager"]

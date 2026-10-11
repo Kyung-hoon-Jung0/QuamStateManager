@@ -747,6 +747,11 @@ def project_state_paths(cfg_dir: Path | None = None) -> dict[str, Any]:
     return result
 
 
+def _ver_text(v: Any) -> str:
+    """A config version as a reader sees it: the number, or 'not set'."""
+    return "not set" if v is None else str(v)
+
+
 def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
     """Doctor findings over a :func:`list_projects` result (pure; no I/O
     beyond what listing already did). Each: {severity, project, code, message,
@@ -768,8 +773,9 @@ def lint(listing: dict[str, Any]) -> list[dict[str, Any]]:
         v = listing.get("versions") or {}
         findings.append({"severity": "warning", "project": None,
                          "code": "version_drift",
-                         "message": (f"config versions qualibrate={v.get('qualibrate')} / "
-                                     f"quam={v.get('quam')} differ from the supported "
+                         # v1.3.0 B2: an unset version reads 'not set', never 'None'
+                         "message": (f"config versions qualibrate={_ver_text(v.get('qualibrate'))} / "
+                                     f"quam={_ver_text(v.get('quam'))} differ from the supported "
                                      f"{SUPPORTED_QUALIBRATE_VERSION}/{SUPPORTED_QUAM_VERSION} "
                                      "— SM stays read-only for these configs")})
 
