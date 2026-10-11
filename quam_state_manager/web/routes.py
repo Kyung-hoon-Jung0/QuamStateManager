@@ -15463,7 +15463,7 @@ def _report_build_trends(rc: _ReportCtx) -> str:
     tz = _report_tz(rc.zone)
     names = sorted(rc.store.qubit_names, key=natural_key)
     order = {n: i for i, n in enumerate(names)}
-    charts = []
+    drawn = []
     no_time = 0
     for m in metrics:
         rows = sorted((s for s in series if s["metric"] == m),
@@ -15489,18 +15489,25 @@ def _report_build_trends(rc: _ReportCtx) -> str:
             full = _units.qty_filter(newest, m, "full")
             leg.append({"name": s["entity"], "color": color, "dash": dash,
                         "value": full or _units.qty_filter(newest, m)})
+        drawn.append((m, rows, sv, leg, xs_all))
+    # v1.3.0 (A3, the report too): every chart of one report spans ONE time
+    # window -- the chosen window's start (else the earliest point of any
+    # chart) to the newest point of any chart -- so the charts line up when
+    # read down the page; a chart used to span only its own points
+    every = [x for _m, _r, _sv, _l, xs in drawn for x in xs]
+    x_rng = None
+    if every:
+        lo = start if start is not None else min(every)
+        x_rng = (lo, max(max(every), lo + 1))
+    charts = []
+    for m, rows, sv, leg, xs_all in drawn:
         scale = _units.fixed_scale(m)
         factor, suffix = scale if scale else (1.0, _trend_unit(m))
         label = _trend_metric_label(m)
-        x_rng = None
-        if xs_all:
-            hi = max(xs_all)
-            lo = start if start is not None else min(xs_all)
-            x_rng = (lo, max(hi, lo + 1))
         svg = _svg.line_chart(sv, x_kind="time", tz=tz, y_factor=factor,
                               y_label=label + (f" ({suffix})" if suffix else ""),
                               x_label=f"time ({_report_zone_label(rc)})", title=label,
-                              x_range=x_rng, step=True)
+                              x_range=x_rng if xs_all else None, step=True)
         charts.append({"metric": m, "label": label, "svg": svg,
                        "legend": _svg.legend(leg), "n": len(rows),
                        "empty": not xs_all})
