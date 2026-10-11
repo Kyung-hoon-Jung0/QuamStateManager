@@ -10,12 +10,10 @@ Harness: PULSE duplicate/rename + EDIT inside the new subtree + APPLY + UNDO.
 Contract: docs/107/160 (the journal records what each action wrote; the walk
 writes the chip when nothing moved).
 """
-import pytest
-
 from tests.state_model.repros._rig import Chip
 
 
-@pytest.mark.xfail(strict=True, reason="SU-09: ChangeEntry.new_value aliases the created subtree")
+# v1.3.0: xfail -> pass, creation records must keep their original subtree.
 def test_the_create_entry_keeps_the_value_it_created(tmp_path):
     chip = Chip(tmp_path)
     r = chip.c.post("/api/pulse/duplicate", data={"path": "qubits.q1.z.operations.const", "new_name": "dupx"})
@@ -25,7 +23,7 @@ def test_the_create_entry_keeps_the_value_it_created(tmp_path):
     assert created.created and created.new_value["amplitude"] == 0.1
 
 
-@pytest.mark.xfail(strict=True, reason="SU-09: the second Ctrl+Z calls the aliased record drift")
+# v1.3.0: xfail -> pass, undo must remove an applied creation after its edit.
 def test_two_ctrl_z_after_apply_remove_the_new_pulse_from_the_chip(tmp_path):
     chip = Chip(tmp_path)
     chip.c.post("/api/pulse/duplicate", data={"path": "qubits.q1.z.operations.const", "new_name": "dupx"})
