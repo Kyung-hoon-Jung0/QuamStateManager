@@ -33,10 +33,11 @@
                     title="Compare against a run 10 steps later" aria-label="10 newer">&raquo;</button>
         </div>
         {% if vs_note %}<p class="muted prevdiff-note">{{ vs_note }}</p>{% endif %}
+        {# v1.3.0 B2: the counts carry their word -- "~15" read as "about 15" #}
         <div class="prevdiff-badges">
-            {% if summary.added %}<span class="diff-badge diff-added">+{{ summary.added }}</span>{% endif %}
-            {% if summary.removed %}<span class="diff-badge diff-removed">&minus;{{ summary.removed }}</span>{% endif %}
-            {% if summary.modified %}<span class="diff-badge diff-modified">~{{ summary.modified }}</span>{% endif %}
+            {% if summary.added %}<span class="diff-badge diff-added">+{{ summary.added }} added</span>{% endif %}
+            {% if summary.removed %}<span class="diff-badge diff-removed">&minus;{{ summary.removed }} removed</span>{% endif %}
+            {% if summary.modified %}<span class="diff-badge diff-modified">{{ summary.modified }} changed</span>{% endif %}
             {% if not summary.total %}<span class="muted">No differences</span>{% endif %}
         </div>
     </div>

@@ -15,7 +15,8 @@
         &nbsp;·&nbsp; <strong>Config root:</strong> <code>{{ listing.config_dir }}</code>
         <small class="muted">(resolved via {{ listing.source }})</small>
         &nbsp;·&nbsp; <strong>Versions:</strong>
-        qualibrate v{{ listing.versions.qualibrate }} / quam v{{ listing.versions.quam }}
+        {# v1.3.0 B2: a version the config does not set reads 'not set', never 'vNone' #}
+        {% for _k in ('qualibrate', 'quam') %}{{ ' / ' if not loop.first }}{{ _k }} {% if listing.versions[_k] is none %}<span class="muted">(version not set)</span>{% else %}v{{ listing.versions[_k] }}{% endif %}{% endfor %}
         {% if listing.versions.supported %}
         <span class="cell-good">&#10003;</span>
         {% else %}

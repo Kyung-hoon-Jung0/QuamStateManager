@@ -328,9 +328,17 @@
         <tbody id="datasets-tbody"></tbody>
     </table>
     <p id="datasets-empty" class="muted" style="display:none;text-align:center;padding:2rem">
+        {# v1.3.0 B2: with nothing to list, "matching the current filters" + "Clear
+           all filters" blamed filters nobody had set #}
+        {% if not total and is_collections %}
+        No tagged runs yet. Tag or star a run in Datasets and it is listed here.
+        {% elif not total %}
+        No runs in this data folder yet.
+        {% else %}
         No runs found matching the current filters.<br>
         <button type="button" class="btn-sm outline" style="margin-top:.6rem"
                 onclick="clearDatasetFilters()">Clear all filters</button>
+        {% endif %}
     </p>
 </div>
 </div>{# /.datasets-page #}

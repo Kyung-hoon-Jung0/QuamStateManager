@@ -1270,14 +1270,19 @@ window.ChipStatus.mount = function (opts) {
             }
             // Never a silently smaller N: an exclusion the user cannot see is
             // the same defect as a silently truncated column (docs/94).
-            var badTail = agg.bad ? '  ·  ' + agg.bad + ' excluded' : '';
+            // v1.3.0 B2: each piece (a stat, a range, the count) is one unbreakable
+            // unit, so a narrow tile wraps BETWEEN them, never "96.15%-" / "99.94%".
+            function keep(t) { return '<span class="tcs-k">' + t + '</span>'; }
+            var badTail = agg.bad ? '  ·  ' + keep(agg.bad + ' excluded') : '';
             var sub;
+            var span = keep(fmtFn(agg.min) + '–' + fmtFn(agg.max));
+            var count = keep('(' + agg.count + ')');
             if (stat === 'avg') {
-                sub = 'med ' + fmtFn(agg.median) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')' + badTail;
+                sub = keep('med ' + fmtFn(agg.median)) + '  ·  ' + span + '  ·  ' + count + badTail;
             } else if (stat === 'min' || stat === 'max') {
-                sub = 'med ' + fmtFn(agg.median) + '  ·  avg ' + fmtFn(agg.avg) + '  ·  (' + agg.count + ')' + badTail;
+                sub = keep('med ' + fmtFn(agg.median)) + '  ·  ' + keep('avg ' + fmtFn(agg.avg)) + '  ·  ' + count + badTail;
             } else {
-                sub = 'avg ' + fmtFn(agg.avg) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')' + badTail;
+                sub = keep('avg ' + fmtFn(agg.avg)) + '  ·  ' + span + '  ·  ' + count + badTail;
             }
             return {
                 title: title,

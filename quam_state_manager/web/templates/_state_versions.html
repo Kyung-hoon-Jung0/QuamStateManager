@@ -78,7 +78,7 @@
                 <td class="sv-q-vals">
                     {% if e.change_type == 'added' %}<span class="sv-q-add">+ {{ e.new_value }}</span>
                     {% elif e.change_type == 'removed' %}<span class="sv-q-del">− {{ e.old_value }}</span>
-                    {% else %}<span class="sv-q-old">{{ e.old_value }}</span> → <b>{{ e.new_value }}</b>
+                    {% else %}<span class="sv-q-old">{{ e.old_value }}</span> <span class="sv-q-new">→ <b>{{ e.new_value }}</b></span>
                     {{ delta_chip(e.old_value, e.new_value) }}{% endif %}
                 </td>
             </tr>

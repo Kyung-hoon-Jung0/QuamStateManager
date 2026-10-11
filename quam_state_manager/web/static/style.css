@@ -1060,6 +1060,8 @@ html.topbar-hidden .topbar-reveal { display: block; }
     border-color: var(--pico-primary-background); font-weight: 600;
 }
 .settings-opt .muted { font-size: 0.8em; }
+/* v1.3.0 B2: the grey hint vanished on the selected (blue) option: 1.02:1 light, 2.0:1 dark */
+.settings-opt-active .muted { color: inherit; opacity: .9; }
 
 /* ── Converter & calculator popover (feedback #2) — mirrors .settings-* ─────── */
 .calc-wrap { position: relative; }
@@ -2912,6 +2914,9 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
    id so the SHARED .table-filter input (/compare, /pulses, /pairs, /table) is untouched;
    padding-right (for the ? glyph) is left intact. */
 #dataset-search { border-color: transparent; background: transparent; }
+/* v1.3.0 B2: the clock-zone note and the indexing note sit inside the page
+   title; as plain <small> they rendered at heading size and weight */
+.ds-head-title .ds-tz-note, .ds-head-title .ds-scan-note { font-size: .5em; font-weight: 400; }
 #dataset-search:focus {
     border-color: var(--pico-primary);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--pico-primary) 25%, transparent);
@@ -4341,7 +4346,11 @@ html.topbar-hidden .topo-subnav {
     padding-top: calc(0.45rem + var(--table-pane-pad-v) + var(--floating-chrome-h));
 }
 .topo-subnav-btn {
-    margin: 0; padding: 0.25rem 0.7rem;
+    /* v1.3.0 B2: .6rem, not .7rem -- at 1280 px the ten tabs overflowed the bar by
+       under a pixel, "Calibration" wrapped alone onto a second row, and the
+       taller bar then covered every jumped-to section's header (scroll-margin
+       is one row) */
+    margin: 0; padding: 0.25rem 0.6rem;
     font-size: 0.85em; line-height: 1.3;
     /* NOT var(--pico-color): Pico's button reset ([role=button],…,button) locally
        redefines --pico-color to --pico-primary-inverse (#fff white) on every <button>,
@@ -4415,7 +4424,7 @@ html.topbar-hidden .topo-subnav {
 }
 .topo-hero-mbtn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
 .topo-hero-mbtn.active {
-    background: var(--pico-primary); border-color: var(--pico-primary);
+    background: var(--pico-primary-background); border-color: var(--pico-primary-background);
     color: var(--pico-primary-inverse); font-weight: 600;
 }
 .topo-hero-mbtn.active .metric-label { color: inherit; }
@@ -4432,8 +4441,11 @@ html.topbar-hidden .topo-subnav {
     background: transparent; color: var(--pico-muted-color);
 }
 .topo-hero-zbtn:hover, .iw-size-btn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
-.topo-hero-zbtn.active, .iw-size-btn.active { background: var(--pico-primary); color: var(--pico-primary-inverse);
-    border-color: var(--pico-primary); }
+/* v1.3.0 B2: the active fills use the BUTTON blue (--pico-primary-background):
+   white on the dark theme's link cyan (--pico-primary) measured 2.56:1. In the
+   light theme the two tokens are the same colour, so light is unchanged. */
+.topo-hero-zbtn.active, .iw-size-btn.active { background: var(--pico-primary-background); color: var(--pico-primary-inverse);
+    border-color: var(--pico-primary-background); }
 .topo-hero-zslider, .iw-size-slider { width: 110px; margin: 0; padding: 0; height: auto; }
 /* docs/126 — the per-gate (pulse-variant) picker under the metric row */
 .topo-hero-gatebar { display: flex; gap: .3rem; align-items: center; flex-wrap: wrap;
@@ -5151,6 +5163,8 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 .topo-card-title { font-size: var(--topo-card-title-size); text-transform: uppercase; letter-spacing: 0.04em; color: var(--pico-muted-color); margin-bottom: 0.2rem; }
 .topo-card-value { font-size: var(--topo-card-value-size); font-weight: 700; font-family: monospace; line-height: 1.2; }
 .topo-card-sub { font-size: var(--topo-card-sub-size); color: var(--pico-muted-color); margin-top: 0.15rem; font-family: monospace; }
+/* v1.3.0 B2: one stat / range / count never breaks inside itself (chip-status.js metricTile) */
+.topo-card-sub .tcs-k { white-space: nowrap; }
 
 /* docs/150: Overview per-panel customization (v1 — display preferences only).
    The kebab appears on hover; the ghost tile adds a panel; the stat tag marks
@@ -10143,8 +10157,8 @@ button.diag-badge { cursor: pointer; }
     background: transparent; color: var(--color-text-muted, var(--pico-muted-color));
     font-size: 0.74rem; line-height: 1.5; cursor: pointer; white-space: nowrap; }
 .bulk-chip:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
-.bulk-chip.active { background: var(--pico-primary); color: var(--pico-primary-inverse);
-    border-color: var(--pico-primary); }
+.bulk-chip.active { background: var(--pico-primary-background); color: var(--pico-primary-inverse);
+    border-color: var(--pico-primary-background); }
 /* An operation is a NAME the chip carries (x180, cz), not a property word, and
    the two combine rather than compete — "x180" AND "amp". Monospace says
    "this is an identifier from your chip" without spending a second colour on
@@ -10212,7 +10226,13 @@ button.diag-badge { cursor: pointer; }
    review). A floor here keeps the path readable whatever the panel width. */
 .sv-q-path { min-width: 12rem; }
 .sv-q-path code { font-size: .95em; word-break: break-all; }
-.sv-q-vals { white-space: nowrap; text-align: right; }
+/* v1.3.0 B2: the value cell was nowrap, so in a narrow panel (or with a long
+   value) old -> new -> delta ran past the panel's right edge. Each piece is
+   now an inline-block: the pieces wrap as units when the panel is narrow,
+   and a single value longer than the cell breaks inside itself. */
+.sv-q-vals { text-align: right; }
+.sv-q-vals .sv-q-old, .sv-q-vals .sv-q-new, .sv-q-vals .sv-q-add, .sv-q-vals .sv-q-del,
+.sv-q-vals .val-delta { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .sv-q-old { color: var(--pico-muted-color); text-decoration: line-through; }
 .sv-q-add { color: var(--color-success-text); }
 .sv-q-del { color: var(--color-error-text); }
@@ -12029,6 +12049,10 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .qualibrate-doctor-info .qualibrate-doctor-sev { color: var(--pico-muted-color, #888); }
 .qualibrate-doctor-sev { display: inline-block; width: 1.1em; }
 .qualibrate-path-missing code { opacity: .65; text-decoration: line-through; }
+/* v1.3.0 B2: a project's paths may break; at 1280 px the row ran 60 px past the
+   pane and cut the "Open in SM" button, which itself never wraps */
+#qualibrate-table .qualibrate-path code { overflow-wrap: anywhere; }
+#qualibrate-table button { white-space: nowrap; }
 .qualibrate-src { margin-left: .35rem; padding: 0 .3rem; border-radius: .5rem;
                   font-size: .68em; border: 1px solid var(--pico-muted-border-color); }
 .qualibrate-src-own { border-color: var(--pico-primary); }
@@ -12425,7 +12449,7 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
    where one line is right. The renderer and its markup are untouched. */
 .field-history-panel .val-delta { white-space: normal; overflow-wrap: anywhere; }
 .fh-val code { font-size: .78rem; background: none; padding: 0; }
-.fh-now { font-size: .62rem; background: var(--pico-primary); color: #fff;
+.fh-now { font-size: .62rem; background: var(--pico-primary-background); color: #fff;
     border-radius: .55rem; padding: 0 .35rem; margin-left: .25rem; vertical-align: middle; }
 .fh-current .fh-val { font-weight: 600; }
 /* docs/186: was `nowrap`. Under `table-layout: fixed` a nowrap cell does not
@@ -12507,8 +12531,12 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 /* docs/283: Param History Changes on the ledger -- the group names the
    event, each row says who the ledger can prove set it */
 .ph-change-head .vh-sub { display: inline; font-size: .62rem; }
-.ph-change-who { font-size: .62rem; white-space: nowrap; width: 1%; padding-left: .6rem; }
-.ph-change-who .vh-sub { display: inline; }
+/* v1.3.0 B2: nowrap + width:1% made this column as wide as its whole sentence,
+   so the path beside it was squeezed into a letter tower (1280 px) or the row
+   ran past the group's clipped right edge (1600 px). The phrases now wrap as
+   units when the row is short of room. */
+.ph-change-who { font-size: .62rem; white-space: normal; padding-left: .6rem; }
+.ph-change-who .vh-sub { display: inline-block; white-space: nowrap; }
 tr.vh-undone .ba-new { text-decoration: line-through; }
 .vh-chip-via, .vh-more { font-size: .62rem; color: var(--color-text-muted); margin-right: .3rem; }
 /* P0-1: a run's saved value the chip never kept -- listed apart, never a change */
@@ -12782,7 +12810,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    onto three lines. */
 .ch-chip-when { font-size: .62rem; color: var(--color-text-muted);
     white-space: nowrap; flex: 0 0 auto; }
-.ch-chip-now { font-size: .58rem; background: var(--pico-primary); color: #fff;
+.ch-chip-now { font-size: .58rem; background: var(--pico-primary-background); color: #fff;
     border-radius: .5rem; padding: 0 .3rem; }
 .ch-chip-miss { color: var(--color-text-muted); }
 .ch-chip-dot { width: .45em; height: .45em; border-radius: 50%;
@@ -12989,7 +13017,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     vertical-align: baseline;
 }
 .ph-change-table tr:first-child td { border-top: none; }
-.ph-change-path { width: 45%; word-break: break-all; }
+.ph-change-path { min-width: 14rem; word-break: break-all; }
 .ph-path-btn {
     background: none; border: none; padding: 0; margin: 0; width: auto;
     color: var(--pico-primary); cursor: pointer; text-align: left;
@@ -12998,8 +13026,11 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 }
 .ph-path-btn:hover { text-decoration: underline; background: none; }
 .ph-change-old, .ph-change-new {
-    font-variant-numeric: tabular-nums; white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
+/* v1.3.0 B2: old, new and the delta wrap as units; a long value breaks inside itself */
+.ph-change-new .ba-old, .ph-change-new .ba-new, .ph-change-new .ba-op,
+.ph-change-new .val-delta { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .ph-change-old code, .ph-change-new code { font-size: 0.95em; }
 .ph-change-arrow { color: var(--pico-muted-color); padding: 0 0.2rem; }
 .ph-change-delta { white-space: nowrap; }
@@ -13072,8 +13103,12 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .diff-wb-list { font-size: 0.85em; margin-top: 0.3rem; }
 .diff-wb-list th { font-size: 0.9em; text-align: left; }
 .diff-wb-list td { padding: 0.15rem 0.5rem; vertical-align: baseline; }
-.diff-list-path { width: 45%; word-break: break-all; }
-.diff-list-a, .diff-list-b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* v1.3.0 B2: nowrap values beside a 45% path squeezed the path into a letter
+   tower at 1280 px and pushed the row's buttons past the pane. The path has a
+   floor, a value too long for its cell breaks, the buttons never wrap. */
+.diff-list-path { min-width: 14rem; word-break: break-all; }
+.diff-list-a, .diff-list-b { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.diff-list-take { white-space: nowrap; }
 .diff-list-arrow { color: var(--pico-muted-color); }
 .diff-row-added  .diff-list-path code { color: var(--color-success-text); }
 .diff-row-removed .diff-list-path code { color: var(--color-error-text); }
@@ -13230,6 +13265,9 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
    never a warning colour. */
 .state-version-none { font-style: italic; }
 .state-version-count { opacity: 0.6; font-size: 0.9em; }
+/* v1.3.0 B2: on the light theme the faded chip name and version count measured
+   2.66:1 and 2.45:1 (grey at .6-.65 opacity on white); .85 clears 3:1. Dark is unchanged. */
+[data-theme="light"] .state-status-name, [data-theme="light"] .state-version-count { opacity: .85; }
 /* "live is on this version, and SM has moved past it". Deliberately a mark on
    the id rather than a different id: the id is still true, it is just no longer
    the whole truth. */
@@ -13568,8 +13606,8 @@ td.vc-cell-takeable:focus-within .vc-take,
     color: var(--pico-muted-color); cursor: pointer; line-height: 1.35;
     white-space: nowrap; font-family: var(--font-mono); }
 .topo-trend-chip:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
-.topo-trend-chip.active { background: var(--pico-primary);
-    border-color: var(--pico-primary); color: var(--pico-primary-inverse);
+.topo-trend-chip.active { background: var(--pico-primary-background);
+    border-color: var(--pico-primary-background); color: var(--pico-primary-inverse);
     font-weight: 600; }
 .topo-trends-count { font-size: .74rem; margin-left: auto; }
 
