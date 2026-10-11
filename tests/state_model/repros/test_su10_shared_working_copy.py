@@ -161,3 +161,42 @@ def test_our_own_save_and_later_applies_keep_the_ownership_anchor(tmp_path):
     assert chip.c.post("/state/apply-to-live").status_code == 200
     assert chip.live_state()["qubits"]["q1"]["T1"] == 2.222e-05
     assert chip.live_state()["qubits"]["q2"]["T1"] == 1.111e-05
+
+
+@pytest.mark.parametrize("walk", [False, True])
+def test_a_copy_replaced_during_the_noop_check_keeps_our_tray(tmp_path, monkeypatch, walk):
+    from quam_state_manager.core import safe_io, working_copy
+    from quam_state_manager.web import routes
+    chip = Chip(tmp_path)
+    chip.edit("qubits.q1.T1", "2.222e-05")
+    original_apply = working_copy.apply_to_live
+    original_hash = working_copy.live_content_hash
+    calls = []
+    armed = []
+
+    def replace_during_hash(wc):
+        if armed:
+            calls.append(1)
+            if len(calls) == 2:
+                state, wiring = safe_io.read_state_wiring(wc.live_folder)
+                safe_io.write_state_wiring(wc.working_folder, state, wiring)
+        return original_hash(wc)
+
+    def move_live_then_apply(wc, **kwargs):
+        chip.set_live("qubits.q3.T1", 3.333e-05)
+        armed.append(1)
+        return original_apply(wc, **kwargs)
+
+    monkeypatch.setattr(working_copy, "apply_to_live", move_live_then_apply)
+    monkeypatch.setattr(working_copy, "live_content_hash", replace_during_hash)
+    before = (chip.log(), chip.journal(), chip.live_state()["qubits"]["q1"]["T1"])
+    if walk:
+        with chip.app.test_request_context("/state/sync", method="POST"):
+            response = chip.app.make_response(routes._sync_pull_apply_to_live(chip.ctx, None))
+    else:
+        response = chip.c.post("/state/apply-to-live")
+    assert len(calls) >= 2, "replacement must land inside the adoption check"
+    assert response.status_code == 409, response.get_data(as_text=True)
+    assert "window/process" in response.get_data(as_text=True)
+    assert (chip.log(), chip.journal(), chip.live_state()["qubits"]["q1"]["T1"]) == before
+    assert chip.live_state()["qubits"]["q3"]["T1"] == 3.333e-05

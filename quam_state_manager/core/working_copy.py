@@ -938,6 +938,8 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                 if _wpair.content_hash() == live_hash:
                     st_mt, wi_mt = safe_io.state_wiring_mtimes(wc.live_folder)
                     fp = fp0 if working_fingerprint(wc) == fp0 else None
+                    if expected_fp is not None and fp != expected_fp:
+                        raise WorkingCopyChangedError(SHARED_WORKING_MSG)
                     # Advance the sync point to what live ALREADY holds. Meta
                     # first, exactly like the write path below: a failed meta
                     # write must never leave memory ahead of disk.
