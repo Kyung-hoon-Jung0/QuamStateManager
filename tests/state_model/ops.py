@@ -1201,6 +1201,7 @@ class Rig:
                 self._replace(tmp, p)
                 m.outside(O.UNREADABLE)
         elif kind == "delete_state":
+            self.saw_torn = True
             try:
                 (self.live / "state.json").unlink()
             except FileNotFoundError:
@@ -1208,6 +1209,7 @@ class Rig:
             m.outside(O.GONE)
             m.folder_gone = not self.live.exists()
         elif kind == "delete_folder":
+            self.saw_torn = True
             shutil.rmtree(self.live, ignore_errors=True)
             m.outside(O.GONE)
             m.folder_gone = True
