@@ -4359,6 +4359,13 @@ def _is_htmx() -> bool:
             and request.headers.get("HX-History-Restore-Request") != "true")
 
 
+def _missing_package(what: str, exc: ImportError) -> str:
+    """v1.3.0 B3: the one sentence a view shows when a package it needs cannot be
+    imported in this Python (absent, or a broken install)."""
+    pkg = (getattr(exc, "name", None) or "a package").split(".")[0]
+    return f"{what} needs {pkg}, which cannot be imported in this Python environment ({exc})."
+
+
 def _no_chip(label: str, nav: str):
     """The "No chip loaded" empty state for a chip menu (jsontree-r2-13).
 
@@ -20097,12 +20104,16 @@ def zline_page():
     store = _store()
     if not store:
         return _no_chip("z-line distortion", "zline")
-    rows = _zline_rows(store)
+    template = "_zline.html" if _is_htmx() else "zline.html"
+    try:
+        rows = _zline_rows(store)
+    except ImportError as exc:      # v1.3.0 B3: a page that says so, never a 500
+        return render_template(template, **_ctx(page="zline", rows=[], selected="",
+                                                 missing=_missing_package("The z-line view", exc)))
     want = request.args.get("line", "").strip()
     paths = [r["channel_path"] for r in rows]
     selected = want if want in paths else next(
         (r["channel_path"] for r in rows if r["ok"]), paths[0] if paths else "")
-    template = "_zline.html" if _is_htmx() else "zline.html"
     return render_template(template, **_ctx(page="zline", rows=rows, selected=selected))
 
 
@@ -20112,8 +20123,10 @@ def zline_data():
     store = _store()
     if not store:
         return jsonify(ok=False, error="no chip loaded"), 409
-    from quam_state_manager.core import zline_filters as zf
-    from quam_state_manager.core.waveform_synth import synth_for_operation
+    try:
+        from quam_state_manager.core import zline_filters as zf
+    except ImportError as exc:      # v1.3.0 B3
+        return jsonify(ok=False, error=_missing_package("The z-line view", exc)), 503
     line = request.args.get("line", "").strip()
     model = "cascade" if request.args.get("model") == "cascade" else "sum"
     with store._lock:

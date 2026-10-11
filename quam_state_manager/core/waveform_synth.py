@@ -838,6 +838,13 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
     except (ValueError, KeyError, ZeroDivisionError, IndexError) as exc:
         return _payload_error(str(exc), spec_key=spec.key, class_match=how,
                               unmodeled=unmodeled, warnings=warnings)
+    except ImportError as exc:
+        # v1.3.0 B3: a filtered/windowed shape needs scipy; without it (a broken
+        # or partial env) this payload says so -- it raised, and every page that
+        # previews a pulse (Pulses, Live State Edit's dBm line) answered 500
+        return _payload_error(f"the preview of this shape needs {(exc.name or 'scipy').split('.')[0]}, "
+                              "which cannot be imported in this Python environment", spec_key=spec.key, class_match=how,
+                              unmodeled=unmodeled, warnings=warnings)
 
     payload = _shape_payload(spec, raw, length, warnings)
     if not payload.get("ok"):

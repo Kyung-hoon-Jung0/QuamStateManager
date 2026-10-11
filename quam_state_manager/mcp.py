@@ -40,8 +40,14 @@ from typing import Any
 
 from quam_state_manager.core import agent_link
 
+try:
+    from quam_state_manager import __version__ as _VERSION
+except ImportError:   # a broken editable install leaves a namespace package (cli._resolve_version)
+    _VERSION = "0.0.0+unknown"
+
 PROTOCOL = "2025-06-18"
-SERVER = {"name": "quam-state-manager", "version": "1.2.0"}
+# v1.3.0 B3: the package version, not a third hand-edited copy of it
+SERVER = {"name": "quam-state-manager", "version": _VERSION}
 
 _link: agent_link.SMLink | None = None
 # docs/120's rule, applied to the agent: a press means what the presser could

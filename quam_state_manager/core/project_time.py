@@ -101,6 +101,18 @@ def _zoneinfo(name: str):
         return None
 
 
+def tzinfo_for(name: str | None):
+    """The tzinfo of *name*: UTC exactly, else the zone when this Python can load
+    it, else None -- this PC's zone, the fallback the report and the display
+    already use. v1.3.0 B3: without tzdata (a bare Windows Python) a raw
+    ``ZoneInfo`` raised, and every read of the change history failed."""
+    if not name:
+        return None
+    if name == "UTC":
+        return timezone.utc
+    return _zoneinfo(name)
+
+
 def valid_zone(name: Any) -> bool:
     """An IANA zone name. With tzdata present the zone must load; without it
     (a bare Windows Python) the name must at least have the IANA shape -- the
