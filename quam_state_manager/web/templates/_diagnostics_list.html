@@ -86,7 +86,7 @@
       </summary>
       <table class="diag-table">
         <thead>
-          <tr><th>Severity</th><th>Location</th><th>Issue</th>{% if allow_jump %}<th></th>{% endif %}</tr>
+          <tr><th>Severity</th><th>Location</th><th class="diag-issue-cell">Issue</th>{% if allow_jump %}<th></th>{% endif %}</tr>
         </thead>
         <tbody>
         {% for f in active + acked %}
@@ -109,7 +109,7 @@
                textContent stay byte-identical), and a floor on the cell -- the
                nowrap action column squeezed a break-all path to one letter. #}
             <td class="diag-loc-cell"><code class="diag-loc">{% for seg in (f.location | string).split('.') %}{{ seg }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</code></td>
-            <td>
+            <td class="diag-issue-cell">
               <div class="diag-msg">{{ f.message }}</div>
               {% if f.detail %}<div class="diag-detail muted"><code>{{ f.detail }}</code></div>{% endif %}
             </td>

@@ -16,7 +16,10 @@
             <td><span class="pulse-chan-chip pulse-chan-{{ r.channel }}">{{
                 {'xy':'xy','z':'z','resonator':'res','flux_pulse_qubit':'flux','coupler_flux_pulse':'coupler','flux_pulse_target':'flux·target'}.get(r.channel, r.channel)
             }}</span></td>
-            <td>{{ r.op_name }}
+            {# v1.3.0: soft breaks after each underscore -- one unbreakable
+               operation name ("population_loss_probe_flux") held the table
+               wider than the pane at 1280 px; textContent is unchanged #}
+            <td>{{ r.op_name | soft_breaks }}
                 {%- if r.is_alias %} <span class="pointer-badge" title="Alias — resolves to {{ r.alias_target }}">alias</span>{% endif %}
                 {%- if r.iq %} <span class="pulse-flag-iq" title="I and Q components">IQ</span>{% endif %}
                 {%- if r.readout %} <span class="pulse-flag-readout" title="Readout pulse">RO</span>{% endif %}

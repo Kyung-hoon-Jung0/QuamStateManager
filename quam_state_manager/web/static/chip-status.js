@@ -2926,15 +2926,17 @@ window.ChipStatus.mount = function (opts) {
                             var dBar = (_edgePaint(e).width + 3) / 2 + (e.directed ? 6 : 0);
                             if (Math.abs(x2 - x1) >= Math.abs(y2 - y1)) {
                                 // A HORIZONTAL edge has only the stone gap
-                                // to write in, so the label stacks: Δf /
-                                // number / unit on three short lines.
+                                // to write in, so the label stacks: the metric over
+                                // "number unit" (v1.3.0: two lines, not a
+                                // three-line tower; the widest value, e.g.
+                                // "1.23 GHz", still fits the gap).
+                                var dVal = dNum + ' ' + dUnit;
                                 var dAt = _heroLabelAt(dSd, dmx, dmy, dBar, _lblFs.edelta,
-                                    Math.max(mCur.edgeDelta.label.length, dNum.length, dUnit.length), 18);
+                                    Math.max(mCur.edgeDelta.label.length, dVal.length), 9);
                                 evalSvg += '<text class="topo-hero-edelta topo-hero-edelta-stack" x="' + dmx
                                     + '" y="' + dAt.y + '">'
                                     + '<tspan x="' + dmx + '">' + _esc(mCur.edgeDelta.label) + '</tspan>'
-                                    + '<tspan x="' + dmx + '" dy="9">' + _esc(dNum) + '</tspan>'
-                                    + '<tspan x="' + dmx + '" dy="9">' + _esc(dUnit) + '</tspan>'
+                                    + '<tspan x="' + dmx + '" dy="9">' + _esc(dVal) + '</tspan>'
                                     + '</text>';
                             } else {
                                 var dAtV = _heroLabelAt(dSd, dmx, dmy, dBar, _lblFs.edelta, 0, 0);

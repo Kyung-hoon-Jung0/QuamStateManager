@@ -41,6 +41,7 @@
     </ul>
 </nav>
 
+<div class="table-scroll">
 <table id="qubits-table" class="data-table" role="grid">
     <thead>
         <tr>
@@ -114,6 +115,7 @@
     {% endif %}
     </tbody>
 </table>
+</div>
 
 {% set base_url = "/qubits" %}
 {% set extra_qs = ("&chain=" ~ active_chain) if active_chain else "" %}

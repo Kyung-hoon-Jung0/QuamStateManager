@@ -25,7 +25,7 @@
 - tests/wiring_portlabel_selfcheck.cjs — the shared port-circle renderer's
   label sizing (2026-08-04): single-member circles (control/z/coupler,
   single readout, input single) get chord-fit adaptive type (9-14px, short
-  names big), feedline sub-circles keep 7px, every label fits its circle,
+  names big), feedline labels fit adaptively up to 10px, every label fits its circle,
   and the iw-port drag-drop DOM contract survives.
 
 - tests/instrument_digital_selfcheck.cjs — the DIG sub-column (docs/126
@@ -71,6 +71,7 @@ def test_generate_dragghost_selfcheck_passes():
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
 def test_wiring_portlabel_selfcheck_passes():
+    # v1.3.0: fixed 7px -> adaptive feedline type; the description matches the renderer.
     _run("wiring_portlabel_selfcheck.cjs")
 
 

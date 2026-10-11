@@ -43,6 +43,8 @@ def _ledger(env):
 
 
 def _text(html: str) -> str:
+    # v1.3.0: raw break tags -> visible dot paths; wbr contributes no text.
+    html = html.replace("<wbr>", "")
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
 
 

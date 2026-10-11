@@ -265,6 +265,8 @@ class TestSameCode:
         live = c.get("/pulses?per_page=0", headers={"HX-Request": "true"}).get_data(as_text=True)
 
         def cells(html, op):
+            # v1.3.0: raw op name -> op name with soft breaks (<wbr>, no text); read the visible name.
+            html = html.replace("<wbr>", "")
             i = html.index(f">{op}")
             row = html[html.rindex("<tr", 0, i):html.index("</tr>", i)]
             return [re.sub(r"<[^>]+>|\s+", " ", x).strip()

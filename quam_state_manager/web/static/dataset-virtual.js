@@ -580,7 +580,8 @@
     function statusChip(status) {
         if (!status) return '<span class="ds-status ds-status-unknown" title="no status">–</span>';
         var s = String(status).toLowerCase(), cls = 'ds-status-unknown';
-        if (/(finish|success|done|complet|pass)/.test(s)) cls = 'ds-status-ok';
+        if (/(finish|done|complet)/.test(s)) cls = 'ds-status-done';
+        else if (/(success|pass)/.test(s)) cls = 'ds-status-ok';
         else if (/(run|progress|pending|queue)/.test(s)) cls = 'ds-status-run';
         else if (/(error|fail|abort|crash)/.test(s)) cls = 'ds-status-err';
         return '<span class="ds-status ' + cls + '" title="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>';
@@ -870,7 +871,7 @@
                             : Math.max(0, Math.min(n - 1, _kbIdx + dir));
         _kbReveal();
     }
-    function _kbReveal() {
+    function _kbReveal(context) {
         // bring the row into the virtual window
         if (state.scrollEl) {
             var el = state.scrollEl, y = _kbIdx * ROW_HEIGHT;
@@ -886,7 +887,9 @@
             var thead = state.tbody.parentNode && state.tbody.parentNode.querySelector
                 ? state.tbody.parentNode.querySelector('thead') : null;
             var headH = thead ? thead.getBoundingClientRect().height : 0;
-            if (rowTop < headH) el.scrollTop += rowTop - headH;
+            if (context && vh >= headH + 2 * ROW_HEIGHT)
+                el.scrollTop += rowTop - headH - ROW_HEIGHT;
+            else if (rowTop < headH) el.scrollTop += rowTop - headH;
             else if (rowTop + ROW_HEIGHT > vh) el.scrollTop += rowTop + ROW_HEIGHT - vh;
         }
         renderWindow(true);
@@ -913,12 +916,12 @@
     // leaves the table on (and marking) the run you ended on, and j continues
     // from there. A run not in the visible list leaves the cursor alone.
     var _kbOpenUid = null;
-    function _kbSyncTo(uid) {
+    function _kbSyncTo(uid, context) {
         if (uid == null || !_kbBound()) return;
         uid = String(uid);
         for (var k = 0; k < state.visible.length; k++) {
             var r = state.rows[state.visible[k]];
-            if (r && String(r.uid != null ? r.uid : r.id) === uid) { _kbIdx = k; _kbReveal(); return; }
+            if (r && String(r.uid != null ? r.uid : r.id) === uid) { _kbIdx = k; _kbReveal(context); return; }
         }
     }
     if (!window._dsKbBound) {
@@ -928,7 +931,7 @@
             if (!t || t.id !== 'inspector-pane' || !_kbBound()) return;   // key first (perf)
             var root = t.querySelector('#ds-detail-root');   // unprefixed = the current run
             _kbOpenUid = root ? root.getAttribute('data-uid') : null;   // not a run: forget
-            if (root) _kbSyncTo(_kbOpenUid);
+            if (root) _kbSyncTo(_kbOpenUid, true);
         });
         // closeInspector dispatches a NON-bubbling event on <body>: listen in
         // the capture phase, which every dispatch passes through.

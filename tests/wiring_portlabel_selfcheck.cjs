@@ -5,7 +5,7 @@
  *     get chord-fit adaptive type: short qubit names render BIG (>= 12px on
  *     an output circle, up from the old fixed 10px), longer names shrink
  *     instead of only truncating.
- *  2. Multi-member feedline sub-circles keep their 7px labels (unchanged).
+ *  2. Multi-member feedline labels use chord-fit type up to 10px.
  *  3. Containment: every label's estimated width (0.62em monospace) stays
  *     within its circle's diameter - the user rule "bigger text, but never
  *     past the circle".
@@ -148,11 +148,11 @@ ok(lz && lz.fs >= 9 && lz.fs <= 10,
    'long z name shrinks toward the floor, 9-10px (got ' + (lz && lz.fs) + ')');
 ok(lz && lz.label.length <= 7, 'long z name truncated to <= 7 chars (got "' + (lz && lz.label) + '")');
 
-/* 2. Feedline sub-circles: unchanged 7px. */
+/* v1.3.0: fixed 7px -> chord-fit feedline labels, readable in Fit mode. */
 const feed = entries.filter(function (e) { return e.role === 'rr'; });
 ok(feed.length === 4, 'four feedline sub-circles (got ' + feed.length + ')');
-ok(feed.every(function (e) { return e.fs === 7; }),
-   'feedline sub-labels stay at 7px (got ' + feed.map(function (e) { return e.fs; }).join(',') + ')');
+ok(feed.every(function (e) { return e.fs >= 9; }),
+   'short feedline sub-labels are at least 9px (got ' + feed.map(function (e) { return e.fs; }).join(',') + ')');
 ok(feed.every(function (e) { return e.r < 14; }),
    'feedline sub-circles keep their small radii (got ' + feed.map(function (e) { return e.r; }).join(',') + ')');
 
@@ -163,6 +163,29 @@ entries.forEach(function (e) {
        'label "' + e.label + '" (' + e.fs + 'px) fits its circle: ' +
        w.toFixed(1) + ' <= ' + (2 * e.r));
 });
+
+/* v1.3.0: a multiplexed INPUT feedline (radius 17, five members -> two rows
+   of 9px sub-circles) is where the chord fit alone would give 6px. It never
+   drops below the old fixed 7px and still fits its sub-circle. */
+const longHost = window.document.createElement('div');
+longHost.id = 'iw-host-long';
+window.document.body.appendChild(longHost);
+window.renderInstrumentWiring('iw-host-long', { controllers: { con1: { max_output_port: 8, fems: {
+    '3': { type: 'mw-fem', output_ports: {}, input_ports: { '1': [1, 2, 3, 4, 5].map(function (i) {
+        return { label: 'qLongFeed' + i + '.rr_in', role: 'rr_in', element: 'qLongFeed' + i };
+    }) } } } } } }, {}, null);
+const longFeed = [];
+longHost.querySelectorAll('g.iw-port-circle').forEach(function (g) {
+    const c = g.querySelector('circle'), t = g.querySelector('text');
+    if (c && t) longFeed.push({ r: parseFloat(c.getAttribute('r')), label: t.textContent,
+                                fs: parseFloat(t.getAttribute('font-size')) });
+});
+ok(longFeed.length === 5, 'five long-name feedline sub-circles (got ' + longFeed.length + ')');
+ok(longFeed.every(function (e) { return e.fs >= 7; }),
+   'long feedline labels never drop below 7px (got ' + longFeed.map(function (e) { return e.fs; }).join(',') + ')');
+ok(longFeed.every(function (e) { return 0.62 * e.label.length * e.fs <= 2 * e.r + 0.1; }),
+   'long feedline labels still fit their sub-circles (' + longFeed.map(function (e) {
+       return e.label + '@' + e.fs + '/r' + e.r; }).join(', ') + ')');
 
 /* 4. Drag-drop DOM contract (generate_dragghost_selfcheck depends on it). */
 const port1 = svg.querySelector('g.iw-port[data-con="con1"][data-slot="3"][data-port="1"][data-io="output"]');

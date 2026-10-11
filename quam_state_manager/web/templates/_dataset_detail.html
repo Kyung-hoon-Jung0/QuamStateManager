@@ -149,11 +149,13 @@
     {# ── Top row: Fit Results (left) + Parameters (right) in 2 columns ──
        Duplicates Overview/Results, so it's hidden in Full View (.ds-fig-context)
        and only shown when the Figures tab is viewed on its own. ── #}
+    {# v1.3.0: both start CLOSED -- open, their two 400 px boxes pushed the
+       first figure below the fold of the Figures tab at 1280 x 800. #}
     {% if run.fit_results or run.parameters %}
     <div class="fig-info-row ds-fig-context">
         <div class="fig-info-col">
             {% if run.fit_results %}
-            <details open class="detail-section">
+            <details class="detail-section">
                 <summary class="section-header">Fit Results</summary>
                 {% for qname, qresults in run.fit_results.items() %}
                 <details open class="detail-section" style="margin-left:.5rem">
@@ -208,7 +210,7 @@
         </div>
         <div class="fig-info-col">
             {% if run.parameters %}
-            <details open class="detail-section">
+            <details class="detail-section">
                 <summary class="section-header">Parameters<button type="button" class="btn-sm outline section-copy-btn" title="Copy these parameters as JSON" data-json='{{ run.parameters | tojson }}' onclick="event.stopPropagation(); window.copyWithFeedback(this.getAttribute('data-json'), this, 'Copied parameters as JSON.')">Copy JSON</button></summary>
                 <div id="ds-fig-params-tree" style="padding:.5rem 1rem"></div>
                 <script>
@@ -281,7 +283,10 @@
                 <tr><td class="col-prop"><code>run_id</code></td><td class="col-val">#{{ run.run_id }}</td></tr>
                 <tr><td class="col-prop"><code>status</code></td>
                     <td class="col-val">
-                        <span class="outcome-badge {% if run.status == 'finished' %}outcome-ok{% else %}outcome-fail{% endif %}">{{ run.status }}</span>
+                        {# v1.3.0: "finished" is the run's lifecycle, not its
+                           outcome -- neutral, like the run list; anything else
+                           (failed, aborted, running) keeps the warning colour. #}
+                        <span class="outcome-badge{% if run.status != 'finished' %} outcome-fail{% endif %}">{{ run.status }}</span>
                     </td></tr>
                 <tr><td class="col-prop"><code>qubits</code></td><td class="col-val">{{ (run.qubit_pairs if run.qubit_pairs else run.qubits) | join(', ') if (run.qubit_pairs or run.qubits) else 'N/A' }}</td></tr>
                 {# docs/263: the run's INSTANT, in the viewer's zone; the run's own

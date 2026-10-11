@@ -8,9 +8,13 @@
     </div>
 </div>
 
+{# v1.3.0: with no couplers there is nothing to highlight -- the map drew the
+   whole chip "highlighted"; the table's own empty row says why. #}
+{% if total %}
 {% set cmap_highlight = 'couplers' %}
 {% set cmap_label = '— coupler edges highlighted' %}
 {% include '_component_map.html' %}
+{% endif %}
 
 <table id="couplers-table" class="data-table" role="grid">
     <thead>

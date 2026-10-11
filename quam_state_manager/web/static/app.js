@@ -21,7 +21,8 @@ var UI_CONFIG = {
         expandedSizes:  [15, 85],  /* DEFAULT "expanded" target — customer ask (2026-08-27): clicking a run should open the detail panel nearly full-screen, not half. The inspector gets 85%; the upper table keeps a 15% sliver for context + grabbing. A user's own ⤒ set-icon preset (localStorage "quam_split_expanded", incl. [0,100]) still wins over this default. */
         collapsedSizes: [85, 15],  /* DEFAULT "collapsed" target — inspector gets 15%. Overridable via the gutter ⤓ set-icon → localStorage "quam_split_collapsed". */
         minSizes:       [0, 60],   /* min height (px) for [upper, lower] pane. Upper=0 lets the inspector be dragged to FULLY cover the page (Qubits / Chip Status / …); lower=60 keeps the inspector grabbable (use its × button to fully reveal the page instead). */
-        gutterSize:     6          /* ⚠ height of the drag handle bar in pixels — keep in sync with --split-gutter-size in style.css */
+        datasetExpandedSizes: [25, 75],  /* v1.3.0: the "expanded" default while the inspector shows a dataset RUN. 15% left about two rows of the run list, and j/k between runs needs the neighbouring rows in view; 25% keeps about five. Every other inspector keeps expandedSizes; the user's own preset still wins over both. */
+        gutterSize:     24          /* height of the drag handle in px (v1.3.0: 6 -> 24, so its three buttons sit inside the gutter instead of over the selected row) -- keep in sync with --split-gutter-size in style.css */
     },
 
     plotly: {
@@ -14423,7 +14424,10 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
         fontSize = Math.max(9, Math.min(cap,
             Math.floor(chord / (0.62 * Math.max(1, display.length)))));
     } else {
-        fontSize = 7;  // multi-member feedline sub-circles
+        // Multi-member feedline sub-circles: chord-fit up to 10px so a short
+        // name stays readable in Fit mode, never below the old fixed 7px
+        // (7px x 0.62em x maxChars still fits every sub-circle radius here).
+        fontSize = Math.max(7, Math.min(10, Math.floor((2 * r - 2) / (0.62 * Math.max(1, display.length)))));
     }
     // docs/141 4ah (user): ONE label colour for every port. The bias-tee fill is
     // dark enough for white now, so the black label that the bright amber

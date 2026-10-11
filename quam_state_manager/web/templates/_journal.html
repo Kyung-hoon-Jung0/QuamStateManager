@@ -19,7 +19,7 @@
       hx-trigger="submit">
     <input type="hidden" name="day" id="jr-day" value="{{ story.day }}">
     {% include '_journal_daynav.html' %}
-    <input type="search" name="q" id="jr-q" value="{{ story.filters.q }}" placeholder="{{ search_hint('a qubit, pair, node or path') }}"
+    <input type="search" name="q" id="jr-q" value="{{ story.filters.q }}" placeholder="{{ search_hint() }}"
            title="{{ search_title('a qubit, pair, node or path') }}" class="jr-q">
     <select name="author" id="jr-author" title="who">
         <option value="">everyone</option>

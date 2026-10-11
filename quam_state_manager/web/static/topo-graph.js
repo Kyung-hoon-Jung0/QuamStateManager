@@ -749,7 +749,10 @@ window.TopoGraph = (function () {
     // byte-identical to what it replaced -- component_map_selfcheck was
     // updated in the same change, restating the docs/92 §2.4 pin at the
     // invariant it always meant: ids or role letters, and never a number.
-    svg += pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true });
+    // v1.3.0: drawn AFTER the stones (below), as the Chip Status hero has
+    // since docs/126 -- the flux stubs and resonator marks are part of each
+    // stone's group and were painted over the C/T/M letters.
+    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
@@ -770,6 +773,7 @@ window.TopoGraph = (function () {
         : (nChain === emphChain ? " cm-chain-emph" : " cm-chain-dim");
       svg += '<g class="cm-node' + chainCls + '" data-cm="q:' + esc(n.id) +
              '" data-cm-chain="' + esc(nChain) + '">' +
+             '<circle class="cm-occluder" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"/>' +
              '<circle class="cm-stone" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"' +
              (pt.shared ? ' stroke-dasharray="3 2"' : "") + "/>" +
              '<text class="cm-id" font-size="' + idFont + '" x="' + pt.x + '" y="' + pt.y +
@@ -803,6 +807,7 @@ window.TopoGraph = (function () {
       }
       svg += "<title>" + esc(n.id) + "</title></g>";
     }
+    svg += glyphSvg;
 
     var hl = opts.highlight ? " cm-hl-" + esc(String(opts.highlight)) : "";
     mount.innerHTML =

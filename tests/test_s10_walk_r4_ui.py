@@ -103,7 +103,10 @@ def test_the_baseline_badge_wraps_inside_the_row():
 def test_a_version_row_wraps_rather_than_overflow_the_panel():
     css = _css()
     row = _block(css, ".state-version-row {")
-    assert "flex-wrap: wrap" in row, row
+    # v1.3.0: wrapping desktop rows -> shared columns, with a narrow wrapping fallback.
+    assert "grid-template-columns: subgrid" in row, row
+    assert re.search(r"@media \(max-width: 800px\) \{.*?"
+                     r"\.state-version-row \{ display: flex; flex-wrap: wrap; \}", css, re.S)
     meta = _block(css, ".sv-meta {")
     # the meta column takes the room left beside the actions, or moves under them
     assert "flex: 1 1 8rem" in meta and "min-width: 0" in meta, meta

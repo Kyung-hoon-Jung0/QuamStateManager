@@ -96,9 +96,12 @@ def matches_hay(hay_lower: str, grps: Sequence[Sequence[str]]) -> bool:
 # thing worth saying in the little space a placeholder has: examples are
 # guessable, operators are not.
 #
-# Shape: "Search: space = AND, | = OR" plus, only where the surface really
-# has them, its own scope tokens. The full sentence lives in the `title`
-# (SEARCH_TITLE) so nothing is lost to the compaction.
+# Shape (v1.3.0): "Search" plus, only where the surface really has them, its
+# own scope tokens ("Search: tag:, is:"). The grammar used to ride in the
+# placeholder too ("Search: space = AND, | = OR"), but the topbar box and the
+# narrow page boxes cut it mid-word at 1280 px ("Search: s"), so it now lives
+# only in the `title` (SEARCH_TITLE) and the Help page -- one compact word
+# every box can show in full.
 def scoped_spans(text: str) -> list[tuple[int, int, str]]:
     """Every token, as ``(raw_start, raw_end, token_text)``.
 
@@ -174,11 +177,11 @@ def search_hint(*extras: str) -> str:
     """The placeholder every SM search box uses.
 
     ``extras`` are the surface's OWN scope tokens (``"tag:"``, ``"is:"``) —
-    kept to what that box can really do, appended after the grammar and
-    never instead of it.
+    kept to what that box can really do. The full grammar is in the tooltip
+    so narrow inputs can show the whole placeholder.
     """
-    parts = [HINT] + [e for e in extras if e]
-    return "Search: " + ", ".join(parts)
+    parts = [e for e in extras if e]
+    return "Search" + (": " + ", ".join(parts) if parts else "")
 
 
 def search_title(*extras: str) -> str:

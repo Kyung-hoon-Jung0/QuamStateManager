@@ -14,7 +14,6 @@
   {# docs/283: the change ledger's notes -- inside the root, so a swap
      replaces them. S10 C5: every arm of the older change-point index feed
      (its label, snapshot groups, old/arrow/new/delta cells) -> gone with that feed. #}
-  {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
   <div class="param-history-header">
     <h2 style="margin:0">Param History{% if project_scope and not archive_chip %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
     {% if archive_chip %}
@@ -29,6 +28,8 @@
       {{ '{:,}'.format(stats.paths) }} of them — with the moment each one changed.
     </p>
   </div>
+
+  {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
 
   <div class="ph-tabs">
     <button type="button" class="ph-tab" hx-get="/param-history{% if cq %}?{{ cq }}&amp;since=all{% endif %}"

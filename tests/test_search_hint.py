@@ -28,14 +28,13 @@ _CSS = (_ROOT / "quam_state_manager/web/static/style.css").read_text(encoding="u
 
 class TestTheHint:
     def test_the_house_text(self):
-        assert search_query.search_hint() == "Search: space = AND, | = OR"
+        # v1.3.0: long grammar hint -> compact placeholder, grammar stays in the tooltip.
+        assert search_query.search_hint() == "Search"
 
-    def test_scopes_are_appended_never_substituted(self):
-        # a surface with its own scopes still names the grammar FIRST: the
-        # operators are what nobody can guess, the scopes are the extra
+    def test_scopes_use_the_compact_hint(self):
+        # v1.3.0: grammar prefix -> short scope hint, so narrow boxes do not clip words.
         out = search_query.search_hint("tag:", "is:")
-        assert out.startswith("Search: space = AND, | = OR")
-        assert out.endswith("tag:, is:")
+        assert out == "Search: tag:, is:"
 
     def test_empty_extras_change_nothing(self):
         assert search_query.search_hint("", None) == search_query.search_hint()  # type: ignore[arg-type]
@@ -83,7 +82,9 @@ class TestEveryBoxUsesIt:
         hint = search_query.search_hint()
         for url in ("/", "/datasets", "/diff"):
             html = client.get(url).data.decode()
-            assert hint in html, f"{url} renders no search hint"
+            # v1.3.0: the hint is now the bare word "Search", which every page
+            # contains anyway -- so the pin reads the placeholder attribute.
+            assert f'placeholder="{hint}"' in html, f"{url} renders no search hint"
 
     def test_the_exempt_pickers_are_still_only_three(self):
         """The exemption is a list, not a loophole: if one of these grows into
@@ -95,9 +96,9 @@ class TestEveryBoxUsesIt:
         assert found == self.PICKERS
 
     def test_a_scoped_box_names_its_scopes(self):
-        """The Datasets box really has tag:/is:, so it says so — after the
-        grammar, never instead of it. Pinned on the template because the box
-        renders only once a dataset folder is configured."""
+        """The Datasets box really has tag:/is:, so it says so (v1.3.0: the
+        grammar itself moved to the title). Pinned on the template because the
+        box renders only once a dataset folder is configured."""
         html = (_TPL / "_datasets.html").read_text(encoding="utf-8")
         i = html.index("search_hint('tag:', 'is:')")
         assert "search_title(" in html[i:i + 400]

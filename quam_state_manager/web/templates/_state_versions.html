@@ -74,7 +74,7 @@
         <table class="sv-quick-table">
             {% for e in quick.entries %}
             <tr>
-                <td class="sv-q-path"><code>{{ e.dot_path }}</code></td>
+                <td class="sv-q-path"><code>{% for part in e.dot_path.split('.') %}{{ part }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</code></td>
                 <td class="sv-q-vals">
                     {% if e.change_type == 'added' %}<span class="sv-q-add">+ {{ e.new_value }}</span>
                     {% elif e.change_type == 'removed' %}<span class="sv-q-del">− {{ e.old_value }}</span>
