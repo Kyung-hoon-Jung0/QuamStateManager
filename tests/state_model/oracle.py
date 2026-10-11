@@ -478,14 +478,11 @@ class Model:
     def take_live(self, *, force: bool) -> Outcome:
         if self.dirty and (self.staged or not self.stash) and not force and self.readable():
             return Outcome("needs_confirm")
+        if not self.readable():
+            return Outcome("refused", "live unreadable")
+        # v1.3.0: backup on refusal -> backup only for a readable Take live.
         if self.T or self.dirty or self.stash:
             self._take_backup()
-        if not self.readable():
-            # SU-17: the backup is written before the live read that refuses
-            if self.backup:
-                self.notes.append(("K:SU-17", "a Take live refused over an unreadable live file "
-                                              "still left a Take-live backup"))
-            return Outcome("refused", "live unreadable")
         self._adopt_live()
         return Outcome("pulled")
 

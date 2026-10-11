@@ -28476,9 +28476,11 @@ def state_sync():
             # edits themselves, which "↶ Bring back" replays on top of the new
             # live. Only when there is something to lose.
             backup = None
+            _pulled = working_copy.sync_from_live(wc)
+            # The store still holds the pre-pull view until the rebuild.
+            # A refused read must publish neither a version nor a replay map.
             if mode == "discard" and (pending or ctx.get("working_dirty")):
                 backup = _take_live_backup(ctx, store, pending)
-            _pulled = working_copy.sync_from_live(wc)
             try:
                 ctx["_pulled_docs"] = (_pulled, safe_io._pair_fingerprint(
                     Path(wc.working_folder)))
