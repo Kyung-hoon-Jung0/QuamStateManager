@@ -31,6 +31,7 @@ Pins, each mutation-checked (docs/250 §5):
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 from pathlib import Path
@@ -303,7 +304,8 @@ class TestTheSurfaces:
         assert ">from lab-B/quam_state<" in html
         # A's own edit, not B's: the quick diff is #4 -> #3 (A's backup -> A's save)
         assert '<span class="sv-quick-ord">#4 → #3</span>' in html
-        assert "5000000000.0</span> → <b>5010000000.0</b>" in html
+        # v1.3.0 B2: raw markup -> visible text, why: the value cell's pieces now wrap as units
+        assert "5000000000.0 → 5010000000.0" in re.sub(r"<[^>]+>", "", html)
         assert "5120000000.0" not in html.split('class="state-versions-actions"')[0]
 
     def test_state_history_labels_other_folder_rows(self, app_two):

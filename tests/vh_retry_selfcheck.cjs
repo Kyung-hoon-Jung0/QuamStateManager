@@ -171,7 +171,9 @@ const DONE = (v) => '<table class="fh-table vh-table"><tr class="vh-row"><td><co
     const before5 = calls.length;
     if (btn5) btn5.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
     await wait(40);
-    const asked = calls.slice(before5).map(c => c.url);
+    // v1.3.0: only the drawer's own requests -- a background poll that lands in
+    // this window is not the drawer asking (it failed the check intermittently)
+    const asked = calls.slice(before5).map(c => c.url).filter(u => u.indexOf('/field/history') >= 0);
     ok(asked.length === 1 && asked[0].indexOf('path=' + encodeURIComponent('qubits.q1.resonator.operations.readout.amplitude')) >= 0,
        'the drawer is asked for the cell\'s own (alias) path: ' + asked.join(', '));
 
