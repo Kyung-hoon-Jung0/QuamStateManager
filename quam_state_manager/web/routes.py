@@ -26278,9 +26278,11 @@ def redo():
     _frames = _redo_stack(ctx)
     # docs/190 F44: a fork clears the redo timeline -- the rule every editor
     # applies -- but in every editor the new edit was YOUR OWN, visible on
-    # screen. Here it was another window or a running node, so the press did
-    # nothing and said nothing (measured: 0 changes, no toast). Remember that
-    # it happened and say it once, at the end.
+    # screen. Here it may also be another window or a running node, so the
+    # press did nothing and said nothing (measured: 0 changes, no toast).
+    # Remember that it happened and say it once, at the end -- without naming
+    # a source it cannot prove (SB-01: the user's own edit was blamed on
+    # "another window or a run").
     _forked = False
     if _frames and ctx.get("redo_seq") != store.mutation_seq:
         _frames.clear()   # foreign mutation since — dead timeline
@@ -26408,8 +26410,8 @@ def redo():
     if not all_fents:
         if _forked:
             return _redo_response(
-                "Nothing to redo — the chip changed after your undo "
-                "(another window or a run edited it), so that redo history "
+                "Nothing to redo — the state changed after your undo "
+                "(a newer edit, apply or live update), so that redo history "
                 "no longer applies.", [],
                 extra={"requested": n_req, "consumed": 0, "stopped": "forked",
                        "level": "warning", "live": False})
