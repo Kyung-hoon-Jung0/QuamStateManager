@@ -2495,6 +2495,7 @@ class HistoryManager:
         trigger: str = "auto",
         *,
         force: bool = False,
+        check_content: bool = False,
         experiment_name: str | None = None,
         run_id: int | None = None,
         experiment_folder_path: str | None = None,
@@ -2511,6 +2512,9 @@ class HistoryManager:
         mapping to :func:`kind_for`.
 
         Returns the new ``SnapshotMeta``, or ``None`` if nothing changed.
+
+        ``check_content=True`` bypasses the mtime shortcut while retaining
+        content deduplication, for backups before an explicit live write.
 
         ``defer_index=True`` moves ONLY the SQLite param-history indexing to a
         background thread; the snapshot files + meta.json are still written
@@ -2534,7 +2538,7 @@ class HistoryManager:
             key = str(path.resolve())
             last_mt = self._last_mtime.get(key)
 
-            if not force and last_mt is not None and current_mt == last_mt:
+            if not force and not check_content and last_mt is not None and current_mt == last_mt:
                 return None
 
             ts = _ts_stamp()

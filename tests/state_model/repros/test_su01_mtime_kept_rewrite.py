@@ -8,12 +8,10 @@ sync-ux 2026-09-25: one honest status): the control says "live".
 """
 import os
 
-import pytest
-
 from tests.state_model.repros._rig import Chip
 
 
-@pytest.mark.xfail(strict=True, reason="SU-01: status facts are keyed on live mtimes only")
+# v1.3.0: xfail -> pass, periodic status refresh must verify content too.
 def test_a_rewrite_that_keeps_the_mtime_is_announced(tmp_path, monkeypatch):
     from quam_state_manager.web import routes
     monkeypatch.setattr(routes, "_LIVE_HASH_RECHECK_S", 0.0)     # the 30 s recheck is due
@@ -31,7 +29,7 @@ def test_a_rewrite_that_keeps_the_mtime_is_announced(tmp_path, monkeypatch):
     assert chip.status() == "live", drift
 
 
-@pytest.mark.xfail(strict=True, reason="SU-01: the pre-apply backup is skipped by mtime, Keep mine refuses")
+# v1.3.0: xfail -> pass, the live backup must verify content before overwrite.
 def test_keep_mine_after_a_rewrite_that_keeps_the_mtime_lands(tmp_path):
     """The second face of SU-01: after Take live (which snapshots the chip) and
     an mtime-kept rewrite, Keep mine is refused "SM could not back up the live
@@ -49,3 +47,22 @@ def test_keep_mine_after_a_rewrite_that_keeps_the_mtime_lands(tmp_path):
     h = chip.c.get("/state/overwrite-live/preflight").get_json()["live_hash"]
     r = chip.c.post("/state/apply-to-live", data={"force": "1", "expect_live_hash": h})
     assert "Applied to the live chip" in r.get_data(as_text=True), r.get_data(as_text=True)[-400:]
+
+
+def test_a_backup_failure_names_history_without_claiming_an_unreadable_chip(tmp_path, monkeypatch):
+    from quam_state_manager.web import routes
+    chip = Chip(tmp_path)
+    chip.edit("qubits.q1.T1", "3.1e-05")
+    with chip.app.app_context():
+        hm = routes._history()
+    monkeypatch.setattr(hm, "check_and_snapshot", lambda *a, **kw: None)
+    monkeypatch.setattr(hm, "snapshot_ts_for_current_content", lambda *a, **kw: None)
+    before = (chip.live / "state.json").read_bytes()
+    r = chip.c.post("/state/apply-to-live", data={"force": "1"},
+                    headers={"Accept": "application/json"})
+    assert r.status_code == 409
+    assert r.get_json()["conflict"] == "no_backup"
+    assert "history" in r.get_json()["message"]
+    assert "files could not be read" not in r.get_json()["message"]
+    assert (chip.live / "state.json").read_bytes() == before
+    assert chip.log() == [("qubits.q1.T1", 3.1e-05)]

@@ -915,7 +915,8 @@ def _sync_live_refresh(ctx) -> None:
         sig = _change_log_sig(store)
     prev = ctx.get("sync_live") or {}
     key = (live_mt, getattr(wc, "synced_live_hash", None))
-    if prev.get("_key") == key:
+    if (prev.get("_key") == key
+            and time.time() - prev.get("checked_at", 0) < _LIVE_HASH_RECHECK_S):
         # Nothing on the live side moved. Only a known live move can make the
         # user's own edit set matter (a collision is an overlap WITH a move).
         if not (prev.get("moved") and prev.get("_sig") != sig):
@@ -28701,7 +28702,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
-                ctx["path"], "auto", kind="backup", actor=_request_actor(),
+                ctx["path"], "auto", kind="backup", actor=_request_actor(), check_content=True,
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
@@ -28880,10 +28881,9 @@ def _live_files_present(wc) -> bool:
 
 
 _UNBACKED_OVERWRITE_MSG = (
-    "Nothing was written — SM could not back up the live chip first (its "
-    "files could not be read: a save in progress, or a UTF-8 BOM), and "
-    "without that backup the overwrite could not be undone. Retry once the "
-    "other program has finished saving.")
+    "Nothing was written — SM could not back up the current live state in "
+    "history. Without that backup the overwrite could not be undone. "
+    "Retry after checking that the live files can be read and history can be written.")
 
 
 _LIVE_MOVED_DURING_CONFIRM_MSG = (
@@ -29177,7 +29177,7 @@ def state_apply_to_live():
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
-                ctx["path"], "auto", kind="backup", actor=_request_actor(),
+                ctx["path"], "auto", kind="backup", actor=_request_actor(), check_content=True,
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
