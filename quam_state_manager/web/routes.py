@@ -31506,10 +31506,21 @@ def workspace_select():
     return redirect(url_for("main.qubits"))
 
 
-def _has_experiment_descendant(root: Path, max_depth: int = 4) -> bool:
-    """Check if *root* contains quam_state folders within *max_depth* levels."""
+#: v1.3.0: the folder dialog's "Contains experiment subfolders" hint gives up
+#: after this long (a big tree on a share walked for minutes, holding the request)
+_DESCENDANT_BUDGET_S = 2.0
+
+
+def _has_experiment_descendant(root: Path, max_depth: int = 4,
+                               budget_s: float | None = None) -> bool:
+    """Check if *root* contains quam_state folders within *max_depth* levels.
+
+    A hint only: past *budget_s* the walk stops and answers False."""
+    deadline = time.monotonic() + (_DESCENDANT_BUDGET_S if budget_s is None else budget_s)
     try:
         for dirpath, dirnames, _filenames in os.walk(root):
+            if time.monotonic() > deadline:
+                return False
             depth = len(Path(dirpath).relative_to(root).parts)
             if depth > 0:
                 dp = Path(dirpath)
@@ -31603,6 +31614,10 @@ def _is_system_path(p: Path, for_mkdir: bool = False) -> bool:
         return True
     if platform.system() == "Windows":
         parts = tuple(part.casefold() for part in resolved.parts)
+        # v1.3.0: a drive's admin share (\\host\c$\Windows) is that drive
+        m = re.fullmatch(r"\\\\[^\\]+\\([a-z])\$\\?", parts[0]) if parts else None
+        if m:
+            parts = (m.group(1) + ":\\",) + parts[1:]
         blocked = [
             ("c:\\", "windows"),
             ("c:\\", "program files"),

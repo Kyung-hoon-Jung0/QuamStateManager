@@ -83,3 +83,38 @@ def test_the_drive_list_names_a_network_drive_without_touching_it(client, monkey
     body = client.get("/browse").get_json()
     assert "Q:\\" in body["dirs"]
     assert "Q:\\" not in touched
+
+
+# v1.3.0 B1 (route sweep, after the share budget): /browse on a REACHABLE share held
+# the request 45 s+ -- the admin share spelling of C:\Windows (\\127.0.0.1\c$\Windows)
+# passed the protected-path guard, and the "Contains experiment subfolders" walk
+# then went four levels deep through the whole Windows tree over SMB (281 s measured).
+
+
+@pytest.mark.parametrize("raw", [r"\\127.0.0.1\c$\Windows", r"\\localhost\C$\Program Files\x",
+                                 r"\\127.0.0.1\c$\ProgramData"])
+def test_a_drive_admin_share_is_that_drive_for_the_protected_paths(raw):
+    from pathlib import Path
+    assert routes._is_system_path(Path(raw)) is True
+
+
+@pytest.mark.parametrize("raw", [r"\\127.0.0.1\share\Windows", r"\\127.0.0.1\c$\work"])
+def test_an_ordinary_share_folder_is_not_protected(raw):
+    from pathlib import Path
+    assert routes._is_system_path(Path(raw)) is False
+
+
+def test_the_experiment_subfolder_hint_gives_up_at_its_budget(monkeypatch, tmp_path):
+    t0 = time.monotonic()
+
+    def endless_walk(root):
+        i = 0
+        while True:
+            if time.monotonic() - t0 > 5:
+                raise AssertionError("the hint walk is not bounded in time")
+            i += 1
+            time.sleep(0.001)
+            yield (str(tmp_path / f"d{i}"), [], [])
+    monkeypatch.setattr(routes.os, "walk", endless_walk)
+    assert routes._has_experiment_descendant(tmp_path, budget_s=0.2) is False
+    assert time.monotonic() - t0 < 2
