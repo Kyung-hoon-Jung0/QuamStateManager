@@ -1123,10 +1123,14 @@ def _composite_rows(saved: "_Rows", index, paths: list[str], compose, extra_even
                 proven = False
         vals = values(ws, pos)
         new_shown = compose(vals)
+        named = ws[0][1] if len(ws) == 1 else None
         meta.append({"ev": ev_at.get(pos), "old": prev_shown, "new": new_shown,
                      # a rename moves every spelling at once: not a retarget
                      "moved": moved and pos not in bounds,
-                     "holder": ws[0][1] if len(ws) == 1 else None,
+                     "holder": named,
+                     # S10 walk (round 4, P2-3): the pulse a pointer named, as context
+                     "via": (named.rsplit(".", 2)[-2] if named and ws[0][0] and named.count(".") >= 2
+                             else None),
                      # what the live tail compares: each input's holder and value
                      "names": [w[1] for w in ws], "vals": vals})
         rows.append((pos, index.eids[pos], prev_tok, tok, proven and not moved))
@@ -1194,6 +1198,13 @@ def _composite_answer(comp: dict, judgement, tgt: dict, index, roots: dict, poin
                 and code != hub_witness.CONFIRMED):
             p["witness"] = code
 
+    def in_force(m):
+        """S10 walk (round 4, P2-3): a save read through a pointer, as the
+        value it meant with the pulse the pointer named (``_vh_through``)."""
+        if not m.get("via") or m["new"] is _ABSENT or isinstance(m["new"], (dict, list)):
+            return None
+        return {"value": m["new"], "via": m["via"]}
+
     def brief(eid):
         if eid is None or eid not in by_eid:
             return None
@@ -1201,12 +1212,13 @@ def _composite_answer(comp: dict, judgement, tgt: dict, index, roots: dict, poin
         ev = m["ev"]
         return {"eid": eid, "t": iso_z(ev["t_utc_us"]), "t_us": ev["t_utc_us"],
                 "run_id": ev.get("run_id"), "experiment": ev.get("experiment"), "kind": ev.get("kind"),
-                "value": None if m["new"] is _ABSENT else m["new"], "in_force": None}
+                "value": None if m["new"] is _ABSENT else m["new"], "in_force": in_force(m)}
 
     def exc_point(a, pts, back):
         return {"holder": here, "anchor": brief(a), "back": brief(back),
                 "points": [dict(_point(*raw(by_eid[e][1], by_eid[e][0][4]), roots, {}),
-                                witness=judgement.code(e), in_force=None) for e in pts if e in by_eid]}
+                                witness=judgement.code(e), in_force=in_force(by_eid[e][1]))
+                           for e in pts if e in by_eid]}
 
     not_kept = []
     for c in sorted(judgement.pairs, key=lambda e: by_eid[e][0][0]):
@@ -1216,8 +1228,8 @@ def _composite_answer(comp: dict, judgement, tgt: dict, index, roots: dict, poin
         w = judgement.pairs[c]
         pt = _not_kept_point(index, *raw(m, r[4]), by_eid[w][1]["ev"] if w in by_eid else None,
                              roots, m["holder"] or here, entity)
-        pt["in_force"] = None
-        pt["by"]["in_force"] = None
+        pt["in_force"] = in_force(m)
+        pt["by"]["in_force"] = in_force(by_eid[w][1]) if w in by_eid else None
         not_kept.append(pt)
     excursions = [exc_point(*e) for e in judgement.excursions]
     newest = judgement.newest
