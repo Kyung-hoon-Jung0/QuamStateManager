@@ -1162,6 +1162,7 @@ class Rig:
             self.hidden_mtimes = tuple(os.stat(self.live / n).st_mtime_ns
                                        for n in ("state.json", "wiring.json"))
         elif kind == "torn":
+            self.saw_torn = True
             p = self.live / "state.json"
             if p.exists():
                 data = p.read_bytes()

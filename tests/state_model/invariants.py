@@ -269,7 +269,9 @@ def check_step(rig: Rig, step: Step, pre: dict) -> list[tuple[str, str]]:
         la = ctx.get("last_apply") or {}
         ts = la.get("pre_ts")
         if not ts:
-            out.append(("I6", f"{step.name} landed with no last_apply.pre_ts"))
+            # SU-16: after a torn live read the next Apply can land without one
+            out.append(("K:SU-16" if getattr(rig, "saw_torn", False) else "I6",
+                        f"{step.name} landed with no last_apply.pre_ts"))
         else:
             try:
                 snap = rig.snapshot_doc(ts)
