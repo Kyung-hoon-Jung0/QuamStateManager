@@ -623,7 +623,7 @@
         // visibleColumns() when a single folder is active (no disambiguation needed).
         {key: 'folder', label: 'Folder', on: true, w: 110, cls: 'col-folder', sortKey: 'f', type: 'str',
          render: function (r) { var f = state.foldersByKey[r.f]; if (!f) return ''; return '<span class="folder-chip" title="' + escapeHtml(f.full_path || '') + '">' + escapeHtml(f.label || '') + '</span>'; }},
-        {key: 'exp', label: 'Experiment', on: true, w: 230, sortKey: 'exp', type: 'str',
+        {key: 'exp', label: 'Experiment', on: true, w: 280, sortKey: 'exp', type: 'str',   // L9: 230 clipped names once the table stopped growing to its content
          render: function (r) { return '<code>' + escapeHtml(r.exp || '') + '</code>'; }},
         {key: 'qubits', label: 'Qubits', on: true, w: 96, sortKey: 'qubits', type: 'str',
          // Prefer the intact pair names ("q0-1") for 2Q runs; fall back to single
@@ -635,9 +635,9 @@
              var as = was ? ' <span class="muted ds-recorded-as" title="Saved before the qubits were renamed">(as ' + escapeHtml(was.join(', ')) + ')</span>' : '';
              return (now.length ? escapeHtml(now.join(', ')) : (as ? '' : '-')) + as;
          }},
-        {key: 'status', label: 'Status', on: true, w: 96, sortKey: 'status', type: 'str',
+        {key: 'status', label: 'Status', on: true, w: 104, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"
          render: function (r) { return statusChip(r.status); }},
-        {key: 'metric', label: 'Key Metric', on: true, w: 96, sortKey: 'metric', type: 'num', cls: 'col-metric',
+        {key: 'metric', label: 'Key Metric', on: true, w: 108, sortKey: 'metric', type: 'num', cls: 'col-metric',   // L9: 96 clipped -3.0143e-05
          render: function (r) { return (r.metric == null || r.metric === '') ? '-' : escapeHtml(r.metric); }},
         {key: 'when', label: 'When', on: true, w: 88, sortKey: 'when', type: 'num',
          render: function (r) { return '<span title="' + escapeHtml(_whenTitle(r)) + '">' + escapeHtml(fmtRelative(r)) + '</span>'; }},

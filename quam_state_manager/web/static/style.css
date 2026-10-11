@@ -6107,7 +6107,10 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
 }
 /* Column widths come from the JS-built <colgroup> (one source for header + body);
    table-layout:fixed makes every cell obey it, so they can never drift. */
-.datasets-table-virtual { table-layout: fixed; width: max-content; min-width: 100%; margin: 0; }
+/* L9: width 0 (not max-content) -- a fixed table is then exactly its colgroup
+   (or the pane, whichever is wider). max-content re-measured the rows in view, so
+   the sideways scroll range jumped 0-81 px while scrolling vertically. */
+.datasets-table-virtual { table-layout: fixed; width: 0; min-width: 100%; margin: 0; }
 .datasets-table-virtual thead th {
     /* Anchored to #table-pane WITH its padding subtracted — the same expression
        the two grids use (docs/141 §4q). `top: 0` sticks the header at the

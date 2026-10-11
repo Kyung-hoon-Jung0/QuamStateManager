@@ -58,3 +58,23 @@ def test_applied_log_in_the_sync_panel_is_in_flow():
     m = re.search(r"\.sp-history \.applied-log-list \{([^}]*)\}", css)
     assert m and "position: static" in m.group(1), "the in-panel applied log floats again"
     assert re.search(r"\.sp-history \.applied-log \{[^}]*display: block", css)
+
+
+def test_datasets_run_table_width_is_its_colgroup_and_defaults_fit():
+    """L9: width max-content re-measured the rows in view (sideways scroll range
+    jumped 73 px while scrolling, measured at 1280); width 0 + min-width 100%
+    keeps it the colgroup. The wider defaults keep "finished", the corpus's
+    longest experiment name and a long key metric unclipped (measured 1280/1600)."""
+    import re
+    from pathlib import Path
+    st = Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static"
+    css = (st / "style.css").read_text(encoding="utf-8")
+    m = re.search(r"\.datasets-table-virtual \{([^}]*)\}", css)
+    assert m and "width: 0;" in m.group(1) and "min-width: 100%" in m.group(1), m and m.group(1)
+    assert "max-content" not in m.group(1)
+    js = (st / "dataset-virtual.js").read_text(encoding="utf-8")
+
+    def w(key):
+        mm = re.search(r"\{key: '" + key + r"', label: '[^']+', on: true, w: (\d+)", js)
+        return int(mm.group(1))
+    assert w("status") >= 104 and w("exp") >= 280 and w("metric") >= 108
