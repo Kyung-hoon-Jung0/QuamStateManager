@@ -2422,7 +2422,7 @@ def _invalidate_engine_cache(ctx: dict | None = None) -> None:
         ctx["wiring_json"] = json.dumps(store.wiring)
 
 
-def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
+def _rebuild_after_working_copy_replaced(ctx: dict, *, replaced: bool = True) -> None:
     """Rebuild every derived object after the working folder's files were
     replaced wholesale (a sync pull, or a State History restore).
 
@@ -2467,7 +2467,10 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # consumed it; a fresh stage re-sets the flag right after this call).
     ctx["staged_base"] = False
     ctx.pop("staged_from", None)    # docs/271: ...and where it came from
-    _hub_discard_saved_units(ctx)   # docs/271 review P2-6
+    if replaced:
+        # docs/271 review P2-6. A Reload re-reads the SAME files (replaced=False):
+        # the saved units are still waiting there, so they stay claimable (SU-03).
+        _hub_discard_saved_units(ctx)
     # docs/107: the reload cleared the change log, so any staged journal steps
     # died with it — re-read the sidecar and put the cursor back at the tip
     # (the redo stack self-invalidates via the mutation_seq handshake).
@@ -31851,7 +31854,7 @@ def app_reload():
                     _invalidate_engine_cache()
                 else:
                     keep = {k: ctx.get(k) for k in ("working_dirty", "staged_base")}
-                    _rebuild_after_working_copy_replaced(ctx)
+                    _rebuild_after_working_copy_replaced(ctx, replaced=False)
                     for k, v in keep.items():
                         if v:
                             ctx[k] = v
