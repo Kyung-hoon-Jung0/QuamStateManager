@@ -302,8 +302,11 @@ class Model:
         if not self.moved():
             return []
         out = []
+        created = [e.path for e in self.T if e.created]
         for p, orig in self.originals().items():
             lv, wv = get(self.L, p), get(self.W, p)
+            if lv is MISSING and any(p.startswith(c + ".") for c in created):
+                continue          # inside a subtree the user created: live never had it
             if not _eq(lv, wv) and not _eq(lv, orig):
                 out.append(p)
         return sorted(out)
@@ -727,6 +730,10 @@ class Model:
         if check and not ack:
             open_ = [p for p in self.conflicts() if p not in (picks or {})]
             if open_:
+                # the collision answer carries the conflict tray (expect_chip
+                # sent), which records the refusal like a stale Apply
+                self.refused_at = digest(self.B)
+                self.refused_land = self.land_count
                 return Outcome("collision", extra={"paths": open_})
         if (not self.moved() and not self.touched and not picks and not self.stash
                 and not self.dirty and not self.staged):
