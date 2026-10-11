@@ -43101,6 +43101,15 @@ def _sched_state() -> dict:
     except Exception:       # noqa: BLE001 — a badge detail must not break the poll
         logger.debug("foreign-owner probe failed", exc_info=True)
     try:
+        # v1.3.0 (dsperf): no plan engine exists in this process until the
+        # engine module is imported, and with no persisted run there is no
+        # summary either -- so the first poll of a cold open does not import
+        # it (matplotlib behind it: ~0.5 s of the interpreter, measured on
+        # the first poll, which can land beside a chip's history catch-up).
+        # The answer is the same.
+        if ("quam_state_manager.core.autofit.engine" not in sys.modules
+                and not (Path(_sched_inst()) / "autofit_run.json").exists()):
+            return out
         from quam_state_manager.core.autofit import engine as autofit_engine
         eng = autofit_engine.get_engine(_sched_inst())
         if eng is not None:
