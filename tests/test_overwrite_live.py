@@ -405,5 +405,8 @@ class TestAMissingLiveFolderStillFailsHonestly:
         (env["live"] / "state.json").unlink()
         (env["live"] / "wiring.json").unlink()
         r = c.post("/state/apply-to-live")
-        assert r.status_code == 500
-        assert "Apply to live failed" in r.get_data(as_text=True)
+        # v1.3.0: missing live pair returned 500 -> honest 409, Apply keeps the staged edit.
+        assert r.status_code == 409
+        assert "live chip state file is missing" in r.get_data(as_text=True)
+        ctx = next(v for v in env["app"].config["contexts"].values() if v.get("type") == "quam")
+        assert ctx["store"].change_log

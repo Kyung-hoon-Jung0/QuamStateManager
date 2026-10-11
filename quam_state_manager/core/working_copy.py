@@ -49,6 +49,18 @@ class WorkingCopyChangedError(Exception):
     """Another process replaced the working files this press meant to apply."""
 
 
+class LiveStateMissingError(FileNotFoundError):
+    """An unforced apply cannot recreate a missing live state or folder."""
+
+
+def missing_live_message(wc: WorkingCopy) -> str | None:
+    if not wc.live_folder.is_dir():
+        return "The live chip folder is missing. Nothing was applied."
+    if not (wc.live_folder / "state.json").is_file():
+        return "The live chip state file is missing. Nothing was applied."
+    return None
+
+
 SHARED_WORKING_MSG = (
     "Another SM window/process changed the shared working copy. Nothing was applied; "
     "your edits remain in the tray. Take live before applying from this window."
@@ -881,6 +893,9 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     """
     from quam_state_manager.core import hub, xlock
 
+    missing = missing_live_message(wc) if not force else None
+    if missing:
+        raise LiveStateMissingError(missing)
     if record is None:
         record = hub.guard_unrecorded(wc.live_folder)
     expected_fp = getattr(record, "expect_fp", None)
@@ -1001,6 +1016,9 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             except OSError:
                 pre_mt = None
 
+        missing = missing_live_message(wc) if not force else None
+        if missing:
+            raise LiveStateMissingError(missing)
         if expect_live_hash is not None:
             try:
                 now_hash = live_content_hash(wc)

@@ -972,7 +972,9 @@ class Rig:
                                                       created=bool(e.get("created")),
                                                       deleted=bool(e.get("deleted")))
                                               for e in u.get("entries") or []],
-                                     kind="wholesale" if (u.get("meta") or {}).get("wholesale") else "edit")
+                                     kind="wholesale" if (u.get("meta") or {}).get("wholesale") else "edit",
+                                     # v1.3.0: empty units were skippable -> preserve the absent-state boundary.
+                                     no_previous_state=bool((u.get("meta") or {}).get("no_previous_state")))
                               for u in units[n0:]]
             m.cursor = m.pcursor = len(m.J)
 

@@ -203,6 +203,7 @@ class Unit:
     entries: list[Entry]
     kind: str = "edit"          # edit | wholesale
     foreign: bool = False
+    no_previous_state: bool = False
 
     def effect(self) -> dict[str, tuple[Any, Any]]:
         """Net leaf-level effect, first old / last new per leaf."""
@@ -624,7 +625,7 @@ class Model:
               snapshot: bool = True) -> Outcome:
         before = copy.deepcopy(self.L)
         units = self._units_of_tray()
-        if wholesale is not None and not wholesale.entries:
+        if wholesale is not None and not wholesale.entries and not wholesale.no_previous_state:
             wholesale = None
         if self.readable() and same(self.L, self.W):
             # docs/116: live already holds the payload -- a provable no-op
@@ -678,6 +679,9 @@ class Model:
             if not pending and not self.moved() and self.L is not GONE:
                 return Outcome("noop", "nothing to apply")
         else:
+            # v1.3.0: a missing chip could save or noop -> refuse unchanged before save.
+            if self.L is GONE:
+                return Outcome("refused", "live missing")
             if self.L is UNREADABLE or (not pending and self.moved() and not same(self.L, self.W)):
                 # the staleness preflight runs before "nothing to apply"
                 if html:
@@ -701,10 +705,8 @@ class Model:
             wholesale = Unit(entries=self._wholesale_entries(), kind="wholesale")
             self._dup_note("Apply after a stage", wholesale)
         elif force and self.L is GONE:
-            # nothing could be read before the write: the unit is the payload
-            # itself, tray leaf edits at their NEW values (no staged-over)
-            ents = self._wholesale_entries(before={}, staged_over=False)
-            wholesale = Unit(entries=ents, kind="wholesale") if ents else None
+            # v1.3.0: journal top-level creates -> refuse the undo, no earlier document exists.
+            wholesale = Unit(entries=[], kind="wholesale", no_previous_state=True)
         elif force and self.readable():
             # the overwritten live content, up to the working copy the tray
             # edits sit on (the edits are their own units above it). SU-04:
@@ -810,6 +812,8 @@ class Model:
         if self.cursor <= 0 or self.cursor > len(self.J):
             return Outcome("noop", "exhausted")
         unit = self.J[self.cursor - 1]
+        if unit.no_previous_state:
+            return Outcome("refused", "the chip had no state before this write; nothing to restore")
         if not unit.entries:
             self.cursor -= 1
             self.R.append(("jrn_live", self.cursor))

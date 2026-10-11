@@ -28624,6 +28624,9 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     if _shared_working_changed(ctx):
         return jsonify(status="error", conflict="shared_working_copy",
                        message=working_copy.SHARED_WORKING_MSG), 409
+    missing = working_copy.missing_live_message(wc) if not force else None
+    if missing:
+        return jsonify(status="error", conflict="missing_live", message=missing), 409
 
     # Re-stash exactly the edits now in the change log, so save()'s clear can't
     # lose them if the apply below hits a fresh conflict. Pin to the CAPTURED ctx
@@ -28729,6 +28732,9 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                 _before_tree = _live_merged_tree(wc)
                 _bref["tree"] = _before_tree
             working_copy.apply_to_live(wc, force=force, record=_pend)
+    except working_copy.LiveStateMissingError as exc:
+        _refused_after_save()
+        return jsonify(status="error", conflict="missing_live", message=str(exc)), 409
     except working_copy.WorkingCopyChangedError:
         _press_keep_tray(ctx, _press)
         return jsonify(status="error", conflict="shared_working_copy",
@@ -29045,6 +29051,11 @@ def state_apply_to_live():
             message="An empty state cannot be applied to the live chip"), 409
     if _shared_working_changed(ctx):
         return _shared_working_refusal()
+    missing = working_copy.missing_live_message(wc) if not force else None
+    if missing:
+        if request.headers.get("Accept", "").startswith("application/json"):
+            return jsonify(ok=False, conflict="missing_live", message=missing), 409
+        return render_template("_status.html", level="warning", message=missing), 409
     # QA correctness-r2-09: "Keep mine" hands back the live content hash its
     # confirm counted; a forced push is held to it (absent -> unchanged).
     expect_live_hash = (request.values.get("expect_live_hash") or None) if force else None
@@ -29243,6 +29254,11 @@ def state_apply_to_live():
             working_copy.apply_to_live(
                 wc, force=force, record=_pend,
                 **({"expect_live_hash": expect_live_hash} if expect_live_hash else {}))
+    except working_copy.LiveStateMissingError as exc:
+        _refused_after_save()
+        if request.headers.get("Accept", "").startswith("application/json"):
+            return jsonify(ok=False, conflict="missing_live", message=str(exc)), 409
+        return render_template("_status.html", level="warning", message=str(exc)), 409
     except working_copy.WorkingCopyChangedError:
         _press_keep_tray(ctx, _press)
         return _shared_working_refusal()
