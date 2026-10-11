@@ -199,10 +199,21 @@
                 btn.title = follow.map(function (u) {
                     return u.dot_path + ' = ' + JSON.stringify(u.value);
                 }).join('\n');
+                btn.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
                 btn.onclick = function (ev) {
                     ev.stopPropagation();
                     btn.disabled = true;
-                    _setBoth(follow).then(done, done);
+                    var form = badge._anchor && badge._anchor.closest('form.pulse-edit-form');
+                    var wasCommitting = form && form.getAttribute('data-committing');
+                    if (form) form.setAttribute('data-committing', '1');
+                    function finish() {
+                        if (form) {
+                            if (wasCommitting == null) form.removeAttribute('data-committing');
+                            else form.setAttribute('data-committing', wasCommitting);
+                        }
+                        done();
+                    }
+                    _setBoth(follow).then(finish, finish);
                 };
                 badge.appendChild(document.createTextNode(' '));
                 badge.appendChild(btn);

@@ -27,7 +27,12 @@ w.eval(fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/la
     const button = w.document.querySelector('.lab-check-follow');
     assert.ok(button, 'a Pulses refusal offers the existing Set too button');
     assert.match(button.textContent, /Set .* too .*one batch/);
+    // v1.3.0: blur retried a refused edit -> batch owns focus and commit, preventing a stale offer.
+    const press = new w.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    button.dispatchEvent(press);
+    assert.equal(press.defaultPrevented, true, 'pressing Set too keeps focus on the refused input');
     button.click();
+    assert.equal(form.getAttribute('data-committing'), '1', 'the batch owns the field while it checks and swaps');
     await new Promise(r => setTimeout(r, 10));
     const batches = calls.filter(c => c.url === '/field/edit-batch');
     assert.equal(batches.length, 1, 'one press sends one batch');
@@ -35,6 +40,7 @@ w.eval(fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/la
     assert.equal(reverted.length, 1);
     assert.equal(reverted[0].entries.length, 2, 'both fields repaint through the undo event');
     assert.equal(w.document.querySelector('.lab-check-follow'), null);
+    assert.equal(form.hasAttribute('data-committing'), false, 'the batch releases the inline commit guard');
     w._debounce = () => {};
     w.eval(fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/pulses.js'), 'utf8'));
     const pane = w.document.getElementById('inspector-pane');
@@ -46,6 +52,6 @@ w.eval(fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/la
     const other = { target: pane, xhr: { status: 404, getResponseHeader: () => null }, shouldSwap: false };
     w.document.dispatchEvent(new w.CustomEvent('htmx:beforeSwap', { detail: other }));
     assert.equal(other.shouldSwap, false, 'an ordinary 404 keeps its normal handling');
-    console.log('10 assertions passed');
+    console.log('13 assertions passed');
     w.close();
 })().catch(err => { console.error(err); w.close(); process.exitCode = 1; });
