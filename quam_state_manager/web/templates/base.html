@@ -1656,12 +1656,14 @@
             btn.setAttribute("aria-label", title);
             gutterListeners.push(scope.listen(btn, "click", function(e) {
                 e.stopPropagation();
-                var hadFocus = document.activeElement === btn;
+                // a keyboard press is a click with detail 0; a mouse press
+                // drops focus as before (no lingering focus ring)
+                var hadFocus = document.activeElement === btn && e.detail === 0;
                 // Straight to the fixed position, every press -- never a no-op
                 // from a hidden preset. Not the remembered height: the next
                 // inspector open goes back to the last DRAGGED height.
                 applySizes(sizesFor());
-                // initSplit rebuilt the gutter; keep a keyboard user on the arrow.
+                // initSplit rebuilt the gutter; keep a keyboard user on the arrow
                 var again = hadFocus && document.querySelector(".gutter-controls ." + cls);
                 if (again) again.focus();
             }));

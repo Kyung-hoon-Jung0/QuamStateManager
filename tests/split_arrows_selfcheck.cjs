@@ -17,7 +17,8 @@
  *     retired      -- the old set-high / set-low keys are removed on load
  *     defaults     -- with no dragged height, the defaults as before
  *     still_click  -- a press on the bar that does not move it is not a drag
- *     focus        -- a keyboard user stays on the arrow after a press
+ *     focus        -- a keyboard user stays on the arrow after a press; a mouse
+ *                     press drops focus as before
  * Driven by tests/test_split_arrows.py.
  */
 'use strict';
@@ -292,6 +293,14 @@ if (mode === 'buttons') {
         'focus is on the rebuilt down arrow, not dropped to the body');
     s.press('down');
     eq(s.sizes(), SPLIT.collapsedSizes, 'a second keyboard press works');
+    // a MOUSE press (detail 1) drops focus as before -- no lingering focus ring
+    const up = s.d.querySelector('.split-up-btn');
+    up.focus();
+    up.dispatchEvent(new s.w.MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+    eq(s.sizes(), SPLIT.expandedSizes, 'the mouse press moved the bar');
+    const after = s.d.activeElement;
+    assert.ok(!(after && after.classList && after.classList.contains('split-up-btn')),
+        'a mouse press does not put focus back on the rebuilt arrow');
 } else {
     assert.fail('unknown mode: ' + mode);
 }
