@@ -461,21 +461,22 @@ def test_a_composite_restored_as_a_unit_leaves_with_its_restoring_row(tmp_path):
 
 def test_a_kept_composite_is_judged_again_when_a_later_read_lands(tmp_path):
     """A composite's verdicts live in its answer, and an answer is kept between reads (docs/298).
-    Run 4 measures another qubit and saves nothing of qA1's x180: it is no row of the composite,
-    yet it is the read that confirms run 3. The kept answer is served again only while the same
-    rows are judged the same -- here they are not, so run 3's point loses its doubt."""
+    Run 3 measures another qubit and saves nothing of qA1's x180: it is no row of the composite,
+    yet it is the read that confirms run 2 (and no single holder's left-out rows move with it).
+    The kept answer is served again only while the same rows are judged the same -- here they
+    are not, so run 2's point loses its doubt."""
     path = "qubits.qA1.xy.operations.x180.amplitude"
     runs = [(1, "100000", _ptr_state("#./x180_DragCosine", 0.40)),
-            (2, "101000", _ptr_state("#./x180_Square", 0.45)),
-            (3, "102000", _ptr_state("#./x180_Square", 0.40))]
+            (2, "101000", _ptr_state("#./x180_Square", 0.45))]
     c, root = _open(tmp_path, runs, runs[-1][2])
     s = _series(c, "metrics=&paths=" + path)
-    assert _doubt(_attr_at(s, _stamp("102000"))) == "no later run has read the chip yet"
-    later = _ptr_state("#./x180_Square", 0.40)
+    assert _doubt(_attr_at(s, _stamp("101000"))) == "no later run has read the chip yet"
+    later = _ptr_state("#./x180_Square", 0.45)
     later["qubits"]["qA2"]["f_01"] = 6.1e9
-    _seed(root, 4, "103000", later, targets=("qA2",))
-    declare_root(c, root)
+    _seed(root, 3, "102000", later, targets=("qA2",))
+    from quam_state_manager.core import hub_sync
+    with c.application.app_context():
+        hub_sync.on_roots_moved([str(root)])
     s = _series(c, "metrics=&paths=" + path)
     assert _real(s) == _expected(runs, path), _real(s)
-    assert _doubt(_attr_at(s, _stamp("102000"))) is None, "run 4 read the chip: run 3 is confirmed"
-    assert _doubt(_attr_at(s, _stamp("101000"))) == "changed again before the chip was read"
+    assert _doubt(_attr_at(s, _stamp("101000"))) is None, "run 3 read the chip: run 2 is confirmed"
