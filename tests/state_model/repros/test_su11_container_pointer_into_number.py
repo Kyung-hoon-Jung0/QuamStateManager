@@ -13,8 +13,15 @@ import pytest
 from tests.state_model.repros._rig import Chip
 
 
-@pytest.mark.xfail(strict=True, reason="SU-11: no container check on the grid door")
 def test_a_container_pointer_is_refused_in_a_numeric_cell(tmp_path):
     chip = Chip(tmp_path)
     r = chip.c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "#/qubits"})
     assert r.status_code == 400, (r.status_code, chip.log())
+    assert "container" in (r.get_json() or {}).get("error", ""), r.get_json()
+    assert chip.log() == [], "nothing staged"
+
+
+def test_a_leaf_pointer_still_lands(tmp_path):
+    chip = Chip(tmp_path)
+    r = chip.c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "#/qubits/q2/T1"})
+    assert r.status_code == 200 and r.get_json()["ok"], r.get_data(as_text=True)[:300]

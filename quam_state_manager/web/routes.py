@@ -11199,6 +11199,9 @@ def field_edit():
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
+        _cno = _container_pointer_refusal(modifier.store, target_path, parsed)
+        if _cno:
+            return jsonify(ok=False, error=_cno), 400
         # w9/pulsegate: a whole-object edit (the tree's JSON editor, a paste)
         # that adds, removes or renames a pulse is the Pulses page's job; a
         # value inside a pulse, or a re-link, passes untouched
@@ -11407,6 +11410,29 @@ def _text_violates_enforced(store, target_path: str, current) -> bool:
     from quam_state_manager.core.state_env_validate import EDIT_BLOCKING, judge
     ok, code, _ = judge(current, expected.spec)
     return (not ok) and code in EDIT_BLOCKING
+
+
+def _container_pointer_refusal(store, target_path: str, parsed) -> str | None:
+    """SU-11: a pointer that resolves to a whole container (``#/qubits``) put
+    into a VALUE leaf (a number, a flag, a text) turns the leaf into a dump of
+    that container on the chip. Refused with the reason, like /pulse/edit
+    (docs/190 F27). A leaf that already holds a container (a port reference)
+    or nothing, and a dangling pointer, pass."""
+    if not (isinstance(parsed, str) and is_pointer(parsed)):
+        return None
+    from quam_state_manager.core.pointer_resolver import resolve_pointer
+    parts = tuple(target_path.split("."))
+    try:
+        cur = store.get_value(target_path)
+        if isinstance(cur, str) and is_pointer(cur):
+            cur = resolve_pointer(store.merged, cur, parts)
+        probe = resolve_pointer(store.merged, parsed, parts)
+    except Exception:  # noqa: BLE001 -- missing / dangling: not this check's call
+        return None
+    if isinstance(probe, (dict, list)) and isinstance(cur, (bool, int, float, str))             and not (isinstance(cur, str) and is_pointer(cur)):
+        return (f"{parsed} resolves to a container, not a value -- {target_path} "
+                f"holds a {'flag' if isinstance(cur, bool) else 'text' if isinstance(cur, str) else 'number'}; point at a leaf (e.g. #/qubits/q1/T1)")
+    return None
 
 
 def _parse_for_target(store, target_path: str, raw_value: str):
