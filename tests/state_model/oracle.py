@@ -497,7 +497,7 @@ class Model:
         wins), except the fields picked ``live``."""
         out = copy.deepcopy(self.L)
         for p in self.fields():
-            if (picks or {}).get(p) == "live":
+            if _picked_live(p, picks):
                 continue
             v = get(self.W, p)
             if v is MISSING:
@@ -744,7 +744,7 @@ class Model:
                 return Outcome("noop", "nothing to apply")
             return self._land(kind="apply")
         target = self.replay_target(picks)
-        fields = [p for p in self.replay_fields() if (picks or {}).get(p) != "live"]
+        fields = [p for p in self.replay_fields() if not _picked_live(p, picks)]
         self._gids = {p: self._gid_of(p) for p in fields}
         self._adopt_live()
         self.W = target
@@ -910,6 +910,11 @@ class Model:
     def outside(self, doc: Any) -> None:
         self.L = copy.deepcopy(doc)
         self.touched = True
+
+
+def _picked_live(p: str, picks: dict | None) -> bool:
+    """A "live" pick covers the picked path and everything under it."""
+    return any(v == "live" and (p == k or p.startswith(k + ".")) for k, v in (picks or {}).items())
 
 
 def _eq(a: Any, b: Any) -> bool:
