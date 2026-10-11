@@ -43324,6 +43324,9 @@ def _loaded_autofit_engine():
     return mod
 
 
+_AGENT_RUN_DOORS = frozenset({"agent.run_node", "agent.plan_start"})
+
+
 @bp.before_app_request
 def _scheduler_lock_guard():
     """409 chip-mutating / QM-subprocess routes while the Scheduler is running.
@@ -43359,7 +43362,8 @@ def _scheduler_lock_guard():
     # docs/173 S5: the agent's run_node holds the chassis too -- say so in the
     # agent's words, not the Experiment Runner's (the runner is hidden in 1.0)
     _alk = current_app.config.get("agent_edit_lock")
-    if _alk and request.method != "GET" and request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS:
+    if _alk and request.method != "GET" and request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
+            and request.endpoint not in _AGENT_RUN_DOORS:
         resp = make_response(jsonify({
             "error": "agent_running", "agent_lock": _alk,
             "message": f"The Agent is running {_alk.get('node')}; editing is locked. Press Stop to edit.",
@@ -43367,7 +43371,12 @@ def _scheduler_lock_guard():
         resp.headers["HX-Reswap"] = "none"
         resp.headers["HX-Trigger"] = "schedulerLocked"
         return resp
+    # The agent's run doors answer a busy runner (or the agent's own run) with
+    # their OWN gate, which names what holds it (run_active, a live orphan row,
+    # a foreign owner) and lets a dead row of this process neither block nor
+    # run first; they stage nothing. The autofit lock above still covers them.
     if request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
+            and request.endpoint not in _AGENT_RUN_DOORS \
             and scheduler.is_active(_sched_inst()):
         resp = make_response(jsonify({
             "error": "scheduler_running",
