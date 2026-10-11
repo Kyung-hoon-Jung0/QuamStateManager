@@ -98,13 +98,13 @@
     --table-pane-pad-h:      1rem;    /* left/right padding inside the upper content pane */
     --inspector-pane-pad-v:  0.5rem;  /* top/bottom padding inside the lower detail pane (qubit detail, dataset detail…) */
     --inspector-pane-pad-h:  1rem;    /* left/right padding inside the lower detail pane */
-    --split-gutter-size:     24px;    /* height of the drag handle between panes (v1.3.0: 6px -> 24px, room for its buttons) -- keep in sync with UI_CONFIG.split.gutterSize */
+    --split-gutter-size:     26px;    /* height of the drag handle between panes (v1.3.0: 6px -> 24px, room for its buttons; 24px -> 26px for the larger arrows) -- keep in sync with UI_CONFIG.split.gutterSize */
 
-    /* ── INSPECTOR TOGGLE BUTTON (on the gutter drag handle) ──────── */
-    --inspector-toggle-w:    32px;    /* width of the expand/collapse arrow button */
-    --inspector-toggle-h:    20px;    /* height of the expand/collapse arrow button */
-    --inspector-toggle-font: 12px;   /* font size of the arrow glyph inside the button */
-    --inspector-toggle-radius: 4px;  /* border-radius of the toggle button */
+    /* -- SPLIT ARROW BUTTONS (up / down, on the gutter drag handle) -- */
+    --inspector-toggle-w:    38px;    /* width of each arrow button (v1.3.0: 32 -> 38, a larger hit area) */
+    --inspector-toggle-h:    22px;    /* height of each arrow button (v1.3.0: 20 -> 22) -- keep 2px+ under --split-gutter-size */
+    --inspector-toggle-font: 15px;   /* font size of the arrow glyph (v1.3.0: 12 -> 15) */
+    --inspector-toggle-radius: 4px;  /* border-radius of the arrow buttons */
 
     /* ── QUBITS / PAIRS — LIST TABLE (.data-table) ────────────────── */
     /* Used on the Qubits page, Pairs page, Search results, Datasets list */
@@ -2284,49 +2284,19 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     background: var(--pico-primary-inverse);
 }
 
-/* Toggle button on the gutter to expand/collapse inspector */
-.inspector-toggle-btn {
-    position: absolute;
-    left: 50%; top: 50%;
-    transform: translate(-50%, -50%);
-    width: var(--inspector-toggle-w);
-    height: var(--inspector-toggle-h);
-    padding: 0; margin: 0; border: none;
-    background: var(--pico-primary-background);
-    color: var(--pico-primary-inverse);
-    border-radius: var(--inspector-toggle-radius);
-    font-size: var(--inspector-toggle-font);
-    line-height: var(--inspector-toggle-h);
-    text-align: center;
-    cursor: pointer; z-index: 2;
-    opacity: 0.7;
-    transition: opacity 0.15s, background 0.15s;
-}
-.inspector-toggle-btn:hover {
-    opacity: 1;
-    background: var(--pico-primary);
-    color: #fff;
-}
-/* Hide default gutter dots when the resize-control cluster is present */
-.gutter.gutter-vertical:has(.inspector-toggle-btn)::after,
+/* v1.3.0 (customer): the gutter carries two arrows, up = the fixed expanded
+   position, down = the fixed collapsed one (base.html ensureGutterArrows).
+   They replaced a set-high / toggle / set-low trio whose set buttons were
+   read as moves. Sized by the --inspector-toggle-* tokens, inside the gutter. */
 .gutter.gutter-vertical:has(.gutter-controls)::after { display: none; }
-
-/* Resize-control cluster on the gutter: [⤒ set-high] [▲/▼ toggle] [⤓ set-low].
-   The toggle keeps its class but is laid out by this flex wrapper, so its
-   standalone absolute centering is neutralized below. */
 .gutter-controls {
     position: absolute;
     left: 50%; top: 50%;
     transform: translate(-50%, -50%);
-    display: flex; align-items: center; gap: 4px;
+    display: flex; align-items: center; gap: 6px;
     z-index: 2;
 }
-.gutter-controls .inspector-toggle-btn {
-    position: static;
-    transform: none;
-    left: auto; top: auto;
-}
-.split-set-btn {
+.split-arrow-btn {
     width: var(--inspector-toggle-w); height: var(--inspector-toggle-h);
     padding: 0; margin: 0; border: none;
     background: var(--pico-primary-background);
@@ -2335,11 +2305,14 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     font-size: var(--inspector-toggle-font);
     line-height: var(--inspector-toggle-h);
     text-align: center; cursor: pointer;
-    opacity: 0.7;
+    opacity: 0.8;
     transition: opacity 0.15s, background 0.15s;
 }
-.split-set-btn:hover { opacity: 1; background: var(--pico-primary); color: #fff; }
-.split-set-btn.split-set-done { background: var(--pico-ins-color, #2a9d8f); color: #fff; opacity: 1; }
+.split-arrow-btn:hover, .split-arrow-btn:focus-visible {
+    opacity: 1;
+    background: var(--pico-primary);
+    color: #fff;
+}
 
 #status-bar {
     /* Pinned to the viewport (not in the #main flow) so a stack of base-level

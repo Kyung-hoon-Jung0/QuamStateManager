@@ -18,11 +18,11 @@ var UI_CONFIG = {
        pane and the lower inspector/detail pane.                       */
     split: {
         defaultSizes:   [55, 45],  /* initial split as percentages [upper pane %, lower pane %] — must add up to 100 */
-        expandedSizes:  [15, 85],  /* DEFAULT "expanded" target — customer ask (2026-08-27): clicking a run should open the detail panel nearly full-screen, not half. The inspector gets 85%; the upper table keeps a 15% sliver for context + grabbing. A user's own ⤒ set-icon preset (localStorage "quam_split_expanded", incl. [0,100]) still wins over this default. */
-        collapsedSizes: [85, 15],  /* DEFAULT "collapsed" target — inspector gets 15%. Overridable via the gutter ⤓ set-icon → localStorage "quam_split_collapsed". */
+        expandedSizes:  [15, 85],  /* the fixed EXPANDED position: where the gutter up arrow moves the bar, and where an inspector opens before the user ever dragged the bar. Customer ask (2026-08-27): the detail panel nearly full-screen, the upper table keeps a 15% sliver for context + grabbing. v1.3.0: no stored preset overrides it any more; the user's own height is the last DRAG (localStorage "quam_split_user"), applied on every inspector open. */
+        collapsedSizes: [85, 15],  /* the fixed COLLAPSED position: where the gutter down arrow (and SM's own collapses: menu navigation, Compare, Go to state) moves the bar -- inspector gets 15%. v1.3.0: fixed, the old set-low preset ("quam_split_collapsed") is gone. */
         minSizes:       [0, 60],   /* min height (px) for [upper, lower] pane. Upper=0 lets the inspector be dragged to FULLY cover the page (Qubits / Chip Status / …); lower=60 keeps the inspector grabbable (use its × button to fully reveal the page instead). */
-        datasetExpandedSizes: [25, 75],  /* v1.3.0: the "expanded" default while the inspector shows a dataset RUN. 15% left about two rows of the run list, and j/k between runs needs the neighbouring rows in view; 25% keeps about five. Every other inspector keeps expandedSizes; the user's own preset still wins over both. */
-        gutterSize:     24          /* height of the drag handle in px (v1.3.0: 6 -> 24, so its three buttons sit inside the gutter instead of over the selected row) -- keep in sync with --split-gutter-size in style.css */
+        datasetExpandedSizes: [25, 75],  /* v1.3.0: the fixed EXPANDED position while the inspector shows a dataset RUN. 15% left about two rows of the run list, and j/k between runs needs the neighbouring rows in view; 25% keeps about five. Every other inspector keeps expandedSizes; the user's own dragged height still wins on an inspector open. */
+        gutterSize:     26          /* height of the drag handle in px (v1.3.0: 6 -> 24, so its buttons sit inside the gutter instead of over the selected row; 24 -> 26 for the larger up/down arrows) -- keep in sync with --split-gutter-size in style.css */
     },
 
     plotly: {

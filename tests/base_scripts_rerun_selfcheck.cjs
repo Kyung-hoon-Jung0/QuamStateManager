@@ -197,7 +197,8 @@ async function scenario(mode) {
         }
         d.getElementById('status-bar').innerHTML = '<span>Saved</span>';
         swap(d.getElementById('status-bar'));
-        d.querySelector('.split-set-high-btn').click();
+        // v1.3.0: set-high -> the up arrow, the set buttons are gone (customer: set-low was read as a move)
+        d.querySelector('.split-up-btn').click();
         oldInput.dispatchEvent(new w.Event('input'));
         oldInput.dispatchEvent(new w.Event('blur'));
         assert(timeouts.size >= 4, 'exercise transient timers');
@@ -221,7 +222,8 @@ async function scenario(mode) {
             assert.notEqual(w.localStorage.getItem('quam_workspace_path'), '/retired', 'old form handlers are detached');
         }
         const beforeSwap = splitCalls;
-        w.localStorage.setItem('quam_split_expanded', '[20,80]');
+        // v1.3.0: quam_split_expanded -> quam_split_user, the old preset keys are removed on load
+        w.localStorage.setItem('quam_split_user', '[20,80]');
         swap(d.getElementById('inspector-pane'));
         assert.equal(splitCalls - beforeSwap, 1, 'one Split call per inspector swap');
         assert.deepEqual(snapshot(), first, 'swapping panes replaces gutter listeners');

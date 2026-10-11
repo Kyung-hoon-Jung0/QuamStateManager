@@ -30,9 +30,6 @@ if (mode === 'gutter') {
   const source = read('templates/base.html');
   const match = source.match(/function expandedSizes\(\) \{[\s\S]*?\n        \}/);
   assert.ok(match, 'expandedSizes() is found in base.html');
-  win.PRESET_EXPANDED_KEY = 'preset';
-  let saved = null;
-  win.loadPreset = (key, fallback) => saved || fallback;
   win.eval(match[0]);
   assert.deepEqual(Array.from(win.expandedSizes()), Array.from(split.expandedSizes),
     'every other inspector keeps the expanded default');
@@ -41,8 +38,10 @@ if (mode === 'gutter') {
   assert.deepEqual(ds, Array.from(split.datasetExpandedSizes), 'a dataset run uses its own default');
   assert.ok(ds[0] >= 25 && ds[0] + ds[1] === 100, 'the run list keeps at least a quarter of the pane');
   assert.ok(split.expandedSizes[0] < ds[0], 'and more than the 15% sliver');
-  saved = [0, 100];
-  assert.deepEqual(Array.from(win.expandedSizes()), saved, 'an explicit user preset wins');
+  // v1.3.0: "an explicit user preset wins" -> the expanded position is FIXED (the up
+  // arrow's target); the user's own height is the last drag, applied on an inspector
+  // open -- customers read the set-high / set-low presets as moves (split_arrows_selfcheck)
+  assert.doesNotMatch(match[0], /localStorage|loadPreset|loadUserSizes/, 'no stored value moves it');
 } else if (mode === 'status') {
   const match = read('static/dataset-virtual.js').match(/function statusChip\(status\) \{[\s\S]*?\n    \}/);
   assert.ok(match);
