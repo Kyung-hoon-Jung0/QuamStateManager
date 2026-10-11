@@ -465,17 +465,26 @@ class Model:
         self.dirty = True
         return Outcome("saved")
 
+    def _covered_by_delete(self, p: str, fields: list[str]) -> bool:
+        """An edit under a field the user deleted is superseded by the delete."""
+        return any(p.startswith(q + ".") and get(self.W, q) is MISSING for q in fields)
+
     def _take_backup(self) -> None:
-        ups = [(p, get(self.W, p)) for p in self.fields()]
+        fields = self.fields()
+        ups = [(p, get(self.W, p)) for p in fields if not self._covered_by_delete(p, fields)]
         self.backup = ups or None
 
     def take_live(self, *, force: bool) -> Outcome:
-        if not self.readable():
-            return Outcome("refused", "live unreadable")
-        if self.dirty and (self.staged or not self.stash) and not force:
+        if self.dirty and (self.staged or not self.stash) and not force and self.readable():
             return Outcome("needs_confirm")
         if self.T or self.dirty or self.stash:
             self._take_backup()
+        if not self.readable():
+            # SU-17: the backup is written before the live read that refuses
+            if self.backup:
+                self.notes.append(("K:SU-17", "a Take live refused over an unreadable live file "
+                                              "still left a Take-live backup"))
+            return Outcome("refused", "live unreadable")
         self._adopt_live()
         return Outcome("pulled")
 
@@ -518,6 +527,8 @@ class Model:
     def _replayed(self, fields: list[str], target: dict) -> list[Entry]:
         out = []
         for p in fields:
+            if self._covered_by_delete(p, fields):
+                continue
             old, new = get(self.L, p), get(target, p)
             if old is MISSING and new is MISSING:
                 continue
@@ -547,7 +558,12 @@ class Model:
         if not self.backup:
             return Outcome("noop", "nothing to bring back")
         ents = []
+        failed = []
         for p, v in self.backup:
+            parent = p.rsplit(".", 1)[0] if "." in p else ""
+            if parent and get(self.W, parent) is MISSING:
+                failed.append(p)          # its container is gone now: cannot be re-staged
+                continue
             cur = get(self.W, p)
             if not (cur is MISSING and v is MISSING):
                 ents.append(Entry(p, None if cur is MISSING else cur, None if v is MISSING else v,
@@ -556,7 +572,7 @@ class Model:
         for e in ents:
             apply_entry(self.W, e, True)
         self.T.extend(ents)
-        return Outcome("brought_back", extra={"n": len(ents)})
+        return Outcome("brought_back", extra={"n": len(ents), "failed": failed})
 
     def stage(self, doc: dict, *, force: bool) -> Outcome:
         if (self.T or self.dirty) and not force:

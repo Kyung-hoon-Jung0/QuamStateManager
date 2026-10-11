@@ -780,6 +780,11 @@ class Rig:
         msg = str((trig.get("syncToast") or {}).get("message", ""))
         st.obs = "brought_back" if msg.startswith("Brought back") else "noop"
         st.exp = self.model.bring_back()
+        failed = st.exp.extra.get("failed") or []
+        if failed and not any(f in msg for f in failed) and str(len(failed)) not in msg:
+            st.notes.append(("I7", f"Bring back could not re-stage {failed} and the toast does not say so: {msg!r}"))
+        if failed:
+            st.observations.append(f"bring back skipped {failed}: {msg[:200]!r}")
         if st.exp.kind == "brought_back":
             # the replay's order, grouping and no-op rows are SM's; the values
             # that CHANGE something are the model's (I7)

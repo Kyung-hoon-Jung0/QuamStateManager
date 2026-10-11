@@ -38,7 +38,7 @@ STRICT = os.environ.get("SM_STATE_MODEL_STRICT") == "1"
 #: Recorded findings that only touch what the status control SAYS: a sequence
 #: that meets one notes it and goes on (the model and SM agree on everything else).
 CONTINUE_PAST = ("K:SU-01", "K:SU-02", "K:SU-03", "K:SU-04", "K:SU-05", "K:SU-08", "K:SU-09",
-                 "K:SU-14", "K:SU-16")
+                 "K:SU-14", "K:SU-16", "K:SU-17")
 SEEDS = int(os.environ.get("SM_STATE_MODEL_SEEDS", "0") or 0)
 STEPS = int(os.environ.get("SM_STATE_MODEL_STEPS", "25") or 25)
 SEED0 = int(os.environ.get("SM_STATE_MODEL_SEED0", "0") or 0)
