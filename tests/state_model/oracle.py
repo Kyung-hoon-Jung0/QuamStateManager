@@ -568,6 +568,28 @@ class Model:
         return Outcome("staged_doc")
 
     # -- live writers ------------------------------------------------------
+    def _wholesale_entries(self) -> list[Entry]:
+        """The docs/160 B wholesale unit with the docs/65 mixed-state rule:
+        live before the write -> the payload, a tray subtree add/delete left
+        to its own unit (excluded), a tray leaf edit recorded at its STAGED
+        value (the oldest entry's old) so the units compose back."""
+        after = copy.deepcopy(self.W)
+        excl: list[str] = []
+        staged_over: dict[str, Any] = {}
+        for e in self.T:
+            if e.created or e.deleted:
+                excl.append(e.path)
+            else:
+                staged_over.setdefault(e.path, MISSING if e.old is None and get(self.L, e.path) is MISSING
+                                       else e.old)
+        for p, v in staged_over.items():
+            if v is MISSING:
+                remove(after, p)
+            else:
+                put(after, p, v)
+        return [e for e in _entries_between(self.L, after)
+                if not any(e.path == x or e.path.startswith(x + ".") for x in excl)]
+
     def _dup_note(self, door: str, unit: Unit | None) -> None:
         """SU-04: a wholesale unit computed against the saved working copy
         re-records edits a Save already journaled."""
@@ -654,7 +676,7 @@ class Model:
             return Outcome("refused", "stale_live")
         wholesale = None
         if self.staged and self.staged_doc is not None:
-            wholesale = Unit(entries=_entries_between(self.L, self.Ws), kind="wholesale")
+            wholesale = Unit(entries=self._wholesale_entries(), kind="wholesale")
             self._dup_note("Apply after a stage", wholesale)
         elif force and self.L is GONE:
             ents = [Entry(k, None, copy.deepcopy(v), created=True) for k, v in self.Ws.items()]
@@ -664,13 +686,7 @@ class Model:
             # edits sit on (the edits are their own units above it). SU-04:
             # SM records it whether or not live moved, so saved edits that
             # already have their own unit are journaled a second time.
-            # the value under the tray's leaf edits (a staged subtree add or
-            # delete is not taken back: SM's base keeps it as staged)
-            base = copy.deepcopy(self.W)
-            for e in reversed(self.T):
-                if not (e.created or e.deleted):
-                    apply_entry(base, e, False)
-            ents = _entries_between(self.L, base)
+            ents = self._wholesale_entries()
             wholesale = Unit(entries=ents, kind="wholesale") if ents else None
             self._dup_note("Keep mine", wholesale)
         return self._land(kind="keep_mine" if force else "apply", wholesale=wholesale,
@@ -701,7 +717,7 @@ class Model:
                 self.refused_at = digest(self.B)
                 self.refused_land = self.land_count
                 return Outcome("refused", "conflict")
-            unit = (Unit(entries=_entries_between(self.L, self.Ws), kind="wholesale")
+            unit = (Unit(entries=self._wholesale_entries(), kind="wholesale")
                     if self.staged and self.staged_doc is not None else None)
             self._dup_note("Pull & apply after a stage", unit)
             return self._land(kind="apply", wholesale=unit)
