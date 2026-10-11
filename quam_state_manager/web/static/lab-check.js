@@ -24,7 +24,10 @@
 
     var SHOW_AFTER_MS = 0;       // the watch answer IS the gate
     var REFUSED_LIFE_MS = 9000;
-    var _lastRow = null;         // the row/cell the user last edited in
+    // the row/cell the user last edited in, held WEAKLY (v1.3.0 B1): a strong
+    // reference kept the whole swapped-out pane alive (~2,400 DOM nodes per
+    // Datasets run switch, heap snapshot: LabCheck -> _lastRow -> old pane)
+    var _lastRow = null;
     var CHECK_TEXT = "checking with your class's own code\u2026";
 
     /* w9/labwarm: a lab check that waits on a worker still STARTING (its
@@ -77,7 +80,7 @@
     try {
         document.addEventListener('focusin', function (e) {
             var r = _rowOf(e.target);
-            if (r) _lastRow = r;
+            if (r) _lastRow = (typeof WeakRef === 'function') ? new WeakRef(r) : r;
         }, true);
     } catch (e) { /* no document (worker) */ }
 
@@ -116,7 +119,8 @@
                 if (el.getClientRects && el.getClientRects().length) return el;
             }
         }
-        if (_lastRow && _lastRow.isConnected) return _lastRow;
+        var last = _lastRow && (typeof _lastRow.deref === 'function' ? _lastRow.deref() : _lastRow);
+        if (last && last.isConnected) return last;
         var ae = document.activeElement;
         return (ae && ae !== document.body) ? ae : null;
     }
