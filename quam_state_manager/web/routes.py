@@ -23838,12 +23838,12 @@ def _lab_follow_payload(path, value, info) -> list[dict] | None:
             + [{"dot_path": f["dot_path"], "value": f["value"]} for f in follow])
 
 
-def _lab_refusal_text(message: str) -> str:
+def _lab_refusal_text(message: str, action: str = "value") -> str:
     if message.startswith("your chip's generate_config()"):
-        return ("Your chip's own generate_config() refused this (run in the "
+        return (f"Your chip's own generate_config() refused this{' delete' if action == 'delete' else ''} (run in the "
                 f"selected environment) — nothing was changed: {message}")
     who = "gate" if message.startswith("your gate ") else "pulse class"
-    return (f"Your {who} refused this value (its own code, run in "
+    return (f"Your {who} refused this {action} (its own code, run in "
             f"the selected environment) — nothing was written: {message}")
 
 
@@ -24336,7 +24336,7 @@ def _pulse_delete_refused_html(store, path: str, message: str, info: dict,
         rows.append({"path": p, "kind": kind, "role": role})
     return render_template(
         "_pulse_delete_refused.html", path=path,
-        message=_lab_refusal_text(message), also=rows, together=together,
+        message=_lab_refusal_text(message, action="delete"), also=rows, together=together,
         subject=subject,
         label=_together_label([r["kind"] for r in rows]) if rows else "")
 

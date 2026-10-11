@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_lab_doors import lab, _store, _v, G, FL_C, FL_T
+from tests.test_lab_doors import lab, _store, _v, _by_name, G, FL_C, FL_T
 from tests.test_pulses_routes import _make_state, _make_wiring
 
 
@@ -128,3 +128,21 @@ def test_redone_delete_returns_an_honest_inspector(client):
     assert b"This pulse no longer exists" in r.data
     assert b"Deleted saturation" in r.data
     assert b"pulse-edit-form" not in r.data and b"pulse-detail-plot" not in r.data
+
+
+def test_a_gate_delete_refusal_names_the_delete_and_why(lab):
+    c, fake = lab
+    st = _store(c)
+    _by_name(st)
+    r = c.post("/api/pulse/delete", data={"path": "qubits.q1.z.operations.czl_q1", "force": "1"})
+    assert r.status_code == 400, r.data[:300]
+    assert b"Your gate refused this delete" in r.data
+    assert b"Operation" in r.data and b"not found" in r.data
+    assert b"refused this value" not in r.data
+    assert not st.change_log
+
+
+def test_config_delete_refusal_names_the_delete():
+    from quam_state_manager.web.routes import _lab_refusal_text
+    text = _lab_refusal_text("your chip's generate_config() fails: missing operation", action="delete")
+    assert "refused this delete" in text and "missing operation" in text
