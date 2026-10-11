@@ -2471,6 +2471,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict, *, replaced: bool = True) ->
         # docs/271 review P2-6. A Reload re-reads the SAME files (replaced=False):
         # the saved units are still waiting there, so they stay claimable (SU-03).
         _hub_discard_saved_units(ctx)
+        ctx.pop("apply_refused", None)   # SU-08: a pull / stage / restore ends it
     # docs/107: the reload cleared the change log, so any staged journal steps
     # died with it — re-read the sidecar and put the cursor back at the tip
     # (the redo stack self-invalidates via the mutation_seq handshake).
@@ -27778,6 +27779,9 @@ def _reset_baseline_after_apply(ctx) -> None:
     (which equals live right after an apply), not a fresh live read. Best-effort:
     a failure here must never break the apply that already succeeded.
     """
+    # SU-08: "refused" is the most recent thing the user did -- a landed write
+    # ends it, even one that returns the chip to the refused sync point.
+    ctx.pop("apply_refused", None)
     if not _drift_tracked(ctx):
         return
     try:
