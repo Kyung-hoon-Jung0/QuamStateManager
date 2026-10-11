@@ -888,6 +888,27 @@ class Rig:
                 m.save()
                 st.exp = O.Outcome("saved")
             st.refusal = False
+        if (m.push_armed and not force and not (json_accept or agent)
+                and st.exp.kind == "refused" and st.exp.reason in ("stale_live", "live unreadable")):
+            # an armed session answers a stale press like its flusher: merge or disarm
+            trig = _trigger(r)
+            if "autoSyncMerge" in trig and m.pull_armed:
+                m.merge_tries += 1
+                r2 = c.post("/state/sync", data={"mode": "apply", "expect_chip": self.token,
+                                                 "check_collisions": "1"})
+                b2 = r2.get_json(silent=True) or {}
+                o = m.merge_apply(check=True)
+                if o.kind in ("landed", "converged"):
+                    m.merge_tries = 0
+                    self._adopt_gids()
+                st.exp = o
+                st.obs = ("landed" if b2.get("status") == "ok" and b2.get("hub_event") else
+                          b2.get("status") or str(r2.status_code))
+                st.refusal = o.kind in ("refused", "collision")
+            elif "autoApplyDisarm" in trig:
+                m.push_armed = False
+            else:
+                st.notes.append(("I12", "a refused Apply in an armed session neither merged nor disarmed"))
         self._saw(window, html if not body else body.get("tray_html"))
         self.stale_live_hash = self.live_hash()
         return st
