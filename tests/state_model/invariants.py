@@ -237,7 +237,11 @@ def check_step(rig: Rig, step: Step, pre: dict) -> list[tuple[str, str]]:
     else:
         for i, (a, b) in enumerate(zip(sm_eff, md_eff)):
             if set(a) != set(b) or any(not (O._eq(a[p][0], b[p][0]) and O._eq(a[p][1], b[p][1])) for p in a):
-                out.append(("I5", f"journal unit {i} effect differs: SM {_short(a)} vs model {_short(b)}"))
+                only_sm = sorted(set(a) - set(b))[:4]
+                only_md = sorted(set(b) - set(a))[:4]
+                vals = [p for p in set(a) & set(b) if not (O._eq(a[p][0], b[p][0]) and O._eq(a[p][1], b[p][1]))][:3]
+                out.append(("I5", f"journal unit {i} effect differs: SM {_short(a)} vs model {_short(b)} "
+                                  f"(only SM {only_sm}, only model {only_md}, values {[(p, a[p], b[p]) for p in vals]})"))
                 break
     if step.obs == "live" and step.name == "UNDO" and not isinstance(live_doc, O._Sentinel):
         u = units[pcur] if pcur < len(units) else None

@@ -779,15 +779,17 @@ class Rig:
         st.obs = "brought_back" if msg.startswith("Brought back") else "noop"
         st.exp = self.model.bring_back()
         if st.exp.kind == "brought_back":
-            # the replay's grouping is SM's; the values are the model's
+            # the replay's order, grouping and no-op rows are SM's; the values
+            # that CHANGE something are the model's (I7)
             log = self.sm_log()[n0:]
             mine = self.model.T[k0:]
-            want = {e.path: e.new for e in mine}
-            got = {e.path: e.new for e in log}
+            eff = lambda ents: {e.path: e.new for e in ents if not O._eq(e.old, e.new)}
+            want, got = eff(mine), eff(log)
             if set(want) != set(got) or any(not O._eq(want[p], got[p]) for p in want):
                 st.notes.append(("I7", f"Bring back re-staged {got!r}, expected {want!r}"))
-            for a, b in zip(mine, log):
-                a.gid = b.gid
+            else:
+                self.model.T[k0:] = [O.Entry(e.path, e.old, e.new, gid=e.gid, created=e.created,
+                                             deleted=e.deleted) for e in log]
         self._saw("a", r.get_data(as_text=True))
         return st
 

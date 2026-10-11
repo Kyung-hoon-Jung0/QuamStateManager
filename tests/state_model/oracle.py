@@ -568,26 +568,27 @@ class Model:
         return Outcome("staged_doc")
 
     # -- live writers ------------------------------------------------------
-    def _wholesale_entries(self) -> list[Entry]:
+    def _wholesale_entries(self, before: dict | None = None, staged_over: bool = True) -> list[Entry]:
         """The docs/160 B wholesale unit with the docs/65 mixed-state rule:
         live before the write -> the payload, a tray subtree add/delete left
         to its own unit (excluded), a tray leaf edit recorded at its STAGED
         value (the oldest entry's old) so the units compose back."""
         after = copy.deepcopy(self.W)
         excl: list[str] = []
-        staged_over: dict[str, Any] = {}
+        staged_vals: dict[str, Any] = {}
         for e in self.T:
             if e.created or e.deleted:
                 excl.append(e.path)
             else:
-                staged_over.setdefault(e.path, MISSING if e.old is None and get(self.L, e.path) is MISSING
+                staged_vals.setdefault(e.path, MISSING if e.old is None and get(self.L, e.path) is MISSING
                                        else e.old)
-        for p, v in staged_over.items():
+        for p, v in (staged_vals.items() if staged_over else []):
             if v is MISSING:
                 remove(after, p)
             else:
                 put(after, p, v)
-        return [e for e in _entries_between(self.L, after)
+        base = self.L if before is None else before
+        return [e for e in _entries_between(base, after)
                 if not any(e.path == x or e.path.startswith(x + ".") for x in excl)]
 
     def _dup_note(self, door: str, unit: Unit | None) -> None:
@@ -679,7 +680,9 @@ class Model:
             wholesale = Unit(entries=self._wholesale_entries(), kind="wholesale")
             self._dup_note("Apply after a stage", wholesale)
         elif force and self.L is GONE:
-            ents = [Entry(k, None, copy.deepcopy(v), created=True) for k, v in self.Ws.items()]
+            # nothing could be read before the write: the unit is the payload
+            # itself, tray leaf edits at their NEW values (no staged-over)
+            ents = self._wholesale_entries(before={}, staged_over=False)
             wholesale = Unit(entries=ents, kind="wholesale") if ents else None
         elif force and self.readable():
             # the overwritten live content, up to the working copy the tray
@@ -881,6 +884,7 @@ class Model:
             # the recovery sidecar carries the flags only with rows
             self.staged = False
             self.staged_doc = None
+            self.stash, self.stash_orig, self.stash_gid = {}, {}, {}
         lost: list[str] = []
         if self.T and (not self.readable() or digest(self.L) != digest(self.B)):
             lost = list(dict.fromkeys(self.tray_paths()))
