@@ -95,7 +95,8 @@ function bigWorld(nCols, nRows, presearch) {
     Object.defineProperty(h, 'offsetLeft', { get: function () { win.__geomReads++; return 60 + i * COL_W; } });
     Object.defineProperty(h, 'offsetWidth', { get: function () { win.__geomReads++; return COL_W; } });
   });
-  const wrap = win.document.getElementById('table-pane');    // docs/141 4q: the ONE scroller
+  // v1.3.0: pane geometry -> grid geometry, matching the horizontal scroll owner.
+  const wrap = win.document.getElementById('bulk-table').closest('.bulk-table-wrap');
   Object.defineProperty(wrap, 'clientWidth', { value: WRAP_W });
   wrap.scrollLeft = 0;
   win.htmx = { ajax: function () {} };

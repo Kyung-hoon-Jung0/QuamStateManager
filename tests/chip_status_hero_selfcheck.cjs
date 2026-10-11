@@ -563,13 +563,12 @@ function edgeDeltaLabels() {
   const hero = win.document.getElementById('topo-hero');
   const texts = () => Array.prototype.map.call(
       hero.querySelectorAll('.topo-hero-edelta'), (t) => t.textContent);
-  // Round 3: compact — whole MHz, and a HORIZONTAL edge (q1-q2 share a row)
-  // stacks Δf / number / unit on three tspans, since only the stone gap is
-  // there to write in; a VERTICAL edge (q1-q3) keeps one line.
+  // v1.3.0: three lines -> two; keep the number and unit together.
+  // Horizontal edges stack the metric and value; vertical edges keep one line.
   const stacked = hero.querySelector('.topo-hero-edelta-stack');
   ok(!!stacked && Array.prototype.map.call(stacked.querySelectorAll('tspan'), (t) => t.textContent)
-        .join('|') === 'Δf|300|MHz',
-     'edelta: a horizontal edge stacks Δf / 300 / MHz on three lines ('
+        .join('|') === 'Δf|300 MHz',
+     'edelta: a horizontal edge stacks the metric and 300 MHz on two lines ('
      + (stacked && stacked.textContent) + ')');
   ok(texts().filter((t) => t === 'Δf 100 MHz').length === 1,
      'edelta: a CR pair\'s two directed edges dedupe to ONE label, one line on a vertical edge');
@@ -676,8 +675,9 @@ function edgeLabelsBesideTheBar() {
   // ── Qubit-freq view (the default): the Δf labels ──
   // (1) horizontal q1-q2: the stacked block sits entirely ABOVE the bar, chevron below
   const m12 = mid('q1-2'), c12 = chevron('q1', 'q2');
+  // v1.3.0: three-line fixture -> two lines, preserving the edge-clearance check.
   const st = Array.prototype.find.call(hero.querySelectorAll('.topo-hero-edelta-stack'),
-      (t) => Array.prototype.map.call(t.querySelectorAll('tspan'), (s) => s.textContent).join('|') === 'Δf|300|MHz');
+      (t) => Array.prototype.map.call(t.querySelectorAll('tspan'), (s) => s.textContent).join('|') === 'Δf|300 MHz');
   ok(!!st && fin(m12.y) && !!c12, 'F-26 fixture: the q1-q2 stacked Δf, its line and its chevron all render');
   ok(c12 && c12.y > m12.y + 5, 'F-26 fixture: the q1-q2 chevron sits BELOW the line (hi = q2 on the right)');
   const lastBase = st ? num(st, 'y') + Array.prototype.reduce.call(st.querySelectorAll('tspan'),

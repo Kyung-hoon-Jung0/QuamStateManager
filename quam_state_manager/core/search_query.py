@@ -174,11 +174,11 @@ def search_hint(*extras: str) -> str:
     """The placeholder every SM search box uses.
 
     ``extras`` are the surface's OWN scope tokens (``"tag:"``, ``"is:"``) —
-    kept to what that box can really do, appended after the grammar and
-    never instead of it.
+    kept to what that box can really do. The full grammar is in the tooltip
+    so narrow inputs can show the whole placeholder.
     """
-    parts = [HINT] + [e for e in extras if e]
-    return "Search: " + ", ".join(parts)
+    parts = [e for e in extras if e]
+    return "Search" + (": " + ", ".join(parts) if parts else "")
 
 
 def search_title(*extras: str) -> str:

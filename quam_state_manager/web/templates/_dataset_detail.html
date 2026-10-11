@@ -281,7 +281,7 @@
                 <tr><td class="col-prop"><code>run_id</code></td><td class="col-val">#{{ run.run_id }}</td></tr>
                 <tr><td class="col-prop"><code>status</code></td>
                     <td class="col-val">
-                        <span class="outcome-badge {% if run.status == 'finished' %}outcome-ok{% else %}outcome-fail{% endif %}">{{ run.status }}</span>
+                        <span class="entry-status status-{{ run.status }}">{{ run.status }}</span>
                     </td></tr>
                 <tr><td class="col-prop"><code>qubits</code></td><td class="col-val">{{ (run.qubit_pairs if run.qubit_pairs else run.qubits) | join(', ') if (run.qubit_pairs or run.qubits) else 'N/A' }}</td></tr>
                 {# docs/263: the run's INSTANT, in the viewer's zone; the run's own

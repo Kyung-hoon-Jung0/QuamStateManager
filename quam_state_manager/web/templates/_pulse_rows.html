@@ -12,6 +12,7 @@
     <button type="button" class="btn-sm primary" onclick="window.openPulseCompare()">Compare waveforms</button>
     <button type="button" class="btn-sm outline" onclick="window.clearPulseSelection()">Clear</button>
 </div>
+<div class="table-scroll">
 <table id="pulses-table" class="data-table" role="grid">
     <thead>
         <tr>
@@ -39,7 +40,8 @@
         </td></tr>
     {% endif %}
     </tbody>
-</table>{% if vt_json %}<script type="application/json" id="pulses-vdata">{{ vt_json | script_json }}</script>{% endif %}
+</table>
+</div>{% if vt_json %}<script type="application/json" id="pulses-vdata">{{ vt_json | script_json }}</script>{% endif %}
 
 {% set base_url = "/pulses" %}
 {% set extra_qs = (("&channel=" ~ active_channel) if active_channel else "")

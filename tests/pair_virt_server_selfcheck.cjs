@@ -170,7 +170,8 @@ function world(opts) {
     Object.defineProperty(h, 'offsetLeft', { get: function () { win.__geomReads++; return 60 + i * 400; } });
     Object.defineProperty(h, 'offsetWidth', { get: function () { win.__geomReads++; return 130; } });
   });
-  const pane = win.document.getElementById('table-pane');
+  // v1.3.0: pane geometry -> pair grid geometry, matching the horizontal scroll owner.
+  const pane = win.document.getElementById('bulk-pair-table').closest('.bulk-table-wrap');
   Object.defineProperty(pane, 'clientWidth', { value: 200 });
   pane.scrollLeft = 0;
   win.htmx = { ajax: function () {} };
@@ -711,9 +712,8 @@ async function main() {
     await tick(200);
     const note = d.getElementById('bulk-pair-virt-note');
     ok(note && !note.hidden, 'fixture: the failure note is up');
-    ok(note && /translateX\(1200px\)/.test(note.style.transform || ''),
-       'and it follows the pane sideways, so it is on screen where the user is ('
-       + (note && note.style.transform) + ')');
+    // v1.3.0: translated note -> stationary note, outside the horizontal grid scroller.
+    ok(note && note.style.transform === '', 'the failure note stays visible beside its grid');
     global.window = win; global.document = doc;
   }
 

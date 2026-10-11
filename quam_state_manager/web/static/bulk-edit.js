@@ -2230,12 +2230,10 @@
     // `_virt.cold` / `.remote` / `.byPath` / `.vals` directly.
     var _gv = null;                  // the GridVirt instance
     var _virt = null;                // its state, or null
-    // docs/141 4q: the ONE vertical scroller is #table-pane (the wrap is a
-    // frame now) -- hydration listens to, and measures, that element. The
-    // wrap fallback keeps a table mounted outside the pane (a test page)
-    // working; a jsdom harness defines its geometry on the pane.
+    // The pane owns vertical scrolling; each grid owns horizontal scrolling.
+    // Hydration measures the grid that the user is scrolling.
     function _scrollerOf(t) {
-        return document.getElementById('table-pane') || t.closest('.bulk-table-wrap') || t.parentElement;
+        return t.closest('.bulk-table-wrap') || document.getElementById('table-pane') || t.parentElement;
     }
     // docs/141 4q: the toolbar rows, the chip bar and the pair divider are as
     // wide as their containing block, so position:sticky has no room to hold
@@ -2268,9 +2266,42 @@
         })(root);
         return out;
     }
+    function _pinGridHeadsToPane() {
+        var pane = document.getElementById('table-pane');
+        if (!pane) return;
+        if (pane._bulkHeadObserver) pane._bulkHeadObserver.disconnect();
+        var entries = Array.prototype.map.call(pane.querySelectorAll('.bulk-table-wrap'),
+            function (wrap) { return { wrap: wrap, top: 0 }; });
+        pane._bulkHeadEntries = entries;
+        function paint() {
+            (pane._bulkHeadEntries || []).forEach(function (entry) {
+                entry.wrap.style.setProperty('--bulk-sticky-top',
+                    Math.max(0, pane.scrollTop - entry.top) + 'px');
+            });
+        }
+        function measure() {
+            var top = pane.getBoundingClientRect().top;
+            entries.forEach(function (entry) {
+                entry.top = entry.wrap.getBoundingClientRect().top - top + pane.scrollTop;
+            });
+            paint();
+        }
+        if (!pane._bulkHeadsBound) {
+            pane._bulkHeadsBound = true;
+            pane.addEventListener('scroll', paint, { passive: true });
+        }
+        if (typeof ResizeObserver === 'function') {
+            pane._bulkHeadObserver = new ResizeObserver(measure);
+            pane._bulkHeadObserver.observe(pane);
+            entries.forEach(function (entry) { pane._bulkHeadObserver.observe(entry.wrap); });
+        }
+        measure();
+    }
+
     function _pinBarsToScroll() {
+        _pinGridHeadsToPane();
         var t = table(); if (!t) return;
-        var s = _scrollerOf(t); if (!s) return;
+        var s = document.getElementById('table-pane'); if (!s) return;
         if (!s._barsBound) {
             s._barsBound = true;
             var pending = false;

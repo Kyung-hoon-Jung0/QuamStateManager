@@ -21,7 +21,7 @@ var UI_CONFIG = {
         expandedSizes:  [15, 85],  /* DEFAULT "expanded" target — customer ask (2026-08-27): clicking a run should open the detail panel nearly full-screen, not half. The inspector gets 85%; the upper table keeps a 15% sliver for context + grabbing. A user's own ⤒ set-icon preset (localStorage "quam_split_expanded", incl. [0,100]) still wins over this default. */
         collapsedSizes: [85, 15],  /* DEFAULT "collapsed" target — inspector gets 15%. Overridable via the gutter ⤓ set-icon → localStorage "quam_split_collapsed". */
         minSizes:       [0, 60],   /* min height (px) for [upper, lower] pane. Upper=0 lets the inspector be dragged to FULLY cover the page (Qubits / Chip Status / …); lower=60 keeps the inspector grabbable (use its × button to fully reveal the page instead). */
-        gutterSize:     6          /* ⚠ height of the drag handle bar in pixels — keep in sync with --split-gutter-size in style.css */
+        gutterSize:     24          /* Keep the drag handle height in sync with --split-gutter-size in style.css. */
     },
 
     plotly: {
@@ -14423,7 +14423,8 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
         fontSize = Math.max(9, Math.min(cap,
             Math.floor(chord / (0.62 * Math.max(1, display.length)))));
     } else {
-        fontSize = 7;  // multi-member feedline sub-circles
+        // Keep short feedline labels readable while containing longer names.
+        fontSize = Math.min(10, Math.floor((2 * r - 2) / (0.62 * Math.max(1, display.length))));
     }
     // docs/141 4ah (user): ONE label colour for every port. The bias-tee fill is
     // dark enough for white now, so the black label that the bright amber

@@ -7,7 +7,7 @@
     <h2>State History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}
         {# S10 walk: the list is the chip's recorded states (runs, SM writes, states
            SM saw) -- no longer "snapshots" #}
-        <small class="muted">every recorded state of the chip — review, compare, roll back</small>
+        <small class="muted">every recorded state of the chip — review, compare, roll&nbsp;back</small>
     </h2>
     <button class="btn-sm outline" hx-post="/state-history/snapshot"
             hx-target="#table-pane" hx-swap="innerHTML"

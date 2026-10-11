@@ -28,14 +28,13 @@ _CSS = (_ROOT / "quam_state_manager/web/static/style.css").read_text(encoding="u
 
 class TestTheHint:
     def test_the_house_text(self):
-        assert search_query.search_hint() == "Search: space = AND, | = OR"
+        # v1.3.0: long grammar hint -> compact placeholder, grammar stays in the tooltip.
+        assert search_query.search_hint() == "Search"
 
-    def test_scopes_are_appended_never_substituted(self):
-        # a surface with its own scopes still names the grammar FIRST: the
-        # operators are what nobody can guess, the scopes are the extra
+    def test_scopes_use_the_compact_hint(self):
+        # v1.3.0: grammar prefix -> short scope hint, so narrow boxes do not clip words.
         out = search_query.search_hint("tag:", "is:")
-        assert out.startswith("Search: space = AND, | = OR")
-        assert out.endswith("tag:, is:")
+        assert out == "Search: tag:, is:"
 
     def test_empty_extras_change_nothing(self):
         assert search_query.search_hint("", None) == search_query.search_hint()  # type: ignore[arg-type]

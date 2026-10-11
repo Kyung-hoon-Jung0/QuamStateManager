@@ -195,7 +195,7 @@
         </span>
         <div class="exp-section-chips">
         {% for exp in cat.experiments %}
-            <span class="exp-chip" data-exp="{{ exp }}" onclick="toggleExpFilter('{{ exp }}', this)">{{ exp }}</span>
+            <span class="exp-chip" data-exp="{{ exp }}" onclick="toggleExpFilter('{{ exp }}', this)"><span>{{ exp | soft_breaks }}</span></span>
         {% endfor %}
         </div>
     </div>
@@ -204,7 +204,7 @@
     <div class="exp-filter-section">
         <div class="exp-section-chips">
         {% for exp in experiments %}
-            <span class="exp-chip" data-exp="{{ exp }}" onclick="toggleExpFilter('{{ exp }}', this)">{{ exp }}</span>
+            <span class="exp-chip" data-exp="{{ exp }}" onclick="toggleExpFilter('{{ exp }}', this)"><span>{{ exp | soft_breaks }}</span></span>
         {% endfor %}
         </div>
     </div>

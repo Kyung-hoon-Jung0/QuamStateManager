@@ -770,6 +770,7 @@ window.TopoGraph = (function () {
         : (nChain === emphChain ? " cm-chain-emph" : " cm-chain-dim");
       svg += '<g class="cm-node' + chainCls + '" data-cm="q:' + esc(n.id) +
              '" data-cm-chain="' + esc(nChain) + '">' +
+             '<circle class="cm-occluder" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"/>' +
              '<circle class="cm-stone" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"' +
              (pt.shared ? ' stroke-dasharray="3 2"' : "") + "/>" +
              '<text class="cm-id" font-size="' + idFont + '" x="' + pt.x + '" y="' + pt.y +

@@ -1607,7 +1607,11 @@
         function saveSizesTo(key, sizes) {
             try { localStorage.setItem(key, JSON.stringify(sizes)); } catch (e) {}
         }
-        function expandedSizes() { return loadPreset(PRESET_EXPANDED_KEY, UI_CONFIG.split.expandedSizes); }
+        function expandedSizes() {
+            var fallback = document.querySelector('#inspector-pane #ds-detail-root')
+                ? [25, 75] : UI_CONFIG.split.expandedSizes;
+            return loadPreset(PRESET_EXPANDED_KEY, fallback);
+        }
         function collapsedSizes() { return loadPreset(PRESET_COLLAPSED_KEY, UI_CONFIG.split.collapsedSizes); }
 
         var inspectorExpanded = true;

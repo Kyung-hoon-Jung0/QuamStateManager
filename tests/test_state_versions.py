@@ -357,7 +357,8 @@ class TestPanelLayout:
         css = self._static("style.css")
         i = css.index(".state-versions-list")
         block = css[i:css.index("}", i)]
-        assert "display: block" in block
+        # v1.3.0: block list -> shared grid columns, so version row actions align.
+        assert "display: grid" in block
 
     def test_the_open_panel_is_clamped_to_the_viewport(self):
         js = self._static("app.js")
@@ -380,7 +381,8 @@ class TestQuickDiff:
         client.post("/state/apply-to-live")
         body = client.get("/state/versions").get_data(as_text=True)
         assert "sv-quick" in body
-        assert "qubits.q1.f_01" in body
+        # v1.3.0: raw dot-path markup -> visible path, with safe dot-boundary breaks.
+        assert "qubits.q1.f_01" in body.replace("<wbr>", "")
         # old AND new, through the one docs/76 delta implementation
         assert "sv-q-old" in body and "val-delta" in body
 

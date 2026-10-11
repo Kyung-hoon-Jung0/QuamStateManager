@@ -5,7 +5,7 @@
  *     get chord-fit adaptive type: short qubit names render BIG (>= 12px on
  *     an output circle, up from the old fixed 10px), longer names shrink
  *     instead of only truncating.
- *  2. Multi-member feedline sub-circles keep their 7px labels (unchanged).
+ *  2. Multi-member feedline labels use chord-fit type up to 10px.
  *  3. Containment: every label's estimated width (0.62em monospace) stays
  *     within its circle's diameter - the user rule "bigger text, but never
  *     past the circle".
@@ -148,11 +148,11 @@ ok(lz && lz.fs >= 9 && lz.fs <= 10,
    'long z name shrinks toward the floor, 9-10px (got ' + (lz && lz.fs) + ')');
 ok(lz && lz.label.length <= 7, 'long z name truncated to <= 7 chars (got "' + (lz && lz.label) + '")');
 
-/* 2. Feedline sub-circles: unchanged 7px. */
+/* v1.3.0: fixed 7px -> chord-fit feedline labels, readable in Fit mode. */
 const feed = entries.filter(function (e) { return e.role === 'rr'; });
 ok(feed.length === 4, 'four feedline sub-circles (got ' + feed.length + ')');
-ok(feed.every(function (e) { return e.fs === 7; }),
-   'feedline sub-labels stay at 7px (got ' + feed.map(function (e) { return e.fs; }).join(',') + ')');
+ok(feed.every(function (e) { return e.fs >= 9; }),
+   'short feedline sub-labels are at least 9px (got ' + feed.map(function (e) { return e.fs; }).join(',') + ')');
 ok(feed.every(function (e) { return e.r < 14; }),
    'feedline sub-circles keep their small radii (got ' + feed.map(function (e) { return e.r; }).join(',') + ')');
 

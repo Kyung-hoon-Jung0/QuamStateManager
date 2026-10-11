@@ -98,7 +98,7 @@
     --table-pane-pad-h:      1rem;    /* left/right padding inside the upper content pane */
     --inspector-pane-pad-v:  0.5rem;  /* top/bottom padding inside the lower detail pane (qubit detail, dataset detail…) */
     --inspector-pane-pad-h:  1rem;    /* left/right padding inside the lower detail pane */
-    --split-gutter-size:     6px;     /* ⚠ height of the drag handle between panes — keep in sync with UI_CONFIG.split.gutterSize */
+    --split-gutter-size:     24px;     /* Keep the drag handle height in sync with UI_CONFIG.split.gutterSize. */
 
     /* ── INSPECTOR TOGGLE BUTTON (on the gutter drag handle) ──────── */
     --inspector-toggle-w:    32px;    /* width of the expand/collapse arrow button */
@@ -2091,7 +2091,7 @@ details.tree-branch-active > summary {
 .entry-name { font-size: var(--tree-entry-name-font); }
 .entry-time { font-size: var(--tree-entry-time-font); color: var(--pico-muted-color); font-family: var(--font-mono); }
 .entry-status { font-size: var(--tree-entry-status-font); padding: 0; border-radius: 0; font-weight: 600; }
-.status-finished { background: none; color: var(--color-success-text); }
+.status-finished { background: none; color: var(--pico-muted-color); }
 .status-failed { background: none; color: var(--color-error-text); }
 .status-standalone { background: none; color: var(--color-neutral-text); }
 
@@ -2224,6 +2224,7 @@ body.exp-list-compact .entry-name wbr { display: none; }
     font-size: 0.8em; line-height: 1; border-radius: 4px;
     transition: transform 0.12s ease, color 0.12s ease, background 0.12s ease;
 }
+.iw-header { padding-right: 1.8rem; }
 .pageheader-toggle:hover, .pageheader-toggle:focus {
     color: var(--pico-contrast); background: var(--pico-card-background-color); outline: none;
 }
@@ -3157,7 +3158,7 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; }
     border: 1px solid var(--pico-muted-border-color);
     cursor: pointer; user-select: none;
     /* Full names wrap over multiple lines instead of truncating. */
-    white-space: normal; overflow-wrap: anywhere;
+    white-space: normal; overflow-wrap: normal;
     font-family: var(--font-mono);
     /* ghost chip: explicit transparent bg + --pico-contrast text. Without the
        explicit bg Pico fills the bare <button> solid blue; without --pico-contrast
@@ -4581,6 +4582,7 @@ html.topbar-hidden .topo-subnav {
 }
 
 /* base symbols — calm, muted; the highlight layer provides the emphasis */
+.cm-occluder { fill: var(--pico-card-background-color, #f7f7f7); pointer-events: none; }
 .cm-stone { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 1.4; }
 /* font-size deliberately NOT set here: a CSS rule would override the SVG
    font-size ATTRIBUTE renderLayout writes (attrs lose to any stylesheet rule),
@@ -6148,6 +6150,7 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
     font-size: .72rem; font-weight: 600; line-height: 1.5; border: 1px solid currentColor;
     overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
 }
+.ds-status-done { color: var(--pico-muted-color); }
 .ds-status-ok { color: var(--color-success-text); }
 .ds-status-run { color: var(--color-warning-text); }
 .ds-status-err { color: var(--color-error-text); }
@@ -6745,7 +6748,7 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
     padding: 0.5rem 0; flex-wrap: wrap;
 }
 .trends-filters label { font-size: 0.88em; display: flex; align-items: center; gap: 0.4rem; }
-.trends-filters select { font-size: 0.88em; padding: 0.2rem 0.4rem; margin: 0; max-width: 280px; }
+.trends-filters select { font-size: 0.88em; padding: 0.2rem 1.8rem 0.2rem 0.4rem; margin: 0; max-width: 280px; }
 .trends-section { margin-bottom: 1.5rem; }
 .trends-section h3 { font-size: 1em; margin-bottom: 0.5rem; }
 /* QA F6: Trends says it is loading (app.js loadTrendData makes this box the
@@ -9973,6 +9976,8 @@ button.diag-badge { cursor: pointer; }
    the 20 px UI scale, no horizontal scroll). */
 .diag-loc { font-size: 0.82rem; word-break: normal; overflow-wrap: anywhere; }
 .diag-loc-cell { min-width: 10rem; }
+.diag-results .diag-table th:nth-child(3), .diag-results .diag-table td:nth-child(3) { min-width: 16rem; }
+.diag-results .diag-action { white-space: normal; width: 12rem; }
 .diag-detail { font-size: 0.78rem; margin-top: 0.15rem; }
 .diag-detail code { overflow-wrap: anywhere; }
 .diag-row-error   td:first-child { box-shadow: inset 3px 0 0 var(--outcome-fail-color, #c0392b); }
@@ -10225,7 +10230,7 @@ button.diag-badge { cursor: pointer; }
    path became a vertical letter-tower when the panel narrowed (docs/128
    review). A floor here keeps the path readable whatever the panel width. */
 .sv-q-path { min-width: 12rem; }
-.sv-q-path code { font-size: .95em; word-break: break-all; }
+.sv-q-path code { font-size: .95em; word-break: normal; overflow-wrap: normal; }
 /* v1.3.0 B2: the value cell was nowrap, so in a narrow panel (or with a long
    value) old -> new -> delta ran past the panel's right edge. Each piece is
    now an inline-block: the pieces wrap as units when the panel is narrow,
@@ -10355,14 +10360,9 @@ html.topbar-hidden .chrome-reveal { display: block; }
    can be scrolled left/right without first scrolling down to the bottom bar. */
 .bulk-scroll-top { overflow-x: auto; overflow-y: hidden; }
 .bulk-scroll-top > div { height: 1px; }
-/* docs/141 4q (user-directed): ONE vertical scroller. The wrap used to scroll
-   inside itself (overflow:auto + a 100vh cap) while #table-pane scrolled the
-   page -- two bars, and users scrolled the grid to its end only to scroll
-   the page again. The wrap is now a frame around a max-content table and
-   #table-pane (overflow-y:auto => both axes) is the only scroller: its
-   horizontal bar sits at the viewport edge, the sticky header / row head /
-   apply column anchor to it, cold columns hydrate on ITS scroll. */
-.bulk-table-wrap { overflow: visible; max-height: none; width: max-content; max-width: none; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
+/* The pane owns vertical scrolling. Each uncapped grid wrap owns its
+   horizontal scrollbar, so wide columns do not scroll the whole page. */
+.bulk-table-wrap { overflow-x: auto; max-height: none; width: 100%; max-width: 100%; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
 /* the rows above and between the grids stay put while the pane scrolls
    sideways: NOT position:sticky (their containing block is exactly as wide as
    they are, so sticky has no room and they scrolled away -- real Chrome) but a
@@ -10383,11 +10383,11 @@ html.topbar-hidden .chrome-reveal { display: block; }
    and never stretches the cells to fill when only a few columns are visible. */
 .bulk-table { border-collapse: separate; border-spacing: 0; font-size: 0.86em; width: max-content; }
 .bulk-table th, .bulk-table td { padding: 1px 3px; border-bottom: 1px solid var(--pico-muted-border-color); white-space: nowrap; vertical-align: middle; }
-.bulk-table thead th { position: sticky; top: calc(-1 * var(--table-pane-pad-v, 0px)); z-index: 2; background: var(--pico-card-background-color); text-align: left; padding: 5px 7px; border-bottom: 2px solid var(--pico-muted-border-color); }
+.bulk-table thead th { position: sticky; top: var(--bulk-sticky-top, 0px); z-index: 2; background: var(--pico-card-background-color); text-align: left; padding: 5px 7px; border-bottom: 2px solid var(--pico-muted-border-color); }
 /* Group-header band: one spanning cell per section, over its columns. The 2nd
    header row (the column heads) sticks BELOW the band — its sticky `top` is offset
    by the band's measured height (--bulk-grouphead-h, set by JS; varies with font). */
-.bulk-table .bulk-head-row th { top: calc(var(--bulk-grouphead-h, 1.7rem) - var(--table-pane-pad-v, 0px)); }
+.bulk-table .bulk-head-row th { top: calc(var(--bulk-grouphead-h, 1.7rem) + var(--bulk-sticky-top, 0px)); }
 .bulk-group-row .bulk-group-head {
     text-align: center; font-weight: 700; text-transform: none; letter-spacing: 0;
     color: var(--pico-color); background: var(--pico-card-sectioning-background-color);
@@ -10396,7 +10396,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
 /* Subtle separator between groups, carried from the band down into the body. */
 .bulk-col-group-start { border-left: 2px solid var(--pico-muted-border-color); }
 /* Frozen first column (qubit id) + its sticky-header corner. */
-.bulk-corner, .bulk-rowhead { position: sticky; left: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); font-weight: 600; text-align: left; padding-right: 10px; border-right: 1px solid var(--pico-muted-border-color); }
+.bulk-corner, .bulk-rowhead { position: sticky; left: 0; background: var(--pico-card-background-color); font-weight: 600; text-align: left; padding-right: 10px; border-right: 1px solid var(--pico-muted-border-color); }
 .bulk-rowhead { font-size: calc(0.92rem * var(--bulk-fs)); }   /* match the cell text size */
 .bulk-corner { z-index: 3; }
 .bulk-rowhead { z-index: 1; }
@@ -10471,7 +10471,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
    its title says why SM states no power for it */
 .bulk-phys-why { display: block; font-size: 0.7em; opacity: 0.45; font-family: var(--font-ui); cursor: help; }
 .bulk-band-warn-count, #bulk-band-warn { color: var(--color-error-text); font-size: 0.82em; font-weight: 600; }
-.bulk-apply-col { text-align: center; position: sticky; right: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); }
+.bulk-apply-col { text-align: center; position: sticky; right: 0; background: var(--pico-card-background-color); }
 .btn-xs { padding: 0.05rem 0.5rem; font-size: 0.78em; width: auto; margin: 0; }
 .bulk-row-error { display: block; color: var(--color-error-text); font-size: 0.72em; max-width: 20ch; white-space: normal; }
 /* These two error spans use display:block, which OVERRIDES the HTML `hidden`
@@ -13050,7 +13050,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     margin: 0.4rem 0;
 }
 .diff-side { display: flex; align-items: center; gap: 0.35rem; margin: 0; flex: 1 1 20rem; }
-.diff-side select { margin: 0; font-size: 0.88em; padding: 0.25rem 0.5rem; height: auto; }
+.diff-side select { margin: 0; font-size: 0.88em; padding: 0.25rem 1.8rem 0.25rem 0.5rem; height: auto; }
 .diff-side-tag {
     font-weight: 700; font-size: 0.8em; padding: 0.1rem 0.4rem; border-radius: 4px;
     background: var(--color-neutral-bg); color: var(--color-neutral-text);
@@ -13296,10 +13296,9 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
 .state-versions-actions { display: flex; align-items: center; gap: 0.5rem;
     margin-bottom: 0.35rem; }
 .sv-hint { font-size: 0.72rem; }
-/* display:block explicitly — the panel lives inside the topbar <nav>, and
-   Pico's `nav ul { display:flex }` reaches nested lists, which laid the
-   version rows out HORIZONTALLY with a scrollbar (bug report). */
-.state-versions-list { list-style: none; margin: 0; padding: 0; display: block; }
+/* Override the enclosing navigation flex layout and share row columns. */
+.state-versions-list { list-style: none; margin: 0; padding: 0; display: grid;
+    grid-template-columns: max-content max-content minmax(0, 1fr); }
 /* The panel lives inside the topbar <nav>, so Pico's `nav li :where(a)`
    reaches every anchor in these rows with its NEGATIVE nav-link margins
    (-10px all round) — the After-chip's real bounding box overlapped Diff
@@ -13312,12 +13311,17 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
    chip's border visually collided with Diff/Pull and the row read as
    twisted. A touch more vertical padding keeps the sv-current outline off
    the chip's border. */
-/* S10 walk r4 (P2-13): the row wraps rather than overflow the panel -- when
-   the date and the actions leave less than .sv-meta's 8rem basis, the meta
-   moves under them instead of pushing a horizontal scrollbar onto the panel. */
-.state-version-row { display: flex; align-items: center; gap: 0.5rem;
-    flex-wrap: wrap;
+/* Share desktop row columns; stack the content on narrow viewports. */
+.state-version-row { display: grid; align-items: center; gap: 0.5rem;
+    grid-template-columns: subgrid; grid-column: 1 / -1;
     padding: 0.28rem 0.25rem; border-radius: 0.25rem; }
+.state-version-row::before { content: none; }
+.state-version-row { min-width: 0; }
+.sv-meta .sv-event-sub { flex-basis: 100%; }
+@media (max-width: 800px) {
+    .state-versions-list { display: block; }
+    .state-version-row { display: flex; flex-wrap: wrap; }
+}
 .state-version-row:hover { background: var(--pico-card-sectioning-background-color, transparent); }
 .state-version-row.sv-current { outline: 1px solid var(--pico-primary); }
 /* center, not baseline (customer, 2026-08-22): under baseline the

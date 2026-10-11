@@ -783,16 +783,13 @@
             if (!el) return;
             el.textContent = msg || '';
             el.style.margin = msg ? '.15rem 0 .3rem' : '0';
-            // docs/141 4ae B-3: `#table-pane` is the ONE scroller (§4q) and the
-            // toolbar rows follow a sideways scroll by transform. A note born
-            // on a FAILED fetch never reached that code, so it was created at
-            // the pane's left edge -- measured 23,676 px off screen, invisible
-            // at exactly the moment it fired, because the user had scrolled
-            // right and that is WHY hydration ran.
+            // Pin a note only when it belongs to the horizontal scroller.
+            // A note beside a grid wrap already stays in place.
             if (msg) {
                 try {
                     var sc = scrollerOf(t);
-                    if (sc && sc.scrollLeft) el.style.transform = 'translateX(' + sc.scrollLeft + 'px)';
+                    if (sc && sc.contains(el) && sc.scrollLeft)
+                        el.style.transform = 'translateX(' + sc.scrollLeft + 'px)';
                 } catch (e) { /* a note that cannot be pinned is still a note */ }
             }
         }

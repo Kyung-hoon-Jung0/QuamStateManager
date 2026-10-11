@@ -8,9 +8,13 @@
     </div>
 </div>
 
+{% if total %}
 {% set cmap_highlight = 'couplers' %}
 {% set cmap_label = '— coupler edges highlighted' %}
 {% include '_component_map.html' %}
+{% else %}
+<p class="muted couplers-empty">This chip declares no couplers.</p>
+{% endif %}
 
 <table id="couplers-table" class="data-table" role="grid">
     <thead>

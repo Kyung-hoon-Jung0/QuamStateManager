@@ -342,7 +342,8 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     win.__tableW = 0;                          // the laid-out part ends here
     const st = win.BulkEdit._virtState && win.BulkEdit._virtState();
     void st;
-    const pane = win.document.getElementById('table-pane');
+    // v1.3.0: pane scroll -> qubit grid scroll, preserving the hydration scenario.
+    const pane = qt.closest('.bulk-table-wrap');
     pane.dispatchEvent(new win.Event('scroll'));
     await tick(40);
     const still = qt.querySelectorAll('th.bulk-virt-collapsed').length;
@@ -402,7 +403,7 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
                    { id: 'bulk-table', pre: 'bulk', attr: 'data-qubit', sfx: '', o: { coldFrom: HOT } }]) {
     const win = world(Object.assign({ tailMin: 100, land: true }, G.o));
     await tick(10);
-    const d = win.document, pt = d.getElementById(G.id), pane = d.getElementById('table-pane');
+    const d = win.document, pt = d.getElementById(G.id), pane = pt.closest('.bulk-table-wrap');
     // geometry: column N starts at N*200px
     Object.defineProperty(win.HTMLElement.prototype, 'offsetLeft', { configurable: true,
       get: function () { const m = /\bck-(\d+)\b/.exec(this.className || ''); return m ? +m[1] * 200 : 0; } });
@@ -522,14 +523,18 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
       const m = modelOf(this); if (!m) return 0;
       if (this === m.t) return m.geo().total;
       const i = colOf(this); if (i < 0) return 0; return m.geo()[i].w; } });
-    const span = () => Math.max.apply(null, models.map((m) => m.geo().total + m.margin()));
-    let SL = 0;
-    Object.defineProperty(pane, 'clientWidth', { configurable: true, get: () => paneW });
-    Object.defineProperty(pane, 'scrollWidth', { configurable: true, get: () => span() });
-    Object.defineProperty(pane, 'scrollLeft', { configurable: true, get: () => SL,
-      set: (v) => { SL = Math.max(0, Math.min(+v || 0, span() - paneW)); } });
+    // v1.3.0: one shared horizontal model -> independent grid scroll models.
+    models.forEach(function (m) {
+      m.scroller = m.t.closest('.bulk-table-wrap');
+      const span = () => m.geo().total + m.margin();
+      let sl = 0;
+      Object.defineProperty(m.scroller, 'clientWidth', { configurable: true, get: () => paneW });
+      Object.defineProperty(m.scroller, 'scrollWidth', { configurable: true, get: () => span() });
+      Object.defineProperty(m.scroller, 'scrollLeft', { configurable: true, get: () => sl,
+        set: (v) => { sl = Math.max(0, Math.min(+v || 0, span() - paneW)); } });
+    });
     win.Element.prototype.getBoundingClientRect = function () {
-      if (this === pane) return { left: 0, right: paneW, width: paneW, top: 0, bottom: 800, height: 800, x: 0, y: 0 };
+      if (models.some((m) => this === m.scroller)) return { left: 0, right: paneW, width: paneW, top: 0, bottom: 800, height: 800, x: 0, y: 0 };
       if (this.tagName === 'TR') {
         // a row is as tall as its tallest laid-out cell (c12 is a two-line
         // column: 50 px, every other 30), and at least its inline height
@@ -542,10 +547,11 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
       if (m && this === m.t) {
         // where the table sits vertically in the pane (default: filling it)
         const vr = (vrect && vrect[m.t.id]) || { top: 0, bottom: 800 };
+        const SL = m.scroller.scrollLeft;
         return { left: -SL, right: m.geo().total - SL, width: m.geo().total, top: vr.top, bottom: vr.bottom, height: vr.bottom - vr.top, x: -SL, y: vr.top };
       }
       if (!m || i < 0) return { left: 0, right: 0, width: 0, top: 0, bottom: 0, height: 0, x: 0, y: 0 };
-      const g = m.geo()[i], l = g.x - SL;
+      const g = m.geo()[i], l = g.x - m.scroller.scrollLeft;
       return { left: l, right: l + g.w, width: g.w, top: 0, bottom: 10, height: 10, x: l, y: 0 };
     };
     const m0 = models[0];
@@ -556,7 +562,7 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     const ok9 = (c, m) => ok(c, (LAND ? '' : '[no cells land] ') + m);
     const win = world({ tailMin: 100, tailBlock: 4, coldFrom: NCOL, pairColdFrom: HOT, land: LAND });
     await tick(10);
-    const d = win.document, pt = d.getElementById('bulk-pair-table'), pane = d.getElementById('table-pane');
+    const d = win.document, pt = d.getElementById('bulk-pair-table'), pane = pt.closest('.bulk-table-wrap');
     const gv = win.__gvs['#bulk-pair-table'];
     const M = layoutModel(win, pt, pane, 300);
     const collapsed = () => { const o = []; for (let i = HOT; i < NCOL; i++) if (gv.isCollapsed('c' + i)) o.push(i); return o; };
@@ -644,7 +650,7 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     const PW = 100;                                  // a narrow pane: the window is ~10 columns of 30
     const win = world({ tailMin: 100, tailBlock: 4, coldFrom: NCOL, pairColdFrom: HOT, land: true });
     await tick(10);
-    const d = win.document, pt = d.getElementById('bulk-pair-table'), pane = d.getElementById('table-pane');
+    const d = win.document, pt = d.getElementById('bulk-pair-table'), pane = pt.closest('.bulk-table-wrap');
     const gv = win.__gvs['#bulk-pair-table'];
     const M = layoutModel(win, pt, pane, PW);
     // PhysAmp as the page has it: a landing in tail mode repaints its own cells, never the table
@@ -739,7 +745,7 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     const PW = 100;
     const win = world({ tailMin: 100, tailBlock: 4, coldFrom: NCOL, pairColdFrom: HOT, land: true });
     await tick(10);
-    const d = win.document, pt = d.getElementById('bulk-pair-table'), pane = d.getElementById('table-pane');
+    const d = win.document, pt = d.getElementById('bulk-pair-table'), pane = pt.closest('.bulk-table-wrap');
     const M = layoutModel(win, pt, pane, PW);
     const settle = async () => { for (let i = 0; i < 4; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(15); } };
     pane.scrollLeft = pane.scrollWidth; await settle();
@@ -776,7 +782,7 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     const PW = 100;
     const win = world({ tailMin: 100, tailBlock: 4, coldFrom: HOT, pairColdFrom: HOT, land: true });
     await tick(10);
-    const d = win.document, qt = d.getElementById('bulk-table'), pt = d.getElementById('bulk-pair-table'), pane = d.getElementById('table-pane');
+    const d = win.document, qt = d.getElementById('bulk-table'), pt = d.getElementById('bulk-pair-table'), pane = pt.closest('.bulk-table-wrap');
     const M = layoutModel(win, [qt, pt], pane, PW);
     const raf0 = win.requestAnimationFrame.bind(win);
     // which grid wrote in a frame: compare each grid's on-set before/after every frame
@@ -790,8 +796,8 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     }, 0); }));
     // a scroll that moves both windows every frame: three viewports per frame
     for (let k = 0; k < 16; k++) {
-      pane.scrollLeft = pane.scrollLeft + 3 * PW;
-      pane.dispatchEvent(new win.Event('scroll'));
+      // v1.3.0: one pane event -> both grid events, retaining the shared frame-budget check.
+      M.models.forEach((m) => { m.scroller.scrollLeft += 3 * PW; m.scroller.dispatchEvent(new win.Event('scroll')); });
       await frameTick();
     }
     const both = perFrame.filter((f) => f.q && f.p).length;
@@ -800,9 +806,9 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     ok(qFrames > 0 && pFrames > 0 && Math.min(qFrames, pFrames) >= Math.floor(perFrame.length / 4),
        'and neither grid starved: the qubit grid changed in ' + qFrames + ' frames, the pair grid in ' + pFrames + ' of ' + perFrame.length);
     // once the scroll stops, both catch up: nothing cold on screen in either grid
-    for (let k = 0; k < 12; k++) { pane.dispatchEvent(new win.Event('scroll')); await tick(20); }
+    for (let k = 0; k < 12; k++) { M.models.forEach((m) => m.scroller.dispatchEvent(new win.Event('scroll'))); await tick(20); }
     const coldIn = (m) => { const g = m.geo(), o = []; for (let i = HOT; i < NCOL; i++) {
-      if (g[i].w > 0 && g[i].x + g[i].w > pane.scrollLeft && g[i].x < pane.scrollLeft + PW
+      if (g[i].w > 0 && g[i].x + g[i].w > m.scroller.scrollLeft && g[i].x < m.scroller.scrollLeft + PW
           && !m.ths[i].classList.contains('bulk-virt-spacer') && m.tds[i].classList.contains('bulk-td-cold')) o.push(i); } return o; };
     const cq = coldIn(M.models[0]), cp = coldIn(M.models[1]);
     ok(cq.length === 0 && cp.length === 0, 'and once it stops both grids are hydrated on screen (cold: qubit ' + cq.join(',') + ' / pair ' + cp.join(',') + ')');
@@ -818,7 +824,7 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     const PW = 100;
     const win = world({ tailMin: 100, tailBlock: 4, coldFrom: HOT, pairColdFrom: HOT, land: true });
     await tick(10);
-    const d = win.document, qt = d.getElementById('bulk-table'), pt = d.getElementById('bulk-pair-table'), pane = d.getElementById('table-pane');
+    const d = win.document, qt = d.getElementById('bulk-table'), pt = d.getElementById('bulk-pair-table'), pane = pt.closest('.bulk-table-wrap');
     const M = layoutModel(win, [qt, pt], pane, PW, { 'bulk-table': { top: -2000, bottom: -1000 }, 'bulk-pair-table': { top: 0, bottom: 800 } });
     const P = M.models[1];
     const settle = async () => { for (let i = 0; i < 6; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(15); } };
