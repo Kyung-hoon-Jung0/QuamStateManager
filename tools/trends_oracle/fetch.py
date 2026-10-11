@@ -17,6 +17,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from html_checks import saved_provenance_note, saved_writer_is_not_proven, validate_legacy_runs
+
 BASE, CHIP, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 ARGS = sys.argv[4:]
 SAMPLE = ARGS[ARGS.index("--sample") + 1] if "--sample" in ARGS else None
@@ -205,7 +207,8 @@ def main():
             out[uid + "|" + via] = {"status": st, "run_id": (re.search(r'data-run-id="([^"]*)"', tag) or [None, None])[1],
                                     "experiment": (re.search(r'data-experiment="([^"]*)"', tag) or [None, None])[1],
                                     "date": (re.search(r'data-date="([^"]*)"', tag) or [None, None])[1],
-                                    "via_saved_words": ("not proven" in body) if via == "saved" else None}
+                                    "via_saved_words": saved_writer_is_not_proven(body) if via == "saved" else None,
+                                    "via_saved_note": saved_provenance_note(body) if via == "saved" else None}
         save("uids.json", out)
         print("uids", len(out), flush=True)
 
@@ -226,6 +229,7 @@ def main():
     if want("legacy") and SAMPLE:
         # the legacy Trend Tracker (reachable from Compare): three runs' saved states, f_01 of qA1
         runs = json.load(open(SAMPLE, encoding="utf-8")).get("legacy_runs") or []
+        validate_legacy_runs(runs)
         form = [("paths", r) for r in runs] + [("props", "f_01"), ("qubits", "qA1")]
         body = urllib.parse.urlencode(form).encode()
         r = urllib.request.Request(BASE + "/trend/chart", data=body, headers={"Origin": BASE}, method="POST")
