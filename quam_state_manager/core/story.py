@@ -784,7 +784,11 @@ def _flags_of(event: Mapping) -> list[dict]:
                 if event.get("first") else
                 "Its saved state may be another chip's: its identity does not match this "
                 "chip's history. Its rows are not listed and it is not counted with the day's runs.")
-        out.append({"key": "other-chip", "label": "starting values" if event.get("first") else "other chip?",
+        # v1.3.0 A8: the first state is the chip's own starting state, not a
+        # run that may be another chip's -- its own key, so the card is not
+        # dimmed as another chip's and the day counts it with its runs
+        out.append({"key": "first-state" if event.get("first") else "other-chip",
+                    "label": "starting values" if event.get("first") else "other chip?",
                     "note": note})
     for bit, key, label, note in (
             (hs.REVERTS_TO_EARLIER, "repeats", "repeats earlier",
