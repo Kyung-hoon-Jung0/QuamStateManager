@@ -761,3 +761,35 @@ def test_the_report_chart_draws_a_step_with_markers_on_the_recorded_points():
     plain = report_svg.line_chart([{"name": "q1", "xs": [0.0, 10.0, 20.0], "ys": [1.0, 3.0, 2.0]}],
                                   x_kind="linear")
     assert len(re.search(r'<polyline[^>]*points="([^"]+)"', plain).group(1).split()) == 3
+
+
+def test_every_report_trends_chart_spans_one_time_window(tmp_path, monkeypatch):
+    """v1.3.0 (A3, the report too): T1 is recorded from the first state, T2echo
+    appears only in the last one; both charts span the same window -- a chart
+    used to start at its own first point, so charts read down the page did not
+    line up."""
+    from quam_state_manager.core import report_svg
+    folder = _chip(tmp_path / "devW")
+    c = create_app(testing=True, instance_path=str(tmp_path / "_w")).test_client()
+    c.post("/load", data={"folder": str(folder)})
+    sp = folder / "state.json"
+    for step in range(3):
+        doc = json.loads(sp.read_text(encoding="utf-8"))
+        doc["qubits"]["q1"]["T1"] = 3.0e-5 + step * 1e-6
+        if step == 2:
+            doc["qubits"]["q1"]["T2echo"] = 1.5e-5
+        sp.write_text(json.dumps(doc), encoding="utf-8")
+        c.post("/state/archive", data={"tag": f"w{step}"})
+        time.sleep(1.05)
+    seen, draw = {}, report_svg.line_chart
+
+    def spy(series, **kw):
+        seen[kw.get("title")] = kw.get("x_range")
+        return draw(series, **kw)
+
+    monkeypatch.setattr(report_svg, "line_chart", spy)
+    st, body = _section(c, "trends", redact=0)
+    assert st == 200 and 'data-rep-metric="T1"' in body and 'data-rep-metric="T2echo"' in body
+    ranges = {t: r for t, r in seen.items() if r is not None}
+    assert len(ranges) >= 2, seen
+    assert len(set(ranges.values())) == 1, ranges
