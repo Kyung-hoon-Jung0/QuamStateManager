@@ -14,7 +14,6 @@ import pytest
 from tests.state_model.repros._rig import Chip
 
 
-@pytest.mark.xfail(strict=True, reason="SU-14: the type assignment refuses the verbatim restore")
 def test_ctrl_z_walks_back_over_a_type_fix(tmp_path):
     chip = Chip(tmp_path)
     path = "twpas.twpa1.spectroscopy_amplitude"

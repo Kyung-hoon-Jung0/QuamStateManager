@@ -25716,8 +25716,11 @@ def _undo_journal_step(ctx, n_req: int = 1):
                     # coerce=False: restore the historical value VERBATIM — the
                     # field's CURRENT type may differ (e.g. a later type-fix),
                     # and coercion would cast the restoration back to it.
+                    # SU-14: nor may that type's gate refuse it (a saved
+                    # type-fix made the walk 409 on every press); the live
+                    # walk restores with enforce=False the same way.
                     e = modifier.set_value(path, value, coerce=False,
-                                           group_id=gid)
+                                           enforce=False, group_id=gid)
                     if _differs(e.old_value, uent.get("new")):
                         drift += 1
                 staged.append(e)
