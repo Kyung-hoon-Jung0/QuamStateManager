@@ -3608,6 +3608,14 @@
             _ph('pin bars');
             var fsCb = document.getElementById('bulk-freq-sync');
             if (fsCb) fsCb.checked = _freqSyncOn();   // restore the 🔗 toggle across swaps
+            // SB-02: bound on EVERY init -- a re-rendered toolbar must get it too
+            ['bulk-reset', 'bulk-apply-all', 'bulk-apply-sync'].forEach(function (bid) {
+                var b = document.getElementById(bid);
+                if (b && !b._toolbarGuardBound) {
+                    b._toolbarGuardBound = true;
+                    b.addEventListener('pointerdown', function () { BulkEdit._toolbarPressTs = Date.now(); });
+                }
+            });
             if (t._bulkBound) { _refreshGlobal(); return; }
             t._bulkBound = true;
 
@@ -3620,13 +3628,6 @@
             // browser then never delivered the click ("Apply all needs two
             // presses"). The relatedTarget check below misses this whenever the
             // browser doesn't focus buttons on mousedown (null relatedTarget).
-            ['bulk-reset', 'bulk-apply-all', 'bulk-apply-sync'].forEach(function (bid) {
-                var b = document.getElementById(bid);
-                if (b && !b._toolbarGuardBound) {
-                    b._toolbarGuardBound = true;
-                    b.addEventListener('pointerdown', function () { BulkEdit._toolbarPressTs = Date.now(); });
-                }
-            });
 
             // Header sort is delegated (no inline onclick) so a click on a resize
             // handle, the column-history clock, or a click right after a drag
@@ -3861,7 +3862,15 @@
         applyAll: function (syncAfter) {
             var t = table(); if (!t) return;
             var rows = _rows().filter(function (tr) { return _cells(tr).some(_isDirty); });
-            if (!rows.length) return;
+            if (!rows.length) {
+                // SB-02: the click-away of the typed cell already committed it to
+                // the tray (a row commit), so no cell is dirty when the click lands.
+                // "Apply to live now" still means what the user pressed: wait for
+                // that commit, then push the tray -- one explicit press, confirmed
+                // with what it carries (docs/117 covenant, docs/120 seen-edits).
+                if (syncAfter) BulkEdit._applyCommittedToLive();
+                return;
+            }
             var n = _dirtyCount(t);   // unique physical changes (linked siblings count once)
             // Surface any LO band conflict among ALL dirty cells in the apply set —
             // appended to the confirm, never a hard block (A10).
@@ -3924,6 +3933,31 @@
                 });
             }
             next();
+        },
+
+        _applyCommittedToLive: function () {
+            var pend = (window._pendingGridCommits || []).slice();
+            Promise.all(pend.map(function (p) { return p.then(null, function () {}); })).then(function () {
+                var tray = document.getElementById('pending-tray');
+                var cc = tray ? parseInt(tray.getAttribute('data-change-count') || '0', 10) : 0;
+                var dirty = !!(tray && tray.getAttribute('data-working-dirty') === '1');
+                if (!cc && !dirty) {
+                    if (window.showToast) window.showToast('Nothing to apply — no unapplied edits.', 'info');
+                    return;
+                }
+                var seen = {}, paths = [];
+                Array.prototype.forEach.call(tray.querySelectorAll(
+                    '#tray-drawer .tray-change-item .tray-change-path'), function (el) {
+                    var p = el.getAttribute('title') || el.textContent || '';
+                    if (p && !seen[p]) { seen[p] = 1; paths.push(p); }
+                });
+                var ex = paths.length ? ('\n\n' + paths.slice(0, 5).join(', ')
+                    + (paths.length > 5 ? ', +' + (paths.length - 5) + ' more' : '')) : '';
+                if (dirty) ex += (ex ? '\n' : '\n\n') + 'It also pushes the saved, not-yet-applied working state.';
+                if (!window.confirm('Apply ' + (cc ? (cc + ' unapplied edit' + (cc === 1 ? '' : 's'))
+                        : 'the saved edits') + ' and push to the live chip?' + ex)) return;
+                if (window.applyEditsToLive) window.applyEditsToLive();
+            });
         },
 
         resetDirty: function () {
