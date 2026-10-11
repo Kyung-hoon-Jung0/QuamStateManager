@@ -877,15 +877,20 @@ class Model:
         self.refused_at = None
         self.push_armed = self.pull_armed = False
         self.cursor = self.pcursor
-        self.staged = False
-        self.staged_doc = None
+        if not self.T:
+            # the recovery sidecar carries the flags only with rows
+            self.staged = False
+            self.staged_doc = None
         lost: list[str] = []
         if self.T and (not self.readable() or digest(self.L) != digest(self.B)):
             lost = list(dict.fromkeys(self.tray_paths()))
             self.T = []
             self.W = copy.deepcopy(self.Ws)
             self.stash, self.stash_orig, self.stash_gid = {}, {}, {}
-        self.dirty = digest(self.Ws) != digest(self.B)
+            self.staged = False
+            self.staged_doc = None
+        if not (self.T and self.staged):
+            self.dirty = digest(self.Ws) != digest(self.B)
         return lost
 
     # -- outside the app ---------------------------------------------------

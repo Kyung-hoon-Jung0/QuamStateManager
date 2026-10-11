@@ -861,8 +861,19 @@ class Rig:
         html = r.get_data(as_text=True)
         body = r.get_json(silent=True) or {}
         gone = m.L is O.GONE
+        before_model = copy.deepcopy(m) if force and self.hidden_mtimes is not None else None
         st.exp = m.apply(force=force, expect_fresh=fresh, unseen=unseen, html=not (json_accept or agent))
         st.obs = _classify_apply(r, html, body)
+        if (before_model is not None and st.exp.kind == "landed" and st.obs == "refused"
+                and "could not back up the live chip" in html):
+            # SU-01 (second face): after an mtime-kept rewrite the pre-apply
+            # backup is skipped and Keep mine refuses, naming unreadable files
+            st.notes.append(("K:SU-01", "Keep mine refused 'could not back up the live chip' after "
+                                        "an mtime-kept rewrite (the files read fine)"))
+            self.model = m = before_model
+            m.refused_at = O.digest(m.B)
+            m.refused_land = m.land_count
+            st.exp = O.Outcome("refused", "no_backup")
         if st.exp.kind == "refused":
             st.refusal = True
         if gone and not force and st.obs == "error500":
@@ -1186,6 +1197,8 @@ class Rig:
         r = self.ca.post("/app/reload", data={"mode": "state"})
         st.status = r.status_code
         body = r.get_json(silent=True) or {}
+        if body.get("reread"):
+            self.model.R.clear()          # the store was reloaded: the redo timeline forks
         st.obs = "reloaded" if body.get("ok") else "failed"
         st.exp = O.Outcome("reloaded")
         return st
