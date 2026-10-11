@@ -36237,7 +36237,8 @@ def _dataset_build_lock(folder: Path) -> threading.Lock:
 
 
 def _get_or_create_store(folder: Path, rescan: bool = True, *,
-                         deadline: float | None = None) -> DatasetStore | None:
+                         deadline: float | None = None,
+                         hold_filling: bool = False) -> DatasetStore | None:
     """Return a cached DatasetStore for ``folder``, building it if needed.
 
     Cached stores have their incremental rescan triggered before return UNLESS
@@ -36265,11 +36266,20 @@ def _get_or_create_store(folder: Path, rescan: bool = True, *,
     v1.3.0 (perf, A1): a store whose first scan stopped part way is handed to
     the index warmer, which finishes it off the request threads
     (``_dataset_index_warmer``).
+
+    ``hold_filling`` (v1.3.0 dsperf): a cached store still building its first
+    index and already holding rows is returned as it is -- no rescan; the
+    index warmer (woken here) and the delta poll continue it. See
+    ``_datasets_view``.
     """
     lru = _dataset_store_lru()
     cached = lru.get(folder)
     if cached is not None:
         lru.move_to_end(folder)
+        if (hold_filling and not getattr(cached, "index_complete", True)
+                and cached.run_count > 0):
+            _kick_dataset_index_warmer()
+            return cached
         if rescan:
             try:
                 cached.rescan_if_stale(deadline=deadline)
@@ -36660,7 +36670,8 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
 
 def _active_dataset_stores(*, fast: bool = False,
                            rescan: bool = True,
-                           deadline: float | None = None) -> list[dict[str, Any]]:
+                           deadline: float | None = None,
+                           hold_filling: bool = False) -> list[dict[str, Any]]:
     """Every workspace data folder that yielded >=1 run, each as
     ``{"key", "path", "label", "store"}``.
 
@@ -36690,13 +36701,15 @@ def _active_dataset_stores(*, fast: bool = False,
     delta poll exactly when it starts mattering. The callers that pass it
     either rescan immediately (and so discover that run) or only read paths.
 
-    ``deadline`` (docs/170) bounds each store's rescan; see
+    ``deadline`` (docs/170) bounds each store's rescan; ``hold_filling``
+    serves a store still building its first index as it is; see
     ``_get_or_create_store``.
     """
     result: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for cand in _dataset_candidate_folders(fast=fast):
-        store = _get_or_create_store(cand, rescan=rescan, deadline=deadline)
+        store = _get_or_create_store(cand, rescan=rescan, deadline=deadline,
+                                     hold_filling=hold_filling)
         if store is None:
             continue
         if rescan and store.run_count == 0:
@@ -37117,13 +37130,22 @@ def _datasets_view(view_mode: str):
     # per file operation, 2,655 runs). The panel now shows what is indexed
     # inside the budget and SAYS so (`scan_partial`); the delta poll already
     # carries the continuation (docs/105 #4) and fills the rest in.
-    # v1.3.0 (perf, A1): while a history catch-up builds, the first screen is
-    # what is indexed already plus one chunk (newest dates first) -- the
-    # catch-up is not held for this scan; the delta poll fills the rest in.
+    # v1.3.0 (perf, A1): while a history catch-up builds, the render's scans
+    # (a cold build, a complete store's rescan) stop at their next chunk --
+    # the catch-up is not held for them; the delta poll fills the rest in.
+    # v1.3.0 (dsperf): a store that already holds rows of its first index is
+    # shown as it is -- no walk, no parse -- whatever else runs; the index
+    # warmer and the delta poll continue it. Measured on a cold 3,500-run
+    # index: opened during a catch-up, the render's walk and chunk held the
+    # first rows 4.5-5.8 s; opened just after it, the render's 3 s parse
+    # (2.7 MB data.json files among the runs) held them 4.5 s. The rows the
+    # store holds are the newest dates either way, and the page says it is
+    # still indexing.
     from quam_state_manager.core.dataset import yielding_scan
     with yielding_scan(_catch_up_should_yield):
         active = _active_dataset_stores(
-            deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S)
+            deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S,
+            hold_filling=True)
     # A deep link from a qubit/pair inspector: /datasets?q=q7. SM does not
     # INTERPRET the token — it hands the string to the search box and lets the
     # grammar dataset-virtual.js already ships do the filtering, which is the
@@ -37689,9 +37711,29 @@ def datasets_changes_since():
             # instead of one huge folder blowing past the client's abort.
             # v1.3.0 (perf, A1): and a history catch-up stops its parse at
             # the next chunk (reported partial: the next poll continues).
+            # v1.3.0 (dsperf): a store still building its first index ships
+            # the archive's existing runs as rows -- not arrivals, so not
+            # EXP-version candidates (below). Each candidate's identity gate
+            # decodes the run's saved state.json (~1 MB here): a cold
+            # 3,500-run index opened during a history catch-up queued all of
+            # them, and that worker held the interpreter for most of the
+            # catch-up (measured: 65-80% of it in 4 s windows) and after
+            # it. Read before the scan: the scan that completes the
+            # index still ships the backlog.
+            filling = not getattr(fol["store"], "index_complete", True)
+            # v1.3.0 (dsperf): and while a catch-up runs, such a store is not
+            # scanned at all (it holds rows; the poll reports partial and the
+            # index warmer continues after the catch-up). One chunk per poll
+            # was ~10 chunks of 64 runs in a 20 s catch-up (measured), 2.7 MB
+            # data.json files among them -- each decode holds the interpreter
+            # ~20 ms, and the catch-up's reads wait behind it.
+            hold = filling and fol["store"].run_count > 0 and _catch_up_should_yield()
+            if hold:
+                _kick_dataset_index_warmer()
             with yielding_scan(_catch_up_should_yield):
                 delta = fol["store"].changes_since(ts, date=date,
-                                                   deadline=deadline)
+                                                   deadline=deadline,
+                                                   rescan=not hold)
             owned = names is not None and names.owns(fol["store"].folder_path)
             for row in delta.get("updated", []):
                 row["f"] = fol["key"]
@@ -37702,7 +37744,7 @@ def datasets_changes_since():
                 # EXP-version candidate. Enqueue-only — the RunInfo lookup
                 # is one dict get; the gate + copy run on the worker, so
                 # this adds zero file I/O to the poll.
-                if row.get("hs"):
+                if row.get("hs") and not filling:
                     _r = fol["store"].runs.get(row.get("id"))
                     if _r is not None:
                         _exp_candidates.append(_r)
@@ -38265,10 +38307,13 @@ def datasets_poll():
     # cold open its 8 s of 32-worker parsing ran beside the user's click and
     # the history catch-up -- it now yields like the long poll (the newest
     # dates, where a new run lands, are read first either way).
+    # v1.3.0 (dsperf): while a catch-up runs, a store still building its first
+    # index answers from what it holds (newest dates first) -- no scan.
     from quam_state_manager.core.dataset import yielding_scan
     with yielding_scan(_background_scan_should_yield):
         active = _active_dataset_stores(fast=True,
-                                        deadline=time.monotonic() + _POLL_BUDGET_S)
+                                        deadline=time.monotonic() + _POLL_BUDGET_S,
+                                        hold_filling=_catch_up_should_yield())
     # docs/167: the sync pill carries a COUNT, not a stream of events, so the
     # client sends the stamp it last ACKNOWLEDGED and gets back how many runs
     # have landed since. Counted in the walk that was already happening — no

@@ -77,8 +77,10 @@ class TestDatasetDetailScanFree:
     def test_get_or_create_store_takes_rescan_flag(self):
         # docs/170 added the keyword-only scan deadline; the rescan flag and
         # its default are what this pin is about
+        # v1.3.0: the signature also takes the keyword-only hold_filling
+        # (dsperf: the render serves a store still building its first index)
         assert re.search(r"def _get_or_create_store\(folder: Path, rescan: bool = True,\s*\*,\s*"
-                         r"deadline: float \| None = None\)", _ROUTES)
+                         r"deadline: float \| None = None,\s*hold_filling: bool = False\)", _ROUTES)
 
     def test_detail_rescans_only_on_miss(self):
         dd = _fn(_ROUTES, "def dataset_detail", 1100)

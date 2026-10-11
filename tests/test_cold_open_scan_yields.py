@@ -327,7 +327,9 @@ def test_the_datasets_delta_poll_yields_to_a_catch_up_only(ws_app, monkeypatch):
     from quam_state_manager.core.run_ingest import FOREGROUND
     monkeypatch.setattr(hub_sync, "catching_up", lambda: True)
     got = c.get("/datasets/changes-since?ts=0").get_json()
-    assert got["partial"] and st.run_count == 8 + dataset._YIELD_CHUNK, st.run_count
+    # v1.3.0 (dsperf): one chunk per poll -> none for a store still building
+    # its first index: ~10 polls' chunks during a catch-up slowed it (measured)
+    assert got["partial"] and st.run_count == 8, st.run_count
     monkeypatch.setattr(hub_sync, "catching_up", lambda: False)
     FOREGROUND.enter()                       # another request in flight: not a reason
     try:
@@ -347,9 +349,15 @@ def test_the_datasets_render_shows_what_is_indexed_while_a_catch_up_builds(ws_ap
     assert st.run_count == 8
     monkeypatch.setattr(hub_sync, "catching_up", lambda: True)
     assert c.get("/datasets").status_code == 200
-    assert st.scan_truncated and st.run_count == 8 + dataset._YIELD_CHUNK, st.run_count
+    # v1.3.0 (dsperf): indexed + one chunk -> indexed as it is: the render's
+    # walk and chunk held the first rows 4-6 s during a catch-up (measured)
+    assert st.scan_truncated and st.run_count == 8, st.run_count
     monkeypatch.setattr(hub_sync, "catching_up", lambda: False)
-    assert c.get("/datasets").status_code == 200
+    # v1.3.0 (dsperf): after the catch-up the render no longer continues the
+    # index (its 3 s parse held the first rows 4.5 s, measured) -> the delta
+    # poll (and the index warmer) does
+    assert c.get("/datasets").status_code == 200 and st.run_count == 8
+    assert not c.get("/datasets/changes-since?ts=0").get_json()["partial"]
     assert not st.scan_truncated and st.run_count == 40 + 3 * dataset._YIELD_CHUNK
 
 
