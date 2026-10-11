@@ -11433,7 +11433,7 @@ def _container_pointer_refusal(store, target_path: str, parsed) -> str | None:
     except Exception:  # noqa: BLE001 -- missing / dangling: not this check's call
         return None
     if isinstance(probe, (dict, list)) and isinstance(cur, (bool, int, float, str))             and not (isinstance(cur, str) and is_pointer(cur)):
-        return (f"{parsed} resolves to a container, not a value -- {target_path} "
+        return (f"{parsed} resolves to a container, not a value: {target_path} "
                 f"holds a {'flag' if isinstance(cur, bool) else 'text' if isinstance(cur, str) else 'number'}; point at a leaf (e.g. #/qubits/q1/T1)")
     return None
 
@@ -25182,7 +25182,7 @@ _TRUTH_STATUS_ERROR = {
                     "config. It is not a channel operation, so the config "
                     "carries it only through a channel operation that is an "
                     "exact copy of it (every field the same, or a pointer to "
-                    "it), and this chip has none -- there is no config "
+                    "it), and this chip has none: there is no config "
                     "waveform to compare it with."),
 }
 
@@ -25194,7 +25194,7 @@ def _truth_not_matched_text(found: dict) -> str:
     if mirror:
         return ("SM could not match this pulse to an entry in the cached "
                 f"config: it is played through {mirror}, an exact copy of it, "
-                "which the cached config does not carry -- the config predates "
+                "which the cached config does not carry; the config predates "
                 "that operation. Regenerate to include it.")
     return _TRUTH_STATUS_ERROR["not-matched"]
 
@@ -25681,7 +25681,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
         cursor -= 1
         _skipped += 1
     _skip_note = (f" (skipped {_skipped} dropped step{'s' if _skipped != 1 else ''}"
-                  " -- no longer in effect)") if _skipped else ""
+                  ", no longer in effect)") if _skipped else ""
     if _skipped:
         ctx["undo_cursor"] = cursor
         if cursor <= 0:
