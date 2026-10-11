@@ -128,7 +128,11 @@ Fixed:
   product: the morning summary read a run's `meta.json` with a plain open, so a read that landed on the
   worker's atomic replace fell back to another record's wording of the failure. The summary now reads it
   share-delete with a short retry, and the failure is worded one way whichever record is read. Pinned.
-- **Final quiet full suite:** (filled in).
+- **Final quiet full suite** on the release commit (68d0a98f), with nothing else running: 15,077 passed,
+  251 skipped, 2 failed. Both failures were in tests and the product code did not change after the run:
+  - `test_history_source_folder` compared raw markup that B2 had changed on purpose;
+  - `vh_retry_selfcheck` counted a background poll that landed in its window.
+  Both now check what they mean, still fail on a mutation of the behaviour they pin, and pass.
 - **Final real-browser walk on a copy of the customer chip (C3):** all 10 steps passed. Each step was also
   reloaded, and used back/forward where the page has history. The steps:
   1. Open the chip.
