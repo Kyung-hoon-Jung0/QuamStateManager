@@ -24245,6 +24245,9 @@ window.FieldHistory = (function () {
         // the viewport while visible.
         window.addEventListener("resize", function () {
             if (!panel || panel.style.display === "none") return;
+            // v1.3.0 A4: beside its anchor again, so a shrink cannot slide
+            // the panel over the anchor's column of clocks
+            if (openAnchor && openAnchor.isConnected && _placeBeside(panel, openAnchor)) return;
             var w = Math.min(500, window.innerWidth - 16);
             panel.style.width = w + "px";
             var r = panel.getBoundingClientRect();
@@ -24262,8 +24265,42 @@ window.FieldHistory = (function () {
         return panel;
     }
 
+    /* v1.3.0 A4: BESIDE the anchor's column, never under it. The inspector's
+       clocks stand in one column (each inside its row's edit box), and the
+       panel used to open BELOW the pressed one, left-aligned and clamped into
+       the window -- with the inspector on the right half that slid it straight
+       over the clocks of the rows below, so the next field's history could not
+       be opened without closing this one first. Pressing another clock
+       already RETARGETS the open panel (the outside-press close skips every
+       clock button, and open() reloads the one panel for the new path), so
+       the clocks only had to stay reachable: the panel now sits to the right
+       of the anchor, or to its left when the right has no room, top-aligned
+       with the anchor's row -- it never overlaps the anchor's column, so
+       every other clock in that column stays clickable. Where neither side
+       has room for a usable panel, the old under/over placement stands. */
+    var FH_SIDE_GAP = 8, FH_SIDE_MIN = 360;
+    function _placeBeside(p, anchor) {
+        var r = anchor.getBoundingClientRect();
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var roomR = vw - r.right - FH_SIDE_GAP - 8;
+        var roomL = r.left - FH_SIDE_GAP - 8;
+        var side = roomR >= FH_SIDE_MIN ? "right" : (roomL >= FH_SIDE_MIN ? "left" : "");
+        if (!side) return false;
+        var w = Math.min(500, side === "right" ? roomR : roomL);
+        p.style.width = w + "px";
+        p.style.left = (side === "right" ? r.right + FH_SIDE_GAP : r.left - FH_SIDE_GAP - w) + "px";
+        p.style.display = "block";
+        p.setAttribute("data-fh-side", side);
+        // the panel's own height, read now: clamped into the window, floored
+        // at 8 (a panel taller than the window top-aligns)
+        var h = p.offsetHeight || 0;
+        p.style.top = Math.max(8, Math.min(r.top - 6, vh - h - 8)) + "px";
+        return true;
+    }
     function position(anchor) {
         var p = ensurePanel();
+        if (_placeBeside(p, anchor)) return;
+        p.setAttribute("data-fh-side", "below");
         var r = anchor.getBoundingClientRect();
         var w = Math.min(500, window.innerWidth - 16);
         p.style.width = w + "px";
