@@ -7386,8 +7386,8 @@ def migrate_legacy_histories_v2(instance_path: str | Path) -> dict[str, Any]:
 
     Snapshots that already live in their correct chip dir are left in
     place. Snapshots that need to move are relocated and their SQLite
-    rows merged into the destination index. Empty source dirs (after
-    everything is moved out) are removed.
+    rows merged into the destination index. Source dirs are retained: their
+    journals, ledgers and pruned-snapshot index rows are independent history.
 
     Idempotent — gated by ``instance/migrated_v2.flag``.
     """
@@ -7451,14 +7451,11 @@ def migrate_legacy_histories_v2(instance_path: str | Path) -> dict[str, Any]:
             except Exception:
                 logger.warning("v2 SQLite merge failed for %s", target_key, exc_info=True)
 
-        # If src_dir is now empty of snapshot subfolders, remove it.
+        # No snapshot folders does not mean no history: journals, ledgers,
+        # pruned rows and a failed index merge must remain recoverable.
         remaining = [s for s in src_dir.iterdir() if s.is_dir()]
         if not remaining:
-            try:
-                shutil.rmtree(src_dir, ignore_errors=True)
-                cleared_dirs.append(src_dir.name)
-            except Exception:
-                pass
+            logger.debug("Retained source history directory %s", src_dir)
 
     # Invalidate any pre-existing ``_hashes.json`` sidecars (Phase 3 §2.3
     # interplay): the migration has moved snapshots between dirs, so any
@@ -7505,7 +7502,8 @@ def migrate_index_attribution_v3(instance_path: str | Path) -> dict[str, Any]:
     so they are not provably foreign. Timestamps whose folder exists in two
     or more dirs are skipped (ambiguous). Copy-then-delete ordering keeps a
     crash midway idempotent: ``INSERT OR IGNORE`` dedups on re-run, and the
-    flag is only written at the end.
+    flag is only written at the end. Source rows are deleted only when every
+    column matches the saved destination row; conflicting values stay intact.
 
     Idempotent — gated by ``instance/migrated_v3.flag``.
     """
@@ -7578,12 +7576,19 @@ def migrate_index_attribution_v3(instance_path: str | Path) -> dict[str, Any]:
                 _merge_index_for_timestamps(src_idx, target_idx, ts_list)
                 conn = sqlite3.connect(str(src_idx), timeout=10.0)
                 try:
+                    conn.execute("ATTACH DATABASE ? AS copied", (str(target_idx),))
+                    same_row = " AND ".join(
+                        f"saved.{col} IS param_history.{col}"
+                        for col in _CP_COLS.split(", "))
+                    verified = (
+                        " AND EXISTS (SELECT 1 FROM copied.param_history AS saved WHERE "
+                        + same_row + ")")
                     conn.execute("BEGIN IMMEDIATE")
                     for i in range(0, len(ts_list), 500):
                         chunk = ts_list[i:i + 500]
                         conn.execute(
                             "DELETE FROM param_history WHERE timestamp IN (%s)"
-                            % ",".join("?" * len(chunk)), chunk)
+                            % ",".join("?" * len(chunk)) + verified, chunk)
                     _cp_invalidate(conn)      # docs/142b: deletes -> cp rebuilt
                     conn.execute("COMMIT")
                 finally:
