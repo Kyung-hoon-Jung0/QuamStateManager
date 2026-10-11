@@ -753,7 +753,9 @@ class Rig:
         body = r.get_json(silent=True) or {}
         m = self.model
         unseen = bool(m.T) and self.seen["a"][1] != m.sig()
-        if unseen and mode == "discard":
+        if m.dirty and (m.staged or not m.stash) and not force and m.readable():
+            st.exp = O.Outcome("needs_confirm")      # asked before the unseen gate
+        elif unseen and mode == "discard":
             st.exp = O.Outcome("refused", "unseen_changes")
         elif mode == "discard":
             st.exp = m.take_live(force=force)
@@ -857,7 +859,7 @@ class Rig:
         fresh = None
         if force:
             now = self.live_hash()
-            fresh = (sent == now) or now is None
+            fresh = (sent == now) if sent else True
         r = c.post("/state/apply-to-live", data=data, headers=headers)
         st.status = r.status_code
         html = r.get_data(as_text=True)
@@ -1052,11 +1054,17 @@ class Rig:
                 if "autoApplyDisarm" not in trig:
                     st.notes.append(("I12", "a refused armed flush did not disarm the session"))
         else:
+            gone = m.L is O.GONE
             o = m.apply(html=True)
             if o.kind in ("landed", "converged"):
                 m.merge_tries = 0
             st.exp = o
             st.obs = _classify_apply(r, html, {})
+            if gone and r.status_code >= 500:
+                st.notes.append(("K:SU-02", "the armed flush over a missing live file answered HTTP 500"))
+                if o.reason == "live unreadable":
+                    m.save()
+                st.exp = O.Outcome("saved")
             if st.obs == "noop" and "autoApplyApplied" in trig:
                 st.obs = "landed"
         self._saw("a", html)
@@ -1130,6 +1138,7 @@ class Rig:
                 self._write_files(self.live, s, w, indent=4 if kind == "resave" else None)
             self.live_by_harness = kind != "resave"
             m.outside(doc)
+            m.folder_gone = False
         elif kind == "touch":
             m.touched = True
             if self.live.exists():
@@ -1176,9 +1185,11 @@ class Rig:
             except FileNotFoundError:
                 pass
             m.outside(O.GONE)
+            m.folder_gone = not self.live.exists()
         elif kind == "delete_folder":
             shutil.rmtree(self.live, ignore_errors=True)
             m.outside(O.GONE)
+            m.folder_gone = True
         st.obs = kind
         st.exp = O.Outcome("outside")
         return st

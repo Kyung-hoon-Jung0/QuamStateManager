@@ -271,6 +271,7 @@ class Model:
         self.merge_tries = 0         # Auto-Sync merges since the last landed write
         self.touched = False         # live mtimes moved since the sync point (content or not)
         self.typefixed: set[str] = set()   # fields whose type a type-fix assigned
+        self.folder_gone = False           # GONE because the whole live folder was deleted
 
     # -- facts ---------------------------------------------------------
     def readable(self) -> bool:
@@ -652,7 +653,8 @@ class Model:
                     self.refused_at = digest(self.B)
                     self.refused_land = self.land_count
                 return Outcome("refused", "live_moved")
-            if self.L is UNREADABLE:
+            if self.L is UNREADABLE or (self.L is GONE and not self.folder_gone):
+                # no backup can be taken of a pair that is there but unreadable
                 if html:
                     self.refused_at = digest(self.B)
                     self.refused_land = self.land_count
@@ -922,7 +924,7 @@ def _entries_between(a: dict, b: dict, prefix: str = "") -> list[Entry]:
     whole subtree (applying it back leaves no empty container), dicts recurse,
     anything else is a leaf set."""
     out: list[Entry] = []
-    for k in sorted(set(a) | set(b)):
+    for k in list(a) + [k for k in b if k not in a]:     # document order, as SM walks it
         path = f"{prefix}.{k}" if prefix else str(k)
         if k not in a:
             out.append(Entry(path, None, copy.deepcopy(b[k]), created=True))
