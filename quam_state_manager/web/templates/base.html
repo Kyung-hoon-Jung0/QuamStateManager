@@ -383,7 +383,7 @@
                     <input type="search" id="global-search" name="q"
                            placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                            hx-get="/search" hx-trigger="keyup changed delay:150ms"
-                           hx-target="#inspector-pane" hx-sync="#inspector-pane:replace"
+                           hx-target="#inspector-pane" hx-sync="#inspector-pane:queue last"
                            hx-indicator="#search-spinner"
                            autocomplete="off">
                     <span id="search-spinner" class="htmx-indicator spinner"></span>

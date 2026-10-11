@@ -47,7 +47,10 @@ class TestInspectorPaneLoadsAreSourced:
         # dataset detail loads (last-action-wins) instead of clobbering them.
         m = re.search(r'id="global-search".*?>', base, re.S)
         assert m, "global-search input not found"
-        assert 'hx-sync="#inspector-pane:replace"' in m.group(0)
+        # v1.3.0: replace -> queue last (SB-06): a keystroke aborting the previous
+        # search made htmx log console errors; queue last keeps the shared owner
+        # and last-search-wins without an abort.
+        assert 'hx-sync="#inspector-pane:queue last"' in m.group(0)
 
     def test_openDatasetDetail_reissue_recovers_clobber_not_only_empty(self):
         # The 300ms backstop must re-fetch when the pane was clobbered by search

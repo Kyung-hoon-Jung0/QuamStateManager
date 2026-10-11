@@ -6107,7 +6107,10 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
 }
 /* Column widths come from the JS-built <colgroup> (one source for header + body);
    table-layout:fixed makes every cell obey it, so they can never drift. */
-.datasets-table-virtual { table-layout: fixed; width: max-content; min-width: 100%; margin: 0; }
+/* L9: width 0 (not max-content) -- a fixed table is then exactly its colgroup
+   (or the pane, whichever is wider). max-content re-measured the rows in view, so
+   the sideways scroll range jumped 0-81 px while scrolling vertically. */
+.datasets-table-virtual { table-layout: fixed; width: 0; min-width: 100%; margin: 0; }
 .datasets-table-virtual thead th {
     /* Anchored to #table-pane WITH its padding subtracted — the same expression
        the two grids use (docs/141 §4q). `top: 0` sticks the header at the
@@ -14653,6 +14656,13 @@ html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap
 .sp-hist-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-size: .78rem; }
 .sp-hist-row .btn-sm { width: auto; margin: 0; font-size: .74rem; padding: .1rem .5rem; }
 .sp-history .applied-log { margin: 0; }
+/* SB-05: inside the sync panel the list is IN FLOW -- the floating dropdown
+   drew its rows over the panel text below it. Expanding pushes that text down. */
+.sp-history .applied-log { display: block; }
+.sp-history .applied-log-list {
+    position: static; min-width: 0; max-width: none;
+    margin-top: .25rem; box-shadow: none;
+}
 .sp-gloss { font-size: .7rem; margin: .3rem 0 0; }
 
 /* ---- a cell older than the live chip: blue left rule + "live now …" ---- */

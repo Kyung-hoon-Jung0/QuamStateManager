@@ -327,7 +327,10 @@ class Model:
         unapplied = len(self.fields())
         if moved and self.conflicts():
             return "collide"
-        refused = self.refused_at is not None and self.refused_at == digest(self.B)
+        # SU-08 fixed (v1.3.0): a landed write or a pull since the refusal ends
+        # it, even when the chip came back to the refused sync point
+        refused = (self.refused_at is not None and self.refused_at == digest(self.B)
+                   and self.land_count == self.refused_land)
         if refused and (unapplied or self.dirty):
             return "refused"
         if moved:

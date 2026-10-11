@@ -955,6 +955,14 @@
             // -- the ~450 ms §4i removed. One rAF later the table is already a
             // fraction of its size (docs/141 4ad; the qubit grid does the same).
             if (_pvirt) _pgv.onScroll();
+            // SB-02: bound on EVERY init -- a re-rendered toolbar must get it too
+            [P + '-reset', P + '-apply-all', P + '-apply-sync'].forEach(function (bid) {
+                var b = document.getElementById(bid);
+                if (b && !b._toolbarGuardBound) {
+                    b._toolbarGuardBound = true;
+                    b.addEventListener('pointerdown', function () { BulkPairEdit._toolbarPressTs = Date.now(); });
+                }
+            });
             if (t._pairBound) { _refreshGlobal(); return; }
             t._pairBound = true;
 
@@ -963,13 +971,6 @@
             // focusout; the stamp lets focusout skip its click-away row commit so
             // Reset stays a discard and Apply all's button isn't disabled by the
             // racing commit before mouseup (the "needs two presses" bug).
-            [P + '-reset', P + '-apply-all', P + '-apply-sync'].forEach(function (bid) {
-                var b = document.getElementById(bid);
-                if (b && !b._toolbarGuardBound) {
-                    b._toolbarGuardBound = true;
-                    b.addEventListener('pointerdown', function () { BulkPairEdit._toolbarPressTs = Date.now(); });
-                }
-            });
 
             t.addEventListener('click', function (e) {
                 if (e.target.closest && e.target.closest('.bulk-resize-handle')) return;
@@ -1122,7 +1123,12 @@
         applyAll: function (syncAfter) {
             var t = table(); if (!t) return;
             var rows = _rows().filter(function (tr) { return _cells(tr).some(_isDirty); });
-            if (!rows.length) return;
+            if (!rows.length) {
+                // SB-02 (see bulk-edit.js): the click-away already committed the
+                // typed cell -- push what the tray holds, confirmed
+                if (syncAfter && window.BulkEdit && BulkEdit._applyCommittedToLive) BulkEdit._applyCommittedToLive();
+                return;
+            }
             var n = _dirtyCount(t);
             // QA F14: the ⚡ push carries the whole tray -- name what else rides along
             var ex = '';

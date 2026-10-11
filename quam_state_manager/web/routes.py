@@ -1135,7 +1135,11 @@ def _sync_view(ctx=None) -> dict | None:
         elif unreadable:
             facts = None
     refused = ctx.get("apply_refused")
-    if refused and wc is not None and refused.get("hash") != getattr(wc, "synced_live_hash", None):
+    if refused and wc is not None and (
+            refused.get("hash") != getattr(wc, "synced_live_hash", None)
+            # SU-08: a landed write or a pull since ends it, even one that
+            # returned the chip to the refused sync point (A -> B -> A)
+            or refused.get("ev", 0) != getattr(wc, "sync_events", 0)):
         refused = None
     # a refused apply stashes the edits it saved (pending_reapply) and clears
     # the change log -- they are still the user's unapplied edits
@@ -2422,7 +2426,7 @@ def _invalidate_engine_cache(ctx: dict | None = None) -> None:
         ctx["wiring_json"] = json.dumps(store.wiring)
 
 
-def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
+def _rebuild_after_working_copy_replaced(ctx: dict, *, replaced: bool = True) -> None:
     """Rebuild every derived object after the working folder's files were
     replaced wholesale (a sync pull, or a State History restore).
 
@@ -2467,7 +2471,10 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # consumed it; a fresh stage re-sets the flag right after this call).
     ctx["staged_base"] = False
     ctx.pop("staged_from", None)    # docs/271: ...and where it came from
-    _hub_discard_saved_units(ctx)   # docs/271 review P2-6
+    if replaced:
+        # docs/271 review P2-6. A Reload re-reads the SAME files (replaced=False):
+        # the saved units are still waiting there, so they stay claimable (SU-03).
+        _hub_discard_saved_units(ctx)
     # docs/107: the reload cleared the change log, so any staged journal steps
     # died with it — re-read the sidecar and put the cursor back at the tip
     # (the redo stack self-invalidates via the mutation_seq handshake).
@@ -2733,6 +2740,28 @@ def _untag(opval) -> tuple:
     return "set", opval, None
 
 
+def _fold_into_created(updates: dict, path: str, value) -> None:
+    """Write *value* at *path* inside the captured value of every ancestor
+    this replay map creates or replaces (that value is the map's own deep
+    copy, never the store's tree)."""
+    parts = path.split(".")
+    for i in range(len(parts) - 1, 0, -1):
+        anc = updates.get(".".join(parts[:i]))
+        if anc is None or anc[0] not in ("create", "replace"):
+            continue
+        cur = anc[1]
+        try:
+            for k in parts[i:-1]:
+                cur = cur[int(k)] if isinstance(cur, list) else cur[k]
+            last = parts[-1]
+            if isinstance(cur, list):
+                cur[int(last)] = copy.deepcopy(value)
+            elif isinstance(cur, dict):
+                cur[last] = copy.deepcopy(value)
+        except (KeyError, IndexError, TypeError, ValueError):
+            pass       # the edit is outside what the record holds: the set entry carries it
+
+
 def _capture_change_log_as_updates(store) -> dict:
     """Snapshot the change log as an op-tagged ``{dot_path: (op, value[, gid])}``
     replay map, where op is ``"set" | "create" | "delete"``.
@@ -2752,9 +2781,10 @@ def _capture_change_log_as_updates(store) -> dict:
     ``_replay_updates`` dispatch to create_subtree/delete_subtree.
 
     Composition rules (insertion-ordered, last op per path wins):
-      - create then edit(s)  → stays ``create`` (the logged subtree object is
-        aliased to the live tree, so it already carries the edits; a same-path
-        scalar ``set`` upgrades the stored value),
+      - create then edit(s)  → stays ``create``; an edit inside the created
+        subtree is folded into the captured value (the logged record is a
+        snapshot since SU-09, not an alias of the live tree), and a same-path
+        scalar ``set`` upgrades the stored value,
       - create then delete   → drops out entirely (net nothing),
       - delete then create   → ``replace`` (replayed with ``coerce=False``:
         the pulled live state may hold a value of a DIFFERENT type at that
@@ -2790,6 +2820,10 @@ def _capture_change_log_as_updates(store) -> dict:
             updates[path] = _tagged("delete", None, gid)
         else:
             prev = updates.get(path)
+            # SU-09 kept the created subtree's record a SNAPSHOT (no aliasing),
+            # so an edit inside a subtree this log created/replaced is folded
+            # into that record here -- it replays with the latest values.
+            _fold_into_created(updates, path, nv)
             if prev is not None and prev[0] in ("create", "replace", "literal"):
                 updates[path] = _tagged(prev[0], nv, gid)
             elif is_pointer(nv) or is_pointer(entry.old_value):
@@ -4108,13 +4142,45 @@ def _wholesale_journal_unit(ctx: dict, before: dict | None, src: str,
     # rather than dropping it.
     excl: set[str] = set()
     staged_over: dict[str, Any] = {}
-    for u in (edit_units or []):
+    for u in _saved_tail_units(ctx, src, edit_units) + list(edit_units or []):
         for e in (u.get("entries") or []):
             if e.get("created") or e.get("deleted"):
                 excl.add(e["path"])
             else:
                 staged_over.setdefault(e["path"], e.get("old"))
     return _wholesale_unit(before, ctx, src, exclude=excl, staged_over=staged_over, after=after)
+
+
+def _saved_tail_units(ctx: dict, src: str, edit_units: list[dict] | None) -> list[dict]:
+    """SU-04: the units a /save already journaled whose edits this press
+    carries to the chip (oldest first). A Keep mine / apply-staged writes the
+    SAVED working copy, so those edits are in the wholesale difference too --
+    they are owned by their saved units, exactly like the press's own edit
+    units, or Ctrl+Z meets them twice. A restore writes other content and
+    carries none."""
+    if src not in ("force-overwrite", "apply-staged"):
+        return []
+    own = {str(u.get("id")) for u in (edit_units or [])}
+    ids = set(_hub_saved_units(ctx)) - own
+    return [u for u in (ctx.get("undo_units") or []) if str(u.get("id")) in ids]
+
+
+def _wholesale_tail(ctx: dict, src: str, edit_units: list[dict] | None, pending) -> int:
+    """How many newest sidecar units the wholesale unit goes below: this
+    press's edit units plus the saved units it landed (SU-04) -- the base is
+    walked back after the edits made on it."""
+    n = len(edit_units or [])
+    if src not in ("force-overwrite", "apply-staged"):
+        return n
+    units = list(ctx.get("undo_units") or [])
+    pid = getattr(pending, "id", None)
+    i = len(units) - n
+    while i > 0:
+        m = units[i - 1].get("meta") or {}
+        if not m.get("saved") or m.get("discarded") or m.get("hub") not in (None, pid):
+            break
+        i -= 1
+    return len(units) - i
 
 
 def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str,
@@ -4135,8 +4201,9 @@ def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str,
             return
         # docs/271: the unit the recorded event lists (built before the write)
         _hub_stamp_units(pending, [unit])
-        if edit_units:
-            _journal_insert_before(ctx, unit, len(edit_units))
+        n_tail = _wholesale_tail(ctx, src, edit_units, pending)
+        if n_tail:
+            _journal_insert_before(ctx, unit, n_tail)
         else:
             _journal_commit(ctx, [unit])
     except Exception:
@@ -11162,6 +11229,9 @@ def field_edit():
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
+        _cno = _container_pointer_refusal(modifier.store, target_path, parsed)
+        if _cno:
+            return jsonify(ok=False, error=_cno), 400
         # w9/pulsegate: a whole-object edit (the tree's JSON editor, a paste)
         # that adds, removes or renames a pulse is the Pulses page's job; a
         # value inside a pulse, or a re-link, passes untouched
@@ -11370,6 +11440,29 @@ def _text_violates_enforced(store, target_path: str, current) -> bool:
     from quam_state_manager.core.state_env_validate import EDIT_BLOCKING, judge
     ok, code, _ = judge(current, expected.spec)
     return (not ok) and code in EDIT_BLOCKING
+
+
+def _container_pointer_refusal(store, target_path: str, parsed) -> str | None:
+    """SU-11: a pointer that resolves to a whole container (``#/qubits``) put
+    into a VALUE leaf (a number, a flag, a text) turns the leaf into a dump of
+    that container on the chip. Refused with the reason, like /pulse/edit
+    (docs/190 F27). A leaf that already holds a container (a port reference)
+    or nothing, and a dangling pointer, pass."""
+    if not (isinstance(parsed, str) and is_pointer(parsed)):
+        return None
+    from quam_state_manager.core.pointer_resolver import resolve_pointer
+    parts = tuple(target_path.split("."))
+    try:
+        cur = store.get_value(target_path)
+        if isinstance(cur, str) and is_pointer(cur):
+            cur = resolve_pointer(store.merged, cur, parts)
+        probe = resolve_pointer(store.merged, parsed, parts)
+    except Exception:  # noqa: BLE001 -- missing / dangling: not this check's call
+        return None
+    if isinstance(probe, (dict, list)) and isinstance(cur, (bool, int, float, str))             and not (isinstance(cur, str) and is_pointer(cur)):
+        return (f"{parsed} resolves to a container, not a value: {target_path} "
+                f"holds a {'flag' if isinstance(cur, bool) else 'text' if isinstance(cur, str) else 'number'}; point at a leaf (e.g. #/qubits/q1/T1)")
+    return None
 
 
 def _parse_for_target(store, target_path: str, raw_value: str):
@@ -13845,6 +13938,9 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 # values pass through — the modifier gate is the backstop).
                 parsed = (_parse_for_target(modifier.store, target_path, raw_value)
                           if isinstance(raw_value, str) else raw_value)
+                _cno = _container_pointer_refusal(modifier.store, target_path, parsed)
+                if _cno:
+                    raise ValueError(_cno)    # SU-11: the grid's own door too
                 try:
                     entry = modifier.set_value(target_path, parsed, _defer_hooks=True,
                                                group_id=_batch_gid)
@@ -25113,7 +25209,7 @@ _TRUTH_STATUS_ERROR = {
                     "config. It is not a channel operation, so the config "
                     "carries it only through a channel operation that is an "
                     "exact copy of it (every field the same, or a pointer to "
-                    "it), and this chip has none -- there is no config "
+                    "it), and this chip has none: there is no config "
                     "waveform to compare it with."),
 }
 
@@ -25125,7 +25221,7 @@ def _truth_not_matched_text(found: dict) -> str:
     if mirror:
         return ("SM could not match this pulse to an entry in the cached "
                 f"config: it is played through {mirror}, an exact copy of it, "
-                "which the cached config does not carry -- the config predates "
+                "which the cached config does not carry; the config predates "
                 "that operation. Regenerate to include it.")
     return _TRUTH_STATUS_ERROR["not-matched"]
 
@@ -25603,6 +25699,26 @@ def _undo_journal_step(ctx, n_req: int = 1):
             or cursor <= 0 or cursor > len(units)):
         return _tray_html()
 
+    # SU-19: a unit a Take live / stage / restore discarded is in effect
+    # nowhere -- its inverse would stage a change that is not there (and a
+    # created subtree's inverse delete 409ed on every press). Walk past it,
+    # RAM only like an empty unit, and say so.
+    _skipped = 0
+    while cursor > 0 and (units[cursor - 1].get("meta") or {}).get("discarded"):
+        cursor -= 1
+        _skipped += 1
+    _skip_note = (f" (skipped {_skipped} dropped step{'s' if _skipped != 1 else ''}"
+                  ", no longer in effect)") if _skipped else ""
+    if _skipped:
+        ctx["undo_cursor"] = cursor
+        if cursor <= 0:
+            resp = make_response(_tray_html())
+            resp.headers["HX-Trigger"] = json.dumps({"cellsReverted": {
+                "message": "Nothing to undo" + _skip_note, "entries": [],
+                "level": "info", "requested": n_req, "consumed": 0,
+                "stopped": "exhausted"}})
+            return resp
+
     unit = units[cursor - 1]
     if (unit.get("meta") or {}).get("no_previous_state"):
         return render_template(
@@ -25653,8 +25769,11 @@ def _undo_journal_step(ctx, n_req: int = 1):
                     # coerce=False: restore the historical value VERBATIM — the
                     # field's CURRENT type may differ (e.g. a later type-fix),
                     # and coercion would cast the restoration back to it.
+                    # SU-14: nor may that type's gate refuse it (a saved
+                    # type-fix made the walk 409 on every press); the live
+                    # walk restores with enforce=False the same way.
                     e = modifier.set_value(path, value, coerce=False,
-                                           group_id=gid)
+                                           enforce=False, group_id=gid)
                     if _differs(e.old_value, uent.get("new")):
                         drift += 1
                 staged.append(e)
@@ -25742,6 +25861,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
     elif drift:
         message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
 
+    message += _skip_note
     live_undo_seq = None
     if live:
         # QA F1 (windows): another window showing this value is told, once,
@@ -26188,9 +26308,11 @@ def redo():
     _frames = _redo_stack(ctx)
     # docs/190 F44: a fork clears the redo timeline -- the rule every editor
     # applies -- but in every editor the new edit was YOUR OWN, visible on
-    # screen. Here it was another window or a running node, so the press did
-    # nothing and said nothing (measured: 0 changes, no toast). Remember that
-    # it happened and say it once, at the end.
+    # screen. Here it may also be another window or a running node, so the
+    # press did nothing and said nothing (measured: 0 changes, no toast).
+    # Remember that it happened and say it once, at the end -- without naming
+    # a source it cannot prove (SB-01: the user's own edit was blamed on
+    # "another window or a run").
     _forked = False
     if _frames and ctx.get("redo_seq") != store.mutation_seq:
         _frames.clear()   # foreign mutation since — dead timeline
@@ -26318,8 +26440,8 @@ def redo():
     if not all_fents:
         if _forked:
             return _redo_response(
-                "Nothing to redo — the chip changed after your undo "
-                "(another window or a run edited it), so that redo history "
+                "Nothing to redo — the state changed after your undo "
+                "(a newer edit, apply or live update), so that redo history "
                 "no longer applies.", [],
                 extra={"requested": n_req, "consumed": 0, "stopped": "forked",
                        "level": "warning", "live": False})
@@ -26670,6 +26792,7 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
         ctx["apply_refused"] = {
             "at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "hash": getattr(wc, "synced_live_hash", None),
+            "ev": getattr(wc, "sync_events", 0),
             "staged": bool(staged_conflict),
             "auto_disarmed": bool(auto_disarmed),
             "auto_merging": bool(auto_merging),
@@ -28273,6 +28396,24 @@ def _take_live_backup(ctx, store, pending: dict) -> dict | None:
     return rec
 
 
+def _bring_back_names(bk: dict, failed: list[dict], cap: int = 3) -> str:
+    """SU-18: NAME the edits Bring back could not re-stage (path = value),
+    and where their values still are, so none is lost without a name."""
+    ups = bk.get("updates") or {}
+    names = []
+    for f in failed[:cap]:
+        p = str(f.get("dot_path") or "?")
+        try:
+            _e = ups.get(p)
+            _op, v, _g = _untag(tuple(_e) if isinstance(_e, list) else _e)
+            names.append(f"{p} = {_fmt_val(v)}" if _op != "delete" else f"{p} (delete)")
+        except Exception:  # noqa: BLE001 -- a name without its value is still a name
+            names.append(p)
+    more = f" and {len(failed) - cap} more" if len(failed) > cap else ""
+    kept = " (kept in the Take-live backup, State History)" if bk.get("snapshot") else ""
+    return ", ".join(names) + more + kept
+
+
 @bp.route("/state/take-live/restore", methods=["POST"])
 def state_take_live_restore():
     """"↶ Bring back": replay the edits the last ↓ Take live dropped, on top of
@@ -28296,7 +28437,8 @@ def state_take_live_restore():
     _n = replay.get("applied", 0)
     _f = replay.get("failed") or []
     msg = (f"Brought back {_n} edit{'s' if _n != 1 else ''} as unapplied edits"
-           + (f"; {len(_f)} could not be re-applied" if _f else "") + ".")
+           + (f"; {len(_f)} could not be re-applied: {_bring_back_names(bk, _f)}"
+              if _f else "") + ".")
     resp.headers["HX-Trigger"] = json.dumps({
         "syncToast": {"message": msg, "level": "warning" if _f else "success"},
         "syncValuesMoved": True})
@@ -31851,7 +31993,7 @@ def app_reload():
                     _invalidate_engine_cache()
                 else:
                     keep = {k: ctx.get(k) for k in ("working_dirty", "staged_base")}
-                    _rebuild_after_working_copy_replaced(ctx)
+                    _rebuild_after_working_copy_replaced(ctx, replaced=False)
                     for k, v in keep.items():
                         if v:
                             ctx[k] = v
@@ -43209,6 +43351,9 @@ def _loaded_autofit_engine():
     return mod
 
 
+_AGENT_RUN_DOORS = frozenset({"agent.run_node", "agent.plan_start"})
+
+
 @bp.before_app_request
 def _scheduler_lock_guard():
     """409 chip-mutating / QM-subprocess routes while the Scheduler is running.
@@ -43244,7 +43389,8 @@ def _scheduler_lock_guard():
     # docs/173 S5: the agent's run_node holds the chassis too -- say so in the
     # agent's words, not the Experiment Runner's (the runner is hidden in 1.0)
     _alk = current_app.config.get("agent_edit_lock")
-    if _alk and request.method != "GET" and request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS:
+    if _alk and request.method != "GET" and request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
+            and request.endpoint not in _AGENT_RUN_DOORS:
         resp = make_response(jsonify({
             "error": "agent_running", "agent_lock": _alk,
             "message": f"The Agent is running {_alk.get('node')}; editing is locked. Press Stop to edit.",
@@ -43252,7 +43398,12 @@ def _scheduler_lock_guard():
         resp.headers["HX-Reswap"] = "none"
         resp.headers["HX-Trigger"] = "schedulerLocked"
         return resp
+    # The agent's run doors answer a busy runner (or the agent's own run) with
+    # their OWN gate, which names what holds it (run_active, a live orphan row,
+    # a foreign owner) and lets a dead row of this process neither block nor
+    # run first; they stage nothing. The autofit lock above still covers them.
     if request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
+            and request.endpoint not in _AGENT_RUN_DOORS \
             and scheduler.is_active(_sched_inst()):
         resp = make_response(jsonify({
             "error": "scheduler_running",

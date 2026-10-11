@@ -59,6 +59,7 @@
                 hx-post="/auto-apply/revert"
                 hx-target="#pending-tray" hx-swap="outerHTML"
                 hx-vals='{"unit_id": "{{ r.id }}"}'
+                data-after-request="appliedLogReverted"
                 aria-label="Revert this applied change"
                 title="Put this change back. Compare-and-swap: if the value moved since, this refuses instead of overwriting.">&#10005;</button>
       {% endif %}

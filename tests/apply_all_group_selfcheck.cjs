@@ -183,6 +183,37 @@ async function settle(win, n) {
        'applyRow sends no group (got ' + JSON.stringify(win.posts[0] && win.posts[0].group) + ')');
   }
 
+  // -- 5. SB-02: "Apply to live now" after the click-away already committed the
+  //    typed cell (no dirty cell left): wait for that commit, confirm what the
+  //    tray carries, push it -- never a silent no-op. Both grids.
+  for (const grid of ['BulkEdit', 'BulkPairEdit']) {
+    const win = world(null);
+    win.document.body.insertAdjacentHTML('beforeend', '<div id="pending-tray" data-change-count="0">'
+      + '<div id="tray-drawer"><div class="tray-change-item"><span class="tray-change-path" '
+      + 'title="qubits.q1.T1">T1</span></div></div></div>');
+    let release;
+    win._pendingGridCommits = [new Promise(function (r) { release = r; })];
+    const asked = [], pushed = [];
+    win.confirm = function (m) { asked.push(m); return true; };
+    win.applyEditsToLive = function () { pushed.push(1); };
+    win[grid].applyAll(true);
+    await tick(20);
+    ok(!asked.length && !pushed.length, grid + ': waits for the in-flight click-away commit');
+    win.document.getElementById('pending-tray').setAttribute('data-change-count', '1');
+    release(); await tick(20);
+    ok(asked.length === 1 && /Apply 1 unapplied edit and push to the live chip\?/.test(asked[0])
+       && asked[0].indexOf('qubits.q1.T1') >= 0,
+       grid + ': confirms the committed edit by name (got ' + JSON.stringify(asked[0]) + ')');
+    ok(pushed.length === 1, grid + ': then pushes it to the live chip');
+    const toasts = [];
+    win.showToast = function (m) { toasts.push(m); };
+    win._pendingGridCommits = [];
+    win.document.getElementById('pending-tray').setAttribute('data-change-count', '0');
+    win[grid].applyAll(true); await tick(20);
+    ok(toasts.length === 1 && /Nothing to apply/.test(toasts[0]) && pushed.length === 1,
+       grid + ': an empty tray says so instead of doing nothing (got ' + JSON.stringify(toasts) + ')');
+  }
+
   if (fails) { console.error(fails + ' of ' + asserts + ' checks failed'); process.exit(1); }
   console.log('all checks passed (' + asserts + ')');
   process.exit(0);

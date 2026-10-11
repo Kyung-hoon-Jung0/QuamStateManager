@@ -54,6 +54,12 @@
         var done = function () {
             window._applyInFlight = false;
             if (_queued) { _queued = false; setTimeout(flush, 0); }
+            // SB-07: an open sync panel follows the write (an applied-log x
+            // staged an inverse that this flush just pushed; without this the
+            // panel kept showing it as an unapplied edit)
+            else if (window.SyncPanel && window.SyncPanel.isOpen && window.SyncPanel.isOpen()) {
+                window.SyncPanel.refresh();
+            }
         };
         try {
             var p = window.htmx.ajax('POST', '/state/apply-to-live', {
@@ -393,6 +399,38 @@ window.AutoSync = (function () {
         var d = e && e.detail;
         var url = (d && d.pathInfo && (d.pathInfo.requestPath || d.pathInfo.finalRequestPath)) || '';
         if (/\/auto-sync\/set|\/auto-apply\/disarm/.test(url)) close();
+    });
+
+    /* SB-08: a tray answer RENDERED before the latest Auto-Sync change landed
+       (a poll or a re-render issued before "Turn off") must not paint the old
+       session back: measured, the pill said ON after the server had disarmed,
+       until a reload. Every htmx request is numbered at issue; a session
+       change records its own number when it lands; an older answer whose pill
+       disagrees with the one on screen is dropped and the tray re-read. */
+    var _reqSeq = 0, _sessSeq = 0;
+    function _isSessUrl(d) {
+        var u = (d && d.pathInfo && (d.pathInfo.requestPath || d.pathInfo.finalRequestPath)) || '';
+        return /\/auto-sync\/set|\/auto-apply\/(arm|disarm)/.test(u);
+    }
+    document.addEventListener('htmx:beforeRequest', function (e) {
+        var x = e && e.detail && e.detail.xhr;
+        if (x) x._smSeq = ++_reqSeq;
+    });
+    document.addEventListener('htmx:afterRequest', function (e) {
+        var d = e && e.detail;
+        if (d && d.successful && d.xhr && _isSessUrl(d)) _sessSeq = Math.max(_sessSeq, d.xhr._smSeq || 0);
+    });
+    document.addEventListener('htmx:beforeSwap', function (e) {
+        var d = e && e.detail;
+        if (!d || !d.xhr || !d.target || d.target.id !== 'pending-tray') return;
+        var seq = d.xhr._smSeq || 0;
+        if (!seq || seq >= _sessSeq) return;
+        var txt = String(d.serverResponse || d.xhr.responseText || '');
+        var on = /auto-apply-pill auto-apply-on/.test(txt);
+        var shown = !!document.querySelector('#pending-tray .auto-apply-pill.auto-apply-on');
+        if (on === shown) return;
+        d.shouldSwap = false;
+        if (window.htmx) window.htmx.ajax('GET', '/state/tray', { target: '#pending-tray', swap: 'outerHTML' });
     });
 
     return { toggle: toggle, close: close, syncNested: syncNested };

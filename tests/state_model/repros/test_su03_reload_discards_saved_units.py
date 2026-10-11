@@ -12,7 +12,7 @@ import pytest
 from tests.state_model.repros._rig import Chip
 
 
-@pytest.mark.xfail(strict=True, reason="SU-03: /app/reload runs the wholesale-replace rebuild")
+
 def test_a_reload_keeps_saved_units_claimable(tmp_path):
     chip = Chip(tmp_path)
     chip.edit("qubits.q1.T1", "3.1e-05")

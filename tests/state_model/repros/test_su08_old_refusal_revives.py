@@ -13,7 +13,6 @@ import pytest
 from tests.state_model.repros._rig import Chip
 
 
-@pytest.mark.xfail(strict=True, reason="SU-08: apply_refused outlives a later landed write")
 def test_a_landed_write_ends_an_earlier_refusal(tmp_path):
     chip = Chip(tmp_path)
     orig = chip.live_state()["qubits"]["q2"]["chi"]
@@ -25,5 +24,20 @@ def test_a_landed_write_ends_an_earlier_refusal(tmp_path):
     h = chip.c.get("/state/overwrite-live/preflight").get_json()["live_hash"]
     r = chip.c.post("/state/apply-to-live", data={"force": "1", "expect_live_hash": h})
     assert r.status_code == 200 and chip.live_state()["qubits"]["q2"]["chi"] == orig   # Keep mine landed
+    chip.edit("qubits.q3.T1", "4.1e-05")
+    assert chip.status() == "mine"
+
+
+def test_a_take_live_ends_an_earlier_refusal(tmp_path):
+    chip = Chip(tmp_path)
+    orig = chip.live_state()["qubits"]["q2"]["chi"]
+    chip.set_live("qubits.q2.chi", 1300000.0)
+    chip.edit("qubits.q1.T1", "3.1e-05")
+    r = chip.c.post("/state/apply-to-live")                  # refused at the old sync point
+    assert "pending-tray-conflict" in r.get_data(as_text=True)
+    chip.c.post("/discard_all")
+    assert chip.c.post("/state/sync", data={"mode": "discard", "force": "1"}).status_code == 200
+    chip.set_live("qubits.q2.chi", orig)                     # the outside writer goes back
+    assert chip.c.post("/state/sync", data={"mode": "discard", "force": "1"}).status_code == 200
     chip.edit("qubits.q3.T1", "4.1e-05")
     assert chip.status() == "mine"
