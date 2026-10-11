@@ -2740,6 +2740,28 @@ def _untag(opval) -> tuple:
     return "set", opval, None
 
 
+def _fold_into_created(updates: dict, path: str, value) -> None:
+    """Write *value* at *path* inside the captured value of every ancestor
+    this replay map creates or replaces (that value is the map's own deep
+    copy, never the store's tree)."""
+    parts = path.split(".")
+    for i in range(len(parts) - 1, 0, -1):
+        anc = updates.get(".".join(parts[:i]))
+        if anc is None or anc[0] not in ("create", "replace"):
+            continue
+        cur = anc[1]
+        try:
+            for k in parts[i:-1]:
+                cur = cur[int(k)] if isinstance(cur, list) else cur[k]
+            last = parts[-1]
+            if isinstance(cur, list):
+                cur[int(last)] = copy.deepcopy(value)
+            elif isinstance(cur, dict):
+                cur[last] = copy.deepcopy(value)
+        except (KeyError, IndexError, TypeError, ValueError):
+            pass       # the edit is outside what the record holds: the set entry carries it
+
+
 def _capture_change_log_as_updates(store) -> dict:
     """Snapshot the change log as an op-tagged ``{dot_path: (op, value[, gid])}``
     replay map, where op is ``"set" | "create" | "delete"``.
@@ -2759,9 +2781,10 @@ def _capture_change_log_as_updates(store) -> dict:
     ``_replay_updates`` dispatch to create_subtree/delete_subtree.
 
     Composition rules (insertion-ordered, last op per path wins):
-      - create then edit(s)  → stays ``create`` (the logged subtree object is
-        aliased to the live tree, so it already carries the edits; a same-path
-        scalar ``set`` upgrades the stored value),
+      - create then edit(s)  → stays ``create``; an edit inside the created
+        subtree is folded into the captured value (the logged record is a
+        snapshot since SU-09, not an alias of the live tree), and a same-path
+        scalar ``set`` upgrades the stored value,
       - create then delete   → drops out entirely (net nothing),
       - delete then create   → ``replace`` (replayed with ``coerce=False``:
         the pulled live state may hold a value of a DIFFERENT type at that
@@ -2797,6 +2820,10 @@ def _capture_change_log_as_updates(store) -> dict:
             updates[path] = _tagged("delete", None, gid)
         else:
             prev = updates.get(path)
+            # SU-09 kept the created subtree's record a SNAPSHOT (no aliasing),
+            # so an edit inside a subtree this log created/replaced is folded
+            # into that record here -- it replays with the latest values.
+            _fold_into_created(updates, path, nv)
             if prev is not None and prev[0] in ("create", "replace", "literal"):
                 updates[path] = _tagged(prev[0], nv, gid)
             elif is_pointer(nv) or is_pointer(entry.old_value):
