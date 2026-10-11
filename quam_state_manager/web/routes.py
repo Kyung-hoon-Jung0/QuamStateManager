@@ -21209,7 +21209,7 @@ def pulse_edit():
             _lab_no = _lab_edit_refusal(store, dot_path, dot_path,
                                         probe if probe is not None else value)
             if _lab_no:
-                return _lab_edit_refused(_lab_no)
+                return _lab_edit_refused(_lab_no, dot_path, probe)
             modifier.set_value(dot_path, value)
         elif mode == "literal":
             # Break-link: type the literal after the RESOLVED value, write
@@ -21234,7 +21234,7 @@ def pulse_edit():
                 parsed = str(parsed)
             _lab_no = _lab_edit_refusal(store, dot_path, dot_path, parsed)
             if _lab_no:
-                return _lab_edit_refused(_lab_no)
+                return _lab_edit_refused(_lab_no, dot_path, parsed)
             # enforce=False: literal mode IS the explicit, audited type-CHANGE
             # surface — forcing a type-assign ceremony here was rejected.
             modifier.set_value(dot_path, parsed, coerce=False, enforce=False)
@@ -21267,7 +21267,7 @@ def pulse_edit():
             elif _lab_no := _lab_edit_refusal(
                     store, dot_path, _pulse_edit_write_path(
                         store, dot_path, raw_current, target_path), parsed):
-                return _lab_edit_refused(_lab_no)
+                return _lab_edit_refused(_lab_no, target_path, parsed)
             elif is_pointer(raw_current):
                 target = resolve_field_target(store.merged, dot_path)
                 _dflt = _pulse_ref_default_target(store, dot_path, raw_current)
@@ -23814,10 +23814,16 @@ def _lab_refusal_text(message: str) -> str:
             f"the selected environment) — nothing was written: {message}")
 
 
-def _lab_edit_refused(message: str):
-    return render_template(
+def _lab_edit_refused(message: str, path=None, value=None):
+    from flask import g
+    resp = make_response(render_template(
         "_status.html", level="error",
-        message=_lab_refusal_text(message)), 400
+        message=_lab_refusal_text(message)), 400)
+    if path:
+        resp.headers["X-Lab-Refusal"] = json.dumps({
+            "lab_refused": True, "error": _lab_refusal_text(message),
+            "lab_follow": _lab_follow_payload(path, value, getattr(g, "lab_info", None))})
+    return resp
 
 
 def _slot_host(merged: dict, pair_name: str, pair: dict, slot: str):

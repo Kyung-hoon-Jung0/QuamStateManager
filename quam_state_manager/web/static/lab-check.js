@@ -377,6 +377,16 @@
         });
         document.addEventListener('htmx:afterRequest', function (e) {
             var elt = e.detail && e.detail.elt;
+            var xhr = e.detail && e.detail.xhr;
+            var refusal = xhr && xhr.getResponseHeader('X-Lab-Refusal');
+            if (refusal && xhr.status === 400 && elt && elt.matches('form.pulse-edit-form')) {
+                try {
+                    var payload = JSON.parse(refusal);
+                    _settle(_badge(elt), { status: 400, clone: function () {
+                        return { json: function () { return Promise.resolve(payload); } };
+                    } });
+                } catch (err) { /* the surface still shows the refusal */ }
+            }
             var ind = elt && elt._labInd;
             if (!ind) return;
             elt._labInd = null;
