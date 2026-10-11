@@ -4111,13 +4111,45 @@ def _wholesale_journal_unit(ctx: dict, before: dict | None, src: str,
     # rather than dropping it.
     excl: set[str] = set()
     staged_over: dict[str, Any] = {}
-    for u in (edit_units or []):
+    for u in _saved_tail_units(ctx, src, edit_units) + list(edit_units or []):
         for e in (u.get("entries") or []):
             if e.get("created") or e.get("deleted"):
                 excl.add(e["path"])
             else:
                 staged_over.setdefault(e["path"], e.get("old"))
     return _wholesale_unit(before, ctx, src, exclude=excl, staged_over=staged_over, after=after)
+
+
+def _saved_tail_units(ctx: dict, src: str, edit_units: list[dict] | None) -> list[dict]:
+    """SU-04: the units a /save already journaled whose edits this press
+    carries to the chip (oldest first). A Keep mine / apply-staged writes the
+    SAVED working copy, so those edits are in the wholesale difference too --
+    they are owned by their saved units, exactly like the press's own edit
+    units, or Ctrl+Z meets them twice. A restore writes other content and
+    carries none."""
+    if src not in ("force-overwrite", "apply-staged"):
+        return []
+    own = {str(u.get("id")) for u in (edit_units or [])}
+    ids = set(_hub_saved_units(ctx)) - own
+    return [u for u in (ctx.get("undo_units") or []) if str(u.get("id")) in ids]
+
+
+def _wholesale_tail(ctx: dict, src: str, edit_units: list[dict] | None, pending) -> int:
+    """How many newest sidecar units the wholesale unit goes below: this
+    press's edit units plus the saved units it landed (SU-04) -- the base is
+    walked back after the edits made on it."""
+    n = len(edit_units or [])
+    if src not in ("force-overwrite", "apply-staged"):
+        return n
+    units = list(ctx.get("undo_units") or [])
+    pid = getattr(pending, "id", None)
+    i = len(units) - n
+    while i > 0:
+        m = units[i - 1].get("meta") or {}
+        if not m.get("saved") or m.get("discarded") or m.get("hub") not in (None, pid):
+            break
+        i -= 1
+    return len(units) - i
 
 
 def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str,
@@ -4138,8 +4170,9 @@ def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str,
             return
         # docs/271: the unit the recorded event lists (built before the write)
         _hub_stamp_units(pending, [unit])
-        if edit_units:
-            _journal_insert_before(ctx, unit, len(edit_units))
+        n_tail = _wholesale_tail(ctx, src, edit_units, pending)
+        if n_tail:
+            _journal_insert_before(ctx, unit, n_tail)
         else:
             _journal_commit(ctx, [unit])
     except Exception:
