@@ -847,3 +847,33 @@ four kinds of chip (docs/301).
   report hides whole names and keeps punctuation; Revert last apply says what it restored.
 - Fixed two missing imports (the overnight grant watch; autofit figure generation) and added a guard
   against undefined names.
+
+## v1.3.0 (2026-10-11)
+
+Production campaign (docs/303): the v1.2.0 follow-up list plus stability, every-page and packaging sweeps.
+
+- **Faster cold opens**: a chip's first screen appears in about 1.3 s, down from about 18 s; background
+  Datasets scans give way to the history catch-up; an archived chip's history builds about 3x faster with the
+  same ledger.
+- **Security**: requests from any host other than loopback (or `qsm serve --host`, or `SM_ALLOWED_HOSTS`)
+  are refused; no request can start an interpreter SM did not discover or the user did not choose.
+- **No 500 on bad input**: every JSON body, path and number a route reads is checked; a route fuzzer went
+  from 159 server errors to 0. A sync while the live file is mid-save says to retry.
+- **Honest history**: a nameless chip's ledger belongs to the chip the user opened (a v1.2.0 ledger seeded
+  from another chip's run heals on open); a change another chip's run masked keeps its own patch proof;
+  gate verdicts survive a ledger rebuild and a server restart.
+- **Trends**: every chart of one view, and of the printable report, spans one time window.
+- **Value history**: the panel opens beside the clock column, so the next field's clock stays reachable;
+  run names wrap at natural points; times carry their offset; null and absent are told apart.
+- **Versions**: a version can be labelled inline (Versions, State History, History drawer).
+- **Calibration age** counts calendar days in the project's zone ("yesterday" at 03:00).
+- **Stability**: closing the inspector and switching Datasets runs no longer keep the old pane in memory;
+  no htmx history snapshots (the localStorage quota errors are gone); a deep page after a restart offers
+  "Re-open"; unreachable network shares answer within seconds; the recovery notice after an interrupted
+  Apply says where the edits are.
+- **Packaging**: the CLI works when piped on a legacy-codepage console; pages degrade with a message
+  without scipy, h5py or tzdata; the MCP server reports the package version.
+- **Every page at 1280 and 1600, light and dark**: nothing cut off-pane or into letter towers (Param History
+  Changes, the diff list, Projects), readable contrast for active chips and topbar text, the Versions
+  panel's value cell wraps, "Auto-Sync" reads as one word, "15 changed" instead of "~15".
+- **Agent morning summary** words a failure the same whichever record it reads.
