@@ -906,8 +906,8 @@ class Model:
 
     def restart(self) -> list[str]:
         """A new process on the same instance: RAM state dies; the tray rows
-        come back from their sidecar only while the live chip still holds the
-        sync point (pending_tray._restore). Returns the paths NOT restored."""
+        come back from their verified working base even if the live chip
+        moved (pending_tray._restore). Returns the paths NOT restored."""
         self.R.clear()
         self.backup = None
         self.refused_at = None
@@ -919,13 +919,7 @@ class Model:
             self.staged_doc = None
             self.stash, self.stash_orig, self.stash_gid = {}, {}, {}
         lost: list[str] = []
-        if self.T and (not self.readable() or digest(self.L) != digest(self.B)):
-            lost = list(dict.fromkeys(self.tray_paths()))
-            self.T = []
-            self.W = copy.deepcopy(self.Ws)
-            self.stash, self.stash_orig, self.stash_gid = {}, {}, {}
-            self.staged = False
-            self.staged_doc = None
+        # v1.3.0: drop rows after live moved -> retain verified unapplied rows.
         if not (self.T and self.staged):
             self.dirty = digest(self.Ws) != digest(self.B)
         return lost
