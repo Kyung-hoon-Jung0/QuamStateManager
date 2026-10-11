@@ -1584,36 +1584,61 @@
             try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sizes)); } catch(e) {}
         }
 
-        // Expand / collapse targets are user-configurable: the gutter ⤒ / ⤓
-        // "set" icons capture the current divider position into these
-        // localStorage keys, so each user decides how high ▲ expands and how
-        // low ▼ collapses. Fall back to the UI_CONFIG defaults when unset.
-        var PRESET_EXPANDED_KEY = "quam_split_expanded";
-        var PRESET_COLLAPSED_KEY = "quam_split_collapsed";
+        // v1.3.0 (customer): the split bar has two arrows, each to a FIXED
+        // position. The old set-high / set-low buttons stored the current
+        // position as a hidden target (quam_split_expanded/_collapsed), so a
+        // later press of the toggle seemed to do nothing. Those keys go.
+        //
+        // The user's LAST action decides where the next inspector opens (a
+        // run or qubit click, a reload, a new session), kept in ONE key: a
+        // drag end stores the dragged sizes, an arrow press stores which
+        // arrow ("up" / "down"), resolved to that arrow's fixed position for
+        // the inspector being opened. SM's own moves (the menu auto-collapse,
+        // the Compare collapse, _applySplitPreset, the table-pane initSplit)
+        // never write it -- they only move the CURRENT split,
+        // quam_split_sizes, which a table-pane swap re-applies.
+        var USER_KEY = "quam_split_user";
+        try {
+            localStorage.removeItem("quam_split_expanded");
+            localStorage.removeItem("quam_split_collapsed");
+        } catch (e) {}
 
         function validSizes(s) {
             if (!Array.isArray(s) || s.length !== 2) return false;
             var a = Number(s[0]), b = Number(s[1]);
-            // Allow 0 so a full-cover preset ([0,100]) saved via the ⤒ icon persists.
+            // Allow 0 so a full-cover drag ([0,100]) persists.
             return isFinite(a) && isFinite(b) && a >= 0 && b >= 0 && Math.abs(a + b - 100) <= 1;
         }
-        function loadPreset(key, fallback) {
+        // The stored choice: dragged sizes, "up", "down", or null (none yet).
+        function loadUserChoice() {
             try {
-                var raw = localStorage.getItem(key);
-                if (raw) { var p = JSON.parse(raw); if (validSizes(p)) return p; }
+                var raw = localStorage.getItem(USER_KEY);
+                if (raw) {
+                    var p = JSON.parse(raw);
+                    if (p === "up" || p === "down" || validSizes(p)) return p;
+                }
             } catch (e) {}
-            return fallback;
+            return null;
         }
-        function saveSizesTo(key, sizes) {
-            try { localStorage.setItem(key, JSON.stringify(sizes)); } catch (e) {}
+        function saveUserChoice(choice) {
+            try { localStorage.setItem(USER_KEY, JSON.stringify(choice)); } catch (e) {}
         }
+        // The two fixed positions the arrows move to (UI_CONFIG.split).
         function expandedSizes() {
             // v1.3.0: a dataset run keeps more of the run list in view
-            var fallback = document.querySelector('#inspector-pane #ds-detail-root')
+            return document.querySelector('#inspector-pane #ds-detail-root')
                 ? UI_CONFIG.split.datasetExpandedSizes : UI_CONFIG.split.expandedSizes;
-            return loadPreset(PRESET_EXPANDED_KEY, fallback);
         }
-        function collapsedSizes() { return loadPreset(PRESET_COLLAPSED_KEY, UI_CONFIG.split.collapsedSizes); }
+        function collapsedSizes() { return UI_CONFIG.split.collapsedSizes; }
+        // The sizes of the user's last choice for the inspector shown now.
+        function userSizes() {
+            var c = loadUserChoice();
+            if (c === "up") return expandedSizes();
+            if (c === "down") return collapsedSizes();
+            return c;
+        }
+        // Where an inspector opens: the user's last choice, else the expanded default.
+        function openSizes() { return userSizes() || expandedSizes(); }
 
         var inspectorExpanded = true;
 
@@ -1622,58 +1647,54 @@
             return el && el.innerHTML.trim().length > 0;
         }
 
-        function updateToggleArrow() {
-            var btn = document.querySelector(".inspector-toggle-btn");
-            if (btn) btn.innerHTML = inspectorExpanded ? "\u25BC" : "\u25B2";
+        // Move the split and make it the current one (a concurrent
+        // table-pane initSplit() re-applies quam_split_sizes).
+        function applySizes(sizes) {
+            sizes = sizes.slice();
+            inspectorExpanded = sizes[1] > 30;
+            saveSizes(sizes);
+            initSplit(sizes);
         }
 
-        function flashBtn(btn) {
-            if (!btn) return;
-            btn.classList.add("split-set-done");
-            scope.timeout(function() { btn.classList.remove("split-set-done"); }, 600);
+        function sameSizes(a, b) {
+            return !!(a && b) && Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01;
         }
 
-        function ensureGutterToggle() {
+        function arrowButton(cls, glyph, title, choice, sizesFor) {
+            var btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "split-arrow-btn " + cls;
+            btn.textContent = glyph;
+            btn.title = title;
+            btn.setAttribute("aria-label", title);
+            gutterListeners.push(scope.listen(btn, "click", function(e) {
+                e.stopPropagation();
+                // a keyboard press is a click with detail 0; a mouse press
+                // drops focus as before (no lingering focus ring)
+                var hadFocus = document.activeElement === btn && e.detail === 0;
+                // Straight to the fixed position, every press -- never a no-op
+                // from a hidden preset. The press is the user's last choice:
+                // the next inspector opens at this arrow's fixed position.
+                saveUserChoice(choice);
+                applySizes(sizesFor());
+                // initSplit rebuilt the gutter; keep a keyboard user on the arrow
+                var again = hadFocus && document.querySelector(".gutter-controls ." + cls);
+                if (again) again.focus();
+            }));
+            return btn;
+        }
+
+        function ensureGutterArrows() {
             var gutter = document.querySelector(".gutter.gutter-vertical");
-            if (!gutter) return;
-            if (gutter.querySelector(".gutter-controls")) { updateToggleArrow(); return; }
+            if (!gutter || gutter.querySelector(".gutter-controls")) return;
 
             var wrap = document.createElement("div");
             wrap.className = "gutter-controls";
             // A button press on the gutter must not start a Split.js drag.
             gutterListeners.push(scope.listen(wrap, "mousedown", function(e) { e.stopPropagation(); }));
-
-            var setHigh = document.createElement("button");
-            setHigh.className = "split-set-btn split-set-high-btn";
-            setHigh.innerHTML = "⤒";  // ⤒ — set the expanded (▲) target to the current divider position
-            setHigh.title = "Set expanded height: drag the divider where you want it, then click";
-            setHigh.setAttribute("aria-label", "Set expanded inspector height to the current divider position");
-            gutterListeners.push(scope.listen(setHigh, "click", function(e) {
-                e.stopPropagation();
-                if (splitInstance) { saveSizesTo(PRESET_EXPANDED_KEY, splitInstance.getSizes()); flashBtn(setHigh); }
-            }));
-
-            var toggle = document.createElement("button");
-            toggle.className = "inspector-toggle-btn";
-            toggle.title = "Expand / Collapse inspector";
-            toggle.setAttribute("aria-label", "Expand or collapse the inspector panel");
-            gutterListeners.push(scope.listen(toggle, "click", function(e) { e.stopPropagation(); toggleInspectorExpand(); }));
-
-            var setLow = document.createElement("button");
-            setLow.className = "split-set-btn split-set-low-btn";
-            setLow.innerHTML = "⤓";  // ⤓ — set the collapsed (▼) target to the current divider position
-            setLow.title = "Set collapsed height: drag the divider where you want it, then click";
-            setLow.setAttribute("aria-label", "Set collapsed inspector height to the current divider position");
-            gutterListeners.push(scope.listen(setLow, "click", function(e) {
-                e.stopPropagation();
-                if (splitInstance) { saveSizesTo(PRESET_COLLAPSED_KEY, splitInstance.getSizes()); flashBtn(setLow); }
-            }));
-
-            wrap.appendChild(setHigh);
-            wrap.appendChild(toggle);
-            wrap.appendChild(setLow);
+            wrap.appendChild(arrowButton("split-up-btn", "\u25B2", "Expand the panel", "up", expandedSizes));
+            wrap.appendChild(arrowButton("split-down-btn", "\u25BC", "Collapse the panel", "down", collapsedSizes));
             gutter.appendChild(wrap);
-            updateToggleArrow();
         }
 
         function initSplit(sizes) {
@@ -1704,15 +1725,22 @@
                 sizes = saved || UI_CONFIG.split.defaultSizes;
             }
 
+            var dragStartSizes = null;
             splitInstance = Split(["#table-pane", "#inspector-pane"], {
                 direction: "vertical",
                 sizes: sizes,
                 minSize: UI_CONFIG.split.minSizes,
                 gutterSize: UI_CONFIG.split.gutterSize,
                 snapOffset: 0,
+                onDragStart: function(s) { dragStartSizes = s; },
                 onDragEnd: function(s) {
                     if (!scope.alive) return;
-                    saveSizes(s); inspectorExpanded = s[1] > 30; updateToggleArrow();
+                    saveSizes(s); inspectorExpanded = s[1] > 30;
+                    // v1.3.0 (customer): a drag is the user's last choice; the
+                    // next inspector opens at this height. A press on the bar
+                    // that did not move it is not a choice.
+                    if (!sameSizes(s, dragStartSizes)) saveUserChoice(s);
+                    dragStartSizes = null;
                     /* Split.js resizing the panes does not fire a window
                        resize, so any Plotly chart in the inspector keeps its
                        pre-drag dimensions (axes/legend drift). Re-layout them. */
@@ -1731,7 +1759,7 @@
             });
 
             inspectorExpanded = sizes[1] > 30;
-            ensureGutterToggle();
+            ensureGutterArrows();
         }
 
         // Auto-expand inspector when content is swapped in (qubit click, search, etc.)
@@ -1751,16 +1779,16 @@
             }
 
             if (tid === "inspector-pane") {
-                inspectorExpanded = true;
-                // Persist the expanded sizes so a *concurrent* table-pane swap's
-                // initSplit() (which re-applies the saved quam_split_sizes) can't
-                // re-collapse the panel. A data-item click fires both an
-                // inspector-pane swap (dataset detail) and a table-pane swap
-                // (/workspace/select) at once; whichever lands last must still
-                // leave the inspector expanded.
-                var sizes = expandedSizes();
-                saveSizes(sizes);
-                initSplit(sizes);
+                // v1.3.0 (customer): an inspector opens at the user's last
+                // choice (a drag's height or an arrow's fixed position), else
+                // the expanded default.
+                // applySizes persists it as the current split so a *concurrent*
+                // table-pane swap's initSplit() (which re-applies the saved
+                // quam_split_sizes) can't re-collapse the panel. A data-item
+                // click fires both an inspector-pane swap (dataset detail) and
+                // a table-pane swap (/workspace/select) at once; whichever
+                // lands last must still leave the inspector at that height.
+                applySizes(openSizes());
             } else if (tid === "table-pane") {
                 initSplit();
             }
@@ -1770,24 +1798,15 @@
             initSplit();
         });
 
-        window.toggleInspectorExpand = function() {
-            inspectorExpanded = !inspectorExpanded;
-            var sizes = inspectorExpanded ? expandedSizes() : collapsedSizes();
-            saveSizes(sizes);
-            initSplit(sizes);
-        };
-
-        // Apply a saved split preset programmatically (e.g. "Go to state" collapses the
-        // bottom dataset pane so the Explorer on top is prominent). Reuses the user's
-        // ⤒/⤓-configured presets — no hardcoded ratio. Persisting via saveSizes() keeps a
-        // concurrent table-pane initSplit() from re-applying stale sizes (same trick the
-        // inspector-pane afterSwap handler uses above).
+        // Move the split to a fixed position programmatically (e.g. "Go to state"
+        // collapses the bottom dataset pane so the Explorer on top is prominent).
+        // The same fixed positions as the arrows (UI_CONFIG.split). SM's own move:
+        // it changes the current split only, never the user's last choice
+        // (v1.3.0). Persisting via saveSizes() keeps a concurrent table-pane
+        // initSplit() from re-applying stale sizes (same trick the inspector-pane
+        // afterSwap handler uses above).
         window._applySplitPreset = function(which) {
-            var sizes = which === "expanded" ? expandedSizes() : collapsedSizes();
-            inspectorExpanded = sizes[1] > 30;
-            saveSizes(sizes);
-            initSplit(sizes);
-            updateToggleArrow();
+            applySizes(which === "expanded" ? expandedSizes() : collapsedSizes());
         };
 
         scope.listen(document.body, "htmx:afterSettle", function() {
@@ -1801,7 +1820,8 @@
         // DATASET detail (qubit/pair inspectors keep the sticky-inspector
         // doctrine untouched); only when currently expanded; and never for
         // the Datasets menu itself (the detail pane is native there). The
-        // detail CONTENT stays — ▲ / the gutter brings it back full-height.
+        // detail CONTENT stays -- the up arrow or a drag brings it back, and
+        // the next inspector open uses the user's last choice (v1.3.0).
         scope.listen(document, "click", function(e) {
             var a = e.target.closest && e.target.closest(".sidebar-nav a[href]");
             if (!a) return;
@@ -1817,10 +1837,11 @@
         // TOP pane, and a run detail opens the inspector at 85% -- so the
         // result arrived under a 15% sliver and "did the compare open at
         // all?" was the report. Any inspector content (a run detail, a qubit
-        // inspector) collapses to the user's ⤓ preset when the compare form
-        // fires; saving the sizes first is what keeps the table-pane swap's
-        // initSplit() from restoring the old split. The content stays -- ▲
-        // brings it back.
+        // inspector) collapses to the fixed collapsed position when the
+        // compare form fires (v1.3.0: was the user's set-low preset, now
+        // gone); saving the sizes first is what keeps the table-pane swap's
+        // initSplit() from restoring the old split. The content stays -- the
+        // up arrow brings it back.
         var compareController = new AbortController();
         scope.cleanup(function () { compareController.abort(); });
         document.addEventListener("htmx:beforeRequest", function(e) {
@@ -1921,7 +1942,17 @@
             });
         }
 
-        scope.ready(function () { restorePrefs(); initSplit(); initSidebarResizer(); });
+        // v1.3.0 (customer): a page load (a reload, a new session, a history
+        // restore re-running this script) opens an inspector the page already
+        // holds at the user's last choice, not at an earlier SM move. It
+        // becomes the current split, so a later table-pane swap re-applies it.
+        function initialSplit() {
+            var user = userSizes();
+            if (user) saveSizes(user);
+            initSplit();
+        }
+
+        scope.ready(function () { restorePrefs(); initialSplit(); initSidebarResizer(); });
     })();
     </script>
 

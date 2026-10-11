@@ -1661,24 +1661,30 @@ class TestSidebarFeatures:
         assert "tree-branch-active > summary" in css.read_text(encoding="utf-8")
 
     def test_split_set_icons_and_presets_present(self):
-        """The gutter resize-preset controls and their localStorage keys must
-        ship in base.html — they let users set how high ▲ expands / how low ▼
-        collapses the inspector panel (default expand is very high)."""
+        """The gutter carries two arrows to fixed positions; the user's last
+        choice (a drag or an arrow) is kept in one localStorage key. Behaviour
+        is pinned in tests/test_split_arrows.py."""
+        # v1.3.0: set-high / set-low icons + preset keys -> two fixed arrows +
+        # one last-choice key, because customers pressed set-low to move the
+        # bar and the toggle then seemed to do nothing.
         base = (Path(__file__).resolve().parent.parent
                 / "quam_state_manager" / "web" / "templates" / "base.html")
         text = base.read_text(encoding="utf-8")
-        assert "split-set-high-btn" in text and "split-set-low-btn" in text, (
-            "Gutter set-expanded / set-collapsed icons are missing from the split IIFE."
+        assert "split-up-btn" in text and "split-down-btn" in text, (
+            "The gutter up / down arrows are missing from the split IIFE."
         )
-        assert "quam_split_expanded" in text and "quam_split_collapsed" in text, (
-            "Per-user split preset localStorage keys are missing."
-        )
+        assert "split-set-high-btn" not in text and "split-set-low-btn" not in text
+        assert 'var USER_KEY = "quam_split_user";' in text
+        # the old preset keys are only removed
+        assert 'localStorage.removeItem("quam_split_expanded")' in text
+        assert 'localStorage.removeItem("quam_split_collapsed")' in text
 
     def test_dataset_panel_opens_nearly_fullscreen(self):
         """Customer ask (2026-08-27): clicking a run must open the detail panel
         nearly full-screen (was [35, 65] — read as 'about half'). The default
-        expanded split gives the inspector 85%; a user's own gutter-⤒ preset
-        still wins over the default (that path is untouched)."""
+        expanded split gives the inspector 85%; the user's last choice (a drag
+        or an arrow) still wins over the default (v1.3.0: was the gutter
+        set-high preset)."""
         app_js = (Path(__file__).resolve().parent.parent
                   / "quam_state_manager" / "web" / "static" / "app.js")
         text = app_js.read_text(encoding="utf-8")
