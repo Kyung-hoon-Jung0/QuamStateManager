@@ -261,9 +261,8 @@ def _at(points: list[tuple[str, object]], stamp: str):
     return v
 
 
-# ------------------------------------------------------------------ findings (WP3), each a failing repro
-@pytest.mark.xfail(strict=True, reason="TR-01: chained contradictions drop the value every later "
-                                       "recorded state agrees with")
+# ------------------------------------------------------------------ findings (WP3), fixed in v1.3.0
+# v1.3.0: strict xfail -> pass, the four findings are fixed (FIX-TR, ADJ_TR); each pin is mutation-checked
 def test_tr01_a_chain_of_contradicted_changes_ends_on_the_recorded_value(tmp_path):
     """qA1 runs save A then B; two runs that did not measure qA1 then save A and B (two lines of runs
     flipping the value); two more agree on B. Every state recorded after run 4 holds B, so B is in
@@ -278,8 +277,6 @@ def test_tr01_a_chain_of_contradicted_changes_ends_on_the_recorded_value(tmp_pat
     assert _at(got, _stamp("104500")) == 5.10e9, got
 
 
-@pytest.mark.xfail(strict=True, reason="TR-02a: a derived readout fidelity mixes kept and witness-filtered "
-                                       "matrix elements into a number the run never saved")
 def test_tr02a_a_derived_fidelity_point_is_the_fidelity_of_that_runs_matrix(tmp_path):
     other = {"targets": ("qA2",)}
     cm1, cm2 = [[0.98, 0.02], [0.06, 0.94]], [[0.99, 0.01], [0.04, 0.96]]
@@ -293,8 +290,6 @@ def test_tr02a_a_derived_fidelity_point_is_the_fidelity_of_that_runs_matrix(tmp_
         f"run 2 saved fidelity 0.975; the point at run 2 shows {at2}", got)
 
 
-@pytest.mark.xfail(strict=True, reason="TR-03: after the data folder is copied to a new place, every Trends "
-                                       "point loses its run link (uid / saved_uid)")
 def test_tr03_a_copied_data_folder_keeps_the_run_links(tmp_path):
     def patch(v):
         return [{"op": "replace", "path": "/quam/qubits/qA1/f_01", "value": v}]
@@ -315,10 +310,172 @@ def test_tr03_a_copied_data_folder_keeps_the_run_links(tmp_path):
     assert (uid_at_run2() or "").endswith(":2"), "the proven point still opens its run after the move"
 
 
-@pytest.mark.xfail(strict=True, reason="TR-04: the report's Trends caption still says 'at most 400 per line'")
 def test_tr04_the_report_trends_caption_names_no_stale_cap(tmp_path):
     runs = [(1, "100000", _state(f01=5.0e9)), (2, "101000", _state(f01=5.1e9))]
     c, _root = _open(tmp_path, runs, _state(f01=5.1e9))
     body = c.get("/chip-status/report/section/trends?window=all").get_data(as_text=True)
     assert "rep-cap" in body
     assert "400 per line" not in re.sub(r"\s+", " ", body)
+
+
+# ------------------------------------------------------------------ v1.3.0 (FIX-TR): the fold and the composites
+def _ledger_series(root_tmp, path: str) -> list[tuple[int, object]]:
+    """(run id, value) of every row of holder *path* in the chip's own ledger series."""
+    from types import SimpleNamespace
+    from quam_state_manager.core import hub_query
+    found = sorted((root_tmp / "_inst" / "history").glob("*/ledger.sqlite"))
+    assert len(found) == 1, found
+    rows = hub_query.series(SimpleNamespace(directory=found[0].parent), path)
+    return [(r[0].get("run_id"), r[2]) for r in rows]
+
+
+def _poll_live(c) -> None:
+    """Read the live files once (what the sync poll does): the chip's value now is then known."""
+    from quam_state_manager.web import routes
+    with c.application.test_request_context():
+        routes._sync_live_refresh(routes._active_ctx())
+
+
+_DOUBT = ("no later run has read the chip yet", "changed again before the chip was read",
+          "the next read of the chip found another value", "not in the next recorded state")
+
+
+def _attr_at(s: dict, stamp: str) -> dict:
+    return next((a for k, a in (s.get("attr") or {}).items() if k.startswith(stamp)), {})
+
+
+def _doubt(attr: dict) -> str | None:
+    return next((w for w in _DOUBT if w in (attr.get("sub") or "")), None)
+
+
+def test_a_restoring_row_that_carries_no_change_still_leaves(tmp_path):
+    """TR-01's fold keeps the shipped rule where the restore changes nothing: run 2 (qA1) saves B,
+    run 3 (another qubit) still has A and so does run 4 -- the pair leaves, and run 3's own row
+    (B -> A against a series that never left A) leaves with it."""
+    other = {"targets": ("qA2",)}
+    runs = [(1, "100000", _state(f01=5.00e9)), (2, "101000", _state(f01=5.10e9)),
+            (3, "102000", _state(f01=5.00e9), other), (4, "103000", _state(f01=5.00e9), other)]
+    c, _root = _open(tmp_path, runs, _state(f01=5.00e9))
+    got = _real(_series(c, "metrics=f_01"))
+    assert got == [(_stamp("100000"), 5.00e9)], got
+    assert _ledger_series(tmp_path, "qubits.qA1.f_01") == [(1, 5.00e9)], \
+        "run 3 did not change the value: its restoring row is not a change of the chip's series"
+
+
+@pytest.mark.parametrize("live", [5.10e9, 5.00e9])
+def test_the_newest_restoring_row_is_settled_by_the_live_value(tmp_path, live):
+    """A chain A (qA1) -> B (qA1) -> A (qA2) -> B (qA2, newest): run 4's row stays (it puts back
+    B, which the series no longer holds) and, with no later read, the chip's value now decides
+    it -- the same live tail as any newest change."""
+    other = {"targets": ("qA2",)}
+    runs = [(1, "100000", _state(f01=5.00e9)), (2, "101000", _state(f01=5.10e9)),
+            (3, "102000", _state(f01=5.00e9), other), (4, "103000", _state(f01=5.10e9), other)]
+    c, _root = _open(tmp_path, runs, _state(f01=live))
+    _poll_live(c)
+    s = _series(c, "metrics=f_01")
+    got = _real(s)
+    if live == 5.10e9:
+        assert got == [(_stamp("100000"), 5.00e9), (_stamp("103000"), 5.10e9)], got
+        assert _doubt(_attr_at(s, _stamp("103000"))) is None, "the chip holds it: a plain point"
+    else:
+        assert got == [(_stamp("100000"), 5.00e9)], got
+        html = c.get("/field/history", query_string={"path": "qubits.qA1.f_01"}).get_data(as_text=True)
+        nk = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.split('<details class="vh-not-kept">', 1)[1]
+                                         .split("</details>", 1)[0]))
+        assert "Saved by run #4" in nk and "(the chip holds" in nk, nk
+
+
+def _ptr_state(alias: str, sq: float, other_pulse: float = 0.35) -> dict:
+    st = _state(alias=alias, amp2=sq)
+    st["qubits"]["qA1"]["xy"]["operations"]["x180_Gauss"] = {"amplitude": other_pulse, "length": 40}
+    return st
+
+
+def test_tr02b_a_pointer_followed_point_is_the_value_the_run_saved_through_the_pointer(tmp_path):
+    """x180 points at DragCosine (0.30); run 2 (qA1) moves it to Square and saves Square 0.45;
+    run 3 (qA1) keeps Square at 0.40; run 4 (another qubit) confirms. Square's own 0.45 came
+    back exactly to its anchor (an excursion of the holder), but the value IN FORCE through the
+    path at run 2 is the 0.45 run 2 saved through the pointer -- shown, labelled -- never a value
+    of the holder's filtered series (0.40) no run saved through the path then."""
+    path = "qubits.qA1.xy.operations.x180.amplitude"
+    other = {"targets": ("qA2",)}
+    runs = [(1, "100000", _ptr_state("#./x180_DragCosine", 0.40)),
+            (2, "101000", _ptr_state("#./x180_Square", 0.45)),
+            (3, "102000", _ptr_state("#./x180_Square", 0.40)),
+            (4, "103000", _ptr_state("#./x180_Square", 0.40), other)]
+    c, _root = _open(tmp_path, runs, runs[-1][2])
+    s = _series(c, "metrics=&paths=" + path)
+    got = _real(s)
+    assert got == _expected(runs, path) == [
+        (_stamp("100000"), 0.30), (_stamp("101000"), 0.45), (_stamp("102000"), 0.40)], got
+    assert _doubt(_attr_at(s, _stamp("101000"))) == "changed again before the chip was read"
+    assert _doubt(_attr_at(s, _stamp("102000"))) is None
+
+
+_CM1, _CM2 = [[0.98, 0.02], [0.06, 0.94]], [[0.99, 0.01], [0.04, 0.96]]
+
+
+def _composite_answer(c, q: str = "qA1", prop: str = "assignment_fidelity") -> dict:
+    """The derived metric's own answer (``value_history.composite_target`` through the
+    Chip Status table): its in-force series and what it left out."""
+    from quam_state_manager.core.history import _DERIVED_FIDELITY_PROPS
+    from quam_state_manager.web import hub_status, routes
+    with c.application.test_request_context():
+        _ans, table = routes._hub_status_table(routes._active_ctx())
+        base, paths = table._matrix_paths(q, _DERIVED_FIDELITY_PROPS[prop][0])
+        key = hub_status._derived_key(base, prop)
+        comp = {key: (base, tuple(paths), hub_status._fidelity_of(_DERIVED_FIDELITY_PROPS[prop][1], base, paths),
+                      prop)}
+        return table.series_many([], comp)["rows"][key]
+
+
+def test_a_composite_whose_whole_matrix_came_back_is_one_excursion(tmp_path):
+    """cm1; run 2 (qA1) saves cm2; run 3 (qA1) saves cm1 again, which run 4 (another qubit)
+    confirms: the matrix came back exactly, so runs 2-3 are one excursion of the composite --
+    no point, listed apart."""
+    other = {"targets": ("qA2",)}
+    runs = [(1, "100000", _state(cm=_CM1)), (2, "101000", _state(cm=_CM2)),
+            (3, "102000", _state(cm=_CM1)), (4, "103000", _state(cm=_CM1), other)]
+    c, _root = _open(tmp_path, runs, _state(cm=_CM1))
+    got = _real(_series(c, "metrics=assignment_fidelity"))
+    assert [k for k, _v in got] == [_stamp("100000")] and abs(got[0][1] - 0.96) <= 1e-12, got
+    row = _composite_answer(c)
+    assert [[p["run_id"] for p in e["points"]] + [e["back"]["run_id"]] for e in row["excursions"]] == [[2, 3]]
+    assert row["not_kept"] == []
+
+
+def test_a_composite_restored_as_a_unit_leaves_with_its_restoring_row(tmp_path):
+    """cm1; run 2 (qA1) saves cm2; run 3 (another qubit) still has cm1: the composite's change is
+    contradicted, it and run 3's restoring row leave, and the change is listed -- never silent."""
+    other = {"targets": ("qA2",)}
+    runs = [(1, "100000", _state(cm=_CM1)), (2, "101000", _state(cm=_CM2)),
+            (3, "102000", _state(cm=_CM1), other)]
+    c, _root = _open(tmp_path, runs, _state(cm=_CM1))
+    got = _real(_series(c, "metrics=assignment_fidelity"))
+    assert [k for k, _v in got] == [_stamp("100000")], got
+    row = _composite_answer(c)
+    nk = row["not_kept"]
+    assert [(n["run_id"], n["by"]["run_id"]) for n in nk] == [(2, 3)], nk
+    assert abs(nk[0]["value"] - 0.975) <= 1e-12 and abs(nk[0]["by"]["value"] - 0.96) <= 1e-12
+
+
+def test_a_kept_composite_is_judged_again_when_a_later_read_lands(tmp_path):
+    """A composite's verdicts live in its answer, and an answer is kept between reads (docs/298).
+    Run 4 measures another qubit and saves nothing of qA1's x180: it is no row of the composite,
+    yet it is the read that confirms run 3. The kept answer is served again only while the same
+    rows are judged the same -- here they are not, so run 3's point loses its doubt."""
+    path = "qubits.qA1.xy.operations.x180.amplitude"
+    runs = [(1, "100000", _ptr_state("#./x180_DragCosine", 0.40)),
+            (2, "101000", _ptr_state("#./x180_Square", 0.45)),
+            (3, "102000", _ptr_state("#./x180_Square", 0.40))]
+    c, root = _open(tmp_path, runs, runs[-1][2])
+    s = _series(c, "metrics=&paths=" + path)
+    assert _doubt(_attr_at(s, _stamp("102000"))) == "no later run has read the chip yet"
+    later = _ptr_state("#./x180_Square", 0.40)
+    later["qubits"]["qA2"]["f_01"] = 6.1e9
+    _seed(root, 4, "103000", later, targets=("qA2",))
+    declare_root(c, root)
+    s = _series(c, "metrics=&paths=" + path)
+    assert _real(s) == _expected(runs, path), _real(s)
+    assert _doubt(_attr_at(s, _stamp("102000"))) is None, "run 4 read the chip: run 3 is confirmed"
+    assert _doubt(_attr_at(s, _stamp("101000"))) == "changed again before the chip was read"

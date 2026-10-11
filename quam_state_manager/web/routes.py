@@ -11748,12 +11748,62 @@ def _vh_live(ctx: dict, targets: dict) -> dict:
         edited.discard(None)
     out = {}
     for key, tgt in targets.items():
+        parts = tgt.get("parts")
+        if parts is not None:
+            # v1.3.0 TR-02: a composite (``value_history.composite_target``):
+            # the chip's value of each input path, in order -- an input the
+            # chip has no value at now is absent there
+            vals = []
+            for p in tgt.get("composite") or ():
+                part = parts.get(p)
+                if part is None or (edited and _vh_touches(edited, part)):
+                    break
+                if not part.get("has_current"):
+                    if part.get("resolvable") or part.get("via"):
+                        break
+                    vals.append(vh.ABSENT)
+                    continue
+                cur = vh.comparable(part)
+                if cur is vh.ABSENT:
+                    break
+                vals.append(cur)
+            else:
+                out[key] = tuple(vals)
+            continue
         if not tgt.get("has_current") or (edited and _vh_touches(edited, tgt)):
             continue
         cur = vh.comparable(tgt)
         if cur is not vh.ABSENT:
             out[key] = cur
     return out
+
+
+def _vh_now_folders(binding, res: dict) -> dict:
+    """v1.3.0 TR-03: ``{eid: the folder the run is under NOW}`` for the run
+    events of one answer (its points, in-force rows, saved values left out,
+    retargets and By run) recorded under more than one data root -- a data
+    folder copied to a new place and registered there. The ledger's own rule
+    (``hub_lanes.now_folders``, the one a folder view names a moved run by):
+    a run's data link resolves through the folder it is under now, never
+    through a root no longer registered. A run with one location is not in
+    the map (its event's own root is where it is). Never raises: ``{}``."""
+    from quam_state_manager.core import hub_index, hub_lanes
+    eids: set = set()
+    for row in (res.get("rows") or {}).values():
+        for lst in (row.get("effective"), row.get("points"), row.get("not_kept")):
+            eids.update(p["eid"] for p in lst or () if p.get("kind") == "run")
+        for hop in row.get("retargets") or ():
+            eids.update(p["eid"] for p in hop.get("rows") or () if p.get("kind") == "run")
+    eids.update(r["eid"] for r in res.get("runs") or ())
+    if not eids:
+        return {}
+    try:
+        with hub_index.snapshot(binding) as (conn, _index):
+            got = hub_lanes.now_folders(conn, sorted(eids))
+    except Exception:  # noqa: BLE001 -- a display rule never breaks an answer
+        logger.debug("value history: the runs' current folders could not be read", exc_info=True)
+        return {}
+    return {eid: str(root).rstrip("/\\") + "/" + rel for eid, (root, rel) in got.items()}
 
 
 def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = None,
@@ -11825,8 +11875,9 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     # reads each position in its own
     resolved()
     try:
+        binding = _vh_binding(ctx, chip_dir)
         res = vh.read(chip_dir, targets, limit=limit, runs=runs,
-                      binding=_vh_binding(ctx, chip_dir), live=_vh_live(ctx, targets),
+                      binding=binding, live=_vh_live(ctx, targets),
                       **(scope if scope is not None else _rename_scope(ctx, chip_dir)))
     except hub_sync.Building as exc:
         out.update(mode="building", status=getattr(exc, "status", None) or st)
@@ -11842,6 +11893,11 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     out["limit"] = limit
     out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"],
                runs_left_out=res.get("runs_left_out", 0), serials=res.get("serials") or {})
+    # v1.3.0 TR-03: where each run is NOW (a copied data folder), read per answer
+    now = _vh_now_folders(binding, res)
+    out["now"] = now
+    out["now_sig"] = (hashlib.sha1(repr(sorted(now.items())).encode("utf-8")).hexdigest()[:16]
+                      if now else "")
     for key, tgt in targets.items():
         pts = res["rows"][key]["points"]
         newest: Any = vh.ABSENT
@@ -12000,9 +12056,14 @@ def _vh_value_strings(value: Any, removed: bool) -> tuple[str, str, bool]:
 from quam_state_manager.core.hub_witness import DOUBT_TEXT as _VH_WITNESS_TEXT  # noqa: E402
 
 
-def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
+def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> dict:
     """One ledger point as every surface shows it (docs/282 §1.4): what the
-    ledger can prove about who set it, and nothing more."""
+    ledger can prove about who set it, and nothing more.
+
+    *now*: ``{eid: run folder}`` -- where a run recorded under more than one
+    data root is now (:func:`_vh_now_folders`, v1.3.0 TR-03); its data link
+    resolves through that folder before the event's own."""
+    folder = (now or {}).get(p.get("eid")) or p.get("folder")
     prov = p["provenance"]
     rid = p.get("run_id")
     exp = p.get("experiment") or ""
@@ -12020,9 +12081,9 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
         sub = "its own patch set it"
         trigger = "experiment"
         if "source_gone" not in p["flags"]:
-            key = p.get("folder") or ""
+            key = folder or ""
             if key not in uid_memo:
-                uid_memo[key] = _uid_for_run_ref(p.get("folder"), rid, uid_roots)
+                uid_memo[key] = _uid_for_run_ref(folder, rid, uid_roots)
             uid = uid_memo[key]
             link_title = f"Open run {run}'s data in the inspector pane"
     elif prov == "run_saved":
@@ -12033,9 +12094,9 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
                  f"made outside SM before the run lands here too.")
         trigger = "auto"
         if "source_gone" not in p["flags"] and rid is not None:
-            key = p.get("folder") or ""
+            key = folder or ""
             if key not in uid_memo:
-                uid_memo[key] = _uid_for_run_ref(p.get("folder"), rid, uid_roots)
+                uid_memo[key] = _uid_for_run_ref(folder, rid, uid_roots)
             saved_uid = uid_memo[key]
     elif prov == "first_record" and p.get("kind") != "run":
         # the folder's history starts at an SM write: the paths it did not write
@@ -12184,10 +12245,12 @@ def _vh_points_view(ans: dict, key: str, uid_roots, uid_memo: dict) -> list[dict
     from quam_state_manager.core import hub_rules
     tgt = ans["targets"][key]
     here = tgt.get("holder")
+    now = ans.get("now")
     pts = []
     for p in _vh_series(ans, key):
         held = p.get("holder")
-        pt = _vh_present(dict(p, recorded_as=held if held and held != here else None), uid_roots, uid_memo)
+        pt = _vh_present(dict(p, recorded_as=held if held and held != here else None), uid_roots, uid_memo,
+                         now=now)
         pt["recorded_as_short"] = _vh_short_name(pt.get("recorded_as"), here)
         pt["via_holder"] = bool(tgt.get("via")) and bool(pt.get("recorded_as"))
         pt["retarget"] = bool(p.get("retarget")) or p.get("op") == "via"
@@ -12212,7 +12275,7 @@ def _vh_points_view(ans: dict, key: str, uid_roots, uid_memo: dict) -> list[dict
 def _vh_via_view(ans: dict, key: str, uid_roots, uid_memo: dict) -> list[dict]:
     out = []
     for hop in ans["rows"][key]["retargets"]:
-        rows = [_vh_present(p, uid_roots, uid_memo) for p in hop["rows"]]
+        rows = [_vh_present(p, uid_roots, uid_memo, now=ans.get("now")) for p in hop["rows"]]
         changed = [r for r in rows if r["provenance"] != "first_record"]
         out.append({"from_path": hop["from_path"], "to_path": hop["to_path"],
                     "pointer": hop["pointer"], "alias": hop["from_path"].split(".")[-1],
@@ -12413,10 +12476,13 @@ def _vh_column_view(ans: dict, path_map: dict[str, str], *, label: str, unit: st
     uid_roots, uid_memo = _uid_roots(), {}
     hm = _history()
     runs = []
+    now = ans.get("now") or {}
     for r in ans["runs"]:
-        key = r.get("folder") or ""
+        # v1.3.0 TR-03: the folder the run is under now (a copied data folder)
+        folder = now.get(r.get("eid")) or r.get("folder")
+        key = folder or ""
         if key not in uid_memo:
-            uid_memo[key] = _uid_for_run_ref(r.get("folder"), r.get("run_id"), uid_roots)
+            uid_memo[key] = _uid_for_run_ref(folder, r.get("run_id"), uid_roots)
         runs.append({**r, "uid": None if "source_gone" in r["flags"] else uid_memo[key]})
     rows_out = []
     notes_seen: dict[str, dict] = {}
@@ -15488,7 +15554,7 @@ def _report_build_trends(rc: _ReportCtx) -> str:
         return render_template("_report_trends.html", charts=[], building=_vh_wait_message(ans),
                                building_mode=ans.get("mode"),
                                window_label=_cr.window_label(rc.window),
-                               zone_label=_report_zone_label(rc), no_time=0, n_snapshots=0)
+                               zone_label=_report_zone_label(rc), no_time=0)
     curated = list(DEFAULT_TRACKED_PROPERTIES)
     have = _trend_metrics_with_data(hm, path, curated, tbl)
     metrics = [m for m in curated if m in have]
@@ -15548,7 +15614,6 @@ def _report_build_trends(rc: _ReportCtx) -> str:
     return render_template("_report_trends.html", charts=charts,
                            window_label=_cr.window_label(rc.window),
                            zone_label=_report_zone_label(rc), no_time=no_time,
-                           n_snapshots=len(hm.list_snapshots(path)) if charts else 0,
                            hub_notes=tbl.notes)
 
 
@@ -18183,7 +18248,7 @@ def _hub_metric_meta(table) -> dict:
         at_top = [p for dp in paths for p in rows[dp]["effective"] if p["ord"] == top]
         best = hub_status.representative(at_top)
         proven = hub_status.is_proven(at_top)
-        info = _vh_present(best, table.roots, table.uid_memo)
+        info = _vh_present(best, table.roots, table.uid_memo, now=table._now)
         matches = all(rows[dp]["effective"] and _vh_same(
             vh.comparable(ans["targets"][dp]),
             None if rows[dp]["effective"][-1]["removed"] else rows[dp]["effective"][-1]["value"])
