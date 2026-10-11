@@ -290,9 +290,6 @@ def check_step(rig: Rig, step: Step, pre: dict) -> list[tuple[str, str]]:
     if not step.skip_status:
         got = rig.status()
         want = m.verdict()
-        if want == "refused" and m.refused_revived() and got == want:
-            out.append(("K:SU-08", "a refusal made at an earlier visit of this sync point shows "
-                                   "again after a later write returned the chip to it"))
         if got != want:
             # SU-01: a same-size rewrite that put the old mtime back is never
             # re-read by the status control (its facts are keyed on mtimes)

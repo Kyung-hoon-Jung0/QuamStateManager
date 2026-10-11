@@ -24,7 +24,7 @@ import re
 import shutil
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -158,6 +158,11 @@ class WorkingCopy:
     #: save) changes it, and the press then records the whole-chip
     #: difference. None = unknown (legacy meta): treated as changed.
     synced_working_fp: tuple | None = None
+    #: SU-08: how many times this session the sync point was re-recorded by a
+    #: landed write or a pull (RAM only). A refusal counts only while no such
+    #: event happened since -- the chip returning to the refused sync point
+    #: (A -> B -> A) does not bring it back.
+    sync_events: int = field(default=0, compare=False)
 
     def meta_path(self) -> Path:
         """Sidecar meta file -- kept *outside* the working folder so the folder
@@ -774,6 +779,7 @@ def reconcile_with_live(wc: WorkingCopy, *, sync_if_clean: bool = True,
             wc.synced_state_mtime = state_mt
             wc.synced_wiring_mtime = wiring_mt
             wc.synced_live_hash = new_hash
+            wc.sync_events += 1
         except OSError:
             logger.exception("Sync-point %s failed for %s", why, wc.key)
         return RECONCILE_IN_SYNC
@@ -834,6 +840,7 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     wc.synced_state_mtime = state_mt
     wc.synced_wiring_mtime = wiring_mt
     wc.synced_live_hash = live_hash
+    wc.sync_events += 1
     try:
         wc.synced_working_fp = working_fingerprint(wc)
     except OSError:
@@ -957,6 +964,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                     wc.synced_state_mtime = st_mt
                     wc.synced_wiring_mtime = wi_mt
                     wc.synced_live_hash = live_hash
+                    wc.sync_events += 1
                     wc.synced_working_fp = fp
                     adopted = True
             except OSError:
@@ -1169,6 +1177,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     wc.synced_state_mtime = state_mt
     wc.synced_wiring_mtime = wiring_mt
     wc.synced_live_hash = applied_hash
+    wc.sync_events += 1
     wc.synced_working_fp = written_fp
     logger.info("Working copy applied to live: %s", wc.live_folder)
 

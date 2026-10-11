@@ -1135,7 +1135,11 @@ def _sync_view(ctx=None) -> dict | None:
         elif unreadable:
             facts = None
     refused = ctx.get("apply_refused")
-    if refused and wc is not None and refused.get("hash") != getattr(wc, "synced_live_hash", None):
+    if refused and wc is not None and (
+            refused.get("hash") != getattr(wc, "synced_live_hash", None)
+            # SU-08: a landed write or a pull since ends it, even one that
+            # returned the chip to the refused sync point (A -> B -> A)
+            or refused.get("ev", 0) != getattr(wc, "sync_events", 0)):
         refused = None
     # a refused apply stashes the edits it saved (pending_reapply) and clears
     # the change log -- they are still the user's unapplied edits
@@ -2471,7 +2475,6 @@ def _rebuild_after_working_copy_replaced(ctx: dict, *, replaced: bool = True) ->
         # docs/271 review P2-6. A Reload re-reads the SAME files (replaced=False):
         # the saved units are still waiting there, so they stay claimable (SU-03).
         _hub_discard_saved_units(ctx)
-        ctx.pop("apply_refused", None)   # SU-08: a pull / stage / restore ends it
     # docs/107: the reload cleared the change log, so any staged journal steps
     # died with it — re-read the sidecar and put the cursor back at the tip
     # (the redo stack self-invalidates via the mutation_seq handshake).
@@ -26757,6 +26760,7 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
         ctx["apply_refused"] = {
             "at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "hash": getattr(wc, "synced_live_hash", None),
+            "ev": getattr(wc, "sync_events", 0),
             "staged": bool(staged_conflict),
             "auto_disarmed": bool(auto_disarmed),
             "auto_merging": bool(auto_merging),
@@ -27829,9 +27833,6 @@ def _reset_baseline_after_apply(ctx) -> None:
     (which equals live right after an apply), not a fresh live read. Best-effort:
     a failure here must never break the apply that already succeeded.
     """
-    # SU-08: "refused" is the most recent thing the user did -- a landed write
-    # ends it, even one that returns the chip to the refused sync point.
-    ctx.pop("apply_refused", None)
     if not _drift_tracked(ctx):
         return
     try:
