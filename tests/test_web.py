@@ -1661,11 +1661,11 @@ class TestSidebarFeatures:
         assert "tree-branch-active > summary" in css.read_text(encoding="utf-8")
 
     def test_split_set_icons_and_presets_present(self):
-        """The gutter carries two arrows to fixed positions; the user's own
-        height is the last drag, kept in one localStorage key. Behaviour is
-        pinned in tests/test_split_arrows.py."""
+        """The gutter carries two arrows to fixed positions; the user's last
+        choice (a drag or an arrow) is kept in one localStorage key. Behaviour
+        is pinned in tests/test_split_arrows.py."""
         # v1.3.0: set-high / set-low icons + preset keys -> two fixed arrows +
-        # one dragged-height key, because customers pressed set-low to move the
+        # one last-choice key, because customers pressed set-low to move the
         # bar and the toggle then seemed to do nothing.
         base = (Path(__file__).resolve().parent.parent
                 / "quam_state_manager" / "web" / "templates" / "base.html")
@@ -1682,8 +1682,9 @@ class TestSidebarFeatures:
     def test_dataset_panel_opens_nearly_fullscreen(self):
         """Customer ask (2026-08-27): clicking a run must open the detail panel
         nearly full-screen (was [35, 65] — read as 'about half'). The default
-        expanded split gives the inspector 85%; a user's own dragged height
-        still wins over the default (v1.3.0: was the gutter set-high preset)."""
+        expanded split gives the inspector 85%; the user's last choice (a drag
+        or an arrow) still wins over the default (v1.3.0: was the gutter
+        set-high preset)."""
         app_js = (Path(__file__).resolve().parent.parent
                   / "quam_state_manager" / "web" / "static" / "app.js")
         text = app_js.read_text(encoding="utf-8")

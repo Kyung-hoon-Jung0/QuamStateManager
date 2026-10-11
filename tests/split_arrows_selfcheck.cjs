@@ -7,16 +7,18 @@
  *   node tests/split_arrows_selfcheck.cjs <mode>
  *     buttons      -- two arrows only, titled and labelled; no set buttons
  *     arrows       -- each arrow lands on its FIXED position, again when pressed twice
- *     drag         -- a drag end is remembered and used on the next inspector open
- *     reload       -- ... and after a reload, over a stale current split
- *     arrow_then_open -- an arrow press, then the next inspector open lands on
- *                     the dragged height, not the arrow position
- *     arrow_keeps  -- an arrow press does NOT replace the stored dragged height
+ *     drag         -- a drag -> the next inspector opens at the dragged height
+ *     up_next      -- an up press after a drag -> the next one opens at the fixed max
+ *                     (for ITS kind: a run's or a qubit's)
+ *     down_next    -- a down press after a drag -> the next one opens at the fixed min
+ *     drag_after_arrow -- a drag after an arrow -> the drag wins
+ *     reload       -- the last choice survives a reload / a new session, over a
+ *                     stale current split from an SM move
  *     programmatic -- menu auto-collapse, Compare, _applySplitPreset and the
- *                     table-pane initSplit leave the remembered height alone
+ *                     table-pane initSplit leave the last choice alone
  *     retired      -- the old set-high / set-low keys are removed on load
- *     defaults     -- with no dragged height, the defaults as before
- *     still_click  -- a press on the bar that does not move it is not a drag
+ *     defaults     -- with no choice yet, the defaults as before
+ *     still_click  -- a press on the bar that does not move it is not a choice
  *     focus        -- a keyboard user stays on the arrow after a press; a mouse
  *                     press drops focus as before
  * Driven by tests/test_split_arrows.py.
@@ -110,6 +112,7 @@ const mode = process.argv[2];
 (async () => {
 const arr = v => (v == null ? v : Array.from(v));
 const eq = (a, b, msg) => assert.deepEqual(arr(a), arr(b), msg);
+const RUN_B = '<div id="ds-detail-root" data-uid="run-b">run b</div>';
 
 if (mode === 'buttons') {
     const s = await boot();
@@ -119,8 +122,8 @@ if (mode === 'buttons') {
     const [up, down] = buttons;
     assert.ok(up.classList.contains('split-up-btn') && down.classList.contains('split-down-btn'),
         'up arrow first, down arrow second');
-    assert.equal(up.textContent, '\u25B2');
-    assert.equal(down.textContent, '\u25BC');
+    assert.equal(up.textContent, String.fromCharCode(0x25B2));
+    assert.equal(down.textContent, String.fromCharCode(0x25BC));
     assert.equal(up.title, 'Expand the panel');
     assert.equal(down.title, 'Collapse the panel');
     assert.equal(up.getAttribute('aria-label'), 'Expand the panel');
@@ -156,11 +159,12 @@ if (mode === 'buttons') {
     eq(s.sizes(), SPLIT.datasetExpandedSizes, 'twice too');
     eq(JSON.parse(s.current()), SPLIT.datasetExpandedSizes, 'the press is the current split');
 } else if (mode === 'drag') {
+    // a drag -> the next run opens at the dragged height
     const s = await boot();
     s.swap('inspector-pane', RUN);
     s.drag([40, 60]);
-    eq(JSON.parse(s.user()), [40, 60], 'the drag end is stored as the user height');
-    s.swap('inspector-pane', '<div id="ds-detail-root" data-uid="run-b">run b</div>');
+    eq(JSON.parse(s.user()), [40, 60], 'the drag end is stored as the last choice');
+    s.swap('inspector-pane', RUN_B);
     eq(s.sizes(), [40, 60], 'the next run opens at the dragged height');
     s.swap('inspector-pane', QUBIT);
     eq(s.sizes(), [40, 60], 'a qubit inspector too');
@@ -169,11 +173,49 @@ if (mode === 'buttons') {
     s.drag([62, 38]);
     s.swap('inspector-pane', RUN);
     eq(s.sizes(), [62, 38], 'a later drag replaces the earlier one');
+} else if (mode === 'up_next') {
+    // an up press (after a drag) -> the next inspector opens at the fixed max
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([40, 60]);
+    s.press('down');
+    s.press('up');
+    assert.equal(s.user(), '"up"', 'the press is stored as the last choice');
+    s.swap('inspector-pane', RUN_B);
+    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'the next run opens at the fixed max, not the dragged height');
+    s.swap('inspector-pane', QUBIT);
+    eq(s.sizes(), SPLIT.expandedSizes, 'a qubit opens at ITS fixed max (the arrow, not a run-sized number)');
+    s.swap('inspector-pane', RUN);
+    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'and a run again at the run max');
+} else if (mode === 'down_next') {
+    // a down press (after a drag) -> the next inspector opens at the fixed min
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([40, 60]);
+    s.press('down');
+    assert.equal(s.user(), '"down"', 'the press is stored as the last choice');
+    s.swap('inspector-pane', RUN_B);
+    eq(s.sizes(), SPLIT.collapsedSizes, 'the next run opens at the fixed min, not the dragged height');
+    s.swap('inspector-pane', QUBIT);
+    eq(s.sizes(), SPLIT.collapsedSizes, 'a qubit too');
+} else if (mode === 'drag_after_arrow') {
+    // a drag after an arrow -> the drag wins
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.press('down');
+    s.drag([45, 55]);
+    s.swap('inspector-pane', RUN_B);
+    eq(s.sizes(), [45, 55], 'after down then a drag, the next run opens at the dragged height');
+    s.press('up');
+    s.drag([70, 30]);
+    s.swap('inspector-pane', QUBIT);
+    eq(s.sizes(), [70, 30], 'after up then a drag, the next qubit opens at the dragged height');
 } else if (mode === 'reload') {
+    // the last choice survives a reload, over a stale current split from an SM move
     const a = await boot();
     a.swap('inspector-pane', RUN);
     a.drag([40, 60]);
-    a.w.document.getElementById('nav-qubits').click();    // SM's auto-collapse: current = collapsed
+    a.d.getElementById('nav-qubits').click();    // SM's auto-collapse: current = collapsed
     eq(JSON.parse(a.current()), SPLIT.collapsedSizes, 'precondition: the current split is collapsed');
     const saved = a.storage();
     // a reload of a page that renders the inspector server-side (a qubit page)
@@ -186,75 +228,48 @@ if (mode === 'buttons') {
     assert.equal(c.calls.length, 0, 'no split while the inspector is empty');
     c.swap('inspector-pane', RUN);
     eq(c.sizes(), [40, 60], 'the first run after a reload opens at the dragged height');
-} else if (mode === 'arrow_then_open') {
-    // the user's correction (2026-10-11): an arrow press is a move, not a choice
-    const s = await boot();
-    s.swap('inspector-pane', RUN);
-    s.drag([40, 60]);
-    s.press('down');
-    s.swap('inspector-pane', '<div id="ds-detail-root" data-uid="run-b">run b</div>');
-    eq(s.sizes(), [40, 60], 'down, then another run: it opens at the DRAGGED height, not the arrow position');
-    s.press('up');
-    s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), [40, 60], 'up, then a qubit: it opens at the DRAGGED height, not the arrow position');
-    s.press('down');
-    const r = await boot({ storage: s.storage() });
-    r.swap('inspector-pane', RUN);
-    eq(r.sizes(), [40, 60], 'down, a new session, a run: the DRAGGED height');
-    const n = await boot();
-    n.swap('inspector-pane', QUBIT);
-    n.press('down');
-    n.swap('inspector-pane', RUN);
-    eq(n.sizes(), SPLIT.datasetExpandedSizes, 'never dragged: down, then a run opens at the default');
-} else if (mode === 'arrow_keeps') {
-    const s = await boot();
-    s.swap('inspector-pane', RUN);
-    s.drag([40, 60]);
-    s.press('down');
-    eq(s.sizes(), SPLIT.collapsedSizes, 'down moves to collapsed right away');
-    eq(JSON.parse(s.user()), [40, 60], 'down does not change the remembered height');
-    s.swap('table-pane', 'list refresh');
-    eq(s.sizes(), SPLIT.collapsedSizes, 'the table-pane swap keeps the arrow position for now');
-    s.swap('inspector-pane', '<div id="ds-detail-root" data-uid="run-b">run b</div>');
-    eq(s.sizes(), [40, 60], 'the next run opens at the DRAGGED height, not the arrow position');
-    s.press('up');
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'up moves to expanded right away');
-    eq(JSON.parse(s.user()), [40, 60], 'up does not change the remembered height either');
-    s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), [40, 60], 'the next open is the dragged height again');
-    s.press('up');
-    const r = await boot({ storage: s.storage(), inspector: QUBIT });
-    eq(r.sizes(), [40, 60], 'a reload after an arrow press opens at the dragged height');
+    // an arrow choice survives a reload as well
+    c.press('down');
+    const d2 = await boot({ storage: c.storage(), inspector: QUBIT });
+    eq(d2.sizes(), SPLIT.collapsedSizes, 'after down, a reload opens at the fixed min');
+    d2.press('up');
+    const e2 = await boot({ storage: d2.storage() });
+    e2.swap('inspector-pane', RUN);
+    eq(e2.sizes(), SPLIT.datasetExpandedSizes, 'after up, a new session opens a run at the fixed max');
 } else if (mode === 'programmatic') {
-    const s = await boot();
-    s.swap('inspector-pane', RUN);
-    s.drag([30, 70]);
-    const before = s.user();
-    // the sidebar-menu auto-collapse with a dataset detail open
-    s.d.getElementById('nav-qubits').click();
-    eq(s.sizes(), SPLIT.collapsedSizes, 'menu navigation collapses the run');
-    assert.equal(s.user(), before, 'the menu auto-collapse leaves the dragged height alone');
-    s.swap('table-pane', 'qubits page');
-    eq(s.sizes(), SPLIT.collapsedSizes, 'the concurrent table-pane initSplit keeps the collapse');
-    assert.equal(s.user(), before, 'the table-pane initSplit leaves it alone');
-    s.d.getElementById('nav-datasets').click();
-    s.swap('table-pane', 'datasets page');
-    s.swap('inspector-pane', RUN);
-    eq(s.sizes(), [30, 70], 'back on a run: the dragged height');
-    // the Compare-form collapse
-    const go = s.d.getElementById('compare-go');
-    s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', { detail: { elt: go } }));
-    eq(s.sizes(), SPLIT.collapsedSizes, 'the compare form collapses the inspector');
-    assert.equal(s.user(), before, 'the Compare collapse leaves it alone');
-    // "Go to state" and the other _applySplitPreset callers
-    s.swap('inspector-pane', RUN);
-    s.w._applySplitPreset('collapsed');
-    eq(s.sizes(), SPLIT.collapsedSizes);
-    s.w._applySplitPreset('expanded');
-    eq(s.sizes(), SPLIT.datasetExpandedSizes);
-    assert.equal(s.user(), before, '_applySplitPreset leaves it alone');
-    s.swap('inspector-pane', RUN);
-    eq(s.sizes(), [30, 70], 'and the next open is still the dragged height');
+    for (const first of ['drag', 'up']) {
+        const s = await boot();
+        s.swap('inspector-pane', RUN);
+        if (first === 'drag') s.drag([30, 70]); else s.press('up');
+        const before = s.user();
+        const open = first === 'drag' ? [30, 70] : SPLIT.datasetExpandedSizes;
+        // the sidebar-menu auto-collapse with a dataset detail open
+        s.d.getElementById('nav-qubits').click();
+        eq(s.sizes(), SPLIT.collapsedSizes, first + ': menu navigation collapses the run');
+        assert.equal(s.user(), before, first + ': the menu auto-collapse leaves the last choice alone');
+        s.swap('table-pane', 'qubits page');
+        eq(s.sizes(), SPLIT.collapsedSizes, first + ': the concurrent table-pane initSplit keeps the collapse');
+        assert.equal(s.user(), before, first + ': the table-pane initSplit leaves it alone');
+        s.d.getElementById('nav-datasets').click();
+        s.swap('table-pane', 'datasets page');
+        s.swap('inspector-pane', RUN);
+        eq(s.sizes(), open, first + ': back on a run: the last choice');
+        // the Compare-form collapse
+        const go = s.d.getElementById('compare-go');
+        s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', { detail: { elt: go } }));
+        eq(s.sizes(), SPLIT.collapsedSizes, first + ': the compare form collapses the inspector');
+        assert.equal(s.user(), before, first + ': the Compare collapse leaves it alone');
+        // "Go to state" and the other _applySplitPreset callers
+        s.swap('inspector-pane', RUN);
+        s.w._applySplitPreset('collapsed');
+        eq(s.sizes(), SPLIT.collapsedSizes);
+        s.w._applySplitPreset('expanded');
+        eq(s.sizes(), SPLIT.datasetExpandedSizes);
+        s.w._applySplitPreset('collapsed');
+        assert.equal(s.user(), before, first + ': _applySplitPreset leaves it alone');
+        s.swap('inspector-pane', RUN);
+        eq(s.sizes(), open, first + ': and the next open is still the last choice');
+    }
 } else if (mode === 'retired') {
     const s = await boot({ storage: { quam_split_expanded: '[0,100]', quam_split_collapsed: '[50,50]' } });
     assert.equal(s.w.localStorage.getItem('quam_split_expanded'), null, 'the set-high key is removed');
@@ -266,23 +281,27 @@ if (mode === 'buttons') {
 } else if (mode === 'defaults') {
     const s = await boot();
     s.swap('inspector-pane', RUN);
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'never dragged: a run opens at the dataset default');
+    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'no choice yet: a run opens at the dataset default');
     s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), SPLIT.expandedSizes, 'never dragged: a qubit opens at the expanded default');
-    assert.equal(s.user(), null, 'opening never writes the remembered height');
+    eq(s.sizes(), SPLIT.expandedSizes, 'no choice yet: a qubit opens at the expanded default');
+    assert.equal(s.user(), null, 'opening never writes the last choice');
     const r = await boot({ storage: { quam_split_sizes: '[50,50]' }, inspector: QUBIT });
-    eq(r.sizes(), [50, 50], 'never dragged: a reload keeps the current split, as before');
+    eq(r.sizes(), [50, 50], 'no choice yet: a reload keeps the current split, as before');
+    const bad = await boot({ storage: { quam_split_user: '"sideways"' } });
+    bad.swap('inspector-pane', QUBIT);
+    eq(bad.sizes(), SPLIT.expandedSizes, 'an unreadable stored choice falls back to the default');
 } else if (mode === 'still_click') {
     const s = await boot();
-    s.swap('inspector-pane', QUBIT);
+    s.swap('inspector-pane', RUN);
     s.drag([40, 60]);
-    s.press('down');
+    s.press('up');
+    // a press on the bar (mousedown + mouseup) that did not move it
     const inst = s.calls[s.calls.length - 1];
     inst.options.onDragStart(inst.getSizes());
     inst.options.onDragEnd(inst.getSizes());
-    eq(JSON.parse(s.user()), [40, 60], 'a press on the bar that did not move it is not a drag');
+    assert.equal(s.user(), '"up"', 'a press on the bar that did not move it is not a choice');
     s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), [40, 60]);
+    eq(s.sizes(), SPLIT.expandedSizes, 'the qubit opens at the up arrow position, not the run-sized bar');
 } else if (mode === 'focus') {
     const s = await boot();
     s.swap('inspector-pane', QUBIT);

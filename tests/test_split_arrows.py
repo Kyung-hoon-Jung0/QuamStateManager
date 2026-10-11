@@ -1,4 +1,4 @@
-"""The inspector split bar: two arrows and the user's dragged height (v1.3.0).
+"""The inspector split bar: two arrows, and the user's last choice (v1.3.0).
 
 Customer feedback: the bar carried set-high / toggle / set-low buttons, and a
 press of set-low (read as "move the bar down") stored the current position as
@@ -6,10 +6,13 @@ the collapsed target, so the toggle afterwards seemed to do nothing. Now:
 
 - two arrows only: up moves the bar to the fixed expanded position
   (datasetExpandedSizes for a dataset run, else expandedSizes), down to the
-  fixed collapsed one (collapsedSizes), every press;
-- the user's own height is the last DRAG (localStorage ``quam_split_user``),
-  used on every inspector open (a run or qubit click, a reload, a new
-  session). An arrow press and SM's own moves never change it;
+  fixed collapsed one (collapsedSizes), on every press;
+- the user's LAST action decides where the next inspector opens (a run or
+  qubit click, a reload, a new session), kept in one localStorage key
+  (``quam_split_user``): a drag stores the dragged sizes, an arrow press
+  stores which arrow, opened at that arrow's fixed position. SM's own moves
+  (menu auto-collapse, Compare, Go to state, the table-pane initSplit) never
+  change it; with no choice yet, the defaults as before;
 - the old ``quam_split_expanded`` / ``quam_split_collapsed`` keys are removed.
 
 The behaviour runs in jsdom against the real base.html split script:
@@ -27,8 +30,8 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "quam_state_manager" / "web"
 
-MODES = ["buttons", "arrows", "drag", "reload", "arrow_then_open", "arrow_keeps", "programmatic",
-         "retired", "defaults", "still_click", "focus"]
+MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow", "reload",
+         "programmatic", "retired", "defaults", "still_click", "focus"]
 
 
 def _node(*args: str) -> subprocess.CompletedProcess:

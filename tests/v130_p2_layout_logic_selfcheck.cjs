@@ -39,9 +39,9 @@ if (mode === 'gutter') {
   assert.ok(ds[0] >= 25 && ds[0] + ds[1] === 100, 'the run list keeps at least a quarter of the pane');
   assert.ok(split.expandedSizes[0] < ds[0], 'and more than the 15% sliver');
   // v1.3.0: "an explicit user preset wins" -> the expanded position is FIXED (the up
-  // arrow's target); the user's own height is the last drag, applied on an inspector
-  // open -- customers read the set-high / set-low presets as moves (split_arrows_selfcheck)
-  assert.doesNotMatch(match[0], /localStorage|loadPreset|loadUserSizes/, 'no stored value moves it');
+  // arrow's target); the user's last choice is applied on an inspector open instead --
+  // customers read the set-high / set-low presets as moves (split_arrows_selfcheck)
+  assert.doesNotMatch(match[0], /localStorage|loadPreset|loadUserChoice|userSizes/, 'no stored value moves it');
 } else if (mode === 'status') {
   const match = read('static/dataset-virtual.js').match(/function statusChip\(status\) \{[\s\S]*?\n    \}/);
   assert.ok(match);

@@ -1589,11 +1589,13 @@
         // position as a hidden target (quam_split_expanded/_collapsed), so a
         // later press of the toggle seemed to do nothing. Those keys go.
         //
-        // The user's own height lives in ONE key, written ONLY by a drag
-        // end; every inspector open (a run or qubit click, a reload, a new
-        // session) applies it. An arrow press and SM's own moves (the menu
-        // auto-collapse, the Compare collapse, _applySplitPreset, the table-
-        // pane initSplit) never write it -- they only move the CURRENT split,
+        // The user's LAST action decides where the next inspector opens (a
+        // run or qubit click, a reload, a new session), kept in ONE key: a
+        // drag end stores the dragged sizes, an arrow press stores which
+        // arrow ("up" / "down"), resolved to that arrow's fixed position for
+        // the inspector being opened. SM's own moves (the menu auto-collapse,
+        // the Compare collapse, _applySplitPreset, the table-pane initSplit)
+        // never write it -- they only move the CURRENT split,
         // quam_split_sizes, which a table-pane swap re-applies.
         var USER_KEY = "quam_split_user";
         try {
@@ -1607,15 +1609,19 @@
             // Allow 0 so a full-cover drag ([0,100]) persists.
             return isFinite(a) && isFinite(b) && a >= 0 && b >= 0 && Math.abs(a + b - 100) <= 1;
         }
-        function loadUserSizes() {
+        // The stored choice: dragged sizes, "up", "down", or null (none yet).
+        function loadUserChoice() {
             try {
                 var raw = localStorage.getItem(USER_KEY);
-                if (raw) { var p = JSON.parse(raw); if (validSizes(p)) return p; }
+                if (raw) {
+                    var p = JSON.parse(raw);
+                    if (p === "up" || p === "down" || validSizes(p)) return p;
+                }
             } catch (e) {}
             return null;
         }
-        function saveUserSizes(sizes) {
-            try { localStorage.setItem(USER_KEY, JSON.stringify(sizes)); } catch (e) {}
+        function saveUserChoice(choice) {
+            try { localStorage.setItem(USER_KEY, JSON.stringify(choice)); } catch (e) {}
         }
         // The two fixed positions the arrows move to (UI_CONFIG.split).
         function expandedSizes() {
@@ -1624,8 +1630,15 @@
                 ? UI_CONFIG.split.datasetExpandedSizes : UI_CONFIG.split.expandedSizes;
         }
         function collapsedSizes() { return UI_CONFIG.split.collapsedSizes; }
-        // Where an inspector opens: the user's own height, else the expanded default.
-        function openSizes() { return loadUserSizes() || expandedSizes(); }
+        // The sizes of the user's last choice for the inspector shown now.
+        function userSizes() {
+            var c = loadUserChoice();
+            if (c === "up") return expandedSizes();
+            if (c === "down") return collapsedSizes();
+            return c;
+        }
+        // Where an inspector opens: the user's last choice, else the expanded default.
+        function openSizes() { return userSizes() || expandedSizes(); }
 
         var inspectorExpanded = true;
 
@@ -1647,7 +1660,7 @@
             return !!(a && b) && Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01;
         }
 
-        function arrowButton(cls, glyph, title, sizesFor) {
+        function arrowButton(cls, glyph, title, choice, sizesFor) {
             var btn = document.createElement("button");
             btn.type = "button";
             btn.className = "split-arrow-btn " + cls;
@@ -1660,8 +1673,9 @@
                 // drops focus as before (no lingering focus ring)
                 var hadFocus = document.activeElement === btn && e.detail === 0;
                 // Straight to the fixed position, every press -- never a no-op
-                // from a hidden preset. Not the remembered height: the next
-                // inspector open goes back to the last DRAGGED height.
+                // from a hidden preset. The press is the user's last choice:
+                // the next inspector opens at this arrow's fixed position.
+                saveUserChoice(choice);
                 applySizes(sizesFor());
                 // initSplit rebuilt the gutter; keep a keyboard user on the arrow
                 var again = hadFocus && document.querySelector(".gutter-controls ." + cls);
@@ -1678,8 +1692,8 @@
             wrap.className = "gutter-controls";
             // A button press on the gutter must not start a Split.js drag.
             gutterListeners.push(scope.listen(wrap, "mousedown", function(e) { e.stopPropagation(); }));
-            wrap.appendChild(arrowButton("split-up-btn", "\u25B2", "Expand the panel", expandedSizes));
-            wrap.appendChild(arrowButton("split-down-btn", "\u25BC", "Collapse the panel", collapsedSizes));
+            wrap.appendChild(arrowButton("split-up-btn", "\u25B2", "Expand the panel", "up", expandedSizes));
+            wrap.appendChild(arrowButton("split-down-btn", "\u25BC", "Collapse the panel", "down", collapsedSizes));
             gutter.appendChild(wrap);
         }
 
@@ -1722,10 +1736,10 @@
                 onDragEnd: function(s) {
                     if (!scope.alive) return;
                     saveSizes(s); inspectorExpanded = s[1] > 30;
-                    // v1.3.0 (customer): a drag sets the user's own height,
-                    // used by every later inspector open. A press on the bar
+                    // v1.3.0 (customer): a drag is the user's last choice; the
+                    // next inspector opens at this height. A press on the bar
                     // that did not move it is not a choice.
-                    if (!sameSizes(s, dragStartSizes)) saveUserSizes(s);
+                    if (!sameSizes(s, dragStartSizes)) saveUserChoice(s);
                     dragStartSizes = null;
                     /* Split.js resizing the panes does not fire a window
                        resize, so any Plotly chart in the inspector keeps its
@@ -1765,8 +1779,9 @@
             }
 
             if (tid === "inspector-pane") {
-                // v1.3.0 (customer): an inspector opens at the user's own
-                // height (the last drag), else the expanded default.
+                // v1.3.0 (customer): an inspector opens at the user's last
+                // choice (a drag's height or an arrow's fixed position), else
+                // the expanded default.
                 // applySizes persists it as the current split so a *concurrent*
                 // table-pane swap's initSplit() (which re-applies the saved
                 // quam_split_sizes) can't re-collapse the panel. A data-item
@@ -1786,7 +1801,7 @@
         // Move the split to a fixed position programmatically (e.g. "Go to state"
         // collapses the bottom dataset pane so the Explorer on top is prominent).
         // The same fixed positions as the arrows (UI_CONFIG.split). SM's own move:
-        // it changes the current split only, never the user's own height
+        // it changes the current split only, never the user's last choice
         // (v1.3.0). Persisting via saveSizes() keeps a concurrent table-pane
         // initSplit() from re-applying stale sizes (same trick the inspector-pane
         // afterSwap handler uses above).
@@ -1806,7 +1821,7 @@
         // doctrine untouched); only when currently expanded; and never for
         // the Datasets menu itself (the detail pane is native there). The
         // detail CONTENT stays -- the up arrow or a drag brings it back, and
-        // the next inspector open uses the user's own height (v1.3.0).
+        // the next inspector open uses the user's last choice (v1.3.0).
         scope.listen(document, "click", function(e) {
             var a = e.target.closest && e.target.closest(".sidebar-nav a[href]");
             if (!a) return;
@@ -1929,11 +1944,10 @@
 
         // v1.3.0 (customer): a page load (a reload, a new session, a history
         // restore re-running this script) opens an inspector the page already
-        // holds at the user's own height, not at an earlier SM move or arrow
-        // press. It becomes the current split, so a later table-pane swap
-        // re-applies it too.
+        // holds at the user's last choice, not at an earlier SM move. It
+        // becomes the current split, so a later table-pane swap re-applies it.
         function initialSplit() {
-            var user = loadUserSizes();
+            var user = userSizes();
             if (user) saveSizes(user);
             initSplit();
         }
