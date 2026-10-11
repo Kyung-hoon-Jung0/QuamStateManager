@@ -26461,6 +26461,22 @@ window.TopbarFit = (function () {
         autoSyncClose: function () {
             if (window.AutoSync && AutoSync.close) AutoSync.close();
         },
+        // SB-07: the applied log's x targets #pending-tray, but the log shown
+        // in the sync panel lives outside it -- the reverted row kept its x.
+        // Mark the row at once, then re-read the panel (server truth).
+        appliedLogReverted: function (el, ev) {
+            if (!(ev && ev.detail && ev.detail.successful)) return;
+            var row = el.closest('.applied-log-row');
+            if (row) {
+                row.classList.add('al-reverted');
+                var s = document.createElement('span');
+                s.className = 'applied-log-reverted';
+                s.title = 'Already reverted';
+                s.textContent = 'reverted';
+                el.replaceWith(s);
+            }
+            if (window.SyncPanel && window.SyncPanel.refresh) window.SyncPanel.refresh();
+        },
         dropApplyConflict: function (el, ev) {
             if (!(ev && ev.detail && ev.detail.successful)) return;
             var box = el.closest('.ds-apply-conflict');
