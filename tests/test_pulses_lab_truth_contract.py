@@ -762,3 +762,33 @@ def test_pu01_a_two_line_gate_is_drawn_by_its_class_and_its_edits_commit(two_lin
                                     "mode": "value", "value": "-0.12"})
     assert r.status_code == 200, r.get_data(as_text=True)[:600]
     assert store.get_value(tgt + ".amplitude") == -0.12
+
+
+def test_pu05_a_cold_row_takes_the_length_from_a_current_config_only(syn):
+    """Before the class has drawn it, a lab-class row's Length is the length
+    the lab's own generate_config() gave the pulse -- from a config NOT older
+    than the chip; a stale one leaves the honest '-'."""
+    from quam_state_manager.core import lab_waveform
+    from quam_state_manager.web import routes
+    c, _rec = syn
+    store = next(iter(c._app.config["contexts"].values()))["store"]
+    path = "qubits.q1.z.operations.czl_q1_q2"
+    store.generated_config = _gt_config(("q1.z", "czl_q1_q2", 64, 0.2))
+    store.generated_config_meta = {"at": "now", "basis_hash": routes._config_state_hash(store)}
+
+    def not_drawn(py, items, spawn=True, **_kw):
+        return [{"ok": False, "reason": "not-drawn", "error": "not drawn yet"} for _ in items]
+
+    def length_cell():
+        txt = c.get("/pulse/row", query_string={"path": path}).get_data(as_text=True)
+        return re.findall(r"<td[^>]*>.*?</td>", txt, re.S)[6]
+    mp = pytest.MonkeyPatch()
+    mp.setattr(lab_waveform, "draw", not_drawn)
+    try:
+        cell = length_cell()
+        assert re.sub(r"<[^>]+>", "", cell).strip() == "64", cell
+        assert "generate_config()" in cell
+        store.generated_config_meta = {"at": "now", "basis_hash": "older"}
+        assert re.sub(r"<[^>]+>", "", length_cell()).strip() == "-"
+    finally:
+        mp.undo()

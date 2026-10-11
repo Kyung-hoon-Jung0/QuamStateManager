@@ -19815,7 +19815,7 @@ _PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
                    "op_name", "alias_target", "iq", "readout", "found", "location",
                    "class_match", "unmodeled", "qclass", "class_short",
                    "length_implausible", "length_stored", "length", "amplitude",
-                   "used_by", "length_why", "length_from_lab")
+                   "used_by", "length_why", "length_from_lab", "length_from_config")
 
 
 def _pulse_vt_sig(row: dict) -> tuple:
@@ -24786,8 +24786,14 @@ def _pulse_fallback_spark(store, path, row) -> None:
         row["spark_at"] = None
         if row["spark_svg"]:
             return
-    row["spark_svg"], row["spark_at"] = _pulse_truth_spark(store, path)
+    row["spark_svg"], row["spark_at"], cfg_len = _pulse_truth_spark(store, path)
     row["spark_from_config"] = bool(row["spark_svg"])
+    if row.get("length") is None and isinstance(cfg_len, int):
+        # PU-05: until the class's own code has drawn it, the length the
+        # lab's own generate_config() gave this pulse -- only from a config
+        # NOT older than the chip's content (a stale one is no answer)
+        row["length"] = cfg_len
+        row["length_from_config"] = True
 
 
 def _pulse_row_lab_length(row, rec) -> None:
@@ -24855,8 +24861,9 @@ def _warm_lab_sparks(store, paths) -> None:
 def _pulse_truth_spark(store, path):
     """A sparkline for a class SM cannot synthesize, from the lab's own config.
 
-    Returns ``(svg, generated_at)`` or ``(None, None)``. Never raises: a missing
-    or unreadable config simply means no thumbnail, exactly as before.
+    Returns ``(svg, generated_at, length)`` or ``(None, None, None)``;
+    ``length`` only from a config not older than the chip's content. Never
+    raises: a missing or unreadable config simply means no thumbnail.
 
     The config is generated ONCE in the background when the chip is opened
     (docs/189 part 2) and cached as one dict, so this is a dictionary lookup --
@@ -24868,15 +24875,17 @@ def _pulse_truth_spark(store, path):
         truth = _pulse_truth_lookup(store, path)
     except Exception:       # noqa: BLE001 -- a thumbnail is never worth an error page
         logger.debug("lab sparkline lookup failed for %s", path, exc_info=True)
-        return None, None
+        return None, None, None
     if truth.get("status") != "ok":
-        return None, None
+        return None, None, None
     traces = truth.get("traces") or []
     ys_i = next((t.get("y") for t in traces if t.get("name") == "I"), None)
     ys_q = next((t.get("y") for t in traces if t.get("name") == "Q"), None)
     if not ys_i:
-        return None, None
-    return sparkline_svg({"ok": True, "i": ys_i, "q": ys_q}), truth.get("at")
+        return None, None, None
+    raw_y = (truth.get("raw_i") or {}).get("y")
+    n = len(raw_y) if isinstance(raw_y, list) and raw_y and not truth.get("stale") else None
+    return sparkline_svg({"ok": True, "i": ys_i, "q": ys_q}), truth.get("at"), n
 
 
 def _pulse_truth_lookup(store, path):
