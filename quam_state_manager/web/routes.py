@@ -28342,6 +28342,24 @@ def _take_live_backup(ctx, store, pending: dict) -> dict | None:
     return rec
 
 
+def _bring_back_names(bk: dict, failed: list[dict], cap: int = 3) -> str:
+    """SU-18: NAME the edits Bring back could not re-stage (path = value),
+    and where their values still are, so none is lost without a name."""
+    ups = bk.get("updates") or {}
+    names = []
+    for f in failed[:cap]:
+        p = str(f.get("dot_path") or "?")
+        try:
+            _e = ups.get(p)
+            _op, v, _g = _untag(tuple(_e) if isinstance(_e, list) else _e)
+            names.append(f"{p} = {_fmt_val(v)}" if _op != "delete" else f"{p} (delete)")
+        except Exception:  # noqa: BLE001 -- a name without its value is still a name
+            names.append(p)
+    more = f" and {len(failed) - cap} more" if len(failed) > cap else ""
+    kept = " (kept in the Take-live backup, State History)" if bk.get("snapshot") else ""
+    return ", ".join(names) + more + kept
+
+
 @bp.route("/state/take-live/restore", methods=["POST"])
 def state_take_live_restore():
     """"↶ Bring back": replay the edits the last ↓ Take live dropped, on top of
@@ -28365,7 +28383,8 @@ def state_take_live_restore():
     _n = replay.get("applied", 0)
     _f = replay.get("failed") or []
     msg = (f"Brought back {_n} edit{'s' if _n != 1 else ''} as unapplied edits"
-           + (f"; {len(_f)} could not be re-applied" if _f else "") + ".")
+           + (f"; {len(_f)} could not be re-applied: {_bring_back_names(bk, _f)}"
+              if _f else "") + ".")
     resp.headers["HX-Trigger"] = json.dumps({
         "syncToast": {"message": msg, "level": "warning" if _f else "success"},
         "syncValuesMoved": True})

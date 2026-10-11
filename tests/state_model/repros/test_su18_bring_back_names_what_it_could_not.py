@@ -12,7 +12,6 @@ import pytest
 from tests.state_model.repros._rig import Chip
 
 
-@pytest.mark.xfail(strict=True, reason="SU-18: the Bring back toast counts, it does not name")
 def test_bring_back_names_the_edit_it_could_not_restage(tmp_path):
     chip = Chip(tmp_path)
     path = "qubits.q1.xy.operations.saturation.amplitude"
@@ -24,3 +23,4 @@ def test_bring_back_names_the_edit_it_could_not_restage(tmp_path):
     msg = (chip.trigger(r).get("syncToast") or {}).get("message", "")
     assert "could not" in msg, msg
     assert path in msg or "saturation" in msg, msg
+    assert "0.21" in msg, msg
