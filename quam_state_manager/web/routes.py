@@ -42961,6 +42961,12 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     "main.pair_add_gate",
     "main.pulse_edit", "main.api_pulse_create", "main.api_pulse_delete",
     "main.api_pulse_duplicate", "main.api_pulse_rename",
+    # Every staging door shares the store saved by the plan's next write.
+    "main.pair_gate_inspector_switch", "main.api_pulse_copy",
+    "main.api_pulse_gaussian_cz", "main.api_pulse_delete_together",
+    "main.type_fix_apply", "main.auto_apply_revert",
+    "main.state_take_live_restore", "main.chip_profile_set", "main.app_reload",
+    "agent.undo_mine", "agent.run_node", "agent.approvals_decide", "agent.plan_start",
     # state-history writers (stage -> working copy, restore-live -> live files)
     "main.state_history_stage", "main.state_history_restore_live",
     # working-copy / live writers
@@ -43027,7 +43033,7 @@ def _loaded_autofit_engine():
     return mod
 
 
-@bp.before_request
+@bp.before_app_request
 def _scheduler_lock_guard():
     """409 chip-mutating / QM-subprocess routes while the Scheduler is running.
 

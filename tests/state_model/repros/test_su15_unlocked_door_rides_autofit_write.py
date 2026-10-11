@@ -19,7 +19,6 @@ import pytest
 from tests.state_model.repros._rig import Chip
 
 
-@pytest.mark.xfail(strict=True, reason="SU-15: unlocked doors stage into the store the plan writes")
 def test_an_edit_staged_through_an_unlocked_door_does_not_ride_a_plan_write(tmp_path):
     from quam_state_manager.core.autofit.writer import ChipHandle, apply_rows
     from quam_state_manager.web import routes
@@ -29,7 +28,8 @@ def test_an_edit_staged_through_an_unlocked_door_does_not_ride_a_plan_write(tmp_
     assert chip.c.post("/field/edit", data={"dot_path": "qubits.q3.T1", "value": "5e-05"}).status_code == 409
     # a door outside the lock set still stages (the type-fix of a text leaf)
     r = chip.c.post("/type-fix/apply", json={"paths": ["twpas.twpa1.spectroscopy_amplitude"]})
-    assert r.status_code == 200 and chip.log(), "the unlocked door staged nothing"
+    # v1.3.0: stage while held -> refuse unchanged, no edit may ride the plan write.
+    assert r.status_code == 409 and not chip.log(), "the held chip accepted a staged edit"
     with chip.app.app_context():
         handle = ChipHandle(store=ctx["store"], modifier=ctx["modifier"], saver=ctx["saver"],
                             wc=ctx["working_copy"], build_lock=threading.RLock(),
