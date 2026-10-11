@@ -3296,7 +3296,8 @@ def _hub_pending(ctx, src: str, *, log=None, wholesale: bool = False, kind: str 
     return _hub.Pending(_hub_chip_dir(ctx["path"]), kind, who, src, entries=entries,
                         plan_id=plan, run_uid=run_uid, undoes=undoes, units=units, ref=ref,
                         fragments=_hub.store_fragments(store, after=after, holder=before_ref),
-                        expect_fp=expect_fp)
+                        expect_fp=expect_fp,
+                        expect_digest=store.working_digest if press is not None else None)
 
 
 def _hub_discard_saved_units(ctx) -> None:

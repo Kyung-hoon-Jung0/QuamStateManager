@@ -136,7 +136,7 @@ def _pending(chip: ChipHandle, src: str, mine: list) -> Any:
     return hub.Pending(chip.hub_dir, "autofit", "autofit", src, entries=ents,
                        plan_id=chip.hub_plan,
                        fragments=hub.store_fragments(chip.store, holder=holder),
-                       expect_fp=chip.hub_fp1)
+                       expect_fp=chip.hub_fp1, expect_digest=chip.store.working_digest)
 
 
 def _values_equal(a, b) -> bool:

@@ -164,7 +164,8 @@ def test_our_own_save_and_later_applies_keep_the_ownership_anchor(tmp_path):
 
 
 @pytest.mark.parametrize("walk", [False, True])
-def test_a_copy_replaced_during_the_noop_check_keeps_our_tray(tmp_path, monkeypatch, walk):
+@pytest.mark.parametrize("preserve_stat", [False, True])
+def test_a_copy_replaced_during_the_noop_check_keeps_our_tray(tmp_path, monkeypatch, walk, preserve_stat):
     from quam_state_manager.core import safe_io, working_copy
     from quam_state_manager.web import routes
     chip = Chip(tmp_path)
@@ -179,7 +180,16 @@ def test_a_copy_replaced_during_the_noop_check_keeps_our_tray(tmp_path, monkeypa
             calls.append(1)
             if len(calls) == 2:
                 state, wiring = safe_io.read_state_wiring(wc.live_folder)
-                safe_io.write_state_wiring(wc.working_folder, state, wiring)
+                # v1.3.0: stat-changing race only -> also pin replacement with the same stat.
+                if preserve_stat:
+                    path = wc.working_folder / "state.json"
+                    stat = path.stat()
+                    raw = json.dumps(state).encode("utf-8")
+                    assert len(raw) <= stat.st_size
+                    path.write_bytes(raw + b" " * (stat.st_size - len(raw)))
+                    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+                else:
+                    safe_io.write_state_wiring(wc.working_folder, state, wiring)
         return original_hash(wc)
 
     def move_live_then_apply(wc, **kwargs):
@@ -200,3 +210,71 @@ def test_a_copy_replaced_during_the_noop_check_keeps_our_tray(tmp_path, monkeypa
     assert "window/process" in response.get_data(as_text=True)
     assert (chip.log(), chip.journal(), chip.live_state()["qubits"]["q1"]["T1"]) == before
     assert chip.live_state()["qubits"]["q3"]["T1"] == 3.333e-05
+
+
+@pytest.mark.parametrize("walk", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+def test_a_saved_payload_replaced_with_the_same_stat_is_refused(tmp_path, monkeypatch, walk, force):
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    chip = Chip(tmp_path)
+    chip.edit("qubits.q1.T1", "2.222e-05")
+    original = working_copy.apply_to_live
+
+    def replace_then_apply(wc, **kwargs):
+        path = wc.working_folder / "state.json"
+        stat = path.stat()
+        fp = working_copy.working_fingerprint(wc)
+        raw = path.read_bytes()
+        changed = raw.replace(b"2.222e-05", b"3.333e-05", 1)
+        assert changed != raw and len(changed) == len(raw)
+        path.write_bytes(changed)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        assert working_copy.working_fingerprint(wc) == fp
+        return original(wc, **kwargs)
+
+    monkeypatch.setattr(working_copy, "apply_to_live", replace_then_apply)
+    before = (chip.log(), chip.journal(), chip.live_state())
+    if walk:
+        with chip.app.test_request_context("/state/sync", method="POST"):
+            response = chip.app.make_response(routes._sync_pull_apply_to_live(chip.ctx, None, force=force))
+    else:
+        response = chip.c.post("/state/apply-to-live", data={"force": "1"} if force else {})
+    assert response.status_code == 409, response.get_data(as_text=True)
+    assert "window/process" in response.get_data(as_text=True)
+    assert (chip.log(), chip.journal(), chip.live_state()) == before
+
+
+def test_autofit_refuses_a_foreign_payload_with_the_same_stat(tmp_path, monkeypatch):
+    import threading
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.core.autofit.writer import ChipHandle, apply_rows
+    from quam_state_manager.web import routes
+    chip = Chip(tmp_path)
+    ctx = chip.ctx
+    original = working_copy.apply_to_live
+
+    def replace_then_apply(wc, **kwargs):
+        path = wc.working_folder / "state.json"
+        stat = path.stat()
+        fp = working_copy.working_fingerprint(wc)
+        raw = path.read_bytes()
+        changed = raw.replace(b"2.222e-05", b"3.333e-05", 1)
+        assert changed != raw and len(changed) == len(raw)
+        path.write_bytes(changed)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        assert working_copy.working_fingerprint(wc) == fp
+        return original(wc, **kwargs)
+
+    monkeypatch.setattr(working_copy, "apply_to_live", replace_then_apply)
+    before = chip.live_state()
+    with chip.app.app_context():
+        handle = ChipHandle(store=ctx["store"], modifier=ctx["modifier"], saver=ctx["saver"],
+                            wc=ctx["working_copy"], build_lock=threading.RLock(),
+                            live_path=str(ctx["path"]), hub_dir=routes._hub_chip_dir(ctx["path"]),
+                            hub_plan="autofit:probe")
+        out = apply_rows(handle, [{"path": "qubits.q1.T1", "value": 2.222e-05}],
+                         apply_live=True, label="probe")
+    assert not out.ok
+    assert "window/process" in out.error
+    assert chip.live_state() == before

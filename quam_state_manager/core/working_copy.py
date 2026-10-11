@@ -849,6 +849,15 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     return state, wiring
 
 
+def _check_working_bytes(record, pair) -> None:
+    """The payload must be the bytes the caller's own store loaded or saved."""
+    expected = getattr(record, "expect_digest", None)
+    if expected is not None:
+        from quam_state_manager.core.loader import file_digest
+        if file_digest(pair.state_bytes, pair.wiring_bytes) != expected:
+            raise WorkingCopyChangedError(SHARED_WORKING_MSG)
+
+
 def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                   expect_live_hash: str | None = None, record=None) -> None:
     """Push the working copy's state + wiring to the live folder.
@@ -933,6 +942,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                 live_hash = live_content_hash(wc)
                 fp0 = working_fingerprint(wc)
                 _wpair = doc_cache.read_pair(wc.working_folder, mode="hash")
+                _check_working_bytes(record, _wpair)
                 if not _wpair.state:
                     raise EmptyStateError("An empty state cannot be applied to the live chip")
                 if _wpair.content_hash() == live_hash:
@@ -973,6 +983,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     except OSError:
         fp_before = None
     _wpair = doc_cache.read_pair(wc.working_folder, mode="hash")
+    _check_working_bytes(record, _wpair)
     if not _wpair.state:
         raise EmptyStateError("An empty state cannot be applied to the live chip")
     state_b, wiring_b = _wpair.state_bytes, _wpair.wiring_bytes
