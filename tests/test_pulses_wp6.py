@@ -172,3 +172,18 @@ def test_same_pointer_relink_records_nothing_and_keeps_real_undo(lab, undone):
     assert "pulses-rows-changed" not in r.headers.get("HX-Trigger", "")
     assert c.post("/redo" if undone else "/undo").status_code == 200
     assert st.get_value(target) == (0.2 if undone else 0.15)
+
+
+@pytest.mark.parametrize("kind", ["dict", "list"])
+@pytest.mark.parametrize("door", ["/field/edit", "/pulse/edit"])
+def test_container_refusal_keeps_the_reason_and_names_the_kind(client, kind, door):
+    st = _store(client)
+    st.merged["shared_container"] = {} if kind == "dict" else [1, 2]
+    data = {"path": MARKER_OP, "dot_path": MARKER_OP + ".amplitude",
+            "mode": "pointer", "value": "#/shared_container"}
+    r = client.post(door, data=data)
+    assert r.status_code == 400
+    text = r.get_json()["error"] if r.is_json else r.get_data(as_text=True)
+    assert "resolves to a container" in text and "not a value" in text
+    assert "is a " + kind in text
+    assert not st.change_log

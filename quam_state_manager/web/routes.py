@@ -11460,7 +11460,7 @@ def _container_pointer_refusal(store, target_path: str, parsed) -> str | None:
     except Exception:  # noqa: BLE001 -- missing / dangling: not this check's call
         return None
     if isinstance(probe, (dict, list)) and isinstance(cur, (bool, int, float, str))             and not (isinstance(cur, str) and is_pointer(cur)):
-        return (f"{parsed} resolves to a container, not a value: {target_path} "
+        return (f"{parsed} resolves to a container (it is a {type(probe).__name__}), not a value: {target_path} "
                 f"holds a {'flag' if isinstance(cur, bool) else 'text' if isinstance(cur, str) else 'number'}; point at a leaf (e.g. #/qubits/q1/T1)")
     return None
 
@@ -21217,7 +21217,7 @@ def pulse_edit():
             if isinstance(probe, (dict, list)):
                 return render_template(
                     "_status.html",
-                    message=("That pointer resolves to a container, not a value "
+                    message=(f"That pointer resolves to a container (it is a {type(probe).__name__}), not a value "
                              "— point at a leaf (e.g. .../amplitude)"),
                     level="error"), 400
             # a dangling re-link of a LAB field is refused by the lab check
