@@ -815,6 +815,13 @@ class Model:
             self.R.append(("jrn_live", self.cursor))
             return Outcome("noop", "empty unit")
         log_was_empty = not self.T
+        if any((e.created and get(self.W, e.path) is MISSING)
+               or (e.deleted and get(self.W, e.path) is not MISSING) for e in unit.entries):
+            # SU-19: the unit is no longer in effect (a dropped save): its inverse
+            # cannot be staged, the press answers 409 and the walk stays here
+            self.notes.append(("K:SU-19", "Ctrl+Z met a unit the working copy no longer holds "
+                                          "(Undo (staged) failed, 409)"))
+            return Outcome("refused", "inverse not stageable")
         if any(e.path in self.typefixed and isinstance(e.old, str) and not isinstance(e.new, str)
                for e in unit.entries):
             self.notes.append(("K:SU-14", "Ctrl+Z cannot walk past a type-fix: staging the old text "
