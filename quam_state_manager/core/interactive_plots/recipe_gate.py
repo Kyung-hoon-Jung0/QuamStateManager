@@ -126,7 +126,7 @@ def gate(bundle, spec, analysis_fingerprint):
         spec.clickable["verification_note"] = note
         for target in spec.clickable.get("targets", []):
             provenance = target.setdefault("provenance", {"formula": "", "inputs": []})
-            provenance["formula"] = provenance.get("formula", "") + "; " + note
+            provenance["formula"] = "; ".join(filter(None, [provenance.get("formula"), note]))
         return spec
     entity = spec.clickable.get("qubit") or spec.key.split("::")[-1]
     points = _recipe_markers(spec, entity)
@@ -147,7 +147,7 @@ def gate(bundle, spec, analysis_fingerprint):
                       marker_id=proof["id"], verified_on=str(getattr(bundle.run, "uid", None) or key[0]))
         label = target["evidence_label"]
         provenance = target.setdefault("provenance", {"formula": "", "inputs": []})
-        provenance["formula"] = provenance.get("formula", "") + f"; verified on this run ({label})"
+        provenance["formula"] = "; ".join(filter(None, [provenance.get("formula"), f"verified on this run ({label})"]))
         verified_targets.append(target)
     if not verified_targets:
         spec.clickable = None

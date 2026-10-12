@@ -119,5 +119,8 @@ class TestEfRabiInteractiveEndToEnd:
         out = registry.build_interactive_figure(run, "amplitude::qA2")
         assert out is not None and out["kind"] == kind
         targets = out["clickable"]["targets"]
+        # v1.3.0: bare targets -> provenance-bearing targets; P3 labels unverified recipes.
         assert targets == [{"path": "qubits.{q}.xy.operations.EF_x180.amplitude",
-                            "scale": 1e-3}]
+                            "scale": 1e-3, "provenance": {
+                                "formula": "recipe formula, not verified on this run (the node wrote no state)",
+                                "inputs": []}}]
