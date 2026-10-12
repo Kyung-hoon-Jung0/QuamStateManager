@@ -1483,7 +1483,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                         else (copy.deepcopy(store.state), copy.deepcopy(store.wiring)))
         seen: dict = {}
         result = working_copy.reconcile_with_live(
-            wc, sync_if_clean=auto_adopt and not in_mem_dirty, out=seen)
+            wc, sync_if_clean=auto_adopt and not in_mem_dirty, out=seen, store=store)
         if result == working_copy.RECONCILE_SYNCED:
             # Mirror the rebuild steps of /state/sync: the working folder
             # now holds the new live content; refresh every derived object.
@@ -1508,8 +1508,8 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                     # SILENTLY DROP the un-applied edit (audit C29). synced_live_hash
                     # stays at new-live, so the rehydrate correctly sees it dirty.
                     try:
-                        safe_io.write_state_wiring(
-                            wc.working_folder, store.state, store.wiring)
+                        working_copy.repersist_working(
+                            wc, store.state, store.wiring, store=store)
                     except OSError:
                         logger.exception(
                             "C29 working-folder re-persist failed for %s", key)
@@ -3789,7 +3789,12 @@ def _shared_working_changed(ctx) -> bool:
     """Only the bytes this process loaded or last saved belong to its store."""
     from quam_state_manager.core.loader import _pair_bytes_digest
     store, wc = ctx["store"], ctx["working_copy"]
-    return store.working_digest is None or _pair_bytes_digest(wc.working_folder) != store.working_digest
+    digest = _pair_bytes_digest(wc.working_folder)
+    if digest is None:
+        return True
+    if store.working_digest is None:
+        store.working_digest = digest
+    return digest != store.working_digest
 
 
 _SHARED_WORKING_SAVE_MSG = (
@@ -27229,8 +27234,8 @@ def auto_sync_pull():
                 with _st._lock:
                     if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
                         try:
-                            safe_io.write_state_wiring(
-                                wc.working_folder, _st.state, _st.wiring)
+                            working_copy.repersist_working(
+                                wc, _st.state, _st.wiring, store=_st)
                         except OSError:
                             logger.exception("post-pull re-persist failed")
                         ctx["live_diverged"] = True
@@ -27276,8 +27281,8 @@ def auto_sync_pull():
             _st = ctx.get("store")
             if _st is not None and wc is not None:
                 with _st._lock:
-                    safe_io.write_state_wiring(
-                        wc.working_folder, _st.state, _st.wiring)
+                    working_copy.repersist_working(
+                        wc, _st.state, _st.wiring, store=_st)
             ctx["live_diverged"] = True
         except Exception:              # noqa: BLE001 — best effort on a failure path
             logger.warning("post-failure re-persist failed", exc_info=True)
@@ -32046,6 +32051,10 @@ def app_reload():
             with _active_wc_lock(ctx):
                 if pending:
                     report["kept_edits"] = pending
+                    from quam_state_manager.core.loader import _pair_bytes_digest
+                    with ctx["store"]._lock:
+                        ctx["store"].working_digest = _pair_bytes_digest(
+                            ctx["working_copy"].working_folder)
                     _invalidate_engine_cache()
                 else:
                     keep = {k: ctx.get(k) for k in ("working_dirty", "staged_base")}

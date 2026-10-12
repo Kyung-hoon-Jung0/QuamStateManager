@@ -659,8 +659,19 @@ def _is_different_chip(old_state: dict, old_wiring: dict,
         return False
 
 
+def repersist_working(wc: WorkingCopy, state: dict, wiring: dict, *,
+                      store=None, like=None) -> str | None:
+    """Write an owned working pair and refresh its store's byte baseline."""
+    from quam_state_manager.core.loader import _pair_bytes_digest
+    safe_io.write_state_wiring(wc.working_folder, state, wiring, like=like)
+    digest = _pair_bytes_digest(wc.working_folder)
+    if store is not None:
+        store.working_digest = digest
+    return digest
+
+
 def _try_sync(wc: WorkingCopy,
-              restore: tuple[dict, dict] | None = None) -> str:
+              restore: tuple[dict, dict] | None = None, *, store=None) -> str:
     """Auto-pull for a clean working copy; degrade gracefully on failure.
 
     A transient live-read failure mid-pull (the experiment program's atomic
@@ -683,8 +694,7 @@ def _try_sync(wc: WorkingCopy,
                        exc_info=True)
         if restore is not None:
             try:
-                safe_io.write_state_wiring(wc.working_folder, *restore,
-                                           like=wc.live_folder)
+                repersist_working(wc, *restore, store=store, like=wc.live_folder)
             except OSError:
                 logger.exception("Pre-sync pair restore failed for %s", wc.key)
         return RECONCILE_STALE
@@ -694,7 +704,7 @@ def _try_sync(wc: WorkingCopy,
 
 
 def reconcile_with_live(wc: WorkingCopy, *, sync_if_clean: bool = True,
-                        out: dict | None = None) -> str:
+                        out: dict | None = None, store=None) -> str:
     """Content-aware staleness decision for an existing working copy.
 
     Pass *out* (an empty dict) to receive the contents this call already had
@@ -760,7 +770,7 @@ def reconcile_with_live(wc: WorkingCopy, *, sync_if_clean: bool = True,
         # JSON impossible, so a parse failure means real corruption) --
         # nothing to preserve. Re-seed from live if allowed.
         if sync_if_clean:
-            return _try_sync(wc)
+            return _try_sync(wc, store=store)
         return RECONCILE_STALE
     except OSError:
         # TRANSIENT read failure (AV/backup/indexer lock) is not proof the
@@ -808,7 +818,7 @@ def reconcile_with_live(wc: WorkingCopy, *, sync_if_clean: bool = True,
                 logger.info("Live folder %s now holds a DIFFERENT chip than the "
                             "working copy — prompting instead of auto-pulling", wc.key)
                 return RECONCILE_STALE
-            return _try_sync(wc, restore=(w_state, w_wiring))
+            return _try_sync(wc, restore=(w_state, w_wiring), store=store)
         return RECONCILE_STALE
 
     # 3. Legacy meta (no recorded hash) + live mtimes moved.
