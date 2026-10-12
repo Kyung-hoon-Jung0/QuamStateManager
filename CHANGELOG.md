@@ -877,3 +877,20 @@ Production campaign (docs/303): the v1.2.0 follow-up list plus stability, every-
   Changes, the diff list, Projects), readable contrast for active chips and topbar text, the Versions
   panel's value cell wraps, "Auto-Sync" reads as one word, "15 changed" instead of "~15".
 - **Agent morning summary** words a failure the same whichever record it reads.
+- **Pre-deployment verification (docs/304)**: a model-based state harness, real-browser journeys, an independent
+  Trends oracle and the lab's own pulse code as ground truth. Fixed:
+  - every staging door is under the mutator lock;
+  - a second SM process can no longer fake an Apply or overwrite a saved draft;
+  - Ctrl+Z never writes an empty chip state;
+  - honest refusals for a missing live chip;
+  - Trends never show a number no saved state produced, and a chain of contradicted changes ends on the recorded
+    value;
+  - pulses read references the way quam does, so two blocked SNZ gates draw and edit and coupled SNZ fields are
+    set in one batch;
+  - undefined digital markers are refused;
+  - a history migration no longer deletes history data;
+  - unapplied tray rows survive a restart.
+- **Datasets** opened during a history catch-up no longer slows it (first rows in under a second).
+- **Split bar**: two arrows to the fixed layout max/min; the user's last action (a drag or an arrow) decides where the
+  next inspector opens.
+- **Layout**: the remaining page-sweep cosmetics at 1280/1600 in both themes.
