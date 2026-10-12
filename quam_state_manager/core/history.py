@@ -2088,6 +2088,8 @@ class HistoryManager:
 
     def _remember_chip_path(self, path: Path, result: tuple) -> None:
         """Keep the last readable routing decision across context rebuilds."""
+        if "__chip_key__" in path.parts:
+            return
         with self._lock:
             data = self._load_aliases()
             key = str(path.resolve())
@@ -5628,6 +5630,11 @@ class HistoryManager:
             if not d.is_dir():
                 continue
             if re.match(r"^pytest-\d+$", d.name) or d.name == "Temp":
+                continue
+            try:
+                if not any(s.is_dir() and (s / "state.json").is_file() for s in d.iterdir()):
+                    continue
+            except OSError:
                 continue
             idx = d / "index.sqlite"
             if not idx.exists():

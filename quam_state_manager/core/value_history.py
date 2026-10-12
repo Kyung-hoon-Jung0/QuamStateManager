@@ -1062,8 +1062,8 @@ def _composite_rows(saved: "_Rows", index, paths: list[str], compose, extra_even
     which the tuple of its inputs changed -- for each input path, the
     pointers its walk consulted with their values, the holder it named and
     that holder's value (``holder_at`` at that position). Every value it
-    shows is ``compose`` of one saved state. A row is proven only when no
-    pointer moved and every value that changed has a proven row there
+    shows is ``compose`` of one saved state. A row is proven only when every
+    changed input, including pointer holders, has a proven row there
     (a several-leaf value is written by an event only when every leaf is).
 
     Returns ``{"rows": [(position, eid, old token, new token, proven)],
@@ -1118,9 +1118,17 @@ def _composite_rows(saved: "_Rows", index, paths: list[str], compose, extra_even
                 continue
             if pw is None or w[0] != pw[0] or w[1] != pw[1]:
                 moved = True                  # a pointer on the way moved (a retarget)
-            row = at_rows.get((w[1], pos))
-            if row is None or not row[4]:
+            if w[1] is None:
                 proven = False
+            inputs = dict(w[0])
+            if w[1] is not None:
+                inputs[w[1]] = w[2]
+            for holder, value in inputs.items():
+                if value == _tok(saved.fold(holder, pos - 1)):
+                    continue
+                row = at_rows.get((holder, pos))
+                if row is None or not row[4]:
+                    proven = False
         vals = values(ws, pos)
         new_shown = compose(vals)
         named = ws[0][1] if len(ws) == 1 else None
@@ -1133,7 +1141,7 @@ def _composite_rows(saved: "_Rows", index, paths: list[str], compose, extra_even
                              else None),
                      # what the live tail compares: each input's holder and value
                      "names": [w[1] for w in ws], "vals": vals})
-        rows.append((pos, index.eids[pos], prev_tok, tok, proven and not moved))
+        rows.append((pos, index.eids[pos], prev_tok, tok, proven))
         prev, prev_tok, prev_shown = ws, tok, new_shown
     missing = [index.eids[r[0]] for r, m in zip(rows, meta) if m["ev"] is None]
     if missing:
