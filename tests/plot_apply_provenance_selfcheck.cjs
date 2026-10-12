@@ -123,7 +123,10 @@ const map = {request_hash: 'abc123', request: {
     check(JSON.parse(form(posts[0]).get('provenance')).text.length === 300, 'wire text is bounded');
     await open([{dot_path: p1, value: 3, provenance: {src: 'map_fit', text: 'x'.repeat(299) + '\u{1F600}'}}]);
     w.applyPlotRow(row()); await delay();
-    check(!/[\uD800-\uDBFF]$/.test(JSON.parse(form(posts[0]).get('provenance')).text), 'truncation keeps complete Unicode characters');
+    check(JSON.parse(form(posts[0]).get('provenance')).text === 'x'.repeat(299), 'truncation keeps the complete Unicode prefix');
+    await open([{dot_path: p1, value: 3, provenance: {src: 'map_fit', text: 'x'.repeat(298) + '\u{1F600}' + 'tail'}}]);
+    w.applyPlotRow(row()); await delay();
+    check(JSON.parse(form(posts[0]).get('provenance')).text === 'x'.repeat(298) + '\u{1F600}', 'truncation preserves a complete Unicode pair at the boundary');
 
     await open([{dot_path: p1, value: 3}]);
     w.applyPlotRow(row()); await delay();
