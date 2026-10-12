@@ -207,15 +207,30 @@ def _restore_record(cls, raw, report, path):
     return cls(**values)
 
 
-def _fit_records(fn, name, records, report):
+def _fit_records(fn, name, records, report, *, util_module=None, restore_objects=False):
     try:
         hint = typing.get_type_hints(inspect.unwrap(fn)).get(name)
     except (NameError, TypeError):
         hint = None
-    if typing.get_origin(hint) is dict:
-        cls = typing.get_args(hint)[-1]
-        if dataclasses.is_dataclass(cls):
-            return {k: _restore_record(cls, v, report, k) for k, v in records.items()}
+    cls = typing.get_args(hint)[-1] if typing.get_origin(hint) is dict else None
+    if not dataclasses.is_dataclass(cls):
+        cls = None
+    if cls is None and restore_objects and util_module is not None:
+        keys = set().union(*(set(v) for v in records.values() if isinstance(v, dict)))
+        candidates = []
+        for value in vars(util_module).values():
+            if inspect.isclass(value) and dataclasses.is_dataclass(value) and keys:
+                known = {f.name for f in dataclasses.fields(value)}
+                score = len(keys & known) / len(keys)
+                if score >= 0.8:
+                    candidates.append((score, value))
+        if candidates:
+            best = max(score for score, _ in candidates)
+            classes = {value for score, value in candidates if score == best}
+            if len(classes) == 1:
+                cls = classes.pop()
+    if cls is not None:
+        return {k: _restore_record(cls, v, report, k) for k, v in records.items()}
     return records
 
 
@@ -225,7 +240,7 @@ _RESULT_ALIASES = {"fringe_results": "fringe", "fit_objects": "fit_results"}
 
 
 def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None,
-               node_tree=None, plot_imports=None, bind_report=None):
+               node_tree=None, plot_imports=None, bind_report=None, util_module=None):
     """Bind saved inputs and record every supplied, defaulted or unbound arg."""
     sig = inspect.signature(fn)
     kwargs = {}
@@ -262,7 +277,8 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
         elif lname == "ds_fit" or path == "node.results.ds_fit":
             value, source = ds_fit, "ds_fit.h5"
         elif lname in ("fits", "fit", "fit_results") and "fit_results" in results:
-            value = _fit_records(fn, name, results["fit_results"], reconstruction)
+            value = _fit_records(fn, name, results["fit_results"], reconstruction,
+                                 util_module=util_module, restore_objects=path == "node.namespace.fit_objects")
             source = "data.fit_results"
         elif lname in ("fits", "fit"):
             value, source = ds_fit, "ds_fit.h5"
@@ -553,7 +569,7 @@ def main() -> int:
         try:
             kwargs = _bind_args(fn, ds_raw=ds_raw, ds_fit=ds_fit, qubits=qubits, params=params,
                                 results=results, machine=machine, node_tree=node_tree,
-                                plot_imports=plot_imports, bind_report=report)
+                                plot_imports=plot_imports, bind_report=report, util_module=U)
             fig = fn(**kwargs)
             result["figures"].extend(_extract_return(fig, key, report, extract_figure, result["not_produced"]))
             import matplotlib.pyplot as plt

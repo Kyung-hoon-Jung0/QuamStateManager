@@ -109,6 +109,37 @@ def test_binder_restores_nested_records_and_reports_defaults():
     assert values["ds_fit"] == "dataset"
 
 
+def test_binder_namespace_objects_with_untyped_annotation():
+    def plot_untyped(ds_fit, fits: dict[str, object]):
+        pass
+    tree = ast.parse("plot_untyped(node.results['ds_fit'], node.namespace['fit_objects'])")
+    report = {}
+    values = runner._bind_args(plot_untyped, ds_raw=None, ds_fit="dataset", qubits=[], params={},
+        results={"fit_results": {"pair0": {"peak": 4, "details": {"left": {"centre": 3}}}}},
+        node_tree=tree, plot_imports={"plot_untyped": ("calibration_utils.synthetic", "plot_untyped")},
+        util_module=SimpleNamespace(Record=Record, Detail=Detail), bind_report=report)
+    assert isinstance(values["fits"]["pair0"], Record)
+    assert isinstance(values["fits"]["pair0"].details["left"], Detail)
+    assert values["fits"]["pair0"].details["left"].centre == 3
+    assert report["fits"]["records"][-1]["class"] == "Record"
+
+
+def test_binder_keeps_saved_plain_dicts_and_ambiguous_records():
+    def plot_untyped(fits: dict[str, object]):
+        pass
+    records = {"pair0": {"peak": 4, "details": {}}}
+    kwargs = dict(ds_raw=None, ds_fit=None, qubits=[], params={}, results={"fit_results": records},
+                  plot_imports={"plot_untyped": ("calibration_utils.synthetic", "plot_untyped")})
+    tree = ast.parse("plot_untyped(node.results['fit_results'])")
+    values = runner._bind_args(plot_untyped, node_tree=tree, util_module=SimpleNamespace(Record=Record), **kwargs)
+    assert values["fits"] == records
+    other = __import__("dataclasses").make_dataclass("OtherRecord", [("peak", float), ("details", dict)])
+    tree = ast.parse("plot_untyped(node.namespace['fit_objects'])")
+    values = runner._bind_args(plot_untyped, node_tree=tree,
+                              util_module=SimpleNamespace(Record=Record, OtherRecord=other), **kwargs)
+    assert values["fits"] == records
+
+
 def test_binder_node_call_preserves_dataset_fit_and_namespace_records():
     def plot_data(ds, fits):
         pass
