@@ -33,6 +33,7 @@
                     title="Does not affect the waveform shape">readout-only</span>{% endif %}
             </td>
             <td class="col-val">
+                {% if p.marker_note %}<p class="muted pulse-marker-note">{{ p.marker_note }}</p>{% endif %}
                 {% if p.is_runtime %}
                 <em class="selfref-value">{{ p.raw }} <span class="tag-runtime">(runtime)</span></em>
                 {% elif p.is_list %}

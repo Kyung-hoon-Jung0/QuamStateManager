@@ -11447,8 +11447,13 @@ def _container_pointer_refusal(store, target_path: str, parsed) -> str | None:
     into a VALUE leaf (a number, a flag, a text) turns the leaf into a dump of
     that container on the chip. Refused with the reason, like /pulse/edit
     (docs/190 F27). A leaf that already holds a container (a port reference)
-    or nothing, and a dangling pointer, pass."""
+    or nothing, and a dangling pointer, pass. A free-form ``extras`` leaf
+    passes too: what it holds is the user's own, and a reference to a whole
+    entity (``#/qubits/qA1``) is a legitimate value there (docs/81)."""
     if not (isinstance(parsed, str) and is_pointer(parsed)):
+        return None
+    from quam_state_manager.core import edit_policy as _ep
+    if _ep.is_free_form_path(target_path):
         return None
     from quam_state_manager.core.pointer_resolver import resolve_pointer
     parts = tuple(target_path.split("."))
@@ -11460,7 +11465,7 @@ def _container_pointer_refusal(store, target_path: str, parsed) -> str | None:
     except Exception:  # noqa: BLE001 -- missing / dangling: not this check's call
         return None
     if isinstance(probe, (dict, list)) and isinstance(cur, (bool, int, float, str))             and not (isinstance(cur, str) and is_pointer(cur)):
-        return (f"{parsed} resolves to a container, not a value: {target_path} "
+        return (f"{parsed} resolves to a container (it is a {type(probe).__name__}), not a value: {target_path} "
                 f"holds a {'flag' if isinstance(cur, bool) else 'text' if isinstance(cur, str) else 'number'}; point at a leaf (e.g. #/qubits/q1/T1)")
     return None
 
@@ -20820,9 +20825,11 @@ def _pulse_section_ctx(store, pulse_index, path: str):
 
     row = pulse_index.row(path)
     if row is None:
-        return render_template("_status.html",
-                               message=f"Pulse not found: {path}",
-                               level="error"), 404
+        resp = make_response(render_template("_status.html",
+            message=f"Deleted {path.rsplit('.', 1)[-1]}. This pulse no longer exists.",
+            level="warning"))
+        resp.headers["X-Pulse-Missing"] = "1"
+        return resp, 404
 
     from quam_state_manager.core.pulse_catalog import (
         infer_spec_ex, unmodeled_fields)
@@ -20983,6 +20990,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
             # earlier this session — drives the "re-link to previous" chip
             "prev_link": (None if is_ptr
                           else prev_links.get(f"{actual_path}.{fname}")),
+            "marker_note": _pulse_marker_note(store) if fname == "digital_marker" else None,
         })
 
     # docs/217: a discovered op in an `operations` dict renames like a qubit
@@ -21174,7 +21182,30 @@ def pulse_edit():
     # held from the lab check to the write (see _lab_hold)
     _lab_rel = _lab_hold(store, _lab_paths)
     try:
-        if mode == "pointer":
+        if dot_path.rsplit(".", 1)[-1] == "digital_marker":
+            candidate = _parse_value(raw_value)
+            if mode == "pointer":
+                from quam_state_manager.core import pulse_refs
+                ref = pulse_refs.read(store.merged, dot_path.split(".")[:-1], raw_value.strip())
+                candidate = ref.value if ref.ok else None
+            elif mode == "literal":
+                resolved = resolve_field_target(store.merged, dot_path).get("resolved_value")
+                if isinstance(resolved, str):
+                    candidate = str(candidate)
+            else:
+                marker_target = resolve_field_target(store.merged, dot_path)
+                if marker_target.get("resolvable"):
+                    candidate = modifier._checked_value(
+                        marker_target["resolved_path"], marker_target["resolved_value"],
+                        candidate, coerce=True, enforce=True)
+            marker_names = _pulse_marker_names(store)
+            if isinstance(candidate, str) and not is_pointer(candidate) and marker_names is not None and candidate not in marker_names:
+                return render_template("_status.html", level="error",
+                    message=f"Digital marker {candidate!r} is not defined by this chip. "
+                            f"Defined markers: {', '.join(sorted(marker_names)) or '(none)'}. Nothing was written."), 400
+        if mode == "pointer" and store.get_value(dot_path) == raw_value.strip():
+            _noop_edit = True
+        elif mode == "pointer":
             value = raw_value.strip()
             if not value.startswith(("#/", "#./", "#../")):
                 return render_template(
@@ -21201,7 +21232,7 @@ def pulse_edit():
             if isinstance(probe, (dict, list)):
                 return render_template(
                     "_status.html",
-                    message=("That pointer resolves to a container, not a value "
+                    message=(f"That pointer resolves to a container (it is a {type(probe).__name__}), not a value "
                              "— point at a leaf (e.g. .../amplitude)"),
                     level="error"), 400
             # a dangling re-link of a LAB field is refused by the lab check
@@ -21209,7 +21240,7 @@ def pulse_edit():
             _lab_no = _lab_edit_refusal(store, dot_path, dot_path,
                                         probe if probe is not None else value)
             if _lab_no:
-                return _lab_edit_refused(_lab_no)
+                return _lab_edit_refused(_lab_no, dot_path, probe)
             modifier.set_value(dot_path, value)
         elif mode == "literal":
             # Break-link: type the literal after the RESOLVED value, write
@@ -21234,7 +21265,7 @@ def pulse_edit():
                 parsed = str(parsed)
             _lab_no = _lab_edit_refusal(store, dot_path, dot_path, parsed)
             if _lab_no:
-                return _lab_edit_refused(_lab_no)
+                return _lab_edit_refused(_lab_no, dot_path, parsed)
             # enforce=False: literal mode IS the explicit, audited type-CHANGE
             # surface — forcing a type-assign ceremony here was rejected.
             modifier.set_value(dot_path, parsed, coerce=False, enforce=False)
@@ -21267,7 +21298,7 @@ def pulse_edit():
             elif _lab_no := _lab_edit_refusal(
                     store, dot_path, _pulse_edit_write_path(
                         store, dot_path, raw_current, target_path), parsed):
-                return _lab_edit_refused(_lab_no)
+                return _lab_edit_refused(_lab_no, target_path, parsed)
             elif is_pointer(raw_current):
                 target = resolve_field_target(store.merged, dot_path)
                 _dflt = _pulse_ref_default_target(store, dot_path, raw_current)
@@ -21318,6 +21349,25 @@ def pulse_edit():
         view_paths = [p_ for p_ in view_paths if p_ != view_main]
         resp = _render_pulse_detail(path, paths=view_paths or None)
     return _lab_toast(_pulse_mutation_response(resp, paths=_touched))
+
+
+def _pulse_marker_names(store) -> set[str] | None:
+    """QUAM's root/template code defines marker names in the generated
+    config, not in pulse digital_marker strings. Never infer declarations
+    from those uses or trust a config whose state basis is unknown/stale."""
+    cfg = store.generated_config
+    if not isinstance(cfg, dict) or not store.generated_config_meta or _config_stale(store):
+        return None
+    markers = cfg.get("digital_waveforms")
+    return set(markers) if isinstance(markers, dict) else None
+
+
+def _pulse_marker_note(store) -> str:
+    names = _pulse_marker_names(store)
+    if names is None:
+        return ("Marker names cannot be determined from this state. Generate a current "
+                "config to check them; edits are allowed without this check.")
+    return "Defined markers: " + (", ".join(sorted(names)) or "(none)")
 
 
 def _lab_toast(resp):
@@ -23805,19 +23855,25 @@ def _lab_follow_payload(path, value, info) -> list[dict] | None:
             + [{"dot_path": f["dot_path"], "value": f["value"]} for f in follow])
 
 
-def _lab_refusal_text(message: str) -> str:
+def _lab_refusal_text(message: str, action: str = "value") -> str:
     if message.startswith("your chip's generate_config()"):
-        return ("Your chip's own generate_config() refused this (run in the "
+        return (f"Your chip's own generate_config() refused this{' delete' if action == 'delete' else ''} (run in the "
                 f"selected environment) — nothing was changed: {message}")
     who = "gate" if message.startswith("your gate ") else "pulse class"
-    return (f"Your {who} refused this value (its own code, run in "
+    return (f"Your {who} refused this {action} (its own code, run in "
             f"the selected environment) — nothing was written: {message}")
 
 
-def _lab_edit_refused(message: str):
-    return render_template(
+def _lab_edit_refused(message: str, path=None, value=None):
+    from flask import g
+    resp = make_response(render_template(
         "_status.html", level="error",
-        message=_lab_refusal_text(message)), 400
+        message=_lab_refusal_text(message)), 400)
+    if path and request.form.get("mode", "value") == "value":
+        resp.headers["X-Lab-Refusal"] = json.dumps({
+            "lab_refused": True, "error": _lab_refusal_text(message),
+            "lab_follow": _lab_follow_payload(path, value, getattr(g, "lab_info", None))})
+    return resp
 
 
 def _slot_host(merged: dict, pair_name: str, pair: dict, slot: str):
@@ -24297,7 +24353,7 @@ def _pulse_delete_refused_html(store, path: str, message: str, info: dict,
         rows.append({"path": p, "kind": kind, "role": role})
     return render_template(
         "_pulse_delete_refused.html", path=path,
-        message=_lab_refusal_text(message), also=rows, together=together,
+        message=_lab_refusal_text(message, action="delete"), also=rows, together=together,
         subject=subject,
         label=_together_label([r["kind"] for r in rows]) if rows else "")
 
