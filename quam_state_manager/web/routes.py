@@ -24940,8 +24940,14 @@ def _is_exact_copy(merged: dict, op_path: str, op_body, slot_path: str, slot_bod
 def _slot_copies(merged: dict, slot_path: str) -> list[str]:
     """The channel operations that are exact copies of the pair-gate slot at
     *slot_path* (:func:`_is_exact_copy`): every op that points into the slot,
-    and the op named by the slot's ``id`` on a qubit's channel (the name a
-    gate plays), checked field by field."""
+    and the op named by the slot's ``id`` on its pair's endpoint channels
+    (the name a gate plays), checked field by field."""
+    from quam_state_manager.core.gaussian_cz import _qubit_name
+    parts = slot_path.split(".")
+    if len(parts) < 2 or parts[0] != "qubit_pairs":
+        return []
+    endpoints = {_qubit_name(merged, parts[1], role)
+                 for role in ("qubit_control", "qubit_target")}
     try:
         slot_body = _walk_path(merged, slot_path.split("."))[1]
     except Exception:  # noqa: BLE001
@@ -24952,6 +24958,8 @@ def _slot_copies(merged: dict, slot_path: str) -> list[str]:
     sid = slot_body.get("id")
     out = []
     for qn, q in ((merged or {}).get("qubits") or {}).items():
+        if qn not in endpoints:
+            continue
         if not isinstance(q, dict):
             continue
         for ch in ("xy", "z", "resonator", "xy_detuned"):
