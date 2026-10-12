@@ -140,7 +140,8 @@ def test_replot_run_labels_and_caches_the_ladder_outcome(tmp_path, monkeypatch):
     replot._CACHE.clear()
     run = SimpleNamespace(folder_path=str(folder))
     out = replot.replot_run(run, tmp_path / "inst")
-    assert out["revision"]["rung"] == "saved" and out["saved_figures"]
+    assert out.get("revision", {}).get("rung") == "saved" and out.get("saved_figures")
+    assert out.get("cache_key"), "Saved-rung outcomes must enter the replay cache"
     replot._CACHE.clear()
     assert replot.replot_run(run, tmp_path / "inst")["cache_key"] == out["cache_key"]
     assert len(calls) == 1
