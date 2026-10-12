@@ -16116,6 +16116,41 @@ function _showPlotApplyPopup(mappings, pt, expName, qubitName) {
 /* Open the editable parameter-apply popup for pre-computed {dot_path, value}
    updates. Shared by the Data tab (axis→path mappings) and the Interactive tab
    (recipe `clickable` spec). Activates the loaded state first so edits target it. */
+function _plotApplyOrigin(prov, expName, runUid) {
+    if (!prov) return null;
+    var text = prov.text || prov.provenance_text;
+    var from = runUid ? 'run #' + String(runUid).split(':').pop() + ' ' + (expName || '') : 'plot';
+    if (!text && prov.formula) {
+        text = 'derived from ' + from + ': ' + prov.formula;
+        if (prov.evidence_tier === 'applied' || prov.evidence_tier === 'proposed') {
+            text = 'derived from ' + from + ': learned from the run\'s '
+                 + (prov.evidence_tier === 'applied' ? 'patch (applied)' : 'proposal (proposed, not applied)')
+                 + '; ' + prov.formula;
+        }
+        (prov.inputs || []).forEach(function(inp) {
+            text += '; ' + inp.label + '=' + String(inp.frozen_value);
+        });
+    }
+    if (!text) {
+        var req = prov.request || prov;
+        var smooth = req.smooth || req;
+        var fit = req.fit || req;
+        var contour = req.contour || {};
+        text = 'derived from ' + from + ': ' + (fit.model || '?')
+             + ' on smoothed map (' + (smooth.kernel || 'gaussian')
+             + ', sigma x=' + (smooth.sigma_x === undefined ? '?' : smooth.sigma_x)
+             + ' pt, y=' + (smooth.sigma_y === undefined ? '?' : smooth.sigma_y) + ' pt)';
+        var level = contour.level === undefined ? req.contour_level : contour.level;
+        if (level !== undefined && level !== null) text += '; contour level ' + level;
+        if (smooth.override_cap) text += '; cap overridden';
+    }
+    var origin = {src: prov.src || (prov.request || prov.model || prov.provenance_text || prov.smooth || prov.fit ? 'map_fit' : 'plot_click'),
+                  text: String(text).slice(0, 300)};
+    if (prov.run_uid || runUid) origin.run_uid = String(prov.run_uid || runUid);
+    if (prov.request_hash) origin.request_hash = String(prov.request_hash);
+    return origin;
+}
+
 function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect, runUid, qubitNow) {
     if (!updates || !updates.length) return;
     // chipExpect = {token, name} for a dataset fit-apply: the run's OWN chip
@@ -16367,7 +16402,8 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
             // HOW this value was computed (formula + the frozen inputs it was
             // baked against) — the trust line for contract-faithful clicks.
             updates.push({dot_path: path, value: value,
-                          provenance: t.provenance || null});
+                          provenance: t.provenance ? Object.assign({}, t.provenance,
+                              {evidence_tier: t.evidence_tier || clickable.evidence_tier}) : null});
         });
         if (!updates.length) return;
 
@@ -16488,6 +16524,7 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
         row.className = 'plot-apply-row';
         row.setAttribute('data-input-path', u.dot_path);
         row.setAttribute('data-dot-path', u.dot_path);
+        row._plotOrigin = _plotApplyOrigin(u.provenance, expName, runUid);
         // Provenance line: HOW the staged value was computed (the node's own
         // formula) + the frozen inputs it was baked against — the trust line
         // for contract-faithful clicks (e.g. "clicked − RF_at_run + frozen
@@ -16500,6 +16537,9 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
             provHtml = '<div class="plot-apply-row-prov muted">'
                      + _ppEscape(u.provenance.formula)
                      + (inputs ? '<br>' + inputs : '') + '</div>';
+        } else if (row._plotOrigin) {
+            provHtml = '<div class="plot-apply-row-prov muted">'
+                     + _ppEscape(row._plotOrigin.text) + '</div>';
         }
         row.innerHTML =
             '<div class="plot-apply-row-path"><code>' + _ppEscape(u.dot_path) + '</code>'
@@ -16712,6 +16752,7 @@ function applyPlotRow(row) {
                     .concat(window._fspCompUpdates(_plan)),
                 fsp_ack: 'comp'
             };
+            if (row._plotOrigin) b.provenance = row._plotOrigin;
             if (_typeFix) b.type_fix = _typeFix;
             if (_pp && _pp.dataset.expectChip) {
                 b.expect_chip = _pp.dataset.expectChip;
@@ -16727,6 +16768,7 @@ function applyPlotRow(row) {
         }
         var body = 'dot_path=' + encodeURIComponent(dotPath)
                  + '&value=' + encodeURIComponent(input.value);
+        if (row._plotOrigin) body += '&provenance=' + encodeURIComponent(JSON.stringify(row._plotOrigin));
         if (_fspAck) body += '&fsp_ack=' + _fspAck;
         if (_typeFix) body += '&type_fix=' + _typeFix;
         if (_pp && _pp.dataset.expectChip) {
@@ -16795,7 +16837,9 @@ function applyAllPlotRows() {
 
     var updates = pending.map(function(r) {
         var input = r.querySelector('.plot-apply-new-input');
-        return {dot_path: r.getAttribute('data-dot-path'), value: input ? input.value : ''};
+        var update = {dot_path: r.getAttribute('data-dot-path'), value: input ? input.value : ''};
+        if (r._plotOrigin) update.provenance = r._plotOrigin;
+        return update;
     });
 
     var applyAllBtn = document.getElementById('plot-apply-all');
@@ -16820,6 +16864,10 @@ function applyAllPlotRows() {
 
     function _post() {
         var b = {updates: _ups};
+        var origin = pending[0]._plotOrigin;
+        if (origin && pending.every(function(r) {
+            return JSON.stringify(r._plotOrigin) === JSON.stringify(origin);
+        })) b.provenance = origin;
         if (_fspAck) b.fsp_ack = _fspAck;
         if (_typeFix) b.type_fix = _typeFix;
         if (_pp && _pp.dataset.expectChip) {

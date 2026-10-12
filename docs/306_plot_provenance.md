@@ -32,3 +32,11 @@ origin for mixed applies. Its shared presentation includes `ref.text` and
 describes the linked run as the derivation source. SM does not write an
 external Calibration log here; the event reference is available to its
 readers. The staging endpoint inventory is unchanged.
+
+The popup carries its origin with the row while the user edits the value or
+selects a pointer target. Learned origins name their patch/proposal tier,
+formula, and frozen inputs. Map origins carry the displayed text and request
+hash, or summarize the request's model, axis sigmas, and contour level. Text
+is bounded to 300 characters and escaped for display. Apply All uses row
+origins and, when they agree, a top-level origin. The same metadata rides
+the existing chip-confirmation, type-fix, and compensation retries.
