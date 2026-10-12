@@ -83,6 +83,8 @@ def analyze(run, uid, figure, converted, body):
     entity = axis.get("entity") or axis.get("title", "").strip()
     records = [v for k, v in saved.items() if k == entity or k in entity] if isinstance(saved, dict) else []
     record = records[0] if len(records) == 1 and isinstance(records[0], dict) and body.get("source") != "ndview" else {}
+    if record.get("b_resolved") is False:
+        meta["b_resolved"] = False
     x, y = centers(trace["x"], len(trace["z"][0])), centers(trace["y"], len(trace["z"]))
     classification = api.classify(x, y, meta, trace["z"])
     names = {"erroramp": ("opt_amp_prefactor", "a_pi"), "ridge": ("frequency", "y"),

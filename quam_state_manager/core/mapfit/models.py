@@ -451,6 +451,8 @@ def landscape(z,x,y,meta=None,raw=None):
     """[derived] Interpolate objective on target contour and refine a three-point arclength minimum."""
     meta = meta or {}
     a,x,y = _prepare(z,x,y)
+    if meta.get("b_resolved") is False:
+        return result("ambiguous", reason="Node reports an unresolved control minimum", candidates=[])
     status = _gate(a,raw,meta)
     if status:
         return result(status)
