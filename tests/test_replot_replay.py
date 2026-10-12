@@ -168,8 +168,21 @@ def replay(tmp_path, monkeypatch):
     captured = {}
     monkeypatch.setattr(runner, "_emit", lambda result, out: captured.update(result) or 0)
 
-    def run(fn):
+    def run(fn, tree=None, data=None, only="", functions=None, ds_fit=None):
         module.plot_data = fn
+        for name, function in (functions or {}).items():
+            setattr(module, name, function)
+        if tree is not None:
+            monkeypatch.setattr(runner, "_resolve_node", lambda *a: (
+                "calibration_utils.synthetic", tree, {name: ("calibration_utils.synthetic", name)
+                                                     for name in (functions or {"plot_data": fn})}))
+        if ds_fit is not None:
+            (tmp_path / "ds_fit.h5").touch()
+            sys.modules["xarray"].open_dataset = lambda *a, **kw: ds_fit
+        if data is not None:
+            (tmp_path / "data.json").write_text(json.dumps(data))
+        if only:
+            monkeypatch.setattr(sys, "argv", ["replay", "--run", str(tmp_path), "--only", only])
         runner.main()
         return captured
     return run
@@ -205,3 +218,91 @@ def test_none_return_is_absence_in_worker_and_ui(replay):
     missing = []
     assert runner._extract_return({"optional": None}, "diagnostics", {}, None, missing) == []
     assert missing[0]["key"] == "diagnostics::optional"
+
+
+def test_plot_plan_selects_one_mode_and_raw_function():
+    tree = ast.parse("""
+def plot_data(node):
+    if 'ds_fit' not in node.results:
+        return
+    if node.results['ds_fit'].attrs.get('scan_mode') == 'resonance_line':
+        figs = {'raw': plot_line_raw(node.results['ds_raw'])}
+        figs.update(plot_line_fits(node.results['ds_raw']))
+        node.results['figures'] = figs
+        return
+    figs = {'raw': plot_raw_maps(node.results['ds_raw'])}
+    figs.update(plot_chevrons(node.results['ds_raw']))
+    figs['hyperbola'] = plot_hyperbola_fits(node.results['ds_fit'])
+    node.results['figures'] = figs
+""")
+    imports = {n: ("calibration_utils.synthetic", n) for n in
+               ("plot_line_raw", "plot_line_fits", "plot_raw_maps", "plot_chevrons", "plot_hyperbola_fits")}
+    selected, aliases = runner._plot_plan(tree, imports, SimpleNamespace(attrs={"scan_mode": "resonance_line"}))
+    assert selected == {"plot_line_raw", "plot_line_fits"}
+    assert aliases == {"plot_line_raw": "raw"}
+    selected, aliases = runner._plot_plan(tree, imports, SimpleNamespace(attrs={"scan_mode": "map"}))
+    assert selected == {"plot_raw_maps", "plot_chevrons", "plot_hyperbola_fits"}
+    assert aliases == {"plot_raw_maps": "raw", "plot_hyperbola_fits": "hyperbola"}
+    assert runner._plot_plan(tree, imports, None)[0] == set()
+
+
+def test_archive_matching_includes_standalone_and_reports_extras(tmp_path):
+    (tmp_path / "figure_l1_partner.png").write_bytes(b"synthetic")
+    saved = runner._saved_figures(tmp_path, {"figures": {"amplitude": "./figures.amplitude.png"}})
+    assert saved == {"amplitude": "./figures.amplitude.png", "l1_partner": "./figure_l1_partner.png"}
+    figures = [
+        {"key": "raw_data_with_fit", "function_key": "raw_data_with_fit", "return_key": None},
+        {"key": "landscapes::l1_partner", "function_key": "landscapes", "return_key": "l1_partner"},
+        {"key": "raw_data", "function_key": "raw_data", "return_key": None},
+    ]
+    report = runner._match_archive(figures, saved, {"plot_raw_data_with_fit": "amplitude"})
+    assert report == {"matched": ["amplitude", "l1_partner"], "missing": [], "extra": ["raw_data"]}
+    assert figures[0]["key"] == "amplitude" and figures[0]["source_key"] == "raw_data_with_fit"
+    assert figures[1]["archive_path"] == "./figure_l1_partner.png"
+    assert figures[2]["archive_key"] is None
+
+
+def test_archive_alias_reaches_worker_and_only_filter(replay):
+    import matplotlib.pyplot as plt
+
+    def plot_data():
+        return plt.figure()
+    tree = ast.parse("""
+def plot_data(node):
+    fig = plot_data()
+    node.results['figures'] = {'amplitude': fig}
+""")
+    result = replay(plot_data, tree=tree, data={"figures": {"amplitude": "./figures.amplitude.png"}},
+                    only="amplitude")
+    assert len(result["figures"]) == 1
+    assert result["figures"][0]["key"] == "amplitude"
+    assert result["archive_match"] == {"matched": ["amplitude"], "missing": [], "extra": []}
+
+
+def test_worker_does_not_invoke_both_modes_or_duplicate_raw(replay):
+    import matplotlib.pyplot as plt
+    called = []
+
+    def draw(name):
+        def function():
+            called.append(name)
+            return plt.figure()
+        return function
+    functions = {n: draw(n) for n in ("plot_line_raw", "plot_line_fits", "plot_raw_maps", "plot_chevrons")}
+    tree = ast.parse("""
+def plot_data(node):
+    if node.results['ds_fit'].attrs.get('scan_mode') == 'resonance_line':
+        figs = {'raw': plot_line_raw()}
+        figs['line'] = plot_line_fits()
+        node.results['figures'] = figs
+        return
+    figs = {'raw': plot_raw_maps()}
+    figs['map'] = plot_chevrons()
+    node.results['figures'] = figs
+""")
+    result = replay(None, tree=tree, functions=functions,
+                    ds_fit=SimpleNamespace(attrs={"scan_mode": "resonance_line"}),
+                    data={"figures": {"raw": "./figures.raw.png", "line": "./figures.line.png"}})
+    assert called == ["plot_line_fits", "plot_line_raw"]
+    assert sorted(f["key"] for f in result["figures"]) == ["line", "raw"]
+    assert result["archive_match"]["extra"] == []

@@ -314,6 +314,128 @@ def _extract_return(value, key, report, extract, not_produced=None):
     return output
 
 
+_UNKNOWN = object()
+
+
+def _saved_condition(expr, ds_fit):
+    """Evaluate only saved-mode predicates; unknown source stays unexecuted."""
+    if isinstance(expr, ast.Constant):
+        return expr.value
+    path = _input_path(expr)
+    if path and path.startswith("node.results.ds_fit.attrs."):
+        return getattr(ds_fit, "attrs", {}).get(path.rsplit(".", 1)[-1])
+    if isinstance(expr, ast.Compare) and len(expr.ops) == 1:
+        left = _saved_condition(expr.left, ds_fit)
+        right = _saved_condition(expr.comparators[0], ds_fit)
+        if _input_path(expr.comparators[0]) == "node.results" and left == "ds_fit":
+            if isinstance(expr.ops[0], ast.NotIn):
+                return ds_fit is None
+            if isinstance(expr.ops[0], ast.In):
+                return ds_fit is not None
+        if left is not _UNKNOWN and right is not _UNKNOWN:
+            if isinstance(expr.ops[0], ast.Eq):
+                return left == right
+            if isinstance(expr.ops[0], ast.NotEq):
+                return left != right
+    return _UNKNOWN
+
+
+def _plot_plan(tree, imports, ds_fit):
+    """Select the node's plot calls and learn its explicit saved-key aliases."""
+    if tree is None or not imports:
+        return None, {}
+    functions = set()
+    aliases = {}
+    variables = {}
+
+    def origin(expr):
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id in imports:
+            return {None: imports[expr.func.id][1]}
+        if isinstance(expr, ast.Name):
+            return variables.get(expr.id, {})
+        if isinstance(expr, ast.Dict):
+            result = {}
+            for key, value in zip(expr.keys, expr.values):
+                if isinstance(key, ast.Constant):
+                    for fn in origin(value).values():
+                        result[str(key.value)] = fn
+            return result
+        return {}
+
+    def visit(statements):
+        for statement in statements:
+            if isinstance(statement, ast.If):
+                condition = _saved_condition(statement.test, ds_fit)
+                if condition is _UNKNOWN:
+                    visit(statement.body)
+                    visit(statement.orelse)
+                elif visit(statement.body if condition else statement.orelse):
+                    return True
+                continue
+            if isinstance(statement, ast.Return):
+                return True
+            for call in ast.walk(statement):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in imports:
+                    functions.add(imports[call.func.id][1])
+            if isinstance(statement, ast.Assign):
+                value = origin(statement.value)
+                for target in statement.targets:
+                    if isinstance(target, ast.Name):
+                        variables[target.id] = value
+                        if isinstance(statement.value, ast.Dict):
+                            aliases.update({fn: key for key, fn in value.items() if key is not None})
+                    elif isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant):
+                        key = str(target.slice.value)
+                        if _input_path(target) == "node.results.figures":
+                            aliases.update({fn: k for k, fn in value.items() if k is not None})
+                        elif not key.startswith("figure"):
+                            aliases.update({fn: key for fn in value.values()})
+        return False
+
+    actions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and n.name == "plot_data"]
+    if not actions:
+        return None, {}
+    for action in actions:
+        visit(action.body)
+    return functions, aliases
+
+
+def _saved_figures(run, results):
+    """Census registered figures and standalone PNGs, with no guessed matches."""
+    saved = dict(results.get("figures") or {})
+    for key, value in results.items():
+        if key.startswith("figure_") and isinstance(value, str) and value.lower().endswith(".png"):
+            saved[key.removeprefix("figure_")] = value
+    for path in sorted(Path(run).glob("figure*.png")):
+        if path.name.startswith("figures."):
+            key = path.stem.removeprefix("figures.")
+        elif path.name.startswith("figure_"):
+            key = path.stem.removeprefix("figure_")
+        else:
+            continue
+        saved.setdefault(key, "./" + path.name)
+    return saved
+
+
+def _match_archive(figures, saved, aliases):
+    claimed = set()
+    for figure in figures:
+        source_key = figure["key"]
+        member = figure.get("return_key")
+        fn = "plot_" + figure["function_key"]
+        candidate = str(member) if member is not None else aliases.get(fn, figure["function_key"])
+        figure["source_key"] = source_key
+        figure["archive_key"] = None
+        if candidate in saved and candidate not in claimed:
+            claimed.add(candidate)
+            figure["key"] = candidate
+            figure["archive_key"] = candidate
+            figure["archive_path"] = saved[candidate]
+    return {"matched": sorted(claimed), "missing": sorted(set(saved) - claimed),
+            "extra": [f["key"] for f in figures if f["archive_key"] is None]}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
@@ -408,10 +530,12 @@ def main() -> int:
     from iplot_extract import extract_figure
 
     plot_fns = sorted(n for n in dir(U) if n.startswith("plot_") and callable(getattr(U, n)))
+    selected, aliases = _plot_plan(node_tree, plot_imports, ds_fit)
+    if selected is not None:
+        plot_fns = [n for n in plot_fns if n in selected]
+    saved = _saved_figures(args.run, results)
     for fname in plot_fns:
         key = re.sub(r"^plot_", "", fname)
-        if args.only and key != args.only:
-            continue
         fn = getattr(U, fname)
         report = result["bind_report"][key] = {}
         try:
@@ -425,6 +549,10 @@ def main() -> int:
         except Exception:
             result["errors"].append({"stage": f"plot:{key}", "trace": traceback.format_exc()})
 
+    result["archive_match"] = _match_archive(result["figures"], saved, aliases)
+    if args.only:
+        result["figures"] = [f for f in result["figures"]
+                             if args.only in (f["key"], f["source_key"], f["function_key"])]
     return _emit(result, args.out)
 
 
