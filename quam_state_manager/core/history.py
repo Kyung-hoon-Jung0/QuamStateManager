@@ -5631,6 +5631,11 @@ class HistoryManager:
                 continue
             if re.match(r"^pytest-\d+$", d.name) or d.name == "Temp":
                 continue
+            try:
+                if not any(s.is_dir() and (s / "state.json").is_file() for s in d.iterdir()):
+                    continue
+            except OSError:
+                continue
             idx = d / "index.sqlite"
             if not idx.exists():
                 # A dir with snapshot FOLDERS but no index used to be
