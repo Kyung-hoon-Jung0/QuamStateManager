@@ -52,6 +52,19 @@
     {% for fig in figures %}
     <div class="ds-interactive-fig" data-fig="{{ fig.key }}" data-kind="replot">
         <div class="ds-interactive-fig-title">{{ fig.title }}</div>
+        {% if fig.bind_report %}
+        <details class="muted ds-replot-bindings">
+            <summary>Plot inputs and defaults</summary>
+            <ul>
+            {% for name, decision in fig.bind_report.items() %}
+                <li><code>{{ name }}</code>: {{ decision.status }} from {{ decision.source }}{% if decision.value is defined %} ({{ decision.value }}){% endif %}
+                {% for record in decision.records|default([]) %}
+                    <span>{{ record.record }}: defaulted {{ record.defaulted }}, dropped {{ record.dropped }}</span>
+                {% endfor %}</li>
+            {% endfor %}
+            </ul>
+        </details>
+        {% endif %}
         <div class="ds-interactive-plot"
              id="ds-replot-{{ run_id }}-{{ loop.index }}"
              data-run-id="{{ uid }}" data-fig="{{ fig.key }}"

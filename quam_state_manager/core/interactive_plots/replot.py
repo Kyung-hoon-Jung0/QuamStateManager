@@ -182,7 +182,7 @@ def replot_menu(result: dict) -> list[dict]:
     """``iplot/v1`` -> tile menu ``[{key,title,available}]`` for the template."""
     figs = result.get("figures", [])
     return [{"key": f["key"], "title": f.get("title", f["key"]),
-             "available": True} for f in figs]
+             "available": True, "bind_report": f.get("bind_report", {})} for f in figs]
 
 
 def replot_outcome(result: dict) -> dict:
@@ -228,7 +228,9 @@ def replot_figure(result: dict, key: str) -> dict | None:
     """Convert one cached figure to Plotly ``{data, layout, title}``; ``None`` if absent."""
     for f in result.get("figures", []):
         if f["key"] == key:
-            return mpljson_to_plotly(f)
+            converted = mpljson_to_plotly(f)
+            converted["bind_report"] = f.get("bind_report", {})
+            return converted
     return None
 
 

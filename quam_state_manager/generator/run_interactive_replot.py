@@ -25,12 +25,14 @@ from __future__ import annotations
 
 import argparse
 import ast
+import dataclasses
 import inspect
 import json
 import os
 import re
 import sys
 import traceback
+import typing
 from pathlib import Path
 
 
@@ -120,23 +122,176 @@ def _deep_find(o, key):
     return None
 
 
-def _bind_args(fn, *, ds_raw, ds_fit, qubits, params):
-    """Bind a plot function's params by name; return kwargs or raise on a gap."""
+def _input_path(expr):
+    """Recognize node input references, never evaluate arbitrary source code."""
+    if isinstance(expr, ast.Name):
+        return expr.id
+    if isinstance(expr, ast.Attribute):
+        base = _input_path(expr.value)
+        return base + "." + expr.attr if base else None
+    if isinstance(expr, ast.Subscript) and isinstance(expr.slice, ast.Constant):
+        base = _input_path(expr.value)
+        return base + "." + str(expr.slice.value) if base else None
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
+        if expr.func.attr == "get_names":
+            return _input_path(expr.func.value) + ".get_names"
+        if expr.func.attr == "get" and expr.args and isinstance(expr.args[0], ast.Constant):
+            base = _input_path(expr.func.value)
+            return base + "." + str(expr.args[0].value) if base else None
+    return None
+
+
+def _call_inputs(fn, tree, imports):
+    if tree is None:
+        return {}
+    names = [n for n, (_, original) in imports.items() if original == fn.__name__]
+    parameters = list(inspect.signature(fn).parameters)
+    found = {}
+    for call in ast.walk(tree):
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in names:
+            for name, expr in zip(parameters, call.args):
+                path = _input_path(expr)
+                if path:
+                    found[name] = path
+            for kw in call.keywords:
+                path = _input_path(kw.value)
+                if kw.arg and path:
+                    found[kw.arg] = path
+    return found
+
+
+def _report_value(value):
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if value == value and abs(value) != float("inf") else None
+    return {"type": type(value).__name__}
+
+
+def _restore_record(cls, raw, report, path):
+    fields = {f.name: f for f in dataclasses.fields(cls)}
+    hints = typing.get_type_hints(cls)
+    values = {}
+    dropped = sorted(set(raw) - set(fields))
+    defaults = {}
+    for name, field in fields.items():
+        if name not in raw:
+            if field.default is not dataclasses.MISSING:
+                defaults[name] = _report_value(field.default)
+            elif field.default_factory is not dataclasses.MISSING:
+                defaults[name] = _report_value(field.default_factory())
+            continue
+        value = raw[name]
+        hint = hints.get(name)
+        if isinstance(value, dict) and dataclasses.is_dataclass(hint):
+            value = _restore_record(hint, value, report, path + "." + name)
+        elif isinstance(value, dict) and typing.get_origin(hint) is dict:
+            item_type = typing.get_args(hint)[-1]
+            if dataclasses.is_dataclass(item_type):
+                value = {k: _restore_record(item_type, v, report, path + "." + name + "." + k)
+                         for k, v in value.items()}
+        values[name] = value
+    report.append({"record": path, "class": cls.__name__, "dropped": dropped, "defaulted": defaults})
+    return cls(**values)
+
+
+def _fit_records(fn, name, records, report):
+    try:
+        hint = typing.get_type_hints(inspect.unwrap(fn)).get(name)
+    except (NameError, TypeError):
+        hint = None
+    if typing.get_origin(hint) is dict:
+        cls = typing.get_args(hint)[-1]
+        if dataclasses.is_dataclass(cls):
+            return {k: _restore_record(cls, v, report, k) for k, v in records.items()}
+    return records
+
+
+_PARAM_ALIASES = {"target_deg": "phase_target_deg", "gate_max_ns": "partner_gate_max_ns",
+                  "num_circles": "num_iq_circles_to_plot", "n_circles": "num_iq_circles_to_plot"}
+_RESULT_ALIASES = {"fringe_results": "fringe", "fit_objects": "fit_results"}
+
+
+def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None,
+               node_tree=None, plot_imports=None, bind_report=None):
+    """Bind saved inputs and record every supplied, defaulted or unbound arg."""
     sig = inspect.signature(fn)
     kwargs = {}
+    params = params.get("model", params)
+    results = results or {}
+    decisions = bind_report if bind_report is not None else {}
+    inputs = _call_inputs(fn, node_tree, plot_imports or {})
+    pair_source = "parameters.qubit_pairs"
+    pair_names = params.get("qubit_pairs")
+    if not pair_names:
+        for dataset in (ds_fit, ds_raw):
+            coords = getattr(dataset, "coords", {})
+            for coord in ("qubit_pair", "qubit_pairs", "pair", "pair_name"):
+                if coord in coords:
+                    pair_names = list(coords[coord].values.tolist())
+                    pair_source = "dataset.coords." + coord
+                    break
+            if pair_names:
+                break
+    if not pair_names and isinstance(results.get("fit_results"), dict):
+        pair_names = list(results["fit_results"])
+        pair_source = "data.fit_results.keys"
     for name, p in sig.parameters.items():
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            decisions[name] = {"status": "variadic", "source": "signature"}
+            continue
         lname = name.lower()
+        path = inputs.get(name, "")
+        source = None
+        value = None
+        reconstruction = []
         if lname in ("ds", "dataset", "ds_raw", "raw"):
-            kwargs[name] = ds_raw
-        elif lname in ("fits", "fit", "ds_fit"):
-            kwargs[name] = ds_fit
+            value, source = ds_raw, "ds_raw.h5"
+        elif lname == "ds_fit" or path == "node.results.ds_fit":
+            value, source = ds_fit, "ds_fit.h5"
+        elif lname in ("fits", "fit", "fit_results") and "fit_results" in results:
+            value = _fit_records(fn, name, results["fit_results"], reconstruction)
+            source = "data.fit_results"
+        elif lname in ("fits", "fit"):
+            value, source = ds_fit, "ds_fit.h5"
         elif lname in ("qubits", "qubit_list"):
-            kwargs[name] = qubits
-        elif lname in ("num_circles", "num_iq_circles_to_plot", "n_circles"):
-            kwargs[name] = int(params.get("num_iq_circles_to_plot", 12))
+            value, source = qubits, "machine.qubits"
+        elif lname == "pair_names" and pair_names:
+            value, source = list(pair_names), pair_source
+        elif lname == "qubit_pairs" and pair_names and machine is not None:
+            pairs = getattr(machine, "qubit_pairs", {})
+            missing = [n for n in pair_names if n not in pairs]
+            if missing:
+                decisions[name] = {"status": "unbound", "source": pair_source, "missing": missing}
+                raise ValueError(f"saved pairs missing from snapshot: {missing!r}")
+            value, source = [pairs[n] for n in pair_names], "machine.qubit_pairs via " + pair_source
+        elif path.startswith("node.parameters.") and path.removeprefix("node.parameters.") in params:
+            key = path.removeprefix("node.parameters.")
+            value, source = params[key], "parameters." + key
+        elif lname in params:
+            value, source = params[lname], "parameters." + lname
+        elif _PARAM_ALIASES.get(lname) in params:
+            key = _PARAM_ALIASES[lname]
+            value, source = params[key], "parameters." + key
+        elif path.startswith("node.results.") and path.removeprefix("node.results.") in results:
+            key = path.removeprefix("node.results.")
+            value, source = results[key], "data." + key
+        elif lname in results:
+            value, source = results[lname], "data." + lname
+        elif _RESULT_ALIASES.get(lname) in results:
+            key = _RESULT_ALIASES[lname]
+            value, source = results[key], "data." + key
+        elif lname == "gate_max_ns" and "partner_gate_window_ns" in getattr(ds_fit, "attrs", {}):
+            value, source = ds_fit.attrs["partner_gate_window_ns"], "ds_fit.attrs.partner_gate_window_ns"
+        if source is not None:
+            kwargs[name] = value
+            decisions[name] = {"status": "bound", "source": source, "value": _report_value(value)}
+            if reconstruction:
+                decisions[name]["records"] = reconstruction
         elif p.default is not inspect.Parameter.empty:
-            pass  # keep the function's own default
+            decisions[name] = {"status": "defaulted", "source": "signature", "value": _report_value(p.default)}
         else:
+            decisions[name] = {"status": "unbound", "source": None}
             raise ValueError(f"unbound required arg {name!r}")
     return kwargs
 
@@ -167,9 +322,14 @@ def main() -> int:
     params = _deep_find(node, "parameters") or {}
     if not isinstance(params, dict):
         params = {}
+    params = params.get("model", params)
+    try:
+        results = json.loads((Path(args.run) / "data.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        results = {}
 
     result = {"schema": "iplot/v1", "util": util, "node_name": node_name,
-              "figures": [], "errors": []}
+              "figures": [], "errors": [], "bind_report": {}}
 
     if not _VALID_UTIL.match(util):
         result["errors"].append({"stage": "import",
@@ -235,12 +395,17 @@ def main() -> int:
         if args.only and key != args.only:
             continue
         fn = getattr(U, fname)
+        report = result["bind_report"][key] = {}
         try:
-            kwargs = _bind_args(fn, ds_raw=ds_raw, ds_fit=ds_fit, qubits=qubits, params=params)
+            kwargs = _bind_args(fn, ds_raw=ds_raw, ds_fit=ds_fit, qubits=qubits, params=params,
+                                results=results, machine=machine, node_tree=node_tree,
+                                plot_imports=plot_imports, bind_report=report)
             fig = fn(**kwargs)
             if fig is None:
                 raise ValueError("plot function returned None")
-            result["figures"].append(extract_figure(fig, key, title=key.replace("_", " ")))
+            extracted = extract_figure(fig, key, title=key.replace("_", " "))
+            extracted["bind_report"] = report
+            result["figures"].append(extracted)
             import matplotlib.pyplot as plt
             plt.close("all")
         except Exception:
