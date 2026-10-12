@@ -465,6 +465,8 @@ def _match_archive(figures, saved, aliases):
 
 
 def main() -> int:
+    if "--serve" in sys.argv[1:]:
+        return serve()
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
     ap.add_argument("--source-root", default="",
@@ -476,6 +478,10 @@ def main() -> int:
     ap.add_argument("--only", default="", help="extract just this figure key")
     args = ap.parse_args()
 
+    return _emit(replay(args), args.out)
+
+
+def _execute(args):
     import matplotlib
     matplotlib.use("Agg")
 
@@ -502,7 +508,7 @@ def main() -> int:
     if not _VALID_UTIL.match(util):
         result["errors"].append({"stage": "import",
                                  "trace": f"refusing non-identifier util name {util!r}"})
-        return _emit(result, args.out)
+        return result
 
     try:
         import importlib
@@ -516,7 +522,7 @@ def main() -> int:
         result["util"] = util
     except Exception:
         result["errors"].append({"stage": "import", "trace": traceback.format_exc()})
-        return _emit(result, args.out)
+        return result
 
     # qubits
     try:
@@ -527,7 +533,7 @@ def main() -> int:
         qubits = [machine.qubits[n] for n in qnames if n in machine.qubits]
     except Exception:
         result["errors"].append({"stage": "qubits", "trace": traceback.format_exc()})
-        return _emit(result, args.out)
+        return result
 
     # datasets
     def _open(name):
@@ -535,7 +541,9 @@ def main() -> int:
         if not os.path.exists(p):
             return None
         try:
-            return xr.open_dataset(p)
+            ds = xr.open_dataset(p)
+            args.datasets.append(ds)
+            return ds
         except Exception:
             # Autodetect failed. NetCDF-classic bytes under the .h5 name
             # (xarray's scipy engine wrote them in an env without netCDF4)
@@ -547,13 +555,15 @@ def main() -> int:
                         eng = "scipy"
             except OSError:
                 pass
-            return xr.open_dataset(p, engine=eng)
+            ds = xr.open_dataset(p, engine=eng)
+            args.datasets.append(ds)
+            return ds
     try:
         ds_raw = _open("ds_raw")
         ds_fit = _open("ds_fit")
     except Exception:
         result["errors"].append({"stage": "datasets", "trace": traceback.format_exc()})
-        return _emit(result, args.out)
+        return result
 
     from iplot_extract import extract_figure
 
@@ -581,7 +591,49 @@ def main() -> int:
     if args.only:
         result["figures"] = [f for f in result["figures"]
                              if args.only in (f["key"], f["source_key"], f["function_key"])]
-    return _emit(result, args.out)
+    return result
+
+
+SERVE_MARK = "@@SM-IPLOT@@"
+
+
+def replay(args):
+    args.datasets = []
+    try:
+        return _execute(args)
+    finally:
+        import matplotlib.pyplot as plt
+        plt.close("all")
+        for ds in args.datasets:
+            close = getattr(ds, "close", None)
+            if close:
+                close()
+
+
+def serve():
+    """One request and one marked response per line; imports stay warm."""
+    from types import SimpleNamespace
+    out = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        for line in sys.stdin:
+            if not line.strip():
+                continue
+            try:
+                spec = json.loads(line)
+                args = SimpleNamespace(run=spec["run"], source_root=spec.get("source_root") or "",
+                                       only=spec.get("only") or "", util=spec.get("util") or "",
+                                       qubits=spec.get("qubits") or "", out="")
+                result = replay(args)
+                result["status"] = "ok"
+            except BaseException:
+                result = {"status": "error", "figures": [], "errors": [
+                    {"stage": "request", "trace": traceback.format_exc()}]}
+            out.write(SERVE_MARK + json.dumps(result, default=_json_default, allow_nan=False) + "\n")
+            out.flush()
+    finally:
+        sys.stdout = out
+    return 0
 
 
 def _json_default(o):

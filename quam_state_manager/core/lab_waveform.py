@@ -35,6 +35,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from quam_state_manager.core import lab_worker
 from quam_state_manager.core.ramcache import Keyed, KeyedMemo
 
 logger = logging.getLogger(__name__)
@@ -60,11 +61,7 @@ MACRO_PREFIX = "@macro:"
 
 
 def _env_lock(python_path: str) -> threading.Lock:
-    with _SLOT_LOCK:
-        lk = _ENV_LOCKS.get(python_path)
-        if lk is None:
-            lk = _ENV_LOCKS[python_path] = threading.Lock()
-        return lk
+    return lab_worker.machine_lock
 
 
 def _canon(params: dict) -> str:
@@ -142,125 +139,23 @@ _WORKERS_LOCK = threading.Lock()
 IMPORT_PREFIX = "@import:"
 
 
-class _Worker:
-    """``run_pulse_waveform.py --serve`` kept alive between edits.
-
-    Safe to reuse only while it would answer exactly what a cold run answers
-    now, so :meth:`fresh` is checked before EVERY request:
-
-    * the process is alive, the env signature it was started under still
-      holds (a ``pip install`` moves it) and so does the process environment
-      it inherited (``PYTHONPATH`` decides which lab module is imported);
-    * every out-of-env file it imported (the lab's editable module) still has
-      the stat it had WHEN IMPORTED -- the worker reports first-seen stats, not
-      re-stats, so an edit after the import is caught here and the worker is
-      killed, never asked.
-
-    Anything unexpected (a timeout, a dead pipe, a garbled line) kills it and
-    the caller falls back to one cold run. It is killed after ``WARM_IDLE_S``
-    idle, when another env is selected, and at interpreter exit."""
+class _Worker(lab_worker.Worker):
+    """Waveform adapter retaining the public warm/prewarm contract."""
 
     def __init__(self, python_path: str):
-        import queue
-        import subprocess
         from quam_state_manager.core.config_generator import _script_path
-        kwargs = {}
-        if os.name == "nt":
-            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
-        self.python_path = python_path
-        self.env_sig = _env_sig(python_path)
-        # a cold run inherits the environment AT ITS SPAWN (PYTHONPATH decides
-        # which lab module is imported): the warm one must still match it
-        self.environ = dict(os.environ)
-        self.sources: dict[str, Any] = {}
-        self.proc = subprocess.Popen(
-            [python_path, "-B", str(_script_path("run_pulse_waveform.py")), "--serve"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
-            bufsize=1, env=env, cwd=tempfile.gettempdir(), **kwargs)
-        self._q: "queue.Queue[str | None]" = queue.Queue()
-        threading.Thread(target=self._pump, daemon=True,
-                         name="lab-waveform-warm").start()
-        self._idle: threading.Timer | None = None
-        self.requests = 0
-        self.timed_out = False
-        # w9/labwarm: False until the process has answered once (its imports
-        # are done); what the UI's "Preparing your lab code..." asks
-        self.ready = False
-        self.t_spawn = time.monotonic()
-        self.t_ready: float | None = None
-        self.prewarmed = False
+        super().__init__(python_path, str(_script_path("run_pulse_waveform.py")),
+                         _WARM_MARK, signature=_env_sig)
 
-    def _pump(self) -> None:
-        try:
-            for line in self.proc.stdout:          # type: ignore[union-attr]
-                if line.startswith(_WARM_MARK):
-                    self._q.put(line[len(_WARM_MARK):])
-        except Exception:  # noqa: BLE001
-            pass
-        self._q.put(None)
+    def ask(self, items, timeout):
+        return super().ask({"items": items}, timeout)
 
-    def fresh(self) -> bool:
-        if self.proc.poll() is not None:
-            return False
-        if _env_sig(self.python_path) != self.env_sig:
-            return False
-        if dict(os.environ) != self.environ:
-            return False
-        for f, rec in self.sources.items():
-            now = _stat(f)
-            if now is None or list(now) != list(rec or []):
-                return False
-        return True
-
-    def ask(self, items: list[dict], timeout: float) -> dict | None:
-        import queue
-        try:
-            self.proc.stdin.write(json.dumps({"items": items}, default=repr) + "\n")  # type: ignore[union-attr]
-            self.proc.stdin.flush()                                                   # type: ignore[union-attr]
-            line = self._q.get(timeout=timeout)
-        except queue.Empty:
-            self.timed_out = True       # the lab's code did not answer
-            return None
-        except (OSError, ValueError):
-            return None
-        if line is None:
-            return None
-        try:
-            parsed = json.loads(line)
-        except ValueError:
-            return None
-        if parsed.get("status") != "ok":
-            return None
-        for f, rec in (parsed.get("sources") or {}).items():
-            self.sources.setdefault(f, rec)
-        self.requests += 1
-        if not self.ready:
-            self.ready = True
-            self.t_ready = time.monotonic()
-        self._arm_idle()
-        return parsed
-
-    def _arm_idle(self) -> None:
+    def _arm_idle(self):
         if self._idle is not None:
             self._idle.cancel()
         self._idle = threading.Timer(WARM_IDLE_S, _retire, args=(self.python_path, self))
         self._idle.daemon = True
         self._idle.start()
-
-    def kill(self) -> None:
-        if self._idle is not None:
-            self._idle.cancel()
-        try:
-            self.proc.stdin.close()                 # type: ignore[union-attr]
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            self.proc.kill()
-            self.proc.wait(timeout=5)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def _retire(python_path: str, worker: "_Worker | None" = None) -> None:
@@ -544,6 +439,7 @@ def _run_cold(python_path: str, items: list[dict]) -> dict:
         out["error"] = ("the selected Python environment no longer exists — "
                         "reselect it in Generate Config")
         return out
+    lab_worker.retire_except()
     outcome = _blank_outcome()
     work_dir = Path(tempfile.mkdtemp(prefix="quamlabwf_"))
     try:

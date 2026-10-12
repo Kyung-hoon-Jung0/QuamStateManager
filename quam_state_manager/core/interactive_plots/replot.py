@@ -96,6 +96,36 @@ def replot_capability(run, instance_path) -> dict:
     return {"available": True, "reason": "", "util": util, "env": env}
 
 
+_PLOT_WORKER = None
+
+
+def _warm_request(env, folder, source_root, timeout):
+    global _PLOT_WORKER
+    from quam_state_manager.core import lab_worker
+    if not Path(env).is_file():
+        return None
+    context = str(source_root or "")
+    w = _PLOT_WORKER
+    if w is not None and (w.context != context or w.python_path != env or not w.fresh()):
+        w.kill()
+        w = None
+    try:
+        if w is None:
+            w = lab_worker.Worker(env, str(_script_path()), "@@SM-IPLOT@@", context=context)
+            _PLOT_WORKER = w
+        lab_worker.retire_except(w)
+        result = w.ask({"run": str(folder), "source_root": context}, timeout)
+        if result is not None:
+            return result
+        w.kill()
+        _PLOT_WORKER = None
+    except (OSError, ValueError):
+        if w is not None:
+            w.kill()
+        _PLOT_WORKER = None
+    return None
+
+
 def replot_run(run, instance_path, *, source_root: str | None = None,
                force: bool = False, timeout: int = 180) -> dict:
     """Re-run the experiment's plotting in the selected env; return ``iplot/v1`` JSON.
@@ -147,7 +177,15 @@ def replot_run(run, instance_path, *, source_root: str | None = None,
         args = [env, str(_script_path()), "--run", str(folder), "--out", out_path]
         if source_root:
             args += ["--source-root", source_root]
-        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        from quam_state_manager.core import lab_worker
+        with lab_worker.machine_lock:
+            result = _warm_request(env, folder, source_root, timeout)
+            if result is None:
+                lab_worker.retire_except()
+                proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                                      env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+            else:
+                Path(out_path).write_text(json.dumps(result), encoding="utf-8")
         try:
             with open(out_path, "r", encoding="utf-8") as fh:
                 result = json.load(fh)
