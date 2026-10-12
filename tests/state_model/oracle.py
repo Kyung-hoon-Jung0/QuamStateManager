@@ -204,6 +204,9 @@ class Unit:
     kind: str = "edit"          # edit | wholesale
     foreign: bool = False
     no_previous_state: bool = False
+    saved: bool = False
+    landed: bool = False
+    discarded: bool = False
 
     def effect(self) -> dict[str, tuple[Any, Any]]:
         """Net leaf-level effect, first old / last new per leaf."""
@@ -455,7 +458,11 @@ class Model:
     def save(self) -> Outcome:
         if not self.T:
             return Outcome("noop", "no unsaved changes")
-        self._journal_append(self._units_of_tray())
+        # v1.3.0: untracked saved units -> track ownership for SU-04 and SU-19.
+        units = self._units_of_tray()
+        for u in units:
+            u.saved = True
+        self._journal_append(units)
         orig = {}
         for e in self.T:
             orig.setdefault(e.path, MISSING if e.created else e.old)
@@ -490,6 +497,7 @@ class Model:
         return Outcome("pulled")
 
     def _adopt_live(self) -> None:
+        self._discard_saved_units()
         self.W = copy.deepcopy(self.L)
         self.Ws = copy.deepcopy(self.L)
         self.B = copy.deepcopy(self.L)
@@ -578,6 +586,7 @@ class Model:
     def stage(self, doc: dict, *, force: bool) -> Outcome:
         if (self.T or self.dirty) and not force:
             return Outcome("needs_confirm")
+        self._discard_saved_units()
         self.W = copy.deepcopy(doc)
         self.Ws = copy.deepcopy(doc)
         self.staged_doc = copy.deepcopy(doc)
@@ -589,6 +598,13 @@ class Model:
         return Outcome("staged_doc")
 
     # -- live writers ------------------------------------------------------
+    def _saved_units(self) -> list[Unit]:
+        return [u for u in self.J if u.saved and not u.landed and not u.discarded]
+
+    def _discard_saved_units(self) -> None:
+        for u in self._saved_units():
+            u.discarded = True
+
     def _wholesale_entries(self, before: dict | None = None, staged_over: bool = True) -> list[Entry]:
         """The docs/160 B wholesale unit with the docs/65 mixed-state rule:
         live before the write -> the payload, a tray subtree add/delete left
@@ -597,7 +613,9 @@ class Model:
         after = copy.deepcopy(self.W)
         excl: list[str] = []
         staged_vals: dict[str, Any] = {}
-        for e in self.T:
+        # v1.3.0: tray only -> saved units also own their edits (SU-04).
+        saved_entries = [e for u in self._saved_units() for e in u.entries]
+        for e in saved_entries + self.T:
             if e.created or e.deleted:
                 excl.append(e.path)
             else:
@@ -611,15 +629,6 @@ class Model:
         base = self.L if before is None else before
         return [e for e in _entries_between(base, after)
                 if not any(e.path == x or e.path.startswith(x + ".") for x in excl)]
-
-    def _dup_note(self, door: str, unit: Unit | None) -> None:
-        """SU-04: a wholesale unit computed against the saved working copy
-        re-records edits a Save already journaled."""
-        if unit is None or not self.stash:
-            return
-        dup = sorted(set(self.stash) & {e.path for e in unit.entries})
-        if dup:
-            self.notes.append(("K:SU-04", f"{door} journaled saved edits twice: {dup[:3]}"))
 
     def _land(self, *, kind: str, wholesale: Unit | None = None, wholesale_below: bool = True,
               snapshot: bool = True) -> Outcome:
@@ -641,8 +650,25 @@ class Model:
             self.touched = False
             return Outcome("converged", kind)
         if wholesale is not None:
-            units = ([wholesale] + units) if wholesale_below else (units + [wholesale])
+            if wholesale_below:
+                # v1.3.0: above saved units -> below the saved tail (SU-04).
+                # v1.3.0: empty-tray wholesale retained redo -> fork at the persisted cursor.
+                self.J = self.J[:self.pcursor]
+                tail = 0
+                for u in reversed(self.J):
+                    if not u.saved or u.landed or u.discarded:
+                        break
+                    tail += 1
+                self._journal_append(units)
+                self.J.insert(len(self.J) - len(units) - tail, wholesale)
+                self.J = self.J[-MAX_UNITS:]
+                self.cursor = self.pcursor = len(self.J)
+                units = []
+            else:
+                units.append(wholesale)
         self._journal_append(units)
+        for u in self._saved_units():
+            u.landed = True
         if snapshot:
             self.last_apply_pre = before
         self.L = copy.deepcopy(self.W)
@@ -677,7 +703,7 @@ class Model:
                     self.refused_land = self.land_count
                 return Outcome("refused", "no_backup")
             if not pending and not self.moved() and self.L is not GONE:
-                return Outcome("noop", "nothing to apply")
+                return self._noop_apply()
         else:
             # v1.3.0: a missing chip could save or noop -> refuse unchanged before save.
             if self.L is GONE:
@@ -689,7 +715,7 @@ class Model:
                     self.refused_land = self.land_count
                 return Outcome("refused", "live unreadable" if self.L is UNREADABLE else "stale_live")
             if not pending:
-                return Outcome("noop", "nothing to apply")
+                return self._noop_apply()
             if not self.readable():
                 return Outcome("refused", "live unreadable")
         moved = self.moved()
@@ -703,20 +729,21 @@ class Model:
         wholesale = None
         if self.staged and self.staged_doc is not None:
             wholesale = Unit(entries=self._wholesale_entries(), kind="wholesale")
-            self._dup_note("Apply after a stage", wholesale)
         elif force and self.L is GONE:
             # v1.3.0: journal top-level creates -> refuse the undo, no earlier document exists.
             wholesale = Unit(entries=[], kind="wholesale", no_previous_state=True)
         elif force and self.readable():
             # the overwritten live content, up to the working copy the tray
-            # edits sit on (the edits are their own units above it). SU-04:
-            # SM records it whether or not live moved, so saved edits that
-            # already have their own unit are journaled a second time.
+            # edits sit on; saved and current edits are their own units above it.
             ents = self._wholesale_entries()
             wholesale = Unit(entries=ents, kind="wholesale") if ents else None
-            self._dup_note("Keep mine", wholesale)
         return self._land(kind="keep_mine" if force else "apply", wholesale=wholesale,
                           wholesale_below=True)
+
+    def _noop_apply(self) -> Outcome:
+        # v1.3.0: early no-op retained refusals -> successful Apply advances the sync point.
+        self._converged()
+        return Outcome("noop", "nothing to apply")
 
     def _converged(self) -> Outcome:
         """docs/116: live already holds exactly the payload -- not a conflict."""
@@ -745,7 +772,6 @@ class Model:
                 return Outcome("refused", "conflict")
             unit = (Unit(entries=self._wholesale_entries(), kind="wholesale")
                     if self.staged and self.staged_doc is not None else None)
-            self._dup_note("Pull & apply after a stage", unit)
             return self._land(kind="apply", wholesale=unit)
         if check and not ack:
             open_ = [p for p in self.conflicts() if p not in (picks or {})]
@@ -776,6 +802,7 @@ class Model:
             return Outcome("needs_confirm")
         if not self.readable():
             return Outcome("refused", "live unreadable")
+        self._discard_saved_units()
         before = copy.deepcopy(self.L)
         unit = Unit(entries=_entries_between(self.L, doc), kind="wholesale")
         if same(self.L, doc):
@@ -809,6 +836,9 @@ class Model:
 
     # -- the journal walk (Ctrl+Z on an empty tray / a jrn: top) -------------
     def walk_undo(self) -> Outcome:
+        # v1.3.0: inverse of discarded saves -> skip them, RAM cursor only (SU-19).
+        while 0 < self.cursor <= len(self.J) and self.J[self.cursor - 1].discarded:
+            self.cursor -= 1
         if self.cursor <= 0 or self.cursor > len(self.J):
             return Outcome("noop", "exhausted")
         unit = self.J[self.cursor - 1]
@@ -826,11 +856,7 @@ class Model:
             self.notes.append(("K:SU-19", "Ctrl+Z met a unit the working copy no longer holds "
                                           "(Undo (staged) failed, 409)"))
             return Outcome("refused", "inverse not stageable")
-        if any(e.path in self.typefixed and isinstance(e.old, str) and not isinstance(e.new, str)
-               for e in unit.entries):
-            self.notes.append(("K:SU-14", "Ctrl+Z cannot walk past a type-fix: staging the old text "
-                                          "into the now-typed field fails (409), every later press too"))
-            return Outcome("refused", "type assignment")
+        # v1.3.0: type assignment refusal -> historical values restored verbatim (SU-14).
         drift = any(not _eq(get(self.W, p), new) for p, (_old, new) in unit.effect().items())
         inv = [Entry(e.path, e.new, e.old, gid=f"jrn:{id(unit)}", created=e.deleted, deleted=e.created)
                for e in reversed(unit.entries)]
