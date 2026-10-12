@@ -159,6 +159,8 @@ def _is_colorbar_axes(ax, traces):
     Decided *after* extraction so a real ``pcolormesh`` heatmap (which yields a
     heatmap trace) is never mistaken for the narrow power colorbar beside it.
     """
+    if getattr(ax, "_colorbar", None) is not None:
+        return True
     if traces:
         return False
     strips = [c for c in ax.collections if isinstance(c, (QuadMesh, LineCollection))]

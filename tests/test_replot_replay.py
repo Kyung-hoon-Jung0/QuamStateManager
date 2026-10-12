@@ -313,6 +313,24 @@ def test_archive_matching_includes_standalone_and_reports_extras(tmp_path):
     assert figures[2]["archive_key"] is None
 
 
+def test_colorbar_marker_does_not_become_archive_panel():
+    plt = pytest.importorskip("matplotlib.pyplot")
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    from quam_state_manager.core.interactive_plots import replot
+    fig, ax = plt.subplots()
+    mesh = ax.pcolormesh([[0, 1], [2, 3]])
+    colorbar = fig.colorbar(mesh, ax=ax)
+    colorbar.ax.axhline(1.0, color="red")
+    try:
+        extracted = extract_figure(fig, "map")
+        assert extracted["axes"][0]["is_colorbar"] is False
+        assert extracted["axes"][1]["is_colorbar"] is True
+        axes = extracted["axes"]
+        assert len(replot._group_panels(axes, replot._drawable(axes))) == 1
+    finally:
+        plt.close(fig)
+
+
 def test_archive_alias_reaches_worker_and_only_filter(replay):
     import matplotlib.pyplot as plt
 
