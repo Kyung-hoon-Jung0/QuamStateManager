@@ -53,6 +53,34 @@ def test_optional_bounded_origin(tmp_path):
     assert chip.edit(PATH, "0.00004", provenance=json.dumps(ORIGIN)).get_json()["ok"]
 
 
+@pytest.mark.parametrize("batch", [False, True])
+def test_complete_unicode_origin_is_persistable(tmp_path, batch):
+    from quam_state_manager.core import pending_tray
+    chip = Chip(tmp_path)
+    origin = {**ORIGIN, "text": "\U0001f600" * 300}
+    if batch:
+        r = chip.c.post("/field/edit-batch", json={
+            "updates": [{"dot_path": PATH, "value": "0.00004"}], "provenance": origin})
+    else:
+        r = chip.c.post("/field/edit", data={
+            "dot_path": PATH, "value": "0.00004", "provenance": json.dumps(origin)})
+    assert r.status_code == 200 and r.get_json()["ok"], r.data
+    pending_tray.flush_all()
+    doc = json.loads(pending_tray.sidecar_path(chip.ctx["working_copy"]).read_text(encoding="utf-8"))
+    assert doc["entries"][0]["origin"] == origin
+
+
+@pytest.mark.parametrize("endpoint", ["/state/review", "/changes"])
+def test_tray_origin_text_is_visible_and_escaped(tmp_path, endpoint):
+    chip = Chip(tmp_path)
+    text = "derived from <script>example</script>"
+    chip.edit(PATH, "0.00004", provenance=json.dumps({**ORIGIN, "text": text}))
+    html = chip.c.get(endpoint).get_data(as_text=True)
+    assert "derived from &lt;script&gt;example&lt;/script&gt;" in html
+    assert text not in html
+    assert "muted" in html
+
+
 def _apply(chip):
     r = chip.c.post("/state/apply-to-live")
     assert r.status_code == 200, r.data
@@ -271,3 +299,45 @@ def test_mixed_origin_is_visible_through_a_pointer(tmp_path):
     point = answer["rows"]["v"]["points"][-1]
     assert (point.get("ref") or {}).get("text") == ORIGIN["text"]
     assert point["run_uid"] == ORIGIN["run_uid"]
+    effective = answer["rows"]["v"]["effective"][-1]
+    assert (effective.get("ref") or {}).get("text") == ORIGIN["text"]
+    assert effective["run_uid"] == ORIGIN["run_uid"]
+
+
+def test_mixed_origins_follow_physical_qubits_across_a_rename(tmp_path):
+    from quam_state_manager.core import rename_lineage, value_history
+    from quam_state_manager.web import routes
+    from tests.test_rename_history import make, record, state, WIRING
+    env = make(tmp_path, [], state({"q1": 5e9, "q2": 6e9}))
+    client = env["client"]
+    other = {**ORIGIN, "text": "derived from the second qubit", "run_uid": "run-8"}
+    for path, value, origin in (("qubits.q1.f_01", "5100000000", ORIGIN),
+                               ("qubits.q2.f_01", "6100000000", other),
+                               ("qubits.q1.T1", "0.00006", None)):
+        data = {"dot_path": path, "value": value}
+        if origin is not None:
+            data["provenance"] = json.dumps(origin)
+        r = client.post("/field/edit", data=data)
+        assert r.status_code == 200 and r.get_json()["ok"], r.data
+    assert client.post("/state/apply-to-live").status_code == 200
+    rec = record(["q1", "q2"], ["q0", "q1"], {"q0": "q1", "q1": "q2"})
+    before = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+    renamed, wiring = rename_lineage.Step(rec).fwd_state(before, WIRING)
+    renamed["extras"]["qubit_renames"] = [rec]
+    (env["live"] / "state.json").write_text(json.dumps(renamed), encoding="utf-8")
+    (env["live"] / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+    assert client.post("/state/sync", data={"mode": "discard", "force": "1"}).status_code == 200
+    with env["app"].app_context():
+        ctx = routes._active_ctx()
+        chip_dir = routes._hub_chip_dir(ctx["path"])
+    targets = {q: value_history.target(ctx["store"].merged, f"qubits.{q}.f_01")
+               for q in ("q0", "q1")}
+    answer = value_history.read(chip_dir, targets,
+                                lineage=rename_lineage.Lineage([rec]), era=(rec["id"],))
+    for q, origin in (("q0", ORIGIN), ("q1", other)):
+        for series in ("points", "effective"):
+            applied = [p for p in answer["rows"][q][series] if p["kind"] == "sm_apply"]
+            assert applied, answer["rows"][q][series]
+            point = applied[0]
+            assert point["ref"]["text"] == origin["text"]
+            assert point["run_uid"] == origin["run_uid"]

@@ -1197,7 +1197,8 @@ def _composite_answer(comp: dict, judgement, tgt: dict, index, roots: dict, poin
         eff_raw.append(raw(dict(m, old=running), r[4]))
         eff_meta.append(m)
         running = new
-    effective = points(eff_raw)
+    origin_segments = [(index.positions[m["ev"]["eid"]], m["holder"]) for m in eff_meta]
+    effective = points(eff_raw, tgt["path"], origin_segments)
     for i, (p, m) in enumerate(zip(effective, eff_meta)):
         p["holder"] = m["holder"] or here
         if m["moved"] and i and p["provenance"] != "first_record":
@@ -1561,10 +1562,12 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
         if path:
             for p in pts:
                 origins = (p.get("ref") or {}).get("origins") or {}
-                origin = origins.get(path)
-                if origin is None and origins and segments:
+                origin = None
+                if origins and segments:
                     holder = _segment_at(segments, index.positions[p["eid"]])
                     origin = next((o for k, o in origins.items() if holder_spelling(k) == holder), None)
+                elif origins:
+                    origin = origins.get(path)
                 if origin is not None:
                     p["ref"] = {k: origin[k] for k in ("request_hash", "text") if k in origin}
                     p["run_uid"] = origin.get("run_uid")

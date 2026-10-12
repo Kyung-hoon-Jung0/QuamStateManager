@@ -42,4 +42,5 @@ is bounded to 300 characters and escaped for display. Apply All uses row
 origins and, when they agree, a top-level origin. The same metadata rides
 the existing chip-confirmation, type-fix, and compensation retries. Truncation
 preserves complete Unicode characters. Mixed origins are matched to the
-stored holder at each history point, including reads through pointers.
+stored holder in that event's rename era, including effective history through
+pointers. A reused qubit name never selects another physical qubit's origin.
