@@ -496,7 +496,7 @@ def main() -> int:
     except (OSError, ValueError):
         results = {}
 
-    result = {"schema": "iplot/v1", "util": util, "node_name": node_name,
+    result = {"schema": "iplot/v2", "util": util, "node_name": node_name,
               "figures": [], "errors": [], "bind_report": {}, "not_produced": []}
 
     if not _VALID_UTIL.match(util):

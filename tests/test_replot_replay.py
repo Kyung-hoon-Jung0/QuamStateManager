@@ -12,6 +12,15 @@ import pytest
 from quam_state_manager.generator import run_interactive_replot as runner
 
 
+@pytest.fixture(autouse=True)
+def headless_figures():
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+    except ImportError:
+        pass
+
+
 def test_serializer_preserves_every_line_and_fit_summary():
     import matplotlib.pyplot as plt
     from quam_state_manager.generator.iplot_extract import extract_figure
@@ -24,16 +33,18 @@ def test_serializer_preserves_every_line_and_fit_summary():
     ax.text(.1, .9, "fit summary", transform=ax.transAxes)
     ax.plot([1], [2], marker="*", linestyle="None", alpha=0)
     ax.plot([], [])
+    ax.plot([0, 1], [2, 3], linestyle="None")
     out = extract_figure(fig, "fit")
     plt.close(fig)
     traces = out["axes"][0]["traces"]
-    assert len(traces) == 8
+    assert len(traces) == 9
     fits = [t for t in traces if t["name"] == "fit"]
     assert len(fits) == 2
     assert all(t["opacity"] == .3 and t["zorder"] == 7 and
                t["drawstyle"] == "steps-post" and t["linestyle"] == ":" for t in fits)
-    assert traces[-2]["mode"] == "markers" and traces[-2]["opacity"] == 0
-    assert traces[-1]["x"] == []
+    assert traces[-3]["mode"] == "markers" and traces[-3]["opacity"] == 0
+    assert traces[-2]["x"] == []
+    assert traces[-1]["mode"] == "none"
     assert out["axes"][0]["annotations"][0]["text"] == "fit summary"
 
 
@@ -114,6 +125,7 @@ def test_map_metadata_and_full_resolution(monkeypatch):
     reduced = replot.mpljson_to_plotly(out)
     m = [t for t in reduced["data"] if t["type"] == "heatmap"][2]
     assert m["meta"]["preview_reduced"] and len(m["z"]) <= 400
+    assert any("full array retained" in s for s in reduced["notices"])
     assert replot.full_map(result, "maps", 2, 0)["z"] == full["z"]
 
 
@@ -126,6 +138,130 @@ def test_map_nonmonotonic_edges_reported():
     plt.close(fig)
     assert out["axes"][0]["traces"] == []
     assert out["axes"][0]["skipped"][0]["artist"] == "QuadMesh"
+
+
+def test_renderer_artist_meaning_and_notes():
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm, TwoSlopeNorm
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    from quam_state_manager.core.interactive_plots import replot
+    fig, axes = plt.subplots(1, 2)
+    ax = axes[0]
+    hm = ax.pcolormesh([1, 2, 4], [1, 2, 3], [[1, 10], [100, 1000]],
+                       norm=LogNorm(1, 1000), cmap="twilight_shifted")
+    fig.colorbar(hm, ax=ax, label="signal (V)")
+    other = axes[1].imshow([[-2, 0], [1, 4]], norm=TwoSlopeNorm(0, -2, 4))
+    fig.colorbar(other, ax=axes[1], label="offset")
+    ax.set_xscale("log")
+    ax.plot([1, 2, 3], [1, 2, 1], drawstyle="steps-post", alpha=.4, zorder=9, label="fit")
+    ax.fill_between([1, 2], [1, 1], [2, 2], alpha=.2)
+    ax.contour([[0, 1], [1, 2]], levels=[.5])
+    ax.axvline(1.4, alpha=.5)
+    ax.axhline(2.5)
+    ax.axvspan(1.1, 1.2, alpha=.25)
+    ax.secondary_xaxis("top", functions=(lambda x: x ** 2, lambda x: x ** .5)).set_xlabel("squared")
+    ax.annotate("pick", (2, 2), xytext=(3, 3), arrowprops={"arrowstyle": "->"})
+    ax.twinx().text(.5, .5, "twin note", transform=ax.transAxes)
+    fig.text(.4, .03, "summary")
+    out = extract_figure(fig, "render")
+    plt.close(fig)
+    out["axes"][0]["skipped"] = [{"artist": "Unknown", "n": 2, "reason": "custom transform"}]
+    converted = replot.mpljson_to_plotly(out)
+    data, layout = converted["data"], converted["layout"]
+    assert len([t for t in data if t.get("fill") == "toself"]) == 1
+    fit = next(t for t in data if t.get("name") == "fit")
+    assert fit["line"]["shape"] == "hv" and fit["opacity"] == .4 and fit["zorder"] == 9
+    assert any(t.get("name") == "level 0.5" for t in data)
+    assert layout["xaxis"]["type"] == "log"
+    assert layout["xaxis"]["domain"][1] < layout["xaxis2"]["domain"][0]
+    assert layout["yaxis"]["domain"] == layout["yaxis2"]["domain"]
+    assert "xaxis201" in layout
+    assert any(t.get("xaxis") == "x201" for t in data)
+    assert layout["xaxis201"]["overlaying"] == "x" and layout["xaxis201"]["title"]["text"] == "squared"
+    assert layout["xaxis201"]["ticktext"] == [f"{v ** 2:.6g}" for v in layout["xaxis201"]["tickvals"]]
+    assert "shapes" in layout
+    assert any(s["type"] == "line" and s["yref"] == "y domain" for s in layout["shapes"])
+    assert any(s["type"] == "line" and s["xref"] == "x domain" for s in layout["shapes"])
+    assert any(s["type"] == "rect" and s["yref"] == "y domain" and s["opacity"] == .25 for s in layout["shapes"])
+    hm, other = [t for t in data if t["type"] == "heatmap"]
+    assert hm["z"] == [[0, 1], [2, 3]] and hm["zmin"] == 0 and hm["zmax"] == 3
+    assert hm["customdata"] == [[1, 10], [100, 1000]]
+    assert hm["colorbar"]["title"]["text"] == "signal (V)" and len(hm["colorscale"]) == 257
+    assert other["z"] == [[0, .5], [.625, 1]]
+    assert hm["showscale"] and other["showscale"]
+    assert any(a["text"] == "summary" and a["xref"] == "paper" for a in layout["annotations"])
+    assert all("color" not in a["font"] for a in layout["annotations"] if a["text"] == "summary")
+    assert any(a["text"] == "twin note" for a in layout["annotations"])
+    assert any(a["text"] == "pick" and a["showarrow"] and a["axref"] == "x" for a in layout["annotations"])
+    arrow = next(a for a in layout["annotations"] if a["text"] == "pick")
+    assert arrow["x"] == math.log10(2) and arrow["ax"] == math.log10(3)
+    assert len(converted["notices"]) == 1
+    assert "Unknown x2" in converted["notices"][0]
+
+
+def test_unsupported_figure_artist_is_reported():
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    from quam_state_manager.core.interactive_plots.replot import mpljson_to_plotly
+    fig = plt.figure()
+    fig.add_artist(Circle((.2, .2), .1, transform=fig.transFigure))
+    extracted = extract_figure(fig, "custom")
+    plt.close(fig)
+    assert len(extracted["skipped"]) == 1
+    converted = mpljson_to_plotly(extracted)
+    assert len(converted["notices"]) == 1 and "Circle x1" in converted["notices"][0]
+
+
+def test_unsupported_coordinates_and_norms_are_named():
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import SymLogNorm
+    from matplotlib.transforms import IdentityTransform
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    fig, ax = plt.subplots()
+    ax.imshow([[-1, 1], [2, 3]], norm=SymLogNorm(1))
+    ax.text(1, 2, "display", transform=IdentityTransform())
+    ax.annotate("offset", (1, 2), xycoords="figure pixels")
+    fig.text(1, 2, "display", transform=IdentityTransform())
+    out = extract_figure(fig, "unsupported")
+    plt.close(fig)
+    assert {s["artist"] for s in out["axes"][0]["skipped"]} == {"AxesImage", "Text", "Annotation"}
+    assert len(out["skipped"]) == 1 and out["skipped"][0]["artist"] == "FigureText"
+    assert out["axes"][0]["annotations"] == []
+
+
+def test_replot_renderer_selfcheck():
+    import subprocess
+    from pathlib import Path
+    proc = subprocess.run(["node", str(Path(__file__).with_name("replot_artists_selfcheck.cjs"))],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_renderer_annotation_coordinates_and_empty_mesh_notice():
+    import matplotlib.pyplot as plt
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    from quam_state_manager.core.interactive_plots.replot import mpljson_to_plotly
+    fig, ax = plt.subplots()
+    ax.pcolormesh([0, 2, 1], [0, 1, 2], [[1, 2], [3, 4]])
+    extracted = extract_figure(fig, "mesh")
+    plt.close(fig)
+    assert not extracted["axes"][0]["is_colorbar"]
+    assert "QuadMesh x1" in mpljson_to_plotly(extracted)["notices"][0]
+    fig, ax = plt.subplots()
+    ax.set_xscale("log")
+    ax.set_xlim(1, 100)
+    ax.annotate("fraction", (.2, .7), xycoords="axes fraction")
+    ax.annotate("offset", (10, 2), xytext=(6, 9), textcoords="offset points")
+    extracted = extract_figure(fig, "notes")
+    plt.close(fig)
+    notes = mpljson_to_plotly(extracted)["layout"]["annotations"]
+    fraction = next(n for n in notes if n["text"] == "fraction")
+    offset = next(n for n in notes if n["text"] == "offset")
+    assert fraction["xref"] == "x domain" and fraction["x"] == .2
+    assert fraction["yref"] == "y domain" and fraction["y"] == .7
+    assert offset["x"] == 1 and offset["y"] == 2
+    assert offset["xshift"] == 8 and offset["yshift"] == 12
 
 
 def test_module_resolution_reads_node_imports(tmp_path, monkeypatch):
@@ -361,6 +497,8 @@ def test_dict_returns_worker_envelope(replay):
     def plot_data():
         return {"left": plt.figure(), "right": plt.figure()}
     result = replay(plot_data)
+    # v1.3.0: v1 -> v2, the payload now carries explicit artist and map metadata.
+    assert result["schema"] == "iplot/v2"
     assert len(result["figures"]) == 2
     assert result["errors"] == []
 

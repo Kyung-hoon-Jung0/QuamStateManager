@@ -1,4 +1,4 @@
-"""Generic matplotlib ``Figure`` -> structured JSON extractor (``iplot/v1``).
+"""Generic matplotlib ``Figure`` -> structured JSON extractor (``iplot/v2``).
 
 Runs inside the QM-stack subprocess (where numpy + matplotlib are importable),
 never in the State-Manager process. The State-Manager side
@@ -11,10 +11,8 @@ hover / click-to-apply) reproduction that tracks whatever the experiment's own
 out of the Axes — so when the analysis changes, this output changes with it and
 no per-experiment porting is needed.
 
-Supported artists (the bounded set QM calibration plots use): ``Line2D`` (lines
-+ markers), ``PathCollection`` (scatter), ``QuadMesh`` (``pcolormesh`` ->
-heatmap), ``LineCollection`` (colorbar strips), and Axes-level ``Text``
-annotations. Anything unrecognised is skipped, never guessed.
+Lines, scatter, scalar maps, contours, fills, segments, text, annotations and
+secondary axes are retained. Unsupported content is counted in ``skipped``.
 """
 from __future__ import annotations
 
@@ -71,7 +69,7 @@ def _line_trace(ln):
     has_marker = ln.get_marker() not in ("None", " ", "", None)
     mode = ("lines" if has_line else "") + ("+markers" if has_marker and has_line else "")
     if not mode:
-        mode = "markers" if has_marker else "lines"
+        mode = "markers" if has_marker else "none"
     label = ln.get_label()
     return {
         "type": "line",
@@ -120,6 +118,7 @@ def _scatter_trace(coll):
         "marker_size": (_flist(np.sqrt(sizes)) if len(sizes) > 1
                         else (_f(np.sqrt(sizes[0])) if len(sizes) else 6.0)),
         "name": None if (label is None or str(label).startswith("_")) else str(label),
+        "zorder": _f(coll.get_zorder()),
         "opacity": float(coll.get_alpha()) if coll.get_alpha() is not None else 1.0,
     }
 
@@ -195,7 +194,7 @@ _CMAP = {"viridis": "Viridis", "plasma": "Plasma", "inferno": "Inferno",
          "gray": "Greys", "Greys": "Greys"}
 
 
-def _is_colorbar_axes(ax, traces):
+def _is_colorbar_axes(ax, traces, skipped=()):
     """A decorative strip: produced no usable traces yet carries mesh/line-strip art.
 
     Decided *after* extraction so a real ``pcolormesh`` heatmap (which yields a
@@ -203,7 +202,7 @@ def _is_colorbar_axes(ax, traces):
     """
     if getattr(ax, "_colorbar", None) is not None:
         return True
-    if traces:
+    if traces or skipped:
         return False
     strips = [c for c in ax.collections if isinstance(c, (QuadMesh, LineCollection))]
     return bool(strips)
@@ -213,13 +212,17 @@ def _annotations(ax):
     out = []
     for t in ax.texts:
         s = t.get_text()
-        if not s or not s.strip():
+        if isinstance(t, Annotation) and (t.xycoords not in ("data", "axes fraction") or
+                                         t.anncoords not in ("data", "axes fraction", "offset points")):
+            continue
+        if not isinstance(t, Annotation) and t.get_transform() not in (ax.transData, ax.transAxes):
             continue
         x, y = t.get_position()
         a = {
             "text": s,
             "x": _f(x), "y": _f(y),
-            "xref_frac": t.get_transform() == ax.transAxes,
+            "xref_frac": (t.anncoords == "axes fraction" if isinstance(t, Annotation)
+                          else t.get_transform() == ax.transAxes),
             "color": _hex(t.get_color()), "size": _f(t.get_fontsize()),
             "ha": t.get_ha(), "va": t.get_va(),
         }
@@ -312,10 +315,16 @@ def extract_axes(ax, axes):
                        "extent": _flist(image.get_extent()), **_map_metadata(image)})
     for patch in ax.patches:
         transform = patch.get_transform()
-        if any(transform.contains_branch_seperately(ax.transData)):
+        branches = transform.contains_branch_seperately(ax.transData)
+        if any(branches):
             vertices = transform.transform(patch.get_path().vertices)
             vertices = ax.transData.inverted().transform(vertices)
-            traces.append(_polygon_trace(vertices, patch))
+            trace = _polygon_trace(vertices, patch)
+            if not all(branches):
+                frac = ax.transAxes.inverted().transform(transform.transform(patch.get_path().vertices))
+                trace.update(coord="x-data-y-domain" if branches[0] else "x-domain-y-data")
+                trace["y" if branches[0] else "x"] = _flist(frac[:, 1 if branches[0] else 0])
+            traces.append(trace)
         else:
             skip(patch, "unsupported patch transform")
     secondary = []
@@ -334,6 +343,16 @@ def extract_axes(ax, axes):
             skip(child, "unsupported child axes")
     for artist in ax.artists:
         skip(artist, "unsupported artist")
+    for text in ax.texts:
+        if isinstance(text, Annotation):
+            if text.xycoords not in ("data", "axes fraction") or text.anncoords not in ("data", "axes fraction", "offset points"):
+                skip(text, "unsupported annotation coordinates")
+        elif text.get_transform() not in (ax.transData, ax.transAxes):
+            skip(text, "unsupported text transform")
+    for artist in list(ax.collections) + list(ax.images):
+        if isinstance(artist, QuadMesh) or artist in ax.images:
+            if type(artist.norm).__name__ not in ("Normalize", "LogNorm", "TwoSlopeNorm"):
+                skip(artist, "unsupported norm " + type(artist.norm).__name__)
     for ln, trace in zip(ax.lines, [t for t in traces if t["type"] == "line"]):
         if ln.get_transform() == ax.get_xaxis_transform():
             trace.update(role="vline", coord="x-data-y-domain")
@@ -351,7 +370,7 @@ def extract_axes(ax, axes):
         "y_side": ax.yaxis.get_label_position(),   # 'left' | 'right'
         "shares_x_with": _shared_index(ax, axes, "x"),  # twinx sibling (paired Y)
         "shares_y_with": _shared_index(ax, axes, "y"),  # twiny sibling (paired X)
-        "is_colorbar": _is_colorbar_axes(ax, traces),
+        "is_colorbar": _is_colorbar_axes(ax, traces, skipped),
         "show_legend": show_legend,
         "traces": traces,
         "secondary_axes": secondary,
@@ -363,7 +382,7 @@ def extract_axes(ax, axes):
 
 def _grid_pos(ax):
     try:
-        ss = ax.get_subplotspec()
+        ss = ax.get_subplotspec().get_topmost_subplotspec()
         g = ss.get_gridspec()
         return {"row": ss.rowspan.start, "col": ss.colspan.start,
                 "nrows": g.nrows, "ncols": g.ncols}
@@ -387,8 +406,11 @@ def extract_figure(fig, key, title=None):
         "texts": [{"text": t.get_text(), "x": _f(t.get_position()[0]),
                    "y": _f(t.get_position()[1]), "color": _hex(t.get_color()),
                    "size": _f(t.get_fontsize()), "ha": t.get_ha(), "va": t.get_va()}
-                  for t in f.texts],
-        "skipped": [],
+                  for t in f.texts if t.get_transform() == f.transFigure],
+        "skipped": [{"artist": type(a).__name__, "n": 1, "reason": "unsupported figure artist"}
+                    for a in list(f.artists) + list(f.images) + list(f.patches)] +
+                   [{"artist": "FigureText", "n": 1, "reason": "unsupported text transform"}
+                    for t in f.texts if t.get_transform() != f.transFigure],
     }
 
 

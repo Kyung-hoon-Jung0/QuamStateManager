@@ -15859,16 +15859,24 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             inner.style.width = '100%';
             inner.style.height = '360px';
             div.appendChild(inner);
+            (d.notices || []).forEach(function(message) {
+                var note = document.createElement('p');
+                note.className = 'muted ds-replot-note';
+                note.textContent = message;
+                div.appendChild(note);
+            });
             // r16 ⑤-1: HOUSE THEME — the raw server layout carries no colors,
             // so Plotly's light template painted near-black axis text on the
             // dark page (ndview was the only themed consumer).
             var layout = (window.PlotTheme && PlotTheme.houseLayout)
                 ? window.PlotTheme.houseLayout(d.layout || {}) : (d.layout || {});
             if (!layout.height) layout.height = 360;
+            inner.style.height = layout.height + 'px';
             // _plotlyRender lazy-loads Plotly and returns a promise; attach the
             // click handler only once the figure exists.
             Promise.resolve(_plotlyRender(inner, d.data, layout, {responsive: true})).then(function() {
                 if (stale()) { _purgeInteractiveTile(div); return; }
+                if (window.PlotHost) window.PlotHost.observe(inner);
                 if (d.clickable && typeof _attachInteractivePlotClickHandler === 'function') {
                     _attachInteractivePlotClickHandler(inner, d.clickable, runId);
                     inner.style.cursor = 'pointer';

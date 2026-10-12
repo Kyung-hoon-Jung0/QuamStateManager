@@ -13,6 +13,7 @@ extraction contract and ``docs/`` for the design rationale.
 from __future__ import annotations
 
 import json
+import math
 import logging
 import os
 import re
@@ -269,15 +270,20 @@ def _decimate(x, y, max_pts=_MAX_LINE_PTS):
 
 
 def _line_to_plotly(t, xref, yref):
-    x, y = _decimate(t["x"], t["y"])
+    x, y = (t["x"], t["y"]) if "zorder" in t else _decimate(t["x"], t["y"])
     d = {
-        "type": "scattergl" if len(x) > 400 else "scatter",
+        "type": "scattergl" if len(x) > 400 and "zorder" not in t else "scatter",
         "x": x, "y": y, "mode": t.get("mode", "lines"),
         "xaxis": xref, "yaxis": yref,
         "line": {"color": t.get("color"), "dash": t.get("dash", "solid"),
-                 "width": t.get("width") or 1.5},
+                 "width": t.get("width", 1.5),
+                 "shape": {"steps-pre": "vh", "steps-post": "hv", "steps-mid": "hvh"}.get(t.get("drawstyle"), "linear")},
         "opacity": t.get("opacity", 1.0),
     }
+    if "zorder" in t:
+        d["zorder"] = int(t.get("zorder") or 0)
+    if t.get("visible") is False:
+        d["visible"] = False
     if t.get("mode", "lines") != "lines":
         d["marker"] = {"color": t.get("color"), "size": t.get("marker_size") or 6,
                        "symbol": t.get("marker_symbol", "circle")}
@@ -290,14 +296,14 @@ def _line_to_plotly(t, xref, yref):
 
 
 def _scatter_to_plotly(t, xref, yref):
-    x, y = _decimate(t["x"], t["y"])
+    x, y = t["x"], t["y"]
     mc = t.get("marker_color")
     # a per-point colour list must match the (decimated) point count or Plotly
     # silently mis-colours; fall back to a single colour on any mismatch.
     if isinstance(mc, list) and len(mc) != len(x):
         mc = mc[0] if mc else None
     d = {
-        "type": "scattergl" if len(x) > 400 else "scatter",
+        "type": "scattergl" if len(x) > 400 and "zorder" not in t else "scatter",
         "x": x, "y": y, "mode": "markers",
         "xaxis": xref, "yaxis": yref,
         "marker": {"size": t.get("marker_size") or 6,
@@ -306,6 +312,8 @@ def _scatter_to_plotly(t, xref, yref):
     }
     if t.get("name"):
         d["name"] = t["name"]
+    if "zorder" in t:
+        d["zorder"] = int(t["zorder"] or 0)
     return d
 
 
@@ -334,6 +342,35 @@ def _heatmap_to_plotly(t, xref, yref):
     if full and not limited:
         result["x"] = t.get("x_edges", x)
         result["y"] = t.get("y_edges", y)
+    norm = t.get("norm") or {}
+    lo, hi, center = norm.get("vmin"), norm.get("vmax"), norm.get("vcenter")
+    result["opacity"] = t.get("opacity", 1)
+    cb = t.get("colorbar")
+    if cb is not None:
+        result["showscale"] = cb.get("visible", False)
+        result["colorbar"]["title"] = {"text": cb.get("label", "")}
+    if lo is not None and hi is not None:
+        result.update(zmin=lo, zmax=hi, zauto=False)
+    if norm.get("log") or center is not None:
+        def normal(v):
+            if v is None:
+                return None
+            if norm.get("log"):
+                return math.log10(v) if v > 0 else None
+            if v <= center:
+                return .5 * (v - lo) / (center - lo) if center != lo else .5
+            return .5 + .5 * (v - center) / (hi - center) if hi != center else .5
+        result["customdata"] = z
+        result["z"] = [[normal(v) for v in row] for row in z]
+        result["hovertemplate"] = "x=%{x}<br>y=%{y}<br>value=%{customdata}<extra></extra>"
+        if norm.get("log"):
+            result.update(zmin=math.log10(lo), zmax=math.log10(hi))
+            vals = [lo * (hi / lo) ** (i / 4) for i in range(5)]
+        else:
+            result.update(zmin=0, zmax=1)
+            vals = [lo, (lo + center) / 2, center, (center + hi) / 2, hi]
+        result["colorbar"].update(tickvals=[normal(v) for v in vals],
+                                 ticktext=[f"{v:.6g}" for v in vals])
     return result
 
 
@@ -350,7 +387,15 @@ def full_map(result: dict, key: str, axes_index: int, trace_index: int) -> dict 
 
 
 def _trace_to_plotly(t, xref, yref):
-    if t["type"] == "line":
+    if t["type"] in ("line", "contour", "polygon"):
+        if t["type"] == "polygon":
+            return {"type": "scatter", "x": t["x"], "y": t["y"],
+                    "xaxis": xref, "yaxis": yref, "mode": "lines",
+                    "fill": "toself", "fillcolor": t.get("color"),
+                    "line": {"width": 0}, "opacity": t.get("opacity", 1),
+                    "showlegend": False, "zorder": int(t.get("zorder") or 0)}
+        if t["type"] == "contour":
+            t = {**t, "name": f"level {t.get('level')}", "mode": "lines"}
         return _line_to_plotly(t, xref, yref)
     if t["type"] == "scatter":
         return _scatter_to_plotly(t, xref, yref)
@@ -364,13 +409,19 @@ def _axis_props(ax, *, log_key):
     scale = ax.get("xscale") if log_key == "x" else ax.get("yscale")
     if scale == "log":
         p["type"] = "log"
+    limits = ax.get(log_key + "lim")
+    if limits and all(v is not None for v in limits):
+        if scale != "log":
+            p["range"] = limits
+        elif all(v > 0 for v in limits):
+            p["range"] = [math.log10(v) for v in limits]
     return p
 
 
 def _drawable(axes):
     """Indices worth rendering: not a colorbar strip, and carrying ≥1 trace."""
     return [i for i, a in enumerate(axes)
-            if not a.get("is_colorbar") and a.get("traces")]
+            if not a.get("is_colorbar") and (a.get("traces") or a.get("annotations") or a.get("skipped"))]
 
 
 def _group_panels(axes, drawable):
@@ -439,7 +490,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     """
     axes = fig_json.get("axes", [])
     drawable = _drawable(axes)
-    if not drawable:
+    if not drawable and not fig_json.get("texts") and not fig_json.get("skipped"):
         return {"data": [], "title": fig_json.get("title", ""),
                 "layout": {"annotations": [
                     {"text": "(no interactive content)", "showarrow": False,
@@ -462,10 +513,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         base = axes[base_i]
         xref, yref = _ref("x", pid), _ref("y", pid)
 
-        for t in base["traces"]:
-            tr = _trace_to_plotly(t, xref, yref)
-            if tr:
-                data.append(tr)
+        _add_artists(base, xref, yref, data, layout, notes)
         layout[_axis_id("xaxis", pid)] = {**_axis_props(base, log_key="x"),
                                           "anchor": yref, "domain": [max(x0, 0), min(x1, 1)]}
         layout[_axis_id("yaxis", pid)] = {**_axis_props(base, log_key="y"),
@@ -481,20 +529,39 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                     **_axis_props(sec, log_key="x"), "anchor": yref,
                     "overlaying": xref, "side": sec.get("x_side", "top"),
                     "domain": [max(x0, 0), min(x1, 1)]}
-                for t in sec["traces"]:
-                    tr = _trace_to_plotly(t, xref2, yref)
-                    if tr:
-                        data.append(tr)
+                _add_artists(sec, xref2, yref, data, layout, notes)
             else:                                       # twinx → secondary right Y
                 yref2 = _ref("y", 100 + pid)
                 layout[_axis_id("yaxis", 100 + pid)] = {
                     **_axis_props(sec, log_key="y"), "anchor": xref,
                     "overlaying": yref, "side": sec.get("y_side", "right"),
                     "domain": [max(y0, 0), min(y1, 1)]}
-                for t in sec["traces"]:
-                    tr = _trace_to_plotly(t, xref, yref2)
-                    if tr:
-                        data.append(tr)
+                _add_artists(sec, xref, yref2, data, layout, notes)
+
+        for j, sec in enumerate(base.get("secondary_axes", [])):
+            kind = sec["axis"]
+            ref = xref if kind == "x" else yref
+            mapping = sec.get("map") or {}
+            values = mapping.get("parent", [])
+            labels = mapping.get("forward", [])
+            step = max(1, (len(values) - 1) // 4)
+            sid = 200 + pid + j * len(panels)
+            layout[_axis_id(kind + "axis", sid)] = {
+                **_axis_props(base, log_key=kind), "title": {"text": sec.get("label", "")},
+                "overlaying": ref, "matches": ref,
+                "anchor": yref if kind == "x" else xref, "side": sec.get("side", "top"),
+                "tickmode": "array", "tickvals": values[::step],
+                "ticktext": [f"{v:.6g}" if v is not None else "" for v in labels[::step]],
+                "showgrid": False, "zeroline": False}
+            if values:
+                endpoints = [values[0], values[-1]]
+                other = base.get("ylim" if kind == "x" else "xlim", [0, 1])[0]
+                data.append({"type": "scatter", "mode": "markers", "opacity": 0,
+                             "x": endpoints if kind == "x" else [other, other],
+                             "y": [other, other] if kind == "x" else endpoints,
+                             "xaxis": _ref("x", sid) if kind == "x" else xref,
+                             "yaxis": yref if kind == "x" else _ref("y", sid),
+                             "showlegend": False, "hoverinfo": "skip"})
 
         if ncols > 1 or nrows > 1:  # per-cell title for a real qubit grid
             ttl = base.get("title") or ""
@@ -503,23 +570,32 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                               "yref": "paper", "x": (x0 + x1) / 2, "y": min(y1 + ypad * 0.5, 1),
                               "xanchor": "center", "yanchor": "bottom",
                               "font": {"size": 11}})
-        for a in base.get("annotations", []):
-            if a.get("xref_frac") and a.get("text"):
-                notes.append({"text": a["text"], "showarrow": False, "xref": "paper",
-                              "yref": "paper", "x": max(x0, 0) + 0.005, "y": min(y1, 1) - 0.005,
-                              "xanchor": "left", "yanchor": "top",
-                              "font": {"size": 10}, "align": "left"})
 
     # One colorbar per figure: overlaid twiny heatmaps would otherwise stack two
     # colorbars (the source plots set add_colorbar=False — there's nothing to dupe).
     seen_cb = False
     for tr in data:
         if tr.get("type") == "heatmap":
-            tr["showscale"] = not seen_cb
-            seen_cb = True
+            cb = (tr.get("meta") or {}).get("colorbar")
+            if cb is None:
+                tr["showscale"] = not seen_cb
+                seen_cb = True
+            elif tr.get("showscale"):
+                xdomain = layout[_axis_id("xaxis", int(tr["xaxis"][1:] or 1))]["domain"]
+                ydomain = layout[_axis_id("yaxis", int(tr["yaxis"][1:] or 1))]["domain"]
+                tr["colorbar"].update(x=xdomain[1], y=sum(ydomain) / 2,
+                                      len=ydomain[1] - ydomain[0])
     has_top_axis = any(k.startswith("xaxis1") for k in layout)  # a twiny secondary top-X
 
-    layout["title"] = {"text": fig_json.get("suptitle") or fig_json.get("title", ""),
+    for text in fig_json.get("texts", []):
+        notes.append(_text_note(text, "paper", "paper"))
+    skipped = fig_json.get("skipped", []) + [s for a in axes if not a.get("is_colorbar") for s in a.get("skipped", [])]
+    notices = [f"{s['artist']} x{s['n']} ({s.get('reason', 'unsupported')})" for s in skipped]
+    if notices:
+        notices = ["Not shown: " + "; ".join(notices)]
+    if any((t.get("meta") or {}).get("preview_reduced") for t in data):
+        notices.append("Map preview reduced to the byte budget; full array retained server-side for map tools.")
+    layout["title"] = {"text": "" if fig_json.get("texts") else (fig_json.get("suptitle") or fig_json.get("title", "")),
                        "y": 0.99, "yanchor": "top"}
     layout["showlegend"] = True
     layout["legend"] = {"orientation": "h", "y": -0.12 / nrows, "x": 0.0}
@@ -527,4 +603,74 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     layout["height"] = max(320, 320 * nrows) + (26 if has_top_axis else 0)
     if notes:
         layout["annotations"] = notes
-    return {"data": data, "layout": layout, "title": fig_json.get("title", "")}
+    return {"data": data, "layout": layout, "title": fig_json.get("title", ""),
+            "skipped": skipped, "notices": notices}
+
+
+def _text_note(a, xref, yref):
+    result = {"text": a["text"], "showarrow": False, "x": a.get("x", 0), "y": a.get("y", 0),
+              "xref": xref, "yref": yref, "font": {"size": a.get("size", 10)},
+              "xanchor": {"center": "center", "right": "right"}.get(a.get("ha"), "left"),
+              "yanchor": {"center": "middle", "top": "top"}.get(a.get("va"), "bottom")}
+    if a.get("color") and a["color"] != "#000000":
+        result["font"]["color"] = a["color"]
+    return result
+
+
+def _add_artists(ax, xref, yref, data, layout, notes):
+    for t in sorted(ax.get("traces", []), key=lambda t: t.get("zorder") or 0):
+        coord = t.get("coord")
+        if coord and t["type"] == "polygon":
+            layout.setdefault("shapes", []).append({"type": "rect", "x0": min(t["x"]), "x1": max(t["x"]),
+                "y0": min(t["y"]), "y1": max(t["y"]),
+                "xref": xref + (" domain" if coord == "x-domain-y-data" else ""),
+                "yref": yref + (" domain" if coord == "x-data-y-domain" else ""),
+                "fillcolor": t.get("color"), "line": {"width": 0},
+                "opacity": t.get("opacity", 1), "layer": "below"})
+        elif coord and t["type"] == "line":
+            layout.setdefault("shapes", []).append({"type": "line", "x0": t["x"][0], "x1": t["x"][-1],
+                "y0": t["y"][0], "y1": t["y"][-1], "xref": xref + (" domain" if coord == "x-domain-y-data" else ""),
+                "yref": yref + (" domain" if coord == "x-data-y-domain" else ""),
+                "line": {"color": t.get("color"), "width": t.get("width", 1), "dash": t.get("dash", "solid")},
+                "opacity": t.get("opacity", 1)})
+        else:
+            trace = _trace_to_plotly(t, xref, yref)
+            if trace:
+                data.append(trace)
+    for a in ax.get("annotations", []):
+        frac = a.get("xref_frac", False)
+        note = _text_note(a, xref + (" domain" if frac else ""), yref + (" domain" if frac else ""))
+        if not a.get("arrow") and a.get("textcoords") == "offset points":
+            frac = a.get("xycoords") == "axes fraction"
+            note.update(x=a["xy"][0], y=a["xy"][1],
+                        xref=xref + (" domain" if frac else ""),
+                        yref=yref + (" domain" if frac else ""),
+                        xshift=a["x"] * 96 / 72, yshift=a["y"] * 96 / 72)
+        if a.get("arrow"):
+            xycoords = a.get("xycoords", "data")
+            textcoords = a.get("textcoords", "data")
+            note.update(showarrow=True, arrowhead=2, x=a["xy"][0], y=a["xy"][1],
+                        xref=xref + (" domain" if xycoords == "axes fraction" else ""),
+                        yref=yref + (" domain" if xycoords == "axes fraction" else ""))
+            if xycoords == "axes fraction":
+                note.update(x=_fraction_data(ax, a["xy"][0], "x"), y=_fraction_data(ax, a["xy"][1], "y"),
+                            xref=xref, yref=yref)
+            if textcoords == "offset points":
+                note.update(ax=a["x"] * 96 / 72, ay=-a["y"] * 96 / 72)
+            else:
+                note.update(ax=_fraction_data(ax, a["x"], "x") if textcoords == "axes fraction" else a["x"],
+                            ay=_fraction_data(ax, a["y"], "y") if textcoords == "axes fraction" else a["y"],
+                            axref=xref, ayref=yref)
+        for field, ref, kind in (("x", "xref", "x"), ("y", "yref", "y"),
+                                 ("ax", "axref", "x"), ("ay", "ayref", "y")):
+            if field in note and " domain" not in note.get(ref, " domain") and ax.get(kind + "scale") == "log":
+                value = note[field]
+                note[field] = math.log10(value) if value is not None and value > 0 else None
+        notes.append(note)
+
+
+def _fraction_data(ax, value, kind):
+    lo, hi = ax.get(kind + "lim", [0, 1])
+    if ax.get(kind + "scale") == "log" and lo > 0 and hi > 0:
+        return lo * (hi / lo) ** value
+    return lo + (hi - lo) * value
