@@ -24947,7 +24947,12 @@ def _slot_copies(merged: dict, slot_path: str) -> list[str]:
     if len(parts) < 2 or parts[0] != "qubit_pairs":
         return []
     endpoints = {_qubit_name(merged, parts[1], role)
-                 for role in ("qubit_control", "qubit_target")}
+                 for role in ("qubit_control", "qubit_target")} - {None}
+    if not endpoints:
+        # a pair without control/target references: its id names its qubits
+        # ("qA1-qA2"), kept only where those qubits exist on this chip
+        qubits = merged.get("qubits") if isinstance(merged.get("qubits"), dict) else {}
+        endpoints = {name for name in parts[1].split("-") if name in qubits}
     try:
         slot_body = _walk_path(merged, slot_path.split("."))[1]
     except Exception:  # noqa: BLE001
