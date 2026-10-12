@@ -39407,6 +39407,13 @@ def dataset_replot_plot(uid):
     fig = replot_figure(result, fig_key)
     if fig is None:
         return jsonify({"error": "Figure not available"}), 404
+    if fig.get("clickable"):
+        names = _dataset_run_names(run.folder_path)
+        if names is not None and not names.identity:
+            from quam_state_manager.core import run_names
+            fig = dict(fig, clickable=run_names.translate_clickable(
+                fig["clickable"], names,
+                list(getattr(run, "qubits", None) or ()) + list(getattr(run, "qubit_pairs", None) or ())))
     return jsonify(fig)
 
 

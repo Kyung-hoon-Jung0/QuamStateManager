@@ -58,7 +58,7 @@ def _derive_util(node_name: str) -> str:
 def _fingerprint(folder: Path) -> str:
     """Run inputs, including saved results and state, with nanosecond stats."""
     parts = []
-    for name in ("node.json", "data.json", "ds_raw.h5", "ds_fit.h5", "quam_state/state.json", "quam_state/wiring.json"):
+    for name in ("node.json", "state_updates.json", "data.json", "ds_raw.h5", "ds_fit.h5", "quam_state/state.json", "quam_state/wiring.json"):
         p = folder / name
         try:
             st = p.stat()
@@ -191,13 +191,13 @@ def replot_run(run, instance_path, *, source_root: str | None = None,
             hit = _CACHE.get(key)
             if not force and hit and cache.valid(hit["meta"], context):
                 _CACHE.move_to_end(key)
-                return hit["result"]
+                return _with_click_contracts(hit["result"], run)
             if not force:
                 found = disk.load(context)
                 if found:
                     meta, result, size = found
                     _remember(key, meta, result, size)
-                    return result
+                    return _with_click_contracts(result, run)
             ev = _INFLIGHT.get(request_key)
             if ev is None:
                 ev = _INFLIGHT[request_key] = threading.Event()
@@ -220,11 +220,22 @@ def replot_run(run, instance_path, *, source_root: str | None = None,
                         _remember(key, meta, result, size)
                 except (OSError, ValueError):
                     logger.debug("replay disk cache unavailable", exc_info=True)
-        return result
+        return _with_click_contracts(result, run)
     finally:
         with _LOCK:
             _INFLIGHT.pop(request_key, None)
         ev.set()
+
+
+def _with_click_contracts(result, run):
+    """Attach fresh evidence proof even when the extracted artists are cached."""
+    from .learn_click import learn
+    figures = []
+    for original in result.get("figures", []):
+        figure = dict(original)
+        figure["clickable"] = learn(run, figure)
+        figures.append(figure)
+    return {**result, "figures": figures}
 
 
 def replot_menu(result: dict) -> list[dict]:
@@ -285,6 +296,10 @@ def replot_figure(result: dict, key: str) -> dict | None:
             converted["bind_report"] = f.get("bind_report", {})
             converted["revision"] = f.get("revision")
             converted["status_chip"] = f.get("status_chip")
+            converted["clickable"] = f.get("clickable")
+            converted["display_only_reason"] = f.get("display_only_reason", "")
+            if converted["display_only_reason"]:
+                converted.setdefault("notices", []).append(converted["display_only_reason"])
             return converted
     return None
 

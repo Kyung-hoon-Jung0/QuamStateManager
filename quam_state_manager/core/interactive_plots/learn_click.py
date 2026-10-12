@@ -164,6 +164,25 @@ def _defaults(figure):
     return defaults
 
 
+def _result_names(run, marker):
+    results = getattr(run, "fit_results", None) or (_read(run, "data.json") or {}).get("fit_results", {})
+    if not isinstance(results, dict):
+        return []
+    names = []
+
+    def visit(value, path):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                visit(item, path + [str(key)])
+        else:
+            number = _number(value)
+            if number is not None and abs(number - marker["coordinate"]) <= 1e-9 * max(abs(number), 1e-12):
+                names.append(".".join(path))
+
+    visit(results.get(marker["entity"], {}), [marker["entity"]])
+    return names
+
+
 def _candidates(entry, marker):
     if entry["old"] is None:
         return []
@@ -277,9 +296,11 @@ def learn(run, figure_payload):
         target = {"path": entry["path"], "path_template": entry["template"], "axis": marker["axis"],
                   "plotly_axis": marker["plotly_axis"], "entity": entry["entity"],
                   "scale": scale, "offset": offset, "transform_kind": kind,
+                  "marker_role": marker["role"],
                   "evidence_tier": tier, "evidence_label": tier_label, "marker_id": marker["id"],
                   "verified_on": str(getattr(run, "uid", None) or getattr(run, "folder_path", run)),
                   "provenance": {"formula": f"{kind}: clicked * {scale:g} + {offset:g}; {tier_label}; fit marker verified on this run",
+                                 "result_names": _result_names(run, marker),
                                  "inputs": [{"label": "pre-update value from evidence", "path": entry["path"],
                                              "frozen_value": entry["old"]}]}}
         if kind == "prefactor":
@@ -306,9 +327,15 @@ def learn(run, figure_payload):
         figure_payload["display_only_reason"] = figure_payload["display_only_reason"] or "no entity-owned fit marker"
         return None
     tier = entries[0]["tier"]
+    label = f"Learned from this run's {len({t['path'] for t in targets})} state writes; the fit marker reproduces them exactly"
+    label += " (proposed, not applied)" if tier == "proposed" else " (applied)"
+    for target in targets:
+        target["provenance"]["formula"] += "; " + label
+        names = target["provenance"]["result_names"]
+        if names:
+            target["provenance"]["formula"] += "; marker matches " + ", ".join(names)
     return {"axis": targets[0]["axis"], "qubit": next(iter(entities)) if len(entities) == 1 else None,
-            "label": f"Learned from this run's {len({t['path'] for t in targets})} state writes; the fit marker reproduces them exactly"
-                     + (" (proposed, not applied)" if tier == "proposed" else " (applied)"),
+            "label": label,
             "targets": targets, "learned": True, "verified_against": "patches" if tier == "applied" else "proposals",
             "evidence_tier": tier, "n_verified": len({t["path"] for t in targets})}
 

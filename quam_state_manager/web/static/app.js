@@ -16312,6 +16312,12 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
 
         var updates = [];
         clickable.targets.forEach(function(t) {
+            if (t.plotly_axis) {
+                var axisKey = (t.axis || clickable.axis) === 'y' ? 'yaxis' : 'xaxis';
+                var clickedAxis = (pt.fullData && pt.fullData[axisKey]) ||
+                                  (pt.data && pt.data[axisKey]) || (axisKey === 'yaxis' ? 'y' : 'x');
+                if (clickedAxis !== t.plotly_axis) return;
+            }
             // Per-target axis overrides the clickable-level axis (so one click can
             // set values from both x and y — e.g. flux on y, frequency on x).
             var av = ((t.axis || clickable.axis) === 'y') ? pt.y : pt.x;
@@ -16319,7 +16325,11 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
             var path = String(t.path).replace('{q}', qNow || '').replace('{name}', qNow || '');
             if (path.indexOf('{') >= 0) return;  // unresolved qubit → skip
             var value;
-            if (t.transform && t.transform.type === 'dbm_to_amp') {
+            if (t.transform && t.transform.type === 'prefactor') {
+                value = t.transform.old *
+                    (av * (t.transform.coordinate_scale == null ? 1 : t.transform.coordinate_scale) +
+                     (t.transform.coordinate_offset || 0));
+            } else if (t.transform && t.transform.type === 'dbm_to_amp') {
                 var amp0 = (t.transform.scale === undefined || t.transform.scale === null)
                            ? 1 : t.transform.scale;
                 value = amp0 * Math.pow(10, (av - t.transform.ref_dbm) / 20);
