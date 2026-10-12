@@ -37,6 +37,52 @@ def test_serializer_preserves_every_line_and_fit_summary():
     assert out["axes"][0]["annotations"][0]["text"] == "fit summary"
 
 
+def test_serializer_artist_coverage():
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from matplotlib.collections import LineCollection
+    from matplotlib.patches import Circle
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    fig, ax = plt.subplots()
+    ax.plot([1, 2], [1, 2])
+    ax.set_xscale("log")
+    ax.secondary_xaxis("top", functions=(lambda x: x * 2, lambda x: x / 2)).set_xlabel("scaled")
+    ax.contour([[0, 1], [1, 2]], levels=[.5, 1.5])
+    ax.fill_between([1, 2], [1, 2], [2, 3], alpha=.2)
+    ax.add_collection(LineCollection([[(1, 1), (1, 2)], [(2, 2), (2, 3)]]))
+    ax.imshow([[1, 2], [3, 4]], extent=(1, 3, 2, 6), origin="upper")
+    ax.scatter([1, 2], [2, 3], s=[16, 81], c=["red", "blue"])
+    ax.axvline(1.5)
+    ax.axhline(2.5)
+    ax.axvspan(1.1, 1.2, alpha=.3)
+    ax.annotate("pick", xy=(1, 2), xytext=(2, 3), arrowprops={"arrowstyle": "->"})
+    ax.twinx().plot([1, 2], [3, 4])
+    fig.text(.3, .05, "summary")
+    fig.suptitle("heading")
+    # A display-coordinate artist must be named rather than silently omitted.
+    ax.add_patch(Circle((.1, .1), .03, transform=fig.transFigure))
+    out = extract_figure(fig, "coverage")
+    plt.close(fig)
+    a = out["axes"][0]
+    ts = a["traces"]
+    assert a["xscale"] == "log" and out["axes"][1]["shares_x_with"] == 0
+    assert len([t for t in ts if t["type"] == "contour"]) == 2
+    assert {t["level"] for t in ts if t["type"] == "contour"} == {.5, 1.5}
+    assert len([t for t in ts if t["type"] == "polygon"]) == 2
+    assert len([t for t in ts if t["type"] == "line"]) == 5
+    assert {t.get("role") for t in ts} >= {"vline", "hline"}
+    image = next(t for t in ts if t["type"] == "heatmap")
+    assert image["y_edges"] == [6, 4, 2] and image["z"] == [[1, 2], [3, 4]]
+    scatter = next(t for t in ts if t["type"] == "scatter")
+    assert scatter["marker_size"] == [4, 9] and scatter["marker_color"] == ["#ff0000", "#0000ff"]
+    assert len(a["secondary_axes"]) == 1
+    assert a["secondary_axes"][0]["map"]["forward"] == [2 * v for v in a["secondary_axes"][0]["map"]["parent"]]
+    assert a["secondary_axes"][0]["map"]["inverse"] == a["secondary_axes"][0]["map"]["parent"]
+    assert a["annotations"][0]["arrow"] is True
+    assert {t["text"] for t in out["texts"]} == {"summary", "heading"}
+    assert a["skipped"] == [{"artist": "Circle", "n": 1, "reason": "unsupported patch transform"}]
+
+
 def test_module_resolution_reads_node_imports(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "path", list(sys.path))
     nodes = tmp_path / "calibrations" / "group"

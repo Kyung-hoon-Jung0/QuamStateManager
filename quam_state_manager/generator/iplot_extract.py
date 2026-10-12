@@ -19,7 +19,11 @@ annotations. Anything unrecognised is skipped, never guessed.
 from __future__ import annotations
 
 import numpy as np
-from matplotlib.collections import LineCollection, PathCollection, QuadMesh
+from matplotlib.collections import LineCollection, PathCollection, QuadMesh, PolyCollection
+from matplotlib.contour import ContourSet
+from matplotlib.text import Annotation
+from matplotlib.axes._secondary_axes import SecondaryAxis
+from matplotlib.path import Path
 from matplotlib.colors import to_hex
 
 
@@ -101,6 +105,7 @@ def _mpl_marker(m):
 
 
 def _scatter_trace(coll):
+    coll.update_scalarmappable()
     offs = np.asarray(coll.get_offsets())
     if offs.ndim != 2 or offs.shape[0] == 0:
         return None
@@ -112,9 +117,10 @@ def _scatter_trace(coll):
         "type": "scatter",
         "x": _flist(offs[:, 0]), "y": _flist(offs[:, 1]),
         "marker_color": (colors if colors and len(colors) > 1 else (colors[0] if colors else None)),
-        "marker_size": (_f(np.sqrt(sizes[0])) if len(sizes) else 6.0),
+        "marker_size": (_flist(np.sqrt(sizes)) if len(sizes) > 1
+                        else (_f(np.sqrt(sizes[0])) if len(sizes) else 6.0)),
         "name": None if (label is None or str(label).startswith("_")) else str(label),
-        "opacity": float(coll.get_alpha() or 1.0),
+        "opacity": float(coll.get_alpha()) if coll.get_alpha() is not None else 1.0,
     }
 
 
@@ -177,11 +183,18 @@ def _annotations(ax):
         if not s or not s.strip():
             continue
         x, y = t.get_position()
-        out.append({
+        a = {
             "text": s,
             "x": _f(x), "y": _f(y),
             "xref_frac": t.get_transform() == ax.transAxes,
-        })
+            "color": _hex(t.get_color()), "size": _f(t.get_fontsize()),
+            "ha": t.get_ha(), "va": t.get_va(),
+        }
+        if isinstance(t, Annotation):
+            a.update(arrow=t.arrow_patch is not None, xy=_flist(t.xy),
+                     xycoords=t.xycoords if isinstance(t.xycoords, str) else "unsupported",
+                     textcoords=t.anncoords if isinstance(t.anncoords, str) else "unsupported")
+        out.append(a)
     return out
 
 
@@ -208,6 +221,14 @@ def extract_axes(ax, axes):
     leg = ax.get_legend()
     show_legend = leg is not None
     traces = []
+    skipped = []
+    def skip(artist, reason):
+        name = type(artist).__name__
+        for entry in skipped:
+            if entry["artist"] == name and entry["reason"] == reason:
+                entry["n"] += 1
+                return
+        skipped.append({"artist": name, "n": 1, "reason": reason})
     for ln in ax.get_lines():
         t = _line_trace(ln)
         if t:
@@ -221,6 +242,72 @@ def extract_axes(ax, axes):
             t = _heatmap_trace(coll)
             if t:
                 traces.append(t)
+            else:
+                skip(coll, "mesh coordinates cannot be represented")
+        elif isinstance(coll, ContourSet):
+            if coll.filled:
+                skip(coll, "filled contour regions; levels retained")
+            traces.extend(_contour_traces(coll))
+        elif isinstance(coll, LineCollection):
+            colors, widths = coll.get_colors(), coll.get_linewidths()
+            for j, segment in enumerate(coll.get_segments()):
+                traces.append({"type": "line", "x": _flist(segment[:, 0]),
+                               "y": _flist(segment[:, 1]), "mode": "lines",
+                               "color": _hex(colors[j % len(colors)]) if len(colors) else None,
+                               "width": _f(widths[j % len(widths)]) if len(widths) else 1,
+                               "zorder": _f(coll.get_zorder()),
+                               "opacity": coll.get_alpha() if coll.get_alpha() is not None else 1})
+        elif isinstance(coll, PolyCollection):
+            for path in coll.get_paths():
+                for vertices in _path_parts(path):
+                    traces.append(_polygon_trace(vertices, coll))
+        else:
+            skip(coll, "unsupported collection")
+    for image in ax.images:
+        arr = np.ma.filled(image.get_array().astype(float), np.nan)
+        if arr.ndim != 2:
+            skip(image, "RGB images are not scalar maps")
+            continue
+        left, right, bottom, top = image.get_extent()
+        ny, nx = arr.shape
+        xe = np.linspace(left, right, nx + 1)
+        ye = np.linspace(top, bottom, ny + 1) if image.origin == "upper" else np.linspace(bottom, top, ny + 1)
+        traces.append({"type": "heatmap", "x": _flist((xe[1:] + xe[:-1]) / 2),
+                       "y": _flist((ye[1:] + ye[:-1]) / 2),
+                       "x_edges": _flist(xe), "y_edges": _flist(ye),
+                       "z": [_flist(row) for row in arr], "origin": image.origin,
+                       "extent": _flist(image.get_extent()), "colorscale": _CMAP.get(image.get_cmap().name, "Viridis")})
+    for patch in ax.patches:
+        transform = patch.get_transform()
+        if any(transform.contains_branch_seperately(ax.transData)):
+            vertices = transform.transform(patch.get_path().vertices)
+            vertices = ax.transData.inverted().transform(vertices)
+            traces.append(_polygon_trace(vertices, patch))
+        else:
+            skip(patch, "unsupported patch transform")
+    secondary = []
+    for child in ax.child_axes:
+        if isinstance(child, SecondaryAxis):
+            which = child._orientation
+            limits = ax.get_xlim() if which == "x" else ax.get_ylim()
+            values = np.linspace(*limits, 33)
+            forward, inverse = child._functions
+            mapped = np.asarray(forward(values))
+            secondary.append({"axis": which, "side": child._loc,
+                              "label": child.get_xlabel() if which == "x" else child.get_ylabel(),
+                              "map": {"parent": _flist(values), "forward": _flist(mapped),
+                                      "inverse": _flist(inverse(mapped))}})
+        else:
+            skip(child, "unsupported child axes")
+    for artist in ax.artists:
+        skip(artist, "unsupported artist")
+    for ln, trace in zip(ax.lines, [t for t in traces if t["type"] == "line"]):
+        if ln.get_transform() == ax.get_xaxis_transform():
+            trace.update(role="vline", coord="x-data-y-domain")
+        elif ln.get_transform() == ax.get_yaxis_transform():
+            trace.update(role="hline", coord="x-domain-y-data")
+        else:
+            trace["role"] = "markers" if trace.get("mode") == "markers" else "curve"
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
@@ -234,6 +321,8 @@ def extract_axes(ax, axes):
         "is_colorbar": _is_colorbar_axes(ax, traces),
         "show_legend": show_legend,
         "traces": traces,
+        "secondary_axes": secondary,
+        "skipped": skipped,
         "annotations": _annotations(ax),
         "grid": _grid_pos(ax),
     }
@@ -257,8 +346,47 @@ def extract_figure(fig, key, title=None):
         sup = f._suptitle.get_text()
     axes = f.get_axes()
     return {
+        "schema": "iplot/v2",
         "key": key,
         "title": title or sup or key,
         "suptitle": sup,
         "axes": [extract_axes(ax, axes) for ax in axes],
+        "texts": [{"text": t.get_text(), "x": _f(t.get_position()[0]),
+                   "y": _f(t.get_position()[1]), "color": _hex(t.get_color()),
+                   "size": _f(t.get_fontsize()), "ha": t.get_ha(), "va": t.get_va()}
+                  for t in f.texts],
+        "skipped": [],
     }
+
+
+def _path_parts(path):
+    vertices = path.vertices
+    if path.codes is None:
+        return [vertices]
+    starts = np.flatnonzero(path.codes == Path.MOVETO)
+    return [vertices[start:end] for start, end in zip(starts, list(starts[1:]) + [len(vertices)])]
+
+
+def _polygon_trace(vertices, artist):
+    color = artist.get_facecolor()
+    if np.asarray(color).ndim > 1:
+        color = color[0] if len(color) else "none"
+    return {"type": "polygon", "x": _flist(vertices[:, 0]), "y": _flist(vertices[:, 1]),
+            "color": _hex(color), "opacity": artist.get_alpha() if artist.get_alpha() is not None else _opacity(color),
+            "zorder": _f(artist.get_zorder())}
+
+
+def _contour_traces(coll):
+    out = []
+    colors = coll.get_edgecolors()
+    widths = coll.get_linewidths()
+    for j, path in enumerate(coll.get_paths()):
+        for vertices in _path_parts(path):
+            out.append({"type": "contour", "level": _f(coll.levels[j]),
+                        "levels": _flist(coll.levels), "x": _flist(vertices[:, 0]),
+                        "y": _flist(vertices[:, 1]), "mode": "lines",
+                        "color": _hex(colors[j % len(colors)]) if len(colors) else None,
+                        "width": _f(widths[j % len(widths)]) if len(widths) else 1,
+                        "zorder": _f(coll.get_zorder()),
+                        "opacity": coll.get_alpha() if coll.get_alpha() is not None else 1})
+    return out
