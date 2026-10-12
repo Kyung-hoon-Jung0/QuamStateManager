@@ -14,7 +14,7 @@
         <tbody>
         {% for c in changes %}
         <tr>
-            <td><code class="dot-path">{{ c.dot_path }}</code></td>
+            <td><code class="dot-path">{{ c.dot_path }}</code>{% if c.origin and c.origin.text %}<small class="muted">{{ c.origin.text }}</small>{% endif %}</td>
             {# r16 ②: show the actual values on created/deleted entries #}
             {% if c.created %}
             <td class="change-old muted">&mdash;</td>

@@ -87,6 +87,7 @@ class ChangeEntry:
     # docs/172: who staged it -- "human" from the window, "agent" through the
     # MCP bridge. The tray shows it; a human's Apply names the agent's share.
     actor: str = "human"
+    origin: dict | None = None
 
     def __setattr__(self, name, value):
         object.__setattr__(self, name, value)

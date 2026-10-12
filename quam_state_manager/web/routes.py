@@ -2722,10 +2722,12 @@ def _archive_write_blocked(ctx: dict | None = None):
     ), 409
 
 
-def _tagged(op: str, value: Any, gid: str | None):
+def _tagged(op: str, value: Any, gid: str | None, origin: dict | None = None):
     """One entry of the replay map. The group id rides ALONG (a 3-tuple) only
     when there IS one (final review, R-A1): a single-field edit is ungrouped
     exactly as before, so every 2-tuple caller and pin is untouched."""
+    if origin is not None:
+        return (op, value, gid, copy.deepcopy(origin))
     return (op, value) if gid is None else (op, value, gid)
 
 
@@ -2801,13 +2803,14 @@ def _capture_change_log_as_updates(store) -> dict:
         # would otherwise mutate the stashed object by reference) — audit D7.
         nv = copy.deepcopy(entry.new_value)
         gid = entry.group_id
+        origin = getattr(entry, "origin", None)
         if entry.created:
             prev = updates.get(path)
             if prev is not None and prev[0] == "delete":
                 updates.pop(path)
-                updates[path] = _tagged("replace", nv, gid)
+                updates[path] = _tagged("replace", nv, gid, origin)
             else:
-                updates[path] = _tagged("create", nv, gid)
+                updates[path] = _tagged("create", nv, gid, origin)
         elif entry.deleted:
             prev = updates.get(path)
             # Drop anything recorded inside the deleted subtree — the delete
@@ -2817,7 +2820,7 @@ def _capture_change_log_as_updates(store) -> dict:
                 updates.pop(stale)
             if prev is not None and prev[0] == "create":
                 continue  # created then deleted in this session → net nothing
-            updates[path] = _tagged("delete", None, gid)
+            updates[path] = _tagged("delete", None, gid, origin)
         else:
             prev = updates.get(path)
             # SU-09 kept the created subtree's record a SNAPSHOT (no aliasing),
@@ -2825,7 +2828,7 @@ def _capture_change_log_as_updates(store) -> dict:
             # into that record here -- it replays with the latest values.
             _fold_into_created(updates, path, nv)
             if prev is not None and prev[0] in ("create", "replace", "literal"):
-                updates[path] = _tagged(prev[0], nv, gid)
+                updates[path] = _tagged(prev[0], nv, gid, origin)
             elif is_pointer(nv) or is_pointer(entry.old_value):
                 # A re-link (new value IS a pointer) or a break-link (the field
                 # HELD a pointer) was written AT this leaf, never through an
@@ -2836,9 +2839,9 @@ def _capture_change_log_as_updates(store) -> dict:
                 # freshly pulled state and wrote the new pointer string into
                 # the old target: a field the user never opened (stress round
                 # 2026-09-16, docs/190 F01).
-                updates[path] = _tagged("literal", nv, gid)
+                updates[path] = _tagged("literal", nv, gid, origin)
             else:
-                updates[path] = _tagged("set", nv, gid)
+                updates[path] = _tagged("set", nv, gid, origin)
     return updates
 
 
@@ -2861,27 +2864,28 @@ def _merge_reapply(base: dict, incoming: dict) -> dict:
     out = dict(base)
     for path, opval in incoming.items():
         op, value, gid = _untag(opval)     # the incoming group id wins (R-A1)
+        origin = opval[3] if isinstance(opval, tuple) and len(opval) > 3 else None
         prev = out.get(path)
         if op == "create":
-            out[path] = _tagged("replace" if (prev and prev[0] == "delete") else "create", value, gid)
+            out[path] = _tagged("replace" if (prev and prev[0] == "delete") else "create", value, gid, origin)
         elif op == "delete":
             prefix = path + "."
             for stale in [p for p in out if p == path or p.startswith(prefix)]:
                 out.pop(stale)
             if prev and prev[0] == "create":
                 continue   # created then deleted across captures → net nothing
-            out[path] = _tagged("delete", None, gid)
+            out[path] = _tagged("delete", None, gid, origin)
         elif op == "replace":
             prefix = path + "."
             for stale in [p for p in out if p != path and p.startswith(prefix)]:
                 out.pop(stale)
-            out[path] = _tagged("replace", value, gid)
+            out[path] = _tagged("replace", value, gid, origin)
         elif op == "literal":
             out[path] = _tagged(prev[0] if (prev and prev[0] in ("create", "replace")) else "literal",
-                                value, gid)
+                                value, gid, origin)
         else:  # set
             out[path] = _tagged(prev[0] if (prev and prev[0] in ("create", "replace", "literal")) else "set",
-                                value, gid)
+                                value, gid, origin)
     return out
 
 
@@ -3299,6 +3303,21 @@ def _hub_pending(ctx, src: str, *, log=None, wholesale: bool = False, kind: str 
         kind = "agent" if (str(who).startswith("by_") or plan) else "sm_apply"
     if undoes is None:
         undoes = _hub_undoes_of(ctx, log)
+    _saved = set(_hub_saved_units(ctx))
+    _records = [e for u in (ctx.get("undo_units") or []) if str(u.get("id")) in _saved
+                for e in u.get("entries", [])]
+    _records += [{"path": e.dot_path, "origin": getattr(e, "origin", None)} for e in log]
+    _origins = {e["path"]: e.get("origin") for e in _records}
+    _plot_origins = {p: o for p, o in _origins.items() if o is not None}
+    if _plot_origins and kind in ("sm_apply", "agent"):
+        _values = list(_plot_origins.values())
+        if len(_plot_origins) == len(_origins) and all(o == _values[0] for o in _values) and not ctx.get("staged_base"):
+            _o = _values[0]
+            src = _o.get("src") or src
+            run_uid = _o.get("run_uid") or run_uid
+            ref = {**(ref or {}), **{k: _o[k] for k in ("request_hash", "text") if k in _o}}
+        else:
+            ref = {**(ref or {}), "origins": copy.deepcopy(_plot_origins)}
     by_path = {e.dot_path: getattr(e, "actor", None) for e in log}
     store, wc = ctx["store"], ctx["working_copy"]
     before_ref = before_ref if before_ref is not None else {}
@@ -4270,6 +4289,7 @@ def _redo_push_group(ctx, store, entries, *, mark: bool = True,
             "created": bool(e.created),
             "deleted": bool(e.deleted),
             "source_file": e.source_file,
+            **({"origin": copy.deepcopy(e.origin)} if getattr(e, "origin", None) is not None else {}),
         } for e in entries],
     })
     if len(frames) > _REDO_MAX_FRAMES:
@@ -4369,6 +4389,8 @@ def _replay_updates(modifier, updates: dict) -> dict:
         for dot_path, tagged in updates.items():
             op, value, _old_gid = _untag(tagged)
             gid = _gid_for(_old_gid)
+            _origin = tagged[3] if isinstance(tagged, tuple) and len(tagged) > 3 else None
+            _log_start = len(store.change_log)
             try:
                 if op == "create":
                     try:
@@ -4453,6 +4475,9 @@ def _replay_updates(modifier, updates: dict) -> dict:
                     # consistent with the 'create'/'replace' branches above.
                     modifier.set_value(target_path, value, _defer_hooks=True,
                                        coerce=False, enforce=False, group_id=gid)
+                if _origin is not None:
+                    for _e in store.change_log[_log_start:]:
+                        _e.origin = copy.deepcopy(_origin)
                 applied += 1
             except (KeyError, TypeError, ValueError, IndexError) as exc:
                 failed.append({"dot_path": dot_path, "error": str(exc)})
@@ -11197,7 +11222,8 @@ def field_edit():
             plan = _fsp_plan_for(modifier.store, target_path, raw_value)
             if plan is not None:
                 return _field_edit_batch_impl(
-                    _fsp_comp_payload(dot_path, raw_value, plan))
+                    {**_fsp_comp_payload(dot_path, raw_value, plan),
+                     **({"provenance": _origin} if _origin is not None else {})})
         # r14 ⑩: a field stored as TEXT that reads like a number ("0.13") is
         # un-fixable through the legacy coercer (old-type-preserving — typing
         # 0.14 quietly stayed text, forever). Never silent, never blocked:
@@ -11259,7 +11285,10 @@ def field_edit():
                                error=_lab_refusal_text(_lab[0]),
                                lab_follow=_lab_follow_payload(
                                    target_path, parsed, _lab_info)), 400
-            _entry = modifier.set_value(target_path, parsed)
+            with modifier.store._lock:
+                _entry = modifier.set_value(target_path, parsed)
+                if _origin is not None:
+                    _entry.origin = copy.deepcopy(_origin)
         finally:
             _lab_rel()
         if hasattr(_entry, "actor"):
@@ -12309,9 +12338,11 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
         else:
             label = f"{verb} by {who}"
         if p.get("run_uid"):
-            label += " (a run's state)"
+            _plot = p.get("src") in ("plot_click", "map_fit") or bool((p.get("ref") or {}).get("text"))
+            label += " (derived from a run)" if _plot else " (a run's state)"
             uid = p["run_uid"]
-            link_title = "Open the run whose saved state this apply wrote"
+            link_title = ("Open the run this value was derived from" if _plot
+                          else "Open the run whose saved state this apply wrote")
         # docs/301 F16 (docs/281: never raw door ids)
         from quam_state_manager.core import story as _story
         sub = f"SM write \u00b7 {_story.write_label(kind, p.get('src'))}"
@@ -12319,6 +12350,10 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
         if p.get("plan_id"):
             title += f", plan {p['plan_id']}"
         title += "."
+        _origin_text = (p.get("ref") or {}).get("text")
+        if _origin_text:
+            sub += " \u00b7 " + _origin_text
+            title += " " + _origin_text
         trigger = "manual" if kind in ("agent", "autofit") else "save"
     else:
         label = p.get("kind") or "unknown"
@@ -13702,6 +13737,11 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
         pairs = [(_normalize_dot_path(p.strip()), v, False)
                  for (p, v) in zip(dot_paths, raw_values)]
 
+    _origins = ([provenance(u) if "provenance" in u else _origin
+                 for u in payload["updates"] if isinstance(u, dict)]
+                if isinstance(payload, dict) and isinstance(payload.get("updates"), list)
+                else [_origin] * len(pairs))
+    _origins = [o for (p, _v, _c), o in zip(pairs, _origins) if p]
     pairs = [(p, v, c) for (p, v, c) in pairs if p]
     if not pairs:
         return jsonify(ok=False, error="No updates supplied"), 400
@@ -13930,6 +13970,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                     if _cr is not None:
                         raise ValueError(_cr)
                     entry = modifier.delete_subtree(dot_path, group_id=_batch_gid)
+                    if _origins[_row_n] is not None:
+                        entry.origin = copy.deepcopy(_origins[_row_n])
                     applied_entries.append(entry)
                     _ps_moved = True
                     results.append({"dot_path": dot_path, "resolved_path": entry.dot_path,
@@ -13992,6 +14034,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                             f"Bring the structure in first (Pull from live, "
                             f"or stage the version from State History)."
                         ) from ce
+                if _origins[_row_n] is not None:
+                    entry.origin = copy.deepcopy(_origins[_row_n])
                 applied_entries.append(entry)
                 _ps_moved = _ps_moved or _ps_moved_structure(entry)
                 # Echo the COMMITTED value (type-coerced by set_value) + its display
@@ -25857,6 +25901,8 @@ def _undo_journal_step(ctx, n_req: int = 1):
                                            enforce=False, group_id=gid)
                     if _differs(e.old_value, uent.get("new")):
                         drift += 1
+                if uent.get("origin") is not None:
+                    e.origin = copy.deepcopy(uent["origin"])
                 staged.append(e)
         except Exception as exc:   # noqa: BLE001 — any failure un-stages all
             for _ in staged:
@@ -26232,13 +26278,16 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
                             f"(now {_fmt_msg_val(cur)}); nothing was written")
         _redo_begin(ctx, store)
         try:
-            for (op, path, value, _src) in fops:
+            for _n, (op, path, value, _src) in enumerate(fops):
                 if op == "create":
                     staged.append(modifier.create_subtree(path, value, group_id=gid))
                 elif op == "delete":
                     staged.append(modifier.delete_subtree(path, group_id=gid))
                 else:
                     staged.append(modifier.set_value(path, value, coerce=False, group_id=gid))
+                _origin = unit["entries"][_n].get("origin")
+                if _origin is not None:
+                    staged[-1].origin = copy.deepcopy(_origin)
         except Exception as exc:  # noqa: BLE001 — all-or-nothing, still in memory
             for _ in staged:
                 try:
@@ -26493,6 +26542,8 @@ def redo():
                     else:
                         e = modifier.set_value(fe["path"], fe["new"], coerce=False,
                                                group_id=gid)
+                    if fe.get("origin") is not None:
+                        e.origin = copy.deepcopy(fe["origin"])
                     staged.append(e)
             except Exception as exc:   # noqa: BLE001 — all-or-nothing, frame dropped
                 for _ in staged:
@@ -27618,6 +27669,7 @@ def state_review():
             continue
         mine_rows.append({
             "index": i, "path": c.dot_path, "old": c.old_value, "new": c.new_value,
+            **({"origin": c.origin} if getattr(c, "origin", None) is not None else {}),
             "gid": getattr(c, "group_id", None) or "",
             "created": bool(getattr(c, "created", False)),
             "deleted": bool(getattr(c, "deleted", False)),

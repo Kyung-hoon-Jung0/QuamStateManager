@@ -772,6 +772,10 @@ def _restore(ctx, p: _Persister) -> None:
                     or row.source_file not in ("state", "wiring")
                     or type(row.created) is not bool or type(row.deleted) is not bool
                     or not isinstance(row.actor, str)
+                    or (row.origin is not None and (
+                        not isinstance(row.origin, dict)
+                        or set(row.origin) - {"src", "run_uid", "request_hash", "text"}
+                        or any(not isinstance(v, str) or len(v) > 300 for v in row.origin.values())))
                     or (row.group_id is not None and not isinstance(row.group_id, str))):
                 raise ValueError("the recovery row metadata is invalid")
         base_hash, applied = doc["base_hash"], doc["applied"]
@@ -794,7 +798,7 @@ def _restore(ctx, p: _Persister) -> None:
         flags = copy.deepcopy(flags)
         if flags.get("pending_reapply"):
             flags["pending_reapply"] = {
-                key: tuple(value) if (isinstance(value, list) and len(value) in (2, 3)
+                key: tuple(value) if (isinstance(value, list) and len(value) in (2, 3, 4)
                                      and value[0] in ("set", "literal", "create", "delete", "replace"))
                 else value for key, value in flags["pending_reapply"].items()}
         if type(doc["mutation_seq"]) is not int or doc["mutation_seq"] < 0:

@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS root_links(
 #   root_links     (root_id, folder): which live folder registered a data root
 #                  (the folder's comparison key, ``history._source_key``)
 _COLUMNS = (("events", "t_ord", "INTEGER"), ("events", "chash", "TEXT"), ("sm_events", "jpos", "INTEGER"),
-            ("events", "live", "TEXT"))
+            ("events", "live", "TEXT"), ("sm_events", "ref", "TEXT"))
 # The same statements one by one: a trigger body holds a ';', so the script
 # cannot be split on it, and executescript() would COMMIT the creating
 # transaction first.
@@ -811,11 +811,12 @@ class HubStore:
                         self.conn.execute("INSERT INTO sm_anchors VALUES(?,?)", (eid, anchor_hash))
                 self.conn.execute(
                     "INSERT INTO sm_events(eid,sm_id,outcome,base_chash,post_chash,run_uid,units,undoes,"
-                    "entries_n,entries,live,jpos) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "entries_n,entries,live,jpos,ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (eid, line["id"], outcome, line.get("base_hash"), line.get("post_hash"), line.get("run_uid"),
                      json_bytes(line.get("units") or []).decode("utf-8"),
                      json_bytes(line["undoes"]).decode("utf-8") if line.get("undoes") else None,
-                     int(line.get("n") or 0), keep_entries if landed_ok else None, line.get("live"), jpos))
+                     int(line.get("n") or 0), keep_entries if landed_ok else None, line.get("live"), jpos,
+                     json_bytes(line["ref"]).decode("utf-8") if line.get("ref") else None))
                 if landed_ok:
                     self.after_sm_placed(eid, ord_, t_us, succ, succ_flat, state_hash)
                 if journal_end is not None:

@@ -683,6 +683,7 @@ def _point(ev: dict, old: Any, new: Any, op: str, proven: bool, roots: dict,
         "folder": folder, "status": ev.get("status"),
         "actor": ev.get("actor"), "src": ev.get("src"), "plan_id": ev.get("plan_id"),
         "run_uid": info.get("run_uid"), "undoes": bool(info.get("undoes")),
+        **({"ref": info["ref"]} if info.get("ref") else {}),
         "flags": _flags(flags),
         "undone": None,
         # S10 C1.5: another folder's event in this folder's view (recorded
@@ -696,7 +697,7 @@ def _sm_info(conn, eids: Iterable[int]) -> dict:
     out: dict[int, dict] = {}
     for start in range(0, len(ids), 500):
         chunk = ids[start:start + 500]
-        sql = ("SELECT eid, sm_id, run_uid, undoes FROM sm_events WHERE eid IN ("
+        sql = ("SELECT eid, sm_id, run_uid, undoes, ref FROM sm_events WHERE eid IN ("
                + ",".join("?" for _ in chunk) + ")")
         for row in conn.execute(sql, chunk):
             try:
@@ -704,7 +705,7 @@ def _sm_info(conn, eids: Iterable[int]) -> dict:
             except ValueError:
                 targets = []
             out[row[0]] = {"sm_id": row[1], "run_uid": row[2], "undoes": row[3],
-                           "undo_targets": targets}
+                           "undo_targets": targets, "ref": json.loads(row[4]) if row[4] else None}
     return out
 
 
@@ -1555,8 +1556,14 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
         """What each event SAVED (one view per derive, shared reads)."""
         return saved_view(cache)
 
-    def points(rows):
+    def points(rows, path=None):
         pts = [_point(ev, old, new, op, proven, roots, sm) for ev, old, new, op, proven in rows]
+        if path:
+            for p in pts:
+                origin = ((p.get("ref") or {}).get("origins") or {}).get(path)
+                if origin is not None:
+                    p["ref"] = {k: origin[k] for k in ("request_hash", "text") if k in origin}
+                    p["run_uid"] = origin.get("run_uid")
         _mark_undone(rows, pts, sm)
         return pts
 
@@ -1564,7 +1571,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
     out_rows: dict[str, dict] = {}
     comp_keep: dict[str, tuple] = {}
     for key, tgt in targets.items():
-        pts = points(raw[key])
+        pts = points(raw[key], tgt["path"])
         here = tgt["holder"]
         for p in pts:
             # docs/296: the holder as spelled in that row's rename era
@@ -1658,7 +1665,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
             "not_kept": [nk_point(*r) for r in nk_raw[key]],
             "excursions": [exc_point(*r) for r in exc_raw[key]],
             **({"tail_excursion": exc_point(*tail_raw[key])} if key in tail_raw else {}),
-            "effective": [in_force(p, i) for i, p in enumerate(points(eff[key]))],
+            "effective": [in_force(p, i) for i, p in enumerate(points(eff[key], tgt["path"]))],
             "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
                           "holder": h} for s, h in segs[key]],
             "renames": _rename_marks(hsegs[key], index, eras)}

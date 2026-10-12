@@ -125,6 +125,7 @@ def make_unit(entries: list[ChangeEntry], ts: float | None = None,
                 "source_file": e.source_file,
                 "created": bool(e.created),
                 "deleted": bool(e.deleted),
+                **({"origin": copy.deepcopy(e.origin)} if getattr(e, "origin", None) is not None else {}),
                 "actor": getattr(e, "actor", "human"),      # docs/173: who staged it
             }
             for e in entries
