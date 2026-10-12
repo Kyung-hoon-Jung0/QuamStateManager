@@ -24,12 +24,14 @@ Prints a JSON envelope to ``--out`` (or stdout) and a one-line status to stderr.
 from __future__ import annotations
 
 import argparse
+import ast
 import inspect
 import json
 import os
 import re
 import sys
 import traceback
+from pathlib import Path
 
 
 def _eprint(*a):
@@ -54,6 +56,43 @@ def _derive_util(node_name: str) -> str:
 # A calibration_utils submodule is a single python identifier — never a dotted
 # path / traversal. Guards importlib.import_module(f"calibration_utils.{util}").
 _VALID_UTIL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def _resolve_node(node_name, source_root=""):
+    """Read plotting imports without executing the acquisition node."""
+    import importlib.util
+    roots = [Path(source_root).resolve()] if source_root else []
+    if not roots:
+        spec = importlib.util.find_spec("calibration_utils")
+        if spec and spec.submodule_search_locations:
+            roots = [Path(p).resolve().parent for p in spec.submodule_search_locations]
+    stem = re.sub(r"^[0-9]+[A-Za-z]?Q_", "", node_name)
+    for root in roots:
+        paths = [root]
+        tree_root = root / "calibrations"
+        if tree_root.is_dir():
+            paths += [tree_root] + sorted(p for p in tree_root.rglob("*") if p.is_dir())
+        for p in reversed(paths):
+            if str(p) not in sys.path:
+                sys.path.insert(0, str(p))
+        candidates = sorted(tree_root.rglob(stem + ".py")) if tree_root.is_dir() else []
+        if not candidates:
+            candidates = sorted(root.glob(stem + ".py"))
+        for path in candidates:
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            imports = {}
+            for item in ast.walk(tree):
+                if isinstance(item, ast.ImportFrom) and (item.module or "").startswith("calibration_utils."):
+                    for alias in item.names:
+                        if alias.name.startswith("plot_"):
+                            imports[alias.asname or alias.name] = (item.module, alias.name)
+            modules = {module for module, _ in imports.values()}
+            if len(modules) == 1:
+                module = next(iter(modules))
+                return module, tree, imports
+            if modules:
+                raise ValueError("node imports plotting functions from multiple modules")
+    return "calibration_utils." + _derive_util(node_name), None, {}
 
 
 def _read_node(run: str) -> dict:
@@ -141,7 +180,12 @@ def main() -> int:
         import importlib
         import xarray as xr
         from quam_config import Quam
-        U = importlib.import_module(f"calibration_utils.{util}")
+        module, node_tree, plot_imports = _resolve_node(node_name, args.source_root)
+        if args.util:
+            module = f"calibration_utils.{util}"
+        U = importlib.import_module(module)
+        util = module.removeprefix("calibration_utils.")
+        result["util"] = util
     except Exception:
         result["errors"].append({"stage": "import", "trace": traceback.format_exc()})
         return _emit(result, args.out)
