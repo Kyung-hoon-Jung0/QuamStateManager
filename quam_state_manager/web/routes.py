@@ -39476,6 +39476,88 @@ def dataset_replot_plot(uid):
     return jsonify(fig)
 
 
+def _map_figure(uid, body):
+    """Resolve server-owned arrays; client data and paths never become fit inputs."""
+    from quam_state_manager.web.request_body import BadBody
+    from quam_state_manager.core.interactive_plots import replot
+    resolved = _resolve_run(uid)
+    if not resolved or not (run := resolved[0].runs.get(resolved[1])):
+        raise BadBody("Run not found.")
+    key = body.get("fig", "")
+    if body.get("source", "replot") == "recipe":
+        from quam_state_manager.core.interactive_plots import build_interactive_figure
+        converted = build_interactive_figure(run, key)
+        if not converted:
+            raise BadBody("Figure not available.")
+        axes = []
+        for trace in converted.get("data", []):
+            if trace.get("type") != "heatmap":
+                continue
+            axis = {}
+            for dim in ("x", "y"):
+                ref = trace.get(dim + "axis", dim)
+                title = converted.get("layout", {}).get(dim + "axis" + ref[1:], {}).get("title", "")
+                axis[dim + "label"] = title.get("text", "") if isinstance(title, dict) else title
+            axes.append({**axis, "traces": [{**trace, "full_resolution": True}]})
+        figure = {"axes": axes}
+    else:
+        if not replot.replot_capability(run, current_app.instance_path)["available"]:
+            raise BadBody("Reproduction not available.")
+        result = replot.replot_run(run, current_app.instance_path)
+        figure = next((f for f in result.get("figures", []) if f["key"] == key), None)
+        converted = replot.replot_figure(result, key)
+        if not figure or not converted:
+            raise BadBody("Figure not available.")
+        figure = {**figure, "code_fingerprint": result.get("code_fingerprint")}
+    if converted.get("clickable"):
+        names = _dataset_run_names(run.folder_path)
+        if names is not None and not names.identity:
+            from quam_state_manager.core import run_names
+            converted = dict(converted, clickable=run_names.translate_clickable(
+                converted["clickable"], names,
+                list(getattr(run, "qubits", None) or ()) + list(getattr(run, "qubit_pairs", None) or ())))
+    return run, figure, converted
+
+
+@bp.route("/dataset/<uid>/map/figures")
+def dataset_map_figures(uid):
+    from quam_state_manager.web import map_analysis
+    from quam_state_manager.web.request_body import map_request, BadBody
+    body = map_request(request.args.to_dict())
+    run, figure, converted = _map_figure(uid, body)
+    output = []
+    try:
+        for index, panel in enumerate(map_analysis.panels(figure, converted)):
+            trace, axis = panel["trace"], panel["axis"]
+            classification = map_analysis.api.classify(trace["x"], trace["y"], {
+                "x": {"label": axis.get("xlabel", "")}, "y": {"label": axis.get("ylabel", "")}})
+            output.append({"panel": index, **classification, "xref": panel["xref"], "yref": panel["yref"],
+                           "available": bool(trace.get("full_resolution")), "title": axis.get("title", "")})
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError) as exc:
+        raise BadBody(str(exc)) from None
+    return jsonify(panels=output)
+
+
+@bp.route("/dataset/<uid>/map/analyze", methods=["POST"])
+def dataset_map_analyze(uid):
+    from quam_state_manager.web import map_analysis
+    from quam_state_manager.web.request_body import map_request, BadBody
+    body = map_request(json_object())
+    try:
+        run, figure, converted = _map_figure(uid, body)
+        result = map_analysis.analyze(run, uid, figure, converted, body)
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError, ArithmeticError) as exc:
+        raise BadBody(str(exc)) from None
+    return jsonify(result)
+
+
+@bp.route("/dataset/<uid>/map/analyze/<digest>")
+def dataset_map_replay(uid, digest):
+    from quam_state_manager.web import map_analysis
+    result = map_analysis.replay(uid, digest)
+    return jsonify(result) if result else (jsonify(error="Analysis expired; analyze again."), 404)
+
+
 @bp.route("/dataset/<uid>/json")
 def dataset_json_file(uid):
     """Return a raw JSON file from a run's folder."""

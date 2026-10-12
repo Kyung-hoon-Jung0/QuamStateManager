@@ -77,3 +77,44 @@ def provenance(data: Any, *, form: bool = False) -> dict | None:
     except UnicodeEncodeError:
         raise BadBody("Provenance fields must be valid Unicode text.") from None
     return dict(value)
+
+
+def map_request(data: dict) -> dict:
+    """Validate map selectors and options before touching arrays or running a model."""
+    import math
+    allowed = {"fig", "panel", "source", "smooth", "contour", "fit", "which", "var", "selection", "x_dim", "y_dim", "component"}
+    if set(data) - allowed:
+        raise BadBody("Unknown map request field.")
+    for key in ("fig", "source", "which", "var", "x_dim", "y_dim", "component"):
+        if key in data and (not isinstance(data[key], str) or len(data[key]) > 300):
+            raise BadBody(f"'{key}' must be bounded text.")
+    if data.get("source", "replot") not in {"replot", "recipe", "ndview"}:
+        raise BadBody("Unknown map source.")
+    panel = data.get("panel", 0)
+    if type(panel) is not int or panel < 0:
+        raise BadBody("'panel' must be a nonnegative integer.")
+    fields = {"smooth": {"kernel", "sigma_x", "sigma_y", "override_cap"},
+              "contour": {"on", "mode", "level", "band"}, "fit": {"model"}}
+    for key, keys in fields.items():
+        options = data.get(key, {})
+        if not isinstance(options, dict) or set(options) - keys:
+            raise BadBody(f"Invalid '{key}' options.")
+        for name, value in options.items():
+            if name in {"override_cap", "on"}:
+                if type(value) is not bool:
+                    raise BadBody(f"'{name}' must be boolean.")
+            elif name in {"sigma_x", "sigma_y", "level", "band"}:
+                if type(value) not in (float, int) or not math.isfinite(value):
+                    raise BadBody(f"'{name}' must be finite numeric data.")
+                if name != "level" and value < 0 or name.startswith("sigma") and value > 8:
+                    raise BadBody(f"'{name}' is outside its range.")
+            elif not isinstance(value, str):
+                raise BadBody(f"'{name}' must be text.")
+    if data.get("smooth", {}).get("kernel", "gaussian") not in {"gaussian", "box", "savgol", "median"}:
+        raise BadBody("Unknown smoothing kernel.")
+    if data.get("contour", {}).get("mode", "auto") not in {"auto", "target", "custom"}:
+        raise BadBody("Unknown contour mode.")
+    if "selection" in data and (not isinstance(data["selection"], dict) or any(
+            not isinstance(k, str) or type(v) is not int or v < 0 for k, v in data["selection"].items())):
+        raise BadBody("Invalid map selection.")
+    return data
