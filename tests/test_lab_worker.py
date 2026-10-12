@@ -1,5 +1,6 @@
 """Synthetic pins for the shared lab worker slot and line protocol."""
 import io
+import os
 import json
 import sys
 import time
@@ -105,3 +106,13 @@ def test_slot_retires_worker_in_another_parent(tmp_path):
         assert w.proc.poll() is not None
     finally:
         w.kill()
+
+
+def test_slot_directory_is_movable():
+    import subprocess
+    import sys
+    env = dict(os.environ, QSM_LAB_WORKER_DIR=os.path.join("x", "slot"))
+    out = subprocess.run([sys.executable, "-c", "from quam_state_manager.core import lab_worker as w;"
+                          "print(w._RECORD.parent, w.machine_lock.path.parent)"],
+                         capture_output=True, text=True, env=env, check=True).stdout.split()
+    assert out == [os.path.join("x", "slot")] * 2

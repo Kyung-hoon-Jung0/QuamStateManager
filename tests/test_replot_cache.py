@@ -27,11 +27,54 @@ def test_disk_and_ram_hit_invalidate_after_analysis_edit(tmp_path, monkeypatch):
     assert replot.replot_run(run, tmp_path / "instance")["cache_key"] == first["cache_key"]
     assert len(calls) == 1
     stat = source.stat()
-    source.write_text("value=2")
-    os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    # a touch without an edit (new mtime, same bytes) re-hashes and still hits
+    os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+    replot._CACHE.clear()
+    assert replot.replot_run(run, tmp_path / "instance")["cache_key"] == first["cache_key"]
+    assert len(calls) == 1
+    # an edit (stat-identical edits are out of scope: unchanged stats skip the hash)
+    source.write_text("value=22")
     changed = replot.replot_run(run, tmp_path / "instance")
     assert len(calls) == 2 and changed["cache_key"] != first["cache_key"]
     assert changed["code_fingerprint"] != first["code_fingerprint"]
+
+
+def test_unchanged_sources_hit_without_hashing(tmp_path, monkeypatch):
+    source = tmp_path / "plotting.py"
+    source.write_text("value=1")
+    run = SimpleNamespace(folder_path=str(tmp_path / "run"))
+    monkeypatch.setattr("quam_state_manager.core.config_generator.get_selected_env", lambda _: "env")
+    monkeypatch.setattr(replot, "_invoke", lambda *a: _result(source))
+    replot._CACHE.clear()
+    first = replot.replot_run(run, tmp_path / "instance")
+    hashed = []
+    real = cache.fingerprint
+    monkeypatch.setattr(cache, "fingerprint", lambda *a: hashed.append(1) or real(*a))
+    replot._CACHE.clear()
+    assert replot.replot_run(run, tmp_path / "instance")["cache_key"] == first["cache_key"]
+    assert replot.replot_run(run, tmp_path / "instance")["cache_key"] == first["cache_key"]
+    assert hashed == []
+    (tmp_path / "added.py").write_text("")
+    meta = {"context": {}, "files": [str(source)], "trees": [str(tmp_path)], "code_fingerprint": "x",
+            "stats": cache.snapshot([str(source)], [])}
+    assert cache.valid(meta, {}) is False and hashed == [1]
+
+
+def test_cache_watches_current_code_for_older_rungs(tmp_path):
+    current = tmp_path / "current.py"
+    pinned = tmp_path / "pinned.py"
+    current.write_text("x=1")
+    pinned.write_text("x=0")
+    result = {"figures": [], "saved_figures": [{"key": "fit"}], "errors": [],
+              "module_files": [{"path": str(pinned)}], "module_trees": [],
+              "code_fingerprint": fingerprint([pinned]),
+              "cache_watch": {"files": [str(current)], "trees": [],
+                              "code_fingerprint": fingerprint([current])}}
+    disk = cache.DiskCache(tmp_path / "instance")
+    assert disk.store({"n": 1}, result) is not None
+    assert disk.load({"n": 1}) is not None
+    current.write_text("x=22")
+    assert disk.load({"n": 1}) is None
 
 
 def test_ram_hits_update_recency(tmp_path, monkeypatch):

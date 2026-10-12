@@ -30,6 +30,12 @@ import pytest
 # a 4 s `conda env list` per app and race the cache-reset fixture below.
 os.environ.setdefault("SM_DISABLE_ENV_WARMUP", "1")
 
+# The lab worker slot is machine-wide (core/lab_worker.py). Tests get their own
+# coordination dir, so a test run never retires the worker of an SM the user
+# has open, nor waits on its lock. Set before anything imports lab_worker.
+if not os.environ.get("QSM_LAB_WORKER_DIR"):
+    os.environ["QSM_LAB_WORKER_DIR"] = tempfile.mkdtemp(prefix="qsm_test_slot_")
+
 # Listing a chip's snapshots arms a background sweep that re-stats the sidecar
 # (docs/155 10h). It is harmless but it is a THREAD touching tmp dirs the test
 # is about to delete, and its timing is not the subject of any test. Off by

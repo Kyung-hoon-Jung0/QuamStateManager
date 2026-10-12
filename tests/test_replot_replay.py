@@ -639,3 +639,29 @@ def plot_data(node):
     assert called == ["plot_line_fits", "plot_line_raw"]
     assert sorted(f["key"] for f in result["figures"]) == ["line", "raw"]
     assert result["archive_match"]["extra"] == []
+
+
+def test_defaulted_argument_feeding_a_marker_is_reported(replay):
+    import matplotlib.pyplot as plt
+
+    def plot_data(marker_at=0.5):
+        fig, ax = plt.subplots()
+        ax.plot([0, 1], [0, 1])
+        ax.axvline(marker_at)
+        return fig
+
+    def plot_style(width=2):
+        fig, ax = plt.subplots()
+        ax.plot([0, 1], [0, 1], lw=width)
+        return fig
+
+    result = replay(plot_data, functions={"plot_style": plot_style})
+    defaults = {f["function_key"]: f["marker_defaults"] for f in result["figures"]}
+    assert defaults == {"data": ["marker_at"], "style": []}
+
+
+def test_import_failure_still_reports_the_code_to_watch(replay, monkeypatch):
+    monkeypatch.setattr(runner, "_resolve_node", lambda *a: ("calibration_utils.absent_module", None, {}))
+    result = replay(lambda: None)
+    assert result["errors"][0]["stage"] == "import"
+    assert result.get("code_fingerprint") and result.get("module_files")

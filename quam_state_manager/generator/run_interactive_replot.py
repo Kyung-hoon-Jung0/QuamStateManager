@@ -523,6 +523,12 @@ def _execute(args):
         result.update(_source_manifest(args, node_name))
     except Exception:
         result["errors"].append({"stage": "import", "trace": traceback.format_exc()})
+        try:
+            # what was imported before the failure is still the code to watch:
+            # its fix must invalidate whatever the revision ladder shows instead
+            result.update(_source_manifest(args, node_name))
+        except Exception:  # noqa: BLE001
+            pass
         return result
 
     # qubits
@@ -567,6 +573,7 @@ def _execute(args):
         return result
 
     from iplot_extract import extract_figure
+    from iplot_markers import marker_defaults
 
     plot_fns = sorted(n for n in dir(U) if n.startswith("plot_") and callable(getattr(U, n)))
     selected, aliases = _plot_plan(node_tree, plot_imports, ds_fit)
@@ -582,7 +589,15 @@ def _execute(args):
                                 results=results, machine=machine, node_tree=node_tree,
                                 plot_imports=plot_imports, bind_report=report, util_module=U)
             fig = fn(**kwargs)
-            result["figures"].extend(_extract_return(fig, key, report, extract_figure, result["not_produced"]))
+            produced = _extract_return(fig, key, report, extract_figure, result["not_produced"])
+            try:
+                defaults = marker_defaults(fn, report)
+            except Exception:  # noqa: BLE001
+                # the check could not run: say so, never claim "no defaults"
+                defaults = ["(marker check failed)"]
+            for figure in produced:
+                figure["marker_defaults"] = defaults
+            result["figures"].extend(produced)
             import matplotlib.pyplot as plt
             plt.close("all")
         except Exception:
@@ -601,7 +616,8 @@ SERVE_MARK = "@@SM-IPLOT@@"
 def _source_manifest(args, node_name):
     from iplot_sources import fingerprint
     files = {str(Path(__file__).resolve()), str(Path(__file__).with_name("iplot_extract.py").resolve()),
-             str(Path(__file__).with_name("iplot_sources.py").resolve())}
+             str(Path(__file__).with_name("iplot_sources.py").resolve()),
+             str(Path(__file__).with_name("iplot_markers.py").resolve())}
     trees = set()
     roots = {str(Path(args.source_root).resolve())} if args.source_root else set()
     package = sys.modules.get("calibration_utils")

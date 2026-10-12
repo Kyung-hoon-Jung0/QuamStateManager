@@ -6,7 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from quam_state_manager.generator.iplot_sources import fingerprint
+from quam_state_manager.generator.iplot_sources import fingerprint, snapshot
 
 SCHEMA = "iplot/v2-cache/1"
 DISK_BYTES = 256 * 1024**2
@@ -18,8 +18,26 @@ def digest(value):
 
 
 def valid(meta, context):
-    return (meta.get("context") == context and
-            meta.get("code_fingerprint") == fingerprint(meta.get("files", []), meta.get("trees", [])))
+    """Same request and the same analysis code. Unchanged file stats (no edit,
+    no file added or removed) skip the content hash; any stat change re-hashes,
+    so a touch without an edit still hits."""
+    if meta.get("context") != context:
+        return False
+    files, trees = meta.get("files", []), meta.get("trees", [])
+    if meta.get("stats") is not None and snapshot(files, trees) == meta["stats"]:
+        return True
+    return meta.get("code_fingerprint") == fingerprint(files, trees)
+
+
+def watched(result):
+    """The code whose edit invalidates *result*: the CURRENT analysis code,
+    also for a result produced by an older revision or the saved figure (a fix
+    in the current code must re-run the ladder)."""
+    watch = result.get("cache_watch") or {}
+    if watch:
+        return list(watch.get("files", [])), list(watch.get("trees", [])), watch.get("code_fingerprint")
+    return ([m["path"] for m in result.get("module_files", [])], result.get("module_trees", []),
+            result.get("code_fingerprint"))
 
 
 def _atomic(path, content):
@@ -55,13 +73,14 @@ class DiskCache:
             return None
 
     def store(self, context, result):
-        files = [m["path"] for m in result.get("module_files", [])]
-        trees = result.get("module_trees", [])
+        files, trees, reported = watched(result)
+        stats = snapshot(files, trees)
         code = fingerprint(files, trees)
-        if result.get("code_fingerprint") and code != result["code_fingerprint"]:
+        if reported and code != reported:
             return None
         # Legacy synthetic responses have no source manifest. Production always does.
-        meta = {"context": context, "files": files, "trees": trees, "code_fingerprint": code}
+        meta = {"context": context, "files": files, "trees": trees, "code_fingerprint": code,
+                "stats": stats}
         meta["key"] = digest([context, code, result.get("revision")])
         result["cache_key"] = meta["key"]
         raw = json.dumps(result, allow_nan=False).encode("utf-8")

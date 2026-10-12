@@ -11,7 +11,11 @@ from pathlib import Path
 
 import psutil
 
-_COORD_DIR = (Path(os.environ.get("PUBLIC", "C:/Users/Public")) / "Documents"
+# Machine-wide on purpose: every SM process on this PC shares the one slot.
+# QSM_LAB_WORKER_DIR moves it (the test suite uses its own, so a test run never
+# retires or waits on the worker of an SM the user has open).
+_COORD_DIR = (Path(os.environ["QSM_LAB_WORKER_DIR"]) if os.environ.get("QSM_LAB_WORKER_DIR")
+              else Path(os.environ.get("PUBLIC", "C:/Users/Public")) / "Documents"
               if os.name == "nt" else Path("/tmp"))
 
 

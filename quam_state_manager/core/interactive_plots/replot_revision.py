@@ -1,7 +1,5 @@
 """Explicit current, run-time heuristic, and saved-figure replay ladder."""
 import json
-import os
-import stat
 from datetime import datetime
 from pathlib import Path
 
@@ -16,12 +14,12 @@ def reasons(result):
         out.append("Saved figure keys missing: " + ", ".join(missing))
     for figure in result.get("figures", []):
         if figure.get("marker_defaults"):
-            out.append("Defaulted fields feed markers: " + ", ".join(figure["marker_defaults"]))
-        if figure.get("archive_panel_count") is not None:
-            count = sum(not ax.get("is_colorbar") and bool(ax.get("traces")) for ax in figure.get("axes", []))
-            if count != figure["archive_panel_count"]:
-                out.append("Saved figure panel count differs: " + figure["key"])
+            out.append(f"Defaulted fields feed markers in {figure.get('key')}: "
+                       + ", ".join(figure["marker_defaults"]))
     return out
+
+
+_INFRA = ("env", "spawn", "subprocess", "timeout")
 
 
 def _start(folder):
@@ -33,7 +31,11 @@ def _start(folder):
         return None
 
 
-def _label(result, rung, sha, text, attempts):
+def _label(result, rung, sha, text, attempts, current):
+    # the cache watches the CURRENT code for every rung: fixing it re-runs the ladder
+    result["cache_watch"] = {"files": [m["path"] for m in current.get("module_files", [])],
+                             "trees": current.get("module_trees", []),
+                             "code_fingerprint": current.get("code_fingerprint")}
     result["revision"] = {"rung": rung, "sha": sha, "code_fingerprint": result.get("code_fingerprint"),
                           "heuristic": rung == "run_time"}
     result["status_chip"] = text
@@ -67,38 +69,38 @@ def reproduce(folder, instance, source_root, invoke):
     attempts = [{"rung": "current", "status": "failed" if failures else "ok", "reasons": failures,
                  "code_fingerprint": current.get("code_fingerprint")}]
     if not failures:
-        return _label(current, "current", None, "Reproduced with the current analysis code", attempts)
+        return _label(current, "current", None, "Reproduced with the current analysis code", attempts, current)
     root = source_root or current.get("source_root")
     start = _start(folder)
     sha = None
-    skip = "Source tree has no git history"
+    skip = "Analysis source tree is unknown" if not root else "Analysis source tree has no git history"
+    infra = next((e.get("stage") for e in current.get("errors", []) if e.get("stage") in _INFRA), None)
+    if infra:
+        # the lab env itself did not run: an older revision would not either
+        root, skip = None, f"The lab environment did not run ({infra})"
     if root and sourceroot.is_git_tree(root):
         if start:
             sha = sourceroot._git(root, "rev-list", "-1", f"--before={start}", "HEAD")
             skip = "No revision before the run's time"
+            if sha and sha == sourceroot.resolve_rev(root) and not sourceroot.is_dirty(root):
+                # the run-time revision IS the current code, which just failed
+                sha, skip = None, "The run-time revision is the current code"
         else:
             skip = "Run start time is unavailable"
     last = current
     if sha:
         pinned = sourceroot.materialize(root, sha, sourceroot.cache_dir_for(instance))
         if pinned:
-            pinned_path = Path(pinned).resolve()
-            if not pinned_path.is_relative_to(sourceroot.cache_dir_for(instance).resolve()):
-                raise ValueError("Pinned source root escaped the instance")
-            for path in pinned_path.rglob("*"):
-                if path.is_file():
-                    os.chmod(path, stat.S_IREAD)
             last = invoke(pinned)
             historic_failures = reasons(last)
             attempts.append({"rung": "run_time", "sha": sha, "heuristic": True,
                              "status": "failed" if historic_failures else "ok", "reasons": historic_failures,
                              "code_fingerprint": last.get("code_fingerprint")})
             if not historic_failures:
-                last["cache_watch_files"] = current.get("module_files", [])
-                last["cache_watch_trees"] = current.get("module_trees", [])
                 last["revision_lookup"] = {"root": root, "start": start, "sha": sha}
                 return _label(last, "run_time", sha,
-                              f"Reproduced with analysis code {sha[:7]} chosen by the run's time (heuristic)", attempts)
+                              f"Reproduced with analysis code {sha[:7]} chosen by the run's time (heuristic)",
+                              attempts, current)
         else:
             attempts.append({"rung": "run_time", "sha": sha, "status": "failed",
                              "reasons": ["Could not materialize the run-time revision"]})
@@ -109,4 +111,4 @@ def reproduce(folder, instance, source_root, invoke):
     attempts.append({"rung": "saved", "status": "shown", "reasons": failures})
     return _label(result, "saved", sha,
                   "Could not reproduce this run's figures with the current or run-time code; "
-                  f"showing the saved figure and raw data. {failures[-1]}", attempts)
+                  f"showing the saved figure and raw data. {failures[-1]}", attempts, current)

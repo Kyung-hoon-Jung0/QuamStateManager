@@ -100,11 +100,13 @@ def _warm_request(env, folder, source_root, timeout):
     from quam_state_manager.core import lab_worker
     if not Path(env).is_file():
         return None
-    from quam_state_manager.generator.iplot_sources import fingerprint
+    from quam_state_manager.generator.iplot_sources import snapshot
     context = str(source_root or "")
     w = _PLOT_WORKER
+    # fresh(): alive, same env, every imported file unedited since import; the
+    # snapshot adds files added to or removed from the imported packages
     if w is not None and (w.context != context or w.python_path != env or not w.fresh()
-                          or (getattr(w, "manifest", None) and fingerprint(*w.manifest) != w.code_fingerprint)):
+                          or (getattr(w, "manifest", None) and snapshot(*w.manifest) != w.snapshot)):
         w.kill()
         w = None
     try:
@@ -115,7 +117,7 @@ def _warm_request(env, folder, source_root, timeout):
         result = w.ask({"run": str(folder), "source_root": context}, timeout)
         if result is not None:
             w.manifest = ([m["path"] for m in result.get("module_files", [])], result.get("module_trees", []))
-            w.code_fingerprint = result.get("code_fingerprint")
+            w.snapshot = snapshot(*w.manifest)
             return result
         w.kill()
         _PLOT_WORKER = None
@@ -203,9 +205,14 @@ def replot_run(run, instance_path, *, source_root: str | None = None,
             force = False
         ev.wait(timeout=timeout + 10)
     try:
-        result = _invoke(env, folder, source_root, timeout)
+        from . import replot_revision
+        # DESIGN 2.5 ladder: current code -> run-time revision (git trees only)
+        # -> the saved figure; the chosen rung is labelled in the payload
+        result = replot_revision.reproduce(
+            folder, instance_path, source_root,
+            lambda root: _invoke(env, folder, root, timeout))
         with _LOCK:
-            if result.get("figures") or result.get("not_produced"):
+            if result.get("figures") or result.get("not_produced") or result.get("saved_figures"):
                 try:
                     stored = disk.store(context, result)
                     if stored:
@@ -264,6 +271,8 @@ def replot_outcome(result: dict) -> dict:
     else:
         state = "no_plot_fns"
     return {"state": state, "n_errors": len(errs),
+            "rung": (result.get("revision") or {}).get("rung"),
+            "status_chip": result.get("status_chip"),
             "fatal": ({"stage": str(fatal.get("stage") or ""), "line": _line(fatal)}
                       if fatal is not None else None)}
 
@@ -274,6 +283,8 @@ def replot_figure(result: dict, key: str) -> dict | None:
         if f["key"] == key:
             converted = mpljson_to_plotly(f)
             converted["bind_report"] = f.get("bind_report", {})
+            converted["revision"] = f.get("revision")
+            converted["status_chip"] = f.get("status_chip")
             return converted
     return None
 
