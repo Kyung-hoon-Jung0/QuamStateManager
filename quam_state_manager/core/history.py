@@ -2088,6 +2088,8 @@ class HistoryManager:
 
     def _remember_chip_path(self, path: Path, result: tuple) -> None:
         """Keep the last readable routing decision across context rebuilds."""
+        if "__chip_key__" in path.parts:
+            return
         with self._lock:
             data = self._load_aliases()
             key = str(path.resolve())
