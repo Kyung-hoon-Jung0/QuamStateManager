@@ -14,7 +14,8 @@ PATH = "qubits.q1.T1"
 @pytest.mark.parametrize("batch", [False, True])
 @pytest.mark.parametrize("bad", [None, [], "text", 3, True, {"extra": "x"},
                                   {"text": []}, {"text": None}, {"src": 7},
-                                  {"text": "x" * 301}, {"run_uid": "x" * 301}])
+                                  {"text": "x" * 301}, {"run_uid": "x" * 301},
+                                  {"text": "\ud800"}])
 def test_bad_origin_refuses_without_changes(tmp_path, batch, bad):
     chip = Chip(tmp_path)
     before = (chip.log(), chip.journal(), chip.live_state(), chip.ctx["store"].mutation_seq)
@@ -219,7 +220,8 @@ def test_origin_is_copied_and_absence_keeps_legacy_shapes(tmp_path):
     assert unit["entries"][0]["origin"] == ORIGIN
 
 
-def test_corrupt_origin_refuses_restart_recovery(tmp_path):
+@pytest.mark.parametrize("bad", [{"text": [3]}, {"text": "\ud800"}])
+def test_corrupt_origin_refuses_restart_recovery(tmp_path, bad):
     from quam_state_manager.core import pending_tray
     from tests.test_tray_restart import _open
     chip = Chip(tmp_path)
@@ -227,7 +229,7 @@ def test_corrupt_origin_refuses_restart_recovery(tmp_path):
     pending_tray.flush_all()
     p = pending_tray.sidecar_path(chip.ctx["working_copy"])
     doc = json.loads(p.read_text())
-    doc["entries"][0]["origin"] = {"text": [3]}
+    doc["entries"][0]["origin"] = bad
     p.write_text(json.dumps(doc), encoding="utf-8")
     chip.app, chip.c, response = _open(chip.inst, chip.live)
     assert chip.log() == []
@@ -250,3 +252,22 @@ def test_origin_on_fsp_compensation_uses_existing_batch(tmp_path):
     log = chip.ctx["store"].change_log
     assert len(log) > 1 and len({e.group_id for e in log}) == 1
     assert all(e.origin == ORIGIN for e in log)
+
+
+def test_mixed_origin_is_visible_through_a_pointer(tmp_path):
+    from quam_state_manager.core import value_history
+    from quam_state_manager.web import routes
+    chip = Chip(tmp_path)
+    leaf = "qubits.q1.anharmonicity"
+    alias = "qubits.q1.xy.operations.x180_DragCosine.anharmonicity"
+    chip.edit(leaf, "-220000000", provenance=json.dumps(ORIGIN))
+    chip.edit("qubits.q2.T1", "0.00004")
+    _apply(chip)
+    target = value_history.target(chip.ctx["store"].merged, alias)
+    assert target["holder_path"] == leaf
+    with chip.app.app_context():
+        chip_dir = routes._hub_chip_dir(chip.ctx["path"])
+    answer = value_history.read(chip_dir, {"v": target})
+    point = answer["rows"]["v"]["points"][-1]
+    assert (point.get("ref") or {}).get("text") == ORIGIN["text"]
+    assert point["run_uid"] == ORIGIN["run_uid"]

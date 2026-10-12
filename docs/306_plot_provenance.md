@@ -10,7 +10,8 @@ A batch row may override that object so different plot targets retain their
 own formulas. Every origin is validated before any batch mutation or type
 assignment. A present value must be an object with only `src`, `run_uid`,
 `request_hash`, and `text`; every supplied value must be a string of at most
-300 characters. Null, invalid JSON, unknown keys, and wrong types return 400.
+300 characters. Null, invalid JSON, unknown keys, wrong types, and unpaired
+Unicode surrogates return 400. Text can be persisted as UTF-8.
 Missing provenance preserves the existing request and record shapes.
 
 The metadata becomes `ChangeEntry.origin`, defaulting to None. The pending
@@ -39,4 +40,6 @@ formula, and frozen inputs. Map origins carry the displayed text and request
 hash, or summarize the request's model, axis sigmas, and contour level. Text
 is bounded to 300 characters and escaped for display. Apply All uses row
 origins and, when they agree, a top-level origin. The same metadata rides
-the existing chip-confirmation, type-fix, and compensation retries.
+the existing chip-confirmation, type-fix, and compensation retries. Truncation
+preserves complete Unicode characters. Mixed origins are matched to the
+stored holder at each history point, including reads through pointers.

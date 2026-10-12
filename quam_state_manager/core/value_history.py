@@ -1556,11 +1556,15 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
         """What each event SAVED (one view per derive, shared reads)."""
         return saved_view(cache)
 
-    def points(rows, path=None):
+    def points(rows, path=None, segments=None):
         pts = [_point(ev, old, new, op, proven, roots, sm) for ev, old, new, op, proven in rows]
         if path:
             for p in pts:
-                origin = ((p.get("ref") or {}).get("origins") or {}).get(path)
+                origins = (p.get("ref") or {}).get("origins") or {}
+                origin = origins.get(path)
+                if origin is None and origins and segments:
+                    holder = _segment_at(segments, index.positions[p["eid"]])
+                    origin = next((o for k, o in origins.items() if holder_spelling(k) == holder), None)
                 if origin is not None:
                     p["ref"] = {k: origin[k] for k in ("request_hash", "text") if k in origin}
                     p["run_uid"] = origin.get("run_uid")
@@ -1571,7 +1575,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
     out_rows: dict[str, dict] = {}
     comp_keep: dict[str, tuple] = {}
     for key, tgt in targets.items():
-        pts = points(raw[key], tgt["path"])
+        pts = points(raw[key], tgt["path"], hsegs[key])
         here = tgt["holder"]
         for p in pts:
             # docs/296: the holder as spelled in that row's rename era
@@ -1665,7 +1669,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
             "not_kept": [nk_point(*r) for r in nk_raw[key]],
             "excursions": [exc_point(*r) for r in exc_raw[key]],
             **({"tail_excursion": exc_point(*tail_raw[key])} if key in tail_raw else {}),
-            "effective": [in_force(p, i) for i, p in enumerate(points(eff[key], tgt["path"]))],
+            "effective": [in_force(p, i) for i, p in enumerate(points(eff[key], tgt["path"], segs[key]))],
             "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
                           "holder": h} for s, h in segs[key]],
             "renames": _rename_marks(hsegs[key], index, eras)}

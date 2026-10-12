@@ -71,4 +71,9 @@ def provenance(data: Any, *, form: bool = False) -> dict | None:
         raise BadBody("Unknown provenance field.")
     if any(not isinstance(v, str) or len(v) > 300 for v in value.values()):
         raise BadBody("Provenance fields must be text of at most 300 characters.")
+    try:
+        for v in value.values():
+            v.encode("utf-8")
+    except UnicodeEncodeError:
+        raise BadBody("Provenance fields must be valid Unicode text.") from None
     return dict(value)

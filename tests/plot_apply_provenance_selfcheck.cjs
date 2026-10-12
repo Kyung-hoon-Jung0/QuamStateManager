@@ -121,6 +121,9 @@ const map = {request_hash: 'abc123', request: {
     check(!row().querySelector('script'), 'provenance is escaped in the popup');
     w.applyPlotRow(row()); await delay();
     check(JSON.parse(form(posts[0]).get('provenance')).text.length === 300, 'wire text is bounded');
+    await open([{dot_path: p1, value: 3, provenance: {src: 'map_fit', text: 'x'.repeat(299) + '\u{1F600}'}}]);
+    w.applyPlotRow(row()); await delay();
+    check(!/[\uD800-\uDBFF]$/.test(JSON.parse(form(posts[0]).get('provenance')).text), 'truncation keeps complete Unicode characters');
 
     await open([{dot_path: p1, value: 3}]);
     w.applyPlotRow(row()); await delay();

@@ -16144,8 +16144,10 @@ function _plotApplyOrigin(prov, expName, runUid) {
         if (level !== undefined && level !== null) text += '; contour level ' + level;
         if (smooth.override_cap) text += '; cap overridden';
     }
+    var shortText = String(text).slice(0, 300);
+    if (/[\uD800-\uDBFF]$/.test(shortText)) shortText = shortText.slice(0, -1);
     var origin = {src: prov.src || (prov.request || prov.model || prov.provenance_text || prov.smooth || prov.fit ? 'map_fit' : 'plot_click'),
-                  text: String(text).slice(0, 300)};
+                  text: shortText};
     if (prov.run_uid || runUid) origin.run_uid = String(prov.run_uid || runUid);
     if (prov.request_hash) origin.request_hash = String(prov.request_hash);
     return origin;

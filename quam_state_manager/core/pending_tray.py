@@ -775,7 +775,9 @@ def _restore(ctx, p: _Persister) -> None:
                     or (row.origin is not None and (
                         not isinstance(row.origin, dict)
                         or set(row.origin) - {"src", "run_uid", "request_hash", "text"}
-                        or any(not isinstance(v, str) or len(v) > 300 for v in row.origin.values())))
+                        or any(not isinstance(v, str) or len(v) > 300
+                               or any(0xD800 <= ord(c) <= 0xDFFF for c in v)
+                               for v in row.origin.values())))
                     or (row.group_id is not None and not isinstance(row.group_id, str))):
                 raise ValueError("the recovery row metadata is invalid")
         base_hash, applied = doc["base_hash"], doc["applied"]
