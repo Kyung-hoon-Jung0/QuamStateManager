@@ -54,6 +54,7 @@ def test_api_full_request_cross_process_hash_and_numbers(tmp_path):
     altered = dict(body,figure_cache_key="new revision")
     assert request_hash(body)!=request_hash(altered)
     assert len(expected["request_hash"])==64
+    assert request_hash({"a":1,"b":[2.,3]}) == request_hash({"b":[2,3.],"a":1})  # key order and int/float spelling
 
 
 def test_api_count_lock_model_menu_and_nan_json():

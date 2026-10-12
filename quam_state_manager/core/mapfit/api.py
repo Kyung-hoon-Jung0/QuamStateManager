@@ -17,29 +17,30 @@ API_VERSION = "mapfit/v1"
 SLIDER_MAX = 8.
 
 
-def _json_value(value):
+def _json_value(value, floats=False):
+    """JSON-safe copy: arrays to lists, non-finite to None; floats=True spells every number as a float."""
     if isinstance(value,np.ndarray):
-        return _json_value(value.tolist())
+        return _json_value(value.tolist(),floats)
     if isinstance(value,dict):
-        return {str(k):_json_value(v) for k,v in value.items()}
+        return {str(k):_json_value(v,floats) for k,v in value.items()}
     if isinstance(value,(list,tuple)):
-        return [_json_value(v) for v in value]
+        return [_json_value(v,floats) for v in value]
+    if isinstance(value,(bool,np.bool_)):
+        return bool(value)
     if isinstance(value,(float,np.floating)):
         return float(value) if np.isfinite(value) else None
-    if isinstance(value,np.integer):
-        return int(value)
-    if isinstance(value,np.bool_):
-        return bool(value)
+    if isinstance(value,(int,np.integer)):
+        return float(value) if floats else int(value)
     return value
 
 
-def canonical_json(value):
-    return json.dumps(_json_value(value),sort_keys=True,separators=(",",":"),ensure_ascii=True,allow_nan=False)
+def canonical_json(value, floats=False):
+    return json.dumps(_json_value(value,floats),sort_keys=True,separators=(",",":"),ensure_ascii=True,allow_nan=False)
 
 
 def request_hash(request):
-    """Versioned SHA256 of canonical JSON including full data, metadata and request parameters."""
-    return hashlib.sha256(canonical_json({"version":API_VERSION,"request":request}).encode("ascii")).hexdigest()
+    """Versioned SHA256 of canonical JSON (sorted keys, every number a float) of the full request."""
+    return hashlib.sha256(canonical_json({"version":API_VERSION,"request":request},True).encode("ascii")).hexdigest()
 
 
 def _step(axis):

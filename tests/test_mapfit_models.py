@@ -113,3 +113,29 @@ def test_a_sparse_line_passes_the_gate_by_its_peak_not_its_percentiles():
     gain = noise_gain(raw.shape,0.,2.)
     assert np.percentile(finite,98)-np.percentile(finite,2) < 6*.3*gain
     assert _status(smoothed,raw,gain) is None
+
+
+def _line(rows=401, hwhm=2., noise=.3, seed=1):
+    x, y = np.arange(61.), np.arange(float(rows))
+    center = .7*rows-.07*(x-30.37)**2*rows/201
+    z = 1/(1+((y[:,None]-center)/hwhm)**2)+np.random.default_rng(seed).normal(0,noise,(rows,61))
+    return {"z":z,"x":x,"y":y,"meta":{"x":{"name":"flux"},"y":{"name":"frequency"}},
+            "fit":{"model":"auto"},"smooth":{"sigma_x":0}}
+
+
+def test_a_noise_peak_is_not_a_second_line():
+    """A narrow noisy line: noise peaks measured from the trough below them used to make most
+    columns 'double' and the map 'ambiguous'. A second line must stand 5 noise floors high."""
+    out = analyze(_line())
+    assert out["fit"]["verdict_line"] == "VERDICT: ok"
+    assert abs(out["fit"]["values"]["x"]-30.37) < 1
+
+
+def test_a_few_columns_with_a_second_line_do_not_make_the_map_ambiguous():
+    body = _line(rows=201, hwhm=4., noise=.05)
+    z = np.array(body["z"])
+    z[20:28,3:6] += 1.  # a short spur over three of 61 columns, far from the line there
+    body["z"], body["smooth"] = z, {}
+    out = analyze(body)
+    assert out["fit"]["verdict_line"] == "VERDICT: ok", out["fit"]["verdict_line"]
+    assert abs(out["fit"]["values"]["x"]-30.37) < 1
