@@ -217,6 +217,8 @@ def replot_outcome(result: dict) -> dict:
         state = "failed"
     elif errs:
         state = "all_plots_failed"
+    elif result.get("not_produced"):
+        state = "no_figures"
     else:
         state = "no_plot_fns"
     return {"state": state, "n_errors": len(errs),

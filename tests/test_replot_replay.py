@@ -183,3 +183,25 @@ def test_dict_returns_worker_envelope(replay):
     result = replay(plot_data)
     assert len(result["figures"]) == 2
     assert result["errors"] == []
+
+
+def test_none_return_is_absence_in_worker_and_ui(replay):
+    from quam_state_manager.core.interactive_plots import replot
+    from jinja2 import Environment, FileSystemLoader
+    from pathlib import Path
+
+    def plot_data():
+        return None
+    result = replay(plot_data)
+    assert result["errors"] == []
+    assert result["figures"] == []
+    assert result["not_produced"] == [{"key": "data", "reason": "no figure for this run"}]
+    outcome = replot.replot_outcome(result)
+    assert outcome["state"] == "no_figures"
+    templates = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates"
+    body = Environment(loader=FileSystemLoader(templates)).get_template("_dataset_replot.html").render(
+        available=True, figures=[], errors=[], outcome=outcome, util="synthetic")
+    assert "No figure for this run" in body and "has no" not in body
+    missing = []
+    assert runner._extract_return({"optional": None}, "diagnostics", {}, None, missing) == []
+    assert missing[0]["key"] == "diagnostics::optional"

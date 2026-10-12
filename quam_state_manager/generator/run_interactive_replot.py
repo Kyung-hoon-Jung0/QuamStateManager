@@ -296,12 +296,16 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
     return kwargs
 
 
-def _extract_return(value, key, report, extract):
+def _extract_return(value, key, report, extract, not_produced=None):
     """Keep every dictionary member and its binding provenance."""
     figures = value.items() if isinstance(value, dict) else [(None, value)]
     output = []
     for member, fig in figures:
         figure_key = key if member is None else key + "::" + str(member)
+        if fig is None:
+            if not_produced is not None:
+                not_produced.append({"key": figure_key, "reason": "no figure for this run"})
+            continue
         extracted = extract(fig, figure_key, title=figure_key.replace("_", " "))
         extracted["bind_report"] = report
         extracted["function_key"] = key
@@ -343,7 +347,7 @@ def main() -> int:
         results = {}
 
     result = {"schema": "iplot/v1", "util": util, "node_name": node_name,
-              "figures": [], "errors": [], "bind_report": {}}
+              "figures": [], "errors": [], "bind_report": {}, "not_produced": []}
 
     if not _VALID_UTIL.match(util):
         result["errors"].append({"stage": "import",
@@ -415,9 +419,7 @@ def main() -> int:
                                 results=results, machine=machine, node_tree=node_tree,
                                 plot_imports=plot_imports, bind_report=report)
             fig = fn(**kwargs)
-            if fig is None:
-                raise ValueError("plot function returned None")
-            result["figures"].extend(_extract_return(fig, key, report, extract_figure))
+            result["figures"].extend(_extract_return(fig, key, report, extract_figure, result["not_produced"]))
             import matplotlib.pyplot as plt
             plt.close("all")
         except Exception:
@@ -454,7 +456,7 @@ def _emit(result, out) -> int:
         _eprint(f"iplot: {len(result['figures'])} figures, {len(result['errors'])} errors -> {out}")
     else:
         print(payload)
-    return 0 if result["figures"] else 2
+    return 0 if result["figures"] or (result.get("not_produced") and not result["errors"]) else 2
 
 
 if __name__ == "__main__":

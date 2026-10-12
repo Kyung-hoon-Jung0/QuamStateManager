@@ -18,6 +18,8 @@
     <span class="ds-replot-title ds-replot-fail"><code>calibration_utils.{{ util }}</code> loaded, but all {{ errors|length }} <code>plot_*</code> function(s) raised</span>
     {% elif o.state == "no_plot_fns" %}
     <span class="ds-replot-title"><code>calibration_utils.{{ util }}</code> has no <code>plot_*</code> functions</span>
+    {% elif o.state == "no_figures" %}
+    <span class="ds-replot-title">No figure for this run</span>
     {% else %}
     <span class="ds-replot-title">Reproduced from <code>calibration_utils.{{ util }}</code></span>
     {% endif %}
