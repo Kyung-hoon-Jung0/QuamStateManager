@@ -82,10 +82,47 @@ def test_display_only_and_panel_gate(rig):
 def test_interactive_defaults_to_reproduced_maps(rig, monkeypatch):
     from quam_state_manager.core import interactive_plots
     client, _ = rig
-    monkeypatch.setattr(interactive_plots, "list_interactive_figures", lambda _: [])
+    monkeypatch.setattr(interactive_plots, "list_interactive_figures", lambda _: [{
+        "key": "legacy::q0", "title": "Legacy duplicate", "static": False, "available": True}])
     response = client.get("/dataset/run/interactive")
     assert response.status_code == 200
     assert 'data-endpoint="replot/plot"' in response.text
+    assert "Legacy duplicate" not in response.text
+
+
+def test_spaced_count_labels_select_erroramp_and_lock_counts():
+    from quam_state_manager.core.mapfit.classify import classify
+    out = classify([.8, 1., 1.2], [1, 3, 5], {"x": {"label": "Pulse amplitude [mV]"},
+        "y": {"label": "Number of pulses"}})
+    assert out["type"] == "erroramp" and out["feature_axis"] == "y"
+
+
+def test_zero_count_baseline_and_secondary_prefactor_are_bound_before_fit(tmp_path):
+    from tests.mapfit_synthetic import sample
+    z, x, y, meta, truth = sample("erroramp", noise=0)
+    z = np.vstack([np.zeros(len(x)), z])
+    y = np.r_[0, y]
+    axis = {"xlabel": "Pulse amplitude [mV]", "ylabel": "Number of pulses", "title": "q0",
+        "secondary_axes": [{"axis": "x", "label": "amplitude prefactor", "map": {
+            "parent": [800, 1000, 1200], "forward": [.8, 1., 1.2]}}],
+        "traces": [{"type": "heatmap", "x": (x * 1000).tolist(), "y": y.tolist(), "z": z.tolist(), "full_resolution": True}]}
+    figure = {"axes": [axis]}
+    converted = {"data": [axis["traces"][0]], "clickable": {"targets": [{"axis": "x", "path": "qubits.q0.amplitude", "transform": {
+        "type": "prefactor", "old": .2, "coordinate_scale": .001, "coordinate_offset": 0}}]}}
+    (tmp_path / "data.json").write_text(json.dumps({"fit_results": {"q0": {"opt_amp_prefactor": truth["a_pi"]}}}))
+    run = SimpleNamespace(folder_path=str(tmp_path), experiment_name="synthetic")
+    try:
+        result = map_analysis.analyze(run, "bound-run", figure, converted, {"smooth": {"sigma_x": 0, "sigma_y": 0}})
+    except ValueError:
+        result = {}
+    assert result.get("compare", {}).get("verdict") == "agree"
+    assert result["updates"][0]["value"] == pytest.approx(.2 * truth["a_pi"], abs=.0001)
+    assert result["smoothed"]["x"][0] == pytest.approx(x[0] * 1000)
+    assert result["smoothed"]["y"][0] > 0 and "zero-count baseline" in result["fit"]["verdict_line"]
+    assert result["caps_applied"]["cap_x"] < 8
+    overridden = map_analysis.analyze(run, "bound-run", figure, converted, {
+        "smooth": {"sigma_x": 8, "sigma_y": 0, "override_cap": True}})
+    assert overridden["caps_applied"]["override"] and "cap overridden" in overridden["provenance_text"]
 
 
 def test_raw_map_full_plane_uses_only_existing_candidates(tmp_path):

@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 
 VOCABULARY = {
-    "count": ("nb_of_pulses", "n_gates", "number_of_", "pulse count", "gate count", "n"),
+    "count": ("nb_of_pulses", "n_gates", "number_of_", "number of pulses", "number of gates", "nb of pulses", "pulse count", "gate count", "n"),
     "amplitude": ("amplitude", "prefactor", "a_scan", "b_over_a", "amp"),
     "frequency": ("frequency", "detuning", "freq", "hz"),
     "time": ("time", "duration", " ns", " us", " ms"),

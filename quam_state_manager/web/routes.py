@@ -39382,7 +39382,7 @@ def dataset_interactive(uid):
         result = replot.replot_run(run, current_app.instance_path)
         reproduced = replot.replot_menu(result)
         covered = {f["key"] for f in reproduced}
-        legacy = [f for f in figures if f["key"] not in covered]
+        legacy = [f for f in figures if f["key"] not in covered and (f.get("static") or not reproduced)]
         return render_template("_dataset_replot.html", uid=uid, run_id=run_id,
             available=True, util=result.get("util", ""), figures=reproduced,
             errors=result.get("errors", []), outcome=replot.replot_outcome(result)) + (

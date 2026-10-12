@@ -81,20 +81,86 @@ def analyze(run, uid, figure, converted, body):
     node_value = record.get(node_name)
     if isinstance(node_value, (float, int)) and math.isfinite(node_value):
         meta.update(node_value=node_value, node_name=node_name, value_key=value_key)
-    result = api.analyze({"z": trace["z"], "x": trace["x"], "y": trace["y"], "meta": meta,
-                          **{k: body[k] for k in ("smooth", "contour", "fit") if k in body}})
+    array, coordinates = trace["z"], {"x": trace["x"], "y": trace["y"]}
+    coordinate_maps = {}
+    omitted = 0
+    if classification["type"] == "erroramp":
+        import numpy as np
+        count_axis = classification["feature_axis"]
+        count = centers(coordinates[count_axis], len(array) if count_axis == "y" else len(array[0]))
+        positive = count > 0
+        omitted = int((~positive).sum())
+        if omitted:
+            values = np.asarray(array, float)
+            array = values[positive, :] if count_axis == "y" else values[:, positive]
+            coordinates[count_axis] = count[positive].tolist()
+        amplitude_axis = "x" if count_axis == "y" else "y"
+        for secondary in axis.get("secondary_axes", []):
+            if secondary.get("axis") != amplitude_axis or "prefactor" not in secondary.get("label", "").lower():
+                continue
+            mapping = secondary.get("map") or {}
+            parent, forward = mapping.get("parent", []), mapping.get("forward", [])
+            if len(parent) < 2 or len(parent) != len(forward) or parent[-1] == parent[0]:
+                continue
+            scale = (forward[-1] - forward[0]) / (parent[-1] - parent[0])
+            offset = forward[0] - scale * parent[0]
+            if scale and all(abs(scale * p + offset - v) < 1e-9 for p, v in zip(parent, forward)):
+                coordinate_maps[amplitude_axis] = {"scale": scale, "offset": offset}
+                coordinates[amplitude_axis] = [v * scale + offset for v in coordinates[amplitude_axis]]
+                break
+    fit_request = {"z": array, "x": coordinates["x"], "y": coordinates["y"], "meta": meta,
+                   **{k: body[k] for k in ("smooth", "contour", "fit") if k in body}}
+    result = api.analyze(fit_request)
+    # A single slider's cap is the tightest row cap, not the least restrictive row.
+    if classification["type"] in {"erroramp", "chevron"}:
+        import numpy as np
+        a = np.asarray(array, float)
+        xc, yc = centers(coordinates["x"], a.shape[1]), centers(coordinates["y"], a.shape[0])
+        if result["caps_applied"]["transposed"]:
+            a, xc, yc = a.T, yc, xc
+        _, _, row_caps, _ = api._cap_info(classification["type"], a, xc, yc,
+            {**meta, "circular": classification["circular"]}, result["raw_fit"])
+        if row_caps is not None:
+            tightest = float(np.min(row_caps))
+            smooth = body.get("smooth", {})
+            if not smooth.get("override_cap") and result["caps_applied"]["sigma_x"] > tightest:
+                key = "sigma_y" if result["caps_applied"]["transposed"] else "sigma_x"
+                fit_request["smooth"] = {**smooth, key: tightest}
+                result = api.analyze(fit_request)
+            result["caps_applied"]["cap_x"] = tightest
+            if smooth.get("override_cap") and result["caps_applied"]["sigma_x"] > tightest:
+                result["caps_applied"].update(override=True, warning="cap overridden")
+                if "cap overridden" not in result["fit"]["verdict_line"]:
+                    result["fit"]["verdict_line"] += "; cap overridden"
+    for dim, mapping in coordinate_maps.items():
+        result["smoothed"][dim] = [(v - mapping["offset"]) / mapping["scale"] for v in result["smoothed"][dim]]
+        for contour in result["contours"]:
+            for line in contour["lines"]:
+                for point in line:
+                    index = 0 if dim == "x" else 1
+                    point[index] = (point[index] - mapping["offset"]) / mapping["scale"]
+    if omitted:
+        result["fit"]["verdict_line"] += f"; {omitted} zero-count baseline rows excluded from fit"
     # Scope the hash to the run, figure and exact source revision as well as arrays/options.
     result["request_hash"] = api.request_hash({"analysis": result["request_hash"], "run": uid,
         "fig": body.get("fig"), "panel": index, "source": body.get("source", "replot"),
-        "revision": figure.get("revision"), "fingerprint": figure.get("code_fingerprint")})
+        "revision": figure.get("revision"), "fingerprint": figure.get("code_fingerprint"), "settings": body})
     chip = converted.get("status_chip") or "not verified on this run"
     comparison = result["compare"]
     run_id = getattr(run, "id", getattr(run, "run_id", "?"))
-    text = (f"derived from run #{run_id} {getattr(run, 'experiment_name', '')}: "
-            f"{result['provenance_text'].removeprefix('derived from ')}; "
-            f"node value {comparison['node_value']}, delta {comparison['delta']}, {comparison['verdict']}; code {chip}")
+    applied = result["caps_applied"]
+    model = body.get("fit", {}).get("model", "auto")
+    model = classification["models"][0] if model == "auto" else model
+    contour_note = ""
     if body.get("contour", {}).get("on"):
-        text += "; contour level " + ", ".join(str(c["level"]) for c in result["contours"])
+        contour_note = " [contour level " + ", ".join(f"{c['level']:.4g}" for c in result["contours"]) + "]"
+    revision = figure.get("revision") or {}
+    code = revision.get("rung", "unverified") + ("/" + revision["sha"][:7] if revision.get("sha") else "")
+    text = (f"derived from run #{run_id} {getattr(run, 'experiment_name', '')}: {model} on smoothed map "
+            f"({body.get('smooth', {}).get('kernel', 'gaussian')}, sigma x={applied['sigma_x']:.1f} pt, "
+            f"y={applied['sigma_y']:.1f}; cap {applied['cap_x']:.3g} pt){contour_note}; "
+            f"node value {comparison['node_value']}, delta {comparison['delta']}, {comparison['verdict']}; "
+            f"code {code}" + ("; cap overridden" if applied["override"] else ""))
     result["provenance_text"] = text[:300]
     origin = {"src": "map_fit", "run_uid": uid, "request_hash": result["request_hash"], "text": text[:300]}
     updates = []
@@ -105,6 +171,9 @@ def analyze(run, uid, figure, converted, body):
         coordinate = _coordinate(result, target_axis, body.get("fit", {}).get("model"))
         if coordinate is None:
             continue
+        if target_axis in coordinate_maps:
+            mapping = coordinate_maps[target_axis]
+            coordinate = (coordinate - mapping["offset"]) / mapping["scale"]
         transform = target.get("transform")
         if transform and transform.get("type") != "prefactor":
             continue
@@ -206,4 +275,6 @@ def raw_figure(run, body, candidates):
 def replay(uid, digest):
     with _LOCK:
         entry = _RESULTS.get((uid, digest))
+        if entry:
+            _RESULTS.move_to_end((uid, digest))
         return deepcopy(entry[0]) if entry else None
