@@ -22,7 +22,11 @@ def test_disk_and_ram_hit_invalidate_after_analysis_edit(tmp_path, monkeypatch):
     monkeypatch.setattr(replot, "_invoke", lambda *a: calls.append(1) or _result(source))
     replot._CACHE.clear()
     first = replot.replot_run(run, tmp_path / "instance")
-    assert replot.replot_run(run, tmp_path / "instance") is first and len(calls) == 1
+    second = replot.replot_run(run, tmp_path / "instance")
+    # v1.3.0: cached response identity -> cached artists plus fresh P3 proof wrappers.
+    assert second == first and len(calls) == 1
+    assert second is not first and second["figures"][0] is not first["figures"][0]
+    assert second["figures"][0]["axes"] is first["figures"][0]["axes"]
     replot._CACHE.clear()
     assert replot.replot_run(run, tmp_path / "instance")["cache_key"] == first["cache_key"]
     assert len(calls) == 1
