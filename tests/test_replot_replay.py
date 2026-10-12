@@ -201,6 +201,7 @@ def test_renderer_artist_meaning_and_notes():
 
 def test_unsupported_figure_artist_is_reported():
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
     from matplotlib.patches import Circle
     from quam_state_manager.generator.iplot_extract import extract_figure
     from quam_state_manager.core.interactive_plots.replot import mpljson_to_plotly
@@ -211,6 +212,15 @@ def test_unsupported_figure_artist_is_reported():
     assert len(extracted["skipped"]) == 1
     converted = mpljson_to_plotly(extracted)
     assert len(converted["notices"]) == 1 and "Circle x1" in converted["notices"][0]
+    fig, ax = plt.subplots()
+    ax.table(cellText=[["value"]], loc="center")
+    fig.lines.append(Line2D([.1, .9], [.2, .8], transform=fig.transFigure))
+    extracted = extract_figure(fig, "unsupported")
+    plt.close(fig)
+    assert extracted["axes"][0]["skipped"] == [{"artist": "Table", "n": 1, "reason": "unsupported artist"}]
+    assert extracted["skipped"] == [{"artist": "Line2D", "n": 1, "reason": "unsupported figure artist"}]
+    note = mpljson_to_plotly(extracted)["notices"][0]
+    assert "Table x1" in note and "Line2D x1" in note
 
 
 def test_unsupported_coordinates_and_norms_are_named():

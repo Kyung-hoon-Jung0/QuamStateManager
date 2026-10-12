@@ -341,7 +341,7 @@ def extract_axes(ax, axes):
                                       "inverse": _flist(inverse(mapped))}})
         else:
             skip(child, "unsupported child axes")
-    for artist in ax.artists:
+    for artist in list(ax.artists) + list(ax.tables):
         skip(artist, "unsupported artist")
     for text in ax.texts:
         if isinstance(text, Annotation):
@@ -408,7 +408,7 @@ def extract_figure(fig, key, title=None):
                    "size": _f(t.get_fontsize()), "ha": t.get_ha(), "va": t.get_va()}
                   for t in f.texts if t.get_transform() == f.transFigure],
         "skipped": [{"artist": type(a).__name__, "n": 1, "reason": "unsupported figure artist"}
-                    for a in list(f.artists) + list(f.images) + list(f.patches)] +
+                    for a in list(f.artists) + list(f.images) + list(f.patches) + list(f.lines)] +
                    [{"artist": "FigureText", "n": 1, "reason": "unsupported text transform"}
                     for t in f.texts if t.get_transform() != f.transFigure],
     }
