@@ -5,14 +5,44 @@ from collections import OrderedDict
 from copy import deepcopy
 import json
 import math
+import re
 import threading
 
 from quam_state_manager.core.mapfit import api
 from quam_state_manager.core.mapfit.contour import centers
+from quam_state_manager.core.mapfit.compare import saved_comparisons
 
 _RESULTS = OrderedDict()
 _LOCK = threading.Lock()
 _BYTES = 64 * 1024 * 1024
+
+
+def _frequency_scale(run, values, label):
+    """Resolve plotted frequency units, verifying a mislabeled scale against source coordinates."""
+    import numpy as np
+    from pathlib import Path
+    from quam_state_manager.core import ndview
+    for unit, scale in (("ghz", 1e9), ("mhz", 1e6), ("khz", 1e3)):
+        if unit in label.lower():
+            return scale
+    # A copied xarray coordinate can retain its old Hz label after division. Only a full
+    # match against the saved frequency grid proves the scale; magnitude alone is not evidence.
+    values = np.asarray(values, float)
+    for filename in ("ds_raw.h5", "ds_fit.h5"):
+        path = Path(run.folder_path) / filename
+        if not path.is_file():
+            continue
+        with ndview._h5_lock_for(str(path)):
+            with ndview._open_reader(path) as reader:
+                for name in ("full_freq", "RF_frequency", "frequency"):
+                    dataset = reader.get(name)
+                    if dataset is None or math.prod(dataset.shape) > 100_000 or not dataset.shape or dataset.shape[-1] != len(values):
+                        continue
+                    rows = np.asarray(reader.read(dataset), float).reshape(-1, len(values))
+                    for scale in (1e9, 1e6, 1e3):
+                        if any(np.allclose(values * scale, row, rtol=1e-10, atol=1e-4) for row in rows):
+                            return scale
+    return 1.
 
 
 def panels(figure, converted):
@@ -85,8 +115,28 @@ def analyze(run, uid, figure, converted, body):
     record = records[0] if len(records) == 1 and isinstance(records[0], dict) and body.get("source") != "ndview" else {}
     if record.get("b_resolved") is False:
         meta["b_resolved"] = False
+    operation = record.get("operation") or getattr(run, "parameters", {}).get("operation")
+    if operation == "x90":
+        meta["theta"] = math.pi / 2
     x, y = centers(trace["x"], len(trace["z"][0])), centers(trace["y"], len(trace["z"]))
     classification = api.classify(x, y, meta, trace["z"])
+    time_scale, control_scale, frequency_scale, lobe = 1., 1., 1., None
+    if classification["type"] == "chevron":
+        time_label = axis.get("xlabel" if classification["feature_axis"] == "x" else "ylabel", "")
+        unit = re.search(r"\b(ns|us|ms|s)\b", time_label.lower())
+        if unit:
+            meta["time_units"] = unit.group(1)
+            time_scale = {"s": 1., "ms": 1e-3, "us": 1e-6, "ns": 1e-9}[unit.group(1)]
+        control_label = axis.get("ylabel" if classification["feature_axis"] == "x" else "xlabel", "")
+        control_scale = .001 if "mv" in control_label.lower() else 1.
+        match = re.search(r"\blobe\s+([+-])", axis.get("title", ""))
+        lobe = match.group(1) if match else None
+    elif classification["type"] == "ridge":
+        feature = classification["feature_axis"]
+        frequency_scale = _frequency_scale(run, x if feature == "x" else y,
+            axis.get("xlabel" if feature == "x" else "ylabel", ""))
+        if isinstance(record.get("fwhm"), (int, float)) and record["fwhm"] > 0:
+            meta["fwhm"] = record["fwhm"] / frequency_scale
     names = {"erroramp": ("opt_amp_prefactor", "a_pi"), "ridge": ("frequency", "y"),
              "landscape": ("optimal_a_scan", "x"), "chevron": ("v_res_plus_v", "dv0")}
     node_name, value_key = names.get(classification["type"], ("x", "x"))
@@ -164,6 +214,16 @@ def analyze(run, uid, figure, converted, body):
                     point[point_index] = (point[point_index] - mapping["offset"]) / mapping["scale"]
     if omitted:
         result["fit"]["verdict_line"] += f"; {omitted} nonpositive-count baseline rows excluded from fit"
+    import numpy as np
+    dx, dy = float(np.median(np.abs(np.diff(x)))), float(np.median(np.abs(np.diff(y))))
+    if result["caps_applied"]["transposed"]:
+        dx, dy = dy, dx
+    references = saved_comparisons(classification["type"], record, result["fit"], result["raw_fit"],
+        dx, dy, frequency_scale, time_scale, control_scale, lobe)
+    if references:
+        result["comparisons"] = references
+        result["compare"] = references[0]
+    result["node_verdict"] = {k: record[k] for k in ("success", "reasons", "reason", "note") if k in record}
     # Scope the hash to the run, figure and exact source revision as well as arrays/options.
     result["request_hash"] = api.request_hash({"analysis": result["request_hash"], "run": uid,
         "fig": body.get("fig"), "panel": index, "source": body.get("source", "replot"),

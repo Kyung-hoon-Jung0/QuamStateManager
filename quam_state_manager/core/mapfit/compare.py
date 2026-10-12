@@ -19,7 +19,7 @@ def tolerance(kind, name, step=None, node_error=None, hwhm=None, node_value=None
         return (.05*abs(node_value) if node_value is not None else None),"5% of node value"
     if step is None or not math.isfinite(step) or step<=0:
         return None,"no sweep step"
-    if kind=="ridge" and name in ("frequency","f_01","y","asymptote"):
+    if kind=="ridge" and name in ("frequency","qubit_frequency","f_01","y","asymptote"):
         return max(step,.1*(hwhm or 0)),"one sweep step or 0.1 HWHM"
     return step,"one sweep step"
 
@@ -40,6 +40,46 @@ def compare(node_value, sm_value, tol, source, node_name="node value", reason=No
         out["verdict"] = "agree" if abs(out["delta"]) <= tol+1e-14*max(1.,abs(node_value)) else "disagree"
         out["reason"] = "within tolerance" if out["verdict"]=="agree" else "exceeds tolerance"
     return out
+
+
+def saved_comparisons(kind, record, fitted, raw_fit, dx, dy, frequency_scale=1.,
+                      time_scale=1., control_scale=1., lobe=None):
+    """Compare in saved units. A chevron's first extreme and full revival differ by two.
+
+    Ridge model axes are control/frequency; landscape values retain their model axes.
+    The caller supplies coordinate scales from the figure and its source coordinate.
+    """
+    values, raw_values = fitted.get("values") or {}, raw_fit.get("values") or {}
+    specifications = []
+    def add(name, key, scale=1., offset=0., step=None, source_record=None):
+        source_record = record if source_record is None else source_record
+        node = source_record.get(name)
+        if not isinstance(node, (int, float)) or not math.isfinite(node):
+            node = None
+        sm, raw = values.get(key), raw_values.get(key)
+        sm = sm * scale + offset if sm is not None else None
+        raw = raw * scale + offset if raw is not None else None
+        tol, source = tolerance(kind, name, step, source_record.get("two_j_err_hz"),
+            (source_record.get("fwhm") or 0) / 2, node)
+        item = compare(node, sm, tol, source, name, fitted["verdict"])
+        item.update(raw_value=raw, raw_smoothed_delta=sm-raw if sm is not None and raw is not None else None)
+        specifications.append(item)
+    if kind == "ridge":
+        name = "qubit_frequency" if "qubit_frequency" in record else "frequency"
+        add(name, "asymptote" if "asymptote" in values or "asymptote" in raw_values else "y",
+            frequency_scale, step=dy * frequency_scale)
+        if "idle_offset" in record:
+            add("idle_offset", "x", step=dx)
+    elif kind == "chevron" and lobe in ("+", "-"):
+        branch = (record.get("lobes") or {}).get(lobe, {})
+        center = branch.get("centre_v")
+        if isinstance(center, (int, float)) and math.isfinite(center):
+            sign = 1 if lobe == "+" else -1
+            add("v_res_plus_v" if sign == 1 else "v_res_minus_v", "dv0",
+                sign * control_scale, center, step=.0005)
+        add("two_j_hz", "two_j_hz", step=1., source_record=branch)
+        add("t_lim_ns", "t_pi", 2 * time_scale * 1e9, step=dx * time_scale * 1e9, source_record=branch)
+    return specifications
 
 
 def contract_verdict(patch, current_old):
