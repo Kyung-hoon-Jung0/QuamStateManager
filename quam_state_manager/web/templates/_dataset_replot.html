@@ -62,6 +62,7 @@
                 <li><code>{{ name }}</code>: {{ decision.status }} from {{ decision.source }}{% if decision.value is defined %} ({{ decision.value }}){% endif %}
                 {% for record in decision.records|default([]) %}
                     <span>{{ record.record }}: defaulted {{ record.defaulted }}, dropped {{ record.dropped }}</span>
+                    {% if record.restored_nonfinite %}<span>Missing numeric values restored: {{ record.restored_nonfinite }}</span>{% endif %}
                 {% endfor %}</li>
             {% endfor %}
             </ul>

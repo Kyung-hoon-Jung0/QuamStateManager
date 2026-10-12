@@ -55,7 +55,7 @@ def _derive_util(node_name: str) -> str:
     return s.strip()
 
 
-# A calibration_utils submodule is a single python identifier — never a dotted
+# A calibration_utils submodule is a single Python identifier, never a dotted
 # path / traversal. Guards importlib.import_module(f"calibration_utils.{util}").
 _VALID_UTIL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
@@ -168,12 +168,32 @@ def _report_value(value):
     return {"type": type(value).__name__}
 
 
+def _restore_value(hint, value, report, path, nonfinite):
+    if value is None and hint is float:
+        nonfinite.append(path)
+        return float("nan")
+    if isinstance(value, dict) and dataclasses.is_dataclass(hint):
+        return _restore_record(hint, value, report, path)
+    origin = typing.get_origin(hint)
+    args = typing.get_args(hint)
+    if isinstance(value, dict) and origin is dict and len(args) == 2:
+        return {k: _restore_value(args[1], v, report, path + "." + str(k), nonfinite)
+                for k, v in value.items()}
+    if isinstance(value, (list, tuple)) and origin in (list, tuple) and args:
+        values = [_restore_value(args[0] if origin is list or args[-1] is Ellipsis else args[i],
+                                 v, report, path + "." + str(i), nonfinite)
+                  for i, v in enumerate(value)]
+        return tuple(values) if origin is tuple else values
+    return value
+
+
 def _restore_record(cls, raw, report, path):
     fields = {f.name: f for f in dataclasses.fields(cls)}
     hints = typing.get_type_hints(cls)
     values = {}
     dropped = sorted(set(raw) - set(fields))
     defaults = {}
+    nonfinite = []
     for name, field in fields.items():
         if name not in raw:
             if field.default is not dataclasses.MISSING:
@@ -181,17 +201,9 @@ def _restore_record(cls, raw, report, path):
             elif field.default_factory is not dataclasses.MISSING:
                 defaults[name] = _report_value(field.default_factory())
             continue
-        value = raw[name]
-        hint = hints.get(name)
-        if isinstance(value, dict) and dataclasses.is_dataclass(hint):
-            value = _restore_record(hint, value, report, path + "." + name)
-        elif isinstance(value, dict) and typing.get_origin(hint) is dict:
-            item_type = typing.get_args(hint)[-1]
-            if dataclasses.is_dataclass(item_type):
-                value = {k: _restore_record(item_type, v, report, path + "." + name + "." + k)
-                         for k, v in value.items()}
-        values[name] = value
-    report.append({"record": path, "class": cls.__name__, "dropped": dropped, "defaulted": defaults})
+        values[name] = _restore_value(hints.get(name), raw[name], report, path + "." + name, nonfinite)
+    report.append({"record": path, "class": cls.__name__, "dropped": dropped, "defaulted": defaults,
+                   "restored_nonfinite": nonfinite})
     return cls(**values)
 
 
@@ -511,7 +523,7 @@ def main() -> int:
         except Exception:
             # Autodetect failed. NetCDF-classic bytes under the .h5 name
             # (xarray's scipy engine wrote them in an env without netCDF4)
-            # can NEVER be read by h5netcdf — pick the fallback by magic.
+            # cannot be read by h5netcdf; pick the fallback by magic.
             eng = "h5netcdf"
             try:
                 with open(p, "rb") as _fh:

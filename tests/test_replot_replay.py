@@ -2,6 +2,7 @@
 import sys
 import ast
 import json
+import math
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from types import ModuleType
@@ -44,6 +45,25 @@ class Detail:
 class Record:
     peak: float = 0.0
     details: dict[str, Detail] = field(default_factory=dict)
+
+
+@dataclass
+class IncompleteRecord:
+    rate: float = float("nan")
+    window: tuple[float, float] = (float("nan"), float("nan"))
+    optional: float | None = None
+
+
+def test_binder_restores_nonfinite_saved_numbers_and_preserves_optional_none():
+    report = []
+    restored = runner._restore_record(IncompleteRecord,
+        {"rate": None, "window": [None, 3.0], "optional": None}, report, "pair0")
+    assert isinstance(restored.rate, float) and math.isnan(restored.rate)
+    assert isinstance(restored.window[0], float) and math.isnan(restored.window[0])
+    assert restored.window[1] == 3.0 and restored.optional is None
+    assert report[0]["restored_nonfinite"] == ["pair0.rate", "pair0.window.0"]
+    assert report[0]["defaulted"] == {}
+    json.dumps(report, allow_nan=False)
 
 
 def plot_records(ds_fit, fits: dict[str, Record], qubit_pairs=None):
