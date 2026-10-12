@@ -17,7 +17,7 @@ from pathlib import Path
 from quam_state_manager.core import safe_io
 from quam_state_manager.core.dataset import _extract_figure_names
 
-from . import h5reader
+from . import h5reader, learn_click, recipe_gate
 from .plotbuild import jsonable
 from .recipes import (
     all_xy, chevron, cz_2d_maps, cz_phase, drag, fallback, flux_qubitspec, flux_ramsey,
@@ -301,11 +301,16 @@ def build_interactive_figure(run, key: str) -> dict | None:
         return None
     if spec is None or spec.figure is None or not spec.available:
         return None
+    fingerprint = recipe_gate.analysis_fingerprint(recipe)
+    spec = learn_click.gate(bundle, spec, fingerprint)
     fig = spec.figure
     return {
         "kind": spec.kind,
         "title": spec.title,
         "clickable": spec.clickable,
+        "analysis_fingerprint": fingerprint,
+        "display_only_reason": spec.reason if spec.clickable is None else "",
+        "notices": [spec.reason] if spec.reason else [],
         "data": jsonable(fig.get("data", [])),
         "layout": jsonable(fig.get("layout", {})),
     }

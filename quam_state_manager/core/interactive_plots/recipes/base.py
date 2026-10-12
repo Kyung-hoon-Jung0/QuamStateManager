@@ -25,6 +25,7 @@ class FigureSpec:
     available: bool = True
     reason: str = ""
     clickable: dict | None = None  # see registry / Click-to-edit design
+    verify_points: list[dict] = field(default_factory=list)
 
 
 @dataclass

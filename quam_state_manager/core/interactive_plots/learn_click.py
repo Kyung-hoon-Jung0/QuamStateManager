@@ -311,3 +311,9 @@ def learn(run, figure_payload):
                      + (" (proposed, not applied)" if tier == "proposed" else " (applied)"),
             "targets": targets, "learned": True, "verified_against": "patches" if tier == "applied" else "proposals",
             "evidence_tier": tier, "n_verified": len({t["path"] for t in targets})}
+
+
+def gate(bundle, spec, analysis_fingerprint):
+    """Check a recipe formula against its marker and analysis revision."""
+    from .recipe_gate import gate as verify_recipe
+    return verify_recipe(bundle, spec, analysis_fingerprint)
