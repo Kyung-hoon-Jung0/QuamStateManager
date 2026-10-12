@@ -54,7 +54,7 @@ from flask import (
     send_file,
     url_for,
 )
-from quam_state_manager.web.request_body import BadBody, json_object, json_text
+from quam_state_manager.web.request_body import BadBody, json_object, json_text, provenance
 from markupsafe import Markup, escape
 from werkzeug.utils import secure_filename
 
@@ -11128,6 +11128,7 @@ def field_edit():
     if _lk is not None:
         return _lk
 
+    _origin = provenance(request.form, form=True)
     dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
     raw_value = request.form.get("value", "")
     # docs/145's tree editor shows a string as its JSON literal and UNWRAPS a
@@ -13667,6 +13668,12 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
         payload = request.get_json(silent=True)
     # Cross-chip guard (audit #1): the apply-fit popup stamps the run's chip token.
     _pj = payload if isinstance(payload, dict) else {}
+    _origin = provenance(_pj if isinstance(payload, dict) else request.form,
+                         form=not isinstance(payload, dict))
+    # Validate every row before any type assignment or value mutation.
+    for _u in _pj.get("updates", []) if isinstance(_pj.get("updates"), list) else []:
+        if isinstance(_u, dict):
+            provenance(_u)
     guard = _chip_mismatch_response(
         str(_pj.get("expect_chip") or request.form.get("expect_chip", "")),
         bool(_pj.get("force_chip")) or request.form.get("force_chip") in ("1", "true", "True"))

@@ -8,6 +8,7 @@ object; anything else is a 400 with a plain message, before the route reads it.
 from __future__ import annotations
 
 from typing import Any, Callable
+import json
 
 from flask import jsonify, request
 from werkzeug.exceptions import BadRequest
@@ -52,3 +53,22 @@ def json_text(data: Any, key: str, default: str = "") -> str:
     if isinstance(v, str):
         return v.strip()
     raise BadBody(f"'{key}' must be text, not a {type(v).__name__}.")
+
+
+def provenance(data: Any, *, form: bool = False) -> dict | None:
+    """Optional plot origin: four bounded strings, never arbitrary metadata."""
+    if "provenance" not in data:
+        return None
+    value = data["provenance"]
+    if form:
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError, RecursionError):
+            raise BadBody("'provenance' must be a JSON object.") from None
+    if not isinstance(value, dict):
+        raise BadBody("'provenance' must be a JSON object.")
+    if set(value) - {"src", "run_uid", "request_hash", "text"}:
+        raise BadBody("Unknown provenance field.")
+    if any(not isinstance(v, str) or len(v) > 300 for v in value.values()):
+        raise BadBody("Provenance fields must be text of at most 300 characters.")
+    return dict(value)
