@@ -296,6 +296,20 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
     return kwargs
 
 
+def _extract_return(value, key, report, extract):
+    """Keep every dictionary member and its binding provenance."""
+    figures = value.items() if isinstance(value, dict) else [(None, value)]
+    output = []
+    for member, fig in figures:
+        figure_key = key if member is None else key + "::" + str(member)
+        extracted = extract(fig, figure_key, title=figure_key.replace("_", " "))
+        extracted["bind_report"] = report
+        extracted["function_key"] = key
+        extracted["return_key"] = member
+        output.append(extracted)
+    return output
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
@@ -403,9 +417,7 @@ def main() -> int:
             fig = fn(**kwargs)
             if fig is None:
                 raise ValueError("plot function returned None")
-            extracted = extract_figure(fig, key, title=key.replace("_", " "))
-            extracted["bind_report"] = report
-            result["figures"].append(extracted)
+            result["figures"].extend(_extract_return(fig, key, report, extract_figure))
             import matplotlib.pyplot as plt
             plt.close("all")
         except Exception:

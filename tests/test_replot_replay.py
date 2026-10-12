@@ -1,8 +1,10 @@
 """Saved-input replay pins using synthetic source trees and run data."""
 import sys
 import ast
+import json
 from dataclasses import dataclass, field
 from types import SimpleNamespace
+from types import ModuleType
 
 import pytest
 
@@ -126,3 +128,58 @@ def test_binding_report_reaches_menu_plot_and_visible_defaults():
         available=True, figures=menu, errors=[], util="synthetic", uid="0", run_id="0")
     assert "Plot inputs and defaults" in body and "defaulted from signature (0.25)" in body
     assert "marker" in body and "2" in body
+
+
+def test_dict_returns_extract_each_figure():
+    plt = pytest.importorskip("matplotlib.pyplot")
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    first, second = plt.figure(), plt.figure()
+    first.add_subplot().plot([0, 1], [1, 2])
+    second.add_subplot().plot([0, 1], [3, 4])
+    report = {"ds": {"status": "bound", "source": "ds_fit.h5"}}
+    try:
+        output = runner._extract_return({"left": first, "right": second}, "diagnostics", report, extract_figure)
+        assert [f["key"] for f in output] == ["diagnostics::left", "diagnostics::right"]
+        assert [f["return_key"] for f in output] == ["left", "right"]
+        assert all(f["axes"] and f["bind_report"] == report for f in output)
+        assert output[0]["axes"][0]["traces"][0]["y"] == [1.0, 2.0]
+        assert output[1]["axes"][0]["traces"][0]["y"] == [3.0, 4.0]
+        assert runner._extract_return({}, "empty", {}, extract_figure) == []
+        assert runner._extract_return(first, "single", {}, extract_figure)[0]["key"] == "single"
+    finally:
+        plt.close("all")
+
+
+@pytest.fixture
+def replay(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from quam_state_manager.generator import iplot_extract
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setitem(sys.modules, "iplot_extract", iplot_extract)
+    config = ModuleType("quam_config")
+    config.Quam = SimpleNamespace(load=lambda path: SimpleNamespace(qubits={"q0": object()}))
+    monkeypatch.setitem(sys.modules, "quam_config", config)
+    monkeypatch.setitem(sys.modules, "xarray", ModuleType("xarray"))
+    module = ModuleType("calibration_utils.synthetic")
+    monkeypatch.setitem(sys.modules, "calibration_utils.synthetic", module)
+    monkeypatch.setattr(runner, "_resolve_node", lambda *a: ("calibration_utils.synthetic", None, {}))
+    (tmp_path / "node.json").write_text(json.dumps({"metadata": {"name": "01_synthetic"}}))
+    monkeypatch.setattr(sys, "argv", ["replay", "--run", str(tmp_path)])
+    captured = {}
+    monkeypatch.setattr(runner, "_emit", lambda result, out: captured.update(result) or 0)
+
+    def run(fn):
+        module.plot_data = fn
+        runner.main()
+        return captured
+    return run
+
+
+def test_dict_returns_worker_envelope(replay):
+    import matplotlib.pyplot as plt
+
+    def plot_data():
+        return {"left": plt.figure(), "right": plt.figure()}
+    result = replay(plot_data)
+    assert len(result["figures"]) == 2
+    assert result["errors"] == []
