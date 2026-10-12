@@ -83,18 +83,26 @@ def test_interactive_defaults_to_reproduced_maps(rig, monkeypatch):
     from quam_state_manager.core import interactive_plots
     client, _ = rig
     monkeypatch.setattr(interactive_plots, "list_interactive_figures", lambda _: [{
-        "key": "legacy::q0", "title": "Legacy duplicate", "static": False, "available": True}])
+        "key": "legacy::q0", "title": "Distinct recipe", "static": False, "available": True}])
     response = client.get("/dataset/run/interactive")
     assert response.status_code == 200
     assert 'data-endpoint="replot/plot"' in response.text
-    assert "Legacy duplicate" not in response.text
+    assert "Distinct recipe" in response.text
 
 
-def test_spaced_count_labels_select_erroramp_and_lock_counts():
+@pytest.mark.parametrize("label", ["Number of pulses", "Number of gates", "Nb of pulses"])
+def test_spaced_count_labels_select_erroramp_and_lock_counts(label):
     from quam_state_manager.core.mapfit.classify import classify
     out = classify([.8, 1., 1.2], [1, 3, 5], {"x": {"label": "Pulse amplitude [mV]"},
-        "y": {"label": "Number of pulses"}})
+        "y": {"label": label}})
     assert out["type"] == "erroramp" and out["feature_axis"] == "y"
+
+
+@pytest.mark.parametrize("label", ["scan dV from lobe centre", "control (mV)"])
+def test_voltage_difference_labels_select_chevron(label):
+    from quam_state_manager.core.mapfit.classify import classify
+    out = classify([0, 4, 8], [-1, 0, 1], {"x": {"label": "Pulse duration (ns)"}, "y": {"label": label}})
+    assert out["type"] == "chevron" and out["feature_axis"] == "x"
 
 
 def test_zero_count_baseline_and_secondary_prefactor_are_bound_before_fit(tmp_path):
@@ -118,11 +126,14 @@ def test_zero_count_baseline_and_secondary_prefactor_are_bound_before_fit(tmp_pa
     assert result.get("compare", {}).get("verdict") == "agree"
     assert result["updates"][0]["value"] == pytest.approx(.2 * truth["a_pi"], abs=.0001)
     assert result["smoothed"]["x"][0] == pytest.approx(x[0] * 1000)
-    assert result["smoothed"]["y"][0] > 0 and "zero-count baseline" in result["fit"]["verdict_line"]
+    assert result["smoothed"]["y"][0] > 0 and "nonpositive-count baseline" in result["fit"]["verdict_line"]
     assert result["caps_applied"]["cap_x"] < 8
     overridden = map_analysis.analyze(run, "bound-run", figure, converted, {
         "smooth": {"sigma_x": 8, "sigma_y": 0, "override_cap": True}})
     assert overridden["caps_applied"]["override"] and "cap overridden" in overridden["provenance_text"]
+    no_levels = map_analysis.analyze(run, "bound-run", figure, converted, {
+        "smooth": {"sigma_x": 0, "sigma_y": 0}, "contour": {"on": True}})
+    assert "contour: no automatic levels" in no_levels["provenance_text"]
 
 
 def test_raw_map_full_plane_uses_only_existing_candidates(tmp_path):
@@ -147,3 +158,143 @@ def test_raw_map_full_plane_uses_only_existing_candidates(tmp_path):
     body["selection"]["qubit"] = 99
     with pytest.raises(ValueError, match="outside"):
         map_analysis.raw_figure(run, body, candidates)
+
+
+@pytest.mark.parametrize("transposed", [False, True])
+def test_erroramp_tightest_cap_override_contours_and_figure_axis_provenance(tmp_path, transposed, monkeypatch):
+    from tests.mapfit_synthetic import sample
+    from quam_state_manager.core.mapfit.caps import erroramp_caps
+    z, amplitude, counts, _, truth = sample("erroramp", noise=0)
+    parent = amplitude * 1000 + 7
+    x, y, data = (counts, parent, z.T) if transposed else (parent, counts, z)
+    amp_axis = "y" if transposed else "x"
+    axis = {"xlabel": "Number of pulses" if transposed else "Pulse amplitude [mV]",
+        "ylabel": "Pulse amplitude [mV]" if transposed else "Number of pulses", "title": "q0",
+        "secondary_axes": [{"axis": amp_axis, "label": "amplitude prefactor", "map": {
+            "parent": [807, 1007, 1207], "forward": [.8, 1., 1.2]}}],
+        "traces": [{"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": y.tolist(), "z": data.tolist()}]}
+    converted = {"data": [axis["traces"][0]], "clickable": {"targets": [{"axis": amp_axis,
+        "path": "qubits.q0.amplitude", "transform": {"type": "prefactor", "old": .2,
+        "coordinate_scale": .001, "coordinate_offset": -.007}}]}}
+    run = SimpleNamespace(folder_path=str(tmp_path), experiment_name="synthetic", id=2)
+    body = {"smooth": {"sigma_x": 0 if transposed else 8, "sigma_y": 8 if transposed else 0},
+            "contour": {"on": True, "mode": "custom", "level": .5}}
+    figure = {"axes": [axis], "revision": {"rung": "current", "sha": "123456789"}}
+    scoped_requests = []
+    original_hash = map_analysis.api.request_hash
+    def capture_hash(request):
+        if "analysis" in request:
+            scoped_requests.append(request)
+        return original_hash(request)
+    monkeypatch.setattr(map_analysis.api, "request_hash", capture_hash)
+    result = map_analysis.analyze(run, "cap-run", figure, converted, body)
+    assert scoped_requests[-1]["panel"] == body.get("panel", 0)
+    expected = float(np.min(erroramp_caps(counts, result["raw_fit"]["diagnostics"]["a_pi"], .005)))
+    assert result["caps_applied"]["cap_x"] == pytest.approx(expected)
+    assert result["caps_applied"]["sigma_x"] <= expected and result["caps_applied"]["sigma_y"] == 0
+    assert result["contours"] and all(800 < p[1 if transposed else 0] < 1210
+        for contour in result["contours"] for line in contour["lines"] for p in line)
+    assert result["updates"][0]["value"] == pytest.approx(.2 * truth["a_pi"], abs=.0001)
+    assert f"sigma {'x=0.0 pt, y=' if transposed else 'x='}" in result["provenance_text"]
+    assert "code current/1234567" in result["provenance_text"]
+    assert "node value n/a, delta n/a" in result["provenance_text"]
+    # Requests that clamp to the same strength still retain their own scoped replay identity.
+    second = map_analysis.analyze(run, "cap-run", figure, converted, {**body, "smooth": {
+        "sigma_x": 0 if transposed else 7, "sigma_y": 7 if transposed else 0}})
+    assert second["request_hash"] != result["request_hash"]
+    overridden = map_analysis.analyze(run, "cap-run", figure, converted, {**body, "smooth": {
+        "sigma_x": expected + .1 if not transposed else 0,
+        "sigma_y": expected + .1 if transposed else 0, "override_cap": True}})
+    assert overridden["caps_applied"]["override"] and overridden["caps_applied"]["warning"] == "cap overridden"
+    assert "cap overridden" in overridden["fit"]["verdict_line"] and "cap overridden" in overridden["provenance_text"]
+    assert len(overridden["provenance_text"]) <= 300
+
+
+def test_landscape_compares_node_amplitude_on_its_figure_axis(tmp_path):
+    x, y = np.linspace(-2, 2, 31), np.linspace(-2, 2, 41)
+    trace = {"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": y.tolist(),
+        "z": ((x[None, :] - .2) ** 2 + (y[:, None] + .3) ** 2).tolist()}
+    axis = {"xlabel": "b_over_a", "ylabel": "scan amplitude (relative)", "title": "q0", "traces": [trace]}
+    (tmp_path / "data.json").write_text(json.dumps({"fit_results": {"q0": {"optimal_a_scan": -.3}}}))
+    result = map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path)), "landscape-axis", {"axes": [axis]},
+        {"data": [trace]}, {"smooth": {"sigma_x": 0, "sigma_y": 0}})
+    assert result["compare"]["sm_value"] == pytest.approx(-.3) and result["compare"]["verdict"] == "agree"
+
+
+def test_descending_chevron_cap_inference_uses_sorted_model_axes(tmp_path, monkeypatch):
+    from tests.mapfit_synthetic import sample
+    z, x, y, _, _ = sample("chevron", noise=0)
+    trace = {"type": "heatmap", "full_resolution": True, "x": x[::-1].tolist(), "y": y[::-1].tolist(), "z": z[::-1, ::-1].tolist()}
+    axis = {"xlabel": "time", "ylabel": "detuning", "traces": [trace]}
+    observed = []
+    original = map_analysis.api._cap_info
+    def capture(kind, array, xc, yc, meta, fit):
+        observed.append((xc.copy(), yc.copy()))
+        return original(kind, array, xc, yc, meta, fit)
+    monkeypatch.setattr(map_analysis.api, "_cap_info", capture)
+    map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path)), "descending-cap", {"axes": [axis]},
+        {"data": [trace]}, {"smooth": {"sigma_x": 0, "sigma_y": 0}})
+    assert observed and all(np.all(np.diff(xc) > 0) and np.all(np.diff(yc) > 0) for xc, yc in observed)
+
+
+@pytest.mark.parametrize("declared", [False, True])
+def test_phase_error_objective_uses_only_its_entity_and_declared_zero_target(tmp_path, declared):
+    x, y = np.linspace(-2, 2, 41), np.linspace(-2, 2, 41)
+    xx, yy = np.meshgrid(x, y)
+    def axis(entity, signal, z, zero=False):
+        trace = {"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": y.tolist(),
+            "z": z.tolist(), "colorbar": {"label": signal, "units": "deg" if "phase" in signal else ""}}
+        return {"title": entity + ": " + signal, "xlabel": "a_scan", "ylabel": "b_over_a", "traces":
+            [trace] + ([{"type": "contour", "level": 0}] if zero else [])}
+    own = axis("q0", "phase error per gate", 20 * (yy + .3), declared)
+    foreign = axis("q1", "phase error per gate", 20 * (yy - 1.2), True)
+    objective = axis("q0", "leakage", (xx - .2) ** 2 + (yy + .3) ** 2)
+    figure = {"axes": [own, foreign, objective]}
+    converted = {"data": [a["traces"][0] for a in figure["axes"]], "clickable": {"targets": [{
+        "path": "qubits.q0.amplitude", "axis": "x", "plotly_axis": "x", "scale": 1}]}}
+    result = map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path)), "phase-target", figure, converted,
+        {"panel": 2, "smooth": {"sigma_x": 0, "sigma_y": 0}})
+    if declared:
+        assert result["fit"]["verdict"] == "ok" and result["updates"]
+        assert result["fit"]["values"]["x"] == pytest.approx(.2, abs=.01)
+        assert result["fit"]["values"]["y"] == pytest.approx(-.3, abs=.01)
+    else:
+        assert result["fit"]["values"] is None and not result["updates"]
+
+
+def test_objective_binds_sibling_radian_units_for_target_contour(tmp_path):
+    x, y = np.linspace(-2, 2, 41), np.linspace(-2, 2, 41)
+    xx, yy = np.meshgrid(x, y)
+    def axis(label, z):
+        return {"title": "q0: " + label, "xlabel": "a_scan", "ylabel": "b_over_a", "traces": [{
+            "type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": y.tolist(), "z": z.tolist(),
+            "colorbar": {"label": label, "units": "rad" if label == "phase" else ""}}]}
+    phase = axis("phase", np.pi + yy + .3)
+    objective = axis("leakage", (xx - .2) ** 2 + (yy + .3) ** 2)
+    result = map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path)), "radian-sibling",
+        {"axes": [phase, objective]}, {"data": [phase["traces"][0], objective["traces"][0]]},
+        {"panel": 1, "smooth": {"sigma_x": 0, "sigma_y": 0}})
+    assert result["fit"]["verdict"] == "ok"
+    assert result["fit"]["values"]["x"] == pytest.approx(.2, abs=.01)
+    assert result["fit"]["values"]["y"] == pytest.approx(-.3, abs=.01)
+
+
+def test_separate_figure_phase_binds_contour_fit_without_phase_levels_on_objective(rig, monkeypatch):
+    client, figure = rig
+    axis = figure["axes"][0]
+    x, y = np.asarray(axis["traces"][0]["x"]), np.asarray(axis["traces"][0]["y"])
+    axis["title"] = "q0 leakage"
+    axis["traces"][0]["z"] = ((x[None, :] - .2) ** 2 + (y[:, None] + 1) ** 2).tolist()
+    phase = {"key": "phase", "axes": [{"title": "q0 phase", "xlabel": axis["xlabel"], "ylabel": axis["ylabel"],
+        "traces": [{"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": y.tolist(),
+            "z": np.broadcast_to(180 + 20 * (y[:, None] + .3), (len(y), len(x))).tolist(),
+            "colorbar": {"label": "phi_2Q", "units": "deg"}}]}]}
+    monkeypatch.setattr(replot, "replot_run", lambda *_: {"figures": [figure, phase]})
+    response = client.post("/dataset/run/map/analyze", json={"fig": "map",
+        "smooth": {"sigma_x": 0, "sigma_y": 0}, "contour": {"on": True}})
+    assert response.status_code == 200
+    out = response.get_json()
+    assert out["fit"]["verdict"] == "ok" and out["updates"]
+    assert out["fit"]["values"]["y"] == pytest.approx(-.3, abs=.01)
+    assert out["contours"] and all(0 < item["level"] < 15 and item["lines"] for item in out["contours"])
+    assert len(client.get("/dataset/run/map/figures?fig=map").get_json()["panels"]) == 1

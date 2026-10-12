@@ -214,8 +214,10 @@ def analyze(request):
     geometry = []
     stride = 2 if a.size>1_000_000 else 1
     if contour_settings.get("on",False):
-        chosen = levels(zs,kind,meta,contour_settings.get("mode","auto"),contour_settings.get("level"),contour_settings.get("band"))
-        geometry = contours(zs[::stride,::stride],x[::stride],y[::stride],chosen,meta.get("circular"))
+        contour_period = classification["circular"] if "phase" in meta else meta.get("circular")
+        contour_meta = {**meta,"circular":contour_period}
+        chosen = levels(zs,kind,contour_meta,contour_settings.get("mode","auto"),contour_settings.get("level"),contour_settings.get("band"))
+        geometry = contours(zs[::stride,::stride],x[::stride],y[::stride],chosen,contour_period)
         for item in geometry:
             item.pop("full_lines")
             if transpose:

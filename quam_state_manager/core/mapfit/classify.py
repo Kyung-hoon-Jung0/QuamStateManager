@@ -8,7 +8,7 @@ VOCABULARY = {
     "amplitude": ("amplitude", "prefactor", "a_scan", "b_over_a", "amp"),
     "frequency": ("frequency", "detuning", "freq", "hz"),
     "time": ("time", "duration", " ns", " us", " ms"),
-    "control": ("flux", "bias", "voltage", "power", "amplitude", "a_scan", "b_over_a", "t_phi", "detuning"),
+    "control": ("flux", "bias", "voltage", " dv ", "(mv)", "power", "amplitude", "a_scan", "b_over_a", "t_phi", "detuning"),
 }
 MENUS = {"erroramp": ("erroramp", "extremum"), "ridge": ("ridge", "extremum"),
          "chevron": ("chevron", "extremum"), "landscape": ("landscape", "extremum"),

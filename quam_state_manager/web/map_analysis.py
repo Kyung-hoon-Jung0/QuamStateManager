@@ -59,11 +59,25 @@ def analyze(run, uid, figure, converted, body):
             "signal_label": (trace.get("colorbar") or {}).get("label", "")}
     if "power" in (axis.get("xlabel", "") + axis.get("ylabel", "")).lower():
         meta["summary"] = "asymptote"
+    def entity_of(candidate):
+        return candidate.get("entity") or candidate.get("title", "").split(":", 1)[0].split(" ", 1)[0].strip()
+    sibling_axes = figure.get("axes", []) + figure.get("map_sibling_axes", [])
+    declared_levels = {t.get("level") for candidate in sibling_axes
+        if not candidate.get("is_colorbar") and entity_of(candidate) == entity_of(axis)
+        for t in candidate.get("traces", []) if t.get("type") == "contour"}
     # Same-grid phase sibling supplies the landscape target contour.
-    for sibling in choices:
+    siblings = choices + [{"axis": candidate, "trace": sibling} for candidate in figure.get("map_sibling_axes", [])
+        if not candidate.get("is_colorbar") for sibling in candidate.get("traces", [])
+        if sibling.get("type") == "heatmap" and sibling.get("full_resolution")]
+    for sibling in siblings:
         label = (sibling["trace"].get("colorbar") or {}).get("label", "").lower()
-        if sibling is not panel and "phase" in label and sibling["trace"]["x"] == trace["x"] and sibling["trace"]["y"] == trace["y"]:
+        if (sibling is not panel and any(word in label for word in ("phase", "phi_2q"))
+                and entity_of(sibling["axis"]) == entity_of(axis)
+                and sibling["trace"]["x"] == trace["x"] and sibling["trace"]["y"] == trace["y"]):
             meta["phase"] = sibling["trace"]["z"]
+            meta["phase_units"] = (sibling["trace"].get("colorbar") or {}).get("units", "")
+            if "phase error" in label and 0 in declared_levels:
+                meta["target_deg"] = 0.
     from quam_state_manager.core.interactive_plots.learn_click import _read
     saved = _read(run, "data.json").get("fit_results", {})
     entity = axis.get("entity") or axis.get("title", "").strip()
@@ -78,6 +92,9 @@ def analyze(run, uid, figure, converted, body):
         node_name = "optimal_a_scan"
     if classification["type"] == "ridge" and meta.get("summary") == "asymptote":
         value_key = "asymptote"
+    if classification["type"] == "landscape" and any(
+            label in axis.get("ylabel", "").lower() for label in ("a_scan", "scan amplitude")):
+        value_key = "y"
     node_value = record.get(node_name)
     if isinstance(node_value, (float, int)) and math.isfinite(node_value):
         meta.update(node_value=node_value, node_name=node_name, value_key=value_key)
@@ -116,6 +133,10 @@ def analyze(run, uid, figure, converted, body):
         import numpy as np
         a = np.asarray(array, float)
         xc, yc = centers(coordinates["x"], a.shape[1]), centers(coordinates["y"], a.shape[0])
+        if np.any(np.diff(xc) < 0):
+            xc, a = xc[::-1], a[:, ::-1]
+        if np.any(np.diff(yc) < 0):
+            yc, a = yc[::-1], a[::-1, :]
         if result["caps_applied"]["transposed"]:
             a, xc, yc = a.T, yc, xc
         _, _, row_caps, _ = api._cap_info(classification["type"], a, xc, yc,
@@ -137,10 +158,10 @@ def analyze(run, uid, figure, converted, body):
         for contour in result["contours"]:
             for line in contour["lines"]:
                 for point in line:
-                    index = 0 if dim == "x" else 1
-                    point[index] = (point[index] - mapping["offset"]) / mapping["scale"]
+                    point_index = 0 if dim == "x" else 1
+                    point[point_index] = (point[point_index] - mapping["offset"]) / mapping["scale"]
     if omitted:
-        result["fit"]["verdict_line"] += f"; {omitted} zero-count baseline rows excluded from fit"
+        result["fit"]["verdict_line"] += f"; {omitted} nonpositive-count baseline rows excluded from fit"
     # Scope the hash to the run, figure and exact source revision as well as arrays/options.
     result["request_hash"] = api.request_hash({"analysis": result["request_hash"], "run": uid,
         "fig": body.get("fig"), "panel": index, "source": body.get("source", "replot"),
@@ -149,18 +170,26 @@ def analyze(run, uid, figure, converted, body):
     comparison = result["compare"]
     run_id = getattr(run, "id", getattr(run, "run_id", "?"))
     applied = result["caps_applied"]
+    display_caps = dict(applied)
+    if applied["transposed"]:
+        for prefix in ("sigma_", "cap_"):
+            display_caps[prefix + "x"], display_caps[prefix + "y"] = applied[prefix + "y"], applied[prefix + "x"]
     model = body.get("fit", {}).get("model", "auto")
     model = classification["models"][0] if model == "auto" else model
     contour_note = ""
     if body.get("contour", {}).get("on"):
-        contour_note = " [contour level " + ", ".join(f"{c['level']:.4g}" for c in result["contours"]) + "]"
+        contour_note = (" [contour level " + ", ".join(f"{c['level']:.4g}" for c in result["contours"]) + "]"
+                        if result["contours"] else " [contour: no automatic levels]")
     revision = figure.get("revision") or {}
     code = revision.get("rung", "unverified") + ("/" + revision["sha"][:7] if revision.get("sha") else "")
-    text = (f"derived from run #{run_id} {getattr(run, 'experiment_name', '')}: {model} on smoothed map "
-            f"({body.get('smooth', {}).get('kernel', 'gaussian')}, sigma x={applied['sigma_x']:.1f} pt, "
-            f"y={applied['sigma_y']:.1f}; cap {applied['cap_x']:.3g} pt){contour_note}; "
-            f"node value {comparison['node_value']}, delta {comparison['delta']}, {comparison['verdict']}; "
-            f"code {code}" + ("; cap overridden" if applied["override"] else ""))
+    def compact(value):
+        return "n/a" if value is None else f"{value:.6g}"
+    text = (f"derived from run #{run_id} {getattr(run, 'experiment_name', '')[:60]}: {model} on smoothed map "
+            f"({body.get('smooth', {}).get('kernel', 'gaussian')}, sigma x={display_caps['sigma_x']:.1f} pt, "
+            f"y={display_caps['sigma_y']:.1f}; cap x={display_caps['cap_x']:.3g}, y={display_caps['cap_y']:.3g} pt"
+            + ("; cap overridden" if applied["override"] else "") + f"){contour_note}; "
+            f"node value {compact(comparison['node_value'])}, delta {compact(comparison['delta'])}, {comparison['verdict']}; "
+            f"code {code}")
     result["provenance_text"] = text[:300]
     origin = {"src": "map_fit", "run_uid": uid, "request_hash": result["request_hash"], "text": text[:300]}
     updates = []
@@ -275,6 +304,4 @@ def raw_figure(run, body, candidates):
 def replay(uid, digest):
     with _LOCK:
         entry = _RESULTS.get((uid, digest))
-        if entry:
-            _RESULTS.move_to_end((uid, digest))
         return deepcopy(entry[0]) if entry else None

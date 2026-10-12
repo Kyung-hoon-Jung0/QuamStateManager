@@ -39382,7 +39382,7 @@ def dataset_interactive(uid):
         result = replot.replot_run(run, current_app.instance_path)
         reproduced = replot.replot_menu(result)
         covered = {f["key"] for f in reproduced}
-        legacy = [f for f in figures if f["key"] not in covered and (f.get("static") or not reproduced)]
+        legacy = [f for f in figures if f["key"] not in covered]
         return render_template("_dataset_replot.html", uid=uid, run_id=run_id,
             available=True, util=result.get("util", ""), figures=reproduced,
             errors=result.get("errors", []), outcome=replot.replot_outcome(result)) + (
@@ -39536,7 +39536,9 @@ def _map_figure(uid, body):
         converted = replot.replot_figure(result, key)
         if not figure or not converted:
             raise BadBody("Figure not available.")
-        figure = {**figure, "code_fingerprint": result.get("code_fingerprint")}
+        figure = {**figure, "code_fingerprint": result.get("code_fingerprint"),
+            "map_sibling_axes": [axis for peer in result.get("figures", []) if peer is not figure
+                                 for axis in peer.get("axes", [])]}
     if converted.get("clickable"):
         names = _dataset_run_names(run.folder_path)
         if names is not None and not names.identity:

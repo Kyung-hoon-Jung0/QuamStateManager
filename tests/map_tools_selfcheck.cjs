@@ -50,7 +50,8 @@ function check(value, message) { checks++; assert.ok(value, message); }
     check(c('model').options.length === 2 && c('model').value === 'erroramp', 'only type models, auto selected');
     check(c('sigma_x').min === '0' && c('sigma_x').max === '8' && c('sigma_x').step === '0.1', 'slider range');
     check(c('sigma_y').disabled && c('sigma_y').value === '0', 'count axis locked');
-    check(tile.textContent.includes('current code') && tile.textContent.includes('proposed, not applied'), 'status and proposal chips');
+    const chipTexts = Array.from(tile.querySelectorAll('.map-tools-chip')).map(el => el.textContent);
+    check(chipTexts.includes('current code') && chipTexts.includes('proposed, not applied'), 'status and proposal chips');
     input('smooth', true); input('sigma_x', 4);
     check(Number(c('sigma_x').value) <= 2.3, 'sigma clamped to cap');
     check(c('apply').disabled, 'old result cannot apply while controls change');
