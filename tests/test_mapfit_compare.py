@@ -19,6 +19,7 @@ def test_tolerance_formulas_and_sources():
     assert tolerance("chevron","two_j_hz",node_error=2)[0] == 6
     assert tolerance("chevron","two_j_hz",node_value=100)[0] == 5
     assert tolerance("landscape","x",step=.2) == (.2,"one sweep step")
+    assert tolerance("erroramp","a_pi",step=.01,circular=True) == (.01,"one sweep step")
 
 
 def test_fault_wrong_old_is_display_only():

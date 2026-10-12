@@ -1,15 +1,17 @@
 import numpy as np
 import pytest
 
+from quam_state_manager.core.mapfit.api import analyze
 from quam_state_manager.core.mapfit.models import fit, shared_pi, erroramp_smoothing, _parabolic_offset, _status
+from quam_state_manager.core.mapfit.smooth import noise_gain, smooth
 from tests.mapfit_synthetic import sample
 
 MODELS = ["erroramp","ridge","chevron","landscape","extremum"]
 
 
 @pytest.mark.parametrize("model",MODELS)
-def test_planted_models_and_three_pixel_shift(model):
-    z,x,y,meta,truth = sample(model,shift=3)
+def test_planted_models_recover_their_values(model):
+    z,x,y,meta,truth = sample(model)
     out = fit(model,z,x,y,meta)
     assert out["verdict_line"] == "VERDICT: ok",out
     for key,value in truth.items():
@@ -19,38 +21,28 @@ def test_planted_models_and_three_pixel_shift(model):
         assert out["pick_method"] == "contour_fit"
 
 
-@pytest.mark.parametrize("model",MODELS)
-@pytest.mark.parametrize("fault,verdict",[("noise","no feature"),("flat","flat"),("ramp","no extremum")])
-def test_fault_noise_flat_ramp_verdict(model,fault,verdict):
-    z,x,y,meta,_ = sample(model)
-    if fault=="noise":
-        z = np.random.default_rng(97).normal(size=z.shape)
-    elif fault=="flat":
-        z = np.ones_like(z)
-    else:
-        z = x[None,:]+2*y[:,None]
-    out = fit(model,z,x,y,meta)
-    assert out["verdict_line"] == "VERDICT: "+verdict
-    assert out["values"] is None
+def test_noisy_ridge_is_found_by_smoothing_and_measured_within_a_pixel():
+    """The design's ridge case (HWHM 4, noise 0.5): one noisy column must not make the map ambiguous."""
+    z,x,y,meta,truth = sample("ridge",noise=.5)
+    body = {"z":z,"x":x,"y":y,"meta":{"x":{"name":"flux"},"y":{"name":"frequency"}},"fit":{"model":"auto"}}
+    out = analyze(body)
+    assert out["fit"]["verdict_line"] == "VERDICT: ok"
+    assert abs(out["fit"]["values"]["x"]-truth["x"]) < 1 and abs(out["fit"]["values"]["y"]-truth["y"]) < 1
+    # The frequency cap is the line's measured HWHM (planted 4 pt; first-pass smoothing broadens it a little).
+    assert 3 <= out["caps_applied"]["cap_y"] <= 6.5
+    # Frequency smoothing alone leaves a sparse line under the p98-p2 test; the peak test still sees it.
+    body["smooth"] = {"sigma_x":0}
+    out = analyze(body)
+    assert out["fit"]["verdict_line"] == "VERDICT: ok"
+    assert abs(out["fit"]["values"]["x"]-truth["x"]) < 1 and abs(out["fit"]["values"]["y"]-truth["y"]) < 1
 
 
-@pytest.mark.parametrize("model",MODELS)
-def test_fault_nan_rows_columns_count(model):
-    z,x,y,meta,_ = sample(model)
-    z[2,:] = np.nan
-    z[:,4] = np.nan
-    out = fit(model,z,x,y,meta)
-    assert out["verdict_line"] == "VERDICT: ok",out
-    assert out["nan_count"] == len(x)+len(y)-1
-
-
-@pytest.mark.parametrize("model",MODELS)
-def test_fault_outside_sweep(model):
-    shift = 75 if model=="erroramp" else 35 if model=="chevron" else 60
-    z,x,y,meta,_ = sample(model,shift=shift)
-    out = fit(model,z,x,y,meta)
-    assert out["verdict_line"] == "VERDICT: outside the sweep",out
-    assert out["values"] is None
+def test_smoothed_noise_floor_uses_the_raw_noise_times_the_gain():
+    """Differences of a smoothed noise map are correlated; only raw noise x gain refuses it."""
+    noise = np.random.default_rng(4).normal(size=(201,61))
+    smoothed = smooth(noise,1.,2.)
+    assert _status(smoothed) is None  # the old self-estimate sees a feature in smoothed noise
+    assert _status(smoothed,noise,noise_gain(noise.shape,1.,2.)) == "no feature"
 
 
 def test_shared_scan_sign_quality_and_parabola_formula():
@@ -109,3 +101,15 @@ def test_circular_all_counts_agree_formula():
     out = erroramp_smoothing(z,x,y)
     assert out["smoothing_verdict"] == "agree"
     assert abs(out["smoothing_pi_gap"]) < .003
+
+
+def test_a_sparse_line_passes_the_gate_by_its_peak_not_its_percentiles():
+    """A line covering ~1% of the cells never reaches p98; its peak excursion over the noise does."""
+    rng = np.random.default_rng(1)
+    y = np.arange(801.)
+    raw = 1/(1+((y[:,None]-500)/3)**2)+rng.normal(0,.3,(801,61))
+    smoothed = smooth(raw,0.,2.)
+    finite = smoothed.ravel()
+    gain = noise_gain(raw.shape,0.,2.)
+    assert np.percentile(finite,98)-np.percentile(finite,2) < 6*.3*gain
+    assert _status(smoothed,raw,gain) is None

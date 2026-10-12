@@ -5,12 +5,13 @@ import math
 from .caps import AGREE_TOL
 
 
-def tolerance(kind, name, step=None, node_error=None, hwhm=None, node_value=None):
+def tolerance(kind, name, step=None, node_error=None, hwhm=None, node_value=None, circular=False):
     """[derived] Frequency tolerance=max(step,0.1 HWHM); coupling=3 error else 5%.
 
-    Other tolerances are design policy: reference prefactor 0.003 or one sweep step.
+    Other tolerances are design policy: reference prefactor 0.003 or one sweep step (a circular
+    phase-per-gate map has no prefactor axis, so it gets one grid step).
     """
-    if kind=="erroramp" and name in ("opt_amp_prefactor","a_pi"):
+    if kind=="erroramp" and not circular and name in ("opt_amp_prefactor","a_pi"):
         return AGREE_TOL,"reference constant"
     if name=="two_j_hz":
         if node_error is not None and math.isfinite(node_error) and node_error>=0:

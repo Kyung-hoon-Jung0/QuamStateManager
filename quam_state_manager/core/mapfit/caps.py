@@ -6,6 +6,10 @@ import numpy as np
 MAX_CONTRAST_LOSS = .10
 AGREE_TOL = .003
 CAP_FACTOR = float(np.sqrt(-np.log1p(-MAX_CONTRAST_LOSS) / (2 * np.pi**2)))
+# Default strengths in points (design 4.2); each is clamped to its cap. Units: "x"/"y" points,
+# "y_hwhm" a fraction of the measured line HWHM, "x_cap" a fraction of the row's time cap.
+DEFAULTS = {"erroramp": {"x": 2.0}, "ridge": {"x": 1.0, "y_hwhm": .5},
+            "chevron": {"x_cap": .5, "y": 1.0}, "landscape": {"x": 1.0, "y": 1.0}}
 
 
 def attenuation(sigma, period):
@@ -53,15 +57,28 @@ def ridge_caps(hwhm, frequency_step, slope, control_step):
             "control": max(1., hwhm / (abs(slope) * control_step)) if slope else float("inf")}
 
 
-def chevron_caps(frequencies, dt, f0, slope, control_step):
-    """[derived] cap_t=CAP_FACTOR/(f dt); cap_c=0.5 f0/(|slope| dc).
+CHEVRON_CONTROL_FRACTION = .15
 
-    f(c)^2=f0^2+slope^2(c-c0)^2 reaches 2 f0^2 at |c-c0|=f0/|slope|.
+
+def chevron_caps(frequencies, dt, f0, slope, control_step):
+    """cap_t=CAP_FACTOR/(f dt) [derived]; cap_c=CHEVRON_CONTROL_FRACTION f0/(|slope| dc) [measured].
+
+    f(c)^2=f0^2+slope^2(c-c0)^2 reaches 2 f0^2 at |c-c0|=f0/|slope| (the chevron half-width).
+    The design's 0.5 of that half-width biased the symmetry axis by 0.17 step in the bias
+    sweep (tests/mapfit_bias_sweep.py); 0.15 keeps it under the 0.1-step target.
     """
     if min(dt, f0, abs(slope), control_step) <= 0 or np.any(np.asarray(frequencies) <= 0):
         raise ValueError("Positive chevron scales required")
     return {"time": fringe_cap(1 / (np.asarray(frequencies) * dt)),
-            "control": .5 * f0 / (abs(slope) * control_step)}
+            "control": CHEVRON_CONTROL_FRACTION * f0 / (abs(slope) * control_step)}
+
+
+def asymmetry_cap(curvature, third, bias=.5):
+    """[derived] An even kernel of variance s^2 on f=c+f2 u^2/2+f3 u^3/6 adds f3 s^2 u/2, moving the
+    vertex by -f3 s^2/(2 f2); cap s=sqrt(2|f2| bias/|f3|) keeps that shift <= bias points."""
+    if not np.isfinite([curvature, third, bias]).all() or bias <= 0:
+        raise ValueError("Finite derivatives and a positive bias required")
+    return float(np.sqrt(2 * abs(curvature) * bias / abs(third))) if third else float("inf")
 
 
 def landscape_cap(shape, extremum_index, contour_spacing=float("inf")):

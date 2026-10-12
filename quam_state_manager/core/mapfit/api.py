@@ -5,14 +5,16 @@ import hashlib
 import json
 import numpy as np
 
-from .caps import apply_caps, erroramp_caps, ridge_caps, chevron_caps, landscape_cap
-from .classify import classify
+from .caps import (DEFAULTS, apply_caps, asymmetry_cap, chevron_caps, erroramp_caps, landscape_cap,
+                   phase_slope_cap, ridge_caps)
+from .classify import circular_period, classify
 from .compare import compare, tolerance, contract_verdict
 from .contour import centers, levels, contours
 from .models import fit, shared_pi
-from .smooth import smooth
+from .smooth import noise_gain, smooth
 
 API_VERSION = "mapfit/v1"
+SLIDER_MAX = 8.
 
 
 def _json_value(value):
@@ -52,17 +54,20 @@ def _cap_info(kind,a,x,y,meta,raw_fit):
         scan = raw_fit.get("diagnostics") or shared_pi(a,x,y,meta.get("theta",np.pi))
         pi = meta.get("a_pi",scan.get("a_pi"))
         if not pi or not np.isfinite(pi):
-            pi = float(np.median(x))
+            pi = 1.  # the reference implementation's fallback when the raw fit has no number
         rows = erroramp_caps(y,pi,dx,meta.get("theta",np.pi),meta.get("multipulse_slope_ratio",1.))
-        return float(np.max(rows)),0.,rows,(2.,0.)
+        return float(np.max(rows)),0.,rows,(DEFAULTS["erroramp"]["x"],0.)
     if kind=="erroramp":
-        from .caps import phase_slope_cap
         period = meta["circular"]
         unwrapped = np.unwrap(a*2*np.pi/period,axis=1)*360/(2*np.pi)
         slopes = np.nanmedian(np.abs(np.diff(unwrapped,axis=1)/dx),axis=1)
         rows = np.array([phase_slope_cap(s,dx) if np.isfinite(s) else 0 for s in slopes])
-        return float(np.max(rows)),0.,rows,(2.,0.)
+        return float(np.max(rows)),0.,rows,(DEFAULTS["erroramp"]["x"],0.)
     if kind=="ridge":
+        # Design 4.2: width and slope come from a first-pass track on a lightly smoothed map
+        # (1 pt each axis), measured against the raw map; a saved node width wins.
+        first = fit("ridge",smooth(a,1.,1.),x,y,{**meta,"noise_gain":noise_gain(a.shape,1.,1.)},raw=a)
+        raw_fit = first if first.get("polyline") else raw_fit
         width = meta.get("hwhm_pts",raw_fit.get("hwhm_pts",1.))
         if "fwhm" in meta:
             width = meta["fwhm"]/2/dy
@@ -73,7 +78,9 @@ def _cap_info(kind,a,x,y,meta,raw_fit):
             if good.sum()>2:
                 slope = float(np.max(np.abs(np.gradient(polyline[good,1],polyline[good,0]))))
         cap = ridge_caps(width*dy,dy,meta.get("ridge_slope",slope),dx)
-        return min(8.,cap["control"]),cap["frequency"],None,(1.,.5*width)
+        # A flat ridge gives an infinite control cap; the slider range ends at SLIDER_MAX (design 5.2).
+        rule = DEFAULTS["ridge"]
+        return min(SLIDER_MAX,cap["control"]),cap["frequency"],None,(rule["x"],rule["y_hwhm"]*width)
     if kind=="chevron":
         freq = np.asarray(raw_fit.get("frequencies",[]),float)
         if len(freq)!=len(y):
@@ -89,7 +96,9 @@ def _cap_info(kind,a,x,y,meta,raw_fit):
         slope = meta.get("chevron_slope",float(np.sqrt(max(coef[0],1e-12))))
         safe = np.where(good,freq,float(np.max(freq[good])))
         cap = chevron_caps(safe,dx,f0,slope,dy)
-        return float(np.max(cap["time"])),cap["control"],cap["time"],(.5*float(np.min(cap["time"])),1.)
+        rule = DEFAULTS["chevron"]
+        return (float(np.max(cap["time"])),cap["control"],cap["time"],
+                (rule["x_cap"]*float(np.min(cap["time"])),rule["y"]))
     finite = np.isfinite(a)
     if not finite.any():
         return 0.,0.,None,(0.,0.)
@@ -102,8 +111,19 @@ def _cap_info(kind,a,x,y,meta,raw_fit):
         gradients = np.hypot(*np.gradient(angle))
         slope = float(np.nanmax(gradients))
         spacing = 5/slope if slope>0 else float("inf")
-    cap = landscape_cap(a.shape,index,spacing)
-    return cap,cap,None,(1.,1.)
+    caps = [landscape_cap(a.shape,index,spacing)]*2
+    # Asymmetry: a local cubic through the extremum (1 pt pre-smoothing) bounds the vertex shift.
+    light = smooth(a,1.,1.)
+    for axis,(line,center) in enumerate(((light[index[0],:],index[1]),(light[:,index[1]],index[0]))):
+        half = min(10,center,len(line)-1-center)
+        u = np.arange(-half,half+1.)
+        segment = line[center-half:center+half+1]
+        good = np.isfinite(segment)
+        if half>=3 and good.sum()>=5:
+            c3,c2,_,_ = np.polyfit(u[good],segment[good],3)
+            caps[axis] = min(caps[axis],asymmetry_cap(2*c2,6*c3))
+    rule = DEFAULTS["landscape"]
+    return caps[0],caps[1],None,(rule["x"],rule["y"])
 
 
 def analyze(request):
@@ -142,6 +162,10 @@ def analyze(request):
     # A circular sibling does not make the scalar objective itself circular.
     if "phase" not in meta:
         meta["circular"] = classification["circular"]
+    elif not meta.get("circular"):
+        # The sibling's own period by range: turns stored under a degree label still read as turns.
+        meta["circular"] = circular_period(meta["phase"],{"signal_label":"phase",
+                                           "signal_units":meta.get("phase_units","")}) or 360.
     raw_fit = fit(model,a,x,y,meta)
     cap_x,cap_y,rows,defaults = _cap_info(kind,a,x,y,meta,raw_fit)
     options = request.get("smooth") or {}
@@ -155,14 +179,17 @@ def analyze(request):
         row_sigmas = np.full(len(y),applied["sigma_x"]) if applied["override"] else np.minimum(rows,applied["sigma_x"])
         applied["row_sigmas"] = row_sigmas
     kernel = options.get("kernel","gaussian")
-    zs = smooth(a,applied["sigma_x"],applied["sigma_y"],kernel,
-                circular=meta.get("circular") if "phase" not in meta else None,
-                row_sigmas=row_sigmas if applied["sigma_y"]==0 else None)
-    if kind=="chevron" and row_sigmas is not None and applied["sigma_y"]!=0:
-        zs = smooth(smooth(a,sigma_y=applied["sigma_y"],kernel=kernel),kernel=kernel,row_sigmas=row_sigmas)
+    circular = meta.get("circular") if "phase" not in meta else None
+    if row_sigmas is None:
+        zs = smooth(a,applied["sigma_x"],applied["sigma_y"],kernel,circular=circular)
+    else:
+        # Per-row strengths along x (erroramp counts never mix; chevron rows have their own period).
+        zs = smooth(smooth(a,sigma_y=applied["sigma_y"],kernel=kernel,circular=circular),
+                    kernel=kernel,circular=circular,row_sigmas=row_sigmas)
     fit_meta = dict(meta)
     if "phase" in meta:
         fit_meta["phase"] = smooth(meta["phase"],applied["sigma_x"],applied["sigma_y"],kernel,circular=meta.get("circular",360))
+    fit_meta["noise_gain"] = noise_gain(a.shape,applied["sigma_x"],applied["sigma_y"],kernel,row_sigmas)
     fitted = fit(model,zs,x,y,fit_meta,raw=a)
     if applied["warning"]:
         fitted["verdict_line"] += "; "+applied["warning"]
@@ -177,7 +204,8 @@ def analyze(request):
     sm_value = (fitted.get("values") or {}).get(key)
     raw_value = (raw_fit.get("values") or {}).get(key)
     step = _step(y) if key in ("y","dv0") else _step(x)
-    tol,source = tolerance(kind,meta.get("node_name",key),step,meta.get("node_error"),meta.get("hwhm"),node)
+    tol,source = tolerance(kind,meta.get("node_name",key),step,meta.get("node_error"),meta.get("hwhm"),node,
+                           circular=bool(meta.get("circular")) and "phase" not in meta)
     comparison = compare(node,sm_value,tol,source,meta.get("node_name",key),fitted["verdict"])
     comparison["raw_value"] = raw_value
     comparison["raw_smoothed_delta"] = sm_value-raw_value if sm_value is not None and raw_value is not None else None
@@ -189,11 +217,16 @@ def analyze(request):
         geometry = contours(zs[::stride,::stride],x[::stride],y[::stride],chosen,meta.get("circular"))
         for item in geometry:
             item.pop("full_lines")
+            if transpose:
+                # Lines are traced in model orientation; hand them back in the figure's (x, y).
+                item["lines"] = [np.asarray(line)[:,::-1] for line in item["lines"]]
     applied["contour_stride"] = stride
     applied["transposed"] = transpose
+    # Fit values and polylines stay in model orientation; this names the figure axis of each.
+    model_axes = {"x":"y","y":"x"} if transpose else {"x":"x","y":"y"}
     digest = request_hash(request)
     provenance = f"derived from smoothed map ({kernel}, sigma x={applied['sigma_x']:.3g} pt, y={applied['sigma_y']:.3g} pt; cap x={cap_x:.3g}, y={cap_y:.3g}); {model}; {fitted['verdict_line']}"
     return _json_value({"schema":API_VERSION,"request_hash":digest,"classification":classification,
         "smoothed":{"z":zs.T if transpose else zs,"x":y if transpose else x,"y":x if transpose else y},
         "fit":fitted,"raw_fit":raw_fit,"compare":comparison,"contours":geometry,
-        "caps_applied":applied,"provenance_text":provenance})
+        "caps_applied":applied,"model_axes":model_axes,"provenance_text":provenance})

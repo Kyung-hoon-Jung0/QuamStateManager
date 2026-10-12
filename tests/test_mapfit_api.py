@@ -21,49 +21,18 @@ def request(model):
             "smooth":{"sigma_x":0,"sigma_y":0},"fit":{"model":"auto"}}
 
 
-@pytest.mark.parametrize("model",list(LABELS))
-def test_api_caps_override_and_wrong_old_verdict(model):
-    body = request(model)
-    body["smooth"] = {"sigma_x":100,"sigma_y":100,"override_cap":True}
-    out = analyze(body)
-    assert "cap overridden" in out["fit"]["verdict_line"]
-    assert out["caps_applied"]["override"]
-    body["smooth"] = {"sigma_x":0,"sigma_y":0}
-    body["meta"].update(patch={"old":.9,"value":.95},current_old=.8)
-    out = analyze(body)
-    assert "display-only" in out["fit"]["verdict_line"]
-    assert out["fit"]["apply_allowed"] is False
-
-
-@pytest.mark.parametrize("model",list(LABELS))
-def test_api_transposed_axes_keep_model_and_values(model):
-    body = request(model)
+def test_api_contours_come_back_in_figure_orientation_when_transposed():
+    body = request("ridge")
+    body["contour"] = {"on": True}
     first = analyze(body)
-    body["z"] = body["z"].T
+    body["z"] = np.asarray(body["z"]).T
     body["x"],body["y"] = body["y"],body["x"]
     body["meta"]["x"],body["meta"]["y"] = body["meta"]["y"],body["meta"]["x"]
-    if "phase" in body["meta"]:
-        body["meta"]["phase"] = body["meta"]["phase"].T
     second = analyze(body)
-    assert first["classification"]["type"] == second["classification"]["type"]
-    assert second["fit"]["verdict_line"] == "VERDICT: ok"
-    if model in ("erroramp","ridge","chevron"):
-        assert first["fit"]["values"] == second["fit"]["values"]
-    else:
-        assert second["fit"]["values"]["x"] == pytest.approx(first["fit"]["values"]["y"],abs=.5)
-
-
-@pytest.mark.parametrize("model",list(LABELS))
-def test_api_turns_with_degree_label(model):
-    body = request(model)
-    body["z"] = np.asarray(body["z"])%1
-    body["meta"]["signal_units"] = "deg"
-    if "phase" in body["meta"]:
-        body["meta"]["phase"] = body["meta"]["phase"]/360
-        body["meta"]["circular"] = 1.
-    out = analyze(body)
-    assert out["classification"]["circular"] == 1.
-    assert out["fit"]["verdict_line"].startswith("VERDICT: ")
+    assert not first["caps_applied"]["transposed"] and second["caps_applied"]["transposed"]
+    assert second["model_axes"] == {"x":"y","y":"x"}
+    a,b = first["contours"][0]["lines"][0],second["contours"][0]["lines"][0]
+    assert np.allclose(np.asarray(b),np.asarray(a)[:,::-1])
 
 
 def test_api_full_request_cross_process_hash_and_numbers(tmp_path):

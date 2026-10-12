@@ -26,23 +26,42 @@ def _prepare(z, x, y):
     return a, x, y
 
 
-def _status(a):
-    """[derived] Noise estimate: MAD(first differences)/(.67449 sqrt(2))."""
+def _noise(a):
+    """[derived] Noise estimate: min over axes of MAD(first differences)/(.67449 sqrt(2))."""
+    noises = []
+    for axis in (0, 1):
+        diffs = np.diff(a, axis=axis).ravel()
+        diffs = diffs[np.isfinite(diffs)]
+        if diffs.size:
+            noises.append(np.median(np.abs(diffs-np.median(diffs))) / (.67448975*np.sqrt(2)))
+    return min(noises) if noises else 0.
+
+
+def _status(a, raw=None, gain=1.):
+    """Refusal gate: "flat", "no feature" or None (a feature is present).
+
+    The noise floor comes from the RAW map scaled by the smoothing gain (smooth.noise_gain):
+    differences of a smoothed map are correlated and would underestimate its noise.
+    A feature needs one of: p98-p2 >= 6 noise (a broad feature); a peak excursion
+    max|z-median| >= (sqrt(2 ln N_eff)+1.5) noise, N_eff = cells*gain^2 independent cells
+    [derived: expected maximum of N_eff Gaussian samples, plus a 1.5-sigma margin] (a sparse
+    line); or raw rows whose spectrum concentrates in one bin (an oscillation).
+    """
+    source = a if raw is None else np.asarray(raw, float)
     finite = a[np.isfinite(a)]
     if finite.size < 8:
         return "no feature"
     span = float(np.ptp(finite))
     if span <= 1e-12 * max(1., float(np.max(np.abs(finite)))):
         return "flat"
-    noises = []
-    for axis in (0,1):
-        diffs = np.diff(a,axis=axis).ravel()
-        diffs = diffs[np.isfinite(diffs)]
-        if diffs.size:
-            noises.append(np.median(np.abs(diffs-np.median(diffs))) / (.67448975*np.sqrt(2)))
-    noise = min(noises) if noises else 0.
+    gain = gain if raw is not None else 1.
+    noise = _noise(source) * gain
+    effective = max(2., finite.size * gain**2)
+    peak = float(np.max(np.abs(finite-np.median(finite))))
+    if peak >= (np.sqrt(2*np.log(effective))+1.5)*noise:
+        return None
     if np.percentile(finite,98)-np.percentile(finite,2) < 6*noise:
-        rows = a[np.all(np.isfinite(a),axis=1)]
+        rows = source[np.all(np.isfinite(source),axis=1)]
         if not len(rows):
             return "no feature"
         power = np.abs(np.fft.rfft(rows-rows.mean(axis=1,keepdims=True),axis=1))**2
@@ -51,6 +70,27 @@ def _status(a):
         if np.median(concentration)<.35:
             return "no feature"
     return None
+
+
+def _gate(a, raw, meta):
+    return _status(a, raw, (meta or {}).get("noise_gain", 1.))
+
+
+def _floor(a, raw, meta):
+    """Noise std of the map being modeled (raw noise times the smoothing gain)."""
+    return _noise(a) if raw is None else _noise(np.asarray(raw, float)) * (meta or {}).get("noise_gain", 1.)
+
+
+def _planar(a, x, y, raw=None):
+    """A plane explains the MEASURED map (raw when given; smoothing bends a ramp at the edges):
+    residual within 2 raw noise floors AND under 30% of the map's spread -> a monotonic ramp."""
+    m = a if raw is None else np.asarray(raw, float)
+    xx, yy = np.meshgrid(x, y)
+    ok = np.isfinite(m)
+    basis = np.column_stack((np.ones(ok.sum()), xx[ok], yy[ok]))
+    residual = m[ok] - basis @ np.linalg.lstsq(basis, m[ok], rcond=None)[0]
+    spread, rest = float(np.std(m[ok])), float(np.std(residual))
+    return rest < 1e-8*max(1., spread) or (rest < 2*_noise(m) and rest < .3*spread)
 
 
 def _parabolic_offset(left, middle, right):
@@ -89,10 +129,13 @@ def _alignment(a, x, counts, theta, pi):
 
 
 def shared_pi(z, x, counts, theta=np.pi):
-    """[derived] y_N=c_N+d_N cos(N theta (1+k(a/a_pi-1))), one sign of d_N.
+    """[reference implementation, no paper] The shared-pi scan of the lab's power-Rabi analysis:
+    y_N=c_N+d_N cos(N theta (1+k(a/a_pi-1))), one sign of d_N, k on linspace(.25,3,56) for >= 3 rows.
 
     Eliminate c,d by centered least squares: gain=(basis dot row)^2/(basis dot basis).
-    Quality=1-min RSS/median(coarse RSS). Coarse sweep then 41-point refinement.
+    Quality=1-min RSS/median(coarse RSS). Coarse sweep then 41-point refinement. NaN cells are
+    masked here (the reference's sums propagate them). Reproduced to 1e-10 against the reference
+    module by tests/test_mapfit_reference.py.
     """
     a, x, counts = _prepare(z,x,counts) if len(counts) >= 3 else (
         np.asarray(z,float), np.asarray(x,float), np.asarray(counts,float))
@@ -146,7 +189,8 @@ def shared_pi(z, x, counts, theta=np.pi):
     aligned, used = _alignment(a,x,counts,theta,pi) if len(a)>=3 else (1.,-1)
     has_pi = bool(x.min() <= pi <= x.max() and quality >= .30 and
                   (used<0 or (used>=3 and aligned>=.75 and .25+1e-9<k<3-1e-9)))
-    minima = find_peaks(-profile)[0]
+    # Distinct residual minima: coarse-grid wiggles closer than three steps are one minimum.
+    minima = find_peaks(-profile,distance=3)[0]
     candidates = [float(coarse[j]) for j in minima if profile[j] <= profile[jc]+.03*total
                   and x.min() <= coarse[j] <= x.max()]
     return {"a_pi":pi,"k":k,"quality":quality,"alignment":aligned,"rows_used":used,
@@ -176,22 +220,23 @@ def erroramp(z,x,y,meta=None,raw=None):
             return result("ambiguous",candidates=candidates)
         position = x[j]+_parabolic_offset(*score[j-1:j+2])*(x[1]-x[0])
         return result("ok",{"a_pi":float(position),"quality":float(1-score[j]),"has_pi":True},score=score.tolist())
-    status = _status(a)
+    status = _gate(a,raw,meta)
     if status:
         return result(status)
     fitted = shared_pi(a,x,y,meta.get("theta",np.pi))
     verdict = "ok"
     if not x.min() <= fitted["a_pi"] <= x.max():
         verdict = "outside the sweep"
-    elif not fitted["has_pi"]:
-        verdict = "no feature"
     elif len(fitted["candidates"])>1:
         verdict = "ambiguous"
+    elif not fitted["has_pi"]:
+        verdict = "no feature"
     mask = np.isfinite(a)
     means = np.sum(np.where(mask,a,0),axis=1)/np.maximum(mask.sum(axis=1),1)
     centered = np.where(mask,a-means[:,None],0)
     score = np.abs(centered.sum(axis=0))/np.maximum(np.abs(centered).sum(axis=0),1e-15)
-    return result(verdict, fitted if verdict=="ok" else None, diagnostics=fitted, agreement_score=score.tolist())
+    return result(verdict, fitted if verdict=="ok" else None, diagnostics=fitted, agreement_score=score.tolist(),
+                  candidates=fitted["candidates"] if verdict=="ambiguous" else [])
 
 
 def erroramp_smoothing(z,x,counts,sigma=2.,meta=None,reference_compat=False):
@@ -216,16 +261,13 @@ def extremum(z,x,y,meta=None,raw=None):
     """[derived] Fit local q=c+b.u+0.5 u.H.u; vertex u=-solve(H,b) on a 5x5 window."""
     meta = meta or {}
     a,x,y = _prepare(z,x,y)
-    status = _status(a)
+    status = _gate(a,raw,meta)
     if status:
         return result(status)
     signed = -a if meta.get("extreme","min")=="max" else a
     # A monotonic plane has no extremum even when its lowest pixel lies at an edge.
-    xx,yy = np.meshgrid(x,y)
     valid = np.isfinite(signed)
-    plane = np.column_stack((np.ones(valid.sum()),xx[valid],yy[valid]))
-    coef = np.linalg.lstsq(plane,signed[valid],rcond=None)[0]
-    if np.std(signed[valid]-plane@coef)<1e-8*max(1.,np.std(signed[valid])):
+    if _planar(a,x,y,raw):
         return result("no extremum")
     i,j = np.unravel_index(np.nanargmin(signed),signed.shape)
     if min(i,j,a.shape[0]-1-i,a.shape[1]-1-j)<2:
@@ -265,11 +307,12 @@ def ridge(z,x,y,meta=None,raw=None):
     meta = meta or {}
     a,x,y = _prepare(z,x,y)
     source = a if raw is None else np.asarray(raw,float)
-    status = _status(a)
+    status = _gate(a,raw,meta)
     if status:
         return result(status)
     track = np.full(len(x),np.nan)
-    widths, ambiguous = [],[]
+    widths, pairs, featured = [],[],0
+    floor = _floor(a,raw,meta)
     for j in range(len(x)):
         col, original = a[:,j],source[:,j]
         if np.isfinite(col).sum()<8 or np.isfinite(original).sum()<8:
@@ -280,9 +323,15 @@ def ridge(z,x,y,meta=None,raw=None):
         mad = np.nanmedian(np.abs(col-baseline))
         if np.nanmax(feature)<5*mad:
             continue
-        peaks = find_peaks(np.nan_to_num(feature,nan=0),prominence=.5*np.nanmax(feature),distance=6)[0]
+        featured += 1
+        # A second line must STAND >= 5 noise floors above the baseline (prominence alone counts a
+        # noise peak from the noise trough below it, about twice its height).
+        peaks = find_peaks(np.nan_to_num(feature,nan=0),height=max(.5*np.nanmax(feature),5*floor),
+                           prominence=.25*np.nanmax(feature),distance=6)[0]
         if len(peaks)>1:
-            ambiguous.extend(float(y[p]) for p in peaks)
+            # A second line in this column: skipped here, the map is ambiguous only when many columns agree.
+            strongest = sorted(peaks[np.argsort(feature[peaks])[-2:]])
+            pairs.append([float(y[p]) for p in strongest])
             continue
         i = int(np.nanargmax(feature))
         if i in (0,len(y)-1):
@@ -300,8 +349,8 @@ def ridge(z,x,y,meta=None,raw=None):
         if w[ok].sum()>0:
             track[j] = np.sum(y[start:end][ok]*w[ok])/w[ok].sum()
             widths.append(width)
-    if ambiguous:
-        return result("ambiguous",candidates=sorted(set(ambiguous)))
+    if pairs and len(pairs)>=max(3,.25*featured):
+        return result("ambiguous",candidates=np.median(pairs,axis=0).tolist(),double_columns=len(pairs))
     ok = np.isfinite(track)
     if ok.sum()<max(5,len(x)//5):
         return result("outside the sweep" if np.nanargmax(np.nanmean(np.abs(a-np.nanmedian(a)),axis=1)) in (0,len(y)-1) else "no feature")
@@ -334,16 +383,25 @@ def chevron(z,x,y,meta=None,raw=None):
     """
     meta = meta or {}
     a,x,y = _prepare(z,x,y)
-    status = _status(a)
+    status = _gate(a,raw,meta)
     if status:
         return result(status)
     dt = float(np.median(np.diff(x)))
     frequencies = np.full(len(y),np.nan)
+    lowest, doubles = np.full(len(y),np.nan), 0
     for i,row in enumerate(a):
         ok = np.isfinite(row)
         if ok.sum()<12:
             continue
         filled = np.interp(x,x[ok],row[ok])
+        # Two oscillation frequencies in one row (8x zero-padded amplitude spectrum, each >= half the
+        # strongest, two native bins apart; window sidelobes stay below 0.22) mean two chevrons.
+        padded = np.abs(np.fft.rfft(filled-filled.mean(),n=8*len(x)))
+        padded[:4] = 0
+        lines = find_peaks(padded,height=.5*padded.max(),distance=16)[0]
+        if len(lines):
+            lowest[i] = np.fft.rfftfreq(8*len(x),dt)[lines[0]]
+            doubles += len(lines)>1
         spectrum = np.abs(np.fft.rfft(filled-filled.mean()))
         spectrum[0] = 0
         peak = int(np.argmax(spectrum))
@@ -363,6 +421,11 @@ def chevron(z,x,y,meta=None,raw=None):
         if np.sum(fitrow.fun**2)<.5*np.sum((observed-observed.mean())**2):
             frequencies[i]=fitrow.x[3]
     ok = np.isfinite(frequencies)
+    if doubles>=max(3,.25*np.isfinite(lowest).sum()):
+        # Each chevron's axis is a minimum of the lowest branch; list them all.
+        branch = np.where(np.isfinite(lowest),lowest,np.nanmax(lowest))
+        axes = find_peaks(-np.r_[np.inf,branch,np.inf],prominence=.05*np.ptp(branch))[0]-1
+        return result("ambiguous",candidates=[float(y[i]) for i in axes],double_rows=int(doubles))
     if ok.sum()<5:
         return result("no feature")
     c = np.polyfit(y[ok],frequencies[ok]**2,2)
@@ -388,7 +451,7 @@ def landscape(z,x,y,meta=None,raw=None):
     """[derived] Interpolate objective on target contour and refine a three-point arclength minimum."""
     meta = meta or {}
     a,x,y = _prepare(z,x,y)
-    status = _status(a)
+    status = _gate(a,raw,meta)
     if status:
         return result(status)
     phase = meta.get("phase")
@@ -402,6 +465,7 @@ def landscape(z,x,y,meta=None,raw=None):
         return result("outside the sweep")
     options = []
     boundary_options = 0
+    floor = _floor(a,raw,meta)
     for line in geometry:
         if len(line)<3:
             continue
@@ -410,22 +474,26 @@ def landscape(z,x,y,meta=None,raw=None):
         finite = np.isfinite(scores)
         if not finite.any():
             continue
-        j = int(np.nanargmin(scores))
-        point = line[j].copy()
-        if j in (0,len(line)-1) and (point[0] in (x[0],x[-1]) or point[1] in (y[0],y[-1])):
-            boundary_options += 1
-            continue
-        if 0<j<len(line)-1 and np.isfinite(scores[j-1:j+2]).all():
-            arc = np.r_[0,np.cumsum(np.linalg.norm(np.diff(line,axis=0),axis=1))]
-            coef = np.polyfit(arc[j-1:j+2]-arc[j],scores[j-1:j+2],2)
-            if coef[0]>0:
-                position = np.clip(-coef[1]/(2*coef[0])+arc[j],arc[j-1],arc[j+1])
-                point = np.array([np.interp(position,arc,line[:,i]) for i in (0,1)])
-        options.append((float(scores[j]),point))
+        # Every distinct local minimum along the line competes, so two wells on one contour are seen.
+        filled = np.where(finite,scores,np.nanmax(scores))
+        prominence = max(.05*float(np.ptp(filled)),3*floor)
+        picks = {int(np.nanargmin(scores))} | set(find_peaks(-filled,prominence=prominence)[0].tolist())
+        arc = np.r_[0,np.cumsum(np.linalg.norm(np.diff(line,axis=0),axis=1))]
+        for j in sorted(picks):
+            point = line[j].copy()
+            if j in (0,len(line)-1) and (point[0] in (x[0],x[-1]) or point[1] in (y[0],y[-1])):
+                boundary_options += 1
+                continue
+            if 0<j<len(line)-1 and np.isfinite(scores[j-1:j+2]).all():
+                coef = np.polyfit(arc[j-1:j+2]-arc[j],scores[j-1:j+2],2)
+                if coef[0]>0:
+                    position = np.clip(-coef[1]/(2*coef[0])+arc[j],arc[j-1],arc[j+1])
+                    point = np.array([np.interp(position,arc,line[:,i]) for i in (0,1)])
+            options.append((float(scores[j]),point))
     if not options:
         return result("outside the sweep" if boundary_options else "no feature")
     options.sort(key=lambda pair:pair[0])
-    if len(options)>1 and abs(options[1][0]-options[0][0])<.02*np.nanstd(a):
+    if len(options)>1 and abs(options[1][0]-options[0][0])<max(.02*np.nanstd(a),2*floor):
         return result("ambiguous",candidates=[p.tolist() for _,p in options])
     score,point = options[0]
     return result("ok",{"x":float(point[0]),"y":float(point[1]),"objective":score},
@@ -441,15 +509,12 @@ def fit(model,z,x,y,meta=None,raw=None):
     if model not in MODELS:
         raise ValueError("Unknown model")
     a,x,y = _prepare(z,x,y)
-    status = _status(a)
+    status = _gate(a,raw,meta)
     if status:
         return result(status,nan_count=int(np.isnan(a).sum()))
-    xx,yy = np.meshgrid(x,y)
-    ok = np.isfinite(a)
-    basis = np.column_stack((np.ones(ok.sum()),xx[ok],yy[ok]))
-    plane = np.linalg.lstsq(basis,a[ok],rcond=None)[0]
-    if np.std(a[ok]-basis@plane)<1e-8*max(1.,np.std(a[ok])):
+    if _planar(a,x,y,raw):
         return result("no extremum",nan_count=int(np.isnan(a).sum()))
     out = MODELS[model](a,x,y,meta,raw)
-    out.setdefault("nan_count",int(np.isnan(a if raw is None else raw).sum()))
+    # Missing samples of the measured map: smoothing may bridge a gap, the count stays honest.
+    out["nan_count"] = int(np.isnan(a if raw is None else np.asarray(raw,float)).sum())
     return out

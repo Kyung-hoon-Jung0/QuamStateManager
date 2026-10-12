@@ -3,7 +3,7 @@ import pytest
 from scipy.ndimage import gaussian_filter1d
 from quam_state_manager.core.mapfit.caps import (
     attenuation, fringe_cap, erroramp_caps, ridge_caps, chevron_caps, landscape_cap,
-    phase_slope_cap, apply_caps)
+    phase_slope_cap, apply_caps, asymmetry_cap, CHEVRON_CONTROL_FRACTION)
 
 
 @pytest.mark.parametrize("period", [8., 16., 40., 100.])
@@ -44,7 +44,7 @@ def test_ridge_caps_displacement_numerical():
 def test_chevron_half_width_and_time_numerical():
     f0, slope, step, dt = 5., 2., .1, .002
     c = chevron_caps([5, 8], dt, f0, slope, step)
-    delta = 2 * c["control"] * step
+    delta = c["control"] * step / CHEVRON_CONTROL_FRACTION
     assert np.sqrt(f0**2+(slope*delta)**2) == pytest.approx(np.sqrt(2)*f0)
     assert np.allclose(attenuation(c["time"], 1/(np.array([5,8])*dt)), .9)
 
@@ -67,3 +67,21 @@ def test_clamp_override_and_count_lock():
     assert out["warning"] == "cap overridden"
     with pytest.raises(ValueError):
         fringe_cap(0)
+
+
+@pytest.mark.parametrize("cubic,sigma", [(.2, 5.), (.5, 3.), (-.3, 4.)])
+def test_asymmetry_vertex_shift_formula_numerical(cubic, sigma):
+    """Smooth f=u^2+c u^3 (u=(x-x0)/20) and measure the vertex shift against -f3 s^2/(2 f2)."""
+    x = np.arange(401.)
+    u = (x - 200.3) / 20
+    bowl = u**2 + cubic * u**3
+    filtered = gaussian_filter1d(bowl, sigma, mode="nearest")
+    window = slice(185, 216)
+    coef = np.polyfit(x[window], filtered[window], 3)
+    roots = np.roots(np.polyder(coef))
+    vertex = float(roots[np.argmin(np.abs(roots - 200.3))].real)
+    f2, f3 = 2 / 400, 6 * cubic / 8000
+    assert vertex - 200.3 == pytest.approx(-f3 * sigma**2 / (2 * f2), rel=.02)
+    cap = asymmetry_cap(f2, f3, bias=.5)
+    assert abs(f3) * cap**2 / (2 * f2) == pytest.approx(.5)
+    assert asymmetry_cap(f2, 0) == float("inf")
