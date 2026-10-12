@@ -11447,8 +11447,13 @@ def _container_pointer_refusal(store, target_path: str, parsed) -> str | None:
     into a VALUE leaf (a number, a flag, a text) turns the leaf into a dump of
     that container on the chip. Refused with the reason, like /pulse/edit
     (docs/190 F27). A leaf that already holds a container (a port reference)
-    or nothing, and a dangling pointer, pass."""
+    or nothing, and a dangling pointer, pass. A free-form ``extras`` leaf
+    passes too: what it holds is the user's own, and a reference to a whole
+    entity (``#/qubits/qA1``) is a legitimate value there (docs/81)."""
     if not (isinstance(parsed, str) and is_pointer(parsed)):
+        return None
+    from quam_state_manager.core import edit_policy as _ep
+    if _ep.is_free_form_path(target_path):
         return None
     from quam_state_manager.core.pointer_resolver import resolve_pointer
     parts = tuple(target_path.split("."))
