@@ -84,6 +84,7 @@ def test_worker_memory_limit_stops_process(tmp_path, monkeypatch):
 
 
 def test_slot_retires_worker_in_another_parent(tmp_path):
+    import os
     import subprocess
     from pathlib import Path
     script = tmp_path / "waiting.py"
@@ -98,7 +99,8 @@ def test_slot_retires_worker_in_another_parent(tmp_path):
     )
     try:
         proc = subprocess.run([sys.executable, "-B", "-c", code, str(script)],
-                              cwd=Path(__file__).resolve().parents[1], capture_output=True, timeout=15)
+                              cwd=Path(__file__).resolve().parents[1], capture_output=True, timeout=15,
+                              env=dict(os.environ, TMPDIR=str(tmp_path), TMP=str(tmp_path), TEMP=str(tmp_path)))
         assert proc.returncode == 0, proc.stderr
         assert w.proc.poll() is not None
     finally:

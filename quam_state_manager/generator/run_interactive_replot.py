@@ -520,6 +520,7 @@ def _execute(args):
         U = importlib.import_module(module)
         util = module.removeprefix("calibration_utils.")
         result["util"] = util
+        result.update(_source_manifest(args, node_name))
     except Exception:
         result["errors"].append({"stage": "import", "trace": traceback.format_exc()})
         return result
@@ -597,10 +598,50 @@ def _execute(args):
 SERVE_MARK = "@@SM-IPLOT@@"
 
 
+def _source_manifest(args, node_name):
+    from iplot_sources import fingerprint
+    files = {str(Path(__file__).resolve()), str(Path(__file__).with_name("iplot_extract.py").resolve()),
+             str(Path(__file__).with_name("iplot_sources.py").resolve())}
+    trees = set()
+    roots = {str(Path(args.source_root).resolve())} if args.source_root else set()
+    package = sys.modules.get("calibration_utils")
+    for directory in getattr(package, "__path__", []):
+        roots.add(str(Path(directory).resolve().parent))
+    for name, module in list(sys.modules.items()):
+        path = getattr(module, "__file__", None)
+        if path and (name == "quam_config" or name.startswith(("quam_config.", "calibration_utils."))
+                     or name == "calibration_utils"
+                     or any(os.path.normcase(os.path.abspath(path)).startswith(os.path.normcase(root) + os.sep) for root in roots)):
+            p = Path(path).resolve()
+            if p.suffix == ".py":
+                files.add(str(p))
+            for directory in getattr(module, "__path__", []):
+                trees.add(str(Path(directory).resolve()))
+            if name == "calibration_utils":
+                roots.add(str(p.parent.parent))
+    stem = re.sub(r"^[0-9]+[A-Za-z]?Q_", "", node_name)
+    for root in roots:
+        files.update(str(p.resolve()) for p in (Path(root) / "calibrations").rglob(stem + ".py"))
+        files.update(str(p.resolve()) for p in Path(root).glob(stem + ".py"))
+    trees = {t for t in trees if not any(t != parent and Path(t).is_relative_to(Path(parent)) for parent in trees)}
+    for tree in trees:
+        files.update(str(p.resolve()) for p in Path(tree).rglob("*.py"))
+    records = []
+    for name in sorted(files):
+        st = Path(name).stat()
+        records.append({"path": name, "mtime_ns": st.st_mtime_ns, "size": st.st_size})
+    return {"module_files": records, "module_trees": sorted(trees),
+            "source_root": next(iter(sorted(roots)), ""),
+            "code_fingerprint": fingerprint(files, trees)}
+
+
 def replay(args):
     args.datasets = []
     try:
-        return _execute(args)
+        result = _execute(args)
+        manifest = result.get("module_files", [])
+        result["sources"] = {m["path"]: [m["mtime_ns"], m["size"]] for m in manifest}
+        return result
     finally:
         import matplotlib.pyplot as plt
         plt.close("all")
@@ -615,6 +656,7 @@ def serve():
     from types import SimpleNamespace
     out = sys.stdout
     sys.stdout = sys.stderr
+    seen = {}
     try:
         for line in sys.stdin:
             if not line.strip():
@@ -625,6 +667,9 @@ def serve():
                                        only=spec.get("only") or "", util=spec.get("util") or "",
                                        qubits=spec.get("qubits") or "", out="")
                 result = replay(args)
+                for path, stat in result.get("sources", {}).items():
+                    seen.setdefault(path, stat)
+                result["sources"] = {p: seen[p] for p in result.get("sources", {})}
                 result["status"] = "ok"
             except BaseException:
                 result = {"status": "error", "figures": [], "errors": [

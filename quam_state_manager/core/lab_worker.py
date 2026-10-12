@@ -11,6 +11,9 @@ from pathlib import Path
 
 import psutil
 
+_COORD_DIR = (Path(os.environ.get("PUBLIC", "C:/Users/Public")) / "Documents"
+              if os.name == "nt" else Path("/tmp"))
+
 
 class _MachineLock:
     """Thread lock plus an OS file lock; released automatically on parent exit."""
@@ -18,7 +21,7 @@ class _MachineLock:
     def __init__(self):
         self.local = threading.RLock()
         self.depth = threading.local()
-        self.path = Path(tempfile.gettempdir()) / "qsm_lab_worker.lock"
+        self.path = _COORD_DIR / "qsm_lab_worker.lock"
 
     def acquire(self, blocking=True):
         if not self.local.acquire(blocking=blocking):
@@ -78,7 +81,7 @@ class _MachineLock:
 
 machine_lock = _MachineLock()
 _SLOT = None
-_RECORD = Path(tempfile.gettempdir()) / "qsm_lab_worker.json"
+_RECORD = _COORD_DIR / "qsm_lab_worker.json"
 
 
 def retire_except(worker=None):
@@ -279,4 +282,3 @@ class Worker:
             self.proc.wait(timeout=5)
         except Exception:  # noqa: BLE001
             pass
-

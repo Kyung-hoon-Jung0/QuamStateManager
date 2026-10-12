@@ -13,6 +13,7 @@ extraction contract and ``docs/`` for the design rationale.
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 import math
 import logging
 import os
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 # folder_path(str) -> {"fingerprint": str, "result": dict}. Bounded; newest wins.
 # Guarded by _LOCK. _INFLIGHT coalesces concurrent same-run requests onto ONE
 # subprocess (the menu call + N lazy tile calls all land here near-simultaneously).
-_CACHE: dict[str, dict] = {}
+_CACHE: dict[str, dict] = OrderedDict()
 _CACHE_MAX = 12
 _LOCK = threading.Lock()
 _INFLIGHT: dict[str, threading.Event] = {}
@@ -55,14 +56,9 @@ def _derive_util(node_name: str) -> str:
 
 
 def _fingerprint(folder: Path) -> str:
-    """Cheap content stamp: mtime+size of the inputs a re-run depends on.
-
-    Note: this tracks the *run's data*, not the analysis code (which lives in the
-    selected env's install and can't be stat-ed cheaply here) — code edits are
-    picked up via an explicit Regenerate, mirroring the Config Viewer.
-    """
+    """Run inputs, including saved results and state, with nanosecond stats."""
     parts = []
-    for name in ("node.json", "ds_raw.h5", "ds_fit.h5"):
+    for name in ("node.json", "data.json", "ds_raw.h5", "ds_fit.h5", "quam_state/state.json", "quam_state/wiring.json"):
         p = folder / name
         try:
             st = p.stat()
@@ -104,9 +100,11 @@ def _warm_request(env, folder, source_root, timeout):
     from quam_state_manager.core import lab_worker
     if not Path(env).is_file():
         return None
+    from quam_state_manager.generator.iplot_sources import fingerprint
     context = str(source_root or "")
     w = _PLOT_WORKER
-    if w is not None and (w.context != context or w.python_path != env or not w.fresh()):
+    if w is not None and (w.context != context or w.python_path != env or not w.fresh()
+                          or (getattr(w, "manifest", None) and fingerprint(*w.manifest) != w.code_fingerprint)):
         w.kill()
         w = None
     try:
@@ -116,6 +114,8 @@ def _warm_request(env, folder, source_root, timeout):
         lab_worker.retire_except(w)
         result = w.ask({"run": str(folder), "source_root": context}, timeout)
         if result is not None:
+            w.manifest = ([m["path"] for m in result.get("module_files", [])], result.get("module_trees", []))
+            w.code_fingerprint = result.get("code_fingerprint")
             return result
         w.kill()
         _PLOT_WORKER = None
@@ -126,95 +126,98 @@ def _warm_request(env, folder, source_root, timeout):
     return None
 
 
+def _invoke(env, folder, source_root, timeout):
+    from quam_state_manager.core import lab_worker
+    with lab_worker.machine_lock:
+        result = _warm_request(env, folder, source_root, timeout)
+        if result is not None:
+            return result
+        lab_worker.retire_except()
+        out_fd, out_path = tempfile.mkstemp(suffix="_iplot.json", prefix="qsm_")
+        os.close(out_fd)
+        try:
+            args = [env, "-B", str(_script_path()), "--run", str(folder), "--out", out_path]
+            if source_root:
+                args += ["--source-root", source_root]
+            proc = subprocess.run(args, capture_output=True, text=True, timeout=min(timeout, 180),
+                                  env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+            try:
+                return json.loads(Path(out_path).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {"schema": "iplot/v2", "figures": [], "errors": [{"stage": "subprocess",
+                        "trace": (proc.stderr or proc.stdout or "no output")[-2000:]}]}
+        except subprocess.TimeoutExpired:
+            return {"schema": "iplot/v2", "figures": [],
+                    "errors": [{"stage": "timeout", "trace": f"exceeded {timeout}s"}]}
+        except OSError as exc:
+            return {"schema": "iplot/v2", "figures": [],
+                    "errors": [{"stage": "spawn", "trace": str(exc)}]}
+        finally:
+            Path(out_path).unlink(missing_ok=True)
+
+
+def _remember(key, meta, result, size):
+    from . import replot_cache as cache
+    if size > cache.RAM_BYTES:
+        return
+    _CACHE.pop(key, None)
+    _CACHE[key] = {"meta": meta, "result": result, "size": size}
+    while len(_CACHE) > _CACHE_MAX or sum(v["size"] for v in _CACHE.values()) > cache.RAM_BYTES:
+        _CACHE.pop(next(iter(_CACHE)))
+
+
 def replot_run(run, instance_path, *, source_root: str | None = None,
                force: bool = False, timeout: int = 180) -> dict:
-    """Re-run the experiment's plotting in the selected env; return ``iplot/v1`` JSON.
-
-    Cached per run folder + data fingerprint. ``force`` re-runs (used by the
-    Regenerate button, e.g. after the user edits the analysis code).
-    """
+    """Warm replay with a content-validated RAM LRU and instance disk cache."""
     from quam_state_manager.core import config_generator
-    folder = Path(getattr(run, "folder_path", "") or "")
+    from . import replot_cache as cache
+    folder = Path(getattr(run, "folder_path", "") or "").resolve()
     key = str(folder)
-    fp = _fingerprint(folder)
-
-    # Fast path + in-flight coalescing: collapse the menu call and every lazy
-    # tile call for the same run onto ONE subprocess instead of N.
+    env = config_generator.get_selected_env(instance_path)
+    if not env:
+        return {"schema": "iplot/v2", "figures": [],
+                "errors": [{"stage": "env", "trace": "No environment selected"}]}
+    context = {"folder": key, "inputs": _fingerprint(folder), "env": env,
+               "env_sig": cache.digest(config_generator._env_signature(env)),
+               "pythonpath": os.environ.get("PYTHONPATH", ""),
+               "source_root": str(Path(source_root).resolve()) if source_root else "live",
+               "instance": str(Path(instance_path).resolve()), "schema": cache.SCHEMA}
+    disk = cache.DiskCache(instance_path)
+    request_key = cache.digest(context)
     while True:
         with _LOCK:
             hit = _CACHE.get(key)
-            if not force and hit and hit["fingerprint"] == fp:
+            if not force and hit and cache.valid(hit["meta"], context):
+                _CACHE.move_to_end(key)
                 return hit["result"]
-            ev = _INFLIGHT.get(key)
+            if not force:
+                found = disk.load(context)
+                if found:
+                    meta, result, size = found
+                    _remember(key, meta, result, size)
+                    return result
+            ev = _INFLIGHT.get(request_key)
             if ev is None:
-                ev = _INFLIGHT[key] = threading.Event()
-                owner = True
+                ev = _INFLIGHT[request_key] = threading.Event()
                 break
-            owner = False
-            force = False  # a waiter never forces a second run; it takes the result
-        # someone else is producing this run; wait then re-check the cache
-        ev.wait(timeout=300)
-        with _LOCK:
-            hit = _CACHE.get(key)
-            if hit and hit["fingerprint"] == fp:
-                return hit["result"]
-            # producer finished without a usable cache entry (error/timeout) — retry as owner
-            if _INFLIGHT.get(key) is None:
-                continue
-        ev.wait(timeout=5)
-
-    env = config_generator.get_selected_env(instance_path)
-    if not env:
-        with _LOCK:
-            _INFLIGHT.pop(key, None)
-        ev.set()
-        return {"schema": "iplot/v1", "figures": [],
-                "errors": [{"stage": "env", "trace": "No environment selected"}]}
-
-    out_fd, out_path = tempfile.mkstemp(suffix="_iplot.json", prefix="qsm_")
-    os.close(out_fd)
+            force = False
+        ev.wait(timeout=timeout + 10)
     try:
-        args = [env, str(_script_path()), "--run", str(folder), "--out", out_path]
-        if source_root:
-            args += ["--source-root", source_root]
-        from quam_state_manager.core import lab_worker
-        with lab_worker.machine_lock:
-            result = _warm_request(env, folder, source_root, timeout)
-            if result is None:
-                lab_worker.retire_except()
-                proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
-                                      env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
-            else:
-                Path(out_path).write_text(json.dumps(result), encoding="utf-8")
-        try:
-            with open(out_path, "r", encoding="utf-8") as fh:
-                result = json.load(fh)
-        except (OSError, ValueError):
-            result = {"schema": "iplot/v1", "figures": [], "errors": [
-                {"stage": "subprocess",
-                 "trace": (proc.stderr or proc.stdout or "no output")[-2000:]}]}
-    except subprocess.TimeoutExpired:
-        result = {"schema": "iplot/v1", "figures": [],
-                  "errors": [{"stage": "timeout", "trace": f"exceeded {timeout}s"}]}
-    except OSError as e:  # bad interpreter path, spawn failure — must still release in-flight
-        result = {"schema": "iplot/v1", "figures": [],
-                  "errors": [{"stage": "spawn", "trace": str(e)}]}
+        result = _invoke(env, folder, source_root, timeout)
+        with _LOCK:
+            if result.get("figures") or result.get("not_produced"):
+                try:
+                    stored = disk.store(context, result)
+                    if stored:
+                        meta, size = stored
+                        _remember(key, meta, result, size)
+                except (OSError, ValueError):
+                    logger.debug("replay disk cache unavailable", exc_info=True)
+        return result
     finally:
-        try:
-            os.unlink(out_path)
-        except OSError:
-            pass
-
-    with _LOCK:
-        # Cache only usable results: a transient timeout/error stays retryable
-        # (it would otherwise pin a "failed" envelope until the next Regenerate).
-        if result.get("figures"):
-            _CACHE[key] = {"fingerprint": fp, "result": result}
-            while len(_CACHE) > _CACHE_MAX:
-                _CACHE.pop(next(iter(_CACHE)), None)
-        _INFLIGHT.pop(key, None)
-    ev.set()
-    return result
+        with _LOCK:
+            _INFLIGHT.pop(request_key, None)
+        ev.set()
 
 
 def replot_menu(result: dict) -> list[dict]:
