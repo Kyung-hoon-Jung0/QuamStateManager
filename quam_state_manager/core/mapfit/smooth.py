@@ -48,6 +48,20 @@ def _axis(a, sigma, axis, kernel):
     return np.where(mask, result, np.nan)
 
 
+def noise_gain(shape, sigma_x=0., sigma_y=0., kernel="gaussian", row_sigmas=None):
+    """[derived] White-noise std after smoothing over std before; for a linear kernel this is ||h||_2.
+
+    Measured on a fixed-seed probe (any kernel, median included). With per-row strengths the
+    largest row gain is returned, so a noise floor derived from it is never underestimated.
+    """
+    rows = shape[0] if row_sigmas is not None else min(shape[0], 128)
+    probe = np.random.default_rng(0).normal(size=(rows, min(shape[1], 256)))
+    if row_sigmas is None:
+        return float(np.std(smooth(probe, sigma_x, sigma_y, kernel)) / np.std(probe))
+    out = smooth(smooth(probe, 0., sigma_y, kernel), kernel=kernel, row_sigmas=row_sigmas)
+    return float(np.max(np.std(out, axis=1) / np.std(probe, axis=1)))
+
+
 def smooth(z, sigma_x=0., sigma_y=0., kernel="gaussian", circular=None, row_sigmas=None):
     """[derived] Circular mean: atan2(K sin(2 pi z/P), K cos(2 pi z/P))*P/(2 pi).
 

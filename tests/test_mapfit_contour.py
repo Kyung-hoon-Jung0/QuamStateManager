@@ -46,3 +46,7 @@ def test_circle_seam_and_nan_hole():
     assert result[1]["full_lines"] == []
     z[10:20,39:42] = np.nan
     assert len(contours(z,x,np.arange(31.),[0],circular=360)[0]["full_lines"]) == 2
+    # A target away from zero: the wrapped residual is contoured at 0, not at the target value.
+    x = np.linspace(60,120,61)
+    ninety = contours(np.tile(x,(9,1)),x,np.arange(9.),[90],circular=360)[0]["full_lines"]
+    assert len(ninety) == 1 and np.allclose(ninety[0][:,0],90)

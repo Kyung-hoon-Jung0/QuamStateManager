@@ -28,3 +28,9 @@ def test_circle_units_and_turns_with_degree_label():
     assert circular_period([0, 180, 360], {"signal_label": "phase"}) == 360
     assert circular_period([0, 3, 6], {"signal_units": "rad"}) == 2 * np.pi
     assert circular_period([0, 1], {}) is None
+
+
+def test_units_only_descriptor_still_names_the_axis():
+    x, y = np.linspace(0, 400, 101), np.linspace(-.1, .1, 21)
+    out = classify(x, y, {"x": {"units": "ns"}, "y": {"name": "flux"}})
+    assert out["type"] == "chevron" and out["feature_axis"] == "x"

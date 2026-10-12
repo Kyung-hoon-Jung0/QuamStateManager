@@ -33,8 +33,9 @@ def circular_period(z, meta):
 
 def _roles(values, descriptor, vocabulary):
     text = " ".join(str(descriptor.get(k, "")) for k in ("name", "label", "units", "dim")).lower().strip()
+    padded = " " + text + " "  # unit words such as " ns" also match a units-only descriptor
     roles = {role for role, words in vocabulary.items()
-             if any((text == word if word == "n" else word in text) for word in words)}
+             if any((text == word if word == "n" else word in padded) for word in words)}
     a = np.asarray(values, float)
     # Only infer an unlabeled count; a labeled voltage grid of small integers is not a count.
     if not text and 1 < a.size <= 64 and np.all(np.isfinite(a)) and np.all(a >= 0) and np.max(a) <= 512:

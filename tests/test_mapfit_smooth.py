@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 from scipy.signal import savgol_filter
-from quam_state_manager.core.mapfit.smooth import smooth, window_size
+from quam_state_manager.core.mapfit.smooth import noise_gain, smooth, window_size
 
 
 @pytest.mark.parametrize("kernel", ["gaussian", "box", "savgol", "median"])
@@ -56,3 +56,14 @@ def test_circular_formula_and_count_lock():
     for kwargs in ({"sigma_x": -1}, {"kernel": "bad"}, {"row_sigmas": [1]}, {"circular": 0}):
         with pytest.raises(ValueError):
             smooth(z, **kwargs)
+
+
+@pytest.mark.parametrize("sigmas", [(1., 0.), (2., 1.), (0., 3.)])
+def test_noise_gain_is_the_impulse_response_norm_for_a_linear_kernel(sigmas):
+    impulse = np.zeros((129, 129))
+    impulse[64, 64] = 1
+    norm = np.linalg.norm(smooth(impulse, *sigmas))
+    assert noise_gain((400, 400), *sigmas) == pytest.approx(norm, rel=.05)
+    rows = noise_gain((5, 400), row_sigmas=[0, 0, sigmas[0], 0, 0])
+    assert rows == pytest.approx(1.)  # the least smoothed row sets the floor
+    assert noise_gain((400, 400), 2, 2, "median") < 1
