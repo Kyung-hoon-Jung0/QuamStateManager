@@ -63,8 +63,6 @@ _DASH = {"-": "solid", "--": "dash", "-.": "dashdot", ":": "dot",
 def _line_trace(ln):
     x = ln.get_xdata(orig=False)
     y = ln.get_ydata(orig=False)
-    if len(x) == 0:
-        return None
     has_line = ln.get_linestyle() not in ("None", " ", "", None) and ln.get_linewidth() > 0
     has_marker = ln.get_marker() not in ("None", " ", "", None)
     mode = ("lines" if has_line else "") + ("+markers" if has_marker and has_line else "")
@@ -79,9 +77,14 @@ def _line_trace(ln):
         "color": _hex(ln.get_color()),
         "dash": _DASH.get(ln.get_linestyle(), "solid"),
         "width": _f(ln.get_linewidth()),
+        "linestyle": ln.get_linestyle(),
+        "drawstyle": ln.get_drawstyle(),
+        "zorder": _f(ln.get_zorder()),
+        "visible": ln.get_visible(),
         "marker_symbol": _mpl_marker(ln.get_marker()),
         "marker_size": _f((ln.get_markersize() or 6)),
-        "opacity": _opacity(ln.get_color(), ln.get_alpha() or 1.0),
+        "opacity": (float(ln.get_alpha()) if ln.get_alpha() is not None
+                    else _opacity(ln.get_color())),
     }
 
 

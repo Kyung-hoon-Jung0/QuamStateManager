@@ -12,6 +12,31 @@ import pytest
 from quam_state_manager.generator import run_interactive_replot as runner
 
 
+def test_serializer_preserves_every_line_and_fit_summary():
+    import matplotlib.pyplot as plt
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    fig, ax = plt.subplots()
+    for i in range(2):
+        ax.plot([0, 1, 2], [i, i + 1, i], label="data")
+        ax.plot([0, 1, 2], [i + .2, i + 1.2, i + .2], label="fit",
+                linestyle=":", alpha=.3, zorder=7, drawstyle="steps-post")
+        ax.axvline(i + .5, linestyle="--")
+    ax.text(.1, .9, "fit summary", transform=ax.transAxes)
+    ax.plot([1], [2], marker="*", linestyle="None", alpha=0)
+    ax.plot([], [])
+    out = extract_figure(fig, "fit")
+    plt.close(fig)
+    traces = out["axes"][0]["traces"]
+    assert len(traces) == 8
+    fits = [t for t in traces if t["name"] == "fit"]
+    assert len(fits) == 2
+    assert all(t["opacity"] == .3 and t["zorder"] == 7 and
+               t["drawstyle"] == "steps-post" and t["linestyle"] == ":" for t in fits)
+    assert traces[-2]["mode"] == "markers" and traces[-2]["opacity"] == 0
+    assert traces[-1]["x"] == []
+    assert out["axes"][0]["annotations"][0]["text"] == "fit summary"
+
+
 def test_module_resolution_reads_node_imports(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "path", list(sys.path))
     nodes = tmp_path / "calibrations" / "group"
