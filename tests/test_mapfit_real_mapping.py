@@ -8,6 +8,7 @@ import pytest
 from quam_state_manager.core.mapfit import api
 from quam_state_manager.web import map_analysis
 from quam_state_manager.core.mapfit.compare import saved_comparisons
+from quam_state_manager.core.mapfit.models import chevron
 
 
 def test_unresolved_control_minimum_is_ambiguous():
@@ -99,3 +100,15 @@ def test_saved_units_and_operation_are_bound_before_modeling(tmp_path, monkeypat
     else:
         assert out["compare"]["node_name"] == "qubit_frequency"
         assert out["compare"]["node_value"] == 5e9
+
+
+def test_chevron_noise_rows_do_not_invent_a_second_branch():
+    x, y = np.arange(16., 121., 4.), np.arange(-25., 26.)
+    frequency = np.sqrt(.02**2 + (.005 * (y + 2))**2)
+    contrast = .35 * np.exp(-((y + 2) / 5)**2)
+    z = .8 + contrast[:, None] * np.cos(2 * np.pi * frequency[:, None] * x)
+    z += np.random.default_rng(19).normal(0, .03, z.shape)
+    out = chevron(z, x, y, {"time_units": "ns"})
+    assert out["verdict"] == "ok"
+    assert out["values"]["dv0"] == pytest.approx(-2, abs=.5)
+    assert out["values"]["two_j_hz"] == pytest.approx(20e6, rel=.05)

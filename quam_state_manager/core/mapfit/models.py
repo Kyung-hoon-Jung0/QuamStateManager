@@ -387,6 +387,7 @@ def chevron(z,x,y,meta=None,raw=None):
     if status:
         return result(status)
     dt = float(np.median(np.diff(x)))
+    floor = _floor(a,raw,meta)
     frequencies = np.full(len(y),np.nan)
     lowest, doubles = np.full(len(y),np.nan), 0
     for i,row in enumerate(a):
@@ -394,16 +395,21 @@ def chevron(z,x,y,meta=None,raw=None):
         if ok.sum()<12:
             continue
         filled = np.interp(x,x[ok],row[ok])
+        # Outside the interaction window a row is often just readout noise. Its random
+        # spectral peaks cannot establish a second oscillation branch.
+        spectral_floor = 5 * floor * np.sqrt(ok.sum()/2)
         # Two oscillation frequencies in one row (8x zero-padded amplitude spectrum, each >= half the
         # strongest, two native bins apart; window sidelobes stay below 0.22) mean two chevrons.
         padded = np.abs(np.fft.rfft(filled-filled.mean(),n=8*len(x)))
         padded[:4] = 0
-        lines = find_peaks(padded,height=.5*padded.max(),distance=16)[0]
+        lines = find_peaks(padded,height=max(.5*padded.max(),spectral_floor),distance=16)[0]
         if len(lines):
             lowest[i] = np.fft.rfftfreq(8*len(x),dt)[lines[0]]
             doubles += len(lines)>1
         spectrum = np.abs(np.fft.rfft(filled-filled.mean()))
         spectrum[0] = 0
+        if spectrum.max() < spectral_floor:
+            continue
         peak = int(np.argmax(spectrum))
         f = np.fft.rfftfreq(len(x),dt)[peak]
         if peak==0 or peak>=len(spectrum)-1:
