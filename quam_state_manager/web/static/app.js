@@ -523,6 +523,8 @@ var INTERACTIVE_RENDER_BUDGET = 6;
 
 function _purgeInteractiveTile(div) {
     if (!div) return;
+    var mapHost = div.closest && div.closest('.ds-interactive-fig');
+    if (mapHost && mapHost._mapTools) { mapHost._mapTools.destroy(); mapHost._mapTools = null; }
     try {
         // docs/118: purge the tile's OWN plot node; falling back to the tile
         // itself covers the narrow race where a prune lands mid-draw, before
@@ -6735,6 +6737,9 @@ window.PhysAmp = (function () {
             ['j / k', 'move through runs'],
             ['Enter / Space', 'open / select the active run'],
             ['[ / ]', 'previous / next run in the open detail'],
+            ['Arrows / Shift+Arrows', 'map sigma by 0.1 / 1 point'],
+            ['Enter (custom level)', 'analyze the map contour'],
+            ['Esc (Map tools)', 'close tools and focus the header button'],
         ];
         var h = document.createElement('h3');
         h.textContent = 'Keyboard shortcuts';
@@ -15877,6 +15882,8 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             Promise.resolve(_plotlyRender(inner, d.data, layout, {responsive: true})).then(function() {
                 if (stale()) { _purgeInteractiveTile(div); return; }
                 if (window.PlotHost) window.PlotHost.observe(inner);
+                if (window.MapTools) window.MapTools.mount(div.closest('.ds-interactive-fig') || div, inner, d,
+                    {uid: runId, fig: figKey, source: endpoint === 'replot/plot' ? 'replot' : 'recipe'});
                 if (d.clickable && typeof _attachInteractivePlotClickHandler === 'function') {
                     _attachInteractivePlotClickHandler(inner, d.clickable, runId);
                     inner.style.cursor = 'pointer';

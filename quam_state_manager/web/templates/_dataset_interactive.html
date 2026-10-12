@@ -1,5 +1,6 @@
 {# Interactive-figures menu for one run. Rendered into #ds-interactive-container;
    each .ds-interactive-plot lazy-loads its Plotly JSON via /interactive/plot. #}
+{% if reproduction_hint %}<p class="muted">{{ reproduction_hint }}</p>{% endif %}
 {% if figures %}
 <div class="ds-interactive-toolbar">
     <span class="ds-interactive-toolbar-label">Columns</span>

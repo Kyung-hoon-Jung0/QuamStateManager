@@ -77,3 +77,36 @@ def test_display_only_and_panel_gate(rig):
     assert client.post("/dataset/run/map/analyze", json={"fig": "map", "fit": {"model": "ridge"}}).status_code == 400
     figure["axes"][0]["traces"][0]["full_resolution"] = False
     assert client.post("/dataset/run/map/analyze", json={"fig": "map"}).status_code == 400
+
+
+def test_interactive_defaults_to_reproduced_maps(rig, monkeypatch):
+    from quam_state_manager.core import interactive_plots
+    client, _ = rig
+    monkeypatch.setattr(interactive_plots, "list_interactive_figures", lambda _: [])
+    response = client.get("/dataset/run/interactive")
+    assert response.status_code == 200
+    assert 'data-endpoint="replot/plot"' in response.text
+
+
+def test_raw_map_full_plane_uses_only_existing_candidates(tmp_path):
+    import h5py
+    x, y = np.linspace(4e9, 5e9, 501), np.linspace(-1, 1, 17)
+    with h5py.File(tmp_path / "ds_raw.h5", "w") as f:
+        q = f.create_dataset("qubit", data=np.array([b"q0"]))
+        q.make_scale("qubit")
+        xx = f.create_dataset("RF_frequency", data=x); xx.make_scale("RF_frequency")
+        yy = f.create_dataset("flux", data=y); yy.make_scale("flux")
+        ds = f.create_dataset("signal", data=((x[None, :] - 4.5e9) ** 2 / 1e18 + y[:, None] ** 2)[None, :, :])
+        for dim, scale in zip(ds.dims, (q, yy, xx)): dim.attach_scale(scale)
+    run = SimpleNamespace(folder_path=str(tmp_path), experiment_name="synthetic")
+    body = {"source": "ndview", "which": "ds_raw.h5", "var": "signal", "x_dim": "RF_frequency", "y_dim": "flux", "selection": {"qubit": 0}, "fit": {"model": "extremum"}, "smooth": {"sigma_x": 0, "sigma_y": 0}}
+    candidates = [{"dim": "RF_frequency", "path": "qubits.{q}.f_01"}]
+    figure, converted = map_analysis.raw_figure(run, body, candidates)
+    assert len(figure["axes"][0]["traces"][0]["x"]) == 501
+    assert converted["clickable"]["targets"] == [{"path": "qubits.q0.f_01", "axis": "x"}]
+    out = map_analysis.analyze(run, "raw-run", figure, converted, body)
+    assert out["updates"] and out["updates"][0]["value"] == pytest.approx(4.5e9)
+    assert out["compare"]["node_value"] is None and "no node fit" in out["display_only_reason"]
+    body["selection"]["qubit"] = 99
+    with pytest.raises(ValueError, match="outside"):
+        map_analysis.raw_figure(run, body, candidates)

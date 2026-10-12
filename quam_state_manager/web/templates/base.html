@@ -106,6 +106,8 @@
        behaviour is testable in isolation under jsdom. #}
     <script src="{{ asset_url('auto-apply.js') }}"></script>
     <script src="{{ asset_url('plot-theme.js') }}"></script>
+    <script src="{{ asset_url('map-tools.js') }}"></script>
+    <link rel="stylesheet" href="{{ asset_url('map-tools.css') }}">
     {# docs/141 4u: the one drag core the Calculator, Settings and the Config
        Manual float with -- before the scripts that call it #}
     <script src="{{ asset_url('float-panel.js') }}"></script>
@@ -165,6 +167,7 @@
     <noscript><style>.ts-local{visibility:visible}</style></noscript>
 </head>
 <body class="app-shell exp-list-compact" data-plotly-src="{{ url_for('static', filename='plotly.min.js') }}">
+    {% include '_map_tools.html' %}
     {# queue #8 follow-up: the body renders compact so a first visit never flashes
        wrapped rows -- but a user who chose Full names ('0' in localStorage) got
        the REVERSE flash until app.js restored it. Read the key here, first thing

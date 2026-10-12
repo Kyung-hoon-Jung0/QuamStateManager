@@ -1,0 +1,23 @@
+<template id="map-tools-template">
+  <section class="map-tools-strip" aria-label="Map tools" hidden>
+    <div class="map-tools-controls">
+      <label>Panel <select data-map="panel"></select></label>
+      <label><input type="checkbox" data-map="smooth"> Smooth</label>
+      <label>Kind <select data-map="kernel"><option>gaussian</option><option>box</option><option>savgol</option><option>median</option></select></label>
+      <label class="map-tools-axis">x sigma <input type="range" min="0" max="8" step="0.1" data-map="sigma_x"><output data-map="x_text"></output><span class="map-tools-cap" data-map="x_cap"></span><datalist data-map="x_ticks"></datalist></label>
+      <label class="map-tools-axis">y sigma <input type="range" min="0" max="8" step="0.1" data-map="sigma_y"><output data-map="y_text"></output><span class="map-tools-cap" data-map="y_cap"></span><datalist data-map="y_ticks"></datalist></label>
+      <label><input type="checkbox" data-map="override"> Override cap</label>
+      <span role="status" class="muted" data-map="warning"></span>
+      <label><input type="checkbox" data-map="contour"> Contour</label>
+      <label>Level <select data-map="mode"><option>auto</option><option>target</option><option>custom</option></select></label>
+      <label>Custom level <input type="number" step="any" value="0" data-map="level"></label>
+      <label>Band <input type="number" min="0" step="any" value="0" data-map="band"></label>
+      <label>Fit model <select data-map="model"><option value="auto">Auto</option></select></label>
+      <label>View <select data-map="view"><option value="smoothed">smoothed</option><option value="raw">raw</option><option value="side">side by side</option></select></label>
+    </div>
+    <p class="map-tools-readout" role="status" aria-live="polite" data-map="status">Analyze a full-resolution map.</p>
+    <p class="muted" data-map="provenance"></p>
+    <button type="button" data-map="apply" disabled>Apply SM value</button>
+    <div class="map-tools-side" hidden></div>
+  </section>
+</template>

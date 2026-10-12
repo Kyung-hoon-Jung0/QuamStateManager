@@ -39377,7 +39377,19 @@ def dataset_interactive(uid):
     # Imported lazily so a missing numpy/h5py only affects this feature, not startup.
     from quam_state_manager.core.interactive_plots import list_interactive_figures
     figures = list_interactive_figures(run)
-    return render_template("_dataset_interactive.html", run_id=run_id, uid=uid, figures=figures)
+    from quam_state_manager.core.interactive_plots import replot
+    if replot.replot_capability(run, current_app.instance_path)["available"]:
+        result = replot.replot_run(run, current_app.instance_path)
+        reproduced = replot.replot_menu(result)
+        covered = {f["key"] for f in reproduced}
+        legacy = [f for f in figures if f["key"] not in covered]
+        return render_template("_dataset_replot.html", uid=uid, run_id=run_id,
+            available=True, util=result.get("util", ""), figures=reproduced,
+            errors=result.get("errors", []), outcome=replot.replot_outcome(result)) + (
+                '<p class="muted">Legacy recipes and saved figures</p>' + render_template(
+                    "_dataset_interactive.html", run_id=run_id, uid=uid, figures=legacy) if legacy else "")
+    return render_template("_dataset_interactive.html", run_id=run_id, uid=uid, figures=figures,
+                           reproduction_hint="Select an environment to reproduce maps from experiment code.")
 
 
 @bp.route("/dataset/<uid>/interactive/plot")
@@ -39473,6 +39485,15 @@ def dataset_replot_plot(uid):
             fig = dict(fig, clickable=run_names.translate_clickable(
                 fig["clickable"], names,
                 list(getattr(run, "qubits", None) or ()) + list(getattr(run, "qubit_pairs", None) or ())))
+    # Reproduction retains full arrays in the server cache; browser maps are previews.
+    from quam_state_manager.web.map_analysis import preview
+    for trace in fig.get("data", []):
+        if trace.get("type") == "heatmap" and trace.get("z"):
+            from quam_state_manager.core.mapfit.contour import centers
+            ny, nx = len(trace["z"]), len(trace["z"][0])
+            grid = {"z": trace["z"], "x": centers(trace["x"], nx).tolist(), "y": centers(trace["y"], ny).tolist()}
+            reduced = preview({"smoothed": grid})["smoothed"]
+            trace.update(reduced)
     return jsonify(fig)
 
 
@@ -39484,7 +39505,14 @@ def _map_figure(uid, body):
     if not resolved or not (run := resolved[0].runs.get(resolved[1])):
         raise BadBody("Run not found.")
     key = body.get("fig", "")
-    if body.get("source", "replot") == "recipe":
+    if body.get("source") == "ndview":
+        from quam_state_manager.core import click_targets
+        from quam_state_manager.web.map_analysis import raw_figure
+        state = _store()
+        overrides = click_targets.qdac_path_overrides(state.merged) if state is not None else None
+        figure, converted = raw_figure(run, body, click_targets.candidates_for(
+            run.experiment_name, body.get("x_dim"), body.get("y_dim"), "qubit", overrides))
+    elif body.get("source", "replot") == "recipe":
         from quam_state_manager.core.interactive_plots import build_interactive_figure
         converted = build_interactive_figure(run, key)
         if not converted:

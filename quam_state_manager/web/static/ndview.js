@@ -380,6 +380,22 @@
         // (a fresh div has no `.on` yet and the handler would be silently lost).
         Promise.resolve(drawn).then(function () {
             attachClick(plotEl, cube, xI, yI);
+            if (window.MapTools && yI >= 0) {
+                var selection = {};
+                cube.dims.forEach(function (dim, index) {
+                    if (index === xI || index === yI) return;
+                    var pos = state.sel[index] || 0;
+                    selection[dim.name] = cube.kept && cube.kept[dim.name] ? cube.kept[dim.name][pos] : pos;
+                });
+                window.MapTools.mount(root(), plotEl, {data: traces, layout: layout, status_chip: 'raw data',
+                    display_only_reason: 'no node fit to compare; existing coordinate candidates only'},
+                    {uid: state.uid, source: 'ndview', chip: cube.click && cube.click.chip,
+                        experiment: cube.click && cube.click.experiment,
+                        request: {which: state.which, var: state.var, component: state.comp,
+                            x_dim: cube.dims[xI].name, y_dim: cube.dims[yI].name, selection: selection}});
+            } else if (root() && root()._mapTools) {
+                root()._mapTools.destroy(); root()._mapTools = null;
+            }
             /* docs/122 — follow the container. Plotly's config.responsive covers
                WINDOW resizes only, and the geometry that moves here is the
                sidebar collapse and the Split gutter. Observe #ndv-root, not
