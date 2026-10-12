@@ -83,6 +83,51 @@ def test_serializer_artist_coverage():
     assert a["skipped"] == [{"artist": "Circle", "n": 1, "reason": "unsupported patch transform"}]
 
 
+def test_map_metadata_and_full_resolution(monkeypatch):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from matplotlib.colors import LogNorm, TwoSlopeNorm
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    from quam_state_manager.core.interactive_plots import replot
+    fig, axes = plt.subplots(1, 3)
+    mesh = axes[0].pcolormesh([0, 1, 4], [0, 2, 5], [[1, 10], [100, 1000]],
+                              cmap="twilight_shifted", norm=LogNorm(1, 1000))
+    fig.colorbar(mesh, ax=axes[0], label="phase (deg)")
+    axes[1].imshow([[-2, 0], [1, 4]], norm=TwoSlopeNorm(0, -2, 4), origin="lower")
+    axes[2].pcolormesh(np.arange(412), np.arange(412), np.ones((411, 411)))
+    out = extract_figure(fig, "maps")
+    plt.close(fig)
+    t = out["axes"][0]["traces"][0]
+    assert t["cmap"] == "twilight_shifted" and len(t["colorscale"]) == 257
+    assert t["norm"]["log"] and t["norm"]["vmin"] == 1 and t["norm"]["vmax"] == 1000
+    assert t["x_edges"] == [0, 1, 4] and t["x"] == [.5, 2.5]
+    assert t["colorbar"]["label"] == "phase (deg)" and t["colorbar"]["units"] == "deg"
+    assert out["axes"][1]["traces"][0]["norm"]["vcenter"] == 0
+    assert out["axes"][1]["traces"][0]["norm"]["type"] == "TwoSlopeNorm"
+    result = {"figures": [out]}
+    full = replot.full_map(result, "maps", 2, 0)
+    assert full is not None and len(full["z"]) == 411 and full["full_resolution"]
+    converted = replot.mpljson_to_plotly(out)
+    maps = [t for t in converted["data"] if t["type"] == "heatmap"]
+    assert len(maps[2]["z"]) == 411 and maps[0]["x"] == [0, 1, 4]
+    monkeypatch.setattr(replot, "_MAP_BYTE_BUDGET", 1024)
+    reduced = replot.mpljson_to_plotly(out)
+    m = [t for t in reduced["data"] if t["type"] == "heatmap"][2]
+    assert m["meta"]["preview_reduced"] and len(m["z"]) <= 400
+    assert replot.full_map(result, "maps", 2, 0)["z"] == full["z"]
+
+
+def test_map_nonmonotonic_edges_reported():
+    import matplotlib.pyplot as plt
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    fig, ax = plt.subplots()
+    ax.pcolormesh([0, 2, 1], [0, 1, 2], [[1, 2], [3, 4]])
+    out = extract_figure(fig, "map")
+    plt.close(fig)
+    assert out["axes"][0]["traces"] == []
+    assert out["axes"][0]["skipped"][0]["artist"] == "QuadMesh"
+
+
 def test_module_resolution_reads_node_imports(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "path", list(sys.path))
     nodes = tmp_path / "calibrations" / "group"

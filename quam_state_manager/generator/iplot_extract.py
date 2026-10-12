@@ -134,11 +134,15 @@ def _heatmap_trace(qm):
         ny1, nx1, _ = coords.shape
     except (ValueError, AttributeError):
         return None
-    if nx1 < 3 or ny1 < 3:   # 1xN strip == colorbar, not data
+    if nx1 < 2 or ny1 < 2:
         return None
     # cell-corner centers -> Plotly x/y (length nx, ny)
     xc = coords[0, :, 0]
     yc = coords[:, 0, 1]
+    if not (np.allclose(coords[:, :, 0], xc[None, :]) and
+            np.allclose(coords[:, :, 1], yc[:, None]) and
+            _monotonic(xc) and _monotonic(yc)):
+        return None
     xcen = 0.5 * (xc[:-1] + xc[1:])
     ycen = 0.5 * (yc[:-1] + yc[1:])
     z = np.ma.getdata(arr).astype(float)
@@ -150,9 +154,38 @@ def _heatmap_trace(qm):
     return {
         "type": "heatmap",
         "x": _flist(xcen), "y": _flist(ycen),
+        "x_edges": _flist(xc), "y_edges": _flist(yc),
         "z": [[(v if np.isfinite(v) else None) for v in row] for row in z],
         "colorscale": _CMAP.get(cmap, "Viridis"),
+        **_map_metadata(qm),
     }
+
+
+def _monotonic(values):
+    delta = np.diff(values)
+    return bool(np.all(delta > 0) or np.all(delta < 0))
+
+
+def _map_metadata(artist):
+    norm = artist.norm
+    cmap = artist.get_cmap()
+    cb = getattr(artist, "colorbar", None)
+    label = ""
+    if cb is not None:
+        label = cb.ax.get_ylabel() or cb.ax.get_xlabel()
+    import re
+    units = re.search(r"[\[(]([^\])]+)[\])]\s*$", label)
+    return {"cmap": cmap.name,
+            "colorscale": [[float(v), _hex(cmap(v))] for v in np.linspace(0, 1, 257)],
+            "norm": {"type": type(norm).__name__, "vmin": _f(norm.vmin),
+                     "vmax": _f(norm.vmax), "log": type(norm).__name__ == "LogNorm",
+                     "vcenter": _f(getattr(norm, "vcenter", None)), "clip": bool(norm.clip)},
+            "colorbar": {"label": label, "units": units.group(1) if units else None,
+                         "id": str(id(cb)) if cb is not None else None,
+                         "visible": cb is not None},
+            "full_resolution": True,
+            "zorder": _f(artist.get_zorder()),
+            "opacity": artist.get_alpha() if artist.get_alpha() is not None else 1}
 
 
 # matplotlib cmap -> Plotly colorscale (common subset)
@@ -276,7 +309,7 @@ def extract_axes(ax, axes):
                        "y": _flist((ye[1:] + ye[:-1]) / 2),
                        "x_edges": _flist(xe), "y_edges": _flist(ye),
                        "z": [_flist(row) for row in arr], "origin": image.origin,
-                       "extent": _flist(image.get_extent()), "colorscale": _CMAP.get(image.get_cmap().name, "Viridis")})
+                       "extent": _flist(image.get_extent()), **_map_metadata(image)})
     for patch in ax.patches:
         transform = patch.get_transform()
         if any(transform.contains_branch_seperately(ax.transData)):

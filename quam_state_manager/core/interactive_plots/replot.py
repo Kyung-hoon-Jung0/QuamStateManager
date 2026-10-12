@@ -257,6 +257,7 @@ def _ref(kind: str, n: int) -> str:
 # of MB per figure to the browser. Striding is enough for an overview plot.
 _MAX_LINE_PTS = 6000
 _MAX_HEATMAP_DIM = 400
+_MAP_BYTE_BUDGET = 64 * 1024 * 1024
 
 
 def _decimate(x, y, max_pts=_MAX_LINE_PTS):
@@ -310,19 +311,42 @@ def _scatter_to_plotly(t, xref, yref):
 
 def _heatmap_to_plotly(t, xref, yref):
     x, y, z = t["x"], t["y"], t["z"]
-    xs = max(1, len(x) // _MAX_HEATMAP_DIM + (1 if len(x) > _MAX_HEATMAP_DIM else 0))
-    ys = max(1, len(y) // _MAX_HEATMAP_DIM + (1 if len(y) > _MAX_HEATMAP_DIM else 0))
+    full = t.get("full_resolution", False)
+    size = len(json.dumps(t, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+    limited = full and size > _MAP_BYTE_BUDGET
+    xs = 1 if full and not limited else max(1, (len(x) + _MAX_HEATMAP_DIM - 1) // _MAX_HEATMAP_DIM)
+    ys = 1 if full and not limited else max(1, (len(y) + _MAX_HEATMAP_DIM - 1) // _MAX_HEATMAP_DIM)
     if xs > 1 or ys > 1:
         x = x[::xs]
         y = y[::ys]
         z = [row[::xs] for row in z[::ys]]
-    return {
+    result = {
         "type": "heatmap", "x": x, "y": y, "z": z,
         "xaxis": xref, "yaxis": yref,
         "colorscale": t.get("colorscale", "Viridis"),
         "showscale": True,
         "colorbar": {"len": 0.9, "thickness": 12},
+        "meta": {"cmap": t.get("cmap"), "norm": t.get("norm"),
+                 "colorbar": t.get("colorbar"), "full_shape": [len(t["y"]), len(t["x"])],
+                 "preview_reduced": limited, "source_bytes": size,
+                 "full_array_server_side": full},
     }
+    if full and not limited:
+        result["x"] = t.get("x_edges", x)
+        result["y"] = t.get("y_edges", y)
+    return result
+
+
+def full_map(result: dict, key: str, axes_index: int, trace_index: int) -> dict | None:
+    """Full map retained in the replay cache for subsequent server map tools."""
+    for fig in result.get("figures", []):
+        if fig["key"] == key:
+            try:
+                trace = fig["axes"][axes_index]["traces"][trace_index]
+            except (IndexError, KeyError):
+                return None
+            return trace if trace.get("type") == "heatmap" else None
+    return None
 
 
 def _trace_to_plotly(t, xref, yref):
