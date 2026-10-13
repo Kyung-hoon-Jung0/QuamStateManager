@@ -167,6 +167,18 @@ def test_ridge_default_does_not_blend_steep_neighboring_columns():
     assert capped['caps_applied']['cap_x']==.5
 
 
+def test_unknown_ridge_slope_does_not_open_the_full_control_cap():
+    x, y = np.arange(13.), np.arange(161.)
+    center = 140. - (x + 2.)**2
+    z = np.exp(-((y[:, None] - center) / 1.5)**2)
+    out = api.analyze({'x': x, 'y': y, 'z': z,
+        'meta': {'x': {'label': 'flux'}, 'y': {'label': 'frequency'}},
+        'smooth': {'sigma_x': 8., 'sigma_y': 8.}})
+    assert out['caps_applied']['cap_x'] == .5
+    assert out['fit']['verdict'] == 'outside the sweep'
+    assert out['fit']['values'] is None
+
+
 @pytest.mark.parametrize("label,name", [("neg_offset_v (V)", "optimal_neg_offset_v"),
     ("t_phi (ns)", "optimal_t_phi")])
 def test_landscape_stage_comparison_uses_the_varied_knob(tmp_path, label, name):

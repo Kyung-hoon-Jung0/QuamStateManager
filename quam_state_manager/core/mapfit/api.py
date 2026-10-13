@@ -79,6 +79,9 @@ def _cap_info(kind,a,x,y,meta,raw_fit):
             if good.sum()>2:
                 slope = float(np.max(np.abs(np.gradient(polyline[good,1],polyline[good,0]))))
         cap = ridge_caps(width*dy,dy,meta.get("ridge_slope",slope),dx)
+        if not len(polyline) and "ridge_slope" not in meta:
+            # An unavailable track leaves the slope unknown, rather than proving it flat.
+            cap["control"] = DEFAULTS["ridge"]["x"]
         # A flat ridge gives an infinite control cap; the slider range ends at SLIDER_MAX (design 5.2).
         rule = DEFAULTS["ridge"]
         return min(SLIDER_MAX,cap["control"]),cap["frequency"],None,(rule["x"],rule["y_hwhm"]*width)
