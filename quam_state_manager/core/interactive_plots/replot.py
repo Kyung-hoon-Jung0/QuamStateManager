@@ -424,7 +424,7 @@ def _heatmap_to_plotly(t, xref, yref):
     cb = t.get("colorbar")
     if cb is not None:
         result["showscale"] = cb.get("visible", False)
-        result["colorbar"]["title"] = {"text": cb.get("label", "")}
+        result["colorbar"]["title"] = {"text": cb.get("label", ""), "side": "right"}
     if lo is not None and hi is not None:
         result.update(zmin=lo, zmax=hi, zauto=False)
     if norm.get("log") or center is not None:
@@ -580,6 +580,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         a.get("shares_y_with") is not None or any(s.get("axis") == "x" and s.get("side", "top") == "top"
                                                   for s in a.get("secondary_axes", [])) for a in axes)
     ypad = (0.20 if has_secondary_top else 0.10) / nrows
+    if nrows == 1 and has_secondary_top:
+        # The outer top margin already holds this row's secondary labels.
+        ypad = .04
 
     data, layout, notes = [], {}, []
     for p_idx, panel in enumerate(panels):

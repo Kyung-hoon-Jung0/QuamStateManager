@@ -47,6 +47,7 @@ def test_source_aspect_column_titles_and_secondary_ticks():
             for i in range(5)]
     layout = mpljson_to_plotly({"axes": axes, "size_inches": [15, 9]})["layout"]
     assert layout["height"] == 720
+    assert layout["yaxis"]["domain"] == [.04, .96]
     assert layout["yaxis"]["title"]["text"] == "Number of pulses"
     assert all(layout[f"yaxis{i}"]["title"]["text"] == "" for i in range(2, 6))
     gap = layout["xaxis2"]["domain"][0] - layout["xaxis"]["domain"][1]
@@ -104,3 +105,11 @@ def test_numeric_map_arrays_skip_the_text_walk():
     assert converted["data"][0]["x"] is row
     assert converted["data"][0]["name"] == "value &lt; limit &amp; note"
     assert converted["ticktext"] == [None, "&lt; lower", "x<sup>2</sup>"]
+
+
+def test_panel_colorbar_title_stays_beside_its_scale():
+    axes = [{"ylabel": "Readout amplitude", "grid": {"row": 0, "col": i, "nrows": 1, "ncols": 3},
+             "traces": [{"type": "heatmap", "x": [0, 1], "y": [0, 1], "z": [[0, 1], [1, 0]],
+                         "colorbar": {"visible": True, "label": "Assignment fidelity (%)"}}]} for i in range(3)]
+    view = mpljson_to_plotly({"axes": axes, "size_inches": [18, 7]})
+    assert all(t["colorbar"]["title"].get("side") == "right" for t in view["data"])
