@@ -150,6 +150,7 @@ def test_every_post_route_is_locked_or_explicitly_non_staging(tmp_path):
 
 def test_map_analysis_and_config_dismissal_do_not_stage_chip_edits(tmp_path, monkeypatch):
     import copy
+    import json
     import numpy as np
     from types import SimpleNamespace
     from quam_state_manager.web import routes
@@ -159,8 +160,11 @@ def test_map_analysis_and_config_dismissal_do_not_stage_chip_edits(tmp_path, mon
     z = (axis[None, :] - .2) ** 2 + (axis[:, None] + .3) ** 2
     trace = {"type": "heatmap", "full_resolution": True, "x": axis.tolist(),
              "y": axis.tolist(), "z": z.tolist()}
-    figure = {"axes": [{"xlabel": "position", "ylabel": "index", "title": "q1", "traces": [trace]}]}
-    converted = {"data": [trace], "clickable": {"targets": [
+    figure = {"axes": [{"xlabel": "a_scan", "ylabel": "b_over_a", "title": "q1", "traces": [trace]}]}
+    # v1.4.1: unproven target -> accepted node write, so analysis still returns updates without staging.
+    (tmp_path / "node.json").write_text(json.dumps({"patches": [
+        {"op": "replace", "path": "/quam/qubits/q1/T1", "old": .1, "value": .2}]}))
+    converted = {"data": [trace], "clickable": {"evidence_tier": "applied", "targets": [
         {"path": "qubits.q1.T1", "axis": "x"}]}}
     run = SimpleNamespace(folder_path=str(tmp_path), id=1, experiment_name="synthetic")
     monkeypatch.setattr(routes, "_map_figure", lambda *args: (run, figure, converted))
