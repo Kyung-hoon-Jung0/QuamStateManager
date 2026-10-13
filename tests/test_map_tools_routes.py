@@ -16,7 +16,8 @@ def rig(tmp_path, monkeypatch):
     figure = {"key": "map", "axes": [{"xlabel": "Amplitude a_scan", "ylabel": "Amplitude b_over_a",
         "title": "q0", "traces": [{"type": "heatmap", "full_resolution": True,
                                   "x": x.tolist(), "y": y.tolist(), "z": z.tolist()}]}],
-        "clickable": {"targets": [{"axis": "x", "plotly_axis": "x", "path": "qubits.q0.amplitude",
+        # v1.4.1: unproven map targets -> accepted-write evidence is required.
+        "clickable": {"evidence_tier": "applied", "targets": [{"axis": "x", "plotly_axis": "x", "path": "qubits.q0.amplitude",
                                   "scale": 2., "offset": 0., "verified_on": "run"}]},
         "status_chip": "current code"}
     (tmp_path / "data.json").write_text(json.dumps({"fit_results": {"q0": {"optimal_a_scan": .2}}}))
@@ -79,6 +80,15 @@ def test_display_only_and_panel_gate(rig):
     assert client.post("/dataset/run/map/analyze", json={"fig": "map"}).status_code == 400
 
 
+@pytest.mark.parametrize("tier", ["proposed", None])
+def test_proposed_or_unverified_map_never_offers_staging(rig, tier):
+    client, figure = rig
+    figure["clickable"]["evidence_tier"] = tier
+    result = client.post("/dataset/run/map/analyze", json={"fig": "map"}).get_json()
+    assert result["fit"]["values"] and result["updates"] == []
+    assert result["display_only_reason"]
+
+
 @pytest.mark.parametrize("error", [ArithmeticError, OverflowError, FloatingPointError, ZeroDivisionError])
 def test_map_numerical_failures_remain_request_errors(rig, monkeypatch, error):
     client, _ = rig
@@ -132,7 +142,8 @@ def test_zero_count_baseline_and_secondary_prefactor_are_bound_before_fit(tmp_pa
             "parent": [800, 1000, 1200], "forward": [.8, 1., 1.2]}}],
         "traces": [{"type": "heatmap", "x": (x * 1000).tolist(), "y": y.tolist(), "z": z.tolist(), "full_resolution": True}]}
     figure = {"axes": [axis]}
-    converted = {"data": [axis["traces"][0]], "clickable": {"targets": [{"axis": "x", "path": "qubits.q0.amplitude", "transform": {
+    # v1.4.1: unproven map targets -> this unit conversion uses accepted-write evidence.
+    converted = {"data": [axis["traces"][0]], "clickable": {"evidence_tier": "applied", "targets": [{"axis": "x", "path": "qubits.q0.amplitude", "transform": {
         "type": "prefactor", "old": .2, "coordinate_scale": .001, "coordinate_offset": 0}}]}}
     (tmp_path / "data.json").write_text(json.dumps({"fit_results": {"q0": {"opt_amp_prefactor": truth["a_pi"]}}}))
     run = SimpleNamespace(folder_path=str(tmp_path), experiment_name="synthetic")
@@ -168,9 +179,11 @@ def test_raw_map_full_plane_uses_only_existing_candidates(tmp_path):
     candidates = [{"dim": "RF_frequency", "path": "qubits.{q}.f_01"}]
     figure, converted = map_analysis.raw_figure(run, body, candidates)
     assert len(figure["axes"][0]["traces"][0]["x"]) == 501
-    assert converted["clickable"]["targets"] == [{"path": "qubits.q0.f_01", "axis": "x"}]
+    # v1.4.1: heuristic raw map writes -> display only, because coordinates prove no write formula.
+    assert converted["clickable"] is None
     out = map_analysis.analyze(run, "raw-run", figure, converted, body)
-    assert out["updates"] and out["updates"][0]["value"] == pytest.approx(4.5e9)
+    assert out["updates"] == []
+    assert map_analysis._coordinate(out, "x", "extremum") == pytest.approx(4.5e9)
     assert out["compare"]["node_value"] is None and "no node fit" in out["display_only_reason"]
     body["selection"]["qubit"] = 99
     with pytest.raises(ValueError, match="outside"):
@@ -190,7 +203,8 @@ def test_erroramp_tightest_cap_override_contours_and_figure_axis_provenance(tmp_
         "secondary_axes": [{"axis": amp_axis, "label": "amplitude prefactor", "map": {
             "parent": [807, 1007, 1207], "forward": [.8, 1., 1.2]}}],
         "traces": [{"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": y.tolist(), "z": data.tolist()}]}
-    converted = {"data": [axis["traces"][0]], "clickable": {"targets": [{"axis": amp_axis,
+    # v1.4.1: unproven map targets -> this cap pin uses accepted-write evidence.
+    converted = {"data": [axis["traces"][0]], "clickable": {"evidence_tier": "applied", "targets": [{"axis": amp_axis,
         "path": "qubits.q0.amplitude", "transform": {"type": "prefactor", "old": .2,
         "coordinate_scale": .001, "coordinate_offset": -.007}}]}}
     run = SimpleNamespace(folder_path=str(tmp_path), experiment_name="synthetic", id=2)
@@ -267,7 +281,8 @@ def test_phase_error_objective_uses_only_its_entity_and_declared_zero_target(tmp
     foreign = axis("q1", "phase error per gate", 20 * (yy - 1.2), True)
     objective = axis("q0", "leakage", (xx - .2) ** 2 + (yy + .3) ** 2)
     figure = {"axes": [own, foreign, objective]}
-    converted = {"data": [a["traces"][0] for a in figure["axes"]], "clickable": {"targets": [{
+    # v1.4.1: unproven map targets -> this entity pin uses accepted-write evidence.
+    converted = {"data": [a["traces"][0] for a in figure["axes"]], "clickable": {"evidence_tier": "applied", "targets": [{
         "path": "qubits.q0.amplitude", "axis": "x", "plotly_axis": "x", "scale": 1}]}}
     result = map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path)), "phase-target", figure, converted,
         {"panel": 2, "smooth": {"sigma_x": 0, "sigma_y": 0}})

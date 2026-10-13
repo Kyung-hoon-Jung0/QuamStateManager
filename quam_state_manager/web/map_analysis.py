@@ -283,6 +283,8 @@ def analyze(run, uid, figure, converted, body):
     origin = {"src": "map_fit", "run_uid": uid, "request_hash": result["request_hash"], "text": text[:300]}
     updates = []
     for target in (converted.get("clickable") or {}).get("targets", []):
+        if target.get("evidence_tier", (converted.get("clickable") or {}).get("evidence_tier")) != "applied":
+            continue
         target_axis = target.get("axis", "x")
         if target.get("plotly_axis", panel[target_axis + "ref"]) != panel[target_axis + "ref"]:
             continue
@@ -385,8 +387,8 @@ def raw_figure(run, body, candidates):
                 path = candidate.get("path_by_entity", {}).get(entity) or candidate["path"]
                 path = path.replace("{q}", entity).replace("{p}", entity)
                 targets.append({"path": path, "axis": "x" if candidate["dim"] == xd else "y"})
-            converted = {"data": [trace], "clickable": {"targets": targets} if targets else None,
-                         "status_chip": "raw data", "display_only_reason": "no node fit to compare; existing coordinate candidates only"}
+            converted = {"data": [trace], "clickable": None,
+                         "status_chip": "raw data", "display_only_reason": "no node fit to compare; raw coordinates have no verified map write contract"}
             return figure, converted
 
 

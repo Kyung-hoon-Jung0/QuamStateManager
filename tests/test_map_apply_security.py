@@ -21,7 +21,7 @@ def map_chip(tmp_path, monkeypatch):
     trace = {"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": x.tolist(),
              "z": ((x[None, :] - .2)**2 + (x[:, None] + .3)**2).tolist()}
     fig = {"key": "map", "axes": [{"xlabel": "a_scan", "ylabel": "b_over_a", "traces": [trace]}]}
-    converted = {"data": [trace], "clickable": {"targets": [{"path": PATH, "axis": "x", "scale": .0002}]}}
+    converted = {"data": [trace], "clickable": {"evidence_tier": "applied", "targets": [{"path": PATH, "axis": "x", "scale": .0002}]}}
     run = SimpleNamespace(folder_path=str(folder), id=7, experiment_name="synthetic")
     monkeypatch.setattr(routes, "_map_figure", lambda *a: (run, fig, converted))
     out = chip.c.post("/dataset/run-7/map/analyze", json={"fig": "map", "smooth": {"sigma_x": 0, "sigma_y": 0}})
