@@ -36,6 +36,33 @@ def test_command_parsing(command, expected):
     assert qr.config_argument(command) == expected
 
 
+@pytest.mark.parametrize("prefix", [
+    ["python", "other.py", "-m"], ["python", "-c", "pass", "-m"],
+    ["pytest", "-m"], ["unrelated.exe", "-m"], ["python", "--label", "-m"]])
+def test_module_tokens_after_a_script_or_foreign_executable_are_not_a_server(prefix):
+    assert qr.config_argument(prefix + ["qualibrate", "start", "--config-path", "config.toml"]) is None
+
+
+def test_module_server_from_another_environment_with_interpreter_flags():
+    assert qr.config_argument(["C:/other-env/python.exe", "-B", "-u", "-m", "qualibrate", "start",
+                               "--config-path=config.toml"]) == "config.toml"
+
+
+def test_access_denied_process_does_not_hide_a_later_server(tmp_path, monkeypatch):
+    import psutil
+    from types import SimpleNamespace
+    file = config_file(tmp_path)
+    class Denied:
+        @property
+        def info(self):
+            raise psutil.AccessDenied(1)
+    server = SimpleNamespace(info={"pid": 2, "cmdline": ["qualibrate.exe", "start", "--config-path", str(file)]},
+                             cwd=lambda: str(tmp_path))
+    monkeypatch.setattr(psutil, "process_iter", lambda *a: iter([Denied(), server]))
+    result = qr.detect_servers()
+    assert result["known"] and [s["pid"] for s in result["servers"]] == [2]
+
+
 def test_multiple_servers_and_overlay(tmp_path):
     first = config_file(tmp_path / "one")
     second = config_file(tmp_path / "two", "beta")

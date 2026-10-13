@@ -71,12 +71,30 @@ def config_argument(command: list[str] | str) -> str | None:
             except ValueError:
                 return None
     args = [str(a).strip('"\'') for a in command]
+    def base(value):
+        return value.replace("\\", "/").rsplit("/", 1)[-1].lower()
+
+    module_index = None
+    if args and re.fullmatch(r"(?:python(?:w|\d+(?:\.\d+)*)?|pypy\d*)(?:\.exe)?", base(args[0])):
+        index = 1
+        while index < len(args):
+            token = args[index]
+            if token == "-m":
+                module_index = index + 1
+                break
+            if token in {"-B", "-u", "-E", "-I", "-s", "-S", "-O", "-OO", "-q"}:
+                index += 1
+            elif token in {"-X", "-W"} and index + 1 < len(args):
+                index += 2
+            elif token.startswith(("-X", "-W")):
+                index += 1
+            else:
+                break
     for i, arg in enumerate(args):
-        base = arg.replace("\\", "/").rsplit("/", 1)[-1].lower()
-        if base not in ("qualibrate", "qualibrate.exe"):
+        if base(arg) not in ("qualibrate", "qualibrate.exe"):
             continue
         # Accept the console launcher and `python -m qualibrate start`.
-        if i and args[i - 1] != "-m":
+        if i and i != module_index:
             continue
         tail = args[i + 1:]
         if not tail or tail[0] != "start":
