@@ -200,11 +200,13 @@ def _slices_until(cs, st, pred, cap=200):
 
 
 class TestProgressPhases:
-    def test_a_fresh_history_looks_for_then_through_run_folders_then_counts_runs(self, tmp_path):
+    def test_a_fresh_history_looks_for_then_through_run_folders_then_counts_runs(self, tmp_path, monkeypatch):
         data, chip = tmp_path / "data", tmp_path / "chip"
         for i in range(1, 6):
             run(data, i, chip_state(t1=1.0e-5 * i))
-        cs = hub_sync.open_chip(chip, [(str(data), "declared")], kick=False)
+        # v1.4.1: registered sync -> private slice owner, so live notifications cannot race its ready assertion.
+        cs = hub_sync.ChipSync(chip)
+        cs.set_roots([(str(data), "declared")])
         st0 = cs.status()
         assert st0["state"] == "building"
         # S10 walk (N8): ": looking for run folders" -> the step it is on (each step counts its own work)
@@ -222,6 +224,10 @@ class TestProgressPhases:
             assert hub_sync.progress_words(ing) == f": step 2 of 2, adding runs ({ing['done']} of 5)"
             while cs.run_slice(st, None):
                 pass
+            assert st.conn.execute("SELECT COUNT(*) FROM events WHERE kind='run'").fetchone()[0] == 5
+        # Force the notification schedule that used to mark the registered sync dirty after its last slice.
+        monkeypatch.setattr(hub_sync, "_kick", lambda cs: None)
+        hub_sync.on_roots_moved([str(data)])
         assert cs.status()["state"] == "ready"
 
     def test_a_moved_folder_is_matched_and_its_identical_runs_re_pointed(self, tmp_path):
