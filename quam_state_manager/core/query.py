@@ -23,6 +23,11 @@ from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
 
 logger = logging.getLogger(__name__)
 
+# Physical analog outputs per OPX1000 FEM (QM docs: "The LF-FEM module features 8 analog
+# outputs ..." / "The MW-FEM module features 8 analog outputs ..."); the instrument
+# diagram draws every one of them so an unused port is a visible, empty slot.
+_OPX1000_FEM_OUTPUTS = {"lf-fem": 8, "mw-fem": 8}
+
 
 # Chip Status MetricRecord map (the universal per-metric carrier — see the
 # redesign plan). The scalars stay on the node/edge for back-compat; `metrics`
@@ -1313,6 +1318,12 @@ class QueryEngine:
                     "input_ports": {p: in_ports[p] for p in sorted(in_ports.keys(), key=_id_key)},
                     "digital_ports": {p: dig_ports[p] for p in sorted(dig_ports.keys(), key=_id_key)},
                 }
+            # An OPX1000 FEM is drawn with ALL its physical analog outputs, used or
+            # not: an empty slot is where a line can be moved to (8 outputs on both
+            # LF-FEM and MW-FEM, QM docs; the same fact config_generator checks).
+            if any(f["type"] in _OPX1000_FEM_OUTPUTS for f in sorted_fems.values()):
+                max_output_port = max(max_output_port, max(
+                    _OPX1000_FEM_OUTPUTS.get(f["type"], 0) for f in sorted_fems.values()))
             result[ctrl] = {"fems": sorted_fems, "max_output_port": max_output_port,
                             "max_digital_port": max_digital_port}
 

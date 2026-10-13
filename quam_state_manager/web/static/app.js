@@ -14124,20 +14124,18 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         var femIds = Object.keys(fems).sort(function(a, b) { return parseInt(a) - parseInt(b); });
         if (!femIds.length) return;
 
-        // DIG sub-column: only when this controller wires >=1 digital output.
-        // A chip with none renders byte-identically to the pre-digital layout.
-        var hasDigital = femIds.some(function(fid) {
-            return Object.keys(fems[fid].digital_ports || {}).length > 0;
-        });
+        // DIG sub-column: always drawn. Every OPX1000 FEM physically carries 8
+        // digital outputs, and an empty DIG slot is where a trigger line (e.g.
+        // an external DC source's trigger) can be wired — hiding the column on
+        // a chip that wires none hid exactly the slots the user needs to see.
+        var hasDigital = true;
         var maxDig = 0;
-        if (hasDigital) {
-            femIds.forEach(function(fid) {
-                Object.keys(fems[fid].digital_ports || {}).forEach(function(p) {
-                    var n = parseInt(p);
-                    if (isFinite(n)) maxDig = Math.max(maxDig, n);
-                });
+        femIds.forEach(function(fid) {
+            Object.keys(fems[fid].digital_ports || {}).forEach(function(p) {
+                var n = parseInt(p);
+                if (isFinite(n)) maxDig = Math.max(maxDig, n);
             });
-        }
+        });
         var femW = outSubW + inSubW + (hasDigital ? digSubW : 0);
         // Both FEM flavors physically carry 8 digital outputs (QM FEM guide),
         // so a visible DIG column shows all 8 slots — grid rows grow to fit.
