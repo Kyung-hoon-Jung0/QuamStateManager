@@ -48,6 +48,18 @@ def test_serializer_preserves_every_line_and_fit_summary():
     assert out["axes"][0]["annotations"][0]["text"] == "fit summary"
 
 
+def test_explicit_saved_dataset_beats_generic_parameter_name():
+    def plot_map(ds):
+        return ds
+    tree = ast.parse('draw(node.results["ds_fit"])')
+    raw, fitted = object(), object()
+    report = {}
+    args = runner._bind_args(plot_map, ds_raw=raw, ds_fit=fitted, qubits=[], params={}, results={},
+        node_tree=tree, plot_imports={"draw": ("calibration_utils.synthetic", "plot_map")}, bind_report=report)
+    assert args["ds"] is fitted, "The node explicitly plots the saved fitted dataset"
+    assert report["ds"]["source"] == "ds_fit.h5"
+
+
 def test_serializer_artist_coverage():
     import matplotlib.pyplot as plt
     import numpy as np

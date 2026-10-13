@@ -272,10 +272,10 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
         source = None
         value = None
         reconstruction = []
-        if lname in ("ds", "dataset", "ds_raw", "raw"):
-            value, source = ds_raw, "ds_raw.h5"
-        elif lname == "ds_fit" or path == "node.results.ds_fit":
+        if lname == "ds_fit" or path == "node.results.ds_fit":
             value, source = ds_fit, "ds_fit.h5"
+        elif lname in ("ds", "dataset", "ds_raw", "raw"):
+            value, source = ds_raw, "ds_raw.h5"
         elif lname in ("fits", "fit", "fit_results") and "fit_results" in results:
             value = _fit_records(fn, name, results["fit_results"], reconstruction,
                                  util_module=util_module, restore_objects=path == "node.namespace.fit_objects")
