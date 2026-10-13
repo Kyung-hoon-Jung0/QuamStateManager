@@ -24,6 +24,8 @@
  *     nav_sidebar / nav_boost / nav_push / nav_history -- navigation collapses runs
  *                     at any height, across swaps/reruns, without changing memory
  *     nav_same_page -- same-page navigation and run switches retain user height
+ *     nav_collapse_low / nav_collapse_high -- navigation uses min(remembered
+ *                     inspector share, collapsed share), including on restore
  *     nav_reopen_low / nav_reopen_high -- first run after navigation opens at
  *                     max(remembered inspector share, dataset expanded share)
  *     nav_run_only -- qubit opens do not consume the next-run navigation rule
@@ -122,7 +124,7 @@ const eq = (a, b, msg) => assert.deepEqual(arr(a), arr(b), msg);
 const RUN_B = '<div id="ds-detail-root" data-uid="run-b">run b</div>';
 
 if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
-    const choices = mode === 'nav_reopen_low' ? [[80, 20], [40, 60], 'down', 'up', null] : [[10, 90], [0, 100]];
+    const choices = mode === 'nav_reopen_low' ? [[90, 10], [80, 20], [40, 60], 'down', 'up', null] : [[10, 90], [0, 100]];
     for (const choice of choices) {
         const s = await boot();
         s.swap('inspector-pane', RUN);
@@ -145,6 +147,51 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         const plain = Array.isArray(choice) ? choice : choice === 'down' ? SPLIT.collapsedSizes : SPLIT.datasetExpandedSizes;
         eq(s.sizes(), plain, 'the following run within Datasets uses the plain remembered height');
         assert.equal(s.user(), before, 'within-page switching also preserves memory');
+    }
+} else if (mode === 'nav_collapse_low' || mode === 'nav_collapse_high') {
+    const choices = mode === 'nav_collapse_low' ? [[95, 5], [90, 10]] : [[80, 20], [10, 90]];
+    for (const choice of choices) {
+        for (const event of ['sidebar', 'boost', 'push', 'popstate', 'htmx:historyRestore']) {
+            const s = await boot();
+            s.swap('inspector-pane', RUN);
+            s.drag(choice);
+            const before = s.user();
+            // Use remembered sizes even when a programmatic move changed the current split.
+            s.w._applySplitPreset('expanded');
+            const expected = mode === 'nav_collapse_low' ? choice : SPLIT.collapsedSizes;
+            if (event === 'sidebar') {
+                s.d.getElementById('nav-qubits').click();
+            } else if (event === 'boost') {
+                const link = s.d.createElement('a');
+                link.href = '/qubits';
+                s.d.body.appendChild(link);
+                s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', {
+                    detail: { elt: link, requestConfig: { boosted: true } }
+                }));
+            } else {
+                s.w.history.replaceState({}, '', '/qubits');
+                if (event === 'push') {
+                    s.d.dispatchEvent(new s.w.CustomEvent('htmx:pushedIntoHistory', {
+                        detail: { path: '/qubits' }
+                    }));
+                } else if (event === 'popstate') {
+                    s.w.dispatchEvent(new s.w.PopStateEvent(event));
+                } else {
+                    s.d.dispatchEvent(new s.w.CustomEvent(event));
+                }
+            }
+            eq(s.sizes(), expected, event + ': navigation uses min(user share, collapsed share)');
+            eq(JSON.parse(s.current()), expected, event + ': the navigation target is persisted');
+            assert.equal(s.user(), before, event + ': navigation preserves the remembered choice');
+            s.w.history.replaceState({}, '', '/qubits');
+            s.swap('table-pane', 'other page');
+            eq(s.sizes(), expected, event + ': table swaps keep the min target');
+            s.rerun();
+            eq(s.sizes(), expected, event + ': script reruns keep the min target');
+            s.d.dispatchEvent(new s.w.CustomEvent('htmx:historyRestore'));
+            eq(s.sizes(), expected, event + ': history restores keep the min target');
+            assert.equal(s.user(), before, event + ': swaps and restores preserve user memory');
+        }
     }
 } else if (mode === 'nav_run_only') {
     const s = await boot();

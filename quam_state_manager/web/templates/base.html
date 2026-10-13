@@ -1644,6 +1644,12 @@
             if (c === "down") return collapsedSizes();
             return c;
         }
+        // Navigation only lowers the remembered inspector share: a user
+        // choice below the down arrow stays below it, including on restore.
+        function navigationSizes() {
+            var sizes = userSizes();
+            return sizes && Number(sizes[1]) < Number(collapsedSizes()[1]) ? sizes : collapsedSizes();
+        }
         // After leaving a page, the next run opens at least as tall as its
         // up arrow. Later run switches use the plain remembered choice again.
         function openSizes() {
@@ -1675,7 +1681,7 @@
             if (!datasetInspector()) return;
             // A low drag is still an open run: the old >30% flag skipped it.
             navigation.collapsed = true;
-            window._applySplitPreset("collapsed");
+            applySizes(navigationSizes());
         }
 
         function inspectorHasContent() {
@@ -1995,7 +2001,7 @@
             // A restored dataset panel must keep the navigation collapse;
             // re-running this script must not reapply the remembered height.
             if (navigation.collapsed && datasetInspector()) {
-                applySizes(collapsedSizes());
+                applySizes(navigationSizes());
                 return;
             }
             var user = userSizes();
