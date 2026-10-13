@@ -189,3 +189,19 @@ def config_mismatches(discovery: dict, sm_config: str | Path,
             and path_key(server["config_path"]) not in ignored
             and (not open_state or (server.get("state_path")
                  and path_key(server["state_path"]) == path_key(open_state)))]
+
+
+def dataset_hints(discovery: dict, open_state: str | None,
+                  data_folders: list[str], added=()) -> list[dict]:
+    """Offer a distinct running server's storage only for this live chip."""
+    if not discovery.get("known") or not open_state or not data_folders:
+        return []
+    have = {path_key(p) for p in (*data_folders, *added)}
+    hints = []
+    for server in discovery.get("servers", []):
+        storage, state = server.get("storage"), server.get("state_path")
+        if (storage and state and path_key(state) == path_key(open_state)
+                and path_key(storage) not in have):
+            hints.append(server)
+            have.add(path_key(storage))
+    return hints

@@ -3,6 +3,12 @@
 {% set view_mode = view_mode | default('datasets') %}
 {% set is_collections = view_mode == 'collections' %}
 {% set page_title = 'Collections' if is_collections else 'Datasets' %}
+{% if not is_collections %}
+<div id="qualibrate-running-data-slot" hx-get="/qualibrate/running-data-hint"
+     hx-trigger="load, every 3s" hx-swap="innerHTML">
+    {% include '_qualibrate_running_data_hint.html' %}
+</div>
+{% endif %}
 {% if no_workspace %}
 <div class="welcome" style="max-width:600px;margin:2rem auto">
     <h2>{{ page_title }}</h2>

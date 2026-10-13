@@ -7476,7 +7476,41 @@ def _running_config_mismatches() -> list[dict]:
 
 @bp.app_context_processor
 def _running_config_context():
-    return {"running_config_mismatches": _running_config_mismatches}
+    return {"running_config_mismatches": _running_config_mismatches,
+            "running_data_hints": _running_data_hints}
+
+
+def _running_data_hints() -> list[dict]:
+    from quam_state_manager.core import qualibrate_running
+    from quam_state_manager.core.history import extras_data_folder
+
+    ctx = _active_ctx()
+    if not ctx or ctx.get("origin") == "dataset_archive":
+        return []
+    discovery = qualibrate_running.running_servers()
+    if not discovery.get("known") or not discovery.get("servers"):
+        return []
+    store = ctx.get("store")
+    if store is None:
+        return []
+    with store._lock:
+        declared = extras_data_folder(store.state)
+    folders = [str(p) for raw in declared if (p := qualibrate_config.native_path(raw))]
+    if not folders and ctx.get("qualibrate_project"):
+        try:
+            storage = qualibrate_config.project_storage(ctx["qualibrate_project"])
+            if storage.get("native"):
+                folders = [storage["native"]]
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+    return qualibrate_running.dataset_hints(
+        discovery, ctx.get("live_path") or ctx.get("path"),
+        folders, [str(root) for root in _ws().root_folders])
+
+
+@bp.route("/qualibrate/running-data-hint")
+def qualibrate_running_data_hint():
+    return render_template("_qualibrate_running_data_hint.html")
 
 
 @bp.route("/qualibrate/running-banner")

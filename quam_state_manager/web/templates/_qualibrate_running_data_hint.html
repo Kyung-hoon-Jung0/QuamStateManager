@@ -1,0 +1,6 @@
+{% for server in running_data_hints() %}
+<form hx-post="/workspace/add" hx-target="#sidebar-tree" style="padding:.5rem 1rem">
+    <input type="hidden" name="folder" value="{{ server.storage }}">
+    <button type="submit" class="btn-sm outline">Add {{ server.storage }} (the running QUAlibrate's data folder)</button>
+</form>
+{% endfor %}

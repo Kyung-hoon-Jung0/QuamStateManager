@@ -149,6 +149,9 @@ def running_app(tmp_path, monkeypatch):
     (state / "wiring.json").write_text('{}', encoding="utf-8")
     sm = config_file(tmp_path / "sm", "beta", state)
     server = config_file(tmp_path / "server", "alpha", state)
+    overlay = sm.parent / "projects" / "beta" / "config.toml"
+    overlay.parent.mkdir(parents=True)
+    overlay.write_text('', encoding="utf-8")
     monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(sm))
     rows = [{"pid": 1, "cmdline": ["qualibrate", "start", "--config-path", str(server)]}]
     monkeypatch.setattr(qr, "running_servers", lambda: qr.detect_servers(rows))
@@ -230,3 +233,76 @@ def test_config_files_remain_byte_and_mtime_identical(running_app):
     assert client.post("/qualibrate/use-location", data={"path": str(server)}).status_code == 302
     assert client.get("/qualibrate/running-banner").status_code == 200
     assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files} == before
+
+
+@pytest.mark.parametrize("known,chip,folder,added,expected", [
+    (True, "same", "different", False, 1),
+    (True, "same", "same", False, 0),
+    (True, "other", "different", False, 0),
+    (True, None, "different", False, 0),
+    (False, "same", "different", False, 0),
+    (True, "same", None, False, 0),
+    (True, "same", "different", True, 0),
+])
+def test_dataset_hint_rule(tmp_path, known, chip, folder, added, expected):
+    state, data = str(tmp_path / "state"), str(tmp_path / "data")
+    server = {"state_path": state, "storage": data}
+    open_state = state if chip == "same" else str(tmp_path / "other") if chip else None
+    folders = [data if folder == "same" else str(tmp_path / "elsewhere")] if folder else []
+    assert len(qr.dataset_hints({"known": known, "servers": [server, server]},
+                                open_state, folders, [data] if added else [])) == expected
+    assert qr.dataset_hints({"known": True, "servers": []}, open_state, folders) == []
+
+
+@pytest.mark.parametrize("declared", [False, True])
+def test_datasets_hint_adds_running_folder_read_only(running_app, declared):
+    import json
+    app, sm, server, state = running_app
+    data = server.parent / "data"
+    data.mkdir()
+    if declared:
+        (state / "state.json").write_text(json.dumps({"qubits": {}, "extras": {
+            "data_folder": str(sm.parent / "data")}}), encoding="utf-8")
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+              for root in (sm.parent, server.parent) for p in root.rglob("*.toml")}
+    client = app.test_client()
+    assert client.post("/load", data={"folder": str(state)}).status_code in (200, 302)
+    response = client.get("/datasets")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert f"Add {data} (the running QUAlibrate&#39;s data folder)" in html or f"Add {data} (the running QUAlibrate's data folder)" in html
+    assert 'hx-get="/qualibrate/running-data-hint"' in html
+    hint = client.get("/qualibrate/running-data-hint").get_data(as_text=True)
+    assert 'hx-post="/workspace/add" hx-target="#sidebar-tree"' in hint
+    assert 'name="folder"' in hint
+    assert client.post("/workspace/add", data={"folder": str(data)}, headers={"HX-Request": "true"}).status_code == 200
+    assert qr.path_key(data) in {qr.path_key(root) for root in app.config["workspace"].root_folders}
+    assert "the running QUAlibrate's data folder" not in client.get("/qualibrate/running-data-hint").get_data(as_text=True)
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before} == before
+
+
+def test_dataset_hint_no_chip_and_same_folder(running_app):
+    import json
+    app, _, server, state = running_app
+    client = app.test_client()
+    assert "name=\"folder\"" not in client.get("/qualibrate/running-data-hint").get_data(as_text=True)
+    data = server.parent / "data"
+    (state / "state.json").write_text(json.dumps({"qubits": {}, "extras": {
+        "data_folder": str(data)}}), encoding="utf-8")
+    client.post("/load", data={"folder": str(state)})
+    assert "name=\"folder\"" not in client.get("/qualibrate/running-data-hint").get_data(as_text=True)
+
+
+@pytest.mark.parametrize("context", [{"origin": "dataset_archive"}, {"type": "experiment"}])
+def test_dataset_hint_without_live_store(running_app, monkeypatch, context):
+    from quam_state_manager.web import routes
+    from types import SimpleNamespace
+    app, sm, _, state = running_app
+    app.config["PROPAGATE_EXCEPTIONS"] = False
+    if context.get("origin") == "dataset_archive":
+        context = dict(context, live_path=str(state), store=SimpleNamespace(
+            _lock=threading.RLock(), state={"extras": {"data_folder": str(sm.parent / "data")}}))
+    monkeypatch.setattr(routes, "_active_ctx", lambda: context)
+    response = app.test_client().get("/qualibrate/running-data-hint")
+    assert response.status_code == 200
+    assert 'name="folder"' not in response.get_data(as_text=True)
