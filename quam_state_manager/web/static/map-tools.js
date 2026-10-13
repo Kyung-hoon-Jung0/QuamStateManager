@@ -170,7 +170,7 @@
         });
         control('apply').onclick = function () {
             if (!last || !last.updates || !last.updates.length) return;
-            var digest = last.request_hash, seq = generation;
+            var digest = last.request_hash, seq = generation, shown = JSON.stringify(settings());
             control('apply').disabled = true;
             window.fetch('/dataset/' + encodeURIComponent(options.uid) + '/map/analyze/' + encodeURIComponent(digest))
                 .then(function (r) { if (!r.ok) throw new Error('Analysis expired; analyze again.'); return r.json(); })
@@ -178,7 +178,10 @@
                     if (!alive || generation !== seq || !document.body.contains(host)) return;
                     var root = window._dsRootFor ? window._dsRootFor(plot) : host;
                     var chip = options.chip || (window._runChipExpect ? window._runChipExpect(root) : null);
-                    window._openPlotApplyPopup(r.updates, options.experiment || '', (payload.clickable || {}).qubit || null,
+                    var updates = r.updates.map(function (row) { return Object.assign({}, row, {
+                        mapValid: function () { return alive && generation === seq && shown === JSON.stringify(settings()) && document.body.contains(host); }
+                    }); });
+                    window._openPlotApplyPopup(updates, options.experiment || '', (payload.clickable || {}).qubit || null,
                         [{label: 'Comparison', value: control('status').textContent}], chip, options.uid);
                     control('apply').disabled = false;
                 }).catch(function (error) { if (alive && seq === generation) control('status').textContent = error.message; });

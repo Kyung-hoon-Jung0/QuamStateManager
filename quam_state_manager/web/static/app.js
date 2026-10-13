@@ -16565,6 +16565,8 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
 
         var btn = row.querySelector('.plot-apply-row-btn');
         var input = row.querySelector('.plot-apply-new-input');
+        row._mapValid = u.mapValid;
+        if (row._plotOrigin && row._plotOrigin.src === 'map_fit') input.readOnly = true;
         btn.addEventListener('click', function() { applyPlotRow(row); });
         input.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
@@ -16751,6 +16753,7 @@ function applyPlotRow(row) {
     function _restore() { btn.disabled = false; btn.textContent = prevLabel; }
 
     function _send() {
+        if (row._mapValid && !row._mapValid()) return Promise.reject(new Error('Map settings changed; analyze again.'));
         if (_fspAck === 'comp') {
             // comp = this row + the compensated amps in ONE /field/edit-batch
             // (one gid = one Review bundle = one Ctrl+Z).
@@ -16870,6 +16873,7 @@ function applyAllPlotRows() {
     }
 
     function _post() {
+        if (pending.some(function(r) { return r._mapValid && !r._mapValid(); })) return Promise.reject(new Error('Map settings changed; analyze again.'));
         var b = {updates: _ups};
         var origin = pending[0]._plotOrigin;
         if (origin && pending.every(function(r) {

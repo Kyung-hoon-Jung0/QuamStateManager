@@ -134,6 +134,16 @@ const map = {request_hash: 'abc123', request: {
     await open([{dot_path: p1, value: 3}, {dot_path: p2, value: 4}]);
     w.applyAllPlotRows(); await delay();
     check(!json(posts[0]).provenance && json(posts[0]).updates.every(u => !u.provenance), 'ordinary batch keeps its existing JSON shape');
+    // v1.4.1: stale map popups could post -> each send checks the shown settings.
+    for (const batch of [false, true]) {
+        let valid = true;
+        await open([{dot_path: p1, value: 3, provenance: map, mapValid: () => valid}]);
+        check(row().querySelector('input').readOnly, 'server map number is read-only');
+        valid = false;
+        if (batch) w.applyAllPlotRows(); else w.applyPlotRow(row());
+        await delay();
+        check(posts.length === 0 && row().textContent.includes('Map settings changed'), 'stale map popup cannot stage');
+    }
     console.log(checks + ' assertions passed');
     dom.window.close();
 })().catch(e => { console.error(e); dom.window.close(); process.exit(1); });

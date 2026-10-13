@@ -67,6 +67,8 @@ function check(value, message) { checks++; assert.ok(value, message); }
     check(popups.length === 1 && popups[0][0][0].value === .1962, 'popup uses replayed authoritative transformed value');
     check(popups[0][0][0].provenance.request_hash === 'server-hash' && popups[0][4].token === 'scratch-token', 'provenance and chip gate carried');
     input('mode', 'custom'); input('level', 3);
+    // v1.4.1: popup outlived slider changes -> its validator invalidates that request.
+    check(typeof popups[0][0][0].mapValid === 'function' && !popups[0][0][0].mapValid(), 'changing controls revokes the open popup');
     const before = posts.length;
     c('level').dispatchEvent(new w.KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true})); await wait(20);
     check(posts.length === before + 1 && posts.at(-1).contour.level === 3, 'Enter analyzes custom level immediately');
