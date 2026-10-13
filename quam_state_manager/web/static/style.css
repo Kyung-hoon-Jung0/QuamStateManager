@@ -6436,7 +6436,10 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
 .figure-card { border: 1px solid var(--pico-muted-border-color); border-radius: 4px; overflow: hidden; }
 .figure-label { padding: .3rem .5rem; background: var(--pico-card-background-color); font-size: .8rem; border-bottom: 1px solid var(--pico-muted-border-color); }
 .figure-card img { width: 100%; height: auto; cursor: pointer; transition: max-height .2s; }  /* height:auto + the img's width/height attrs = a reserved box before load (queue item 6) */
-#ds-detail-root .figure-card img {
+/* Saved PNGs: the Figures tab's cards and the Interactive tab's static rung
+   (one column there is full pane width, so a tall PNG ran past the pane). */
+#ds-detail-root .figure-card img,
+#ds-detail-root .ds-interactive-fig > img {
     max-height: var(--saved-figure-height, calc(100vh - 12rem));
     object-fit: contain;
 }

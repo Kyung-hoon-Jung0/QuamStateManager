@@ -27,8 +27,9 @@ assert.equal(root.style.getPropertyValue('--saved-figure-height'), '248px', 'hei
 paneHeight = 250;
 w.SavedFigureFit.init();
 assert.equal(root.style.getPropertyValue('--saved-figure-height'), '98px', 'a shorter split pane limits the image further');
-const rule = css.match(/#ds-detail-root \.figure-card img\s*\{([^}]+)\}/);
-assert.ok(rule && /max-height:\s*var\(--saved-figure-height/.test(rule[1]), 'saved images use the measured height limit');
+const rule = css.match(/#ds-detail-root \.figure-card img,\s*#ds-detail-root \.ds-interactive-fig > img\s*\{([^}]+)\}/);
+// v1.4.1: Figures-tab cards only -> also the Interactive tab's static rung (the reported #260 view).
+assert.ok(rule && /max-height:\s*var\(--saved-figure-height/.test(rule[1]), 'saved images in both tabs use the measured height limit');
 assert.ok(/object-fit:\s*contain/.test(rule[1]), 'the complete image keeps its aspect ratio');
 assert.ok(w.document.querySelector('img').getAttribute('onclick').includes('toggleFigureZoom'), 'click still opens full-size zoom');
 console.log('6 checks passed');
