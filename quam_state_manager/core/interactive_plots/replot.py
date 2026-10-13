@@ -130,6 +130,15 @@ def _warm_request(env, folder, source_root, timeout):
 
 def _invoke(env, folder, source_root, timeout):
     from quam_state_manager.core import lab_worker
+    total = 0
+    for name in ("ds_raw.h5", "ds_fit.h5"):
+        try:
+            total += (folder / name).stat().st_size
+        except OSError:
+            pass
+    if total > 300 * 1024**2:
+        return {"schema": "iplot/v2", "figures": [], "errors": [{"stage": "datasets",
+                "trace": "Run data exceeds 300 MiB; use saved figures or the raw data viewer"}]}
     with lab_worker.machine_lock:
         result = _warm_request(env, folder, source_root, timeout)
         if result is not None:
@@ -141,7 +150,7 @@ def _invoke(env, folder, source_root, timeout):
             args = [env, "-B", str(_script_path()), "--run", str(folder), "--out", out_path]
             if source_root:
                 args += ["--source-root", source_root]
-            proc = subprocess.run(args, capture_output=True, text=True, timeout=min(timeout, 180),
+            proc = lab_worker.run(args, capture_output=True, text=True, timeout=min(timeout, 180),
                                   env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
             try:
                 return json.loads(Path(out_path).read_text(encoding="utf-8"))

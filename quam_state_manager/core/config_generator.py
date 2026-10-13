@@ -1392,6 +1392,7 @@ def _run_script_outcome(
     *,
     no_result_label: str,
     error_fallback: str,
+    runner=None,
 ) -> dict:
     """Run a ``generator/`` script and fill *outcome* from its ``_result.json``.
 
@@ -1399,7 +1400,7 @@ def _run_script_outcome(
     spawn via :func:`_run_command` (looked up as a module global so tests can
     monkeypatch it), then parse ``work_dir/_result.json`` into the outcome.
     """
-    returncode, stdout, stderr = _run_command(argv, timeout=timeout)
+    returncode, stdout, stderr = (runner or _run_command)(argv, timeout=timeout)
     outcome["returncode"] = returncode
     outcome["stdout"] = stdout
     outcome["stderr"] = stderr

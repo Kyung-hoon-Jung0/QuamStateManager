@@ -24,10 +24,10 @@ def circular_period(z, meta):
     finite = finite[np.isfinite(finite)]
     if not finite.size:
         return None
-    if "turn" in label.lower() or np.max(np.abs(finite)) <= 1.01:
-        return 1.0
     if "rad" in label.lower():
         return 2 * np.pi
+    if "turn" in label.lower() or np.max(np.abs(finite)) <= 1.01:
+        return 1.0
     return 360.0
 
 

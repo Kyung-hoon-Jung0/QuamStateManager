@@ -184,3 +184,22 @@ def test_warm_plot_worker_is_reused_only_for_the_same_code(tmp_path, monkeypatch
     (tree / "added.py").write_text("")
     replot._warm_request(str(env), tmp_path, str(tmp_path), 10)
     assert len(spawned) == 3 and killed == spawned[:2]
+
+
+def test_large_run_never_enters_the_lab_worker(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from pathlib import Path
+    from quam_state_manager.core.interactive_plots import replot
+    real_stat = Path.stat
+    calls = []
+
+    def stat(path, *args, **kwargs):
+        if path.name in ("ds_raw.h5", "ds_fit.h5"):
+            return SimpleNamespace(st_size=151 * 1024**2)
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(replot, "_warm_request", lambda *args: calls.append(args) or {"figures": []})
+    result = replot._invoke("synthetic", tmp_path, None, 1)
+    assert not calls, "Large datasets must be refused before any lab process starts"
+    assert "300 MiB" in str(result.get("errors")) and result.get("figures") == []

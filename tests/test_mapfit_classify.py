@@ -34,3 +34,18 @@ def test_units_only_descriptor_still_names_the_axis():
     x, y = np.linspace(0, 400, 101), np.linspace(-.1, .1, 21)
     out = classify(x, y, {"x": {"units": "ns"}, "y": {"name": "flux"}})
     assert out["type"] == "chevron" and out["feature_axis"] == "x"
+
+
+@pytest.mark.parametrize("descriptor", [{"signal_units": "rad"}, {"signal_label": "phase rad"}])
+def test_small_radian_phase_maps_keep_their_explicit_period(descriptor):
+    from quam_state_manager.core.mapfit.smooth import smooth
+    phase = np.tile(np.linspace(-.4, .4, 9), (5, 1))
+    period = circular_period(phase, descriptor)
+    assert period == 2 * np.pi, "Small phase excursions do not change a radian's units"
+    result = smooth(phase, 1, 1, circular=period)
+    # An independent circular mean in radians, avoiding the turn-period heuristic.
+    from scipy.ndimage import gaussian_filter1d
+    sine = gaussian_filter1d(np.sin(phase), 1, axis=1, mode="nearest", truncate=4)
+    cosine = gaussian_filter1d(np.cos(phase), 1, axis=1, mode="nearest", truncate=4)
+    expected = np.mod(np.arctan2(sine, cosine), 2 * np.pi)
+    assert np.allclose(result, expected, atol=1e-12)

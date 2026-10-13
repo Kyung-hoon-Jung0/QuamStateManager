@@ -18,6 +18,40 @@ _SCAN_SECONDS = 2.0
 _lock = threading.Lock()
 _cache: dict[str, Any] = {"checked": float("-inf"), "busy": False,
                           "known": False, "servers": []}
+_location_cache = {"checked": float("-inf"), "busy": False, "key": None, "value": None}
+
+
+def _read_sm_location(project):
+    """Resolve local config hints in a background thread, including share I/O."""
+    file = qc.root_config_path()
+    storage = qc.project_storage(project).get("native") if project else None
+    return {"config_path": str(file), "storage": storage}
+
+
+def sm_location(project=None):
+    """Nonblocking config snapshot; hide stale hints after a location change."""
+    key = (qc.env_raw(), str(qc._dir_override), str(qc._file_override),
+           qc._override_beats_env, project)
+    now = time.monotonic()
+    with _lock:
+        cache = _location_cache
+        expired = key != cache["key"] or now - cache["checked"] >= _CACHE_SECONDS
+        if expired and not cache["busy"]:
+            cache["busy"] = True
+
+            def refresh():
+                value = None
+                try:
+                    value = _read_sm_location(project)
+                except (OSError, ValueError, TypeError, AttributeError):
+                    value = None
+                finally:
+                    with _lock:
+                        cache.update(key=key, value=value,
+                                     checked=time.monotonic(), busy=False)
+
+            threading.Thread(target=refresh, name="sm-config-location", daemon=True).start()
+        return None if expired else dict(cache["value"]) if cache["value"] else None
 
 
 def path_key(value: str | Path) -> str:

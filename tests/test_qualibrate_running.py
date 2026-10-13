@@ -155,6 +155,8 @@ def running_app(tmp_path, monkeypatch):
     monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(sm))
     rows = [{"pid": 1, "cmdline": ["qualibrate", "start", "--config-path", str(server)]}]
     monkeypatch.setattr(qr, "running_servers", lambda: qr.detect_servers(rows))
+    # Route rendering pins use a ready synthetic snapshot; async latency has its own pin.
+    monkeypatch.setattr(qr, "sm_location", qr._read_sm_location)
     app = create_app(testing=True, instance_path=str(tmp_path / "instance"))
     yield app, sm, server, state
     qc.set_dir_override(None)
@@ -306,3 +308,54 @@ def test_dataset_hint_without_live_store(running_app, monkeypatch, context):
     response = app.test_client().get("/qualibrate/running-data-hint")
     assert response.status_code == 200
     assert 'name="folder"' not in response.get_data(as_text=True)
+
+
+def test_local_config_resolution_never_blocks_banner_requests(tmp_path, monkeypatch):
+    from quam_state_manager.web.app import create_app
+    from quam_state_manager.web import routes
+    from types import SimpleNamespace
+
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    request_thread = threading.get_ident()
+    sm, server, state, data = (str(tmp_path / name) for name in ("sm.toml", "server.toml", "state", "data"))
+    cache = {"checked": float("-inf"), "busy": False, "key": None, "value": None}
+    monkeypatch.setattr(qr, "_location_cache", cache)
+    monkeypatch.setattr(qr, "running_servers", lambda: {"known": True, "servers": [
+        {"config_path": server, "project": "alpha", "state_path": state, "storage": data}]})
+    monkeypatch.setattr(routes, "_active_ctx", lambda: {
+        "live_path": state, "qualibrate_project": "alpha", "store": SimpleNamespace(
+            _lock=threading.RLock(), state={"extras": {}})})
+
+    def slow(project):
+        calls.append(threading.get_ident())
+        entered.set()
+        release.wait(3)
+        return {"config_path": sm, "storage": str(tmp_path / "other")}
+
+    monkeypatch.setattr(qr, "_read_sm_location", slow)
+    app = create_app(testing=True, instance_path=str(tmp_path / "instance"))
+    client = app.test_client()
+    try:
+        for endpoint in ("/qualibrate/running-banner", "/qualibrate/running-data-hint"):
+            start = time.monotonic()
+            response = client.get(endpoint)
+            elapsed = time.monotonic() - start
+            assert response.status_code == 200
+            assert elapsed < .2, "Config hints must not wait on filesystem reads"
+        assert entered.wait(1)
+        assert len(calls) == 1 and calls[0] != request_thread
+    finally:
+        release.set()
+        for _ in range(100):
+            if not cache["busy"]:
+                break
+            time.sleep(.01)
+    assert "The running QUAlibrate uses" in client.get("/qualibrate/running-banner").get_data(as_text=True)
+    assert 'name="folder"' in client.get("/qualibrate/running-data-hint").get_data(as_text=True)
+    monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(tmp_path / "changed.toml"))
+    assert qr.sm_location("alpha") is None, "An old config snapshot must not survive a location change"
+    for _ in range(100):
+        if not cache["busy"]:
+            break
+        time.sleep(.01)

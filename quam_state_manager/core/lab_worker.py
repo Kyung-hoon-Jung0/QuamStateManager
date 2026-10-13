@@ -88,6 +88,65 @@ _SLOT = None
 _RECORD = _COORD_DIR / "qsm_lab_worker.json"
 
 
+def _kill_tree(proc):
+    """Stop only this worker and its descendants, including plotting helpers."""
+    try:
+        children = proc.children(recursive=True)
+    except psutil.Error:
+        children = []
+    for child in reversed(children):
+        try:
+            child.kill()
+        except psutil.Error:
+            pass
+    proc.kill()
+    psutil.wait_procs(children, timeout=5)
+
+
+def run(argv, *, timeout, **kwargs):
+    """Cold replay with the same RSS and deadline limits as a warm request."""
+    import subprocess
+    kwargs.pop("capture_output", None)
+    if os.name == "nt":
+        kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs) as proc:
+        observed = psutil.Process(proc.pid)
+        deadline = time.monotonic() + min(timeout, 180)
+        try:
+            while True:
+                try:
+                    if observed.memory_info().rss > 2 * 1024**3:
+                        raise OSError("Lab worker exceeded the 2 GiB memory limit")
+                except psutil.NoSuchProcess:
+                    pass
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                try:
+                    stdout, stderr = proc.communicate(timeout=min(.1, remaining))
+                    return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            try:
+                _kill_tree(observed)
+            except psutil.Error:
+                pass
+
+
+def command(argv, *, timeout):
+    """Outcome adapter for the existing waveform result-file reader."""
+    import subprocess
+    try:
+        result = run(argv, timeout=timeout, text=True, encoding="utf-8",
+                     env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", "Lab worker timed out"
+    except (OSError, UnicodeError) as exc:
+        return -1, "", str(exc)
+
+
 def retire_except(worker=None):
     """Retire the previous slot before any warm or cold lab process starts.
 
@@ -104,7 +163,7 @@ def retire_except(worker=None):
             return
         proc = psutil.Process(rec["pid"])
         if proc.create_time() == rec["created"]:
-            proc.kill()
+            _kill_tree(proc)
             proc.wait(timeout=5)
     except (OSError, ValueError, KeyError, psutil.Error):
         pass
@@ -180,16 +239,21 @@ class Worker:
         # which lab module is imported): the warm one must still match it
         self.environ = dict(os.environ)
         self.sources: dict[str, Any] = {script: _stat(script)}
+        self._idle: threading.Timer | None = None
         self.proc = subprocess.Popen(
             [python_path, "-B", script, "--serve"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
             bufsize=1, env=env, cwd=tempfile.gettempdir(), **kwargs)
-        register(self)
+        try:
+            self._process = psutil.Process(self.proc.pid)
+            register(self)
+        except Exception:
+            self.kill()
+            raise
         self._q: "queue.Queue[str | None]" = queue.Queue()
         threading.Thread(target=self._pump, daemon=True,
                          name="lab-waveform-warm").start()
-        self._idle: threading.Timer | None = None
         self.requests = 0
         self.timed_out = False
         # w9/labwarm: False until the process has answered once (its imports
@@ -266,23 +330,28 @@ class Worker:
     def _arm_idle(self) -> None:
         if self._idle is not None:
             self._idle.cancel()
+        self._idle_deadline = time.monotonic() + self.idle_s
         self._idle = threading.Timer(self.idle_s, self._expire)
         self._idle.daemon = True
         self._idle.start()
 
     def _expire(self):
         with machine_lock:
-            self.kill()
+            if time.monotonic() >= self._idle_deadline:
+                self.kill()
 
     def kill(self) -> None:
         if self._idle is not None:
             self._idle.cancel()
         try:
+            _kill_tree(self._process)
+        except (AttributeError, psutil.Error):
+            self.proc.kill()
+        try:
             self.proc.stdin.close()                 # type: ignore[union-attr]
         except Exception:  # noqa: BLE001
             pass
         try:
-            self.proc.kill()
             self.proc.wait(timeout=5)
         except Exception:  # noqa: BLE001
             pass

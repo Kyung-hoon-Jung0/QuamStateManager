@@ -153,9 +153,15 @@ class _Worker(lab_worker.Worker):
     def _arm_idle(self):
         if self._idle is not None:
             self._idle.cancel()
-        self._idle = threading.Timer(WARM_IDLE_S, _retire, args=(self.python_path, self))
+        self._idle_deadline = time.monotonic() + WARM_IDLE_S
+        self._idle = threading.Timer(WARM_IDLE_S, self._expire)
         self._idle.daemon = True
         self._idle.start()
+
+    def _expire(self):
+        with lab_worker.machine_lock:
+            if time.monotonic() >= self._idle_deadline:
+                _retire(self.python_path, self)
 
 
 def _retire(python_path: str, worker: "_Worker | None" = None) -> None:
@@ -450,6 +456,7 @@ def _run_cold(python_path: str, items: list[dict]) -> dict:
             [python_path, "-B", str(script), "--in", str(work_dir / "_in.json"),
              "--out", str(work_dir / "_result.json")],
             work_dir, TIMEOUT_S, outcome,
+            runner=lab_worker.command,
             no_result_label="lab waveform",
             error_fallback="drawing with the lab's class failed")
     finally:

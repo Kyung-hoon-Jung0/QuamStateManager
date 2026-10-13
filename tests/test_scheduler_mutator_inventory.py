@@ -7,6 +7,9 @@ from tests.state_model.repros._rig import Chip
 # history, queues or generated output; none stages an edit into the chip store.
 # A new POST requires classification here or inclusion in the mutator lock.
 _NON_STAGING_POSTS = {
+    # v1.3.0: old POST inventory -> classify map analysis/local dismissal, neither stages state.
+    'main.dataset_map_analyze',
+    'main.qualibrate_dismiss_running',
     'agent.note_set',
     'agent.journal_append',
     'agent.journal_root',
@@ -143,6 +146,32 @@ def test_every_post_route_is_locked_or_explicitly_non_staging(tmp_path):
     assert not posts - routes._SCHEDULER_MUTATOR_ENDPOINTS - _NON_STAGING_POSTS
     assert not _NON_STAGING_POSTS & routes._SCHEDULER_MUTATOR_ENDPOINTS
     assert _NON_STAGING_POSTS <= posts
+
+
+def test_map_analysis_and_config_dismissal_do_not_stage_chip_edits(tmp_path, monkeypatch):
+    import copy
+    import numpy as np
+    from types import SimpleNamespace
+    from quam_state_manager.web import routes
+
+    chip = Chip(tmp_path)
+    axis = np.linspace(-2, 2, 21)
+    z = (axis[None, :] - .2) ** 2 + (axis[:, None] + .3) ** 2
+    trace = {"type": "heatmap", "full_resolution": True, "x": axis.tolist(),
+             "y": axis.tolist(), "z": z.tolist()}
+    figure = {"axes": [{"xlabel": "position", "ylabel": "index", "title": "q1", "traces": [trace]}]}
+    converted = {"data": [trace], "clickable": {"targets": [
+        {"path": "qubits.q1.T1", "axis": "x"}]}}
+    run = SimpleNamespace(folder_path=str(tmp_path), id=1, experiment_name="synthetic")
+    monkeypatch.setattr(routes, "_map_figure", lambda *args: (run, figure, converted))
+    store = chip.ctx["store"]
+    before = (copy.deepcopy(store.merged), chip.log(), store.mutation_seq,
+              chip.live_state(), chip.journal())
+    response = chip.c.post("/dataset/run/map/analyze", json={"fig": "map"})
+    assert response.status_code == 200 and response.get_json().get("updates"), response.data
+    response = chip.c.post("/qualibrate/dismiss-running", data={"path": str(tmp_path / "server.toml")})
+    assert response.status_code in (200, 302)
+    assert (store.merged, chip.log(), store.mutation_seq, chip.live_state(), chip.journal()) == before
 
 
 @pytest.mark.parametrize("url", [

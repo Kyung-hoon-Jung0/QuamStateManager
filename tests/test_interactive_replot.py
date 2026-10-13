@@ -261,7 +261,8 @@ def test_concurrent_same_run_spawns_one_subprocess(tmp_path, monkeypatch):
             _json.dump({"schema": "iplot/v1", "figures": [_twin_log_fig()], "errors": []}, fh)
         return SimpleNamespace(stdout="", stderr="", returncode=0)
 
-    monkeypatch.setattr(R.subprocess, "run", fake_run)
+    # v1.3.0: bare cold spawn -> monitored cold replay, retaining coalescing.
+    monkeypatch.setattr("quam_state_manager.core.lab_worker.run", fake_run)
 
     results = []
     threads = [threading.Thread(
@@ -300,7 +301,8 @@ def test_transient_failure_not_cached_but_success_is(tmp_path, monkeypatch):
             _json.dump(payload, fh)
         return SimpleNamespace(stdout="", stderr="", returncode=0)
 
-    monkeypatch.setattr(R.subprocess, "run", fake_run)
+    # v1.3.0: bare cold spawn -> monitored cold replay, retaining retry semantics.
+    monkeypatch.setattr("quam_state_manager.core.lab_worker.run", fake_run)
 
     r1 = R.replot_run(run, str(tmp_path))
     assert not r1.get("figures")

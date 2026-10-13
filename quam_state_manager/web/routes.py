@@ -7469,8 +7469,14 @@ def _running_config_mismatches() -> list[dict]:
     from quam_state_manager.core import qualibrate_running
 
     ctx = _active_ctx() or {}
+    discovery = qualibrate_running.running_servers()
+    if not discovery.get("known") or not discovery.get("servers"):
+        return []
+    location = qualibrate_running.sm_location(ctx.get("qualibrate_project"))
+    if location is None:
+        return []
     return qualibrate_running.config_mismatches(
-        qualibrate_running.running_servers(), qualibrate_config.root_config_path(),
+        discovery, location["config_path"],
         ctx.get("live_path") or ctx.get("path"), _running_config_dismissals())
 
 
@@ -7495,14 +7501,16 @@ def _running_data_hints() -> list[dict]:
         return []
     with store._lock:
         declared = extras_data_folder(store.state)
-    folders = [str(p) for raw in declared if (p := qualibrate_config.native_path(raw))]
+    location = qualibrate_running.sm_location(ctx.get("qualibrate_project"))
+    if location is None:
+        return []
+    # Dialect conversion uses the cached config spelling, without discovery I/O.
+    folders = [str(qualibrate_config._to_native(raw, os.name,
+               qualibrate_config._wsl_root_of(location["config_path"])))
+               for raw in declared if isinstance(raw, str) and raw.strip()]
     if not folders and ctx.get("qualibrate_project"):
-        try:
-            storage = qualibrate_config.project_storage(ctx["qualibrate_project"])
-            if storage.get("native"):
-                folders = [storage["native"]]
-        except (OSError, ValueError, TypeError, AttributeError):
-            pass
+        if location.get("storage"):
+            folders = [location["storage"]]
     return qualibrate_running.dataset_hints(
         discovery, ctx.get("live_path") or ctx.get("path"),
         folders, [str(root) for root in _ws().root_folders])
