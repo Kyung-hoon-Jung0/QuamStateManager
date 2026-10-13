@@ -21,6 +21,12 @@
  *     still_click  -- a press on the bar that does not move it is not a choice
  *     focus        -- a keyboard user stays on the arrow after a press; a mouse
  *                     press drops focus as before
+ *     nav_sidebar / nav_boost / nav_history -- page navigation collapses runs
+ *                     at any height, across swaps/reruns, without changing memory
+ *     nav_same_page -- same-page navigation and run switches retain user height
+ *     nav_reopen_low / nav_reopen_high -- first run after navigation opens at
+ *                     max(remembered inspector share, dataset expanded share)
+ *     nav_run_only -- qubit opens do not consume the next-run navigation rule
  * Driven by tests/test_split_arrows.py.
  */
 'use strict';
@@ -115,7 +121,44 @@ const arr = v => (v == null ? v : Array.from(v));
 const eq = (a, b, msg) => assert.deepEqual(arr(a), arr(b), msg);
 const RUN_B = '<div id="ds-detail-root" data-uid="run-b">run b</div>';
 
-if (mode === 'nav_sidebar') {
+if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
+    const choices = mode === 'nav_reopen_low' ? [[80, 20], [40, 60], 'down', 'up', null] : [[10, 90], [0, 100]];
+    for (const choice of choices) {
+        const s = await boot();
+        s.swap('inspector-pane', RUN);
+        if (Array.isArray(choice)) s.drag(choice);
+        else if (choice) s.press(choice);
+        const before = s.user();
+        s.d.getElementById('nav-qubits').click();
+        s.w.history.pushState({}, '', '/qubits');
+        s.swap('table-pane', 'other page');
+        s.d.getElementById('nav-datasets').click();
+        s.w.history.pushState({}, '', '/datasets');
+        s.swap('table-pane', 'datasets page');
+        const expected = mode === 'nav_reopen_high' ? choice : SPLIT.datasetExpandedSizes;
+        s.swap('inspector-pane', RUN);
+        eq(s.sizes(), expected, 'after navigation the run opens at max(user share, expanded share)');
+        assert.equal(s.user(), before, 'reopening preserves the remembered choice');
+        s.swap('table-pane', 'concurrent workspace selection');
+        eq(s.sizes(), expected, 'a concurrent table swap keeps the reopened height');
+        s.swap('inspector-pane', RUN_B);
+        const plain = Array.isArray(choice) ? choice : choice === 'down' ? SPLIT.collapsedSizes : SPLIT.datasetExpandedSizes;
+        eq(s.sizes(), plain, 'the following run within Datasets uses the plain remembered height');
+        assert.equal(s.user(), before, 'within-page switching also preserves memory');
+    }
+} else if (mode === 'nav_run_only') {
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([80, 20]);
+    const before = s.user();
+    s.d.getElementById('nav-qubits').click();
+    s.w.history.pushState({}, '', '/qubits');
+    s.swap('inspector-pane', QUBIT);
+    eq(s.sizes(), [80, 20], 'a qubit still opens at the remembered height');
+    s.swap('inspector-pane', RUN);
+    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'only a run consumes the post-navigation expanded minimum');
+    assert.equal(s.user(), before, 'the qubit and run opens preserve memory');
+} else if (mode === 'nav_sidebar') {
     for (const sizes of [[80, 20], [40, 60], [10, 90]]) {
         const s = await boot();
         s.swap('inspector-pane', RUN);
@@ -314,7 +357,8 @@ if (mode === 'nav_sidebar') {
         s.d.getElementById('nav-datasets').click();
         s.swap('table-pane', 'datasets page');
         s.swap('inspector-pane', RUN);
-        eq(s.sizes(), open, first + ': back on a run: the last choice');
+        // v1.3.0: plain last choice -> expanded minimum on the first run after page navigation.
+        eq(s.sizes(), SPLIT.datasetExpandedSizes, first + ': back on a run: at least the expanded height');
         // the Compare-form collapse
         const go = s.d.getElementById('compare-go');
         s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', { detail: { elt: go } }));

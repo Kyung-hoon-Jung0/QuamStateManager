@@ -1644,8 +1644,16 @@
             if (c === "down") return collapsedSizes();
             return c;
         }
-        // Where an inspector opens: the user's last choice, else the expanded default.
-        function openSizes() { return userSizes() || expandedSizes(); }
+        // After leaving a page, the next run opens at least as tall as its
+        // up arrow. Later run switches use the plain remembered choice again.
+        function openSizes() {
+            var sizes = userSizes() || expandedSizes();
+            if (navigation.collapsed && datasetInspector()) {
+                navigation.collapsed = false;
+                if (Number(sizes[1]) < Number(expandedSizes()[1])) sizes = expandedSizes();
+            }
+            return sizes;
+        }
 
         var inspectorExpanded = true;
         // Page navigation survives full-body swaps and split-script reruns,
