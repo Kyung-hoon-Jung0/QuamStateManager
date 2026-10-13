@@ -44,11 +44,12 @@ def test_settling_rewrites_count_but_later_saved_edits_do_not(tmp_path, edited):
 
 
 def test_later_writer_edit_remains_excluded(tmp_path):
+    import os
     source, answer = history()
     points = answer["rows"]["value"]["points"]
     for point in points:
         point["flags"] = ["rewritten"]
-    result = changed_since(answer, source, {source})
+    result = changed_since(answer, source, {os.path.normcase(source)})
     assert not result["proven"] and "unknown" in result["text"]
 
 
