@@ -911,3 +911,10 @@ Interactive figures and map tools (docs/305).
   offers that config or the running data folder for the open chip.
 - **Stability**: plotting and waveform drawing share one worker slot, source
   edits refresh cached figures, and config discovery stays off request threads.
+- **Instrument Wiring**: every OPX1000 FEM draws all 8 analog outputs and its
+  8-slot DIG column, used or not, so an unused port is a visible empty slot to
+  wire into (shipped to main first as a fix on top of v1.3.0).
+- **Split bar**: leaving a page lowers an open data panel to the lower of your
+  height and the down-arrow height; the next run opened after that opens at
+  least at the up-arrow height. Inside Datasets your height applies as before.
+- **Packaging**: `contourpy` and `psutil` are declared dependencies.
