@@ -151,6 +151,9 @@ const map = {request_hash: 'abc123', request: {
         let valid = true;
         await open([{dot_path: p1, value: 3, provenance: map, mapValid: () => valid}]);
         check(row().querySelector('input').readOnly, 'server map number is read-only');
+        // v1.4.1: read-only number unexplained -> name the server result and the Live Edit alternative.
+        check(row().querySelector('.plot-apply-map-note').textContent.includes("server's map result") &&
+            row().querySelector('.plot-apply-map-note').textContent.includes('Live Edit'), 'read-only map number explains how to enter another value');
         valid = false;
         if (batch) w.applyAllPlotRows(); else w.applyPlotRow(row());
         await delay();

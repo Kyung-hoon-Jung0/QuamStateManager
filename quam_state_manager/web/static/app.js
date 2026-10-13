@@ -16568,7 +16568,12 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
         var btn = row.querySelector('.plot-apply-row-btn');
         var input = row.querySelector('.plot-apply-new-input');
         row._mapValid = u.mapValid;
-        if (row._plotOrigin && row._plotOrigin.src === 'map_fit') input.readOnly = true;
+        if (row._plotOrigin && row._plotOrigin.src === 'map_fit') {
+            input.readOnly = true;
+            var reason = document.createElement('div'); reason.className = 'plot-apply-map-note muted';
+            reason.textContent = "This is the server's map result. Use Live Edit to enter another value.";
+            row.appendChild(reason);
+        }
         btn.addEventListener('click', function() { applyPlotRow(row); });
         input.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
