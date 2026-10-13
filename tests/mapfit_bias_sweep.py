@@ -19,7 +19,8 @@ from tests.mapfit_synthetic import sample
 
 LABELS = {"erroramp": ("amp_prefactor", "nb_of_pulses"), "ridge": ("flux", "frequency"),
           "chevron": ("duration", "detuning"), "landscape": ("a_scan", "b_over_a"),
-          "extremum": ("position", "index")}
+          # v1.4.1: unknown axes -> supported controls, so the bias sweep still exercises the extremum estimator.
+          "extremum": ("a_scan", "b_over_a")}
 # model -> (variants, noise, trials, value keys with their step)
 PLAN = {
     "erroramp": ({"k=1": {}, "k=1.5": {"k": 1.5}, "nan 5%": {"nan": .05}}, .1, 2, {"a_pi": .005}),
@@ -41,7 +42,7 @@ def _request(model, variant, noise, seed, smooth):
         z[np.random.default_rng(seed + 100).random(z.shape) < holes] = np.nan
     lx, ly = LABELS[model]
     return {"z": z, "x": x, "y": y, "meta": {**meta, "x": {"name": lx}, "y": {"name": ly}},
-            "smooth": smooth, "fit": {"model": "auto"}}
+            "smooth": smooth, "fit": {"model": "extremum" if model == "extremum" else "auto"}}
 
 
 def _settings(level, cap):

@@ -12,7 +12,7 @@ from quam_state_manager.core.mapfit.compare import saved_comparisons
 from quam_state_manager.web import map_analysis
 
 
-def test_real_detuning_figure_uses_its_own_frozen_reference(tmp_path):
+def test_real_detuning_figure_uses_its_own_frozen_reference(tmp_path, monkeypatch):
     figure = next(f for f in json.loads((Path(__file__).parent / "fixtures/map_journeys/run-481.json").read_text())
                   if f["key"] == "amplitude_linear")
     detuning = np.asarray(figure["axes"][0]["traces"][0]["x"]) * 1e6
@@ -22,18 +22,34 @@ def test_real_detuning_figure_uses_its_own_frozen_reference(tmp_path):
         stream.create_dataset("detuning", data=detuning)
         stream.create_dataset("full_freq", data=detuning[None, :] + reference)
     (tmp_path / "data.json").write_text(json.dumps({"fit_results": {"q0": {"frequency": reference - 6e6}}}))
+    captured = []
+    original = map_analysis.api.analyze
+    def analyze(request):
+        captured.append(request["meta"])
+        return original(request)
+    monkeypatch.setattr(map_analysis.api, "analyze", analyze)
     result = map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path)), "run", figure,
                                   mpljson_to_plotly(figure), {"smooth": {"sigma_x": 0, "sigma_y": 0}})
     c = result["compare"]
-    raw = result["fit"]["values"]
-    assert c["sm_value"] == pytest.approx(raw.get("asymptote", raw.get("y")) * 1e6 + reference)
-    assert c["delta"] == pytest.approx(c["sm_value"] - c["node_value"])
+    # v1.4.1: ridge vertex -> low-drive asymptote; the full saved map has no resolved low-drive feature.
+    assert all(meta.get("summary") == "asymptote" for meta in captured)
+    assert c["sm_value"] is None and c["delta"] is None and c["verdict"] == "n/a"
     assert "this run's reference" in c["quantity"] and "ds_raw.h5" in c["quantity"]
     (tmp_path / "ds_raw.h5").unlink()
     unknown = map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path)), "run", figure,
                                    mpljson_to_plotly(figure), {})["compare"]
     assert unknown["delta"] is None and unknown["sm_value"] is None and unknown["verdict"] == "n/a"
     assert "different quantities" in unknown["reason"]
+
+
+def test_resolved_detuning_comparison_uses_absolute_frequency_and_tolerance():
+    reference = 3499059752.30639
+    fitted = {"verdict": "ok", "values": {"asymptote": -3.97682}}
+    result = saved_comparisons("ridge", {"frequency": 3493059752.30639}, fitted, fitted,
+        .01, 1., frequency_scale=1e6, frequency_offset=reference)[0]
+    assert result["sm_value"] == pytest.approx(reference - 3.97682e6)
+    assert result["delta"] == pytest.approx(2.02318e6)
+    assert result["tol"] == 1e6 and result["verdict"] == "disagree"
 
 
 def test_frequency_reference_never_borrows_another_entity(tmp_path):

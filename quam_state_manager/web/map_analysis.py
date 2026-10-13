@@ -197,6 +197,8 @@ def analyze(run, uid, figure, converted, body):
         frequency_offset, quantity_reason = _frequency_reference(run, x if feature == "x" else y, frequency_label, entity)
         control_label = axis.get("ylabel" if feature == "x" else "xlabel", "")
         control_scale = .001 if "mv" in control_label.lower() else 1.
+        if "amplitude" in control_label.lower():
+            meta["summary"] = "asymptote"
         if isinstance(record.get("fwhm"), (int, float)) and record["fwhm"] > 0:
             meta["fwhm"] = record["fwhm"] / frequency_scale
     names = {"erroramp": ("opt_amp_prefactor", "a_pi"), "ridge": ("frequency", "y"),
@@ -403,6 +405,10 @@ def analyze(run, uid, figure, converted, body):
             updates.append({"dot_path": path, "value": value, "provenance": {**origin, "text": row_text, "map": details}})
     if target_comparisons:
         result.update(compare=target_comparisons[0], comparisons=target_comparisons)
+        shown = target_comparisons[0]
+        result["provenance_text"] = (text.split("node value ", 1)[0] +
+            f"node value {compact(shown['node_value'])}, SM {compact(shown['sm_value'])}, "
+            f"delta {compact(shown['delta'])}, {shown['verdict']}; target {shown['node_name']}")[:300]
     result.update(updates=updates, status_chip=chip, xref=panel["xref"], yref=panel["yref"],
                   display_only_reason="; ".join(refusals) or (converted.get("display_only_reason") if not updates else "") or ("not verified on this run" if not updates else ""))
     out = preview(result)

@@ -11761,7 +11761,7 @@ def field_peek():
         from .plot_apply_history import notes
         since_run = notes(_active_ctx(), uid, clean_paths, _resolve_run, _value_history)
     return jsonify(ok=True, values=values, errors=errors, resolved=resolved,
-                   expected=expected, since_run=since_run)
+                   expected=expected, **({"since_run": since_run} if uid else {}))
 
 
 def _fh_fill_string(value: Any) -> str:

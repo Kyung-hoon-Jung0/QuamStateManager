@@ -258,7 +258,8 @@ def test_erroramp_tightest_cap_override_contours_and_figure_axis_provenance(tmp_
     assert result["updates"][0]["value"] == pytest.approx(.2 * truth["a_pi"], abs=.0001)
     assert f"sigma {'x=0.0 pt, y=' if transposed else 'x='}" in result["provenance_text"]
     assert "code current/1234567" in result["provenance_text"]
-    assert "node value n/a, delta n/a" in result["provenance_text"]
+    # v1.4.1: missing generic node value -> accepted target value, so displayed provenance describes Apply.
+    assert "node value 0.1966" in result["provenance_text"] and "target qubits.q0.amplitude" in result["provenance_text"]
     # Requests that clamp to the same strength still retain their own scoped replay identity.
     second = map_analysis.analyze(run, "cap-run", figure, converted, {**body, "smooth": {
         "sigma_x": 0 if transposed else 7, "sigma_y": 7 if transposed else 0}})

@@ -43,6 +43,7 @@ def test_ridge_apply_compares_each_written_target_and_refuses_lower_offset(ridge
         assert row["provenance"]["map"]["comparison"] == c
         assert "tolerance" in row["provenance"]["text"]
     assert result["comparisons"][1]["node_value"] == 6.828050e9
+    assert "node value 0.161408" in result["provenance_text"] and paths[0] in result["provenance_text"]
 
 
 def test_claimed_contract_without_accepted_target_value_has_no_apply(ridge_run):

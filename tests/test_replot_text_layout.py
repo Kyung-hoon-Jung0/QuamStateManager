@@ -27,7 +27,10 @@ def test_secondary_top_axis_reserves_title_space_in_each_grid_row():
                 "traces": [{"type": "line", "x": [0, 1], "y": [0, 1]}],
                 "secondary_axes": [{"axis": "x", "side": "top", "label": "amplitude prefactor",
                                     "map": {"parent": [0, 1], "forward": [.9, 1.1]}}]})
-    layout = mpljson_to_plotly({"axes": axes})["layout"]
+    layout = mpljson_to_plotly({"axes": axes, "suptitle": "Power scan", "texts": [
+        {"text": "Power scan", "x": .5, "y": .98, "ha": "center", "va": "top"}]})["layout"]
     assert layout["margin"]["t"] >= 90 and layout["height"] >= 768
     assert all(note["yshift"] >= 60 for note in layout["annotations"])
     assert layout["yaxis"]["domain"][1] < .91
+    assert layout["title"]["text"] == "Power scan"
+    assert all(note["text"] != "Power scan" for note in layout["annotations"])

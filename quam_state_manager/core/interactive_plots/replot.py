@@ -667,7 +667,12 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                                       len=ydomain[1] - ydomain[0])
     has_top_axis = has_secondary_top
 
+    heading = fig_json.get("suptitle") or ""
+    heading_in_texts = False
     for text in fig_json.get("texts", []):
+        if heading and text.get("text") == heading and text.get("y", 0) >= .9:
+            heading_in_texts = True
+            continue
         notes.append(_text_note(text, "paper", "paper"))
     skipped = fig_json.get("skipped", []) + [s for a in axes if not a.get("is_colorbar") for s in a.get("skipped", [])]
     notices = [f"{s['artist']} x{s['n']} ({s.get('reason', 'unsupported')})" for s in skipped]
@@ -675,7 +680,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         notices = ["Not shown: " + "; ".join(notices)]
     if any((t.get("meta") or {}).get("preview_reduced") for t in data):
         notices.append("Map preview reduced to the byte budget; full array retained server-side for map tools.")
-    layout["title"] = {"text": "" if fig_json.get("texts") else (fig_json.get("suptitle") or fig_json.get("title", "")),
+    layout["title"] = {"text": heading if heading_in_texts else "" if fig_json.get("texts") else (heading or fig_json.get("title", "")),
                        "y": 0.99, "yanchor": "top"}
     layout["showlegend"] = True
     layout["legend"] = {"orientation": "h", "y": -0.12 / nrows, "x": 0.0}
