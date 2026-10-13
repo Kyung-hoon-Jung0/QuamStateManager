@@ -38,7 +38,8 @@ def test_ridge_caps_displacement_numerical():
     result = ridge_caps(4, .5, 2, .2)
     assert result["frequency"] == 8
     assert 2 * (.2 * result["control"]) == pytest.approx(4)
-    assert ridge_caps(4, .5, 100, .2)["control"] == 1
+    # v1.4.0: 1 -> 0.5 pt; real steep ridges split falsely at the old floor.
+    assert ridge_caps(4, .5, 100, .2)["control"] == .5
 
 
 def test_chevron_half_width_and_time_numerical():

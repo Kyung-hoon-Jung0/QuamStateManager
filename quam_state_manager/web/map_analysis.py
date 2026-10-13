@@ -115,7 +115,7 @@ def analyze(run, uid, figure, converted, body):
     record = records[0] if len(records) == 1 and isinstance(records[0], dict) and body.get("source") != "ndview" else {}
     if record.get("b_resolved") is False:
         meta["b_resolved"] = False
-    if "l1_at_pick" in record:
+    if "l1_at_pick" in record or "l1_amp_at_pick" in record:
         import numpy as np
         parameters = getattr(run,"parameters",{})
         shots = parameters.get("num_shots",0) * parameters.get("num_frame_rotations",1)
@@ -124,6 +124,9 @@ def analyze(run, uid, figure, converted, body):
         finite = finite[np.isfinite(finite)]
         if shots > 0 and isinstance(floor,(int,float)) and 0 <= floor <= 1 and finite.size:
             on = min(1.,max(floor,floor+2*float(np.min(finite))))
+            # Zero observed counts still have finite binomial uncertainty (Jeffreys half count).
+            on = on if on > 0 else .5/(shots+1)
+            floor = floor if floor > 0 else .5/(shots+1)
             meta["objective_sigma"] = math.sqrt(on*(1-on)+floor*(1-floor))/(2*math.sqrt(shots))
     operation = record.get("operation") or getattr(run, "parameters", {}).get("operation")
     if operation == "x90":

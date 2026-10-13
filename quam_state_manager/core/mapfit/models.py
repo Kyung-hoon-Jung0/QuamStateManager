@@ -356,7 +356,12 @@ def ridge(z,x,y,meta=None,raw=None):
         return result("outside the sweep" if np.nanargmax(np.nanmean(np.abs(a-np.nanmedian(a)),axis=1)) in (0,len(y)-1) else "no feature")
     values = {}
     if meta.get("summary")=="asymptote":
-        selection = np.flatnonzero(ok)[:max(1,int(np.ceil(ok.sum()*.2)))]
+        selection = np.flatnonzero(ok & (x <= x[0]+.2*np.ptp(x)))
+        if len(selection)<3:
+            return result("no feature",reason="No resolved ridge in the lowest-power fifth of the sweep")
+        spread = float(np.median(np.abs(track[selection]-np.median(track[selection]))))
+        if spread > 3 * float(np.median(widths)) * (y[1]-y[0]):
+            return result("no feature",reason="Low-power positions do not form a resolved asymptote",spread=spread)
         values["asymptote"] = float(np.median(track[selection]))
     elif meta.get("summary")=="sinusoid":
         period = meta.get("period")
@@ -472,10 +477,10 @@ def landscape(z,x,y,meta=None,raw=None):
     if not geometry:
         return result("outside the sweep")
     options = []
-    boundary_options = 0
+    boundary_options = []
     floor = _floor(a,raw,meta)
     for line in geometry:
-        if len(line)<3:
+        if len(line)<2:
             continue
         indices = np.array([np.interp(line[:,1],y,np.arange(len(y))),np.interp(line[:,0],x,np.arange(len(x)))])
         scores = map_coordinates(a,indices,order=1,mode="nearest",prefilter=False)
@@ -497,7 +502,7 @@ def landscape(z,x,y,meta=None,raw=None):
         for j in sorted(picks):
             point = line[j].copy()
             if j in (0,len(line)-1) and (point[0] in (x[0],x[-1]) or point[1] in (y[0],y[-1])):
-                boundary_options += 1
+                boundary_options.append(float(scores[j]))
                 continue
             if 0<j<len(line)-1 and np.isfinite(scores[j-1:j+2]).all():
                 coef = np.polyfit(arc[j-1:j+2]-arc[j],scores[j-1:j+2],2)
@@ -508,6 +513,8 @@ def landscape(z,x,y,meta=None,raw=None):
     if not options:
         return result("outside the sweep" if boundary_options else "no feature")
     options.sort(key=lambda pair:pair[0])
+    if boundary_options and min(boundary_options) < options[0][0]:
+        return result("outside the sweep",reason="The lowest contour objective is on the sweep boundary")
     if len(options)>1 and abs(options[1][0]-options[0][0])<max(.02*np.nanstd(a),2*floor):
         return result("ambiguous",candidates=[p.tolist() for _,p in options])
     score,point = options[0]

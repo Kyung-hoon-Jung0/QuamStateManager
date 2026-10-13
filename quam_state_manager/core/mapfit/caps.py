@@ -69,11 +69,14 @@ def phase_slope_cap(slope, step):
 
 
 def ridge_caps(hwhm, frequency_step, slope, control_step):
-    """[derived] cap_f=HWHM/df; cap_control=max(1,HWHM/(|dF/dc| dc))."""
+    """[derived] cap_f=HWHM/df; control displacement is bounded by HWHM.
+
+    Real steep ridges require a 0.5 pt floor: 1 pt blends adjacent columns into false lines.
+    """
     if min(hwhm, frequency_step, control_step) <= 0:
         raise ValueError("Widths and steps must be positive")
     return {"frequency": hwhm / frequency_step,
-            "control": max(1., hwhm / (abs(slope) * control_step)) if slope else float("inf")}
+            "control": max(.5, hwhm / (abs(slope) * control_step)) if slope else float("inf")}
 
 
 CHEVRON_CONTROL_FRACTION = .15

@@ -80,12 +80,15 @@ def saved_comparisons(kind, record, fitted, raw_fit, dx, dy, frequency_scale=1.,
         add("two_j_hz", "two_j_hz", step=1., source_record=branch)
         add("t_lim_ns", "t_pi", 2 * time_scale * 1e9, step=dx * time_scale * 1e9, source_record=branch)
     elif kind == "landscape":
+        nominal = "kept the nominal amplitude" in str(record.get("pick_note", ""))
         pick_missing = record.get("pick_found") is False
         if "optimal_b_over_a" in record:
             b = record["optimal_b_over_a"]
             pick_missing |= not isinstance(b,(int,float)) or not math.isfinite(b)
         for name, key in landscape_fields:
-            add(name, key, step=dx if key == "x" else dy, source_record={} if pick_missing else record)
+            add(name, key, step=dx if key == "x" else dy, source_record={} if pick_missing or nominal else record)
+            if nominal:
+                specifications[-1]["reason"] = "different quantity: nominal-amplitude policy versus unrestricted contour minimum"
     return specifications
 
 

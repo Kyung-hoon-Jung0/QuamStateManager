@@ -138,6 +138,9 @@ def test_ridge_default_does_not_blend_steep_neighboring_columns():
     assert out["fit"]["verdict"] == "ok"
     assert out["fit"]["values"]["x"] == pytest.approx(5.3, abs=.1)
     assert out["fit"]["values"]["y"] == pytest.approx(140, abs=.5)
+    capped=api.analyze({**request,"smooth":{"sigma_x":8,"sigma_y":8}})
+    assert capped['fit']['verdict']=='ok'
+    assert capped['caps_applied']['cap_x']==.5
 
 
 @pytest.mark.parametrize("label,name", [("neg_offset_v (V)", "optimal_neg_offset_v"),
@@ -168,13 +171,14 @@ def test_flat_contour_valley_is_unresolved_at_measured_population_noise():
     assert out["fit"]["values"] is None
 
 
-def test_saved_population_noise_reaches_landscape_model(tmp_path,monkeypatch):
+@pytest.mark.parametrize("population_floor",[.01,0.])
+def test_saved_population_noise_reaches_landscape_model(tmp_path,monkeypatch,population_floor):
     x,y=np.arange(31.),np.arange(31.)
     trace={"type":"heatmap","full_resolution":True,"x":x.tolist(),"y":y.tolist(),
         "z":(.001*(x[None,:]-15)**2+(y[:,None]-15)**2).tolist()}
     axis={"xlabel":"b_over_a","ylabel":"a_scan","title":"q0","traces":[trace]}
     phase={**trace,"z":(180+(y[:,None]-15)*3+np.zeros((31,31))).tolist(),"colorbar":{"label":"phase (deg)"}}
-    (tmp_path/'data.json').write_text(json.dumps({"fit_results":{"q0":{"l1_at_pick":.01,"readout_f_floor":.01}}}))
+    (tmp_path/'data.json').write_text(json.dumps({"fit_results":{"q0":{"l1_at_pick":.01,"readout_f_floor":population_floor}}}))
     captured=[];original=api.analyze
     def capture(request):
         captured.append(request['meta'].copy())
@@ -183,7 +187,8 @@ def test_saved_population_noise_reaches_landscape_model(tmp_path,monkeypatch):
     out=map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path),experiment_name='synthetic',
         parameters={"num_shots":100,"num_frame_rotations":8}),"run",
         {"axes":[axis],"map_sibling_axes":[{**axis,"traces":[phase]}]},{"data":[trace]}, {})
-    assert captured[0].get('objective_sigma') == pytest.approx(np.sqrt(.01*.99*2)/(2*np.sqrt(800)))
+    p=population_floor or .5/801
+    assert captured[0].get('objective_sigma') == pytest.approx(np.sqrt(p*(1-p)*2)/(2*np.sqrt(800)))
 
 
 def test_missing_landscape_pick_is_not_a_comparison_to_nominal_amplitude():
@@ -191,3 +196,40 @@ def test_missing_landscape_pick_is_not_a_comparison_to_nominal_amplitude():
         {'verdict':'ok','values':{'x':.9,'y':.5}}, {'values':None}, .01,.05,
         landscape_fields=[('optimal_a_scan','x'),('optimal_b_over_a','y')])
     assert all(c['node_value'] is None and c['verdict']=='n/a' for c in out)
+
+
+def test_low_power_asymptote_requires_a_low_power_feature():
+    x,y=np.arange(61.),np.arange(201.)
+    z=np.exp(-((y[:,None]-100)/4)**2)*np.where(x<20,0.,1.)[None,:]
+    out=api.analyze({'x':x,'y':y,'z':z,'meta':{'x':{'label':'power'},'y':{'label':'frequency'},'summary':'asymptote'}})
+    assert out['fit']['verdict']=='no feature'
+    assert out['fit']['values'] is None
+
+
+def test_incoherent_low_power_positions_are_not_a_frequency():
+    x,y=np.arange(61.),np.arange(201.)
+    centers=np.tile([40.,100.,160.],21)[:61]
+    z=np.exp(-((y[:,None]-centers)/3)**2)
+    out=api.analyze({'x':x,'y':y,'z':z,'meta':{'x':{'label':'power'},'y':{'label':'frequency'},'summary':'asymptote'},
+        'smooth':{'sigma_x':0,'sigma_y':0}})
+    assert out['fit']['verdict']=='no feature'
+    assert out['fit']['values'] is None
+
+
+def test_nominal_policy_is_not_compared_with_an_unrestricted_minimum():
+    out=saved_comparisons('landscape',{'optimal_a_scan':1.,'optimal_b_over_a':.5,
+        'pick_note':'kept the nominal amplitude'}, {'verdict':'ok','values':{'x':.9,'y':.8}},
+        {'values':None},.01,.05,landscape_fields=[('optimal_a_scan','x'),('optimal_b_over_a','y')])
+    assert all(c['verdict']=='n/a' and 'different quantity' in c['reason'] for c in out)
+
+
+def test_lower_boundary_contour_minimum_is_not_replaced_by_an_interior_one():
+    from quam_state_manager.core.mapfit.models import landscape
+    x,y=np.arange(31.),np.arange(31.)
+    phase=180+(y[:,None]-10)*(y[:,None]-25)+np.zeros((31,31))
+    z=(x[None,:]-15)**2+(y[:,None]-25)**2
+    # At the second branch the minimum is beyond the x boundary.
+    z[24:27,:]=(x[None,:]+2)**2
+    out=landscape(z,x,y,{'phase':phase,'circular':360.})
+    assert out['verdict']=='outside the sweep'
+    assert out['values'] is None
