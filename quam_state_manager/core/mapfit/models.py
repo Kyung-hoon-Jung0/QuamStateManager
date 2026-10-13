@@ -394,6 +394,7 @@ def chevron(z,x,y,meta=None,raw=None):
     dt = float(np.median(np.diff(x)))
     floor = _floor(a,raw,meta)
     frequencies = np.full(len(y),np.nan)
+    frequency_errors = np.full(len(y), np.nan)
     lowest, doubles = np.full(len(y),np.nan), 0
     for i,row in enumerate(a):
         ok = np.isfinite(row)
@@ -431,6 +432,11 @@ def chevron(z,x,y,meta=None,raw=None):
             [np.inf,np.inf,np.inf,min(.499/dt,f+1/np.ptp(x)),10/np.ptp(x)]),max_nfev=250)
         if np.sum(fitrow.fun**2)<.5*np.sum((observed-observed.mean())**2):
             frequencies[i]=fitrow.x[3]
+            variance = np.sum(fitrow.fun**2) / max(1, len(fitrow.fun) - len(fitrow.x))
+            covariance = np.linalg.pinv(fitrow.jac.T @ fitrow.jac)
+            gain = max(float(meta.get("noise_gain", 1.)), 1e-12)
+            frequency_errors[i] = max(np.sqrt(max(0., variance * covariance[3, 3])) / gain,
+                                      1e-6 / np.ptp(x))
     ok = np.isfinite(frequencies)
     if doubles>=max(3,.25*np.isfinite(lowest).sum()):
         # Each chevron's axis is a minimum of the lowest branch; list them all.
@@ -446,6 +452,18 @@ def chevron(z,x,y,meta=None,raw=None):
     f0sq = np.polyval(c,axis)
     if not y.min()<=axis<=y.max() or f0sq<=0:
         return result("outside the sweep")
+    # [derived] Var(f^2) = (2 f sigma_f)^2. A row fit can settle on a transient
+    # or a slow drift; a resolved single hyperbola must describe its frequencies.
+    squared_errors = 2 * frequencies[ok] * frequency_errors[ok]
+    chi2_reduced = float(np.sum(((frequencies[ok]**2 - np.polyval(c, y[ok])) / squared_errors)**2)
+                         / (ok.sum() - 3))
+    # Smoothing mixes neighboring oscillations and its residuals are correlated.
+    # Use the measured-map check when the API has already computed it.
+    measured_chi_square = meta.get("raw_hyperbola_chi_square", chi2_reduced)
+    if measured_chi_square > 9.:
+        return result("no feature", reason="Row frequencies do not resolve a single hyperbola",
+                      reduced_chi_square=chi2_reduced, measured_chi_square=measured_chi_square,
+                      frequencies=frequencies.tolist())
     f0 = float(np.sqrt(f0sq))
     scale = {"s":1.,"ms":1e-3,"us":1e-6,"ns":1e-9}.get(meta.get("time_units","s"))
     if scale is None:
@@ -455,6 +473,7 @@ def chevron(z,x,y,meta=None,raw=None):
         return result("outside the sweep")
     return result("ok",{"dv0":float(axis),"two_j_hz":f0/scale,"t_pi":t_pi,"t_pi_ns":t_pi*scale*1e9},
                   apex_row=int(np.argmin(np.abs(y-axis))),frequencies=frequencies.tolist(),
+                  reduced_chi_square=chi2_reduced,
                   nan_count=int(np.isnan(a).sum()),missing_rows=int((~ok).sum()))
 
 
@@ -488,10 +507,18 @@ def landscape(z,x,y,meta=None,raw=None):
         if not finite.any():
             continue
         sigma = meta.get("objective_sigma",0.)
+        if meta.get("objective_shots", 0) > 0:
+            population_floor = meta["objective_floor"]
+            on = min(1., max(population_floor, population_floor + 2 * float(np.nanmin(scores))))
+            sigma = np.sqrt(on * (1 - on) + population_floor * (1 - population_floor)) / (
+                2 * np.sqrt(meta["objective_shots"]))
         if sigma > 0:
             near = line[finite & (scores <= np.nanmin(scores) + 2*sigma)]
-            span = np.ptp(near / [x[1]-x[0],y[1]-y[0]],axis=0) if len(near) else [0.,0.]
-            if np.max(span) > 4:
+            location = line[int(np.nanargmin(scores))]
+            displacement = np.abs((near - location) / [x[1]-x[0], y[1]-y[0]])
+            # The comparison promises one grid step, so an indistinguishable point
+            # farther from the minimum cannot support a precise coordinate.
+            if displacement.size and np.max(displacement) > 1 + 1e-12:
                 return result("ambiguous", candidates=near.tolist(),
                     reason="Contour minimum is unresolved at the measured objective noise", objective_sigma=sigma)
         # Every distinct local minimum along the line competes, so two wells on one contour are seen.

@@ -128,6 +128,8 @@ def analyze(run, uid, figure, converted, body):
             on = on if on > 0 else .5/(shots+1)
             floor = floor if floor > 0 else .5/(shots+1)
             meta["objective_sigma"] = math.sqrt(on*(1-on)+floor*(1-floor))/(2*math.sqrt(shots))
+            meta["objective_shots"] = shots
+            meta["objective_floor"] = floor
     operation = record.get("operation") or getattr(run, "parameters", {}).get("operation")
     if operation == "x90":
         meta["theta"] = math.pi / 2

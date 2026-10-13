@@ -114,6 +114,30 @@ def test_chevron_noise_rows_do_not_invent_a_second_branch():
     assert out["values"]["two_j_hz"] == pytest.approx(20e6, rel=.05)
 
 
+def test_incoherent_row_frequencies_do_not_resolve_a_chevron():
+    x, y = np.linspace(0., 4., 201), np.linspace(-2., 2., 41)
+    frequency = np.sqrt(1.7**2 + (1.3 * (y - .137))**2)
+    frequency[::4] += .4
+    z = .5 + .45 * np.exp(-x[None, :] / 8) * np.cos(2 * np.pi * frequency[:, None] * x)
+    z += np.random.default_rng(3).normal(0., .005, z.shape)
+    out = chevron(z, x, y, {'time_units': 's'})
+    assert out['verdict'] == 'no feature'
+    assert out['values'] is None
+    assert out['reduced_chi_square'] > 9.
+    out = api.analyze({'x': x, 'y': y, 'z': z,
+        'meta': {'x': {'label': 'duration'}, 'y': {'label': 'voltage'}, 'time_units': 's'}})
+    assert out['fit']['verdict'] in ('no feature', 'ambiguous')
+    assert out['fit']['values'] is None
+
+
+def test_smoothed_chevron_uses_measured_hyperbola_quality():
+    from tests.test_mapfit_faults import request
+    out = api.analyze(request('chevron', noise=.02))
+    assert out['raw_fit']['reduced_chi_square'] < 9.
+    assert out['fit']['reduced_chi_square'] > 9.
+    assert out['fit']['verdict'] == 'ok'
+
+
 def test_json_null_phase_cells_are_nan_before_cap_inference():
     x, y = np.arange(31.), np.arange(31.)
     phase = (180 + (y[:, None] - 15) * 3 + np.zeros((31, 31))).tolist()
@@ -171,6 +195,16 @@ def test_flat_contour_valley_is_unresolved_at_measured_population_noise():
     assert out["fit"]["values"] is None
 
 
+def test_contour_uncertainty_must_resolve_the_one_step_comparison():
+    from quam_state_manager.core.mapfit.models import landscape
+    x, y = np.arange(31.), np.arange(31.)
+    z = .01 * (x[None, :] - 15)**2 + (y[:, None] - 15)**2
+    out = landscape(z, x, y, {'phase': 180 + (y[:, None] - 15) * 3 + np.zeros_like(z),
+        'circular': 360., 'objective_sigma': .021})
+    assert out['verdict'] == 'ambiguous'
+    assert out['values'] is None
+
+
 @pytest.mark.parametrize("population_floor",[.01,0.])
 @pytest.mark.parametrize("population_key", ["l1_at_pick", "l1_amp_at_pick"])
 def test_saved_population_noise_reaches_landscape_model(tmp_path,monkeypatch,population_floor,population_key):
@@ -190,6 +224,21 @@ def test_saved_population_noise_reaches_landscape_model(tmp_path,monkeypatch,pop
         {"axes":[axis],"map_sibling_axes":[{**axis,"traces":[phase]}]},{"data":[trace]}, {})
     p=population_floor or .5/801
     assert captured[0].get('objective_sigma') == pytest.approx(np.sqrt(p*(1-p)*2)/(2*np.sqrt(800)))
+    assert captured[0].get('objective_shots') == 800
+    assert captured[0].get('objective_floor') == pytest.approx(p)
+
+
+def test_population_noise_is_measured_at_the_contour_not_an_unrelated_zero_cell():
+    from quam_state_manager.core.mapfit.models import landscape
+    x, y = np.arange(31.), np.arange(31.)
+    z = .1 + .00005 * (x[None, :] - 15)**2 + .001 * (y[:, None] - 15)**2
+    z[0, 0] = 0.
+    phase = 180 + (y[:, None] - 15) * 3 + np.zeros_like(z)
+    out = landscape(z, x, y, {'phase': phase, 'circular': 360.,
+        'objective_sigma': .00003, 'objective_shots': 800, 'objective_floor': .5 / 801})
+    assert out['verdict'] == 'ambiguous'
+    assert out['values'] is None
+    assert out['objective_sigma'] > .005
 
 
 def test_missing_landscape_pick_is_not_a_comparison_to_nominal_amplitude():

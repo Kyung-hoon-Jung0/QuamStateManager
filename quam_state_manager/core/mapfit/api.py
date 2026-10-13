@@ -188,6 +188,8 @@ def analyze(request):
         zs = smooth(smooth(a,sigma_y=applied["sigma_y"],kernel=kernel,circular=circular),
                     kernel=kernel,circular=circular,row_sigmas=row_sigmas)
     fit_meta = dict(meta)
+    if model == "chevron" and "reduced_chi_square" in raw_fit:
+        fit_meta["raw_hyperbola_chi_square"] = raw_fit["reduced_chi_square"]
     if "phase" in meta:
         fit_meta["phase"] = smooth(meta["phase"],applied["sigma_x"],applied["sigma_y"],kernel,circular=meta.get("circular",360))
     fit_meta["noise_gain"] = noise_gain(a.shape,applied["sigma_x"],applied["sigma_y"],kernel,row_sigmas)
