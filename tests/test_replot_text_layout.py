@@ -58,13 +58,11 @@ def test_source_aspect_column_titles_and_secondary_ticks():
 
 def test_extractor_carries_source_figure_aspect():
     pytest.importorskip("matplotlib")
-    import matplotlib.pyplot as plt
+    # A bare Figure needs no GUI backend (pyplot's default Tk backend fails on hosts without Tcl).
+    from matplotlib.figure import Figure
     from quam_state_manager.generator.iplot_extract import extract_figure
-    fig = plt.figure(figsize=(15, 9))
-    try:
-        assert extract_figure(fig, "map")["size_inches"] == [15, 9]
-    finally:
-        plt.close(fig)
+    fig = Figure(figsize=(15, 9))
+    assert extract_figure(fig, "map")["size_inches"] == [15, 9]
 
 
 def test_serialized_warning_wraps_newlines_and_escapes_pseudo_html():
@@ -82,19 +80,24 @@ def test_serialized_warning_wraps_newlines_and_escapes_pseudo_html():
     assert readable("literal <br> & $x^2$\nnext") == "literal &lt;br&gt; &amp; x<sup>2</sup><br>next"
 
 
+def test_quotes_stay_literal_because_plotly_decodes_no_quote_entity():
+    # Plotly's text renderer decodes only a few named entities (amp, lt, gt, nbsp, mu, times,
+    # plusmn, deg) plus numeric ones; "&quot;" would be drawn as those six characters.
+    assert readable('drive "x90" at 5 \'GHz\'') == 'drive "x90" at 5 \'GHz\''
+    assert readable('$\\alpha$ of "q1"') == '\u03b1 of "q1"'
+
+
 def test_extractor_retains_annotation_and_figure_wrap():
     pytest.importorskip("matplotlib")
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
     from quam_state_manager.generator.iplot_extract import extract_figure
-    fig, ax = plt.subplots()
-    try:
-        ax.annotate("warning\nroot side", (.02, .06), xycoords="axes fraction", wrap=True)
-        fig.text(.1, .1, "figure note", wrap=True)
-        extracted = extract_figure(fig, "warning")
-        assert extracted["axes"][0]["annotations"][0]["wrap"] is True
-        assert extracted["texts"][0]["wrap"] is True
-    finally:
-        plt.close(fig)
+    fig = Figure()
+    ax = fig.add_subplot()
+    ax.annotate("warning\nroot side", (.02, .06), xycoords="axes fraction", wrap=True)
+    fig.text(.1, .1, "figure note", wrap=True)
+    extracted = extract_figure(fig, "warning")
+    assert extracted["axes"][0]["annotations"][0]["wrap"] is True
+    assert extracted["texts"][0]["wrap"] is True
 
 
 def test_numeric_map_arrays_skip_the_text_walk():

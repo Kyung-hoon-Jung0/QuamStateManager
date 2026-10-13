@@ -14,7 +14,7 @@ def readable(text):
         return text
 
     def render(expression):
-        expression = escape(expression)
+        expression = escape(expression, quote=False)
         expression = re.sub(r"\\(?:mathrm|mathregular|mathbf|mathit|text|operatorname)\b", "", expression)
         expression = re.sub(r"\\([A-Za-z]+)", lambda m: _SYMBOLS.get(m[1], m[1]), expression)
         expression = expression.replace(r"\,", " ").replace(r"\;", " ").replace(r"\!", "")
@@ -25,9 +25,9 @@ def readable(text):
 
     parts, end = [], 0
     for match in re.finditer(r"(?<!\\)\$([^$]+)(?<!\\)\$", text):
-        parts.extend((escape(text[end:match.start()]), render(match[1])))
+        parts.extend((escape(text[end:match.start()], quote=False), render(match[1])))
         end = match.end()
-    parts.append(escape(text[end:]))
+    parts.append(escape(text[end:], quote=False))
     return "".join(parts).replace("\r\n", "\n").replace("\n", "<br>")
 
 
