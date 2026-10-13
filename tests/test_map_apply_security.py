@@ -125,7 +125,7 @@ def test_map_details_survive_restart_ledger_history_and_undo(map_chip):
     with chip.app.app_context():
         directory = routes._hub_chip_dir(chip.ctx["path"])
     event = hub.Hub.for_chip(directory).events()[-1]
-    assert event["ref"]["map"] == details
+    assert event["ref"].get("map") == details
     answer = value_history.read(directory, {"v": value_history.target(chip.ctx["store"].merged, PATH)})
     assert answer["rows"]["v"]["points"][-1]["ref"]["map"] == details
     assert chip.c.post("/undo").status_code == 200
@@ -134,3 +134,34 @@ def test_map_details_survive_restart_ledger_history_and_undo(map_chip):
     answer = value_history.read(directory, {"v": value_history.target(chip.ctx["store"].merged, PATH)})
     points = answer["rows"]["v"]["points"]
     assert any(p.get("undone") for p in points if p.get("kind") == "sm_apply")
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_map_refuses_staging_into_an_archive(map_chip, batch):
+    chip, result, _ = map_chip
+    chip.ctx["origin"] = "dataset_archive"
+    response = post(chip, result["updates"][0], batch)
+    assert response.status_code == 400 and chip.log() == []
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_map_obeys_running_node_lock(map_chip, batch):
+    chip, result, _ = map_chip
+    chip.app.config["agent_edit_lock"] = {"path": chip.ctx["path"], "node": "scan"}
+    assert post(chip, result["updates"][0], batch).status_code == 409
+    assert chip.log() == []
+
+
+def test_map_uses_unseen_gate_and_auto_apply_session(map_chip):
+    chip, result, _ = map_chip
+    before = chip.live_state()
+    assert chip.c.post("/auto-apply/arm").status_code == 200
+    row = result["updates"][0]
+    assert post(chip, row, True).status_code == 200
+    assert chip.live_state() == before
+    unseen = chip.c.post("/state/apply-to-live", data={"seen_changes": "0"})
+    assert unseen.status_code == 409 and unseen.get_json()["status"] == "unseen_changes"
+    assert chip.live_state() == before
+    applied = chip.c.post("/state/apply-to-live", data={"seen_changes": "1"})
+    assert applied.status_code == 200
+    assert chip.live_state()["qubits"]["q1"]["T1"] == row["value"]

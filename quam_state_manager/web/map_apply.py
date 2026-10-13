@@ -38,6 +38,8 @@ def validate(ctx, path, value, origin, *, create=False, delete=False):
     """Reject changed numbers, targets, chip contexts and expired evidence."""
     if not origin or origin.get("src") != "map_fit":
         return
+    if (ctx.get("origin") or "live") != "live":
+        raise BadBody("Map staging requires an editable live chip.")
     from . import map_analysis, routes
     from quam_state_manager.core.interactive_plots.replot import _fingerprint
     key = (origin.get("run_uid"), origin.get("request_hash"))
