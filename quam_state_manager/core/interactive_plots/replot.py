@@ -575,7 +575,10 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     panels = _group_panels(axes, drawable)
     nrows, ncols, cells = _grid_layout(axes, panels)
     xpad = 0.06 / ncols
-    ypad = 0.10 / nrows
+    has_secondary_top = any(
+        a.get("shares_y_with") is not None or any(s.get("axis") == "x" and s.get("side", "top") == "top"
+                                                  for s in a.get("secondary_axes", [])) for a in axes)
+    ypad = (0.20 if has_secondary_top else 0.10) / nrows
 
     data, layout, notes = [], {}, []
     for p_idx, panel in enumerate(panels):
@@ -643,7 +646,8 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             ttl = base.get("title") or ""
             if ttl:
                 notes.append({"text": ttl, "showarrow": False, "xref": "paper",
-                              "yref": "paper", "x": (x0 + x1) / 2, "y": min(y1 + ypad * 0.5, 1),
+                              "yref": "paper", "x": (x0 + x1) / 2, "y": y1,
+                              "yshift": 64 if has_secondary_top else 12,
                               "xanchor": "center", "yanchor": "bottom",
                               "font": {"size": 11}})
 
@@ -661,7 +665,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 ydomain = layout[_axis_id("yaxis", int(tr["yaxis"][1:] or 1))]["domain"]
                 tr["colorbar"].update(x=xdomain[1], y=sum(ydomain) / 2,
                                       len=ydomain[1] - ydomain[0])
-    has_top_axis = any(k.startswith("xaxis1") for k in layout)  # a twiny secondary top-X
+    has_top_axis = has_secondary_top
 
     for text in fig_json.get("texts", []):
         notes.append(_text_note(text, "paper", "paper"))
@@ -675,12 +679,13 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                        "y": 0.99, "yanchor": "top"}
     layout["showlegend"] = True
     layout["legend"] = {"orientation": "h", "y": -0.12 / nrows, "x": 0.0}
-    layout["margin"] = {"l": 60, "r": 60, "t": 70 if has_top_axis else 44, "b": 50}
-    layout["height"] = max(320, 320 * nrows) + (26 if has_top_axis else 0)
+    layout["margin"] = {"l": 60, "r": 60, "t": 92 if has_top_axis else 44, "b": 50}
+    layout["height"] = max(320, 320 * nrows) + (64 * nrows if has_top_axis else 0)
     if notes:
         layout["annotations"] = notes
-    return {"data": data, "layout": layout, "title": fig_json.get("title", ""),
-            "skipped": skipped, "notices": notices}
+    from .mathtext import plotly_text
+    return plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
+                       "skipped": skipped, "notices": notices})
 
 
 def _text_note(a, xref, yref):
