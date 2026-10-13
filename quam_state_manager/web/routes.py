@@ -35138,7 +35138,7 @@ def param_history():
             try:
                 qd = engine.get_qubit(q)
                 for p in props:
-                    current_values[(q, p)] = qd.get(p)
+                    current_values[(q, p)] = _param_history_current_value(engine, q, p, qd)
             except Exception:
                 pass
     # S10 walk (N4): an archived chip has no live state -- each cell shows the
@@ -35886,6 +35886,17 @@ def _hub_latest_values(table, props) -> dict:
     return out
 
 
+def _param_history_current_value(engine, qubit: str, prop: str, resolved=None):
+    """Use the history extractor's formula for derived live properties."""
+    from quam_state_manager.core.history import _DERIVED_FIDELITY_PROPS, _walk_dict
+    derived = _DERIVED_FIDELITY_PROPS.get(prop)
+    if derived:
+        path, formula = derived
+        raw = engine.store.merged.get("qubits", {}).get(qubit, {})
+        return formula(_walk_dict(raw, path))
+    return (resolved if resolved is not None else engine.get_qubit(qubit)).get(prop)
+
+
 def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
                               extra_notes=()):
     """docs/283: one grid cell's drawer on the ledger -- the cell's recorded
@@ -35921,7 +35932,7 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
         engine = _engine()
         if engine:
             try:
-                current_value = engine.get_qubit(qubit).get(prop)
+                current_value = _param_history_current_value(engine, qubit, prop)
             except Exception:  # noqa: BLE001
                 pass
         if isinstance(current_value, float) and _vh_numeric(current_value) is None:
