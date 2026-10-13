@@ -103,13 +103,42 @@ def _kill_tree(proc):
     psutil.wait_procs(children, timeout=5)
 
 
+def _spawn(argv, **kwargs):
+    import subprocess
+    if os.name != "nt":
+        return subprocess.Popen(argv, **kwargs)
+    from .process_owner import Job
+    job = Job()
+    proc = None
+    # Attach before any plotting code can create helpers.
+    kwargs["creationflags"] = kwargs.get("creationflags", 0) | 0x4  # CREATE_SUSPENDED
+    try:
+        proc = subprocess.Popen(argv, **kwargs)
+        job.assign(proc._handle)
+        proc._sm_owner = job
+        job.resume(proc.pid)
+        return proc
+    except BaseException:
+        job.close()
+        if proc is not None:
+            proc.kill()
+            proc.wait(timeout=5)
+        raise
+
+
+def _close_owner(proc):
+    job = getattr(proc, "_sm_owner", None)
+    if job is not None:
+        job.close()
+
+
 def run(argv, *, timeout, **kwargs):
     """Cold replay with the same RSS and deadline limits as a warm request."""
     import subprocess
     kwargs.pop("capture_output", None)
     if os.name == "nt":
         kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
-    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs) as proc:
+    with _spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs) as proc:
         observed = psutil.Process(proc.pid)
         deadline = time.monotonic() + min(timeout, 180)
         try:
@@ -132,6 +161,7 @@ def run(argv, *, timeout, **kwargs):
                 _kill_tree(observed)
             except psutil.Error:
                 pass
+            _close_owner(proc)
 
 
 def command(argv, *, timeout):
@@ -240,7 +270,7 @@ class Worker:
         self.environ = dict(os.environ)
         self.sources: dict[str, Any] = {script: _stat(script)}
         self._idle: threading.Timer | None = None
-        self.proc = subprocess.Popen(
+        self.proc = _spawn(
             [python_path, "-B", script, "--serve"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
@@ -354,6 +384,7 @@ class Worker:
             _kill_tree(self._process)
         except (AttributeError, psutil.Error):
             self.proc.kill()
+        _close_owner(self.proc)
         try:
             self.proc.stdin.close()                 # type: ignore[union-attr]
         except Exception:  # noqa: BLE001
