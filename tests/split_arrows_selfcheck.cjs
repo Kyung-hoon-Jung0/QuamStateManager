@@ -21,7 +21,7 @@
  *     still_click  -- a press on the bar that does not move it is not a choice
  *     focus        -- a keyboard user stays on the arrow after a press; a mouse
  *                     press drops focus as before
- *     nav_sidebar / nav_boost / nav_history -- page navigation collapses runs
+ *     nav_sidebar / nav_boost / nav_push / nav_history -- navigation collapses runs
  *                     at any height, across swaps/reruns, without changing memory
  *     nav_same_page -- same-page navigation and run switches retain user height
  *     nav_reopen_low / nav_reopen_high -- first run after navigation opens at
@@ -187,6 +187,20 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.rerun();
     eq(s.sizes(), SPLIT.collapsedSizes, 'a full-body script rerun keeps the navigation collapse');
     assert.equal(s.user(), before, 'boost and rerun preserve the remembered choice');
+} else if (mode === 'nav_push') {
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([80, 20]);
+    const before = s.user();
+    s.swap('table-pane', 'other page');
+    s.w.history.pushState({}, '', '/qubits');
+    s.d.dispatchEvent(new s.w.CustomEvent('htmx:pushedIntoHistory', { detail: { path: '/qubits' } }));
+    eq(s.sizes(), SPLIT.collapsedSizes, 'a pushed page navigation collapses without a sidebar click');
+    assert.equal(s.user(), before, 'pushed navigation preserves the remembered choice');
+    s.swap('table-pane', 'concurrent swap');
+    eq(s.sizes(), SPLIT.collapsedSizes, 'later table swaps retain the pushed navigation collapse');
+    s.swap('inspector-pane', RUN_B);
+    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'the next run after pushed navigation gets the expanded minimum');
 } else if (mode === 'nav_history') {
     for (const event of ['popstate', 'htmx:historyRestore']) {
         const s = await boot();

@@ -35,7 +35,7 @@ WEB = ROOT / "quam_state_manager" / "web"
 
 MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow", "reload",
          "programmatic", "retired", "defaults", "still_click", "focus",
-         "nav_sidebar", "nav_boost", "nav_history", "nav_same_page",
+         "nav_sidebar", "nav_boost", "nav_push", "nav_history", "nav_same_page",
          "nav_reopen_low", "nav_reopen_high", "nav_run_only"]
 
 
