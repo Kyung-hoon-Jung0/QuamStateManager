@@ -1,0 +1,52 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {JSDOM} = require('jsdom');
+const source = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/app.js'), 'utf8');
+const start = source.indexOf('window.FieldHistory = (function () {');
+const dom = new JSDOM('<body><button id="anchor">History</button></body>', {
+    url: 'http://localhost/bulk', runScripts: 'outside-only', pretendToBeVisual: true
+});
+const w = dom.window;
+const calls = [];
+const answers = [];
+w.fetch = url => { calls.push(url); return new Promise(resolve => answers.push(html => resolve({text: () => Promise.resolve(html)}))); };
+w.eval(source.slice(start, source.indexOf('})();', start) + 5));
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const html = value => '<div class="fh-currentline">now: <code>' + value + '</code></div><p>run ' + value + '</p>';
+let checks = 0;
+function check(value, message) { checks++; assert.ok(value, message); }
+(async () => {
+    w.FieldHistory.open(w.document.getElementById('anchor'), 'qubits.q1.T1', null);
+    answers.shift()(html(1));
+    await wait(20);
+    const panel = w.document.getElementById('field-history-panel');
+    panel.scrollTop = 123;
+    for (let i = 0; i < 5; i++) w.document.dispatchEvent(new w.CustomEvent('stateRestored'));
+    check(!panel.textContent.includes('now:'), 'old current value is not called now while refreshing');
+    await wait(350);
+    check(calls.length === 2, 'a mutation burst causes one history refresh');
+    answers.shift()(html(2));
+    await wait(20);
+    check(panel.textContent.includes('now: 2') && panel.textContent.includes('run 2'), 'open drawer follows new values and runs');
+    check(panel.scrollTop === 123, 'refresh keeps the drawer reading position');
+    w.document.dispatchEvent(new w.CustomEvent('stateRestored'));
+    await wait(350);
+    const stale = answers.shift();
+    w.document.dispatchEvent(new w.CustomEvent('stateRestored'));
+    stale(html('stale'));
+    await wait(20);
+    check(!panel.textContent.includes('stale'), 'a response superseded by a mutation cannot restore old now');
+    await wait(350);
+    answers.shift()(html(3));
+    await wait(20);
+    check(panel.textContent.includes('now: 3'), 'the latest mutation wins');
+    w.document.dispatchEvent(new w.CustomEvent('stateRestored'));
+    w.FieldHistory.close();
+    const count = calls.length;
+    await wait(350);
+    check(calls.length === count, 'closing cancels the scheduled refresh');
+    console.log(checks + ' checks passed');
+    dom.window.close();
+})().catch(e => { console.error(e); process.exit(1); });

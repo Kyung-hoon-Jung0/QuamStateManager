@@ -24348,6 +24348,25 @@ window.FieldHistory = (function () {
     var applyInput = null;   // the edit input "Use" fills
     var openPath = null;     // docs/186: what Revert stages, when the button
                              // carries no data-path of its own
+    var refreshTimer = null;
+    var openAll = false;
+
+    function refreshAfterMutation() {
+        if (!panel || panel.style.display === 'none' || !openPath) return;
+        ++loadSeq;  // an earlier response must not restore a superseded now
+        var now = panel.querySelector('.fh-currentline');
+        if (now) now.textContent = 'Values changed; refreshing history...';
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(function () {
+            refreshTimer = null;
+            if (panel && panel.style.display !== 'none' && openPath) {
+                load(openAnchor, openPath, ++loadSeq, openAll);
+            }
+        }, 250);
+    }
+    ['stateRestored', 'quam:state-changed', 'liveDriftChanged', 'sm:runs-changed'].forEach(function (name) {
+        document.addEventListener(name, refreshAfterMutation);
+    });
 
     function ensurePanel() {
         if (panel) return panel;
@@ -24446,6 +24465,8 @@ window.FieldHistory = (function () {
     var openAnchor = null;
     function open(anchor, path, input) {
         if (!path) return;
+        clearTimeout(refreshTimer);
+        openAll = false;
         applyInput = input || null;
         openPath = path;
         openAnchor = anchor;
@@ -24479,14 +24500,17 @@ window.FieldHistory = (function () {
                 : p.isConnected && p._fhLoadSeq === seq && p.firstChild === contentStart;
         }
         function replace(html) {
+            var scroll = p.scrollTop;
             if (window.PlotHost) { try { window.PlotHost.purgeWithin(p); } catch (e) {} }
             p.innerHTML = html;
+            p.scrollTop = scroll;
             contentStart = p.firstChild;
         }
         fetch("/field/history?path=" + encodeURIComponent(path) + (all ? "&all=1" : ""))
             .then(function (r) { return r.text(); })
             .then(function (html) {
                 if (!current()) return;
+                if (isPanel) openAll = !!all;
                 replace(html);
                 // same reason as the Column History card: no swap event here
                 if (window.applyLocalTimes) window.applyLocalTimes(p);
@@ -24599,6 +24623,7 @@ window.FieldHistory = (function () {
     }
 
     function close() {
+        clearTimeout(refreshTimer);
         if (panel) panel.style.display = "none";
         openPath = null;
         openAnchor = null;
