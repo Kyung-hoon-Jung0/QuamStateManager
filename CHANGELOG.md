@@ -918,3 +918,28 @@ Interactive figures and map tools (docs/305).
   height and the down-arrow height; the next run opened after that opens at
   least at the up-arrow height. Inside Datasets your height applies as before.
 - **Packaging**: `contourpy` and `psutil` are declared dependencies.
+
+## v1.4.1 (2026-10-14)
+
+Map tools and Apply safety, from real-browser journeys on a 5-qubit chip and two days of its runs.
+
+- **Model by figure family**: a 2-D map gets a fit model only when its family supports one (Rabi chevron,
+  error amplification, spectroscopy ridge, landscape). Decay-vs-flux, DRAG and readout-metric maps get smoothing
+  and contours with a one-line reason, never a model value or an "ok" verdict.
+- **Same quantity, stated tolerance**: the comparison line compares the very field Apply writes, in its own
+  units, against the value the node wrote in that run (from the run's patches), with the tolerance it used.
+  A detuning axis is converted with the run's own reference frequency, or the comparison is withheld with a
+  reason.
+- **Apply only with a verified target**: Apply SM value is enabled only when the run wrote that field; otherwise
+  the button says "Apply unavailable" and why. A ridge vertex is never offered for the lower sweet spot.
+- **Older runs**: the Apply popup says when a later run proved a newer write to the same field, and "unknown"
+  when that cannot be proven. Server map values are read-only in the popup, with the reason shown.
+- **Bounded analysis**: a full-resolution map analysis ends with a result or a clear message; late answers for
+  old settings are discarded.
+- **Staging rules**: map results are bound to the chip, the run's inputs and the accepted node writes; archive
+  views never stage; settings and proof travel with the edit through Review, undo and value history.
+- **Figure text**: matplotlib math labels such as `$\alpha$` render as readable text; panel titles no longer
+  collide with top secondary axes.
+- **Floating Instrument Wiring**: Escape closes it, and it follows the light/dark theme.
+- **Lab processes**: plotting and analysis workers on Windows end with SM (kill-on-close job objects); the running
+  QUAlibrate detector recognizes its server only by the interpreter's module position.

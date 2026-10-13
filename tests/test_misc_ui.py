@@ -46,7 +46,7 @@ class TestFloatWiring:
         assert "window.FloatWiring" in js
         assert "/api/instrument/data" in js
         # a wholesale working-copy replacement refreshes the panel in place
-        assert "stateRestored" in js.split("window.FloatWiring")[1]
+        assert "stateRestored" in js.split("window.FloatWiring = ")[1]
 
 
 class TestCalcPinRemoved:
