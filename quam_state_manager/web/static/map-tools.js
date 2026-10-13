@@ -108,6 +108,7 @@
             invalidate();
             var seq = generation, body = Object.assign({}, options.request || {}, {fig: options.fig || '', panel: Number(control('panel').value), source: options.source || 'replot'});
             if (!initial) Object.assign(body, settings());
+            var requestedSettings = JSON.stringify(settings());
             control('status').textContent = 'Analyzing full-resolution map...';
             return window.fetch('/dataset/' + encodeURIComponent(options.uid) + '/map/analyze', {
                 method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -127,6 +128,7 @@
                         } catch (_) {}
                     }
                     clamp();
+                    if (!initial && requestedSettings !== JSON.stringify(settings())) return analyze(false);
                     var c = result.compare;
                     control('status').textContent = 'node ' + c.node_name + ' ' + number(c.node_value) + ' | SM ' + number(c.sm_value) +
                         ' | delta ' + number(c.delta) + ' | ' + c.verdict + ' (' + number(c.tol) + ', ' + c.tol_source + ') | ' + c.reason +

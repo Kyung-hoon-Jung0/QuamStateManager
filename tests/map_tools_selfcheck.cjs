@@ -76,6 +76,14 @@ function check(value, message) { checks++; assert.ok(value, message); }
     check(tile.querySelector('.map-tools-strip').hidden && d.activeElement === tile.querySelector('.map-tools-button'), 'Escape closes and focuses header');
     check(JSON.parse(w.localStorage.getItem('quam_map_tools_v1')).erroramp.override, 'settings persisted by type');
     tile.querySelector('.map-tools-button').click();
+    // v1.4.1: a server cap changed the slider after fitting -> re-fit the displayed strength.
+    queued.push((resolve, value) => {
+        value.caps_applied.cap_x = .25; value.caps_applied.sigma_x = .25;
+        resolve({ok: true, json: () => Promise.resolve(value)});
+    });
+    input('override', false); input('sigma_x', 1); await wait(340);
+    check(posts.at(-1).smooth.sigma_x === .2 && c('sigma_x').value === '0.2', 'server cap clamp is analyzed at the displayed slider setting');
+    input('override', true);
     let resolveOld;
     queued.push(resolve => { resolveOld = resolve; });
     input('sigma_x', 6); await wait(320);
