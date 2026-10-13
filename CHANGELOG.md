@@ -894,3 +894,20 @@ Production campaign (docs/303): the v1.2.0 follow-up list plus stability, every-
 - **Split bar**: two arrows to the fixed layout max/min; the user's last action (a drag or an arrow) decides where the
   next inspector opens.
 - **Layout**: the remaining page-sweep cosmetics at 1280/1600 in both themes.
+
+## v1.4.0 (2026-10-13)
+
+Interactive figures and map tools (docs/305).
+
+- **Interactive** now uses the experiment's own plotting code by default, with
+  saved figures and raw data available when reproduction cannot finish.
+- **Smooth, Contour and Fit** on 2-D maps, with a comparison of the saved value
+  and SM's estimate. Apply uses the server's result and keeps the run, settings
+  and calculation with the edit through Review, undo and value history.
+- **Verified clicks** check the plotted marker against the run's saved state
+  changes. Saved proposals are clearly labelled; missing or ambiguous evidence
+  leaves the figure available for viewing.
+- **Running QUAlibrate**: a banner shows when its config differs from SM's and
+  offers that config or the running data folder for the open chip.
+- **Stability**: plotting and waveform drawing share one worker slot, source
+  edits refresh cached figures, and config discovery stays off request threads.
