@@ -172,13 +172,14 @@ def test_flat_contour_valley_is_unresolved_at_measured_population_noise():
 
 
 @pytest.mark.parametrize("population_floor",[.01,0.])
-def test_saved_population_noise_reaches_landscape_model(tmp_path,monkeypatch,population_floor):
+@pytest.mark.parametrize("population_key", ["l1_at_pick", "l1_amp_at_pick"])
+def test_saved_population_noise_reaches_landscape_model(tmp_path,monkeypatch,population_floor,population_key):
     x,y=np.arange(31.),np.arange(31.)
     trace={"type":"heatmap","full_resolution":True,"x":x.tolist(),"y":y.tolist(),
         "z":(.001*(x[None,:]-15)**2+(y[:,None]-15)**2).tolist()}
     axis={"xlabel":"b_over_a","ylabel":"a_scan","title":"q0","traces":[trace]}
     phase={**trace,"z":(180+(y[:,None]-15)*3+np.zeros((31,31))).tolist(),"colorbar":{"label":"phase (deg)"}}
-    (tmp_path/'data.json').write_text(json.dumps({"fit_results":{"q0":{"l1_at_pick":.01,"readout_f_floor":population_floor}}}))
+    (tmp_path/'data.json').write_text(json.dumps({"fit_results":{"q0":{population_key:.01,"readout_f_floor":population_floor}}}))
     captured=[];original=api.analyze
     def capture(request):
         captured.append(request['meta'].copy())
@@ -214,6 +215,28 @@ def test_incoherent_low_power_positions_are_not_a_frequency():
         'smooth':{'sigma_x':0,'sigma_y':0}})
     assert out['fit']['verdict']=='no feature'
     assert out['fit']['values'] is None
+
+
+def test_resolved_low_power_asymptote_is_retained():
+    x, y = np.arange(61.), np.arange(201.)
+    centers = 100. + np.maximum(x - 12, 0) * .2
+    z = np.exp(-((y[:, None] - centers) / 3)**2)
+    out = api.analyze({'x': x, 'y': y, 'z': z,
+        'meta': {'x': {'label': 'power'}, 'y': {'label': 'frequency'}, 'summary': 'asymptote'}})
+    assert out['fit']['verdict'] == 'ok'
+    assert out['fit']['values']['asymptote'] == pytest.approx(100., abs=.1)
+
+
+def test_two_point_boundary_contour_competes_with_interior_minimum(monkeypatch):
+    from quam_state_manager.core.mapfit import models
+    x, y = np.arange(31.), np.arange(31.)
+    lines = [np.array([[0., 10.], [1., 10.]]), np.array([[14., 25.], [15., 25.], [16., 25.]])]
+    monkeypatch.setattr(models, 'contours', lambda *args, **kwargs: [{'full_lines': lines}])
+    z = (x[None, :] - 15)**2 + (y[:, None] - 25)**2
+    z[10, :2] = [-1., 0.]
+    out = models.landscape(z, x, y, {'phase': np.zeros_like(z)})
+    assert out['verdict'] == 'outside the sweep'
+    assert out['values'] is None
 
 
 def test_nominal_policy_is_not_compared_with_an_unrestricted_minimum():
