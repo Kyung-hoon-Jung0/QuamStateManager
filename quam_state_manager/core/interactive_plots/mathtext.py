@@ -10,7 +10,7 @@ _SYMBOLS.update(varepsilon="\u03f5", varphi="\u03d5", vartheta="\u03d1", varrho=
 
 
 def readable(text):
-    if not isinstance(text, str) or "$" not in text:
+    if not isinstance(text, str):
         return text
 
     def render(expression):
@@ -23,7 +23,12 @@ def readable(text):
                             (m[2] if m[2] is not None else m[3]) + "</" + ("sub" if m[1] == "_" else "sup") + ">", expression)
         return expression.replace("{", "").replace("}", "")
 
-    return re.sub(r"(?<!\\)\$([^$]+)(?<!\\)\$", lambda m: render(m[1]), text)
+    parts, end = [], 0
+    for match in re.finditer(r"(?<!\\)\$([^$]+)(?<!\\)\$", text):
+        parts.extend((escape(text[end:match.start()]), render(match[1])))
+        end = match.end()
+    parts.append(escape(text[end:]))
+    return "".join(parts).replace("\r\n", "\n").replace("\n", "<br>")
 
 
 def plotly_text(value, key=""):

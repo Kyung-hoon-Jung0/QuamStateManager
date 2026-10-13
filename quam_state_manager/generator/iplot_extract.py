@@ -225,6 +225,7 @@ def _annotations(ax):
                           else t.get_transform() == ax.transAxes),
             "color": _hex(t.get_color()), "size": _f(t.get_fontsize()),
             "ha": t.get_ha(), "va": t.get_va(),
+            "wrap": t.get_wrap(),
         }
         if isinstance(t, Annotation):
             a.update(arrow=t.arrow_patch is not None, xy=_flist(t.xy),
@@ -406,7 +407,7 @@ def extract_figure(fig, key, title=None):
         "axes": [extract_axes(ax, axes) for ax in axes],
         "texts": [{"text": t.get_text(), "x": _f(t.get_position()[0]),
                    "y": _f(t.get_position()[1]), "color": _hex(t.get_color()),
-                   "size": _f(t.get_fontsize()), "ha": t.get_ha(), "va": t.get_va()}
+                   "size": _f(t.get_fontsize()), "ha": t.get_ha(), "va": t.get_va(), "wrap": t.get_wrap()}
                   for t in f.texts if t.get_transform() == f.transFigure],
         "skipped": [{"artist": type(a).__name__, "n": 1, "reason": "unsupported figure artist"}
                     for a in list(f.artists) + list(f.images) + list(f.patches) + list(f.lines)] +

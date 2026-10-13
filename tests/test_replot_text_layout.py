@@ -63,3 +63,33 @@ def test_extractor_carries_source_figure_aspect():
         assert extract_figure(fig, "map")["size_inches"] == [15, 9]
     finally:
         plt.close(fig)
+
+
+def test_serialized_warning_wraps_newlines_and_escapes_pseudo_html():
+    warning = "the rotation per pair stays positive across the whole window: no zero crossing to report " * 4
+    note = {"text": warning + "\nroot < lower & upper > 0", "x": .02, "y": .06,
+            "xref_frac": True, "size": 8, "ha": "left", "va": "bottom", "wrap": True}
+    axes = [{"xlabel": "alpha", "traces": [{"type": "line", "x": [0, 1], "y": [0, 1]}],
+             "annotations": [note], "grid": {"row": 0, "col": col, "nrows": 1, "ncols": 3}}
+            for col in range(3)]
+    figure = {"axes": axes, "texts": [{**note, "text": "figure < warning & note >\nsecond line"}]}
+    notes = mpljson_to_plotly(figure)["layout"]["annotations"]
+    assert all("<br>" in n["text"] and "\n" not in n["text"] for n in notes)
+    assert all("&lt;" in n["text"] and "&gt;" in n["text"] and "&amp;" in n["text"] for n in notes)
+    assert max(len(line) for line in notes[0]["text"].split("<br>")[:-1]) <= 55
+    assert readable("literal <br> & $x^2$\nnext") == "literal &lt;br&gt; &amp; x<sup>2</sup><br>next"
+
+
+def test_extractor_retains_annotation_and_figure_wrap():
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    fig, ax = plt.subplots()
+    try:
+        ax.annotate("warning\nroot side", (.02, .06), xycoords="axes fraction", wrap=True)
+        fig.text(.1, .1, "figure note", wrap=True)
+        extracted = extract_figure(fig, "warning")
+        assert extracted["axes"][0]["annotations"][0]["wrap"] is True
+        assert extracted["texts"][0]["wrap"] is True
+    finally:
+        plt.close(fig)

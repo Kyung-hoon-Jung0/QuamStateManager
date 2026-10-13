@@ -593,7 +593,8 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         base = axes[base_i]
         xref, yref = _ref("x", pid), _ref("y", pid)
 
-        _add_artists(base, xref, yref, data, layout, notes)
+        panel_width = 1080 * (x1 - x0)
+        _add_artists(base, xref, yref, data, layout, notes, panel_width)
         layout[_axis_id("xaxis", pid)] = {**_axis_props(base, log_key="x"),
                                           "anchor": yref, "domain": [max(x0, 0), min(x1, 1)]}
         layout[_axis_id("yaxis", pid)] = {**_axis_props(base, log_key="y"),
@@ -612,14 +613,14 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                     **_axis_props(sec, log_key="x"), "anchor": yref,
                     "overlaying": xref, "side": sec.get("x_side", "top"),
                     "domain": [max(x0, 0), min(x1, 1)]}
-                _add_artists(sec, xref2, yref, data, layout, notes)
+                _add_artists(sec, xref2, yref, data, layout, notes, panel_width)
             else:                                       # twinx → secondary right Y
                 yref2 = _ref("y", 100 + pid)
                 layout[_axis_id("yaxis", 100 + pid)] = {
                     **_axis_props(sec, log_key="y"), "anchor": xref,
                     "overlaying": yref, "side": sec.get("y_side", "right"),
                     "domain": [max(y0, 0), min(y1, 1)]}
-                _add_artists(sec, xref, yref2, data, layout, notes)
+                _add_artists(sec, xref, yref2, data, layout, notes, panel_width)
 
         for j, sec in enumerate(base.get("secondary_axes", [])):
             kind = sec["axis"]
@@ -703,8 +704,14 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                        "skipped": skipped, "notices": notices})
 
 
-def _text_note(a, xref, yref):
-    result = {"text": a["text"], "showarrow": False, "x": a.get("x", 0), "y": a.get("y", 0),
+def _text_note(a, xref, yref, width=1080):
+    text = a["text"]
+    if a.get("wrap"):
+        import textwrap
+        columns = max(12, int(width * .95 / (max(1, a.get("size", 10)) * .6)))
+        text = "\n".join("\n".join(textwrap.wrap(line, width=columns, break_long_words=False,
+                           break_on_hyphens=False)) for line in text.split("\n"))
+    result = {"text": text, "showarrow": False, "x": a.get("x", 0), "y": a.get("y", 0),
               "xref": xref, "yref": yref, "font": {"size": a.get("size", 10)},
               "xanchor": {"center": "center", "right": "right"}.get(a.get("ha"), "left"),
               "yanchor": {"center": "middle", "top": "top"}.get(a.get("va"), "bottom")}
@@ -713,7 +720,7 @@ def _text_note(a, xref, yref):
     return result
 
 
-def _add_artists(ax, xref, yref, data, layout, notes):
+def _add_artists(ax, xref, yref, data, layout, notes, width=1080):
     for t in sorted(ax.get("traces", []), key=lambda t: t.get("zorder") or 0):
         coord = t.get("coord")
         if coord and t["type"] == "polygon":
@@ -735,7 +742,7 @@ def _add_artists(ax, xref, yref, data, layout, notes):
                 data.append(trace)
     for a in ax.get("annotations", []):
         frac = a.get("xref_frac", False)
-        note = _text_note(a, xref + (" domain" if frac else ""), yref + (" domain" if frac else ""))
+        note = _text_note(a, xref + (" domain" if frac else ""), yref + (" domain" if frac else ""), width)
         if not a.get("arrow") and a.get("textcoords") == "offset points":
             frac = a.get("xycoords") == "axes fraction"
             note.update(x=a["xy"][0], y=a["xy"][1],
