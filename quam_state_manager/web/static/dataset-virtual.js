@@ -1645,9 +1645,18 @@
         });
     }
 
+    function searchStorageKey() {
+        return state.collections ? 'sm.collectionsSearch' : 'sm.datasetSearch';
+    }
+
+    function saveSearchText(value) {
+        try { window.sessionStorage.setItem(searchStorageKey(), value); } catch (e) {}
+    }
+
     function onSearchInput() {
         var inp = document.getElementById('dataset-search');
         var q = inp ? (inp.value || '').trim() : '';
+        saveSearchText(inp ? inp.value : '');
         if (q) {
             var parsed = parseQuery(q);
             state.searchTokens = parsed.freeText;
@@ -2667,6 +2676,7 @@
     window.clearDatasetFilters = function () {
         var inp = document.getElementById('dataset-search');
         if (inp) inp.value = '';
+        saveSearchText('');
         state.searchTokens = []; state.searchGroups = []; state.scopedFilters = []; state.unknownScopes = [];
         if (state.qubitFilter) state.qubitFilter.clear();
         if (state.pairFilter) state.pairFilter.clear();
@@ -2921,7 +2931,11 @@
         // Pull initial filter state from the existing search input + exp chips.
         // Route through parseQuery so scoped tokens persist across HTMX swaps.
         var inp = document.getElementById('dataset-search');
+        if (inp && !inp.value && !inp.getAttribute('data-preset')) {
+            try { inp.value = window.sessionStorage.getItem(searchStorageKey()) || ''; } catch (e) {}
+        }
         var q = inp ? (inp.value || '').trim() : '';
+        if (inp) saveSearchText(inp.value);
         if (q) {
             var parsed = parseQuery(q);
             state.searchTokens = parsed.freeText;
