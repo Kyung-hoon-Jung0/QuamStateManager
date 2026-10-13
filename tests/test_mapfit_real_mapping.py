@@ -112,3 +112,82 @@ def test_chevron_noise_rows_do_not_invent_a_second_branch():
     assert out["verdict"] == "ok"
     assert out["values"]["dv0"] == pytest.approx(-2, abs=.5)
     assert out["values"]["two_j_hz"] == pytest.approx(20e6, rel=.05)
+
+
+def test_json_null_phase_cells_are_nan_before_cap_inference():
+    x, y = np.arange(31.), np.arange(31.)
+    phase = (180 + (y[:, None] - 15) * 3 + np.zeros((31, 31))).tolist()
+    phase[2][2] = None
+    try:
+        out = api.analyze({"x": x, "y": y, "z": (x[None, :] - 15)**2 + (y[:, None] - 15)**2,
+            "meta": {"x": {"label": "a_scan"}, "y": {"label": "b_over_a"}, "phase": phase, "circular": 360}})
+    except TypeError:
+        out = {}
+    assert out.get("fit", {}).get("verdict") == "ok"
+    assert out["caps_applied"]["cap_x"] == pytest.approx(5/3/4)
+
+
+def test_ridge_default_does_not_blend_steep_neighboring_columns():
+    x, y = np.arange(13.), np.arange(161.)
+    center = 140 - (x - 5.3)**2
+    z = np.exp(-((y[:, None] - center)/1.5)**2)
+    request = {"x": x, "y": y, "z": z,
+        "meta": {"x": {"label": "flux"}, "y": {"label": "frequency"}}}
+    out = api.analyze(request)
+    assert out["caps_applied"]["sigma_x"] == .5
+    assert out["fit"]["verdict"] == "ok"
+    assert out["fit"]["values"]["x"] == pytest.approx(5.3, abs=.1)
+    assert out["fit"]["values"]["y"] == pytest.approx(140, abs=.5)
+
+
+@pytest.mark.parametrize("label,name", [("neg_offset_v (V)", "optimal_neg_offset_v"),
+    ("t_phi (ns)", "optimal_t_phi")])
+def test_landscape_stage_comparison_uses_the_varied_knob(tmp_path, label, name):
+    x, y = np.arange(31.), np.arange(31.)
+    z = ((x[None, :] - 15)/10)**2 + ((y[:, None] - 15)/10)**2
+    phase = 180 + (y[:, None] - 15) * 3 + np.zeros_like(z)
+    trace = {"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": y.tolist(), "z": z.tolist()}
+    phase_trace = {**trace, "z": phase.tolist(), "colorbar": {"label": "phase (deg)"}}
+    axis = {"title": "q0", "xlabel": "b_over_a", "ylabel": label, "traces": [trace]}
+    sibling = {**axis, "traces": [phase_trace]}
+    (tmp_path / "data.json").write_text(json.dumps({"fit_results": {"q0": {
+        "optimal_a_scan": 1., "optimal_b_over_a": 15., name: 15.}}}))
+    out = map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path), experiment_name="synthetic"),
+        "run", {"axes": [axis], "map_sibling_axes": [sibling]}, {"data": [trace]}, {})
+    assert out["classification"]["type"] == "landscape"
+    assert out["compare"]["node_name"] == name
+    assert out["compare"]["verdict"] == "agree"
+
+
+def test_flat_contour_valley_is_unresolved_at_measured_population_noise():
+    x,y = np.arange(31.),np.arange(31.)
+    meta = {"x":{"label":"b_over_a"},"y":{"label":"a_scan"},
+        "phase":180+(y[:,None]-15)*3+np.zeros((31,31)), "circular":360.,"objective_sigma":.01}
+    out = api.analyze({"x":x,"y":y,"z":.001*(x[None,:]-15)**2+(y[:,None]-15)**2,"meta":meta})
+    assert out["fit"]["verdict"] == "ambiguous"
+    assert out["fit"]["values"] is None
+
+
+def test_saved_population_noise_reaches_landscape_model(tmp_path,monkeypatch):
+    x,y=np.arange(31.),np.arange(31.)
+    trace={"type":"heatmap","full_resolution":True,"x":x.tolist(),"y":y.tolist(),
+        "z":(.001*(x[None,:]-15)**2+(y[:,None]-15)**2).tolist()}
+    axis={"xlabel":"b_over_a","ylabel":"a_scan","title":"q0","traces":[trace]}
+    phase={**trace,"z":(180+(y[:,None]-15)*3+np.zeros((31,31))).tolist(),"colorbar":{"label":"phase (deg)"}}
+    (tmp_path/'data.json').write_text(json.dumps({"fit_results":{"q0":{"l1_at_pick":.01,"readout_f_floor":.01}}}))
+    captured=[];original=api.analyze
+    def capture(request):
+        captured.append(request['meta'].copy())
+        return original(request)
+    monkeypatch.setattr(api,'analyze',capture)
+    out=map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path),experiment_name='synthetic',
+        parameters={"num_shots":100,"num_frame_rotations":8}),"run",
+        {"axes":[axis],"map_sibling_axes":[{**axis,"traces":[phase]}]},{"data":[trace]}, {})
+    assert captured[0].get('objective_sigma') == pytest.approx(np.sqrt(.01*.99*2)/(2*np.sqrt(800)))
+
+
+def test_missing_landscape_pick_is_not_a_comparison_to_nominal_amplitude():
+    out=saved_comparisons('landscape',{'optimal_a_scan':1.,'optimal_b_over_a':None},
+        {'verdict':'ok','values':{'x':.9,'y':.5}}, {'values':None}, .01,.05,
+        landscape_fields=[('optimal_a_scan','x'),('optimal_b_over_a','y')])
+    assert all(c['node_value'] is None and c['verdict']=='n/a' for c in out)

@@ -115,6 +115,16 @@ def analyze(run, uid, figure, converted, body):
     record = records[0] if len(records) == 1 and isinstance(records[0], dict) and body.get("source") != "ndview" else {}
     if record.get("b_resolved") is False:
         meta["b_resolved"] = False
+    if "l1_at_pick" in record:
+        import numpy as np
+        parameters = getattr(run,"parameters",{})
+        shots = parameters.get("num_shots",0) * parameters.get("num_frame_rotations",1)
+        floor = record.get("readout_f_floor")
+        finite = np.asarray(trace["z"],float)
+        finite = finite[np.isfinite(finite)]
+        if shots > 0 and isinstance(floor,(int,float)) and 0 <= floor <= 1 and finite.size:
+            on = min(1.,max(floor,floor+2*float(np.min(finite))))
+            meta["objective_sigma"] = math.sqrt(on*(1-on)+floor*(1-floor))/(2*math.sqrt(shots))
     operation = record.get("operation") or getattr(run, "parameters", {}).get("operation")
     if operation == "x90":
         meta["theta"] = math.pi / 2
@@ -150,6 +160,15 @@ def analyze(run, uid, figure, converted, body):
     node_value = record.get(node_name)
     if isinstance(node_value, (float, int)) and math.isfinite(node_value):
         meta.update(node_value=node_value, node_name=node_name, value_key=value_key)
+    landscape_fields = []
+    if classification["type"] == "landscape":
+        for key, label in (("x", axis.get("xlabel", "").lower()), ("y", axis.get("ylabel", "").lower())):
+            name = ("optimal_b_over_a" if "b_over_a" in label else "optimal_t_phi" if "t_phi" in label
+                else "optimal_neg_offset_v" if "neg_offset" in label else "optimal_a_scan"
+                if "a_scan" in label or "scan amplitude" in label else None)
+            if name:
+                landscape_fields.append((name, key))
+        landscape_fields.sort(key=lambda item: item[0] == "optimal_b_over_a")
     array, coordinates = trace["z"], {"x": trace["x"], "y": trace["y"]}
     coordinate_maps = {}
     omitted = 0
@@ -219,7 +238,7 @@ def analyze(run, uid, figure, converted, body):
     if result["caps_applied"]["transposed"]:
         dx, dy = dy, dx
     references = saved_comparisons(classification["type"], record, result["fit"], result["raw_fit"],
-        dx, dy, frequency_scale, time_scale, control_scale, lobe)
+        dx, dy, frequency_scale, time_scale, control_scale, lobe, landscape_fields)
     if references:
         result["comparisons"] = references
         result["compare"] = references[0]

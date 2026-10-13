@@ -482,6 +482,13 @@ def landscape(z,x,y,meta=None,raw=None):
         finite = np.isfinite(scores)
         if not finite.any():
             continue
+        sigma = meta.get("objective_sigma",0.)
+        if sigma > 0:
+            near = line[finite & (scores <= np.nanmin(scores) + 2*sigma)]
+            span = np.ptp(near / [x[1]-x[0],y[1]-y[0]],axis=0) if len(near) else [0.,0.]
+            if np.max(span) > 4:
+                return result("ambiguous", candidates=near.tolist(),
+                    reason="Contour minimum is unresolved at the measured objective noise", objective_sigma=sigma)
         # Every distinct local minimum along the line competes, so two wells on one contour are seen.
         filled = np.where(finite,scores,np.nanmax(scores))
         prominence = max(.05*float(np.ptp(filled)),3*floor)

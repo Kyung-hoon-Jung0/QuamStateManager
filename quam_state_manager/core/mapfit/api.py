@@ -108,7 +108,7 @@ def _cap_info(kind,a,x,y,meta,raw_fit):
     phase = meta.get("phase")
     if phase is not None and "contour_spacing_pts" not in meta:
         period = meta.get("circular",360.)
-        angle = np.unwrap(np.unwrap(np.asarray(phase)*2*np.pi/period,axis=1),axis=0)*360/(2*np.pi)
+        angle = np.unwrap(np.unwrap(np.asarray(phase,float)*2*np.pi/period,axis=1),axis=0)*360/(2*np.pi)
         gradients = np.hypot(*np.gradient(angle))
         slope = float(np.nanmax(gradients))
         spacing = 5/slope if slope>0 else float("inf")
