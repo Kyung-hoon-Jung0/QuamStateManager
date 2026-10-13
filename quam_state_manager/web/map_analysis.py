@@ -89,7 +89,8 @@ def analyze(run, uid, figure, converted, body):
     if not trace.get("full_resolution", False):
         raise ValueError("Full-resolution map not available for server analysis")
     meta = {"x": {"label": axis.get("xlabel", "")}, "y": {"label": axis.get("ylabel", "")},
-            "signal_label": (trace.get("colorbar") or {}).get("label", "")}
+            "signal_label": (trace.get("colorbar") or {}).get("label", ""),
+            "map_label": figure.get("key", "")}
     if "power" in (axis.get("xlabel", "") + axis.get("ylabel", "")).lower():
         meta["summary"] = "asymptote"
     def entity_of(candidate):
@@ -267,7 +268,7 @@ def analyze(run, uid, figure, converted, body):
         for prefix in ("sigma_", "cap_"):
             display_caps[prefix + "x"], display_caps[prefix + "y"] = applied[prefix + "y"], applied[prefix + "x"]
     model = body.get("fit", {}).get("model", "auto")
-    model = classification["models"][0] if model == "auto" else model
+    model = (classification["models"] or ["none"])[0] if model == "auto" else model
     contour_note = ""
     if body.get("contour", {}).get("on"):
         contour_note = (" [contour level " + ", ".join(f"{c['level']:.4g}" for c in result["contours"]) + "]"

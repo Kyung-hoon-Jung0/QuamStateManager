@@ -145,8 +145,8 @@ def analyze(request):
     kind = classification["type"]
     settings = request.get("fit") or {}
     model = settings.get("model","auto")
-    model = classification["models"][0] if model=="auto" else model
-    if model not in classification["models"]:
+    model = (classification["models"] or ["none"])[0] if model=="auto" else model
+    if model not in (classification["models"] or ["none"]):
         raise ValueError("Model is not available for this map type")
     # Models use count/frequency on y, time on x. Sort descending axes before modeling.
     if np.any(np.diff(x)<0):
@@ -170,7 +170,11 @@ def analyze(request):
         # The sibling's own period by range: turns stored under a degree label still read as turns.
         meta["circular"] = circular_period(meta["phase"],{"signal_label":"phase",
                                            "signal_units":meta.get("phase_units","")}) or 360.
-    raw_fit = fit(model,a,x,y,meta)
+    def evaluate(array, fit_meta, raw=None):
+        if model == "none":
+            return {"verdict": "unsupported", "verdict_line": classification["reason"], "values": None}
+        return fit(model, array, x, y, fit_meta, raw=raw)
+    raw_fit = evaluate(a,meta)
     cap_x,cap_y,rows,defaults = _cap_info(kind,a,x,y,meta,raw_fit)
     options = request.get("smooth") or {}
     sigma_x = float(options.get("sigma_x",defaults[0]))
@@ -196,7 +200,7 @@ def analyze(request):
     if "phase" in meta:
         fit_meta["phase"] = smooth(meta["phase"],applied["sigma_x"],applied["sigma_y"],kernel,circular=meta.get("circular",360))
     fit_meta["noise_gain"] = noise_gain(a.shape,applied["sigma_x"],applied["sigma_y"],kernel,row_sigmas)
-    fitted = fit(model,zs,x,y,fit_meta,raw=a)
+    fitted = evaluate(zs,fit_meta,raw=a)
     if applied["warning"]:
         fitted["verdict_line"] += "; "+applied["warning"]
         fitted["warnings"] = [applied["warning"]]

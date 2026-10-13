@@ -12,7 +12,8 @@ def test_classification_and_transpose(labels, kind):
     result = classify(x, y, {"x": {"name": labels[0]}, "y": {"name": labels[1]}})
     swapped = classify(y, x, {"x": {"name": labels[1]}, "y": {"name": labels[0]}})
     assert result["type"] == swapped["type"] == kind
-    assert result["models"][-1] == "extremum"
+    # v1.4.1: unknown extremum -> no model, because coordinate quantities do not justify a fit.
+    assert result["models"] == [] if kind == "unknown" else result["models"][-1] == "extremum"
     if kind in ("ridge", "erroramp", "chevron"):
         assert result["feature_axis"] != swapped["feature_axis"]
 

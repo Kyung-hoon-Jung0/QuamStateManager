@@ -12,7 +12,7 @@ VOCABULARY = {
 }
 MENUS = {"erroramp": ("erroramp", "extremum"), "ridge": ("ridge", "extremum"),
          "chevron": ("chevron", "extremum"), "landscape": ("landscape", "extremum"),
-         "unknown": ("extremum",)}
+         "unknown": ()}
 
 
 def circular_period(z, meta):
@@ -49,8 +49,15 @@ def classify(x, y, meta=None, z=None, vocabulary=None):
     meta = meta or {}
     rx = _roles(x, meta.get("x", {}), vocabulary or VOCABULARY)
     ry = _roles(y, meta.get("y", {}), vocabulary or VOCABULARY)
+    labels = " ".join(str(meta.get(dim, {})) for dim in ("x", "y")).lower()
+    signal = (str(meta.get("map_label", "")) + " " + str(meta.get("signal_label", ""))).lower()
+    reason = "No supported model for these coordinate quantities; smoothing and contours only."
+    unsupported = any(word in labels + " " + signal for word in
+                      ("idle time", "idle_time", "relaxation", "echo", "drag coefficient", "drag alpha"))
+    metric = any(word in signal for word in ("blob_radius", "blob radius", "outlier", "distance_map", "fidelity"))
     kind, feature_axis = "unknown", None
     for first, second, candidate in (("count", "amplitude", "erroramp"),
+                                     ("time", "frequency", "chevron"),
                                      ("time", "control", "chevron"),
                                      ("frequency", "control", "ridge")):
         if first in ry and second in rx:
@@ -61,5 +68,10 @@ def classify(x, y, meta=None, z=None, vocabulary=None):
             break
     if kind == "unknown" and "control" in rx and "control" in ry:
         kind = "landscape"
+    if unsupported or metric:
+        kind, feature_axis = "unknown", None
+        reason = ("No supported decay model; smoothing and contours only." if unsupported and "drag" not in labels
+                  else "No supported model for this figure family; smoothing and contours only.")
     return {"type": kind, "feature_axis": feature_axis, "models": list(MENUS[kind]),
+            "reason": reason if kind == "unknown" else "",
             "circular": circular_period(z, meta) if z is not None else None}

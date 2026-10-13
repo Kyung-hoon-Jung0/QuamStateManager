@@ -12,7 +12,8 @@ from tests.mapfit_synthetic import sample
 
 LABELS = {"erroramp": ("amp_prefactor", "nb_of_pulses"), "ridge": ("flux", "frequency"),
           "chevron": ("duration", "detuning"), "landscape": ("a_scan", "b_over_a"),
-          "extremum": ("position", "index")}
+          # v1.4.1: unknown axes -> supported controls, to keep testing the extremum estimator's faults.
+          "extremum": ("a_scan", "b_over_a")}
 MODELS = list(LABELS)
 # Where each model's planted value lives and one pixel/step of that axis.
 KEYS = {"erroramp": {"a_pi": .005}, "ridge": {"x": 1., "y": 1.}, "chevron": {"dv0": .1},
@@ -24,7 +25,7 @@ def request(model, z=None, smooth=None, **kwargs):
     lx, ly = LABELS[model]
     return {"z": planted if z is None else z, "x": x, "y": y,
             "meta": {**meta, "x": {"name": lx}, "y": {"name": ly}},
-            "smooth": smooth or {}, "fit": {"model": "auto"}}
+            "smooth": smooth or {}, "fit": {"model": "extremum" if model == "extremum" else "auto"}}
 
 
 @pytest.mark.parametrize("model", MODELS)

@@ -121,6 +121,10 @@
                         ['x', 'y'].forEach(function (axis) { control('sigma_' + axis).value = result.caps_applied['sigma_' + (caps.transposed ? (axis === 'x' ? 'y' : 'x') : axis)]; });
                         control('model').replaceChildren();
                         result.classification.models.forEach(function (model) { var option = document.createElement('option'); option.value = model; option.textContent = model; control('model').appendChild(option); });
+                        control('model').disabled = !result.classification.models.length;
+                        if (control('model').disabled) {
+                            var noModel = document.createElement('option'); noModel.value = 'none'; noModel.textContent = 'Smoothing and contours only'; control('model').appendChild(noModel);
+                        }
                         control('band').value = result.classification.circular ? 5 * result.classification.circular / 360 : 0;
                         try {
                             var saved = JSON.parse(window.localStorage.getItem('quam_map_tools_v1') || '{}')[kind];
