@@ -92,6 +92,8 @@ function check(value, message) { checks++; assert.ok(value, message); }
     check(!c('provenance').textContent.includes('STALE') && c('apply').disabled, 'stale response ignored');
     displayOnly = true; await wait(330);
     check(c('apply').disabled && c('status').textContent.includes('not verified on this run'), 'display-only contract has no Apply');
+    // v1.4.1: a disabled Apply had no reason -> the button identifies the missing verified target.
+    check(c('apply').textContent.includes('no verified target') && c('apply').title.includes('not verified'), 'disabled Apply explains why');
     const nonmap = d.createElement('div'); d.body.appendChild(nonmap);
     w.MapTools.mount(nonmap, plot, {data: [{type: 'scatter'}]}, {uid: 'run'});
     check(!nonmap.querySelector('.map-tools-button'), 'non heatmaps hide tools');

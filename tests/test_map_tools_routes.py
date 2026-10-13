@@ -21,6 +21,9 @@ def rig(tmp_path, monkeypatch):
                                   "scale": 2., "offset": 0., "verified_on": "run"}]},
         "status_chip": "current code"}
     (tmp_path / "data.json").write_text(json.dumps({"fit_results": {"q0": {"optimal_a_scan": .2}}}))
+    # v1.4.1: declared tier -> actual accepted target value, so comparisons prove the written quantity.
+    (tmp_path / "node.json").write_text(json.dumps({"patches": [
+        {"op": "replace", "path": "/quam/qubits/q0/amplitude", "old": .3, "value": .4}]}))
     run = SimpleNamespace(folder_path=str(tmp_path), experiment_name="synthetic", id=1)
     monkeypatch.setattr(replot, "replot_capability", lambda *_: {"available": True})
     monkeypatch.setattr(replot, "replot_run", lambda *_: {"figures": [figure]})
@@ -165,7 +168,9 @@ def test_zero_count_baseline_and_secondary_prefactor_are_bound_before_fit(tmp_pa
             "parent": [800, 1000, 1200], "forward": [.8, 1., 1.2]}}],
         "traces": [{"type": "heatmap", "x": (x * 1000).tolist(), "y": y.tolist(), "z": z.tolist(), "full_resolution": True}]}
     figure = {"axes": [axis]}
-    # v1.4.1: unproven map targets -> this unit conversion uses accepted-write evidence.
+    # v1.4.1: declared tier -> accepted node patch, to keep the conversion pin applying a verified target.
+    (tmp_path / "node.json").write_text(json.dumps({"patches": [
+        {"op": "replace", "path": "/quam/qubits/q0/amplitude", "old": .2, "value": .2 * truth["a_pi"]}]}))
     converted = {"data": [axis["traces"][0]], "clickable": {"evidence_tier": "applied", "targets": [{"axis": "x", "path": "qubits.q0.amplitude", "transform": {
         "type": "prefactor", "old": .2, "coordinate_scale": .001, "coordinate_offset": 0}}]}}
     (tmp_path / "data.json").write_text(json.dumps({"fit_results": {"q0": {"opt_amp_prefactor": truth["a_pi"]}}}))
@@ -226,7 +231,9 @@ def test_erroramp_tightest_cap_override_contours_and_figure_axis_provenance(tmp_
         "secondary_axes": [{"axis": amp_axis, "label": "amplitude prefactor", "map": {
             "parent": [807, 1007, 1207], "forward": [.8, 1., 1.2]}}],
         "traces": [{"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": y.tolist(), "z": data.tolist()}]}
-    # v1.4.1: unproven map targets -> this cap pin uses accepted-write evidence.
+    # v1.4.1: declared tier -> accepted node patch, to keep the cap pin applying a verified target.
+    (tmp_path / "node.json").write_text(json.dumps({"patches": [
+        {"op": "replace", "path": "/quam/qubits/q0/amplitude", "old": .2, "value": .2 * truth["a_pi"]}]}))
     converted = {"data": [axis["traces"][0]], "clickable": {"evidence_tier": "applied", "targets": [{"axis": amp_axis,
         "path": "qubits.q0.amplitude", "transform": {"type": "prefactor", "old": .2,
         "coordinate_scale": .001, "coordinate_offset": -.007}}]}}
@@ -304,7 +311,9 @@ def test_phase_error_objective_uses_only_its_entity_and_declared_zero_target(tmp
     foreign = axis("q1", "phase error per gate", 20 * (yy - 1.2), True)
     objective = axis("q0", "leakage", (xx - .2) ** 2 + (yy + .3) ** 2)
     figure = {"axes": [own, foreign, objective]}
-    # v1.4.1: unproven map targets -> this entity pin uses accepted-write evidence.
+    # v1.4.1: declared tier -> accepted node patch, to keep the entity pin applying a verified target.
+    (tmp_path / "node.json").write_text(json.dumps({"patches": [
+        {"op": "replace", "path": "/quam/qubits/q0/amplitude", "old": .1, "value": .2}]}))
     converted = {"data": [a["traces"][0] for a in figure["axes"]], "clickable": {"evidence_tier": "applied", "targets": [{
         "path": "qubits.q0.amplitude", "axis": "x", "plotly_axis": "x", "scale": 1}]}}
     result = map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path)), "phase-target", figure, converted,

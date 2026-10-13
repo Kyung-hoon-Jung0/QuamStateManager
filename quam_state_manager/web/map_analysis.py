@@ -10,7 +10,7 @@ import threading
 
 from quam_state_manager.core.mapfit import api
 from quam_state_manager.core.mapfit.contour import centers
-from quam_state_manager.core.mapfit.compare import saved_comparisons
+from quam_state_manager.core.mapfit.compare import compare, saved_comparisons
 
 # Map calculation failures are request errors, including numerical domain failures.
 REQUEST_ERRORS = (ValueError, TypeError, KeyError, IndexError, ArithmeticError)
@@ -339,37 +339,72 @@ def analyze(run, uid, figure, converted, body):
             f"node value {compact(comparison['node_value'])}, delta {compact(comparison['delta'])}, {comparison['verdict']}")
     result["provenance_text"] = text[:300]
     origin = {"src": "map_fit", "run_uid": uid, "request_hash": result["request_hash"], "text": text[:300]}
-    updates = []
+    from quam_state_manager.core.interactive_plots.learn_click import evidence
+    writes = evidence(run)
+    updates, target_comparisons, refusals = [], [], []
     for target in (converted.get("clickable") or {}).get("targets", []):
         if target.get("evidence_tier", (converted.get("clickable") or {}).get("evidence_tier")) != "applied":
             continue
         target_axis = target.get("axis", "x")
         if target.get("plotly_axis", panel[target_axis + "ref"]) != panel[target_axis + "ref"]:
             continue
+        path = target.get("path", "")
+        # A ridge vertex estimates the upper sweet spot, never the separate lower one.
+        if classification["type"] == "ridge" and (path.endswith((".min_offset", ".joint_offset")) or
+                any(name.endswith(".min_offset") for name in target.get("provenance", {}).get("result_names", []))):
+            refusals.append(f"{path}: this model does not estimate the lower sweet spot")
+            continue
+        original_path = target.get("path_template", path).replace("{q}", target.get("entity", "")).replace("{pair}", target.get("entity", ""))
+        proven = [w for w in writes if w["path"] in (path, original_path) and w["tier"] == "applied"]
+        if len(proven) != 1:
+            refusals.append(f"{path}: node value for this target is unavailable in accepted run writes")
+            continue
         coordinate = _coordinate(result, target_axis, body.get("fit", {}).get("model"))
         if coordinate is None:
             continue
-        if target_axis in coordinate_maps:
-            mapping = coordinate_maps[target_axis]
-            coordinate = (coordinate - mapping["offset"]) / mapping["scale"]
         transform = target.get("transform")
         if transform and transform.get("type") != "prefactor":
             continue
-        value = coordinate * target.get("scale", 1) + target.get("offset", 0)
-        if transform:
-            value = transform["old"] * (coordinate * transform.get("coordinate_scale", 1) + transform.get("coordinate_offset", 0))
-        path = target.get("path", "")
+        def mapped(coordinate):
+            if coordinate is None:
+                return None
+            if target_axis in coordinate_maps:
+                mapping = coordinate_maps[target_axis]
+                coordinate = (coordinate - mapping["offset"]) / mapping["scale"]
+            if transform:
+                return transform["old"] * (coordinate * transform.get("coordinate_scale", 1) + transform.get("coordinate_offset", 0))
+            return coordinate * target.get("scale", 1) + target.get("offset", 0)
+        value = mapped(coordinate)
         if math.isfinite(value) and path and "{" not in path:
+            raw = mapped(_coordinate({**result, "fit": result["raw_fit"]}, target_axis, body.get("fit", {}).get("model")))
+            grid = result["smoothed"][target_axis]
+            step = float(np.median(np.abs(np.diff(grid))))
+            factor = abs(transform["old"] * transform.get("coordinate_scale", 1)) if transform else abs(target.get("scale", 1))
+            tol, tol_source = step * factor, "one sweep step in target units"
+            if classification["type"] == "erroramp" and transform:
+                tol = .003 * abs(transform["old"])
+                tol_source = "reference prefactor tolerance converted to target units"
+            c = compare(proven[0]["value"], value, tol, tol_source, path)
+            unit = "Hz" if path.endswith((".f_01", ".RF_frequency")) else "V" if path.endswith(("_offset", ".amplitude")) else "target units"
+            c.update(quantity=f"{unit}; node value from accepted run patches", raw_value=raw,
+                     raw_smoothed_delta=value-raw if raw is not None else None)
+            target_comparisons.append(c)
+            row_text = (f"run #{run_id}: {model}; {path}; node {compact(c['node_value'])}, "
+                        f"SM {compact(value)}, delta {compact(c['delta'])} {unit}; {c['verdict']} "
+                        f"(tolerance {compact(tol)} {unit}, {tol_source}); code {code}")[:300]
             details = {"figure": body.get("fig", ""), "panel": index,
                 "run_id": run_id, "experiment_name": getattr(run, "experiment_name", ""),
                 "source": body.get("source", "replot"), "settings": deepcopy(body),
                 "caps_applied": deepcopy(result["caps_applied"]),
                 "contour_levels": [c["level"] for c in result["contours"]],
                 "model": model, "revision": deepcopy(revision),
-                "code_fingerprint": figure.get("code_fingerprint"), "target": deepcopy(target)}
-            updates.append({"dot_path": path, "value": value, "provenance": {**origin, "map": details}})
+                "code_fingerprint": figure.get("code_fingerprint"), "target": deepcopy(target),
+                "comparison": deepcopy(c)}
+            updates.append({"dot_path": path, "value": value, "provenance": {**origin, "text": row_text, "map": details}})
+    if target_comparisons:
+        result.update(compare=target_comparisons[0], comparisons=target_comparisons)
     result.update(updates=updates, status_chip=chip, xref=panel["xref"], yref=panel["yref"],
-                  display_only_reason=converted.get("display_only_reason") or ("not verified on this run" if not updates else ""))
+                  display_only_reason="; ".join(refusals) or (converted.get("display_only_reason") if not updates else "") or ("not verified on this run" if not updates else ""))
     out = preview(result)
     key = (uid, out["request_hash"])
     size = len(api.canonical_json(out).encode("utf-8"))

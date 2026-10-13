@@ -16,7 +16,9 @@ def map_chip(tmp_path, monkeypatch):
     chip = Chip(tmp_path)
     folder = tmp_path / "run"
     folder.mkdir()
-    (folder / "node.json").write_text("{}")
+    # v1.4.1: declared tier -> actual accepted target value, required by target comparisons.
+    (folder / "node.json").write_text(json.dumps({"patches": [
+        {"op": "replace", "path": "/quam/qubits/q1/T1", "old": .00003, "value": .00004}]}))
     x = np.linspace(-2, 2, 41)
     trace = {"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": x.tolist(),
              "z": ((x[None, :] - .2)**2 + (x[:, None] + .3)**2).tolist()}
