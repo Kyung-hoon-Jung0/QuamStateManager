@@ -111,10 +111,10 @@ def analyze(run, uid, figure, converted, body):
             meta["phase_units"] = (sibling["trace"].get("colorbar") or {}).get("units", "")
             if "phase error" in label and 0 in declared_levels:
                 meta["target_deg"] = 0.
-    from quam_state_manager.core.interactive_plots.learn_click import _read
+    from quam_state_manager.core.interactive_plots.learn_click import _read, _owner
     saved = _read(run, "data.json").get("fit_results", {})
-    entity = axis.get("entity") or axis.get("title", "").strip()
-    records = [v for k, v in saved.items() if k == entity or k in entity] if isinstance(saved, dict) else []
+    entity = _owner(axis, set(saved)) if isinstance(saved, dict) else None
+    records = [saved[entity]] if isinstance(saved, dict) and entity in saved else []
     record = records[0] if len(records) == 1 and isinstance(records[0], dict) and body.get("source") != "ndview" else {}
     if record.get("b_resolved") is False:
         meta["b_resolved"] = False

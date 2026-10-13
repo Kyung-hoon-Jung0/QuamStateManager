@@ -98,6 +98,20 @@ def test_replay_identity_includes_the_verified_write_transform(rig):
     assert client.get("/dataset/run/map/analyze/" + first["request_hash"]).get_json() == first
 
 
+@pytest.mark.parametrize("own_record", [False, True])
+def test_saved_result_uses_exact_entity_tokens(tmp_path, own_record):
+    x = np.linspace(-2, 2, 41)
+    trace = {"type": "heatmap", "full_resolution": True, "x": x.tolist(), "y": x.tolist(),
+             "z": ((x[None, :] - .2)**2 + (x[:, None] + .3)**2).tolist()}
+    records = {"q1": {"optimal_a_scan": .8}}
+    if own_record: records["q10"] = {"optimal_a_scan": .2}
+    (tmp_path / "data.json").write_text(json.dumps({"fit_results": records}))
+    figure = {"axes": [{"entity": "q10", "title": "q10", "xlabel": "a_scan", "ylabel": "b_over_a", "traces": [trace]}]}
+    result = map_analysis.analyze(SimpleNamespace(folder_path=str(tmp_path)), "entity-run", figure,
+                                 {"data": [trace]}, {"smooth": {"sigma_x": 0, "sigma_y": 0}})
+    assert result["compare"]["node_value"] == (.2 if own_record else None)
+
+
 @pytest.mark.parametrize("error", [ArithmeticError, OverflowError, FloatingPointError, ZeroDivisionError])
 def test_map_numerical_failures_remain_request_errors(rig, monkeypatch, error):
     client, _ = rig
