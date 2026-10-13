@@ -143,4 +143,7 @@ class TestCompareMakesRoom:
         assert 'window._applySplitPreset("collapsed")' in seg
         # the r13 ⑦ menu-navigation collapse keeps its narrower gate (dataset detail only)
         j = _BASE.index('closest(".sidebar-nav a[href]")')
-        assert 'querySelector("#ds-detail-root")' in _BASE[j:j + 600]
+        # v1.4.0: inline menu gate -> shared navigation gate, covers boost and history too.
+        assert 'navigateSplit(href)' in _BASE[j:j + 600]
+        nav = _BASE.split('function navigateSplit(href)', 1)[1].split('function inspectorHasContent', 1)[0]
+        assert 'if (!datasetInspector()) return;' in nav

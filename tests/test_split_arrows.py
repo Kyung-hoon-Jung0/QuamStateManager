@@ -13,6 +13,10 @@ the collapsed target, so the toggle afterwards seemed to do nothing. Now:
   stores which arrow, opened at that arrow's fixed position. SM's own moves
   (menu auto-collapse, Compare, Go to state, the table-pane initSplit) never
   change it; with no choice yet, the defaults as before;
+- page navigation lowers an open run to min(remembered inspector share,
+  fixed collapsed share) without changing that choice; the
+  next run opens at max(remembered inspector share, fixed expanded share),
+  then within-page run switches use the plain remembered share again;
 - the old ``quam_split_expanded`` / ``quam_split_collapsed`` keys are removed.
 
 The behaviour runs in jsdom against the real base.html split script:
@@ -31,7 +35,10 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "quam_state_manager" / "web"
 
 MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow", "reload",
-         "programmatic", "retired", "defaults", "still_click", "focus"]
+         "programmatic", "retired", "defaults", "still_click", "focus",
+         "nav_sidebar", "nav_boost", "nav_push", "nav_history", "nav_same_page",
+         "nav_collapse_low", "nav_collapse_high",
+         "nav_reopen_low", "nav_reopen_high", "nav_run_only"]
 
 
 def _node(*args: str) -> subprocess.CompletedProcess:

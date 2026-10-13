@@ -1609,18 +1609,16 @@ class TestSidebarFeatures:
         assert frag.count("tree-entry-click") == 3
 
     def test_menu_nav_collapses_expanded_dataset_panel(self):
-        """r13 feedback ⑦: clicking another MENU while a dataset detail sits
-        expanded in the inspector must auto-collapse the data panel (the new
-        page was squeezed under it). Gated: menu links only, dataset detail
-        only (#ds-detail-root — qubit/pair inspectors keep sticky), expanded
-        only, and never the Datasets menu itself."""
+        """Page navigation collapses a dataset detail at any open height;
+        same-page links and qubit/pair inspectors retain their split."""
         base = (Path(__file__).resolve().parent.parent
                 / "quam_state_manager" / "web" / "templates" / "base.html")
         text = base.read_text(encoding="utf-8")
         assert '.sidebar-nav a[href]' in text
         assert 'querySelector("#ds-detail-root")' in text
         assert '_applySplitPreset("collapsed")' in text
-        assert 'href.indexOf("/datasets") === 0' in text
+        # v1.4.0: Datasets exemption -> same-page exemption, collapse on page changes at any height.
+        assert 'url.pathname === navigation.page' in text
 
     def test_ndview_axis_title_shows_dim_name_when_metadata_lies(self):
         """r13 feedback ⑧: a lab node copy-pasted long_name='readout

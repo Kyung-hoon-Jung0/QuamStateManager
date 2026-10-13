@@ -21,6 +21,14 @@
  *     still_click  -- a press on the bar that does not move it is not a choice
  *     focus        -- a keyboard user stays on the arrow after a press; a mouse
  *                     press drops focus as before
+ *     nav_sidebar / nav_boost / nav_push / nav_history -- navigation collapses runs
+ *                     at any height, across swaps/reruns, without changing memory
+ *     nav_same_page -- same-page navigation and run switches retain user height
+ *     nav_collapse_low / nav_collapse_high -- navigation uses min(remembered
+ *                     inspector share, collapsed share), including on restore
+ *     nav_reopen_low / nav_reopen_high -- first run after navigation opens at
+ *                     max(remembered inspector share, dataset expanded share)
+ *     nav_run_only -- qubit opens do not consume the next-run navigation rule
  * Driven by tests/test_split_arrows.py.
  */
 'use strict';
@@ -46,13 +54,14 @@ const RUN = '<div id="ds-detail-root" data-uid="run-a">run</div>';
 const QUBIT = '<div class="qubit-detail">qubit</div>';
 
 async function boot({ storage = {}, inspector = '' } = {}) {
+    // v1.4.0: root URL -> Datasets URL, navigation pins start on the run's page.
     const dom = new JSDOM(`<!doctype html><html><body>
         <nav class="sidebar-nav"><a id="nav-qubits" href="/qubits">Qubits</a>
             <a id="nav-datasets" href="/datasets">Datasets</a></nav>
         <div id="table-pane">table</div><div id="inspector-pane">${inspector}</div>
         <form id="compare-form"><button id="compare-go">Compare</button></form>
         <div id="status-bar"></div></body></html>`,
-        { url: 'https://example.invalid/', runScripts: 'outside-only', pretendToBeVisual: true });
+        { url: 'https://example.invalid/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
     const w = dom.window, d = w.document;
     // let jsdom finish parsing, as a loaded page has (the script's ready() runs at once)
     await new Promise(resolve => setImmediate(resolve));
@@ -80,6 +89,7 @@ async function boot({ storage = {}, inspector = '' } = {}) {
         sizes: () => Array.from(last().options.sizes),
         user: () => w.localStorage.getItem('quam_split_user'),
         current: () => w.localStorage.getItem('quam_split_sizes'),
+        rerun() { w.eval(splitScript); },
         swap(id, html) {
             const target = d.getElementById(id);
             if (html !== undefined) target.innerHTML = html;
@@ -114,7 +124,163 @@ const arr = v => (v == null ? v : Array.from(v));
 const eq = (a, b, msg) => assert.deepEqual(arr(a), arr(b), msg);
 const RUN_B = '<div id="ds-detail-root" data-uid="run-b">run b</div>';
 
-if (mode === 'buttons') {
+if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
+    const choices = mode === 'nav_reopen_low' ? [[90, 10], [80, 20], [40, 60], 'down', 'up', null] : [[10, 90], [0, 100]];
+    for (const choice of choices) {
+        const s = await boot();
+        s.swap('inspector-pane', RUN);
+        if (Array.isArray(choice)) s.drag(choice);
+        else if (choice) s.press(choice);
+        const before = s.user();
+        s.d.getElementById('nav-qubits').click();
+        s.w.history.pushState({}, '', '/qubits');
+        s.swap('table-pane', 'other page');
+        s.d.getElementById('nav-datasets').click();
+        s.w.history.pushState({}, '', '/datasets');
+        s.swap('table-pane', 'datasets page');
+        const expected = mode === 'nav_reopen_high' ? choice : SPLIT.datasetExpandedSizes;
+        s.swap('inspector-pane', RUN);
+        eq(s.sizes(), expected, 'after navigation the run opens at max(user share, expanded share)');
+        assert.equal(s.user(), before, 'reopening preserves the remembered choice');
+        s.swap('table-pane', 'concurrent workspace selection');
+        eq(s.sizes(), expected, 'a concurrent table swap keeps the reopened height');
+        s.swap('inspector-pane', RUN_B);
+        const plain = Array.isArray(choice) ? choice : choice === 'down' ? SPLIT.collapsedSizes : SPLIT.datasetExpandedSizes;
+        eq(s.sizes(), plain, 'the following run within Datasets uses the plain remembered height');
+        assert.equal(s.user(), before, 'within-page switching also preserves memory');
+    }
+} else if (mode === 'nav_collapse_low' || mode === 'nav_collapse_high') {
+    const choices = mode === 'nav_collapse_low' ? [[95, 5], [90, 10]] : [[80, 20], [10, 90]];
+    for (const choice of choices) {
+        for (const event of ['sidebar', 'boost', 'push', 'popstate', 'htmx:historyRestore']) {
+            const s = await boot();
+            s.swap('inspector-pane', RUN);
+            s.drag(choice);
+            const before = s.user();
+            // Use remembered sizes even when a programmatic move changed the current split.
+            s.w._applySplitPreset('expanded');
+            const expected = mode === 'nav_collapse_low' ? choice : SPLIT.collapsedSizes;
+            if (event === 'sidebar') {
+                s.d.getElementById('nav-qubits').click();
+            } else if (event === 'boost') {
+                const link = s.d.createElement('a');
+                link.href = '/qubits';
+                s.d.body.appendChild(link);
+                s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', {
+                    detail: { elt: link, requestConfig: { boosted: true } }
+                }));
+            } else {
+                s.w.history.replaceState({}, '', '/qubits');
+                if (event === 'push') {
+                    s.d.dispatchEvent(new s.w.CustomEvent('htmx:pushedIntoHistory', {
+                        detail: { path: '/qubits' }
+                    }));
+                } else if (event === 'popstate') {
+                    s.w.dispatchEvent(new s.w.PopStateEvent(event));
+                } else {
+                    s.d.dispatchEvent(new s.w.CustomEvent(event));
+                }
+            }
+            eq(s.sizes(), expected, event + ': navigation uses min(user share, collapsed share)');
+            eq(JSON.parse(s.current()), expected, event + ': the navigation target is persisted');
+            assert.equal(s.user(), before, event + ': navigation preserves the remembered choice');
+            s.w.history.replaceState({}, '', '/qubits');
+            s.swap('table-pane', 'other page');
+            eq(s.sizes(), expected, event + ': table swaps keep the min target');
+            s.rerun();
+            eq(s.sizes(), expected, event + ': script reruns keep the min target');
+            s.d.dispatchEvent(new s.w.CustomEvent('htmx:historyRestore'));
+            eq(s.sizes(), expected, event + ': history restores keep the min target');
+            assert.equal(s.user(), before, event + ': swaps and restores preserve user memory');
+        }
+    }
+} else if (mode === 'nav_run_only') {
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([80, 20]);
+    const before = s.user();
+    s.d.getElementById('nav-qubits').click();
+    s.w.history.pushState({}, '', '/qubits');
+    s.swap('inspector-pane', QUBIT);
+    eq(s.sizes(), [80, 20], 'a qubit still opens at the remembered height');
+    s.swap('inspector-pane', RUN);
+    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'only a run consumes the post-navigation expanded minimum');
+    assert.equal(s.user(), before, 'the qubit and run opens preserve memory');
+} else if (mode === 'nav_sidebar') {
+    for (const sizes of [[80, 20], [40, 60], [10, 90]]) {
+        const s = await boot();
+        s.swap('inspector-pane', RUN);
+        s.drag(sizes);
+        const before = s.user();
+        s.d.getElementById('nav-qubits').click();
+        eq(s.sizes(), SPLIT.collapsedSizes, 'sidebar navigation collapses a run at any height');
+        assert.equal(s.user(), before, 'sidebar navigation preserves the remembered choice');
+        s.swap('table-pane', 'other page');
+        eq(s.sizes(), SPLIT.collapsedSizes, 'table-pane initSplit preserves the navigation collapse');
+        assert.equal(s.user(), before, 'table-pane initSplit preserves the remembered choice');
+    }
+} else if (mode === 'nav_boost') {
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([80, 20]);
+    const before = s.user();
+    const link = s.d.createElement('a');
+    link.href = '/qubits';
+    s.d.body.appendChild(link);
+    s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', {
+        detail: { elt: link, requestConfig: { boosted: true } }
+    }));
+    eq(s.sizes(), SPLIT.collapsedSizes, 'boosted page navigation collapses without a sidebar click');
+    s.w.history.pushState({}, '', '/qubits');
+    s.rerun();
+    eq(s.sizes(), SPLIT.collapsedSizes, 'a full-body script rerun keeps the navigation collapse');
+    assert.equal(s.user(), before, 'boost and rerun preserve the remembered choice');
+} else if (mode === 'nav_push') {
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([80, 20]);
+    const before = s.user();
+    s.swap('table-pane', 'other page');
+    s.w.history.pushState({}, '', '/qubits');
+    s.d.dispatchEvent(new s.w.CustomEvent('htmx:pushedIntoHistory', { detail: { path: '/qubits' } }));
+    eq(s.sizes(), SPLIT.collapsedSizes, 'a pushed page navigation collapses without a sidebar click');
+    assert.equal(s.user(), before, 'pushed navigation preserves the remembered choice');
+    s.swap('table-pane', 'concurrent swap');
+    eq(s.sizes(), SPLIT.collapsedSizes, 'later table swaps retain the pushed navigation collapse');
+    s.swap('inspector-pane', RUN_B);
+    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'the next run after pushed navigation gets the expanded minimum');
+} else if (mode === 'nav_history') {
+    for (const event of ['popstate', 'htmx:historyRestore']) {
+        const s = await boot();
+        s.swap('inspector-pane', RUN);
+        s.drag([80, 20]);
+        const before = s.user();
+        for (const page of ['/qubits', '/datasets']) {
+            s.w.history.replaceState({}, '', page);
+            if (event === 'popstate') s.w.dispatchEvent(new s.w.PopStateEvent(event));
+            else s.d.dispatchEvent(new s.w.CustomEvent(event));
+            eq(s.sizes(), SPLIT.collapsedSizes, event + ': another page collapses the dataset panel');
+            s.rerun();
+            s.d.dispatchEvent(new s.w.CustomEvent('htmx:historyRestore'));
+            eq(s.sizes(), SPLIT.collapsedSizes, event + ': restored content stays collapsed');
+            assert.equal(s.user(), before, event + ': history preserves the remembered choice');
+        }
+    }
+} else if (mode === 'nav_same_page') {
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([80, 20]);
+    s.d.getElementById('nav-datasets').click();
+    eq(JSON.parse(s.current()), [80, 20], 'the Datasets menu on Datasets preserves the height');
+    s.w.history.replaceState({}, '', '/datasets?name=run');
+    s.w.dispatchEvent(new s.w.PopStateEvent('popstate'));
+    eq(JSON.parse(s.current()), [80, 20], 'same-page history preserves the height');
+    s.swap('inspector-pane', RUN_B);
+    eq(s.sizes(), [80, 20], 'within Datasets a low remembered height still applies');
+    s.swap('inspector-pane', QUBIT);
+    s.d.getElementById('nav-qubits').click();
+    eq(s.sizes(), [80, 20], 'page navigation retains a qubit inspector');
+} else if (mode === 'buttons') {
     const s = await boot();
     s.swap('inspector-pane', QUBIT);
     const buttons = s.d.querySelectorAll('.gutter button');
@@ -253,7 +419,8 @@ if (mode === 'buttons') {
         s.d.getElementById('nav-datasets').click();
         s.swap('table-pane', 'datasets page');
         s.swap('inspector-pane', RUN);
-        eq(s.sizes(), open, first + ': back on a run: the last choice');
+        // v1.4.0: plain last choice -> expanded minimum, so a reopened run has room after navigation.
+        eq(s.sizes(), SPLIT.datasetExpandedSizes, first + ': back on a run: at least the expanded height');
         // the Compare-form collapse
         const go = s.d.getElementById('compare-go');
         s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', { detail: { elt: go } }));
