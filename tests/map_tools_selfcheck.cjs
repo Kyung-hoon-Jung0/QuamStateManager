@@ -99,5 +99,16 @@ function check(value, message) { checks++; assert.ok(value, message); }
     check(!nonmap.querySelector('.map-tools-button'), 'non heatmaps hide tools');
     const instance = tile._mapTools; instance.destroy(); await wait(20);
     check(!tile.querySelector('.map-tools-strip') && !tile.querySelector('.map-tools-button'), 'prune removes tools');
+    // v1.4.1: unresolved fetch stranded the strip -> a bounded timeout ends analysis and revokes Apply.
+    const nativeTimer = w.setTimeout.bind(w);
+    w.setTimeout = (fn, ms) => nativeTimer(fn, ms === 45000 ? 10 : ms);
+    let resolveLate;
+    w.fetch = () => new Promise(resolve => { resolveLate = resolve; });
+    w.MapTools.mount(tile, plot, payload, {uid: 'run:slow', fig: 'map'});
+    tile.querySelector('.map-tools-button').click(); await wait(30);
+    check(c('status').textContent.includes('timed out after 45 seconds') && c('apply').disabled, 'bounded timeout clears busy state and Apply');
+    resolveLate({ok: true, json: () => Promise.resolve(authoritative)}); await wait(20);
+    check(c('status').textContent.includes('timed out') && c('apply').disabled, 'a late response cannot revive an expired result');
+    tile._mapTools.destroy();
     console.log(checks + ' assertions passed'); dom.window.close();
 })().catch(error => { console.error(error); dom.window.close(); process.exitCode = 1; });

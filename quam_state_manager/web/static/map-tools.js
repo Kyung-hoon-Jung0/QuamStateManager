@@ -42,6 +42,7 @@
         header.appendChild(button); host.appendChild(strip);
         function control(name) { return strip.querySelector('[data-map="' + name + '"]'); }
         var caps = null, last = null, classification = null, generation = 0, timer = null, alive = true, initialized = false, kind = '';
+        var pending = null;
         var side = strip.querySelector('.map-tools-side');
         var statusChip = document.createElement('span'); statusChip.className = 'map-tools-chip';
         statusChip.textContent = payload.status_chip || 'not verified on this run'; header.appendChild(statusChip);
@@ -103,17 +104,28 @@
             Promise.resolve(window.Plotly.react(plot, mode === 'smoothed' ? traces : copy(base), layout, {responsive: true})).catch(function () {});
             if (mode === 'side') Promise.resolve(window.Plotly.react(side, traces, layout, {responsive: true})).catch(function () {});
         }
-        function invalidate() { generation++; last = null; control('apply').disabled = true; window.clearTimeout(timer); }
+        function invalidate() {
+            generation++; last = null; control('apply').disabled = true; window.clearTimeout(timer);
+            if (pending) { pending.controller.abort(); window.clearTimeout(pending.timeout); pending = null; }
+        }
         function analyze(initial) {
             invalidate();
             var seq = generation, body = Object.assign({}, options.request || {}, {fig: options.fig || '', panel: Number(control('panel').value), source: options.source || 'replot'});
             if (!initial) Object.assign(body, settings());
             var requestedSettings = JSON.stringify(settings());
             control('status').textContent = 'Analyzing full-resolution map...';
-            return window.fetch('/dataset/' + encodeURIComponent(options.uid) + '/map/analyze', {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
-            }).then(function (response) { return response.json().then(function (value) { if (!response.ok) throw new Error(value.error || 'Analysis failed'); return value; }); })
+            var request = {controller: new window.AbortController(), timeout: null}; pending = request;
+            var deadline = new Promise(function (_, reject) {
+                request.timeout = window.setTimeout(function () {
+                    request.controller.abort(); reject(new Error('Map analysis timed out after 45 seconds; reopen Map tools to retry.'));
+                }, 45000);
+            });
+            var response = window.fetch('/dataset/' + encodeURIComponent(options.uid) + '/map/analyze', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body), signal: request.controller.signal
+            }).then(function (response) { return response.json().then(function (value) { if (!response.ok) throw new Error(value.error || 'Analysis failed'); return value; }); });
+            return Promise.race([response, deadline])
                 .then(function (result) {
+                    window.clearTimeout(request.timeout); if (pending === request) pending = null;
                     if (!alive || seq !== generation || !document.body.contains(host)) return;
                     last = result; classification = result.classification; kind = classification.type; caps = copy(result.caps_applied);
                     if (caps.transposed) { var swap = caps.cap_x; caps.cap_x = caps.cap_y; caps.cap_y = swap; }
@@ -130,6 +142,7 @@
                             var saved = JSON.parse(window.localStorage.getItem('quam_map_tools_v1') || '{}')[kind];
                             if (saved) Object.keys(saved).forEach(function (name) { var c = control(name); if (c) { if (c.type === 'checkbox') c.checked = saved[name]; else c.value = saved[name]; } });
                         } catch (_) {}
+                        if (!control('model').value) control('model').value = (classification.models || [])[0] || 'none';
                     }
                     clamp();
                     if (!initial && requestedSettings !== JSON.stringify(settings())) return analyze(false);
@@ -145,7 +158,14 @@
                     if (!initial) draw(result, false);
                     initialized = true;
                     if (initial) return analyze(false);
-                }).catch(function (error) { if (alive && seq === generation) control('status').textContent = error.message; });
+                }).catch(function (error) {
+                    window.clearTimeout(request.timeout); if (pending === request) pending = null;
+                    if (alive && seq === generation) {
+                        last = null; initialized = false; control('apply').disabled = true;
+                        control('apply').textContent = 'Apply unavailable: analysis failed'; control('apply').title = error.message;
+                        control('status').textContent = error.message;
+                    }
+                });
         }
         function changed() {
             var period = last && last.classification.circular;
