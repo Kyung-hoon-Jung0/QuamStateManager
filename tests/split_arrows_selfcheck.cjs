@@ -52,7 +52,7 @@ async function boot({ storage = {}, inspector = '' } = {}) {
         <div id="table-pane">table</div><div id="inspector-pane">${inspector}</div>
         <form id="compare-form"><button id="compare-go">Compare</button></form>
         <div id="status-bar"></div></body></html>`,
-        { url: 'https://example.invalid/', runScripts: 'outside-only', pretendToBeVisual: true });
+        { url: 'https://example.invalid/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
     const w = dom.window, d = w.document;
     // let jsdom finish parsing, as a loaded page has (the script's ready() runs at once)
     await new Promise(resolve => setImmediate(resolve));
@@ -80,6 +80,7 @@ async function boot({ storage = {}, inspector = '' } = {}) {
         sizes: () => Array.from(last().options.sizes),
         user: () => w.localStorage.getItem('quam_split_user'),
         current: () => w.localStorage.getItem('quam_split_sizes'),
+        rerun() { w.eval(splitScript); },
         swap(id, html) {
             const target = d.getElementById(id);
             if (html !== undefined) target.innerHTML = html;
@@ -114,7 +115,67 @@ const arr = v => (v == null ? v : Array.from(v));
 const eq = (a, b, msg) => assert.deepEqual(arr(a), arr(b), msg);
 const RUN_B = '<div id="ds-detail-root" data-uid="run-b">run b</div>';
 
-if (mode === 'buttons') {
+if (mode === 'nav_sidebar') {
+    for (const sizes of [[80, 20], [40, 60], [10, 90]]) {
+        const s = await boot();
+        s.swap('inspector-pane', RUN);
+        s.drag(sizes);
+        const before = s.user();
+        s.d.getElementById('nav-qubits').click();
+        eq(s.sizes(), SPLIT.collapsedSizes, 'sidebar navigation collapses a run at any height');
+        assert.equal(s.user(), before, 'sidebar navigation preserves the remembered choice');
+        s.swap('table-pane', 'other page');
+        eq(s.sizes(), SPLIT.collapsedSizes, 'table-pane initSplit preserves the navigation collapse');
+        assert.equal(s.user(), before, 'table-pane initSplit preserves the remembered choice');
+    }
+} else if (mode === 'nav_boost') {
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([80, 20]);
+    const before = s.user();
+    const link = s.d.createElement('a');
+    link.href = '/qubits';
+    s.d.body.appendChild(link);
+    s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', {
+        detail: { elt: link, requestConfig: { boosted: true } }
+    }));
+    eq(s.sizes(), SPLIT.collapsedSizes, 'boosted page navigation collapses without a sidebar click');
+    s.w.history.pushState({}, '', '/qubits');
+    s.rerun();
+    eq(s.sizes(), SPLIT.collapsedSizes, 'a full-body script rerun keeps the navigation collapse');
+    assert.equal(s.user(), before, 'boost and rerun preserve the remembered choice');
+} else if (mode === 'nav_history') {
+    for (const event of ['popstate', 'htmx:historyRestore']) {
+        const s = await boot();
+        s.swap('inspector-pane', RUN);
+        s.drag([80, 20]);
+        const before = s.user();
+        for (const page of ['/qubits', '/datasets']) {
+            s.w.history.replaceState({}, '', page);
+            if (event === 'popstate') s.w.dispatchEvent(new s.w.PopStateEvent(event));
+            else s.d.dispatchEvent(new s.w.CustomEvent(event));
+            eq(s.sizes(), SPLIT.collapsedSizes, event + ': another page collapses the dataset panel');
+            s.rerun();
+            s.d.dispatchEvent(new s.w.CustomEvent('htmx:historyRestore'));
+            eq(s.sizes(), SPLIT.collapsedSizes, event + ': restored content stays collapsed');
+            assert.equal(s.user(), before, event + ': history preserves the remembered choice');
+        }
+    }
+} else if (mode === 'nav_same_page') {
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([80, 20]);
+    s.d.getElementById('nav-datasets').click();
+    eq(JSON.parse(s.current()), [80, 20], 'the Datasets menu on Datasets preserves the height');
+    s.w.history.replaceState({}, '', '/datasets?name=run');
+    s.w.dispatchEvent(new s.w.PopStateEvent('popstate'));
+    eq(JSON.parse(s.current()), [80, 20], 'same-page history preserves the height');
+    s.swap('inspector-pane', RUN_B);
+    eq(s.sizes(), [80, 20], 'within Datasets a low remembered height still applies');
+    s.swap('inspector-pane', QUBIT);
+    s.d.getElementById('nav-qubits').click();
+    eq(s.sizes(), [80, 20], 'page navigation retains a qubit inspector');
+} else if (mode === 'buttons') {
     const s = await boot();
     s.swap('inspector-pane', QUBIT);
     const buttons = s.d.querySelectorAll('.gutter button');

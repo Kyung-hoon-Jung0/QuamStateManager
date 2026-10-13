@@ -31,7 +31,8 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "quam_state_manager" / "web"
 
 MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow", "reload",
-         "programmatic", "retired", "defaults", "still_click", "focus"]
+         "programmatic", "retired", "defaults", "still_click", "focus",
+         "nav_sidebar", "nav_boost", "nav_history", "nav_same_page"]
 
 
 def _node(*args: str) -> subprocess.CompletedProcess:

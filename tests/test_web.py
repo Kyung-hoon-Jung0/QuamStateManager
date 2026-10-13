@@ -1620,7 +1620,8 @@ class TestSidebarFeatures:
         assert '.sidebar-nav a[href]' in text
         assert 'querySelector("#ds-detail-root")' in text
         assert '_applySplitPreset("collapsed")' in text
-        assert 'href.indexOf("/datasets") === 0' in text
+        # v1.3.0: Datasets exemption -> same-page exemption, collapse on page changes at any height.
+        assert 'url.pathname === navigation.page' in text
 
     def test_ndview_axis_title_shows_dim_name_when_metadata_lies(self):
         """r13 feedback ⑧: a lab node copy-pasted long_name='readout
