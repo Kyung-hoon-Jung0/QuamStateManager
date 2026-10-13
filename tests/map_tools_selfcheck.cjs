@@ -110,5 +110,16 @@ function check(value, message) { checks++; assert.ok(value, message); }
     resolveLate({ok: true, json: () => Promise.resolve(authoritative)}); await wait(20);
     check(c('status').textContent.includes('timed out') && c('apply').disabled, 'a late response cannot revive an expired result');
     tile._mapTools.destroy();
+    // v1.4.1: unknown maps offered an extremum -> the UI has no model selector or numeric result.
+    authoritative.classification = {type: 'unknown', models: [], reason: 'No supported model; smoothing and contours only.'};
+    authoritative.fit.verdict_line = authoritative.classification.reason;
+    authoritative.compare.sm_value = null; authoritative.compare.delta = null; authoritative.updates = [];
+    w.fetch = () => Promise.resolve({ok: true, json: () => Promise.resolve(authoritative)});
+    w.localStorage.setItem('quam_map_tools_v1', JSON.stringify({unknown: {model: 'extremum'}}));
+    w.MapTools.mount(tile, plot, payload, {uid: 'run:unsupported', fig: 'map'});
+    tile.querySelector('.map-tools-button').click(); await wait(20);
+    check(c('model').disabled && c('model').value === 'none', 'unsupported model menu stays disabled despite old stored settings');
+    check(c('apply').disabled && c('status').textContent.includes('smoothing and contours only'), 'unsupported family explains why no model result can apply');
+    tile._mapTools.destroy();
     console.log(checks + ' assertions passed'); dom.window.close();
 })().catch(error => { console.error(error); dom.window.close(); process.exitCode = 1; });
