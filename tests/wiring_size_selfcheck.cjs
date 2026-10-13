@@ -99,8 +99,10 @@ function makeWorld(bodyHtml) {
   return { win, doc: win.document, store, ls };
 }
 
-/* The 8-FEM rack of tests/instrument_fit_selfcheck.cjs (3 MW + 5 LF, no
- * digital column -> 1356 px natural), with a multiplexed readout feedline
+/* The 8-FEM rack of tests/instrument_fit_selfcheck.cjs (3 MW + 5 LF; the DIG
+ * column is always drawn since the instrument-ports hotfix, old 1356 -> 1884 px
+ * natural, because every FEM carries 8 digital outputs whether wired or not),
+ * with a multiplexed readout feedline
  * on FEM 1 port 1 -- the cell whose labels the complaint was about. */
 function rack() {
   const fems = {};
@@ -147,7 +149,7 @@ setW('instrument-diagram', 1200);
 render('instrument-diagram', OPT_I);
 const nat = parseFloat(svg('instrument-diagram').dataset.natW);
 const natH = parseFloat(svg('instrument-diagram').dataset.natH);
-ok(nat === 1356, 'fixture rack is the 1356 px one (got ' + nat + ')');
+ok(nat === 1884, 'fixture rack is the 1884 px one (got ' + nat + ')');
 
 /* -- S1: no option, no size bar, the old bar as before ----------------- */
 setW('plain-diagram', Math.round(nat * 0.3));
@@ -227,7 +229,7 @@ ok(svg('instrument-diagram').style.width === Math.round(nat * 0.5) + 'px',
 /* -- S5: Fit and 1:1 ----------------------------------------------------- */
 press('instrument-diagram', 'fit');
 ok(store[KEY_I] === 'fit', 'S5 Fit is recorded');
-ok(/^min\(100%, 1356px\)$/.test(svg('instrument-diagram').style.width) &&
+ok(/^min\(100%, 1884px\)$/.test(svg('instrument-diagram').style.width) &&
    svg('instrument-diagram').style.maxWidth === nat + 'px',
    'S5 Fit is the docs/135 never-magnify fit (' + sizing('instrument-diagram') + ')');
 ok(btn('instrument-diagram', 'fit').getAttribute('aria-pressed') === 'true' &&

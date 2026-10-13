@@ -16,8 +16,9 @@ Pins here:
   * the payload shape is additive — a chip with no digital wiring gets empty
     ``digital_ports`` maps and ``max_digital_port == 0``, nothing else moves.
 
-The jsdom half (DIG sub-column rendering, popup fields, byte-identical
-no-digital layout) lives in tests/instrument_digital_selfcheck.cjs.
+The jsdom half (DIG sub-column rendering, popup fields, the DIG column drawn
+with empty slots even on a chip with no digital wiring) lives in
+tests/instrument_digital_selfcheck.cjs.
 """
 from __future__ import annotations
 
@@ -233,8 +234,8 @@ class TestDigitalCollection:
 
     def test_no_digital_payload_shape_is_additive(self):
         """A chip with no digital wiring: empty digital_ports on every FEM,
-        max_digital_port 0 — the renderer's hasDigital gate reads exactly
-        this to keep the layout byte-identical."""
+        max_digital_port 0 (the renderer still draws all 8 empty DIG slots
+        per FEM; the payload invents no digital assignment)."""
         state = {"qubits": {"q1": {}}}
         wiring = {"wiring": {"qubits": {"q1": {
             "xy": {"opx_output": "#/ports/mw_outputs/con1/1/1"},

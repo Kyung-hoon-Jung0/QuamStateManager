@@ -10,9 +10,11 @@
  *     the analog OUT cell, the trigger on the digital cell.
  *  4. Hover popup on a digital circle shows the DIGITAL badge + the
  *     marker/line/delay fields (through the real _showPortPopup path).
- *  5. CONTROL: a payload with no digital anywhere renders byte-identically
- *     to the pre-digital layout — no DIG header, zero digital cells, and the
- *     svg width equals the old two-sub-column constant.
+ *  5. A payload with no digital anywhere STILL draws the DIG sub-column with
+ *     its 8 physical slots, all empty (instrument-ports hotfix: old "no DIG
+ *     column, byte-identical pre-digital layout" -> new "always drawn", because
+ *     every FEM carries 8 digital outputs and an empty slot is where a trigger
+ *     line can be wired); same width as the digital layout.
  *
  * Run: node tests/instrument_digital_selfcheck.cjs
  * (driven by tests/test_gen_ux_selfchecks.py).
@@ -174,7 +176,7 @@ ok(bodyText.indexOf('line') !== -1 && bodyText.indexOf('z.opx_trigger_out') !== 
 ok(bodyText.indexOf('delay') !== -1 && bodyText.indexOf('0 ns') !== -1,
    'popup body shows the delay in ns');
 
-/* 5. CONTROL: no digital anywhere → pre-digital layout, byte-identical */
+/* 5. No digital anywhere -> the DIG column is still drawn, every slot empty */
 const noDigital = {
     controllers: {
         con1: {
@@ -195,15 +197,17 @@ window.renderInstrumentWiring('iw-host2', noDigital, {}, null);
 const svg2 = window.document.getElementById('iw-host2').querySelector('svg.instrument-svg');
 ok(!!svg2, 'no-digital payload rendered an svg');
 const texts2 = Array.prototype.map.call(svg2.querySelectorAll('text'), (t) => t.textContent);
-ok(texts2.indexOf('DIG') === -1, 'no DIG header without digital wiring');
-ok(svg2.querySelectorAll('g.iw-port[data-io="digital"]').length === 0,
-   'no digital cells without digital wiring');
-/* The pre-digital femW constant: marginLeft 40 + (82 + 66) + 20 = 208 */
-ok(svg2.getAttribute('width') === '208',
-   'no-digital svg keeps the pre-digital width 208 (got ' + svg2.getAttribute('width') + ')');
-/* And the digital layout is exactly one 66px sub-column wider */
+ok(texts2.indexOf('DIG') !== -1, 'DIG header drawn without digital wiring');
+const digCells2 = svg2.querySelectorAll('g.iw-port[data-io="digital"]');
+ok(digCells2.length === 8,
+   'eight empty digital slots drawn without digital wiring (got ' + digCells2.length + ')');
+ok(Array.prototype.every.call(digCells2, (c) => !c.querySelector('circle[fill="#54617a"]')),
+   'no digital slot carries an invented assignment');
+/* One FEM: marginLeft 40 + (82 + 66 + 66) + 20 = 274, the digital layout's width */
+ok(svg2.getAttribute('width') === '274',
+   'no-digital svg has the DIG sub-column width 274 (got ' + svg2.getAttribute('width') + ')');
 ok(svg.getAttribute('width') === '274',
-   'digital svg is exactly digSubW wider: 274 (got ' + svg.getAttribute('width') + ')');
+   'digital svg width 274 (got ' + svg.getAttribute('width') + ')');
 
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('ALL OK');
