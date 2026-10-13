@@ -20997,6 +20997,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     // column the gate does not read.
     var clickHintLine = function(p) {
         if (!p.uid) return '';
+        if (p.via_saved) return '<i>click to open the run that saved it (not proven to have measured it)</i>';
         var run = runOf(p);   // S10 C5: p.writer (snapshot writer check) -> gone
         return '<i style="opacity:0.7">click → open dataset'
              + (run != null ? ' #' + run : '') + '</i>';
@@ -21028,6 +21029,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                 contextLine(p),
                 clickHintLine(p),
                 p.uid || '',
+                !!p.via_saved,
             ];
         });
         return {
@@ -21134,7 +21136,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                 // already withheld the click hint.
                 if (!uid) return;
                 // Use HTMX so the dataset detail loads inside the main pane
-                var url = '/dataset/' + uid;
+                var url = '/dataset/' + uid + (cd[5] ? '?via=saved' : '');
                 if (window.htmx) {
                     // See chip-status.js's twin: `source` for hx-sync queueing,
                     // and no pushUrl -- htmx 2 has no such ajax option.

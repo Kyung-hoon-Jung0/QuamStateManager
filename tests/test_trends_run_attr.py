@@ -177,7 +177,7 @@ class TestValueHistoryDrawer:
 
 
 class TestParamHistoryDrawer:
-    def test_only_a_writer_is_clickable(self, env):
+    def test_writers_and_saved_sources_are_clickable(self, env):
         s0, s1, s2, s3 = _four(env)
         env["snap"](4.0e-5, "experiment", 401, "24_all_xy")   # unchanged value
         html = env["client"].get("/param-history/expand?qubit=qA1&prop=T1").get_data(as_text=True)
@@ -187,7 +187,10 @@ class TestParamHistoryDrawer:
         attrs = row["values"]
         proven = [a for a in attrs if a["provenance"] == "run_proven"]
         assert len(proven) == 1 and proven[0]["uid"].endswith(":404")
-        assert all(a["uid"] is None for a in attrs if a["provenance"] != "run_proven")
+        # v1.4.1: writer-only links -> saved source links too, with the writer caveat.
+        saved = [a for a in attrs if a["provenance"] == "run_saved"]
+        assert saved and all(a["uid"] and a["via_saved"] and "saved in" in a["label"] for a in saved)
+        assert all(a["uid"] is None for a in attrs if a["provenance"] not in ("run_proven", "run_saved"))
         assert all(a["run"] not in (401, 403) for a in attrs)
 
 

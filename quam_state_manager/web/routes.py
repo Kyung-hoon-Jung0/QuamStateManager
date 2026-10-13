@@ -35901,8 +35901,7 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
                               extra_notes=()):
     """docs/283: one grid cell's drawer on the ledger -- the cell's recorded
     changes (``LedgerTable.curated``, the grid's own rows), each with S7's
-    words; a point opens its run only when that run's own patch proves it
-    wrote the value (its uid is set only then)."""
+    words; a saved-only point opens its source run with the writer caveat."""
     rows = [r for r in table.curated((prop,)) if r["qubit"] == qubit]
     row = rows[0] if rows else {"qubit": qubit, "property": prop, "raw_pointer": None, "values": []}
     attrs = row.get("_attrs") or {}
@@ -35912,6 +35911,7 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
             continue          # not a recorded change: the current-value line covers it
         info = attrs.get(v["timestamp"]) or {}
         proven = info.get("provenance") == "run_proven"
+        saved_uid = info.get("saved_uid")
         pt = v.get("point") or {}
         value = v["value"]
         if isinstance(value, float) and value != value or value in (float("inf"), float("-inf")):
@@ -35921,10 +35921,10 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
                        "label": info.get("label"), "sub": info.get("sub"),
                        "flags": info.get("flag_text") or [],
                        "provenance": info.get("provenance"),
-                       "uid": info.get("uid"),
-                       # a run is named for the click only on proof
-                       "run": pt.get("run_id") if proven else None,
-                       "node": pt.get("experiment") if proven else None})
+                       "uid": info.get("uid") or saved_uid,
+                       "via_saved": bool(saved_uid and not info.get("uid")),
+                       "run": pt.get("run_id") if proven or saved_uid else None,
+                       "node": pt.get("experiment") if proven or saved_uid else None})
     out = {"qubit": qubit, "property": prop, "raw_pointer": row.get("raw_pointer"),
            "values": values, "ledger": True}
     current_value = None
