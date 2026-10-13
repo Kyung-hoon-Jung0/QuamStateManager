@@ -151,16 +151,15 @@ class _Worker(lab_worker.Worker):
         return super().ask({"items": items}, timeout)
 
     def _arm_idle(self):
-        if self._idle is not None:
-            self._idle.cancel()
         self._idle_deadline = time.monotonic() + WARM_IDLE_S
-        self._idle = threading.Timer(WARM_IDLE_S, self._expire)
-        self._idle.daemon = True
-        self._idle.start()
+        self._schedule_idle(WARM_IDLE_S)
 
     def _expire(self):
         with lab_worker.machine_lock:
-            if time.monotonic() >= self._idle_deadline:
+            remaining = self._idle_deadline - time.monotonic()
+            if remaining > 0:
+                self._schedule_idle(remaining)
+            else:
                 _retire(self.python_path, self)
 
 

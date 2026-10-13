@@ -328,16 +328,23 @@ class Worker:
         return parsed
 
     def _arm_idle(self) -> None:
+        self._idle_deadline = time.monotonic() + self.idle_s
+        self._schedule_idle(self.idle_s)
+
+    def _schedule_idle(self, delay) -> None:
         if self._idle is not None:
             self._idle.cancel()
-        self._idle_deadline = time.monotonic() + self.idle_s
-        self._idle = threading.Timer(self.idle_s, self._expire)
+        self._idle = threading.Timer(delay, self._expire)
         self._idle.daemon = True
         self._idle.start()
 
     def _expire(self):
         with machine_lock:
-            if time.monotonic() >= self._idle_deadline:
+            remaining = self._idle_deadline - time.monotonic()
+            if remaining > 0:
+                # A timer can wake before a coarse monotonic clock reaches the deadline.
+                self._schedule_idle(remaining)
+            else:
                 self.kill()
 
     def kill(self) -> None:

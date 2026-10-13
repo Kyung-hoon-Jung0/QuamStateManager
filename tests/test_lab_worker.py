@@ -6,6 +6,8 @@ import sys
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from quam_state_manager.core import lab_worker, lab_waveform
 from quam_state_manager.generator import run_interactive_replot as runner
 
@@ -69,6 +71,40 @@ def test_worker_timeout_and_source_freshness(tmp_path):
             assert not w.fresh()
         finally:
             w.kill()
+
+
+@pytest.mark.parametrize("kind", ["plot", "waveform"])
+def test_idle_callback_before_clock_deadline_is_rescheduled(monkeypatch, kind):
+    timers = []
+    clock = SimpleNamespace(now=100.)
+    killed = []
+
+    def timer(delay, callback):
+        scheduled = SimpleNamespace(delay=delay, callback=callback, daemon=False,
+                                    cancel=lambda: None, start=lambda: None)
+        timers.append(scheduled)
+        return scheduled
+
+    cls = lab_worker.Worker if kind == "plot" else lab_waveform._Worker
+    worker = cls.__new__(cls)
+    worker._idle = None
+    worker.idle_s = .05
+    worker.python_path = "synthetic"
+    monkeypatch.setattr(lab_waveform, "WARM_IDLE_S", .05)
+    monkeypatch.setattr(lab_waveform, "_retire", lambda *args: killed.append(True))
+    monkeypatch.setattr(lab_worker.threading, "Timer", timer)
+    monkeypatch.setattr(lab_worker.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(worker, "kill", lambda: killed.append(True))
+    worker._arm_idle()
+    deadline = worker._idle_deadline
+    clock.now = deadline - .003
+    timers[0].callback()
+    assert killed == [], "A timer must honor the monotonic deadline"
+    assert len(timers) == 2, "An early callback must schedule the remaining idle interval"
+    assert 0 < timers[1].delay <= .0031 and worker._idle_deadline == deadline
+    clock.now = deadline
+    timers[1].callback()
+    assert killed == [True], "The rescheduled callback must expire the worker at its deadline"
 
 
 def test_worker_memory_limit_stops_process(tmp_path, monkeypatch):
