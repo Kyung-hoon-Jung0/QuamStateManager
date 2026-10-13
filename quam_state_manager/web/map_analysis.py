@@ -48,6 +48,43 @@ def _frequency_scale(run, values, label):
     return 1.
 
 
+def _frequency_reference(run, values, label, entity):
+    """A detuning needs the matching entity's frozen absolute/relative source grid."""
+    if "detuning" not in label.lower():
+        if "hz" in label.lower():
+            return 0., "absolute frequency in Hz"
+        return None, "frequency units unavailable; no verified conversion to Hz"
+    import numpy as np
+    from pathlib import Path
+    from quam_state_manager.core import ndview
+    scale = _frequency_scale(run, values, label)
+    plotted = np.asarray(values, float) * scale
+    for filename in ("ds_raw.h5", "ds_fit.h5"):
+        path = Path(run.folder_path) / filename
+        if not path.is_file():
+            continue
+        with ndview._h5_lock_for(str(path)):
+            with ndview._open_reader(path) as reader:
+                relative, absolute = reader.get("detuning"), reader.get("full_freq")
+                if relative is None or absolute is None or math.prod(absolute.shape) > 100_000:
+                    continue
+                rel = np.asarray(reader.read(relative), float).reshape(-1)
+                rows = np.asarray(reader.read(absolute), float).reshape(-1, len(rel))
+                owners = reader.read_coord("qubit")
+                names = [str(ndview._decode(v)) for v in owners] if owners is not None else []
+                if entity in names and len(names) == len(rows):
+                    rows = rows[[names.index(entity)]]
+                elif len(rows) != 1:
+                    continue
+                if not all(np.any(np.isclose(v, rel, rtol=1e-10, atol=1e-4)) for v in plotted):
+                    continue
+                offsets = rows[0] - rel
+                if np.allclose(offsets, offsets[0], rtol=1e-12, atol=1e-4):
+                    reference = float(offsets[0])
+                    return reference, f"detuning converted to Hz with this run's reference {reference:.9g} Hz ({filename})"
+    return None, "different quantities: detuning and absolute frequency; this run's reference is unavailable"
+
+
 def panels(figure, converted):
     """Associate source heatmaps with converter axis references, retaining full z."""
     originals = [(axis, trace) for axis in figure.get("axes", [])
@@ -140,20 +177,26 @@ def analyze(run, uid, figure, converted, body):
     x, y = centers(trace["x"], len(trace["z"][0])), centers(trace["y"], len(trace["z"]))
     classification = api.classify(x, y, meta, trace["z"])
     time_scale, control_scale, frequency_scale, lobe = 1., 1., 1., None
+    frequency_offset, quantity_reason = 0., ""
     if classification["type"] == "chevron":
         time_label = axis.get("xlabel" if classification["feature_axis"] == "x" else "ylabel", "")
         unit = re.search(r"\b(ns|us|ms|s)\b", time_label.lower())
         if unit:
             meta["time_units"] = unit.group(1)
             time_scale = {"s": 1., "ms": 1e-3, "us": 1e-6, "ns": 1e-9}[unit.group(1)]
+        else:
+            time_scale = None
         control_label = axis.get("ylabel" if classification["feature_axis"] == "x" else "xlabel", "")
         control_scale = .001 if "mv" in control_label.lower() else 1.
         match = re.search(r"\blobe\s+([+-])", axis.get("title", ""))
         lobe = match.group(1) if match else None
     elif classification["type"] == "ridge":
         feature = classification["feature_axis"]
-        frequency_scale = _frequency_scale(run, x if feature == "x" else y,
-            axis.get("xlabel" if feature == "x" else "ylabel", ""))
+        frequency_label = axis.get("xlabel" if feature == "x" else "ylabel", "")
+        frequency_scale = _frequency_scale(run, x if feature == "x" else y, frequency_label)
+        frequency_offset, quantity_reason = _frequency_reference(run, x if feature == "x" else y, frequency_label, entity)
+        control_label = axis.get("ylabel" if feature == "x" else "xlabel", "")
+        control_scale = .001 if "mv" in control_label.lower() else 1.
         if isinstance(record.get("fwhm"), (int, float)) and record["fwhm"] > 0:
             meta["fwhm"] = record["fwhm"] / frequency_scale
     names = {"erroramp": ("opt_amp_prefactor", "a_pi"), "ridge": ("frequency", "y"),
@@ -167,7 +210,8 @@ def analyze(run, uid, figure, converted, body):
             label in axis.get("ylabel", "").lower() for label in ("a_scan", "scan amplitude")):
         value_key = "y"
     node_value = record.get(node_name)
-    if isinstance(node_value, (float, int)) and math.isfinite(node_value):
+    # Only the prefactor/scan coordinate is already in the saved scalar's units.
+    if classification["type"] == "erroramp" and isinstance(node_value, (float, int)) and math.isfinite(node_value):
         meta.update(node_value=node_value, node_name=node_name, value_key=value_key)
     landscape_fields = []
     if classification["type"] == "landscape":
@@ -205,6 +249,9 @@ def analyze(run, uid, figure, converted, body):
                 coordinate_maps[amplitude_axis] = {"scale": scale, "offset": offset}
                 coordinates[amplitude_axis] = [v * scale + offset for v in coordinates[amplitude_axis]]
                 break
+        if node_name == "opt_amp_prefactor" and amplitude_axis not in coordinate_maps and "prefactor" not in axis.get(amplitude_axis + "label", "").lower():
+            meta.pop("node_value", None)
+            quantity_reason = "different quantities: amplitude and prefactor; no verified coordinate conversion"
     fit_request = {"z": array, "x": coordinates["x"], "y": coordinates["y"], "meta": meta,
                    **{k: body[k] for k in ("smooth", "contour", "fit") if k in body}}
     result = api.analyze(fit_request)
@@ -247,10 +294,17 @@ def analyze(run, uid, figure, converted, body):
     if result["caps_applied"]["transposed"]:
         dx, dy = dy, dx
     references = saved_comparisons(classification["type"], record, result["fit"], result["raw_fit"],
-        dx, dy, frequency_scale, time_scale, control_scale, lobe, landscape_fields)
+        dx, dy, frequency_scale, time_scale, control_scale, lobe, landscape_fields,
+        frequency_offset=frequency_offset, quantity_reason=quantity_reason)
     if references:
+        for reference in references:
+            if reference["node_name"] == "optimal_t_phi" and any(word in (axis.get("xlabel", "") + axis.get("ylabel", "")).lower() for word in ("clock", "cycle")):
+                reference.update(sm_value=None, delta=None, verdict="n/a",
+                                 reason="clock cycles and saved time have no verified conversion")
         result["comparisons"] = references
         result["compare"] = references[0]
+    elif quantity_reason:
+        result["compare"].update(delta=None, verdict="n/a", reason=quantity_reason)
     result["node_verdict"] = {k: record[k] for k in ("success", "reasons", "reason", "note") if k in record}
     # Scope the hash to the run, figure and exact source revision as well as arrays/options.
     from quam_state_manager.core.interactive_plots.replot import _fingerprint

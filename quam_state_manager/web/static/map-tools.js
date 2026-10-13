@@ -136,6 +136,7 @@
                     var c = result.compare;
                     control('status').textContent = 'node ' + c.node_name + ' ' + number(c.node_value) + ' | SM ' + number(c.sm_value) +
                         ' | delta ' + number(c.delta) + ' | ' + c.verdict + ' (' + number(c.tol) + ', ' + c.tol_source + ') | ' + c.reason +
+                        (c.quantity ? ' | ' + c.quantity : '') +
                         ' | raw-to-smoothed delta ' + number(c.raw_smoothed_delta) + ' | ' + result.fit.verdict_line +
                         (result.display_only_reason ? ' | ' + result.display_only_reason : '');
                     control('provenance').textContent = result.provenance_text;

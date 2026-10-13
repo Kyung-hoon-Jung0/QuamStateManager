@@ -43,7 +43,8 @@ def compare(node_value, sm_value, tol, source, node_name="node value", reason=No
 
 
 def saved_comparisons(kind, record, fitted, raw_fit, dx, dy, frequency_scale=1.,
-                      time_scale=1., control_scale=1., lobe=None, landscape_fields=()):
+                      time_scale=1., control_scale=1., lobe=None, landscape_fields=(),
+                      frequency_offset=0., quantity_reason=""):
     """Compare in saved units. A chevron's first extreme and full revival differ by two.
 
     Ridge model axes are control/frequency; landscape values retain their model axes.
@@ -65,11 +66,15 @@ def saved_comparisons(kind, record, fitted, raw_fit, dx, dy, frequency_scale=1.,
         item.update(raw_value=raw, raw_smoothed_delta=sm-raw if sm is not None and raw is not None else None)
         specifications.append(item)
     if kind == "ridge":
-        name = "qubit_frequency" if "qubit_frequency" in record else "frequency"
+        name = next((n for n in ("qubit_frequency", "resonator_frequency", "frequency") if n in record), "frequency")
         add(name, "asymptote" if "asymptote" in values or "asymptote" in raw_values else "y",
-            frequency_scale, step=dy * frequency_scale)
+            frequency_scale, offset=frequency_offset or 0., step=dy * frequency_scale)
+        specifications[-1]["quantity"] = quantity_reason or "frequency in Hz"
+        if frequency_offset is None:
+            specifications[-1].update(sm_value=None, raw_value=None, delta=None, raw_smoothed_delta=None,
+                                      verdict="n/a", reason=quantity_reason)
         if "idle_offset" in record:
-            add("idle_offset", "x", step=dx)
+            add("idle_offset", "x", control_scale, step=dx * control_scale)
     elif kind == "chevron" and lobe in ("+", "-"):
         branch = (record.get("lobes") or {}).get(lobe, {})
         center = branch.get("centre_v")
@@ -78,7 +83,10 @@ def saved_comparisons(kind, record, fitted, raw_fit, dx, dy, frequency_scale=1.,
             add("v_res_plus_v" if sign == 1 else "v_res_minus_v", "dv0",
                 sign * control_scale, center, step=.0005)
         add("two_j_hz", "two_j_hz", step=1., source_record=branch)
-        add("t_lim_ns", "t_pi", 2 * time_scale * 1e9, step=dx * time_scale * 1e9, source_record=branch)
+        add("t_lim_ns", "t_pi", 2 * (time_scale or 1.) * 1e9, step=dx * (time_scale or 1.) * 1e9, source_record=branch)
+        if time_scale is None:
+            specifications[-1].update(sm_value=None, raw_value=None, delta=None, raw_smoothed_delta=None,
+                                      verdict="n/a", reason="time units unavailable; no verified conversion to ns")
     elif kind == "landscape":
         nominal = "kept the nominal amplitude" in str(record.get("pick_note", ""))
         pick_missing = record.get("pick_found") is False
