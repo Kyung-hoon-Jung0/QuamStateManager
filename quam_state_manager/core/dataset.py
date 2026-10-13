@@ -197,6 +197,7 @@ class RunInfo:
     has_ds_raw: bool = False
     has_ds_fit: bool = False
     has_quam_state: bool = False
+    files_version: str = ""
 
     # Pre-computed key-metric string for the dataset-table "metric"
     # column (Phase 3 §4.1). Deterministic given ``fit_results`` +
@@ -298,7 +299,7 @@ def _compact_row(run: "RunInfo") -> dict:
         "note": run.note,
         "parent": run.parent_id,
         "hs": run.has_quam_state,
-        "cap": f"{int(run.has_ds_raw)}{int(run.has_ds_fit)}{int(run.has_quam_state)}",
+        "cap": f"{int(run.has_ds_raw)}{int(run.has_ds_fit)}{int(run.has_quam_state)}:{run.files_version}",
         "sm": run.sort_scalars,   # sparse {fit_key: scalar | [first,max,min]} for the Sort banner
         "pm": run.filter_params,  # sparse {param_key: bool|str|int} for the Parameters facet filter
     }
@@ -773,12 +774,14 @@ class DatasetStore:
                 and not known.incomplete and known.folder_path == run_entry):
             if refresh_flags:
                 flags = (known.has_ds_raw, known.has_ds_fit, known.has_quam_state)
+                files_version = self._run_files_version(run_entry)
                 fresh = ((run_entry / "ds_raw.h5").exists(),
                          (run_entry / "ds_fit.h5").exists(),
                          (run_entry / "quam_state").is_dir())
-                if flags != fresh:
+                if flags != fresh or known.files_version != files_version:
                     known = _dc_replace(known, has_ds_raw=fresh[0],
-                                        has_ds_fit=fresh[1], has_quam_state=fresh[2])
+                                        has_ds_fit=fresh[1], has_quam_state=fresh[2],
+                                        files_version=files_version)
                     known.last_parsed = self._stamp()   # the row changed: ship it
             return known
 
@@ -861,6 +864,7 @@ class DatasetStore:
             has_ds_raw=(run_entry / "ds_raw.h5").exists(),
             has_ds_fit=(run_entry / "ds_fit.h5").exists(),
             has_quam_state=(run_entry / "quam_state").is_dir(),
+            files_version=self._run_files_version(run_entry),
         )
         # Pre-compute the dataset-table key metric so list_runs_compact /
         # changes_since don't repeat the same work per row at request time
@@ -1511,6 +1515,13 @@ class DatasetStore:
                 best = mt
         return (best, n_dates)
 
+    def _run_files_version(self, path: Path) -> str:
+        # Files can finish in place after their existence flags first turn on.
+        fps = [self._stat_fp(path / name) for name in (
+            "ds_raw.h5", "ds_fit.h5", "quam_state/state.json", "quam_state/wiring.json")]
+        fps.append(self._stat_fp(path))  # late saved figures move this directory
+        return hashlib.blake2b(repr(fps).encode("ascii"), digest_size=8).hexdigest()
+
     def _watch_settling(self, path: Path, folder_fp: tuple | None) -> None:
         if not folder_fp or not isinstance(folder_fp[0], int):
             return
@@ -1556,12 +1567,16 @@ class DatasetStore:
                     continue  # the ordinary vanish pass owns deletion
                 flags = ((path / "ds_raw.h5").exists(), (path / "ds_fit.h5").exists(),
                          (path / "quam_state").is_dir())
-                if fps != cached[:3] or flags != (old.has_ds_raw, old.has_ds_fit, old.has_quam_state):
+                files_version = self._run_files_version(path)
+                if (fps != cached[:3] or files_version != old.files_version
+                        or flags != (old.has_ds_raw, old.has_ds_fit, old.has_quam_state)):
                     new = self._parse_run_folder(path, old.date, old.run_id,
                                                  old.time, old.experiment_name,
                                                  known=old, refresh_flags=True)
                     if new is not None and not new.incomplete:
                         if new is not old:
+                            new = _dc_replace(new, bookmarked=old.bookmarked,
+                                              tags=list(old.tags), note=old.note)
                             new.last_parsed = self._stamp()
                             self.runs[old.run_id] = new
                             self._note_run_change(old.run_id, old, new)
@@ -2055,6 +2070,7 @@ class DatasetStore:
             "has_ds_raw": run.has_ds_raw,
             "has_ds_fit": run.has_ds_fit,
             "has_quam_state": run.has_quam_state,
+            "files_version": run.files_version,
             # Nearest earlier run carrying a state snapshot — gates the
             # "Prev State" tab / Full-View diff summary. None when none exists.
             "prev_run_id": (

@@ -1,6 +1,7 @@
 """Late files inside an indexed run must not need a date-dir change."""
 import os
 import time
+import json
 
 import pytest
 
@@ -62,10 +63,39 @@ def test_recent_checks_are_bounded_and_expire(tmp_path, monkeypatch):
     original = store._stat_fp
     monkeypatch.setattr(store, "_stat_fp", lambda path: (calls.append(path), original(path))[1])
     store.rescan_if_stale()
-    assert len(calls) == 3 * dataset._RUN_SETTLE_MAX
+    assert len(calls) == 8 * dataset._RUN_SETTLE_MAX
     expired = max(store._settling_paths.values()) + 1
     monkeypatch.setattr(dataset._time, "time", lambda: expired)
     calls.clear()
     store.rescan_if_stale()
     assert calls == []
     assert not store._settling_paths
+
+
+def test_settling_metadata_preserves_run_annotations(tmp_path):
+    folder = _write_run(tmp_path / "data", "2026-08-01", 1)
+    store = DatasetStore(tmp_path / "data")
+    store.add_tag(1, "good")
+    store.set_note(1, "inspect this run")
+    store.toggle_bookmark(1)
+    store.rescan_if_stale()
+    (folder / "data.json").write_text(json.dumps({"fit_results": {"q1": {"T1": 2e-6}}}))
+    store.rescan_if_stale()
+    run = store.runs[1]
+    assert run.fit_results["q1"]["T1"] == 2e-6
+    assert run.bookmarked and run.note == "inspect this run" and "good" in run.tags
+
+
+def test_existing_late_files_finishing_in_place_refresh_open_detail(tmp_path):
+    folder = _write_run(tmp_path / "data", "2026-08-01", 1)
+    (folder / "ds_raw.h5").write_bytes(b"writing")
+    (folder / "quam_state").mkdir()
+    store = DatasetStore(tmp_path / "data")
+    cursor = store.changes_since(0)["now"]
+    version = store.runs[1].files_version
+    (folder / "ds_raw.h5").write_bytes(b"finished dataset")
+    (folder / "quam_state" / "state.json").write_text("{}")
+    (folder / "quam_state" / "wiring.json").write_text("{}")
+    store.rescan_if_stale()
+    assert store.runs[1].files_version != version
+    assert len(store.changes_since(cursor)["updated"]) == 1

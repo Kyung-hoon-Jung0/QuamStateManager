@@ -1,7 +1,7 @@
 <div id="ds-detail-root" data-experiment="{{ run.experiment_name }}"
      data-qubits="{{ run.qubits | join(',') }}" data-run-id="{{ run.run_id }}"
      data-uid="{{ uid }}" data-folder-key="{{ folder_key }}"
-     data-capabilities="{{ run.has_ds_raw | int }}{{ run.has_ds_fit | int }}{{ run.has_quam_state | int }}"
+     data-capabilities="{{ run.has_ds_raw | int }}{{ run.has_ds_fit | int }}{{ run.has_quam_state | int }}:{{ run.files_version }}"
      data-chip-token="{{ run_chip_token | default('') }}" data-chip-name="{{ run_chip_name | default('') }}"
      data-folder-label="{{ folder_label }}" data-date="{{ run.date }}">
 {% set inspector_type = "dataset" %}
