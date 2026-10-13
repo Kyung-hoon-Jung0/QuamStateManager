@@ -56,7 +56,7 @@ def json_text(data: Any, key: str, default: str = "") -> str:
 
 
 def provenance(data: Any, *, form: bool = False) -> dict | None:
-    """Optional plot origin: four bounded strings, never arbitrary metadata."""
+    """Optional bounded plot origin, with server-verified map settings."""
     if "provenance" not in data:
         return None
     value = data["provenance"]
@@ -67,16 +67,13 @@ def provenance(data: Any, *, form: bool = False) -> dict | None:
             raise BadBody("'provenance' must be a JSON object.") from None
     if not isinstance(value, dict):
         raise BadBody("'provenance' must be a JSON object.")
-    if set(value) - {"src", "run_uid", "request_hash", "text"}:
+    if set(value) - {"src", "run_uid", "request_hash", "text", "map"}:
         raise BadBody("Unknown provenance field.")
-    if any(not isinstance(v, str) or len(v) > 300 for v in value.values()):
-        raise BadBody("Provenance fields must be text of at most 300 characters.")
-    try:
-        for v in value.values():
-            v.encode("utf-8")
-    except UnicodeEncodeError:
-        raise BadBody("Provenance fields must be valid Unicode text.") from None
-    return dict(value)
+    from quam_state_manager.core.plot_origin import valid
+    if not valid(value):
+        raise BadBody("Invalid or oversized plot provenance.")
+    from copy import deepcopy
+    return deepcopy(value)
 
 
 def map_request(data: dict) -> dict:

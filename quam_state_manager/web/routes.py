@@ -3315,7 +3315,7 @@ def _hub_pending(ctx, src: str, *, log=None, wholesale: bool = False, kind: str 
             _o = _values[0]
             src = _o.get("src") or src
             run_uid = _o.get("run_uid") or run_uid
-            ref = {**(ref or {}), **{k: _o[k] for k in ("request_hash", "text") if k in _o}}
+            ref = {**(ref or {}), **{k: copy.deepcopy(_o[k]) for k in ("request_hash", "text", "map") if k in _o}}
         else:
             ref = {**(ref or {}), "origins": copy.deepcopy(_plot_origins)}
     by_path = {e.dot_path: getattr(e, "actor", None) for e in log}

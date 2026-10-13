@@ -47,6 +47,7 @@ from pathlib import Path
 
 from . import doc_cache, safe_io, working_copy
 from .loader import ChangeEntry, QuamStore, merge_state_wiring
+from .plot_origin import valid as _valid_plot_origin
 
 logger = logging.getLogger(__name__)
 
@@ -772,12 +773,7 @@ def _restore(ctx, p: _Persister) -> None:
                     or row.source_file not in ("state", "wiring")
                     or type(row.created) is not bool or type(row.deleted) is not bool
                     or not isinstance(row.actor, str)
-                    or (row.origin is not None and (
-                        not isinstance(row.origin, dict)
-                        or set(row.origin) - {"src", "run_uid", "request_hash", "text"}
-                        or any(not isinstance(v, str) or len(v) > 300
-                               or any(0xD800 <= ord(c) <= 0xDFFF for c in v)
-                               for v in row.origin.values())))
+                    or (row.origin is not None and not _valid_plot_origin(row.origin))
                     or (row.group_id is not None and not isinstance(row.group_id, str))):
                 raise ValueError("the recovery row metadata is invalid")
         base_hash, applied = doc["base_hash"], doc["applied"]

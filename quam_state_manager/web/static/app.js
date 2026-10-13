@@ -16155,6 +16155,7 @@ function _plotApplyOrigin(prov, expName, runUid) {
                   text: shortText};
     if (prov.run_uid || runUid) origin.run_uid = String(prov.run_uid || runUid);
     if (prov.request_hash) origin.request_hash = String(prov.request_hash);
+    if (prov.map) origin.map = JSON.parse(JSON.stringify(prov.map));
     return origin;
 }
 

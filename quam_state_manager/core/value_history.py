@@ -1569,7 +1569,7 @@ def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[s
                 elif origins:
                     origin = origins.get(path)
                 if origin is not None:
-                    p["ref"] = {k: origin[k] for k in ("request_hash", "text") if k in origin}
+                    p["ref"] = {k: origin[k] for k in ("request_hash", "text", "map") if k in origin}
                     p["run_uid"] = origin.get("run_uid")
         _mark_undone(rows, pts, sm)
         return pts

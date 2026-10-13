@@ -144,6 +144,11 @@ const map = {request_hash: 'abc123', request: {
         await delay();
         check(posts.length === 0 && row().textContent.includes('Map settings changed'), 'stale map popup cannot stage');
     }
+    // v1.4.1: summary-only map origin -> retain the exact server settings.
+    const details = {figure: 'map', settings: {smooth: {sigma_x: 2}}, code_fingerprint: 'fingerprint'};
+    await open([{dot_path: p1, value: 3, provenance: {src: 'map_fit', text: 'derived', request_hash: 'abc123', map: details}}]);
+    w.applyPlotRow(row()); await delay();
+    check(JSON.stringify(JSON.parse(form(posts[0]).get('provenance')).map) === JSON.stringify(details), 'full server settings ride the staging request');
     console.log(checks + ' assertions passed');
     dom.window.close();
 })().catch(e => { console.error(e); dom.window.close(); process.exit(1); });

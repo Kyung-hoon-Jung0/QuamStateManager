@@ -279,6 +279,7 @@ def analyze(run, uid, figure, converted, body):
             + ("; cap overridden" if applied["override"] else "") + f"){contour_note}; "
             f"node value {compact(comparison['node_value'])}, delta {compact(comparison['delta'])}, {comparison['verdict']}; "
             f"code {code}")
+    text = f"figure {body.get('fig', '')[:40]}, panel {index}: " + text
     result["provenance_text"] = text[:300]
     origin = {"src": "map_fit", "run_uid": uid, "request_hash": result["request_hash"], "text": text[:300]}
     updates = []
@@ -302,7 +303,13 @@ def analyze(run, uid, figure, converted, body):
             value = transform["old"] * (coordinate * transform.get("coordinate_scale", 1) + transform.get("coordinate_offset", 0))
         path = target.get("path", "")
         if math.isfinite(value) and path and "{" not in path:
-            updates.append({"dot_path": path, "value": value, "provenance": origin})
+            details = {"figure": body.get("fig", ""), "panel": index,
+                "source": body.get("source", "replot"), "settings": deepcopy(body),
+                "caps_applied": deepcopy(result["caps_applied"]),
+                "contour_levels": [c["level"] for c in result["contours"]],
+                "model": model, "revision": deepcopy(revision),
+                "code_fingerprint": figure.get("code_fingerprint"), "target": deepcopy(target)}
+            updates.append({"dot_path": path, "value": value, "provenance": {**origin, "map": details}})
     result.update(updates=updates, status_chip=chip, xref=panel["xref"], yref=panel["yref"],
                   display_only_reason=converted.get("display_only_reason") or ("not verified on this run" if not updates else ""))
     out = preview(result)

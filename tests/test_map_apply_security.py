@@ -104,3 +104,33 @@ def test_type_coercion_cannot_change_map_number(map_chip, batch, monkeypatch):
     monkeypatch.setattr(chip.ctx["modifier"], "_checked_value", lambda *a, **kw: 0)
     response = post(chip, result["updates"][0], batch)
     assert response.status_code == 400 and chip.log() == []
+
+
+def test_map_details_survive_restart_ledger_history_and_undo(map_chip):
+    from quam_state_manager.core import hub, pending_tray, value_history
+    from tests.test_tray_restart import _open
+    chip, result, _ = map_chip
+    row = result["updates"][0]
+    details = row["provenance"].get("map")
+    assert details and details["figure"] == "map" and details["model"] == "landscape"
+    assert details["settings"]["smooth"] == {"sigma_x": 0, "sigma_y": 0}
+    assert details["caps_applied"]["override"] is False and details["contour_levels"] == []
+    before = chip.live_state()
+    assert post(chip, row, True).status_code == 200
+    pending_tray.flush_all()
+    chip.app, chip.c, _ = _open(chip.inst, chip.live)
+    assert chip.ctx["store"].change_log[0].origin["map"] == details
+    assert chip.c.post("/state/apply-to-live").status_code == 200
+    assert chip.journal()[0][-1]["entries"][0]["origin"]["map"] == details
+    with chip.app.app_context():
+        directory = routes._hub_chip_dir(chip.ctx["path"])
+    event = hub.Hub.for_chip(directory).events()[-1]
+    assert event["ref"]["map"] == details
+    answer = value_history.read(directory, {"v": value_history.target(chip.ctx["store"].merged, PATH)})
+    assert answer["rows"]["v"]["points"][-1]["ref"]["map"] == details
+    assert chip.c.post("/undo").status_code == 200
+    assert chip.live_state() == before and chip.log() == []
+    # The historical record remains, marked undone; no pending origin remains.
+    answer = value_history.read(directory, {"v": value_history.target(chip.ctx["store"].merged, PATH)})
+    points = answer["rows"]["v"]["points"]
+    assert any(p.get("undone") for p in points if p.get("kind") == "sm_apply")
