@@ -62,6 +62,27 @@ def test_frequency_reference_never_borrows_another_entity(tmp_path):
     assert map_analysis._frequency_reference(run, [-1, 0, 1], "Detuning MHz", "q2")[0] is None
 
 
+@pytest.mark.parametrize("label", ["probe frequency - carrier [kHz]", "offset from the ridge [MHz]",
+    "residual (MHz)", "Stark-shifted frequency [GHz]", "IF frequency (Hz)", "frequency (Hz)"])
+def test_relative_or_unspecified_labels_require_a_frozen_reference(tmp_path, label):
+    run = SimpleNamespace(folder_path=str(tmp_path))
+    offset, reason = map_analysis._frequency_reference(run, [-1, 0, 1], label, "q0")
+    assert offset is None and "different quantities" in reason
+
+
+@pytest.mark.parametrize("label", ["Frequency (GHz)", "RF frequency [MHz]", "qubit frequency [Hz]"])
+def test_explicit_absolute_labels_need_no_offset(tmp_path, label):
+    assert map_analysis._frequency_reference(SimpleNamespace(folder_path=str(tmp_path)), [1, 2], label, "q0")[0] == 0
+
+
+@pytest.mark.parametrize("node,sm", [(5e9, 1e6), (1e6, 5e9)])
+def test_frequency_magnitude_guard_is_independent_of_the_label(node, sm):
+    fitted = {"verdict": "ok", "values": {"y": sm}}
+    result = saved_comparisons("ridge", {"frequency": node}, fitted, fitted, 1, 1)[0]
+    assert result["delta"] is None and result["verdict"] == "n/a"
+    assert "different quantities" in result["reason"]
+
+
 def test_ridge_frequency_and_flux_tolerances_convert_ghz_and_mv():
     fitted = {"verdict": "ok", "values": {"x": 10., "y": 5.}}
     result = saved_comparisons("ridge", {"frequency": 5e9, "idle_offset": .01}, fitted, fitted,

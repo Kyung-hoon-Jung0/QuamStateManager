@@ -42,6 +42,14 @@ def compare(node_value, sm_value, tol, source, node_name="node value", reason=No
     return out
 
 
+def frequency_guard(item):
+    """An absolute frequency and a small relative coordinate cannot form a delta."""
+    node, sm = item["node_value"], item["sm_value"]
+    if node is not None and sm is not None and max(abs(node), abs(sm)) > 1e8 and min(abs(node), abs(sm)) < .1 * max(abs(node), abs(sm)):
+        item.update(delta=None, verdict="n/a", reason="different quantities: relative and absolute frequency")
+    return item
+
+
 def saved_comparisons(kind, record, fitted, raw_fit, dx, dy, frequency_scale=1.,
                       time_scale=1., control_scale=1., lobe=None, landscape_fields=(),
                       frequency_offset=0., quantity_reason=""):
@@ -63,6 +71,8 @@ def saved_comparisons(kind, record, fitted, raw_fit, dx, dy, frequency_scale=1.,
         tol, source = tolerance(kind, name, step, source_record.get("two_j_err_hz"),
             (source_record.get("fwhm") or 0) / 2, node)
         item = compare(node, sm, tol, source, name, fitted["verdict"])
+        if kind == "ridge" and name != "idle_offset":
+            frequency_guard(item)
         item.update(raw_value=raw, raw_smoothed_delta=sm-raw if sm is not None and raw is not None else None)
         specifications.append(item)
     if kind == "ridge":

@@ -10,7 +10,7 @@ import threading
 
 from quam_state_manager.core.mapfit import api
 from quam_state_manager.core.mapfit.contour import centers
-from quam_state_manager.core.mapfit.compare import compare, saved_comparisons
+from quam_state_manager.core.mapfit.compare import compare, saved_comparisons, frequency_guard
 
 # Map calculation failures are request errors, including numerical domain failures.
 REQUEST_ERRORS = (ValueError, TypeError, KeyError, IndexError, ArithmeticError)
@@ -50,10 +50,10 @@ def _frequency_scale(run, values, label):
 
 def _frequency_reference(run, values, label, entity):
     """A detuning needs the matching entity's frozen absolute/relative source grid."""
-    if "detuning" not in label.lower():
-        if "hz" in label.lower():
-            return 0., "absolute frequency in Hz"
-        return None, "frequency units unavailable; no verified conversion to Hz"
+    words = label.lower()
+    relative = re.search(r"offset|detuning|carrier|relative|residual|shift|\bfrom\b|\bif\b", words)
+    if not relative and ("ghz" in words or re.search(r"\b(?:rf|qubit)\s+frequency\b", words)):
+        return 0., "absolute frequency in Hz"
     import numpy as np
     from pathlib import Path
     from quam_state_manager.core import ndview
@@ -387,6 +387,8 @@ def analyze(run, uid, figure, converted, body):
                 tol = .003 * abs(transform["old"])
                 tol_source = "reference prefactor tolerance converted to target units"
             c = compare(proven[0]["value"], value, tol, tol_source, path)
+            if path.endswith((".f_01", ".RF_frequency")):
+                frequency_guard(c)
             unit = "Hz" if path.endswith((".f_01", ".RF_frequency")) else "V" if path.endswith(("_offset", ".amplitude")) else "target units"
             c.update(quantity=f"{unit}; node value from accepted run patches", raw_value=raw,
                      raw_smoothed_delta=value-raw if raw is not None else None)
