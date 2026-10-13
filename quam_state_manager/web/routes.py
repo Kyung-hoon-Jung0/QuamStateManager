@@ -35138,7 +35138,7 @@ def param_history():
             try:
                 qd = engine.get_qubit(q)
                 for p in props:
-                    current_values[(q, p)] = qd.get(p)
+                    current_values[(q, p)] = _param_history_current_value(engine, q, p, qd)
             except Exception:
                 pass
     # S10 walk (N4): an archived chip has no live state -- each cell shows the
@@ -35886,12 +35886,22 @@ def _hub_latest_values(table, props) -> dict:
     return out
 
 
+def _param_history_current_value(engine, qubit: str, prop: str, resolved=None):
+    """Use the history extractor's formula for derived live properties."""
+    from quam_state_manager.core.history import _DERIVED_FIDELITY_PROPS, _walk_dict
+    derived = _DERIVED_FIDELITY_PROPS.get(prop)
+    if derived:
+        path, formula = derived
+        raw = engine.store.merged.get("qubits", {}).get(qubit, {})
+        return formula(_walk_dict(raw, path))
+    return (resolved if resolved is not None else engine.get_qubit(qubit)).get(prop)
+
+
 def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
                               extra_notes=()):
     """docs/283: one grid cell's drawer on the ledger -- the cell's recorded
     changes (``LedgerTable.curated``, the grid's own rows), each with S7's
-    words; a point opens its run only when that run's own patch proves it
-    wrote the value (its uid is set only then)."""
+    words; a saved-only point opens its source run with the writer caveat."""
     rows = [r for r in table.curated((prop,)) if r["qubit"] == qubit]
     row = rows[0] if rows else {"qubit": qubit, "property": prop, "raw_pointer": None, "values": []}
     attrs = row.get("_attrs") or {}
@@ -35901,6 +35911,7 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
             continue          # not a recorded change: the current-value line covers it
         info = attrs.get(v["timestamp"]) or {}
         proven = info.get("provenance") == "run_proven"
+        saved_uid = info.get("saved_uid")
         pt = v.get("point") or {}
         value = v["value"]
         if isinstance(value, float) and value != value or value in (float("inf"), float("-inf")):
@@ -35910,10 +35921,10 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
                        "label": info.get("label"), "sub": info.get("sub"),
                        "flags": info.get("flag_text") or [],
                        "provenance": info.get("provenance"),
-                       "uid": info.get("uid"),
-                       # a run is named for the click only on proof
-                       "run": pt.get("run_id") if proven else None,
-                       "node": pt.get("experiment") if proven else None})
+                       "uid": info.get("uid") or saved_uid,
+                       "via_saved": bool(saved_uid and not info.get("uid")),
+                       "run": pt.get("run_id") if proven or saved_uid else None,
+                       "node": pt.get("experiment") if proven or saved_uid else None})
     out = {"qubit": qubit, "property": prop, "raw_pointer": row.get("raw_pointer"),
            "values": values, "ledger": True}
     current_value = None
@@ -35921,7 +35932,7 @@ def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool,
         engine = _engine()
         if engine:
             try:
-                current_value = engine.get_qubit(qubit).get(prop)
+                current_value = _param_history_current_value(engine, qubit, prop)
             except Exception:  # noqa: BLE001
                 pass
         if isinstance(current_value, float) and _vh_numeric(current_value) is None:

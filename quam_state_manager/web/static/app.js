@@ -15045,6 +15045,40 @@ window.loadPrevDiff = function(btn, runId, vs, compact) {
  * Figure lightbox. Entry point for every figure <img onclick="toggleFigureZoom(this)">
  * (dataset detail / compare / interactive / trends).
  */
+window.SavedFigureFit = (function () {
+    var observer = null;
+    function measure(root, box) {
+        if (!root.isConnected) return;
+        var top = Math.max(0, box.getBoundingClientRect().top);
+        var available = Math.min(box.clientHeight || window.innerHeight, window.innerHeight - top);
+        var header = root.querySelector('.inspector-header');
+        var tabs = root.querySelector('.dataset-tabs');
+        var labels = Array.from(root.querySelectorAll('.figure-label'));
+        var labelHeight = labels.reduce(function (height, label) {
+            return Math.max(height, label.getBoundingClientRect().height);
+        }, 0);
+        var limit = available - (header ? header.getBoundingClientRect().height : 0)
+            - (tabs ? tabs.getBoundingClientRect().height : 0) - labelHeight - 32;
+        root.style.setProperty('--saved-figure-height', Math.max(64, limit) + 'px');
+    }
+    function init() {
+        if (observer) { observer.disconnect(); observer = null; }
+        var root = document.getElementById('ds-detail-root');
+        if (!root) return;
+        var box = root.closest('#inspector-pane, #table-pane') || document.documentElement;
+        measure(root, box);
+        if (window.ResizeObserver) {
+            observer = new window.ResizeObserver(function () { measure(root, box); });
+            observer.observe(box);
+        }
+    }
+    document.addEventListener('htmx:afterSwap', init);
+    document.addEventListener('DOMContentLoaded', init);
+    window.addEventListener('resize', init);
+    if (document.readyState !== 'loading') init();
+    return {init: init};
+})();
+
 window.toggleFigureZoom = function(imgEl) {
     // r13 feedback: the old class-toggle only pinned the <img> over the page —
     // "the popup opens but how do I zoom in/out?". Real viewer now:
@@ -20997,6 +21031,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     // column the gate does not read.
     var clickHintLine = function(p) {
         if (!p.uid) return '';
+        if (p.via_saved) return '<i>click to open the run that saved it (not proven to have measured it)</i>';
         var run = runOf(p);   // S10 C5: p.writer (snapshot writer check) -> gone
         return '<i style="opacity:0.7">click → open dataset'
              + (run != null ? ' #' + run : '') + '</i>';
@@ -21028,6 +21063,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                 contextLine(p),
                 clickHintLine(p),
                 p.uid || '',
+                !!p.via_saved,
             ];
         });
         return {
@@ -21134,7 +21170,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                 // already withheld the click hint.
                 if (!uid) return;
                 // Use HTMX so the dataset detail loads inside the main pane
-                var url = '/dataset/' + uid;
+                var url = '/dataset/' + uid + (cd[5] ? '?via=saved' : '');
                 if (window.htmx) {
                     // See chip-status.js's twin: `source` for hx-sync queueing,
                     // and no pushUrl -- htmx 2 has no such ajax option.
@@ -24346,6 +24382,25 @@ window.FieldHistory = (function () {
     var applyInput = null;   // the edit input "Use" fills
     var openPath = null;     // docs/186: what Revert stages, when the button
                              // carries no data-path of its own
+    var refreshTimer = null;
+    var openAll = false;
+
+    function refreshAfterMutation() {
+        if (!panel || panel.style.display === 'none' || !openPath) return;
+        ++loadSeq;  // an earlier response must not restore a superseded now
+        var now = panel.querySelector('.fh-currentline');
+        if (now) now.textContent = 'Values changed; refreshing history...';
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(function () {
+            refreshTimer = null;
+            if (panel && panel.style.display !== 'none' && openPath) {
+                load(openAnchor, openPath, ++loadSeq, openAll);
+            }
+        }, 250);
+    }
+    ['stateRestored', 'quam:state-changed', 'liveDriftChanged', 'sm:runs-changed'].forEach(function (name) {
+        document.addEventListener(name, refreshAfterMutation);
+    });
 
     function ensurePanel() {
         if (panel) return panel;
@@ -24444,6 +24499,8 @@ window.FieldHistory = (function () {
     var openAnchor = null;
     function open(anchor, path, input) {
         if (!path) return;
+        clearTimeout(refreshTimer);
+        openAll = false;
         applyInput = input || null;
         openPath = path;
         openAnchor = anchor;
@@ -24477,14 +24534,17 @@ window.FieldHistory = (function () {
                 : p.isConnected && p._fhLoadSeq === seq && p.firstChild === contentStart;
         }
         function replace(html) {
+            var scroll = p.scrollTop;
             if (window.PlotHost) { try { window.PlotHost.purgeWithin(p); } catch (e) {} }
             p.innerHTML = html;
+            p.scrollTop = scroll;
             contentStart = p.firstChild;
         }
         fetch("/field/history?path=" + encodeURIComponent(path) + (all ? "&all=1" : ""))
             .then(function (r) { return r.text(); })
             .then(function (html) {
                 if (!current()) return;
+                if (isPanel) openAll = !!all;
                 replace(html);
                 // same reason as the Column History card: no swap event here
                 if (window.applyLocalTimes) window.applyLocalTimes(p);
@@ -24597,6 +24657,7 @@ window.FieldHistory = (function () {
     }
 
     function close() {
+        clearTimeout(refreshTimer);
         if (panel) panel.style.display = "none";
         openPath = null;
         openAnchor = null;

@@ -156,6 +156,23 @@ function jsonResponse(body, status) {
 }
 
 (async function main() {
+    {
+        const row = Object.assign({}, ROWS[0], {cap: '111', hs: true});
+        const {w} = boot(() => jsonResponse({updated: [row], vanished: [], now: 2000}));
+        const pane = w.document.createElement('div');
+        pane.id = 'inspector-pane';
+        pane.innerHTML = '<div id="ds-detail-root" data-uid="fold1:1" data-capabilities="000"></div>';
+        w.document.body.appendChild(pane);
+        const swaps = [];
+        w.htmx = {ajax: (...args) => swaps.push(args)};
+        w._dsListNav = () => ({'X-SM-DS-Nav': 'list'});
+        pump(w);
+        await wait(40);
+        ok(swaps.length === 1 && swaps[0][1] === '/dataset/fold1:1',
+           'late capabilities refresh the open run without Rescan');
+        ok(swaps[0] && swaps[0][2].headers['X-SM-DS-Nav'] === 'list',
+           'completion refresh retains the detail tab and reading position');
+    }
     // ------------------------------------------------------------------
     // 1. A normal poll happens and advances the cursor.
     // ------------------------------------------------------------------

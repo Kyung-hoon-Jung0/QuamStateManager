@@ -406,6 +406,9 @@ world.push((function () {
       { timestamp: '20260901_010300', value: 6.3e9, trigger: 'save',
         run_id: null, experiment: null, run: 64,
         node: '03_resonator_spectroscopy_single', uid: 'a1b2c3d4:64' },
+      { timestamp: '20260901_010400', value: 6.4e9, trigger: 'auto',
+        run: 65, uid: 'a1b2c3d4:65', via_saved: true,
+        label: 'saved in #65 scan', sub: 'writer not proven' },
     ],
   }, null);
   return until(win, function () { return chart.__renders === 1
@@ -446,6 +449,14 @@ world.push((function () {
     ok(win._htmxCalls.length === 1
        && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:64',
        '6k the tier-split point opens the run the hint promised');
+    const saved = chart.data.find(t => t.name === 'Auto').customdata[0];
+    ok(/saved in #65/.test(saved[2]) && /writer not proven/.test(saved[2])
+       && /not proven to have measured it/.test(saved[3]),
+       'the Param History saved point retains the writer caveat');
+    win._htmxCalls.length = 0;
+    fireIt(saved);
+    ok(win._htmxCalls.length === 1 && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:65?via=saved',
+       'the Param History saved point opens its run with the caveat');
   });
 })());
 

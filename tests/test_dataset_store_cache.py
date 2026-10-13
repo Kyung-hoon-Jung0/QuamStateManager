@@ -158,6 +158,10 @@ class TestTheScanIsTheVerification:
 
     def test_an_untouched_archive_costs_one_stat_per_date_dir(self, tmp_path):
         root, cache = self._warm(tmp_path)
+        # v1.4.1: fresh folders -> settled archive; recent runs now check for late files.
+        for folder in root.glob("*/*"):
+            os.utime(folder, (time.time() - 3600, time.time() - 3600))
+        DatasetStore(root, cache_dir=cache).flush_store_cache()
         under: list[str] = []
         real_stat = os.stat
 

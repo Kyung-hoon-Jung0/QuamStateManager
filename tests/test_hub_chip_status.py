@@ -208,14 +208,16 @@ class TestWriterOnlyOnProof:
             "a row the run's patch did not set never says the run set it"
         assert "ledger start; writer unknown" in by_run["first recorded in #1"]
 
-    def test_the_grid_drawer_opens_a_run_only_on_proof(self, sm):
+    def test_the_grid_drawer_opens_saved_runs_with_a_caveat(self, sm):
         html = sm["client"].get("/param-history/expand?qubit=qA1&prop=f_01").data.decode()
         data = json.loads(re.search(r'id="phd-data" type="application/json">(.*?)</script>',
                                     html, re.S).group(1))
         # P0-1: old "writer not proven" -> + the open label, why: every run of this fixture targets qA1, so nothing read the chip after #3
+        # v1.4.1: writer-only links -> saved source links too; writer proof stays unchanged.
         assert data["ledger"] and [(v["value"], v["sub"], v["uid"], v["run"]) for v in data["values"]] == [
             (5.0e9, "ledger start; writer unknown", None, None),
-            (5.1e9, "writer not proven \u00b7 no later run has read the chip yet", None, None)]
+            (5.1e9, "writer not proven \u00b7 no later run has read the chip yet", routes._folder_key(sm["data"]) + ":3", 3)]
+        assert data["values"][-1]["via_saved"]
         html = sm["client"].get("/param-history/expand?qubit=qA1&prop=T1").data.decode()
         data = json.loads(re.search(r'id="phd-data" type="application/json">(.*?)</script>',
                                     html, re.S).group(1))

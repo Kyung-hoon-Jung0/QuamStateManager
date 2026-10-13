@@ -117,6 +117,10 @@ class TestRandomSequence:
             active = _active(stores)
             bad = _all_views_match(active, views)
             assert bad == [], f"step {step} ({ev}): {bad}"
+            # v1.4.1: incidental idle hits -> explicit repeat hits; recent inner-file updates invalidate the memo.
+            before_repeat = R._DATASETS_PAYLOAD.hits
+            assert _all_views_match(active, views) == []
+            assert R._DATASETS_PAYLOAD.hits - before_repeat == 4
         # not vacuous: the memo really served most of those answers
         assert R._DATASETS_PAYLOAD.hits - hits0 > 60
 
