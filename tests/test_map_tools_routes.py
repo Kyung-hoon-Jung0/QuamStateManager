@@ -89,6 +89,15 @@ def test_proposed_or_unverified_map_never_offers_staging(rig, tier):
     assert result["display_only_reason"]
 
 
+def test_replay_identity_includes_the_verified_write_transform(rig):
+    client, figure = rig
+    first = client.post("/dataset/run/map/analyze", json={"fig": "map"}).get_json()
+    figure["clickable"]["targets"][0]["scale"] = 3
+    second = client.post("/dataset/run/map/analyze", json={"fig": "map"}).get_json()
+    assert first["request_hash"] != second["request_hash"]
+    assert client.get("/dataset/run/map/analyze/" + first["request_hash"]).get_json() == first
+
+
 @pytest.mark.parametrize("error", [ArithmeticError, OverflowError, FloatingPointError, ZeroDivisionError])
 def test_map_numerical_failures_remain_request_errors(rig, monkeypatch, error):
     client, _ = rig

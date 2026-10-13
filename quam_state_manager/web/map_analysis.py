@@ -252,9 +252,12 @@ def analyze(run, uid, figure, converted, body):
         result["compare"] = references[0]
     result["node_verdict"] = {k: record[k] for k in ("success", "reasons", "reason", "note") if k in record}
     # Scope the hash to the run, figure and exact source revision as well as arrays/options.
+    from quam_state_manager.core.interactive_plots.replot import _fingerprint
+    from pathlib import Path
     result["request_hash"] = api.request_hash({"analysis": result["request_hash"], "run": uid,
         "fig": body.get("fig"), "panel": index, "source": body.get("source", "replot"),
-        "revision": figure.get("revision"), "fingerprint": figure.get("code_fingerprint"), "settings": body})
+        "revision": figure.get("revision"), "fingerprint": figure.get("code_fingerprint"), "settings": body,
+        "inputs": _fingerprint(Path(run.folder_path)), "contract": converted.get("clickable")})
     chip = converted.get("status_chip") or "not verified on this run"
     comparison = result["compare"]
     run_id = getattr(run, "id", getattr(run, "run_id", "?"))
