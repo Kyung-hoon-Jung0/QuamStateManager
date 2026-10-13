@@ -15,6 +15,8 @@ const d = w.document;
 const p1 = 'qubits.q1.T1', p2 = 'qubits.q2.T1';
 const posts = [];
 let replies = [];
+let sinceReply = null;
+const peekUrls = [];
 let checks = 0;
 function check(condition, message) { checks++; assert.ok(condition, message); }
 const delay = () => new Promise(resolve => setTimeout(resolve, 30));
@@ -27,7 +29,8 @@ w.fetch = (url, opts) => {
     } else if (url.startsWith('/chip/active-token')) {
         reply = {loaded: true, token: 'chip-token', path: '/scratch/live'};
     } else if (url.startsWith('/field/peek')) {
-        reply = {ok: true, values: {[p1]: 0.00002, [p2]: 0.00003}, resolved: {}, errors: {}};
+        peekUrls.push(url);
+        reply = {ok: true, values: {[p1]: 0.00002, [p2]: 0.00003}, resolved: {}, errors: {}, since_run: sinceReply ? {[p1]: sinceReply} : {}};
     }
     return Promise.resolve({ok: status === 200, status, json: () => Promise.resolve(reply)});
 };
@@ -52,6 +55,15 @@ const map = {request_hash: 'abc123', request: {
     fit: {model: 'extremum'}, smooth: {kernel: 'gaussian', sigma_x: 2, sigma_y: 0},
     contour: {on: true, level: 180}}};
 (async () => {
+    // v1.4.1: stale Apply had no warning -> the popup asks for proven history of this run's target.
+    sinceReply = {proven: true, text: 'Changed since this run by #514 at 19:02 (local time).'};
+    await open([{dot_path: p1, value: 3}]);
+    check(peekUrls.at(-1).includes('run_uid=root%3A7'), 'peek carries the source run identity');
+    check(row().querySelector('.plot-apply-row-history').textContent.includes('#514'), 'proven later write is shown before Apply');
+    sinceReply = {proven: false, text: 'Changes since this run: unknown (no proven later write found).'};
+    await open([{dot_path: p1, value: 3}]);
+    check(!row().querySelector('.plot-apply-row-history').textContent.includes('#514'), 'unknown history never borrows a previous writer');
+    sinceReply = null;
     const root = d.createElement('div');
     root.id = 'ds-detail-root';
     root.setAttribute('data-uid', 'root:7');

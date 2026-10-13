@@ -16169,7 +16169,7 @@ function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpec
         // Even if activation failed, still render — the popup shows real
         // per-row errors when Apply is clicked.
         _renderPlotApplyPopup(updates, expName, qubitName, contextRows, expect, runUid, qubitNow);
-        _fetchPlotApplyOldValues(updates);
+        _fetchPlotApplyOldValues(updates, runUid);
     }
     // Cross-chip pre-check: warn BEFORE the popup if the loaded chip isn't
     // the chip this fit came from. Cancel aborts; OK marks it force-applied.
@@ -16560,6 +16560,7 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
           + '<div class="plot-apply-row-action">'
           + '<button type="button" class="primary btn-sm plot-apply-row-btn">Apply</button></div>'
           + provHtml
+          + '<div class="plot-apply-row-history muted" hidden></div>'
           + '<div class="plot-apply-row-domainwarn" hidden'
           + ' style="color:var(--color-warning-text);font-size:0.74rem"></div>'
           + '<div class="plot-apply-row-error" hidden></div>';
@@ -16678,12 +16679,13 @@ function _renderPointerRow(row, info, rawValue) {
     }
 }
 
-function _fetchPlotApplyOldValues(updates) {
+function _fetchPlotApplyOldValues(updates, runUid) {
     var rowsBox = document.getElementById('plot-apply-rows');
     if (!rowsBox) return;
     var rows = Array.prototype.slice.call(rowsBox.querySelectorAll('.plot-apply-row'));
     var inputs = rows.map(function(r) { return r.getAttribute('data-input-path'); });
     var qs = inputs.map(function(p) { return 'dot_path=' + encodeURIComponent(p); }).join('&');
+    if (runUid) qs += '&run_uid=' + encodeURIComponent(runUid);
     fetch('/field/peek?' + qs).then(function(resp) {
         return resp.json();
     }).then(function(payload) {
@@ -16693,6 +16695,9 @@ function _fetchPlotApplyOldValues(updates) {
         var errors = payload.errors || {};
         rows.forEach(function(row) {
             var input = row.getAttribute('data-input-path');
+            var historySlot = row.querySelector('.plot-apply-row-history');
+            var since = (payload.since_run || {})[input];
+            if (historySlot && since) { historySlot.textContent = since.text; historySlot.hidden = false; }
             var info = resolved[input];
             var oldSlot = row.querySelector('.plot-apply-old-val');
             if (info && info.is_pointer) {
