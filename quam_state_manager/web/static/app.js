@@ -1601,9 +1601,10 @@ document.addEventListener('keydown', function(evt) {
     var tool = document.querySelector('#settings-dropdown:not(.settings-hidden),'
                                       + ' #calc-popover:not(.calc-hidden),'
                                       + ' #manual-popover:not(.manual-hidden),'
-                                      + ' #state-version-panel:not([hidden])');
+                                      + ' #state-version-panel:not([hidden]), #float-wiring');
     if (tool) {
         evt.preventDefault();
+        if (tool.id === 'float-wiring') { tool.querySelector('.fw-close').click(); return; }
         if (tool.id === 'state-version-panel') {       // what the panel's own close() does
             var _svFocus = tool.contains(document.activeElement);
             tool.hidden = true;
@@ -2471,6 +2472,7 @@ window.toggleTheme = function() {
     _applyThemeToPlotly(newTheme);
     // House-themed plots (ndview + any surface using PlotTheme) follow instantly.
     if (window.PlotTheme) window.PlotTheme.retheme();
+    if (window.FloatWiring) window.FloatWiring.refresh();
 };
 
 // Restore theme on page load. Dark is the default; the inline script
