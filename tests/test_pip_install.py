@@ -20,6 +20,16 @@ from quam_state_manager.web import app as app_mod
 _REPO = Path(__file__).resolve().parent.parent
 
 
+@pytest.mark.parametrize("requirement", ["contourpy>=1.0", "psutil>=5.9"])
+def test_map_and_worker_dependencies_are_declared(requirement):
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    project = tomllib.loads((_REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    assert requirement in project["project"]["dependencies"], "Direct runtime imports need declared dependencies"
+
+
 @pytest.mark.real_instance_path        # docs/155 F7: this class IS the policy
 class TestDefaultInstancePath:
     def test_repo_checkout_keeps_repo_instance(self):
@@ -85,6 +95,14 @@ def test_wheel_install_serves_a_page(tmp_path):
         pytest.skip(f"wheel build unavailable here: {r.stderr[-400:]}")
     wheels = list(wheel_dir.glob("quam_state_manager-*.whl"))
     assert wheels, r.stdout + r.stderr
+    # v1.4.0: transitive imports -> declared runtime requirements, clean installs need both.
+    from email.parser import Parser
+    from zipfile import ZipFile
+    with ZipFile(wheels[0]) as archive:
+        metadata_path = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
+        metadata = Parser().parsestr(archive.read(metadata_path).decode("utf-8"))
+    requirements = {r.replace(" ", "") for r in metadata.get_all("Requires-Dist", [])}
+    assert {"contourpy>=1.0", "psutil>=5.9"} <= requirements
     site = tmp_path / "site"
     r = subprocess.run(pip + ["install", str(wheels[0]), "--no-deps",
                               "--target", str(site)],
@@ -93,9 +111,12 @@ def test_wheel_install_serves_a_page(tmp_path):
     assert r.returncode == 0, r.stderr[-800:]
 
     probe = tmp_path / "probe.py"
+    # v1.4.0: page-only smoke -> import map and worker modules, catch missing install dependencies.
     probe.write_text(
         "import json, sys\n"
         "from quam_state_manager.web.app import create_app, default_instance_path\n"
+        "from quam_state_manager.core.mapfit import contour\n"
+        "from quam_state_manager.core import lab_worker\n"
         "app = create_app(testing=True)\n"
         "c = app.test_client()\n"
         "r = c.get('/')\n"

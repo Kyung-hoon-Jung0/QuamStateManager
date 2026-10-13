@@ -35,6 +35,8 @@ dependencies = [
     # (import-time UserWarning, degraded synth) — with the floor pip
     # REPAIRS the env instead (docs/102).
     "numpy>=1.26.4",
+    "contourpy>=1.0",
+    "psutil>=5.9",
     "pywebview>=5.0",
     # Production WSGI server for `qsm serve`/`browser` (non-debug mode) — swaps
     # out Werkzeug's dev server so it stops nagging about production use.
