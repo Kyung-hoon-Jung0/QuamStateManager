@@ -6,6 +6,50 @@ from types import SimpleNamespace
 import pytest
 
 from quam_state_manager.web.plot_apply_history import changed_since
+from quam_state_manager.web.plot_apply_history import settled_rewrites, notes
+
+
+@pytest.mark.parametrize("edited", [False, True])
+def test_settling_rewrites_count_but_later_saved_edits_do_not(tmp_path, edited):
+    import sqlite3
+    import os
+    source, answer = history()
+    points = answer["rows"]["value"]["points"]
+    for point in points:
+        point["flags"] = ["rewritten"]
+    root = str(Path("/runs").absolute())
+    with sqlite3.connect(tmp_path / "ledger.sqlite") as conn:
+        conn.executescript("CREATE TABLE roots(root_id, path); "
+                           "CREATE TABLE events(kind, root_id, rel_path, run_start_us, flags); "
+                           "CREATE TABLE run_files(root_id, rel_path, sig);")
+        conn.execute("INSERT INTO roots VALUES(1,?)", (root,))
+        # First ingest precedes the saved pair. Both current pairs settle before the next run.
+        for rel, start, mtime in [("source", 1_000_000, 2_500_000 if edited else 1_500_000),
+                                  ("later", 2_000_000, 2_500_000), ("next", 3_000_000, 3_500_000)]:
+            conn.execute("INSERT INTO events VALUES('run',1,?,?,128)", (rel, start))
+            conn.execute("INSERT INTO run_files VALUES(1,?,?)", (rel, "|".join([f"100:{mtime * 1000}"] * 3)))
+        # A different root's earlier next run must not change this root's proof.
+        conn.execute("INSERT INTO events VALUES('run',2,'other',1100000,0)")
+    settled = settled_rewrites(tmp_path)
+    assert (os.path.normcase(source) in settled) is not edited
+    assert os.path.normcase(points[1]["folder"]) in settled  # no subsequent edit of the later writer
+    result = changed_since(answer, source, settled)
+    assert result["proven"] is not edited
+    if not edited:
+        assert result["run_id"] == 514
+    ctx = {"hub_chip_dir": str(tmp_path), "path": "unused"}
+    resolved = (SimpleNamespace(runs={502: SimpleNamespace(folder_path=source)}), 502, "")
+    note = notes(ctx, "run", ["value"], lambda uid: resolved, lambda *a, **k: answer)
+    assert note["value"]["proven"] is not edited
+
+
+def test_later_writer_edit_remains_excluded(tmp_path):
+    source, answer = history()
+    points = answer["rows"]["value"]["points"]
+    for point in points:
+        point["flags"] = ["rewritten"]
+    result = changed_since(answer, source, {source})
+    assert not result["proven"] and "unknown" in result["text"]
 
 
 def history():
