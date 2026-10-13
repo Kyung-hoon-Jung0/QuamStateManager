@@ -11252,6 +11252,8 @@ def field_edit():
     _origin = provenance(request.form, form=True)
     dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
     raw_value = request.form.get("value", "")
+    from quam_state_manager.web import map_apply
+    map_apply.validate(ctx, dot_path, raw_value, _origin)
     # docs/145's tree editor shows a string as its JSON literal and UNWRAPS a
     # valid one before posting, so the quotes a user typed to say "this stays
     # text" never arrive. Standing the type-fix offer down is not enough: the
@@ -11382,6 +11384,8 @@ def field_edit():
                                lab_follow=_lab_follow_payload(
                                    target_path, parsed, _lab_info)), 400
             with modifier.store._lock:
+                map_apply.validate(ctx, dot_path, raw_value, _origin)
+                map_apply.checked(modifier, target_path, parsed, _origin)
                 _entry = modifier.set_value(target_path, parsed)
                 if _origin is not None:
                     _entry.origin = copy.deepcopy(_origin)
@@ -13842,6 +13846,11 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     if not pairs:
         return jsonify(ok=False, error="No updates supplied"), 400
 
+    from quam_state_manager.web import map_apply
+    for (_dp, _rv, _create), _row_origin in zip(pairs, _origins):
+        map_apply.validate(ctx, _dp, _rv, _row_origin,
+                           create=_create, delete=_rv is _BATCH_DELETE)
+
     independent = bool(_pj.get("independent"))
 
     # w9/pulsegate: a row that adds, removes or renames a pulse is the Pulses
@@ -14019,6 +14028,9 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
 
     from quam_state_manager.core import pending_tray
     with _lab_released(_lab_rel), modifier.store._lock, pending_tray.batch(modifier.store):
+        for (_dp, _rv, _create), _row_origin in zip(pairs, _origins):
+            map_apply.validate(ctx, _dp, _rv, _row_origin,
+                               create=_create, delete=_rv is _BATCH_DELETE)
         if isinstance(_grp, str) and _grp:
             _log = modifier.store.change_log
             _top = _log[-1].group_id if _log else None
@@ -14097,6 +14109,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 if _cno:
                     raise ValueError(_cno)    # SU-11: the grid's own door too
                 try:
+                    map_apply.checked(modifier, target_path, parsed, _origins[_row_n])
                     entry = modifier.set_value(target_path, parsed, _defer_hooks=True,
                                                group_id=_batch_gid)
                 except KeyError:
@@ -39633,6 +39646,7 @@ def _map_figure(uid, body):
         if not figure or not converted:
             raise BadBody("Figure not available.")
         figure = {**figure, "code_fingerprint": result.get("code_fingerprint"),
+            "module_files": result.get("module_files", []), "module_trees": result.get("module_trees", []),
             "map_sibling_axes": [axis for peer in result.get("figures", []) if peer is not figure
                                  for axis in peer.get("axes", [])]}
     if converted.get("clickable"):
@@ -39672,6 +39686,8 @@ def dataset_map_analyze(uid):
     try:
         run, figure, converted = _map_figure(uid, body)
         result = map_analysis.analyze(run, uid, figure, converted, body)
+        from quam_state_manager.web import map_apply
+        map_apply.bind(_active_ctx(), run, result, figure)
     except map_analysis.REQUEST_ERRORS as exc:
         raise BadBody(str(exc)) from None
     return jsonify(result)

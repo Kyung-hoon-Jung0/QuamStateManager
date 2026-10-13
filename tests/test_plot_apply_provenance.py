@@ -197,6 +197,14 @@ def test_per_row_origins_and_mixed_apply_are_not_misattributed(tmp_path):
     from quam_state_manager.web import routes
     chip = Chip(tmp_path)
     other = {**ORIGIN, "text": "derived from smoothed map", "src": "map_fit"}
+    # v1.4.1: client map claims -> server-bound results, so mixed origins need a real grant.
+    from types import SimpleNamespace
+    from quam_state_manager.web import map_analysis, map_apply
+    result = {"request_hash": other["request_hash"], "updates": [
+        {"dot_path": PATH, "value": .00005, "provenance": other}]}
+    map_analysis._RESULTS[(other["run_uid"], other["request_hash"])] = (result, 1)
+    with chip.app.app_context():
+        map_apply.bind(chip.ctx, SimpleNamespace(folder_path=str(tmp_path)), result)
     r = chip.c.post("/field/edit-batch", json={"updates": [
         {"dot_path": PATH, "value": "0.00004", "provenance": ORIGIN},
         {"dot_path": PATH, "value": "0.00005", "provenance": other}]})
