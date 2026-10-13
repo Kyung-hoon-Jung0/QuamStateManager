@@ -276,13 +276,12 @@ def analyze(run, uid, figure, converted, body):
     code = revision.get("rung", "unverified") + ("/" + revision["sha"][:7] if revision.get("sha") else "")
     def compact(value):
         return "n/a" if value is None else f"{value:.6g}"
-    text = (f"derived from run #{run_id} {getattr(run, 'experiment_name', '')[:60]}: {model} on smoothed map "
+    text = (f"derived from run #{run_id}: {model} on smoothed map; code {code}; "
+            f"figure {body.get('fig', '')[:32]}, panel {index} "
             f"({body.get('smooth', {}).get('kernel', 'gaussian')}, sigma x={display_caps['sigma_x']:.1f} pt, "
             f"y={display_caps['sigma_y']:.1f}; cap x={display_caps['cap_x']:.3g}, y={display_caps['cap_y']:.3g} pt"
             + ("; cap overridden" if applied["override"] else "") + f"){contour_note}; "
-            f"node value {compact(comparison['node_value'])}, delta {compact(comparison['delta'])}, {comparison['verdict']}; "
-            f"code {code}")
-    text = f"figure {body.get('fig', '')[:40]}, panel {index}: " + text
+            f"node value {compact(comparison['node_value'])}, delta {compact(comparison['delta'])}, {comparison['verdict']}")
     result["provenance_text"] = text[:300]
     origin = {"src": "map_fit", "run_uid": uid, "request_hash": result["request_hash"], "text": text[:300]}
     updates = []
@@ -307,6 +306,7 @@ def analyze(run, uid, figure, converted, body):
         path = target.get("path", "")
         if math.isfinite(value) and path and "{" not in path:
             details = {"figure": body.get("fig", ""), "panel": index,
+                "run_id": run_id, "experiment_name": getattr(run, "experiment_name", ""),
                 "source": body.get("source", "replot"), "settings": deepcopy(body),
                 "caps_applied": deepcopy(result["caps_applied"]),
                 "contour_levels": [c["level"] for c in result["contours"]],

@@ -117,6 +117,9 @@ def test_map_details_survive_restart_ledger_history_and_undo(map_chip):
     assert details["caps_applied"]["override"] is False and details["contour_levels"] == []
     before = chip.live_state()
     assert post(chip, row, True).status_code == 200
+    for endpoint in ("/state/review", "/changes"):
+        html = chip.c.get(endpoint).get_data(as_text=True)
+        assert "code unverified" in html and "code_fingerprint" in html and "caps_applied" in html
     pending_tray.flush_all()
     chip.app, chip.c, _ = _open(chip.inst, chip.live)
     assert chip.ctx["store"].change_log[0].origin["map"] == details
@@ -128,6 +131,10 @@ def test_map_details_survive_restart_ledger_history_and_undo(map_chip):
     assert event["ref"].get("map") == details
     answer = value_history.read(directory, {"v": value_history.target(chip.ctx["store"].merged, PATH)})
     assert answer["rows"]["v"]["points"][-1]["ref"]["map"] == details
+    point = answer["rows"]["v"]["points"][-1]
+    with chip.app.test_request_context():
+        shown = routes._vh_present(point, [], {})
+    assert '"code_fingerprint"' in shown["title"] and '"caps_applied"' in shown["title"]
     assert chip.c.post("/undo").status_code == 200
     assert chip.live_state() == before and chip.log() == []
     # The historical record remains, marked undone; no pending origin remains.

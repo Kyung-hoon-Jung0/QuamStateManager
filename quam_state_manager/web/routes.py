@@ -12454,6 +12454,9 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
         if _origin_text:
             sub += " \u00b7 " + _origin_text
             title += " " + _origin_text
+        _map_details = (p.get("ref") or {}).get("map")
+        if _map_details:
+            title += " " + json.dumps(_map_details, ensure_ascii=True, sort_keys=True)
         trigger = "manual" if kind in ("agent", "autofit") else "save"
     else:
         label = p.get("kind") or "unknown"
