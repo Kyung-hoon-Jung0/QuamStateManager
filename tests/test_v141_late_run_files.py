@@ -99,3 +99,44 @@ def test_existing_late_files_finishing_in_place_refresh_open_detail(tmp_path):
     store.rescan_if_stale()
     assert store.runs[1].files_version != version
     assert len(store.changes_since(cursor)["updated"]) == 1
+
+
+def test_detail_open_never_waits_for_a_running_scan(tmp_path):
+    import threading
+    root = tmp_path / "data"
+    _write_run(root, "2026-08-01", 1)
+    store = DatasetStore(root)
+    held, release = threading.Event(), threading.Event()
+
+    def scan_in_progress():
+        with store._scan_lock:
+            held.set()
+            release.wait(10)
+
+    worker = threading.Thread(target=scan_in_progress)
+    worker.start()
+    assert held.wait(5)
+    try:
+        started = time.monotonic()
+        run = store.get_run(1)
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        worker.join()
+    assert run is not None and elapsed < 2.0
+
+
+def test_settled_folders_cost_one_stat_for_their_files_version(tmp_path, monkeypatch):
+    root = tmp_path / "data"
+    folder = _write_run(root, "2026-08-01", 1)
+    (folder / "ds_raw.h5").write_bytes(b"raw")
+    store = DatasetStore(root)
+    calls = []
+    original = store._stat_fp
+    monkeypatch.setattr(store, "_stat_fp", lambda path: (calls.append(path), original(path))[1])
+    hour_ago = time.time() - 3600
+    os.utime(folder, (hour_ago, hour_ago))
+    assert store._run_files_version(folder) == "" and calls == [folder]
+    os.utime(folder, None)
+    calls.clear()
+    assert store._run_files_version(folder) != "" and len(calls) == 5

@@ -1517,9 +1517,15 @@ class DatasetStore:
 
     def _run_files_version(self, path: Path) -> str:
         # Files can finish in place after their existence flags first turn on.
+        # Only a folder inside the settle window can still be finishing: an
+        # older one costs this one stat instead of five, because a cold scan
+        # parses every run of the archive (a share pays ~2 ms per stat).
+        folder = self._stat_fp(path)  # late saved figures move this directory
+        if not isinstance(folder[0], int) or folder[0] / 1e9 + _RUN_SETTLE_S <= _time.time():
+            return ""
         fps = [self._stat_fp(path / name) for name in (
             "ds_raw.h5", "ds_fit.h5", "quam_state/state.json", "quam_state/wiring.json")]
-        fps.append(self._stat_fp(path))  # late saved figures move this directory
+        fps.append(folder)
         return hashlib.blake2b(repr(fps).encode("ascii"), digest_size=8).hexdigest()
 
     def _watch_settling(self, path: Path, folder_fp: tuple | None) -> None:
@@ -1540,8 +1546,13 @@ class DatasetStore:
 
         No date listing or retry sleeps. Unchanged JSON is not read. Check
         snapshot presence too: adding files below it need not move the run.
+
+        Opening a detail never waits for a running scan: with the lock busy it
+        returns at once, and that scan (or the next poll) re-stats the run.
         """
-        with self._scan_lock:
+        if not self._scan_lock.acquire(blocking=run_id is None):
+            return
+        try:
             if run_id is None:
                 paths = list(self._settling_paths)
             else:
@@ -1583,6 +1594,8 @@ class DatasetStore:
                         self._folder_fp[path] = (*fps, old.run_id)
                         self._mark_store_cache_dirty()
                 self._watch_settling(path, fps[0])
+        finally:
+            self._scan_lock.release()
 
     def rescan_if_stale(self, deadline: float | None = None) -> bool:
         """Re-scan if folder mtimes changed.  Returns True if new runs found.
