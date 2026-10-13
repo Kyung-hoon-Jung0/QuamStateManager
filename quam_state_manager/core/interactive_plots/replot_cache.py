@@ -8,7 +8,7 @@ from pathlib import Path
 
 from quam_state_manager.generator.iplot_sources import fingerprint, snapshot
 
-SCHEMA = "iplot/v2-cache/1"
+SCHEMA = "iplot/v2-cache/2"
 DISK_BYTES = 256 * 1024**2
 RAM_BYTES = 64 * 1024**2
 

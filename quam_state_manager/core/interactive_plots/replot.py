@@ -574,7 +574,8 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
 
     panels = _group_panels(axes, drawable)
     nrows, ncols, cells = _grid_layout(axes, panels)
-    xpad = 0.06 / ncols
+    # Reserve a title plus tick labels between columns at the nominal pane width.
+    xpad = min(42 / 1080, .22 / ncols) if ncols > 1 else .06
     has_secondary_top = any(
         a.get("shares_y_with") is not None or any(s.get("axis") == "x" and s.get("side", "top") == "top"
                                                   for s in a.get("secondary_axes", [])) for a in axes)
@@ -597,6 +598,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                                           "anchor": yref, "domain": [max(x0, 0), min(x1, 1)]}
         layout[_axis_id("yaxis", pid)] = {**_axis_props(base, log_key="y"),
                                           "anchor": xref, "domain": [max(y0, 0), min(y1, 1)]}
+        if col > 0 and any(cells[k] == (row, 0) and axes[_pick_base(axes, p)].get("ylabel") == base.get("ylabel")
+                           for k, p in enumerate(panels)):
+            layout[_axis_id("yaxis", pid)]["title"] = {"text": ""}
 
         for i in panel:
             if i == base_i:
@@ -624,13 +628,16 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             values = mapping.get("parent", [])
             labels = mapping.get("forward", [])
             step = max(1, (len(values) - 1) // 4)
+            tick_indices = list(range(0, len(values), step))
+            if kind == "x" and ncols > 1 and len(values) >= 5:
+                tick_indices = [round((len(values) - 1) * fraction) for fraction in (.1, .5, .9)]
             sid = 200 + pid + j * len(panels)
             layout[_axis_id(kind + "axis", sid)] = {
                 **_axis_props(base, log_key=kind), "title": {"text": sec.get("label", "")},
                 "overlaying": ref, "matches": ref,
                 "anchor": yref if kind == "x" else xref, "side": sec.get("side", "top"),
-                "tickmode": "array", "tickvals": values[::step],
-                "ticktext": [f"{v:.6g}" if v is not None else "" for v in labels[::step]],
+                "tickmode": "array", "tickvals": [values[k] for k in tick_indices],
+                "ticktext": [f"{labels[k]:.6g}" if labels[k] is not None else "" for k in tick_indices],
                 "showgrid": False, "zeroline": False}
             if values:
                 endpoints = [values[0], values[-1]]
@@ -686,6 +693,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     layout["legend"] = {"orientation": "h", "y": -0.12 / nrows, "x": 0.0}
     layout["margin"] = {"l": 60, "r": 60, "t": 92 if has_top_axis else 44, "b": 50}
     layout["height"] = max(320, 320 * nrows) + (64 * nrows if has_top_axis else 0)
+    size = fig_json.get("size_inches")
+    if size and len(size) == 2 and all(isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in size):
+        layout["height"] = round(max(320, min(2200, 1200 * size[1] / size[0])))
     if notes:
         layout["annotations"] = notes
     from .mathtext import plotly_text

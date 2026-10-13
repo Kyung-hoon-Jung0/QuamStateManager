@@ -402,6 +402,7 @@ def extract_figure(fig, key, title=None):
         "key": key,
         "title": title or sup or key,
         "suptitle": sup,
+        "size_inches": _flist(f.get_size_inches()),
         "axes": [extract_axes(ax, axes) for ax in axes],
         "texts": [{"text": t.get_text(), "x": _f(t.get_position()[0]),
                    "y": _f(t.get_position()[1]), "color": _hex(t.get_color()),

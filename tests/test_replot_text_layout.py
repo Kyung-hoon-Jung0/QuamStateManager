@@ -1,6 +1,7 @@
 """Figure labels and secondary-axis titles remain readable in Plotly."""
 import json
 from pathlib import Path
+import pytest
 
 from quam_state_manager.core.interactive_plots.mathtext import readable
 from quam_state_manager.core.interactive_plots.replot import mpljson_to_plotly
@@ -34,3 +35,31 @@ def test_secondary_top_axis_reserves_title_space_in_each_grid_row():
     assert layout["yaxis"]["domain"][1] < .91
     assert layout["title"]["text"] == "Power scan"
     assert all(note["text"] != "Power scan" for note in layout["annotations"])
+
+
+def test_source_aspect_column_titles_and_secondary_ticks():
+    axes = [{"xlabel": "Pulse amplitude [mV]", "ylabel": "Number of pulses", "title": f"q{i}",
+             "grid": {"row": 0, "col": i, "nrows": 1, "ncols": 5},
+             "traces": [{"type": "heatmap", "x": [0, 1], "y": [0, 1], "z": [[0, 1], [1, 0]]}],
+             "secondary_axes": [{"axis": "x", "side": "top", "label": "amplitude prefactor",
+                                  "map": {"parent": list(range(11)), "forward": [n/10 for n in range(11)]}}]}
+            for i in range(5)]
+    layout = mpljson_to_plotly({"axes": axes, "size_inches": [15, 9]})["layout"]
+    assert layout["height"] == 720
+    assert layout["yaxis"]["title"]["text"] == "Number of pulses"
+    assert all(layout[f"yaxis{i}"]["title"]["text"] == "" for i in range(2, 6))
+    gap = layout["xaxis2"]["domain"][0] - layout["xaxis"]["domain"][1]
+    assert gap * 1080 >= 80
+    for i in range(201, 206):
+        assert layout[f"xaxis{i}"]["tickvals"] == [1, 5, 9]
+
+
+def test_extractor_carries_source_figure_aspect():
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    fig = plt.figure(figsize=(15, 9))
+    try:
+        assert extract_figure(fig, "map")["size_inches"] == [15, 9]
+    finally:
+        plt.close(fig)
