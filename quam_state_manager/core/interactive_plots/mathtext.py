@@ -35,5 +35,7 @@ def plotly_text(value, key=""):
     if isinstance(value, dict):
         return {k: plotly_text(v, k) for k, v in value.items()}
     if isinstance(value, list):
+        if value and isinstance(value[0], (int, float, type(None))) and key not in {"text", "title", "name", "label", "ticktext"}:
+            return value
         return [plotly_text(v, key) for v in value]
     return readable(value) if key in {"text", "title", "name", "label", "ticktext"} else value

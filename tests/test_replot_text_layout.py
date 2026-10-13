@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.core.interactive_plots.mathtext import readable
+from quam_state_manager.core.interactive_plots.mathtext import plotly_text
 from quam_state_manager.core.interactive_plots.replot import mpljson_to_plotly
 
 
@@ -93,3 +94,13 @@ def test_extractor_retains_annotation_and_figure_wrap():
         assert extracted["texts"][0]["wrap"] is True
     finally:
         plt.close(fig)
+
+
+def test_numeric_map_arrays_skip_the_text_walk():
+    row = [None, 1., 2.] * 1000
+    converted = plotly_text({"data": [{"z": [row] * 1000, "x": row, "name": "value < limit & note"}],
+                             "ticktext": [None, "< lower", "$x^2$"]})
+    assert converted["data"][0]["z"][0] is row
+    assert converted["data"][0]["x"] is row
+    assert converted["data"][0]["name"] == "value &lt; limit &amp; note"
+    assert converted["ticktext"] == [None, "&lt; lower", "x<sup>2</sup>"]
