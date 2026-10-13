@@ -6,6 +6,7 @@
 <div class="table-header-row">
     <h2>QUAlibrate Projects <small class="muted">({{ listing.projects | length }})</small></h2>
 </div>
+{% if show_running_banner %}<div id="qualibrate-running-slot" hx-swap-oob="innerHTML">{% include '_qualibrate_running_banner.html' %}</div>{% endif %}
 
 {# ---- top strip: active project + provenance + versions ---- #}
 <div class="qualibrate-topstrip">

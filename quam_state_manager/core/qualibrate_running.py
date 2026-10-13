@@ -174,3 +174,18 @@ def running_servers() -> dict:
         if expired:
             return {"known": False, "servers": []}
         return {"known": _cache["known"], "servers": list(_cache["servers"])}
+
+
+def config_mismatches(discovery: dict, sm_config: str | Path,
+                      open_state: str | None = None, dismissed=()) -> list[dict]:
+    """Only compare explicit config files relevant to the open live chip."""
+    if not discovery.get("known"):
+        return []
+    ignored = {path_key(p) for p in dismissed}
+    current = path_key(sm_config)
+    return [dict(server, sm_config=str(sm_config))
+            for server in discovery.get("servers", [])
+            if path_key(server["config_path"]) != current
+            and path_key(server["config_path"]) not in ignored
+            and (not open_state or (server.get("state_path")
+                 and path_key(server["state_path"]) == path_key(open_state)))]

@@ -1,0 +1,15 @@
+{% for server in running_config_mismatches() %}
+<div class="qualibrate-running-banner" role="status" style="padding:.5rem 1rem;background:var(--pico-card-background-color)">
+    The running QUAlibrate uses <code>{{ server.config_path }}</code>
+    (project <code>{{ server.project }}</code>, data <code>{{ server.storage or 'unknown' }}</code>);
+    SM reads <code>{{ server.sm_config }}</code>.
+    <form action="/qualibrate/use-location" method="post" hx-post="/qualibrate/use-location" hx-swap="none" style="display:inline">
+        <input type="hidden" name="path" value="{{ server.config_path }}">
+        <button type="submit" class="btn-sm">Use this config</button>
+    </form>
+    <form action="/qualibrate/dismiss-running" method="post" hx-post="/qualibrate/dismiss-running" hx-swap="none" style="display:inline">
+        <input type="hidden" name="path" value="{{ server.config_path }}">
+        <button type="submit" class="btn-sm outline">Dismiss</button>
+    </form>
+</div>
+{% endfor %}

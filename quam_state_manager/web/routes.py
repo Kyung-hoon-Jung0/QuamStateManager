@@ -7441,6 +7441,7 @@ def qualibrate_page():
     template = "_qualibrate.html" if _is_htmx() else "qualibrate.html"
     return render_template(template, **_ctx(
         page="qualibrate",
+        show_running_banner=_is_htmx(),
         listing=listing,
         raw_tomls=raws,
         qualibrate_source=qualibrate_config.config_source(),
@@ -7449,6 +7450,59 @@ def qualibrate_page():
             "quam": qualibrate_config.SUPPORTED_QUAM_VERSION,
         },
     ))
+
+
+def _running_config_dismissals() -> list[str]:
+    key = "running_config_dismissals"
+    if key not in current_app.config:
+        try:
+            data = json.loads((Path(current_app.instance_path)
+                               / "qualibrate_running_dismissed.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = []
+        current_app.config[key] = ([p for p in data if isinstance(p, str)]
+                                   if isinstance(data, list) else [])
+    return current_app.config[key]
+
+
+def _running_config_mismatches() -> list[dict]:
+    from quam_state_manager.core import qualibrate_running
+
+    ctx = _active_ctx() or {}
+    return qualibrate_running.config_mismatches(
+        qualibrate_running.running_servers(), qualibrate_config.root_config_path(),
+        ctx.get("live_path") or ctx.get("path"), _running_config_dismissals())
+
+
+@bp.app_context_processor
+def _running_config_context():
+    return {"running_config_mismatches": _running_config_mismatches}
+
+
+@bp.route("/qualibrate/running-banner")
+def qualibrate_running_banner():
+    return render_template("_qualibrate_running_banner.html")
+
+
+@bp.route("/qualibrate/dismiss-running", methods=["POST"])
+def qualibrate_dismiss_running():
+    from quam_state_manager.core import qualibrate_running
+
+    path = request.form.get("path", "").strip()
+    if not path or "\0" in path:
+        return render_template("_status.html", level="error", message="Invalid config path"), 400
+    dismissed = list(_running_config_dismissals())
+    if qualibrate_running.path_key(path) not in {qualibrate_running.path_key(p) for p in dismissed}:
+        dismissed.append(path)
+        safe_io.atomic_write_json(Path(current_app.instance_path)
+                                  / "qualibrate_running_dismissed.json", dismissed)
+        current_app.config["running_config_dismissals"] = dismissed
+    if _is_htmx():
+        # Refresh any Projects copy as well as the persistent topbar slot.
+        response = make_response()
+        response.headers["HX-Refresh"] = "true"
+        return response
+    return redirect(url_for("main.qualibrate_page"))
 
 
 @bp.route("/qualibrate/project-config/<name>")

@@ -412,6 +412,10 @@
             </ul>
         </nav>
     </header>
+    <div id="qualibrate-running-slot" hx-get="/qualibrate/running-banner"
+         hx-trigger="load, every 3s" hx-swap="innerHTML">
+        {% include '_qualibrate_running_banner.html' %}
+    </div>
     {# Reveal handle: the "Hide top bar" toggle lives INSIDE the top bar (which is
        gone once hidden), so this always-reachable little tab brings it back. Shown
        only when <html> carries .topbar-hidden (see style.css). #}

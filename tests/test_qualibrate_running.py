@@ -7,6 +7,8 @@ import pytest
 
 from quam_state_manager.core import qualibrate_running as qr
 
+_real_running_servers = qr.running_servers
+
 
 def config_file(base, project="alpha", state=None, storage=None):
     base.mkdir(parents=True, exist_ok=True)
@@ -80,6 +82,7 @@ def test_platform_fallback(monkeypatch, tmp_path):
 
 
 def test_slow_discovery_never_waits_and_cache_is_reused(monkeypatch):
+    monkeypatch.setattr(qr, "running_servers", _real_running_servers)
     entered, release = threading.Event(), threading.Event()
     calls = []
 
@@ -114,3 +117,116 @@ def test_bad_config_is_ignored(tmp_path):
                  '[qualibrate]\nproject = "../outside"\n'):
         file.write_text(text, encoding="utf-8")
         assert qr.read_server_config(file) is None
+
+
+@pytest.mark.parametrize("running,open_chip,expected", [
+    ("match", None, 0),
+    ("differ", None, 1),
+    ("differ", "same", 1),
+    ("differ", "other", 0),
+    ("none", None, 0),
+    ("unknown", None, 0),
+])
+def test_mismatch_rule(tmp_path, running, open_chip, expected):
+    sm = tmp_path / "sm.toml"
+    chip = str(tmp_path / "state")
+    server = {"config_path": str(sm if running == "match" else tmp_path / "server.toml"),
+              "project": "alpha", "storage": str(tmp_path / "data"), "state_path": chip}
+    discovery = {"known": running != "unknown", "servers": [] if running == "none" else [server]}
+    open_state = chip if open_chip == "same" else str(tmp_path / "other") if open_chip else None
+    assert len(qr.config_mismatches(discovery, sm, open_state)) == expected
+    assert qr.config_mismatches(discovery, sm, open_state, [server["config_path"]]) == []
+
+
+@pytest.fixture
+def running_app(tmp_path, monkeypatch):
+    from quam_state_manager.core import qualibrate_config as qc
+    from quam_state_manager.web.app import create_app
+
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "state.json").write_text('{"qubits": {}, "extras": {}}', encoding="utf-8")
+    (state / "wiring.json").write_text('{}', encoding="utf-8")
+    sm = config_file(tmp_path / "sm", "beta", state)
+    server = config_file(tmp_path / "server", "alpha", state)
+    monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(sm))
+    rows = [{"pid": 1, "cmdline": ["qualibrate", "start", "--config-path", str(server)]}]
+    monkeypatch.setattr(qr, "running_servers", lambda: qr.detect_servers(rows))
+    app = create_app(testing=True, instance_path=str(tmp_path / "instance"))
+    yield app, sm, server, state
+    qc.set_dir_override(None)
+
+
+def test_banner_route_and_existing_adoption(running_app):
+    import json
+    from quam_state_manager.core import qualibrate_config as qc
+
+    app, sm, server, _ = running_app
+    client = app.test_client()
+    response = client.get("/qualibrate/running-banner")
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "The running QUAlibrate uses" in html
+    assert "Use this config" in html and "Dismiss" in html
+    assert "alpha" in html and "SM reads" in html
+    assert str(sm) in html and str(server) in html
+    import re
+    visible = re.sub(r"<[^>]+>", "", html)
+    assert visible.isascii() and "--" not in visible
+    assert 'hx-post="/qualibrate/use-location"' in html
+    assert "The running QUAlibrate uses" in client.get("/").get_data(as_text=True)
+    assert "The running QUAlibrate uses" in client.get("/qualibrate", headers={"HX-Request": "true"}).get_data(as_text=True)
+    response = client.post("/qualibrate/use-location", data={"path": str(server)},
+                           headers={"HX-Request": "true"})
+    assert response.status_code == 200 and response.headers["HX-Refresh"] == "true"
+    assert qc.root_config_path() == server
+    assert "The running QUAlibrate uses" not in client.get("/qualibrate/running-banner").get_data(as_text=True)
+    memo = json.loads((Path(app.instance_path) / "qualibrate_location.json").read_text())
+    assert memo["config_file"] == str(server)
+
+
+def test_dismissal_survives_restart_per_config(running_app):
+    from quam_state_manager.web.app import create_app
+
+    app, _, server, _ = running_app
+    client = app.test_client()
+    response = client.post("/qualibrate/dismiss-running", data={"path": str(server)},
+                           headers={"HX-Request": "true"})
+    assert response.status_code == 200
+    assert "The running QUAlibrate uses" not in client.get("/qualibrate/running-banner").get_data(as_text=True)
+    restarted = create_app(testing=True, instance_path=app.instance_path)
+    assert "The running QUAlibrate uses" not in restarted.test_client().get("/qualibrate/running-banner").get_data(as_text=True)
+    other = server.with_name("another.toml")
+    other.write_bytes(server.read_bytes())
+    from unittest.mock import patch
+    with patch.object(qr, "running_servers", lambda: {"known": True, "servers": [qr.read_server_config(other)]}):
+        assert "The running QUAlibrate uses" in client.get("/qualibrate/running-banner").get_data(as_text=True)
+
+
+def test_bad_running_config_never_500(running_app):
+    app, _, server, _ = running_app
+    client = app.test_client()
+    for text in ('[broken', '[qualibrate]\nproject = 7\n',
+                 '[qualibrate]\nproject = "alpha"\nstorage = 7\n'):
+        server.write_text(text, encoding="utf-8")
+        response = client.get("/qualibrate/running-banner")
+        assert response.status_code == 200
+        assert "The running QUAlibrate uses" not in response.get_data(as_text=True)
+
+
+def test_config_files_remain_byte_and_mtime_identical(running_app):
+    app, sm, server, _ = running_app
+    files = []
+    for root in (sm, server):
+        overlay = root.parent / "projects" / "alpha" / "config.toml"
+        overlay.parent.mkdir(parents=True)
+        overlay.write_text('# A read-only overlay\n', encoding="utf-8")
+        files.extend([root, overlay])
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files}
+    client = app.test_client()
+    for url in ("/", "/qualibrate", "/qualibrate/running-banner"):
+        assert client.get(url).status_code == 200
+    assert client.post("/qualibrate/dismiss-running", data={"path": str(server)}).status_code == 302
+    assert client.post("/qualibrate/use-location", data={"path": str(server)}).status_code == 302
+    assert client.get("/qualibrate/running-banner").status_code == 200
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files} == before

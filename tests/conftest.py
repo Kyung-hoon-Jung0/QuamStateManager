@@ -81,6 +81,15 @@ def tmp_path(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_running_qualibrate(monkeypatch):
+    # Discovery pins opt into a synthetic listing; the suite never scans real servers.
+    from quam_state_manager.core import qualibrate_running
+
+    monkeypatch.setattr(qualibrate_running, "running_servers",
+                        lambda: {"known": False, "servers": []})
+
+
+@pytest.fixture(autouse=True)
 def _isolate_qualibrate_config(tmp_path_factory, monkeypatch):
     missing = tmp_path_factory.getbasetemp() / "_no_qualibrate_config"
     monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(missing))
