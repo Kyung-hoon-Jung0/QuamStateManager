@@ -9,5 +9,5 @@ def test_map_tools_native_controls_preview_replay_and_lifecycle():
     result = subprocess.run(["node", str(root / "tests/map_tools_selfcheck.cjs")],
         cwd=root, env=os.environ.copy(), capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
-    # v1.4.1: 28 -> 30 assertions, including refusal of unsupported models and old stored selections.
-    assert "30 assertions passed" in result.stdout
+    # v1.4.1: 30 -> 32 assertions, including reason-only unsupported maps and a separate fit verdict.
+    assert "32 assertions passed" in result.stdout

@@ -146,10 +146,10 @@
                     }
                     clamp();
                     if (!initial && requestedSettings !== JSON.stringify(settings())) return analyze(false);
-                    control('status').textContent = (result.comparisons || [result.compare]).map(function (c) { return 'node ' + c.node_name + ' ' + number(c.node_value) + ' | SM ' + number(c.sm_value) +
+                    control('status').textContent = !classification.models.length ? (classification.reason || result.fit.verdict_line) : (result.comparisons || [result.compare]).map(function (c) { return 'node ' + c.node_name + ' ' + number(c.node_value) + ' | SM ' + number(c.sm_value) +
                         ' | delta ' + number(c.delta) + ' | ' + c.verdict + ' (' + number(c.tol) + ', ' + c.tol_source + ') | ' + c.reason +
                         (c.quantity ? ' | ' + c.quantity : '') +
-                        ' | raw-to-smoothed delta ' + number(c.raw_smoothed_delta); }).join(' ; ') + ' | ' + result.fit.verdict_line +
+                        ' | raw-to-smoothed delta ' + number(c.raw_smoothed_delta); }).join(' ; ') + ' | fit: ' + result.fit.verdict_line.replace(/^VERDICT:\s*/i, '') +
                         (result.display_only_reason ? ' | ' + result.display_only_reason : '');
                     control('provenance').textContent = result.provenance_text;
                     control('apply').disabled = !(result.updates && result.updates.length);

@@ -17,7 +17,8 @@ const authoritative = {request_hash: 'server-hash', classification: {type: 'erro
     smoothed: {x: [0, 1, 2], y: [1, 2, 3], z: [[0, 1, 0], [1, 0, 1], [0, 1, 0]]},
     contours: [{level: .5, lines: [[[0, 1], [1, 2]]]}], xref: 'x', yref: 'y',
     compare: {node_name: 'opt_amp_prefactor', node_value: .98, sm_value: .981, delta: .001, tol: .003, tol_source: 'reference constant', verdict: 'agree', reason: 'within tolerance', raw_smoothed_delta: .0001},
-    fit: {verdict_line: 'ok'}, provenance_text: 'derived from smoothed map; proposed, not applied',
+    // v1.4.1: ambiguous verdict suffix -> explicitly name the fit independently of comparison.
+    fit: {verdict_line: 'VERDICT: ok'}, provenance_text: 'derived from smoothed map; proposed, not applied',
     updates: [{dot_path: 'qubits.q0.amplitude', value: .1962, provenance: {src: 'map_fit', request_hash: 'server-hash', text: 'derived from smoothed map'}}]};
 w.fetch = (url, opts) => {
     if (opts) posts.push(JSON.parse(opts.body));
@@ -63,6 +64,7 @@ function check(value, message) { checks++; assert.ok(value, message); }
     input('contour', true); await wait(340);
     check(draws.at(-1).data.some(t => t.name === 'Contour 0.5'), 'server contours draw');
     check(c('status').textContent.includes('agree') && c('status').textContent.includes('raw-to-smoothed delta'), 'comparison and raw gap visible');
+    check(c('status').textContent.includes('fit: ok') && !c('status').textContent.includes('VERDICT:'), 'fit verdict has its own label');
     c('apply').click(); await wait(20);
     check(popups.length === 1 && popups[0][0][0].value === .1962, 'popup uses replayed authoritative transformed value');
     check(popups[0][0][0].provenance.request_hash === 'server-hash' && popups[0][4].token === 'scratch-token', 'provenance and chip gate carried');
@@ -120,6 +122,8 @@ function check(value, message) { checks++; assert.ok(value, message); }
     tile.querySelector('.map-tools-button').click(); await wait(20);
     check(c('model').disabled && c('model').value === 'none', 'unsupported model menu stays disabled despite old stored settings');
     check(c('apply').disabled && c('status').textContent.includes('smoothing and contours only'), 'unsupported family explains why no model result can apply');
+    // v1.4.1: unsupported maps printed null comparisons -> show only the honest reason.
+    check(c('status').textContent === authoritative.classification.reason, 'no comparison noise for an unsupported model');
     tile._mapTools.destroy();
     console.log(checks + ' assertions passed'); dom.window.close();
 })().catch(error => { console.error(error); dom.window.close(); process.exitCode = 1; });
