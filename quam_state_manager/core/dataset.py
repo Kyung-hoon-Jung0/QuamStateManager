@@ -132,6 +132,8 @@ _INCOMPLETE_FP = ("incomplete",)
 # fingerprint on every write, so this never cuts short a genuine mid-write
 # run; it only stops a permanently broken file from taxing every future scan.
 _INCOMPLETE_MAX_TRIES = 3
+_RUN_SETTLE_S = 10 * 60
+_RUN_SETTLE_MAX = 32
 
 # Reserved tag that backs the one-click ⭐ "favorite" (bookmarks are now just
 # this tag, so the star and the tag system share one store). A run is
@@ -296,6 +298,7 @@ def _compact_row(run: "RunInfo") -> dict:
         "note": run.note,
         "parent": run.parent_id,
         "hs": run.has_quam_state,
+        "cap": f"{int(run.has_ds_raw)}{int(run.has_ds_fit)}{int(run.has_quam_state)}",
         "sm": run.sort_scalars,   # sparse {fit_key: scalar | [first,max,min]} for the Sort banner
         "pm": run.filter_params,  # sparse {param_key: bool|str|int} for the Parameters facet filter
     }
@@ -546,6 +549,9 @@ class DatasetStore:
         # path -> (real fingerprint, consecutive identical failures); bounds
         # the "it must still be mid-write" bet — see _retry_incomplete.
         self._incomplete_tries: dict[Path, tuple[tuple, int]] = {}
+        # Recent folders may still gain HDF5, figures and a state snapshot
+        # after their JSON pair is readable. Bound both time and poll cost.
+        self._settling_paths: dict[Path, float] = {}
         # Per-date-dir fingerprint cache (B27). date_path → (date_mtime, run_paths).
         # A run folder can only be added to / removed from a date dir by moving
         # the date dir's own mtime, so a date dir whose mtime is unchanged since
@@ -584,6 +590,9 @@ class DatasetStore:
         # the delta poll ships those rows, but they are not run arrivals.
         self.index_complete = False
         self._load_store_cache()
+        for path, fp in self._folder_fp.items():
+            self._watch_settling(path, fp[0])
+        self._refresh_settling(deadline=_time.monotonic() + _COLD_SCAN_BUDGET_S)
         self._last_scan_truncated = self._scan(
             deadline=_time.monotonic() + _COLD_SCAN_BUDGET_S)
         self._load_tags()
@@ -764,10 +773,12 @@ class DatasetStore:
                 and not known.incomplete and known.folder_path == run_entry):
             if refresh_flags:
                 flags = (known.has_ds_raw, known.has_ds_fit, known.has_quam_state)
-                known.has_ds_raw = (run_entry / "ds_raw.h5").exists()
-                known.has_ds_fit = (run_entry / "ds_fit.h5").exists()
-                known.has_quam_state = (run_entry / "quam_state").is_dir()
-                if flags != (known.has_ds_raw, known.has_ds_fit, known.has_quam_state):
+                fresh = ((run_entry / "ds_raw.h5").exists(),
+                         (run_entry / "ds_fit.h5").exists(),
+                         (run_entry / "quam_state").is_dir())
+                if flags != fresh:
+                    known = _dc_replace(known, has_ds_raw=fresh[0],
+                                        has_ds_fit=fresh[1], has_quam_state=fresh[2])
                     known.last_parsed = self._stamp()   # the row changed: ship it
             return known
 
@@ -1146,6 +1157,7 @@ class DatasetStore:
                     self._incomplete_paths.discard(run_entry)
                     self._incomplete_tries.pop(run_entry, None)
                     self._folder_fp[run_entry] = (folder_fp, node_fp, data_fp, run_id)
+                self._watch_settling(run_entry, folder_fp)
                 parsed += 1
 
         # Drop runs whose folders vanished. SKIPPED on a truncated walk — an
@@ -1499,6 +1511,64 @@ class DatasetStore:
                 best = mt
         return (best, n_dates)
 
+    def _watch_settling(self, path: Path, folder_fp: tuple | None) -> None:
+        if not folder_fp or not isinstance(folder_fp[0], int):
+            return
+        expires = folder_fp[0] / 1e9 + _RUN_SETTLE_S
+        if expires <= _time.time():
+            self._settling_paths.pop(path, None)
+            return
+        self._settling_paths[path] = expires
+        if len(self._settling_paths) > _RUN_SETTLE_MAX:
+            oldest = min(self._settling_paths, key=self._settling_paths.get)
+            self._settling_paths.pop(oldest)
+
+    def _refresh_settling(self, deadline: float | None = None,
+                          run_id: int | None = None) -> None:
+        """Check only the bounded recent set; opening a detail checks that run.
+
+        No date listing or retry sleeps. Unchanged JSON is not read. Check
+        snapshot presence too: adding files below it need not move the run.
+        """
+        with self._scan_lock:
+            if run_id is None:
+                paths = list(self._settling_paths)
+            else:
+                run = self.runs.get(run_id)
+                paths = [run.folder_path] if run else []
+            for path in paths:
+                if deadline is not None and _time.monotonic() >= deadline:
+                    break
+                if run_id is None and self._settling_paths.get(path, 0) <= _time.time():
+                    self._settling_paths.pop(path, None)
+                    continue
+                cached = self._folder_fp.get(path)
+                old = self.runs.get(cached[3]) if cached else None
+                if old is None:
+                    self._settling_paths.pop(path, None)
+                    continue
+                if old.incomplete:
+                    continue  # the existing bounded JSON retry owns this run
+                fps = (self._stat_fp(path), self._stat_fp(path / "node.json"),
+                       self._stat_fp(path / "data.json"))
+                if fps[0][0] is None:
+                    self._settling_paths.pop(path, None)
+                    continue  # the ordinary vanish pass owns deletion
+                flags = ((path / "ds_raw.h5").exists(), (path / "ds_fit.h5").exists(),
+                         (path / "quam_state").is_dir())
+                if fps != cached[:3] or flags != (old.has_ds_raw, old.has_ds_fit, old.has_quam_state):
+                    new = self._parse_run_folder(path, old.date, old.run_id,
+                                                 old.time, old.experiment_name,
+                                                 known=old, refresh_flags=True)
+                    if new is not None and not new.incomplete:
+                        if new is not old:
+                            new.last_parsed = self._stamp()
+                            self.runs[old.run_id] = new
+                            self._note_run_change(old.run_id, old, new)
+                        self._folder_fp[path] = (*fps, old.run_id)
+                        self._mark_store_cache_dirty()
+                self._watch_settling(path, fps[0])
+
     def rescan_if_stale(self, deadline: float | None = None) -> bool:
         """Re-scan if folder mtimes changed.  Returns True if new runs found.
 
@@ -1520,6 +1590,7 @@ class DatasetStore:
         # bounded by ``_retry_incomplete`` (an unchanging broken folder
         # leaves ``_incomplete_paths``), so this cannot keep the gate open
         # forever.
+        self._refresh_settling(deadline)
         if not self._incomplete_paths and self._current_mtime() == self._last_mtime:
             return False
         with self._scan_lock:
@@ -1955,6 +2026,7 @@ class DatasetStore:
 
     def get_run(self, run_id: int) -> dict | None:
         """Return full metadata + fit_results for a single run."""
+        self._refresh_settling(run_id=run_id)
         run = self.runs.get(run_id)
         if not run:
             return None

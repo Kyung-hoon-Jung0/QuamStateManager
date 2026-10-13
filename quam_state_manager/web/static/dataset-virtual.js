@@ -1759,6 +1759,7 @@
             .then(function(data) {
                 if (!data || typeof data.now !== 'number') throw new Error('bad payload');
                 pollSucceeded();
+                refreshOpenDetail(data);
                 // docs/170: the render's "still indexing" note goes away on
                 // the first poll that reports a complete scan -- and the
                 // header's run count, server-rendered from the partial table,
@@ -1934,6 +1935,21 @@
             _buildQubitPicker();   // surface any new qubit
             _buildPairPicker();    // …and any new qubit-pair
         }
+    }
+
+    function refreshOpenDetail(data) {
+        var root = document.getElementById('ds-detail-root');
+        if (!root || !window.htmx) return;
+        var row = (data.updated || []).find(function (r) {
+            return (r.f || '') + ':' + r.id === root.dataset.uid;
+        });
+        if (!row || !row.cap || row.cap === root.dataset.capabilities) return;
+        var pane = root.closest('#inspector-pane');
+        if (!pane || pane.classList.contains('htmx-request')) return;
+        window.htmx.ajax('GET', '/dataset/' + root.dataset.uid, {
+            source: pane, target: pane, swap: 'innerHTML',
+            headers: window._dsListNav ? window._dsListNav() : undefined
+        });
     }
 
     function flushPendingIfIdle() {
