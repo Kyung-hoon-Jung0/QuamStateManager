@@ -79,6 +79,23 @@ def test_display_only_and_panel_gate(rig):
     assert client.post("/dataset/run/map/analyze", json={"fig": "map"}).status_code == 400
 
 
+@pytest.mark.parametrize("error", [ArithmeticError, OverflowError, FloatingPointError, ZeroDivisionError])
+def test_map_numerical_failures_remain_request_errors(rig, monkeypatch, error):
+    client, _ = rig
+
+    def fail(*args):
+        raise error("Invalid map calculation")
+
+    monkeypatch.setattr(map_analysis, "analyze", fail)
+    response = None
+    try:
+        response = client.post("/dataset/run/map/analyze", json={"fig": "map"})
+    except error:
+        pass
+    assert response is not None, "Map numerical failures must not escape the request boundary"
+    assert response.status_code == 400 and response.get_json()["error"] == "Invalid map calculation"
+
+
 def test_interactive_defaults_to_reproduced_maps(rig, monkeypatch):
     from quam_state_manager.core import interactive_plots
     client, _ = rig

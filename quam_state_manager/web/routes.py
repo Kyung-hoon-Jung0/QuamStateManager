@@ -39672,7 +39672,7 @@ def dataset_map_analyze(uid):
     try:
         run, figure, converted = _map_figure(uid, body)
         result = map_analysis.analyze(run, uid, figure, converted, body)
-    except (ValueError, TypeError, KeyError, IndexError, OverflowError, ArithmeticError) as exc:
+    except map_analysis.REQUEST_ERRORS as exc:
         raise BadBody(str(exc)) from None
     return jsonify(result)
 

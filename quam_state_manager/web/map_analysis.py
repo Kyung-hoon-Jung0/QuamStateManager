@@ -12,6 +12,9 @@ from quam_state_manager.core.mapfit import api
 from quam_state_manager.core.mapfit.contour import centers
 from quam_state_manager.core.mapfit.compare import saved_comparisons
 
+# Map calculation failures are request errors, including numerical domain failures.
+REQUEST_ERRORS = (ValueError, TypeError, KeyError, IndexError, ArithmeticError)
+
 _RESULTS = OrderedDict()
 _LOCK = threading.Lock()
 _BYTES = 64 * 1024 * 1024
