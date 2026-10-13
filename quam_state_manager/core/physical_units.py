@@ -279,6 +279,37 @@ def pulse_peak(merged: dict, amp_path: str, alias_path: str | None = None) -> di
     return out
 
 
+def _port_kind(merged: dict, ch: str) -> tuple[str | None, dict]:
+    """``"mw"`` when the channel's port carries a numeric full-scale power,
+    ``"lf"`` when it resolves under analog_outputs, else ``None`` -- with the
+    full-scale-power field target either way (a caller records its path as a
+    read). The one rule both callers below use."""
+    try:
+        ft = resolve_field_target(merged, ch + ".opx_output.full_scale_power_dbm")
+    except Exception:
+        ft = {}
+    fsp = ft.get("resolved_value") if ft.get("resolvable") else None
+    if isinstance(fsp, (int, float)) and not isinstance(fsp, bool):
+        return "mw", ft
+    try:
+        pft = resolve_field_target(merged, ch + ".opx_output")
+    except Exception:
+        pft = {}
+    if pft.get("resolvable") and ".analog_outputs." in f".{pft.get('resolved_path') or ''}.":
+        return "lf", ft
+    return None, ft
+
+
+def amplitude_kind(merged: dict, amp_path: str) -> str | None:
+    """What a pulse amplitude means on this chip: ``"mw"`` (a dimensionless
+    scale of the port's full-scale power), ``"lf"`` (volts), or ``None``
+    when the channel or its port cannot be resolved (say nothing)."""
+    if not amp_path.endswith(".amplitude"):
+        return None
+    ch = channel_of(merged, amp_path)
+    return None if ch is None else _port_kind(merged, ch)[0]
+
+
 def amp_annotation(merged: dict, amp_path: str, amp_value: Any,
                    reads: list | None = None, *, alias_path: str | None = None,
                    why: list | None = None) -> dict | None:
@@ -301,16 +332,13 @@ def amp_annotation(merged: dict, amp_path: str, amp_value: Any,
     ch = channel_of(merged, amp_path)
     if ch is None:
         return None
-    try:
-        ft = resolve_field_target(merged, ch + ".opx_output.full_scale_power_dbm")
-    except Exception:
-        ft = {}
-    fsp = ft.get("resolved_value") if ft.get("resolvable") else None
+    kind, ft = _port_kind(merged, ch)
+    fsp = ft.get("resolved_value") if kind == "mw" else None
     if reads is not None and ft.get("resolvable") and ft.get("resolved_path"):
         # the one VALUE this annotation reads besides the amplitude itself
         # (RAM P6: the Live-Edit grid re-annotates a cell when it moves)
         reads.append(ft["resolved_path"])
-    if isinstance(fsp, (int, float)) and not isinstance(fsp, bool):
+    if kind == "mw":
         if amp_value == 0:
             return None            # no output — a fabricated "-inf dBm" helps no one
         pk = pulse_peak(merged, amp_path, alias_path)
@@ -330,14 +358,7 @@ def amp_annotation(merged: dict, amp_path: str, amp_value: Any,
                 "peak": r}
     # Not an MW port — LF (flux) if the channel's port resolves under
     # ports.analog_outputs; a sample value is then literally volts.
-    try:
-        pft = resolve_field_target(merged, ch + ".opx_output")
-    except Exception:
-        pft = {}
-    if not pft.get("resolvable"):
-        return None
-    rp = pft.get("resolved_path") or ""
-    if ".analog_outputs." not in f".{rp}.":
+    if kind != "lf":
         return None
     pk = pulse_peak(merged, amp_path, alias_path)
     if reads is not None:

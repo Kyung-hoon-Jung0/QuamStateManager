@@ -71,10 +71,16 @@ def test_pulse_amplitude_is_a_scale_and_flux_offset_is_volts(ridge_run):
     saved["patches"][0]["path"] = "/quam/" + amplitude.replace(".", "/")
     node.write_text(json.dumps(saved))
     converted["clickable"]["targets"][0]["path"] = amplitude
-    result = map_analysis.analyze(run, "run", figure, converted, {})
+    # v1.4.1: "(scale)" by path shape -> by the chip's port (an LF pulse amplitude is volts).
+    result = map_analysis.analyze(run, "run", figure, converted, {}, amplitude_kind=lambda p: "mw")
     c = result["compare"]
     assert c["node_name"] == amplitude and c["quantity"].startswith("(scale);")
     assert "(scale)" in result["updates"][0]["provenance"]["text"]
+    lf = map_analysis.analyze(run, "run", figure, converted, {}, amplitude_kind=lambda p: "lf")
+    assert lf["compare"]["quantity"].startswith("V;")
+    for unknown in (None, lambda p: None):
+        c = map_analysis.analyze(run, "run", figure, converted, {}, amplitude_kind=unknown)["compare"]
+        assert c["quantity"].startswith("target units;")
     converted["clickable"]["targets"][0]["path"] = paths[0]
     saved["patches"][0]["path"] = "/quam/" + paths[0].replace(".", "/")
     node.write_text(json.dumps(saved))

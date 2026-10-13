@@ -119,7 +119,8 @@ def test_saved_result_uses_exact_entity_tokens(tmp_path, own_record):
 def test_map_numerical_failures_remain_request_errors(rig, monkeypatch, error):
     client, _ = rig
 
-    def fail(*args):
+    # v1.4.1: (*args) -> (*args, **kwargs), why: the route now also passes amplitude_kind=
+    def fail(*args, **kwargs):
         raise error("Invalid map calculation")
 
     monkeypatch.setattr(map_analysis, "analyze", fail)

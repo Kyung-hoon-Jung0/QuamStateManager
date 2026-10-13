@@ -39692,7 +39692,12 @@ def dataset_map_analyze(uid):
     body = map_request(json_object())
     try:
         run, figure, converted = _map_figure(uid, body)
-        result = map_analysis.analyze(run, uid, figure, converted, body)
+        from quam_state_manager.core.physical_units import amplitude_kind
+        store = _store()
+        merged = getattr(store, "merged", None) if store is not None else None
+        result = map_analysis.analyze(
+            run, uid, figure, converted, body,
+            amplitude_kind=(lambda p: amplitude_kind(merged, p)) if isinstance(merged, dict) else None)
         from quam_state_manager.web import map_apply
         map_apply.bind(_active_ctx(), run, result, figure)
     except map_analysis.REQUEST_ERRORS as exc:

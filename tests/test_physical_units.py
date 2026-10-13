@@ -146,6 +146,22 @@ class TestCore:
         assert physical_units.amp_annotation(
             merged, "qubits.qA1.f_01.amplitude", 0.1) is None
 
+    def test_amplitude_kind_follows_the_port_not_the_path(self, merged, tmp_path):
+        """v1.4.1: the map comparison names an amplitude's unit from this rule --
+        an MW port's amplitude is a scale, an LF port's is volts, else unclaimed."""
+        kind = physical_units.amplitude_kind
+        assert kind(merged, "qubits.qA1.xy.operations.x180_DragCosine.amplitude") == "mw"
+        assert kind(merged, "qubits.qA1.xy.operations.x180.amplitude") == "mw"
+        assert kind(merged, "qubits.qA1.z.operations.const.amplitude") == "lf"
+        assert kind(merged, "qubits.qA1.f_01.amplitude") is None
+        assert kind(merged, "qubits.qA1.xy.operations.x180_DragCosine.length") is None
+        from quam_state_manager.core.loader import QuamStore
+        wr = json.loads(json.dumps(_WIRING))
+        wr["wiring"]["qubits"]["qA1"]["xy"]["opx_output"] = "#/ports/mw_outputs/conX/9/9"
+        _write_chip(tmp_path / "chipk", _state(), wr)
+        dangling = QuamStore(str(tmp_path / "chipk")).merged
+        assert kind(dangling, "qubits.qA1.xy.operations.x180_DragCosine.amplitude") is None
+
 
 class TestSurfaces:
     @pytest.fixture

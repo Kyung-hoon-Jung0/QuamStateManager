@@ -116,7 +116,7 @@ def _coordinate(result, axis, model=None):
     return values.get(key)
 
 
-def analyze(run, uid, figure, converted, body):
+def analyze(run, uid, figure, converted, body, amplitude_kind=None):
     choices = panels(figure, converted)
     index = body.get("panel", 0)
     if index >= len(choices):
@@ -389,7 +389,12 @@ def analyze(run, uid, figure, converted, body):
             c = compare(proven[0]["value"], value, tol, tol_source, path)
             if path.endswith((".f_01", ".RF_frequency")):
                 frequency_guard(c)
-            unit = "Hz" if path.endswith((".f_01", ".RF_frequency")) else "(scale)" if path.endswith(".amplitude") else "V" if path.endswith("_offset") else "target units"
+            # An amplitude is a scale of full-scale power on an MW port but volts on an LF port;
+            # with no resolvable channel the unit is not claimed.
+            kind = amplitude_kind(path) if amplitude_kind and path.endswith(".amplitude") else None
+            unit = ("Hz" if path.endswith((".f_01", ".RF_frequency")) else
+                    {"mw": "(scale)", "lf": "V"}.get(kind, "target units") if path.endswith(".amplitude") else
+                    "V" if path.endswith("_offset") else "target units")
             c.update(quantity=f"{unit}; node value from accepted run patches", raw_value=raw,
                      raw_smoothed_delta=value-raw if raw is not None else None)
             target_comparisons.append(c)
