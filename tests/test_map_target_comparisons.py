@@ -60,3 +60,22 @@ def test_proposals_do_not_enable_map_apply(ridge_run):
     converted["clickable"]["targets"][0]["evidence_tier"] = "proposed"
     result = map_analysis.analyze(run, "run", figure, converted, {})
     assert all(not row["dot_path"].endswith("independent_offset") for row in result["updates"])
+
+
+def test_pulse_amplitude_is_a_scale_and_flux_offset_is_volts(ridge_run):
+    from pathlib import Path
+    run, figure, converted, paths = ridge_run
+    node = Path(run.folder_path) / "node.json"
+    amplitude = "qubits.q0.xy.operations.x180.amplitude"
+    saved = json.loads(node.read_text())
+    saved["patches"][0]["path"] = "/quam/" + amplitude.replace(".", "/")
+    node.write_text(json.dumps(saved))
+    converted["clickable"]["targets"][0]["path"] = amplitude
+    result = map_analysis.analyze(run, "run", figure, converted, {})
+    c = result["compare"]
+    assert c["node_name"] == amplitude and c["quantity"].startswith("(scale);")
+    assert "(scale)" in result["updates"][0]["provenance"]["text"]
+    converted["clickable"]["targets"][0]["path"] = paths[0]
+    saved["patches"][0]["path"] = "/quam/" + paths[0].replace(".", "/")
+    node.write_text(json.dumps(saved))
+    assert map_analysis.analyze(run, "run", figure, converted, {})["compare"]["quantity"].startswith("V;")

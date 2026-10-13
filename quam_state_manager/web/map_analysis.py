@@ -389,7 +389,7 @@ def analyze(run, uid, figure, converted, body):
             c = compare(proven[0]["value"], value, tol, tol_source, path)
             if path.endswith((".f_01", ".RF_frequency")):
                 frequency_guard(c)
-            unit = "Hz" if path.endswith((".f_01", ".RF_frequency")) else "V" if path.endswith(("_offset", ".amplitude")) else "target units"
+            unit = "Hz" if path.endswith((".f_01", ".RF_frequency")) else "(scale)" if path.endswith(".amplitude") else "V" if path.endswith("_offset") else "target units"
             c.update(quantity=f"{unit}; node value from accepted run patches", raw_value=raw,
                      raw_smoothed_delta=value-raw if raw is not None else None)
             target_comparisons.append(c)
