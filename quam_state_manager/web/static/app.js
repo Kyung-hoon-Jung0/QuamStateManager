@@ -15045,6 +15045,40 @@ window.loadPrevDiff = function(btn, runId, vs, compact) {
  * Figure lightbox. Entry point for every figure <img onclick="toggleFigureZoom(this)">
  * (dataset detail / compare / interactive / trends).
  */
+window.SavedFigureFit = (function () {
+    var observer = null;
+    function measure(root, box) {
+        if (!root.isConnected) return;
+        var top = Math.max(0, box.getBoundingClientRect().top);
+        var available = Math.min(box.clientHeight || window.innerHeight, window.innerHeight - top);
+        var header = root.querySelector('.inspector-header');
+        var tabs = root.querySelector('.dataset-tabs');
+        var labels = Array.from(root.querySelectorAll('.figure-label'));
+        var labelHeight = labels.reduce(function (height, label) {
+            return Math.max(height, label.getBoundingClientRect().height);
+        }, 0);
+        var limit = available - (header ? header.getBoundingClientRect().height : 0)
+            - (tabs ? tabs.getBoundingClientRect().height : 0) - labelHeight - 32;
+        root.style.setProperty('--saved-figure-height', Math.max(64, limit) + 'px');
+    }
+    function init() {
+        if (observer) { observer.disconnect(); observer = null; }
+        var root = document.getElementById('ds-detail-root');
+        if (!root) return;
+        var box = root.closest('#inspector-pane, #table-pane') || document.documentElement;
+        measure(root, box);
+        if (window.ResizeObserver) {
+            observer = new window.ResizeObserver(function () { measure(root, box); });
+            observer.observe(box);
+        }
+    }
+    document.addEventListener('htmx:afterSwap', init);
+    document.addEventListener('DOMContentLoaded', init);
+    window.addEventListener('resize', init);
+    if (document.readyState !== 'loading') init();
+    return {init: init};
+})();
+
 window.toggleFigureZoom = function(imgEl) {
     // r13 feedback: the old class-toggle only pinned the <img> over the page —
     // "the popup opens but how do I zoom in/out?". Real viewer now:
