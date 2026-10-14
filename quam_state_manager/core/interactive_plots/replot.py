@@ -821,7 +821,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     if any((t.get("meta") or {}).get("preview_reduced") for t in data):
         notices.append("Map preview reduced to the byte budget; full array retained server-side for map tools.")
     fallback_heading = fig_json.get("title", "")
-    if fallback_heading == fig_json.get("key") and any(a.get("title") for a in axes):
+    keys = [fig_json.get(name, "") for name in ("key", "source_key", "function_key")]
+    if any(fallback_heading in (key, key.replace("_", " ")) for key in keys if key) \
+            and any(a.get("title") for a in axes):
         fallback_heading = ""
     layout["title"] = {"text": heading if heading_in_texts else "" if fig_json.get("texts") else (heading or fallback_heading),
                        "y": 0.99, "yanchor": "top"}
