@@ -431,6 +431,17 @@ def _scatter_to_plotly(t, xref, yref):
         d["name"] = t["name"]
     if "zorder" in t:
         d["zorder"] = int(t["zorder"] or 0)
+    if "marker_values" in t:
+        mapped = _heatmap_to_plotly({**t, "z": [t["marker_values"]], "y": [0]}, xref, yref)
+        d["marker"].update(color=mapped["z"][0], colorscale=mapped["colorscale"],
+                           showscale=mapped["showscale"], colorbar=mapped["colorbar"])
+        for zkey, ckey in (("zmin", "cmin"), ("zmax", "cmax"), ("zauto", "cauto")):
+            if zkey in mapped:
+                d["marker"][ckey] = mapped[zkey]
+        d["meta"] = mapped["meta"]
+        if "customdata" in mapped:
+            d.update(customdata=t["marker_values"],
+                     hovertemplate="x=%{x}<br>y=%{y}<br>value=%{customdata}<extra></extra>")
     return d
 
 
@@ -756,25 +767,31 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                               "xanchor": "center", "yanchor": "bottom",
                               "font": {"size": 10 if positions else 11}})
 
+    for scale in fig_json.get("colorbars", []):
+        norm = scale.get("norm") or {}
+        data.append(_scatter_to_plotly({**scale, "type": "scatter", "x": [None, None],
+                    "y": [None, None], "marker_values": [norm.get("vmin"), norm.get("vmax")],
+                    "marker_size": 0, "opacity": 0}, "x", "y"))
     # One colorbar per figure: overlaid twiny heatmaps would otherwise stack two
     # colorbars (the source plots set add_colorbar=False — there's nothing to dupe).
     seen_cb = False
     for tr in data:
-        if tr.get("type") == "heatmap":
+        if tr.get("type") == "heatmap" or (tr.get("marker") or {}).get("showscale"):
+            owner = tr if tr.get("type") == "heatmap" else tr["marker"]
             cb = (tr.get("meta") or {}).get("colorbar")
             if cb is None:
                 tr["showscale"] = not seen_cb
                 seen_cb = True
-            elif tr.get("showscale"):
+            elif owner.get("showscale"):
                 xdomain = layout[_axis_id("xaxis", int(tr["xaxis"][1:] or 1))]["domain"]
                 ydomain = layout[_axis_id("yaxis", int(tr["yaxis"][1:] or 1))]["domain"]
-                tr["colorbar"].update(x=xdomain[1], y=sum(ydomain) / 2,
+                owner["colorbar"].update(x=xdomain[1], y=sum(ydomain) / 2,
                                       len=ydomain[1] - ydomain[0])
                 bounds = _position_bounds(cb.get("position"))
                 if positions and bounds:
                     cx0, cx1, cy0, cy1 = positions[0](bounds)
                     horizontal = cb.get("orientation") == "horizontal"
-                    tr["colorbar"].update(orientation="h" if horizontal else "v",
+                    owner["colorbar"].update(orientation="h" if horizontal else "v",
                         x=(cx0 + cx1) / 2 if horizontal else cx0,
                         y=cy0 if horizontal else (cy0 + cy1) / 2,
                         xanchor="center" if horizontal else "left", yanchor="bottom" if horizontal else "middle",

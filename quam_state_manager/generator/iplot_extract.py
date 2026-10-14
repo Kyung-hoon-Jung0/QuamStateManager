@@ -111,7 +111,10 @@ def _scatter_trace(coll):
     colors = [_hex(c) for c in fc] if len(fc) else None
     sizes = coll.get_sizes()
     label = coll.get_label()
+    mapping = ({"marker_values": _flist(coll.get_array()), **_map_metadata(coll)}
+               if coll.get_array() is not None else {})
     return {
+        **mapping,
         "type": "scatter",
         "x": _flist(offs[:, 0]), "y": _flist(offs[:, 1]),
         "marker_color": (colors if colors and len(colors) > 1 else (colors[0] if colors else None)),
@@ -185,8 +188,8 @@ def _map_metadata(artist):
                          "id": str(id(cb)) if cb is not None else None,
                          "visible": cb is not None},
             "full_resolution": True,
-            "zorder": _f(artist.get_zorder()),
-            "opacity": artist.get_alpha() if artist.get_alpha() is not None else 1}
+            "zorder": _f(getattr(artist, "get_zorder", lambda: 0)()),
+            "opacity": artist.get_alpha() if getattr(artist, "get_alpha", lambda: None)() is not None else 1}
 
 
 # matplotlib cmap -> Plotly colorscale (common subset)
@@ -418,6 +421,10 @@ def extract_figure(fig, key, title=None):
         "suptitle": sup,
         "size_inches": _flist(f.get_size_inches()),
         "axes": [extract_axes(ax, axes) for ax in axes],
+        "colorbars": [_map_metadata(ax._colorbar.mappable) for ax in axes
+                      if getattr(ax, "_colorbar", None) is not None
+                      and not any(ax._colorbar.mappable in list(a.collections) + list(a.images)
+                                  for a in axes)],
         "texts": [{"text": t.get_text(), "x": _f(t.get_position()[0]),
                    "y": _f(t.get_position()[1]), "color": _hex(t.get_color()),
                    "size": _f(t.get_fontsize()), "ha": t.get_ha(), "va": t.get_va(), "wrap": t.get_wrap()}
