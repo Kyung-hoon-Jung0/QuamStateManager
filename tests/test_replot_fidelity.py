@@ -97,3 +97,23 @@ def test_single_axes_caption_is_distinct_from_figure_heading():
     view = mpljson_to_plotly(extract_figure(fig, 'response'))
     assert any(n['text'] == 'Pair = a-b' for n in view['layout'].get('annotations', []))
     assert view['layout']['title']['text'] == 'Calibration'
+
+
+def test_subfigure_verdicts_and_axes_use_root_coordinates():
+    fig = Figure(figsize=(10, 6))
+    header, body = fig.subfigures(2, 1, height_ratios=[1, 4])
+    header.text(.5, .5, 'Diagnostic heading')
+    body.text(.01, .98, 'VERDICT: PREP_ERROR', va='top')
+    body.text(.01, .88, 'floor = 2.5%; sigma = 0.2%', va='top')
+    ax = body.subplots()
+    body.subplots_adjust(top=.7)
+    ax.plot([0, 1], [1, 2])
+    source = extract_figure(fig, 'diagnosis')
+    notes = {t['text']: t for t in source['texts']}
+    assert 'VERDICT: PREP_ERROR' in notes
+    assert notes['Diagnostic heading']['y'] == pytest.approx(.9)
+    assert notes['VERDICT: PREP_ERROR']['y'] == pytest.approx(.784)
+    assert source['axes'][0]['position'][3] == pytest.approx(ax.get_position().height * .8)
+    view = mpljson_to_plotly(source)
+    assert len(view['layout']['annotations']) == 3
+    assert view['layout']['yaxis']['domain'][1] == pytest.approx(.56)

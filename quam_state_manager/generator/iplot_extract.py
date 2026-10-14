@@ -183,7 +183,7 @@ def _map_metadata(artist):
                      "vmax": _f(norm.vmax), "log": type(norm).__name__ == "LogNorm",
                      "vcenter": _f(getattr(norm, "vcenter", None)), "clip": bool(norm.clip)},
             "colorbar": {"label": label, "units": units.group(1) if units else None,
-                         "position": _flist(cb.ax.get_position().bounds) if cb is not None else None,
+                         "position": _figure_position(cb.ax) if cb is not None else None,
                          "orientation": cb.orientation if cb is not None else "vertical",
                          "id": str(id(cb)) if cb is not None else None,
                          "visible": cb is not None},
@@ -385,7 +385,7 @@ def extract_axes(ax, axes):
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
-        "position": _flist(ax.get_position().bounds),
+        "position": _figure_position(ax),
         "axison": bool(ax.axison),
         "spines_visible": {name: bool(spine.get_visible()) for name, spine in ax.spines.items()},
         "ticks_visible": {kind: bool(axis.get_visible() and any(
@@ -452,15 +452,41 @@ def extract_figure(fig, key, title=None):
                       if getattr(ax, "_colorbar", None) is not None
                       and not any(ax._colorbar.mappable in list(a.collections) + list(a.images)
                                   for a in axes)],
-        "texts": [{"text": t.get_text(), "x": _f(t.get_position()[0]),
-                   "y": _f(t.get_position()[1]), "color": _hex(t.get_color()),
-                   "size": _f(t.get_fontsize()), "ha": t.get_ha(), "va": t.get_va(), "wrap": t.get_wrap()}
-                  for t in f.texts if t.get_transform() == f.transFigure],
+        "texts": _figure_texts(f),
         "skipped": [{"artist": type(a).__name__, "n": 1, "reason": "unsupported figure artist"}
                     for a in list(f.artists) + list(f.images) + list(f.patches) + list(f.lines)] +
                    [{"artist": "FigureText", "n": 1, "reason": "unsupported text transform"}
                     for t in f.texts if t.get_transform() != f.transFigure],
     }
+
+
+def _root_figure(owner):
+    while getattr(owner, "_parent", None) is not None:
+        owner = owner._parent
+    return owner
+
+
+def _figure_position(ax):
+    owner = ax.get_figure()
+    root = _root_figure(owner)
+    bbox = ax.get_position().transformed(owner.transSubfigure).transformed(root.transFigure.inverted())
+    return _flist(bbox.bounds)
+
+
+def _figure_texts(root):
+    out = []
+    def visit(owner):
+        for t in owner.texts:
+            if t.get_transform() not in (owner.transFigure, owner.transSubfigure):
+                continue
+            x, y = root.transFigure.inverted().transform(t.get_transform().transform(t.get_position()))
+            out.append({"text": t.get_text(), "x": _f(x), "y": _f(y),
+                        "color": _hex(t.get_color()), "size": _f(t.get_fontsize()),
+                        "ha": t.get_ha(), "va": t.get_va(), "wrap": t.get_wrap()})
+        for sub in owner.subfigs:
+            visit(sub)
+    visit(root)
+    return out
 
 
 def _path_parts(path):
