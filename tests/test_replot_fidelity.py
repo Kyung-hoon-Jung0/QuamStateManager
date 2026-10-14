@@ -138,3 +138,19 @@ def test_axes_caption_does_not_overlap_a_synthetic_key_heading():
     view = mpljson_to_plotly(extract_figure(fig, 'operation'))
     assert view['layout']['title']['text'] == ''
     assert view['layout']['annotations'][0]['text'] == 'Device<br>Gain = 13.4'
+
+
+def test_shared_subfigure_axes_choose_the_overlaid_twin():
+    fig = Figure()
+    upper, lower = fig.subfigures(2, 1)
+    top, bottom = upper.subplots(), lower.subplots()
+    bottom.sharex(top)
+    twin = top.twinx()
+    for ax in (top, bottom, twin):
+        ax.plot([0, 1], [1, 2])
+    source = extract_figure(fig, 'panels')
+    assert source['axes'][0]['shares_x_with'] == 2
+    assert source['axes'][1]['shares_x_with'] is None
+    view = mpljson_to_plotly(source)
+    assert view['layout']['yaxis']['domain'] != view['layout']['yaxis2']['domain']
+
