@@ -47,8 +47,9 @@ def _write_live(folder: Path, state: dict) -> None:
     the change is unambiguously detectable on coarse-mtime filesystems."""
     p = folder / "state.json"
     p.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    future = time.time() + 1000
-    os.utime(p, (future, future))
+    # v1.4.1: wall-clock stamps -> strictly increasing stamps, rapid writes must differ.
+    future = max(time.time_ns() + 1000 * 10**9, p.stat().st_mtime_ns + 10**9)
+    os.utime(p, ns=(future, future))
 
 
 @pytest.fixture
@@ -195,12 +196,15 @@ class TestDriftRoutes:
         # Second poll: mtimes unchanged since → settled → reads + reports it.
         assert client.get("/state/drift").get_json()["count"] == 1
 
-    def test_repeated_live_changes_accumulate(self, tmp_path, live_folder):
+    def test_repeated_live_changes_accumulate(self, tmp_path, live_folder, monkeypatch):
         """The reported bug: update #1 shows, then a second qualibrate update
         must ACCUMULATE, not be lost."""
         client = _app_client(tmp_path)
         client.post("/load", data={"folder": str(live_folder)})
         assert _drift_count(client) == 0
+        # v1.4.1: timing-dependent saves -> a frozen clock pins rapid-write accumulation.
+        stamp = time.time()
+        monkeypatch.setattr(time, 'time', lambda: stamp)
         _write_live(live_folder, _chip_state(f_01=6.30e9))           # fit #1
         assert _drift_count(client) == 1
         _write_live(live_folder, _chip_state(f_01=6.30e9, t1=8500))  # fit #2

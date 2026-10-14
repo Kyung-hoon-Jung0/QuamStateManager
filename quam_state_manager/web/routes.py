@@ -722,6 +722,7 @@ _drift_lock = threading.Lock()
 # ~3 polls ≈ 15s before the forced read; the forced read still goes through
 # safe_io's torn-pair refusal (serves last-known on raise), so it can't tear the baseline.
 _DRIFT_MAX_DEFERS = 3
+_DRIFT_VERIFY_S = 30.0
 
 
 def _get_quam_build_lock(key: str) -> threading.RLock:
@@ -28043,6 +28044,8 @@ def _compute_drift(ctx, *, full: bool = False) -> dict | None:
     base = _drift_baseline(ctx)
     if base is None:
         return None
+    # Recheck bytes periodically: coarse or preserved mtimes can hide a save.
+    # The settle gate and armored read still protect an active writer.
     # Cache is valid only if BOTH the live mtimes AND the baseline identity
     # still match — so a baseline reset that didn't move the live mtimes can't
     # serve a stale count (red-team finding §3).
@@ -28051,7 +28054,8 @@ def _compute_drift(ctx, *, full: bool = False) -> dict | None:
         if (not full and cache is not None
                 and cache.get("state_mtime") == sm
                 and cache.get("wiring_mtime") == wm
-                and cache.get("baseline_utc") == base["captured_utc"]):
+                and cache.get("baseline_utc") == base["captured_utc"]
+                and time.monotonic() - cache.get("checked_at", float("-inf")) < _DRIFT_VERIFY_S):
             return {"count": cache["count"], "baseline_utc": cache["baseline_utc"]}
 
         # SETTLE-GATE (audit #2): the background poll must not read live CONTENT
@@ -28093,6 +28097,7 @@ def _compute_drift(ctx, *, full: bool = False) -> dict | None:
     summary = Differ.summary(entries)
     with _drift_lock:
         ctx["_drift"] = {"state_mtime": sm, "wiring_mtime": wm,
+                         "checked_at": time.monotonic(),
                          "count": summary["total"],
                          "baseline_utc": base["captured_utc"]}
         ctx["_drift_defer_count"] = 0   # a successful read clears the defer streak
