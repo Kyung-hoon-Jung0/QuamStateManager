@@ -568,6 +568,9 @@ def _group_panels(axes, drawable):
         for rel in ("shares_x_with", "shares_y_with"):
             j = axes[i].get(rel)
             if j is not None and j in dset:
+                a, b = axes[i].get("position"), axes[j].get("position")
+                if a and b and any(abs(u - v) > 1e-7 for u, v in zip(a, b)):
+                    continue
                 ri, rj = find(i), find(j)
                 if ri != rj:
                     parent[rj] = ri

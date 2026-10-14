@@ -251,7 +251,8 @@ def _shared_index(ax, axes, which):
     for j, other in enumerate(axes):
         if other is ax:
             continue
-        if other in sibs:
+        if other in sibs and np.allclose(ax.get_position().bounds, other.get_position().bounds,
+                                        rtol=0, atol=1e-7):
             return j
     return None
 
