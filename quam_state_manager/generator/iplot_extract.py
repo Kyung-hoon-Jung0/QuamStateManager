@@ -448,6 +448,15 @@ def extract_figure(fig, key, title=None):
     if getattr(f, "_suptitle", None) is not None:
         sup = f._suptitle.get_text()
     axes = f.get_axes()
+    # A layout engine (constrained / tight layout) places the axes only when the figure
+    # is drawn -- that is how the saved PNG gets room for a multi-line title. Read the
+    # positions after that placement, not the default subplot box.
+    get_engine = getattr(f, "get_layout_engine", None)
+    if get_engine is not None and get_engine() is not None:
+        try:
+            f.draw_without_rendering()
+        except Exception:
+            pass
     # Final aspect boxes are available without allocating a raster canvas.
     for ax in axes:
         ax.apply_aspect()

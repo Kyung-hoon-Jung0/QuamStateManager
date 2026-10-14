@@ -817,11 +817,15 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     has_top_axis = has_secondary_top
 
     heading = fig_json.get("suptitle") or ""
-    heading_in_texts = False
+    heading_in_texts = heading_as_note = False
     for text in fig_json.get("texts", []):
         if heading and text.get("text") == heading and text.get("y", 0) >= .9:
             heading_in_texts = True
-            continue
+            # A Plotly title centres extra lines on its y, so a multi-line lab heading ran
+            # off the top; as a note its whole block hangs from y like the lab's.
+            heading_as_note = bool(positions) and "\n" in heading
+            if not heading_as_note:
+                continue
         notes.append(_text_note(text, "paper", "paper"))
     skipped = fig_json.get("skipped", []) + [s for a in axes if not a.get("is_colorbar") for s in a.get("skipped", [])]
     notices = [f"{s['artist']} x{s['n']} ({s.get('reason', 'unsupported')})" for s in skipped]
@@ -834,7 +838,8 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     if any(fallback_heading in (key, key.replace("_", " ")) for key in keys if key) \
             and any(a.get("title") for a in axes):
         fallback_heading = ""
-    layout["title"] = {"text": heading if heading_in_texts else "" if fig_json.get("texts") else (heading or fallback_heading),
+    layout["title"] = {"text": "" if heading_as_note else heading if heading_in_texts else ""
+                       if fig_json.get("texts") else (heading or fallback_heading),
                        "y": 0.99, "yanchor": "top"}
     layout["showlegend"] = True
     layout["legend"] = {"orientation": "h", "y": -0.12 / nrows, "x": 0.0}
@@ -892,8 +897,13 @@ def _text_note(a, xref, yref, width=1080):
         columns = max(12, int(width * .95 / (max(1, a.get("size", 10)) * .6)))
         text = "\n".join("\n".join(textwrap.wrap(line, width=columns, break_long_words=False,
                            break_on_hyphens=False)) for line in text.split("\n"))
+    size = a.get("size", 10)
+    if "\n" in text:
+        # Plotly sets lines 1.3 em apart, Matplotlib 1.2 em: scale a block so it fills
+        # the height the lab reserved for it instead of running into the panels.
+        size = round(size * 1.2 / 1.3, 3)
     result = {"text": text, "showarrow": False, "x": a.get("x", 0), "y": a.get("y", 0),
-              "xref": xref, "yref": yref, "font": {"size": a.get("size", 10)},
+              "xref": xref, "yref": yref, "font": {"size": size},
               "xanchor": {"center": "center", "right": "right"}.get(a.get("ha"), "left"),
               "yanchor": {"center": "middle", "top": "top"}.get(a.get("va"), "bottom")}
     if a.get("color"):
