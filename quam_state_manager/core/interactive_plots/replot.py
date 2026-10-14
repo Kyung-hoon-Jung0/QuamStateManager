@@ -820,7 +820,10 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         notices = ["Not shown: " + "; ".join(notices)]
     if any((t.get("meta") or {}).get("preview_reduced") for t in data):
         notices.append("Map preview reduced to the byte budget; full array retained server-side for map tools.")
-    layout["title"] = {"text": heading if heading_in_texts else "" if fig_json.get("texts") else (heading or fig_json.get("title", "")),
+    fallback_heading = fig_json.get("title", "")
+    if fallback_heading == fig_json.get("key") and any(a.get("title") for a in axes):
+        fallback_heading = ""
+    layout["title"] = {"text": heading if heading_in_texts else "" if fig_json.get("texts") else (heading or fallback_heading),
                        "y": 0.99, "yanchor": "top"}
     layout["showlegend"] = True
     layout["legend"] = {"orientation": "h", "y": -0.12 / nrows, "x": 0.0}

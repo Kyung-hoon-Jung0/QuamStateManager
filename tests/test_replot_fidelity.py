@@ -128,3 +128,13 @@ def test_colorbar_uses_active_box_aspect_without_drawing():
     bar = source['axes'][0]['traces'][0]['colorbar']['position']
     assert bar[2] == pytest.approx(bar[3] * 6 / 10 / 20)
     assert cb.ax.get_position().width == pytest.approx(bar[2])
+
+
+def test_axes_caption_does_not_overlap_a_synthetic_key_heading():
+    fig = Figure()
+    ax = fig.subplots()
+    ax.plot([0, 1], [1, 2])
+    ax.set_title('Device\nGain = 13.4')
+    view = mpljson_to_plotly(extract_figure(fig, 'operation'))
+    assert view['layout']['title']['text'] == ''
+    assert view['layout']['annotations'][0]['text'] == 'Device<br>Gain = 13.4'
