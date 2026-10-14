@@ -985,3 +985,21 @@ More of the lab's own figures become interactive, and they keep the lab figure's
   and does not save).
 - **Interactive figure shape**: a reproduced figure takes its height from the width the pane really has, so it keeps
   the lab figure's shape in a narrow or a wide pane.
+
+## v1.4.4 (2026-10-15)
+
+Reproduced lab figures are laid out like the lab's own pictures and stay readable.
+
+- **The lab's layout, not an even grid**: a reproduced figure now uses the panel positions, gaps and colorbar sizes of
+  the lab figure, so text rows, short header rows and panel spacing match the saved picture. Text that a lab figure
+  keeps in a panel without data (per-qubit verdicts above each panel) is shown, and axes the lab hid stay hidden.
+- **Readable at any pane width**: text scales with the tile and grows by at most 1.2x. A wide or multi-panel figure,
+  a run's only figure, and any figure a column would shrink below 3/4 of its own size take the whole row. A figure
+  taller than the visible pane is fitted to it when it still shows at 3/4 of its size or more; a tall multi-panel
+  figure keeps its width and the pane scrolls.
+- **Dark theme**: black lines, markers and text from the lab figure are drawn in the theme's foreground colour so
+  they stay visible; light mode keeps the lab's colours exactly.
+- **Legends**: one entry per kind of line (a label repeated in every panel shows once and toggles every panel);
+  contour levels no longer add "level 0.5" entries.
+- **Fresh results after an upgrade**: a reproduced figure cached by an older SM is recomputed, instead of showing the
+  older result until the run changes.
