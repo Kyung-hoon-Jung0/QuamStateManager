@@ -39510,7 +39510,8 @@ def dataset_interactive(uid):
     from quam_state_manager.core.interactive_plots import list_interactive_figures
     figures = list_interactive_figures(run)
     from quam_state_manager.core.interactive_plots import replot
-    if replot.replot_capability(run, current_app.instance_path)["available"]:
+    capability = replot.replot_capability(run, current_app.instance_path)
+    if capability["available"]:
         result = replot.replot_run(run, current_app.instance_path)
         reproduced = replot.replot_menu(result)
         covered = {f["key"] for f in reproduced}
@@ -39521,7 +39522,7 @@ def dataset_interactive(uid):
                 '<p class="muted">Legacy recipes and saved figures</p>' + render_template(
                     "_dataset_interactive.html", run_id=run_id, uid=uid, figures=legacy) if legacy else "")
     return render_template("_dataset_interactive.html", run_id=run_id, uid=uid, figures=figures,
-                           reproduction_hint="Select an environment to reproduce maps from experiment code.")
+                           reproduction_hint=capability["reason"])
 
 
 @bp.route("/dataset/<uid>/interactive/plot")

@@ -36,3 +36,22 @@ def test_saved_input_gate_survives_store_restart(tmp_path, monkeypatch, saved_fi
     menu = client.get('/dataset/sample/interactive').get_data(as_text=True)
     assert 'response' in menu
     assert 'saved' in menu.lower()
+
+
+def test_unavailable_replay_keeps_its_capability_reason(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from quam_state_manager.core.interactive_plots import replot
+    folder = tmp_path / 'run'
+    folder.mkdir()
+    (folder / 'data.json').write_text(json.dumps({'figures': {'response':'./figures.response.png'}}))
+    (folder / 'figures.response.png').write_bytes(b'saved image')
+    run = SimpleNamespace(folder_path=folder, experiment_name='sample', qubits=[], qubit_pairs=[])
+    store = SimpleNamespace(runs={1:run})
+    monkeypatch.setattr(routes, '_resolve_run', lambda uid:(store,1,''))
+    reason = 'Run has no state snapshot to rebuild the device.'
+    monkeypatch.setattr(replot, 'replot_capability', lambda run, ip:
+                        dict(available=False, reason=reason, util='sample', env='offline'))
+    app = create_app(testing=True, instance_path=str(tmp_path / 'instance'))
+    body = app.test_client().get('/dataset/sample/interactive').get_data(as_text=True)
+    assert reason in body
+    assert 'response' in body and '(static)' in body
