@@ -943,3 +943,27 @@ Map tools and Apply safety, from real-browser journeys on a 5-qubit chip and two
 - **Floating Instrument Wiring**: Escape closes it, and it follows the light/dark theme.
 - **Lab processes**: plotting and analysis workers on Windows end with SM (kill-on-close job objects); the running
   QUAlibrate detector recognizes its server only by the interpreter's module position.
+
+## v1.4.2 (2026-10-14)
+
+Runs that are still being written, honest map comparisons, and figures that read like the lab's own.
+
+- **Runs still being written**: a run indexed while QUAlibrate is still saving it (HDF5, figures and the state
+  snapshot arrive after node.json) now picks up those files on the next poll, without a Rescan. An open run detail
+  refreshes its tabs when the run completes. Only recent runs are re-checked, and opening a run never waits for a scan.
+- **"Changed since this run"** now works on runs that SM first read while they were still being written. A run whose
+  saved files were rewritten after a later run started still does not count as proof.
+- **Map comparisons**: a frequency axis counts as absolute only when its label says so. Otherwise the run's own
+  reference is required, and an absolute frequency is never subtracted from a detuning. A pulse amplitude is shown as
+  a scale on an MW port and in volts on an LF port. A map with no supported model shows only its reason, and the fit
+  verdict is labelled "fit:".
+- **Figures**: the interactive figure keeps the lab figure's aspect ratio. Columns leave room for tick labels,
+  repeated y titles show on the first column only, and colorbar titles stay beside their scales. Multi-line and
+  wrapped lab text keeps its line breaks, and "<", ">", "&" and quotes in lab text show literally. Large maps convert
+  faster.
+- **Saved figures** fit the visible pane, with click-to-zoom for full size.
+- **Param History**: derived values such as assignment fidelity show their current value. A "saved in #N" point
+  opens the run that saved it, and says it is not proven to have measured it.
+- **Value history**: an open drawer refreshes when new runs or a sync change the values, instead of calling an old
+  value "now".
+- **Datasets search** survives a page reload in the same tab; a new tab starts clean.
