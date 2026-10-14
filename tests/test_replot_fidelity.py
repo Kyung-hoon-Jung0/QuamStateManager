@@ -179,3 +179,16 @@ def test_source_legend_stays_inside_a_single_axes():
     assert legend['y'] == pytest.approx(ax.get_position().y1)
     assert legend['font']['size'] == 8
 
+
+
+def test_fixed_aspect_uses_the_active_box_and_data_scale():
+    fig = Figure(figsize=(10, 6))
+    ax = fig.subplots()
+    ax.plot([0, 4], [0, 1])
+    ax.set_aspect('equal')
+    view = mpljson_to_plotly(extract_figure(fig, 'circle'))
+    box = ax.get_position()
+    assert box.width * 10 / (box.height * 6) == pytest.approx(4)
+    assert view['layout']['yaxis'].get('scaleanchor') == 'x'
+    assert view['layout']['yaxis'].get('scaleratio') == 1
+

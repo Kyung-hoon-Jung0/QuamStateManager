@@ -715,6 +715,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                                           "anchor": yref, "domain": [max(x0, 0), min(x1, 1)]}
         layout[_axis_id("yaxis", pid)] = {**_axis_props(base, log_key="y"),
                                           "anchor": xref, "domain": [max(y0, 0), min(y1, 1)]}
+        if base.get("aspect"):
+            layout[_axis_id("xaxis", pid)]["constrain"] = "domain"
+            layout[_axis_id("yaxis", pid)].update(scaleanchor=xref, scaleratio=base["aspect"], constrain="domain")
         if col > 0 and any(cells[k] == (row, 0) and axes[_pick_base(axes, p)].get("ylabel") == base.get("ylabel")
                            for k, p in enumerate(panels)):
             layout[_axis_id("yaxis", pid)]["title"] = {"text": ""}

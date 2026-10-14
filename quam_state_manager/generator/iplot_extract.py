@@ -385,6 +385,7 @@ def extract_axes(ax, axes):
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
+        "aspect": _f(ax.get_aspect()),
         "legend": ({"loc": leg._loc, "size": _f(leg.get_texts()[0].get_fontsize())}
                    if leg is not None and leg.get_texts() else None),
         "position": _figure_position(ax),
@@ -443,6 +444,9 @@ def extract_figure(fig, key, title=None):
     if getattr(f, "_suptitle", None) is not None:
         sup = f._suptitle.get_text()
     axes = f.get_axes()
+    # Final aspect boxes are available without allocating a raster canvas.
+    for ax in axes:
+        ax.apply_aspect()
     return {
         "schema": "iplot/v2",
         "key": key,
