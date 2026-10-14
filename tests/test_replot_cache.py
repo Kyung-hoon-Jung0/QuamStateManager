@@ -117,7 +117,27 @@ def test_cache_inputs_context_and_schema_are_part_of_key(tmp_path, monkeypatch):
     keys.append(replot.replot_run(run, tmp_path / "instance", source_root=str(tmp_path))["cache_key"])
     monkeypatch.setattr(cache, "SCHEMA", "next")
     keys.append(replot.replot_run(run, tmp_path / "instance")["cache_key"])
-    assert len(calls) == len(set(keys)) == 4
+    # v1.4.3: an upgrade of SM's own replay code (same run, same lab code) is a new key too.
+    monkeypatch.setattr(replot, "_replay_code_digest", lambda: "other code")
+    keys.append(replot.replot_run(run, tmp_path / "instance")["cache_key"])
+    assert len(calls) == len(set(keys)) == 5
+
+
+def test_replay_code_digest_follows_the_worker_scripts(tmp_path, monkeypatch):
+    """Editing any script the lab worker runs changes the digest the cache key carries."""
+    from quam_state_manager.core import config_generator
+    for name in replot._REPLAY_CODE:
+        (tmp_path / name).write_text("# " + name)
+    monkeypatch.setattr(config_generator, "_script_path", lambda name: tmp_path / name)
+    digests = []
+    for name in replot._REPLAY_CODE:
+        monkeypatch.setattr(replot, "_replay_code_digest_value", None)
+        digests.append(replot._replay_code_digest())
+        (tmp_path / name).write_text("# edited " + name)
+    monkeypatch.setattr(replot, "_replay_code_digest_value", None)
+    digests.append(replot._replay_code_digest())
+    assert len(set(digests)) == len(digests)
+    assert replot._replay_code_digest() == digests[-1]  # computed once per process
 
 
 def test_package_membership_and_disk_corruption(tmp_path):

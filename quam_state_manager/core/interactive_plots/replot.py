@@ -44,6 +44,31 @@ def _script_path() -> Path:
     return sp("run_interactive_replot.py")
 
 
+# The SM code a cached replay was made with: the scripts the lab worker runs and the
+# revision ladder that composes their result. The cache key carries their digest, so
+# an upgrade that changes how figures are reproduced never serves an older result.
+_REPLAY_CODE = ("run_interactive_replot.py", "iplot_extract.py", "iplot_markers.py", "iplot_sources.py")
+_replay_code_digest_value: str | None = None
+
+
+def _replay_code_digest() -> str:
+    global _replay_code_digest_value
+    if _replay_code_digest_value is None:
+        import hashlib
+        from quam_state_manager import __version__
+        from quam_state_manager.core.config_generator import _script_path as sp
+        h = hashlib.sha256()
+        paths = [(name, lambda name=name: sp(name)) for name in _REPLAY_CODE]
+        paths.append(("replot_revision.py", lambda: Path(__file__).with_name("replot_revision.py")))
+        for name, locate in paths:
+            try:
+                h.update(name.encode() + b"\0" + Path(locate()).read_bytes())
+            except OSError:
+                h.update(name.encode() + b"\0" + __version__.encode())  # frozen build: the release
+        _replay_code_digest_value = h.hexdigest()[:16]
+    return _replay_code_digest_value
+
+
 def _derive_util(node_name: str) -> str:
     """Node name -> ``calibration_utils`` submodule (mirror of the subprocess copy).
 
@@ -194,7 +219,8 @@ def replot_run(run, instance_path, *, source_root: str | None = None,
                "env_sig": cache.digest(config_generator._env_signature(env)),
                "pythonpath": os.environ.get("PYTHONPATH", ""),
                "source_root": str(Path(source_root).resolve()) if source_root else "live",
-               "instance": str(Path(instance_path).resolve()), "schema": cache.SCHEMA}
+               "instance": str(Path(instance_path).resolve()), "schema": cache.SCHEMA,
+               "code": _replay_code_digest()}
     disk = cache.DiskCache(instance_path)
     request_key = cache.digest(context)
     while True:
