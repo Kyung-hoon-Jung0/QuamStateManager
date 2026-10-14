@@ -129,9 +129,12 @@ def _input_path(expr):
     if isinstance(expr, ast.Attribute):
         base = _input_path(expr.value)
         return base + "." + expr.attr if base else None
-    if isinstance(expr, ast.Subscript) and isinstance(expr.slice, ast.Constant):
+    if isinstance(expr, ast.Subscript):
         base = _input_path(expr.value)
-        return base + "." + str(expr.slice.value) if base else None
+        if isinstance(expr.slice, ast.Constant):
+            return base + "." + str(expr.slice.value) if base else None
+        selector = _input_path(expr.slice)
+        return base + ".[" + (selector or "unknown") + "]" if base else None
     if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
         if expr.func.attr == "get_names":
             return _input_path(expr.func.value) + ".get_names"
@@ -147,14 +150,36 @@ def _call_inputs(fn, tree, imports):
     names = [n for n, (_, original) in imports.items() if original == fn.__name__]
     parameters = list(inspect.signature(fn).parameters)
     found = {}
+    owners = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+    def resolve(expr, call, seen=()):
+        if isinstance(expr, ast.Name) and expr.id not in seen:
+            scope = call
+            while scope in owners and not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scope = owners[scope]
+            assignments = []
+            for item in ast.walk(scope):
+                if isinstance(item, ast.Assign) and item.lineno < call.lineno:
+                    for target in item.targets:
+                        if isinstance(target, ast.Name) and target.id == expr.id:
+                            assignments.append((item.lineno, item.value))
+                        elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(item.value, (ast.Tuple, ast.List)):
+                            for name, value in zip(target.elts, item.value.elts):
+                                if isinstance(name, ast.Name) and name.id == expr.id:
+                                    assignments.append((item.lineno, value))
+            if assignments:
+                value = max(assignments, key=lambda item: item[0])[1]
+                return resolve(value, call, (*seen, expr.id)) or expr.id
+        return _input_path(expr)
+
     for call in ast.walk(tree):
         if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in names:
             for name, expr in zip(parameters, call.args):
-                path = _input_path(expr)
+                path = resolve(expr, call)
                 if path:
                     found[name] = path
             for kw in call.keywords:
-                path = _input_path(kw.value)
+                path = resolve(kw.value, call)
                 if kw.arg and path:
                     found[kw.arg] = path
     return found
@@ -207,11 +232,25 @@ def _restore_record(cls, raw, report, path):
     return cls(**values)
 
 
-def _fit_records(fn, name, records, report, *, util_module=None, restore_objects=False):
+def _fit_records(fn, name, records, report, *, util_module=None, restore_objects=False, input_path=""):
     try:
         hint = typing.get_type_hints(inspect.unwrap(fn)).get(name)
     except (NameError, TypeError):
         hint = None
+    mapping_hint = typing.get_origin(hint) is dict or hint is dict
+    bases = ("node.results.fit_results", "node.namespace.fit_results", "node.namespace.fit_objects")
+    whole_mapping = input_path in bases
+    selected_path = next((input_path[len(base) + 1:] for base in bases
+                          if input_path.startswith(base + ".")), None)
+    single = not mapping_hint and not whole_mapping and (dataclasses.is_dataclass(hint) or selected_path is not None)
+    if single and isinstance(records, dict):
+        key = selected_path if selected_path in records else next(iter(records)) if len(records) == 1 else None
+        if key is not None:
+            report.append({"selection": key, "reason": "single element requested by hint or node call"})
+            value = records[key]
+            return _restore_record(hint, value, report, key) if dataclasses.is_dataclass(hint) else value
+        report.append({"selection": "unchanged", "reason": "multiple fit entries; element key is unknown"})
+        return records
     cls = typing.get_args(hint)[-1] if typing.get_origin(hint) is dict else None
     if not dataclasses.is_dataclass(cls):
         cls = None
@@ -278,7 +317,8 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
             value, source = ds_raw, "ds_raw.h5"
         elif lname in ("fits", "fit", "fit_results") and "fit_results" in results:
             value = _fit_records(fn, name, results["fit_results"], reconstruction,
-                                 util_module=util_module, restore_objects=path == "node.namespace.fit_objects")
+                                 util_module=util_module, restore_objects=path == "node.namespace.fit_objects",
+                                 input_path=path)
             source = "data.fit_results"
         elif lname in ("fits", "fit"):
             value, source = ds_fit, "ds_fit.h5"
