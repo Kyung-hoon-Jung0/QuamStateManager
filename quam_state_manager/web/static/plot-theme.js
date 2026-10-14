@@ -215,6 +215,12 @@
                 }
                 if (el._houseSourceLayout) {
                     var themed = houseLayout(el._houseSourceLayout), updates = {};
+                    Object.keys(themed).forEach(function (key) {
+                        if (!/^[xy]axis\d*$/.test(key)) return;
+                        var axis = themed[key];
+                        if (axis.tickfont) updates[key + '.tickfont.color'] = axis.tickfont.color || L.font.color;
+                        if (axis.title && axis.title.font) updates[key + '.title.font.color'] = axis.title.font.color || L.font.color;
+                    });
                     if (themed.title && themed.title.font) updates['title.font.color'] = themed.title.font.color || L.font.color;
                     (themed.annotations || []).forEach(function (note, index) {
                         updates['annotations[' + index + '].font.color'] = (note.font || {}).color || L.font.color;

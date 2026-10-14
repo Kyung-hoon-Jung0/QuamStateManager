@@ -33,6 +33,7 @@ assert.strictEqual(data[0].x, source[0].x, 'do not copy large numeric arrays');
 assert.strictEqual(data[1].colorscale, source[1].colorscale);
 assert.deepStrictEqual(Array.from(data[1].marker.color), [0, 1]);
 const layout = { title: { text: 'Scan', font: { color: '#000000' } },
+    xaxis:{tickfont:{color:'#000000'},title:{font:{color:'#000000'}}},
     annotations: [{ text: 'Summary', font: { color: '#222222', size: 9 } },
     { text: 'Limit', font: { color: '#ff0000' } }],
     shapes: [{ type: 'line', line: { color: '#000000' }, fillcolor: '#000000' }] };
@@ -63,6 +64,8 @@ restyles = []; relayouts = [];
 theme.retheme();
 assert.strictEqual(restyles[0].update['line.color'][0], '#000000');
 assert.strictEqual(relayouts[1]['annotations[0].font.color'], '#222222');
+assert.strictEqual(relayouts[1]['xaxis.tickfont.color'], '#000000');
+assert.strictEqual(relayouts[1]['xaxis.title.font.color'], '#000000');
 const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const mount = app.slice(app.indexOf('function _fetchInteractiveFig'), app.indexOf('function _replotHeight'));
 assert(mount.includes('window.PlotTheme.houseData(d.data)'), 'mount must adapt data');
