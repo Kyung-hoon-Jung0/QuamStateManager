@@ -33,6 +33,7 @@ import re
 import sys
 import traceback
 import typing
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -221,6 +222,11 @@ class _SavedNamespace(dict):
             raise AttributeError(name) from error
 
 
+def _mapping_hint(hint):
+    origin = typing.get_origin(hint) or hint
+    return isinstance(origin, type) and issubclass(origin, Mapping)
+
+
 def _restore_value(hint, value, report, path, nonfinite):
     if value is None and hint is float:
         nonfinite.append(path)
@@ -229,7 +235,7 @@ def _restore_value(hint, value, report, path, nonfinite):
         return _restore_record(hint, value, report, path)
     origin = typing.get_origin(hint)
     args = typing.get_args(hint)
-    if isinstance(value, dict) and origin is dict and len(args) == 2:
+    if isinstance(value, dict) and _mapping_hint(hint) and len(args) == 2:
         return {k: _restore_value(args[1], v, report, path + "." + str(k), nonfinite)
                 for k, v in value.items()}
     if isinstance(value, (list, tuple)) and origin in (list, tuple) and args:
@@ -242,7 +248,12 @@ def _restore_value(hint, value, report, path, nonfinite):
 
 def _restore_record(cls, raw, report, path):
     fields = {f.name: f for f in dataclasses.fields(cls)}
-    hints = typing.get_type_hints(cls)
+    try:
+        hints = typing.get_type_hints(cls)
+    except (NameError, TypeError) as error:
+        report.append({"record": path, "class": cls.__name__,
+                       "reason": f"unresolved record annotation: {type(error).__name__}: {error}"})
+        return raw
     values = {}
     dropped = sorted(set(raw) - set(fields))
     defaults = {}
@@ -261,11 +272,15 @@ def _restore_record(cls, raw, report, path):
 
 
 def _fit_records(fn, name, records, report, *, util_module=None, restore_objects=False, input_path=""):
+    unresolved = False
     try:
         hint = typing.get_type_hints(inspect.unwrap(fn)).get(name)
-    except (NameError, TypeError):
+    except (NameError, TypeError) as error:
         hint = None
-    mapping_hint = typing.get_origin(hint) is dict or hint is dict
+        unresolved = True
+        report.append({"annotation": name,
+                       "reason": f"unresolved fit annotation: {type(error).__name__}: {error}"})
+    mapping_hint = _mapping_hint(hint)
     bases = ("node.results.fit_results", "node.namespace.fit_results", "node.namespace.fit_objects")
     whole_mapping = input_path in bases
     selected_path = next((input_path[len(base) + 1:] for base in bases
@@ -280,10 +295,10 @@ def _fit_records(fn, name, records, report, *, util_module=None, restore_objects
         report.append({"selection": "unchanged", "reason": "multiple fit entries; element key is unknown"})
         return records
     args = typing.get_args(hint)
-    cls = args[-1] if typing.get_origin(hint) is dict and args else None
+    cls = args[-1] if mapping_hint and args else None
     if not dataclasses.is_dataclass(cls):
         cls = None
-    if cls is None and restore_objects and util_module is not None:
+    if cls is None and not unresolved and restore_objects and util_module is not None:
         keys = set().union(*(set(v) for v in records.values() if isinstance(v, dict)))
         candidates = []
         for value in vars(util_module).values():

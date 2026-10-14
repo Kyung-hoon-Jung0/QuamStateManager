@@ -340,3 +340,69 @@ def plot_data(node):
     assert result['bind_report']['raw']['normalize']['value'] is False
     assert result['bind_report']['raw']['normalize']['source'] == 'node.call.literal'
     assert {f['function_key'] for f in result['figures']} == {'variant'}
+
+
+@pytest.mark.parametrize('annotation', [
+    'dict', 'Dict', 'Mapping', 'MutableMapping', 'abc.Mapping', 'abc.MutableMapping',
+])
+def test_mapping_origins_restore_nested_records(plots, annotation):
+    exec(f'''
+from __future__ import annotations
+from typing import Dict, Mapping, MutableMapping
+from collections import abc
+
+@dataclass
+class Detail:
+    value: float
+
+@dataclass
+class Bundle:
+    detail: Detail
+    members: {annotation}[str, Detail]
+
+def plot_nested(fits: {annotation}[str, Bundle]):
+    return {{key: (fit.detail.value, fit.members['inner'].value) for key, fit in fits.items()}}
+''', plots.__dict__)
+    records = {key: {'detail': {'value': value}, 'members': {'inner': {'value': value + 1}}}
+               for key, value in [('element0', 4), ('element1', 7)]}
+    values, report = bind(plots.plot_nested, records,
+                         "plot_nested(node.namespace['fit_results']['element0'])")
+    assert set(values['fits']) == set(records)
+    assert isinstance(values['fits']['element0'], plots.Bundle)
+    assert isinstance(values['fits']['element0'].detail, plots.Detail)
+    assert isinstance(values['fits']['element0'].members['inner'], plots.Detail)
+    assert plots.plot_nested(**values) == {'element0': (4, 5), 'element1': (7, 8)}
+    assert len(report['fits']['records']) == 6
+
+
+def test_unresolved_fit_annotation_reports_without_guessing(plots):
+    exec('''
+from __future__ import annotations
+from typing import TYPE_CHECKING, Mapping
+if TYPE_CHECKING:
+    from unavailable_records import MissingFit
+def plot_unresolved(fits: Mapping[str, MissingFit]):
+    return fits
+''', plots.__dict__)
+    records = {'element0': {'peak': 4}}
+    values, report = bind(plots.plot_unresolved, records,
+                         "plot_unresolved(node.namespace['fit_objects'])", util_module=plots)
+    assert values['fits'] is records
+    reason = next((entry.get('reason', '') for entry in report['fits'].get('records', [])), '')
+    assert 'unresolved fit annotation' in reason and 'NameError' in reason and 'MissingFit' in reason
+
+
+def test_unresolved_nested_annotation_reports_without_guessing(plots):
+    exec('''
+from __future__ import annotations
+@dataclass
+class UnknownBundle:
+    detail: MissingDetail
+def plot_unknown(fits: Dict[str, UnknownBundle]):
+    return fits
+''', plots.__dict__)
+    records = {'element0': {'detail': {'value': 4}}}
+    values, report = bind(plots.plot_unknown, records)
+    assert values['fits']['element0'] is records['element0']
+    reason = next((entry.get('reason', '') for entry in report['fits'].get('records', [])), '')
+    assert 'unresolved record annotation' in reason and 'MissingDetail' in reason
