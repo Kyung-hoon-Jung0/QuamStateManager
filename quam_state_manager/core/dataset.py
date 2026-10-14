@@ -243,6 +243,15 @@ class RunInfo:
     # run and is not re-parsed (see ``_parse_run_folder``).
     content_fp: tuple | None = None
 
+    @property
+    def has_interactive(self) -> bool:
+        """Replay snapshots and saved figures also support the Interactive tab.
+
+        Derived from persisted scan fields, so old caches need no migration or
+        extra file walk. Replay reports missing inputs inside the tab.
+        """
+        return bool(self.has_ds_raw or self.has_ds_fit or self.has_quam_state or self.figure_names)
+
 
 def _content_hash(raw: bytes | None) -> str | None:
     """Fingerprint of one file's bytes (docs/170); ``None`` for no file."""
@@ -2082,6 +2091,7 @@ class DatasetStore:
             "figure_names": run.figure_names,
             "has_ds_raw": run.has_ds_raw,
             "has_ds_fit": run.has_ds_fit,
+            "has_interactive": run.has_interactive,
             "has_quam_state": run.has_quam_state,
             "files_version": run.files_version,
             # Nearest earlier run carrying a state snapshot — gates the

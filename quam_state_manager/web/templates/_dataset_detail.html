@@ -104,7 +104,7 @@
         {% if run.has_quam_state and run.prev_run_id %}
         <li><a role="tab" tabindex="0" data-ds-tab="prev" onclick="switchDatasetTab('prev', this)" title="Diff this run's state against the previous run">Prev State</a></li>
         {% endif %}
-        {% if run.has_ds_raw or run.has_ds_fit %}
+        {% if run.has_interactive %}
         <li><a role="tab" tabindex="0" data-ds-tab="interactive" onclick="switchDatasetTab('interactive', this)">Interactive</a></li>
         {% endif %}
         <li><a role="tab" tabindex="0" data-ds-tab="data" onclick="switchDatasetTab('data', this)">Raw Data</a></li>
@@ -441,7 +441,7 @@
 
 {# ── Tab: Interactive ── #}
 <div class="dataset-tab-content hidden" id="ds-tab-interactive">
-    {% if run.has_ds_raw or run.has_ds_fit %}
+    {% if run.has_interactive %}
     {# Strategy-B: reproduce figures by re-running the experiment's own plotting.py
        in the selected QM env. Opt-in (subprocess + env), so it never slows the
        default recipe view below. #}
