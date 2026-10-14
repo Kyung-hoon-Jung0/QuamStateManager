@@ -65,6 +65,22 @@ def _saved(folder):
 
 def reproduce(folder, instance, source_root, invoke):
     current = invoke(source_root)
+    usable = {}
+
+    def keep(result, rung, revision=None):
+        for original in result.get("figures", []):
+            if original.get("marker_defaults"):
+                continue
+            key = original.get("archive_key") or original["key"]
+            if key not in usable:
+                figure = dict(original)
+                figure["revision"] = {"rung": rung, "sha": revision, "heuristic": rung == "run_time",
+                                      "code_fingerprint": result.get("code_fingerprint")}
+                figure["status_chip"] = ("Reproduced with the current analysis code" if rung == "current" else
+                                        f"Reproduced with analysis code {revision[:7]} chosen by the run's time (heuristic)")
+                usable[key] = figure
+
+    keep(current, "current")
     failures = reasons(current)
     attempts = [{"rung": "current", "status": "failed" if failures else "ok", "reasons": failures,
                  "code_fingerprint": current.get("code_fingerprint")}]
@@ -92,6 +108,7 @@ def reproduce(folder, instance, source_root, invoke):
         pinned = sourceroot.materialize(root, sha, sourceroot.cache_dir_for(instance))
         if pinned:
             last = invoke(pinned)
+            keep(last, "run_time", sha)
             historic_failures = reasons(last)
             attempts.append({"rung": "run_time", "sha": sha, "heuristic": True,
                              "status": "failed" if historic_failures else "ok", "reasons": historic_failures,
@@ -107,8 +124,14 @@ def reproduce(folder, instance, source_root, invoke):
     else:
         attempts.append({"rung": "run_time", "status": "skipped", "reasons": [skip]})
     failures = reasons(last) or failures
-    result = dict(last, figures=[], saved_figures=_saved(folder), ndview=True)
+    saved = [f for f in _saved(folder) if f["key"] not in usable]
+    result = dict(last, figures=[], saved_figures=saved, ndview=True)
     attempts.append({"rung": "saved", "status": "shown", "reasons": failures})
-    return _label(result, "saved", sha,
+    result = _label(result, "saved", sha,
                   "Could not reproduce this run's figures with the current or run-time code; "
                   f"showing the saved figure and raw data. {failures[-1]}", attempts, current)
+    if usable:
+        result["figures"] = list(usable.values())
+        result["revision"]["rung"] = "mixed"
+        result["status_chip"] = "Reproduced available figures; showing saved figures for missing inputs"
+    return result

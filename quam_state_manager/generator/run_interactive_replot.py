@@ -34,6 +34,7 @@ import sys
 import traceback
 import typing
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _eprint(*a):
@@ -279,7 +280,7 @@ _RESULT_ALIASES = {"fringe_results": "fringe", "fit_objects": "fit_results"}
 
 
 def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None,
-               node_tree=None, plot_imports=None, bind_report=None, util_module=None):
+               node_tree=None, plot_imports=None, bind_report=None, util_module=None, saved_datasets=None):
     """Bind saved inputs and record every supplied, defaulted or unbound arg."""
     sig = inspect.signature(fn)
     kwargs = {}
@@ -287,6 +288,7 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
     results = results or {}
     decisions = bind_report if bind_report is not None else {}
     inputs = _call_inputs(fn, node_tree, plot_imports or {})
+    missing = []
     pair_source = "parameters.qubit_pairs"
     pair_names = params.get("qubit_pairs")
     if not pair_names:
@@ -311,7 +313,29 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
         source = None
         value = None
         reconstruction = []
-        if lname == "ds_fit" or path == "node.results.ds_fit":
+        saved_key = path.removeprefix("node.results.") if path.startswith("node.results.") else ""
+        saved_file = results.get(saved_key)
+        dataset_reference = isinstance(saved_file, str) and saved_file.lower().endswith(".h5")
+        if saved_key and (dataset_reference or saved_key.startswith("ds_")):
+            if saved_key == "ds_fit":
+                value = ds_fit
+            elif saved_key == "ds_raw":
+                value = ds_raw
+            elif callable(saved_datasets):
+                value = saved_datasets(saved_key)
+            elif saved_datasets is not None:
+                value = saved_datasets.get(saved_key)
+            source = Path(saved_file).name if dataset_reference else saved_key + ".h5"
+            if value is None:
+                reason = f"{name}: saved value {path} is missing"
+                if p.default is not inspect.Parameter.empty:
+                    decisions[name] = {"status": "defaulted", "source": "signature",
+                                       "value": _report_value(p.default), "reason": reason}
+                else:
+                    decisions[name] = {"status": "unbound", "source": path, "reason": reason}
+                    missing.append((name, reason))
+                continue
+        elif lname == "ds_fit" or path == "node.results.ds_fit":
             value, source = ds_fit, "ds_fit.h5"
         elif lname in ("ds", "dataset", "ds_raw", "raw"):
             value, source = ds_raw, "ds_raw.h5"
@@ -333,6 +357,8 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
                 decisions[name] = {"status": "unbound", "source": pair_source, "missing": missing}
                 raise ValueError(f"saved pairs missing from snapshot: {missing!r}")
             value, source = [pairs[n] for n in pair_names], "machine.qubit_pairs via " + pair_source
+        elif path == "node.parameters":
+            value, source = SimpleNamespace(**params), "parameters"
         elif path.startswith("node.parameters.") and path.removeprefix("node.parameters.") in params:
             key = path.removeprefix("node.parameters.")
             value, source = params[key], "parameters." + key
@@ -359,8 +385,14 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
         elif p.default is not inspect.Parameter.empty:
             decisions[name] = {"status": "defaulted", "source": "signature", "value": _report_value(p.default)}
         else:
-            decisions[name] = {"status": "unbound", "source": None}
-            raise ValueError(f"unbound required arg {name!r}")
+            computed = path.startswith("node.namespace.") or (node_tree is not None and any(
+                isinstance(item, ast.Assign) and any(isinstance(target, ast.Name) and target.id == path
+                    for target in item.targets) for item in ast.walk(node_tree)))
+            reason = f"{name}: computed by the node's analysis, not saved" if computed else f"{name}: no saved input"
+            decisions[name] = {"status": "unbound", "source": path or None, "reason": reason}
+            missing.append((name, reason))
+    if missing:
+        raise ValueError("; ".join(f"unbound required arg {name!r}: {reason}" for name, reason in missing))
     return kwargs
 
 
@@ -583,13 +615,19 @@ def _execute(args):
         return result
 
     # datasets
+    opened = {}
     def _open(name):
-        p = os.path.join(args.run, name + ".h5")
-        if not os.path.exists(p):
+        if name in opened:
+            return opened[name]
+        saved_path = results.get(name)
+        relative = saved_path if isinstance(saved_path, str) and saved_path.lower().endswith(".h5") else name + ".h5"
+        p = (Path(args.run) / relative).resolve()
+        if not p.is_relative_to(Path(args.run).resolve()) or not p.is_file():
             return None
         try:
             ds = xr.open_dataset(p)
             args.datasets.append(ds)
+            opened[name] = ds
             return ds
         except Exception:
             # Autodetect failed. NetCDF-classic bytes under the .h5 name
@@ -604,6 +642,7 @@ def _execute(args):
                 pass
             ds = xr.open_dataset(p, engine=eng)
             args.datasets.append(ds)
+            opened[name] = ds
             return ds
     try:
         ds_raw = _open("ds_raw")
@@ -627,7 +666,7 @@ def _execute(args):
         try:
             kwargs = _bind_args(fn, ds_raw=ds_raw, ds_fit=ds_fit, qubits=qubits, params=params,
                                 results=results, machine=machine, node_tree=node_tree,
-                                plot_imports=plot_imports, bind_report=report, util_module=U)
+                                plot_imports=plot_imports, bind_report=report, util_module=U, saved_datasets=_open)
             fig = fn(**kwargs)
             produced = _extract_return(fig, key, report, extract_figure, result["not_produced"])
             try:

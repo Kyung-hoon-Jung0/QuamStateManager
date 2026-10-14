@@ -58,7 +58,9 @@ def _derive_util(node_name: str) -> str:
 def _fingerprint(folder: Path) -> str:
     """Run inputs, including saved results and state, with nanosecond stats."""
     parts = []
-    for name in ("node.json", "state_updates.json", "data.json", "ds_raw.h5", "ds_fit.h5", "quam_state/state.json", "quam_state/wiring.json"):
+    names = ["node.json", "state_updates.json", "data.json", "ds_raw.h5", "ds_fit.h5", "quam_state/state.json", "quam_state/wiring.json"]
+    names += sorted(p.name for p in folder.glob("*.h5") if p.name not in names)
+    for name in names:
         p = folder / name
         try:
             st = p.stat()
