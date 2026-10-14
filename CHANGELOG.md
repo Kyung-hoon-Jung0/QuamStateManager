@@ -1023,3 +1023,13 @@ Reproduced lab figures keep what the lab drew, and every run with data offers th
   why instead of a generic hint.
 - **Live changes**: a live state save that keeps the file's timestamp (a copy that preserves times) is no longer
   missed: the content is re-checked every 30 s while the timestamps look unchanged.
+
+## v1.4.6 (2026-10-15)
+
+Lab figures laid out by Matplotlib's layout engines reproduce with the same room for their headings.
+
+- **Headings stay above the panels**: a lab figure that uses constrained or tight layout is now reproduced with the
+  panel positions that layout gives it, so a long verdict heading keeps the space above the maps that the saved
+  picture has instead of covering them.
+- **Multi-line headings and notes**: a heading of several lines hangs from its top edge (the first line is no longer
+  clipped), and multi-line text is sized so its block takes the same height as in the lab figure.
