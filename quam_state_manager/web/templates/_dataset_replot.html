@@ -52,7 +52,7 @@
 {% if figures %}
 <div class="ds-interactive-list" style="--ds-cols:2">
     {% for fig in figures %}
-    <div class="ds-interactive-fig" data-fig="{{ fig.key }}" data-kind="replot">
+    <div class="ds-interactive-fig{% if fig.span %} ds-fig-span{% endif %}" data-fig="{{ fig.key }}" data-kind="replot">
         <div class="ds-interactive-fig-title">{{ fig.title }}</div>
         {% if fig.bind_report %}
         <details class="muted ds-replot-bindings">

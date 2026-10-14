@@ -275,11 +275,24 @@ def _with_click_contracts(result, run):
     return {**result, "figures": figures}
 
 
+def _spans_row(fig: dict) -> bool:
+    """A lab figure drawn wide -- several panel columns, or a canvas 10 in or wider --
+    takes a whole row of the tile grid. Squeezed into one of two or three columns,
+    its panel titles, shared axis labels and colorbar titles overlap."""
+    panels = [a for a in fig.get("axes", []) if not a.get("is_colorbar")]
+    columns = max(((a.get("grid") or {}).get("ncols") or 1 for a in panels), default=1)
+    size = fig.get("size_inches") or ()
+    wide = (len(size) == 2 and isinstance(size[0], (int, float)) and math.isfinite(size[0])
+            and size[0] >= 10)
+    return columns >= 2 or wide
+
+
 def replot_menu(result: dict) -> list[dict]:
-    """``iplot/v1`` -> tile menu ``[{key,title,available}]`` for the template."""
+    """``iplot/v1`` -> tile menu ``[{key,title,available,span}]`` for the template."""
     figs = result.get("figures", [])
     return [{"key": f["key"], "title": f.get("title", f["key"]),
-             "available": True, "bind_report": f.get("bind_report", {})} for f in figs]
+             "available": True, "bind_report": f.get("bind_report", {}),
+             "span": _spans_row(f)} for f in figs]
 
 
 def replot_outcome(result: dict) -> dict:

@@ -5604,6 +5604,12 @@ p.ds-replot-fatal { padding: 0 0.2rem; overflow-wrap: anywhere; }
     grid-template-columns: repeat(var(--ds-cols, 2), minmax(0, 1fr));
     gap: 0.8rem;
 }
+/* A wide lab figure (several panel columns or a wide canvas) and a run's only figure
+   take the whole row: in one column of two or three, panel labels overlap. */
+.ds-interactive-list > .ds-fig-span,
+.ds-interactive-list > .ds-interactive-fig:only-child {
+    grid-column: 1 / -1;
+}
 
 .json-tree {
     font-family: var(--font-mono);
