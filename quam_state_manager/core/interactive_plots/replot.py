@@ -512,7 +512,9 @@ def _trace_to_plotly(t, xref, yref):
                     "line": {"width": 0}, "opacity": t.get("opacity", 1),
                     "showlegend": False, "zorder": int(t.get("zorder") or 0)}
         if t["type"] == "contour":
+            # The level names the line on hover; a contour carries no legend label of its own.
             t = {**t, "name": f"level {t.get('level')}", "mode": "lines"}
+            return {**_line_to_plotly(t, xref, yref), "showlegend": False}
         return _line_to_plotly(t, xref, yref)
     if t["type"] == "scatter":
         return _scatter_to_plotly(t, xref, yref)
@@ -623,6 +625,23 @@ def _position_domains(axes, panels):
     def domain(b):
         return b[0], b[2], b[1], b[3]
     return domain, [domain(b) for b in bounds]
+
+
+def _legend_once(data: list) -> None:
+    """One legend entry per distinct artist kind: a lab figure that labels the same line
+    in every panel draws one legend per panel, but Plotly has one legend for the figure,
+    so the entry repeated once per panel. Same name and same look share a legend group,
+    so the one entry still shows or hides that kind in every panel."""
+    groups: dict = {}
+    for trace in data:
+        if not trace.get("showlegend") or not trace.get("name"):
+            continue
+        line, marker = trace.get("line") or {}, trace.get("marker") or {}
+        key = (trace["name"], trace.get("mode"), trace.get("type"), str(line.get("color")),
+               str(line.get("dash")), str(marker.get("color")), str(marker.get("symbol")))
+        if key in groups:
+            trace["showlegend"] = False
+        trace["legendgroup"] = groups.setdefault(key, f"lg{len(groups)}")
 
 
 def mpljson_to_plotly(fig_json: dict) -> dict:
@@ -804,6 +823,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             if re.fullmatch(r"[xy]axis\d*", name):
                 axis["tickfont"] = {"size": 10}
                 axis["title"].update(font={"size": 10}, standoff=4 if name.startswith("y") else 0)
+    _legend_once(data)
     from .mathtext import plotly_text
     return plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
                        "skipped": skipped, "notices": notices, "source_aspect": source_aspect,
