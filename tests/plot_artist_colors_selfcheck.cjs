@@ -43,6 +43,12 @@ assert.strictEqual(theme.houseLayout(layout).annotations[1].font.color, '#ff0000
 assert.strictEqual(layout.annotations[0].font.color, '#222222');
 assert.strictEqual(theme.houseLayout(layout).shapes[0].line.color, foreground);
 assert.strictEqual(theme.houseLayout(layout).shapes[0].fillcolor, '#000000');
+const axes = theme.houseLayout({xaxis:{tickfont:{color:'#000000'},title:{font:{color:'#000000'}}},
+    yaxis101:{overlaying:'y',tickfont:{color:'#ffa500'},title:{font:{color:'#ffa500'}}}});
+assert.strictEqual(axes.xaxis.tickfont.color, foreground);
+assert.strictEqual(axes.xaxis.title.font.color, foreground);
+assert.strictEqual(axes.yaxis101.tickfont.color, '#ffa500');
+assert.strictEqual(axes.yaxis101.title.font.color, '#ffa500');
 const el = w.document.querySelector('div');
 el._houseSourceData = source; el._houseSourceLayout = layout;
 let restyles = [], relayouts = [];

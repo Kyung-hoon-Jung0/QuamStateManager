@@ -112,6 +112,13 @@
         });
         if (isDark()) {
             out.font = artistStyle(out.font, text);
+            Object.keys(out).forEach(function (key) {
+                if (!/^[xy]axis\d*$/.test(key)) return;
+                var axis = out[key];
+                axis.tickfont = artistStyle(axis.tickfont, text);
+                if (axis.title) axis.title = Object.assign({}, axis.title,
+                    { font: artistStyle(axis.title.font, text) });
+            });
             if (out.title) out.title = Object.assign({}, out.title, { font: artistStyle(out.title.font, text) });
             if (out.annotations) out.annotations = out.annotations.map(function (note) {
                 return Object.assign({}, note, { font: artistStyle(note.font, text) });
