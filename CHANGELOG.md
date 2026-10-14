@@ -1003,3 +1003,23 @@ Reproduced lab figures are laid out like the lab's own pictures and stay readabl
   contour levels no longer add "level 0.5" entries.
 - **Fresh results after an upgrade**: a reproduced figure cached by an older SM is recomputed, instead of showing the
   older result until the run changes.
+
+## v1.4.5 (2026-10-15)
+
+Reproduced lab figures keep what the lab drew, and every run with data offers the Interactive tab.
+
+- **Panels stay apart**: subplots that share an axis are drawn as separate panels again (a stability figure's sigma
+  panel no longer merges into the fidelity panel); only overlaid twin axes share a panel.
+- **Colour scales**: scatter points coloured by a value keep their colour scale and colorbar.
+- **Ticks and titles**: category tick labels (bar names) and a twin axis's coloured ticks are kept; a single-panel
+  figure shows its panel title ("qubit = q4"); text placed in sub-figures (verdict lines, numeric summaries) is shown.
+- **Legends**: labelled reference lines and marker-only entries appear in the legend, once per kind.
+- **Markers**: tick-like markers ("_", "|") draw as short strokes instead of dots; pentagon, hexagon, octagon, tri,
+  thin/filled x and plus markers keep their shape.
+- **Dark theme**: near-black per-point colours and rgba colours are drawn in the theme's foreground; axis tick and
+  title colours from the lab figure are kept, with only black adapted.
+- **Interactive tab for every run with data**: runs that save their data under other names (per-qubit files) or only
+  as saved figures with a state snapshot now get the Interactive tab; when a run cannot be reproduced, the tab says
+  why instead of a generic hint.
+- **Live changes**: a live state save that keeps the file's timestamp (a copy that preserves times) is no longer
+  missed: the content is re-checked every 30 s while the timestamps look unchanged.
