@@ -15915,7 +15915,15 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             }
             layout.height = _replotHeight(d.source_aspect, inner.clientWidth, layout.height);
             if (!layout.height) layout.height = 360;
-            layout = _replotFigureLayout(layout, d.source_size_inches, inner.clientWidth, layout.height);
+            var root = div.closest && div.closest('#ds-detail-root');
+            var paneHeight = root ? parseFloat(getComputedStyle(root).getPropertyValue('--saved-figure-height')) : NaN;
+            var fit = _replotFitToPane(d.source_size_inches, d.source_aspect, layout.height, paneHeight);
+            if (fit) {
+                inner.style.width = fit.width + 'px';
+                inner.style.margin = '0 auto';
+                layout.height = fit.height;
+            }
+            layout = _replotFigureLayout(layout, d.source_size_inches, fit ? fit.width : inner.clientWidth, layout.height);
             inner.style.height = layout.height + 'px';
             // Keep source colors so theme toggles can restore the lab's palette.
             inner._houseSourceData = d.data;
@@ -15978,11 +15986,27 @@ function _replotNeedsRow(size, width, tile) {
 }
 window._replotNeedsRow = _replotNeedsRow;
 
+/**
+ * Fit a reproduced figure that is taller than the visible pane to it, keeping the
+ * lab's aspect by narrowing it, when it then still shows at 3/4 of its own size or
+ * more. A tall multi-panel figure would shrink below that, so it keeps the full
+ * width and the pane scrolls. Returns {width, height} in px, or null to leave it.
+ */
+function _replotFitToPane(size, aspect, height, paneHeight) {
+    if (!Array.isArray(size) || !(size[1] > 0) || !(aspect > 0) || !(paneHeight > 0) || !(height > paneHeight)) return null;
+    var fitted = Math.max(320, Math.round(paneHeight));
+    if (fitted >= height || fitted / (size[1] * 96) < 0.75) return null;
+    return {width: Math.round(fitted / aspect), height: fitted};
+}
+window._replotFitToPane = _replotFitToPane;
+
 function _replotFigureLayout(layout, size, width, height) {
     if (!Array.isArray(size) || size.length !== 2 ||
         !size.every(function (v) { return typeof v === 'number' && isFinite(v) && v > 0; }) ||
         !(width > 0) || !(height > 0)) return layout;
-    var scale = Math.min(width / (size[0] * 96), height / (size[1] * 96));
+    // Text follows the canvas down to keep the lab layout, but grows by at most 1.2x:
+    // a small figure given a whole wide row keeps readable, not poster-size, text.
+    var scale = Math.min(1.2, width / (size[0] * 96), height / (size[1] * 96));
     var out = JSON.parse(JSON.stringify(layout));
     function font(style) {
         if (style && typeof style.size === 'number') style.size *= scale * 96 / 72;
