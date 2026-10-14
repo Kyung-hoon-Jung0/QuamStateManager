@@ -15909,6 +15909,10 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             // dark page (ndview was the only themed consumer).
             var layout = (window.PlotTheme && PlotTheme.houseLayout)
                 ? window.PlotTheme.houseLayout(d.layout || {}) : (d.layout || {});
+            var tile = div.closest && div.closest('.ds-interactive-fig');
+            if (tile && _replotNeedsRow(d.source_size_inches, inner.clientWidth, tile)) {
+                tile.classList.add('ds-fig-span');  // reading clientWidth below reflows to the row width
+            }
             layout.height = _replotHeight(d.source_aspect, inner.clientWidth, layout.height);
             if (!layout.height) layout.height = 360;
             layout = _replotFigureLayout(layout, d.source_size_inches, inner.clientWidth, layout.height);
@@ -15960,6 +15964,20 @@ function _replotHeight(aspect, width, fallback) {
 window._replotHeight = _replotHeight;
 
 /** Scale source point sizes and annotation offsets with the displayed canvas. */
+/**
+ * Whether a reproduced lab figure should take the whole grid row: its text scales
+ * with the tile, so a figure shown below ~3/4 of its own size in one of two or
+ * three columns gets text too small to read. The decision uses the width the tile
+ * really has (a 9 in figure fits a column of a wide pane but not of a narrow one).
+ */
+function _replotNeedsRow(size, width, tile) {
+    if (!Array.isArray(size) || !(size[0] > 0) || !(width > 0) || !tile || !tile.parentElement) return false;
+    if (tile.classList.contains('ds-fig-span')) return false;
+    var cols = parseInt(getComputedStyle(tile.parentElement).getPropertyValue('--ds-cols'), 10) || 1;
+    return cols > 1 && width / (size[0] * 96) < 0.75;
+}
+window._replotNeedsRow = _replotNeedsRow;
+
 function _replotFigureLayout(layout, size, width, height) {
     if (!Array.isArray(size) || size.length !== 2 ||
         !size.every(function (v) { return typeof v === 'number' && isFinite(v) && v > 0; }) ||
