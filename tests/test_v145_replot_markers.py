@@ -27,7 +27,8 @@ def test_tick_markers_are_strokes_drawn_with_the_line_colour():
 def test_line_markers_and_filled_markers_keep_their_kind():
     markers = _converted(("x", "thin x"), ("X", "filled x"), ("+", "plus"), ("p", "pentagon"), ("o", "dot"))
     assert markers["thin x"]["symbol"] == "x-thin" and "line" in markers["thin x"]
-    assert markers["filled x"]["symbol"] == "x" and "line" not in markers["filled x"]
+    # v1.4.7: every marker now carries the lab's edge; a filled one has face and edge alike.
+    assert markers["filled x"]["symbol"] == "x" and markers["filled x"]["line"]["color"] == markers["filled x"]["color"]
     assert markers["plus"]["symbol"] == "cross-thin"
     assert markers["pentagon"]["symbol"] == "pentagon"
-    assert markers["dot"]["symbol"] == "circle" and "line" not in markers["dot"]
+    assert markers["dot"]["symbol"] == "circle" and markers["dot"]["line"]["color"] == markers["dot"]["color"]

@@ -404,15 +404,38 @@ def _line_to_plotly(t, xref, yref):
     if t.get("mode", "lines") != "lines":
         symbol = t.get("marker_symbol", "circle")
         d["marker"] = {"color": t.get("color"), "size": t.get("marker_size") or 6, "symbol": symbol}
+        _marker_paint(d["marker"], t)
         if symbol in _STROKE_SYMBOLS:
             # Plotly draws these symbols with the marker outline only.
-            d["marker"]["line"] = {"color": t.get("color"), "width": max(1.5, t.get("width") or 1.5)}
+            d["marker"]["line"] = {"color": _paint(t.get("marker_edge")) or t.get("color"),
+                                   "width": max(1.5, t.get("width") or 1.5)}
     if t.get("name"):
         d["name"] = t["name"]
         d["showlegend"] = True
     else:
         d["showlegend"] = False
     return d
+
+
+_HOLLOW = "rgba(0,0,0,0)"
+
+
+def _paint(color):
+    """An extracted marker colour for Plotly: "none" is see-through, a list stays a list."""
+    if isinstance(color, list):
+        return [_HOLLOW if c == "none" else c for c in color]
+    return _HOLLOW if color == "none" else color
+
+
+def _marker_paint(marker, t):
+    """Face and edge as the lab drew them (a hollow ring, a star with a black edge).
+    Results extracted before these fields existed keep the trace colour."""
+    if "marker_face" not in t and "marker_edge" not in t:
+        return
+    if t.get("marker_face") is not None:
+        marker["color"] = _paint(t["marker_face"])
+    if t.get("marker_edge") is not None:
+        marker["line"] = {"color": _paint(t["marker_edge"]), "width": t.get("marker_edge_width") or 1.0}
 
 
 _STROKE_SYMBOLS = {"line-ew", "line-ns", "x-thin", "cross-thin", "y-down", "y-up", "y-left", "y-right"}
@@ -433,6 +456,7 @@ def _scatter_to_plotly(t, xref, yref):
                    "color": mc, "opacity": t.get("opacity", 1.0)},
         "showlegend": bool(t.get("name")),
     }
+    _marker_paint(d["marker"], t)
     if t.get("name"):
         d["name"] = t["name"]
     if "zorder" in t:

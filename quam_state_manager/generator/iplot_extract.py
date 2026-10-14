@@ -49,6 +49,13 @@ def _hex(c):
         return None
 
 
+def _marker_fill(c):
+    """A marker face colour, or "none" for a hollow marker (to_hex would make it black)."""
+    if isinstance(c, str) and c.lower() == "none":
+        return "none"
+    return "none" if _opacity(c) == 0 else _hex(c)
+
+
 def _opacity(c, default=1.0):
     try:
         from matplotlib.colors import to_rgba
@@ -85,6 +92,11 @@ def _line_trace(ln):
         "visible": ln.get_visible(),
         "marker_symbol": _mpl_marker(ln.get_marker()),
         "marker_size": _f((ln.get_markersize() or 6)),
+        # The marker's own colours: a hollow shortlist ring or a star with a black edge is
+        # not the line colour.
+        "marker_face": _marker_fill(ln.get_markerfacecolor()),
+        "marker_edge": _marker_fill(ln.get_markeredgecolor()),
+        "marker_edge_width": _f(ln.get_markeredgewidth()),
         "opacity": (float(ln.get_alpha()) if ln.get_alpha() is not None
                     else _opacity(ln.get_color())),
     }
@@ -113,6 +125,10 @@ def _scatter_trace(coll):
         return None
     fc = coll.get_facecolors()
     colors = [_hex(c) for c in fc] if len(fc) else None
+    hollow = not len(fc) or all(_opacity(c) == 0 for c in fc)
+    ec = coll.get_edgecolors()
+    edges = [_marker_fill(c) for c in ec] if len(ec) else []
+    widths = coll.get_linewidths()
     sizes = coll.get_sizes()
     label = coll.get_label()
     mapping = ({"marker_values": _flist(coll.get_array()), **_map_metadata(coll)}
@@ -122,6 +138,9 @@ def _scatter_trace(coll):
         "type": "scatter",
         "x": _flist(offs[:, 0]), "y": _flist(offs[:, 1]),
         "marker_color": (colors if colors and len(colors) > 1 else (colors[0] if colors else None)),
+        "marker_face": "none" if hollow else None,
+        "marker_edge": (edges if len(set(edges)) > 1 else edges[0]) if edges else None,
+        "marker_edge_width": _f(widths[0]) if len(widths) else None,
         "marker_size": (_flist(np.sqrt(sizes)) if len(sizes) > 1
                         else (_f(np.sqrt(sizes[0])) if len(sizes) else 6.0)),
         "name": None if (label is None or str(label).startswith("_")) else str(label),
