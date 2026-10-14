@@ -180,6 +180,8 @@ def _map_metadata(artist):
                      "vmax": _f(norm.vmax), "log": type(norm).__name__ == "LogNorm",
                      "vcenter": _f(getattr(norm, "vcenter", None)), "clip": bool(norm.clip)},
             "colorbar": {"label": label, "units": units.group(1) if units else None,
+                         "position": _flist(cb.ax.get_position().bounds) if cb is not None else None,
+                         "orientation": cb.orientation if cb is not None else "vertical",
                          "id": str(id(cb)) if cb is not None else None,
                          "visible": cb is not None},
             "full_resolution": True,
@@ -366,6 +368,7 @@ def extract_axes(ax, axes):
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
+        "position": _flist(ax.get_position().bounds),
         "axison": bool(ax.axison),
         "spines_visible": {name: bool(spine.get_visible()) for name, spine in ax.spines.items()},
         "ticks_visible": {kind: bool(axis.get_visible() and any(

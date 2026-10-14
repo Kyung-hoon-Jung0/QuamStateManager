@@ -604,6 +604,33 @@ def _grid_layout(axes, panels):
     return nrows, ncols, cells
 
 
+def _position_bounds(position):
+    if not isinstance(position, (list, tuple)) or len(position) != 4:
+        return None
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in position):
+        return None
+    x, y, width, height = position
+    if width <= 0 or height <= 0 or x < 0 or y < 0 or x + width > 1.000001 or y + height > 1.000001:
+        return None
+    return x, y, x + width, y + height
+
+
+def _position_domains(axes, panels):
+    """Fit the source axes envelope inside the label margins, preserving gaps."""
+    bounds = [_position_bounds(axes[_pick_base(axes, p)].get("position")) for p in panels]
+    if not bounds or any(b is None for b in bounds):
+        return None
+    # Include decorative strips so their width ratios reserve space too.
+    extents = bounds + [b for a in axes if a.get("is_colorbar")
+                        if (b := _position_bounds(a.get("position"))) is not None]
+    left, bottom = min(b[0] for b in extents), min(b[1] for b in extents)
+    right, top = max(b[2] for b in extents), max(b[3] for b in extents)
+    def domain(b):
+        return ((b[0] - left) / (right - left), (b[2] - left) / (right - left),
+                (b[1] - bottom) / (top - bottom), (b[3] - bottom) / (top - bottom))
+    return domain, [domain(b) for b in bounds]
+
+
 def mpljson_to_plotly(fig_json: dict) -> dict:
     """One extracted figure -> Plotly ``{data, layout, title}``.
 
@@ -621,6 +648,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
 
     panels = _group_panels(axes, drawable)
     nrows, ncols, cells = _grid_layout(axes, panels)
+    positions = _position_domains(axes, panels)
     # Reserve a title plus tick labels between columns at the nominal pane width.
     xpad = min(42 / 1080, .22 / ncols) if ncols > 1 else .06
     has_secondary_top = any(
@@ -639,6 +667,8 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         x1 = (col + 1) / ncols - xpad
         y1 = 1.0 - row / nrows - ypad
         y0 = 1.0 - (row + 1) / nrows + ypad
+        if positions:
+            x0, x1, y0, y1 = positions[1][p_idx]
         base_i = _pick_base(axes, panel)
         base = axes[base_i]
         xref, yref = _ref("x", pid), _ref("y", pid)
@@ -723,6 +753,16 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 ydomain = layout[_axis_id("yaxis", int(tr["yaxis"][1:] or 1))]["domain"]
                 tr["colorbar"].update(x=xdomain[1], y=sum(ydomain) / 2,
                                       len=ydomain[1] - ydomain[0])
+                bounds = _position_bounds(cb.get("position"))
+                if positions and bounds:
+                    cx0, cx1, cy0, cy1 = positions[0](bounds)
+                    horizontal = cb.get("orientation") == "horizontal"
+                    tr["colorbar"].update(orientation="h" if horizontal else "v",
+                        x=(cx0 + cx1) / 2 if horizontal else cx0,
+                        y=cy0 if horizontal else (cy0 + cy1) / 2,
+                        xanchor="center" if horizontal else "left", yanchor="bottom" if horizontal else "middle",
+                        xpad=0, ypad=0, len=cx1 - cx0 if horizontal else cy1 - cy0,
+                        thicknessmode="fraction", thickness=cy1 - cy0 if horizontal else cx1 - cx0)
     has_top_axis = has_secondary_top
 
     heading = fig_json.get("suptitle") or ""
