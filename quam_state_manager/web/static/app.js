@@ -15909,6 +15909,7 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             // dark page (ndview was the only themed consumer).
             var layout = (window.PlotTheme && PlotTheme.houseLayout)
                 ? window.PlotTheme.houseLayout(d.layout || {}) : (d.layout || {});
+            layout.height = _replotHeight(d.source_aspect, inner.clientWidth, layout.height);
             if (!layout.height) layout.height = 360;
             inner.style.height = layout.height + 'px';
             // _plotlyRender lazy-loads Plotly and returns a promise; attach the
@@ -15939,6 +15940,18 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             div.setAttribute('data-rendered', '0');
         });
 }
+
+/**
+ * Height for a reproduced lab figure: its own aspect (height / width) at the
+ * width this pane really has. The server's height assumes a 1200 px pane, so a
+ * narrower pane drew the figure taller than the lab's. Without an aspect or a
+ * measured width, the server's height stands.
+ */
+function _replotHeight(aspect, width, fallback) {
+    if (typeof aspect !== 'number' || !isFinite(aspect) || aspect <= 0 || !(width > 0)) return fallback;
+    return Math.round(Math.max(320, Math.min(2200, width * aspect)));
+}
+window._replotHeight = _replotHeight;
 
 /**
  * Fetch a single plot from the backend and render it into container.

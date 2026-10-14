@@ -698,13 +698,18 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     layout["margin"] = {"l": 60, "r": 60, "t": 92 if has_top_axis else 44, "b": 50}
     layout["height"] = max(320, 320 * nrows) + (64 * nrows if has_top_axis else 0)
     size = fig_json.get("size_inches")
+    source_aspect = None
     if size and len(size) == 2 and all(isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in size):
-        layout["height"] = round(max(320, min(2200, 1200 * size[1] / size[0])))
+        # Height at a nominal 1200 px width; the browser re-derives it from the
+        # width the pane really has (source_aspect), so a narrow pane keeps the
+        # lab figure's shape instead of drawing it too tall.
+        source_aspect = round(size[1] / size[0], 4)
+        layout["height"] = round(max(320, min(2200, 1200 * source_aspect)))
     if notes:
         layout["annotations"] = notes
     from .mathtext import plotly_text
     return plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
-                       "skipped": skipped, "notices": notices})
+                       "skipped": skipped, "notices": notices, "source_aspect": source_aspect})
 
 
 def _text_note(a, xref, yref, width=1080):
