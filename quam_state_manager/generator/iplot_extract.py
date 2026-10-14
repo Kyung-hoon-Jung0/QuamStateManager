@@ -467,6 +467,8 @@ def _root_figure(owner):
 
 
 def _figure_position(ax):
+    if getattr(ax, "_colorbar", None) is not None:
+        ax.apply_aspect()
     owner = ax.get_figure()
     root = _root_figure(owner)
     bbox = ax.get_position().transformed(owner.transSubfigure).transformed(root.transFigure.inverted())

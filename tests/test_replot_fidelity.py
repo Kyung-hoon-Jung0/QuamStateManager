@@ -117,3 +117,14 @@ def test_subfigure_verdicts_and_axes_use_root_coordinates():
     view = mpljson_to_plotly(source)
     assert len(view['layout']['annotations']) == 3
     assert view['layout']['yaxis']['domain'][1] == pytest.approx(.56)
+
+
+def test_colorbar_uses_active_box_aspect_without_drawing():
+    fig = Figure(figsize=(10, 6))
+    ax = fig.subplots()
+    points = ax.scatter([0, 1], [1, 2], c=[0, 1])
+    cb = fig.colorbar(points, ax=ax, aspect=20)
+    source = extract_figure(fig, 'scale')
+    bar = source['axes'][0]['traces'][0]['colorbar']['position']
+    assert bar[2] == pytest.approx(bar[3] * 6 / 10 / 20)
+    assert cb.ax.get_position().width == pytest.approx(bar[2])
