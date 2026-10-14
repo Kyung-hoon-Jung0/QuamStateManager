@@ -25,6 +25,51 @@
             '#facc15', '#2dd4bf', '#f43f5e', '#a3a3a3'];
     }
 
+    function isDark() {
+        return document.documentElement.getAttribute('data-theme') === 'dark';
+    }
+
+    function artistColor(color, foreground) {
+        if (Array.isArray(color)) return color.map(function (c) { return artistColor(c, foreground); });
+        if (typeof color !== 'string') return color;
+        var value = color.trim().toLowerCase(), channels;
+        if (value === 'black' || value === 'k') channels = [0, 0, 0];
+        var hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(value);
+        if (hex) {
+            var digits = hex[1];
+            if (digits.length <= 4) digits = digits.split('').map(function (c) { return c + c; }).join('');
+            if (digits.length === 8 && parseInt(digits.slice(6), 16) === 0) return color;
+            channels = [0, 2, 4].map(function (i) { return parseInt(digits.slice(i, i + 2), 16); });
+        }
+        var rgb = /^rgba?\(\s*([\d.]+)(%)?\s*,\s*([\d.]+)(%)?\s*,\s*([\d.]+)(%)?(?:\s*,\s*([\d.]+))?\s*\)$/.exec(value);
+        if (rgb) {
+            if (rgb[7] !== undefined && +rgb[7] === 0) return color;
+            channels = [1, 3, 5].map(function (i) { return +rgb[i] * (rgb[i + 1] ? 2.55 : 1); });
+        }
+        return channels && channels.every(function (c) { return c < 48; }) ? foreground : color;
+    }
+
+    function artistStyle(style, foreground) {
+        if (!style) return style;
+        var out = Object.assign({}, style);
+        if ('color' in out) out.color = artistColor(out.color, foreground);
+        if (out.line) out.line = artistStyle(out.line, foreground);
+        return out;
+    }
+
+    /** Adapt explicit near-black artist colors without changing map scales. */
+    function houseData(data) {
+        if (!isDark()) return data;
+        var foreground = cssVar('--plot-axis-text', cssVar('--pico-color', '#ccc'));
+        return (data || []).map(function (trace) {
+            var out = Object.assign({}, trace);
+            ['line', 'marker', 'textfont'].forEach(function (key) {
+                if (trace[key]) out[key] = artistStyle(trace[key], foreground);
+            });
+            return out;
+        });
+    }
+
     /** Base layout — deep-merged under caller overrides. */
     function houseLayout(overrides) {
         var text = cssVar('--plot-axis-text', cssVar('--pico-color', '#ccc'));
@@ -64,6 +109,14 @@
             if (/^xaxis/.test(k) && ax.side === 'top') dflt.ticklabelstandoff = 8;
             out[k] = Object.assign(dflt, ax);
         });
+        if (isDark()) {
+            if (out.annotations) out.annotations = out.annotations.map(function (note) {
+                return Object.assign({}, note, { font: artistStyle(note.font, text) });
+            });
+            if (out.shapes) out.shapes = out.shapes.map(function (shape) {
+                return Object.assign({}, shape, { line: artistStyle(shape.line, text) });
+            });
+        }
         return out;
     }
 
@@ -137,6 +190,29 @@
                     'hoverlabel.bgcolor': L.hoverlabel.bgcolor,
                     'hoverlabel.font.color': L.hoverlabel.font.color,
                 });
+                if (el._houseSourceData && window.Plotly.restyle) {
+                    var data = houseData(el._houseSourceData);
+                    data.forEach(function (trace, index) {
+                        var updates = {};
+                        ['line', 'marker', 'textfont'].forEach(function (key) {
+                            if (trace[key] && 'color' in trace[key]) updates[key + '.color'] = [trace[key].color];
+                        });
+                        if (trace.marker && trace.marker.line && 'color' in trace.marker.line) {
+                            updates['marker.line.color'] = [trace.marker.line.color];
+                        }
+                        if (Object.keys(updates).length) window.Plotly.restyle(el, updates, [index]);
+                    });
+                }
+                if (el._houseSourceLayout) {
+                    var themed = houseLayout(el._houseSourceLayout), updates = {};
+                    (themed.annotations || []).forEach(function (note, index) {
+                        updates['annotations[' + index + '].font.color'] = (note.font || {}).color || L.font.color;
+                    });
+                    (themed.shapes || []).forEach(function (shape, index) {
+                        if (shape.line && 'color' in shape.line) updates['shapes[' + index + '].line.color'] = shape.line.color;
+                    });
+                    if (Object.keys(updates).length) window.Plotly.relayout(el, updates);
+                }
             } catch (e) { /* a torn-down plot mid-swap — ignore */ }
         });
     }
@@ -170,6 +246,7 @@
 
     window.PlotTheme = {
         houseLayout: houseLayout,
+        houseData: houseData,
         axisNumberFormat: axisNumberFormat,
         houseConfig: houseConfig,
         siFormat: siFormat,

@@ -810,7 +810,7 @@ def _text_note(a, xref, yref, width=1080):
               "xref": xref, "yref": yref, "font": {"size": a.get("size", 10)},
               "xanchor": {"center": "center", "right": "right"}.get(a.get("ha"), "left"),
               "yanchor": {"center": "middle", "top": "top"}.get(a.get("va"), "bottom")}
-    if a.get("color") and a["color"] != "#000000":
+    if a.get("color"):
         result["font"]["color"] = a["color"]
     return result
 

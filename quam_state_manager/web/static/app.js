@@ -15912,9 +15912,14 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             layout.height = _replotHeight(d.source_aspect, inner.clientWidth, layout.height);
             if (!layout.height) layout.height = 360;
             inner.style.height = layout.height + 'px';
+            // Keep source colors so theme toggles can restore the lab's palette.
+            inner._houseSourceData = d.data;
+            inner._houseSourceLayout = d.layout || {};
+            var themedData = (window.PlotTheme && PlotTheme.houseData)
+                ? window.PlotTheme.houseData(d.data) : d.data;
             // _plotlyRender lazy-loads Plotly and returns a promise; attach the
             // click handler only once the figure exists.
-            Promise.resolve(_plotlyRender(inner, d.data, layout, {responsive: true})).then(function() {
+            Promise.resolve(_plotlyRender(inner, themedData, layout, {responsive: true})).then(function() {
                 if (stale()) { _purgeInteractiveTile(div); return; }
                 if (window.PlotHost) window.PlotHost.observe(inner);
                 if (window.MapTools) window.MapTools.mount(div.closest('.ds-interactive-fig') || div, inner, d,
