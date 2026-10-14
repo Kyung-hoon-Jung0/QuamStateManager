@@ -41,7 +41,8 @@
             if (digits.length === 8 && parseInt(digits.slice(6), 16) === 0) return color;
             channels = [0, 2, 4].map(function (i) { return parseInt(digits.slice(i, i + 2), 16); });
         }
-        var rgb = /^rgba?\(\s*([\d.]+)(%)?\s*,\s*([\d.]+)(%)?\s*,\s*([\d.]+)(%)?(?:\s*,\s*([\d.]+))?\s*\)$/.exec(value);
+        var rgb = /^rgba?\(\s*([\d.]+)(%)?\s*,\s*([\d.]+)(%)?\s*,\s*([\d.]+)(%)?(?:\s*,\s*([\d.]+)(%)?)?\s*\)$/.exec(value)
+            || /^rgba?\(\s*([\d.]+)(%)?\s+([\d.]+)(%)?\s+([\d.]+)(%)?(?:\s*\/\s*([\d.]+)(%)?)?\s*\)$/.exec(value);
         if (rgb) {
             if (rgb[7] !== undefined && +rgb[7] === 0) return color;
             channels = [1, 3, 5].map(function (i) { return +rgb[i] * (rgb[i + 1] ? 2.55 : 1); });

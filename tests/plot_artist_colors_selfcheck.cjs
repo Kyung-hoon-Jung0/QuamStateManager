@@ -10,9 +10,12 @@ const w = dom.window;
 w.document.documentElement.style.setProperty('--plot-axis-text', '#e6e9ef');
 w.eval(fs.readFileSync(path.join(root, 'plot-theme.js'), 'utf8'));
 const theme = w.PlotTheme, foreground = '#e6e9ef';
-const dark = ['k', 'black', '#000', '#122', '#000000', '#2f2f2f', 'rgb(10, 20, 30)', 'rgba(0,0,0,1)'];
+// v1.4.1: comma-only inputs -> CSS space/slash and percent alpha forms, same near-black rule.
+const dark = ['k', 'black', '#000', '#122', '#000000', '#2f2f2f', 'rgb(10, 20, 30)', 'rgba(0,0,0,1)',
+    'rgba(10 20 30 / 40%)', 'rgb(4% 8% 10%)', 'rgba(0,0,0,40%)'];
 const preserved = ['#303030', '#30302f', '#123', '#333', '#808080', '#ffffff', '#000080', '#ff0000',
-    '#008000', '#1f77b4', '#9467bd', 'transparent', 'rgba(0,0,0,0)', '#0000', '#00000000'];
+    '#008000', '#1f77b4', '#9467bd', 'transparent', 'rgba(0,0,0,0)', '#0000', '#00000000',
+    'rgba(0 0 0 / 0%)', 'rgba(31 119 180 / 30%)'];
 const source = [{ type: 'scatter', x: [0, 1], y: [1, 2],
     line: { color: '#000000' }, marker: { color: dark.concat(preserved), line: { color: '#222' } },
     textfont: { color: '#121212' } },
