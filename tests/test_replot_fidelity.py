@@ -45,3 +45,24 @@ def test_scalar_scatter_and_independent_colorbars(independent):
     assert bar['colorbar']['x'] == pytest.approx(cb.ax.get_position().x0)
     assert bar['colorbar']['ticktext'] == ['1', '3.16228', '10', '31.6228', '100']
     assert view['data'][0]['marker']['color'] == [0, 1, 2]
+
+
+def test_explicit_ticks_and_colored_twin_ticks():
+    fig = Figure()
+    ax = fig.subplots()
+    ax.bar([0, 1], [1, 2])
+    ax.set_xticks([0, 1], ['prepared a', 'prepared b'], rotation=30)
+    ax.set_yticks([1, 2], ['low', 'high'])
+    right = ax.twinx()
+    right.plot([0, 1], [10, 20])
+    right.set_yticks([10, 20], ['slow', 'fast'])
+    right.tick_params(axis='y', colors='orange')
+    right.set_ylabel('Delay', color='orange')
+    view = mpljson_to_plotly(extract_figure(fig, 'phase'))['layout']
+    assert view['xaxis'].get('ticktext') == ['prepared a', 'prepared b']
+    assert view['xaxis']['tickvals'] == [0, 1]
+    assert view['xaxis']['tickangle'] == -30
+    assert view['yaxis']['ticktext'] == ['low', 'high']
+    assert view['yaxis101']['ticktext'] == ['slow', 'fast']
+    assert view['yaxis101']['tickfont']['color'] == '#ffa500'
+    assert view['yaxis101']['title']['font']['color'] == '#ffa500'

@@ -381,6 +381,7 @@ def extract_axes(ax, axes):
             for tick in axis.get_major_ticks() + axis.get_minor_ticks()))
             for kind, axis in (("x", ax.xaxis), ("y", ax.yaxis))},
         "xscale": ax.get_xscale(), "yscale": ax.get_yscale(),
+        "x_ticks": _axis_ticks(ax.xaxis), "y_ticks": _axis_ticks(ax.yaxis),
         "xlim": [_f(v) for v in ax.get_xlim()],
         "ylim": [_f(v) for v in ax.get_ylim()],
         "x_side": ax.xaxis.get_label_position(),   # 'bottom' | 'top'
@@ -395,6 +396,19 @@ def extract_axes(ax, axes):
         "annotations": _annotations(ax),
         "grid": _grid_pos(ax),
     }
+
+
+def _axis_ticks(axis):
+    from matplotlib.ticker import FixedLocator, FixedFormatter
+    labels = axis.get_ticklabels()
+    style = {"color": _hex(labels[0].get_color()) if labels else None,
+             "label_color": _hex(axis.label.get_color())}
+    if isinstance(axis.get_major_locator(), FixedLocator) or isinstance(axis.get_major_formatter(), FixedFormatter) \
+            or type(axis.get_major_locator()).__name__ == "StrCategoryLocator":
+        style.update(values=_flist(axis.get_majorticklocs()),
+                     labels=[t.get_text() for t in labels],
+                     angle=-labels[0].get_rotation() if labels else 0)
+    return style
 
 
 def _grid_pos(ax):

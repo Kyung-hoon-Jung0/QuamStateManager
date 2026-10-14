@@ -536,6 +536,14 @@ def _trace_to_plotly(t, xref, yref):
 
 def _axis_props(ax, *, log_key):
     p = {"title": {"text": ax.get("xlabel") if log_key == "x" else ax.get("ylabel")}}
+    ticks = ax.get(log_key + "_ticks") or {}
+    if "values" in ticks:
+        p.update(tickmode="array", tickvals=ticks["values"], ticktext=ticks["labels"],
+                 tickangle=ticks.get("angle", 0))
+    if ticks.get("color"):
+        p["tickfont"] = {"color": ticks["color"]}
+    if ticks.get("label_color"):
+        p["title"]["font"] = {"color": ticks["label_color"]}
     if "axison" in ax:
         spines = ax.get("spines_visible", {})
         sides = ("bottom", "top") if log_key == "x" else ("left", "right")
@@ -841,8 +849,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         layout["legend"]["font"] = {"size": 10}
         for name, axis in layout.items():
             if re.fullmatch(r"[xy]axis\d*", name):
-                axis["tickfont"] = {"size": 10}
-                axis["title"].update(font={"size": 10}, standoff=4 if name.startswith("y") else 0)
+                axis.setdefault("tickfont", {}).update(size=10)
+                axis["title"].setdefault("font", {}).update(size=10)
+                axis["title"].update(standoff=4 if name.startswith("y") else 0)
     _legend_once(data)
     from .mathtext import plotly_text
     return plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
