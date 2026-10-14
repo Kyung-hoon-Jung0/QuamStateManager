@@ -523,6 +523,12 @@ def _trace_to_plotly(t, xref, yref):
 
 def _axis_props(ax, *, log_key):
     p = {"title": {"text": ax.get("xlabel") if log_key == "x" else ax.get("ylabel")}}
+    if "axison" in ax:
+        spines = ax.get("spines_visible", {})
+        sides = ("bottom", "top") if log_key == "x" else ("left", "right")
+        p["visible"] = bool(ax["axison"] and (ax.get("ticks_visible", {}).get(log_key, True)
+                                             or any(spines.get(side, False) for side in sides)
+                                             or p["title"]["text"]))
     scale = ax.get("xscale") if log_key == "x" else ax.get("yscale")
     if scale == "log":
         p["type"] = "log"
@@ -770,6 +776,7 @@ def _text_note(a, xref, yref, width=1080):
 
 
 def _add_artists(ax, xref, yref, data, layout, notes, width=1080):
+    first_trace = len(data)
     for t in sorted(ax.get("traces", []), key=lambda t: t.get("zorder") or 0):
         coord = t.get("coord")
         if coord and t["type"] == "polygon":
@@ -789,6 +796,12 @@ def _add_artists(ax, xref, yref, data, layout, notes, width=1080):
             trace = _trace_to_plotly(t, xref, yref)
             if trace:
                 data.append(trace)
+    # Plotly only instantiates Cartesian pairs referenced by a trace. Null points
+    # keep text-only and shape-only panels alive without affecting their ranges.
+    if len(data) == first_trace:
+        data.append({"type": "scatter", "x": [None], "y": [None],
+                     "xaxis": xref, "yaxis": yref, "mode": "markers", "opacity": 0,
+                     "showlegend": False, "hoverinfo": "skip"})
     for a in ax.get("annotations", []):
         frac = a.get("xref_frac", False)
         note = _text_note(a, xref + (" domain" if frac else ""), yref + (" domain" if frac else ""), width)

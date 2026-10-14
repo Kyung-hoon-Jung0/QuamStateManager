@@ -366,6 +366,13 @@ def extract_axes(ax, axes):
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
+        "axison": bool(ax.axison),
+        "spines_visible": {name: bool(spine.get_visible()) for name, spine in ax.spines.items()},
+        "ticks_visible": {kind: bool(axis.get_visible() and any(
+            tick.tick1line.get_visible() or tick.tick2line.get_visible() or
+            tick.label1.get_visible() or tick.label2.get_visible()
+            for tick in axis.get_major_ticks() + axis.get_minor_ticks()))
+            for kind, axis in (("x", ax.xaxis), ("y", ax.yaxis))},
         "xscale": ax.get_xscale(), "yscale": ax.get_yscale(),
         "xlim": [_f(v) for v in ax.get_xlim()],
         "ylim": [_f(v) for v in ax.get_ylim()],
