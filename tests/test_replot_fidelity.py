@@ -155,3 +155,27 @@ def test_shared_subfigure_axes_choose_the_overlaid_twin():
     view = mpljson_to_plotly(source)
     assert view['layout']['yaxis']['domain'] != view['layout']['yaxis2']['domain']
 
+
+
+def test_restored_legend_uses_the_source_footer():
+    fig = Figure()
+    ax = fig.subplots()
+    ax.axvline(.5, label='Center = 0.5')
+    view = mpljson_to_plotly(extract_figure(fig, 'reference'))
+    assert view['layout']['legend']['y'] == 0
+    assert view['layout']['legend'].get('yanchor') == 'bottom'
+
+
+
+def test_source_legend_stays_inside_a_single_axes():
+    fig = Figure()
+    ax = fig.subplots()
+    ax.axvline(.5, label='Center = 0.5')
+    ax.legend(loc='upper left', fontsize=8)
+    view = mpljson_to_plotly(extract_figure(fig, 'reference'))
+    legend = view['layout']['legend']
+    assert legend['orientation'] == 'v'
+    assert legend['x'] == pytest.approx(ax.get_position().x0)
+    assert legend['y'] == pytest.approx(ax.get_position().y1)
+    assert legend['font']['size'] == 8
+

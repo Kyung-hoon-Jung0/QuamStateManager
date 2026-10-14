@@ -833,6 +833,16 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     if positions:
         # Source fractions already contain the margins around axes and headers.
         layout["margin"] = {"l": 0, "r": 0, "t": 0, "b": 0}
+        layout["legend"].update(y=0, yanchor="bottom")
+        source_legend = axes[_pick_base(axes, panels[0])].get("legend") if len(panels) == 1 else None
+        if source_legend:
+            x0, x1, y0, y1 = positions[1][0]
+            loc = source_legend.get("loc", 1)
+            left, bottom = loc in (2, 3, 6, 9), loc in (3, 4, 8)
+            layout["legend"].update(orientation="v", x=x0 if left else x1,
+                                    y=y0 if bottom else y1,
+                                    xanchor="left" if left else "right",
+                                    yanchor="bottom" if bottom else "top")
     layout["height"] = max(320, 320 * nrows) + (64 * nrows if has_top_axis else 0)
     size = fig_json.get("size_inches")
     source_aspect = None
@@ -852,6 +862,8 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         if heading_style.get("color"):
             layout["title"]["font"]["color"] = heading_style["color"]
         layout["legend"]["font"] = {"size": 10}
+        if source_legend:
+            layout["legend"]["font"]["size"] = source_legend.get("size") or 10
         for name, axis in layout.items():
             if re.fullmatch(r"[xy]axis\d*", name):
                 axis.setdefault("tickfont", {}).update(size=10)

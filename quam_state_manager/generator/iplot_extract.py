@@ -385,6 +385,8 @@ def extract_axes(ax, axes):
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
+        "legend": ({"loc": leg._loc, "size": _f(leg.get_texts()[0].get_fontsize())}
+                   if leg is not None and leg.get_texts() else None),
         "position": _figure_position(ax),
         "axison": bool(ax.axison),
         "spines_visible": {name: bool(spine.get_visible()) for name, spine in ax.spines.items()},
