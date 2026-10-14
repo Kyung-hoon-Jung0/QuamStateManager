@@ -44,6 +44,23 @@ def plot_summary(summary):
 
 def plot_limits(parameters=None):
     return parameters.limit
+
+def plot_bare(fit_results: Dict):
+    return fit_results
+
+def plot_builtin(fit_results: dict):
+    return fit_results
+
+def plot_decision(summary=None):
+    return summary.cell if summary.propose else summary.get('fallback', -1)
+
+def plot_uncertain(fit: Fit):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    fig, ax = plt.subplots()
+    ax.errorbar([0, 1, 2], [fit.peak, fit.peak + 1, fit.peak + 2],
+                yerr=[0.2, np.nan, 0.4], fmt='o', capsize=3)
+    return fig
 """, module.__dict__)
     return module
 
@@ -231,3 +248,53 @@ def test_runner_opens_the_explicit_saved_object_once(plots, tmp_path, monkeypatc
     assert closed == ['closed']
     assert result['figures'][0]['axes'][0]['traces'][0]['y'] == [2, 4]
     assert result['bind_report']['saved']['ds_check']['source'] == 'alternate.h5'
+
+
+@pytest.mark.parametrize('function', ['plot_bare', 'plot_builtin'])
+def test_bare_mapping_annotations_keep_saved_records(plots, function):
+    records = {'element0': {'peak': 4}, 'element1': {'peak': 7}}
+    fn = getattr(plots, function)
+    try:
+        values, report = bind(fn, records)
+    except IndexError:
+        values, report = {}, {}
+    assert 'fit_results' in values
+    assert values['fit_results'] is records
+    assert fn(**values) == records
+    assert report['fit_results']['source'] == 'data.fit_results'
+
+
+def test_saved_namespace_record_preserves_attribute_marker_inputs(plots):
+    report = {}
+    saved = {'cell': 3, 'propose': True, 'fallback': -1}
+    values = runner._bind_args(plots.plot_decision, ds_raw=None, ds_fit=None, qubits=[], params={},
+        results={'summary': saved}, node_tree=ast.parse("""
+def draw(node):
+    summary = node.namespace.get('summary')
+    plot_decision(summary)
+"""), plot_imports={'plot_decision': ('calibration_utils.synthetic', 'plot_decision')}, bind_report=report)
+    assert getattr(values['summary'], 'propose', False) is True
+    assert plots.plot_decision(**values) == 3
+    assert values['summary'] == saved
+    assert report['summary']['source'] == 'data.summary via node.namespace.summary'
+
+
+def test_empty_uncertainty_segments_keep_points_and_finite_bars(plots):
+    import matplotlib.pyplot as plt
+    from quam_state_manager.generator.iplot_extract import extract_figure
+    values, _ = bind(plots.plot_uncertain, {'element0': {'peak': 4}})
+    figure = plots.plot_uncertain(**values)
+    result = None
+    try:
+        result = extract_figure(figure, 'uncertainty')
+    except IndexError:
+        pass
+    finally:
+        plt.close(figure)
+    assert result is not None
+    traces = result['axes'][0]['traces']
+    bars = [t for t in traces if t.get('mode') == 'lines' and t['x'] in ([0, 0], [2, 2])]
+    assert len(bars) == 2
+    assert bars[0]['y'] == [3.8, 4.2] and bars[1]['y'] == [5.6, 6.4]
+    points = next(t for t in traces if t.get('mode') == 'markers' and t['x'] == [0, 1, 2])
+    assert points['y'] == [4, 5, 6]

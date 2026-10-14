@@ -288,6 +288,8 @@ def extract_axes(ax, axes):
         elif isinstance(coll, LineCollection):
             colors, widths = coll.get_colors(), coll.get_linewidths()
             for j, segment in enumerate(coll.get_segments()):
+                if segment.size == 0:
+                    continue
                 traces.append({"type": "line", "x": _flist(segment[:, 0]),
                                "y": _flist(segment[:, 1]), "mode": "lines",
                                "color": _hex(colors[j % len(colors)]) if len(colors) else None,

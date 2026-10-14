@@ -194,6 +194,16 @@ def _report_value(value):
     return {"type": type(value).__name__}
 
 
+class _SavedNamespace(dict):
+    """Saved namespace records retain mapping access and expose saved attributes."""
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as error:
+            raise AttributeError(name) from error
+
+
 def _restore_value(hint, value, report, path, nonfinite):
     if value is None and hint is float:
         nonfinite.append(path)
@@ -252,7 +262,8 @@ def _fit_records(fn, name, records, report, *, util_module=None, restore_objects
             return _restore_record(hint, value, report, key) if dataclasses.is_dataclass(hint) else value
         report.append({"selection": "unchanged", "reason": "multiple fit entries; element key is unknown"})
         return records
-    cls = typing.get_args(hint)[-1] if typing.get_origin(hint) is dict else None
+    args = typing.get_args(hint)
+    cls = args[-1] if typing.get_origin(hint) is dict and args else None
     if not dataclasses.is_dataclass(cls):
         cls = None
     if cls is None and restore_objects and util_module is not None:
@@ -359,6 +370,12 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
             value, source = [pairs[n] for n in pair_names], "machine.qubit_pairs via " + pair_source
         elif path == "node.parameters":
             value, source = SimpleNamespace(**params), "parameters"
+        elif path.startswith("node.namespace.") and path.removeprefix("node.namespace.") in results:
+            key = path.removeprefix("node.namespace.")
+            value = results[key]
+            if isinstance(value, dict):
+                value = _SavedNamespace(value)
+            source = "data." + key + " via " + path
         elif path.startswith("node.parameters.") and path.removeprefix("node.parameters.") in params:
             key = path.removeprefix("node.parameters.")
             value, source = params[key], "parameters." + key
