@@ -766,7 +766,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                              "yaxis": yref if kind == "x" else _ref("y", sid),
                              "showlegend": False, "hoverinfo": "skip"})
 
-        if ncols > 1 or nrows > 1:  # per-cell title for a real qubit grid
+        if base.get("title"):  # axes captions also belong to single-panel figures
             ttl = base.get("title") or ""
             if ttl:
                 notes.append({"text": ttl, "showarrow": False, "xref": "paper",

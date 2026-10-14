@@ -86,3 +86,14 @@ def test_reference_marker_and_proxy_legends_deduplicate():
     assert len(view['layout']['shapes']) == 4
     for name in legends:
         assert len({t['legendgroup'] for t in view['data'] if t.get('name') == name}) == 1
+
+
+def test_single_axes_caption_is_distinct_from_figure_heading():
+    fig = Figure()
+    ax = fig.subplots()
+    ax.plot([0, 1], [1, 2])
+    ax.set_title('Pair = a-b')
+    fig.suptitle('Calibration')
+    view = mpljson_to_plotly(extract_figure(fig, 'response'))
+    assert any(n['text'] == 'Pair = a-b' for n in view['layout'].get('annotations', []))
+    assert view['layout']['title']['text'] == 'Calibration'
