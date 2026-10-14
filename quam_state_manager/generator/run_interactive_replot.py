@@ -145,7 +145,7 @@ def _input_path(expr):
     return None
 
 
-def _call_inputs(fn, tree, imports):
+def _call_inputs(fn, tree, imports, node_call=None):
     if tree is None:
         return {}
     names = [n for n, (_, original) in imports.items() if original == fn.__name__]
@@ -174,6 +174,8 @@ def _call_inputs(fn, tree, imports):
         return _input_path(expr)
 
     for call in ast.walk(tree):
+        if node_call is not None and call is not node_call:
+            continue
         if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in names:
             for name, expr in zip(parameters, call.args):
                 path = resolve(expr, call)
@@ -184,6 +186,21 @@ def _call_inputs(fn, tree, imports):
                 if kw.arg and path:
                     found[kw.arg] = path
     return found
+
+
+def _call_literals(fn, call):
+    """Literal call arguments are saved source evidence, never evaluated code."""
+    if call is None:
+        return {}
+    expressions = dict(zip(inspect.signature(fn).parameters, call.args))
+    expressions.update({kw.arg: kw.value for kw in call.keywords if kw.arg})
+    values = {}
+    for name, expression in expressions.items():
+        try:
+            values[name] = ast.literal_eval(expression)
+        except (ValueError, TypeError, SyntaxError):
+            pass
+    return values
 
 
 def _report_value(value):
@@ -291,14 +308,16 @@ _RESULT_ALIASES = {"fringe_results": "fringe", "fit_objects": "fit_results"}
 
 
 def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None,
-               node_tree=None, plot_imports=None, bind_report=None, util_module=None, saved_datasets=None):
+               node_tree=None, plot_imports=None, bind_report=None, util_module=None, saved_datasets=None,
+               node_call=None):
     """Bind saved inputs and record every supplied, defaulted or unbound arg."""
     sig = inspect.signature(fn)
     kwargs = {}
     params = params.get("model", params)
     results = results or {}
     decisions = bind_report if bind_report is not None else {}
-    inputs = _call_inputs(fn, node_tree, plot_imports or {})
+    inputs = _call_inputs(fn, node_tree, plot_imports or {}, node_call)
+    literals = _call_literals(fn, node_call)
     missing = []
     pair_source = "parameters.qubit_pairs"
     pair_names = params.get("qubit_pairs")
@@ -327,7 +346,9 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
         saved_key = path.removeprefix("node.results.") if path.startswith("node.results.") else ""
         saved_file = results.get(saved_key)
         dataset_reference = isinstance(saved_file, str) and saved_file.lower().endswith(".h5")
-        if saved_key and (dataset_reference or saved_key.startswith("ds_")):
+        if name in literals:
+            value, source = literals[name], "node.call.literal"
+        elif saved_key and (dataset_reference or saved_key.startswith("ds_")):
             if saved_key == "ds_fit":
                 value = ds_fit
             elif saved_key == "ds_raw":
@@ -457,17 +478,19 @@ def _saved_condition(expr, ds_fit):
     return _UNKNOWN
 
 
-def _plot_plan(tree, imports, ds_fit):
+def _plot_plan(tree, imports, ds_fit, *, with_calls=False):
     """Select the node's plot calls and learn its explicit saved-key aliases."""
     if tree is None or not imports:
-        return None, {}
+        return (None, {}, [], {}) if with_calls else (None, {})
     functions = set()
     aliases = {}
     variables = {}
+    calls = []
+    call_aliases = {}
 
     def origin(expr):
         if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id in imports:
-            return {None: imports[expr.func.id][1]}
+            return {None: (imports[expr.func.id][1], id(expr))}
         if isinstance(expr, ast.Name):
             return variables.get(expr.id, {})
         if isinstance(expr, ast.Dict):
@@ -478,6 +501,13 @@ def _plot_plan(tree, imports, ds_fit):
                         result[str(key.value)] = fn
             return result
         return {}
+
+    def register(value, key=None):
+        for member, (fn, call_id) in value.items():
+            label = member if key is None else key
+            if label is not None:
+                aliases[fn] = label
+                call_aliases[call_id] = label
 
     def visit(statements):
         for statement in statements:
@@ -494,28 +524,29 @@ def _plot_plan(tree, imports, ds_fit):
             for call in ast.walk(statement):
                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in imports:
                     functions.add(imports[call.func.id][1])
+                    calls.append(call)
             if isinstance(statement, ast.Assign):
                 value = origin(statement.value)
                 for target in statement.targets:
                     if isinstance(target, ast.Name):
                         variables[target.id] = value
                         if isinstance(statement.value, ast.Dict):
-                            aliases.update({fn: key for key, fn in value.items() if key is not None})
+                            register(value)
                     elif isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant):
                         key = str(target.slice.value)
                         if _input_path(target) == "node.results.figures":
-                            aliases.update({fn: k for k, fn in value.items() if k is not None})
+                            register(value)
                         elif not key.startswith("figure"):
-                            aliases.update({fn: key for fn in value.values()})
+                            register(value, key)
         return False
 
     actions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
                and n.name == "plot_data"]
     if not actions:
-        return None, {}
+        return (None, {}, [], {}) if with_calls else (None, {})
     for action in actions:
         visit(action.body)
-    return functions, aliases
+    return (functions, aliases, calls, call_aliases) if with_calls else (functions, aliases)
 
 
 def _saved_figures(run, results):
@@ -541,7 +572,7 @@ def _match_archive(figures, saved, aliases):
         source_key = figure["key"]
         member = figure.get("return_key")
         fn = "plot_" + figure["function_key"]
-        candidate = str(member) if member is not None else aliases.get(fn, figure["function_key"])
+        candidate = str(member) if member is not None else figure.get("call_archive_key", aliases.get(fn, figure["function_key"]))
         figure["source_key"] = source_key
         figure["archive_key"] = None
         if candidate in saved and candidate not in claimed:
@@ -672,20 +703,29 @@ def _execute(args):
     from iplot_markers import marker_defaults
 
     plot_fns = sorted(n for n in dir(U) if n.startswith("plot_") and callable(getattr(U, n)))
-    selected, aliases = _plot_plan(node_tree, plot_imports, ds_fit)
+    selected, aliases, calls, call_aliases = _plot_plan(node_tree, plot_imports, ds_fit, with_calls=True)
     if selected is not None:
         plot_fns = [n for n in plot_fns if n in selected]
     saved = _saved_figures(args.run, results)
-    for fname in plot_fns:
-        key = re.sub(r"^plot_", "", fname)
+    invocations = [(fname, call) for fname in plot_fns
+                   for call in ([c for c in calls if plot_imports[c.func.id][1] == fname] or [None])]
+    for fname, call in invocations:
+        function_key = re.sub(r"^plot_", "", fname)
+        repeated = sum(original == fname for original, _ in invocations) > 1
+        key = call_aliases.get(id(call), function_key) if repeated else function_key
         fn = getattr(U, fname)
         report = result["bind_report"][key] = {}
         try:
             kwargs = _bind_args(fn, ds_raw=ds_raw, ds_fit=ds_fit, qubits=qubits, params=params,
                                 results=results, machine=machine, node_tree=node_tree,
-                                plot_imports=plot_imports, bind_report=report, util_module=U, saved_datasets=_open)
+                                plot_imports=plot_imports, bind_report=report, util_module=U, saved_datasets=_open,
+                                node_call=call)
             fig = fn(**kwargs)
             produced = _extract_return(fig, key, report, extract_figure, result["not_produced"])
+            for figure in produced:
+                figure["function_key"] = function_key
+                if id(call) in call_aliases:
+                    figure["call_archive_key"] = call_aliases[id(call)]
             try:
                 defaults = marker_defaults(fn, report)
             except Exception:  # noqa: BLE001

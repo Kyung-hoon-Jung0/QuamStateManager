@@ -61,6 +61,15 @@ def plot_uncertain(fit: Fit):
     ax.errorbar([0, 1, 2], [fit.peak, fit.peak + 1, fit.peak + 2],
                 yerr=[0.2, np.nan, 0.4], fmt='o', capsize=3)
     return fig
+
+def plot_variant(fit: Fit, normalize=True, scale=1):
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    values = [scale * fit.peak, scale * (fit.peak + 1)]
+    if normalize:
+        values = [value / fit.peak for value in values]
+    ax.plot([0, 1], values)
+    return fig
 """, module.__dict__)
     return module
 
@@ -298,3 +307,36 @@ def test_empty_uncertainty_segments_keep_points_and_finite_bars(plots):
     assert bars[0]['y'] == [3.8, 4.2] and bars[1]['y'] == [5.6, 6.4]
     points = next(t for t in traces if t.get('mode') == 'markers' and t['x'] == [0, 1, 2])
     assert points['y'] == [4, 5, 6]
+
+
+def test_repeated_calls_preserve_literals_records_and_saved_aliases(plots, tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+    from quam_state_manager.generator import iplot_extract
+    monkeypatch.setitem(sys.modules, 'iplot_extract', iplot_extract)
+    config = ModuleType('quam_config')
+    config.Quam = SimpleNamespace(load=lambda _: SimpleNamespace(qubits={}))
+    monkeypatch.setitem(sys.modules, 'quam_config', config)
+    module = ModuleType('calibration_utils.synthetic')
+    module.plot_variant = plots.plot_variant
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    tree = ast.parse("""
+def plot_data(node):
+    first = plot_variant(node.namespace['fit_results']['element0'], normalize=True)
+    second = plot_variant(node.namespace['fit_results']['element1'], normalize=False, scale=2)
+    node.results['figures'] = {'normalized': first, 'raw': second}
+""")
+    imports = {'plot_variant': (module.__name__, 'plot_variant')}
+    monkeypatch.setattr(runner, '_resolve_node', lambda *args: (module.__name__, tree, imports))
+    (tmp_path / 'node.json').write_text(json.dumps({'metadata': {'name': '01_synthetic'}}))
+    (tmp_path / 'data.json').write_text(json.dumps({'fit_results': {'element0': {'peak': 4}, 'element1': {'peak': 7}},
+        'figures': {'normalized': './figures.normalized.png', 'raw': './figures.raw.png'}}))
+    result = runner.replay(SimpleNamespace(run=str(tmp_path), source_root='', qubits='', util='', only=''))
+    plt.close('all')
+    assert not result['errors']
+    assert [f['key'] for f in result['figures']] == ['normalized', 'raw']
+    assert result['archive_match']['missing'] == []
+    assert result['figures'][0]['axes'][0]['traces'][0]['y'] == [1, 1.25]
+    assert result['figures'][1]['axes'][0]['traces'][0]['y'] == [14, 16]
+    assert result['bind_report']['raw']['normalize']['value'] is False
+    assert result['bind_report']['raw']['normalize']['source'] == 'node.call.literal'
+    assert {f['function_key'] for f in result['figures']} == {'variant'}
