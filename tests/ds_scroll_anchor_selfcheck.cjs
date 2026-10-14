@@ -899,7 +899,13 @@ const tpl = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
     const dvCalls = odd.match(/htmx\.ajax\('GET', '\/dataset\/' \+ id, \{[^}]*\}\)/g) || [];
     ok(dvCalls.length === 2 && dvCalls.every(c => /headers: listNav/.test(c)) && /var listNav = window\._dsListNav \? window\._dsListNav\(\) : undefined;/.test(odd),
        'L7: the Datasets / Collections table (row click, j+Enter, its re-issue) opens with the list header, got ' + dvCalls.length);
-    ok((a.match(/_dsListNav\(\)/g) || []).length === 2 && (dv.match(/_dsListNav\(\)/g) || []).length === 1,
+    // v1.4.2: the one non-list sender is the background refresh of the run ALREADY open (its files
+    // finished after it was opened): it re-opens that same uid and keeps the reader's tab and place.
+    const refresh = dv.slice(dv.indexOf('function refreshOpenDetail(data) {'), dv.indexOf('function flushPendingIfIdle('));
+    ok(/htmx\.ajax\('GET', '\/dataset\/' \+ root\.dataset\.uid, \{[^}]*headers: window\._dsListNav \? window\._dsListNav\(\) : undefined/.test(refresh),
+       'L8: the open-run refresh re-opens the SAME run with the list header (tab and place kept)');
+    ok((a.match(/_dsListNav\(\)/g) || []).length === 2 && (dv.match(/_dsListNav\(\)/g) || []).length === 2
+       && (refresh.match(/_dsListNav\(\)/g) || []).length === 1,
        'L8: no other opener in app.js / dataset-virtual.js sends the list header');
     ok(cs.indexOf('_dsListNav') < 0 && cs.indexOf('X-SM-DS-Nav') < 0, 'L8: Chip Status (its Trends points) never sends it');
     const tdir = path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates');
