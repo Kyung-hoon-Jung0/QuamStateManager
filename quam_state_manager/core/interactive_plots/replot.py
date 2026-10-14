@@ -616,25 +616,20 @@ def _position_bounds(position):
 
 
 def _position_domains(axes, panels):
-    """Fit the source axes envelope inside the label margins, preserving gaps."""
+    """Keep figure fractions, including space reserved for headers and labels."""
     bounds = [_position_bounds(axes[_pick_base(axes, p)].get("position")) for p in panels]
     if not bounds or any(b is None for b in bounds):
         return None
-    # Include decorative strips so their width ratios reserve space too.
-    extents = bounds + [b for a in axes if a.get("is_colorbar")
-                        if (b := _position_bounds(a.get("position"))) is not None]
-    left, bottom = min(b[0] for b in extents), min(b[1] for b in extents)
-    right, top = max(b[2] for b in extents), max(b[3] for b in extents)
     def domain(b):
-        return ((b[0] - left) / (right - left), (b[2] - left) / (right - left),
-                (b[1] - bottom) / (top - bottom), (b[3] - bottom) / (top - bottom))
+        return b[0], b[2], b[1], b[3]
     return domain, [domain(b) for b in bounds]
 
 
 def mpljson_to_plotly(fig_json: dict) -> dict:
     """One extracted figure -> Plotly ``{data, layout, title}``.
 
-    Layout: colorbar strips and trace-less axes are dropped; axes sharing an axis
+    Layout: colorbar strips are handled by their artists; text-only axes survive.
+    Axes sharing an axis
     (twinx → right Y, twiny → top X) fold into one panel; panels are seated in the
     experiment's QubitGrid R×C (or stacked when there's no real grid).
     """
@@ -735,9 +730,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             if ttl:
                 notes.append({"text": ttl, "showarrow": False, "xref": "paper",
                               "yref": "paper", "x": (x0 + x1) / 2, "y": y1,
-                              "yshift": 64 if has_secondary_top else 12,
+                              "yshift": 64 if has_secondary_top else 6 if positions else 12,
                               "xanchor": "center", "yanchor": "bottom",
-                              "font": {"size": 11}})
+                              "font": {"size": 10 if positions else 11}})
 
     # One colorbar per figure: overlaid twiny heatmaps would otherwise stack two
     # colorbars (the source plots set add_colorbar=False — there's nothing to dupe).
@@ -783,6 +778,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     layout["showlegend"] = True
     layout["legend"] = {"orientation": "h", "y": -0.12 / nrows, "x": 0.0}
     layout["margin"] = {"l": 60, "r": 60, "t": 92 if has_top_axis else 44, "b": 50}
+    if positions:
+        # Source fractions already contain the margins around axes and headers.
+        layout["margin"] = {"l": 0, "r": 0, "t": 0, "b": 0}
     layout["height"] = max(320, 320 * nrows) + (64 * nrows if has_top_axis else 0)
     size = fig_json.get("size_inches")
     source_aspect = None
@@ -794,9 +792,22 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         layout["height"] = round(max(320, min(2200, 1200 * source_aspect)))
     if notes:
         layout["annotations"] = notes
+    if positions and source_aspect:
+        layout["font"] = {"size": 10}
+        heading_style = next((t for t in fig_json.get("texts", []) if t.get("text") == heading), {})
+        layout["title"]["y"] = min(.98, heading_style.get("y", .98))
+        layout["title"]["font"] = {"size": heading_style.get("size", 12)}
+        if heading_style.get("color"):
+            layout["title"]["font"]["color"] = heading_style["color"]
+        layout["legend"]["font"] = {"size": 10}
+        for name, axis in layout.items():
+            if re.fullmatch(r"[xy]axis\d*", name):
+                axis["tickfont"] = {"size": 10}
+                axis["title"].update(font={"size": 10}, standoff=4 if name.startswith("y") else 0)
     from .mathtext import plotly_text
     return plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
-                       "skipped": skipped, "notices": notices, "source_aspect": source_aspect})
+                       "skipped": skipped, "notices": notices, "source_aspect": source_aspect,
+                       "source_size_inches": size if positions and source_aspect else None})
 
 
 def _text_note(a, xref, yref, width=1080):

@@ -110,6 +110,8 @@
             out[k] = Object.assign(dflt, ax);
         });
         if (isDark()) {
+            out.font = artistStyle(out.font, text);
+            if (out.title) out.title = Object.assign({}, out.title, { font: artistStyle(out.title.font, text) });
             if (out.annotations) out.annotations = out.annotations.map(function (note) {
                 return Object.assign({}, note, { font: artistStyle(note.font, text) });
             });
@@ -205,6 +207,7 @@
                 }
                 if (el._houseSourceLayout) {
                     var themed = houseLayout(el._houseSourceLayout), updates = {};
+                    if (themed.title && themed.title.font) updates['title.font.color'] = themed.title.font.color || L.font.color;
                     (themed.annotations || []).forEach(function (note, index) {
                         updates['annotations[' + index + '].font.color'] = (note.font || {}).color || L.font.color;
                     });

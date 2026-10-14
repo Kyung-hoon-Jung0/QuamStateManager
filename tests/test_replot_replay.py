@@ -186,7 +186,10 @@ def test_renderer_artist_meaning_and_notes():
     assert any(t.get("name") == "level 0.5" for t in data)
     assert layout["xaxis"]["type"] == "log"
     assert layout["xaxis"]["domain"][1] < layout["xaxis2"]["domain"][0]
-    assert layout["yaxis"]["domain"] == layout["yaxis2"]["domain"]
+    # v1.4.1: equal grid domains -> actual bounds, imshow preserves a shorter aspect.
+    for key, source_axis in (("yaxis", out["axes"][0]), ("yaxis2", out["axes"][1])):
+        _, bottom, _, height = source_axis["position"]
+        assert layout[key]["domain"] == pytest.approx([bottom, bottom + height])
     assert "xaxis201" in layout
     assert any(t.get("xaxis") == "x201" for t in data)
     assert layout["xaxis201"]["overlaying"] == "x" and layout["xaxis201"]["title"]["text"] == "squared"
@@ -202,7 +205,8 @@ def test_renderer_artist_meaning_and_notes():
     assert other["z"] == [[0, .5], [.625, 1]]
     assert hm["showscale"] and other["showscale"]
     assert any(a["text"] == "summary" and a["xref"] == "paper" for a in layout["annotations"])
-    assert all("color" not in a["font"] for a in layout["annotations"] if a["text"] == "summary")
+    # v1.4.1: omitted black -> source black, the house theme alone adapts dark mode.
+    assert all(a["font"].get("color") == "#000000" for a in layout["annotations"] if a["text"] == "summary")
     assert any(a["text"] == "twin note" for a in layout["annotations"])
     assert any(a["text"] == "pick" and a["showarrow"] and a["axref"] == "x" for a in layout["annotations"])
     arrow = next(a for a in layout["annotations"] if a["text"] == "pick")

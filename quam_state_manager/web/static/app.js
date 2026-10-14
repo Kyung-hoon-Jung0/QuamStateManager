@@ -15911,6 +15911,7 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                 ? window.PlotTheme.houseLayout(d.layout || {}) : (d.layout || {});
             layout.height = _replotHeight(d.source_aspect, inner.clientWidth, layout.height);
             if (!layout.height) layout.height = 360;
+            layout = _replotFigureLayout(layout, d.source_size_inches, inner.clientWidth, layout.height);
             inner.style.height = layout.height + 'px';
             // Keep source colors so theme toggles can restore the lab's palette.
             inner._houseSourceData = d.data;
@@ -15957,6 +15958,38 @@ function _replotHeight(aspect, width, fallback) {
     return Math.round(Math.max(320, Math.min(2200, width * aspect)));
 }
 window._replotHeight = _replotHeight;
+
+/** Scale source point sizes and annotation offsets with the displayed canvas. */
+function _replotFigureLayout(layout, size, width, height) {
+    if (!Array.isArray(size) || size.length !== 2 ||
+        !size.every(function (v) { return typeof v === 'number' && isFinite(v) && v > 0; }) ||
+        !(width > 0) || !(height > 0)) return layout;
+    var scale = Math.min(width / (size[0] * 96), height / (size[1] * 96));
+    var out = JSON.parse(JSON.stringify(layout));
+    function font(style) {
+        if (style && typeof style.size === 'number') style.size *= scale * 96 / 72;
+    }
+    font(out.font);
+    if (out.title) font(out.title.font);
+    if (out.legend) font(out.legend.font);
+    Object.keys(out).forEach(function (key) {
+        if (!/^[xy]axis\d*$/.test(key)) return;
+        var axis = out[key];
+        font(axis.tickfont);
+        if (axis.title) font(axis.title.font);
+    });
+    (out.annotations || []).forEach(function (note) {
+        font(note.font);
+        ['xshift', 'yshift'].forEach(function (key) {
+            if (typeof note[key] === 'number') note[key] *= scale;
+        });
+        ['ax', 'ay'].forEach(function (key) {
+            if (!note[key + 'ref'] && typeof note[key] === 'number') note[key] *= scale;
+        });
+    });
+    return out;
+}
+window._replotFigureLayout = _replotFigureLayout;
 
 /**
  * Fetch a single plot from the backend and render it into container.

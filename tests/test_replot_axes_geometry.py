@@ -73,15 +73,16 @@ def test_source_positions_preserve_unequal_rows_gaps_and_colorbar_extent():
             dict(is_colorbar=True, position=[.8, .1, .03, .6])]
     view = mpljson_to_plotly(dict(axes=axes, suptitle='Scan'))
     layout = view['layout']
-    assert layout['yaxis']['domain'] == pytest.approx([.875, 1])
-    assert layout['yaxis2']['domain'] == pytest.approx([0, .75])
-    assert layout['xaxis2']['domain'] == pytest.approx([0, .6 / .73])
+    # Figure fractions retain header space as well as the unequal row heights.
+    assert layout['yaxis']['domain'] == pytest.approx([.8, .9])
+    assert layout['yaxis2']['domain'] == pytest.approx([.1, .7])
+    assert layout['xaxis2']['domain'] == pytest.approx([.1, .7])
     assert layout['xaxis2']['title']['text'] == 'Sweep'
     cb = view['data'][1]['colorbar']
-    assert cb['x'] == pytest.approx(.7 / .73)
-    assert cb['len'] == pytest.approx(.75)
-    assert cb['thickness'] == pytest.approx(.03 / .73)
-    assert layout['margin']['t'] >= 44
+    assert cb['x'] == pytest.approx(.8)
+    assert cb['len'] == pytest.approx(.6)
+    assert cb['thickness'] == pytest.approx(.03)
+    assert layout['margin'] == dict(l=0, r=0, t=0, b=0)
 
 
 def test_missing_or_invalid_position_keeps_cached_grid_rule():
@@ -105,15 +106,15 @@ def test_positioned_spanning_panel_twins_and_horizontal_colorbar():
             dict(is_colorbar=True, position=[.1, .05, .3, .02])]
     view = mpljson_to_plotly(dict(axes=axes, suptitle='Scan'))
     layout = view['layout']
-    assert layout['xaxis']['domain'] == pytest.approx([0, 1])
-    assert layout['xaxis2']['domain'] == pytest.approx([0, .375])
+    assert layout['xaxis']['domain'] == pytest.approx([.1, .9])
+    assert layout['xaxis2']['domain'] == pytest.approx([.1, .4])
     assert layout['yaxis101']['domain'] == layout['yaxis']['domain']
     assert layout['yaxis101']['title']['text'] == 'Ratio'
     assert layout['yaxis101']['overlaying'] == 'y'
     assert layout['showlegend'] is True and view['data'][0]['name'] == 'Signal'
-    assert layout['margin']['b'] >= 50
+    assert layout['margin']['b'] == 0
     cb = view['data'][2]['colorbar']
     assert cb['orientation'] == 'h'
-    assert cb['x'] == pytest.approx(.1875) and cb['y'] == pytest.approx(0)
-    assert cb['len'] == pytest.approx(.375) and cb['thickness'] == pytest.approx(.02 / .85)
+    assert cb['x'] == pytest.approx(.25) and cb['y'] == pytest.approx(.05)
+    assert cb['len'] == pytest.approx(.3) and cb['thickness'] == pytest.approx(.02)
 

@@ -29,10 +29,13 @@ assert.strictEqual(JSON.stringify(source), original, 'source artists must be imm
 assert.strictEqual(data[0].x, source[0].x, 'do not copy large numeric arrays');
 assert.strictEqual(data[1].colorscale, source[1].colorscale);
 assert.deepStrictEqual(Array.from(data[1].marker.color), [0, 1]);
-const layout = { annotations: [{ text: 'Summary', font: { color: '#222222', size: 9 } },
+const layout = { title: { text: 'Scan', font: { color: '#000000' } },
+    annotations: [{ text: 'Summary', font: { color: '#222222', size: 9 } },
     { text: 'Limit', font: { color: '#ff0000' } }],
     shapes: [{ type: 'line', line: { color: '#000000' }, fillcolor: '#000000' }] };
 assert.strictEqual(theme.houseLayout(layout).annotations[0].font.color, foreground);
+assert.strictEqual(theme.houseLayout(layout).title.font.color, foreground);
+assert.strictEqual(theme.houseLayout({ title: { font: { color: '#dc143c' } } }).title.font.color, '#dc143c');
 assert.strictEqual(theme.houseLayout(layout).annotations[1].font.color, '#ff0000');
 assert.strictEqual(layout.annotations[0].font.color, '#222222');
 assert.strictEqual(theme.houseLayout(layout).shapes[0].line.color, foreground);
