@@ -406,3 +406,119 @@ def plot_unknown(fits: Dict[str, UnknownBundle]):
     assert values['fits']['element0'] is records['element0']
     reason = next((entry.get('reason', '') for entry in report['fits'].get('records', [])), '')
     assert 'unresolved record annotation' in reason and 'MissingDetail' in reason
+
+
+@pytest.fixture
+def util_package(tmp_path, monkeypatch):
+    package = ModuleType('calibration_utils.synthetic')
+    package.__path__ = []
+    child = ModuleType(package.__name__ + '.plotting')
+    exec('''
+def plot_primary():
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [2, 4])
+    return fig
+def plot_extra():
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [3, 5])
+    return fig
+''', child.__dict__)
+    package.plot_primary = child.plot_primary
+    for module in (package, child):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    (tmp_path / '01_synthetic.py').write_text('''
+from calibration_utils.synthetic import plot_primary
+from calibration_utils.synthetic.plotting import plot_extra as draw_extra
+raise RuntimeError('acquisition must not execute')
+def plot_data(node):
+    first = plot_primary()
+    second = draw_extra()
+    node.results['figures'] = {'primary': first, 'extra': second}
+''')
+    monkeypatch.syspath_prepend(str(tmp_path))
+    return package, child
+
+
+def test_package_and_submodule_resolve_and_replay(util_package, tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+    from quam_state_manager.generator import iplot_extract
+    monkeypatch.setitem(sys.modules, 'iplot_extract', iplot_extract)
+    config = ModuleType('quam_config')
+    config.Quam = SimpleNamespace(load=lambda _: SimpleNamespace(qubits={}))
+    monkeypatch.setitem(sys.modules, 'quam_config', config)
+    reason = ''
+    try:
+        resolved, _, imports = runner._resolve_node('01_synthetic', str(tmp_path))
+    except ValueError as error:
+        resolved, imports, reason = None, {}, str(error)
+    assert resolved == util_package[0].__name__, reason
+    assert imports['draw_extra'] == (util_package[1].__name__, 'plot_extra')
+    (tmp_path / 'node.json').write_text(json.dumps({'metadata': {'name': '01_synthetic'}}))
+    (tmp_path / 'data.json').write_text(json.dumps({'figures': {
+        'primary': './figures.primary.png', 'extra': './figures.extra.png'}}))
+    result = runner.replay(SimpleNamespace(run=str(tmp_path), source_root=str(tmp_path), qubits='', util='', only=''))
+    plt.close('all')
+    assert not result['errors']
+    assert [f['key'] for f in result['figures']] == ['extra', 'primary']
+    assert result['archive_match']['missing'] == []
+    assert result['figures'][0]['axes'][0]['traces'][0]['y'] == [3, 5]
+
+
+def test_different_util_packages_refused_with_reason(util_package, tmp_path):
+    path = tmp_path / '01_synthetic.py'
+    path.write_text(path.read_text().replace('synthetic.plotting', 'different.plotting'))
+    reason = ''
+    try:
+        runner._resolve_node('01_synthetic', str(tmp_path))
+    except ValueError as error:
+        reason = str(error)
+    assert 'different util packages' in reason
+    assert 'calibration_utils.synthetic' in reason and 'calibration_utils.different' in reason
+
+
+def test_submodule_requires_function_ownership_evidence(util_package, tmp_path):
+    util_package[1].plot_extra.__module__ = 'unrelated.plotting'
+    reason = ''
+    try:
+        runner._resolve_node('01_synthetic', str(tmp_path))
+    except ValueError as error:
+        reason = str(error)
+    assert 'no ownership evidence' in reason and 'unrelated.plotting' in reason
+
+
+def test_reexport_identity_proves_function_ownership(util_package, tmp_path):
+    util_package[1].plot_primary.__module__ = 'shared_helpers'
+    reason = ''
+    try:
+        resolved, _, _ = runner._resolve_node('01_synthetic', str(tmp_path))
+    except ValueError as error:
+        resolved, reason = None, str(error)
+    assert resolved == util_package[0].__name__, reason
+
+
+def test_multiple_paths_require_a_package(util_package, tmp_path):
+    del util_package[0].__path__
+    reason = ''
+    try:
+        runner._resolve_node('01_synthetic', str(tmp_path))
+    except ValueError as error:
+        reason = str(error)
+    assert 'do not share a util package' in reason
+
+
+def test_conflicting_function_names_are_refused(util_package, tmp_path, monkeypatch):
+    child = ModuleType(util_package[0].__name__ + '.alternate')
+    exec('def plot_primary():\n    return None\n', child.__dict__)
+    monkeypatch.setitem(sys.modules, child.__name__, child)
+    path = tmp_path / '01_synthetic.py'
+    path.write_text(path.read_text().replace(
+        'from calibration_utils.synthetic.plotting import plot_extra as draw_extra',
+        'from calibration_utils.synthetic.alternate import plot_primary as draw_extra'))
+    reason = ''
+    try:
+        runner._resolve_node('01_synthetic', str(tmp_path))
+    except ValueError as error:
+        reason = str(error)
+    assert 'conflicting plotting functions named plot_primary' in reason

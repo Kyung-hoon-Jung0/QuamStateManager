@@ -62,6 +62,29 @@ def _derive_util(node_name: str) -> str:
 _VALID_UTIL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
+def _plot_util(imports):
+    """Unify paths only with evidence that they belong to one util package."""
+    import importlib
+    modules = {module for module, _ in imports.values()}
+    roots = {".".join(module.split(".")[:2]) for module in modules}
+    if len(roots) != 1:
+        raise ValueError("node imports plotting functions from different util packages: " + ", ".join(sorted(roots)))
+    root = roots.pop()
+    package = importlib.import_module(root)
+    if not hasattr(package, "__path__"):
+        raise ValueError(f"plotting import paths do not share a util package: {root}")
+    functions = {}
+    for module, name in imports.values():
+        fn = getattr(importlib.import_module(module), name)
+        owner = getattr(fn, "__module__", "")
+        if not callable(fn) or not (getattr(package, name, None) is fn or owner == root or owner.startswith(root + ".")):
+            raise ValueError(f"plotting function {module}.{name} has no ownership evidence for {root} (owner {owner!r})")
+        if name in functions and functions[name] is not fn:
+            raise ValueError(f"conflicting plotting functions named {name} in {root}")
+        functions[name] = fn
+    return root
+
+
 def _resolve_node(node_name, source_root=""):
     """Read plotting imports without executing the acquisition node."""
     import importlib.util
@@ -95,7 +118,7 @@ def _resolve_node(node_name, source_root=""):
                 module = next(iter(modules))
                 return module, tree, imports
             if modules:
-                raise ValueError("node imports plotting functions from multiple modules")
+                return _plot_util(imports), tree, imports
     return "calibration_utils." + _derive_util(node_name), None, {}
 
 
@@ -717,7 +740,11 @@ def _execute(args):
     from iplot_extract import extract_figure
     from iplot_markers import marker_defaults
 
-    plot_fns = sorted(n for n in dir(U) if n.startswith("plot_") and callable(getattr(U, n)))
+    plot_functions = {n: getattr(U, n) for n in dir(U) if n.startswith("plot_") and callable(getattr(U, n))}
+    if not args.util:
+        for module, name in plot_imports.values():
+            plot_functions[name] = getattr(importlib.import_module(module), name)
+    plot_fns = sorted(plot_functions)
     selected, aliases, calls, call_aliases = _plot_plan(node_tree, plot_imports, ds_fit, with_calls=True)
     if selected is not None:
         plot_fns = [n for n in plot_fns if n in selected]
@@ -728,7 +755,7 @@ def _execute(args):
         function_key = re.sub(r"^plot_", "", fname)
         repeated = sum(original == fname for original, _ in invocations) > 1
         key = call_aliases.get(id(call), function_key) if repeated else function_key
-        fn = getattr(U, fname)
+        fn = plot_functions[fname]
         report = result["bind_report"][key] = {}
         try:
             kwargs = _bind_args(fn, ds_raw=ds_raw, ds_fit=ds_fit, qubits=qubits, params=params,
