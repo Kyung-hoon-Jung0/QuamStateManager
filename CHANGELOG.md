@@ -967,3 +967,21 @@ Runs that are still being written, honest map comparisons, and figures that read
 - **Value history**: an open drawer refreshes when new runs or a sync change the values, instead of calling an old
   value "now".
 - **Datasets search** survives a page reload in the same tab; a new tab starts clean.
+
+## v1.4.3 (2026-10-14)
+
+More of the lab's own figures become interactive, and they keep the lab figure's shape.
+
+- **More families reproduce their figures from the lab's code**: TWPA calibration and fine-tuning, shelved readout,
+  IQ blobs, readout weights, readout efficiency, resonator spectroscopy vs power and several others now draw their
+  figures from the lab's plotting code instead of falling back to the saved picture. SM now passes a plot the one
+  fit it asks for (not the whole set), restores typed fit records, opens the run's other saved datasets when the
+  node passed them to the plot, keeps each call when a node draws the same plot twice with different settings, and
+  accepts a node importing its plots through a package and its submodule.
+- **Missing overlays restored**: reproduced figures now include overlays they used to drop, such as the resonator
+  circle fit and the qualification tolerance lines.
+- **Partly reproducible runs**: when only some of a run's figures can be reproduced, those become interactive and the
+  rest show their saved pictures, each with the reason (for example, a value the node computes during its analysis
+  and does not save).
+- **Interactive figure shape**: a reproduced figure takes its height from the width the pane really has, so it keeps
+  the lab figure's shape in a narrow or a wide pane.
