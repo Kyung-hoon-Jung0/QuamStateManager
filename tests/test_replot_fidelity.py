@@ -66,3 +66,23 @@ def test_explicit_ticks_and_colored_twin_ticks():
     assert view['yaxis101']['ticktext'] == ['slow', 'fast']
     assert view['yaxis101']['tickfont']['color'] == '#ffa500'
     assert view['yaxis101']['title']['font']['color'] == '#ffa500'
+
+
+def test_reference_marker_and_proxy_legends_deduplicate():
+    from matplotlib.lines import Line2D
+    fig = Figure()
+    for ax in fig.subplots(2, 1):
+        ax.plot([0, 1], [1, 2], label='Signal')
+        ax.axvline(.5, color='red', label='Center = 0.5')
+        ax.axhline(1.5, color='green', label='Idle = 1.5')
+        ax.scatter([.4], [1.4], label='Peak = 1.4')
+        ax.plot([.2], [1.2], 'x', label='Selected = 1.2')
+        handles, labels = ax.get_legend_handles_labels()
+        ax.legend(handles + [Line2D([], [], marker='s', color='orange')], labels + ['Flux = 0.2'])
+    view = mpljson_to_plotly(extract_figure(fig, 'references'))
+    legends = [t['name'] for t in view['data'] if t.get('showlegend')]
+    assert sorted(legends) == sorted(['Signal', 'Center = 0.5', 'Idle = 1.5', 'Peak = 1.4',
+                                     'Selected = 1.2', 'Flux = 0.2'])
+    assert len(view['layout']['shapes']) == 4
+    for name in legends:
+        assert len({t['legendgroup'] for t in view['data'] if t.get('name') == name}) == 1

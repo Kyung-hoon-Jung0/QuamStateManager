@@ -369,6 +369,19 @@ def extract_axes(ax, axes):
             trace.update(role="hline", coord="x-domain-y-data")
         else:
             trace["role"] = "markers" if trace.get("mode") == "markers" else "curve"
+    if leg is not None:
+        from matplotlib.lines import Line2D
+        names = {t.get("name") for t in traces}
+        for handle, text in zip(leg.legend_handles, leg.get_texts()):
+            name = text.get_text()
+            if name in names:
+                continue
+            proxy = (_line_trace(handle) if isinstance(handle, Line2D)
+                     else _scatter_trace(handle) if isinstance(handle, PathCollection) else None)
+            if proxy:
+                proxy.update(name=name, x=[None], y=[None], legend_only=True)
+                traces.append(proxy)
+                names.add(name)
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),

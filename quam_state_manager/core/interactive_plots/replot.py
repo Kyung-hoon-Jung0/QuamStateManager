@@ -892,6 +892,8 @@ def _add_artists(ax, xref, yref, data, layout, notes, width=1080):
                 "yref": yref + (" domain" if coord == "x-data-y-domain" else ""),
                 "line": {"color": t.get("color"), "width": t.get("width", 1), "dash": t.get("dash", "solid")},
                 "opacity": t.get("opacity", 1)})
+            if t.get("name"):
+                data.append(_line_to_plotly({**t, "x": [None], "y": [None]}, xref, yref))
         else:
             trace = _trace_to_plotly(t, xref, yref)
             if trace:
