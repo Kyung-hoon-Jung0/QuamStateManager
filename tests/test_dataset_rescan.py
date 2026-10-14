@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from quam_state_manager.core.dataset import DatasetStore
+from quam_state_manager.core.dataset import _RUN_SETTLE_S, DatasetStore
 
 
 def _seed_run(root: Path, run_id: int, *, date: str, hhmmss: str = "010000",
@@ -44,6 +44,18 @@ def _seed_run(root: Path, run_id: int, *, date: str, hhmmss: str = "010000",
 def _bump_mtime(path: Path, when: float) -> None:
     """Force a deterministic mtime (avoids coarse-FS same-second collisions)."""
     os.utime(path, (when, when))
+
+
+def _age_runs(root: Path) -> None:
+    """Make every seeded run an ARCHIVE run: older than the settle window.
+
+    A run younger than the window may still be receiving its h5 / figure /
+    snapshot files, so every poll re-stats it (bounded set); the date-dir
+    short-circuit pinned below is about the archive. Moving a run folder's
+    mtime does not move its date dir's."""
+    old = __import__("time").time() - 2 * _RUN_SETTLE_S
+    for run in root.glob("*/#*"):
+        os.utime(run, (old, old))
 
 
 def test_new_run_in_new_date_dir_is_found(tmp_path):
@@ -106,6 +118,7 @@ def test_untouched_date_dirs_are_not_rewalked(tmp_path, monkeypatch):
     for d in ("2026-05-01", "2026-05-02", "2026-05-03"):
         _seed_run(root, int(d[-2:]) * 10 + 1, date=d, hhmmss="010000")
         _seed_run(root, int(d[-2:]) * 10 + 2, date=d, hhmmss="020000")
+    _age_runs(root)
     store = DatasetStore(root)
     assert len(store.runs) == 6
 
@@ -149,6 +162,7 @@ def test_unchanged_workspace_serves_all_from_cache(tmp_path, monkeypatch):
     root = tmp_path / "data"
     _seed_run(root, 1, date="2026-05-01")
     _seed_run(root, 2, date="2026-05-02")
+    _age_runs(root)
     store = DatasetStore(root)
 
     real_stat = DatasetStore._stat_fp
@@ -168,6 +182,35 @@ def test_unchanged_workspace_serves_all_from_cache(tmp_path, monkeypatch):
     store._scan()  # force a full scan to exercise the short-circuit path
     assert run_stats == []  # nothing re-stated; all date dirs unchanged
     assert set(store.runs.keys()) == {1, 2}
+
+
+def test_a_run_still_settling_is_the_only_one_restatted(tmp_path, monkeypatch):
+    """The other side of the short-circuit: a run younger than the settle
+    window can still get its h5 / figures / snapshot (QUAlibrate writes them
+    after node.json), which moves no date dir. A no-change poll re-stats THAT
+    run and leaves the archive runs alone."""
+    root = tmp_path / "data"
+    _seed_run(root, 1, date="2026-05-01")
+    _seed_run(root, 2, date="2026-05-02")
+    _age_runs(root)
+    fresh = _seed_run(root, 3, date="2026-05-02", hhmmss="020000")
+    store = DatasetStore(root)
+    assert not store.runs[3].has_ds_raw
+
+    real_stat = DatasetStore._stat_fp
+    run_stats: list[Path] = []
+
+    def _counting_stat(p):
+        run_dir = p.parent if p.name in ("node.json", "data.json") else p
+        if run_dir.name.startswith("#"):
+            run_stats.append(run_dir)
+        return real_stat(p)
+
+    monkeypatch.setattr(DatasetStore, "_stat_fp", staticmethod(_counting_stat))
+    (fresh / "ds_raw.h5").write_bytes(b"late file")
+    assert store.rescan_if_stale() is False  # no date dir moved
+    assert set(run_stats) == {fresh}
+    assert store.runs[3].has_ds_raw  # the late file is seen without a Rescan
 
 
 # ---------------------------------------------------------------------------
