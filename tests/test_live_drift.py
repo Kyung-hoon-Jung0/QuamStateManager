@@ -46,9 +46,10 @@ def _write_live(folder: Path, state: dict) -> None:
     """Out-of-band replacement of the live state.json with a future mtime so
     the change is unambiguously detectable on coarse-mtime filesystems."""
     p = folder / "state.json"
+    previous = p.stat().st_mtime_ns
     p.write_text(json.dumps(state, indent=2), encoding="utf-8")
     # v1.4.1: wall-clock stamps -> strictly increasing stamps, rapid writes must differ.
-    future = max(time.time_ns() + 1000 * 10**9, p.stat().st_mtime_ns + 10**9)
+    future = max(time.time_ns() + 1000 * 10**9, previous + 10**9)
     os.utime(p, ns=(future, future))
 
 
@@ -205,6 +206,7 @@ class TestDriftRoutes:
         # v1.4.1: timing-dependent saves -> a frozen clock pins rapid-write accumulation.
         stamp = time.time()
         monkeypatch.setattr(time, 'time', lambda: stamp)
+        monkeypatch.setattr(time, 'time_ns', lambda: int(stamp * 10**9))
         _write_live(live_folder, _chip_state(f_01=6.30e9))           # fit #1
         assert _drift_count(client) == 1
         _write_live(live_folder, _chip_state(f_01=6.30e9, t1=8500))  # fit #2
