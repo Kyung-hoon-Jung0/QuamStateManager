@@ -402,14 +402,20 @@ def _line_to_plotly(t, xref, yref):
     if t.get("visible") is False:
         d["visible"] = False
     if t.get("mode", "lines") != "lines":
-        d["marker"] = {"color": t.get("color"), "size": t.get("marker_size") or 6,
-                       "symbol": t.get("marker_symbol", "circle")}
+        symbol = t.get("marker_symbol", "circle")
+        d["marker"] = {"color": t.get("color"), "size": t.get("marker_size") or 6, "symbol": symbol}
+        if symbol in _STROKE_SYMBOLS:
+            # Plotly draws these symbols with the marker outline only.
+            d["marker"]["line"] = {"color": t.get("color"), "width": max(1.5, t.get("width") or 1.5)}
     if t.get("name"):
         d["name"] = t["name"]
         d["showlegend"] = True
     else:
         d["showlegend"] = False
     return d
+
+
+_STROKE_SYMBOLS = {"line-ew", "line-ns", "x-thin", "cross-thin", "y-down", "y-up", "y-left", "y-right"}
 
 
 def _scatter_to_plotly(t, xref, yref):

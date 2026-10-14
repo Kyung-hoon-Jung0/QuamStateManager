@@ -92,8 +92,12 @@ def _line_trace(ln):
 
 # matplotlib marker -> Plotly symbol (common subset; unknown -> circle)
 _MARKER = {"o": "circle", ".": "circle", "s": "square", "^": "triangle-up",
-           "v": "triangle-down", "D": "diamond", "d": "diamond", "x": "x",
-           "+": "cross", "*": "star", "<": "triangle-left", ">": "triangle-right"}
+           "v": "triangle-down", "D": "diamond", "d": "diamond-tall", "x": "x-thin",
+           "X": "x", "+": "cross-thin", "P": "cross", "*": "star", "<": "triangle-left",
+           ">": "triangle-right", "p": "pentagon", "h": "hexagon", "H": "hexagon2",
+           "8": "octagon", "1": "y-down", "2": "y-up", "3": "y-left", "4": "y-right",
+           # A tick-like marker is a short stroke (an expected level, a sigma), not a dot.
+           "_": "line-ew", "|": "line-ns"}
 
 
 def _mpl_marker(m):
