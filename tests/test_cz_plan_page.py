@@ -132,6 +132,11 @@ def test_every_route_answers_on_a_real_chip(tmp_path, folder):
             p = ln["point"]
             assert p["frequency_hz"] is not None or p["reason"], (op, ln["name"])
     assert c.get("/cz-plan/history").status_code == 200
+    m = c.get("/cz-plan/map").get_json()
+    assert m["ok"] and m["qubits"] and (m["segments"] or m["refused"])
+    for name in m["operations"]:
+        picked = c.get("/cz-plan/map?op=" + name)
+        assert picked.status_code == 200 and {s["operation"] for s in picked.get_json()["segments"]} <= {name}
 
 
 @pytest.mark.parametrize("shape", ["pair_alias", "macros_alias", "pairs_alias", "bad_pairs", "bad_pair", "bad_macros", "bad_macro"])
@@ -327,3 +332,15 @@ def test_unresolved_or_oversized_playback_is_bounded_and_explained(tmp_path, mon
     else:
         assert data["trajectory"][0] is None
         assert any("exceeds the waveform sample limit" in n for n in data["notes"])
+
+
+def test_the_chip_map_route_draws_each_pair_and_names_what_it_cannot(client):
+    m = client.get("/cz-plan/map").get_json()
+    assert m["ok"] and [q["name"] for q in m["qubits"]] == ["q1", "q2", "q3"]
+    shown = {(s["pair"], s["qubit"]) for s in m["segments"]}
+    # q1-2 shows its "cz" (an alias of cz_unipolar); q3 has no quad term -> refused, listed
+    assert ("q1-2", "q1") in shown and ("q1-2", "q2") in shown and ("q3-2", "q2") in shown
+    assert all(s["operation"] == "cz" for s in m["segments"])
+    assert any(r["qubit"] == "q3" and "freq_vs_flux_01_quad_term" in r["reason"] for r in m["refused"])
+    two = client.get("/cz-plan/map?op=cz_two").get_json()
+    assert two["missing"] == ["q3-2"] and {s["operation"] for s in two["segments"]} == {"cz_two"}

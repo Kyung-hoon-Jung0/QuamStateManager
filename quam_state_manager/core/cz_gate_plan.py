@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 import numpy as np
 
@@ -494,10 +495,89 @@ def tls_bands(qubit):
     return out
 
 
+def safe_intervals(qubit):
+    """Frequency intervals the lab's population-loss scan found free of defects, absolute Hz."""
+    raw = (qubit.get("extras") or {}).get("population_loss_safe_intervals_json")
+    try:
+        rows = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if isinstance(r, dict):
+            lo, hi = number(r.get("frequency_lo_hz")), number(r.get("frequency_hi_hz"))
+            if lo is not None and hi is not None:
+                out.append({"lo_hz": min(lo, hi), "hi_hz": max(lo, hi)})
+    return out
+
+
+def _natural(name):
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", str(name))]
+
+
+def chip_map(rows, conversions, op_name=None):
+    """The chip frequency map: every qubit's idle frequency and stored population-loss
+    data, and one operation per pair drawn at the frequency each member reaches.
+
+    The layout follows [paper: arXiv:2112.03708v1, p.11, Fig. 6c] "Frequency arrangement
+    chosen for the operation of the device." -- one column per qubit on a shared frequency
+    axis. *op_name* picks that operation on every pair that has it; without it each pair
+    shows its macro named exactly ``cz`` (an alias is followed by operations()), else its
+    first CZ operation. A refused frequency is listed, never drawn."""
+    qubits = {}
+    for path, conv in conversions.items():
+        name = path.split(".")[-1]
+        q = conv.qubit or {}
+        defects, safe = tls_bands(q), safe_intervals(q)
+        qubits[path] = {"name": name, "path": path, "f01_hz": conv.f01, "defects": defects, "safe": safe,
+                        "loss_data": bool(defects or safe), "tier": conv.model_kind or QUAD_LABEL,
+                        "direction": conv.frame["reason"]}
+    by_pair = {}
+    for r in rows:
+        by_pair.setdefault(r["pair"], []).append(r)
+    segments, planned, refused, missing = [], [], [], []
+    for pair, ops in by_pair.items():
+        if op_name:
+            row = next((r for r in ops if r["operation"] == op_name), None)
+            if row is None:
+                missing.append(pair)
+                continue
+        else:
+            row = next((r for r in ops if r["operation"] == "cz"), ops[0])
+        fq = [ln["point"].get("frequency_hz") for ln in row["lines"]]
+        for k, ln in enumerate(row["lines"]):
+            p = ln["point"]
+            seg = {"pair": pair, "operation": row["operation"], "path": row["path"], "role": ln["role"],
+                   "qubit": ln["name"], "qubit_path": ln["qubit_path"], "moves": ln["moves"],
+                   "frequency_hz": p.get("frequency_hz"), "kind": p.get("kind"), "validity": p.get("validity"),
+                   "partner_hz": fq[1 - k], "detuning_hz": row["detuning_hz"], "nearest": row["nearest"]}
+            if p.get("frequency_hz") is None:
+                refused.append({**seg, "reason": p.get("reason") or "no frequency"})
+            else:
+                segments.append(seg)
+        plan = row.get("plan") or {}
+        carrier = plan.get("leakage_qubit")
+        if plan.get("omega_int_hz") is not None and carrier in ("control", "target"):
+            ln = row["lines"][0 if carrier == "control" else 1]
+            planned.append({"pair": pair, "qubit": ln["name"], "qubit_path": ln["qubit_path"],
+                            "frequency_hz": plan["omega_int_hz"], "what": "planned interaction frequency"})
+        if row.get("interaction_frequency_hz") is not None:
+            high = next((ln for ln in row["lines"] if (ln.get("pulse_path") or "").endswith("flux_pulse_high")), None)
+            if high is not None:
+                planned.append({"pair": pair, "qubit": high["name"], "qubit_path": high["qubit_path"],
+                                "frequency_hz": row["interaction_frequency_hz"],
+                                "what": "stored interaction frequency"})
+    order = sorted(qubits, key=lambda q: _natural(qubits[q]["name"]))
+    return {"qubits": [qubits[q] for q in order], "segments": segments, "planned": planned,
+            "refused": refused, "missing": sorted(missing, key=_natural), "op": op_name or None,
+            "operations": sorted({r["operation"] for r in rows}, key=_natural)}
+
+
 # ---------------------------------------------------------------- the chip
 _QUBIT_FIELDS = ("f_01", "anharmonicity", "freq_vs_flux_01_quad_term", "phi0_voltage")
 _EXTRAS_USED = ("lffem_flux_model", "upper_sweet_spot_frequency", "lower_sweet_spot_frequency",
-                "opposite_sweet_spot_qubit_frequency", "at_sweet_spot", "population_loss_defects_json")
+                "opposite_sweet_spot_qubit_frequency", "at_sweet_spot", "population_loss_defects_json",
+                "population_loss_safe_intervals_json")
 
 
 def qubit_at(doc, path):

@@ -14815,6 +14815,9 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 .czp-fig figcaption { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.25rem; }
 .czp-plot { height: 460px; min-width: 0; }
 .czp-card { margin-top: 0.75rem; }
+.czp-map-box { margin: 0 0 1rem; }
+.czp-map { height: 520px; min-width: 0; }
+.czp-map-notes { font-size: 0.8rem; margin: 0.25rem 0 0; }
 .czp-card h4 { margin: 0 0 0.5rem; font-size: 1rem; }
 .czp-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 0.75rem; }
 .czp-card-q { border: 1px solid var(--pico-muted-border-color, #888); border-radius: 0.4rem; padding: 0.5rem 0.75rem; font-size: 0.85rem; }

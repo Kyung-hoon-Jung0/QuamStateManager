@@ -20717,6 +20717,20 @@ def _cz_plan_point_view(point: dict) -> dict:
     return {k: point.get(k) for k in ("t", "t_us", "run_id", "proven", "provenance", "kind")}
 
 
+@bp.route("/cz-plan/map")
+def cz_plan_map():
+    """The chip frequency map: every qubit's idle frequency and stored population-loss
+    data, and one operation per pair at the frequency each member reaches (``?op=`` picks
+    that operation name on every pair; default: each pair's ``cz``)."""
+    from quam_state_manager.core import cz_gate_plan as czp
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    rows, convs, unavailable = _cz_plan_ops(store)
+    op = request.args.get("op", "").strip() or None
+    return jsonify(ok=True, unavailable=unavailable, **czp.chip_map(rows, convs, op))
+
+
 @bp.route("/cz-plan/history")
 def cz_plan_history():
     """When each operation's amplitudes were last set, and every staleness warning."""

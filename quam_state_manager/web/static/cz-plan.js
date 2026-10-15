@@ -266,6 +266,128 @@
         el.innerHTML = h.join('');
     }
 
+    /* The chip frequency map (cf. arXiv:2112.03708 Fig. 6c): one column per qubit on a shared
+       frequency axis -- the idle frequency (dot), the stored population-loss defects (gray bars,
+       length ~ peak loss), the safe intervals (faint band), and each pair's operating point as a
+       short segment in each member's column (solid: fitted model, dashed: quad-term estimate),
+       joined by a thin connector. Refused frequencies are listed under the figure, never drawn. */
+    var mseq = 0;
+    var MAP_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf',
+                      '#bcbd22', '#7f7f7f'];
+    function mapColors() {
+        var P = window.PlotTheme && window.PlotTheme.palette ? window.PlotTheme.palette() : null;
+        return P && P.length >= 6 ? P.concat(MAP_COLORS.filter(function (c) { return P.indexOf(c) < 0; })) : MAP_COLORS;
+    }
+    function mapEmpty(el, text) {
+        if (window.PlotHost) window.PlotHost.purgeWithin(el);
+        el.innerHTML = '<p class="muted zline-empty">' + esc(text) + '</p>';
+    }
+    function drawMap(root) {
+        var el = root.querySelector('#czp-map');
+        if (!el) return Promise.resolve();
+        var my = ++mseq;
+        var opSel = root.querySelector('#czp-map-op'), ordSel = root.querySelector('#czp-map-order');
+        var op = opSel ? opSel.value : '', order = ordSel ? ordSel.value : 'name';
+        return fetch('/cz-plan/map' + (op ? '?op=' + encodeURIComponent(op) : ''), { headers: { 'Accept': 'application/json' } })
+            .then(function (r) { return r.json(); })
+            .then(function (m) {
+                if (my !== mseq || !document.body.contains(root)) return;
+                if (!m.ok) { mapEmpty(el, m.error || 'The map could not be computed.'); return; }
+                if (opSel && opSel.options.length <= 1) {
+                    (m.operations || []).forEach(function (name) {
+                        var o = document.createElement('option'); o.value = name; o.textContent = name; opSel.appendChild(o);
+                    });
+                }
+                var qs = m.qubits.slice();
+                if (order === 'f01') qs.sort(function (a, b) { return (a.f01_hz == null) - (b.f01_hz == null) || (a.f01_hz || 0) - (b.f01_hz || 0); });
+                var col = {}; qs.forEach(function (q, i) { col[q.path] = i; });
+                var C = colors(), P = mapColors(), traces = [], shapes = [];
+                var ink = getComputedStyle(document.documentElement).getPropertyValue('--pico-color').trim() || '#222';
+                qs.forEach(function (q, i) {
+                    if (i) shapes.push({ type: 'line', xref: 'x', x0: i, x1: i, yref: 'paper', y0: 0, y1: 1,
+                                         line: { color: C.muted, width: 0.6 }, layer: 'below' });
+                    (q.safe || []).forEach(function (b) {
+                        shapes.push({ type: 'rect', xref: 'x', x0: i + 0.02, x1: i + 0.98, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
+                                      fillcolor: C.plan, opacity: 0.07, line: { width: 0 }, layer: 'below' });
+                    });
+                    (q.defects || []).forEach(function (b) {
+                        var f = (b.lo_hz + b.hi_hz) / 2, w = 0.08 + 0.82 * Math.min(1, (b.peak_loss || 0) / 0.5);
+                        traces.push({ type: 'scatter', mode: 'lines', x: [i + 0.05, i + 0.05 + w], y: [ghz(f), ghz(f)], showlegend: false,
+                            line: { color: C.muted, width: 3 }, opacity: 0.75,
+                            hovertemplate: esc(q.name) + ' defect %{y:.4f} GHz<br>FWHM ' + ((b.hi_hz - b.lo_hz) / 1e6).toFixed(1) + ' MHz' +
+                                (b.peak_loss != null ? ', peak loss ' + (100 * b.peak_loss).toFixed(0) + ' %' : '') + '<extra></extra>' });
+                    });
+                });
+                traces.push({ type: 'scatter', mode: 'markers', x: qs.map(function (q, i) { return i + 0.5; }),
+                    y: qs.map(function (q) { return ghz(q.f01_hz); }), name: 'idle f_01',
+                    marker: { color: ink, size: 9, symbol: 'circle' },
+                    customdata: qs.map(function (q) { return q.name + (q.loss_data ? '' : ' (no population-loss data)') + '<br>' + q.direction; }),
+                    hovertemplate: '%{customdata}<br>idle %{y:.4f} GHz<extra></extra>' });
+                var pairs = [];
+                m.segments.forEach(function (s) { if (pairs.indexOf(s.pair) < 0) pairs.push(s.pair); });
+                pairs.forEach(function (pair, k) {
+                    var color = P[k % P.length], segs = m.segments.filter(function (s) { return s.pair === pair; });
+                    segs.forEach(function (s, j) {
+                        var i = col[s.qubit_path];
+                        if (i == null) return;
+                        var quad = /quad/.test(s.kind || '');
+                        traces.push({ type: 'scatter', mode: 'lines', x: [i + 0.12, i + 0.88], y: [ghz(s.frequency_hz), ghz(s.frequency_hz)],
+                            name: pair, legendgroup: pair, showlegend: j === 0,
+                            line: { color: color, width: s.moves ? 3.2 : 1.6, dash: quad ? 'dash' : 'solid' },
+                            customdata: [s.path, s.path],
+                            hovertemplate: esc(pair) + ' · ' + esc(s.operation) + '<br>' + esc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
+                                ': %{y:.4f} GHz<br>' + esc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + esc(s.validity) : '') +
+                                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
+                                '<extra></extra>' });
+                    });
+                    if (segs.length === 2 && col[segs[0].qubit_path] != null && col[segs[1].qubit_path] != null) {
+                        var a = segs[0], b = segs[1], ia = col[a.qubit_path], ib = col[b.qubit_path];
+                        var left = ia <= ib ? a : b, right = ia <= ib ? b : a;
+                        traces.push({ type: 'scatter', mode: 'lines', legendgroup: pair, showlegend: false, hoverinfo: 'skip',
+                            x: [Math.min(ia, ib) + 0.88, Math.max(ia, ib) + 0.12], y: [ghz(left.frequency_hz), ghz(right.frequency_hz)],
+                            line: { color: color, width: 1, dash: 'dot' }, opacity: 0.6 });
+                    }
+                    (m.planned || []).filter(function (p) { return p.pair === pair; }).forEach(function (p) {
+                        var i = col[p.qubit_path];
+                        if (i == null) return;
+                        traces.push({ type: 'scatter', mode: 'markers', x: [i + 0.5], y: [ghz(p.frequency_hz)], legendgroup: pair, showlegend: false,
+                            marker: { color: color, size: 11, symbol: 'diamond-open', line: { width: 2 } },
+                            hovertemplate: esc(pair) + ' ' + esc(p.what) + ' (' + esc(p.qubit) + '): %{y:.4f} GHz<extra></extra>' });
+                    });
+                });
+                var notes = [];
+                if (m.refused.length) notes.push('Not drawn: ' + m.refused.map(function (r) {
+                    return r.qubit + ' in ' + r.pair + ' ' + r.operation + ' (' + r.reason + ')'; }).join('; ') + '.');
+                if (m.missing.length) notes.push('No ' + (m.op || 'such') + ' operation on ' + m.missing.join(', ') + '.');
+                var noLoss = qs.filter(function (q) { return !q.loss_data; }).map(function (q) { return q.name; });
+                if (noLoss.length) notes.push('No population-loss data stored for ' + (noLoss.length === qs.length ? 'any qubit' : noLoss.join(', ')) + '.');
+                notes.push('Solid: fitted flux model; dashed: quad-term estimate; thin: a member that stays at idle; ◇ planned interaction frequency.');
+                var nEl = root.querySelector('#czp-map-notes');
+                if (nEl) nEl.textContent = notes.join(' ');
+                var L = layout({
+                    margin: { l: 64, r: 16, t: 10, b: 60 }, showlegend: pairs.length > 0,
+                    legend: { orientation: 'h', y: -0.12, x: 0, font: { size: 11 } },
+                    xaxis: { tickmode: 'array', tickvals: qs.map(function (q, i) { return i + 0.5; }), ticktext: qs.map(function (q) { return q.name; }),
+                             range: [0, Math.max(1, qs.length)], showgrid: false, zeroline: false, fixedrange: true },
+                    yaxis: { title: { text: 'frequency (GHz)' } },
+                    shapes: shapes, hovermode: 'closest'
+                });
+                el.setAttribute('data-segments', String(m.segments.length));
+                return window.requirePlotly().then(function () {
+                    if (my !== mseq || !document.body.contains(root)) return;
+                    return window._plotlyRender(el, traces, L, config());
+                }).then(function () {
+                    if (my !== mseq || !document.body.contains(root) || !el.on || el._czpMapClick) return;
+                    el._czpMapClick = true;
+                    el.on('plotly_click', function (ev) {
+                        var pt = ev && ev.points && ev.points[0], path = pt && pt.customdata;
+                        if (typeof path === 'string' && path.indexOf('qubit_pairs.') === 0) { load(root, path); revealFigures(root); }
+                    });
+                });
+            })
+            .catch(function (e) { if (my === mseq) mapEmpty(el, 'The map could not be loaded: ' + (e && e.message || e)); });
+    }
+
     function fillOps(root, d) {
         var sel = root.querySelector('#czp-op');
         if (!sel) return;
@@ -369,6 +491,8 @@
         root._czMounted = true;
         var host = root.querySelector('.czp-plots');
         if (host && window.PlotHost) window.PlotHost.observe(host);
+        var mapBox = root.querySelector('.czp-map-box');
+        if (mapBox && window.PlotHost) window.PlotHost.observe(mapBox);
         root.addEventListener('click', function (ev) {
             var tr = ev.target.closest && ev.target.closest('.czp-row');
             if (tr && root.contains(tr)) { load(root, tr.getAttribute('data-op')); revealFigures(root); }
@@ -382,6 +506,11 @@
         if (sel) sel.addEventListener('change', function () { load(root, sel.value); });
         var first = root.getAttribute('data-selected');
         if (first) load(root, first);
+        ['#czp-map-op', '#czp-map-order'].forEach(function (s) {
+            var c = root.querySelector(s);
+            if (c) c.addEventListener('change', function () { drawMap(root); });
+        });
+        drawMap(root);
         loadHistory(root, 0);
     }
 
@@ -404,7 +533,7 @@
             });
     }
 
-    window.CzPlan = { mount: mount, refresh: refresh, _esc: esc };
+    window.CzPlan = { mount: mount, refresh: refresh, drawMap: drawMap, _esc: esc };
     document.addEventListener('DOMContentLoaded', mount);
     document.addEventListener('htmx:afterSwap', mount);
     document.addEventListener('sm:wc-moved', function () {

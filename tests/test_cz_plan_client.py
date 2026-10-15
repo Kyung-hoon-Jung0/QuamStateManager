@@ -17,3 +17,16 @@ def test_cz_plan_client():
     assert result.returncode == 0, result.stdout + result.stderr
     # v1.4.1: fixed old count -> expanded deferred-render and unknown-motion pins must execute.
     assert "31 assertions passed" in result.stdout
+
+
+def test_cz_chip_map_client():
+    """The chip frequency map: columns, segment styles, refusals, picker, order, click."""
+    root = Path(__file__).resolve().parents[1]
+    probe = subprocess.run(["node", "-e", "require('jsdom')"], cwd=root, env=os.environ.copy(),
+                           capture_output=True, text=True)
+    if probe.returncode:
+        pytest.skip("jsdom not installed")
+    result = subprocess.run(["node", str(root / "tests/cz_map_selfcheck.cjs")], cwd=root, env=os.environ.copy(),
+                            capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "16 assertions passed" in result.stdout
