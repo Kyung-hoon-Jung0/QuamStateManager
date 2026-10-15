@@ -1049,3 +1049,20 @@ A reproduced figure's legend sits where the lab put it.
 - **Legend placement**: when one panel of a multi-panel lab figure carries the legend, the reproduction keeps it in
   that panel, at the corner Matplotlib drew it in (also for "best" placement), instead of moving it to a footer where it
   could run into an axis title. Figures with several legends still gather them in one footer.
+
+## v1.4.9 (2026-10-15)
+
+Map tools on reproduced maps: every panel, about a second per step, values named on hover.
+
+- **Speed**: a run that never wrote `state_updates.json` made every reproduced figure request wait out a file-retry
+  delay meant for live files (about 0.9 s, five times per request). Map analysis took about 5 s per step and each
+  Interactive tile about 4 s to load. Measured in a real browser on a three-panel spectroscopy-vs-power map: opening
+  the tools now takes 1.0 s, Smooth 1.6 s and Contour 1.4 s.
+- **Every panel**: smoothing and contours apply to every map of the figure, in one request. **Readout** picks the map
+  whose fit, comparison and Apply are shown.
+- **Placement**: the tools sit under the figure's title, above the plot.
+- **Bias limit instead of a cap**: the strength sliders go past the limit at which smoothing can shift the fitted
+  feature by more than its tolerance. The tools say which maps are above it, and the result is marked
+  "cap overridden". The separate Override switch is gone.
+- **Hover**: values are named by the axis titles (a label drawn once for a row names every panel in it), and a
+  dashed crosshair follows the pointer.
