@@ -227,6 +227,43 @@ def _snz_two_flux(p):
     return samples
 
 
+def _snz_two_flux_length(p):
+    """The two-flux class's ``inferred_length`` (and its unipolar lobe 3), transcribed:
+    ceil4(2 * padding + flat + 2 + t_phi + post), post = lobe 3 (unipolar) or tail zeros."""
+    core = int(p["flat_length"]) + 2 + int(p.get("t_phi", 0) or 0)
+    post = int(p.get("tail_length", 0) or 0)
+    if p.get("unipolar", False):
+        area = abs(float(p["amplitude"])) * core
+        cap = float(p.get("lobe3_max_v", .060))
+        post = max(4, 4 * int(math.ceil(area / cap / 4 - 1e-9))) if area else 0
+    raw = 2 * int(p.get("padding", 0) or 0) + core + post
+    return int(math.ceil(raw / 4) * 4)
+
+
+#: lab pulse classes SM has transcribed for the CZ gate plan's frequency-in-time only -- NOT
+#: catalog entries: the Pulses page keeps drawing a lab class with the lab's own code
+LAB_WAVEFORMS = {"SNZTwoFluxPulse": (_snz_two_flux, _snz_two_flux_length)}
+
+
+def lab_waveform(pulse: dict) -> list | None:
+    """Samples (1 per ns) of a transcribed lab pulse class from its resolved fields, else None."""
+    if not isinstance(pulse, dict):
+        return None
+    leaf = str(pulse.get("__class__", "")).rsplit(".", 1)[-1]
+    entry = LAB_WAVEFORMS.get(leaf)
+    if entry is None:
+        return None
+    fn, length_of = entry
+    p = dict(pulse)
+    try:
+        if not isinstance(p.get("length"), (int, float)) or isinstance(p.get("length"), bool):
+            p["length"] = length_of(p)
+        samples = fn(p)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    return [float(np.real(v)) for v in samples]
+
+
 def _square(p):
     waveform = float(p["amplitude"])
     if p.get("axis_angle") is not None:
@@ -590,7 +627,6 @@ def _cosine_bipolar_deprecated(p):
 
 
 _RAW_FUNCS: dict[str, Callable[[dict], Any]] = {
-    "SNZTwoFluxPulse": _snz_two_flux,
     "SquarePulse": _square,
     "SquareReadoutPulse": _square,  # inherits SquarePulse.waveform_function
     "GaussianPulse": _gaussian,

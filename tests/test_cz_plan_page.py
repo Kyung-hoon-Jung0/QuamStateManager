@@ -344,3 +344,28 @@ def test_the_chip_map_route_draws_each_pair_and_names_what_it_cannot(client):
     assert any(r["qubit"] == "q3" and "freq_vs_flux_01_quad_term" in r["reason"] for r in m["refused"])
     two = client.get("/cz-plan/map?op=cz_two").get_json()
     assert two["missing"] == ["q3-2"] and {s["operation"] for s in two["segments"]} == {"cz_two"}
+
+
+def test_a_lab_two_flux_pulse_is_drawn_from_the_transcription_with_a_note(tmp_path, monkeypatch):
+    """The catalog does not carry the lab's two-flux class (the Pulses page draws it with the lab's
+    code); the CZ plan maps its samples through SM's pinned transcription, and says so."""
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.web import routes
+    s, w = _chip()
+    snz = {"__class__": "lab.pkg.SNZTwoFluxPulse", "amplitude": .1, "flat_length": 20, "t_phi": 0,
+           "b_over_a": 0.0, "neg_offset_v": 0.0, "padding": 0, "length": "#./inferred_length"}
+    s["qubits"]["q1"]["z"]["operations"]["snz"] = snz
+    s["qubits"]["q2"]["z"]["operations"]["snz_t"] = {**snz, "amplitude": .05}
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_snz"] = {"__class__": "x.CZGateTwoFlux",
+                                                    "flux_pulse_qubit": "#/qubits/q1/z/operations/snz",
+                                                    "flux_pulse_target": "#/qubits/q2/z/operations/snz_t"}
+    store = QuamStore.from_dicts(s, w)
+    monkeypatch.setattr(routes, "_store", lambda: store)
+    monkeypatch.setattr(routes, "_active_ctx", lambda: None)
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    d = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_snz").get_json()
+    t0, t1 = d["trajectory"]
+    assert t0 is not None and len(t0["frequency_hz"]) == 24              # 20 + 2, rounded up to 4 ns
+    assert min(f for f in t0["frequency_hz"] if f is not None) == pytest.approx(5e9 - 8e9 * .1 ** 2)
+    assert t1 is not None
+    assert sum("transcription of the lab's own pulse class" in n for n in d["notes"]) == 2

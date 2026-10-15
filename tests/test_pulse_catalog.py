@@ -27,9 +27,6 @@ class TestCatalogShape:
             "ErfSquarePulse", "SNZPulse", "CosineBipolarPulse",
             "GaussianFilteredSquarePulse", "GaussianFilteredSymmetricBipolarPulse",
             "WaveformPulse", "_FlatTopGaussianPulse", "_CosineBipolarPulse",
-            # v1.5.0: no two-flux preview -> the lab's two-flux SNZ class is drawn (preview only, not
-            # creatable), because the CZ gate plan maps its samples to frequency in time.
-            "SNZTwoFluxPulse",
         }
         assert set(PULSE_CATALOG) == expected
 
@@ -42,10 +39,6 @@ class TestCatalogShape:
                 assert spec.qclass == (
                     "quam_builder.architecture.superconducting.components"
                     ".pulses.CosineBipolarPulse")
-                continue
-            if spec.key == "SNZTwoFluxPulse":
-                # v1.5.0: a lab package's class (preview only) keeps the lab's own module path
-                assert spec.qclass == "quam_config.two_flux_gate.SNZTwoFluxPulse" and not spec.creatable
                 continue
             assert spec.qclass == _QC + spec.key
 

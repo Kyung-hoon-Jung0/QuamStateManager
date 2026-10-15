@@ -20794,6 +20794,15 @@ def cz_plan_data():
             payload = synth_for_operation(store, ln["pulse_path"], overrides={"length": int(played)})
         samples = payload.get("i") if payload.get("ok") else None
         if not samples:
+            from quam_state_manager.core.waveform_synth import lab_waveform
+            with store._lock:
+                pulse = czp.resolved_tree(store.merged, ln["pulse_path"])
+            samples = lab_waveform(pulse)
+            if samples:
+                payload = {"ok": True, "kind": "lab transcription"}
+                notes.append(f"{ln['name']}: waveform from SM's transcription of the lab's own pulse class"
+                             " (pinned sample for sample to that class)")
+        if not samples:
             notes.append(f"{ln['name']}: SM cannot draw this pulse ({payload.get('error') or 'no samples'}),"
                          " so the frequency in time is not drawn for it")
             traj.append(None)
