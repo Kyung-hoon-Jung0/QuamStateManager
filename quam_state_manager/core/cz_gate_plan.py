@@ -628,7 +628,7 @@ def operations(doc, conversions=None, unavailable=None):
                               "duration_unknown": (raw_duration is not None and duration_ns is None
                                                    and field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low")),
                               "pulse_class": (str(current(doc, pulse_path + ".__class__", "")).split(".")[-1]
-                                              if isinstance(pulse, dict) else None),
+                                              if pulse_path and isinstance(pulse, dict) else None),
                               "amplitude_v": amp, "point": pt})
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]

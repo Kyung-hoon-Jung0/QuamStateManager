@@ -89,7 +89,8 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     check(card.includes('unknown') && card.includes('No change history'), 'no history: the time is unknown, with the reason');
     check(d.getElementById('czp-op').options.length === 2 && d.getElementById('czp-op').value === 'qubit_pairs.p.macros.b', 'the picker lists the pair operations');
     const flux = renders.filter(x => x.id === 'czp-flux').at(-1);
-    check(flux.traces.some(t => /quad-term estimate/.test(t.name || '')) && flux.layout.annotations.some(a => a.showarrow), 'curve labelled and an arrow to the operating point');
+    // v1.4.1: assume panel exists -> assert panel identity before inspecting its curve.
+    check(flux && flux.traces.some(t => /quad-term estimate/.test(t.name || '')) && flux.layout.annotations.some(a => a.showarrow), 'curve in the flux panel labelled with an arrow to the operating point');
     check(flux.layout.shapes.some(s => s.type === 'rect') && flux.layout.annotations.some(a => /control on \|11>-\|20>/.test(a.text)), 'defect band and resonance levels drawn');
     const time = renders.filter(x => x.id === 'czp-time').at(-1);
     const delta = time.traces.find(t => t.yaxis === 'y2');
