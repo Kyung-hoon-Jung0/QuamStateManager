@@ -116,7 +116,8 @@ def test_the_quad_range_is_measured_against_the_fitted_arc_on_both_lobes():
     good = C.Conversion(model_qubit(0) | {"freq_vs_flux_01_quad_term": k})
     band = good.range
     assert len(band["branches"]) == 2 and 100e6 < band["limit_hz"] < 1e9
-    assert good.point(.05)["validity"] == "within the quadratic range"
+    # v1.4.1: generic wording -> measured wording, this arc supplies the checked span.
+    assert good.point(.05)["validity"] == "within the measured quadratic range"
     assert good.point(.7)["validity"] == "outside the quadratic range"
     assert conv.range["limit_hz"] < band["limit_hz"]               # a wrong coefficient fails sooner
 
@@ -250,3 +251,77 @@ def test_unproven_is_not_called_calibrated_and_missing_history_is_unknown():
     assert c["last_set"]["run_id"] == 1 and c["last_calibrated"] == {}
     gone = C.calibration(row, {"mode": "unavailable", "rows": {}, "reason": "no_ledger"})
     assert gone["unknown"] and gone["last_set"] == {} and gone["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("evidence", [{"lower_sweet_spot_frequency": 5.04e9}, {"at_sweet_spot": False}])
+def test_refused_conversion_keeps_only_idle_in_curves_and_trajectories(evidence):
+    conv = C.Conversion(model_qubit(0, **evidence))
+    assert conv.point(.1)["frequency_hz"] is None
+    for key in ("quad_hz", "model_hz"):
+        assert conv.curve(.1, 3)[key] == [None, conv.f01, None]
+        assert conv.trajectory([.1, 0, -.1])[key] == [None, conv.f01, None]
+    assert conv.trajectory([.1, 0, -.1])["frequency_hz"] == [None, conv.f01, None]
+
+
+@pytest.mark.parametrize("bad", [{"model_r2": .1}, {"a_half_v": None}, {"phi0_v": float("inf")}])
+@pytest.mark.parametrize("other_spot", [False, True])
+def test_quality_rejection_never_draws_the_fit_at_either_anchor(bad, other_spot):
+    q = model_qubit(0)
+    if other_spot:
+        q["f_01"] = C.model_spots(q["extras"]["lffem_flux_model"])["other"]["f_hz"]
+        q["z"]["flux_point"] = "min"
+    q["extras"]["lffem_flux_model"].update(bad)
+    conv = C.Conversion(q)
+    assert conv.anchor is None and conv.model_kind is None
+    assert conv.curve(.1)["model_hz"] is None
+    assert conv.trajectory([0, .1])["model_hz"] is None
+    assert conv.point(.1)["kind"] == C.QUAD_LABEL
+    assert any("not drawn" in n for n in conv.notes)
+
+
+def test_reanchored_model_has_numeric_points_curves_and_trajectory():
+    q = model_qubit(0)
+    m = q["extras"]["lffem_flux_model"]
+    q["f_01"] = C.model_spots(m)["other"]["f_hz"]
+    q["z"]["flux_point"] = "min"
+    conv = C.Conversion(q)
+    expected = q["f_01"] + ((5.2e9 * (np.cos(np.pi * .6)**2 + .25 * np.sin(np.pi * .6)**2)**.25)
+                              - 5.2e9 * .25**.25)
+    assert math.isfinite(expected) and expected > q["f_01"]
+    assert conv.point(.1)["model_hz"] == pytest.approx(expected)
+    assert conv.point(.1)["frequency_hz"] == pytest.approx(expected)
+    assert conv.curve(.1, 3)["model_hz"] == pytest.approx([expected, q["f_01"], expected])
+    assert conv.trajectory([0, .1])["frequency_hz"] == pytest.approx([q["f_01"], expected])
+
+
+def test_checked_window_boundaries_and_each_lobe_are_finite():
+    q = model_qubit(0)
+    q["extras"]["lffem_flux_model"].update(amp_min_v=-.01, amp_max_v=.02)
+    q["freq_vs_flux_01_quad_term"] = abs(C.Conversion(q).curvature["here_hz_per_v2"])
+    conv = C.Conversion(q)
+    for a in (.019, -.009):
+        assert conv.point(a)["validity"] == "within the measured quadratic range"
+    for a in (.021, -.011, .4):
+        assert conv.point(a)["validity"] == "beyond the fitted arc's measured range"
+    # The fitted model's 1% guard itself is inclusive on both measured boundaries.
+    lo, hi = conv._model_window()
+    assert math.isfinite(float(conv.model_shift(lo)))
+    assert math.isfinite(float(conv.model_shift(hi)))
+    assert math.isnan(float(conv.model_shift(lo - 1e-6)))
+    assert math.isnan(float(conv.model_shift(hi + 1e-6)))
+
+
+def test_reanchored_measured_window_is_periodic_with_numeric_endpoints():
+    q = model_qubit(0)
+    m = q["extras"]["lffem_flux_model"]
+    m.update(amp_min_v=-.02, amp_max_v=.02)
+    q.update(f_01=C.model_spots(m)["other"]["f_hz"], z={"flux_point": "min"})
+    conv = C.Conversion(q)
+    expected = m["f_01_at_fit_hz"]
+    assert conv.point(.5)["model_hz"] == pytest.approx(expected)
+    assert conv.point(-.5)["model_hz"] == pytest.approx(expected)
+    assert conv.point(.01)["model_hz"] is None
+    assert math.isfinite(float(conv.model_shift(.5201)))
+    assert math.isnan(float(conv.model_shift(.5203)))
+    assert math.isfinite(float(conv.model_shift(-.5201)))
+    assert math.isnan(float(conv.model_shift(-.5203)))

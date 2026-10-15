@@ -249,10 +249,11 @@ class Conversion:
         if m is not None:
             self.rejection = lab_rejection(m, self.f01)
             spot = self.frame["model_anchor"]
-            if spot == "fit":
+            quality_ok = lab_rejection(m, m["f_01_at_fit_hz"]) is None
+            if spot == "fit" and quality_ok:
                 self.anchor, self.model_kind = m["phi_park"], (MODEL_LABEL if self.rejection is None
                                                              else MODEL_LABEL + ", re-anchored to f_01 [derived]")
-            elif spot == "other":
+            elif spot == "other" and quality_ok:
                 self.anchor, self.model_kind = model_spots(m)["other"]["phi"], OTHER_SPOT_LABEL
             if self.anchor is not None:
                 gap = abs(self.f01 - model_spots(m)[spot]["f_hz"])
@@ -260,10 +261,14 @@ class Conversion:
                     self.notes.append(f"f_01 is {gap / 1e6:.0f} MHz from that sweet spot of the fit;"
                                       " the curve is drawn from f_01")
             else:
-                self.notes.append("lab flux model not drawn: f_01 is at neither sweet spot of the fit")
+                self.notes.append("lab flux model not drawn: " + (self.rejection if not quality_ok else
+                                  "f_01 is at neither sweet spot of the fit"))
             if self.rejection and self.anchor is not None:
                 self.notes.append("the lab's own resolver would reject this fit (" + self.rejection
                                   + ") and use the quad term")
+        elif (qubit.get("extras") or {}).get("lffem_flux_model") is not None:
+            self.rejection = "invalid or non-finite model parameters"
+            self.notes.append("lab flux model not drawn: " + self.rejection)
         self.curvature = self._curvature()
         self.range = self._range()
 
@@ -343,6 +348,9 @@ class Conversion:
             limit = abs(float(shifts[max(0, int(bad[0]) - 1)])) if len(bad) else None
             out["branches"].append({"side": side, "limit_hz": limit,
                                     "checked_hz": float(np.max(np.abs(shifts))),
+                                    "checked_quad_hz": float(np.max(np.abs(self.quad_shift(amps)))),
+                                    "amplitude_min_v": float(np.min(np.abs(amps))),
+                                    "amplitude_max_v": float(np.max(np.abs(amps))),
                                     "max_error_hz": float(np.max(errors))})
         limits = [b["limit_hz"] for b in out["branches"]]
         if out["branches"]:
@@ -386,9 +394,19 @@ class Conversion:
         limit = self.range["limit_hz"]
         if res["quad_hz"] is not None:
             shift = abs(res["quad_hz"] - self.f01)
-            if limit is None:
-                res["validity"] = ("within the measured quadratic range" if self.range.get("within_checked_hz")
-                                   else "quadratic range unknown")
+            if self.range["branches"]:
+                branch = next((b for b in self.range["branches"] if b["side"] == (1 if a > 0 else -1)), None)
+                if branch and branch["limit_hz"] is not None and shift > branch["limit_hz"]:
+                    res["validity"] = "outside the quadratic range"
+                elif (branch and branch["amplitude_min_v"] <= abs(a) <= branch["amplitude_max_v"]
+                      and shift <= branch["checked_quad_hz"]):
+                    res["validity"] = "within the measured quadratic range"
+                else:
+                    res["validity"] = "beyond the fitted arc's measured range"
+            elif self.anchor is not None:
+                res["validity"] = "beyond the fitted arc's measured range"
+            elif limit is None:
+                res["validity"] = "quadratic range unknown"
             else:
                 res["validity"] = ("outside the quadratic range" if shift > limit
                                    else "within the quadratic range")
@@ -401,8 +419,10 @@ class Conversion:
             return [None if not np.isfinite(v) else float(v) for v in arr]
         f0 = self.f01 if self.f01 is not None else float("nan")
         return {"amplitude_v": [float(a) for a in amps],
-                "quad_hz": clean(f0 + self.quad_shift(amps)),
-                "model_hz": clean(f0 + self.model_shift(amps)) if self.anchor is not None else None}
+                "quad_hz": clean(f0 + np.where(amps == 0, 0.0, self.quad_shift(amps))),
+                "model_hz": clean(f0 + np.where(amps == 0, 0.0,
+                                   self.model_shift(amps) if self.sign is not None else np.nan))
+                            if self.anchor is not None else None}
 
     def trajectory(self, samples):
         """Each waveform sample (V) mapped through the same tiers (1 sample per ns)."""
@@ -411,7 +431,8 @@ class Conversion:
         def clean(arr):
             return [None if not np.isfinite(v) else float(v) for v in arr]
         quad = f0 + np.where(a == 0, 0.0, self.quad_shift(a))
-        model = f0 + np.where(a == 0, 0.0, self.model_shift(a)) if self.anchor is not None else None
+        model = (f0 + np.where(a == 0, 0.0, self.model_shift(a) if self.sign is not None else np.nan)
+                 if self.anchor is not None else None)
         main = model if model is not None else quad
         if model is not None:
             main = np.where(np.isfinite(model), model, quad)
