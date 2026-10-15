@@ -1066,3 +1066,28 @@ Map tools on reproduced maps: every panel, about a second per step, values named
   "cap overridden". The separate Override switch is gone.
 - **Hover**: values are named by the axis titles (a label drawn once for a row names every panel in it), and a
   dashed crosshair follows the pointer.
+
+## v1.5.0 (2026-10-15)
+
+Chip Status gains a CZ gate plan view; Z-line distortion moves under Chip Status.
+
+- **Chip Status > Z-line distortion**: the distortion view now sits under Chip Status (it describes the chip's state);
+  its address `/zline` is unchanged.
+- **Chip Status > CZ gate plan** (new): at what frequency every CZ operation of every pair operates.
+  - **Chip frequency map**: every qubit on one frequency axis, one column each. A column shows the qubit's idle
+    frequency, the population-loss defects and safe intervals the chip stores, and each pair's operating point
+    (solid: the lab's fitted flux model; dashed: the quad-term estimate). Pick one operation name for every pair, or
+    order the columns by idle frequency; a click opens that operation.
+  - **All-pairs table**: the frequency each qubit reaches, the detuning, the nearest resonance of the |11> manifold,
+    how the frequency was obtained, the quadratic-range flag, IRB, and when the operation was last set (from the chip's
+    change history; "unknown" when it is not known, with a warning when a value it depends on changed later).
+  - **Per operation**: frequency vs flux amplitude for both qubits (idle point, an arrow to the operating point, the
+    resonance levels at that height, the planned interaction point, defect bands); frequency during the gate from the
+    operation's own waveforms, with the detuning against the three resonance conditions; and a card with amplitudes,
+    plan vs played, phases, IRB/RB with load ids, played duration, last set and staleness.
+  - **How a frequency is obtained**: the quadratic term `freq_vs_flux_01_quad_term` by default, labelled
+    "quad-term estimate". Where the qubit stores the lab's fitted flux model, that model is drawn as the main curve.
+    The direction is decided from what the chip stores (flux point, the fitted arc, sweet-spot frequencies), never from
+    the coefficient's sign; conflicting evidence shows "sign convention unclear" instead of a number. Each estimate is
+    checked against the fitted arc where one exists, and the view flags operations beyond the quadratic range.
+- **Pulses**: the two-flux SNZ pulse class previews sample for sample like the lab's own class.
