@@ -926,10 +926,14 @@ _SPIKE = {"showspikes": True, "spikemode": "across", "spikesnap": "cursor", "spi
           "spikethickness": 1, "spikecolor": "rgba(128,128,128,0.75)"}
 
 
+_TAG = re.compile(r"</?(?:sup|sub|b|i|em|strong|span)(?:\s[^>]*)?>", re.I)
+
+
 def _plain(text) -> str:
-    """An axis or colorbar title as hover text: tags dropped, a template brace kept literal."""
-    text = re.sub(r"<br\s*/?>", " ", str(text or ""))
-    return re.sub(r"<[^>]+>", "", text).replace("%{", "% {").strip()
+    """An axis or colorbar title as hover text: the converter's own markup tags dropped (never a
+    bare '<' that is part of the label), a template brace kept literal."""
+    text = re.sub(r"<br\s*/?>", " ", str(text or ""), flags=re.I)
+    return _TAG.sub("", text).replace("%{", "% {").strip()
 
 
 def _hover_guides(fig: dict) -> dict:
@@ -946,10 +950,15 @@ def _hover_guides(fig: dict) -> dict:
                 for key, value in _SPIKE.items():
                     axis.setdefault(key, value)
     # A shared label is drawn once (the left panel of a row, the bottom panel of a column): an
-    # untitled axis borrows the title of a titled axis of the same letter, side and domain.
+    # untitled axis borrows the title of a titled axis of the same letter, side and domain, and
+    # only when both show the same range (a shared axis); an unshared one keeps "x"/"y".
     def place(ref):
         a = axes[ref]
-        return (ref[0], a.get("side"), bool(a.get("overlaying")), tuple(round(v, 6) for v in a.get("domain") or ()))
+        rng = a.get("range")
+        return (ref[0], a.get("side"), bool(a.get("overlaying")), a.get("type"),
+                tuple(round(v, 6) for v in a.get("domain") or ()),
+                tuple(float(f"{v:.9g}") for v in rng) if isinstance(rng, list) and len(rng) == 2
+                and all(isinstance(v, (int, float)) for v in rng) else None)
     for ref in [r for r, t in titles.items() if not t]:
         donor = next((r for r, t in titles.items() if t and place(r) == place(ref)), None)
         if donor:

@@ -79,3 +79,17 @@ def test_a_shared_label_drawn_once_names_every_panel_of_its_row():
     heats = [t for t in out["data"] if t["type"] == "heatmap"]
     assert len(heats) == 3
     assert all("Power (dBm): %{y}" in t["hovertemplate"] for t in heats)
+
+
+def test_a_bare_angle_bracket_in_a_title_survives_and_an_unshared_axis_borrows_nothing():
+    from quam_state_manager.core.interactive_plots.replot import _hover_guides
+    fig = {"data": [{"type": "scatter", "x": [0], "y": [0], "xaxis": "x", "yaxis": "y"},
+                    {"type": "scatter", "x": [0], "y": [0], "xaxis": "x2", "yaxis": "y2"}],
+           "layout": {"xaxis": {"title": {"text": "occupancy < 1 > 0"}, "domain": [0, .45], "range": [0, 1]},
+                      "yaxis": {"title": {"text": "f<sub>01</sub> [GHz]"}, "domain": [0, 1], "range": [4, 5]},
+                      "xaxis2": {"title": {"text": ""}, "domain": [.55, 1], "range": [0, 1]},
+                      # same row and side, different range: not the same quantity -> keeps "y"
+                      "yaxis2": {"title": {"text": ""}, "domain": [0, 1], "range": [0, 30]}}}
+    out = _hover_guides(fig)["data"]
+    assert out[0]["hovertemplate"].startswith("occupancy < 1 > 0: %{x}<br>f01 [GHz]: %{y}")
+    assert out[1]["hovertemplate"].startswith("x: %{x}<br>y: %{y}")

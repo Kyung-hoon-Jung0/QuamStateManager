@@ -124,6 +124,25 @@ function check(value, message) { checks++; assert.ok(value, message); }
     c('panel').value = '1'; c('panel').dispatchEvent(new w.Event('input', {bubbles: true})); c('panel').dispatchEvent(new w.Event('change', {bubbles: true}));
     await wait(340);
     check(posts.length === beforeReadout && c('status').textContent.startsWith('Map 2: '), 'switching the readout re-reads without re-analyzing');
+    // review: a Readout switch while a request is out must not revive (or Apply) the older answer
+    input('sigma_x', 1.5);
+    let release;
+    queued.push((resolve, value) => { release = () => resolve({ok: true, json: () => Promise.resolve(value)}); });
+    await wait(330);
+    c('panel').value = '0'; c('panel').dispatchEvent(new w.Event('change', {bubbles: true}));
+    check(c('apply').disabled && !c('status').textContent.startsWith('Map 1: node'), 'a pending request keeps Apply off across a Readout switch');
+    release(); await wait(20);
+    check(!c('apply').disabled, 'the answer for the shown settings enables Apply');
+    tile._mapTools.destroy();
+    // review: more than 16 maps -> requests of at most 16 panels (the route's bound)
+    const many = {data: Array.from({length: 18}, (_, i) => ({...payload.data[0], xaxis: 'x' + (i + 1), yaxis: 'y' + (i + 1)})), layout: {}};
+    const before16 = posts.length;
+    w.MapTools.mount(tile, plot, many, {uid: 'run:18', fig: 'map'});
+    tile.querySelector('.map-tools-button').click(); await wait(30);
+    const sent = posts.slice(before16).map(p => p.panels.length);
+    check(sent.length >= 2 && sent.every(n => n <= 16) && posts.slice(before16, before16 + 2).reduce((n, p) => n + p.panels.length, 0) === 18,
+          'eighteen maps go out as requests of at most sixteen');
+    tile._mapTools.destroy();
     const nonmap = d.createElement('div'); d.body.appendChild(nonmap);
     w.MapTools.mount(nonmap, plot, {data: [{type: 'scatter'}]}, {uid: 'run'});
     check(!nonmap.querySelector('.map-tools-button'), 'non heatmaps hide tools');

@@ -53,7 +53,9 @@
         else host.insertBefore(strip, host.firstChild);
         function control(name) { return strip.querySelector('[data-map="' + name + '"]'); }
         // Per panel: the last server result and its caps in FIGURE axes (a transposed model swaps them).
-        var results = [], caps = [], last = null, classification = null, generation = 0, timer = null, alive = true, initialized = false, kind = '';
+        // results: this generation's answers only (cleared while a request is out, so a Readout switch can
+        // never show or Apply an older answer); models / caps: what each panel's type allows, kept across.
+        var results = [], models = [], caps = [], last = null, classification = null, generation = 0, timer = null, alive = true, initialized = false, kind = '';
         var pending = [];
         var side = strip.querySelector('.map-tools-side');
         var statusChip = document.createElement('span'); statusChip.className = 'map-tools-chip';
@@ -77,8 +79,8 @@
             });
         }
         function modelFor(i) {
-            var chosen = control('model').value, models = results[i] && results[i].classification.models;
-            return i === readout() || !models || models.indexOf(chosen) !== -1 ? chosen : 'auto';
+            var chosen = control('model').value, allowed = models[i];
+            return !allowed || allowed.indexOf(chosen) !== -1 ? chosen : 'auto';
         }
         function settings(model) {
             return {smooth: {kernel: control('kernel').value,
@@ -89,10 +91,14 @@
                     level: Number(control('level').value), band: Number(control('band').value)},
                 fit: {model: model || control('model').value}};
         }
-        // panels grouped by the model each can take (a panel of another type falls back to auto)
-        function groups() {
-            var out = {};
-            maps.forEach(function (_, i) { var m = modelFor(i); (out[m] = out[m] || []).push(i); });
+        // panels grouped by the model each can take (a panel of another type falls back to auto),
+        // at most 16 panels per request (the route's bound)
+        function groups(all) {
+            var out = [], byModel = {};
+            maps.forEach(function (_, i) { var m = all ? 'auto' : modelFor(i); (byModel[m] = byModel[m] || []).push(i); });
+            Object.keys(byModel).forEach(function (m) {
+                for (var k = 0; k < byModel[m].length; k += 16) out.push({model: m, panels: byModel[m].slice(k, k + 16)});
+            });
             return out;
         }
         function clamp() {
@@ -141,7 +147,7 @@
             if (mode === 'side') Promise.resolve(window.Plotly.react(side, traces, layout, {responsive: true})).catch(function () {});
         }
         function invalidate() {
-            generation++; last = null; control('apply').disabled = true; window.clearTimeout(timer);
+            generation++; last = null; results = []; control('apply').disabled = true; window.clearTimeout(timer);
             pending.forEach(function (request) { request.controller.abort(); window.clearTimeout(request.timeout); });
             pending = [];
         }
@@ -179,9 +185,9 @@
         }
         function analyze(initial) {
             invalidate();
-            var seq = generation, wanted = initial ? {auto: maps.map(function (_, i) { return i; })} : groups();
+            var seq = generation, wanted = groups(initial);
             control('status').textContent = 'Analyzing ' + (maps.length > 1 ? maps.length + ' full-resolution maps...' : 'full-resolution map...');
-            return Promise.all(Object.keys(wanted).map(function (model) { return post(wanted[model], initial ? 'auto' : model); }))
+            return Promise.all(wanted.map(function (g) { return post(g.panels, g.model); }))
                 .then(function (lists) {
                     pending = [];
                     if (!alive || seq !== generation || !document.body.contains(host)) return;
@@ -189,6 +195,7 @@
                     lists.forEach(function (list) { list.forEach(function (item) { values[item.panel] = item.result; }); });
                     if (values.length !== maps.length || values.some(function (v) { return !v; })) throw new Error('Analysis returned no result for a map.');
                     results = values;
+                    models = values.map(function (result) { return result.classification.models || []; });
                     caps = values.map(function (result) {
                         var c = copy(result.caps_applied);
                         if (c.transposed) { var swap = c.cap_x; c.cap_x = c.cap_y; c.cap_y = swap; }
