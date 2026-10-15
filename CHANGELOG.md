@@ -1041,3 +1041,11 @@ Markers in reproduced lab figures keep their own colours.
 - **Marker colours**: a marker keeps the face and edge colours the lab gave it -- hollow rings stay hollow with their
   coloured edge (a shortlist of candidates), a star keeps its fill and black edge, and scatter points drawn hollow stay
   hollow. Before, a marker took its line's default colour and every hollow marker was filled.
+
+## v1.4.8 (2026-10-15)
+
+A reproduced figure's legend sits where the lab put it.
+
+- **Legend placement**: when one panel of a multi-panel lab figure carries the legend, the reproduction keeps it in
+  that panel, at the corner Matplotlib drew it in (also for "best" placement), instead of moving it to a footer where it
+  could run into an axis title. Figures with several legends still gather them in one footer.
