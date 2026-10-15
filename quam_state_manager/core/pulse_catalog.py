@@ -698,6 +698,10 @@ _READOUT_BASES = frozenset({
 _CHIP_CLASSES: dict | None = None
 _CHIP_SPECS_MEMO: tuple[int, dict] | None = None
 
+#: lab classes the catalog carries ONLY as a waveform transcription (preview, never creatable): the
+#: chip's own declaration still offers the class in the create form ("From this chip"), once
+LAB_TRANSCRIBED = frozenset({"SNZTwoFluxPulse"})
+
 
 def apply_chip_classes(classes: dict | None) -> None:
     """Install the probed class inventory for the OPEN chip (or clear it)."""
@@ -738,7 +742,7 @@ def chip_pulse_specs(classes: dict | None = None) -> dict[str, PulseSpec]:
         if not isinstance(bases, (list, tuple)) or _PULSE_BASE not in bases:
             continue                       # a macro / the root / a port, not a pulse
         leaf = str(path).rsplit(".", 1)[-1]
-        if (leaf in PULSE_CATALOG or leaf in _LEAF_ALIASES or leaf in roster
+        if ((leaf in PULSE_CATALOG and leaf not in LAB_TRANSCRIBED) or leaf in _LEAF_ALIASES or leaf in roster
                 or leaf.startswith("_") or leaf in _ENV_SPEC_BASE_DENY):
             continue
         fields = rec.get("fields")
