@@ -20783,7 +20783,7 @@ def cz_plan_data():
     traj, notes = [], unavailable + list(row["notes"])
     for ln in row["lines"]:
         conv = convs.get(ln["qubit_path"])
-        if not ln["moves"] or conv is None:
+        if ln.get("refusal") or not ln["moves"] or conv is None:
             traj.append(None)
             continue
         played = ln["play_duration_ns"]
@@ -20797,7 +20797,9 @@ def cz_plan_data():
             from quam_state_manager.core.waveform_synth import lab_waveform
             with store._lock:
                 pulse = czp.resolved_tree(store.merged, ln["pulse_path"])
-            samples = lab_waveform(pulse)
+            waveform_reasons = []
+            samples = lab_waveform(pulse, waveform_reasons)
+            notes.extend(f"{ln['name']}: {reason}" for reason in waveform_reasons)
             if samples:
                 payload = {"ok": True, "kind": "lab transcription"}
                 notes.append(f"{ln['name']}: waveform from SM's transcription of the lab's own pulse class"

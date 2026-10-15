@@ -75,3 +75,89 @@ def test_the_planned_point_sits_in_the_carrier_column():
     p = the_map()["planned"]
     assert p == [{"pair": "q10-2", "qubit": "q10", "qubit_path": "qubits.q10", "frequency_hz": 4.6e9,
                   "what": "planned interaction frequency"}]
+
+
+def mapped(state, op=None):
+    rows, convs = C.operations(state)
+    return rows, C.chip_map(rows, convs, op)
+
+
+def test_pair_aliases_of_one_qubit_are_refused_without_resonances():
+    s = chip()
+    s["qubits"]["alias"] = "#/qubits/q10"
+    s["qubit_pairs"]["q10-2"]["qubit_target"] = "#/qubits/alias"
+    rows, m = mapped(s)
+    row = next(r for r in rows if r["pair"] == "q10-2")
+    assert all(ln["point"]["frequency_hz"] is None for ln in row["lines"])
+    assert row["detuning_hz"] is None and row["resonances"] == [] and row["nearest"] is None
+    assert row["idle_detuning_hz"] is None
+    assert not any("amplitude cannot be read" in note for note in row["notes"])
+    assert not any(e["pair"] == "q10-2" for e in m["segments"] + m["planned"])
+    refused = [e for e in m["refused"] if e["pair"] == "q10-2"]
+    assert len(refused) == 2 and all("same qubit" in e["reason"] for e in refused)
+
+
+@pytest.mark.parametrize("both", [True, False])
+def test_unknown_routing_never_becomes_idle(both):
+    s = chip()
+    pair = s["qubit_pairs"]["q10-2"]
+    if both:
+        del s["qubits"]["q10"]["f_01"]
+        pair["macros"] = {"cz": {"__class__": "x.CZGateBothMovers", "flux_pulse_high": {"amplitude": .1},
+                                  "flux_pulse_low": {"amplitude": .05}}}
+        reason = "high and low"
+    else:
+        del pair["moving_qubit"]
+        reason = "moving_qubit"
+    rows, m = mapped(s)
+    row = next(r for r in rows if r["pair"] == "q10-2" and r["operation"] == "cz")
+    assert all(ln["amplitude_v"] is None and ln["point"]["frequency_hz"] is None for ln in row["lines"])
+    assert row["detuning_hz"] is None
+    assert not any(e["pair"] == "q10-2" for e in m["segments"])
+    refused = [e for e in m["refused"] if e["pair"] == "q10-2"]
+    assert len(refused) == 2 and all(reason in e["reason"] for e in refused)
+
+
+@pytest.mark.parametrize("mode", ["inline", "pointer", "registered", "misleading_low"])
+@pytest.mark.parametrize("high_role", ["control", "target"])
+def test_stored_marker_uses_gate_role_instead_of_canonical_pulse_spelling(mode, high_role):
+    s = chip()
+    s["qubit_pairs"]["q10-2"].pop("extras")
+    if high_role == "target":
+        s["qubits"]["q2"]["f_01"] = 6e9
+    high_name = "q10" if high_role == "control" else "q2"
+    s["qubits"][high_name]["z"]["operations"]["flux"] = {"amplitude": .1}
+    high = {"amplitude": .1}
+    low = {"amplitude": .05}
+    if mode in ("pointer", "misleading_low"):
+        high = f"#/qubits/{high_name}/z/operations/flux"
+    elif mode == "registered":
+        high = "flux"
+    if mode == "misleading_low":
+        s["shared"] = {"flux_pulse_high": low}
+        low = "#/shared/flux_pulse_high"
+    s["qubit_pairs"]["q10-2"]["macros"] = {"cz": {"__class__": "x.CZGateBothMovers",
+        "flux_pulse_high": high, "flux_pulse_low": low, "interaction_frequency": 4.6e9}}
+    _, m = mapped(s)
+    markers = [p for p in m["planned"] if p["pair"] == "q10-2"]
+    assert len(markers) == 1 and markers[0]["qubit_path"] == "qubits." + high_name
+    assert markers[0]["frequency_hz"] == 4.6e9 and markers[0]["what"] == "stored interaction frequency"
+
+
+@pytest.mark.parametrize("no_rows", [False, True])
+def test_inventory_includes_unpaired_qubits_and_pairs_without_cz(no_rows):
+    s = chip()
+    s["qubits"]["q11"] = qubit(4.8e9, population_loss_defects_json=[
+        {"frequency_hz": 4.6e9, "peak_loss": .2}], population_loss_safe_intervals_json=[
+        {"frequency_lo_hz": 4.7e9, "frequency_hi_hz": 4.75e9}])
+    s["qubit_pairs"]["empty"] = {"qubit_control": "#/qubits/q10", "qubit_target": "#/qubits/q2", "macros": {}}
+    if no_rows:
+        for p in s["qubit_pairs"].values():
+            p["macros"] = {}
+    _, m = mapped(s, "cz")
+    assert "q11" in [q["name"] for q in m["qubits"]]
+    q = next(q for q in m["qubits"] if q["name"] == "q11")
+    assert q["f01_hz"] == 4.8e9 and q["defects"][0]["peak_loss"] == .2 and q["safe"][0]["lo_hz"] == 4.7e9
+    assert "empty" in m["missing"]
+    if no_rows:
+        assert m["segments"] == [] and set(m["missing"]) == set(s["qubit_pairs"])

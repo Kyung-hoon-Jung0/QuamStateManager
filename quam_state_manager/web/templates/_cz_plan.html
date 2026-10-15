@@ -16,7 +16,6 @@
 {% for reason in unavailable %}
 <p class="czp-warn-text">{{ reason }}</p>
 {% endfor %}
-{% if rows %}
 <section class="czp-map-box" aria-label="Chip frequency map">
     <div class="czp-controls">
         <h3 class="czp-title">Chip frequency map <small class="muted">&mdash; every pair's operating point on one frequency axis</small></h3>
@@ -30,6 +29,7 @@
     <div id="czp-map" class="czp-map"></div>
     <p id="czp-map-notes" class="muted czp-map-notes" role="status"></p>
 </section>
+{% if rows %}
 <div class="czp-table-wrap">
 <table id="czp-table" class="data-table czp-table" role="grid">
     <thead>

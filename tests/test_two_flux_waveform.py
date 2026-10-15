@@ -33,3 +33,39 @@ def test_a_unipolar_line_has_zero_net_area_and_a_bipolar_one_both_lobes():
 def test_the_catalog_does_not_carry_the_lab_class():
     assert "SNZTwoFluxPulse" not in pulse_catalog.PULSE_CATALOG
     assert waveform_synth.lab_waveform({"__class__": "x.SquarePulse", "amplitude": .1, "length": 8}) is None
+
+
+@pytest.mark.parametrize("changes", [
+    {"length": 200004}, {"flat_length": 10**12}, {"length": 40, "flat_length": 10**12},
+    {"t_phi": 200001}, {"tail_length": 200001}, {"padding": 200001},
+    {"flat_length": 150000, "t_phi": 60000}, {"padding": 100000},
+    {"unipolar": True, "amplitude": 1000},
+])
+def test_transcription_bounds_all_sizes_before_dispatch(monkeypatch, changes):
+    called = []
+    monkeypatch.setitem(waveform_synth.LAB_WAVEFORMS, "SNZTwoFluxPulse",
+                        (lambda p: called.append(p) or [], waveform_synth._snz_two_flux_length))
+    reasons = []
+    result = waveform_synth.lab_waveform(
+        {"__class__": "x.SNZTwoFluxPulse", "amplitude": .1, "flat_length": 20, **changes}, reasons)
+    assert called == [], "oversized declared or computed size reached the allocator"
+    assert result is None and reasons and "MAX_SAMPLES" in reasons[0]
+
+
+@pytest.mark.parametrize("cap", [0, -1, float("nan"), float("inf")])
+def test_invalid_lobe_cap_is_refused_with_reason(cap):
+    reasons = []
+    assert waveform_synth.lab_waveform({"__class__": "x.SNZTwoFluxPulse", "amplitude": .1,
+                                       "flat_length": 20, "unipolar": True, "lobe3_max_v": cap}, reasons) is None
+    assert "lobe3_max_v" in reasons[0] and "not drawn" in reasons[0]
+
+
+@pytest.mark.parametrize("error", [ZeroDivisionError("numeric domain"), FloatingPointError("numeric domain")])
+def test_transcription_numeric_errors_are_contained(monkeypatch, error):
+    def broken(p):
+        raise error
+    monkeypatch.setitem(waveform_synth.LAB_WAVEFORMS, "SNZTwoFluxPulse", (broken, lambda p: 24))
+    reasons = []
+    assert waveform_synth.lab_waveform({"__class__": "x.SNZTwoFluxPulse", "amplitude": .1,
+                                       "flat_length": 20}, reasons) is None
+    assert "numeric domain" in reasons[0]

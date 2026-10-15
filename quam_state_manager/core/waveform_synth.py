@@ -245,7 +245,7 @@ def _snz_two_flux_length(p):
 LAB_WAVEFORMS = {"SNZTwoFluxPulse": (_snz_two_flux, _snz_two_flux_length)}
 
 
-def lab_waveform(pulse: dict) -> list | None:
+def lab_waveform(pulse: dict, reasons: list | None = None) -> list | None:
     """Samples (1 per ns) of a transcribed lab pulse class from its resolved fields, else None."""
     if not isinstance(pulse, dict):
         return None
@@ -256,12 +256,35 @@ def lab_waveform(pulse: dict) -> list | None:
     fn, length_of = entry
     p = dict(pulse)
     try:
+        # Validate every allocation input, including the core hidden by an explicit length.
+        for key in ("length", "flat_length", "t_phi", "tail_length", "padding"):
+            value = p.get(key)
+            if key == "length" and (value is None or isinstance(value, str) and value.startswith("#")):
+                continue
+            value = 0 if value is None and key != "flat_length" else value
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"{key} must be a finite sample count")
+            if value < 0 or value != int(value):
+                raise ValueError(f"{key} must be a nonnegative integer sample count")
+            if value > MAX_SAMPLES:
+                raise ValueError(f"{key} exceeds MAX_SAMPLES ({MAX_SAMPLES})")
+        cap = float(p.get("lobe3_max_v", .060))
+        if not math.isfinite(cap) or cap <= 0:
+            raise ValueError("lobe3_max_v must be finite and positive")
+        inferred = length_of(p)
+        if inferred > MAX_SAMPLES:
+            raise ValueError(f"computed length exceeds MAX_SAMPLES ({MAX_SAMPLES})")
         if not isinstance(p.get("length"), (int, float)) or isinstance(p.get("length"), bool):
-            p["length"] = length_of(p)
-        samples = fn(p)
-    except (KeyError, TypeError, ValueError, OverflowError):
+            p["length"] = inferred
+        with np.errstate(all="raise"):
+            samples = [float(np.real(v)) for v in fn(p)]
+        if not all(math.isfinite(v) for v in samples):
+            raise ValueError("transcription produced non-finite samples")
+    except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
+        if reasons is not None:
+            reasons.append(f"not drawn: {exc}")
         return None
-    return [float(np.real(v)) for v in samples]
+    return samples
 
 
 def _square(p):

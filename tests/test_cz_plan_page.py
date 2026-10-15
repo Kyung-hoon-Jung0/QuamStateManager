@@ -201,6 +201,65 @@ def test_registered_name_draws_its_resolved_waveform(tmp_path, monkeypatch):
     assert data["trajectory"][0]["frequency_hz"][0] == pytest.approx(4.8848e9)
 
 
+def state_client(tmp_path, monkeypatch, state):
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.web import routes
+    store = QuamStore.from_dicts(state, {})
+    monkeypatch.setattr(routes, "_store", lambda: store)
+    monkeypatch.setattr(routes, "_active_ctx", lambda: None)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    app.config["TESTING"] = False
+    return app.test_client()
+
+
+@pytest.mark.parametrize("changes,reason", [({"length": 200004}, "MAX_SAMPLES"),
+    ({"length": 40, "flat_length": 10**12}, "MAX_SAMPLES"),
+    ({"unipolar": True, "lobe3_max_v": 0}, "lobe3_max_v"),
+    ({"unipolar": True, "lobe3_max_v": -1}, "lobe3_max_v"),
+    ({"unipolar": True, "lobe3_max_v": float("inf")}, "lobe3_max_v"),
+    ({"axis_angle": "invalid"}, "not drawn")])
+def test_invalid_transcription_returns_200_with_explicit_not_drawn(tmp_path, monkeypatch, changes, reason):
+    s, _ = _chip()
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]["flux_pulse_qubit"] = {
+        "__class__": "x.SNZTwoFluxPulse", "flat_length": 20, "amplitude": .1, **changes}
+    c = state_client(tmp_path, monkeypatch, s)
+    response = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["trajectory"][0] is None
+    assert any("not drawn" in n and reason in n for n in data["notes"])
+
+
+def test_idle_map_is_present_without_any_cz_rows(tmp_path, monkeypatch):
+    s, _ = _chip()
+    for pair in s["qubit_pairs"].values():
+        pair["macros"] = {}
+    c = state_client(tmp_path, monkeypatch, s)
+    html = c.get("/cz-plan", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert 'id="czp-map"' in html and 'id="czp-map-op"' in html
+    m = c.get("/cz-plan/map?op=cz").get_json()
+    assert len(m["qubits"]) == 3 and m["segments"] == []
+    assert set(m["missing"]) == set(s["qubit_pairs"])
+
+
+@pytest.mark.parametrize("case", ["same_member", "unknown_mover", "unknown_high"])
+def test_routing_refusals_do_not_synthesize_a_time_frequency(tmp_path, monkeypatch, case):
+    s, _ = _chip()
+    p = s["qubit_pairs"]["q1-2"]
+    if case == "same_member":
+        p["qubit_target"] = p["qubit_control"]
+    elif case == "unknown_mover":
+        del p["moving_qubit"]
+    else:
+        del s["qubits"]["q1"]["f_01"]
+        p["macros"]["cz_unipolar"] = {"__class__": "x.CZGateBothMovers",
+            "flux_pulse_high": {"amplitude": .1}, "flux_pulse_low": {"amplitude": .05}}
+    c = state_client(tmp_path, monkeypatch, s)
+    data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_json()
+    assert data["trajectory"] == [None, None]
+    assert all(ln["point"]["frequency_hz"] is None and ln["point"]["reason"] for ln in data["row"]["lines"])
+
+
 @pytest.mark.parametrize("both", [False, True])
 @pytest.mark.parametrize("cycles", [4, 16])
 def test_play_time_override_converts_cycles_and_resizes_constant_pulses(tmp_path, monkeypatch, both, cycles):

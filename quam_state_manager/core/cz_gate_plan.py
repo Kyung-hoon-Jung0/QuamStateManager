@@ -532,11 +532,14 @@ def chip_map(rows, conversions, op_name=None):
         qubits[path] = {"name": name, "path": path, "f01_hz": conv.f01, "defects": defects, "safe": safe,
                         "loss_data": bool(defects or safe), "tier": conv.model_kind or QUAD_LABEL,
                         "direction": conv.frame["reason"]}
-    by_pair = {}
+    by_pair = {name: [] for name in getattr(rows, "pair_names", ())}
     for r in rows:
         by_pair.setdefault(r["pair"], []).append(r)
     segments, planned, refused, missing = [], [], [], []
     for pair, ops in by_pair.items():
+        if not ops:
+            missing.append(pair)
+            continue
         if op_name:
             row = next((r for r in ops if r["operation"] == op_name), None)
             if row is None:
@@ -562,7 +565,7 @@ def chip_map(rows, conversions, op_name=None):
             planned.append({"pair": pair, "qubit": ln["name"], "qubit_path": ln["qubit_path"],
                             "frequency_hz": plan["omega_int_hz"], "what": "planned interaction frequency"})
         if row.get("interaction_frequency_hz") is not None:
-            high = next((ln for ln in row["lines"] if (ln.get("pulse_path") or "").endswith("flux_pulse_high")), None)
+            high = next((ln for ln in row["lines"] if ln.get("pulse_field") == "flux_pulse_high"), None)
             if high is not None:
                 planned.append({"pair": pair, "qubit": high["name"], "qubit_path": high["qubit_path"],
                                 "frequency_hz": row["interaction_frequency_hz"],
@@ -609,6 +612,14 @@ def _is_cz(name, macro):
     return "CZ" in cls.split(".")[-1] or name.lower().startswith("cz")
 
 
+class OperationRows(list):
+    """Operation rows plus the resolved pair inventory, including pairs without CZ macros."""
+
+    def __init__(self):
+        super().__init__()
+        self.pair_names = []
+
+
 def operations(doc, conversions=None, unavailable=None):
     """Every CZ macro of every pair (aliases included), with what each qubit plays.
 
@@ -628,11 +639,17 @@ def operations(doc, conversions=None, unavailable=None):
         unavailable.append(path + ": unavailable (expected an object; unresolved pointer or malformed value)")
         return {}
 
-    rows = []
+    # Columns exist independently of pair membership and operation availability.
+    for name in mapping("qubits"):
+        path = read(doc, "qubits." + name).get("holder_path")
+        if path and isinstance(current(doc, path), dict) and path not in conversions:
+            conversions[path] = Conversion(qubit_at(doc, path))
+    rows = OperationRows()
     for pair_name in mapping("qubit_pairs"):
         pp = "qubit_pairs." + pair_name
         if not mapping(pp):
             continue
+        rows.pair_names.append(pair_name)
         roles = {}
         for role in ("control", "target"):
             t = read(doc, pp + ".qubit_" + role)
@@ -641,6 +658,8 @@ def operations(doc, conversions=None, unavailable=None):
             if path and path not in conversions:
                 conversions[path] = Conversion(q)
             roles[role] = {"path": path, "name": path.split(".")[-1] if path else "?", "qubit": q}
+        pair_refusal = ("pair roles resolve to the same qubit" if roles["control"]["path"]
+                        and roles["control"]["path"] == roles["target"]["path"] else None)
         plan = resolved_tree(doc, pp + ".extras.cz_plan")
         moving = current(doc, pp + ".moving_qubit")
         for name in mapping(pp + ".macros"):
@@ -651,6 +670,7 @@ def operations(doc, conversions=None, unavailable=None):
                 continue
             alias = read(doc, path).get("via") or []
             fields, notes = {}, []
+            routing_reason = None
             cls = str(cls).split(".")[-1]
             if "flux_pulse_high" in macro or "flux_pulse_low" in macro:
                 fc, ft = (number(roles[k]["qubit"].get("f_01")) for k in ("control", "target"))
@@ -659,7 +679,8 @@ def operations(doc, conversions=None, unavailable=None):
                     low = "target" if high == "control" else "control"
                     fields = {high: "flux_pulse_high", low: "flux_pulse_low"}
                 else:
-                    notes.append("cannot tell the high and low qubit: an idle f_01 is missing")
+                    routing_reason = "cannot tell the high and low qubit: an idle f_01 is missing"
+                    notes.append(routing_reason)
                 kind = "both movers"
             elif "flux_pulse_target" in macro:
                 fields = {"control": "flux_pulse_qubit", "target": "flux_pulse_target"}
@@ -668,8 +689,11 @@ def operations(doc, conversions=None, unavailable=None):
                 fields = {moving: "flux_pulse_qubit"}
                 kind = "single mover"
             else:
-                notes.append("qubit_pair.moving_qubit is missing or not control/target")
+                routing_reason = "qubit_pair.moving_qubit is missing or not control/target"
+                notes.append(routing_reason)
                 kind = "single mover"
+            if pair_refusal:
+                notes.append(pair_refusal)
             duration_field = "duration" if kind == "both movers" else "duration_qubit" if kind == "single mover" else None
             raw_duration = current(doc, path + "." + duration_field) if duration_field else None
             cycles = number(raw_duration)
@@ -698,13 +722,16 @@ def operations(doc, conversions=None, unavailable=None):
                 if pulse_path and isinstance(current(doc, pulse_path), dict):
                     pulse_path = read(doc, pulse_path)["holder_path"]
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
-                amp = number(current(doc, amp_path)) if amp_path else 0.0
-                if amp_path and amp is None:
+                refusal = pair_refusal or routing_reason
+                amp = None if refusal else number(current(doc, amp_path)) if amp_path else 0.0
+                if amp_path and amp is None and not refusal:
                     notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 pulse = current(doc, pulse_path, {}) if pulse_path else {}
-                pt = conv.point(amp) if conv else {"frequency_hz": None, "reason": "qubit not found"}
+                pt = ({"frequency_hz": None, "reason": refusal} if refusal else
+                      conv.point(amp) if conv else {"frequency_hz": None, "reason": "qubit not found"})
                 lines.append({"role": role, "name": info["name"], "qubit_path": info["path"],
-                              "moves": bool(field), "pulse_path": pulse_path, "amplitude_path": amp_path,
+                              "moves": True if routing_reason else bool(field), "refusal": refusal,
+                              "pulse_field": field, "pulse_path": pulse_path, "amplitude_path": amp_path,
                               "play_duration_ns": duration_ns if field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low") else None,
                               "duration_unknown": (raw_duration is not None and duration_ns is None
                                                    and field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low")),
@@ -713,7 +740,7 @@ def operations(doc, conversions=None, unavailable=None):
                               "amplitude_v": amp, "point": pt})
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
-            res = resonances(fq[0], fq[1], alphas[0], alphas[1])
+            res = [] if pair_refusal else resonances(fq[0], fq[1], alphas[0], alphas[1])
             known = [r for r in res if r["distance_hz"] is not None]
             nearest = min(known, key=lambda r: abs(r["distance_hz"])) if known else None
             coupler = current(doc, path + ".coupler_flux_pulse")
@@ -724,13 +751,13 @@ def operations(doc, conversions=None, unavailable=None):
                 "alias_of": alias[-1]["to_path"] if alias else None,
                 "lines": lines, "resonances": res, "nearest": nearest,
                 "detuning_hz": (fq[0] - fq[1]) if None not in fq else None,
-                "idle_detuning_hz": (lambda a, b: a - b if a is not None and b is not None else None)(
+                "idle_detuning_hz": None if pair_refusal else (lambda a, b: a - b if a is not None and b is not None else None)(
                     number(roles["control"]["qubit"].get("f_01")), number(roles["target"]["qubit"].get("f_01"))),
                 "duration_ns": duration_ns, "duration_note": duration_note,
                 "phases": {k: number(current(doc, path + ".phase_shift_" + k)) for k in ("control", "target")},
                 "fidelity": _fidelity(resolved_tree(doc, path + ".fidelity")),
-                "plan": _plan(plan, lines),
-                "interaction_frequency_hz": number(current(doc, path + ".interaction_frequency")),
+                "plan": None if pair_refusal else _plan(plan, lines),
+                "interaction_frequency_hz": None if pair_refusal else number(current(doc, path + ".interaction_frequency")),
                 "coupler_amplitude_v": number(current(doc, path + ".coupler_flux_pulse.amplitude")) if coupler else None,
                 "amplitudes": [ln["amplitude_path"] for ln in lines if ln["amplitude_path"]],
                 "dependencies": [p for r in ("control", "target") if roles[r]["path"]
