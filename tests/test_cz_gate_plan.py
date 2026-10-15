@@ -301,9 +301,9 @@ def test_checked_window_boundaries_and_each_lobe_are_finite():
     q["extras"]["lffem_flux_model"].update(amp_min_v=-.01, amp_max_v=.02)
     q["freq_vs_flux_01_quad_term"] = abs(C.Conversion(q).curvature["here_hz_per_v2"])
     conv = C.Conversion(q)
-    for a in (.019, -.009):
+    for a in (.009, -.009):
         assert conv.point(a)["validity"] == "within the measured quadratic range"
-    for a in (.021, -.011, .4):
+    for a in (.019, .021, -.011, .4):
         assert conv.point(a)["validity"] == "beyond the fitted arc's measured range"
     # The fitted model's 1% guard itself is inclusive on both measured boundaries.
     lo, hi = conv._model_window()
@@ -347,6 +347,7 @@ def test_every_evidence_model_and_plan_leaf_resolves_like_its_literal():
     assert convs["qubits.q0"].rejection is None
     assert row[0]["lines"][0]["point"]["model_hz"] == pytest.approx(4_944_285_385.031667)
     assert row[0]["plan"]["omega_int_hz"] == 4.5e9
+    assert "qubits.q0.extras.lffem_flux_model.model_r2" in row[0]["dependencies"]
 
 
 def test_spectator_control_maps_resolve_before_enumeration():

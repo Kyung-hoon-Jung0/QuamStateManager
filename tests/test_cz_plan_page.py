@@ -305,3 +305,25 @@ def test_constant_pulse_without_nominal_length_never_invents_time(tmp_path, monk
     else:
         assert data["trajectory"][0] is not None
         assert len(data["trajectory"][0]["frequency_hz"]) == 4 * cycles
+
+
+@pytest.mark.parametrize("cycles", ["#/runtime/length", 50_001])
+def test_unresolved_or_oversized_playback_is_bounded_and_explained(tmp_path, monkeypatch, cycles):
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.web import routes
+    s, w = _chip()
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]["duration_qubit"] = cycles
+    store = QuamStore.from_dicts(s, w)
+    monkeypatch.setattr(routes, "_store", lambda: store)
+    monkeypatch.setattr(routes, "_active_ctx", lambda: None)
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_json()
+    if isinstance(cycles, str):
+        assert data["row"]["duration_ns"] is None
+        assert "unknown" in data["row"]["duration_note"]
+        assert len(data["trajectory"][0]["frequency_hz"]) == 40
+        assert not data["trajectory"][0]["playback_known"]
+        assert any("drawn waveform is the nominal one" in n for n in data["notes"])
+    else:
+        assert data["trajectory"][0] is None
+        assert any("exceeds the waveform sample limit" in n for n in data["notes"])

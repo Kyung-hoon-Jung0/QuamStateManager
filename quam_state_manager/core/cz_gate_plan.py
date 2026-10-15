@@ -409,12 +409,13 @@ class Conversion:
         if res["quad_hz"] is not None:
             shift = abs(res["quad_hz"] - self.f01)
             if self.range["branches"]:
-                branch = next((b for b in self.range["branches"] if b["side"] == (1 if a > 0 else -1)), None)
-                checked = (branch and branch["amplitude_min_v"] <= abs(a) <= branch["amplitude_max_v"]
-                           and shift <= branch["checked_quad_hz"])
+                branches = self.range["branches"]
+                checked = len(branches) == 2 and all(
+                    b["amplitude_min_v"] <= abs(a) <= b["amplitude_max_v"] and shift <= b["checked_quad_hz"]
+                    for b in branches)
                 if not checked:
                     res["validity"] = "beyond the fitted arc's measured range"
-                elif branch["limit_hz"] is not None and shift > branch["limit_hz"]:
+                elif any(b["limit_hz"] is not None and shift > b["limit_hz"] for b in branches):
                     res["validity"] = "outside the quadratic range"
                 else:
                     res["validity"] = "within the measured quadratic range"
@@ -519,7 +520,7 @@ def dependency_paths(qubit_path, qubit):
     if point in ("joint", "min", "independent"):
         paths.append(qubit_path + ".z." + point + "_offset")
     if "lffem_flux_model" in (qubit.get("extras") or {}):
-        paths += [qubit_path + ".extras.lffem_flux_model." + k for k in _MODEL_KEYS]
+        paths += [qubit_path + ".extras.lffem_flux_model." + k for k in (*_MODEL_KEYS, "model_r2", "a_half_v")]
     return paths
 
 
