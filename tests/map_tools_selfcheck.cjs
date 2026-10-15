@@ -11,19 +11,24 @@ const w = dom.window, d = w.document;
 // All browser globals read by the shipped code live in this one realm.
 Object.assign(w, {console, AbortController, structuredClone});
 const draws = [], posts = [], popups = [];
-let queued = [], displayOnly = false;
+let queued = [], displayOnly = false, serverCap = null;
 const authoritative = {request_hash: 'server-hash', classification: {type: 'erroramp', models: ['erroramp', 'extremum'], feature_axis: 'y'},
-    caps_applied: {cap_x: 2.3, cap_y: 0, sigma_x: 2, sigma_y: 0},
+    caps_applied: {cap_x: 2.3, cap_y: 0, sigma_x: 2, sigma_y: 0, default_x: 2, default_y: 0},
     smoothed: {x: [0, 1, 2], y: [1, 2, 3], z: [[0, 1, 0], [1, 0, 1], [0, 1, 0]]},
     contours: [{level: .5, lines: [[[0, 1], [1, 2]]]}], xref: 'x', yref: 'y',
     compare: {node_name: 'opt_amp_prefactor', node_value: .98, sm_value: .981, delta: .001, tol: .003, tol_source: 'reference constant', verdict: 'agree', reason: 'within tolerance', raw_smoothed_delta: .0001},
     // v1.4.1: ambiguous verdict suffix -> explicitly name the fit independently of comparison.
     fit: {verdict_line: 'VERDICT: ok'}, provenance_text: 'derived from smoothed map; proposed, not applied',
     updates: [{dot_path: 'qubits.q0.amplitude', value: .1962, provenance: {src: 'map_fit', request_hash: 'server-hash', text: 'derived from smoothed map'}}]};
+// A POST names its panels and is answered with one result per panel (the batch route).
+const batch = (value, body) => ({results: (body.panels || [0]).map(() => JSON.parse(JSON.stringify(value)))});
 w.fetch = (url, opts) => {
-    if (opts) posts.push(JSON.parse(opts.body));
-    const value = JSON.parse(JSON.stringify(authoritative));
+    const body = opts ? JSON.parse(opts.body) : null;
+    if (opts) posts.push(body);
+    let value = JSON.parse(JSON.stringify(authoritative));
     if (displayOnly) { value.updates = []; value.display_only_reason = 'not verified on this run'; }
+    if (serverCap !== null) { value.caps_applied.cap_x = serverCap; value.caps_applied.sigma_x = Math.min(value.caps_applied.sigma_x, serverCap); }
+    if (body) value = batch(value, body);
     if (queued.length && opts) return new Promise(resolve => queued.shift()(resolve, value));
     return Promise.resolve({ok: true, json: () => Promise.resolve(value)});
 };
@@ -47,18 +52,26 @@ function check(value, message) { checks++; assert.ok(value, message); }
     check(circle < 3 || circle > 357, 'phase smoothing follows shortest arc');
     w.MapTools.mount(tile, plot, payload, {uid: 'run:1', fig: 'map'});
     tile.querySelector('.map-tools-button').click(); await wait(20);
-    check(posts.length === 2 && posts[1].smooth.sigma_x === 0, 'Smooth starts off with raw server analysis');
+    // bug report 2026-10-15: opening asked twice -> one request, raw (smooth off), every panel, defaults learned
+    check(posts.length === 1 && posts[0].smooth.sigma_x === 0 && posts[0].panels.join() === '0', 'Smooth starts off with one raw server analysis');
+    check(c('sigma_x').value === '2', 'the default strength comes back with the answer');
     check(c('model').options.length === 2 && c('model').value === 'erroramp', 'only type models, auto selected');
     check(c('sigma_x').min === '0' && c('sigma_x').max === '8' && c('sigma_x').step === '0.1', 'slider range');
     check(c('sigma_y').disabled && c('sigma_y').value === '0', 'count axis locked');
     const chipTexts = Array.from(tile.querySelectorAll('.map-tools-chip')).map(el => el.textContent);
     check(chipTexts.includes('current code') && chipTexts.includes('proposed, not applied'), 'status and proposal chips');
+    // bug report 2026-10-15: the tools sat under a tall figure -> they sit under the title, above the plot
+    const kids = Array.from(tile.children);
+    check(kids.indexOf(tile.querySelector('.map-tools-strip')) === 1 && kids.indexOf(plot) === 2, 'strip sits between the title and the plot');
+    check(!c('override'), 'no separate override switch');
     input('smooth', true); input('sigma_x', 4);
-    check(Number(c('sigma_x').value) <= 2.3, 'sigma clamped to cap');
+    // a cap is a bias limit, not a wall: the slider keeps the value and the request asks for it explicitly
+    check(c('sigma_x').value === '4' && c('warning').textContent.includes('bias limit'), 'above the cap keeps the value with a warning');
+    check(c('x_cap').textContent.includes('bias limit 2.3'), 'the cap is named a bias limit');
     check(c('apply').disabled, 'old result cannot apply while controls change');
     check(draws.at(-1).data[0].z[0][0] > 0, 'local live preview draws before server');
-    input('override', true); input('sigma_x', 4);
-    check(c('sigma_x').value === '4' && c('warning').textContent.includes('bias'), 'override unclamps with warning');
+    await wait(340);
+    check(posts.at(-1).smooth.sigma_x === 4 && posts.at(-1).smooth.override_cap === true, 'a value above the cap is requested as an override');
     c('sigma_x').dispatchEvent(new w.KeyboardEvent('keydown', {key: 'ArrowRight', shiftKey: true, bubbles: true, cancelable: true}));
     check(c('sigma_x').value === '5', 'Shift arrows move ten steps');
     input('contour', true); await wait(340);
@@ -76,26 +89,41 @@ function check(value, message) { checks++; assert.ok(value, message); }
     check(posts.length === before + 1 && posts.at(-1).contour.level === 3, 'Enter analyzes custom level immediately');
     c('level').dispatchEvent(new w.KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
     check(tile.querySelector('.map-tools-strip').hidden && d.activeElement === tile.querySelector('.map-tools-button'), 'Escape closes and focuses header');
-    check(JSON.parse(w.localStorage.getItem('quam_map_tools_v1')).erroramp.override, 'settings persisted by type');
+    check(JSON.parse(w.localStorage.getItem('quam_map_tools_v1')).erroramp.sigma_x === '5', 'settings persisted by type');
     tile.querySelector('.map-tools-button').click();
     // v1.4.1: a server cap changed the slider after fitting -> re-fit the displayed strength.
-    queued.push((resolve, value) => {
-        value.caps_applied.cap_x = .25; value.caps_applied.sigma_x = .25;
-        resolve({ok: true, json: () => Promise.resolve(value)});
-    });
-    input('override', false); input('sigma_x', 1); await wait(340);
-    check(posts.at(-1).smooth.sigma_x === .2 && c('sigma_x').value === '0.2', 'server cap clamp is analyzed at the displayed slider setting');
-    input('override', true);
+    serverCap = .25;      // the server knows a tighter cap than the client has seen
+    input('sigma_x', 1); await wait(340);
+    // the server's tighter cap arrives with the answer: the displayed strength is re-asked as an override
+    check(posts.at(-1).smooth.sigma_x === 1 && posts.at(-1).smooth.override_cap === true && c('sigma_x').value === '1'
+        && c('warning').textContent.includes('bias limit'), 'a tighter cap from the answer keeps the shown strength and warns');
+    serverCap = null;
     let resolveOld;
     queued.push(resolve => { resolveOld = resolve; });
     input('sigma_x', 6); await wait(320);
     input('sigma_x', 7);
-    resolveOld({ok: true, json: () => Promise.resolve({...authoritative, provenance_text: 'STALE'})}); await wait(20);
+    resolveOld({ok: true, json: () => Promise.resolve({results: [{...authoritative, provenance_text: 'STALE'}]})}); await wait(20);
     check(!c('provenance').textContent.includes('STALE') && c('apply').disabled, 'stale response ignored');
     displayOnly = true; await wait(330);
     check(c('apply').disabled && c('status').textContent.includes('not verified on this run'), 'display-only contract has no Apply');
     // v1.4.1: a disabled Apply had no reason -> the button identifies the missing verified target.
     check(c('apply').textContent.includes('no verified target') && c('apply').title.includes('not verified'), 'disabled Apply explains why');
+    // bug report 2026-10-15: smoothing reached only Map 1 -> every map panel is analyzed and redrawn
+    tile._mapTools.destroy(); displayOnly = false;
+    const two = {data: [payload.data[0], {...payload.data[0], xaxis: 'x2', yaxis: 'y2'}], layout: {}, status_chip: 'current code'};
+    w.MapTools.mount(tile, plot, two, {uid: 'run:2', fig: 'map'});
+    const first = posts.length;
+    tile.querySelector('.map-tools-button').click(); await wait(20);
+    // (settings saved earlier for this map type are restored, so a second request may follow)
+    check(posts.length > first && posts.slice(first).every(p => p.panels.join() === '0,1'), 'both panels analyzed in one request');
+    input('smooth', true); input('sigma_x', 1); await wait(340);
+    check(posts.at(-1).panels.join() === '0,1' && posts.at(-1).smooth.sigma_x === 1, 'a change re-analyzes every panel');
+    check(draws.at(-1).data[0].z === undefined || JSON.stringify(draws.at(-1).data[0].z) === JSON.stringify(authoritative.smoothed.z), 'panel 1 redrawn from its result');
+    check(JSON.stringify(draws.at(-1).data[1].z) === JSON.stringify(authoritative.smoothed.z), 'panel 2 redrawn from its result');
+    const beforeReadout = posts.length;
+    c('panel').value = '1'; c('panel').dispatchEvent(new w.Event('input', {bubbles: true})); c('panel').dispatchEvent(new w.Event('change', {bubbles: true}));
+    await wait(340);
+    check(posts.length === beforeReadout && c('status').textContent.startsWith('Map 2: '), 'switching the readout re-reads without re-analyzing');
     const nonmap = d.createElement('div'); d.body.appendChild(nonmap);
     w.MapTools.mount(nonmap, plot, {data: [{type: 'scatter'}]}, {uid: 'run'});
     check(!nonmap.querySelector('.map-tools-button'), 'non heatmaps hide tools');
@@ -116,7 +144,7 @@ function check(value, message) { checks++; assert.ok(value, message); }
     authoritative.classification = {type: 'unknown', models: [], reason: 'No supported model; smoothing and contours only.'};
     authoritative.fit.verdict_line = authoritative.classification.reason;
     authoritative.compare.sm_value = null; authoritative.compare.delta = null; authoritative.updates = [];
-    w.fetch = () => Promise.resolve({ok: true, json: () => Promise.resolve(authoritative)});
+    w.fetch = (url, opts) => Promise.resolve({ok: true, json: () => Promise.resolve(batch(authoritative, JSON.parse(opts.body)))});
     w.localStorage.setItem('quam_map_tools_v1', JSON.stringify({unknown: {model: 'extremum'}}));
     w.MapTools.mount(tile, plot, payload, {uid: 'run:unsupported', fig: 'map'});
     tile.querySelector('.map-tools-button').click(); await wait(20);

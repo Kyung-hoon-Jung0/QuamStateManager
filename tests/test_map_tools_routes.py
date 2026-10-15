@@ -364,3 +364,26 @@ def test_separate_figure_phase_binds_contour_fit_without_phase_levels_on_objecti
     assert out["fit"]["values"]["y"] == pytest.approx(-.3, abs=.01)
     assert out["contours"] and all(0 < item["level"] < 15 and item["lines"] for item in out["contours"])
     assert len(client.get("/dataset/run/map/figures?fig=map").get_json()["panels"]) == 1
+
+
+def test_every_panel_in_one_request_resolves_the_figure_once(rig, monkeypatch):
+    """Bug report 2026-10-15: smoothing reached only the first map, and each panel's request
+    re-resolved the figure. One request names its panels; the figure is resolved once and each
+    panel's answer equals the one-panel answer (same numbers, same request hash)."""
+    client, figure = rig
+    figure["axes"].append(json.loads(json.dumps({**figure["axes"][0], "title": "q1"})))
+    resolved = []
+    original = replot.replot_run
+    monkeypatch.setattr(replot, "replot_run", lambda *a, **k: resolved.append(1) or original(*a, **k))
+    body = {"fig": "map", "fit": {"model": "extremum"}, "smooth": {"sigma_x": 1, "sigma_y": 1, "override_cap": True}}
+    out = client.post("/dataset/run/map/analyze", json={**body, "panels": [0, 1]}).get_json()
+    assert resolved == [1] and [r["request_hash"] for r in out["results"]] != [None, None]
+    singles = [client.post("/dataset/run/map/analyze", json={**body, "panel": i}).get_json() for i in (0, 1)]
+    assert out["results"] == singles
+    assert out["results"][0]["caps_applied"]["default_x"] <= out["results"][0]["caps_applied"]["cap_x"]
+
+
+@pytest.mark.parametrize("panels", [[], [0, 0], [-1], ["0"], list(range(17)), 3])
+def test_bad_panel_lists_are_400(rig, panels):
+    client, _ = rig
+    assert client.post("/dataset/run/map/analyze", json={"fig": "map", "panels": panels}).status_code == 400

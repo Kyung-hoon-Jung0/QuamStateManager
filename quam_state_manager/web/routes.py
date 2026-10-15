@@ -39712,14 +39712,21 @@ def dataset_map_analyze(uid):
         from quam_state_manager.core.physical_units import amplitude_kind
         store = _store()
         merged = getattr(store, "merged", None) if store is not None else None
-        result = map_analysis.analyze(
-            run, uid, figure, converted, body,
-            amplitude_kind=(lambda p: amplitude_kind(merged, p)) if isinstance(merged, dict) else None)
         from quam_state_manager.web import map_apply
-        map_apply.bind(_active_ctx(), run, result, figure)
+        results = []
+        # bug report 2026-10-15: one figure, every panel -- the figure (a cached lab replay whose
+        # code is re-verified on each resolve) is resolved once instead of once per panel
+        for panel in body.get("panels") or [body.get("panel", 0)]:
+            one = {k: v for k, v in body.items() if k != "panels"}
+            one["panel"] = panel
+            result = map_analysis.analyze(
+                run, uid, figure, converted, one,
+                amplitude_kind=(lambda p: amplitude_kind(merged, p)) if isinstance(merged, dict) else None)
+            map_apply.bind(_active_ctx(), run, result, figure)
+            results.append(result)
     except map_analysis.REQUEST_ERRORS as exc:
         raise BadBody(str(exc)) from None
-    return jsonify(result)
+    return jsonify(results=results) if "panels" in body else jsonify(results[0])
 
 
 @bp.route("/dataset/<uid>/map/analyze/<digest>")

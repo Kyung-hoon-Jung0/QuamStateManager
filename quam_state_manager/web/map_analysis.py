@@ -278,6 +278,7 @@ def analyze(run, uid, figure, converted, body, amplitude_kind=None):
                 fit_request["smooth"] = {**smooth, key: tightest}
                 result = api.analyze(fit_request)
             result["caps_applied"]["cap_x"] = tightest
+            result["caps_applied"]["default_x"] = min(result["caps_applied"].get("default_x", tightest), tightest)
             if smooth.get("override_cap") and result["caps_applied"]["sigma_x"] > tightest:
                 result["caps_applied"].update(override=True, warning="cap overridden")
                 if "cap overridden" not in result["fit"]["verdict_line"]:

@@ -916,9 +916,65 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 axis["title"].update(standoff=4 if name.startswith("y") else 0)
     _legend_once(data)
     from .mathtext import plotly_text
-    return plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
-                       "skipped": skipped, "notices": notices, "source_aspect": source_aspect,
-                       "source_size_inches": size if positions and source_aspect else None})
+    return _hover_guides(plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
+                                      "skipped": skipped, "notices": notices, "source_aspect": source_aspect,
+                                      "source_size_inches": size if positions and source_aspect else None}))
+
+
+#: a dashed crosshair that follows the pointer (neutral grey reads on both themes)
+_SPIKE = {"showspikes": True, "spikemode": "across", "spikesnap": "cursor", "spikedash": "dash",
+          "spikethickness": 1, "spikecolor": "rgba(128,128,128,0.75)"}
+
+
+def _plain(text) -> str:
+    """An axis or colorbar title as hover text: tags dropped, a template brace kept literal."""
+    text = re.sub(r"<br\s*/?>", " ", str(text or ""))
+    return re.sub(r"<[^>]+>", "", text).replace("%{", "% {").strip()
+
+
+def _hover_guides(fig: dict) -> dict:
+    """Hover names each value by its axis title (not x/y/z), and every panel draws a
+    dashed horizontal + vertical guide through the pointer."""
+    layout = fig.get("layout") or {}
+    titles, axes = {}, {}
+    for name, axis in layout.items():
+        if re.fullmatch(r"[xy]axis\d*", name) and isinstance(axis, dict):
+            title = axis.get("title")
+            titles[name[0] + name[5:]] = _plain(title.get("text") if isinstance(title, dict) else title)
+            axes[name[0] + name[5:]] = axis
+            if axis.get("visible", True) is not False:
+                for key, value in _SPIKE.items():
+                    axis.setdefault(key, value)
+    # A shared label is drawn once (the left panel of a row, the bottom panel of a column): an
+    # untitled axis borrows the title of a titled axis of the same letter, side and domain.
+    def place(ref):
+        a = axes[ref]
+        return (ref[0], a.get("side"), bool(a.get("overlaying")), tuple(round(v, 6) for v in a.get("domain") or ()))
+    for ref in [r for r, t in titles.items() if not t]:
+        donor = next((r for r, t in titles.items() if t and place(r) == place(ref)), None)
+        if donor:
+            titles[ref] = titles[donor]
+    if titles:
+        layout.setdefault("hovermode", "closest")
+        layout.setdefault("spikedistance", -1)
+    for trace in fig.get("data") or []:
+        if trace.get("hoverinfo") == "skip" or trace.get("type") not in ("heatmap", "scatter", "scattergl"):
+            continue
+        xl = titles.get(trace.get("xaxis", "x")) or "x"
+        yl = titles.get(trace.get("yaxis", "y")) or "y"
+        if trace["type"] == "heatmap":
+            cb = (trace.get("colorbar") or {}).get("title")
+            zl = _plain(cb.get("text") if isinstance(cb, dict) else cb) or "value"
+            z = "%{customdata}" if "customdata" in trace else "%{z}"
+            trace["hovertemplate"] = f"{xl}: %{{x}}<br>{yl}: %{{y}}<br>{zl}: {z}<extra></extra>"
+        elif "hovertemplate" in trace and "customdata" in trace:
+            cb = ((trace.get("marker") or {}).get("colorbar") or {}).get("title")
+            zl = _plain(cb.get("text") if isinstance(cb, dict) else cb) or "value"
+            trace["hovertemplate"] = f"{xl}: %{{x}}<br>{yl}: %{{y}}<br>{zl}: %{{customdata}}<extra></extra>"
+        else:
+            name = "" if trace.get("name") else "<extra></extra>"
+            trace["hovertemplate"] = f"{xl}: %{{x}}<br>{yl}: %{{y}}{name}"
+    return fig
 
 
 def _text_note(a, xref, yref, width=1080):

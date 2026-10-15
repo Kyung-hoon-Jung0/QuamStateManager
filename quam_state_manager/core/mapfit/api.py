@@ -182,6 +182,9 @@ def analyze(request):
     if transpose:
         sigma_x,sigma_y = float(options.get("sigma_y",defaults[0])),float(options.get("sigma_x",defaults[1]))
     applied = apply_caps(sigma_x,sigma_y,cap_x,cap_y,bool(options.get("override_cap",False)),"y" if kind=="erroramp" else None)
+    # The default strengths (capped), so a client that asked with its own settings still learns them.
+    applied["default_x"] = min(float(defaults[0]),cap_x)
+    applied["default_y"] = 0. if kind=="erroramp" else min(float(defaults[1]),cap_y)
     row_sigmas = None
     if rows is not None:
         row_sigmas = np.full(len(y),applied["sigma_x"]) if applied["override"] else np.minimum(rows,applied["sigma_x"])
