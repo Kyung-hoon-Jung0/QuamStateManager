@@ -132,3 +132,60 @@ def test_every_route_answers_on_a_real_chip(tmp_path, folder):
             p = ln["point"]
             assert p["frequency_hz"] is not None or p["reason"], (op, ln["name"])
     assert c.get("/cz-plan/history").status_code == 200
+
+
+@pytest.mark.parametrize("shape", ["pair_alias", "macros_alias", "pairs_alias", "bad_pairs", "bad_pair", "bad_macros", "bad_macro"])
+def test_collection_shapes_never_crash_and_unavailable_entries_are_explained(tmp_path, monkeypatch, shape):
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.web import routes
+    s, w = _chip()
+    pairs = s["qubit_pairs"]
+    if shape == "pair_alias":
+        pairs["alias"] = "#/qubit_pairs/q1-2"
+    elif shape == "macros_alias":
+        s["shared"] = pairs["q1-2"]["macros"]
+        pairs["q1-2"]["macros"] = "#/shared"
+    elif shape == "pairs_alias":
+        s["shared"] = s.pop("qubit_pairs")
+        s["qubit_pairs"] = "#/shared"
+    elif shape == "bad_pairs":
+        s["qubit_pairs"] = ["broken"]
+    elif shape == "bad_pair":
+        pairs["broken"] = "#/missing"
+    elif shape == "bad_macros":
+        pairs["q1-2"]["macros"] = ["broken"]
+    else:
+        pairs["q1-2"]["macros"]["cz_broken"] = 12
+    store = QuamStore.from_dicts(s, w)
+    monkeypatch.setattr(routes, "_store", lambda: store)
+    monkeypatch.setattr(routes, "_active_ctx", lambda: None)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    page = c.get("/cz-plan", headers={"HX-Request": "true"})
+    data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_two")
+    hist = c.get("/cz-plan/history")
+    assert page.status_code == hist.status_code == 200
+    assert data.status_code == (404 if shape in ("bad_pairs", "bad_macros") else 200)
+    if shape.startswith("bad_"):
+        assert "unavailable (expected an object" in page.get_data(as_text=True)
+        assert any("unavailable (expected an object" in r for r in hist.get_json()["unavailable"])
+        if data.status_code == 404:
+            assert data.get_json()["unavailable"]
+    if shape == "pair_alias":
+        alias = c.get("/cz-plan/data?op=qubit_pairs.alias.macros.cz_two").get_json()
+        assert alias["trajectory"][0]["frequency_hz"][0] == pytest.approx(4.8848e9)
+
+
+def test_registered_name_draws_its_resolved_waveform(tmp_path, monkeypatch):
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.web import routes
+    s, w = _chip()
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]["flux_pulse_qubit"] = "cz_flux"
+    store = QuamStore.from_dicts(s, w)
+    monkeypatch.setattr(routes, "_store", lambda: store)
+    monkeypatch.setattr(routes, "_active_ctx", lambda: None)
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_json()
+    assert data["row"]["amplitudes"] == ["qubits.q1.z.operations.cz_flux.amplitude"]
+    assert len(data["trajectory"][0]["frequency_hz"]) == 40
+    assert data["trajectory"][0]["frequency_hz"][0] == pytest.approx(4.8848e9)

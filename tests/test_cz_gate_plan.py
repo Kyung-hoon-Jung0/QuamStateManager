@@ -325,3 +325,70 @@ def test_reanchored_measured_window_is_periodic_with_numeric_endpoints():
     assert math.isnan(float(conv.model_shift(.5203)))
     assert math.isfinite(float(conv.model_shift(-.5201)))
     assert math.isnan(float(conv.model_shift(-.5203)))
+
+
+def test_every_evidence_model_and_plan_leaf_resolves_like_its_literal():
+    s = state(cz={"__class__": "#/shared/class", "flux_pulse_qubit": {"amplitude": "#/shared/amp"},
+                  "interaction_frequency": "#/shared/frequency", "fidelity": {"InterleavedRB": "#/shared/fidelity"}})
+    s["shared"] = {"class": "g.CZGate", "amp": .1, "frequency": 4.5e9, "fidelity": .99,
+                   "flag": False, "model": GOLDEN["cases"][0]["model"], "plan": {"omega_int_hz": "#/shared/frequency"}}
+    s["qubits"]["q0"]["extras"] = {"at_sweet_spot": "#/shared/flag"}
+    row = C.operations(s)[0][0]
+    assert row["lines"][0]["point"]["frequency_hz"] is None
+    assert "at_sweet_spot is false" in row["lines"][0]["point"]["reason"]
+    assert row["interaction_frequency_hz"] == 4.5e9
+    assert row["fidelity"]["InterleavedRB"]["value"] == .99
+    s["qubits"]["q0"].update(f_01=5.04e9, extras={"lffem_flux_model": "#/shared/model"})
+    s["shared"]["model"] = dict(s["shared"]["model"], model_r2="#/shared/fidelity")
+    s["qubit_pairs"]["p0"]["extras"] = {"cz_plan": "#/shared/plan"}
+    row, convs = C.operations(s)
+    assert convs["qubits.q0"].rejection is None
+    assert row[0]["lines"][0]["point"]["model_hz"] == pytest.approx(4_944_285_385.031667)
+    assert row[0]["plan"]["omega_int_hz"] == 4.5e9
+
+
+def test_spectator_control_maps_resolve_before_enumeration():
+    s = state(cz={"__class__": "g.CZGate", "flux_pulse_qubit": {"amplitude": .1},
+                  "spectator_qubits": {"q1": "#/qubits/q1"}, "spectator_qubits_control": "#/shared"})
+    s["shared"] = {"q1": {"amplitude": .2}}
+    target = C.operations(s)[0][0]["lines"][1]
+    assert target["moves"] and target["amplitude_v"] == .2
+    assert target["point"]["frequency_hz"] == pytest.approx(4.32e9)
+    del s["qubit_pairs"]["p0"]["macros"]["cz"]["spectator_qubits"]
+    assert not C.operations(s)[0][0]["lines"][1]["moves"]
+
+
+@pytest.mark.parametrize("value", ["#/missing", [], 4, True, None])
+@pytest.mark.parametrize("path", ["qubit_pairs", "qubit_pairs.p0", "qubit_pairs.p0.macros", "qubit_pairs.p0.macros.cz"])
+def test_malformed_collections_are_skipped_with_a_reason(path, value):
+    s = state(cz={"__class__": "g.CZGate", "flux_pulse_qubit": {"amplitude": .1}})
+    obj = s
+    *parents, key = path.split(".")
+    for part in parents:
+        obj = obj[part]
+    obj[key] = value
+    reasons = []
+    assert C.operations(s, unavailable=reasons)[0] == []
+    assert any(path + ": unavailable" in r for r in reasons)
+
+
+def test_pair_and_macro_collection_pointers_are_resolved():
+    s = state(cz={"__class__": "g.CZGate", "flux_pulse_qubit": {"amplitude": .1}})
+    s["qubit_pairs"]["alias"] = "#/qubit_pairs/p0"
+    s["shared"] = s["qubit_pairs"]["p0"].pop("macros")
+    s["qubit_pairs"]["p0"]["macros"] = "#/shared"
+    rows = C.operations(s)[0]
+    assert [r["pair"] for r in rows] == ["p0", "alias"]
+    assert all(r["lines"][0]["amplitude_v"] == .1 for r in rows)
+
+
+@pytest.mark.parametrize("field", ["flux_pulse_qubit", "flux_pulse_high"])
+def test_registered_pulse_names_use_the_moving_channel_and_history_path(field):
+    s = state(cz={"__class__": "g.CZGate", field: "flux"})
+    s["qubits"]["q0"]["z"]["operations"] = {"flux": {"amplitude": .1}}
+    row = C.operations(s)[0][0]
+    line = row["lines"][0]
+    assert line["point"]["frequency_hz"] == pytest.approx(4.92e9)
+    assert line["pulse_path"] == "qubits.q0.z.operations.flux"
+    assert line["amplitude_path"] == "qubits.q0.z.operations.flux.amplitude"
+    assert line["amplitude_path"] in row["amplitudes"]

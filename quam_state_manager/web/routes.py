@@ -20658,7 +20658,9 @@ def _cz_plan_ops(store):
     from quam_state_manager.core import cz_gate_plan as czp
     with store._lock:
         merged = store.merged
-    return czp.operations(merged)
+    unavailable = []
+    rows, convs = czp.operations(merged, unavailable=unavailable)
+    return rows, convs, unavailable
 
 
 def _cz_plan_table(rows) -> list[dict]:
@@ -20691,12 +20693,12 @@ def cz_plan_page():
     if not store:
         return _no_chip("CZ gate plan", "czplan")
     template = "_cz_plan.html" if _is_htmx() else "cz_plan.html"
-    rows, _convs = _cz_plan_ops(store)
+    rows, _convs, unavailable = _cz_plan_ops(store)
     table = _cz_plan_table(rows)
     want = request.args.get("op", "").strip()
     paths = [r["path"] for r in table]
     selected = want if want in paths else (paths[0] if paths else "")
-    return render_template(template, **_ctx(page="czplan", rows=table, selected=selected))
+    return render_template(template, **_ctx(page="czplan", rows=table, selected=selected, unavailable=unavailable))
 
 
 def _cz_plan_history(rows: list[dict]) -> dict:
@@ -20719,7 +20721,7 @@ def cz_plan_history():
     store = _store()
     if not store:
         return jsonify(ok=False, error="no chip loaded"), 409
-    rows, _convs = _cz_plan_ops(store)
+    rows, _convs, unavailable = _cz_plan_ops(store)
     hist = _cz_plan_history(rows)
     ops = {}
     for r in rows:
@@ -20727,7 +20729,8 @@ def cz_plan_history():
         ops[r["path"]] = {"last_set": _cz_plan_point_view(c["last_set"]) if c["last_set"] else None,
                           "proven": bool(c["last_calibrated"]), "unknown": c["unknown"],
                           "warnings": c["warnings"]}
-    return jsonify(ok=True, mode=hist.get("mode"), note=hist.get("unavailable_note") or None, ops=ops)
+    return jsonify(ok=True, mode=hist.get("mode"), note=hist.get("unavailable_note") or None,
+                   ops=ops, unavailable=unavailable)
 
 
 @bp.route("/cz-plan/data")
@@ -20741,10 +20744,10 @@ def cz_plan_data():
     if not store:
         return jsonify(ok=False, error="no chip loaded"), 409
     path = request.args.get("op", "").strip()
-    rows, convs = _cz_plan_ops(store)
+    rows, convs, unavailable = _cz_plan_ops(store)
     row = next((r for r in rows if r["path"] == path), None)
     if row is None:
-        return jsonify(ok=False, error=f"not a CZ operation on this chip: {path!r}"), 404
+        return jsonify(ok=False, error=f"not a CZ operation on this chip: {path!r}", unavailable=unavailable), 404
     pair_rows = [r for r in rows if r["pair"] == row["pair"]]
     amps = [abs(ln["amplitude_v"]) for r in pair_rows for ln in r["lines"] if ln["amplitude_v"]]
     if row["plan"]:
@@ -20760,7 +20763,7 @@ def cz_plan_data():
             q = czp.qubit_at(store.merged, ln["qubit_path"])
         qubits.append({"role": ln["role"], "name": ln["name"], "summary": conv.summary(),
                        "curve": conv.curve(amax), "tls": czp.tls_bands(q)})
-    traj, notes = [], list(row["notes"])
+    traj, notes = [], unavailable + list(row["notes"])
     for ln in row["lines"]:
         conv = convs.get(ln["qubit_path"])
         if not ln["moves"] or conv is None:

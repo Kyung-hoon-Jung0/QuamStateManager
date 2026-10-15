@@ -13,6 +13,9 @@
     A <strong>quad-term estimate</strong> uses <code>freq_vs_flux_01_quad_term</code>; a fitted flux model is
     drawn instead where the qubit carries one. Bare-qubit frequencies: coupling shifts are not included.
 </p>
+{% for reason in unavailable %}
+<p class="czp-warn-text">{{ reason }}</p>
+{% endfor %}
 {% if rows %}
 <div class="czp-table-wrap">
 <table id="czp-table" class="data-table czp-table" role="grid">

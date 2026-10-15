@@ -81,6 +81,20 @@ def current(doc, path, default=None):
     return t["current"] if t.get("has_current") else default
 
 
+def resolved_tree(doc, path, seen=()):
+    """Resolve each consumed descendant, including leaves of referenced containers."""
+    target = read(doc, path)
+    holder = target.get("holder_path")
+    if holder in seen or len(seen) >= 16:
+        return None
+    value = target.get("current") if target.get("has_current") else None
+    if isinstance(value, dict):
+        return {k: resolved_tree(doc, path + "." + k, (*seen, holder)) for k in value}
+    if isinstance(value, list):
+        return [resolved_tree(doc, path + "." + str(i), (*seen, holder)) for i in range(len(value))]
+    return value
+
+
 # ---------------------------------------------------------------- lab model
 _MODEL_KEYS = ("phi0_v", "phi_park", "d", "f_max_hz", "ec_hz", "amp_min_v", "amp_max_v",
                "f_01_at_fit_hz")
@@ -492,8 +506,8 @@ def qubit_at(doc, path):
     out = {k: current(doc, path + "." + k) for k in _QUBIT_FIELDS}
     out["z"] = {k: current(doc, path + ".z." + k) for k in
                 ("flux_point", "joint_offset", "min_offset", "independent_offset")}
-    extras = current(doc, path + ".extras", {})
-    out["extras"] = {k: extras[k] for k in _EXTRAS_USED if isinstance(extras, dict) and k in extras}
+    out["extras"] = {k: resolved_tree(doc, path + ".extras." + k) for k in _EXTRAS_USED
+                     if read(doc, path + ".extras." + k).get("has_current")}
     return out
 
 
@@ -513,7 +527,7 @@ def _is_cz(name, macro):
     return "CZ" in cls.split(".")[-1] or name.lower().startswith("cz")
 
 
-def operations(doc, conversions=None):
+def operations(doc, conversions=None, unavailable=None):
     """Every CZ macro of every pair (aliases included), with what each qubit plays.
 
     Pulse-to-qubit mapping follows the gate classes: a single-mover CZ plays
@@ -523,9 +537,20 @@ def operations(doc, conversions=None):
     to the control) and ``flux_pulse_low`` on the other; a spectator entry whose
     qubit is a pair member also moves that member."""
     conversions = {} if conversions is None else conversions
+    unavailable = [] if unavailable is None else unavailable
+
+    def mapping(path):
+        raw = current(doc, path, {})
+        if isinstance(raw, dict):
+            return raw
+        unavailable.append(path + ": unavailable (expected an object; unresolved pointer or malformed value)")
+        return {}
+
     rows = []
-    for pair_name, pair in (doc.get("qubit_pairs") or {}).items():
+    for pair_name in mapping("qubit_pairs"):
         pp = "qubit_pairs." + pair_name
+        if not mapping(pp):
+            continue
         roles = {}
         for role in ("control", "target"):
             t = read(doc, pp + ".qubit_" + role)
@@ -534,17 +559,17 @@ def operations(doc, conversions=None):
             if path and path not in conversions:
                 conversions[path] = Conversion(q)
             roles[role] = {"path": path, "name": path.split(".")[-1] if path else "?", "qubit": q}
-        extras = current(doc, pp + ".extras", {}) or {}
-        plan = extras.get("cz_plan") if isinstance(extras, dict) else None
+        plan = resolved_tree(doc, pp + ".extras.cz_plan")
         moving = current(doc, pp + ".moving_qubit")
-        for name in (pair.get("macros") or {}):
+        for name in mapping(pp + ".macros"):
             path = pp + ".macros." + name
-            macro = current(doc, path, {})
-            if not isinstance(macro, dict) or not _is_cz(name, macro):
+            macro = mapping(path)
+            cls = current(doc, path + ".__class__", "")
+            if not macro or not _is_cz(name, {"__class__": cls}):
                 continue
             alias = read(doc, path).get("via") or []
             fields, notes = {}, []
-            cls = str(macro.get("__class__", "")).split(".")[-1]
+            cls = str(cls).split(".")[-1]
             if "flux_pulse_high" in macro or "flux_pulse_low" in macro:
                 fc, ft = (number(roles[k]["qubit"].get("f_01")) for k in ("control", "target"))
                 if fc is not None and ft is not None:
@@ -563,10 +588,10 @@ def operations(doc, conversions=None):
             else:
                 notes.append("qubit_pair.moving_qubit is missing or not control/target")
                 kind = "single mover"
-            spectators = macro.get("spectator_qubits_control") or {}
-            for key in spectators if isinstance(spectators, dict) else ():
-                who = read(doc, path + ".spectator_qubits." + key).get("holder_path") or (
-                    "qubits." + key)
+            spectators = mapping(path + ".spectator_qubits_control")
+            for key in spectators:
+                target = read(doc, path + ".spectator_qubits." + key)
+                who = target.get("holder_path") if target.get("has_current") else None
                 for role, info in roles.items():
                     if info["path"] == who and role not in fields:
                         fields[role] = "spectator_qubits_control." + key
@@ -576,6 +601,9 @@ def operations(doc, conversions=None):
                 conv = conversions.get(info["path"])
                 field = fields.get(role)
                 pulse_path = path + "." + field if field else None
+                pulse = current(doc, pulse_path) if pulse_path else None
+                if isinstance(pulse, str) and not pulse.startswith("#"):
+                    pulse_path = info["path"] + ".z.operations." + pulse
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
                 amp = number(current(doc, amp_path)) if amp_path else 0.0
                 if amp_path and amp is None:
@@ -604,9 +632,9 @@ def operations(doc, conversions=None):
                     number(roles["control"]["qubit"].get("f_01")), number(roles["target"]["qubit"].get("f_01"))),
                 "duration_ns": number(current(doc, path + ".duration")),
                 "phases": {k: number(current(doc, path + ".phase_shift_" + k)) for k in ("control", "target")},
-                "fidelity": _fidelity(current(doc, path + ".fidelity", {})),
+                "fidelity": _fidelity(resolved_tree(doc, path + ".fidelity")),
                 "plan": _plan(plan, lines),
-                "interaction_frequency_hz": number(macro.get("interaction_frequency")),
+                "interaction_frequency_hz": number(current(doc, path + ".interaction_frequency")),
                 "coupler_amplitude_v": number(current(doc, path + ".coupler_flux_pulse.amplitude")) if coupler else None,
                 "amplitudes": [ln["amplitude_path"] for ln in lines if ln["amplitude_path"]],
                 "dependencies": [p for r in ("control", "target") if roles[r]["path"]
