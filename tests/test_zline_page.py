@@ -62,11 +62,13 @@ def _data(c, line, **kw):
 
 
 class TestPage:
-    def test_sidebar_entry_under_live_state_edit(self, client):
+    def test_sidebar_entry_under_chip_status(self, client):
         html = client.get("/zline").get_data(as_text=True)
-        i_p, i_z = html.index('href="/pulses"'), html.index('href="/zline"')
-        assert i_p < i_z and "Z-line distortion" in html
-        assert 'id="live-edit-subnav"' in html and "nav-subitems-collapsed" not in html.split('id="live-edit-subnav"')[0][-200:]
+        # v1.4.1: editing tools -> Chip Status, because distortion describes chip status.
+        status = html.split('id="chip-status-subnav"', 1)[1].split('</ul>', 1)[0]
+        editing = html.split('id="live-edit-subnav"', 1)[1].split('</ul>', 1)[0]
+        assert 'href="/zline"' in status and "Z-line distortion" in status
+        assert 'href="/zline"' not in editing
 
     def test_table_lists_every_flux_line_with_its_state(self, client):
         html = client.get("/zline", headers={"HX-Request": "true"}).get_data(as_text=True)

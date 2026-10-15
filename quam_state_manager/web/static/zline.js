@@ -1,4 +1,4 @@
-/* Live State Edit > Z-line distortion (bundle 'zline').
+/* Chip Status > Z-line distortion (bundle 'zline').
  *
  * Draws what /zline/data computed -- the physics and every refusal live in
  * core/zline_filters.py. This file only: picks the line, asks for its data,

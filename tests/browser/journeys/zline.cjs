@@ -55,8 +55,9 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
   {
     const p = await open(`${BASE}/pulses`); await p.sleep(2500);
     const mark = p.events.length;
-    const link = await center(p, '#live-edit-subnav a[href="/zline"]');
-    rec('Z1a sidebar shows Z-line distortion under Live State Edit', !!link);
+    // v1.4.1: editing tools -> Chip Status, because distortion describes chip status.
+    const link = await center(p, '#chip-status-subnav a[href="/zline"]');
+    rec('Z1a sidebar shows Z-line distortion under Chip Status', !!link);
     if (link) { await p.click(link.x, link.y); }
     const r0 = await waitRendered(p);
     rec('Z1b clicking it renders the first line', !!r0, r0);
