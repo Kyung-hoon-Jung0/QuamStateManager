@@ -14823,7 +14823,8 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 .czp-card-q { border: 1px solid var(--pico-muted-border-color, #888); border-radius: 0.4rem; padding: 0.5rem 0.75rem; font-size: 0.85rem; }
 .czp-card-q dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.75rem; margin: 0.4rem 0 0; }
 .czp-card-q dt { color: var(--pico-muted-color, #888); font-weight: normal; }
-.czp-card-q dd { margin: 0; }
+.czp-card-q dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.czp-card-q { min-width: 0; }
 
 /* 2026-09-27: the one create flow's first step -- what to create */
 .pulse-create-choice { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 0.35rem; margin: 0.35rem 0.5rem 0.6rem; padding: 0; }

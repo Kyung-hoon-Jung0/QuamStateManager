@@ -61,7 +61,8 @@
     function renderNotes(root, d) {
         var ul = root.querySelector('#czp-notes');
         if (!ul) return;
-        var items = (d.notes || []).map(function (t) { return { level: 'warn', text: t }; });
+        var items = (d.notes || []).map(function (t) { return { level: 'warn', text: t }; })
+            .concat((d.info || []).map(function (t) { return { level: 'info', text: t }; }));
         (d.qubits || []).forEach(function (q) {
             if (!q.summary) return;
             (q.summary.notes || []).forEach(function (t) { items.push({ level: 'info', text: q.name + ': ' + t }); });
@@ -255,8 +256,8 @@
         h.push('<div class="czp-card-q"><strong>Operation</strong><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
             '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' : '—') + '</dd>' +
-            '<dt>Duration</dt><dd>' + (r.duration_ns == null ? 'unknown' : r.duration_ns + ' ns') +
-            (r.duration_note ? ' <small class="muted">(' + esc(r.duration_note) + ')</small>' : '') + '</dd>' +
+            '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' + (r.duration_note ? ' <small class="muted">(' + esc(r.duration_note) + ')</small>' : '')
+                : (r.duration_note ? esc(r.duration_note) : 'unknown')) + '</dd>' +
             (r.coupler_amplitude_v != null ? '<dt>Coupler pulse</dt><dd>' + fmtV(r.coupler_amplitude_v) + '</dd>' : '') +
             (r.plan ? '<dt>Planned ω_int</dt><dd>' + fmtGHz(r.plan.omega_int_hz) + (r.plan.path_ok === false ? ' <span class="czp-warn-text">path not ok</span>' : '') +
                 (r.plan.reasons.length ? '<br><small class="muted">' + esc(r.plan.reasons.join(', ')) + '</small>' : '') + '</dd>' : '') +

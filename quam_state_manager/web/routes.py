@@ -20781,6 +20781,7 @@ def cz_plan_data():
         qubits.append({"role": ln["role"], "name": ln["name"], "summary": conv.summary(),
                        "curve": conv.curve(amax), "tls": czp.tls_bands(q)})
     traj, notes = [], unavailable + list(row["notes"])
+    info = []                           # facts about how a figure was drawn, not warnings
     for ln in row["lines"]:
         conv = convs.get(ln["qubit_path"])
         if ln.get("refusal") or not ln["moves"] or conv is None:
@@ -20802,8 +20803,8 @@ def cz_plan_data():
             notes.extend(f"{ln['name']}: {reason}" for reason in waveform_reasons)
             if samples:
                 payload = {"ok": True, "kind": "lab transcription"}
-                notes.append(f"{ln['name']}: waveform from SM's transcription of the lab's own pulse class"
-                             " (pinned sample for sample to that class)")
+                info.append(f"{ln['name']}: waveform from SM's transcription of the lab's own pulse class"
+                            " (pinned sample for sample to that class)")
         if not samples:
             notes.append(f"{ln['name']}: SM cannot draw this pulse ({payload.get('error') or 'no samples'}),"
                          " so the frequency in time is not drawn for it")
@@ -20833,7 +20834,7 @@ def cz_plan_data():
     others = [{"path": r["path"], "operation": r["operation"],
                "points": [{"amplitude_v": ln["amplitude_v"], "frequency_hz": ln["point"].get("frequency_hz")}
                           for ln in r["lines"]]} for r in pair_rows]
-    return jsonify(ok=True, row=row, qubits=qubits, trajectory=traj, notes=notes,
+    return jsonify(ok=True, row=row, qubits=qubits, trajectory=traj, notes=notes, info=info,
                    calibration=card, pair_ops=others, amax_v=amax)
 
 

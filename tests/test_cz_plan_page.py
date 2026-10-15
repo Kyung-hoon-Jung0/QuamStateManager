@@ -427,4 +427,6 @@ def test_a_lab_two_flux_pulse_is_drawn_from_the_transcription_with_a_note(tmp_pa
     assert t0 is not None and len(t0["frequency_hz"]) == 24              # 20 + 2, rounded up to 4 ns
     assert min(f for f in t0["frequency_hz"] if f is not None) == pytest.approx(5e9 - 8e9 * .1 ** 2)
     assert t1 is not None
-    assert sum("transcription of the lab's own pulse class" in n for n in d["notes"]) == 2
+    # v1.5.0: how a figure was drawn is a note (info), not a warning
+    assert sum("transcription of the lab's own pulse class" in n for n in d["info"]) == 2
+    assert not any("transcription" in n for n in d["notes"])
