@@ -332,6 +332,24 @@ _SPECS: tuple[PulseSpec, ...] = (
         group="Flux / Bipolar", doc="Flat top with erf edges (Quil ErfSquare)",
     ),
     PulseSpec(
+        key="SNZTwoFluxPulse", qclass="quam_config.two_flux_gate.SNZTwoFluxPulse",
+        label="Two-flux sudden net-zero", iq="optional", readout=False, channels=("z",),
+        params=(
+            _p("amplitude", "Amplitude", "float", 0.05, unit="V", required=True),
+            _p("flat_length", "Flat length", "int", 20, unit="ns", required=True),
+            _p("t_phi", "Idle gap", "int", 0, unit="ns"),
+            _p("b_over_a", "B/A", "float", 0.0),
+            _p("neg_offset_v", "Negative lobe offset", "float", 0.0, unit="V"),
+            _p("padding", "Padding", "int", 0, unit="ns"),
+            _p("tail_length", "Tail", "int", 0, unit="ns"),
+            _p("unipolar", "Unipolar partner", "bool", False),
+            _p("lobe3_max_v", "Third lobe cap", "float", 0.060, unit="V"),
+            _AXIS_ANGLE_OPT, _ID, _DIGITAL_MARKER,
+        ),
+        length_mode="inferred", creatable=False,
+        group="Flux / Bipolar", doc="Stored two-flux waveform preview",
+    ),
+    PulseSpec(
         key="SNZPulse", qclass=_QC + "SNZPulse",
         label="SNZ (sudden net-zero)",
         iq="optional", readout=False, channels=("z",),
@@ -1289,6 +1307,14 @@ def inferred_length(spec_key: str, params: dict[str, Any]) -> int | None:
                 + int(params["risetime_samples"])
                 + int(params.get("post_zero_padding_length", 0) or 0)
             )
+        if spec_key == "SNZTwoFluxPulse":
+            core = int(params["flat_length"]) + 2 + int(params.get("t_phi", 0))
+            tail = int(params.get("tail_length", 0))
+            if params.get("unipolar", False):
+                cap = float(params.get("lobe3_max_v", 0.060))
+                # the lab's lobe-3 rounding exactly: 4 * ceil(area / cap / 4 - 1e-9), at least 4
+                tail = max(4, 4 * int(math.ceil(abs(float(params["amplitude"])) * core / cap / 4 - 1e-9)))
+            return _ceil4(2 * int(params.get("padding", 0)) + core + tail)
         if spec_key == "SNZPulse":
             t_phi_eff = float(params.get("t_phi_eff", 0.0) or 0.0)
             if t_phi_eff < 0:

@@ -186,6 +186,47 @@ def _axis_rotate_envelope(env, axis_angle):
     return env
 
 
+def _snz_two_flux(p):
+    """Stored two-flux waveform_function/core_samples transcription (1 ns).
+
+    Both lobes and the independent mirror offset matter. The upstream SNZ
+    effective-gap parameter does not describe this pulse.
+    """
+    flat, gap = int(p["flat_length"]), int(p.get("t_phi", 0))
+    amp, offset, b = float(p["amplitude"]), float(p.get("neg_offset_v", 0)), float(p.get("b_over_a", 0))
+    tail, padding = int(p.get("tail_length", 0)), int(p.get("padding", 0))
+    if flat <= 0 or flat % 2 or min(gap, tail, padding) < 0 or not 0 <= b <= 1:
+        raise ValueError("invalid two-flux shape: even positive flat_length, nonnegative gap/tail/padding, 0 <= B/A <= 1 required")
+    if not all(math.isfinite(x) for x in (amp, offset, b)):
+        raise ValueError("two-flux amplitudes must be finite")
+    sign = -1.0 if amp < 0 else 1.0
+    if p.get("unipolar", False):
+        cap = float(p.get("lobe3_max_v", .060))
+        if offset != 0 or b != 0 or tail != 0 or abs(amp) < 1e-3 or not math.isfinite(cap) or cap <= 0:
+            raise ValueError("invalid unipolar partner parameters")
+        n = flat + 2 + gap
+        t3 = max(4, 4 * int(math.ceil(abs(amp) * n / cap / 4 - 1e-9)))
+        if t3 > 1000:
+            raise ValueError("third lobe exceeds 1000 samples")
+        a3 = -math.copysign(abs(amp) * n / t3, amp)
+        core = np.concatenate([amp * np.ones(n), a3 * np.ones(t3)])
+    else:
+        if abs(amp) + offset < 0 or (b > 0 and abs(amp) * b + offset < 0):
+            raise ValueError("negative lobe offset flips a lobe sign")
+        a1, a2 = amp, -sign * (abs(amp) + offset)
+        b1 = a1 * b
+        b2 = -sign * (abs(b1) + offset) if b > 0 else 0.0
+        core = np.concatenate([a1 * np.ones(flat // 2), [b1], np.zeros(gap),
+                               [b2], a2 * np.ones(flat // 2), np.zeros(tail)])
+    pad = int(p["length"]) - len(core)
+    if pad < 0:
+        raise ValueError("two-flux length is shorter than core")
+    samples = np.concatenate([np.zeros(pad // 2), core, np.zeros(pad - pad // 2)])
+    if p.get("axis_angle") is not None:
+        samples = samples * np.exp(1j * p["axis_angle"])
+    return samples
+
+
 def _square(p):
     waveform = float(p["amplitude"])
     if p.get("axis_angle") is not None:
@@ -549,6 +590,7 @@ def _cosine_bipolar_deprecated(p):
 
 
 _RAW_FUNCS: dict[str, Callable[[dict], Any]] = {
+    "SNZTwoFluxPulse": _snz_two_flux,
     "SquarePulse": _square,
     "SquareReadoutPulse": _square,  # inherits SquarePulse.waveform_function
     "GaussianPulse": _gaussian,
