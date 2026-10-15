@@ -108,8 +108,10 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     // the table's Last set column
     const cells = Array.from(r.querySelectorAll('td[data-last]')).map(td => td.textContent);
     // v1.4.1: bare unknown -> unknown with the observation, never presented as a setting.
-    check(cells[0].includes('run #41') && cells[0].includes('1 newer') && cells[1].includes('unknown') &&
-          cells[1].includes('first recorded in run #8'), 'Last set filled, observations retain unknown setting time');
+    // v1.5.0: the observation's long text made the table unreadable -> compact cell, details on hover.
+    const hint = r.querySelectorAll('td[data-last]')[1].querySelector('span').getAttribute('title') || '';
+    check(cells[0].includes('run #41') && cells[0].includes('1 newer') && cells[1] === 'unknown · first recorded only' &&
+          hint.includes('first recorded in run #8'), 'Last set filled, observations retain unknown setting time');
 
     async function select(op, data) {
         const index = pending.length;

@@ -29,4 +29,4 @@ def test_cz_chip_map_client():
     result = subprocess.run(["node", str(root / "tests/cz_map_selfcheck.cjs")], cwd=root, env=os.environ.copy(),
                             capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "16 assertions passed" in result.stdout
+    assert "17 assertions passed" in result.stdout

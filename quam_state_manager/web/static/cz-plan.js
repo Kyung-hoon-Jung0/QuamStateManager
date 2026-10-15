@@ -306,9 +306,10 @@
                 qs.forEach(function (q, i) {
                     if (i) shapes.push({ type: 'line', xref: 'x', x0: i, x1: i, yref: 'paper', y0: 0, y1: 1,
                                          line: { color: C.muted, width: 0.6 }, layer: 'below' });
+                    // safe intervals: a narrow strip at the column's right edge (a full-width band covers the column)
                     (q.safe || []).forEach(function (b) {
-                        shapes.push({ type: 'rect', xref: 'x', x0: i + 0.02, x1: i + 0.98, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
-                                      fillcolor: C.plan, opacity: 0.07, line: { width: 0 }, layer: 'below' });
+                        shapes.push({ type: 'rect', xref: 'x', x0: i + 0.93, x1: i + 0.98, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
+                                      fillcolor: C.plan, opacity: 0.45, line: { width: 0 }, layer: 'below' });
                     });
                     (q.defects || []).forEach(function (b) {
                         var f = (b.lo_hz + b.hi_hz) / 2, w = 0.08 + 0.82 * Math.min(1, (b.peak_loss || 0) / 0.5);
@@ -340,7 +341,8 @@
                                 '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
                                 '<extra></extra>' });
                     });
-                    if (segs.length === 2 && col[segs[0].qubit_path] != null && col[segs[1].qubit_path] != null) {
+                    // connectors help on a small chip; across 10+ pairs they cross the whole map
+                    if (pairs.length <= 10 && segs.length === 2 && col[segs[0].qubit_path] != null && col[segs[1].qubit_path] != null) {
                         var a = segs[0], b = segs[1], ia = col[a.qubit_path], ib = col[b.qubit_path];
                         var left = ia <= ib ? a : b, right = ia <= ib ? b : a;
                         traces.push({ type: 'scatter', mode: 'lines', legendgroup: pair, showlegend: false, hoverinfo: 'skip',
@@ -361,7 +363,9 @@
                 if (m.missing.length) notes.push('No ' + (m.op || 'such') + ' operation on ' + m.missing.join(', ') + '.');
                 var noLoss = qs.filter(function (q) { return !q.loss_data; }).map(function (q) { return q.name; });
                 if (noLoss.length) notes.push('No population-loss data stored for ' + (noLoss.length === qs.length ? 'any qubit' : noLoss.join(', ')) + '.');
-                notes.push('Solid: fitted flux model; dashed: quad-term estimate; thin: a member that stays at idle; ◇ planned interaction frequency.');
+                notes.push('Solid: fitted flux model; dashed: quad-term estimate; thin: a member that stays at idle; ◇ planned interaction frequency' +
+                    (qs.some(function (q) { return (q.safe || []).length; }) ? '; right-edge strip: safe intervals' : '') +
+                    (pairs.length > 10 ? '; click a legend entry to isolate a pair' : '') + '.');
                 var nEl = root.querySelector('#czp-map-notes');
                 if (nEl) nEl.textContent = notes.join(' ');
                 var L = layout({
@@ -465,7 +469,10 @@
                 Array.prototype.forEach.call(root.querySelectorAll('td[data-last]'), function (td) {
                     var o = (h.ops || {})[td.getAttribute('data-last')];
                     if (!o || !o.last_set) {
-                        td.innerHTML = '<span class="muted">unknown' + (o && o.note ? ' (' + esc(o.note) + ')' : '') + '</span>';
+                        // compact in the table; what is known (first record, a value that differs) on hover
+                        var first = !!(o && o.note && /first recorded/.test(o.note));
+                        td.innerHTML = '<span class="muted"' + (o && o.note ? ' title="' + esc(o.note) + '"' : '') + '>unknown' +
+                            (first ? ' · first recorded only' : '') + '</span>';
                         return;
                     }
                     td.innerHTML = esc(when(o.last_set)) + (o.warnings.length ? ' <span class="czp-warn-text" title="' +

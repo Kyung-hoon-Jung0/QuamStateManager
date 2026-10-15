@@ -70,7 +70,8 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     const notes = d.getElementById('czp-map-notes').textContent;
     check(notes.includes('q3 in q3-2 cz (sign convention unclear)'), 'the refusal is listed with its reason');
     check(r.traces.some(t => t.mode === 'lines' && !t.legendgroup && t.y[0] === 4.62), 'a defect is a bar at its frequency');
-    check(r.layout.shapes.some(s => s.type === 'rect' && s.y0 === 4.7 && s.y1 === 4.95), 'a safe interval is a band');
+    check(r.layout.shapes.some(s => s.type === 'rect' && s.y0 === 4.7 && s.y1 === 4.95 && s.x0 >= 1.9 && s.x1 <= 2.0),
+          'a safe interval is a strip at its column edge');
     check(r.traces.some(t => t.marker && t.marker.symbol === 'diamond-open' && t.y[0] === 4.6 && t.x[0] === 1.5), 'the planned point sits in the carrier column');
     check(r.traces.some(t => t.mode === 'lines' && t.line.dash === 'dot' && t.legendgroup === 'q10-2'), 'the pair members are joined');
     // the picker: every operation name; choosing one re-asks the route with it
@@ -83,6 +84,19 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     const ord = d.getElementById('czp-map-order');
     ord.value = 'f01'; ord.dispatchEvent(new w.Event('change', {bubbles: true})); await wait(30);
     check(renders.filter(x => x.id === 'czp-map').at(-1).layout.xaxis.ticktext.join() === 'q2,q3,q10', 'columns by idle frequency');
+    // eleven pairs: no connectors across the map (the legend isolates a pair instead)
+    const many = JSON.parse(JSON.stringify(MAP));
+    many.segments = [];
+    for (let k = 0; k < 11; k++) many.segments.push(
+        {...MAP.segments[0], pair: 'p' + k, path: 'qubit_pairs.p' + k + '.macros.cz'},
+        {...MAP.segments[1], pair: 'p' + k, path: 'qubit_pairs.p' + k + '.macros.cz'});
+    const fetchBefore = w.fetch;
+    w.fetch = (url) => url.startsWith('/cz-plan/map') ? Promise.resolve({json: () => Promise.resolve(many)}) : fetchBefore(url);
+    w.CzPlan.drawMap(d.getElementById('czp-root')); await wait(30);
+    const crowded = renders.filter(x => x.id === 'czp-map').at(-1);
+    check(!crowded.traces.some(t => t.line && t.line.dash === 'dot') && d.getElementById('czp-map-notes').textContent.includes('legend'),
+          'more than ten pairs: no connectors, the legend isolates a pair');
+    w.fetch = fetchBefore;
     // a click on a segment opens that operation
     handlers.plotly_click({points: [{customdata: 'qubit_pairs.q10-2.macros.cz'}]}); await wait(10);
     check(fetched.some(u => u === '/cz-plan/data?op=' + encodeURIComponent('qubit_pairs.q10-2.macros.cz')), 'a click opens that operation');
