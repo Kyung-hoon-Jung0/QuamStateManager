@@ -161,6 +161,7 @@ def test_collection_shapes_never_crash_and_unavailable_entries_are_explained(tmp
     monkeypatch.setattr(routes, "_active_ctx", lambda: None)
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    app.config["TESTING"] = False
     page = c.get("/cz-plan", headers={"HX-Request": "true"})
     data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_two")
     hist = c.get("/cz-plan/history")
@@ -300,7 +301,7 @@ def test_constant_pulse_without_nominal_length_never_invents_time(tmp_path, monk
     data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_json()
     if cycles is None:
         assert data["trajectory"][0] is None
-        assert any("pulse duration is unknown" in n for n in data["notes"])
+        assert any("cannot draw this pulse" in n and "length" in n for n in data["notes"])
     else:
         assert data["trajectory"][0] is not None
         assert len(data["trajectory"][0]["frequency_hz"]) == 4 * cycles

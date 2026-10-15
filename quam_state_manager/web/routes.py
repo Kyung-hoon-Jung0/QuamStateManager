@@ -4546,7 +4546,10 @@ def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool, bool
     if store is None:
         return False, False, False, False
     qubits = store.merged.get("qubits", {})
-    pairs = store.merged.get("qubit_pairs", {})
+    from quam_state_manager.core import value_history
+    pairs = value_history.target(store.merged, "qubit_pairs", container=True).get("current")
+    qubits = qubits if isinstance(qubits, dict) else {}
+    pairs = pairs if isinstance(pairs, dict) else {}
     has_resonator = any(isinstance(q, dict) and isinstance(q.get("resonator"), dict)
                         for q in qubits.values())
     has_flux = any(isinstance(q, dict) and isinstance(q.get("z"), dict)
@@ -20769,19 +20772,19 @@ def cz_plan_data():
         if not ln["moves"] or conv is None:
             traj.append(None)
             continue
+        played = ln["play_duration_ns"]
         payload = synth_for_operation(store, ln["pulse_path"])
+        if (not payload.get("ok") and played is not None
+                and payload.get("spec_key") in ("SquarePulse", "SquareReadoutPulse")
+                and "length" in (payload.get("param_errors") or {})):
+            payload = synth_for_operation(store, ln["pulse_path"], overrides={"length": int(played)})
         samples = payload.get("i") if payload.get("ok") else None
         if not samples:
             notes.append(f"{ln['name']}: SM cannot draw this pulse ({payload.get('error') or 'no samples'}),"
                          " so the frequency in time is not drawn for it")
             traj.append(None)
             continue
-        played = ln["play_duration_ns"]
         playback_known = not ln["duration_unknown"]
-        if played is None and any("constant pulse without length" in w for w in payload.get("warnings", [])):
-            notes.append(f"{ln['name']}: pulse duration is unknown; frequency in time is not drawn")
-            traj.append(None)
-            continue
         if played is not None:
             if payload.get("kind") == "constant":
                 from quam_state_manager.core.waveform_synth import MAX_SAMPLES
