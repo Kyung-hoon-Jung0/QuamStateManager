@@ -16,4 +16,4 @@ def test_cz_plan_client():
                             capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     # v1.4.1: fixed old count -> expanded deferred-render and unknown-motion pins must execute.
-    assert "29 assertions passed" in result.stdout
+    assert "31 assertions passed" in result.stdout

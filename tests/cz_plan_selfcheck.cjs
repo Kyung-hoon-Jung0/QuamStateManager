@@ -40,7 +40,7 @@ function payload(op, stale) {
                  {role: 'target', name: 'qb', tls: [{lo_hz: 4.8e9, hi_hz: 4.81e9}], curve: {amplitude_v: [-0.2, 0, 0.2], quad_hz: [4.7e9, 4.7e9, 4.7e9], model_hz: null},
                   summary: {f01_hz: 4.7e9, anharmonicity_hz: -210e6, model_kind: null, notes: [], frame: {reason: 'lower sweet spot: flux moves it up'}, range: {}}}],
         trajectory: [{amplitude_v: [0, 0.1, 0.1, 0], frequency_hz: [5e9, 4.92e9, 4.92e9, 5e9], quad_hz: [5e9, 4.92e9, 4.92e9, 5e9], model_hz: null}, null],
-        calibration: stale ? {last_set: {t: '2026-01-02T03:04:05Z', run_id: 41, proven: true}, proven: true, unknown: false, mode: 'ledger', note: null,
+        calibration: stale ? {last_set: {t: '2026-01-02T03:04:05Z', run_id: 41, proven: true, provenance: 'run_proven'}, proven: true, unknown: false, mode: 'ledger', note: null,
                               warnings: [{path: 'qubits.qa.f_01', t: '2026-01-03T00:00:00Z', run_id: 50, text: 'calibrated against an older qa.f_01'}]}
                            : {last_set: null, proven: false, unknown: true, mode: 'unavailable', note: 'No change history has been built for this chip yet.', warnings: []},
         pair_ops: [{path: 'qubit_pairs.p.macros.a', operation: 'a', points: []}, {path: 'qubit_pairs.p.macros.b', operation: 'b', points: []}]};
@@ -60,7 +60,7 @@ const pending = [];
 let historyAnswer = {ok: true, mode: 'ledger', note: null, ops: {
     'qubit_pairs.p.macros.a': {last_set: {t: '2026-01-02T03:04:05Z', run_id: 41}, proven: true, unknown: false,
                                warnings: [{text: 'calibrated against an older qa.f_01'}]},
-    'qubit_pairs.p.macros.b': {last_set: null, proven: false, unknown: true, warnings: []}}};
+    'qubit_pairs.p.macros.b': {last_set: null, proven: false, unknown: true, warnings: [], note: 'first recorded in run #8'}}};
 w.fetch = (url) => {
     if (url.startsWith('/cz-plan/history')) return Promise.resolve({json: () => Promise.resolve(historyAnswer)});
     const op = decodeURIComponent(url.split('op=')[1]);
@@ -106,7 +106,9 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     check(d.getElementById('czp-card').textContent.includes('run #41'), 'last set names the run');
     // the table's Last set column
     const cells = Array.from(r.querySelectorAll('td[data-last]')).map(td => td.textContent);
-    check(cells[0].includes('run #41') && cells[0].includes('1 newer') && cells[1] === 'unknown', 'Last set filled, unknown stays unknown');
+    // v1.4.1: bare unknown -> unknown with the observation, never presented as a setting.
+    check(cells[0].includes('run #41') && cells[0].includes('1 newer') && cells[1].includes('unknown') &&
+          cells[1].includes('first recorded in run #8'), 'Last set filled, observations retain unknown setting time');
 
     async function select(op, data) {
         const index = pending.length;
@@ -114,6 +116,15 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
         await wait(5); answer(index, data); await wait(15);
     }
     const aPath = 'qubit_pairs.p.macros.a', bPath = 'qubit_pairs.p.macros.b';
+    const observation = payload(aPath, false);
+    observation.calibration.note = 'first recorded in run #8; setting time unknown';
+    await select('a', observation);
+    check(d.getElementById('czp-card').textContent.includes('first recorded in run #8') &&
+          !d.getElementById('czp-card').textContent.includes('written by that run'), 'the card describes observations without inventing a setting');
+    const uncertain = payload(aPath, true);
+    uncertain.calibration.last_set.provenance = 'run_uncertain_chip';
+    await select('a', uncertain);
+    check(!d.getElementById('czp-card').textContent.includes('written by that run'), 'writer attribution requires run_proven provenance');
     const unknown = payload(aPath, false);
     unknown.row.lines[1].moves = true;
     unknown.row.duration_ns = null;

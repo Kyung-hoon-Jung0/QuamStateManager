@@ -258,7 +258,7 @@
                 (r.plan.reasons.length ? '<br><small class="muted">' + esc(r.plan.reasons.join(', ')) + '</small>' : '') + '</dd>' : '') +
             (r.interaction_frequency_hz ? '<dt>Stored interaction frequency</dt><dd>' + fmtGHz(r.interaction_frequency_hz) + '</dd>' : '') +
             '<dt>Fidelity</dt><dd>' + (fl.length ? fl.join('<br>') : '—') + '</dd>' +
-            '<dt>Last set</dt><dd>' + (cal.last_set ? esc(when(cal.last_set)) + (cal.proven ? ' <small class="muted">(written by that run)</small>' : ' <small class="muted">(' + esc(cal.last_set.provenance || 'writer not proven') + ')</small>') :
+            '<dt>Last set</dt><dd>' + (cal.last_set ? esc(when(cal.last_set)) + (cal.proven && cal.last_set.provenance === 'run_proven' ? ' <small class="muted">(written by that run)</small>' : ' <small class="muted">(' + esc(cal.last_set.provenance || 'writer not proven') + ')</small>') :
                 '<span class="muted">unknown' + (cal.note ? ' — ' + esc(cal.note) : '') + '</span>') + '</dd>' +
             (cal.warnings.length ? '<dt>Staleness</dt><dd class="czp-warn-text">' + cal.warnings.map(function (w) { return esc(w.text); }).join('<br>') + '</dd>' : '') +
             '</dl></div>');
@@ -342,7 +342,10 @@
                 if (note) note.textContent = h.mode === 'ledger' ? '' : (h.note || 'This chip has no change history, so when each operation was set is unknown.');
                 Array.prototype.forEach.call(root.querySelectorAll('td[data-last]'), function (td) {
                     var o = (h.ops || {})[td.getAttribute('data-last')];
-                    if (!o || !o.last_set) { td.innerHTML = '<span class="muted">unknown</span>'; return; }
+                    if (!o || !o.last_set) {
+                        td.innerHTML = '<span class="muted">unknown' + (o && o.note ? ' (' + esc(o.note) + ')' : '') + '</span>';
+                        return;
+                    }
                     td.innerHTML = esc(when(o.last_set)) + (o.warnings.length ? ' <span class="czp-warn-text" title="' +
                         esc(o.warnings.map(function (w) { return w.text; }).join('\n')) + '">⚠ ' + o.warnings.length + ' newer</span>' : '');
                 });

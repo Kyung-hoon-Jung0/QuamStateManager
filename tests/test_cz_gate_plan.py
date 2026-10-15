@@ -118,7 +118,9 @@ def test_the_quad_range_is_measured_against_the_fitted_arc_on_both_lobes():
     assert len(band["branches"]) == 2 and 100e6 < band["limit_hz"] < 1e9
     # v1.4.1: generic wording -> measured wording, this arc supplies the checked span.
     assert good.point(.05)["validity"] == "within the measured quadratic range"
-    assert good.point(.7)["validity"] == "outside the quadratic range"
+    # v1.4.1: outside -> beyond, no validity classification extends beyond the checked arc.
+    assert good.point(.7)["validity"] == "beyond the fitted arc's measured range"
+    assert good.point(.4)["validity"] == "outside the quadratic range"
     assert conv.range["limit_hz"] < band["limit_hz"]               # a wrong coefficient fails sooner
 
 
@@ -392,3 +394,43 @@ def test_registered_pulse_names_use_the_moving_channel_and_history_path(field):
     assert line["pulse_path"] == "qubits.q0.z.operations.flux"
     assert line["amplitude_path"] == "qubits.q0.z.operations.flux.amplitude"
     assert line["amplitude_path"] in row["amplitudes"]
+
+
+@pytest.mark.parametrize("provenance", ["first_record", "observed", "held_before_write"])
+def test_observations_are_never_last_set_or_dependency_changes(provenance):
+    row = {"amplitudes": ["a"], "dependencies": ["f"]}
+    observed = dict(pt(20_000_000, run=8), provenance=provenance)
+    c = C.calibration(row, {"rows": {"a": {"effective": [observed]}}})
+    assert c["unknown"] and c["last_set"] == {} and c["last_calibrated"] == {}
+    assert "first recorded in run #8" in c["reason"]
+    assert c["observations"]["a"]["t_us"] == 20_000_000
+    c = C.calibration(row, {"rows": {"a": {"effective": [pt(10_000_000)]},
+                                    "f": {"effective": [observed]}}})
+    assert not c["unknown"] and c["warnings"] == []
+
+
+def test_uncertain_run_identity_never_claims_the_run_wrote_the_value():
+    event = {"eid": 1, "ord": 1, "t_utc_us": 10, "kind": "run", "run_id": 1,
+             "flags": C.value_history.CHIP_UNCERTAIN, "base_hash": "base"}
+    p = C.value_history._point(event, .2, .1, "set", True, {}, {})
+    assert p["proven"] and p["provenance"] == "run_uncertain_chip"
+    c = C.calibration({"amplitudes": ["a"], "dependencies": []}, {"rows": {"a": {"effective": [p]}}})
+    assert c["last_set"]["run_id"] == 1
+    assert not c["last_set"]["proven"] and c["last_calibrated"] == {}
+
+
+def test_current_value_mismatch_invalidates_setting_and_preserves_the_note():
+    history = {"rows": {"a": {"effective": [pt(10_000_000)]}},
+               "notes": {"a": [{"code": "current_differs", "text": "The value now differs from the newest recorded one"}]}}
+    c = C.calibration({"amplitudes": ["a"], "dependencies": []}, history)
+    assert c["unknown"] and c["last_set"] == {} and c["last_calibrated"] == {}
+    assert "value now differs" in c["reason"]
+
+
+def test_only_actual_dependency_changes_can_make_a_setting_stale():
+    row = {"amplitudes": ["a"], "dependencies": ["f"]}
+    unchanged = dict(pt(30_000_000), old=5e9, value=5e9)
+    hist = {"rows": {"a": {"effective": [pt(10_000_000)]}, "f": {"effective": [unchanged]}}}
+    assert C.calibration(row, hist)["warnings"] == []
+    hist["rows"]["f"]["effective"].insert(0, dict(pt(20_000_000), old=5e9, value=4.9e9))
+    assert C.calibration(row, hist)["warnings"][0]["t"] == "T20000000"

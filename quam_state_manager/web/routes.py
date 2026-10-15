@@ -20728,7 +20728,7 @@ def cz_plan_history():
         c = czp.calibration(r, hist)
         ops[r["path"]] = {"last_set": _cz_plan_point_view(c["last_set"]) if c["last_set"] else None,
                           "proven": bool(c["last_calibrated"]), "unknown": c["unknown"],
-                          "warnings": c["warnings"]}
+                          "warnings": c["warnings"], "note": c["reason"]}
     return jsonify(ok=True, mode=hist.get("mode"), note=hist.get("unavailable_note") or None,
                    ops=ops, unavailable=unavailable)
 
@@ -20778,6 +20778,10 @@ def cz_plan_data():
             continue
         played = ln["play_duration_ns"]
         playback_known = not ln["duration_unknown"]
+        if played is None and any("constant pulse without length" in w for w in payload.get("warnings", [])):
+            notes.append(f"{ln['name']}: pulse duration is unknown; frequency in time is not drawn")
+            traj.append(None)
+            continue
         if played is not None:
             if payload.get("kind") == "constant":
                 from quam_state_manager.core.waveform_synth import MAX_SAMPLES
@@ -20796,7 +20800,7 @@ def cz_plan_data():
     cal = czp.calibration(row, hist)
     card = {"last_set": _cz_plan_point_view(cal["last_set"]) if cal["last_set"] else None,
             "proven": bool(cal["last_calibrated"]), "unknown": cal["unknown"], "warnings": cal["warnings"],
-            "mode": hist.get("mode"), "note": hist.get("unavailable_note") or None,
+            "mode": hist.get("mode"), "note": cal["reason"],
             "fields": {p: _cz_plan_point_view(f) for p, f in cal["fields"].items() if f.get("t_us") is not None}}
     others = [{"path": r["path"], "operation": r["operation"],
                "points": [{"amplitude_v": ln["amplitude_v"], "frequency_hz": ln["point"].get("frequency_hz")}

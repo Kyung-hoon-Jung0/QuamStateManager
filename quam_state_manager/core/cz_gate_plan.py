@@ -410,13 +410,14 @@ class Conversion:
             shift = abs(res["quad_hz"] - self.f01)
             if self.range["branches"]:
                 branch = next((b for b in self.range["branches"] if b["side"] == (1 if a > 0 else -1)), None)
-                if branch and branch["limit_hz"] is not None and shift > branch["limit_hz"]:
-                    res["validity"] = "outside the quadratic range"
-                elif (branch and branch["amplitude_min_v"] <= abs(a) <= branch["amplitude_max_v"]
-                      and shift <= branch["checked_quad_hz"]):
-                    res["validity"] = "within the measured quadratic range"
-                else:
+                checked = (branch and branch["amplitude_min_v"] <= abs(a) <= branch["amplitude_max_v"]
+                           and shift <= branch["checked_quad_hz"])
+                if not checked:
                     res["validity"] = "beyond the fitted arc's measured range"
+                elif branch["limit_hz"] is not None and shift > branch["limit_hz"]:
+                    res["validity"] = "outside the quadratic range"
+                else:
+                    res["validity"] = "within the measured quadratic range"
             elif self.anchor is not None:
                 res["validity"] = "beyond the fitted arc's measured range"
             elif limit is None:
@@ -613,6 +614,8 @@ def operations(doc, conversions=None, unavailable=None):
                 pulse = current(doc, pulse_path) if pulse_path else None
                 if isinstance(pulse, str) and not pulse.startswith("#"):
                     pulse_path = info["path"] + ".z.operations." + pulse
+                if pulse_path and isinstance(current(doc, pulse_path), dict):
+                    pulse_path = read(doc, pulse_path)["holder_path"]
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
                 amp = number(current(doc, amp_path)) if amp_path else 0.0
                 if amp_path and amp is None:
@@ -624,7 +627,7 @@ def operations(doc, conversions=None, unavailable=None):
                               "play_duration_ns": duration_ns if field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low") else None,
                               "duration_unknown": (raw_duration is not None and duration_ns is None
                                                    and field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low")),
-                              "pulse_class": (str(pulse.get("__class__", "")).split(".")[-1]
+                              "pulse_class": (str(current(doc, pulse_path + ".__class__", "")).split(".")[-1]
                                               if isinstance(pulse, dict) else None),
                               "amplitude_v": amp, "point": pt})
             fq = [ln["point"].get("frequency_hz") for ln in lines]
@@ -696,15 +699,39 @@ def calibration(row, history):
     model, the park offset) changed after an amplitude is a staleness warning.
     Unknown stays unknown: no amplitude history -> ``unknown``."""
     rows = history.get("rows") or {}
-    fields = {}
+    fields, changes, observations, notes = {}, {}, {}, []
+
+    def setting(p):
+        return (p.get("provenance") in ("sm", "run_proven", "run_saved", "run_uncertain_chip")
+                and not p.get("removed") and not p.get("undone")
+                and ("old" not in p or "value" not in p or p["old"] != p["value"]))
+
+    def view(p):
+        return {"t": p.get("t"), "t_us": p.get("t_us"), "run_id": p.get("run_id"),
+                "provenance": p.get("provenance"),
+                "proven": bool(p.get("proven")) and p.get("provenance") == "run_proven",
+                "kind": p.get("kind")}
+
     for path in row["amplitudes"] + row["dependencies"]:
         series = rows.get(path) or {}
         points = series.get("effective") or series.get("points") or []
-        usable = [p for p in points if not p.get("removed") and not p.get("undone")]
+        usable = [p for p in points if not p.get("undone")]
         p = usable[-1] if usable else {}
-        fields[path] = {"t": p.get("t"), "t_us": p.get("t_us"), "run_id": p.get("run_id"),
-                        "provenance": p.get("provenance"), "proven": bool(p.get("proven")),
-                        "kind": p.get("kind")}
+        path_notes = (history.get("notes") or {}).get(path) or []
+        differs = any(n.get("code") == "current_differs" for n in path_notes)
+        fields[path] = view(p if setting(p) and not differs else {})
+        events = [p for p in usable if setting(p)] if not differs else []
+        changes[path] = view(events[-1] if events else {})
+        if path in row["amplitudes"]:
+            if differs:
+                notes.extend(n["text"] for n in path_notes if n.get("code") == "current_differs" and n.get("text"))
+            if usable and fields[path]["t_us"] is None:
+                first = usable[0]
+                observations[path] = view(first)
+                if first.get("run_id") is not None:
+                    notes.append(f"{path}: first recorded in run #{first['run_id']}; setting time unknown")
+                elif first.get("t"):
+                    notes.append(f"{path}: first recorded {first['t']}; setting time unknown")
     amps = [fields[p] for p in row["amplitudes"]]
     known = [a for a in amps if a["t_us"] is not None]
     complete = bool(amps) and len(known) == len(amps)
@@ -713,7 +740,7 @@ def calibration(row, history):
     warnings = []
     if oldest is not None:
         for path in row["dependencies"]:
-            dep = fields[path]
+            dep = changes[path]
             if dep["t_us"] is not None and dep["t_us"] > oldest["t_us"] + STALE_SLACK_US:
                 warnings.append({"path": path, "t": dep["t"], "run_id": dep["run_id"],
                                  "text": "calibrated against an older "
@@ -721,5 +748,6 @@ def calibration(row, history):
     return {"fields": fields, "last_set": newest,
             "last_calibrated": newest if newest and newest.get("proven") else {},
             "warnings": warnings, "unknown": not complete,
+            "observations": observations,
             "status": history.get("mode", "unavailable"),
-            "reason": history.get("unavailable_note") or history.get("reason")}
+            "reason": "; ".join(notes) or history.get("unavailable_note") or history.get("reason")}

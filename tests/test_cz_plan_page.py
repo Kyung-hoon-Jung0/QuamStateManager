@@ -173,7 +173,11 @@ def test_collection_shapes_never_crash_and_unavailable_entries_are_explained(tmp
             assert data.get_json()["unavailable"]
     if shape == "pair_alias":
         alias = c.get("/cz-plan/data?op=qubit_pairs.alias.macros.cz_two").get_json()
+        assert alias["trajectory"][0] is not None
         assert alias["trajectory"][0]["frequency_hz"][0] == pytest.approx(4.8848e9)
+    if shape in ("macros_alias", "pairs_alias"):
+        assert data.get_json()["trajectory"][0] is not None
+        assert data.get_json()["trajectory"][0]["frequency_hz"][0] == pytest.approx(4.8848e9)
 
 
 def test_registered_name_draws_its_resolved_waveform(tmp_path, monkeypatch):
@@ -260,3 +264,43 @@ def test_unsupported_mover_is_explicitly_different_from_a_stationary_qubit(tmp_p
     assert data["trajectory"] == [None, None]
     assert [ln["moves"] for ln in data["row"]["lines"]] == [True, False]
     assert any("cannot draw this pulse" in n for n in data["notes"])
+
+
+@pytest.mark.parametrize("provenance", ["first_record", "observed", "held_before_write", "run_uncertain_chip"])
+def test_history_card_and_table_do_not_promote_observations_or_uncertain_writers(client, monkeypatch, provenance):
+    from quam_state_manager.web import routes
+
+    def history(rows):
+        return {"mode": "ledger", "rows": {p: {"effective": [
+            {"t": "2026-01-01T00:00:00Z", "t_us": 10, "run_id": 8,
+             "kind": "run", "proven": True, "provenance": provenance}]}
+            for row in rows for p in row["amplitudes"]}}
+
+    monkeypatch.setattr(routes, "_cz_plan_history", history)
+    data = client.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_json()["calibration"]
+    table = client.get("/cz-plan/history").get_json()["ops"]["qubit_pairs.q1-2.macros.cz_unipolar"]
+    assert not data["proven"] and not table["proven"]
+    if provenance != "run_uncertain_chip":
+        assert data["last_set"] is None and table["last_set"] is None
+        assert data["unknown"] and table["unknown"]
+        assert "first recorded in run #8" in data["note"] and "first recorded in run #8" in table["note"]
+
+
+@pytest.mark.parametrize("cycles", [None, 4])
+def test_constant_pulse_without_nominal_length_never_invents_time(tmp_path, monkeypatch, cycles):
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.web import routes
+    s, w = _chip()
+    del s["qubits"]["q1"]["z"]["operations"]["cz_flux"]["length"]
+    if cycles is not None:
+        s["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]["duration_qubit"] = cycles
+    monkeypatch.setattr(routes, "_store", lambda: QuamStore.from_dicts(s, w))
+    monkeypatch.setattr(routes, "_active_ctx", lambda: None)
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_json()
+    if cycles is None:
+        assert data["trajectory"][0] is None
+        assert any("pulse duration is unknown" in n for n in data["notes"])
+    else:
+        assert data["trajectory"][0] is not None
+        assert len(data["trajectory"][0]["frequency_hz"]) == 4 * cycles
