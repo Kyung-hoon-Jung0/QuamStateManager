@@ -269,6 +269,8 @@ def test_erroramp_tightest_cap_override_contours_and_figure_axis_provenance(tmp_
         "sigma_x": expected + .1 if not transposed else 0,
         "sigma_y": expected + .1 if transposed else 0, "override_cap": True}})
     assert overridden["caps_applied"]["override"] and overridden["caps_applied"]["warning"] == "cap overridden"
+    # review: a requested override reaches every row, the tightest included (no silent per-row clamp)
+    assert overridden["caps_applied"]["row_sigmas"] == pytest.approx([expected + .1] * len(counts))
     assert "cap overridden" in overridden["fit"]["verdict_line"] and "cap overridden" in overridden["provenance_text"]
     assert len(overridden["provenance_text"]) <= 300
 

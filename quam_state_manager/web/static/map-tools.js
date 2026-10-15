@@ -168,6 +168,20 @@
             },
                 function (error) { window.clearTimeout(request.timeout); throw error; });
         }
+        // the model menu for the readout panel's type (a switch to a panel of another type rebuilds it)
+        function setModels(c) {
+            var keep = control('model').value, names = (c.models || []).join('|');
+            if (control('model').getAttribute('data-models') !== names) {
+                control('model').replaceChildren();
+                (c.models || []).forEach(function (model) { var option = document.createElement('option'); option.value = model; option.textContent = model; control('model').appendChild(option); });
+                control('model').disabled = !(c.models || []).length;
+                if (control('model').disabled) {
+                    var noModel = document.createElement('option'); noModel.value = 'none'; noModel.textContent = 'Smoothing and contours only'; control('model').appendChild(noModel);
+                }
+                control('model').setAttribute('data-models', names);
+                control('model').value = (c.models || []).indexOf(keep) !== -1 ? keep : ((c.models || [])[0] || 'none');
+            }
+        }
         function showReadout() {
             var result = results[readout()];
             last = result || null;
@@ -206,12 +220,7 @@
                     if (initial) {
                         var sent = JSON.stringify(settings('auto'));
                         ['x', 'y'].forEach(function (axis) { control('sigma_' + axis).value = mine.caps_applied['default_' + (mine.caps_applied.transposed ? (axis === 'x' ? 'y' : 'x') : axis)]; });
-                        control('model').replaceChildren();
-                        classification.models.forEach(function (model) { var option = document.createElement('option'); option.value = model; option.textContent = model; control('model').appendChild(option); });
-                        control('model').disabled = !classification.models.length;
-                        if (control('model').disabled) {
-                            var noModel = document.createElement('option'); noModel.value = 'none'; noModel.textContent = 'Smoothing and contours only'; control('model').appendChild(noModel);
-                        }
+                        setModels(classification);
                         control('band').value = classification.circular ? 5 * classification.circular / 360 : 0;
                         try {
                             var saved = JSON.parse(window.localStorage.getItem('quam_map_tools_v1') || '{}')[kind];
@@ -225,6 +234,7 @@
                         var first = (classification.models || [])[0] || 'none';
                         if (JSON.stringify(settings(control('model').value === first ? 'auto' : null)) !== sent) return analyze(false);
                         showReadout();
+                        if (control('view').value !== 'smoothed') draw(null);
                         return;
                     }
                     clamp();
@@ -266,7 +276,11 @@
             if (event.target === control('panel')) return;      // a readout switch re-reads, never re-analyzes
             changed();
         });
-        control('panel').addEventListener('change', function () { clamp(); showReadout(); });
+        control('panel').addEventListener('change', function () {
+            var r = results[readout()];
+            if (r) { classification = r.classification; kind = classification.type; setModels(classification); }
+            clamp(); showReadout();
+        });
         strip.addEventListener('keydown', function (event) {
             if (event.key === 'Escape') { event.stopPropagation(); strip.hidden = true; button.setAttribute('aria-expanded', 'false'); button.focus(); }
             if (event.key === 'Enter' && event.target === control('level')) { event.preventDefault(); analyze(false); }

@@ -20,8 +20,21 @@ const authoritative = {request_hash: 'server-hash', classification: {type: 'erro
     // v1.4.1: ambiguous verdict suffix -> explicitly name the fit independently of comparison.
     fit: {verdict_line: 'VERDICT: ok'}, provenance_text: 'derived from smoothed map; proposed, not applied',
     updates: [{dot_path: 'qubits.q0.amplitude', value: .1962, provenance: {src: 'map_fit', request_hash: 'server-hash', text: 'derived from smoothed map'}}]};
-// A POST names its panels and is answered with one result per panel (the batch route).
-const batch = (value, body) => ({results: (body.panels || [0]).map(() => JSON.parse(JSON.stringify(value)))});
+// A POST names its panels and is answered with one result per panel (the batch route). Each panel's
+// answer is its own (grid, hash, value), so a wrong-panel draw or Apply cannot pass by accident.
+let panelTypes = null;
+const RIDGE = {type: 'ridge', models: ['ridge', 'extremum'], feature_axis: 'x'};
+const variant = (value, panel) => {
+    const v = JSON.parse(JSON.stringify(value));
+    if (panel) {
+        v.request_hash = 'server-hash-p' + panel;
+        v.smoothed.z = v.smoothed.z.map(r => r.map(x => x + 10 * panel));
+        (v.updates || []).forEach(u => { u.value = +(u.value * (panel + 1)).toFixed(6); u.provenance.request_hash = v.request_hash; });
+    }
+    if (panelTypes && panelTypes[panel]) v.classification = panelTypes[panel];
+    return v;
+};
+const batch = (value, body) => ({results: (body.panels || [0]).map(p => variant(value, p))});
 w.fetch = (url, opts) => {
     const body = opts ? JSON.parse(opts.body) : null;
     if (opts) posts.push(body);
@@ -29,6 +42,7 @@ w.fetch = (url, opts) => {
     if (displayOnly) { value.updates = []; value.display_only_reason = 'not verified on this run'; }
     if (serverCap !== null) { value.caps_applied.cap_x = serverCap; value.caps_applied.sigma_x = Math.min(value.caps_applied.sigma_x, serverCap); }
     if (body) value = batch(value, body);
+    else { const m = /server-hash-p(\d+)$/.exec(decodeURIComponent(url)); if (m) value = variant(value, +m[1]); }
     if (queued.length && opts) return new Promise(resolve => queued.shift()(resolve, value));
     return Promise.resolve({ok: true, json: () => Promise.resolve(value)});
 };
@@ -119,11 +133,16 @@ function check(value, message) { checks++; assert.ok(value, message); }
     input('smooth', true); input('sigma_x', 1); await wait(340);
     check(posts.at(-1).panels.join() === '0,1' && posts.at(-1).smooth.sigma_x === 1, 'a change re-analyzes every panel');
     check(draws.at(-1).data[0].z === undefined || JSON.stringify(draws.at(-1).data[0].z) === JSON.stringify(authoritative.smoothed.z), 'panel 1 redrawn from its result');
-    check(JSON.stringify(draws.at(-1).data[1].z) === JSON.stringify(authoritative.smoothed.z), 'panel 2 redrawn from its result');
+    check(JSON.stringify(draws.at(-1).data[1].z) === JSON.stringify(variant(authoritative, 1).smoothed.z), 'panel 2 redrawn from its own result');
     const beforeReadout = posts.length;
     c('panel').value = '1'; c('panel').dispatchEvent(new w.Event('input', {bubbles: true})); c('panel').dispatchEvent(new w.Event('change', {bubbles: true}));
     await wait(340);
     check(posts.length === beforeReadout && c('status').textContent.startsWith('Map 2: '), 'switching the readout re-reads without re-analyzing');
+    // review: Apply on Map 2 stages Map 2's own replayed value, under Map 2's hash
+    const popupsBefore = popups.length;
+    c('apply').click(); await wait(20);
+    check(popups.length === popupsBefore + 1 && popups.at(-1)[0][0].value === .3924
+          && popups.at(-1)[0][0].provenance.request_hash === 'server-hash-p1', 'Apply on Map 2 is Map 2');
     // review: a Readout switch while a request is out must not revive (or Apply) the older answer
     input('sigma_x', 1.5);
     let release;
@@ -143,6 +162,26 @@ function check(value, message) { checks++; assert.ok(value, message); }
     check(sent.length >= 2 && sent.every(n => n <= 16) && posts.slice(before16, before16 + 2).reduce((n, p) => n + p.panels.length, 0) === 18,
           'eighteen maps go out as requests of at most sixteen');
     tile._mapTools.destroy();
+    // review: panels of different types -> the readout's menu follows its panel; each panel asks for a model it has
+    panelTypes = [null, RIDGE];
+    w.localStorage.removeItem('quam_map_tools_v1');
+    w.MapTools.mount(tile, plot, two, {uid: 'run:mixed', fig: 'map'});
+    tile.querySelector('.map-tools-button').click(); await wait(30);
+    c('panel').value = '1'; c('panel').dispatchEvent(new w.Event('change', {bubbles: true}));
+    check(Array.from(c('model').options).map(o => o.value).join() === 'ridge,extremum', 'the model menu follows the readout panel type');
+    const beforeMixed = posts.length;
+    input('smooth', true); await wait(340);
+    const mixed = posts.slice(beforeMixed);
+    check(mixed.length === 2 && mixed.every(p => !(p.panels.includes(0) && p.fit.model === 'ridge')
+          && !(p.panels.includes(1) && p.fit.model === 'erroramp')), 'each panel asks only for a model of its own type');
+    tile._mapTools.destroy(); panelTypes = null;
+    // review: a restored side-by-side view is drawn from the first answer
+    w.localStorage.setItem('quam_map_tools_v1', JSON.stringify({erroramp: {view: 'side'}}));
+    const drawsBefore = draws.length;
+    w.MapTools.mount(tile, plot, payload, {uid: 'run:side', fig: 'map'});
+    tile.querySelector('.map-tools-button').click(); await wait(30);
+    check(draws.length > drawsBefore && !tile.querySelector('.map-tools-side').hidden, 'a restored side-by-side view is drawn');
+    tile._mapTools.destroy(); w.localStorage.removeItem('quam_map_tools_v1');
     const nonmap = d.createElement('div'); d.body.appendChild(nonmap);
     w.MapTools.mount(nonmap, plot, {data: [{type: 'scatter'}]}, {uid: 'run'});
     check(!nonmap.querySelector('.map-tools-button'), 'non heatmaps hide tools');

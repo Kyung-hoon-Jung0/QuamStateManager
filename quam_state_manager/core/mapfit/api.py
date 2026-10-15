@@ -187,7 +187,10 @@ def analyze(request):
     applied["default_y"] = 0. if kind=="erroramp" else min(float(defaults[1]),cap_y)
     row_sigmas = None
     if rows is not None:
-        row_sigmas = np.full(len(y),applied["sigma_x"]) if applied["override"] else np.minimum(rows,applied["sigma_x"])
+        # A requested override reaches every row (the tightest row's cap included); without one,
+        # each row keeps its own cap.
+        requested = bool(options.get("override_cap",False))
+        row_sigmas = np.full(len(y),applied["sigma_x"]) if requested else np.minimum(rows,applied["sigma_x"])
         applied["row_sigmas"] = row_sigmas
     kernel = options.get("kernel","gaussian")
     circular = meta.get("circular") if "phase" not in meta else None
