@@ -7787,6 +7787,7 @@ window.Bundles = (function () {
         [/^\/bulk(\/|$|\?)/, ["grid"]], [/^\/table(\/|$|\?)/, ["grid"]],
         [/^\/pulses?(\/|$|\?)/, ["pulses"]],
         [/^\/zline(\/|$|\?)/, ["zline"]],
+        [/^\/cz-plan(\/|$|\?)/, ["czplan"]],
         [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
         [/^\/instrument(\/|$|\?)/, ["wiring"]],
         [/^\/topology(\/|$|\?)/, ["chipstatus", "components"]], [/^\/chip-status(\/|$|\?)/, ["chipstatus", "components"]],

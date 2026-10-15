@@ -125,6 +125,7 @@
         'grid': ['grid-virt.js', 'bulk-edit.js', 'pair-edit.js', 'all-values.js', 'notes.js'],
         'pulses': ['pulses.js', 'pulses-vt.js'],
         'zline': ['zline.js'],
+        'czplan': ['cz-plan.js'],
         'topo': ['topo-graph.js'],
         'wiring': ['topo-graph.js', 'wiring-grid.js'],
         'components': ['topo-graph.js', 'component-map.js'],
@@ -143,6 +144,7 @@
         'bulk': ['grid'], 'table': ['grid'],
         'pulses': ['pulses', 'components'],
         'zline': ['zline'],
+        'czplan': ['czplan'],
         'generate': ['generate'], 'regenerate': ['generate'],
         'instrument': ['wiring'],
         'topology': ['chipstatus', 'components'], 'trends': ['chipstatus', 'datasets'], 'trend': ['chipstatus', 'datasets'],
@@ -736,10 +738,14 @@
                                    onclick="return chipNavView('frequencies', event)">Frequencies</a></li>
                             <li><a href="/topology?view=calibration" data-view="calibration"
                                    onclick="return chipNavView('calibration', event)">Calibration</a></li>
-                            {# v1.4.1: editing tools -> Chip Status, because distortion describes chip status. #}
+                            {# Distortion and the CZ operating points describe the chip's state, so they
+                               sit under Chip Status (customer feedback, 2026-10-15). #}
                             <li><a href="/zline" hx-get="/zline" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                    title="The port's exponential + FIR filters applied together to each flux line's step and pulses"
                                    {% if page == 'zline' %}class="active"{% endif %}>Z-line distortion</a></li>
+                            <li><a href="/cz-plan" hx-get="/cz-plan" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   title="At what frequency each CZ operation of each pair operates: flux, detuning, resonances, when last set"
+                                   {% if page == 'czplan' %}class="active"{% endif %}>CZ gate plan</a></li>
                         </ul>
                     </li>
                     {# Compare — docs/84 made the DIFF the front door: the hub
@@ -1441,6 +1447,7 @@
                 {"label": "Diagnostics",       "url": "/diagnostics"},
                 {"label": "Chip Status",       "url": "/topology"},
                 {"label": "Z-line distortion", "url": "/zline"},
+                {"label": "CZ gate plan",      "url": "/cz-plan"},
                 {"label": "Compare",           "url": "/diff"},
                 {"label": "Live State Edit",   "url": "/bulk"},
                 {"label": "Live edit - Json Tree view", "url": "/explorer"},

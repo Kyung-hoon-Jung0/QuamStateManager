@@ -14767,7 +14767,7 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 [data-theme="light"] td.cell-live-stale { box-shadow: inset 3px 0 0 #0284c7; }
 [data-theme="light"] .sp-group-mine .sp-group-head td { color: #b45309; }
 
-/* ── Z-LINE DISTORTION (Live State Edit > Z-line distortion) ─────────── */
+/* ── Z-LINE DISTORTION (Chip Status > Z-line distortion) ─────────── */
 .zline-lede { max-width: 62rem; margin: 0 0 0.75rem; }
 .zline-table .zline-row { cursor: pointer; }
 .zline-table .zline-row-selected td { background: var(--pico-primary-focus, rgba(79, 156, 249, 0.14)); }
@@ -14792,6 +14792,35 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 .zline-plot { height: 340px; min-width: 0; }
 .zline-stats { font-size: 0.8rem; margin: 0.25rem 0 0; }
 .zline-empty { padding: 3rem 1rem; text-align: center; }
+/* Chip Status > CZ gate plan */
+.czp-lede { max-width: 66rem; margin: 0 0 0.75rem; }
+.czp-table-wrap { max-height: 45vh; overflow: auto; }
+.czp-table .czp-row { cursor: pointer; }
+.czp-table .czp-row-selected td { background: var(--pico-primary-focus, rgba(79, 156, 249, 0.14)); }
+.czp-table .czp-row-selected td:first-child { box-shadow: inset 3px 0 0 var(--pico-primary, #4f9cf9); }
+.czp-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.czp-mover { display: inline-block; margin-right: 0.3rem; font-weight: 600; }
+.czp-tier { display: inline-block; font-size: 0.75em; padding: 0 0.35rem; margin: 0 0.2rem 0.1rem 0; border-radius: 0.6rem;
+    border: 1px solid var(--pico-primary, #4f9cf9); color: var(--pico-primary, #4f9cf9); white-space: nowrap; }
+.czp-tier-quad { border-style: dashed; color: var(--pico-muted-color, #888); border-color: var(--pico-muted-color, #888); }
+.czp-warn-text { color: var(--color-warning-text, #856404); }
+.czp-history-note { font-size: 0.85rem; margin: 0.25rem 0 0; }
+.czp-detail { margin-top: 1rem; }
+.czp-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem 1.25rem; }
+.czp-controls .czp-title { flex: 1 1 14rem; margin: 0; font-size: 1.05rem; }
+.czp-controls label { display: flex; flex-direction: column; font-size: 0.8rem; margin: 0; }
+.czp-controls select { margin: 0.15rem 0 0; padding: 0.2rem 1.8rem 0.2rem 0.5rem; font-size: 0.85rem; height: auto; min-width: 12rem; }
+.czp-plots { display: grid; grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr)); gap: 1rem; }
+.czp-fig { margin: 0; min-width: 0; }
+.czp-fig figcaption { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.25rem; }
+.czp-plot { height: 460px; min-width: 0; }
+.czp-card { margin-top: 0.75rem; }
+.czp-card h4 { margin: 0 0 0.5rem; font-size: 1rem; }
+.czp-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 0.75rem; }
+.czp-card-q { border: 1px solid var(--pico-muted-border-color, #888); border-radius: 0.4rem; padding: 0.5rem 0.75rem; font-size: 0.85rem; }
+.czp-card-q dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.75rem; margin: 0.4rem 0 0; }
+.czp-card-q dt { color: var(--pico-muted-color, #888); font-weight: normal; }
+.czp-card-q dd { margin: 0; }
 
 /* 2026-09-27: the one create flow's first step -- what to create */
 .pulse-create-choice { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 0.35rem; margin: 0.35rem 0.5rem 0.6rem; padding: 0; }

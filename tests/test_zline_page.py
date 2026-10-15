@@ -64,7 +64,7 @@ def _data(c, line, **kw):
 class TestPage:
     def test_sidebar_entry_under_chip_status(self, client):
         html = client.get("/zline").get_data(as_text=True)
-        # v1.4.1: editing tools -> Chip Status, because distortion describes chip status.
+        # customer feedback 2026-10-15: distortion describes the chip's state, so it sits under Chip Status.
         status = html.split('id="chip-status-subnav"', 1)[1].split('</ul>', 1)[0]
         editing = html.split('id="live-edit-subnav"', 1)[1].split('</ul>', 1)[0]
         assert 'href="/zline"' in status and "Z-line distortion" in status

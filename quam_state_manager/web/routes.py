@@ -20454,7 +20454,7 @@ def _pulse_draw_sparks(store, pulse_index, rows) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Z-line distortion (Live State Edit > Z-line distortion)
+# Z-line distortion (Chip Status > Z-line distortion)
 # ---------------------------------------------------------------------------
 
 #: Content-keyed memo of one line's computed responses. The TOKEN is the full
@@ -20646,6 +20646,145 @@ def _zline_payload(store, line: str, model: str = "sum", op: str = "",
             out["pulse"] = memo((line, "pulse", op), tok,
                                 lambda: zf.pulse_response(pf, samples, model=model))
     return out
+
+
+
+# ---------------------------------------------------------------- CZ gate plan
+# Chip Status > CZ gate plan: at what frequency every CZ operation of every pair
+# operates. The physics, the tiers and every refusal live in core/cz_gate_plan.py;
+# these routes only resolve the chip once, add the history and the waveforms.
+
+def _cz_plan_ops(store):
+    from quam_state_manager.core import cz_gate_plan as czp
+    with store._lock:
+        merged = store.merged
+    return czp.operations(merged)
+
+
+def _cz_plan_table(rows) -> list[dict]:
+    """One row per operation for the all-pairs table (no history: that arrives by itself)."""
+    out = []
+    for r in rows:
+        pts = [ln["point"] for ln in r["lines"]]
+        kinds = sorted({p.get("kind") for p in pts if p.get("kind") and p.get("kind") != "idle f_01"})
+        validity = [p.get("validity") for p in pts if p.get("validity") not in (None, "idle")]
+        out.append({
+            "path": r["path"], "pair": r["pair"], "operation": r["operation"], "kind": r["kind"],
+            "alias_of": r["alias_of"],
+            "names": [ln["name"] for ln in r["lines"]],
+            "freqs": [p.get("frequency_hz") for p in pts],
+            "moves": [ln["moves"] for ln in r["lines"]],
+            "reasons": [p.get("reason") for p in pts if p.get("reason")],
+            "detuning_hz": r["detuning_hz"], "nearest": r["nearest"], "kinds": kinds,
+            "validity": ("outside the quadratic range" if "outside the quadratic range" in validity
+                         else validity[0] if validity else None),
+            "irb": (r["fidelity"].get("InterleavedRB") or {}).get("value"),
+        })
+    return out
+
+
+@bp.route("/cz-plan")
+def cz_plan_page():
+    """Every CZ operation of every pair: the frequency each qubit reaches, the detuning,
+    the nearest |11> resonance, and (filled in by /cz-plan/history) when it was last set."""
+    store = _store()
+    if not store:
+        return _no_chip("CZ gate plan", "czplan")
+    template = "_cz_plan.html" if _is_htmx() else "cz_plan.html"
+    rows, _convs = _cz_plan_ops(store)
+    table = _cz_plan_table(rows)
+    want = request.args.get("op", "").strip()
+    paths = [r["path"] for r in table]
+    selected = want if want in paths else (paths[0] if paths else "")
+    return render_template(template, **_ctx(page="czplan", rows=table, selected=selected))
+
+
+def _cz_plan_history(rows: list[dict]) -> dict:
+    """``value_history`` for every amplitude and dependency path of *rows*, one ledger read."""
+    paths = sorted({p for r in rows for p in r["amplitudes"] + r["dependencies"]})
+    ctx = _active_ctx()
+    if not ctx or not paths:
+        return {"mode": "unavailable", "reason": "no chip", "rows": {}}
+    return _value_history(ctx, {p: p for p in paths}, limit=3)
+
+
+def _cz_plan_point_view(point: dict) -> dict:
+    return {k: point.get(k) for k in ("t", "t_us", "run_id", "proven", "provenance", "kind")}
+
+
+@bp.route("/cz-plan/history")
+def cz_plan_history():
+    """When each operation's amplitudes were last set, and every staleness warning."""
+    from quam_state_manager.core import cz_gate_plan as czp
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    rows, _convs = _cz_plan_ops(store)
+    hist = _cz_plan_history(rows)
+    ops = {}
+    for r in rows:
+        c = czp.calibration(r, hist)
+        ops[r["path"]] = {"last_set": _cz_plan_point_view(c["last_set"]) if c["last_set"] else None,
+                          "proven": bool(c["last_calibrated"]), "unknown": c["unknown"],
+                          "warnings": c["warnings"]}
+    return jsonify(ok=True, mode=hist.get("mode"), note=hist.get("unavailable_note") or None, ops=ops)
+
+
+@bp.route("/cz-plan/data")
+def cz_plan_data():
+    """One operation, drawn: both qubits' flux -> frequency curves, every operation of its
+    pair as an operating point, the gate's frequency vs time from its own waveforms, the
+    planner's point, the defect bands, and the operation's card (history included)."""
+    from quam_state_manager.core import cz_gate_plan as czp
+    from quam_state_manager.core.waveform_synth import synth_for_operation
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    path = request.args.get("op", "").strip()
+    rows, convs = _cz_plan_ops(store)
+    row = next((r for r in rows if r["path"] == path), None)
+    if row is None:
+        return jsonify(ok=False, error=f"not a CZ operation on this chip: {path!r}"), 404
+    pair_rows = [r for r in rows if r["pair"] == row["pair"]]
+    amps = [abs(ln["amplitude_v"]) for r in pair_rows for ln in r["lines"] if ln["amplitude_v"]]
+    if row["plan"]:
+        amps += [abs(v["plan_v"]) for v in row["plan"]["roles"].values() if v.get("plan_v")]
+    amax = max([0.05] + amps) * 1.3
+    qubits = []
+    for ln in row["lines"]:
+        conv = convs.get(ln["qubit_path"])
+        if conv is None:
+            qubits.append({"role": ln["role"], "name": ln["name"], "summary": None})
+            continue
+        with store._lock:
+            q = czp.qubit_at(store.merged, ln["qubit_path"])
+        qubits.append({"role": ln["role"], "name": ln["name"], "summary": conv.summary(),
+                       "curve": conv.curve(amax), "tls": czp.tls_bands(q)})
+    traj, notes = [], list(row["notes"])
+    for ln in row["lines"]:
+        conv = convs.get(ln["qubit_path"])
+        if not ln["moves"] or conv is None:
+            traj.append(None)
+            continue
+        payload = synth_for_operation(store, ln["pulse_path"])
+        samples = payload.get("i") if payload.get("ok") else None
+        if not samples:
+            notes.append(f"{ln['name']}: SM cannot draw this pulse ({payload.get('error') or 'no samples'}),"
+                         " so the frequency in time is not drawn for it")
+            traj.append(None)
+            continue
+        traj.append({"amplitude_v": samples, **conv.trajectory(samples)})
+    hist = _cz_plan_history([row])
+    cal = czp.calibration(row, hist)
+    card = {"last_set": _cz_plan_point_view(cal["last_set"]) if cal["last_set"] else None,
+            "proven": bool(cal["last_calibrated"]), "unknown": cal["unknown"], "warnings": cal["warnings"],
+            "mode": hist.get("mode"), "note": hist.get("unavailable_note") or None,
+            "fields": {p: _cz_plan_point_view(f) for p, f in cal["fields"].items() if f.get("t_us") is not None}}
+    others = [{"path": r["path"], "operation": r["operation"],
+               "points": [{"amplitude_v": ln["amplitude_v"], "frequency_hz": ln["point"].get("frequency_hz")}
+                          for ln in r["lines"]]} for r in pair_rows]
+    return jsonify(ok=True, row=row, qubits=qubits, trajectory=traj, notes=notes,
+                   calibration=card, pair_ops=others, amax_v=amax)
 
 
 @bp.route("/pulses")

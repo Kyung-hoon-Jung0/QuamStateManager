@@ -55,7 +55,7 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
   {
     const p = await open(`${BASE}/pulses`); await p.sleep(2500);
     const mark = p.events.length;
-    // v1.4.1: editing tools -> Chip Status, because distortion describes chip status.
+    // customer feedback 2026-10-15: distortion describes the chip's state, so it sits under Chip Status.
     const link = await center(p, '#chip-status-subnav a[href="/zline"]');
     rec('Z1a sidebar shows Z-line distortion under Chip Status', !!link);
     if (link) { await p.click(link.x, link.y); }

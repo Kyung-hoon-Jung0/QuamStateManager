@@ -1,0 +1,77 @@
+{# Chip Status > CZ gate plan. Every CZ operation of every pair: the frequency each qubit
+   reaches, the detuning, the nearest |11> resonance and when the operation was last set.
+   The physics, the estimate tiers and every refusal live in core/cz_gate_plan.py;
+   cz-plan.js only draws. #}
+<div id="czp-root" class="czp-root" data-selected="{{ selected }}">
+<div class="table-header-row">
+    <h2>CZ gate plan <small class="muted">({{ rows | length }} operation{{ '' if rows|length == 1 else 's' }})</small></h2>
+</div>
+<p class="muted czp-lede">
+    Where each CZ operation moves its qubits: flux amplitude &rarr; frequency, the detuning
+    &Delta; = f<sub>control</sub> &minus; f<sub>target</sub> it reaches, and the nearest resonance of the
+    |11&rang; manifold (|11&rang;&ndash;|20&rang; at +|&alpha;<sub>c</sub>|, |11&rang;&ndash;|02&rang; at &minus;|&alpha;<sub>t</sub>|, iSWAP at 0).
+    A <strong>quad-term estimate</strong> uses <code>freq_vs_flux_01_quad_term</code>; a fitted flux model is
+    drawn instead where the qubit carries one. Bare-qubit frequencies: coupling shifts are not included.
+</p>
+{% if rows %}
+<div class="czp-table-wrap">
+<table id="czp-table" class="data-table czp-table" role="grid">
+    <thead>
+        <tr>
+            <th>Pair</th>
+            <th>Operation</th>
+            <th title="Which qubits the operation flux-pulses">Moves</th>
+            <th title="Frequency each qubit reaches at the operation's amplitude (control / target)">At the operation (GHz)</th>
+            <th title="f_control - f_target at the operating point">&Delta; (MHz)</th>
+            <th title="The nearest |11> resonance and how far &Delta; is from it">Nearest resonance</th>
+            <th title="How the frequency was obtained">Estimate</th>
+            <th title="Quad-term estimate against the measured quadratic range">Validity</th>
+            <th>IRB</th>
+            <th title="When the operation's amplitudes were last set (from this chip's history)">Last set</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+        <tr class="clickable-row czp-row{% if r.path == selected %} czp-row-selected{% endif %}" data-op="{{ r.path }}" tabindex="0"
+            aria-selected="{{ 'true' if r.path == selected else 'false' }}">
+            <td><strong>{{ r.pair }}</strong></td>
+            <td>{{ r.operation }}{% if r.alias_of %} <small class="muted" title="{{ r.alias_of }}">alias</small>{% endif %}</td>
+            <td>{% for n in r.names %}{% if r.moves[loop.index0] %}<span class="czp-mover">{{ n }}</span>{% endif %}{% endfor %}<small class="muted"> {{ r.kind }}</small></td>
+            <td class="czp-num">{% for f in r.freqs %}{{ '%.4f' | format(f / 1e9) if f is not none else '—' }}{% if not loop.last %} / {% endif %}{% endfor %}</td>
+            <td class="czp-num">{{ '%.1f' | format(r.detuning_hz / 1e6) if r.detuning_hz is not none else '—' }}</td>
+            <td>{% if r.nearest %}{{ r.nearest.name }} <small class="muted">{{ '%+.1f' | format(r.nearest.distance_hz / 1e6) }} MHz</small>{% else %}<span class="muted" title="{{ r.reasons | join('; ') }}">{{ r.reasons[0] if r.reasons else '—' }}</span>{% endif %}</td>
+            <td>{% for k in r.kinds %}<span class="czp-tier{% if 'quad' in k %} czp-tier-quad{% endif %}">{{ k }}</span>{% endfor %}</td>
+            <td>{% if r.validity %}<span class="{{ 'czp-warn-text' if r.validity == 'outside the quadratic range' else 'muted' }}">{{ r.validity }}</span>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+            <td class="czp-num">{{ '%.4f' | format(r.irb) if r.irb is not none else '—' }}</td>
+            <td class="czp-last" data-last="{{ r.path }}"><span class="muted">&hellip;</span></td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+<p class="muted czp-history-note" id="czp-history-note" role="status"></p>
+
+<section class="czp-detail" aria-live="polite">
+    <div class="czp-controls">
+        <h3 id="czp-title" class="czp-title">&nbsp;</h3>
+        <label>Operation
+            <select id="czp-op" aria-label="Operation of this pair"></select>
+        </label>
+    </div>
+    <ul id="czp-notes" class="zline-notes czp-notes"></ul>
+    <div class="czp-plots">
+        <figure class="czp-fig">
+            <figcaption>Frequency vs flux amplitude <span class="muted">&mdash; idle &rarr; operating point, resonance levels at that height</span></figcaption>
+            <div id="czp-flux" class="czp-plot"></div>
+        </figure>
+        <figure class="czp-fig">
+            <figcaption>Frequency during the gate <span class="muted">&mdash; from the operation's own waveforms</span></figcaption>
+            <div id="czp-time" class="czp-plot"></div>
+        </figure>
+    </div>
+    <div id="czp-card" class="czp-card"></div>
+</section>
+{% else %}
+<p class="muted" style="text-align:center;padding:2rem">No CZ operations on this chip &mdash; no qubit pair has a macro of a CZ gate class.</p>
+{% endif %}
+</div>
