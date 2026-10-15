@@ -1033,3 +1033,11 @@ Lab figures laid out by Matplotlib's layout engines reproduce with the same room
   picture has instead of covering them.
 - **Multi-line headings and notes**: a heading of several lines hangs from its top edge (the first line is no longer
   clipped), and multi-line text is sized so its block takes the same height as in the lab figure.
+
+## v1.4.7 (2026-10-15)
+
+Markers in reproduced lab figures keep their own colours.
+
+- **Marker colours**: a marker keeps the face and edge colours the lab gave it -- hollow rings stay hollow with their
+  coloured edge (a shortlist of candidates), a star keeps its fill and black edge, and scatter points drawn hollow stay
+  hollow. Before, a marker took its line's default colour and every hollow marker was filled.
