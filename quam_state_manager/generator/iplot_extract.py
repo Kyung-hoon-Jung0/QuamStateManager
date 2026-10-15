@@ -49,6 +49,18 @@ def _hex(c):
         return None
 
 
+def _legend_box(leg):
+    """Where the legend was drawn, in figure fractions [x0, y0, x1, y1] ("best" picks a
+    corner only at draw time). None when the figure has no renderer to ask."""
+    try:
+        fig = leg.get_figure(root=True) if "root" in leg.get_figure.__code__.co_varnames else leg.figure
+        renderer = fig.canvas.get_renderer()
+        box = leg.get_window_extent(renderer).transformed(fig.transFigure.inverted())
+        return [_f(box.x0), _f(box.y0), _f(box.x1), _f(box.y1)]
+    except Exception:
+        return None
+
+
 def _marker_fill(c):
     """A marker face colour, or "none" for a hollow marker (to_hex would make it black)."""
     if isinstance(c, str) and c.lower() == "none":
@@ -409,7 +421,7 @@ def extract_axes(ax, axes):
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
         "aspect": _f(ax.get_aspect()),
-        "legend": ({"loc": leg._loc, "size": _f(leg.get_texts()[0].get_fontsize())}
+        "legend": ({"loc": leg._loc, "size": _f(leg.get_texts()[0].get_fontsize()), "box": _legend_box(leg)}
                    if leg is not None and leg.get_texts() else None),
         "position": _figure_position(ax),
         "axison": bool(ax.axison),

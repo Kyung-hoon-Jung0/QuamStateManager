@@ -872,15 +872,22 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         # Source fractions already contain the margins around axes and headers.
         layout["margin"] = {"l": 0, "r": 0, "t": 0, "b": 0}
         layout["legend"].update(y=0, yanchor="bottom")
-        source_legend = axes[_pick_base(axes, panels[0])].get("legend") if len(panels) == 1 else None
+        # The one panel that carries the lab's legend keeps it; several legends share the footer.
+        holders = [i for i, p in enumerate(panels) if axes[_pick_base(axes, p)].get("legend")]
+        source_legend = axes[_pick_base(axes, panels[holders[0]])].get("legend") if len(holders) == 1 else None
         if source_legend:
-            x0, x1, y0, y1 = positions[1][0]
-            loc = source_legend.get("loc", 1)
-            left, bottom = loc in (2, 3, 6, 9), loc in (3, 4, 8)
-            layout["legend"].update(orientation="v", x=x0 if left else x1,
-                                    y=y0 if bottom else y1,
-                                    xanchor="left" if left else "right",
-                                    yanchor="bottom" if bottom else "top")
+            x0, x1, y0, y1 = positions[1][holders[0]]
+            box = source_legend.get("box")
+            if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box) \
+                    and 0 <= box[0] < box[2] <= 1 and 0 <= box[1] < box[3] <= 1:
+                layout["legend"].update(orientation="v", x=box[0], y=box[3], xanchor="left", yanchor="top")
+            else:
+                loc = source_legend.get("loc", 1)
+                left, bottom = loc in (2, 3, 6, 9), loc in (3, 4, 8)
+                layout["legend"].update(orientation="v", x=x0 if left else x1,
+                                        y=y0 if bottom else y1,
+                                        xanchor="left" if left else "right",
+                                        yanchor="bottom" if bottom else "top")
     layout["height"] = max(320, 320 * nrows) + (64 * nrows if has_top_axis else 0)
     size = fig_json.get("size_inches")
     source_aspect = None
