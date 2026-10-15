@@ -588,6 +588,15 @@ def operations(doc, conversions=None, unavailable=None):
             else:
                 notes.append("qubit_pair.moving_qubit is missing or not control/target")
                 kind = "single mover"
+            duration_field = "duration" if kind == "both movers" else "duration_qubit" if kind == "single mover" else None
+            raw_duration = current(doc, path + "." + duration_field) if duration_field else None
+            cycles = number(raw_duration)
+            duration_ns = (4 * cycles if cycles is not None and cycles > 0 and cycles.is_integer()
+                           and math.isfinite(4 * cycles) else None)
+            duration_note = (f"{cycles:g} clock cycles x 4 ns = {duration_ns:g} ns (play-time override)"
+                             if duration_ns is not None else
+                             "unknown: play-time duration override cannot be resolved" if raw_duration is not None else
+                             "unknown: no play-time duration override is stored; stored duration is a runtime property")
             spectators = mapping(path + ".spectator_qubits_control")
             for key in spectators:
                 target = read(doc, path + ".spectator_qubits." + key)
@@ -612,6 +621,9 @@ def operations(doc, conversions=None, unavailable=None):
                 pt = conv.point(amp) if conv else {"frequency_hz": None, "reason": "qubit not found"}
                 lines.append({"role": role, "name": info["name"], "qubit_path": info["path"],
                               "moves": bool(field), "pulse_path": pulse_path, "amplitude_path": amp_path,
+                              "play_duration_ns": duration_ns if field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low") else None,
+                              "duration_unknown": (raw_duration is not None and duration_ns is None
+                                                   and field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low")),
                               "pulse_class": (str(pulse.get("__class__", "")).split(".")[-1]
                                               if isinstance(pulse, dict) else None),
                               "amplitude_v": amp, "point": pt})
@@ -630,7 +642,7 @@ def operations(doc, conversions=None, unavailable=None):
                 "detuning_hz": (fq[0] - fq[1]) if None not in fq else None,
                 "idle_detuning_hz": (lambda a, b: a - b if a is not None and b is not None else None)(
                     number(roles["control"]["qubit"].get("f_01")), number(roles["target"]["qubit"].get("f_01"))),
-                "duration_ns": number(current(doc, path + ".duration")),
+                "duration_ns": duration_ns, "duration_note": duration_note,
                 "phases": {k: number(current(doc, path + ".phase_shift_" + k)) for k in ("control", "target")},
                 "fidelity": _fidelity(resolved_tree(doc, path + ".fidelity")),
                 "plan": _plan(plan, lines),

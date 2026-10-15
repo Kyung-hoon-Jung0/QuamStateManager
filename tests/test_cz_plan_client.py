@@ -15,4 +15,5 @@ def test_cz_plan_client():
     result = subprocess.run(["node", str(root / "tests/cz_plan_selfcheck.cjs")], cwd=root, env=os.environ.copy(),
                             capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "14 assertions passed" in result.stdout
+    # v1.4.1: fixed old count -> expanded deferred-render and unknown-motion pins must execute.
+    assert "29 assertions passed" in result.stdout

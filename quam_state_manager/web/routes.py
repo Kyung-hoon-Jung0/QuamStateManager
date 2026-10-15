@@ -20776,7 +20776,22 @@ def cz_plan_data():
                          " so the frequency in time is not drawn for it")
             traj.append(None)
             continue
-        traj.append({"amplitude_v": samples, **conv.trajectory(samples)})
+        played = ln["play_duration_ns"]
+        playback_known = not ln["duration_unknown"]
+        if played is not None:
+            if payload.get("kind") == "constant":
+                from quam_state_manager.core.waveform_synth import MAX_SAMPLES
+                if played > MAX_SAMPLES:
+                    notes.append(f"{ln['name']}: played duration exceeds the waveform sample limit; time frequency unknown")
+                    traj.append(None)
+                    continue
+                samples = [samples[0]] * int(played)
+            else:
+                playback_known = False
+                notes.append(f"{ln['name']}: drawn waveform is the nominal one; the play-time override is {played:g} ns")
+        elif ln["duration_unknown"]:
+            notes.append(f"{ln['name']}: drawn waveform is the nominal one; played duration is unknown")
+        traj.append({"amplitude_v": samples, "playback_known": playback_known, **conv.trajectory(samples)})
     hist = _cz_plan_history([row])
     cal = czp.calibration(row, hist)
     card = {"last_set": _cz_plan_point_view(cal["last_set"]) if cal["last_set"] else None,

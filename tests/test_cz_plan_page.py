@@ -189,3 +189,74 @@ def test_registered_name_draws_its_resolved_waveform(tmp_path, monkeypatch):
     assert data["row"]["amplitudes"] == ["qubits.q1.z.operations.cz_flux.amplitude"]
     assert len(data["trajectory"][0]["frequency_hz"]) == 40
     assert data["trajectory"][0]["frequency_hz"][0] == pytest.approx(4.8848e9)
+
+
+@pytest.mark.parametrize("both", [False, True])
+@pytest.mark.parametrize("cycles", [4, 16])
+def test_play_time_override_converts_cycles_and_resizes_constant_pulses(tmp_path, monkeypatch, both, cycles):
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.web import routes
+    s, w = _chip()
+    macro = s["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]
+    if both:
+        macro["__class__"] = "x.CZGateBothMovers"
+        macro["flux_pulse_high"] = macro.pop("flux_pulse_qubit")
+        macro["flux_pulse_low"] = "#/qubits/q2/z/operations/cz_flux_t"
+    macro["duration" if both else "duration_qubit"] = "#/played"
+    s["played"] = cycles
+    store = QuamStore.from_dicts(s, w)
+    monkeypatch.setattr(routes, "_store", lambda: store)
+    monkeypatch.setattr(routes, "_active_ctx", lambda: None)
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_json()
+    assert data["row"]["duration_ns"] == 4 * cycles
+    assert "clock cycles x 4 ns" in data["row"]["duration_note"]
+    for k in range(2 if both else 1):
+        trajectory = data["trajectory"][k]
+        assert len(trajectory["frequency_hz"]) == 4 * cycles
+        assert trajectory["playback_known"]
+        assert all(f == pytest.approx(data["row"]["lines"][k]["point"]["frequency_hz"])
+                   for f in trajectory["frequency_hz"])
+
+
+@pytest.mark.parametrize("stored", [16, "#/runtime/duration"])
+def test_standard_macro_duration_property_has_no_proven_unit(stored):
+    from quam_state_manager.core import cz_gate_plan as C
+    s, _w = _chip()
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]["duration"] = stored
+    row = C.operations(s)[0][0]
+    assert row["duration_ns"] is None
+    assert row["duration_note"].startswith("unknown:")
+
+
+def test_arbitrary_override_keeps_nominal_samples_and_names_that_limit(tmp_path, monkeypatch):
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.web import routes
+    s, w = _chip()
+    pulse = s["qubits"]["q1"]["z"]["operations"]["cz_flux"]
+    pulse.update(__class__="quam.components.pulses.GaussianPulse", sigma=8)
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]["duration_qubit"] = 16
+    store = QuamStore.from_dicts(s, w)
+    monkeypatch.setattr(routes, "_store", lambda: store)
+    monkeypatch.setattr(routes, "_active_ctx", lambda: None)
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_json()
+    assert data["row"]["duration_ns"] == 64
+    assert len(data["trajectory"][0]["frequency_hz"]) == 40
+    assert not data["trajectory"][0]["playback_known"]
+    assert any("drawn waveform is the nominal one" in n and "64 ns" in n for n in data["notes"])
+
+
+def test_unsupported_mover_is_explicitly_different_from_a_stationary_qubit(tmp_path, monkeypatch):
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.web import routes
+    s, w = _chip()
+    s["qubits"]["q1"]["z"]["operations"]["cz_flux"]["__class__"] = "x.UnsupportedPulse"
+    store = QuamStore.from_dicts(s, w)
+    monkeypatch.setattr(routes, "_store", lambda: store)
+    monkeypatch.setattr(routes, "_active_ctx", lambda: None)
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    data = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_json()
+    assert data["trajectory"] == [None, None]
+    assert [ln["moves"] for ln in data["row"]["lines"]] == [True, False]
+    assert any("cannot draw this pulse" in n for n in data["notes"])

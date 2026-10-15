@@ -42,8 +42,15 @@
         return (p.run_id != null ? 'run #' + p.run_id + ' · ' : '') + t;
     }
 
-    function empty(el, text) {
+    function active(root, token) {
+        return token === seq && document.body.contains(root);
+    }
+
+    function empty(el, text, root, token) {
+        if (!active(root, token)) return;
         if (window.PlotHost) window.PlotHost.purgeWithin(el);
+        el.removeAttribute('data-dwell');
+        el.removeAttribute('data-notes');
         el.innerHTML = '<p class="muted zline-empty">' + esc(text) + '</p>';
     }
 
@@ -67,7 +74,7 @@
     /* (a) f vs flux amplitude: each qubit's curve(s), its idle point, an arrow to the selected
        operation's operating point, the pair's other operations faintly, the resonance levels at
        the operating height, the planned interaction point and the defect bands. */
-    function drawFlux(root, d) {
+    function drawFlux(root, d, token) {
         var el = root.querySelector('#czp-flux');
         if (!el) return Promise.resolve();
         var C = colors(), traces = [], shapes = [], notes = [];
@@ -145,24 +152,28 @@
             shapes: shapes, annotations: annotations, hovermode: 'closest'
         });
         el.setAttribute('data-notes', notes.join('; '));
-        return window.requirePlotly().then(function () { return window._plotlyRender(el, traces, L, config()); });
+        return window.requirePlotly().then(function () {
+            if (!active(root, token)) return;
+            return window._plotlyRender(el, traces, L, config());
+        });
     }
 
     /* (b) f(t) of both qubits from the operation's waveforms, and Delta(t) against the three
        resonance conditions, so it shows when and how long the pair sits on the intended one. */
-    function drawTime(root, d) {
+    function drawTime(root, d, token) {
         var el = root.querySelector('#czp-time');
         if (!el) return Promise.resolve();
         var C = colors(), traj = d.trajectory, n = 0;
         traj.forEach(function (t) { if (t) n = Math.max(n, t.frequency_hz.length); });
         if (!n) {
-            empty(el, 'Not drawn: SM cannot draw the waveform of a moving qubit (see the notes above).');
+            empty(el, 'Not drawn: SM cannot draw the waveform of a moving qubit (see the notes above).', root, token);
             return Promise.resolve();
         }
         var tt = []; for (var i = 0; i < n; i++) tt.push(i);
         var series = d.qubits.map(function (q, k) {
             var t = traj[k], f01 = q.summary ? q.summary.f01_hz : null, out = [];
-            for (var i = 0; i < n; i++) out.push(t ? (i < t.frequency_hz.length ? t.frequency_hz[i] : f01) : f01);
+            for (var i = 0; i < n; i++) out.push(t ? (i < t.frequency_hz.length ? t.frequency_hz[i] :
+                (t.playback_known === false ? null : f01)) : (d.row.lines[k].moves ? null : f01));
             return out;
         });
         var traces = [];
@@ -201,7 +212,10 @@
             yaxis2: { title: { text: 'Δ (MHz)' }, domain: [0, 0.34], anchor: 'x' },
             shapes: shapes, annotations: annotations, hovermode: 'x unified'
         });
-        return window.requirePlotly().then(function () { return window._plotlyRender(el, traces, L, config()); });
+        return window.requirePlotly().then(function () {
+            if (!active(root, token)) return;
+            return window._plotlyRender(el, traces, L, config());
+        });
     }
 
     /* (c) the operation's card. */
@@ -237,7 +251,8 @@
         h.push('<div class="czp-card-q"><strong>Operation</strong><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
             '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' : '—') + '</dd>' +
-            '<dt>Duration</dt><dd>' + (r.duration_ns == null ? '—' : r.duration_ns + ' ns') + '</dd>' +
+            '<dt>Duration</dt><dd>' + (r.duration_ns == null ? 'unknown' : r.duration_ns + ' ns') +
+            (r.duration_note ? ' <small class="muted">(' + esc(r.duration_note) + ')</small>' : '') + '</dd>' +
             (r.coupler_amplitude_v != null ? '<dt>Coupler pulse</dt><dd>' + fmtV(r.coupler_amplitude_v) + '</dd>' : '') +
             (r.plan ? '<dt>Planned ω_int</dt><dd>' + fmtGHz(r.plan.omega_int_hz) + (r.plan.path_ok === false ? ' <span class="czp-warn-text">path not ok</span>' : '') +
                 (r.plan.reasons.length ? '<br><small class="muted">' + esc(r.plan.reasons.join(', ')) + '</small>' : '') + '</dd>' : '') +
@@ -281,7 +296,7 @@
                     var ul = root.querySelector('#czp-notes');
                     if (ul) ul.innerHTML = '<li class="zline-note-block"><strong>not drawn</strong> ' + esc(d.error || 'failed') +
                         ' — the chip may have changed since this table was drawn; reload the page to refresh it.</li>';
-                    ['#czp-flux', '#czp-time'].forEach(function (s) { var e = root.querySelector(s); if (e) empty(e, 'Not drawn.'); });
+                    ['#czp-flux', '#czp-time'].forEach(function (s) { var e = root.querySelector(s); if (e) empty(e, 'Not drawn.', root, my); });
                     var card = root.querySelector('#czp-card'); if (card) card.innerHTML = '';
                     return;
                 }
@@ -289,7 +304,7 @@
                 renderNotes(root, d);
                 fillOps(root, d);
                 renderCard(root, d);
-                return Promise.all([drawFlux(root, d), drawTime(root, d)]).then(function () {
+                return Promise.all([drawFlux(root, d, my), drawTime(root, d, my)]).then(function () {
                     if (my === seq) root.setAttribute('data-rendered', op);
                 });
             })
@@ -297,6 +312,7 @@
                 if (my !== seq) return;
                 root.removeAttribute('data-loading');
                 root.setAttribute('data-failed', op);
+                ['#czp-flux', '#czp-time'].forEach(function (s) { var el = root.querySelector(s); if (el) empty(el, 'Not drawn.', root, my); });
                 var ul = root.querySelector('#czp-notes');
                 if (ul) ul.innerHTML = '<li class="zline-note-block"><strong>not drawn</strong> Could not load: ' + esc(e && e.message || e) + '</li>';
             });
