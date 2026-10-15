@@ -7,6 +7,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('jsdom');
+const probe = require('./cz_plotly_probe.cjs');
 const root = path.join(__dirname, '..');
 const page = `<div id="czp-root" class="czp-root" data-selected="">
 <section class="czp-map-box"><select id="czp-map-op"><option value="">default</option></select>
@@ -23,7 +24,8 @@ const handlers = {};
 w.requirePlotly = () => Promise.resolve();
 w._plotlyRender = (el, traces, layout) => {
     renders.push({id: el.id, traces, layout});
-    el.on = (evt, fn) => { handlers[evt] = fn; };
+    probe.emitter(el);
+    handlers.plotly_click = ev => el._ev.emit('plotly_click', ev);
     return Promise.resolve();
 };
 w.PlotTheme = {houseLayout: l => l, houseConfig: c => c, palette: () => ['#111', '#222', '#333', '#444', '#555', '#666']};
@@ -94,12 +96,87 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     w.fetch = (url) => url.startsWith('/cz-plan/map') ? Promise.resolve({json: () => Promise.resolve(many)}) : fetchBefore(url);
     w.CzPlan.drawMap(d.getElementById('czp-root')); await wait(30);
     const crowded = renders.filter(x => x.id === 'czp-map').at(-1);
-    check(!crowded.traces.some(t => t.line && t.line.dash === 'dot') && d.getElementById('czp-map-notes').textContent.includes('legend'),
+    // v1.4.1: vague legend hint -> pin the default double-click isolation gesture.
+    check(!crowded.traces.some(t => t.line && t.line.dash === 'dot') && d.getElementById('czp-map-notes').textContent.includes('double-click a legend entry to isolate'),
           'more than ten pairs: no connectors, the legend isolates a pair');
     w.fetch = fetchBefore;
     // a click on a segment opens that operation
     handlers.plotly_click({points: [{customdata: 'qubit_pairs.q10-2.macros.cz'}]}); await wait(10);
     check(fetched.some(u => u === '/cz-plan/data?op=' + encodeURIComponent('qubit_pairs.q10-2.macros.cz')), 'a click opens that operation');
+    const rootEl = d.getElementById('czp-root'), mapEl = d.getElementById('czp-map');
+    function serve(body) {
+        w.fetch = url => url.startsWith('/cz-plan/map') ? Promise.resolve({json: () => Promise.resolve(body)}) : fetchBefore(url);
+    }
+    const widths = JSON.parse(JSON.stringify(MAP));
+    widths.qubits[1].defects = [0, null, .1, .3, .5, .8].map((loss, i) => ({
+        lo_hz: (4.1 + i * .01) * 1e9, hi_hz: (4.1 + i * .01) * 1e9, ...(loss == null ? {} : {peak_loss: loss})}));
+    serve(widths);
+    for (const order of ['name', 'f01']) {
+        ord.value = order;
+        await w.CzPlan.drawMap(rootEl);
+        const fig = renders.at(-1), column = order === 'name' ? 1 : 2;
+        const bars = fig.traces.filter(t => t.line && !t.legendgroup && t.mode === 'lines');
+        check(bars.length === 6 && bars.every((t, i) => Math.abs((t.x[1] - t.x[0]) - [.08, .08, .244, .572, .9, .9][i]) < 1e-12 &&
+              Math.abs(t.x[0] - (column + .05)) < 1e-12),
+              'defect width numerically follows peak loss, including zero, missing and saturation after ' + order + ' ordering');
+    }
+    const onlyPlan = JSON.parse(JSON.stringify(MAP));
+    onlyPlan.segments = [];
+    onlyPlan.refused = MAP.segments.slice(0, 2).map(s => ({...s, reason: 'conversion unavailable'}));
+    serve(onlyPlan); await w.CzPlan.drawMap(rootEl);
+    check(renders.at(-1).traces.some(t => t.marker && t.marker.symbol === 'diamond-open' && t.y[0] === 4.6),
+          'an independently stored point draws when both computed members are refused');
+
+    const literal = '%{y} %{x:.2f} 50% {braces} <b>literal</b> < 1 > 0 & text';
+    const hostile = JSON.parse(JSON.stringify(MAP));
+    hostile.qubits.forEach(q => { q.name = literal; q.direction = literal; });
+    hostile.segments.forEach(s => { s.pair = literal; s.operation = literal; s.qubit = literal; s.kind = literal; s.validity = literal; });
+    hostile.planned.forEach(p => { p.pair = literal; p.qubit = literal; p.what = literal; });
+    hostile.refused.forEach(r => { r.pair = literal; r.operation = literal; r.qubit = literal; r.reason = literal; });
+    serve(hostile); await w.CzPlan.drawMap(rootEl);
+    for (const trace of renders.at(-1).traces.filter(t => t.hovertemplate)) {
+        const result = probe.hover(trace.hovertemplate, {x: trace.x[0], y: trace.y[0], customdata: trace.customdata && trace.customdata[0]});
+        const text = d.createElement('span'); text.innerHTML = result;
+        check(text.textContent.includes(literal) && !text.querySelector('b'),
+              'production hover grammar preserves percent, braces, comparisons and literal markup in every state value');
+    }
+    check(d.getElementById('czp-map-notes').textContent.includes(literal) && !d.getElementById('czp-map-notes').querySelector('b'),
+          'refusal identities and reasons stay literal');
+
+    // The shipped purge deletes Plotly's event emitter, leaving arbitrary element properties.
+    w.PlotHost = {purgeWithin: el => { probe.purge(el); delete el.data; }};
+    serve(MAP); await w.CzPlan.drawMap(rootEl); await w.CzPlan.drawMap(rootEl);
+    check(mapEl._ev.listenerCount('plotly_click') === 1, 'ordinary redraws bind once per emitter');
+    const oldEmitter = mapEl._ev;
+    serve({ok: false, error: 'temporary failure'}); await w.CzPlan.drawMap(rootEl);
+    check(!mapEl._ev && !mapEl.on, 'the actual Plotly event purge removed the emitter');
+    serve(MAP); await w.CzPlan.drawMap(rootEl); await w.CzPlan.drawMap(rootEl);
+    check(mapEl._ev !== oldEmitter && mapEl._ev.listenerCount('plotly_click') === 1, 'recovery binds exactly once on the new emitter');
+    const beforeClick = fetched.length;
+    mapEl._ev.emit('plotly_click', {points: [{customdata: 'qubit_pairs.q10-2.macros.cz'}]}); await wait(5);
+    check(fetched.slice(beforeClick).filter(u => u.startsWith('/cz-plan/data')).length === 1, 'a recovered segment click opens the operation once');
+
+    probe.queue(w, renders);
+    let release;
+    mapEl.__plotlyRenderChain = new Promise(resolve => { release = resolve; });
+    renders.length = 0;
+    serve(MAP); const oldWork = w.CzPlan.drawMap(rootEl); await wait(10);
+    serve({ok: false, error: 'new selection refused'}); await w.CzPlan.drawMap(rootEl);
+    release(); await oldWork;
+    check(renders.length === 0 && mapEl.textContent.includes('new selection refused'), 'production queue: stale map cannot replace a newer error');
+    mapEl.__plotlyRenderChain = new Promise(resolve => { release = resolve; });
+    serve(MAP); const previous = w.CzPlan.drawMap(rootEl); await wait(10);
+    const latest = JSON.parse(JSON.stringify(MAP)); latest.segments[0].frequency_hz = 4.7e9;
+    serve(latest); const current = w.CzPlan.drawMap(rootEl); await wait(10);
+    release(); await Promise.all([previous, current]);
+    check(renders.length === 1 && renders[0].traces.find(t => t.legendgroup && t.customdata).y[0] === 4.7,
+          'production queue: only the newest numeric map draws');
+    mapEl.__plotlyRenderChain = new Promise(resolve => { release = resolve; });
+    const beforePurge = renders.length;
+    serve(MAP); const purged = w.CzPlan.drawMap(rootEl); await wait(10);
+    probe.purgeWithin(w, mapEl);
+    release(); await purged;
+    check(renders.length === beforePurge && !mapEl.data, 'production purge invalidates queued map work without a selection change');
     console.log(checks + ' assertions passed');
     dom.window.close();
 })().catch(e => { console.error(e); dom.window.close(); process.exitCode = 1; });

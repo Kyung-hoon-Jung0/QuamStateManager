@@ -188,6 +188,39 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     failedReady(); await wait(15);
     check(renders.length === 0 && d.getElementById('czp-flux').textContent.includes('Not drawn') &&
           d.getElementById('czp-time').textContent.includes('Not drawn'), 'a failed newer selection invalidates both pending panels');
+    // The real helper waits again behind an existing per-element render chain.
+    const probe = require('./cz_plotly_probe.cjs');
+    probe.queue(w, renders);
+    w.requirePlotly = () => Promise.resolve();
+    w.PlotHost = {purgeWithin: el => { probe.purge(el); delete el.data; }};
+    let releaseTime, releaseFlux;
+    const timeEl = d.getElementById('czp-time'), fluxEl = d.getElementById('czp-flux');
+    timeEl.__plotlyRenderChain = new Promise(resolve => { releaseTime = resolve; });
+    fluxEl.__plotlyRenderChain = new Promise(resolve => { releaseFlux = resolve; });
+    renders.length = 0;
+    await select('a', payload(aPath, false));
+    await select('b', refused);
+    releaseTime(); releaseFlux(); await wait(25);
+    check(renders.filter(x => x.id === 'czp-time').length === 0 && timeEl.textContent.includes('Not drawn'),
+          'production queue: old time work cannot replace the newer refusal');
+    const queuedFlux = renders.filter(x => x.id === 'czp-flux');
+    check(queuedFlux.length === 1 && queuedFlux[0].traces.find(t => /qa.*quad-term/.test(t.name || '')).y[1] === 4.9,
+          'production queue: only the current selection draws its flux curve');
+    timeEl.__plotlyRenderChain = new Promise(resolve => { releaseTime = resolve; });
+    fluxEl.__plotlyRenderChain = new Promise(resolve => { releaseFlux = resolve; });
+    renders.length = 0;
+    await select('a', payload(aPath, false));
+    const epoch = timeEl.__plotlyRenderEpoch || 0;
+    await select('b', {ok: false, error: 'refused'});
+    releaseTime(); releaseFlux(); await wait(25);
+    check(renders.length === 0 && timeEl.__plotlyRenderEpoch > epoch && fluxEl.textContent.includes('Not drawn'),
+          'production queue: emptying invalidates pending work in both panels');
+    timeEl.__plotlyRenderChain = new Promise(resolve => { releaseTime = resolve; });
+    fluxEl.__plotlyRenderChain = new Promise(resolve => { releaseFlux = resolve; });
+    await select('a', payload(aPath, false));
+    probe.purgeWithin(w, r);
+    releaseTime(); releaseFlux(); await wait(25);
+    check(renders.length === 0, 'production purge invalidates queued detail work without a selection change');
     console.log(checks + ' assertions passed');
     dom.window.close();
 })().catch(e => { console.error(e); dom.window.close(); process.exitCode = 1; });

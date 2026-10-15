@@ -15,8 +15,8 @@ def test_cz_plan_client():
     result = subprocess.run(["node", str(root / "tests/cz_plan_selfcheck.cjs")], cwd=root, env=os.environ.copy(),
                             capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
-    # v1.4.1: fixed old count -> expanded deferred-render and unknown-motion pins must execute.
-    assert "31 assertions passed" in result.stdout
+    # v1.4.1: 31 -> 35, include the production render queue and panel invalidation pins.
+    assert "35 assertions passed" in result.stdout
 
 
 def test_cz_chip_map_client():
@@ -29,4 +29,5 @@ def test_cz_chip_map_client():
     result = subprocess.run(["node", str(root / "tests/cz_map_selfcheck.cjs")], cwd=root, env=os.environ.copy(),
                             capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "17 assertions passed" in result.stdout
+    # v1.4.1: 17 -> 34, include numeric widths, production hover/purge and render queue pins.
+    assert "34 assertions passed" in result.stdout

@@ -16,6 +16,9 @@
             return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
         });
     }
+    function hoverEsc(s) {
+        return esc(s).replace(/%/g, '&#37;');
+    }
     function colors() {
         var P = (window.PlotTheme && window.PlotTheme.palette()) || ['#4f9cf9', '#f97316', '#22c55e', '#a855f7'];
         var muted = getComputedStyle(document.documentElement).getPropertyValue('--pico-muted-color').trim() || '#8a8a8a';
@@ -48,6 +51,7 @@
 
     function empty(el, text, root, token) {
         if (!active(root, token)) return;
+        el.__plotlyRenderEpoch = (el.__plotlyRenderEpoch || 0) + 1;
         if (window.PlotHost) window.PlotHost.purgeWithin(el);
         el.removeAttribute('data-dwell');
         el.removeAttribute('data-notes');
@@ -84,16 +88,16 @@
             var col = C.q[k], c = q.curve, s = q.summary;
             if (c.model_hz) {
                 traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.model_hz.map(ghz), name: q.name + ' · ' + s.model_kind,
-                    line: { color: col, width: 2.2 }, hovertemplate: 'amplitude: %{x:.4f} V<br>' + esc(q.name) + ': %{y:.4f} GHz<extra>' + esc(s.model_kind) + '</extra>' });
+                    line: { color: col, width: 2.2 }, hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>' + hoverEsc(s.model_kind) + '</extra>' });
             }
             if (c.quad_hz.some(function (v) { return v != null; })) {
                 traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.quad_hz.map(ghz), name: q.name + ' · quad-term estimate',
                     line: { color: col, width: 1.4, dash: c.model_hz ? 'dash' : 'solid' },
-                    hovertemplate: 'amplitude: %{x:.4f} V<br>' + esc(q.name) + ': %{y:.4f} GHz<extra>quad-term estimate</extra>' });
+                    hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>quad-term estimate</extra>' });
             }
             traces.push({ type: 'scatter', mode: 'markers', x: [0], y: [ghz(s.f01_hz)], name: q.name + ' idle', showlegend: false,
                 marker: { color: col, size: 11, symbol: 'circle-open', line: { width: 2 } },
-                hovertemplate: esc(q.name) + ' idle f_01: %{y:.4f} GHz<extra></extra>' });
+                hovertemplate: hoverEsc(q.name) + ' idle f_01: %{y:.4f} GHz<extra></extra>' });
             (q.tls || []).forEach(function (b) {
                 shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
                     fillcolor: col, opacity: 0.18, line: { width: 0 }, layer: 'below' });
@@ -106,7 +110,7 @@
                 if (p.frequency_hz == null || !p.amplitude_v) return;
                 traces.push({ type: 'scatter', mode: 'markers', x: [p.amplitude_v], y: [ghz(p.frequency_hz)], showlegend: false,
                     marker: { color: C.q[k], size: 7, opacity: 0.35 },
-                    hovertemplate: esc(op.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra></extra>' });
+                    hovertemplate: hoverEsc(op.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra></extra>' });
             });
         });
         var annotations = [];
@@ -115,7 +119,7 @@
             if (!ln.moves || p.frequency_hz == null || !q.summary) return;
             traces.push({ type: 'scatter', mode: 'markers', x: [ln.amplitude_v], y: [ghz(p.frequency_hz)], name: q.name + ' at ' + d.row.operation,
                 showlegend: false, marker: { color: C.q[k], size: 12, symbol: 'diamond' },
-                hovertemplate: esc(q.name) + ' at ' + esc(d.row.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra>' + esc(p.kind) + '</extra>' });
+                hovertemplate: hoverEsc(q.name) + ' at ' + hoverEsc(d.row.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra>' + hoverEsc(p.kind) + '</extra>' });
             annotations.push({ x: ln.amplitude_v, y: ghz(p.frequency_hz), ax: 0, ay: ghz(q.summary.f01_hz), axref: 'x', ayref: 'y',
                 xref: 'x', yref: 'y', showarrow: true, arrowhead: 3, arrowsize: 1.2, arrowwidth: 1.6, arrowcolor: C.q[k], text: '' });
         });
@@ -154,7 +158,7 @@
         el.setAttribute('data-notes', notes.join('; '));
         return window.requirePlotly().then(function () {
             if (!active(root, token)) return;
-            return window._plotlyRender(el, traces, L, config());
+            return window._plotlyRender(el, traces, L, config(), function () { return active(root, token); });
         });
     }
 
@@ -179,7 +183,7 @@
         var traces = [];
         d.qubits.forEach(function (q, k) {
             traces.push({ type: 'scatter', mode: 'lines', x: tt, y: series[k].map(ghz), name: q.name, line: { color: C.q[k], width: 2, shape: 'hv' },
-                hovertemplate: 't = %{x} ns<br>' + esc(q.name) + ': %{y:.4f} GHz<extra></extra>' });
+                hovertemplate: 't = %{x} ns<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra></extra>' });
             var t = traj[k];
             if (t && t.model_hz && t.quad_hz) {
                 traces.push({ type: 'scatter', mode: 'lines', x: tt.slice(0, t.quad_hz.length), y: t.quad_hz.map(ghz), name: q.name + ' · quad-term estimate',
@@ -214,7 +218,7 @@
         });
         return window.requirePlotly().then(function () {
             if (!active(root, token)) return;
-            return window._plotlyRender(el, traces, L, config());
+            return window._plotlyRender(el, traces, L, config(), function () { return active(root, token); });
         });
     }
 
@@ -279,6 +283,8 @@
         return P && P.length >= 6 ? P.concat(MAP_COLORS.filter(function (c) { return P.indexOf(c) < 0; })) : MAP_COLORS;
     }
     function mapEmpty(el, text) {
+        el.__plotlyRenderEpoch = (el.__plotlyRenderEpoch || 0) + 1;
+        delete el._czpMapClick;
         if (window.PlotHost) window.PlotHost.purgeWithin(el);
         el.innerHTML = '<p class="muted zline-empty">' + esc(text) + '</p>';
     }
@@ -315,17 +321,17 @@
                         var f = (b.lo_hz + b.hi_hz) / 2, w = 0.08 + 0.82 * Math.min(1, (b.peak_loss || 0) / 0.5);
                         traces.push({ type: 'scatter', mode: 'lines', x: [i + 0.05, i + 0.05 + w], y: [ghz(f), ghz(f)], showlegend: false,
                             line: { color: C.muted, width: 3 }, opacity: 0.75,
-                            hovertemplate: esc(q.name) + ' defect %{y:.4f} GHz<br>FWHM ' + ((b.hi_hz - b.lo_hz) / 1e6).toFixed(1) + ' MHz' +
+                            hovertemplate: hoverEsc(q.name) + ' defect %{y:.4f} GHz<br>FWHM ' + ((b.hi_hz - b.lo_hz) / 1e6).toFixed(1) + ' MHz' +
                                 (b.peak_loss != null ? ', peak loss ' + (100 * b.peak_loss).toFixed(0) + ' %' : '') + '<extra></extra>' });
                     });
                 });
                 traces.push({ type: 'scatter', mode: 'markers', x: qs.map(function (q, i) { return i + 0.5; }),
                     y: qs.map(function (q) { return ghz(q.f01_hz); }), name: 'idle f_01',
                     marker: { color: ink, size: 9, symbol: 'circle' },
-                    customdata: qs.map(function (q) { return q.name + (q.loss_data ? '' : ' (no population-loss data)') + '<br>' + q.direction; }),
+                    customdata: qs.map(function (q) { return esc(q.name) + (q.loss_data ? '' : ' (no population-loss data)') + '<br>' + esc(q.direction); }),
                     hovertemplate: '%{customdata}<br>idle %{y:.4f} GHz<extra></extra>' });
                 var pairs = [];
-                m.segments.forEach(function (s) { if (pairs.indexOf(s.pair) < 0) pairs.push(s.pair); });
+                m.segments.concat(m.refused || [], m.planned || []).forEach(function (s) { if (pairs.indexOf(s.pair) < 0) pairs.push(s.pair); });
                 pairs.forEach(function (pair, k) {
                     var color = P[k % P.length], segs = m.segments.filter(function (s) { return s.pair === pair; });
                     segs.forEach(function (s, j) {
@@ -336,9 +342,9 @@
                             name: pair, legendgroup: pair, showlegend: j === 0,
                             line: { color: color, width: s.moves ? 3.2 : 1.6, dash: quad ? 'dash' : 'solid' },
                             customdata: [s.path, s.path],
-                            hovertemplate: esc(pair) + ' · ' + esc(s.operation) + '<br>' + esc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
-                                ': %{y:.4f} GHz<br>' + esc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + esc(s.validity) : '') +
-                                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
+                            hovertemplate: hoverEsc(pair) + ' · ' + hoverEsc(s.operation) + '<br>' + hoverEsc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
+                                ': %{y:.4f} GHz<br>' + hoverEsc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + hoverEsc(s.validity) : '') +
+                                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + hoverEsc(s.nearest.name) + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
                                 '<extra></extra>' });
                     });
                     // connectors help on a small chip; across 10+ pairs they cross the whole map
@@ -354,7 +360,7 @@
                         if (i == null) return;
                         traces.push({ type: 'scatter', mode: 'markers', x: [i + 0.5], y: [ghz(p.frequency_hz)], legendgroup: pair, showlegend: false,
                             marker: { color: color, size: 11, symbol: 'diamond-open', line: { width: 2 } },
-                            hovertemplate: esc(pair) + ' ' + esc(p.what) + ' (' + esc(p.qubit) + '): %{y:.4f} GHz<extra></extra>' });
+                            hovertemplate: hoverEsc(pair) + ' ' + hoverEsc(p.what) + ' (' + hoverEsc(p.qubit) + '): %{y:.4f} GHz<extra></extra>' });
                     });
                 });
                 var notes = [];
@@ -365,7 +371,7 @@
                 if (noLoss.length) notes.push('No population-loss data stored for ' + (noLoss.length === qs.length ? 'any qubit' : noLoss.join(', ')) + '.');
                 notes.push('Solid: fitted flux model; dashed: quad-term estimate; thin: a member that stays at idle; ◇ planned interaction frequency' +
                     (qs.some(function (q) { return (q.safe || []).length; }) ? '; right-edge strip: safe intervals' : '') +
-                    (pairs.length > 10 ? '; click a legend entry to isolate a pair' : '') + '.');
+                    (pairs.length > 10 ? '; double-click a legend entry to isolate a pair' : '') + '.');
                 var nEl = root.querySelector('#czp-map-notes');
                 if (nEl) nEl.textContent = notes.join(' ');
                 var L = layout({
@@ -379,10 +385,10 @@
                 el.setAttribute('data-segments', String(m.segments.length));
                 return window.requirePlotly().then(function () {
                     if (my !== mseq || !document.body.contains(root)) return;
-                    return window._plotlyRender(el, traces, L, config());
+                    return window._plotlyRender(el, traces, L, config(), function () { return my === mseq && document.body.contains(root); });
                 }).then(function () {
-                    if (my !== mseq || !document.body.contains(root) || !el.on || el._czpMapClick) return;
-                    el._czpMapClick = true;
+                    if (my !== mseq || !document.body.contains(root) || !el.on || el._czpMapClick === (el._ev || el.on)) return;
+                    el._czpMapClick = el._ev || el.on;
                     el.on('plotly_click', function (ev) {
                         var pt = ev && ev.points && ev.points[0], path = pt && pt.customdata;
                         if (typeof path === 'string' && path.indexOf('qubit_pairs.') === 0) { load(root, path); revealFigures(root); }

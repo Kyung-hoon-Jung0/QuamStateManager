@@ -1090,9 +1090,14 @@ window.requirePlotly = function() {
  * handlers in .then(). Resolves to null if the target element is missing or
  * Plotly fails to load (the caller's .then() must tolerate that).
  */
-window._plotlyRender = function(divId, data, layout, config) {
+window._plotlyRender = function(divId, data, layout, config, isCurrent) {
     var el = typeof divId === 'string' ? document.getElementById(divId) : divId;
     if (!el) return Promise.resolve(null);
+    el.setAttribute('data-plotly-render', '');
+    var epoch = el.__plotlyRenderEpoch || 0;
+    function current() {
+        return document.body.contains(el) && epoch === (el.__plotlyRenderEpoch || 0) && (!isCurrent || isCurrent());
+    }
     /* Make charts transparent so they inherit the page background color
        from the current theme (light or dark). Individual callers can
        still override by setting these explicitly in their layout.       */
@@ -1112,7 +1117,7 @@ window._plotlyRender = function(divId, data, layout, config) {
     var run = prev.catch(function() {}).then(function() {
         return window.requirePlotly();
     }).then(function() {
-        if (!document.body.contains(el)) return null;  // detached between chained renders
+        if (!current()) return null;
         if (el.data && el.data.length > 0) {
             return Plotly.react(el, data, layout, config);
         }
@@ -1126,6 +1131,7 @@ window._plotlyRender = function(divId, data, layout, config) {
         if (el.firstChild) el.textContent = '';
         return Plotly.newPlot(el, data, layout, config);
     }).catch(function(e) {
+        if (!current()) return null;
         try { el.innerHTML = '<p class="muted" style="padding:.5rem">Plot library failed to load.</p>'; } catch (_) {}
         return null;
     });
@@ -15780,6 +15786,10 @@ window.PlotHost = (function () {
        and DOM references leak. Safe to call on anything: purging a node that is
        about to be discarded cannot break it. */
     function purgeWithin(root) {
+        var r = root || document;
+        var pending = Array.prototype.slice.call(r.querySelectorAll('[data-plotly-render]'));
+        if (r.matches && r.matches('[data-plotly-render]')) pending.push(r);
+        pending.forEach(function (el) { el.__plotlyRenderEpoch = (el.__plotlyRenderEpoch || 0) + 1; });
         if (typeof Plotly === 'undefined') return 0;
         var n = 0;
         _graphDivs(root).forEach(function (el) {
