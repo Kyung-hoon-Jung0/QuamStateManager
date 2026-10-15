@@ -24,9 +24,12 @@ def _number(value):
 
 
 def _read(run, filename):
-    folder = getattr(run, "folder_path", run)
+    path = Path(getattr(run, "folder_path", run)) / filename
     try:
-        return safe_io.read_json(Path(folder) / filename)
+        # An absent run file is absent: the retry ladder is for a live file caught mid-replace,
+        # and waiting it out on a run that never wrote state_updates.json cost ~0.9 s per read,
+        # five reads per reproduced figure request.
+        return safe_io.read_json(path, attempts=None if path.exists() else 1)
     except (OSError, ValueError, TypeError):
         return {}
 

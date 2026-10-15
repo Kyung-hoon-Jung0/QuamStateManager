@@ -79,7 +79,8 @@ def provenance(data: Any, *, form: bool = False) -> dict | None:
 def map_request(data: dict) -> dict:
     """Validate map selectors and options before touching arrays or running a model."""
     import math
-    allowed = {"fig", "panel", "source", "smooth", "contour", "fit", "which", "var", "selection", "x_dim", "y_dim", "component"}
+    allowed = {"fig", "panel", "panels", "source", "smooth", "contour", "fit", "which", "var", "selection", "x_dim", "y_dim",
+               "component"}
     if set(data) - allowed:
         raise BadBody("Unknown map request field.")
     for key in ("fig", "source", "which", "var", "x_dim", "y_dim", "component"):
@@ -90,6 +91,11 @@ def map_request(data: dict) -> dict:
     panel = data.get("panel", 0)
     if type(panel) is not int or panel < 0:
         raise BadBody("'panel' must be a nonnegative integer.")
+    # every map panel of one figure in one request: the figure is resolved once, not once per panel
+    panels = data.get("panels")
+    if panels is not None and (not isinstance(panels, list) or not 1 <= len(panels) <= 16
+                               or any(type(p) is not int or p < 0 for p in panels) or len(set(panels)) != len(panels)):
+        raise BadBody("'panels' must list 1 to 16 distinct nonnegative integers.")
     fields = {"smooth": {"kernel", "sigma_x", "sigma_y", "override_cap"},
               "contour": {"on", "mode", "level", "band"}, "fit": {"model"}}
     for key, keys in fields.items():
