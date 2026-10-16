@@ -42,8 +42,7 @@ def test_without_a_renderer_the_location_code_places_it_in_that_panel():
 
 
 def test_several_legends_each_stay_in_their_panel():
-    # v1.5.1: several legends shared one footer -> each panel keeps its own legend where the lab
-    # drew it (per-panel numbers kept their panel; the footer sat on the bottom axis titles).
+    # v1.4.1: one footer -> panel legends; retain panel values and avoid axis-title overlap.
     figure, layout = _view(["upper left", "lower right"], with_renderer=True)
     for name, axes in (("legend", figure["axes"][0]), ("legend2", figure["axes"][1])):
         box = axes["legend"]["box"]

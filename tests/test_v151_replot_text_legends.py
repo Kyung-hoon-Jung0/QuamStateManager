@@ -87,9 +87,130 @@ def test_a_label_only_legend_entry_has_a_point():
     data = mpljson_to_plotly(_figure(build))["data"]
     entry = next(t for t in data if t.get("name") == "T2* = 1.16 us")
     assert entry["x"] == [None] and entry["showlegend"] is True
-    assert entry["mode"] == "markers" and entry["marker"].get("opacity") == 0   # no symbol, as drawn
+    assert entry["mode"] == "markers"                                   # no symbol, as drawn:
+    assert entry["marker"]["color"] == entry["marker"]["line"]["color"] == "rgba(0,0,0,0)"
     line = next(t for t in data if t.get("name") == "EPC = 1.1e-03")
     assert line["x"] == [None] and line["mode"] == "lines"
+
+
+def test_errorbar_bar_band_and_span_entries_stay_in_the_legend():
+    def build(fig):
+        ax = fig.subplots()
+        series = ax.errorbar([0, 1, 2], [1, 2, 1.5], yerr=[.1, .2, .1], fmt=".-", color="C0")
+        bars = ax.bar([0, 1], [1, 2], color="C1")
+        band = ax.fill_between([0, 2], [0, 0], [.5, .5], color="C2", alpha=.3)
+        span = ax.axvspan(.2, .4, color="C3", alpha=.2)
+        line = ax.axvline(1, color="red", linestyle="--")
+        ax.legend([series, bars, band, span, line], ["T2*", "made by x180", "candidate window", "ADC range", "Flux offset"])
+    data = mpljson_to_plotly(_figure(build))["data"]
+    shown = {t["name"]: t for t in data if t.get("showlegend")}
+    assert set(shown) == {"T2*", "made by x180", "candidate window", "ADC range", "Flux offset"}
+    assert shown["T2*"]["mode"] == "lines+markers"                 # the series line and its dots
+    assert shown["candidate window"]["marker"]["symbol"] == "square"   # a swatch for a filled area
+
+
+def test_a_figure_legend_sits_where_the_lab_drew_it():
+    def build(fig):
+        for i, ax in enumerate(fig.subplots(1, 3)):
+            ax.plot([0, 1], [i, i + 1], ".", label="Ground")
+            ax.plot([0, 1], [i + 1, i], ".", label="Excited")
+        handles, labels = ax.get_legend_handles_labels()
+        fig.legend(handles, labels, loc="lower center", ncol=2)
+    fig_json = _figure(build, size=(12, 4))
+    box = fig_json["figure_legend"]["box"]
+    assert box and fig_json["figure_legend"]["ncol"] == 2
+    legend = mpljson_to_plotly(fig_json)["layout"]["legend"]
+    assert legend["x"] == pytest.approx((box[0] + box[2]) / 2) and legend["xanchor"] == "center"
+    assert legend["y"] == pytest.approx(box[1]) and legend["yanchor"] == "bottom"
+    assert legend["orientation"] == "h" and legend.get("borderwidth") == 1
+    view = mpljson_to_plotly(fig_json)
+    for label in ("Ground", "Excited"):
+        traces = [trace for trace in view["data"] if trace.get("name") == label]
+        assert len(traces) == 4
+        assert len({trace.get("legendgroup") for trace in traces}) == 1
+
+
+def test_legend_packing_order_caps_scatter_and_hollow_swatches():
+    def build(fig):
+        from matplotlib.patches import Patch
+        ax = fig.subplots()
+        error = ax.errorbar([0, 1], [0, 1], yerr=.1, fmt="o-", capsize=4)
+        cloud = ax.scatter([0, 1], [1, 0], s=16, color="purple")
+        ax.legend([error, cloud, Patch(facecolor="none", edgecolor="red")],
+                  ["errors", "cloud", "outline"], markerfirst=False, ncol=2)
+    shown = {t["name"]: t for t in mpljson_to_plotly(_figure(build))["data"] if t.get("showlegend")}
+    assert set(shown) == {"errors", "cloud", "outline"}
+    assert shown["errors"].get("marker", {}).get("symbol") == "circle"
+    assert shown["cloud"]["marker"]["color"] == "#800080"
+    assert shown["outline"].get("opacity", 1) * shown["outline"]["marker"].get("opacity", 1) == 1
+    assert shown["outline"]["marker"]["color"] == "rgba(0,0,0,0)"
+    assert shown["outline"]["marker"]["line"]["color"] == "#ff0000"
+
+
+@pytest.mark.parametrize("legacy,packing", [(False, "changed"), (True, "missing"), (False, "empty"), (False, "throws")])
+def test_legend_public_fallback_survives_missing_or_changed_private_boxes(legacy, packing):
+    pytest.importorskip("matplotlib")
+    from matplotlib.figure import Figure
+    from quam_state_manager.generator.iplot_extract import _legend_proxies
+    ax = Figure().subplots()
+    error = ax.errorbar([0, 1], [0, 1], yerr=.1)
+    ax.legend([error], ["errors"])
+    real = ax.get_legend()
+    class PublicLegend:
+        def get_texts(self):
+            return real.get_texts()
+    leg = PublicLegend()
+    setattr(leg, "legendHandles" if legacy else "legend_handles", real.legend_handles)
+    if not legacy:
+        from types import SimpleNamespace
+        def children():
+            if packing == "throws":
+                raise RuntimeError("unavailable private packing")
+            return []
+        leg._legend_handle_box = object() if packing == "changed" else SimpleNamespace(get_children=children)
+    try:
+        entries = _legend_proxies(leg)
+    except (AttributeError, TypeError, RuntimeError) as error:
+        entries = [(str(error), None)]
+    assert len(entries) == 1 and entries[0][0] == "errors"
+    assert entries[0][1] and entries[0][1]["mode"] == "lines"
+
+
+def test_figure_custom_legends_and_axes_legends_coexist():
+    def build(fig):
+        from matplotlib.patches import Patch
+        ax = fig.subplots()
+        ax.plot([0, 1], [0, 1], label="data")
+        ax.legend()
+        fig.legend([Patch(color="orange")], ["window"], loc="lower center")
+        fig.legend([Patch(color="blue")], ["reference"], loc="upper center")
+    view = mpljson_to_plotly(_figure(build))
+    shown = [(t.get("legend", "legend"), t["name"]) for t in view["data"] if t.get("showlegend")]
+    assert sorted(shown) == [("legend", "data"), ("legend2", "window"), ("legend3", "reference")]
+
+
+def test_errorbars_without_a_data_line_and_independent_swatch_alpha():
+    def build(fig):
+        from matplotlib.patches import Patch
+        ax = fig.subplots()
+        bars = ax.errorbar([0, 1], [0, 1], yerr=.1, fmt="none", capsize=4)
+        swatch = Patch(facecolor=(1, 0, 0, .25), edgecolor=(0, 0, 1, .75))
+        ax.legend([bars, swatch], ["uncertainty", "area"])
+    shown = {t["name"]: t for t in mpljson_to_plotly(_figure(build))["data"] if t.get("showlegend")}
+    assert shown["uncertainty"]["mode"] == "lines"
+    assert shown["uncertainty"].get("visible") is not False
+    assert shown["area"]["marker"]["color"] == "rgba(255,0,0,0.25)"
+    assert shown["area"]["marker"]["line"]["color"] == "rgba(0,0,255,0.75)"
+
+
+def test_figure_legend_keeps_only_its_explicit_entries():
+    def build(fig):
+        ax = fig.subplots()
+        line, = ax.plot([0, 1], [0, 1], label="internal label")
+        ax.plot([0, 1], [1, 0], label="unlisted")
+        fig.legend([line], ["public label"])
+    view = mpljson_to_plotly(_figure(build))
+    assert [t["name"] for t in view["data"] if t.get("showlegend")] == ["public label"]
 
 
 def test_every_panel_keeps_its_own_legend(tmp_path):

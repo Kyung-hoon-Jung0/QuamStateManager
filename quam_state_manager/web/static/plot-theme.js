@@ -117,7 +117,7 @@
         });
     }
 
-    /** Base layout — deep-merged under caller overrides. `data` (optional) are the traces
+    /** Base layout -- deep-merged under caller overrides. `data` (optional) are the traces
      *  the layout is drawn with: text on a heatmap of theirs keeps the lab colour. */
     function houseLayout(overrides, data) {
         var text = cssVar('--plot-axis-text', cssVar('--pico-color', '#ccc'));

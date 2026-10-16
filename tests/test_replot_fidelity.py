@@ -80,8 +80,7 @@ def test_reference_marker_and_proxy_legends_deduplicate():
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(handles + [Line2D([], [], marker='s', color='orange')], labels + ['Flux = 0.2'])
     view = mpljson_to_plotly(extract_figure(fig, 'references'))
-    # v1.5.1: one footer legend for both panels -> each panel keeps its own legend (a panel's
-    # numbers belong to that panel); the entries still deduplicate within each legend.
+    # v1.4.1: one footer -> panel legends; fit summaries retain their panel and deduplicate within it.
     by_legend = {}
     for t in view['data']:
         if t.get('showlegend'):

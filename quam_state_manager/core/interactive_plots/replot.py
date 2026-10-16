@@ -395,7 +395,8 @@ def _line_to_plotly(t, xref, yref):
         # neither line nor marker keeps an empty symbol, as matplotlib draws it.
         x, y = [None], [None]
         if t.get("mode") == "none":
-            t = {**t, "mode": "markers", "opacity": 0.0}
+            # see-through paint, not opacity 0: a legend still draws a faint symbol at 0
+            t = {**t, "mode": "markers", "marker_face": "none", "marker_edge": "none"}
     d = {
         "type": "scattergl" if len(x) > 400 and "zorder" not in t else "scatter",
         "x": x, "y": y, "mode": t.get("mode", "lines"),
@@ -917,6 +918,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     layout["showlegend"] = True
     layout["legend"] = {"orientation": "h", "y": -0.12 / nrows, "x": 0.0}
     layout["margin"] = {"l": 60, "r": 60, "t": 92 if has_top_axis else 44, "b": 50}
+    figure_links = []
     if positions:
         # Source fractions already contain the margins around axes and headers.
         layout["margin"] = {"l": 0, "r": 0, "t": 0, "b": 0}
@@ -943,6 +945,34 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             for k, trace in enumerate(data[:spans[-1]]):
                 if k not in held:
                     trace["showlegend"] = False   # the lab drew no legend for that panel
+        figure_legends = fig_json.get("figure_legends") or [fig_json.get("figure_legend") or {}]
+        if any(legend.get("entries") for legend in figure_legends) and not holders:
+            for trace in data:
+                trace["showlegend"] = False
+        for index, figure_legend in enumerate(figure_legends):
+            if not figure_legend:
+                continue
+            # v1.5.1 (D3 class T): a figure-level legend (fig.legend) went to the footer's
+            # left corner, onto the first panel's axis title. Keep its own entries too:
+            # custom figure handles need not occur in any axes, and axes legends may coexist.
+            number = len(holders) + index + 1
+            name = "legend" if number == 1 else f"legend{number}"
+            own = _legend_place(figure_legend, (0, 1, 0, 1))
+            own.update(orientation="h" if (figure_legend.get("ncol") or 1) > 1 else "v",
+                       font={"size": figure_legend.get("size") or 10})
+            box = figure_legend.get("box")
+            if isinstance(box, list) and len(box) == 4 and \
+                    all(isinstance(v, (int, float)) and math.isfinite(v) for v in box) and \
+                    _position_bounds([box[0], box[1], box[2] - box[0], box[3] - box[1]]):
+                own.update(x=(box[0] + box[2]) / 2, xanchor="center", y=box[1], yanchor="bottom")
+            layout[name] = own
+            for entry in figure_legend.get("entries", []):
+                proxy = (_scatter_to_plotly(entry, "x", "y") if entry.get("type") == "scatter"
+                         else _line_to_plotly(entry, "x", "y"))
+                proxy["legend"] = name
+                figure_links.append((proxy, [trace for trace in data if trace.get("name") == entry.get("name")
+                                              and not trace.get("showlegend")]))
+                data.append(proxy)
     layout["height"] = max(320, 320 * nrows) + (64 * nrows if has_top_axis else 0)
     size = fig_json.get("size_inches")
     source_aspect = None
@@ -977,6 +1007,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 axis["title"].setdefault("font", {}).update(size=10)
                 axis["title"].update(standoff=4 if name.startswith("y") else 0)
     _legend_once(data)
+    for proxy, linked in figure_links:
+        for trace in linked:
+            trace["legendgroup"] = proxy.get("legendgroup", "")
     from .mathtext import plotly_text
     return _hover_guides(plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
                                       "skipped": skipped, "notices": notices, "source_aspect": source_aspect,

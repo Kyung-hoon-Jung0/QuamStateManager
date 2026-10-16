@@ -61,6 +61,78 @@ def _legend_box(leg):
         return None
 
 
+def _legend_proxies(leg):
+    """``[(label, proxy trace)]`` for every legend entry, from what the legend DREW for it.
+
+    ``legend_handles`` keeps one artist per entry -- for an errorbar that is its error-bar
+    LineCollection, for a bar / fill / span a Rectangle -- so those entries had no proxy and
+    the legend lost them (a T2* data series, a shaded window, bar categories). The handle box
+    holds every artist drawn for an entry: the data line and its marker, or the patch swatch.
+    """
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    from matplotlib.colors import to_rgba
+
+    def patch_paint(color, alpha):
+        # A patch can give its face and outline different alpha values.
+        if alpha is None and 0 < _opacity(color) < 1:
+            r, g, b, a = to_rgba(color)
+            return f"rgba({r * 255:g},{g * 255:g},{b * 255:g},{a:g})"
+        return _marker_fill(color)
+
+    def artists_by_entry():
+        fallback = [(t.get_text(), [h]) for h, t in zip(
+            getattr(leg, "legend_handles", getattr(leg, "legendHandles", [])), leg.get_texts())]
+        try:
+            rows = [row for column in leg._legend_handle_box.get_children() for row in column.get_children()]
+            entries = []
+            for row in rows:
+                # markerfirst=False reverses the text and drawing boxes.
+                children = row.get_children()
+                text = next(c for c in children if callable(getattr(c, "get_text", None)))
+                drawing = next(c for c in children if c is not text)
+                entries.append((text.get_text(), drawing.get_children()))
+            if len(entries) == len(leg.get_texts()):
+                return entries
+        except Exception:
+            pass   # packed boxes are private; public handles remain usable
+        return fallback
+
+    out = []
+    for name, drawn in artists_by_entry():
+        lines = [a for a in drawn if isinstance(a, Line2D) and a.get_visible()]
+        proxy = None
+        caps_only = lines and all(ln.get_marker() in ("|", "_") and
+                                  ln.get_linestyle() in ("None", " ", "", None) for ln in lines)
+        if lines and not caps_only:
+            with_line = next((ln for ln in lines if ln.get_linestyle() not in ("None", " ", "", None)), lines[0])
+            proxy = _line_trace(with_line)
+            # Errorbar cap markers are not the data series' marker.
+            marked = next((ln for ln in lines if ln.get_marker() not in ("None", " ", "", None, "|", "_")), None)
+            if marked is not None and marked is not with_line:
+                mark = _line_trace(marked)
+                proxy.update({k: mark[k] for k in mark if k.startswith("marker_")})
+                proxy["mode"] = "lines+markers" if proxy["mode"].startswith("lines") else "markers"
+        elif any(isinstance(a, PathCollection) for a in drawn):
+            proxy = _scatter_trace(next(a for a in drawn if isinstance(a, PathCollection)))
+        elif any(isinstance(a, Patch) for a in drawn):
+            patch = next(a for a in drawn if isinstance(a, Patch))
+            face = patch_paint(patch.get_facecolor(), patch.get_alpha())
+            proxy = {"type": "line", "mode": "markers", "color": face, "marker_symbol": "square",
+                     "marker_size": 10.0, "marker_face": face,
+                     "marker_edge": patch_paint(patch.get_edgecolor(), patch.get_alpha()) if patch.get_linewidth() else face,
+                     "marker_edge_width": _f(patch.get_linewidth()) or 1.0,
+                     "opacity": patch.get_alpha() if patch.get_alpha() is not None else 1.0}
+        elif any(isinstance(a, LineCollection) for a in drawn):
+            # Older/public errorbar handles expose only a LineCollection.
+            collection = next(a for a in drawn if isinstance(a, LineCollection))
+            colors, widths = collection.get_colors(), collection.get_linewidths()
+            proxy = {"type": "line", "mode": "lines", "color": _hex(colors[0]) if len(colors) else None,
+                     "width": _f(widths[0]) if len(widths) else 1.0}
+        out.append((name, proxy))
+    return out
+
+
 def _title_box(ax):
     """Where the axes title was drawn, in figure fractions [x0, y0, x1, y1]: matplotlib lifts
     it above a top axis's labels only at draw time. None when there is no renderer."""
@@ -435,18 +507,13 @@ def extract_axes(ax, axes):
         else:
             trace["role"] = "markers" if trace.get("mode") == "markers" else "curve"
     if leg is not None:
-        from matplotlib.lines import Line2D
         names = {t.get("name") for t in traces}
-        for handle, text in zip(leg.legend_handles, leg.get_texts()):
-            name = text.get_text()
-            if name in names:
+        for name, proxy in _legend_proxies(leg):
+            if name in names or not proxy:
                 continue
-            proxy = (_line_trace(handle) if isinstance(handle, Line2D)
-                     else _scatter_trace(handle) if isinstance(handle, PathCollection) else None)
-            if proxy:
-                proxy.update(name=name, x=[None], y=[None], legend_only=True)
-                traces.append(proxy)
-                names.add(name)
+            proxy.update(name=name, x=[None], y=[None], legend_only=True)
+            traces.append(proxy)
+            names.add(name)
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
@@ -539,6 +606,8 @@ def extract_figure(fig, key, title=None):
                       and not any(ax._colorbar.mappable in list(a.collections) + list(a.images)
                                   for a in axes)],
         "texts": _figure_texts(f),
+        "figure_legend": _figure_legend(f),
+        "figure_legends": [_figure_legend(f, leg) for leg in getattr(f, "legends", []) if leg.get_texts()],
         "skipped": [{"artist": type(a).__name__, "n": 1, "reason": "unsupported figure artist"}
                     for a in list(f.artists) + list(f.images) + list(f.patches) + list(f.lines)] +
                    [{"artist": "FigureText", "n": 1, "reason": "unsupported text transform"}
@@ -559,6 +628,19 @@ def _figure_position(ax):
     root = _root_figure(owner)
     bbox = ax.get_position().transformed(owner.transSubfigure).transformed(root.transFigure.inverted())
     return _flist(bbox.bounds)
+
+
+def _figure_legend(root, leg=None):
+    """A figure-level legend (``fig.legend``): where it was drawn and how; None without one."""
+    if leg is None:
+        legends = [item for item in getattr(root, "legends", []) if item.get_texts()]
+        if not legends:
+            return None
+        leg = legends[0]
+    return {"box": _legend_box(leg), "ncol": int(getattr(leg, "_ncols", 1) or 1),
+            "size": _f(leg.get_texts()[0].get_fontsize()), "frame": bool(leg.get_frame_on()),
+            "entries": [dict(proxy, name=name, x=[None], y=[None], legend_only=True)
+                        for name, proxy in _legend_proxies(leg) if proxy]}
 
 
 def _figure_texts(root):
