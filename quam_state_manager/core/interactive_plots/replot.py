@@ -785,7 +785,7 @@ def _legend_box_ok(box) -> bool:
         and box[0] < box[2] and box[1] < box[3]
 
 
-def _split_legend_rows(data: list, layout: dict, grids: dict) -> None:
+def _split_legend_rows(data: list, layout: dict, grids: dict, width_pt=None) -> None:
     """A lab legend laid out in ``ncol`` columns over several rows, as one Plotly legend per row.
 
     Plotly lays a horizontal legend out in one row as wide as the whole figure, so a lab legend
@@ -813,6 +813,15 @@ def _split_legend_rows(data: list, layout: dict, grids: dict) -> None:
         if rows < 2:
             continue
         pitch = (box[3] - box[1]) / rows
+        # One column per lab column. A browser legend entry (symbol + text) is often wider than
+        # matplotlib's at the same size, so a column is at least as wide as its longest entry
+        # needs (a generous estimate: 0.62 em per character plus 3 em of symbol and gaps) --
+        # columns still line up, and an entry never runs into the next one.
+        column = (box[2] - box[0]) / ncol
+        if isinstance(width_pt, (int, float)) and width_pt > 0:
+            size = ((own.get("font") or {}).get("size")) or 10
+            longest = max(len(re.sub(r"<[^>]+>", "", str(t.get("name")))) for t in entries)
+            column = max(column, (0.62 * longest + 3) * size / width_pt)
         anchor, y = own.get("yanchor", "top"), own.get("y", box[3])
         names = [name] + [free() for _ in range(rows - 1)]
         for r, row_name in enumerate(names):
@@ -823,7 +832,7 @@ def _split_legend_rows(data: list, layout: dict, grids: dict) -> None:
             row = {k: v for k, v in own.items() if k not in ("borderwidth", "bordercolor", "bgcolor")}
             layout[row_name] = {**row, "orientation": "h", "y": y + step * pitch,
                                 "x": box[0], "xanchor": "left",
-                                "entrywidth": round((box[2] - box[0]) / ncol, 6), "entrywidthmode": "fraction",
+                                "entrywidth": round(column, 6), "entrywidthmode": "fraction",
                                 "font": dict(own.get("font") or {})}
         for k, trace in enumerate(entries):
             if k % rows:
@@ -1159,7 +1168,10 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 axis["title"].setdefault("font", {}).setdefault("size", 10)
                 axis["title"].update(standoff=4 if name.startswith("y") else 0)
     _legend_once(data)
-    _split_legend_rows(data, layout, grids)
+    size_inches = fig_json.get("size_inches")
+    _split_legend_rows(data, layout, grids,
+                       size_inches[0] * 72 if isinstance(size_inches, list) and len(size_inches) == 2
+                       and isinstance(size_inches[0], (int, float)) else None)
     for proxy, linked in figure_links:
         for trace in linked:
             trace["legendgroup"] = proxy.get("legendgroup", "")

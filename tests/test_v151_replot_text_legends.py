@@ -466,6 +466,24 @@ def test_a_multi_row_lab_legend_becomes_one_legend_per_row():
         assert not row.get("borderwidth")            # a frame per row would overlap the next
 
 
+def test_a_split_row_column_is_wide_enough_for_its_longest_entry():
+    # a browser entry is wider than matplotlib's: a lab column too narrow for its longest label
+    # made the next entry start inside it; the column now fits the label (estimate) and the
+    # columns still line up
+    def build(fig):
+        ax = fig.subplots()
+        lines = [ax.plot([0, 1], [i, i + 1])[0] for i in range(4)]
+        ax.legend(lines, ["indistinguishable from the best", "in force", "chosen", "x"],
+                  loc="lower left", ncol=2, fontsize=15, columnspacing=0.2, handlelength=0.5)
+    fig_json = _figure(build, size=(6, 4))
+    box = fig_json["axes"][0]["legend"]["box"]
+    layout = mpljson_to_plotly(fig_json)["layout"]
+    rows = [layout[k] for k in layout if k.startswith("legend") and isinstance(layout[k], dict)]
+    need = (0.62 * len("indistinguishable from the best") + 3) * 15 / (6 * 72)
+    assert len(rows) == 2 and need > (box[2] - box[0]) / 2          # the lab column is too narrow
+    assert all(row.get("entrywidth") == pytest.approx(need, abs=1e-5) for row in rows)
+
+
 def test_a_framed_multi_row_legend_keeps_no_frame_per_row():
     def build(fig):
         ax = fig.subplots()
