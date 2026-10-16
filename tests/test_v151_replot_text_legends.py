@@ -273,7 +273,60 @@ def test_a_multi_column_axes_legend_reads_across(ncol, orientation):
     box = fig_json["axes"][0]["legend"]["box"]
     assert box is not None, "a bare Figure is measured too"
     assert legend["orientation"] == orientation
-    assert (legend["x"], legend["y"]) == pytest.approx((box[0], box[3]))
+    # a lower-centre legend is held by its bottom centre
+    assert (legend["x"], legend["y"]) == pytest.approx(((box[0] + box[2]) / 2, box[1]))
+    assert (legend["xanchor"], legend["yanchor"]) == ("center", "bottom")
+
+
+@pytest.mark.parametrize("kwargs,anchors,corner", [
+    ({"loc": "upper left", "bbox_to_anchor": (1.02, 1.0)}, ("left", "top"), (0, 3)),     # outside right
+    ({"loc": "lower left"}, ("left", "bottom"), (0, 1)),
+    ({"loc": "upper right"}, ("right", "top"), (2, 3)),
+    ({"loc": "upper center"}, ("center", "top"), (None, 3)),
+    ({"loc": "center right"}, ("right", "middle"), (2, None)),
+    ({"loc": "lower center", "bbox_to_anchor": (0.5, -0.25)}, ("center", "top"), (None, 3))])  # below the axes
+def test_a_legend_is_held_by_the_edge_facing_its_panel_border(kwargs, anchors, corner):
+    def build(fig):
+        ax = fig.subplots()
+        ax.plot([0, 1], [0, 1], label="data")
+        ax.plot([0, 1], [1, 0], label="fit")
+        ax.legend(**kwargs)
+    fig_json = _figure(build, size=(10, 6), canvas=False)
+    box = fig_json["axes"][0]["legend"]["box"]
+    legend = mpljson_to_plotly(fig_json)["layout"]["legend"]
+    assert (legend["xanchor"], legend["yanchor"]) == anchors
+    x = (box[0] + box[2]) / 2 if corner[0] is None else box[corner[0]]
+    y = (box[1] + box[3]) / 2 if corner[1] is None else box[corner[1]]
+    assert (legend["x"], legend["y"]) == pytest.approx((x, y))
+
+
+def test_a_legend_with_enlarged_symbols_keeps_them_readable():
+    def build(fig):
+        ax = fig.subplots()
+        ax.scatter([0, 1, 2], [0, 1, 0], s=1, label="shots")
+        ax.legend(markerscale=6)
+    legend = mpljson_to_plotly(_figure(build))["layout"]["legend"]
+    assert legend.get("itemsizing") == "constant"
+
+    def plain(fig):
+        ax = fig.subplots()
+        ax.scatter([0, 1, 2], [0, 1, 0], s=1, label="shots")
+        ax.legend()
+    assert "itemsizing" not in mpljson_to_plotly(_figure(plain))["layout"]["legend"]
+
+
+def test_a_log_axis_over_decades_is_labelled_at_the_decades_only():
+    def build(fig):
+        wide, narrow = fig.subplots(1, 2)
+        wide.plot([1, 2, 3], [1e-3, 1e-2, 1e-1])
+        wide.set_yscale("log")
+        narrow.plot([1, 2, 3], [2, 3, 5])
+        narrow.set_yscale("log")
+        narrow.set_ylim(2, 6)
+    layout = mpljson_to_plotly(_figure(build, size=(10, 4)))["layout"]
+    assert layout["yaxis"]["type"] == "log"
+    assert layout["yaxis"].get("dtick") == 1 and layout["yaxis"].get("exponentformat") == "power"
+    assert "dtick" not in layout["yaxis2"]          # under a decade: Plotly's own labels stay
 
 
 def test_the_lab_tick_and_axis_title_sizes_are_kept():

@@ -628,6 +628,11 @@ def _axis_props(ax, *, log_key):
             p["range"] = limits
         elif all(v > 0 for v in limits):
             p["range"] = [math.log10(v) for v in limits]
+            if "values" not in ticks and abs(math.log10(limits[1]) - math.log10(limits[0])) >= 1:
+                # v1.5.1 (D3 class T): matplotlib labels a log axis that spans a decade
+                # or more at the decades only (10^k); Plotly's default added "2" and "5"
+                # between them, which crowded small panels (log histograms)
+                p.update(dtick=1, exponentformat="power")
     return p
 
 
@@ -718,6 +723,22 @@ def _position_domains(axes, panels):
     return domain, [domain(b) for b in bounds]
 
 
+def _legend_edge(lo, hi, p_lo, p_hi, names, axis):
+    """Anchor one direction of a lab legend box [lo, hi] against its panel [p_lo, p_hi]:
+    outside the panel, the edge next to it; inside, the half the box lies in (centred ->
+    its centre). Returns {axis: position, axis + "anchor": name}."""
+    low, mid, high = names
+    span = max(p_hi - p_lo, 1e-9)
+    centre, p_centre = (lo + hi) / 2, (p_lo + p_hi) / 2
+    if lo >= p_hi - 1e-6:                       # beyond the high side: the edge facing it
+        return {axis: lo, axis + "anchor": low}
+    if hi <= p_lo + 1e-6:                       # beyond the low side
+        return {axis: hi, axis + "anchor": high}
+    if abs(centre - p_centre) <= 0.1 * span:
+        return {axis: centre, axis + "anchor": mid}
+    return {axis: hi, axis + "anchor": high} if centre > p_centre else {axis: lo, axis + "anchor": low}
+
+
 def _legend_place(legend: dict, bounds) -> dict:
     """Plotly placement of one lab legend: the box matplotlib drew it in (figure fractions),
     else its location code inside its panel ``bounds`` (x0, x1, y0, y1). A framed lab legend
@@ -726,9 +747,19 @@ def _legend_place(legend: dict, bounds) -> dict:
     box = legend.get("box")
     # a legend the lab laid out in several columns reads across, not down
     orientation = "h" if (legend.get("ncol") or 1) > 1 else "v"
-    if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box) \
-            and 0 <= box[0] < box[2] <= 1 and 0 <= box[1] < box[3] <= 1:
-        out = {"orientation": orientation, "x": box[0], "y": box[3], "xanchor": "left", "yanchor": "top"}
+    # a legend the lab put beside or below the axes (bbox_to_anchor) may reach past the
+    # figure edge; its box still says where it is (Plotly accepts positions outside 0..1)
+    if isinstance(box, list) and len(box) == 4 \
+            and all(isinstance(v, (int, float)) and math.isfinite(v) for v in box) \
+            and box[0] < box[2] and box[1] < box[3] and box[2] > -0.5 and box[0] < 1.5 \
+            and box[3] > -0.5 and box[1] < 1.5:
+        # v1.5.1 (D3 class T): hold the legend by the edge of its box that faces the panel
+        # border it sits against. A Plotly legend is often larger than the lab's (a row is at
+        # least ~16 px): hung from its top-left corner a lower legend grew down over the
+        # tick labels and axis title; held by that edge it grows into the panel instead.
+        out = {"orientation": orientation}
+        out.update(_legend_edge(box[0], box[2], x0, x1, ("left", "center", "right"), "x"))
+        out.update(_legend_edge(box[1], box[3], y0, y1, ("bottom", "middle", "top"), "y"))
     else:
         # matplotlib location codes: 1 upper right, 2 upper left, 3 lower left, 4 lower right,
         # 5 right, 6 center left, 7 center right, 8 lower center, 9 upper center, 10 center
@@ -741,6 +772,10 @@ def _legend_place(legend: dict, bounds) -> dict:
                "xanchor": across, "yanchor": down}
     if legend.get("frame"):
         out.update(borderwidth=1, bordercolor="rgba(128,128,128,0.6)")
+    if (legend.get("markerscale") or 1) > 1:
+        # the lab enlarged the legend symbols (markerscale): a cloud of 1 pt dots would
+        # otherwise show 1 pt dots in its legend
+        out["itemsizing"] = "constant"
     return out
 
 
@@ -998,11 +1033,6 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             own = _legend_place(figure_legend, (0, 1, 0, 1))
             own.update(orientation="h" if (figure_legend.get("ncol") or 1) > 1 else "v",
                        font={"size": figure_legend.get("size") or 10})
-            box = figure_legend.get("box")
-            if isinstance(box, list) and len(box) == 4 and \
-                    all(isinstance(v, (int, float)) and math.isfinite(v) for v in box) and \
-                    _position_bounds([box[0], box[1], box[2] - box[0], box[3] - box[1]]):
-                own.update(x=(box[0] + box[2]) / 2, xanchor="center", y=box[1], yanchor="bottom")
             layout[name] = own
             for entry in figure_legend.get("entries", []):
                 proxy = (_scatter_to_plotly(entry, "x", "y") if entry.get("type") == "scatter"

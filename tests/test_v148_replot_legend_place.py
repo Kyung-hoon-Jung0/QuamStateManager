@@ -28,8 +28,10 @@ def test_one_legend_panel_keeps_its_drawn_box():
     right = figure["axes"][1]["position"]
     assert box and right[0] < box[0] < box[2] <= right[0] + right[2] + 1e-6   # inside the right panel
     legend = layout["legend"]
-    assert (legend["x"], legend["y"]) == pytest.approx((box[0], box[3]))
-    assert (legend["xanchor"], legend["yanchor"], legend["orientation"]) == ("left", "top", "v")
+    # v1.4.1: held by its top-left corner -> by the corner facing the panel border it sits
+    # against (a larger Plotly legend then grows into the panel, not over the tick labels)
+    assert (legend["x"], legend["y"]) == pytest.approx((box[2], box[1]))
+    assert (legend["xanchor"], legend["yanchor"], legend["orientation"]) == ("right", "bottom", "v")
 
 
 def test_a_bare_figure_is_measured_too():
@@ -38,7 +40,7 @@ def test_a_bare_figure_is_measured_too():
     figure, layout = _view([None, "lower right"], with_renderer=False)
     box = figure["axes"][1]["legend"]["box"]
     assert box is not None
-    assert (layout["legend"]["x"], layout["legend"]["y"]) == pytest.approx((box[0], box[3]))
+    assert (layout["legend"]["x"], layout["legend"]["y"]) == pytest.approx((box[2], box[1]))
 
 
 @pytest.mark.parametrize("loc,anchors", [(4, ("right", "bottom")), (8, ("center", "bottom")),
@@ -60,8 +62,11 @@ def test_without_a_box_the_location_code_places_it_in_that_panel(loc, anchors):
 def test_several_legends_each_stay_in_their_panel():
     # v1.4.1: one footer -> panel legends; retain panel values and avoid axis-title overlap.
     figure, layout = _view(["upper left", "lower right"], with_renderer=True)
-    for name, axes in (("legend", figure["axes"][0]), ("legend2", figure["axes"][1])):
+    # v1.4.1: each held by the corner facing its panel border (upper left: top-left; lower
+    # right: bottom-right), see test_one_legend_panel_keeps_its_drawn_box
+    for name, axes, corner in (("legend", figure["axes"][0], (0, 3)), ("legend2", figure["axes"][1], (2, 1))):
         box = axes["legend"]["box"]
         legend = layout[name]
-        assert legend["orientation"] == "v" and (legend["x"], legend["y"]) == pytest.approx((box[0], box[3]))
+        assert legend["orientation"] == "v"
+        assert (legend["x"], legend["y"]) == pytest.approx((box[corner[0]], box[corner[1]]))
         assert legend.get("borderwidth") == 1   # the lab's legend frame

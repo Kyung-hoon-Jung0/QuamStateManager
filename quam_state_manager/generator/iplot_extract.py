@@ -579,7 +579,8 @@ def extract_axes(ax, axes):
         "title_box": _title_box(ax) if ax.get_title() else None,
         "aspect": _f(ax.get_aspect()),
         "legend": ({"loc": leg._loc, "size": _f(leg.get_texts()[0].get_fontsize()), "box": _legend_box(leg),
-                    "frame": bool(leg.get_frame_on()), "ncol": _legend_ncol(leg)}
+                    "frame": bool(leg.get_frame_on()), "ncol": _legend_ncol(leg),
+                    "markerscale": _f(getattr(leg, "markerscale", 1))}
                    if leg is not None and leg.get_texts() else None),
         "position": _figure_position(ax),
         "axison": bool(ax.axison),
@@ -707,6 +708,7 @@ def _figure_legend(root, leg=None):
         leg = legends[0]
     return {"box": _legend_box(leg), "ncol": _legend_ncol(leg),
             "size": _f(leg.get_texts()[0].get_fontsize()), "frame": bool(leg.get_frame_on()),
+            "markerscale": _f(getattr(leg, "markerscale", 1)),
             "entries": [dict(proxy, name=name, x=[None], y=[None], legend_only=True)
                         for name, proxy in _legend_proxies(leg) if proxy]}
 
