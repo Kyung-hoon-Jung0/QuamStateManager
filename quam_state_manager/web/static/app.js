@@ -1522,6 +1522,10 @@ window.showWaveformPlot = function(btn) {
         // Only handle when no input/textarea is focused
         var active = document.activeElement;
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
+        // v1.5.0 (customer bug): with the keyboard ON the left data list, Up/Down step the runs
+        // there (dsNavRun) and nothing else -- this table's selection moved along with them and
+        // scrolled the page under the run being read (e.g. the CZ gate plan's operation table).
+        if (active && active.closest && active.closest('#sidebar')) return;
 
         if (evt.key !== 'ArrowUp' && evt.key !== 'ArrowDown' && evt.key !== 'Enter') return;
 
