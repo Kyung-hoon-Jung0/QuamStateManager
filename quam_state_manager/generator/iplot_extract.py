@@ -128,6 +128,7 @@ def _legend_proxies(leg):
             collection = next(a for a in drawn if isinstance(a, LineCollection))
             colors, widths = collection.get_colors(), collection.get_linewidths()
             proxy = {"type": "line", "mode": "lines", "color": _hex(colors[0]) if len(colors) else None,
+                     "opacity": _opacity(colors[0]) if len(colors) else 1.0,
                      "width": _f(widths[0]) if len(widths) else 1.0}
         out.append((name, proxy))
     return out

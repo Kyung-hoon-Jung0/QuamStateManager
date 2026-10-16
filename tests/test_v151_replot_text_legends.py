@@ -153,7 +153,7 @@ def test_legend_public_fallback_survives_missing_or_changed_private_boxes(legacy
     from matplotlib.figure import Figure
     from quam_state_manager.generator.iplot_extract import _legend_proxies
     ax = Figure().subplots()
-    error = ax.errorbar([0, 1], [0, 1], yerr=.1)
+    error = ax.errorbar([0, 1], [0, 1], yerr=.1, alpha=.4)
     ax.legend([error], ["errors"])
     real = ax.get_legend()
     class PublicLegend:
@@ -174,6 +174,7 @@ def test_legend_public_fallback_survives_missing_or_changed_private_boxes(legacy
         entries = [(str(error), None)]
     assert len(entries) == 1 and entries[0][0] == "errors"
     assert entries[0][1] and entries[0][1]["mode"] == "lines"
+    assert entries[0][1].get("opacity", 1.0) == pytest.approx(.4)
 
 
 def test_figure_custom_legends_and_axes_legends_coexist():
@@ -193,12 +194,13 @@ def test_errorbars_without_a_data_line_and_independent_swatch_alpha():
     def build(fig):
         from matplotlib.patches import Patch
         ax = fig.subplots()
-        bars = ax.errorbar([0, 1], [0, 1], yerr=.1, fmt="none", capsize=4)
+        bars = ax.errorbar([0, 1], [0, 1], yerr=.1, fmt="none", capsize=4, alpha=.25)
         swatch = Patch(facecolor=(1, 0, 0, .25), edgecolor=(0, 0, 1, .75))
         ax.legend([bars, swatch], ["uncertainty", "area"])
     shown = {t["name"]: t for t in mpljson_to_plotly(_figure(build))["data"] if t.get("showlegend")}
     assert shown["uncertainty"]["mode"] == "lines"
     assert shown["uncertainty"].get("visible") is not False
+    assert shown["uncertainty"].get("opacity", 1.0) == pytest.approx(.25)
     assert shown["area"]["marker"]["color"] == "rgba(255,0,0,0.25)"
     assert shown["area"]["marker"]["line"]["color"] == "rgba(0,0,255,0.75)"
 
