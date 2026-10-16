@@ -1,33 +1,49 @@
 {# Chip Status > CZ gate plan. Every CZ operation of every pair: the frequency each qubit
    reaches, the detuning, the nearest |11> resonance and when the operation was last set.
    The physics, the estimate tiers and every refusal live in core/cz_gate_plan.py;
-   cz-plan.js only draws. #}
+   cz-map.js draws the chip map, cz-plan.js the operation below it. #}
 <div id="czp-root" class="czp-root" data-selected="{{ selected }}">
 <div class="table-header-row">
     <h2>CZ gate plan <small class="muted">({{ rows | length }} operation{{ '' if rows|length == 1 else 's' }})</small></h2>
 </div>
-<p class="muted czp-lede">
-    Where each CZ operation moves its qubits: flux amplitude &rarr; frequency, the detuning
-    &Delta; = f<sub>control</sub> &minus; f<sub>target</sub> it reaches, and the nearest resonance of the
-    |11&rang; manifold (|11&rang;&ndash;|20&rang; at +|&alpha;<sub>c</sub>|, |11&rang;&ndash;|02&rang; at &minus;|&alpha;<sub>t</sub>|, iSWAP at 0).
-    A <strong>quad-term estimate</strong> uses <code>freq_vs_flux_01_quad_term</code>; a fitted flux model is
-    drawn instead where the qubit carries one. Bare-qubit frequencies: coupling shifts are not included.
-</p>
+<div class="muted czp-lede">
+    Where each CZ operation moves its qubits on the chip, and how lossy those frequencies were when measured.
+    <details class="czp-help">
+        <summary aria-label="How to read this page">?</summary>
+        <div class="czp-help-body">
+            Flux amplitude &rarr; frequency, the detuning &Delta; = f<sub>control</sub> &minus; f<sub>target</sub> it reaches,
+            and the nearest resonance of the |11&rang; manifold (|11&rang;&ndash;|20&rang; at +|&alpha;<sub>c</sub>|,
+            |11&rang;&ndash;|02&rang; at &minus;|&alpha;<sub>t</sub>|, iSWAP at 0). A <strong>quad-term estimate</strong> uses
+            <code>freq_vs_flux_01_quad_term</code>; a fitted flux model is drawn instead where the qubit carries one.
+            Bare-qubit frequencies: coupling shifts are not included. The gray loss in each column is the newest
+            population-loss scan of that qubit (cf. arXiv:2112.03708v1 p.11, Fig. 6c): the population lost when the qubit is
+            flux-tuned from idle to that frequency for the scan's duration &mdash; a dwell loss, not a gate error.
+        </div>
+    </details>
+</div>
 {% for reason in unavailable %}
 <p class="czp-warn-text">{{ reason }}</p>
 {% endfor %}
 <section class="czp-map-box" aria-label="Chip frequency map">
-    <div class="czp-controls">
-        <h3 class="czp-title">Chip frequency map <small class="muted">&mdash; every pair's operating point on one frequency axis</small></h3>
+    <div class="czp-controls czp-map-head">
+        <h3 class="czp-title" title="Each pair's operating point on one frequency axis, the chip drawn below">Chip frequency map</h3>
         <label>Operation
-            <select id="czp-map-op" aria-label="Operation drawn for every pair"><option value="">Each pair's cz (default)</option></select>
+            <select id="czp-map-op" aria-label="Operation drawn for every pair"><option value="">Each pair's cz</option></select>
         </label>
         <label>Columns
-            <select id="czp-map-order" aria-label="Column order"><option value="name">By qubit name</option><option value="f01">By idle frequency</option></select>
+            <select id="czp-map-order" aria-label="Column order"><option value="chip" selected>By chip position</option><option value="name">By qubit name</option><option value="f01">By idle frequency</option></select>
+        </label>
+        <label>Loss scale
+            <select id="czp-map-scale" aria-label="Population loss scale of each column"><option value="0.25" selected>0-25 % (paper)</option><option value="0.5">0-50 %</option><option value="1">0-100 %</option></select>
         </label>
     </div>
     <div id="czp-map" class="czp-map"></div>
+    <p id="czp-map-key" class="muted czp-map-key"></p>
     <p id="czp-map-notes" class="muted czp-map-notes" role="status"></p>
+    <details id="czp-map-detail" class="czp-map-detail">
+        <summary id="czp-map-detail-summary">Measured loss per qubit</summary>
+        <div id="czp-map-detail-body"></div>
+    </details>
 </section>
 {% if rows %}
 <div class="czp-table-wrap">
@@ -70,22 +86,29 @@
 <section class="czp-detail" aria-live="polite">
     <div class="czp-controls">
         <h3 id="czp-title" class="czp-title">&nbsp;</h3>
+        <button type="button" id="czp-stale-chip" class="czp-stale-chip" hidden></button>
         <label>Operation
             <select id="czp-op" aria-label="Operation of this pair"></select>
         </label>
     </div>
-    <ul id="czp-notes" class="zline-notes czp-notes"></ul>
+    <p id="czp-status" class="czp-status" role="status" hidden></p>
     <div class="czp-plots">
         <figure class="czp-fig">
-            <figcaption>Frequency vs flux amplitude <span class="muted">&mdash; idle &rarr; operating point, resonance levels at that height</span></figcaption>
+            <figcaption>Frequency vs flux amplitude <span class="muted">&mdash; idle &rarr; operating point, resonance levels at that height, the scan loss beside it</span></figcaption>
+            <p id="czp-flux-caveat" class="czp-caveat" hidden></p>
             <div id="czp-flux" class="czp-plot"></div>
         </figure>
         <figure class="czp-fig">
             <figcaption>Frequency during the gate <span class="muted">&mdash; from the operation's own waveforms</span></figcaption>
+            <p id="czp-time-caveat" class="czp-caveat" hidden></p>
             <div id="czp-time" class="czp-plot"></div>
         </figure>
     </div>
     <div id="czp-card" class="czp-card"></div>
+    <details id="czp-notes-box" class="czp-notes-box">
+        <summary id="czp-notes-summary">Notes</summary>
+        <ul id="czp-notes" class="zline-notes czp-notes"></ul>
+    </details>
 </section>
 {% else %}
 <p class="muted" style="text-align:center;padding:2rem">No CZ operations on this chip &mdash; no qubit pair has a macro of a CZ gate class.</p>

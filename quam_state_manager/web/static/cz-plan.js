@@ -1,15 +1,18 @@
-/* Chip Status > CZ gate plan (bundle 'czplan').
+/* Chip Status > CZ gate plan (bundle 'czplan'; the chip map is cz-map.js, window.CzMap).
  *
  * Draws what /cz-plan/data computed -- the physics, the estimate tiers and every refusal live
- * in core/cz_gate_plan.py. This file only: picks the operation, asks for its data, shows the
- * notes, draws (a) frequency vs flux amplitude, (b) frequency during the gate from the
- * operation's own waveforms, (c) the operation's card, and fills the table's "Last set" column
- * from /cz-plan/history. A response that arrives after a newer request is dropped (seq token).
+ * in core/cz_gate_plan.py. This file only: picks the operation, asks for its data, draws
+ * (a) frequency vs flux amplitude with the qubits' measured loss beside it, (b) frequency
+ * during the gate from the operation's own waveforms, (c) the operation's card, puts each
+ * caveat under the figure it explains, keeps the staleness and drawing notes in a collapsed
+ * box below the card, and fills the table's "Last set" column from /cz-plan/history. A
+ * response that arrives after a newer request is dropped (seq token).
  */
 (function () {
     'use strict';
 
     var seq = 0, hseq = 0;
+    var NOTES_OPEN_KEY = 'czp-notes-open';
 
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -27,8 +30,8 @@
     function layout(over) {
         var base = window.PlotTheme ? window.PlotTheme.houseLayout({}) : {};
         var L = window.PlotTheme ? window.PlotTheme.houseLayout(over) : over;
-        ['xaxis', 'yaxis', 'yaxis2'].forEach(function (k) {
-            if (over[k]) L[k] = Object.assign({}, base[k] || base.yaxis || {}, over[k]);
+        ['xaxis', 'xaxis2', 'yaxis', 'yaxis2'].forEach(function (k) {
+            if (over[k]) L[k] = Object.assign({}, base[k] || base[k.charAt(0) + 'axis'] || base.yaxis || {}, over[k]);
         });
         return L;
     }
@@ -39,11 +42,16 @@
     function fmtGHz(v) { return v == null ? '—' : (v / 1e9).toFixed(4) + ' GHz'; }
     function fmtMHz(v, sign) { return v == null ? '—' : (sign && v > 0 ? '+' : '') + (v / 1e6).toFixed(1) + ' MHz'; }
     function fmtV(v) { return v == null ? '—' : Number(v).toFixed(4) + ' V'; }
+    function pct(v) { return v == null ? '—' : (100 * v).toFixed(1) + ' %'; }
     function when(p) {
         if (!p || !p.t) return 'unknown';
         var t = String(p.t).replace('T', ' ').replace(/\.\d+/, '').replace('Z', ' UTC');
         return (p.run_id != null ? 'run #' + p.run_id + ' · ' : '') + t;
     }
+    function stamp(t) {
+        return t ? String(t).replace('T', ' ').replace(/:\d\d(\.\d+)?Z$/, ' UTC').replace(/\.\d+/, '') : 'time unknown';
+    }
+    function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
     function active(root, token) {
         return token === seq && document.body.contains(root);
@@ -58,32 +66,155 @@
         el.innerHTML = '<p class="muted zline-empty">' + esc(text) + '</p>';
     }
 
+    /* The visible line under the title: why a figure is empty or the load failed. */
+    function setStatus(root, lines) {
+        var p = root.querySelector('#czp-status');
+        if (!p) return;
+        p.innerHTML = lines.map(esc).join('<br>');
+        p.hidden = !lines.length;
+    }
+
+    /* The staleness warnings grouped per qubit and per run (newest run first). The route
+       sends warning_groups; older answers carry only the flat list. */
+    function warningGroups(cal) {
+        if (cal.warning_groups) return cal.warning_groups;
+        var by = {}, order = [];
+        (cal.warnings || []).forEach(function (w) {
+            var parts = String(w.path || '').split('.'), q = parts[0] === 'qubits' ? parts[1] : '?';
+            var field = parts[0] === 'qubits' ? parts.slice(2).join('.') : String(w.path || '');
+            if (!by[q]) { by[q] = {}; order.push(q); }
+            var key = String(w.run_id) + '|' + (w.t || '');
+            (by[q][key] = by[q][key] || { run_id: w.run_id, t: w.t, fields: [] }).fields.push(field);
+        });
+        return order.map(function (q) {
+            var runs = Object.keys(by[q]).map(function (k) { return by[q][k]; });
+            runs.sort(function (a, b) { return String(b.t || '').localeCompare(String(a.t || '')); });
+            return { qubit: q, runs: runs };
+        });
+    }
+
+    function notesOpen() {
+        try { return window.sessionStorage.getItem(NOTES_OPEN_KEY) === '1'; } catch (e) { return false; }
+    }
+    function rememberNotes(open) {
+        try { window.sessionStorage.setItem(NOTES_OPEN_KEY, open ? '1' : '0'); } catch (e) { /* storage off: still works */ }
+    }
+    function openNotes(root) {
+        var box = root.querySelector('#czp-notes-box');
+        if (!box) return;
+        box.open = true;
+        rememberNotes(true);
+        try { box.scrollIntoView({ block: 'nearest' }); } catch (e) { /* jsdom */ }
+    }
+
+    /* Notes: each caveat stays visible under the figure it explains (tagged by the route;
+       the qubits' own summary notes explain the flux figure); the chip's unreadable entries go
+       to the status line; the staleness warnings and the notes on how a figure was drawn go
+       into the collapsed box below the card, with a chip in the title row that opens it. */
     function renderNotes(root, d) {
-        var ul = root.querySelector('#czp-notes');
-        if (!ul) return;
-        var items = (d.notes || []).map(function (t) { return { level: 'warn', text: t }; })
-            .concat((d.info || []).map(function (t) { return { level: 'info', text: t }; }));
+        var tags = d.notes_figure || [], status = [], cave = { flux: [], time: [] };
+        (d.notes || []).forEach(function (t, i) {
+            var tag = tags[i] || 'both';
+            if (tag === 'status') status.push(t);
+            else if (tag === 'flux') cave.flux.push(t);
+            else if (tag === 'time') cave.time.push(t);
+            else { cave.flux.push(t); cave.time.push(t); }
+        });
         (d.qubits || []).forEach(function (q) {
             if (!q.summary) return;
-            (q.summary.notes || []).forEach(function (t) { items.push({ level: 'info', text: q.name + ': ' + t }); });
+            (q.summary.notes || []).forEach(function (t) { cave.flux.push(q.name + ': ' + t); });
         });
-        (d.calibration.warnings || []).forEach(function (w) {
-            items.push({ level: 'warn', text: w.text + ' (changed ' + when(w) + ', after this operation was set)' });
+        setStatus(root, status);
+        ['flux', 'time'].forEach(function (f) {
+            var p = root.querySelector('#czp-' + f + '-caveat');
+            if (!p) return;
+            p.innerHTML = cave[f].map(esc).join('<br>');
+            p.hidden = !cave[f].length;
         });
-        ul.innerHTML = items.map(function (n) {
-            var cls = n.level === 'warn' ? 'zline-note-warn' : 'zline-note-info';
-            return '<li class="' + cls + '"><strong>' + (n.level === 'warn' ? 'check' : 'note') + '</strong> ' + esc(n.text) + '</li>';
-        }).join('');
+        var cal = d.calibration || {}, groups = warningGroups(cal);
+        var count = cal.warning_count != null ? cal.warning_count : (cal.warnings || []).length;
+        var info = d.info || [];
+        var chip = root.querySelector('#czp-stale-chip');
+        if (chip) {
+            chip.textContent = plural(count, 'input changed', 'inputs changed') + ' after this operation was set';
+            chip.hidden = !count;
+        }
+        var ul = root.querySelector('#czp-notes');
+        if (ul) {
+            ul.innerHTML = groups.map(function (g) {
+                return '<li class="zline-note-warn"><strong>' + esc(g.qubit) + '</strong> ' + g.runs.map(function (r) {
+                    return (r.run_id != null ? 'run #' + esc(r.run_id) : 'run unknown') + ' (' + esc(stamp(r.t)) + '): ' + esc((r.fields || []).join(', '));
+                }).join('; ') + '</li>';
+            }).concat(info.map(function (t) {
+                return '<li class="zline-note-info czp-note-muted"><strong>note</strong> ' + esc(t) + '</li>';
+            })).join('');
+        }
+        var sum = root.querySelector('#czp-notes-summary');
+        if (sum) {
+            var parts = [];
+            if (count) parts.push(plural(count, 'input changed', 'inputs changed') + ' after this operation was set');
+            if (info.length) parts.push(plural(info.length, 'note', 'notes') + ' on how the figures were drawn');
+            sum.textContent = 'Notes — ' + (parts.length ? parts.join(' · ') : 'none');
+        }
+        var box = root.querySelector('#czp-notes-box');
+        if (box) box.open = notesOpen();
+    }
+
+    /* The qubits' measured loss (the page's /cz-plan/loss answer, held by the map) as a
+       narrow panel to the right of the flux figure: where the levels meet beside how lossy
+       that frequency was in the scan. */
+    function lossPanel(root, d, C) {
+        var loss = window.CzMap ? window.CzMap.loss(root) : null;
+        var scale = window.CzMap ? window.CzMap.scale(root) : 0.25;
+        var curves = (loss && loss.curves) || {}, traces = [], shapes = [];
+        d.qubits.forEach(function (q, k) {
+            var e = curves[q.name], c = e && e.scan;
+            if (!c) return;
+            var xs = [], ys = [], ts = [];
+            (c.pieces || []).forEach(function (pc) {
+                var run = [];
+                function flush() {
+                    if (run.length) {
+                        xs.push(0); ys.push(run[0][1]); ts.push(null);
+                        run.forEach(function (s) { xs.push(s[0]); ys.push(s[1]); ts.push(s[2]); });
+                        xs.push(0); ys.push(run[run.length - 1][1]); ts.push(null);
+                        xs.push(null); ys.push(null); ts.push(null);
+                    }
+                    run = [];
+                }
+                for (var j = 0; j < (pc.frequency_hz || []).length; j++) {
+                    var f = pc.frequency_hz[j], l = (pc.loss || [])[j];
+                    if (typeof f !== 'number' || typeof l !== 'number' || !isFinite(f) || !isFinite(l)) { flush(); continue; }
+                    run.push([100 * Math.min(scale, Math.max(0, l)), f / 1e9,
+                              esc(q.name) + ' run #' + esc(c.run_id) + '<br>' + (f / 1e9).toFixed(4) + ' GHz · loss ' + pct(l)]);
+                }
+                flush();
+            });
+            if (!xs.length) return;
+            traces.push({ type: 'scatter', mode: 'lines', xaxis: 'x2', x: xs, y: ys, text: ts, fill: 'toself', fillcolor: C.q[k],
+                          opacity: 0.45, line: { color: C.q[k], width: 1 }, name: q.name + ' · scan loss (run #' + c.run_id + ')',
+                          hovertemplate: '%{text}<extra></extra>', showlegend: false });
+        });
+        if (!traces.length) return null;
+        d.row.lines.forEach(function (ln, k) {
+            var f = ln.point && ln.point.frequency_hz;
+            if (!ln.moves || f == null) return;
+            shapes.push({ type: 'line', xref: 'paper', x0: 0.80, x1: 1, yref: 'y', y0: ghz(f), y1: ghz(f),
+                          line: { color: C.q[k], width: 2.5 }, name: 'operating:' + ln.name });
+        });
+        return { traces: traces, shapes: shapes, scale: scale };
     }
 
     /* (a) f vs flux amplitude: each qubit's curve(s), its idle point, an arrow to the selected
        operation's operating point, the pair's other operations faintly, the resonance levels at
-       the operating height, the planned interaction point and the defect bands. */
+       the operating height, the planned interaction point and the defect bands; beside it the
+       qubits' measured loss. */
     function drawFlux(root, d, token) {
         var el = root.querySelector('#czp-flux');
         if (!el) return Promise.resolve();
         var C = colors(), traces = [], shapes = [], notes = [];
         var lines = d.row.lines, pts = lines.map(function (ln) { return ln.point; });
+        var side = lossPanel(root, d, C), right = side ? 0.76 : 1;
         d.qubits.forEach(function (q, k) {
             if (!q.summary || !q.curve) return;
             var col = C.q[k], c = q.curve, s = q.summary;
@@ -125,14 +256,14 @@
                 xref: 'x', yref: 'y', showarrow: true, arrowhead: 3, arrowsize: 1.2, arrowwidth: 1.6, arrowcolor: C.q[k], text: '' });
         });
         // resonance levels for the moving control at the target's operating height
-        var fc = pts[0].frequency_hz, ft = pts[1].frequency_hz;
+        var ft = pts[1].frequency_hz;
         var ac = d.qubits[0].summary && d.qubits[0].summary.anharmonicity_hz, at = d.qubits[1].summary && d.qubits[1].summary.anharmonicity_hz;
         if (ft != null) {
             [['|11>-|20>', ac == null ? null : ft + Math.abs(ac)], ['iSWAP', ft], ['|11>-|02>', at == null ? null : ft - Math.abs(at)]].forEach(function (lv) {
                 if (lv[1] == null) return;
                 shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(lv[1]), y1: ghz(lv[1]),
                     line: { color: C.res, width: 1, dash: 'dot' } });
-                annotations.push({ xref: 'paper', x: 1, xanchor: 'right', yref: 'y', y: ghz(lv[1]), yanchor: 'bottom', showarrow: false,
+                annotations.push({ xref: 'paper', x: right, xanchor: 'right', yref: 'y', y: ghz(lv[1]), yanchor: 'bottom', showarrow: false,
                     text: 'control on ' + lv[0], font: { size: 10, color: C.res } });
             });
         }
@@ -149,13 +280,31 @@
             annotations.push({ xref: 'paper', x: 0, xanchor: 'left', yref: 'y', y: ghz(fi), yanchor: 'bottom', showarrow: false,
                 text: 'stored interaction frequency', font: { size: 10, color: C.plan } });
         }
-        var L = layout({
+        var over = {
             margin: { l: 64, r: 16, t: 10, b: 90 }, showlegend: true,
             legend: { orientation: 'h', y: -0.22, x: 0, font: { size: 11 } },
-            xaxis: { title: { text: 'flux amplitude (V)' }, zeroline: true },
+            xaxis: { title: { text: 'flux amplitude (V)' }, zeroline: true, domain: [0, right] },
             yaxis: { title: { text: 'frequency (GHz)' } },
             shapes: shapes, annotations: annotations, hovermode: 'closest'
-        });
+        };
+        if (side) {
+            // the main figure keeps its own frequency span; the loss panel is cut to it
+            var lo = Infinity, hi = -Infinity;
+            traces.forEach(function (t) { (t.y || []).forEach(function (v) { if (v != null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }); });
+            shapes.forEach(function (s) { if (s.yref === 'y' && s.type === 'line') { lo = Math.min(lo, s.y0); hi = Math.max(hi, s.y0); } });
+            if (isFinite(lo) && isFinite(hi)) {
+                var pad = Math.max(0.01, (hi - lo) * 0.04);
+                over.yaxis.range = [lo - pad, hi + pad];
+            }
+            traces = traces.concat(side.traces);
+            over.shapes = shapes.concat(side.shapes);
+            over.xaxis2 = { domain: [0.80, 1], anchor: 'y', range: [0, 100 * side.scale], fixedrange: true,
+                            title: { text: 'scan loss (%)', font: { size: 11 } }, zeroline: false };
+            el.setAttribute('data-loss-panel', String(side.traces.length));
+        } else {
+            el.removeAttribute('data-loss-panel');
+        }
+        var L = layout(over);
         el.setAttribute('data-notes', notes.join('; '));
         return window.requirePlotly().then(function () {
             if (!active(root, token)) return;
@@ -171,7 +320,7 @@
         var C = colors(), traj = d.trajectory, n = 0;
         traj.forEach(function (t) { if (t) n = Math.max(n, t.frequency_hz.length); });
         if (!n) {
-            empty(el, 'Not drawn: SM cannot draw the waveform of a moving qubit (see the notes above).', root, token);
+            empty(el, 'Not drawn: SM cannot draw the waveform of a moving qubit (the reason is above the figure).', root, token);
             return Promise.resolve();
         }
         var tt = []; for (var i = 0; i < n; i++) tt.push(i);
@@ -223,16 +372,46 @@
         });
     }
 
+    /* The scan's loss at the operating frequency and the stored defects the gate's own
+       excursion touches ([derived] on the server: cz_loss.loss_at / defects_swept). */
+    function gateLossHtml(gl) {
+        if (!gl || !gl.moves) return '';
+        if (gl.reason) return '<p class="czp-card-loss"><strong>Scan loss at the operating frequency:</strong> <span class="muted">' + esc(gl.reason) + '</span></p>';
+        var h = [], s = gl.scan || {};
+        var why = s.interaction_time_ns != null ? esc(s.interaction_time_ns) + ' ns' : 'scan duration unknown';
+        if (s.loss != null) {
+            h.push('<p class="czp-card-loss"><strong>Scan loss at the operating frequency:</strong> ' + pct(s.loss) +
+                   ' <small class="muted">(run #' + esc(s.run_id) + ', ' + why + ' flux excursion from idle: dwell there plus every defect crossed on the way, with the scan\'s ramp)</small>' +
+                   ((s.pieces || []).length > 1 ? '<br><small class="muted">' + s.pieces.map(function (p) {
+                       return 'piece ' + esc(p.piece) + ': ' + (p.loss != null ? pct(p.loss) : esc(p.reason || 'not measured')); }).join('; ') + '</small>' : '') + '</p>');
+        } else {
+            h.push('<p class="czp-card-loss"><strong>Scan loss at the operating frequency:</strong> ' +
+                   (s.run_id != null ? 'not measured at this frequency <small class="muted">(run #' + esc(s.run_id) + (s.reason && s.reason !== 'not measured at this frequency' ? '; ' + esc(s.reason) : '') + ')</small>'
+                                     : '<span class="muted">' + esc(s.reason || 'no scan') + '</span>') +
+                   ((s.pieces || []).length ? '<br><small class="muted">' + s.pieces.map(function (p) {
+                       return 'piece ' + esc(p.piece) + ': ' + (p.loss != null ? pct(p.loss) : esc(p.reason || 'not measured')); }).join('; ') + '</small>' : '') + '</p>');
+        }
+        var sw = gl.sweep, touched = gl.defects_touched || [];
+        h.push('<p class="czp-card-loss"><strong>Defects touched during the gate:</strong> ' + (touched.length ? touched.map(function (t) {
+            return fmtGHz(t.frequency_hz) + ' <small class="muted">(FWHM ' + fmtMHz(t.fwhm_hz) + (t.peak_loss != null ? ', peak ' + pct(t.peak_loss) : '') +
+                (t.inside ? '' : ', ' + fmtMHz(t.distance_hz) + ' outside') + ')</small>' + (t.strong ? ' <span class="czp-warn-text">strong</span>' : '');
+        }).join('; ') : 'none') +
+            (sw ? '<br><small class="muted">excursion ' + fmtGHz(sw.f_min_hz) + ' – ' + fmtGHz(sw.f_max_hz) + ' ' + esc(sw.label || '') +
+                  (gl.marker && gl.marker.label ? '; ' + esc(gl.marker.label) : '') + (sw.note ? '; ' + esc(sw.note) : '') + '</small>' : '') + '</p>');
+        return h.join('');
+    }
+
     /* (c) the operation's card. */
     function renderCard(root, d) {
         var el = root.querySelector('#czp-card');
         if (!el) return;
-        var r = d.row, cal = d.calibration, h = [];
+        var r = d.row, cal = d.calibration, h = [], gls = d.gate_loss || [];
         h.push('<h4>' + esc(r.pair) + ' · ' + esc(r.operation) + ' <small class="muted">' + esc(r['class'] || '') + ' · ' + esc(r.kind) +
             (r.alias_of ? ' · alias of ' + esc(r.alias_of) : '') + '</small></h4>');
         h.push('<div class="czp-card-grid">');
         r.lines.forEach(function (ln, k) {
             var p = ln.point, q = d.qubits[k], s = q.summary || {};
+            var gl = gls.find(function (g) { return g.role === ln.role; }) || null;
             h.push('<div class="czp-card-q"><strong>' + esc(ln.role) + ' ' + esc(ln.name) + '</strong>' +
                 (ln.moves ? ' <small class="muted">plays ' + esc((ln.pulse_path || '').split('.').pop()) + (ln.pulse_class ? ' (' + esc(ln.pulse_class) + ')' : '') + '</small>' : ' <small class="muted">does not move</small>') +
                 '<dl>' +
@@ -246,13 +425,14 @@
                 (r.plan && r.plan.roles[ln.role] && r.plan.roles[ln.role].plan_v != null ? '<dt>Planned amplitude</dt><dd>' + fmtV(r.plan.roles[ln.role].plan_v) +
                     (r.plan.roles[ln.role].difference_v != null ? ' <small class="muted">(operation ' + (r.plan.roles[ln.role].difference_v >= 0 ? '+' : '') + (r.plan.roles[ln.role].difference_v * 1e3).toFixed(1) + ' mV)</small>' : '') + '</dd>' : '') +
                 '<dt>Phase correction</dt><dd>' + (r.phases[ln.role] == null ? '—' : Number(r.phases[ln.role]).toFixed(4) + ' × 2π') + '</dd>' +
-                '</dl></div>');
+                '</dl>' + gateLossHtml(gl) + '</div>');
         });
         var fid = r.fidelity || {}, fl = [];
         ['InterleavedRB', 'StandardRB'].forEach(function (k) {
             if (fid[k]) fl.push(k + ' ' + Number(fid[k].value).toFixed(4) + (fid[k].load_id != null ? ' <small class="muted">(load id ' + esc(fid[k].load_id) + ')</small>' : ''));
         });
         var near = r.nearest;
+        var count = cal.warning_count != null ? cal.warning_count : (cal.warnings || []).length;
         h.push('<div class="czp-card-q"><strong>Operation</strong><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
             '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' : '—') + '</dd>' +
@@ -265,138 +445,11 @@
             '<dt>Fidelity</dt><dd>' + (fl.length ? fl.join('<br>') : '—') + '</dd>' +
             '<dt>Last set</dt><dd>' + (cal.last_set ? esc(when(cal.last_set)) + (cal.proven && cal.last_set.provenance === 'run_proven' ? ' <small class="muted">(written by that run)</small>' : ' <small class="muted">(' + esc(cal.last_set.provenance || 'writer not proven') + ')</small>') :
                 '<span class="muted">unknown' + (cal.note ? ' — ' + esc(cal.note) : '') + '</span>') + '</dd>' +
-            (cal.warnings.length ? '<dt>Staleness</dt><dd class="czp-warn-text">' + cal.warnings.map(function (w) { return esc(w.text); }).join('<br>') + '</dd>' : '') +
+            (count ? '<dt>Staleness</dt><dd><a href="#czp-notes-box" class="czp-notes-link czp-warn-text">' +
+                plural(count, 'input changed', 'inputs changed') + ' after this operation was set</a></dd>' : '') +
             '</dl></div>');
         h.push('</div>');
         el.innerHTML = h.join('');
-    }
-
-    /* The chip frequency map (cf. arXiv:2112.03708 Fig. 6c): one column per qubit on a shared
-       frequency axis -- the idle frequency (dot), the stored population-loss defects (gray bars,
-       length ~ peak loss), the safe intervals (faint band), and each pair's operating point as a
-       short segment in each member's column (solid: fitted model, dashed: quad-term estimate),
-       joined by a thin connector. Refused frequencies are listed under the figure, never drawn. */
-    var mseq = 0;
-    var MAP_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf',
-                      '#bcbd22', '#7f7f7f'];
-    function mapColors() {
-        var P = window.PlotTheme && window.PlotTheme.palette ? window.PlotTheme.palette() : null;
-        return P && P.length >= 6 ? P.concat(MAP_COLORS.filter(function (c) { return P.indexOf(c) < 0; })) : MAP_COLORS;
-    }
-    function mapEmpty(el, text) {
-        el.__plotlyRenderEpoch = (el.__plotlyRenderEpoch || 0) + 1;
-        delete el._czpMapClick;
-        if (window.PlotHost) window.PlotHost.purgeWithin(el);
-        el.innerHTML = '<p class="muted zline-empty">' + esc(text) + '</p>';
-    }
-    function drawMap(root) {
-        var el = root.querySelector('#czp-map');
-        if (!el) return Promise.resolve();
-        var my = ++mseq;
-        var opSel = root.querySelector('#czp-map-op'), ordSel = root.querySelector('#czp-map-order');
-        var op = opSel ? opSel.value : '', order = ordSel ? ordSel.value : 'name';
-        return fetch('/cz-plan/map' + (op ? '?op=' + encodeURIComponent(op) : ''), { headers: { 'Accept': 'application/json' } })
-            .then(function (r) { return r.json(); })
-            .then(function (m) {
-                if (my !== mseq || !document.body.contains(root)) return;
-                if (!m.ok) { mapEmpty(el, m.error || 'The map could not be computed.'); return; }
-                if (opSel && opSel.options.length <= 1) {
-                    (m.operations || []).forEach(function (name) {
-                        var o = document.createElement('option'); o.value = name; o.textContent = name; opSel.appendChild(o);
-                    });
-                }
-                var qs = m.qubits.slice();
-                if (order === 'f01') qs.sort(function (a, b) { return (a.f01_hz == null) - (b.f01_hz == null) || (a.f01_hz || 0) - (b.f01_hz || 0); });
-                var col = {}; qs.forEach(function (q, i) { col[q.path] = i; });
-                var C = colors(), P = mapColors(), traces = [], shapes = [];
-                var ink = getComputedStyle(document.documentElement).getPropertyValue('--pico-color').trim() || '#222';
-                qs.forEach(function (q, i) {
-                    if (i) shapes.push({ type: 'line', xref: 'x', x0: i, x1: i, yref: 'paper', y0: 0, y1: 1,
-                                         line: { color: C.muted, width: 0.6 }, layer: 'below' });
-                    // safe intervals: a narrow strip at the column's right edge (a full-width band covers the column)
-                    (q.safe || []).forEach(function (b) {
-                        shapes.push({ type: 'rect', xref: 'x', x0: i + 0.93, x1: i + 0.98, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
-                                      fillcolor: C.plan, opacity: 0.45, line: { width: 0 }, layer: 'below' });
-                    });
-                    (q.defects || []).forEach(function (b) {
-                        var f = (b.lo_hz + b.hi_hz) / 2, w = 0.08 + 0.82 * Math.min(1, (b.peak_loss || 0) / 0.5);
-                        traces.push({ type: 'scatter', mode: 'lines', x: [i + 0.05, i + 0.05 + w], y: [ghz(f), ghz(f)], showlegend: false,
-                            line: { color: C.muted, width: 3 }, opacity: 0.75,
-                            hovertemplate: hoverEsc(q.name) + ' defect %{y:.4f} GHz<br>FWHM ' + ((b.hi_hz - b.lo_hz) / 1e6).toFixed(1) + ' MHz' +
-                                (b.peak_loss != null ? ', peak loss ' + (100 * b.peak_loss).toFixed(0) + ' %' : '') + '<extra></extra>' });
-                    });
-                });
-                traces.push({ type: 'scatter', mode: 'markers', x: qs.map(function (q, i) { return i + 0.5; }),
-                    y: qs.map(function (q) { return ghz(q.f01_hz); }), name: 'idle f_01',
-                    marker: { color: ink, size: 9, symbol: 'circle' },
-                    customdata: qs.map(function (q) { return esc(q.name) + (q.loss_data ? '' : ' (no population-loss data)') + '<br>' + esc(q.direction); }),
-                    hovertemplate: '%{customdata}<br>idle %{y:.4f} GHz<extra></extra>' });
-                var pairs = [];
-                m.segments.concat(m.refused || [], m.planned || []).forEach(function (s) { if (pairs.indexOf(s.pair) < 0) pairs.push(s.pair); });
-                pairs.forEach(function (pair, k) {
-                    var color = P[k % P.length], segs = m.segments.filter(function (s) { return s.pair === pair; });
-                    segs.forEach(function (s, j) {
-                        var i = col[s.qubit_path];
-                        if (i == null) return;
-                        var quad = /quad/.test(s.kind || '');
-                        traces.push({ type: 'scatter', mode: 'lines', x: [i + 0.12, i + 0.88], y: [ghz(s.frequency_hz), ghz(s.frequency_hz)],
-                            name: pair, legendgroup: pair, showlegend: j === 0,
-                            line: { color: color, width: s.moves ? 3.2 : 1.6, dash: quad ? 'dash' : 'solid' },
-                            customdata: [s.path, s.path],
-                            hovertemplate: hoverEsc(pair) + ' · ' + hoverEsc(s.operation) + '<br>' + hoverEsc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
-                                ': %{y:.4f} GHz<br>' + hoverEsc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + hoverEsc(s.validity) : '') +
-                                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + hoverEsc(s.nearest.name) + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
-                                '<extra></extra>' });
-                    });
-                    // connectors help on a small chip; across 10+ pairs they cross the whole map
-                    if (pairs.length <= 10 && segs.length === 2 && col[segs[0].qubit_path] != null && col[segs[1].qubit_path] != null) {
-                        var a = segs[0], b = segs[1], ia = col[a.qubit_path], ib = col[b.qubit_path];
-                        var left = ia <= ib ? a : b, right = ia <= ib ? b : a;
-                        traces.push({ type: 'scatter', mode: 'lines', legendgroup: pair, showlegend: false, hoverinfo: 'skip',
-                            x: [Math.min(ia, ib) + 0.88, Math.max(ia, ib) + 0.12], y: [ghz(left.frequency_hz), ghz(right.frequency_hz)],
-                            line: { color: color, width: 1, dash: 'dot' }, opacity: 0.6 });
-                    }
-                    (m.planned || []).filter(function (p) { return p.pair === pair; }).forEach(function (p) {
-                        var i = col[p.qubit_path];
-                        if (i == null) return;
-                        traces.push({ type: 'scatter', mode: 'markers', x: [i + 0.5], y: [ghz(p.frequency_hz)], legendgroup: pair, showlegend: false,
-                            marker: { color: color, size: 11, symbol: 'diamond-open', line: { width: 2 } },
-                            hovertemplate: hoverEsc(pair) + ' ' + hoverEsc(p.what) + ' (' + hoverEsc(p.qubit) + '): %{y:.4f} GHz<extra></extra>' });
-                    });
-                });
-                var notes = [];
-                if (m.refused.length) notes.push('Not drawn: ' + m.refused.map(function (r) {
-                    return r.qubit + ' in ' + r.pair + ' ' + r.operation + ' (' + r.reason + ')'; }).join('; ') + '.');
-                if (m.missing.length) notes.push('No ' + (m.op || 'such') + ' operation on ' + m.missing.join(', ') + '.');
-                var noLoss = qs.filter(function (q) { return !q.loss_data; }).map(function (q) { return q.name; });
-                if (noLoss.length) notes.push('No population-loss data stored for ' + (noLoss.length === qs.length ? 'any qubit' : noLoss.join(', ')) + '.');
-                notes.push('Solid: fitted flux model; dashed: quad-term estimate; thin: a member that stays at idle; ◇ planned interaction frequency' +
-                    (qs.some(function (q) { return (q.safe || []).length; }) ? '; right-edge strip: safe intervals' : '') +
-                    (pairs.length > 10 ? '; double-click a legend entry to isolate a pair' : '') + '.');
-                var nEl = root.querySelector('#czp-map-notes');
-                if (nEl) nEl.textContent = notes.join(' ');
-                var L = layout({
-                    margin: { l: 64, r: 16, t: 10, b: 60 }, showlegend: pairs.length > 0,
-                    legend: { orientation: 'h', y: -0.12, x: 0, font: { size: 11 } },
-                    xaxis: { tickmode: 'array', tickvals: qs.map(function (q, i) { return i + 0.5; }), ticktext: qs.map(function (q) { return q.name; }),
-                             range: [0, Math.max(1, qs.length)], showgrid: false, zeroline: false, fixedrange: true },
-                    yaxis: { title: { text: 'frequency (GHz)' } },
-                    shapes: shapes, hovermode: 'closest'
-                });
-                el.setAttribute('data-segments', String(m.segments.length));
-                return window.requirePlotly().then(function () {
-                    if (my !== mseq || !document.body.contains(root)) return;
-                    return window._plotlyRender(el, traces, L, config(), function () { return my === mseq && document.body.contains(root); });
-                }).then(function () {
-                    if (my !== mseq || !document.body.contains(root) || !el.on || el._czpMapClick === (el._ev || el.on)) return;
-                    el._czpMapClick = el._ev || el.on;
-                    el.on('plotly_click', function (ev) {
-                        var pt = ev && ev.points && ev.points[0], path = pt && pt.customdata;
-                        if (typeof path === 'string' && path.indexOf('qubit_pairs.') === 0) { load(root, path); revealFigures(root); }
-                    });
-                });
-            })
-            .catch(function (e) { if (my === mseq) mapEmpty(el, 'The map could not be loaded: ' + (e && e.message || e)); });
     }
 
     function fillOps(root, d) {
@@ -405,6 +458,16 @@
         sel.innerHTML = (d.pair_ops || []).map(function (o) {
             return '<option value="' + esc(o.path) + '"' + (o.path === d.row.path ? ' selected' : '') + '>' + esc(o.operation) + '</option>';
         }).join('');
+    }
+
+    function failed(root, op, text, token) {
+        root.setAttribute('data-failed', op);
+        setStatus(root, ['Not drawn: ' + text]);
+        ['#czp-flux', '#czp-time'].forEach(function (s) { var e = root.querySelector(s); if (e) empty(e, 'Not drawn.', root, token); });
+        ['#czp-flux-caveat', '#czp-time-caveat'].forEach(function (s) { var e = root.querySelector(s); if (e) { e.textContent = ''; e.hidden = true; } });
+        var chip = root.querySelector('#czp-stale-chip');
+        if (chip) chip.hidden = true;
+        root._czLast = null;
     }
 
     function load(root, op) {
@@ -417,6 +480,7 @@
             tr.classList.toggle('czp-row-selected', on);
             tr.setAttribute('aria-selected', on ? 'true' : 'false');
         });
+        if (window.CzMap) window.CzMap.select(root, op);
         var title = root.querySelector('#czp-title');
         var done = fetch('/cz-plan/data?op=' + encodeURIComponent(op), { headers: { 'Accept': 'application/json' } })
             .then(function (r) { return r.json(); })
@@ -424,16 +488,13 @@
                 if (my !== seq || !document.body.contains(root)) return;
                 root.removeAttribute('data-loading');
                 if (!d.ok) {
-                    root.setAttribute('data-failed', op);
                     if (title) title.textContent = op;
-                    var ul = root.querySelector('#czp-notes');
-                    if (ul) ul.innerHTML = '<li class="zline-note-block"><strong>not drawn</strong> ' + esc(d.error || 'failed') +
-                        ' — the chip may have changed since this table was drawn; reload the page to refresh it.</li>';
-                    ['#czp-flux', '#czp-time'].forEach(function (s) { var e = root.querySelector(s); if (e) empty(e, 'Not drawn.', root, my); });
+                    failed(root, op, (d.error || 'failed') + ' — the chip may have changed since this table was drawn; reload the page to refresh it.', my);
                     var card = root.querySelector('#czp-card'); if (card) card.innerHTML = '';
                     return;
                 }
                 if (title) title.textContent = d.row.pair + '  ·  ' + d.row.operation;
+                root._czLast = { d: d, token: my };
                 renderNotes(root, d);
                 fillOps(root, d);
                 renderCard(root, d);
@@ -444,10 +505,7 @@
             .catch(function (e) {
                 if (my !== seq) return;
                 root.removeAttribute('data-loading');
-                root.setAttribute('data-failed', op);
-                ['#czp-flux', '#czp-time'].forEach(function (s) { var el = root.querySelector(s); if (el) empty(el, 'Not drawn.', root, my); });
-                var ul = root.querySelector('#czp-notes');
-                if (ul) ul.innerHTML = '<li class="zline-note-block"><strong>not drawn</strong> Could not load: ' + esc(e && e.message || e) + '</li>';
+                failed(root, op, 'could not load: ' + (e && e.message || e), my);
             });
         try {
             var u = new URL(window.location.href);
@@ -457,6 +515,14 @@
             }
         } catch (e) { /* no URL support -- the page still works */ }
         return done;
+    }
+
+    /* The loss answer arrived or the loss scale changed: redraw the flux figure of the shown
+       operation from what the page holds (no request; a newer selection wins). */
+    function redrawFlux(root) {
+        var last = root._czLast;
+        if (!last || !active(root, last.token)) return Promise.resolve();
+        return drawFlux(root, last.d, last.token);
     }
 
     /* The table's "Last set" column: one ledger read for every operation. While the chip's
@@ -499,6 +565,11 @@
         }
     }
 
+    function pairOfRow(tr) {
+        var m = /^qubit_pairs\.(.+)\.macros\./.exec(tr ? tr.getAttribute('data-op') || '' : '');
+        return m ? m[1] : null;
+    }
+
     function mount() {
         var root = document.getElementById('czp-root');
         if (!root || root._czMounted) return;
@@ -508,6 +579,8 @@
         var mapBox = root.querySelector('.czp-map-box');
         if (mapBox && window.PlotHost) window.PlotHost.observe(mapBox);
         root.addEventListener('click', function (ev) {
+            var link = ev.target.closest && ev.target.closest('.czp-notes-link, #czp-stale-chip');
+            if (link && root.contains(link)) { ev.preventDefault(); openNotes(root); return; }
             var tr = ev.target.closest && ev.target.closest('.czp-row');
             if (tr && root.contains(tr)) { load(root, tr.getAttribute('data-op')); revealFigures(root); }
         });
@@ -516,15 +589,28 @@
             if (!tr) return;
             if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); load(root, tr.getAttribute('data-op')); revealFigures(root); }
         });
+        // a table row and its pair on the map are one surface: hovering the row lights the pair
+        var table = root.querySelector('#czp-table');
+        if (table && window.CzMap) {
+            table.addEventListener('mouseover', function (ev) {
+                var tr = ev.target.closest && ev.target.closest('.czp-row');
+                window.CzMap.highlight(root, tr ? pairOfRow(tr) : null);
+            });
+            table.addEventListener('mouseleave', function () { window.CzMap.highlight(root, null); });
+        }
+        var box = root.querySelector('#czp-notes-box');
+        if (box) box.addEventListener('toggle', function () { rememberNotes(box.open); });
+        root.addEventListener('czp:open', function (ev) {
+            var op = ev.detail && ev.detail.op;
+            if (op) { load(root, op); revealFigures(root); }
+        });
+        root.addEventListener('czp:loss', function () { redrawFlux(root); });
+        root.addEventListener('czp:scale', function () { redrawFlux(root); });
         var sel = root.querySelector('#czp-op');
         if (sel) sel.addEventListener('change', function () { load(root, sel.value); });
         var first = root.getAttribute('data-selected');
         if (first) load(root, first);
-        ['#czp-map-op', '#czp-map-order'].forEach(function (s) {
-            var c = root.querySelector(s);
-            if (c) c.addEventListener('change', function () { drawMap(root); });
-        });
-        drawMap(root);
+        if (window.CzMap) window.CzMap.mount(root);
         loadHistory(root, 0);
     }
 
@@ -547,7 +633,8 @@
             });
     }
 
-    window.CzPlan = { mount: mount, refresh: refresh, drawMap: drawMap, _esc: esc };
+    window.CzPlan = { mount: mount, refresh: refresh, _esc: esc,
+                      drawMap: function (root) { return window.CzMap ? window.CzMap.draw(root) : Promise.resolve(); } };
     document.addEventListener('DOMContentLoaded', mount);
     document.addEventListener('htmx:afterSwap', mount);
     document.addEventListener('sm:wc-moved', function () {

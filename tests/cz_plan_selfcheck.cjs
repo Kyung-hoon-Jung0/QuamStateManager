@@ -13,8 +13,9 @@ const page = `<div id="czp-root" class="czp-root" data-selected="qubit_pairs.p.m
 <tr class="czp-row" data-op="qubit_pairs.p.macros.a"><td class="czp-last" data-last="qubit_pairs.p.macros.a">...</td></tr>
 <tr class="czp-row" data-op="qubit_pairs.p.macros.b"><td class="czp-last" data-last="qubit_pairs.p.macros.b">...</td></tr>
 </tbody></table><p id="czp-history-note"></p>
-<section><h3 id="czp-title"></h3><select id="czp-op"></select><ul id="czp-notes"></ul>
-<div class="czp-plots"><div id="czp-flux"></div><div id="czp-time"></div></div><div id="czp-card"></div></section></div>`;
+<section><h3 id="czp-title"></h3><button id="czp-stale-chip" hidden></button><select id="czp-op"></select><p id="czp-status" hidden></p>
+<div class="czp-plots"><p id="czp-flux-caveat" hidden></p><div id="czp-flux"></div><p id="czp-time-caveat" hidden></p><div id="czp-time"></div></div>
+<div id="czp-card"></div><details id="czp-notes-box"><summary id="czp-notes-summary"></summary><ul id="czp-notes"></ul></details></section></div>`;
 const dom = new JSDOM('<!doctype html><body>' + page + '</body>', {url: 'http://localhost/cz-plan', runScripts: 'outside-only', pretendToBeVisual: true});
 const w = dom.window, d = w.document;
 Object.assign(w, {console});
@@ -102,8 +103,12 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     r.querySelector('tr[data-op="qubit_pairs.p.macros.a"]').dispatchEvent(new w.MouseEvent('click', {bubbles: true}));
     await wait(10); answer(2, payload('qubit_pairs.p.macros.a', true)); await wait(20);
     const notes = d.getElementById('czp-notes').textContent;
-    check(notes.includes('calibrated against an older qa.f_01') && notes.includes('run #50'), 'a later dependency change is a warning with its run');
-    check(notes.includes('qa: a qubit note'), 'qubit notes are shown');
+    // v1.4.1 (A14 F1): one flat warning line per path -> grouped per qubit and run, in the collapsed box.
+    check(notes.includes('qa') && notes.includes('run #50 (2026-01-03 00:00 UTC): f_01') && !d.getElementById('czp-notes-box').open,
+          'a later dependency change is listed with its run, grouped per qubit, in the collapsed notes box');
+    // v1.4.1 (A14 F1): qubit notes in the notes list -> under the flux figure they explain, always visible.
+    check(d.getElementById('czp-flux-caveat').textContent.includes('qa: a qubit note') && !d.getElementById('czp-flux-caveat').hidden,
+          'qubit notes are shown under the flux figure');
     check(d.getElementById('czp-card').textContent.includes('run #41'), 'last set names the run');
     // the table's Last set column
     const cells = Array.from(r.querySelectorAll('td[data-last]')).map(td => td.textContent);
@@ -221,6 +226,151 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     probe.purgeWithin(w, r);
     releaseTime(); releaseFlux(); await wait(25);
     check(renders.length === 0, 'production purge invalidates queued detail work without a selection change');
+    dom.window.close();
+
+    // ===== A14 D1-D3: the detail on the page's bundle (topo-graph.js, cz-map.js, cz-plan.js) =====
+    const FX = f => JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/cz_plan_contract', f), 'utf8'));
+    async function detail(opts) {
+        const page2 = `<div id="czp-root" class="czp-root" data-selected="${opts.sel}">
+<section class="czp-map-box"><select id="czp-map-op"><option value="">d</option></select>
+<select id="czp-map-order"><option value="chip" selected>c</option></select>
+<select id="czp-map-scale"><option value="0.25" selected>25</option><option value="0.5">50</option></select>
+<div id="czp-map"></div><p id="czp-map-key"></p><p id="czp-map-notes"></p><details id="czp-map-detail"><summary id="czp-map-detail-summary"></summary><div id="czp-map-detail-body"></div></details></section>
+<table id="czp-table"><tbody>${opts.sel ? `<tr class="czp-row" data-op="${opts.sel}"><td class="czp-last" data-last="${opts.sel}">x</td></tr>` : ''}</tbody></table><p id="czp-history-note"></p>
+<section><h3 id="czp-title"></h3><button id="czp-stale-chip" hidden></button><select id="czp-op"></select><p id="czp-status" hidden></p>
+<div class="czp-plots"><p id="czp-flux-caveat" hidden></p><div id="czp-flux"></div><p id="czp-time-caveat" hidden></p><div id="czp-time"></div></div>
+<div id="czp-card"></div><details id="czp-notes-box"><summary id="czp-notes-summary"></summary><ul id="czp-notes"></ul></details></section></div>`;
+        const dm = new JSDOM('<!doctype html><body>' + page2 + '</body>', {url: 'http://localhost/cz-plan', runScripts: 'outside-only', pretendToBeVisual: true});
+        const W = dm.window, env = {dm, W, D: W.document, renders: [], data: [], loss: opts.loss, holdLoss: !!opts.holdLoss, held: null};
+        Object.assign(W, {console});
+        W.requirePlotly = () => Promise.resolve();
+        W._plotlyRender = (el, traces, layout) => { env.renders.push({id: el.id, traces, layout}); el.data = traces; return Promise.resolve(); };
+        W.Plotly = {restyle: () => Promise.resolve(), relayout: () => Promise.resolve()};
+        W.PlotTheme = {houseLayout: l => l, houseConfig: c => c, palette: () => ['#111', '#222', '#333', '#444']};
+        W.fetch = url => {
+            if (url.startsWith('/cz-plan/map')) return Promise.resolve({json: () => Promise.resolve(JSON.parse(JSON.stringify(opts.map)))});
+            if (url.startsWith('/cz-plan/loss')) {
+                const ans = {json: () => Promise.resolve(JSON.parse(JSON.stringify(env.loss)))};
+                return env.holdLoss ? new Promise(res => { env.held = () => res(ans); }) : Promise.resolve(ans);
+            }
+            if (url.startsWith('/cz-plan/history')) return Promise.resolve({json: () => Promise.resolve({ok: true, mode: 'ledger', ops: {}})});
+            return new Promise(res => env.data.push({op: decodeURIComponent(url.split('op=')[1]), res}));
+        };
+        ['topo-graph.js', 'cz-map.js', 'cz-plan.js'].forEach(f => W.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static', f), 'utf8')));
+        env.root = W.document.getElementById('czp-root');
+        env.answer = async body => { env.data.at(-1).res({json: () => Promise.resolve(body)}); await wait(30); };
+        env.flux = () => env.renders.filter(x => x.id === 'czp-flux').at(-1);
+        env.text = id => W.document.getElementById(id).textContent;
+        W.CzPlan.mount(); await wait(30);
+        return env;
+    }
+    const SEL = 'qubit_pairs.p.macros.a';
+    const curveMap = {ok: true, unavailable: [], op: null, missing: [], operations: [], refused: [], planned: [], segments: [], pairs: {},
+                      qubits: [{name: 'qa', path: 'qubits.qa', f01_hz: 5e9, defects: [], safe: [], loss_data: true, grid_location: '0,0'},
+                               {name: 'qb', path: 'qubits.qb', f01_hz: 4.7e9, defects: [], safe: [], loss_data: true, grid_location: '1,0'}]};
+    const qaScan = {run_id: 7, interaction_time_ns: 100, flux_conversion: 'model', n_samples: 3, defects: [], notes: [], idle_note: null,
+                    pieces: [{n_raw: 3, frequency_hz: [5.0e9, 4.9e9, 4.8e9], loss: [0.01, 0.4, -0.02], detuning_hz: null, stderr: null}]};
+    const lossAns = {ok: true, reason: null, roots: [], runs_listed: 1, runs_read: 1, cap: 60, skipped: [], staleness: {mode: 'none', note: null, qubits: {}},
+                     curves: {qa: {scan: qaScan, marker: {status: 'none', label: 'no stored defects'}, marker_curve: null, reason: null},
+                              qb: {scan: null, marker: {status: 'none', label: 'no stored defects'}, marker_curve: null, reason: 'no population-loss run of qb'}}};
+    function rich(extra) {
+        const body = payload(SEL, true);
+        body.calibration.warning_count = 3;
+        body.calibration.warning_groups = [{qubit: 'qa', runs: [{run_id: 60, t: '2026-01-05T08:09:10Z', fields: ['f_01', 'anharmonicity']},
+                                                               {run_id: 50, t: '2026-01-03T00:00:00Z', fields: ['z.joint_offset']}]}];
+        body.notes = ['route note', 'wave note', 'entry unreadable'];
+        body.notes_figure = ['both', 'time', 'status'];
+        body.info = ['waveform from the transcription of the lab pulse class'];
+        body.info_figure = ['time'];
+        body.gate_loss = [{role: 'control', qubit: 'qa', moves: true, operating_hz: 4.92e9, reason: null, marker: {label: 'stored defects match run #7'},
+                           scan: {run_id: 7, interaction_time_ns: 100, loss: 0.0123, pieces: [{piece: 0, loss: 0.0123, reason: null}], reason: null},
+                           sweep: {f_min_hz: 4.92e9, f_max_hz: 5e9, source: 'trajectory', label: "from the gate's own waveform", note: 'the axis note'},
+                           defects_touched: [{frequency_hz: 4.95e9, fwhm_hz: 4e6, peak_loss: 0.3, strong: true, inside: true, distance_hz: 0}]},
+                          {role: 'target', qubit: 'qb', moves: false, operating_hz: 4.7e9, reason: 'stays at idle', marker: null, scan: null, sweep: null, defects_touched: []}];
+        return Object.assign(body, extra || {});
+    }
+    const E = await detail({sel: SEL, map: curveMap, loss: lossAns});
+    await E.answer(rich());
+    const chip = E.D.getElementById('czp-stale-chip'), box = E.D.getElementById('czp-notes-box');
+    check(!chip.hidden && chip.textContent === '3 inputs changed after this operation was set' && !box.open &&
+          E.text('czp-notes-summary') === 'Notes — 3 inputs changed after this operation was set · 1 note on how the figures were drawn',
+          'D1: a status chip in the title row counts the staleness; the notes box is collapsed and its summary counts both kinds');
+    const items = Array.from(E.D.querySelectorAll('#czp-notes li')).map(li => li.textContent);
+    check(items[0].startsWith('qa run #60 (2026-01-05 08:09 UTC): f_01, anharmonicity; run #50') &&
+          (items[1] || '').includes('waveform from the transcription') && E.D.querySelectorAll('#czp-notes li.czp-note-muted').length === 1,
+          'D1: staleness grouped per qubit and run, newest run first, then the drawing notes, muted');
+    check(E.text('czp-flux-caveat') === 'route noteqa: a qubit note' && !E.D.getElementById('czp-flux-caveat').hidden &&
+          E.text('czp-time-caveat') === 'route notewave note' && E.text('czp-status') === 'entry unreadable' && !E.D.getElementById('czp-status').hidden &&
+          !E.text('czp-notes').includes('route note') && !E.text('czp-time-caveat').includes('transcription'),
+          'D1: every caveat is visible under the figure it explains; the chip-wide status on the status line');
+    const card2 = E.text('czp-card');
+    check(card2.includes('3 inputs changed after this operation was set') && E.D.querySelector('#czp-card a.czp-notes-link') &&
+          !card2.includes('calibrated against'), 'D1: the card states the staleness as a count with a link, not the list');
+    E.D.querySelector('#czp-card a.czp-notes-link').dispatchEvent(new E.W.MouseEvent('click', {bubbles: true, cancelable: true}));
+    check(box.open && E.W.sessionStorage.getItem('czp-notes-open') === '1', 'D1: the link opens the notes box and remembers it for this tab');
+    E.root.querySelector('.czp-row').dispatchEvent(new E.W.MouseEvent('click', {bubbles: true})); await wait(10);
+    await E.answer(rich());
+    check(box.open, 'D1: an opened notes box stays open across operation switches');
+    box.open = false; box.dispatchEvent(new E.W.Event('toggle'));
+    chip.dispatchEvent(new E.W.MouseEvent('click', {bubbles: true}));
+    check(box.open, 'D1: the status chip opens the notes box');
+    check(card2.includes('Scan loss at the operating frequency: 1.2 % (run #7, 100 ns flux excursion from idle: dwell there plus every defect crossed on the way, with the scan\'s ramp)'),
+          'D3: the scan loss at the operating frequency, with its run and duration and what it measures');
+    check(card2.includes('Defects touched during the gate: 4.9500 GHz (FWHM 4.0 MHz, peak 30.0 %) strong') && card2.includes('the axis note') &&
+          card2.includes('excursion 4.9200 GHz – 5.0000 GHz from the gate\'s own waveform'), 'D3: the defects the gate touches, strong flagged, with the axis caveat');
+    check(card2.split('Scan loss at the operating frequency').length === 2, 'D3: a member that stays at idle gets no scan-loss line');
+    const fx = E.flux();
+    const side = fx.traces.filter(t => t.xaxis === 'x2');
+    check(fx.layout.xaxis.domain.join() === '0,0.76' && fx.layout.xaxis2.domain.join() === '0.8,1' && fx.layout.xaxis2.range.join() === '0,25' &&
+          side.length === 1 && side[0].fill === 'toself' && side[0].x.slice(0, 5).join() === '0,1,25,0,0' && side[0].line.color === '#111',
+          'D2: the flux figure carries the qubits\' scan loss in a right panel, in their colours, clipped to the map\'s scale');
+    check(fx.layout.shapes.some(sh => sh.name === 'operating:qa' && sh.y0 === 4.92 && sh.x0 === 0.8), 'D2: the operating frequency is a tick across the loss panel');
+    const fluxRenders = E.renders.filter(x => x.id === 'czp-flux').length;
+    const scaleSel = E.D.getElementById('czp-map-scale');
+    scaleSel.value = '0.5'; scaleSel.dispatchEvent(new E.W.Event('change', {bubbles: true})); await wait(30);
+    check(E.renders.filter(x => x.id === 'czp-flux').length === fluxRenders + 1 && E.flux().layout.xaxis2.range.join() === '0,50' &&
+          E.flux().traces.find(t => t.xaxis === 'x2').x[2] === 40 && E.data.length === 2, 'D2: the loss scale select redraws the panel at its scale, without a request');
+    // a failed load: the reason is a visible line, the caveats and the chip go
+    E.root.querySelector('.czp-row').dispatchEvent(new E.W.MouseEvent('click', {bubbles: true})); await wait(10);
+    await E.answer({ok: false, error: 'Unavailable operation'});
+    check(!E.D.getElementById('czp-status').hidden && E.text('czp-status').includes('Not drawn: Unavailable operation') &&
+          E.D.getElementById('czp-flux-caveat').hidden && chip.hidden, 'D1: a failed load is a visible status line, never hidden in the box');
+    E.root.querySelector('.czp-row').dispatchEvent(new E.W.MouseEvent('click', {bubbles: true})); await wait(10);
+    const nowave = rich({trajectory: [null, null]});
+    nowave.gate_loss[0].scan = {run_id: 7, interaction_time_ns: 100, loss: null, reason: 'not measured at this frequency (a 40.0 MHz gap)',
+                                pieces: [{piece: 0, loss: null, reason: 'gap'}, {piece: 1, loss: 0.02, reason: null}]};
+    await E.answer(nowave);
+    check(E.text('czp-time').includes('Not drawn') && E.text('czp-time').includes('the reason is above the figure') && !E.text('czp-time').includes('see the notes above') &&
+          !E.text('czp-status').includes('Unavailable operation'),
+          'D1: an empty time figure points at its own caveat line, not at notes above');
+    check(E.text('czp-card').includes('Scan loss at the operating frequency: not measured at this frequency (run #7; not measured at this frequency (a 40.0 MHz gap))') &&
+          E.text('czp-card').includes('piece 0: gap; piece 1: 2.0 %'), 'D3: not measured at this frequency, every bracketing piece listed');
+    E.dm.window.close();
+    // the loss answer arrives after the operation: the flux figure gains its panel without a request
+    const L2 = await detail({sel: SEL, map: curveMap, loss: lossAns, holdLoss: true});
+    await L2.answer(rich());
+    const noPanel = !L2.flux().layout.xaxis2 && !L2.flux().traces.some(t => t.xaxis === 'x2');
+    L2.held(); await wait(30);
+    check(noPanel && L2.flux().layout.xaxis2 && L2.data.length === 1, 'D2: the loss panel joins the flux figure when the page\'s loss answer arrives');
+    L2.dm.window.close();
+    // the frozen route answers: the customer layout (5 qubits) and the 21-qubit grid
+    const R5 = await detail({sel: 'qubit_pairs.q3-4.macros.cz_SNZ', map: FX('map_rig5q.json'), loss: FX('loss_rig5q.json')});
+    await R5.answer(FX('data_rig5q.json'));
+    check(R5.text('czp-notes').includes("waveform from SM's transcription") && R5.D.getElementById('czp-time-caveat').hidden &&
+          R5.D.getElementById('czp-status').hidden && R5.D.getElementById('czp-stale-chip').hidden && !R5.D.getElementById('czp-notes-box').open,
+          'F1 on the real answer: the transcription notes sit in the collapsed box, nothing between the title and the figures');
+    check(R5.text('czp-card').includes('Scan loss at the operating frequency: 0.5 % (run #1909') &&
+          R5.text('czp-card').includes('Scan loss at the operating frequency: not measured at this frequency (run #1905)'),
+          'D3 on the real answer: the mover with a reading and the one outside its scan');
+    check(R5.flux().traces.filter(t => t.xaxis === 'x2').length === 2, 'D2 on the real answer: both qubits\' scans beside the flux figure');
+    R5.dm.window.close();
+    const R21 = await detail({sel: 'qubit_pairs.qA2-qA1.macros.cz_SNZ', map: FX('map_rig21.json'), loss: FX('loss_rig21.json')});
+    await R21.answer(FX('data_rig21.json'));
+    check(R21.D.getElementById('czp-stale-chip').textContent === '2 inputs changed after this operation was set' &&
+          R21.text('czp-notes').includes('qA2 run #3450 (2026-10-09 09:36 UTC): f_01'), 'D1 on the real answer: the count chip and the grouped list');
+    check(/Defects touched during the gate: 5\.5506 GHz \(FWHM 9\.6 MHz, peak 65\.6 %\) strong/.test(R21.text('czp-card')),
+          'D3 on the real answer: the strong defect the gate crosses');
+    R21.dm.window.close();
     console.log(checks + ' assertions passed');
     dom.window.close();
 })().catch(e => { console.error(e); dom.window.close(); process.exitCode = 1; });

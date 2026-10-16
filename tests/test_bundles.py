@@ -24,7 +24,7 @@ LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses
         "component-map.js", "chip-status.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js",
         "notes.js", "agent-setup.js", "zline.js", "pulses-vt.js",
-        "cz-plan.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
+        "cz-plan.js", "cz-map.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15); cz-map.js: its chip map (A14)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
 
 
 def _scripts(html: str):
@@ -74,6 +74,8 @@ def test_every_page_ships_the_core_and_only_its_own_bundles(client):
         ("/topology", {"chip-status.js", "topo-graph.js", "component-map.js"}, {"bulk-edit.js", "generate.js"}),
         ("/generate", {"generate.js", "generate_preview.js", "wiring-grid.js", "pulses.js", "topo-graph.js"}, {"bulk-edit.js", "chip-status.js"}),
         ("/datasets", {"dataset-virtual.js", "ndview.js"}, {"bulk-edit.js", "generate.js"}),
+        # A14: the CZ map draws the chip with TopoGraph.layoutFor -- the page carries it
+        ("/cz-plan", {"topo-graph.js", "cz-map.js", "cz-plan.js"}, {"bulk-edit.js", "chip-status.js", "generate.js"}),
     ):
         html = client.get(url).get_data(as_text=True)
         names, lazy = _scripts(html)
@@ -103,6 +105,8 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
         "scheduler", "autofit", "compare_hub", "diff", "journal", "agent_setup", "zline", "czplan",
     }
     assert man["pages"]["topology"] == ["chipstatus", "components"] and man["pages"]["trends"] == ["chipstatus", "datasets"]
+    # A14: an htmx navigation to /cz-plan loads the topology helper before the map, the map before the detail
+    assert man["bundles"]["czplan"] == ["topo-graph.js", "cz-map.js", "cz-plan.js"]
     # the JS path map agrees with the page map on the pages that matter
     app_js = (_STATIC / "app.js").read_text(encoding="utf-8")
     assert "window.Bundles = (function () {" in app_js
