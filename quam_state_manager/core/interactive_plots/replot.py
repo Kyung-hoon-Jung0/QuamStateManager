@@ -912,6 +912,42 @@ def _axes_legend_links(data: list, axes: list, owner_spans: dict, end: int) -> l
     return links
 
 
+def _link_legend_groups(data: list, links: list) -> None:
+    """A legend entry controls the measurements it stands for (``links``: (entry, [trace])).
+
+    A measurement two entries of different look could stand for joins neither, so a red key
+    never hides a blue series (R5 P0-1). Entries of the SAME name and look are one key drawn
+    twice (a lab that calls fig.legend twice draws two identical legends on top of each other):
+    they share one group with their measurements, and either one shows or hides them."""
+    claims = {}
+    for entry, linked in links:
+        for trace in linked:
+            claims.setdefault(id(trace), (trace, {}))[1][id(entry)] = entry
+    parent = {}
+
+    def find(group):
+        while parent.get(group, group) != group:
+            group = parent[group]
+        return group
+
+    owned = []
+    for trace, entries in claims.values():
+        keys = list(entries.values())
+        if len({repr(_legend_style(e)) for e in keys}) != 1 or not all(e.get("legendgroup") for e in keys):
+            continue
+        root = find(keys[0]["legendgroup"])
+        for e in keys[1:]:
+            other = find(e["legendgroup"])
+            if other != root:
+                parent[other] = root
+        owned.append((trace, keys[0]))
+    for trace in data:
+        if trace.get("legendgroup"):
+            trace["legendgroup"] = find(trace["legendgroup"])
+    for trace, entry in owned:
+        trace["legendgroup"] = find(entry["legendgroup"])
+
+
 def _legend_once(data: list, preserve=()) -> None:
     """One legend entry per distinct artist kind: a lab figure that labels the same line
     in every panel draws one legend per panel, but Plotly has one legend for the figure,
@@ -1260,16 +1296,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     _legend_once(data, grids)
     links = figure_links + _axes_legend_links(data, axes, owner_spans, spans[-1])
     _split_legend_rows(data, layout, grids)
-    # A legend entry controls the measurements it stands for; a measurement two entries could
-    # stand for (the same name and look in two legends) is left to neither (R5 P0-1).
-    claims = {}
-    for entry, linked in links:
-        for trace in linked:
-            claims.setdefault(id(trace), set()).add(id(entry))
-    for entry, linked in links:
-        for trace in linked:
-            if len(claims[id(trace)]) == 1:
-                trace["legendgroup"] = entry.get("legendgroup", "")
+    _link_legend_groups(data, links)
     from .mathtext import plotly_text
     return _hover_guides(plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
                                       "skipped": skipped, "notices": notices, "source_aspect": source_aspect,

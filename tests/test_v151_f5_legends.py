@@ -33,7 +33,25 @@ def test_duplicate_labels_link_only_the_same_style(panels, styles):
             assert t.get("legendgroup") == expected.get("legendgroup")
 
 
-def test_ambiguous_proxies_cannot_claim_unrelated_data():
+def test_keys_of_different_look_cannot_share_a_measurement():
+    # an axes key the lab restyled (opaque) and a figure key of the cloud's own look both stand
+    # for the one cloud: keys that disagree on the look claim it ambiguously, so neither does
+    fig = Figure()
+    ax = fig.subplots()
+    cloud = ax.scatter([0, 1], [0, 1], color="red", alpha=.2, label="cloud")
+    for handle in ax.legend().legend_handles:
+        handle.set_alpha(1)
+    fig.legend([cloud], ["cloud"], loc="lower center")
+    data = view(fig)["data"]
+    trace = next(t for t in data if t.get("x") != [None] and t.get("name") == "cloud")
+    keys = [t for t in data if t.get("showlegend")]
+    assert len(keys) == 2 and len({k["legendgroup"] for k in keys}) == 2
+    assert not trace.get("legendgroup")
+
+
+def test_identical_keys_drawn_twice_are_one_key():
+    # two identical keys (a lab that draws the same figure legend twice, one over the
+    # other) -> one group with their measurement (the first F5 draft left it to neither)
     fig = Figure()
     ax = fig.subplots()
     ax.plot([0, 1], [0, 1], color="red", label="data")
@@ -41,8 +59,29 @@ def test_ambiguous_proxies_cannot_claim_unrelated_data():
     fig.legend(handles, ["data", "data"])
     data = view(fig)["data"]
     trace = next(t for t in data if t.get("x") != [None])
-    assert not trace.get("legendgroup")
-    assert len([t for t in data if t.get("showlegend")]) == 2
+    keys = [t for t in data if t.get("showlegend")]
+    assert len(keys) == 2 and {k.get("legendgroup") for k in keys} == {trace.get("legendgroup")}
+    assert trace.get("legendgroup")
+
+
+@pytest.mark.parametrize("panels", [1, 4])
+def test_a_figure_legend_drawn_twice_still_controls_every_panel(panels):
+    fig = Figure(figsize=(12, 6))
+    for ax in fig.subplots(1, panels, squeeze=False)[0]:
+        ax.plot([0, 1], [0, 1], ".", alpha=.2, label="Ground")
+        ax.axvline(.5, color="r", ls="--", lw=.5, label="Threshold")
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=2)
+    fig.legend(handles, labels, loc="lower center", ncol=2)
+    data = view(fig)["data"]
+    keys = {}
+    for t in data:
+        if t.get("showlegend"):
+            keys.setdefault(t["name"], set()).add(t.get("legendgroup"))
+    assert sorted(keys) == ["Ground", "Threshold"] and all(len(g) == 1 for g in keys.values())
+    measured = [t for t in data if t.get("name") in keys and not t.get("showlegend")]
+    assert len(measured) == 2 * panels
+    assert all({t.get("legendgroup")} == keys[t["name"]] for t in measured)
 
 
 @pytest.mark.parametrize("count,cols", [(7, 3), (6, 4), (5, 3), (3, 2)])
