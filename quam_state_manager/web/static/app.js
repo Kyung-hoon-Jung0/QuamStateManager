@@ -15672,7 +15672,22 @@ window.PlotHost = (function () {
                         height:   has.call(lay, 'height')   ? lay.height   : undefined,
                         autosize: has.call(lay, 'autosize') ? lay.autosize : undefined
                     };
-                    return Plotly.relayout(el, { width: w2 }).then(function () {
+                    /* v1.5.1 (D3 class R): a reproduced lab figure kept its old height at the
+                       new width, stretching the lab aspect until it was reopened. It asks
+                       for the size a fresh open at this width gives (height from the lab
+                       aspect, text with the canvas) and declares that height from now on.
+                       Only a WIDTH change reaches here (the <2 px gate above and the
+                       width-only observers), so the pane height still never sizes a figure. */
+                    var fit = null;
+                    if (typeof el._replotLayoutAt === 'function') {
+                        try { fit = el._replotLayoutAt(w2); } catch (e) { fit = null; }
+                    }
+                    var upd = fit ? Object.assign(_replotSizeUpdate(fit), { width: w2 }) : { width: w2 };
+                    if (fit) {
+                        snap.height = fit.height;
+                        el.style.height = fit.height + 'px';
+                    }
+                    return Plotly.relayout(el, upd).then(function () {
                         var l2 = el.layout || {};
                         ['width', 'height', 'autosize'].forEach(function (k) {
                             if (snap[k] === undefined) delete l2[k]; else l2[k] = snap[k];
@@ -15885,21 +15900,22 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                 note.textContent = message;
                 div.appendChild(note);
             });
-            // r16 ⑤-1: HOUSE THEME — the raw server layout carries no colors,
-            // so Plotly's light template painted near-black axis text on the
-            // dark page (ndview was the only themed consumer).
-            var layout = (window.PlotTheme && PlotTheme.houseLayout)
-                ? window.PlotTheme.houseLayout(d.layout || {}) : (d.layout || {});
             var tile = div.closest && div.closest('.ds-interactive-fig');
             if (tile && _replotNeedsRow(d.source_size_inches, inner.clientWidth, tile)) {
                 tile.classList.add('ds-fig-span');  // reading clientWidth below reflows to the row width
             }
-            layout.height = _replotHeight(d.source_aspect, inner.clientWidth, layout.height);
-            if (!layout.height) layout.height = 360;
             // v1.5.0 (customer): the figure keeps its full size whatever the pane height --
             // resizing the panel must not shrink or grow the figure being read; the pane scrolls.
-            layout = _replotFigureLayout(layout, d.source_size_inches, inner.clientWidth, layout.height);
+            var layout = _replotLayoutAt(d, inner.clientWidth);
             inner.style.height = layout.height + 'px';
+            _replotTileFloor(div, layout.height);
+            // v1.5.1 (D3 class R): a WIDTH change (window resize, sidebar) re-derives the size a
+            // fresh open at the new width gives; PlotHost.resizeWithin asks for it.
+            inner._replotLayoutAt = function (width) {
+                var fit = _replotLayoutAt(d, width);
+                _replotTileFloor(div, fit.height);
+                return fit;
+            };
             // Keep source colors so theme toggles can restore the lab's palette.
             inner._houseSourceData = d.data;
             inner._houseSourceLayout = d.layout || {};
@@ -15940,11 +15956,21 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
  * narrower pane drew the figure taller than the lab's. Without an aspect or a
  * measured width, the server's height stands.
  */
-function _replotHeight(aspect, width, fallback) {
+function _replotHeight(aspect, width, fallback, keepAspect) {
     if (typeof aspect !== 'number' || !isFinite(aspect) || aspect <= 0 || !(width > 0)) return fallback;
-    return Math.round(Math.max(320, Math.min(2200, width * aspect)));
+    // v1.5.1 (D3 class H): a figure seated by the lab's own panel positions keeps its
+    // aspect below 320 px too -- the floor stretched a very wide strip of panels to half
+    // again its height. A figure laid out by Plotly margins (no source size) keeps the
+    // floor, or its margins would leave no plot area.
+    var floor = keepAspect ? 100 : 320;
+    return Math.round(Math.max(floor, Math.min(2200, width * aspect)));
 }
 window._replotHeight = _replotHeight;
+
+/** The skeleton's 340 px reserve never makes a short figure's tile taller than the figure. */
+function _replotTileFloor(div, height) {
+    if (div && div.style && height > 0) div.style.minHeight = Math.min(340, Math.round(height)) + 'px';
+}
 
 /** Scale source point sizes and annotation offsets with the displayed canvas. */
 /**
@@ -15993,6 +16019,54 @@ function _replotFigureLayout(layout, size, width, height) {
     return out;
 }
 window._replotFigureLayout = _replotFigureLayout;
+
+/**
+ * The layout a tile mounts with at `width`: the house theme (r16 5-1 -- the raw server
+ * layout carries no colours, so Plotly's light template painted near-black axis text on
+ * the dark page), the height the lab aspect gives at that width, and text scaled with the
+ * canvas. A mount and a later width change both call this, so a resized figure is the
+ * figure a fresh open at that width draws (v1.5.1, D3 class R).
+ */
+function _replotLayoutAt(d, width) {
+    var layout = (window.PlotTheme && PlotTheme.houseLayout)
+        ? window.PlotTheme.houseLayout(d.layout || {}, d.data) : JSON.parse(JSON.stringify(d.layout || {}));
+    layout.height = _replotHeight(d.source_aspect, width, layout.height, Array.isArray(d.source_size_inches));
+    if (!layout.height) layout.height = 360;
+    return _replotFigureLayout(layout, d.source_size_inches, width, layout.height);
+}
+window._replotLayoutAt = _replotLayoutAt;
+
+/**
+ * The relayout that moves a drawn tile to `fit` (a _replotLayoutAt result): its height and
+ * every text size / annotation offset _replotFigureLayout scales. Keys only, so a zoom, a
+ * pan or a theme toggle the reader made stays.
+ */
+function _replotSizeUpdate(fit) {
+    var upd = { height: fit.height };
+    function size(prefix, style) {
+        if (style && typeof style.size === 'number') upd[prefix + '.size'] = style.size;
+    }
+    size('font', fit.font);
+    if (fit.title) size('title.font', fit.title.font);
+    if (fit.legend) size('legend.font', fit.legend.font);
+    Object.keys(fit).forEach(function (key) {
+        if (!/^[xy]axis\d*$/.test(key) || !fit[key]) return;
+        size(key + '.tickfont', fit[key].tickfont);
+        if (fit[key].title) size(key + '.title.font', fit[key].title.font);
+    });
+    (fit.annotations || []).forEach(function (note, i) {
+        var at = 'annotations[' + i + ']';
+        size(at + '.font', note.font);
+        ['xshift', 'yshift'].forEach(function (key) {
+            if (typeof note[key] === 'number') upd[at + '.' + key] = note[key];
+        });
+        ['ax', 'ay'].forEach(function (key) {
+            if (!note[key + 'ref'] && typeof note[key] === 'number') upd[at + '.' + key] = note[key];
+        });
+    });
+    return upd;
+}
+window._replotSizeUpdate = _replotSizeUpdate;
 
 /**
  * Fetch a single plot from the backend and render it into container.

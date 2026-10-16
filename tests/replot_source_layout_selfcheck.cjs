@@ -30,5 +30,8 @@ for (const size of [null, [0, 2], [NaN, 2], [10], ['10', 10]]) {
 }
 const mount = source.slice(source.indexOf('function _fetchInteractiveFig'), source.indexOf('function _replotHeight'));
 // v1.5.0: no fit to the pane -- the layout always gets the full row width (replot_fit_pane_selfcheck).
-assert(mount.includes('_replotFigureLayout(layout, d.source_size_inches, inner.clientWidth, layout.height)'));
+// v1.5.1: mount text inlined _replotFigureLayout -> mount calls _replotLayoutAt(d, inner.clientWidth), shared with a width resize.
+assert(mount.includes('_replotLayoutAt(d, inner.clientWidth)'));
+const at = source.slice(source.indexOf('function _replotLayoutAt('), source.indexOf('window._replotLayoutAt'));
+assert(at.includes('_replotFigureLayout(layout, d.source_size_inches, width, layout.height)'));
 console.log('source layout: all passed');
