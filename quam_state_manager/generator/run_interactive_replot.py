@@ -232,7 +232,8 @@ def _report_value(value):
         return value
     if isinstance(value, float):
         return value if value == value and abs(value) != float("inf") else None
-    return {"type": type(value).__name__}
+    # a saved record reads as the mapping it is, not as the adapter class around it
+    return {"type": "dict" if isinstance(value, dict) else type(value).__name__}
 
 
 class SavedInputMissing(AttributeError):
@@ -250,11 +251,14 @@ class _SavedNamespace(dict):
     Nested records (dicts inside dicts, lists or tuples) are wrapped too: a lab plot reads
     ``plan.control`` of every saved plan, not only attributes of the top-level mapping."""
 
-    def __init__(self, value=(), path="saved"):
+    def __init__(self, value=(), path="saved", memo=None):
         super().__init__()
         self._saved_path = path
+        memo = {} if memo is None else memo
+        memo[id(value)] = self
         for key, item in dict(value).items():
-            self[key] = _saved_view(item, f"{path}[{key!r}]")
+            item_path = f"{path}.{key}" if path == "data" else f"{path}[{key!r}]"
+            self[key] = _saved_view(item, item_path, memo)
 
     def __getattr__(self, name):
         if name.startswith("__") or name == "_saved_path":
@@ -265,13 +269,21 @@ class _SavedNamespace(dict):
             raise SavedInputMissing(self._saved_path, name) from None
 
 
-def _saved_view(value, path):
-    """Saved JSON as the attribute-readable records a lab plot expects, at every depth."""
+def _saved_view(value, path, memo=None):
+    """One replay shares adapted records across plot calls, including nested aliases."""
+    if isinstance(value, _SavedNamespace):
+        return value
+    memo = {} if memo is None else memo
+    if id(value) in memo:
+        return memo[id(value)]
     if isinstance(value, dict):
-        return _SavedNamespace(value, path)
+        return _SavedNamespace(value, path, memo)
     if isinstance(value, (list, tuple)):
-        items = [_saved_view(item, f"{path}[{i}]") for i, item in enumerate(value)]
-        return tuple(items) if isinstance(value, tuple) else items
+        items = []
+        memo[id(value)] = items
+        items.extend(_saved_view(item, f"{path}[{i}]", memo) for i, item in enumerate(value))
+        memo[id(value)] = tuple(items) if isinstance(value, tuple) else items
+        return memo[id(value)]
     return value
 
 
@@ -406,12 +418,17 @@ _RESULT_ALIASES = {"fringe_results": "fringe", "fit_objects": "fit_results"}
 
 def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None,
                node_tree=None, plot_imports=None, bind_report=None, util_module=None, saved_datasets=None,
-               node_call=None):
+               node_call=None, saved_context=None):
     """Bind saved inputs and record every supplied, defaulted or unbound arg."""
     sig = inspect.signature(fn)
     kwargs = {}
     params = params.get("model", params)
-    results = results or {}
+    results = {} if results is None else results
+    if saved_context is not None:
+        # v1.5.1 (R5 P2-9): one adapted copy of data.json per replay, shared by every plot call
+        # and every path to it (node.namespace / node.results), so a record a plot changes is the
+        # record the next plot reads, as on the node's own run
+        results = _saved_view(results, "data", saved_context)
     decisions = bind_report if bind_report is not None else {}
     inputs = _call_inputs(fn, node_tree, plot_imports or {}, node_call)
     literals = _call_literals(fn, node_call)
@@ -490,7 +507,7 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
             value, source = SimpleNamespace(**params), "parameters"
         elif path.startswith("node.namespace.") and path.removeprefix("node.namespace.") in results:
             key = path.removeprefix("node.namespace.")
-            value = _saved_view(results[key], "data." + key)
+            value = _saved_view(results[key], "data." + key, saved_context)
             source = "data." + key + " via " + path
         elif path.startswith("node.parameters.") and path.removeprefix("node.parameters.") in params:
             key = path.removeprefix("node.parameters.")
@@ -808,6 +825,7 @@ def _execute(args):
     saved = _saved_figures(args.run, results)
     invocations = [(fname, call) for fname in plot_fns
                    for call in ([c for c in calls if plot_imports[c.func.id][1] == fname] or [None])]
+    saved_context = {}
     for fname, call in invocations:
         function_key = re.sub(r"^plot_", "", fname)
         repeated = sum(original == fname for original, _ in invocations) > 1
@@ -818,7 +836,7 @@ def _execute(args):
             kwargs = _bind_args(fn, ds_raw=ds_raw, ds_fit=ds_fit, qubits=qubits, params=params,
                                 results=results, machine=machine, node_tree=node_tree,
                                 plot_imports=plot_imports, bind_report=report, util_module=U, saved_datasets=_open,
-                                node_call=call)
+                                node_call=call, saved_context=saved_context)
             fig = fn(**kwargs)
             produced = _extract_return(fig, key, report, extract_figure, result["not_produced"])
             for figure in produced:
