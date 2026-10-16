@@ -15052,40 +15052,6 @@ window.loadPrevDiff = function(btn, runId, vs, compact) {
  * Figure lightbox. Entry point for every figure <img onclick="toggleFigureZoom(this)">
  * (dataset detail / compare / interactive / trends).
  */
-window.SavedFigureFit = (function () {
-    var observer = null;
-    function measure(root, box) {
-        if (!root.isConnected) return;
-        var top = Math.max(0, box.getBoundingClientRect().top);
-        var available = Math.min(box.clientHeight || window.innerHeight, window.innerHeight - top);
-        var header = root.querySelector('.inspector-header');
-        var tabs = root.querySelector('.dataset-tabs');
-        var labels = Array.from(root.querySelectorAll('.figure-label'));
-        var labelHeight = labels.reduce(function (height, label) {
-            return Math.max(height, label.getBoundingClientRect().height);
-        }, 0);
-        var limit = available - (header ? header.getBoundingClientRect().height : 0)
-            - (tabs ? tabs.getBoundingClientRect().height : 0) - labelHeight - 32;
-        root.style.setProperty('--saved-figure-height', Math.max(64, limit) + 'px');
-    }
-    function init() {
-        if (observer) { observer.disconnect(); observer = null; }
-        var root = document.getElementById('ds-detail-root');
-        if (!root) return;
-        var box = root.closest('#inspector-pane, #table-pane') || document.documentElement;
-        measure(root, box);
-        if (window.ResizeObserver) {
-            observer = new window.ResizeObserver(function () { measure(root, box); });
-            observer.observe(box);
-        }
-    }
-    document.addEventListener('htmx:afterSwap', init);
-    document.addEventListener('DOMContentLoaded', init);
-    window.addEventListener('resize', init);
-    if (document.readyState !== 'loading') init();
-    return {init: init};
-})();
-
 window.toggleFigureZoom = function(imgEl) {
     // r13 feedback: the old class-toggle only pinned the <img> over the page —
     // "the popup opens but how do I zoom in/out?". Real viewer now:
@@ -15926,15 +15892,9 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             }
             layout.height = _replotHeight(d.source_aspect, inner.clientWidth, layout.height);
             if (!layout.height) layout.height = 360;
-            var root = div.closest && div.closest('#ds-detail-root');
-            var paneHeight = root ? parseFloat(getComputedStyle(root).getPropertyValue('--saved-figure-height')) : NaN;
-            var fit = _replotFitToPane(d.source_size_inches, d.source_aspect, layout.height, paneHeight);
-            if (fit) {
-                inner.style.width = fit.width + 'px';
-                inner.style.margin = '0 auto';
-                layout.height = fit.height;
-            }
-            layout = _replotFigureLayout(layout, d.source_size_inches, fit ? fit.width : inner.clientWidth, layout.height);
+            // v1.5.0 (customer): the figure keeps its full size whatever the pane height --
+            // resizing the panel must not shrink or grow the figure being read; the pane scrolls.
+            layout = _replotFigureLayout(layout, d.source_size_inches, inner.clientWidth, layout.height);
             inner.style.height = layout.height + 'px';
             // Keep source colors so theme toggles can restore the lab's palette.
             inner._houseSourceData = d.data;
@@ -15996,20 +15956,6 @@ function _replotNeedsRow(size, width, tile) {
     return cols > 1 && width / (size[0] * 96) < 0.75;
 }
 window._replotNeedsRow = _replotNeedsRow;
-
-/**
- * Fit a reproduced figure that is taller than the visible pane to it, keeping the
- * lab's aspect by narrowing it, when it then still shows at 3/4 of its own size or
- * more. A tall multi-panel figure would shrink below that, so it keeps the full
- * width and the pane scrolls. Returns {width, height} in px, or null to leave it.
- */
-function _replotFitToPane(size, aspect, height, paneHeight) {
-    if (!Array.isArray(size) || !(size[1] > 0) || !(aspect > 0) || !(paneHeight > 0) || !(height > paneHeight)) return null;
-    var fitted = Math.max(320, Math.round(paneHeight));
-    if (fitted >= height || fitted / (size[1] * 96) < 0.75) return null;
-    return {width: Math.round(fitted / aspect), height: fitted};
-}
-window._replotFitToPane = _replotFitToPane;
 
 function _replotFigureLayout(layout, size, width, height) {
     if (!Array.isArray(size) || size.length !== 2 ||

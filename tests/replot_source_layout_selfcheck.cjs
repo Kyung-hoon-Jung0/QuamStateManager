@@ -29,6 +29,6 @@ for (const size of [null, [0, 2], [NaN, 2], [10], ['10', 10]]) {
     assert.strictEqual(adapt(input, size, 600, 600), input, 'old caches keep their typography');
 }
 const mount = source.slice(source.indexOf('function _fetchInteractiveFig'), source.indexOf('function _replotHeight'));
-// v1.4.4: a figure fitted to the pane passes its fitted width (replot_fit_pane_selfcheck covers the fit).
-assert(mount.includes('_replotFigureLayout(layout, d.source_size_inches, fit ? fit.width : inner.clientWidth, layout.height)'));
+// v1.5.0: no fit to the pane -- the layout always gets the full row width (replot_fit_pane_selfcheck).
+assert(mount.includes('_replotFigureLayout(layout, d.source_size_inches, inner.clientWidth, layout.height)'));
 console.log('source layout: all passed');
