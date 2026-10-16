@@ -179,16 +179,23 @@ const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB
     widths.qubits[1].defects = [0, null, .1, .3, .5, .8].map((loss, i) => ({
         lo_hz: (4.1 + i * .01) * 1e9, hi_hz: (4.1 + i * .01) * 1e9, ...(loss == null ? {} : {peak_loss: loss})}));
     P1.state.map = widths;
-    for (const order of ['name', 'f01']) {
-        ord.value = order;
+    // v1.4.1 (A14 fix3 P2-1): a hidden 0-50 % scale -> the Loss scale select, so a column without a scan
+    // and a scanned one read on one scale (the 0.5 case keeps the old numbers), and the scale is printed.
+    const scaleSel1 = d.getElementById('czp-map-scale');
+    for (const [order, scale] of [['name', '0.25'], ['f01', '0.5']]) {
+        ord.value = order; scaleSel1.value = scale;
         await w.CzPlan.drawMap(P1.root);
         const t = P1.last().traces.find(x => x.meta === 'defect-bars'), column = order === 'name' ? 1 : 2;
         const bars = [];
         for (let k = 0; k + 1 < t.x.length; k += 3) bars.push([t.x[k], t.x[k + 1]]);
-        check(bars.length === 6 && bars.every((b, i) => Math.abs((b[1] - b[0]) - [.08, .08, .244, .572, .9, .9][i]) < 1e-12 &&
-              Math.abs(b[0] - (column + .05)) < 1e-12),
-              'defect width numerically follows peak loss, including zero, missing and saturation after ' + order + ' ordering');
+        const want = [0, null, .1, .3, .5, .8].map(p => .08 + .82 * Math.min(1, (p || 0) / +scale));
+        check(bars.length === 6 && bars.every((b, i) => Math.abs((b[1] - b[0]) - want[i]) < 1e-12 &&
+              Math.abs(b[0] - (column + .05)) < 1e-12) &&
+              (scale !== '0.5' || want.every((v, i) => Math.abs(v - [.08, .08, .244, .572, .9, .9][i]) < 1e-12)) &&
+              P1.last().layout.annotations.some(a => a.name === 'scale' && a.text === 'loss 0–' + Math.round(100 * scale) + ' %'),
+              'defect width numerically follows peak loss on the Loss scale select (' + scale + '), including zero, missing and saturation after ' + order + ' ordering');
     }
+    scaleSel1.value = '0.25';
     const onlyPlan = JSON.parse(JSON.stringify(MAP));
     onlyPlan.segments = [];
     onlyPlan.refused = MAP.segments.slice(0, 2).map(s => ({...s, reason: 'conversion unavailable'}));
@@ -215,6 +222,9 @@ const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB
     check(hovered >= 4, 'production hover grammar preserves percent, braces, comparisons and literal markup in every state value');
     check(d.getElementById('czp-map-notes').textContent.includes(literal) && !d.getElementById('czp-map-notes').querySelector('b'),
           'refusal identities and reasons stay literal');
+    const ticks = P1.last().layout.xaxis.ticktext;
+    check(ticks.length === 3 && ticks.every(t => !t.includes('<b>') && t.includes('&lt;b&gt;literal&lt;/b&gt;') && t.includes('&amp;')),
+          'fix3 P2-7: the qubit names on the x axis are escaped like every hover (Plotly reads tick text as markup)');
 
     // The shipped purge deletes Plotly's event emitter, leaving arbitrary element properties.
     const mapEl = P1.mapEl;
@@ -257,11 +267,64 @@ const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB
     // ===== Part 2: the chip drawing joined to the columns, on the frozen route answers =====
     const map5 = FX('map_rig5q.json'), loss5 = FX('loss_rig5q.json'), map13 = FX('map_rig13.json'), loss13 = FX('loss_rig13.json');
     const map21 = FX('map_rig21.json'), loss21 = FX('loss_rig21.json');
-    const ops5 = Array.from(new Set(map5.segments.map(s => s.path)));
-    const S5 = await page({map: map5, loss: loss5, sel: 'qubit_pairs.q3-4.macros.cz_SNZ', rows: ops5, width: 1100});
+    // The map answer of a picked operation name: the frozen default answer with that name on every
+    // segment (the 5-qubit chip's default draws cz_unipolar: it has no macro named cz).
+    const opMap = base => url => {
+        const body = JSON.parse(JSON.stringify(base)), hit = /[?&]op=([^&]+)/.exec(url);
+        if (hit) {
+            const name = decodeURIComponent(hit[1]);
+            body.op = name;
+            body.segments.concat(body.refused || []).forEach(s => { s.operation = name; s.path = s.path.replace(/macros\.[^.]+$/, 'macros.' + name); });
+        }
+        return body;
+    };
+    // v1.4.1 (A14 fix3 P1-1): rows of the drawn default -> rows of the selected cz_SNZ; the map now follows
+    // the selection (one refetch), so the rest of these pins read the map of the selected operation.
+    const ops5 = Array.from(new Set(map5.segments.map(s => s.path.replace(/macros\.[^.]+$/, 'macros.cz_SNZ'))));
+    const S5 = await page({map: opMap(map5), loss: loss5, sel: 'qubit_pairs.q3-4.macros.cz_SNZ', rows: ops5, width: 1100});
     const S13 = await page({map: map13, loss: loss13, width: 1100});
     const S21 = await page({map: map21, loss: loss21, width: 1000});
     const r5 = S5.last(), r13 = S13.last(), r21 = S21.last();
+    // ---- fix3 P1-1: the map draws the operation the reader selected ----
+    check(map5.op === null && map5.segments.every(s => s.operation === 'cz_unipolar') && S5.fetched.filter(u => u.startsWith('/cz-plan/map')).join() ===
+          '/cz-plan/map,/cz-plan/map?op=cz_SNZ' && S5.d.getElementById('czp-map-op').value === 'cz_SNZ' &&
+          segments(r5).every(s => s.path.endsWith('.cz_SNZ')) && named(r5, 'selected:q3-4').length === 3 &&
+          !S5.d.getElementById('czp-map-key').textContent.includes('Outline:'),
+          'P1-1: the selected cz_SNZ is not what the default map draws (cz_unipolar): the map switches to it with one refetch and outlines it');
+    const SF = await page({map: opMap(map5), loss: loss5, sel: 'qubit_pairs.q3-4.macros.cz_SNZ', rows: ops5, width: 1100});
+    const fOp = SF.d.getElementById('czp-map-op');
+    fOp.value = 'cz_GNZ'; fOp.dispatchEvent(new SF.w.Event('change', {bubbles: true})); await wait(30);
+    const rf = SF.last(), bf = rf.traces.find(t => t.meta === 'bars');
+    check(SF.mapFetches() === 3 && fOp.value === 'cz_GNZ' && segments(rf).every(s => s.path.endsWith('.cz_GNZ')) &&
+          SF.d.getElementById('czp-map-key').textContent.includes('Outline: the map shows cz_GNZ for q3-4; selected below: cz_SNZ.') &&
+          bf.text[bf.customdata.findIndex(c => c[1] === 'q3-4')].includes('selected below: cz_SNZ (this map shows cz_GNZ)'),
+          'P1-1: a name the reader picks on the map stays; the key and the outline\'s hover name the drawn and the selected operation');
+    SF.root.querySelector('tr[data-op="qubit_pairs.q1-2.macros.cz_SNZ"]').dispatchEvent(new SF.w.MouseEvent('click', {bubbles: true})); await wait(30);
+    check(SF.mapFetches() === 4 && fOp.value === 'cz_SNZ' && segments(SF.last()).every(s => s.path.endsWith('.cz_SNZ')) &&
+          named(SF.last(), 'selected:q1-2').length === 3 && !SF.d.getElementById('czp-map-key').textContent.includes('Outline:'),
+          'P1-1: the next selection below brings the map to its operation again');
+    // a selection made while the map could not be drawn asks the next map to follow it; a name the reader
+    // picks before that map lands wins over it
+    SF.state.map = {ok: false, error: 'temporary failure'};
+    await SF.w.CzPlan.drawMap(SF.root);
+    SF.root.querySelector('tr[data-op="qubit_pairs.q2-3.macros.cz_SNZ"]').dispatchEvent(new SF.w.MouseEvent('click', {bubbles: true})); await wait(10);
+    SF.state.map = opMap(map5);
+    fOp.value = 'cz_GNZ'; fOp.dispatchEvent(new SF.w.Event('change', {bubbles: true})); await wait(30);
+    check(fOp.value === 'cz_GNZ' && segments(SF.last()).every(s => s.path.endsWith('.cz_GNZ')) &&
+          SF.fetched.filter(u => u.startsWith('/cz-plan/map')).at(-1) === '/cz-plan/map?op=cz_GNZ',
+          'P1-1: a name picked on the map after a failed draw stays; the pending follow does not override it');
+    SF.close();
+    const SM = await page({map: opMap(map5), loss: loss5, sel: 'qubit_pairs.q3-4.macros.cz_custom', rows: ['qubit_pairs.q3-4.macros.cz_custom'], width: 1100});
+    const bm = SM.last().traces.find(t => t.meta === 'bars');
+    check(SM.mapFetches() === 1 && SM.d.getElementById('czp-map-op').value === '' &&
+          SM.d.getElementById('czp-map-key').textContent.includes('Outline: the map shows cz_unipolar for q3-4; selected below: cz_custom.') &&
+          bm.text[bm.customdata.findIndex(c => c[1] === 'q3-4')].includes('selected below: cz_custom (this map shows cz_unipolar)') &&
+          segments(SM.last()).filter(s => s.pair === 'q3-4').every(s => s.text.includes('selected below: cz_custom')),
+          'P1-1: a selected name the map cannot draw: no refetch; the key and the hovers of the outlined pair name both');
+    SM.close();
+    const opt0 = fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_cz_plan.html'), 'utf8');
+    check(opt0.includes('<option value="">Each pair\'s cz (else its first CZ operation)</option>'),
+          'P1-1: the default picker entry says what it draws when a pair has no cz');
     check(r5.layout.xaxis.ticktext.join(' ') === 'q1 q2 q3 q4 q5' && r13.layout.xaxis.ticktext.join(' ') === ORDER_13 &&
           r21.layout.xaxis.ticktext.join(' ') === ORDER_21, 'by chip position: the grid sheared into one column per qubit (13 and 21 qubits pinned)');
     check([S5, S13, S21].every(S => S.mapEl.getAttribute('data-layout') === 'physical'), 'a complete grid is drawn as the chip itself');
@@ -326,10 +389,12 @@ const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB
     // bar labels: the mover's operating frequency; both movers -> the control's, with its name
     const mover = (m, pair) => m.segments.filter(s => s.pair === pair && s.moves);
     const one = mover(map5, 'q1-2');
-    check(one.length === 1 && label(r5, 'q1-2').text === (one[0].frequency_hz / 1e9).toFixed(3), 'a bar carries the moving qubit\'s operating frequency (GHz, 3 decimals)');
+    // v1.4.1 (A14 fix3): label(...).text -> (label(...) || {}).text: a label may now go to hover only, and a
+    // missing one must fail this assertion, not throw
+    check(one.length === 1 && (label(r5, 'q1-2') || {}).text === (one[0].frequency_hz / 1e9).toFixed(3), 'a bar carries the moving qubit\'s operating frequency (GHz, 3 decimals)');
     const both = Object.keys(map13.pairs).find(p => mover(map13, p).length === 2);
     const ctl = both && mover(map13, both).find(s => s.role === 'control');
-    check(ctl && label(r13, both).text === ctl.qubit + ' ' + (ctl.frequency_hz / 1e9).toFixed(3), 'both members move: the label names its owner (the control)');
+    check(ctl && (label(r13, both) || {}).text === ctl.qubit + ' ' + (ctl.frequency_hz / 1e9).toFixed(3), 'both members move: the label names its owner (the control)');
     const refusedMap = JSON.parse(JSON.stringify(map5));
     const mv = refusedMap.segments.find(s => s.pair === 'q3-4' && s.moves);
     refusedMap.segments = refusedMap.segments.filter(s => s !== mv);
@@ -344,18 +409,108 @@ const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB
     check(gbar.line.width < 2 && gbar.line.dash === 'dot' && !label(SG.last(), 'q2-3') &&
           gpt.text[gpt.customdata.findIndex(c => c[1] === 'q2-3')].includes('no cz operation'), 'a pair without the operation: a thin gray bar, the reason on hover');
     SG.close();
-    // a short bar's label is lifted off it along its upward normal; a long one sits on it
-    const colPx21 = (1000 - 80) / 21;
-    let lifted = 0, flat = 0, wrong = 0;
-    named(r21, 'bar:').forEach(s => {
-        const a = label(r21, s.name.slice(4));
-        if (!a) return;
-        const rowPx = 150 / (r21.layout.yaxis2.range[1] - r21.layout.yaxis2.range[0]);
-        const len = Math.hypot((s.x1 - s.x0) * colPx21, (s.y1 - s.y0) * rowPx);
-        if (len < 60) { if (a.yshift > 0 && Math.hypot(a.xshift, a.yshift) >= 11) lifted++; else wrong++; }
-        else if (a.xshift === 0 && a.yshift === 0) flat++; else wrong++;
+    // v1.4.1 (A14 fix3 P1-3): "a short bar's label is lifted 12 px along its upward normal" -> placed where it
+    // hides no other bar, node or label (the old lift put it ON the row above's bar); pinned by geometry below.
+    // ---- fix3 P1-3: the drawing follows the rows; bar labels never hide another bar or a node ----
+    const drawnPx = r => r.layout.yaxis2.domain[1] * (r.layout.height - r.layout.margin.t - r.layout.margin.b);
+    check(near(drawnPx(r21), 220, 0.5) && near(drawnPx(r13), Math.max(150, 44 * (r13.layout.yaxis2.range[1] - r13.layout.yaxis2.range[0] - 0.2)), 0.5) &&
+          near(drawnPx(r5), 150, 0.5), 'P1-3: the drawing is 44 px per row of the chip (at least 150 px): 5 rows -> 220 px, the 5-qubit chain 150 px');
+    // an independent check of the drawn geometry: every bar sampled each px, every node a disc, every
+    // label the box the page sizes it with, at the real figure widths of a 1280 and a 1600 px window
+    function labelHits(S, r) {
+        const W = S.width - 80, n = r.layout.xaxis.ticktext.length, colPx = W / n;
+        const span = r.layout.yaxis2.range[1] - r.layout.yaxis2.range[0], rowPx = drawnPx(r) / span, y0 = r.layout.yaxis2.range[0];
+        const P = (x, y) => [x * colPx, (y - y0) * rowPx];
+        const nodes = r.traces.find(t => t.meta === 'nodes'), bars = named(r, 'bar:'), out = [];
+        const labels = (r.layout.annotations || []).filter(a => String(a.name || '').startsWith('bar-label:'));
+        labels.forEach(a => {
+            const own = a.name.slice(10), [cx, cy] = P(a.x, a.y), el = S.d.createElement('i');
+            el.innerHTML = a.text;
+            const sz = S.w.CzMap.labelSize(el.textContent);
+            const bx = {x0: cx + a.xshift - sz.w / 2, x1: cx + a.xshift + sz.w / 2, y0: cy + a.yshift - sz.h / 2, y1: cy + a.yshift + sz.h / 2};
+            nodes.x.forEach((x, k) => {
+                const [nx, ny] = P(x, nodes.y[k]);
+                const d = Math.hypot(Math.max(bx.x0 - nx, 0, nx - bx.x1), Math.max(bx.y0 - ny, 0, ny - bx.y1));
+                if (d < 12) out.push(own + ' on node ' + nodes.text[k]);
+            });
+            bars.forEach(b => {
+                if (b.name.slice(4) === own) return;
+                const [ax, ay] = P(b.x0, b.y0), [qx, qy] = P(b.x1, b.y1), len = Math.hypot(qx - ax, qy - ay), half = b.line.width / 2;
+                for (let s = 0; s <= len; s += 1) {
+                    const x = ax + (qx - ax) * s / len, y = ay + (qy - ay) * s / len;
+                    if (x > bx.x0 - half && x < bx.x1 + half && y > bx.y0 - half && y < bx.y1 + half) { out.push(own + ' on bar ' + b.name.slice(4)); break; }
+                }
+            });
+        });
+        return {hits: out, labels: labels.length};
+    }
+    for (const [m, l, nm, nPairs] of [[map21, loss21, '21Q', 32], [map13, loss13, '13Q', 16]]) {
+        // the map's measured width and top in real Chrome: 919 px at 181 (1280x800), 1237 px at 194 (1600x950)
+        for (const [W, Hv, top] of [[919, 800, 181], [1237, 950, 194]]) {
+            const S = await page({map: m, loss: l, width: W, innerHeight: Hv, top});
+            const res = labelHits(S, S.last());
+            check(res.hits.length === 0 && res.labels >= nPairs - (W > 1000 ? 1 : 2),
+                  'P1-3: ' + nm + ' at a ' + (W > 1000 ? 1600 : 1280) + ' px window: ' + res.labels + ' bar labels, none on another bar or a node ' + res.hits.join(', '));
+            S.close();
+        }
+    }
+    // the row-pitch gate: below ROW_LABEL_MIN_PX a short bar's label is hover only, a long one keeps its own
+    const CM = S21.w.CzMap, pt = (X, Y) => ({X, Y});
+    const gate = rp => CM.placeLabels([{pair: 'short', text: '5.287', a: pt(100, 30), b: pt(130, 30 + rp)},
+                                       {pair: 'long', text: '5.430', a: pt(100, 30), b: pt(330, 30)}],
+                                      [], [pt(100, 30), pt(130, 30 + rp), pt(330, 30)], {rowPx: rp, x0: 0, x1: 600, y0: 0, y1: 300});
+    const g30 = gate(30), g44 = gate(44);
+    check(g30.short === null && g30.long && g30.long.dx === 0 && g30.long.dy === 0 && g44.short && Math.hypot(g44.short.dx, g44.short.dy) > 0,
+          'P1-3: under a 36 px row pitch a short bar\'s label is hover only; above it the label sits beside its bar; a long bar keeps its label on itself');
+    // the 13-qubit chip in a narrower window (an 800 px map): q7-q8 is one column long and its "q7 5.275"
+    // fits beside it nowhere -> hover only
+    const keyHidden = await page({map: map13, loss: loss13, width: 800, innerHeight: 800, top: 181});
+    const hid = keyHidden.last(), hidBar = hid.traces.find(t => t.meta === 'bars');
+    check(!label(hid, 'q7-8') && named(hid, 'bar:q7-8')[0].line.width > 2 &&
+          hidBar.text[hidBar.customdata.findIndex(c => c[1] === 'q7-8')].includes('q7 5.275 GHz') &&
+          keyHidden.d.getElementById('czp-map-key').textContent.includes('a bar without a label: hover it') &&
+          !S21.d.getElementById('czp-map-key').textContent.includes('without a label'),
+          'P1-3: a label with no free spot goes to the hover of its bar and the key says so (and only then)');
+    keyHidden.close();
+
+    // ---- fix3 P1-4: segments that coincide in one column sit side by side, every colour visible ----
+    function clusters(r) {
+        const H = r.layout.height - r.layout.margin.t - r.layout.margin.b, dom = r.layout.yaxis.domain, rng = r.layout.yaxis.range;
+        const pxPerGHz = H * (dom[1] - dom[0]) / (rng[1] - rng[0]);
+        const segs = segments(r), bad = [];
+        let close = 0;
+        segs.forEach((a, i) => segs.forEach((b, j) => {
+            if (j <= i || Math.floor(a.x0) !== Math.floor(b.x0) || Math.abs(a.y - b.y) * pxPerGHz > 6) return;
+            close++;
+            if (a.x0 < b.x1 && b.x0 < a.x1) bad.push(a.pair + '/' + b.pair + ' in column ' + r.layout.xaxis.ticktext[Math.floor(a.x0)]);
+        }));
+        return {bad, close, pxPerGHz};
+    }
+    const cl21 = clusters(r21);
+    check(r21.layout.yaxis.autorange === false && cl21.close >= 16 && cl21.bad.length === 0 &&
+          r21.traces.findIndex(t => t.meta === 'idle') < r21.traces.findIndex(t => t.meta === 'seg'),
+          'P1-4: on the 21-qubit map every pair of segments within 6 px in one column sits side by side (' + cl21.close + ' such pairs), over the idle dot ' + cl21.bad.join(', '));
+    const p21 = r21.traces.find(t => t.meta === 'partners');
+    const names = t => t.split(/<br>| /);
+    const multi = p21.text.filter(t => names(t).length >= 3);
+    // every partner label as the box it prints in (9 px font; anchored at its segment's top right or top left)
+    const colPx21 = (1000 - 80) / 21, pbox = k => {
+        const lines = p21.text[k].split('<br>'), h = 11 * lines.length;
+        const w = Math.max(...lines.map(l => S21.w.CzMap.partnerWidth(l))), x = p21.x[k] * colPx21, y = (p21.y[k] - r21.layout.yaxis.range[0]) * cl21.pxPerGHz;
+        return p21.textposition[k] === 'top left' ? {x0: x - w, x1: x, y0: y, y1: y + h} : {x0: x, x1: x + w, y0: y, y1: y + h};
+    };
+    const overprint = [];
+    p21.x.forEach((x, k) => p21.x.forEach((x2, k2) => {
+        if (k2 <= k) return;
+        const a = pbox(k), b = pbox(k2);
+        if (a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1) overprint.push(p21.text[k] + '|' + p21.text[k2]);
+    }));
+    const wide = p21.text.map((t, k) => k).filter(k => {
+        const w = Math.max(...p21.text[k].split('<br>').map(l => S21.w.CzMap.partnerWidth(l)));
+        return names(p21.text[k]).length > 1 && w > 0.76 * colPx21 + 0.5;
     });
-    check(wrong === 0 && lifted > 5 && flat > 5, 'a bar shorter than 60 px carries its label above it, a longer one on it');
+    check(multi.length >= 2 && overprint.length === 0 && wide.length === 0 && p21.text.some(t => t.includes('<br>')),
+          'P1-4: one partner label lists every partner of a shared row ("' + multi[0] + '"), wrapped to its column; no two partner labels print over each other ' + overprint.join(', '));
 
     // partner names at a segment's right end, only when a column is at least 40 px wide
     const pt5 = r5.traces.find(t => t.meta === 'partners');
@@ -439,19 +594,47 @@ const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB
           !(r13.traces.find(t => t.meta === 'defects-clips') || {x: []}).x.length, 'no curve: the stored defects draw as bars, as before');
     // notes: one line per qubit, only when something is off; the rest in the collapsed detail
     const n5 = S5.d.getElementById('czp-map-notes').textContent.split('\n');
-    check(n5.includes('q4: stored defects from run #1390 (dotted), newest scan #1909.') &&
+    // v1.4.1 (A14 fix3 P2-6): "stored defects from run #1390" -> "equal run #1390's": the match is by content.
+    check(n5.includes("q4: stored defects equal run #1390's (dotted), newest scan #1909.") &&
           n5.includes('q1: source of the stored defects not in the data folder.') && !n5.some(l => l.startsWith('q3:')),
           'the note names a qubit only when something is off (source run, no match)');
-    check(n5.some(l => l.startsWith('q5:') && l.includes('axis of run #1388 predates 2 flux-model inputs changed (run #1897)')),
-          'the ledger\'s staleness of a curve\'s axis is in the qubit\'s line');
+    // v1.4.1 (A14 fix3 P1-2): "axis of run #1388 predates 2 flux-model inputs changed (run #1897)" in the qubit's line
+    // -> one merged line per change, worded by what the ledger proves (#1897 only carried the values first).
+    check(n5.includes("Axis check: freq_vs_flux_01_quad_term, z.joint_offset changed after the scan of q5 #1388 (first seen in run #1897's saved state).") &&
+          !n5.some(l => /\(run #1897\)|changed by run #1897/.test(l)),
+          'P1-2: the ledger\'s staleness of a curve\'s axis names the run only as the first saved state that carried the change');
     const n21 = S21.d.getElementById('czp-map-notes').textContent.split('\n');
-    check(n21.filter(l => l.startsWith('qA2:')).length === 1 &&
-          n21.find(l => l.startsWith('qA2:')).includes('axis of runs #1822 and #676 predate 1 flux-model input changed (run #3450)'),
-          'two curves of one qubit staled by one change read as one line');
+    const zl = n21.filter(l => l.startsWith('Axis check: z.joint_offset '));
+    check(zl.length === 1 && zl[0] === 'Axis check: z.joint_offset changed after the scans of qA3 #653, qA1 #824, qB4 #1936, qA4 #1667, ' +
+          "qA2 #1822 and #676, qB2 #1725, qA5 #1825 and #432 (first seen in run #3450's saved state)." &&
+          !n21.some(l => /^q[A-D]\d: .*predate/.test(l) || /\(run #3450\)|changed by run #3450/.test(l)),
+          'P1-2: nine identical axis lines (same field, same change) read as one, listing the qubits and their scans');
+    const proven21 = JSON.parse(JSON.stringify(loss21));
+    Object.values(proven21.staleness.qubits).forEach(ls => ls.forEach(s => { s.changed_provenance = 'run_proven'; s.changed_words = 'changed by run #3450'; }));
+    const SP = await page({map: map21, loss: proven21, width: 1000});
+    check(SP.d.getElementById('czp-map-notes').textContent.split('\n').some(l => l.startsWith('Axis check: z.joint_offset changed by run #3450 after the scans of qA3 #653,')),
+          'P1-2: a run the ledger proves wrote the change is named as its writer');
+    SP.close();
     const det = S5.d.getElementById('czp-map-detail');
     check(!det.open && S5.d.getElementById('czp-map-detail-summary').textContent.includes('5 of 5 with a scan') &&
           det.textContent.includes('newest scan run #1909') && det.textContent.includes('dotted outline run #1390'),
           'the full loss detail sits in a collapsed box under the map');
+    // ---- fix3 P2-6: a content match is worded as one; a run nobody could tie to the chip says so ----
+    const src5 = r5.traces.find(t => t.meta === 'loss-source');
+    check(S5.d.getElementById('czp-map-key').textContent.includes('dotted = the run whose defects equal the stored list (matched by content)') &&
+          src5.hovertemplate.includes('(the run whose defects equal the stored list)') && !/came from/.test(S5.d.getElementById('czp-map-key').textContent + src5.hovertemplate),
+          'P2-6: the key and the outline hover say "the run whose defects equal the stored list", not where they came from');
+    const unchecked5 = JSON.parse(JSON.stringify(loss5));
+    unchecked5.curves.q4.scan.identity = 'unchecked';
+    const SU = await page({map: map5, loss: unchecked5, width: 1100});
+    const ru = SU.last(), lu = ru.traces.find(t => t.meta === 'loss-line'), q4u = ru.layout.xaxis.ticktext.indexOf('q4');
+    const q4t = lu.text.filter((t, k) => t && Math.floor(lu.x[k]) === q4u), q2t = lu.text.filter((t, k) => t && t.startsWith('q2 '));
+    check(q4t.length && q4t.every(t => t.includes('chip identity unchecked')) && q2t.length && !q2t.some(t => t.includes('identity')) &&
+          SU.d.getElementById('czp-map-notes').textContent.split('\n').includes('Chip identity unchecked for the loss runs of q4 (no change history holds them and one side declares no chip name).') &&
+          SU.d.getElementById('czp-map-detail-body').textContent.includes('chip identity unchecked') &&
+          !S5.d.getElementById('czp-map-notes').textContent.includes('identity'),
+          'P2-6: a run judged by neither the history nor a chip name says so in its hover, the notes and the detail (and only that run)');
+    SU.close();
 
     // the drawing is inside the viewport at 1280x800: height = viewport - figure top - 40
     const SV = await page({map: map5, loss: loss5, width: 920, innerHeight: 800, top: 260});
@@ -475,6 +658,12 @@ const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB
           'the map draws first; the measured loss joins it without a second map request');
     check(SA.d.getElementById('czp-map-notes').textContent.includes('change history is being prepared') && SA.w._timers.length === 1,
           'while the ledger is being built the curves draw and the axis check is asked again');
+    SA.holdLoss = false;
+    for (let k = 0; k < SA.w.CzMap.RETRY_N && SA.w._timers.length; k++) { SA.w._timers.shift()(); await wait(15); }
+    const gaveUp = SA.d.getElementById('czp-map-notes').textContent;
+    check(SA.fetched.filter(u => u.startsWith('/cz-plan/loss')).length === SA.w.CzMap.RETRY_N + 1 && SA.w._timers.length === 0 &&
+          gaveUp.includes('The change history was still being prepared after 60 s; the axis check of the loss scans was not done') &&
+          !gaveUp.includes('follows'), 'fix3 P2-5: when the re-asks run out the note says the check was not done, not that it follows');
     SA.close();
     [S5, S13, S21, SV].forEach(S => S.close());
     console.log(checks + ' assertions passed');

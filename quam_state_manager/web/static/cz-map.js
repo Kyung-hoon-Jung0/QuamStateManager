@@ -18,11 +18,21 @@
     'use strict';
 
     var fseq = 0, pseq = 0;
-    var DRAW_PX = 150, GAP_PX = 26, MIN_H = 460, MAX_H = 640;
+    /* The drawing's height follows the chip's rows (fix3 P1-3: a fixed 150 px put 5 rows
+       29 px apart, so every vertical neighbour's bar hid under its label): ROW_PX per row,
+       at least DRAW_PX, never more than DRAW_MAX_FRAC of the plot. */
+    var DRAW_PX = 150, ROW_PX = 44, DRAW_MAX_FRAC = 0.45, GAP_PX = 26, MIN_H = 460, MAX_H = 640;
     var MARGIN = { l: 64, r: 16, t: 30, b: 6 };
     var LOSS_W = 0.9;          // a column's loss scale spans 90 % of the column
     var LABEL_GATE_PX = 40;    // partner names only when a column is at least this wide
-    var SHORT_BAR_PX = 60;     // a bar shorter than this carries its label above it
+    var SHORT_BAR_PX = 60;     // a bar shorter than this never carries its label on itself
+    var ROW_LABEL_MIN_PX = 36; // below this row pitch a short bar's label is hover only
+    var NODE_R = 12.5;         // a node's radius in the drawing (marker size 24 + its line)
+    var BAR_HALF = 3;          // half the width of a drawn bar
+    var LABEL_FONT = 10;
+    var CLUSTER_PX = 6;        // segments of one column this close share the row side by side
+    var PARTNER_H = 11;        // a partner name's height (9 px font)
+    var RETRY_N = 20, RETRY_MS = 3000;   // re-asks while the change history is being built
     /* Pair colours: green, violet, magenta, yellow first -- the four-hue subset of the
        docs/93 categorical hues that passes the dataviz validator on ALL pairs in both themes
        (CVD dE 6.9, normal-vision dE 19.3; light surface #ffffff, dark #181c25), since any
@@ -36,7 +46,7 @@
     var MAP_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf',
                       '#bcbd22', '#7f7f7f'];
     var KEY = 'solid fitted model, dashed quad-term estimate, thin stays at idle, diamond planned; ' +
-              'colour = pair (unique around each qubit, not a time step); bar label = operating frequency (GHz)';
+              'colour = pair (unique around each qubit, not a time step); bar label = operating frequency (GHz), framed in the bar colour';
 
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -90,6 +100,25 @@
     function pairOf(path) {
         var m = /^qubit_pairs\.(.+)\.macros\./.exec(String(path || ''));
         return m ? m[1] : null;
+    }
+    function opNameOf(path) {
+        var m = /^qubit_pairs\..+\.macros\.([^.]+)$/.exec(String(path || ''));
+        return m ? m[1] : null;
+    }
+    /* The operation the map draws for one pair: its segments' (or refusals') operation,
+       else the picked name (null: each pair's default). */
+    function drawnOp(m, pair) {
+        var s = (m.segments || []).concat(m.refused || []).find(function (x) { return x.pair === pair && x.operation; });
+        return s ? s.operation : (m.op || null);
+    }
+    /* fix3 P1-1: the operation name the map must switch to so that it draws what the reader
+       selected -- only when that name is one of the map's operations, differs from what the
+       map draws for the selected pair and is not already picked; else null. */
+    function followName(root, m, path) {
+        var name = opNameOf(path), pair = pairOf(path), sel = root && root.querySelector('#czp-map-op');
+        if (!name || !pair || !sel || !m) return null;
+        if ((m.operations || []).indexOf(name) < 0 || drawnOp(m, pair) === name || sel.value === name) return null;
+        return Array.prototype.some.call(sel.options, function (o) { return o.value === name; }) ? name : null;
     }
     function members(p) {
         return [p.control_path || p.control, p.target_path || p.target].filter(Boolean);
@@ -217,6 +246,121 @@
         el.innerHTML = '<p class="muted zline-empty">' + esc(text) + '</p>';
     }
 
+    /* ---- bar labels (fix3 P1-3): placed in the drawing's pixels, never on another bar, a
+       node or another label; a short bar's label sits beside its own bar, never on it. ---- */
+    /* A bar label's box (px): the annotation's text at LABEL_FONT plus its pad and border,
+       a little larger than Chrome draws it ("q1 4.017": 41 x 17 px measured, 47.2 x 18 here). */
+    function labelSize(text) {
+        return { w: 5.4 * String(text).length + 4, h: 18 };
+    }
+    /* A partner label's width (px) at its 9 px font. */
+    function partnerWidth(text) {
+        return 5.2 * String(text).length + 2;
+    }
+    /* The partner names of one shared row as lines no wider than the column (one name a line
+       at least): {lines: [[name, ...]], w, h} in px. */
+    function partnerLines(names, maxW) {
+        var lines = [], cur = [];
+        names.forEach(function (nm) {
+            if (cur.length && partnerWidth(cur.concat(nm).join(' ')) > maxW) { lines.push(cur); cur = []; }
+            cur.push(nm);
+        });
+        if (cur.length) lines.push(cur);
+        return { lines: lines, h: PARTNER_H * lines.length,
+                 w: Math.max.apply(null, lines.map(function (l) { return partnerWidth(l.join(' ')); })) };
+    }
+    function pointSegDist(p, a, b) {
+        var dx = b.X - a.X, dy = b.Y - a.Y, l2 = dx * dx + dy * dy;
+        var t = l2 ? Math.max(0, Math.min(1, ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / l2)) : 0;
+        return Math.hypot(p.X - a.X - t * dx, p.Y - a.Y - t * dy);
+    }
+    function boxPointDist(r, p) {
+        return Math.hypot(Math.max(r.x0 - p.X, 0, p.X - r.x1), Math.max(r.y0 - p.Y, 0, p.Y - r.y1));
+    }
+    function segHitsBox(a, b, r) {        // Liang-Barsky: does segment a-b cross box r?
+        var t0 = 0, t1 = 1, dx = b.X - a.X, dy = b.Y - a.Y;
+        var p = [-dx, dx, -dy, dy], q = [a.X - r.x0, r.x1 - a.X, a.Y - r.y0, r.y1 - a.Y];
+        for (var i = 0; i < 4; i++) {
+            if (p[i] === 0) { if (q[i] < 0) return false; continue; }
+            var t = q[i] / p[i];
+            if (p[i] < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+        }
+        return true;
+    }
+    function boxSegDist(r, a, b) {
+        if (segHitsBox(a, b, r)) return 0;
+        var c = [{ X: r.x0, Y: r.y0 }, { X: r.x1, Y: r.y0 }, { X: r.x0, Y: r.y1 }, { X: r.x1, Y: r.y1 }];
+        return Math.min(boxPointDist(r, a), boxPointDist(r, b), Math.min.apply(null, c.map(function (p) { return pointSegDist(p, a, b); })));
+    }
+    function boxesOverlap(r, s, pad) {
+        return r.x0 < s.x1 + pad && s.x0 < r.x1 + pad && r.y0 < s.y1 + pad && s.y0 < r.y1 + pad;
+    }
+    /* items: [{pair, text, a, b}] (own bar's node centres, px, Y up); bars: [{pair, a, b,
+       half}] every drawn bar; nodes: [{X, Y}]; opts: {rowPx, x0, x1, y0, y1} the box limits.
+       A long bar keeps its label on itself when that box hits nothing else; otherwise (and
+       always for a short bar) the box goes to the nearest free spot touching its own bar --
+       never on another bar, a node or a label, preferring room from the other bars, and a
+       short bar's own colour stays uncovered where it can. Under ROW_LABEL_MIN_PX of row
+       pitch, or with no free spot, a short bar's label is hover only (null).
+       Returns {pair: {dx, dy, w, h, box} | null}. */
+    function placeLabels(items, bars, nodes, opts) {
+        var out = {}, placed = [], R = 48, RY = 30, STEP = 2, ATTACH = 12;
+        var info = items.map(function (it) {
+            var dx = it.b.X - it.a.X, dy = it.b.Y - it.a.Y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+            var sz = labelSize(it.text), ext = sz.w * Math.abs(ux) + sz.h * Math.abs(uy);
+            var cut = Math.min(NODE_R, len / 2);
+            return { it: it, sz: sz, short: len < SHORT_BAR_PX || len - 2 * NODE_R - ext < 24,
+                     mx: (it.a.X + it.b.X) / 2, my: (it.a.Y + it.b.Y) / 2,
+                     va: { X: it.a.X + ux * cut, Y: it.a.Y + uy * cut }, vb: { X: it.b.X - ux * cut, Y: it.b.Y - uy * cut } };
+        });
+        info.sort(function (p, q) { return (p.short - q.short) || natCmp(p.it.pair, q.it.pair); });
+        info.forEach(function (L) {
+            var pair = L.it.pair, w = L.sz.w, h = L.sz.h;
+            if (L.short && opts.rowPx < ROW_LABEL_MIN_PX) { out[pair] = null; return; }
+            var reach = Math.max(R, RY) + w;
+            var near = function (p) { return Math.abs(p.X - L.mx) < reach + NODE_R && Math.abs(p.Y - L.my) < reach + NODE_R; };
+            var others = bars.filter(function (b) {
+                return b.pair !== pair && (near(b.a) || near(b.b) || pointSegDist({ X: L.mx, Y: L.my }, b.a, b.b) < reach);
+            });
+            var ns = nodes.filter(near);
+            function boxAt(ox, oy) {
+                return { x0: L.mx + ox - w / 2, x1: L.mx + ox + w / 2, y0: L.my + oy - h / 2, y1: L.my + oy + h / 2 };
+            }
+            function free(r) {
+                if (r.x0 < opts.x0 || r.x1 > opts.x1 || r.y0 < opts.y0 || r.y1 > opts.y1) return null;
+                for (var i = 0; i < ns.length; i++) if (boxPointDist(r, ns[i]) < NODE_R + 1) return null;
+                var room = 12;
+                for (var j = 0; j < others.length; j++) {
+                    var d = boxSegDist(r, others[j].a, others[j].b) - (others[j].half || BAR_HALF);
+                    if (d < 1) return null;
+                    room = Math.min(room, d);
+                }
+                for (var k = 0; k < placed.length; k++) if (boxesOverlap(r, placed[k], 1)) return null;
+                return { room: room };
+            }
+            var best = null;
+            if (!L.short && free(boxAt(0, 0))) best = { ox: 0, oy: 0 };
+            else {
+                var bc = Infinity;
+                for (var ox = -R; ox <= R; ox += STEP) {
+                    for (var oy = -RY; oy <= RY; oy += STEP) {
+                        var r = boxAt(ox, oy), own = boxSegDist(r, L.va, L.vb);
+                        if (own > ATTACH) continue;
+                        var f = free(r);
+                        if (!f) continue;
+                        var c = Math.hypot(ox, oy) + (L.short && own < BAR_HALF + 0.5 ? 80 : 0) - 0.5 * f.room;
+                        if (c < bc) { bc = c; best = { ox: ox, oy: oy }; }
+                    }
+                }
+            }
+            if (!best) { out[pair] = null; return; }
+            var box = boxAt(best.ox, best.oy);
+            placed.push(box);
+            out[pair] = { dx: best.ox, dy: best.oy, w: w, h: h, box: box };
+        });
+        return out;
+    }
+
     function scaleOf(root) {
         var s = root && root.querySelector('#czp-map-scale'), v = s ? parseFloat(s.value) : NaN;
         return v > 0 ? v : 0.25;
@@ -271,7 +415,8 @@
                     ' (' + (c.interaction_time_ns != null ? esc(c.interaction_time_ns) + ' ns' : 'scan duration unknown') +
                     ', axis ' + esc(c.flux_conversion || '?') + ')<br>' + (F[j] / 1e9).toFixed(4) + ' GHz' +
                     (finite(D[j]) ? ' · detuning ' + fmtMHz(D[j], true) : '') +
-                    '<br>loss ' + pct(Ls[j]) + (finite(S[j]) ? ' ± ' + pct(S[j]) : '') });
+                    '<br>loss ' + pct(Ls[j]) + (finite(S[j]) ? ' ± ' + pct(S[j]) : '') +
+                    (c.identity === 'unchecked' ? '<br>chip identity unchecked (no history, no chip name)' : '') });
             }
             flush();
         });
@@ -305,11 +450,21 @@
         el.style.height = H + 'px';
         var plotW = Math.max(240, (el.clientWidth || 1200) - MARGIN.l - MARGIN.r);
         var plotH = H - MARGIN.t - MARGIN.b;
-        var dd = drawing ? DRAW_PX / plotH : 0, colLo = drawing ? (DRAW_PX + GAP_PX) / plotH : 0;
+        // fix3 P1-3: the drawing grows with the chip's rows, capped to a share of the plot
+        var drawPx = drawing ? Math.round(Math.min(Math.max(DRAW_PX, ROW_PX * (lay.ymax + 1)), DRAW_MAX_FRAC * plotH)) : 0;
+        var dd = drawing ? drawPx / plotH : 0, colLo = drawing ? (drawPx + GAP_PX) / plotH : 0;
         var colPx = plotW / n;
         var y2r = [-0.6, lay.ymax + 0.6];
-        var rowPx = DRAW_PX / (y2r[1] - y2r[0]);
+        var rowPx = drawPx / (y2r[1] - y2r[0]);
         function paperY(v) { return (v - y2r[0]) / (y2r[1] - y2r[0]) * dd; }
+        // fix3 P1-1: when the map draws another operation of the selected pair than the one
+        // selected below (its name is not on the picker, or the reader picked another), the
+        // outline's hover and the key name both
+        var selPath = root.getAttribute('data-selected') || '', selPair = pairOf(selPath), selName = opNameOf(selPath);
+        var shown = selPair ? drawnOp(m, selPair) : null;
+        var mismatch = selName && shown && shown !== selName ? { pair: selPair, shown: shown, selected: selName } : null;
+        root._czMismatch = mismatch ? selPair + '|' + shown + '|' + selName : '';
+        var mmHover = mismatch ? '<br>selected below: ' + esc(selName) + ' (this map shows ' + esc(shown) + ')' : '';
 
         var P = pairColors(), colour = edgeColours(pairs);
         var muted = cssVar('--pico-muted-color', '#8a8a8a');
@@ -345,7 +500,8 @@
                     thin.x.push(i + LOSS_W * Math.min(1, Math.max(0, (b.peak_loss || 0) / scale)));
                     thin.y.push(f / 1e9); thin.t.push(t);
                 } else {
-                    var w = 0.08 + 0.82 * Math.min(1, (b.peak_loss || 0) / 0.5);
+                    // fix3 P2-1: a column without a scan follows the same Loss scale select
+                    var w = 0.08 + 0.82 * Math.min(1, Math.max(0, (b.peak_loss || 0) / scale));
                     bars.x.push(i + 0.05, i + 0.05 + w, null);
                     bars.y.push(f / 1e9, f / 1e9, null);
                     bars.t.push(t, t, null);
@@ -361,36 +517,110 @@
         if (O.lineX.length) {
             traces.push({ type: 'scatter', mode: 'lines', x: O.lineX, y: O.lineY, text: O.lineT, showlegend: false,
                           line: { color: ink, width: 0.6, dash: 'dot' }, opacity: 0.4,
-                          hovertemplate: '%{text}<br>(the run the stored defects came from)<extra></extra>', meta: 'loss-source' });
+                          hovertemplate: '%{text}<br>(the run whose defects equal the stored list)<extra></extra>', meta: 'loss-source' });
         }
         if (bars.x.length) {
             traces.push({ type: 'scatter', mode: 'lines', x: bars.x, y: bars.y, text: bars.t, showlegend: false,
                           line: { color: muted, width: 3 }, opacity: 0.75, hovertemplate: '%{text}<extra></extra>', meta: 'defect-bars' });
         }
 
-        // ---- segments: one trace per colour class and style, null-separated ----
-        var segClass = {}, connectors = {}, geo = {}, partnerX = [], partnerY = [], partnerT = [];
+        // ---- the columns' frequency range, set here (not autoranged) so a segment's pixel
+        //      height is known: everything the columns draw, padded 4 % ----
+        var lo = Infinity, hi = -Infinity;
+        function addY(v) { if (v != null && isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; } }
+        [G.fillY, O.lineY, thin.y, bars.y, G.clipY].forEach(function (a) { a.forEach(addY); });
+        qs.forEach(function (q) { addY(ghz(q.f01_hz)); (q.safe || []).forEach(function (b) { addY(ghz(b.lo_hz)); addY(ghz(b.hi_hz)); }); });
+        m.segments.forEach(function (s) { if (col[s.qubit_path] != null) addY(ghz(s.frequency_hz)); });
+        (m.planned || []).forEach(function (p) { if (col[p.qubit_path] != null) addY(ghz(p.frequency_hz)); });
+        var yr = isFinite(lo) ? [lo - Math.max(0.01, 0.04 * (hi - lo)), hi + Math.max(0.01, 0.04 * (hi - lo))] : null;
+        var pxPerGHz = yr ? plotH * (1 - colLo) / (yr[1] - yr[0]) : 1;
+
+        // ---- segments (fix3 P1-4): one column's segments within CLUSTER_PX of each other
+        //      share their row side by side, each in its own colour, under one partner label ----
+        function partnerOf(s) {
+            var pp = pairs[s.pair] || {};
+            return pp.control_path === s.qubit_path ? pp.target : pp.control;
+        }
+        var place = {}, partners = [], wanted = [], byCol = {};
+        m.segments.forEach(function (s, k) {
+            var i = col[s.qubit_path];
+            if (i == null || s.frequency_hz == null) return;
+            (byCol[i] = byCol[i] || []).push(k);
+        });
+        Object.keys(byCol).forEach(function (ci) {
+            var i = +ci, ks = byCol[ci].slice().sort(function (a, b) {
+                return m.segments[a].frequency_hz - m.segments[b].frequency_hz || a - b;
+            });
+            var groups = [], cur = [];
+            ks.forEach(function (k) {
+                if (cur.length && (m.segments[k].frequency_hz - m.segments[cur[cur.length - 1]].frequency_hz) / 1e9 * pxPerGHz > CLUSTER_PX) {
+                    groups.push(cur); cur = [];
+                }
+                cur.push(k);
+            });
+            if (cur.length) groups.push(cur);
+            groups.forEach(function (gk) {
+                gk.sort(function (a, b) {
+                    return natCmp(partnerOf(m.segments[a]) || '', partnerOf(m.segments[b]) || '') || natCmp(m.segments[a].pair, m.segments[b].pair);
+                });
+                var W = 0.76 / gk.length, gap = gk.length > 1 ? 0.01 : 0;
+                gk.forEach(function (k, j) { place[k] = { x0: i + 0.12 + j * W + gap, x1: i + 0.12 + (j + 1) * W - gap }; });
+                var names = gk.map(function (k) { return partnerOf(m.segments[k]); }).filter(Boolean);
+                if (!names.length) return;
+                var top = Math.max.apply(null, gk.map(function (k) { return m.segments[k].frequency_hz / 1e9; }));
+                // a list wider than the column wraps onto lines inside it (never into the next column)
+                var pl = partnerLines(names, 0.76 * colPx);
+                wanted.push({ i: i, y: top, ypx: (top - (yr ? yr[0] : 0)) * pxPerGHz, w: pl.w, h: pl.h,
+                              t: pl.lines.map(function (l) { return l.map(esc).join(' '); }).join('<br>') });
+            });
+        });
+        // partner names never print over each other (a long list runs into the next column): the
+        // right end of the segment first, else its left end, else hover only
+        var taken = [];
+        wanted.forEach(function (pw) {
+            var right = (pw.i + 0.88) * colPx, left = (pw.i + 0.12) * colPx;
+            var spots = [{ x0: right - pw.w, x1: right, x: pw.i + 0.88, pos: 'top left' },
+                         { x0: left, x1: left + pw.w, x: pw.i + 0.12, pos: 'top right' }];
+            for (var k = 0; k < spots.length; k++) {
+                var b = { x0: spots[k].x0, x1: spots[k].x1, y0: pw.ypx, y1: pw.ypx + pw.h };
+                if (b.x0 < 0 || b.x1 > n * colPx || taken.some(function (t) { return boxesOverlap(b, t, 1); })) continue;
+                taken.push(b);
+                partners.push({ x: spots[k].x, y: pw.y, t: pw.t, pos: spots[k].pos });
+                return;
+            }
+        });
+        var segClass = {}, connectors = {}, geo = {};
         var listed = [];
         m.segments.concat(m.refused || [], m.planned || []).forEach(function (s) { if (listed.indexOf(s.pair) < 0) listed.push(s.pair); });
         function g(pair) {
             return geo[pair] || (geo[pair] = { segX: [], segY: [], barX: [], barY: [], color: P[colour[pair] % P.length], segs: [] });
         }
-        m.segments.forEach(function (s) {
-            var i = col[s.qubit_path];
-            if (i == null || s.frequency_hz == null) return;
+        m.segments.forEach(function (s, k) {
+            var x = place[k];
+            if (!x) return;
             var c = colour[s.pair] || 0, style = !s.moves ? 'idle' : (/quad/.test(s.kind || '') ? 'dash' : 'solid');
-            var k = c + ':' + style, f = s.frequency_hz / 1e9;
+            var key = c + ':' + style, f = s.frequency_hz / 1e9;
             var t = esc(s.pair) + ' · ' + esc(s.operation) + '<br>' + esc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
                 ': ' + f.toFixed(4) + ' GHz<br>' + esc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + esc(s.validity) : '') +
-                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + ' ' + fmtMHz(s.nearest.distance_hz, true) : '');
-            var cl = segClass[k] || (segClass[k] = { c: c, style: style, x: [], y: [], t: [], cd: [] });
-            cl.x.push(i + 0.12, i + 0.88, null); cl.y.push(f, f, null); cl.t.push(t, t, null);
+                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
+                (mismatch && s.pair === mismatch.pair ? mmHover : '');
+            var cl = segClass[key] || (segClass[key] = { c: c, style: style, x: [], y: [], t: [], cd: [] });
+            cl.x.push(x.x0, x.x1, null); cl.y.push(f, f, null); cl.t.push(t, t, null);
             cl.cd.push([s.path, s.pair], [s.path, s.pair], null);
             var gg = g(s.pair);
-            gg.segX.push(i + 0.12, i + 0.88, null); gg.segY.push(f, f, null); gg.segs.push(s);
-            var pp = pairs[s.pair] || {}, partner = pp.control_path === s.qubit_path ? pp.target : pp.control;
-            if (partner) { partnerX.push(i + 0.88); partnerY.push(f); partnerT.push(esc(partner)); }
+            gg.segX.push(x.x0, x.x1, null); gg.segY.push(f, f, null); gg.segs.push(s);
         });
+        // the idle dots under the segments: a segment that stays at idle sits on its dot, and in a
+        // shared row (fix3 P1-4) the dot must not hide the middle partner's colour
+        traces.push({ type: 'scatter', mode: 'markers', x: qs.map(function (q, i) { return i + 0.5; }),
+                      y: qs.map(function (q) { return ghz(q.f01_hz); }), name: 'idle f_01', showlegend: false,
+                      text: qs.map(function (q) {
+                          var e = curves[q.name];
+                          return esc(q.name) + ' idle ' + f3(q.f01_hz) + ' GHz' + '<br>' + esc(q.direction) +
+                              (e && e.scan ? '<br>loss scan: run #' + esc(e.scan.run_id) : (e && e.reason ? '<br>' + esc(e.reason) : '')) +
+                              (q.loss_data ? '' : '<br>no population-loss data stored');
+                      }),
+                      marker: { color: ink, size: 9, symbol: 'circle' }, hovertemplate: '%{text}<extra></extra>', meta: 'idle' });
         Object.keys(segClass).sort().forEach(function (k) {
             var cl = segClass[k], color = P[cl.c % P.length];
             traces.push({ type: 'scatter', mode: 'lines', x: cl.x, y: cl.y, text: cl.t, customdata: cl.cd, showlegend: false,
@@ -400,13 +630,14 @@
         // connectors help on a small chip; across 10+ pairs they cross the whole map
         if (listed.length <= 10) {
             listed.forEach(function (pair) {
-                var segs = m.segments.filter(function (s) { return s.pair === pair && col[s.qubit_path] != null; });
-                if (segs.length !== 2) return;
-                var ia = col[segs[0].qubit_path], ib = col[segs[1].qubit_path];
-                var left = ia <= ib ? segs[0] : segs[1], right = ia <= ib ? segs[1] : segs[0];
+                var ks = [];
+                m.segments.forEach(function (s, k) { if (s.pair === pair && place[k]) ks.push(k); });
+                if (ks.length !== 2) return;
+                var ia = col[m.segments[ks[0]].qubit_path], ib = col[m.segments[ks[1]].qubit_path];
+                var kl = ia <= ib ? ks[0] : ks[1], kr = ia <= ib ? ks[1] : ks[0];
                 var c = colour[pair] || 0, cn = connectors[c] || (connectors[c] = { x: [], y: [] });
-                cn.x.push(Math.min(ia, ib) + 0.88, Math.max(ia, ib) + 0.12, null);
-                cn.y.push(ghz(left.frequency_hz), ghz(right.frequency_hz), null);
+                cn.x.push(place[kl].x1, place[kr].x0, null);
+                cn.y.push(ghz(m.segments[kl].frequency_hz), ghz(m.segments[kr].frequency_hz), null);
             });
             Object.keys(connectors).forEach(function (c) {
                 traces.push({ type: 'scatter', mode: 'lines', x: connectors[c].x, y: connectors[c].y, showlegend: false, hoverinfo: 'skip',
@@ -422,15 +653,6 @@
                                     symbol: 'diamond-open', line: { width: 2 } },
                           hovertemplate: '%{text}<extra></extra>', meta: 'planned' });
         }
-        traces.push({ type: 'scatter', mode: 'markers', x: qs.map(function (q, i) { return i + 0.5; }),
-                      y: qs.map(function (q) { return ghz(q.f01_hz); }), name: 'idle f_01', showlegend: false,
-                      text: qs.map(function (q) {
-                          var e = curves[q.name];
-                          return esc(q.name) + ' idle ' + f3(q.f01_hz) + ' GHz' + '<br>' + esc(q.direction) +
-                              (e && e.scan ? '<br>loss scan: run #' + esc(e.scan.run_id) : (e && e.reason ? '<br>' + esc(e.reason) : '')) +
-                              (q.loss_data ? '' : '<br>no population-loss data stored');
-                      }),
-                      marker: { color: ink, size: 9, symbol: 'circle' }, hovertemplate: '%{text}<extra></extra>', meta: 'idle' });
         // ticks only where the drawn scan itself runs past the scale (the outline is a reference)
         if (thin.x.length || G.clipX.length) {
             traces.push({ type: 'scatter', mode: 'markers', x: thin.x.concat(G.clipX), y: thin.y.concat(G.clipY),
@@ -440,13 +662,14 @@
                                     line: { color: ink, width: 2 } },
                           hovertemplate: '%{text}<extra></extra>', meta: 'defects-clips' });
         }
-        if (partnerX.length && colPx >= LABEL_GATE_PX) {
-            traces.push({ type: 'scatter', mode: 'text', x: partnerX, y: partnerY, text: partnerT, textposition: 'top left',
+        if (partners.length && colPx >= LABEL_GATE_PX) {
+            traces.push({ type: 'scatter', mode: 'text', x: partners.map(function (p) { return p.x; }), y: partners.map(function (p) { return p.y; }),
+                          text: partners.map(function (p) { return p.t; }), textposition: partners.map(function (p) { return p.pos; }),
                           textfont: { size: 9, color: muted }, hoverinfo: 'skip', showlegend: false, cliponaxis: false, meta: 'partners' });
         }
 
         // ---- the chip drawing: leaders, bars, nodes ----
-        var barPts = { x: [], y: [], t: [], cd: [] };
+        var barPts = { x: [], y: [], t: [], cd: [] }, hidden = 0;
         if (drawing) {
             qs.forEach(function (q, i) {
                 var nd = lay.node[q.path];
@@ -454,6 +677,8 @@
                 shapes.push({ type: 'line', xref: 'x', x0: nd.x, x1: i + 0.5, yref: 'paper', y0: paperY(nd.y), y1: colLo,
                               line: { color: muted, width: 0.8 }, layer: 'below', name: 'leader' });
             });
+            var px = function (nd) { return { X: nd.x * colPx, Y: (nd.y - y2r[0]) * rowPx }; };
+            var barList = [], items = [];
             Object.keys(pairs).sort(natCmp).forEach(function (pair) {
                 var pp = pairs[pair], a = lay.node[pp.control_path], b = lay.node[pp.target_path];
                 if (!a || !b) return;
@@ -462,6 +687,7 @@
                 var computed = segs.length > 0, color = P[(colour[pair] || 0) % P.length];
                 shapes.push({ type: 'line', xref: 'x', yref: 'y2', x0: a.x, y0: a.y, x1: b.x, y1: b.y, layer: 'below', name: 'bar:' + pair,
                               line: computed ? { color: color, width: 6 } : { color: muted, width: 1.5, dash: 'dot' } });
+                barList.push({ pair: pair, a: px(a), b: px(b), half: computed ? BAR_HALF : 1 });
                 var gg = g(pair);
                 gg.barX = [a.x, b.x]; gg.barY = [a.y, b.y];
                 var movers = segs.filter(function (s) { return s.moves; }), label = '';
@@ -469,22 +695,12 @@
                     if (movers.length + refused.length >= 2) {
                         var own = movers.find(function (s) { return s.role === 'control'; });
                         var ownRef = refused.find(function (r) { return r.qubit === pp.control; });
-                        label = own ? esc(own.qubit) + ' ' + f3(own.frequency_hz) : ownRef ? esc(ownRef.qubit) + ' ?'
-                            : movers.length ? esc(movers[0].qubit) + ' ' + f3(movers[0].frequency_hz) : '?';
+                        label = own ? own.qubit + ' ' + f3(own.frequency_hz) : ownRef ? ownRef.qubit + ' ?'
+                            : movers.length ? movers[0].qubit + ' ' + f3(movers[0].frequency_hz) : '?';
                     } else if (movers.length === 1) label = f3(movers[0].frequency_hz);
                     else if (refused.length) label = '?';
                 }
-                if (label) {
-                    // a short bar has no room for its label: lift it off the bar, along the bar's
-                    // upward normal (straight up for a level bar, up-left for a rising one)
-                    var dx = (b.x - a.x) * colPx, dy = (b.y - a.y) * rowPx, len = Math.hypot(dx, dy) || 1;
-                    var nx = -dy / len, ny = dx / len;
-                    if (ny < 0 || (ny === 0 && nx > 0)) { nx = -nx; ny = -ny; }
-                    var lift = len < SHORT_BAR_PX ? 12 : 0;
-                    annotations.push({ xref: 'x', yref: 'y2', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, text: label, showarrow: false,
-                                       font: { size: 10, color: ink }, bgcolor: card, borderpad: 1, opacity: 0.92,
-                                       xshift: Math.round(nx * lift), yshift: Math.round(ny * lift), name: 'bar-label:' + pair });
-                }
+                if (label) items.push({ pair: pair, text: label, a: px(a), b: px(b), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, color: color });
                 var op = segs.length ? segs[0] : null, t;
                 if (computed) {
                     t = esc(pair) + ' · ' + esc(op.operation) + segs.map(function (s) {
@@ -496,12 +712,24 @@
                 } else {
                     t = esc(pair) + ': no ' + esc(m.op || 'cz') + ' operation';
                 }
+                if (mismatch && pair === mismatch.pair) t += mmHover;
                 barPts.x.push((a.x + b.x) / 2); barPts.y.push((a.y + b.y) / 2); barPts.t.push(t);
                 barPts.cd.push([op ? op.path : (refused[0] && refused[0].path) || '', pair]);
             });
+            var placed = qs.filter(function (q) { return lay.node[q.path]; });
+            // fix3 P1-3: each label where it hides no other bar, node or label (see placeLabels);
+            // its frame carries its bar's colour, so a label always names its own bar
+            var spots = placeLabels(items, barList, placed.map(function (q) { return px(lay.node[q.path]); }),
+                                    { rowPx: rowPx, x0: 0, x1: plotW, y0: 0, y1: drawPx + GAP_PX - 2 });
+            items.forEach(function (it) {
+                var sp = spots[it.pair];
+                if (!sp) { hidden++; return; }
+                annotations.push({ xref: 'x', yref: 'y2', x: it.x, y: it.y, text: esc(it.text), showarrow: false,
+                                   font: { size: LABEL_FONT, color: ink }, bgcolor: card, bordercolor: it.color, borderwidth: 1,
+                                   borderpad: 1, opacity: 0.92, xshift: sp.dx, yshift: sp.dy, name: 'bar-label:' + it.pair });
+            });
             traces.push({ type: 'scatter', mode: 'markers', x: barPts.x, y: barPts.y, yaxis: 'y2', text: barPts.t, customdata: barPts.cd,
                           marker: { size: 16, color: 'rgba(0,0,0,0)' }, showlegend: false, hovertemplate: '%{text}<extra></extra>', meta: 'bars' });
-            var placed = qs.filter(function (q) { return lay.node[q.path]; });
             traces.push({ type: 'scatter', mode: 'markers+text', yaxis: 'y2', x: placed.map(function (q) { return lay.node[q.path].x; }),
                           y: placed.map(function (q) { return lay.node[q.path].y; }), text: placed.map(function (q) { return esc(q.name); }),
                           hovertext: placed.map(function (q) { return esc(q.name) + (q.grid_location ? ' at ' + esc(q.grid_location) : '') + ' · idle ' + f3(q.f01_hz) + ' GHz'; }),
@@ -519,12 +747,14 @@
         var barIdx = traces.length;
         traces.push({ type: 'scatter', mode: 'lines', x: [], y: [], yaxis: drawing ? 'y2' : 'y', hoverinfo: 'skip', showlegend: false,
                       opacity: 0.45, line: { color: 'rgba(0,0,0,0)', width: 14 }, meta: 'highlight-bar' });
-        if (G.fillX.length || O.lineX.length) {
+        var lossDrawn = !!(G.fillX.length || O.lineX.length);
+        if (lossDrawn || bars.x.length) {
             annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false, yshift: 8,
                                text: 'loss 0–' + Math.round(100 * scale) + ' %', font: { size: 9, color: muted }, name: 'scale' });
         }
 
-        // ---- notes under the map: one line per qubit, only when something is off ----
+        // ---- notes under the map: one line per qubit, only when something is off; the
+        //      ledger's axis changes merged across qubits (same fields, same change) ----
         var notes = [], detail = [];
         if (m.refused.length) notes.push('Not drawn: ' + m.refused.map(function (r) {
             return r.qubit + ' in ' + r.pair + ' ' + r.operation + ' (' + r.reason + ')'; }).join('; ') + '.');
@@ -533,49 +763,79 @@
         if (loss && loss.reason) notes.push('Measured loss: ' + loss.reason + '.');
         if (root._czLossError) notes.push('Measured loss could not be loaded: ' + root._czLossError + '.');
         var stale = (loss && loss.staleness) || {};
-        if (stale.mode === 'building' || stale.mode === 'preparing') notes.push('The change history is being prepared; the axis check of the loss scans follows.');
-        var none = [];
+        if (stale.mode === 'building' || stale.mode === 'preparing') {
+            // fix3 P2-5: once the re-ask budget is spent the note says so, never "follows" forever
+            notes.push(root._czLossGaveUp ? 'The change history was still being prepared after ' + Math.round(RETRY_N * RETRY_MS / 1000) +
+                       ' s; the axis check of the loss scans was not done (reload the page to try again).'
+                       : 'The change history is being prepared; the axis check of the loss scans follows.');
+        }
+        var none = [], unchecked = [], sg = {}, sgOrder = [];
         qs.forEach(function (q) {
             var e = curves[q.name], parts = [];
             if (!e) { if (!q.loss_data) none.push(q.name); return; }
             var mk = e.marker || {};
             if ((mk.status === 'no_match' || mk.status === 'unreadable') && (q.defects || []).length) parts.push(mk.label);
             if (mk.status === 'match' && !mk.same_as_scan && e.marker_curve) {
-                parts.push('stored defects from run #' + mk.run_id + ' (dotted), newest scan ' + (e.scan ? '#' + e.scan.run_id : 'none'));
+                parts.push('stored defects equal run #' + mk.run_id + '\'s (dotted), newest scan ' + (e.scan ? '#' + e.scan.run_id : 'none'));
             }
-            [e.scan, e.marker_curve].forEach(function (c) { if (c && c.idle_note) parts.push('run #' + c.run_id + ': ' + c.idle_note); });
-            var lines = (stale.qubits || {})[q.name] || [];
-            if (lines.length) parts.push(staleText(lines));
+            if (mk.status === 'ambiguous' && e.marker_curve) {
+                parts.push(mk.label + ' (dotted), newest scan ' + (e.scan ? '#' + e.scan.run_id : 'none'));
+            }
+            [e.scan, e.marker_curve].forEach(function (c) {
+                if (!c) return;
+                if (c.idle_note) parts.push('run #' + c.run_id + ': ' + c.idle_note);
+                if (c.identity === 'unchecked' && unchecked.indexOf(q.name) < 0) unchecked.push(q.name);
+            });
+            ((stale.qubits || {})[q.name] || []).forEach(function (s) {
+                var f = (s.fields || []).slice().sort();
+                var k = f.join(',') + '|' + s.changed_run_id + '|' + (s.changed_provenance || '') + '|' + (s.changed_run_id == null ? s.changed_t : '');
+                var gr = sg[k];
+                if (!gr) { gr = sg[k] = { fields: f, words: changedWords(s), qs: {}, order: [], unproven: [] }; sgOrder.push(k); }
+                if (!gr.qs[q.name]) { gr.qs[q.name] = []; gr.order.push(q.name); }
+                if (gr.qs[q.name].indexOf(s.run_id) < 0) gr.qs[q.name].push(s.run_id);
+                if (s.order_proven === false || / order not proven$/.test(s.text || '')) gr.unproven.push(s.run_id);
+            });
             if (parts.length) notes.push(q.name + ': ' + parts.join('; ') + '.');
             if (!e.scan && !e.marker_curve && !q.loss_data) none.push(q.name);
             detail.push({ q: q, e: e });
         });
+        sgOrder.forEach(function (k) { notes.push(staleGroupLine(sg[k])); });
+        if (unchecked.length) {
+            notes.push('Chip identity unchecked for the loss runs of ' + unchecked.join(', ') +
+                       ' (no change history holds them and one side declares no chip name).');
+        }
         if (none.length) notes.push('No population-loss data for ' + (none.length === qs.length ? 'any qubit' : none.join(', ')) +
                                     ' (none stored, no scan in the data folders).');
         var nEl = root.querySelector('#czp-map-notes');
         if (nEl) nEl.textContent = notes.join('\n');
         var kEl = root.querySelector('#czp-map-key');
         if (kEl) {
-            kEl.textContent = 'Key: ' + KEY + (G.fillX.length ? '; gray = measured population loss of the newest scan, ' +
-                'dotted = the run the stored defects came from, short dash = a stored defect, ▸ = past the column scale' : '') + '.';
+            kEl.textContent = 'Key: ' + KEY + (lossDrawn ? '; gray = measured population loss of the newest scan, ' +
+                'dotted = the run whose defects equal the stored list (matched by content), short dash = a stored defect, ' +
+                '▸ = past the column scale' : '') + (hidden ? '; a bar without a label: hover it' : '') + '.' +
+                (mismatch ? ' Outline: the map shows ' + mismatch.shown + ' for ' + mismatch.pair + '; selected below: ' +
+                 mismatch.selected + '.' : '');
         }
         renderDetail(root, loss, detail);
 
         var L = layout({
             margin: MARGIN, height: H, showlegend: false, hovermode: 'closest',
-            xaxis: { tickmode: 'array', tickvals: qs.map(function (q, i) { return i + 0.5; }), ticktext: qs.map(function (q) { return q.name; }),
+            xaxis: { tickmode: 'array', tickvals: qs.map(function (q, i) { return i + 0.5; }),
+                     // fix3 P2-7: tick text is pseudo-HTML like every hover
+                     ticktext: qs.map(function (q) { return esc(q.name); }),
                      range: [0, n], showgrid: false, zeroline: false, fixedrange: true, side: drawing ? 'top' : 'bottom',
                      anchor: 'y', tickfont: { size: 10 } },
-            yaxis: { title: { text: 'frequency (GHz)' }, domain: [colLo, 1] },
+            yaxis: Object.assign({ title: { text: 'frequency (GHz)' }, domain: [colLo, 1] }, yr ? { range: yr, autorange: false } : {}),
             shapes: shapes, annotations: annotations
         });
         if (drawing) L.yaxis2 = { domain: [0, dd], range: y2r, visible: false, fixedrange: true, anchor: 'x', showgrid: false, zeroline: false };
         el.setAttribute('data-segments', String(m.segments.length));
         el.setAttribute('data-layout', lay.mode);
+        el.setAttribute('data-drawn-op', shown || m.op || '');
         var overlay = { seg: segIdx, bar: barIdx, geo: geo, base: shapes.slice(), ink: ink, hl: null, drawing: drawing };
-        var sel = selectionShapes(overlay, root.getAttribute('data-selected'));
+        var sel = selectionShapes(overlay, selPath);
         L.shapes = sel.concat(L.shapes || []);
-        overlay.sel = pairOf(root.getAttribute('data-selected'));
+        overlay.sel = selPath;
         root._czH = H;
         root._czW = plotW;
         function current() { return my === pseq && document.body.contains(root); }
@@ -604,20 +864,39 @@
         });
     }
 
+    /* How a ledger change is named (the server's cz_gate_plan.change_words): "changed by run
+       #M" only for a run the ledger proves wrote it, "first seen in run #M's saved state" for
+       a run that only carried it first. An answer without the words names the run neutrally. */
+    function changedWords(s) {
+        if (s.changed_words) return s.changed_words;
+        return s.changed_run_id != null ? 'seen in run #' + s.changed_run_id : 'changed';
+    }
+
+    /* One merged axis line: "z.joint_offset changed after the scans of qA1 #824, qA2 #1822 and
+       #676 (first seen in run #3450's saved state)"; a proven writer is named in the verb. */
+    function staleGroupLine(gr) {
+        var who = gr.order.map(function (q) { return q + ' #' + gr.qs[q].join(' and #'); }).join(', ');
+        var nScans = gr.order.reduce(function (s, q) { return s + gr.qs[q].length; }, 0);
+        var verb = /^changed/.test(gr.words), fields = gr.fields.join(', ') || 'a flux-model input';
+        return 'Axis check: ' + fields + ' ' + (verb ? gr.words : 'changed') + ' after the scan' + (nScans === 1 ? '' : 's') +
+            ' of ' + who + (verb ? '' : ' (' + gr.words + ')') +
+            (gr.unproven.length ? '; order not proven for #' + gr.unproven.join(', #') : '') + '.';
+    }
+
     /* The ledger's axis lines of one qubit (one per drawn curve, so up to two) as one: two
        runs whose axes predate the same change read "axis of runs #A and #B predate ...". */
     function staleText(lines) {
         var by = {}, order = [];
         lines.forEach(function (s) {
-            var k = s.changed_run_id + '|' + (s.fields || []).length;
-            if (!by[k]) { by[k] = { runs: [], n: (s.fields || []).length, m: s.changed_run_id, text: s.text }; order.push(k); }
+            var k = s.changed_run_id + '|' + (s.fields || []).length + '|' + (s.changed_provenance || '');
+            if (!by[k]) { by[k] = { runs: [], n: (s.fields || []).length, words: changedWords(s), text: s.text }; order.push(k); }
             by[k].runs.push(s.run_id);
         });
         return order.map(function (k) {
-            var g = by[k];
-            if (g.runs.length === 1) return g.text;
-            return 'axis of runs #' + g.runs.join(' and #') + ' predate ' + g.n + ' flux-model input' + (g.n === 1 ? '' : 's') +
-                ' changed (run #' + g.m + ')';
+            var gr = by[k];
+            if (gr.runs.length === 1) return gr.text;
+            return 'axis of runs #' + gr.runs.join(' and #') + ' predate ' + gr.n + ' flux-model input change' + (gr.n === 1 ? '' : 's') +
+                ' (' + gr.words + ')';
         }).join('; ');
     }
 
@@ -662,13 +941,23 @@
         });
     }
 
-    /* The operation selected in the table / detail stays outlined on the map. */
+    /* The operation selected in the table / detail stays outlined on the map. fix3 P1-1: the
+       map follows the selection -- when the selected name is one of its operations and it
+       draws another for that pair, it switches to that name (one refetch); when it cannot,
+       a repaint names both in the outline's hover and the key. */
     function select(root, path) {
-        var el = root && root.querySelector('#czp-map'), o = el && el._czpOverlay;
-        if (!o) return Promise.resolve();
-        var pair = pairOf(path);
-        if (o.sel === pair) return Promise.resolve();
-        o.sel = pair;
+        if (!root) return Promise.resolve();
+        var m = root._czMap, el = root.querySelector('#czp-map'), o = el && el._czpOverlay;
+        root._czFollow = !m;          // a map still on its way follows the selection when it lands
+        if (m) {
+            var want = followName(root, m, path);
+            if (want) { root.querySelector('#czp-map-op').value = want; return draw(root); }
+            var shown = drawnOp(m, pairOf(path)), name = opNameOf(path);
+            var mm = name && shown && shown !== name ? pairOf(path) + '|' + shown + '|' + name : '';
+            if (mm !== (root._czMismatch || '')) return paint(root);
+        }
+        if (!o || o.sel === path) return Promise.resolve();
+        o.sel = path;
         return chain(el, function (ov) {
             var shapes = selectionShapes(ov, path).concat(ov.base);
             if (window.PlotTheme) shapes = window.PlotTheme.houseLayout({ shapes: shapes }).shapes;
@@ -691,7 +980,8 @@
                 ', axis ' + esc(c.flux_conversion || '?') + ', ' + esc(c.n_samples) + ' samples in ' + (c.pieces || []).length +
                 ' piece' + ((c.pieces || []).length === 1 ? '' : 's') +
                 (c.range_hz ? ', ' + f3(c.range_hz[0]) + '–' + f3(c.range_hz[1]) + ' GHz' : '') +
-                (c.loss_max != null ? ', loss ' + pct(c.loss_min) + ' … ' + pct(c.loss_max) : '') + ')' +
+                (c.loss_max != null ? ', loss ' + pct(c.loss_min) + ' … ' + pct(c.loss_max) : '') +
+                (c.identity === 'unchecked' ? ', chip identity unchecked' : '') + ')' +
                 ((c.notes || []).length ? ' — ' + c.notes.map(esc).join('; ') : '');
         }
         var h = ['<p class="muted">Searched: ' + ((loss.roots || []).map(function (r) { return esc(r.path) + ' (' + esc(r.source) + ')'; }).join(', ') || 'no data folder') +
@@ -727,6 +1017,11 @@
                     });
                 }
                 root._czMap = m;
+                if (root._czFollow) {
+                    root._czFollow = false;
+                    var want = followName(root, m, root.getAttribute('data-selected'));
+                    if (want) { opSel.value = want; return draw(root); }
+                }
                 return render(root, m);
             })
             .catch(function (e) {
@@ -752,8 +1047,13 @@
                 root._czLossError = null;
                 root.dispatchEvent(new CustomEvent('czp:loss'));
                 var mode = (d.staleness || {}).mode;
-                if ((mode === 'building' || mode === 'preparing') && (tries || 0) < 20) {
-                    setTimeout(function () { if (document.body.contains(root)) loadLoss(root, (tries || 0) + 1); }, 3000);
+                root._czLossGaveUp = false;
+                if (mode === 'building' || mode === 'preparing') {
+                    if ((tries || 0) < RETRY_N) {
+                        setTimeout(function () { if (document.body.contains(root)) loadLoss(root, (tries || 0) + 1); }, RETRY_MS);
+                    } else {
+                        root._czLossGaveUp = true;        // fix3 P2-5: the note says it ended
+                    }
                 }
                 return paint(root);
             })
@@ -768,7 +1068,9 @@
         if (!root || root._czMapMounted) return;
         root._czMapMounted = true;
         var opSel = root.querySelector('#czp-map-op');
-        if (opSel) opSel.addEventListener('change', function () { draw(root); });
+        // a name the reader picks here stays until a new selection below asks for another
+        if (opSel) opSel.addEventListener('change', function () { root._czFollow = false; draw(root); });
+        root._czFollow = true;
         ['#czp-map-order', '#czp-map-scale'].forEach(function (s) {
             var c = root.querySelector(s);
             if (c) c.addEventListener('change', function () {
@@ -795,6 +1097,9 @@
         mount: mount, draw: draw, paint: paint, loadLoss: loadLoss, highlight: highlight, select: select,
         scale: scaleOf, loss: function (root) { return (root && root._czLoss) || null; },
         edgeColours: edgeColours, chipLayout: chipLayout, natCmp: natCmp, pairOf: pairOf, pairColors: pairColors,
-        DRAW_PX: DRAW_PX, LOSS_W: LOSS_W, LABEL_GATE_PX: LABEL_GATE_PX, SHORT_BAR_PX: SHORT_BAR_PX, _esc: esc
+        placeLabels: placeLabels, labelSize: labelSize, partnerWidth: partnerWidth, partnerLines: partnerLines, followName: followName, drawnOp: drawnOp,
+        DRAW_PX: DRAW_PX, ROW_PX: ROW_PX, DRAW_MAX_FRAC: DRAW_MAX_FRAC, LOSS_W: LOSS_W, LABEL_GATE_PX: LABEL_GATE_PX,
+        SHORT_BAR_PX: SHORT_BAR_PX, ROW_LABEL_MIN_PX: ROW_LABEL_MIN_PX, NODE_R: NODE_R, BAR_HALF: BAR_HALF,
+        CLUSTER_PX: CLUSTER_PX, RETRY_N: RETRY_N, _esc: esc
     };
 })();
