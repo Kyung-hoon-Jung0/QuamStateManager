@@ -294,6 +294,31 @@ def test_the_lab_tick_and_axis_title_sizes_are_kept():
     assert layout["xaxis2"]["title"]["font"]["size"] == pytest.approx(10)
 
 
+def test_an_unfilled_patch_is_drawn_as_its_outline():
+    # A step histogram (histtype="step") is one unfilled patch: only its edge is drawn.
+    def build(fig):
+        ax = fig.subplots()
+        ax.hist([0, 1, 1, 2, 2, 2], bins=3, histtype="step", color="grey", lw=1.5, label="without")
+        ax.hist([0, 0, 1], bins=3, color="tab:blue", alpha=.5, edgecolor="black", label="prepared")
+        ax.add_patch(__import__("matplotlib.patches", fromlist=["Rectangle"]).Rectangle(
+            (0.2, 0.2), 0.5, 1, fill=False, edgecolor="red", linestyle="--"))
+        ax.axvspan(1.5, 1.8, facecolor="none", edgecolor="green")
+    view = mpljson_to_plotly(_figure(build))
+    polys = [t for t in view["data"] if t.get("line", {}).get("width")]
+    step = next((t for t in polys if t["line"]["color"] == "#808080"), None)
+    assert step is not None, "the step histogram is drawn as its outline"
+    assert step["fill"] == "none" and step.get("opacity", 1) == 1 and step["line"]["width"] == 1.5
+    box = next((t for t in polys if t["line"]["color"] == "#ff0000"), None)
+    assert box is not None, "an unfilled box is drawn as its outline"
+    assert box["fill"] == "none" and box["line"]["dash"] == "dash"
+    bars = [t for t in polys if t["line"]["color"] == "rgba(0,0,0,0.5)"]   # alpha reaches the edge too
+    assert bars and all(t["fill"] == "toself" and t["fillcolor"] == "rgba(31,119,180,0.5)"
+                        and t.get("opacity", 1) == 1 for t in bars)   # the fill keeps its alpha, the edge none
+    span = next((sh for sh in view["layout"]["shapes"] if sh.get("line", {}).get("color") == "#008000"), None)
+    assert span is not None, "an unfilled span is drawn as its outline"
+    assert span["fillcolor"] == "rgba(0,0,0,0)" and span["line"]["width"] == 1
+
+
 def test_figure_legend_keeps_only_its_explicit_entries():
     def build(fig):
         ax = fig.subplots()

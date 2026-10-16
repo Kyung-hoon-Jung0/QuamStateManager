@@ -489,6 +489,7 @@ def extract_axes(ax, axes):
             vertices = transform.transform(patch.get_path().vertices)
             vertices = ax.transData.inverted().transform(vertices)
             trace = _polygon_trace(vertices, patch)
+            trace.update(_patch_edge(patch))
             if not all(branches):
                 frac = ax.transAxes.inverted().transform(transform.transform(patch.get_path().vertices))
                 trace.update(coord="x-data-y-domain" if branches[0] else "x-domain-y-data")
@@ -710,6 +711,21 @@ def _polygon_trace(vertices, artist):
     return {"type": "polygon", "x": _flist(vertices[:, 0]), "y": _flist(vertices[:, 1]),
             "color": _hex(color), "opacity": artist.get_alpha() if artist.get_alpha() is not None else _opacity(color),
             "zorder": _f(artist.get_zorder())}
+
+
+def _patch_edge(patch):
+    """A patch's own outline: an unfilled patch (a step histogram, an outline box) is ONLY its
+    edge, and the polygon trace carried the face alone, so such a patch was invisible."""
+    try:
+        edge, width = patch.get_edgecolor(), _f(patch.get_linewidth())
+        if not width or _opacity(edge, 0) <= 0:
+            return {"fill": bool(patch.get_fill())}
+        r, g, b, a = (float(v) for v in edge)
+        paint = _hex(edge) if a >= 1 else f"rgba({r * 255:g},{g * 255:g},{b * 255:g},{a:g})"
+        return {"fill": bool(patch.get_fill()), "edge_color": paint, "edge_width": width,
+                "edge_dash": _DASH.get(patch.get_linestyle(), "solid")}
+    except (AttributeError, TypeError, ValueError):
+        return {}
 
 
 def _contour_traces(coll):

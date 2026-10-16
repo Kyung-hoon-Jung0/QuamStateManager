@@ -434,6 +434,14 @@ def _line_to_plotly(t, xref, yref):
 _HOLLOW = "rgba(0,0,0,0)"
 
 
+def _with_alpha(color, alpha):
+    """A "#rrggbb" colour with ``alpha`` folded in (an rgba() string); other values unchanged."""
+    if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color) and isinstance(alpha, (int, float)):
+        r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+        return f"rgba({r},{g},{b},{max(0.0, min(1.0, float(alpha))):g})"
+    return color
+
+
 def _paint(color):
     """An extracted marker colour for Plotly: "none" is see-through, a list stays a list."""
     if isinstance(color, list):
@@ -561,11 +569,23 @@ def full_map(result: dict, key: str, axes_index: int, trace_index: int) -> dict 
 def _trace_to_plotly(t, xref, yref):
     if t["type"] in ("line", "contour", "polygon"):
         if t["type"] == "polygon":
-            return {"type": "scatter", "x": t["x"], "y": t["y"],
-                    "xaxis": xref, "yaxis": yref, "mode": "lines",
-                    "fill": "toself", "fillcolor": t.get("color"),
-                    "line": {"width": 0}, "opacity": t.get("opacity", 1),
-                    "showlegend": False, "zorder": int(t.get("zorder") or 0)}
+            trace = {"type": "scatter", "x": t["x"], "y": t["y"],
+                     "xaxis": xref, "yaxis": yref, "mode": "lines",
+                     "fill": "toself", "fillcolor": t.get("color"),
+                     "line": {"width": 0}, "opacity": t.get("opacity", 1),
+                     "showlegend": False, "zorder": int(t.get("zorder") or 0)}
+            if t.get("edge_color") and (t.get("edge_width") or 0) > 0:
+                # v1.5.1 (D3 class P): the patch's own outline. An unfilled patch (a step
+                # histogram, an outline box) is only its edge and was invisible; the edge
+                # carries its own alpha, the fill keeps the fill's.
+                trace["line"] = {"color": t["edge_color"], "width": t["edge_width"],
+                                 "dash": t.get("edge_dash", "solid")}
+                if t.get("fill") is False:
+                    trace.update(fill="none", opacity=1.0)
+                    trace.pop("fillcolor")
+                else:
+                    trace.update(fillcolor=_with_alpha(t.get("color"), t.get("opacity", 1)), opacity=1.0)
+            return trace
         if t["type"] == "contour":
             # The level names the line on hover; a contour carries no legend label of its own.
             t = {**t, "name": f"level {t.get('level')}", "mode": "lines"}
@@ -1125,6 +1145,12 @@ def _add_artists(ax, xref, yref, data, layout, notes, width=1080):
                 "yref": yref + (" domain" if coord == "x-data-y-domain" else ""),
                 "fillcolor": t.get("color"), "line": {"width": 0},
                 "opacity": t.get("opacity", 1), "layer": "below"})
+            if t.get("edge_color") and (t.get("edge_width") or 0) > 0:
+                # the span's own outline (an unfilled box is only its edge)
+                layout["shapes"][-1].update(
+                    line={"color": t["edge_color"], "width": t["edge_width"], "dash": t.get("edge_dash", "solid")},
+                    fillcolor=(_with_alpha(t.get("color"), t.get("opacity", 1)) if t.get("fill") is not False
+                               else "rgba(0,0,0,0)"), opacity=1.0)
         elif coord and t["type"] == "line":
             layout.setdefault("shapes", []).append({"type": "line", "x0": t["x"][0], "x1": t["x"][-1],
                 "y0": t["y"][0], "y1": t["y"][-1], "xref": xref + (" domain" if coord == "x-domain-y-data" else ""),
