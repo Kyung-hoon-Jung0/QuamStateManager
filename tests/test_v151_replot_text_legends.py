@@ -456,9 +456,28 @@ def test_a_multi_row_lab_legend_becomes_one_legend_per_row():
     top, bottom = view["layout"]["legend"], view["layout"]["legend2"]
     box = fig_json["figure_legends"][0]["box"]
     assert top["orientation"] == bottom["orientation"] == "h"
-    assert (top["xanchor"], top["x"]) == (bottom["xanchor"], bottom["x"])
     assert top["yanchor"] == bottom["yanchor"]
     assert top["y"] - bottom["y"] == pytest.approx((box[3] - box[1]) / 2)   # the lab's row pitch
+    for row in (top, bottom):
+        # columns line up: each row starts at the box's left edge, one lab column per entry
+        assert (row["x"], row["xanchor"]) == (pytest.approx(box[0]), "left")
+        assert row.get("entrywidthmode") == "fraction"
+        assert row.get("entrywidth") == pytest.approx((box[2] - box[0]) / 2, abs=1e-6)
+        assert not row.get("borderwidth")            # a frame per row would overlap the next
+
+
+def test_a_framed_multi_row_legend_keeps_no_frame_per_row():
+    def build(fig):
+        ax = fig.subplots()
+        lines = [ax.plot([0, 1], [i, i + 1])[0] for i in range(4)]
+        ax.legend(lines, ["a", "b", "c", "d"], loc="lower center", ncol=2, frameon=True)
+    fig_json = _figure(build)
+    box = fig_json["axes"][0]["legend"]["box"]
+    layout = mpljson_to_plotly(fig_json)["layout"]
+    rows = [layout[k] for k in layout if k.startswith("legend") and isinstance(layout[k], dict)]
+    assert len(rows) == 2 and not any(row.get("borderwidth") for row in rows)
+    # a centred lab legend: its rows still start at its left edge, not each one centred
+    assert all((row["x"], row["xanchor"]) == (pytest.approx(box[0]), "left") for row in rows)
 
 
 @pytest.mark.parametrize("ncol,entries,legends", [(3, 3, 1), (2, 4, 2), (1, 3, 1)])

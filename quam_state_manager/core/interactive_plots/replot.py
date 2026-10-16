@@ -817,7 +817,13 @@ def _split_legend_rows(data: list, layout: dict, grids: dict) -> None:
         names = [name] + [free() for _ in range(rows - 1)]
         for r, row_name in enumerate(names):
             step = {"bottom": rows - 1 - r, "middle": (rows - 1) / 2 - r}.get(anchor, -r)
-            layout[row_name] = {**own, "orientation": "h", "y": y + step * pitch,
+            # every row starts at the lab box's left edge with one column per lab column
+            # (entries a fixed fraction wide), so the columns line up as matplotlib's do;
+            # a frame per row would overlap its neighbours, so the rows are unframed
+            row = {k: v for k, v in own.items() if k not in ("borderwidth", "bordercolor", "bgcolor")}
+            layout[row_name] = {**row, "orientation": "h", "y": y + step * pitch,
+                                "x": box[0], "xanchor": "left",
+                                "entrywidth": round((box[2] - box[0]) / ncol, 6), "entrywidthmode": "fraction",
                                 "font": dict(own.get("font") or {})}
         for k, trace in enumerate(entries):
             if k % rows:
