@@ -101,15 +101,19 @@ def _legend_proxies(leg):
     out = []
     for name, drawn in artists_by_entry():
         lines = [a for a in drawn if isinstance(a, Line2D) and a.get_visible()]
+        if any(isinstance(a, LineCollection) for a in drawn):
+            # An errorbar entry: its caps ("|" / "_" strokes without a line) are neither the
+            # data series' marker nor a data line.
+            lines = [ln for ln in lines if not (ln.get_marker() in ("|", "_") and _no_line(ln))]
+        # An errorbar entry draws its series as a line with marker "none" plus a separate
+        # marker-only line; the marker comes from the second, never "none" read as a circle.
+        stroked = next((ln for ln in lines if not _no_line(ln)), None)
+        marked = next((ln for ln in lines if not _no_marker(ln.get_marker())), None)
         proxy = None
-        caps_only = lines and all(ln.get_marker() in ("|", "_") and
-                                  ln.get_linestyle() in ("None", " ", "", None) for ln in lines)
-        if lines and not caps_only:
-            with_line = next((ln for ln in lines if ln.get_linestyle() not in ("None", " ", "", None)), lines[0])
-            proxy = _line_trace(with_line)
-            # Errorbar cap markers are not the data series' marker.
-            marked = next((ln for ln in lines if ln.get_marker() not in ("None", " ", "", None, "|", "_")), None)
-            if marked is not None and marked is not with_line:
+        if lines:
+            base = stroked if stroked is not None else marked if marked is not None else lines[0]
+            proxy = _line_trace(base)
+            if marked is not None and marked is not base:
                 mark = _line_trace(marked)
                 proxy.update({k: mark[k] for k in mark if k.startswith("marker_")})
                 proxy["mode"] = "lines+markers" if proxy["mode"].startswith("lines") else "markers"
@@ -157,6 +161,16 @@ def _marker_fill(c):
     return "none" if _opacity(c) == 0 else _hex(c)
 
 
+def _no_marker(m):
+    """True for every spelling matplotlib draws as no marker, "none" included (an errorbar's
+    legend line is set to marker "none"; read as a marker it became a circle)."""
+    return m is None or (isinstance(m, str) and m.strip().lower() in ("none", ""))
+
+
+def _no_line(ln):
+    return ln.get_linestyle() in ("None", " ", "", None)
+
+
 def _opacity(c, default=1.0):
     try:
         from matplotlib.colors import to_rgba
@@ -173,8 +187,8 @@ _DASH = {"-": "solid", "--": "dash", "-.": "dashdot", ":": "dot",
 def _line_trace(ln):
     x = ln.get_xdata(orig=False)
     y = ln.get_ydata(orig=False)
-    has_line = ln.get_linestyle() not in ("None", " ", "", None) and ln.get_linewidth() > 0
-    has_marker = ln.get_marker() not in ("None", " ", "", None)
+    has_line = not _no_line(ln) and ln.get_linewidth() > 0
+    has_marker = not _no_marker(ln.get_marker())
     mode = ("lines" if has_line else "") + ("+markers" if has_marker and has_line else "")
     if not mode:
         mode = "markers" if has_marker else "none"
@@ -216,7 +230,7 @@ _MARKER = {"o": "circle", ".": "circle", "s": "square", "^": "triangle-up",
 
 
 def _mpl_marker(m):
-    if m in ("None", " ", "", None):
+    if _no_marker(m):
         return "circle"
     return _MARKER.get(m, "circle")
 

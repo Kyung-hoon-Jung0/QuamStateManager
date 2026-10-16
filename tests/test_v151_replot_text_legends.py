@@ -205,6 +205,33 @@ def test_errorbars_without_a_data_line_and_independent_swatch_alpha():
     assert shown["area"]["marker"]["line"]["color"] == "rgba(0,0,255,0.75)"
 
 
+@pytest.mark.parametrize("fmt,mode,symbol,size", [
+    ("s-", "lines+markers", "square", 6.0), ("-", "lines", None, None), ("D", "markers", "diamond", 6.0),
+    (".-", "lines+markers", "circle", 3.0), ("^--", "lines+markers", "triangle-up", 6.0)])
+def test_an_errorbar_entry_draws_the_lab_marker_and_no_phantom_one(fmt, mode, symbol, size):
+    # The legend draws an errorbar series as a line with marker "none" plus a marker-only
+    # line: "none" read as a marker gave every entry a circle (a square, a diamond, a "."
+    # dot all became full circles, and a plain line grew one).
+    def build(fig):
+        ax = fig.subplots()
+        series = ax.errorbar([0, 1, 2], [1, 2, 1.5], yerr=.1, fmt=fmt, capsize=3)
+        ax.legend([series], ["T2*"])
+    entry = next(t for t in mpljson_to_plotly(_figure(build))["data"] if t.get("name") == "T2*")
+    assert entry["mode"] == mode
+    if symbol is None:
+        assert "marker" not in entry
+    else:
+        assert entry["marker"]["symbol"] == symbol and entry["marker"]["size"] == pytest.approx(size)
+    assert entry["line"]["dash"] == ("dash" if "--" in fmt else "solid")
+
+
+def test_a_line_drawn_with_marker_none_has_no_markers():
+    def build(fig):
+        fig.subplots().plot([0, 1, 2], [0, 1, 0], marker="none", label="fit")
+    trace = next(t for t in mpljson_to_plotly(_figure(build))["data"] if t.get("name") == "fit")
+    assert trace["mode"] == "lines" and "marker" not in trace
+
+
 def test_figure_legend_keeps_only_its_explicit_entries():
     def build(fig):
         ax = fig.subplots()
