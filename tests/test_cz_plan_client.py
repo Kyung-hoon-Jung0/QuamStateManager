@@ -18,7 +18,9 @@ def test_cz_plan_client():
     # v1.4.1: 31 -> 35, include the production render queue and panel invalidation pins.
     # v1.4.1 (A14): 35 -> 61, the notes box / status chip / caveat lines (D1), the flux figure's
     # loss panel (D2) and the card's scan-loss and defects-touched lines (D3).
-    assert "61 assertions passed" in result.stdout
+    # v1.4.1 (A14 fix3): 61 -> 67, the merged and provenance-worded staleness, the loss panel's clip tick, the
+    # failed load clearing the notes, the re-ask budget's final line, the Last set column's "saved in".
+    assert "67 assertions passed" in result.stdout
 
 
 def test_cz_chip_map_client():
@@ -35,7 +37,10 @@ def test_cz_chip_map_client():
     # v1.4.1: 17 -> 34, include numeric widths, production hover/purge and render queue pins.
     # v1.4.1 (A14): 34 -> 76, the chip drawing (shear order, leaders, logical / none), the edge
     # colouring, bar and partner labels, selection and highlight, the trace bound and the loss.
-    assert "76 assertions passed" in result.stdout
+    # v1.4.1 (A14 fix3): 76 -> 95, the map following the selected operation, the drawing height and bar
+    # labels by geometry, coinciding segments side by side, merged staleness, the no-scan scale, escaped ticks,
+    # the content-match wording and the unchecked chip identity.
+    assert "95 assertions passed" in result.stdout
 
 
 def test_the_page_reads_title_status_figures_card_then_the_collapsed_notes(tmp_path):

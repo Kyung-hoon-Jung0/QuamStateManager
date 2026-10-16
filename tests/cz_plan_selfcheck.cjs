@@ -258,7 +258,10 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
                 const ans = {json: () => Promise.resolve(JSON.parse(JSON.stringify(env.loss)))};
                 return env.holdLoss ? new Promise(res => { env.held = () => res(ans); }) : Promise.resolve(ans);
             }
-            if (url.startsWith('/cz-plan/history')) return Promise.resolve({json: () => Promise.resolve({ok: true, mode: 'ledger', ops: {}})});
+            if (url.startsWith('/cz-plan/history')) {
+                env.histories = (env.histories || 0) + 1;
+                return Promise.resolve({json: () => Promise.resolve(JSON.parse(JSON.stringify(opts.history || {ok: true, mode: 'ledger', ops: {}})))});
+            }
             return new Promise(res => env.data.push({op: decodeURIComponent(url.split('op=')[1]), res}));
         };
         ['topo-graph.js', 'cz-map.js', 'cz-plan.js'].forEach(f => W.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static', f), 'utf8')));
@@ -281,8 +284,11 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     function rich(extra) {
         const body = payload(SEL, true);
         body.calibration.warning_count = 3;
-        body.calibration.warning_groups = [{qubit: 'qa', runs: [{run_id: 60, t: '2026-01-05T08:09:10Z', fields: ['f_01', 'anharmonicity']},
-                                                               {run_id: 50, t: '2026-01-03T00:00:00Z', fields: ['z.joint_offset']}]}];
+        // v1.4.1 (A14 fix3 P1-2): the groups carry the route's words for each run (proven writer or saved state)
+        body.calibration.warning_groups = [{qubit: 'qa', runs: [{run_id: 60, t: '2026-01-05T08:09:10Z', fields: ['f_01', 'anharmonicity'],
+                                                                provenance: 'run_proven', words: 'changed by run #60'},
+                                                               {run_id: 50, t: '2026-01-03T00:00:00Z', fields: ['z.joint_offset'],
+                                                                provenance: 'run_saved', words: 'first seen in run #50\'s saved state'}]}];
         body.notes = ['route note', 'wave note', 'entry unreadable'];
         body.notes_figure = ['both', 'time', 'status'];
         body.info = ['waveform from the transcription of the lab pulse class'];
@@ -301,7 +307,9 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
           E.text('czp-notes-summary') === 'Notes — 3 inputs changed after this operation was set · 1 note on how the figures were drawn',
           'D1: a status chip in the title row counts the staleness; the notes box is collapsed and its summary counts both kinds');
     const items = Array.from(E.D.querySelectorAll('#czp-notes li')).map(li => li.textContent);
-    check(items[0].startsWith('qa run #60 (2026-01-05 08:09 UTC): f_01, anharmonicity; run #50') &&
+    // v1.4.1 (A14 fix3 P1-2): "qa run #60 (...)" -> the route's words: a proven writer "changed by run #60", a run
+    // whose saved state only carried the value first "first seen in run #50's saved state".
+    check(items[0] === "qa changed by run #60 (2026-01-05 08:09 UTC): f_01, anharmonicity; first seen in run #50's saved state (2026-01-03 00:00 UTC): z.joint_offset" &&
           (items[1] || '').includes('waveform from the transcription') && E.D.querySelectorAll('#czp-notes li.czp-note-muted').length === 1,
           'D1: staleness grouped per qubit and run, newest run first, then the drawing notes, muted');
     check(E.text('czp-flux-caveat') === 'route noteqa: a qubit note' && !E.D.getElementById('czp-flux-caveat').hidden &&
@@ -325,21 +333,31 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
           card2.includes('excursion 4.9200 GHz – 5.0000 GHz from the gate\'s own waveform'), 'D3: the defects the gate touches, strong flagged, with the axis caveat');
     check(card2.split('Scan loss at the operating frequency').length === 2, 'D3: a member that stays at idle gets no scan-loss line');
     const fx = E.flux();
-    const side = fx.traces.filter(t => t.xaxis === 'x2');
+    // v1.4.1 (A14 fix3 P2-2): every x2 trace -> the filled ones (the panel now also carries its clip ticks)
+    const side = fx.traces.filter(t => t.xaxis === 'x2' && t.fill);
     check(fx.layout.xaxis.domain.join() === '0,0.76' && fx.layout.xaxis2.domain.join() === '0.8,1' && fx.layout.xaxis2.range.join() === '0,25' &&
           side.length === 1 && side[0].fill === 'toself' && side[0].x.slice(0, 5).join() === '0,1,25,0,0' && side[0].line.color === '#111',
           'D2: the flux figure carries the qubits\' scan loss in a right panel, in their colours, clipped to the map\'s scale');
     check(fx.layout.shapes.some(sh => sh.name === 'operating:qa' && sh.y0 === 4.92 && sh.x0 === 0.8), 'D2: the operating frequency is a tick across the loss panel');
+    const clip = fx.traces.find(t => t.xaxis === 'x2' && t.mode === 'markers');
+    check(clip && clip.x.join() === '25' && clip.y.join() === '4.9' && clip.marker.symbol === 'triangle-right' &&
+          clip.text[0].includes('qa run #7: loss 40.0 % at 4.9000 GHz') && clip.text[0].includes('past the panel scale (0–25 %): clipped') &&
+          fx.layout.xaxis2.title.text === 'scan loss (0–25 %)',
+          'fix3 P2-2: a scan past the panel scale gets an edge tick whose hover gives the true loss; the axis title names the scale');
     const fluxRenders = E.renders.filter(x => x.id === 'czp-flux').length;
     const scaleSel = E.D.getElementById('czp-map-scale');
     scaleSel.value = '0.5'; scaleSel.dispatchEvent(new E.W.Event('change', {bubbles: true})); await wait(30);
     check(E.renders.filter(x => x.id === 'czp-flux').length === fluxRenders + 1 && E.flux().layout.xaxis2.range.join() === '0,50' &&
           E.flux().traces.find(t => t.xaxis === 'x2').x[2] === 40 && E.data.length === 2, 'D2: the loss scale select redraws the panel at its scale, without a request');
+    check(!E.flux().traces.some(t => t.xaxis === 'x2' && t.mode === 'markers') && E.flux().layout.xaxis2.title.text === 'scan loss (0–50 %)',
+          'fix3 P2-2: inside a wider scale nothing is clipped and the title follows the scale');
     // a failed load: the reason is a visible line, the caveats and the chip go
     E.root.querySelector('.czp-row').dispatchEvent(new E.W.MouseEvent('click', {bubbles: true})); await wait(10);
     await E.answer({ok: false, error: 'Unavailable operation'});
     check(!E.D.getElementById('czp-status').hidden && E.text('czp-status').includes('Not drawn: Unavailable operation') &&
           E.D.getElementById('czp-flux-caveat').hidden && chip.hidden, 'D1: a failed load is a visible status line, never hidden in the box');
+    check(E.D.querySelectorAll('#czp-notes li').length === 0 && E.text('czp-notes-summary') === 'Notes — none' && E.text('czp-card') === '',
+          'fix3 P2-4: a failed load leaves none of the previous operation\'s notes or card under its title');
     E.root.querySelector('.czp-row').dispatchEvent(new E.W.MouseEvent('click', {bubbles: true})); await wait(10);
     const nowave = rich({trajectory: [null, null]});
     nowave.gate_loss[0].scan = {run_id: 7, interaction_time_ns: 100, loss: null, reason: 'not measured at this frequency (a 40.0 MHz gap)',
@@ -348,7 +366,8 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     check(E.text('czp-time').includes('Not drawn') && E.text('czp-time').includes('the reason is above the figure') && !E.text('czp-time').includes('see the notes above') &&
           !E.text('czp-status').includes('Unavailable operation'),
           'D1: an empty time figure points at its own caveat line, not at notes above');
-    check(E.text('czp-card').includes('Scan loss at the operating frequency: not measured at this frequency (run #7; not measured at this frequency (a 40.0 MHz gap))') &&
+    // v1.4.1 (A14 fix3): the reason repeated the headline ("not measured ... (run #7; not measured ... (a gap))") -> only what it adds
+    check(E.text('czp-card').includes('Scan loss at the operating frequency: not measured at this frequency (run #7; a 40.0 MHz gap)') &&
           E.text('czp-card').includes('piece 0: gap; piece 1: 2.0 %'), 'D3: not measured at this frequency, every bracketing piece listed');
     E.dm.window.close();
     // the loss answer arrives after the operation: the flux figure gains its panel without a request
@@ -365,18 +384,24 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
           R5.D.getElementById('czp-status').hidden && R5.D.getElementById('czp-stale-chip').hidden && !R5.D.getElementById('czp-notes-box').open,
           'F1 on the real answer: the transcription notes sit in the collapsed box, nothing between the title and the figures');
     check(R5.text('czp-card').includes('Scan loss at the operating frequency: 0.5 % (run #1909') &&
-          R5.text('czp-card').includes('Scan loss at the operating frequency: not measured at this frequency (run #1905)'),
+          // v1.4.1 (A14 fix3): fixtures regenerated after the scan-range reason (33e874a1) -> the line names the range the scan covers
+          R5.text('czp-card').includes('Scan loss at the operating frequency: not measured at this frequency (run #1905; the scan covers 4.241-4.761 GHz)'),
           'D3 on the real answer: the mover with a reading and the one outside its scan');
-    check(R5.flux().traces.filter(t => t.xaxis === 'x2').length === 2, 'D2 on the real answer: both qubits\' scans beside the flux figure');
+    check(R5.flux().traces.filter(t => t.xaxis === 'x2' && t.fill).length === 2, 'D2 on the real answer: both qubits\' scans beside the flux figure');
     R5.dm.window.close();
     const R21 = await detail({sel: 'qubit_pairs.qA2-qA1.macros.cz_SNZ', map: FX('map_rig21.json'), loss: FX('loss_rig21.json')});
     await R21.answer(FX('data_rig21.json'));
     check(R21.D.getElementById('czp-stale-chip').textContent === '2 inputs changed after this operation was set' &&
-          R21.text('czp-notes').includes('qA2 run #3450 (2026-10-09 09:36 UTC): f_01'), 'D1 on the real answer: the count chip and the grouped list');
+          // v1.4.1 (A14 fix3 P1-2): "qA2 run #3450 (...)" twice -> one merged line in the route's words (#3450 is a saved state)
+          R21.D.querySelector('#czp-notes li.zline-note-warn').textContent === "qA2, qA1 first seen in run #3450's saved state (2026-10-09 09:36 UTC): f_01" &&
+          R21.D.querySelectorAll('#czp-notes li.zline-note-warn').length === 1, 'D1 on the real answer: the count chip and the grouped list');
+    check(R21.text('czp-card').includes("Last setrun #3450 · 2026-10-09 09:36:28 UTC (first seen in that run's saved state; writer not proven)") &&
+          !R21.text('czp-card').includes('run_saved') && !/changed by run #3450|\(run #3450\)/.test(R21.text('czp-notes')),
+          'fix3 P1-2 on the real answer: a run that only carried the values first is never named as their writer (box and card)');
     check(/Defects touched during the gate: 5\.5506 GHz \(FWHM 9\.6 MHz, peak 65\.6 %\) strong/.test(R21.text('czp-card')),
           'D3 on the real answer: the strong defect the gate crosses');
     check(R21.text('czp-card').includes('Scan loss at the operating frequency: -1.1 % (below zero: no loss resolved)') &&
-          R21.D.querySelector('#czp-notes li strong.czp-note-q').textContent === 'qA2',
+          R21.D.querySelector('#czp-notes li strong.czp-note-q').textContent === 'qA2, qA1',
           'D3: a reading below zero says no loss was resolved; D1: the qubit name in the notes keeps its spelling');
     R21.dm.window.close();
     // the change history was still being built: the chip, the box and the card fill in when it is ready
@@ -393,6 +418,34 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
           B.text('czp-card').includes('3 inputs changed after this operation was set') &&
           B.renders.filter(x => x.id === 'czp-flux').length === fluxN, 'D1: the ready history fills the chip and the card without redrawing the figures');
     B.dm.window.close();
+    // fix3 P2-5: the history is still being built when the re-asks run out -- a final line, never "fills in" forever
+    const bld = rich();
+    Object.assign(bld.calibration, {mode: 'building', warning_count: 0, warning_groups: [], warnings: [], last_set: null,
+                                    note: 'The change history is being built. It shows here when it is complete.'});
+    const G2 = await detail({sel: SEL, map: curveMap, loss: lossAns, timers: true, history: {ok: true, mode: 'building', ops: {}}});
+    await G2.answer(bld);
+    const building0 = G2.text('czp-card').includes('It shows here when it is complete') &&
+        G2.text('czp-history-note').includes('fills in when it is ready');
+    let answered = G2.data.length;
+    for (let k = 0; k < 60 && G2.W._timers.length; k++) {
+        G2.W._timers.shift()(); await wait(5);
+        if (G2.data.length > answered) { await G2.answer(bld); answered = G2.data.length; }
+    }
+    const GAVE = 'still being prepared after a minute; reload the page to see when each operation was set';
+    check(building0 && G2.W._timers.length === 0 && G2.data.length === 21 && G2.histories === 21 &&
+          G2.text('czp-card').includes(GAVE) && !G2.text('czp-card').includes('It shows here when it is complete') &&
+          G2.text('czp-history-note').includes(GAVE) && !G2.text('czp-history-note').includes('fills in'),
+          'fix3 P2-5: after 20 re-asks the card and the table note end on a final line');
+    G2.dm.window.close();
+    // fix3 P1-2: the table's Last set names a saved state as one, a proven writer plainly
+    const T = await detail({sel: SEL, map: curveMap, loss: lossAns, history: {ok: true, mode: 'ledger', ops: {
+        [SEL]: {last_set: {run_id: 9, t: '2026-01-02T03:04:05Z', provenance: 'run_saved'}, warnings: []}}}});
+    await wait(20);
+    const td = T.root.querySelector('td[data-last]');
+    check(td.textContent === 'saved in run #9 · 2026-01-02 03:04:05 UTC' &&
+          td.querySelector('span').getAttribute('title') === "first seen in that run's saved state; writer not proven",
+          'fix3 P1-2: the Last set column says "saved in" for a run that only carried the amplitude first');
+    T.dm.window.close();
     console.log(checks + ' assertions passed');
     dom.window.close();
 })().catch(e => { console.error(e); dom.window.close(); process.exitCode = 1; });

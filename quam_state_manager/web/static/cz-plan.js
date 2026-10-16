@@ -13,6 +13,8 @@
 
     var seq = 0, hseq = 0;
     var NOTES_OPEN_KEY = 'czp-notes-open';
+    var RETRY_N = 20, RETRY_MS = 3000;     // re-asks while the chip's change history is being built
+    var GAVE_UP = 'This chip\'s change history was still being prepared after a minute; reload the page to see when each operation was set.';
 
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -83,14 +85,44 @@
             var parts = String(w.path || '').split('.'), q = parts[0] === 'qubits' ? parts[1] : '?';
             var field = parts[0] === 'qubits' ? parts.slice(2).join('.') : String(w.path || '');
             if (!by[q]) { by[q] = {}; order.push(q); }
-            var key = String(w.run_id) + '|' + (w.t || '');
-            (by[q][key] = by[q][key] || { run_id: w.run_id, t: w.t, fields: [] }).fields.push(field);
+            var key = String(w.run_id) + '|' + (w.t || '') + '|' + (w.provenance || '');
+            (by[q][key] = by[q][key] || { run_id: w.run_id, t: w.t, provenance: w.provenance, words: w.words, fields: [] }).fields.push(field);
         });
         return order.map(function (q) {
             var runs = Object.keys(by[q]).map(function (k) { return by[q][k]; });
             runs.sort(function (a, b) { return String(b.t || '').localeCompare(String(a.t || '')); });
             return { qubit: q, runs: runs };
         });
+    }
+
+    /* fix3 P1-2: how a change is named -- the route's words (cz_gate_plan.change_words: "changed
+       by run #M" only for a run the ledger proves wrote it, "first seen in run #M's saved state"
+       for one that only carried it first); an answer without them names the run neutrally. */
+    function changeWords(r) {
+        if (r.words) return r.words;
+        return r.run_id != null ? 'seen in run #' + r.run_id : 'changed';
+    }
+    /* Members whose staleness reads the same (same runs, same fields) share one line. */
+    function mergeGroups(groups) {
+        var out = [], at = {};
+        groups.forEach(function (g) {
+            var key = JSON.stringify((g.runs || []).map(function (r) {
+                return [r.run_id, r.t, r.provenance || null, (r.fields || []).slice().sort()];
+            }));
+            if (at[key] != null) { out[at[key]].qubits.push(g.qubit); return; }
+            at[key] = out.length;
+            out.push({ qubits: [g.qubit], runs: g.runs || [] });
+        });
+        return out;
+    }
+    /* The Last set provenance in words: only run_proven names a writer. */
+    function setWords(p, proven) {
+        var prov = p && p.provenance;
+        if (prov === 'run_proven') return proven ? 'written by that run' : 'writer not proven';
+        if (prov === 'run_saved') return 'first seen in that run\'s saved state; writer not proven';
+        if (prov === 'run_uncertain_chip') return 'saved by a run whose chip is uncertain; writer not proven';
+        if (prov === 'sm') return 'set in SM';
+        return 'writer not proven';
     }
 
     function notesOpen() {
@@ -141,9 +173,9 @@
         }
         var ul = root.querySelector('#czp-notes');
         if (ul) {
-            ul.innerHTML = groups.map(function (g) {
-                return '<li class="zline-note-warn"><strong class="czp-note-q">' + esc(g.qubit) + '</strong> ' + g.runs.map(function (r) {
-                    return (r.run_id != null ? 'run #' + esc(r.run_id) : 'run unknown') + ' (' + esc(stamp(r.t)) + '): ' + esc((r.fields || []).join(', '));
+            ul.innerHTML = mergeGroups(groups).map(function (g) {
+                return '<li class="zline-note-warn"><strong class="czp-note-q">' + esc(g.qubits.join(', ')) + '</strong> ' + g.runs.map(function (r) {
+                    return esc(changeWords(r)) + ' (' + esc(stamp(r.t)) + '): ' + esc((r.fields || []).join(', '));
                 }).join('; ') + '</li>';
             }).concat(info.map(function (t) {
                 return '<li class="zline-note-info czp-note-muted"><strong>note</strong> ' + esc(t) + '</li>';
@@ -167,6 +199,7 @@
         var loss = window.CzMap ? window.CzMap.loss(root) : null;
         var scale = window.CzMap ? window.CzMap.scale(root) : 0.25;
         var curves = (loss && loss.curves) || {}, traces = [], shapes = [];
+        var clip = { x: [], y: [], t: [], c: [] };
         d.qubits.forEach(function (q, k) {
             var e = curves[q.name], c = e && e.scan;
             if (!c) return;
@@ -179,6 +212,16 @@
                         run.forEach(function (s) { xs.push(s[0]); ys.push(s[1]); ts.push(s[2]); });
                         xs.push(0); ys.push(run[run.length - 1][1]); ts.push(null);
                         xs.push(null); ys.push(null); ts.push(null);
+                        // fix3 P2-2: a stretch past the panel's scale gets an edge tick at its peak
+                        var j = 0;
+                        while (j < run.length) {
+                            if (run[j][3] <= scale) { j++; continue; }
+                            var top = j;
+                            while (j < run.length && run[j][3] > scale) { if (run[j][3] > run[top][3]) top = j; j++; }
+                            clip.x.push(100 * scale); clip.y.push(run[top][1]); clip.c.push(C.q[k]);
+                            clip.t.push(esc(q.name) + ' run #' + esc(c.run_id) + ': loss ' + pct(run[top][3]) + ' at ' + run[top][1].toFixed(4) +
+                                        ' GHz<br>past the panel scale (0–' + Math.round(100 * scale) + ' %): clipped');
+                        }
                     }
                     run = [];
                 }
@@ -186,7 +229,7 @@
                     var f = pc.frequency_hz[j], l = (pc.loss || [])[j];
                     if (typeof f !== 'number' || typeof l !== 'number' || !isFinite(f) || !isFinite(l)) { flush(); continue; }
                     run.push([100 * Math.min(scale, Math.max(0, l)), f / 1e9,
-                              esc(q.name) + ' run #' + esc(c.run_id) + '<br>' + (f / 1e9).toFixed(4) + ' GHz · loss ' + pct(l)]);
+                              esc(q.name) + ' run #' + esc(c.run_id) + '<br>' + (f / 1e9).toFixed(4) + ' GHz · loss ' + pct(l), l]);
                 }
                 flush();
             });
@@ -196,6 +239,11 @@
                           hovertemplate: '%{text}<extra></extra>', showlegend: false });
         });
         if (!traces.length) return null;
+        if (clip.x.length) {
+            traces.push({ type: 'scatter', mode: 'markers', xaxis: 'x2', x: clip.x, y: clip.y, text: clip.t, showlegend: false,
+                          marker: { symbol: 'triangle-right', size: 8, color: clip.c, line: { width: 1, color: C.muted } },
+                          hovertemplate: '%{text}<extra></extra>', name: 'clipped', cliponaxis: false, _czpClip: true });
+        }
         d.row.lines.forEach(function (ln, k) {
             var f = ln.point && ln.point.frequency_hz;
             if (!ln.moves || f == null) return;
@@ -306,8 +354,8 @@
             traces = traces.concat(side.traces);
             over.shapes = shapes.concat(side.shapes);
             over.xaxis2 = { domain: [0.80, 1], anchor: 'y', range: [0, 100 * side.scale], fixedrange: true,
-                            title: { text: 'scan loss (%)', font: { size: 11 } }, zeroline: false };
-            el.setAttribute('data-loss-panel', String(side.traces.length));
+                            title: { text: 'scan loss (0–' + Math.round(100 * side.scale) + ' %)', font: { size: 11 } }, zeroline: false };
+            el.setAttribute('data-loss-panel', String(side.traces.filter(function (t) { return !t._czpClip; }).length));
         } else {
             el.removeAttribute('data-loss-panel');
         }
@@ -379,6 +427,12 @@
         });
     }
 
+    /* What a "not measured at this frequency (...)" reason adds after the headline that already
+       says it: "the scan covers 4.241-4.761 GHz", not the headline twice. */
+    function notMeasuredWhy(reason) {
+        return String(reason || '').replace(/^not measured at this frequency\s*/, '').replace(/^\((.*)\)$/, '$1');
+    }
+
     /* The scan's loss at the operating frequency and the stored defects the gate's own
        excursion touches ([derived] on the server: cz_loss.loss_at / defects_swept). */
     function gateLossHtml(gl) {
@@ -394,7 +448,7 @@
                        return 'piece ' + esc(p.piece) + ': ' + (p.loss != null ? pct(p.loss) : esc(p.reason || 'not measured')); }).join('; ') + '</small>' : '') + '</p>');
         } else {
             h.push('<p class="czp-card-loss"><strong>Scan loss at the operating frequency:</strong> ' +
-                   (s.run_id != null ? 'not measured at this frequency <small class="muted">(run #' + esc(s.run_id) + (s.reason && s.reason !== 'not measured at this frequency' ? '; ' + esc(s.reason) : '') + ')</small>'
+                   (s.run_id != null ? 'not measured at this frequency <small class="muted">(run #' + esc(s.run_id) + (notMeasuredWhy(s.reason) ? '; ' + esc(notMeasuredWhy(s.reason)) : '') + ')</small>'
                                      : '<span class="muted">' + esc(s.reason || 'no scan') + '</span>') +
                    ((s.pieces || []).length ? '<br><small class="muted">' + s.pieces.map(function (p) {
                        return 'piece ' + esc(p.piece) + ': ' + (p.loss != null ? pct(p.loss) : esc(p.reason || 'not measured')); }).join('; ') + '</small>' : '') + '</p>');
@@ -451,7 +505,8 @@
                 (r.plan.reasons.length ? '<br><small class="muted">' + esc(r.plan.reasons.join(', ')) + '</small>' : '') + '</dd>' : '') +
             (r.interaction_frequency_hz ? '<dt>Stored interaction frequency</dt><dd>' + fmtGHz(r.interaction_frequency_hz) + '</dd>' : '') +
             '<dt>Fidelity</dt><dd>' + (fl.length ? fl.join('<br>') : '—') + '</dd>' +
-            '<dt>Last set</dt><dd>' + (cal.last_set ? esc(when(cal.last_set)) + (cal.proven && cal.last_set.provenance === 'run_proven' ? ' <small class="muted">(written by that run)</small>' : ' <small class="muted">(' + esc(cal.last_set.provenance || 'writer not proven') + ')</small>') :
+            '<dt>Last set</dt><dd>' + (cal.last_set ? esc(when(cal.last_set)) + ' <small class="muted">(' +
+                esc(setWords(cal.last_set, cal.proven)) + ')</small>' :
                 '<span class="muted">unknown' + (cal.note ? ' — ' + esc(cal.note) : '') + '</span>') + '</dd>' +
             (count ? '<dt>Staleness</dt><dd><a href="#czp-notes-box" class="czp-notes-link czp-warn-text">' +
                 plural(count, 'input changed', 'inputs changed') + ' after this operation was set</a></dd>' : '') +
@@ -475,6 +530,11 @@
         ['#czp-flux-caveat', '#czp-time-caveat'].forEach(function (s) { var e = root.querySelector(s); if (e) { e.textContent = ''; e.hidden = true; } });
         var chip = root.querySelector('#czp-stale-chip');
         if (chip) chip.hidden = true;
+        // fix3 P2-4: nothing of the previous operation stays under the failed one's title
+        var ul = root.querySelector('#czp-notes'), sum = root.querySelector('#czp-notes-summary'), card = root.querySelector('#czp-card');
+        if (ul) ul.innerHTML = '';
+        if (sum) sum.textContent = 'Notes — none';
+        if (card) card.innerHTML = '';
         root._czLast = null;
     }
 
@@ -531,7 +591,16 @@
        and refresh only what it feeds (the staleness chip, the notes box, the card) while the
        same selection is shown -- the figures do not depend on it. */
     function recheck(root, op, token, tries) {
-        if (tries >= 20) return;
+        if (tries >= RETRY_N) {
+            // fix3 P2-5: the budget is spent -- the card says so instead of "being built" forever
+            var last = root._czLast;
+            if (!last || !active(root, token)) return;
+            var d = JSON.parse(JSON.stringify(last.d));
+            d.calibration = Object.assign({}, d.calibration, { mode: 'gave_up', note: GAVE_UP });
+            renderCard(root, d);
+            root.setAttribute('data-history-gave-up', '1');
+            return;
+        }
         setTimeout(function () {
             if (!active(root, token)) return;
             fetch('/cz-plan/data?op=' + encodeURIComponent(op), { headers: { 'Accept': 'application/json' } })
@@ -565,8 +634,12 @@
             .then(function (h) {
                 if (my !== hseq || !document.body.contains(root)) return;
                 if (h.mode === 'building' || h.mode === 'preparing') {
-                    if (note) note.textContent = 'This chip\'s change history is being prepared; the Last set column fills in when it is ready.';
-                    if ((tries || 0) < 20) setTimeout(function () { loadHistory(root, (tries || 0) + 1); }, 3000);
+                    if ((tries || 0) < RETRY_N) {
+                        if (note) note.textContent = 'This chip\'s change history is being prepared; the Last set column fills in when it is ready.';
+                        setTimeout(function () { loadHistory(root, (tries || 0) + 1); }, RETRY_MS);
+                    } else if (note) {
+                        note.textContent = GAVE_UP;       // fix3 P2-5: a final line, not "fills in" forever
+                    }
                     return;
                 }
                 if (note) note.textContent = h.mode === 'ledger' ? '' : (h.note || 'This chip has no change history, so when each operation was set is unknown.');
@@ -579,7 +652,10 @@
                             (first ? ' · first recorded only' : '') + '</span>';
                         return;
                     }
-                    td.innerHTML = esc(when(o.last_set)) + (o.warnings.length ? ' <span class="czp-warn-text" title="' +
+                    // fix3 P1-2: a run that only carried the value first is not named as its writer
+                var saved = o.last_set.provenance === 'run_saved' || o.last_set.provenance === 'run_uncertain_chip';
+                td.innerHTML = (saved ? '<span title="' + esc(setWords(o.last_set, false)) + '">saved in ' + esc(when(o.last_set)) + '</span>'
+                                      : esc(when(o.last_set))) + (o.warnings.length ? ' <span class="czp-warn-text" title="' +
                         esc(o.warnings.map(function (w) { return w.text; }).join('\n')) + '">⚠ ' + o.warnings.length + ' newer</span>' : '');
                 });
                 root.setAttribute('data-history', h.mode || '');
