@@ -143,7 +143,9 @@ def test_loss_at_refuses_a_gap_and_says_not_measured():
     assert five["loss"] is None and five["reason"].startswith(L.NOT_MEASURED) and "4.0 MHz gap" in five["reason"]
     assert [p["piece"] for p in five["pieces"]] == [1]
     outside = L.loss_at(PIECES, 9e6)
-    assert outside == {"loss": None, "pieces": [], "reason": L.NOT_MEASURED}
+    # outside every piece the reason names what the scan does cover
+    assert outside["loss"] is None and outside["pieces"] == []
+    assert outside["reason"].startswith(L.NOT_MEASURED) and "the scan covers" in outside["reason"]
 
 
 def test_defects_swept_counts_a_defect_within_half_its_width_of_the_excursion():

@@ -223,8 +223,9 @@
                     line: { color: col, width: 2.2 }, hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>' + hoverEsc(s.model_kind) + '</extra>' });
             }
             if (c.quad_hz.some(function (v) { return v != null; })) {
+                // beside a fitted model the quad term is the secondary curve: it never sets the frequency span
                 traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.quad_hz.map(ghz), name: q.name + ' · quad-term estimate',
-                    line: { color: col, width: 1.4, dash: c.model_hz ? 'dash' : 'solid' },
+                    line: { color: col, width: 1.4, dash: c.model_hz ? 'dash' : 'solid' }, _czpSecondary: !!c.model_hz,
                     hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>quad-term estimate</extra>' });
             }
             traces.push({ type: 'scatter', mode: 'markers', x: [0], y: [ghz(s.f01_hz)], name: q.name + ' idle', showlegend: false,
@@ -287,15 +288,21 @@
             yaxis: { title: { text: 'frequency (GHz)' } },
             shapes: shapes, annotations: annotations, hovermode: 'closest'
         };
+        // The frequency span follows what is read here -- the main curves, the idle and operating points
+        // and the resonance / plan levels; a quad-term estimate drawn beside a fitted model leaves the
+        // span (it ran to ~10 GHz and flattened the operating region); the loss panel is cut to the span.
+        var lo = Infinity, hi = -Infinity;
+        traces.forEach(function (t) {
+            if (t._czpSecondary) return;
+            (t.y || []).forEach(function (v) { if (v != null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+        });
+        shapes.forEach(function (s) { if (s.yref === 'y' && s.type === 'line') { lo = Math.min(lo, s.y0); hi = Math.max(hi, s.y0); } });
+        if (isFinite(lo) && isFinite(hi)) {
+            var pad = Math.max(0.01, (hi - lo) * 0.04);
+            over.yaxis.range = [lo - pad, hi + pad];
+        }
+        el.setAttribute('data-yspan', isFinite(lo) && isFinite(hi) ? lo.toFixed(4) + ' ' + hi.toFixed(4) : '');
         if (side) {
-            // the main figure keeps its own frequency span; the loss panel is cut to it
-            var lo = Infinity, hi = -Infinity;
-            traces.forEach(function (t) { (t.y || []).forEach(function (v) { if (v != null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }); });
-            shapes.forEach(function (s) { if (s.yref === 'y' && s.type === 'line') { lo = Math.min(lo, s.y0); hi = Math.max(hi, s.y0); } });
-            if (isFinite(lo) && isFinite(hi)) {
-                var pad = Math.max(0.01, (hi - lo) * 0.04);
-                over.yaxis.range = [lo - pad, hi + pad];
-            }
             traces = traces.concat(side.traces);
             over.shapes = shapes.concat(side.shapes);
             over.xaxis2 = { domain: [0.80, 1], anchor: 'y', range: [0, 100 * side.scale], fixedrange: true,

@@ -198,6 +198,12 @@ def loss_at(pieces: list[dict], f_hz: float) -> dict:
         out["loss"], out["reason"] = max(found), None
     elif out["pieces"]:
         out["reason"] = next((p["reason"] for p in out["pieces"] if p["reason"]), NOT_MEASURED)
+    else:
+        # outside every piece: say what the scan does cover, so "not measured" is not read as a failure
+        spans = [(float(np.nanmin(x)), float(np.nanmax(x))) for x in freqs if np.isfinite(x).any()]
+        if spans:
+            out["reason"] = "%s (the scan covers %s GHz)" % (
+                NOT_MEASURED, ", ".join("%.3f-%.3f" % (a / 1e9, b / 1e9) for a, b in sorted(spans)))
     return out
 
 
