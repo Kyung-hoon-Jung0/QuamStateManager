@@ -1091,3 +1091,29 @@ Chip Status gains a CZ gate plan view; Z-line distortion moves under Chip Status
     the coefficient's sign; conflicting evidence shows "sign convention unclear" instead of a number. Each estimate is
     checked against the fitted arc where one exists, and the view flags operations beyond the quadratic range.
 - **Pulses**: the two-flux SNZ pulse class previews sample for sample like the lab's own class.
+
+### v1.5.0 update (2026-10-16)
+
+The version stays 1.5.0. Customer feedback on the CZ gate plan and the Datasets panel.
+
+- **CZ gate plan -- the chip under the map** (cf. arXiv:2112.03708 Fig. 6c): the chip frequency map now draws the
+  chip below its columns. Each qubit's column sits above its place on the chip ("By chip position", the new default
+  order), joined by a thin leader line; each pair is a bar in the colour of its CZ lines in the columns (a colour is
+  never shared by two pairs at one qubit), labelled with its operating frequency. Hovering a bar, a column segment or
+  a table row highlights that pair; the selected operation stays outlined; a click opens it below. The map fits the
+  window height (the chip stays visible at 1280x800). A chip without positions gets a labelled logical layout, or no
+  drawing with a one-line reason.
+- **CZ gate plan -- measured population loss**: where the chip's own data folders hold population-loss runs, each
+  column shows the newest scan's measured loss as a gray area (scale 0-25 % as in the paper, or 0-50 / 0-100 %),
+  the run the stored defects came from as a dotted outline (found by content; "not in the data folder" or
+  "ambiguous" when it cannot be named), and the stored defects as short marks. A note line per qubit appears only
+  when something is off (the qubit idled elsewhere at the scan, the flux model changed after it).
+- **CZ gate plan -- per operation**: the figures now come right under the title; the notes (staleness and how the
+  figures were drawn) are in a collapsed box below the card, grouped per qubit and run, with a count chip by the
+  title. Caveats that explain a figure stay visible under it. The frequency-vs-flux figure gains a loss panel beside
+  it and keeps its span on the operating region; the card adds the scan loss at the operating frequency (or the range
+  the scan covers) and the defects the gate touches.
+- **Datasets**: a figure keeps its full size when the panel is resized (saved and reproduced figures no longer
+  shrink or grow with the panel height; the pane scrolls).
+- **Keyboard**: with a run of the left data list clicked, Up/Down step the runs only; the open page's table (e.g. the
+  CZ gate plan's operation table) no longer moves and scrolls along with them.
