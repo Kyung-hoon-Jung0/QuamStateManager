@@ -520,7 +520,7 @@
         traces.push({ type: 'scatter', mode: 'lines', x: [], y: [], yaxis: drawing ? 'y2' : 'y', hoverinfo: 'skip', showlegend: false,
                       opacity: 0.45, line: { color: 'rgba(0,0,0,0)', width: 14 }, meta: 'highlight-bar' });
         if (G.fillX.length || O.lineX.length) {
-            annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false,
+            annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false, yshift: 8,
                                text: 'loss 0–' + Math.round(100 * scale) + ' %', font: { size: 9, color: muted }, name: 'scale' });
         }
 

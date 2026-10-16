@@ -14791,6 +14791,7 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 /* Chip Status > CZ gate plan */
 .czp-lede { margin: 0 0 0.5rem; font-size: 0.9rem; position: relative; }
 .czp-help { display: inline-block; margin: 0 0 0 0.25rem; vertical-align: baseline; }
+.czp-help[open] > summary { margin-bottom: 0; }
 .czp-help > summary { display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem;
     border: 1px solid var(--pico-muted-border-color, #888); border-radius: 50%; font-size: 0.75rem; cursor: pointer;
     list-style: none; color: var(--pico-muted-color, #888); }
@@ -14824,7 +14825,7 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 .czp-map-head { margin-bottom: 0.25rem; align-items: center; gap: 0.4rem 0.6rem; }
 .czp-map-head .czp-title { flex: 1 1 8rem; min-width: 0; font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .czp-map-head label { flex-direction: row; align-items: center; gap: 0.3rem; white-space: nowrap; }
-.czp-map-head select { min-width: 0; width: auto; margin: 0; padding-right: 1.5rem; }
+.czp-map-head select { min-width: 0; width: auto; max-width: 8rem; margin: 0; padding-right: 1.5rem; font-size: 0.8rem; text-overflow: ellipsis; }
 .czp-map { height: 560px; min-height: 460px; min-width: 0; }
 .czp-map-key { font-size: 0.78rem; margin: 0.2rem 0 0; }
 .czp-map-notes { font-size: 0.8rem; margin: 0.15rem 0 0; white-space: pre-line; }
@@ -14840,6 +14841,7 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 .czp-notes-box { margin: 0.75rem 0 0; font-size: 0.85rem; }
 .czp-notes-box > summary { cursor: pointer; }
 .czp-notes-box .czp-note-muted { color: var(--pico-muted-color, #888); }
+.czp-notes li strong.czp-note-q { text-transform: none; font-size: inherit; letter-spacing: normal; }
 .czp-card-loss { margin: 0.4rem 0 0; font-size: 0.82rem; overflow-wrap: anywhere; }
 .czp-card h4 { margin: 0 0 0.5rem; font-size: 1rem; }
 .czp-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 0.75rem; }

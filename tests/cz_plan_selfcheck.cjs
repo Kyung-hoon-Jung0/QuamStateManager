@@ -243,6 +243,11 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
         const dm = new JSDOM('<!doctype html><body>' + page2 + '</body>', {url: 'http://localhost/cz-plan', runScripts: 'outside-only', pretendToBeVisual: true});
         const W = dm.window, env = {dm, W, D: W.document, renders: [], data: [], loss: opts.loss, holdLoss: !!opts.holdLoss, held: null};
         Object.assign(W, {console});
+        if (opts.timers) {
+            W._timers = [];
+            const st = W.setTimeout.bind(W);
+            W.setTimeout = (fn, ms) => { if (ms === 3000) { W._timers.push(fn); return 0; } return st(fn, ms); };
+        }
         W.requirePlotly = () => Promise.resolve();
         W._plotlyRender = (el, traces, layout) => { env.renders.push({id: el.id, traces, layout}); el.data = traces; return Promise.resolve(); };
         W.Plotly = {restyle: () => Promise.resolve(), relayout: () => Promise.resolve()};
@@ -370,7 +375,24 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
           R21.text('czp-notes').includes('qA2 run #3450 (2026-10-09 09:36 UTC): f_01'), 'D1 on the real answer: the count chip and the grouped list');
     check(/Defects touched during the gate: 5\.5506 GHz \(FWHM 9\.6 MHz, peak 65\.6 %\) strong/.test(R21.text('czp-card')),
           'D3 on the real answer: the strong defect the gate crosses');
+    check(R21.text('czp-card').includes('Scan loss at the operating frequency: -1.1 % (below zero: no loss resolved)') &&
+          R21.D.querySelector('#czp-notes li strong.czp-note-q').textContent === 'qA2',
+          'D3: a reading below zero says no loss was resolved; D1: the qubit name in the notes keeps its spelling');
     R21.dm.window.close();
+    // the change history was still being built: the chip, the box and the card fill in when it is ready
+    const B = await detail({sel: SEL, map: curveMap, loss: lossAns, timers: true});
+    const building = rich();
+    Object.assign(building.calibration, {mode: 'building', warning_count: 0, warning_groups: [], warnings: [], last_set: null});
+    await B.answer(building);
+    const fluxN = B.renders.filter(x => x.id === 'czp-flux').length, bchip = B.D.getElementById('czp-stale-chip');
+    check(bchip.hidden && B.W._timers.length === 1, 'D1: while the history is being built there is no count yet, and the operation is asked again');
+    B.W._timers.shift()(); await wait(10);
+    check(B.data.length === 2 && B.data[1].op === SEL, 'D1: the same operation is asked again after a pause');
+    await B.answer(rich());
+    check(!bchip.hidden && bchip.textContent === '3 inputs changed after this operation was set' &&
+          B.text('czp-card').includes('3 inputs changed after this operation was set') &&
+          B.renders.filter(x => x.id === 'czp-flux').length === fluxN, 'D1: the ready history fills the chip and the card without redrawing the figures');
+    B.dm.window.close();
     console.log(checks + ' assertions passed');
     dom.window.close();
 })().catch(e => { console.error(e); dom.window.close(); process.exitCode = 1; });

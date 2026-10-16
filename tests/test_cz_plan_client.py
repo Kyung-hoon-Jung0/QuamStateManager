@@ -16,9 +16,9 @@ def test_cz_plan_client():
                             capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     # v1.4.1: 31 -> 35, include the production render queue and panel invalidation pins.
-    # v1.4.1 (A14): 35 -> 57, the notes box / status chip / caveat lines (D1), the flux figure's
+    # v1.4.1 (A14): 35 -> 61, the notes box / status chip / caveat lines (D1), the flux figure's
     # loss panel (D2) and the card's scan-loss and defects-touched lines (D3).
-    assert "57 assertions passed" in result.stdout
+    assert "61 assertions passed" in result.stdout
 
 
 def test_cz_chip_map_client():
@@ -60,3 +60,10 @@ def test_the_page_reads_title_status_figures_card_then_the_collapsed_notes(tmp_p
     assert all(f'id="{i}"' in head for i in ("czp-map-op", "czp-map-order", "czp-map-scale"))
     assert '<option value="chip" selected>By chip position</option>' in head
     assert '<option value="0.25" selected>0-25 % (paper)</option>' in head
+
+
+def test_notes_never_uppercase_a_qubit_name():
+    """The notes list uppercases its <strong> labels (CHECK / NOTE); a qubit name there is a
+    name, spelled as the chip spells it (qA2, not QA2)."""
+    css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+    assert ".czp-notes li strong.czp-note-q { text-transform: none;" in css

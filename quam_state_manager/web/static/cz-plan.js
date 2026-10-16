@@ -142,7 +142,7 @@
         var ul = root.querySelector('#czp-notes');
         if (ul) {
             ul.innerHTML = groups.map(function (g) {
-                return '<li class="zline-note-warn"><strong>' + esc(g.qubit) + '</strong> ' + g.runs.map(function (r) {
+                return '<li class="zline-note-warn"><strong class="czp-note-q">' + esc(g.qubit) + '</strong> ' + g.runs.map(function (r) {
                     return (r.run_id != null ? 'run #' + esc(r.run_id) : 'run unknown') + ' (' + esc(stamp(r.t)) + '): ' + esc((r.fields || []).join(', '));
                 }).join('; ') + '</li>';
             }).concat(info.map(function (t) {
@@ -381,6 +381,7 @@
         var why = s.interaction_time_ns != null ? esc(s.interaction_time_ns) + ' ns' : 'scan duration unknown';
         if (s.loss != null) {
             h.push('<p class="czp-card-loss"><strong>Scan loss at the operating frequency:</strong> ' + pct(s.loss) +
+                   (s.loss < 0 ? ' <small class="muted">(below zero: no loss resolved)</small>' : '') +
                    ' <small class="muted">(run #' + esc(s.run_id) + ', ' + why + ' flux excursion from idle: dwell there plus every defect crossed on the way, with the scan\'s ramp)</small>' +
                    ((s.pieces || []).length > 1 ? '<br><small class="muted">' + s.pieces.map(function (p) {
                        return 'piece ' + esc(p.piece) + ': ' + (p.loss != null ? pct(p.loss) : esc(p.reason || 'not measured')); }).join('; ') + '</small>' : '') + '</p>');
@@ -498,6 +499,8 @@
                 renderNotes(root, d);
                 fillOps(root, d);
                 renderCard(root, d);
+                var mode = d.calibration && d.calibration.mode;
+                if (mode === 'building' || mode === 'preparing') recheck(root, op, my, 0);
                 return Promise.all([drawFlux(root, d, my), drawTime(root, d, my)]).then(function () {
                     if (my === seq) root.setAttribute('data-rendered', op);
                 });
@@ -515,6 +518,27 @@
             }
         } catch (e) { /* no URL support -- the page still works */ }
         return done;
+    }
+
+    /* The chip's change history was still being built when the operation loaded: ask again
+       and refresh only what it feeds (the staleness chip, the notes box, the card) while the
+       same selection is shown -- the figures do not depend on it. */
+    function recheck(root, op, token, tries) {
+        if (tries >= 20) return;
+        setTimeout(function () {
+            if (!active(root, token)) return;
+            fetch('/cz-plan/data?op=' + encodeURIComponent(op), { headers: { 'Accept': 'application/json' } })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (!active(root, token) || !d.ok) return;
+                    var mode = d.calibration && d.calibration.mode;
+                    if (mode === 'building' || mode === 'preparing') { recheck(root, op, token, tries + 1); return; }
+                    root._czLast = { d: d, token: token };
+                    renderNotes(root, d);
+                    renderCard(root, d);
+                })
+                .catch(function () { /* the next selection asks again */ });
+        }, 3000);
     }
 
     /* The loss answer arrived or the loss scale changed: redraw the flux figure of the shown
