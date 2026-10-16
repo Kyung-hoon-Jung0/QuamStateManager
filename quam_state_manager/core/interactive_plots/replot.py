@@ -588,6 +588,11 @@ def _axis_props(ax, *, log_key):
         p["tickfont"] = {"color": ticks["color"]}
     if ticks.get("label_color"):
         p["title"]["font"] = {"color": ticks["label_color"]}
+    # the lab's tick and axis-title sizes (a fixed 10 pt drew labelsize-14 ticks at 70%)
+    if isinstance(ticks.get("size"), (int, float)) and ticks["size"] > 0:
+        p.setdefault("tickfont", {})["size"] = ticks["size"]
+    if isinstance(ticks.get("label_size"), (int, float)) and ticks["label_size"] > 0:
+        p["title"].setdefault("font", {})["size"] = ticks["label_size"]
     if "axison" in ax:
         spines = ax.get("spines_visible", {})
         sides = ("bottom", "top") if log_key == "x" else ("left", "right")
@@ -1010,8 +1015,8 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             layout["legend"]["font"]["size"] = source_legend.get("size") or 10
         for name, axis in layout.items():
             if re.fullmatch(r"[xy]axis\d*", name):
-                axis.setdefault("tickfont", {}).update(size=10)
-                axis["title"].setdefault("font", {}).update(size=10)
+                axis.setdefault("tickfont", {}).setdefault("size", 10)
+                axis["title"].setdefault("font", {}).setdefault("size", 10)
                 axis["title"].update(standoff=4 if name.startswith("y") else 0)
     _legend_once(data)
     for proxy, linked in figure_links:

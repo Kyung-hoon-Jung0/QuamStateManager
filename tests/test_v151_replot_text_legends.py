@@ -276,6 +276,24 @@ def test_a_multi_column_axes_legend_reads_across(ncol, orientation):
     assert (legend["x"], legend["y"]) == pytest.approx((box[0], box[3]))
 
 
+def test_the_lab_tick_and_axis_title_sizes_are_kept():
+    def build(fig):
+        lab, plain = fig.subplots(1, 2)
+        lab.plot([0, 1], [0, 1])
+        lab.tick_params(labelsize=14)
+        lab.set_xlabel("detuning", fontsize=13)
+        lab.set_ylabel("signal")
+        plain.plot([0, 1], [1, 0])
+        plain.set_xlabel("time")
+    layout = mpljson_to_plotly(_figure(build, size=(12, 4), canvas=False))["layout"]
+    assert layout["xaxis"]["tickfont"]["size"] == pytest.approx(14)
+    assert layout["yaxis"]["tickfont"]["size"] == pytest.approx(14)
+    assert layout["xaxis"]["title"]["font"]["size"] == pytest.approx(13)
+    assert layout["yaxis"]["title"]["font"]["size"] == pytest.approx(10)    # the default label size
+    assert layout["xaxis2"]["tickfont"]["size"] == pytest.approx(10)        # a default panel is unchanged
+    assert layout["xaxis2"]["title"]["font"]["size"] == pytest.approx(10)
+
+
 def test_figure_legend_keeps_only_its_explicit_entries():
     def build(fig):
         ax = fig.subplots()

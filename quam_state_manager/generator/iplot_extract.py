@@ -579,7 +579,11 @@ def _axis_ticks(axis):
     from matplotlib.ticker import FixedLocator, FixedFormatter
     labels = axis.get_ticklabels()
     style = {"color": _hex(labels[0].get_color()) if labels else None,
-             "label_color": _hex(axis.label.get_color())}
+             "label_color": _hex(axis.label.get_color()),
+             # the lab's own text sizes (tick_params labelsize, set_xlabel fontsize): the
+             # converter drew every tick and axis title at a fixed 10 pt
+             "size": _f(labels[0].get_fontsize()) if labels else None,
+             "label_size": _f(axis.label.get_fontsize())}
     if isinstance(axis.get_major_locator(), FixedLocator) or isinstance(axis.get_major_formatter(), FixedFormatter) \
             or type(axis.get_major_locator()).__name__ == "StrCategoryLocator":
         style.update(values=_flist(axis.get_majorticklocs()),
