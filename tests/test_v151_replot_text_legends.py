@@ -49,6 +49,41 @@ def test_the_heading_hangs_at_the_lab_y(va, anchor, y):
     assert title["y"] == pytest.approx(y) and title["yanchor"] == anchor
 
 
+@pytest.mark.parametrize("canvas", [True, False])
+def test_a_heading_wider_than_the_figure_fits_its_width(canvas):
+    # the lab saves with a tight box, so its PNG grows to hold the heading; the reproduced
+    # figure has the lab's width and cut one long line off at both sides
+    heading = ("GEF readout: amplitude cut through the chosen detuning "
+               "(the outlier fraction is the over-power gate)")
+    def build(fig):
+        fig.subplots().plot([0, 1], [0, 1])
+        fig.suptitle(heading)
+    title = mpljson_to_plotly(_figure(build, size=(6, 4.6), canvas=canvas))["layout"]["title"]
+    # one line, on the line the lab reserved for it, shrunk to the figure width
+    assert title["text"] == heading
+    size = title["font"]["size"]
+    assert size == pytest.approx(6 * 72 * 0.98 / (len(heading) * 0.54), rel=1e-3)   # just enough
+    assert 12 * 0.6 <= size < 12
+
+    def short(fig):
+        fig.subplots().plot([0, 1], [0, 1])
+        fig.suptitle("Short heading")
+    title = mpljson_to_plotly(_figure(short, size=(6, 4.6)))["layout"]["title"]
+    assert title["text"] == "Short heading" and title["font"]["size"] == 12
+
+    def very_long(fig):
+        fig.subplots().plot([0, 1], [0, 1])
+        fig.suptitle(heading + " " + heading)
+    view = mpljson_to_plotly(_figure(very_long, size=(6, 4.6)))
+    assert view["layout"]["title"]["text"] == ""
+    note = next(n for n in view["layout"]["annotations"] if n["text"].startswith("GEF readout"))
+    lines = note["text"].split("<br>")
+    assert len(lines) >= 2 and " ".join(lines) == heading + " " + heading
+    assert all(len(line) * 12 * 0.6 * 0.54 <= 6 * 72 * 0.98 for line in lines)
+    assert (note["xanchor"], note["yanchor"]) == ("center", "top")
+    assert note["font"]["size"] == pytest.approx(12 * 0.6 * 1.2 / 1.3, abs=1e-3)   # at the floor size
+
+
 def test_a_heading_keeps_its_colour_without_source_positions():
     def build(fig):
         fig.subplots().plot([0, 1], [0, 1])

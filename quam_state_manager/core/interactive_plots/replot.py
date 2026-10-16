@@ -965,14 +965,19 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
 
     heading = fig_json.get("suptitle") or ""
     heading_in_texts = heading_as_note = False
+    heading_size = None
     for text in fig_json.get("texts", []):
         if heading and text.get("text") == heading and text.get("y", 0) >= .9:
             heading_in_texts = True
+            fitted = heading
+            if positions:
+                fitted, heading_size = _fit_heading(heading, text.get("size") or 12, fig_json.get("size_inches"))
             # A Plotly title centres extra lines on its y, so a multi-line lab heading ran
             # off the top; as a note its whole block hangs from y like the lab's.
-            heading_as_note = bool(positions) and "\n" in heading
+            heading_as_note = bool(positions) and "\n" in fitted
             if not heading_as_note:
                 continue
+            text = {**text, "text": fitted, "size": heading_size}
         notes.append(_text_note(text, "paper", "paper"))
     skipped = fig_json.get("skipped", []) + [s for a in axes if not a.get("is_colorbar") for s in a.get("skipped", [])]
     notices = [f"{s['artist']} x{s['n']} ({s.get('reason', 'unsupported')})" for s in skipped]
@@ -1063,7 +1068,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         layout["title"]["y"] = min(1.0, heading_style.get("y", .98))
         layout["title"]["yanchor"] = {"center": "middle", "bottom": "bottom",
                                       "baseline": "bottom"}.get(heading_style.get("va"), "top")
-        layout["title"]["font"] = {"size": heading_style.get("size", 12)}
+        layout["title"]["font"] = {"size": heading_size or heading_style.get("size", 12)}
         if heading_style.get("color"):
             layout["title"]["font"]["color"] = heading_style["color"]
         layout["legend"]["font"] = {"size": (layout["legend"].get("font") or {}).get("size") or 10}
@@ -1147,6 +1152,38 @@ def _hover_guides(fig: dict) -> dict:
             name = "" if trace.get("name") else "<extra></extra>"
             trace["hovertemplate"] = f"{xl}: %{{x}}<br>{yl}: %{{y}}{name}"
     return fig
+
+
+_HEADING_EM = 0.54        # mean glyph width of the browser plot font, in em (measured)
+_HEADING_MIN_SCALE = 0.6  # below this a heading wraps instead of shrinking further
+
+
+def _fit_heading(text, size_pt, size_inches):
+    """``(text, size)`` of a figure heading that fits the lab figure's width.
+
+    A lab that saves with a tight bounding box gets a PNG that grows to hold a long heading;
+    the reproduced figure has the lab's own width, so one long line was cut off at both
+    sides (v1.5.1, D3 class T). The heading shrinks to the width -- staying on the line the
+    lab reserved for it, so it never runs into the panel captions below -- and wraps only
+    below 60 % of the lab size. Text scales with the canvas, so a width in figure points
+    holds at every display width. Lines the lab broke itself are kept."""
+    size_pt = float(size_pt or 12)
+    if not (isinstance(size_inches, (list, tuple)) and len(size_inches) == 2
+            and isinstance(size_inches[0], (int, float)) and size_inches[0] > 0):
+        return text, size_pt
+    width_pt = size_inches[0] * 72 * 0.98
+    longest = max(len(line) for line in text.split("\n"))
+    needed = longest * size_pt * _HEADING_EM
+    if needed <= width_pt:
+        return text, size_pt
+    if width_pt / needed >= _HEADING_MIN_SCALE:
+        return text, round(size_pt * width_pt / needed, 3)
+    import textwrap
+    size = round(size_pt * _HEADING_MIN_SCALE, 3)
+    columns = max(12, int(width_pt / (size * _HEADING_EM)))
+    lines = [textwrap.wrap(line, width=columns, break_long_words=False, break_on_hyphens=False) or [""]
+             for line in text.split("\n")]
+    return "\n".join(part for line in lines for part in line), size
 
 
 def _text_note(a, xref, yref, width=1080):
