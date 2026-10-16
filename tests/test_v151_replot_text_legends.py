@@ -38,13 +38,41 @@ def _note(view, text):
     return next(n for n in view["layout"]["annotations"] if n["text"].replace("<br>", "\n") == text)
 
 
-def test_the_heading_hangs_at_the_lab_y():
+@pytest.mark.parametrize("va,anchor,y", [("top", "top", 0.995), ("center", "middle", 0.95),
+                                         ("bottom", "bottom", 0.95), ("baseline", "bottom", 0.95)])
+def test_the_heading_hangs_at_the_lab_y(va, anchor, y):
     def build(fig):
         fig.subplots().plot([0, 1], [0, 1])
-        fig.suptitle("Heading", y=0.995)
+        fig.suptitle("Heading", y=y, va=va)
     title = mpljson_to_plotly(_figure(build))["layout"]["title"]
     assert title["text"] == "Heading"
-    assert title["y"] == pytest.approx(0.995) and title["yanchor"] == "top"
+    assert title["y"] == pytest.approx(y) and title["yanchor"] == anchor
+
+
+def test_a_heading_keeps_its_colour_without_source_positions():
+    def build(fig):
+        fig.subplots().plot([0, 1], [0, 1])
+        fig.suptitle("Heading", color="crimson")
+    fig_json = _figure(build)
+    for axes in fig_json["axes"]:
+        axes.pop("position", None)     # an older extraction: no panel positions
+    title = mpljson_to_plotly(fig_json)["layout"]["title"]
+    assert title["text"] == "Heading" and title.get("font", {}).get("color") == "#dc143c"
+
+
+def test_lab_legend_font_sizes_are_kept():
+    def panels(fig):
+        for i, ax in enumerate(fig.subplots(1, 2)):
+            ax.plot([0, 1], [i, i + 1], label=f"data {i}")
+            ax.legend(fontsize=7)
+    layout = mpljson_to_plotly(_figure(panels, size=(12, 4)))["layout"]
+    assert layout["legend"]["font"]["size"] == pytest.approx(7)
+    assert layout["legend2"]["font"]["size"] == pytest.approx(7)
+
+    def figure_legend(fig):
+        line, = fig.subplots().plot([0, 1], [0, 1])
+        fig.legend([line], ["data"], fontsize=7, loc="lower center")
+    assert mpljson_to_plotly(_figure(figure_legend))["layout"]["legend"]["font"]["size"] == pytest.approx(7)
 
 
 def test_a_title_over_a_top_axis_sits_where_matplotlib_drew_it():
@@ -245,7 +273,9 @@ def test_figure_legend_keeps_only_its_explicit_entries():
 def test_every_panel_keeps_its_own_legend(tmp_path):
     def build(fig):
         for i, ax in enumerate(fig.subplots(1, 3)):
-            ax.plot([0, 1], [i, i + 1], label="data")
+            # distinct colours: the third panel (no legend of its own) lists nothing, and
+            # de-duplication cannot hide its entry if it leaked
+            ax.plot([0, 1], [i, i + 1], label="data", color=f"C{i}")
             if i < 2:
                 ax.plot([], [], " ", label=f"T2* = {i + 1}.0 us")
                 ax.legend(loc="upper left")

@@ -94,6 +94,10 @@ if (process.argv[2]) {
 const app = fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8');
 const s = app.indexOf('function _fetchInteractiveFig('), e = app.indexOf('function _fetchAndRenderPlot(', s);
 w.eval(app.slice(s, e));
+// a fresh open (and a width change) themes the mount layout WITH the traces: the cell text
+// keeps the lab colour from the first draw, not only after a theme toggle
+const mounted = w._replotLayoutAt({ layout: recipeLayout, data: recipe }, 919);
+eq(colour(mounted, 0), '#000', 'a fresh open keeps the cell text the lab coloured');
 const traces = [{ type: 'scattergl', marker: { size: 4, opacity: 0.2, line: { width: 1, color: '#1f77b4' } } },
                 { type: 'scatter', marker: { size: [2, 4, null] } },
                 { type: 'heatmap', z: [[1]] },

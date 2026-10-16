@@ -78,4 +78,4 @@ def test_dark_artist_contrast_selfcheck(tmp_path):
     r = subprocess.run(["node", str(ROOT / "tests" / "dark_artist_contrast_selfcheck.cjs"), str(out)],
                        capture_output=True, text=True, env=env, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "36 assertions passed" in r.stdout, r.stdout
+    assert "37 assertions passed" in r.stdout, r.stdout

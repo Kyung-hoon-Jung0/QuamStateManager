@@ -55,11 +55,11 @@ _SAVED = {"q1-2": {"pair": "q1-2", "control": {"name": "q1", "f_01_hz": 4.9e9},
 
 
 def _call(fn, values):
-    """The plot's result, or the AttributeError it raised as text (so a regression fails an assert)."""
+    """The plot's result, or the error it raised as text (so a regression fails an assert)."""
     try:
         return fn(**values)
-    except AttributeError as error:
-        return f"AttributeError: {error}"
+    except Exception as error:   # noqa: BLE001 -- any error is a wrong result here
+        return f"{type(error).__name__}: {error}"
 
 
 def _bind(fn, report, saved=_SAVED):
