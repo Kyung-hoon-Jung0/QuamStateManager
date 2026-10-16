@@ -155,6 +155,8 @@ def _legend_proxies(leg):
             proxy = {"type": "line", "mode": "lines", "color": _hex(colors[0]) if len(colors) else None,
                      "opacity": _opacity(colors[0]) if len(colors) else 1.0,
                      "width": _f(widths[0]) if len(widths) else 1.0}
+        if proxy and getattr(leg, "handlelength", 2) == 0:
+            proxy.update(mode="none", marker_face="none", marker_edge="none")
         out.append((name, proxy))
     return out
 
@@ -240,20 +242,48 @@ def _line_trace(ln):
     }
 
 
-# matplotlib marker -> Plotly symbol (common subset; unknown -> circle)
-_MARKER = {"o": "circle", ".": "circle", "s": "square", "^": "triangle-up",
+# matplotlib marker -> Plotly symbol: every named matplotlib marker. Plotly has no symbol for a
+# mathtext ("$...$") or custom-path marker, a half-filled fillstyle or a rotated MarkerStyle:
+# those keep the base symbol or fall back to a circle (an unknown path).
+_MARKER = {"o": "circle", ".": "circle", ",": "square", "s": "square", "^": "triangle-up",
            "v": "triangle-down", "D": "diamond", "d": "diamond-tall", "x": "x-thin",
            "X": "x", "+": "cross-thin", "P": "cross", "*": "star", "<": "triangle-left",
            ">": "triangle-right", "p": "pentagon", "h": "hexagon", "H": "hexagon2",
            "8": "octagon", "1": "y-down", "2": "y-up", "3": "y-left", "4": "y-right",
            # A tick-like marker is a short stroke (an expected level, a sigma), not a dot.
-           "_": "line-ew", "|": "line-ns"}
+           "_": "line-ew", "|": "line-ns",
+           # TICKLEFT/RIGHT/UP/DOWN (0-3) are half strokes, CARET* (4-11) small triangles
+           0: "line-ew", 1: "line-ew", 2: "line-ns", 3: "line-ns",
+           4: "triangle-left", 5: "triangle-right", 6: "triangle-up", 7: "triangle-down",
+           8: "triangle-left", 9: "triangle-right", 10: "triangle-up", 11: "triangle-down"}
 
 
 def _mpl_marker(m):
     if _no_marker(m):
         return "circle"
-    return _MARKER.get(m, "circle")
+    try:
+        if m in _MARKER:
+            return _MARKER[m]
+    except TypeError:
+        pass
+    from matplotlib.markers import MarkerStyle
+    try:
+        style = MarkerStyle(m)
+        return _path_marker(style.get_path().transformed(style.get_transform()))
+    except (ValueError, TypeError):
+        return "circle"
+
+
+def _path_marker(path):
+    """Scatter stores a normalized path rather than the original marker spelling."""
+    from matplotlib.markers import MarkerStyle
+    for marker, symbol in _MARKER.items():
+        style = MarkerStyle(marker)
+        expected = style.get_path().transformed(style.get_transform())
+        if path.vertices.shape == expected.vertices.shape and np.allclose(path.vertices, expected.vertices) \
+                and np.array_equal(path.codes, expected.codes):
+            return symbol
+    return "circle"
 
 
 def _path_width(coll):
@@ -293,6 +323,7 @@ def _scatter_trace(coll):
         "marker_edge_width": _f(widths[0]) if len(widths) else None,
         "marker_size": (_flist(np.sqrt(sizes)) if len(sizes) > 1
                         else (_f(np.sqrt(sizes[0])) if len(sizes) else 6.0)),
+        "marker_symbol": _path_marker(coll.get_paths()[0]) if coll.get_paths() else "circle",
         "name": None if (label is None or str(label).startswith("_")) else str(label),
         "zorder": _f(coll.get_zorder()),
         "opacity": float(coll.get_alpha()) if coll.get_alpha() is not None else 1.0,
@@ -494,8 +525,11 @@ def extract_axes(ax, axes):
                 skip(coll, "mesh coordinates cannot be represented")
         elif isinstance(coll, ContourSet):
             if coll.filled:
-                skip(coll, "filled contour regions; levels retained")
-            traces.extend(_contour_traces(coll))
+                traces.extend(_filled_contour_traces(coll))
+                if any(getattr(coll, "hatches", []) or []):
+                    skip(coll, "contour hatching; region fills retained")
+            else:
+                traces.extend(_contour_traces(coll))
         elif isinstance(coll, LineCollection):
             colors, widths = coll.get_colors(), coll.get_linewidths()
             for j, segment in enumerate(coll.get_segments()):
@@ -554,7 +588,8 @@ def extract_axes(ax, axes):
                               "label": child.get_xlabel() if which == "x" else child.get_ylabel(),
                               "map": {"parent": _flist(values), "forward": _flist(mapped),
                                       "inverse": _flist(inverse(mapped))},
-                              "ticks": _secondary_ticks(child, which, limits, inverse)})
+                              "ticks": _secondary_ticks(child, which, limits, inverse),
+                              "style": _axis_ticks(child.xaxis if which == "x" else child.yaxis)})
         else:
             skip(child, "unsupported child axes")
     for artist in list(ax.artists) + list(ax.tables):
@@ -853,4 +888,21 @@ def _contour_traces(coll):
                         "width": _f(widths[j % len(widths)]) if len(widths) else 1,
                         "zorder": _f(coll.get_zorder()),
                         "opacity": coll.get_alpha() if coll.get_alpha() is not None else 1})
+    return out
+
+
+def _filled_contour_traces(coll):
+    """Retain compound region paths and their sampled colormap paint, including holes.
+
+    A ContourSet does not retain its input scalar grid. Re-contouring an invented grid
+    would move boundaries; compound Plotly fills preserve the drawn level intervals."""
+    colors = coll.get_facecolors()
+    out = []
+    for i, path in enumerate(coll.get_paths()):
+        rings = [part for part in _path_parts(path) if len(part) >= 3]
+        if not rings or not len(colors):
+            continue
+        out.append({"type": "filled_contour", "rings": [[_flist(p) for p in ring] for ring in rings],
+                    "levels": _flist(coll.levels), "interval": i, "cmap": coll.get_cmap().name,
+                    "color": _paint_rgba(colors[i % len(colors)]) or "rgba(0,0,0,0)", "zorder": _f(coll.get_zorder())})
     return out

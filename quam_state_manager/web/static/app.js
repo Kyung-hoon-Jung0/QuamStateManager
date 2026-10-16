@@ -15911,6 +15911,22 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             inner.style.height = '360px';
             div.appendChild(inner);
             (d.notices || []).forEach(function(message) {
+                // v1.5.1 (D3 #810): why click-to-apply is off is the same for every lab figure of
+                // the run, so it is said once, above the figures (each chip keeps it on hover)
+                if (container && endpoint === 'replot/plot' && message === d.display_only_reason) {
+                    var seen = Array.prototype.some.call(container.querySelectorAll('.ds-replot-run-note'), function (note) {
+                        return note.dataset.runId === String(runId) && note.textContent === message;
+                    });
+                    if (!seen) {
+                        var shared = document.createElement('p');
+                        shared.className = 'muted ds-replot-note ds-replot-run-note';
+                        shared.dataset.runId = String(runId); shared.textContent = message;
+                        var list = container.querySelector('.ds-interactive-list');
+                        if (list && list.parentNode) list.parentNode.insertBefore(shared, list);
+                        else container.insertBefore(shared, container.firstChild);
+                    }
+                    return;
+                }
                 var note = document.createElement('p');
                 note.className = 'muted ds-replot-note';
                 note.textContent = message;
@@ -16032,6 +16048,7 @@ function _replotFigureLayout(layout, size, width, height) {
         font(axis.tickfont);
         if (axis.title) font(axis.title.font);
     });
+    var captionTop = 0;
     (out.annotations || []).forEach(function (note) {
         font(note.font);
         ['xshift', 'yshift'].forEach(function (key) {
@@ -16040,7 +16057,33 @@ function _replotFigureLayout(layout, size, width, height) {
         ['ax', 'ay'].forEach(function (key) {
             if (!note[key + 'ref'] && typeof note[key] === 'number') note[key] *= scale;
         });
+        if (note.name && note.name.indexOf('axes-caption:') === 0) {
+            var yref = note.name.slice('axes-caption:'.length);
+            var yaxis = out['yaxis' + yref.slice(1)] || {};
+            var top = (yaxis.domain || [0, 1])[1];
+            var needed = 0;
+            Object.keys(out).forEach(function (key) {
+                var axis = out[key];
+                if (!/^xaxis\d*$/.test(key) || !axis || axis.side !== 'top' || axis.anchor !== yref) return;
+                var tick = (axis.tickfont || out.font || {}).size || 12;
+                var title = axis.title || {}, titleSize = (title.font || out.font || {}).size || 12;
+                needed = Math.max(needed, tick * 1.3 + (axis.ticklabelstandoff === undefined ? 8 : axis.ticklabelstandoff) +
+                    5 + (title.text ? titleSize * 1.3 + (title.standoff || 0) : 0) + 3);
+            });
+            if (needed) {
+                note.yshift = Math.max(note.yshift || 0, needed - (note.y - top) * height);
+                captionTop = Math.max(captionTop, note.y * height + note.yshift + ((note.font || {}).size || 12) * 1.3);
+            }
+        }
     });
+    if (captionTop && out.title && out.title.text && out.title.yanchor === 'top') {
+        var heading = out.title, lines = String(heading.text).split(/<br\s*\/?\s*>|\n/).length;
+        heading.font = heading.font || {};
+        var pad = (heading.pad || {}).t || 0;
+        var headingHeight = (heading.font.size || 12) * 1.3 * lines;
+        heading.y = Math.min(1, Math.max(heading.y || .98, (captionTop + 3 + headingHeight + pad) / height));
+        heading.font.size = Math.min(heading.font.size || 12, Math.max(1, (heading.y * height - captionTop - 3 - pad) / (1.3 * lines)));
+    }
     return out;
 }
 window._replotFigureLayout = _replotFigureLayout;
@@ -16148,6 +16191,8 @@ function _replotSizeUpdate(fit) {
     }
     size('font', fit.font);
     if (fit.title) size('title.font', fit.title.font);
+    // a heading lifted clear of a raised caption (_replotFigureLayout) moves with the width too
+    if (fit.title && typeof fit.title.y === 'number') upd['title.y'] = fit.title.y;
     Object.keys(fit).forEach(function (key) {
         if (/^legend\d*$/.test(key) && fit[key]) size(key + '.font', fit[key].font);
     });

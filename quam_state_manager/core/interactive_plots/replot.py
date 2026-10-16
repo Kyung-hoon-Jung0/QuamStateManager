@@ -476,6 +476,7 @@ def _scatter_to_plotly(t, xref, yref):
         "x": x, "y": y, "mode": "markers",
         "xaxis": xref, "yaxis": yref,
         "marker": {"size": t.get("marker_size") or 6,
+                   "symbol": t.get("marker_symbol", "circle"),
                    "color": mc, "opacity": t.get("opacity", 1.0)},
         "showlegend": bool(t.get("name")),
         "meta": {"source_kind": "scatter"},
@@ -778,6 +779,8 @@ def _legend_place(legend: dict, bounds) -> dict:
         # the lab enlarged the legend symbols (markerscale): a cloud of 1 pt dots would
         # otherwise show 1 pt dots in its legend
         out["itemsizing"] = "constant"
+    if legend.get("handlelength") == 0:
+        out["indentation"] = max(-15, (legend.get("handletextpad") or 0) * (legend.get("size") or 10) - 30)
     return out
 
 
@@ -1040,6 +1043,13 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 "anchor": yref if kind == "x" else xref, "side": sec.get("side", "top"),
                 "tickmode": "array", "tickvals": tickvals, "ticktext": ticktext,
                 "showgrid": False, "zeroline": False}
+            style = sec.get("style") or {}
+            title_font = {k: style[v] for k, v in (("size", "label_size"), ("color", "label_color")) if style.get(v)}
+            if title_font:
+                layout[_axis_id(kind + "axis", sid)]["title"]["font"] = title_font
+            tick_font = {k: style[v] for k, v in (("size", "size"), ("color", "color")) if style.get(v)}
+            if tick_font:
+                layout[_axis_id(kind + "axis", sid)]["tickfont"] = tick_font
             if drawn.get("parent") and kind == "x":
                 layout[_axis_id(kind + "axis", sid)]["tickangle"] = 0   # matplotlib's upright labels
             if values:
@@ -1056,6 +1066,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             ttl = base.get("title") or ""
             if ttl:
                 note = {"text": ttl, "showarrow": False, "xref": "paper",
+                        "name": "axes-caption:" + yref,
                         "yref": "paper", "x": (x0 + x1) / 2, "y": y1,
                         "yshift": 64 if has_secondary_top else 6 if positions else 12,
                         "xanchor": "center", "yanchor": "bottom",
@@ -1109,19 +1120,22 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
 
     heading = fig_json.get("suptitle") or ""
     heading_in_texts = heading_as_note = False
-    heading_size = None
+    heading_size = heading_y = None
     for text in fig_json.get("texts", []):
         if heading and text.get("text") == heading and text.get("y", 0) >= .9:
             heading_in_texts = True
             fitted = heading
             if positions:
                 fitted, heading_size = _fit_heading(heading, text.get("size") or 12, fig_json.get("size_inches"))
+                clear = _heading_clear_of_captions(text, fitted, heading_size, axes, fig_json.get("size_inches"))
+                if clear:
+                    heading_y, heading_size = clear
             # A Plotly title centres extra lines on its y, so a multi-line lab heading ran
             # off the top; as a note its whole block hangs from y like the lab's.
             heading_as_note = bool(positions) and "\n" in fitted
             if not heading_as_note:
                 continue
-            text = {**text, "text": fitted, "size": heading_size}
+            text = {**text, "text": fitted, "size": heading_size, "y": heading_y or text.get("y", 0)}
         notes.append(_text_note(text, "paper", "paper"))
     skipped = fig_json.get("skipped", []) + [s for a in axes if not a.get("is_colorbar") for s in a.get("skipped", [])]
     notices = [f"{s['artist']} x{s['n']} ({s.get('reason', 'unsupported')})" for s in skipped]
@@ -1229,7 +1243,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         layout["font"] = {"size": 10}
         # v1.5.1 (D3 class T): the heading hangs where the lab put it (a suptitle sits at
         # y ~0.99, top-anchored). Capped at 0.98 it sat on the first row's panel titles.
-        layout["title"]["y"] = min(1.0, heading_style.get("y", .98))
+        layout["title"]["y"] = min(1.0, heading_y or heading_style.get("y", .98))
         layout["title"]["yanchor"] = {"center": "middle", "bottom": "bottom",
                                       "baseline": "bottom"}.get(heading_style.get("va"), "top")
         layout["title"]["font"] = {"size": heading_size or heading_style.get("size", 12)}
@@ -1359,6 +1373,31 @@ def _fit_heading(text, size_pt, size_inches):
     return "\n".join(part for line in lines for part in line), size
 
 
+def _heading_clear_of_captions(text, fitted, size_pt, axes, size_inches):
+    """``(y, size)`` for a top-hung figure heading that would reach the panel captions below it,
+    else None (v1.5.1, D3 #785: a two-line heading over a tall stack ran into the first
+    captions). The heading first rises into the room above them, up to the figure's top edge, at
+    the lab's size; only a heading taller than that room shrinks, to at most 60 % of the lab size
+    (smaller text is unreadable, so a lab layout without the room keeps its overlap)."""
+    if not (isinstance(size_inches, (list, tuple)) and len(size_inches) == 2
+            and isinstance(size_inches[1], (int, float)) and size_inches[1] > 0) \
+            or text.get("va", "top") != "top" or not size_pt:
+        return None
+    top = text.get("y", .98)
+    captions = [a["title_box"][3] for a in axes if a.get("title") and _legend_box_ok(a.get("title_box"))
+                and a["title_box"][3] < top]
+    if not captions:
+        return None
+    height_pt = size_inches[1] * 72
+    lines = len(fitted.split("\n"))
+    floor = max(captions) * height_pt + 3          # a 3 pt gap above the highest caption
+    if top * height_pt - 1.2 * lines * size_pt >= floor:
+        return None
+    lab = text.get("size") or size_pt
+    size = max(min(size_pt, (height_pt - floor) / (1.2 * lines)), min(size_pt, _HEADING_MIN_SCALE * lab))
+    return min(1.0, (floor + 1.2 * lines * size) / height_pt), round(size, 3)
+
+
 def _text_note(a, xref, yref, width=1080):
     text = a["text"]
     if a.get("wrap"):
@@ -1393,7 +1432,17 @@ def _add_artists(ax, xref, yref, data, layout, notes, width=1080):
     for t in sorted(ax.get("traces", []), key=lambda t: t.get("zorder") or 0):
         coord = t.get("coord")
         drawn = len(data)
-        if coord and t["type"] == "polygon":
+        if t["type"] == "filled_contour":
+            # v1.5.1 (D3 #243): the regions matplotlib filled, holes included (even-odd), in the
+            # lab's colormap paint; above the grid like the lab's opaque fill, below every trace
+            rings = [[p for p in ring if all(v is not None for v in p)] for ring in t.get("rings") or []]
+            path = " ".join("M " + " L ".join(",".join(f"{v:.12g}" for v in p) for p in ring) + " Z"
+                            for ring in rings if len(ring) >= 3)
+            if path:
+                layout.setdefault("shapes", []).append({
+                    "type": "path", "name": "filled-contour", "path": path, "xref": xref, "yref": yref,
+                    "fillcolor": t.get("color"), "fillrule": "evenodd", "line": {"width": 0}, "layer": "between"})
+        elif coord and t["type"] == "polygon":
             layout.setdefault("shapes", []).append({"type": "rect", "x0": min(t["x"]), "x1": max(t["x"]),
                 "y0": min(t["y"]), "y1": max(t["y"]),
                 "xref": xref + (" domain" if coord == "x-domain-y-data" else ""),
