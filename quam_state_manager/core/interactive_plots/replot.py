@@ -843,6 +843,8 @@ def _thin_ticks(values, labels, width_pt, size_pt):
         return values, labels
     zero = next((i for i, t in enumerate(labels) if str(t).replace("\u2212", "-") in ("0", "-0", "0.0")), 0)
     keep = list(range(zero % step, len(values), step))
+    if len(keep) < 2 and len(values) >= 2:
+        keep = [0, len(values) - 1]   # a narrow panel still labels both ends: one label is no scale
     return [values[i] for i in keep], [labels[i] for i in keep]
 
 

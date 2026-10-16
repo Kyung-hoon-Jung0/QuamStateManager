@@ -196,6 +196,8 @@ def test_renderer_artist_meaning_and_notes():
     assert layout["xaxis201"]["overlaying"] == "x" and layout["xaxis201"]["title"]["text"] == "squared"
     # v1.4.1: samples "f(v):.6g" -> the ticks matplotlib drew on the secondary axis (on this log
     # parent: 10<sup>k</sup> labels, the \mathdefault wrapper removed).
+    # v1.4.1: unchecked zip -> equal nonempty lengths, so missing labels cannot pass.
+    assert len(layout["xaxis201"]["tickvals"]) == len(layout["xaxis201"]["ticktext"]) >= 2
     for v, text in zip(layout["xaxis201"]["tickvals"], layout["xaxis201"]["ticktext"]):
         power = re.fullmatch(r"10<sup>(-?\d+)</sup>", text.replace("\u2212", "-"))
         assert power and 10 ** int(power[1]) == pytest.approx(v ** 2)
