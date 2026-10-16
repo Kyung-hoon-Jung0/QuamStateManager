@@ -34,6 +34,15 @@
         }
         return pass(pass(z, sx, false), sy, true);
     }
+    /** The one verification status of a figure's click contract. A recipe the node never
+     *  checked (it wrote no state) keeps its formula clickable but is NOT verified. */
+    function verification(payload) {
+        var c = payload.clickable;
+        if (!c) return 'not verified on this run';
+        if (c.verification_note) return 'not verified on this run';
+        if (c.evidence_tier === 'proposed' || c.verified_against === 'proposals') return 'proposed, not applied';
+        return 'verified on this run';
+    }
     function mount(host, plot, payload, options) {
         options = options || {};
         var previous = host._mapTools;
@@ -61,11 +70,17 @@
         var results = [], models = [], caps = [], last = null, classification = null, generation = 0, timer = null, alive = true, initialized = false, kind = '';
         var pending = [];
         var side = strip.querySelector('.map-tools-side');
+        // v1.5.1 (D3 class C): ONE verification status per tile. A recipe tile has no
+        // reproduction status, and its chip defaulted to "not verified on this run" beside a
+        // second chip saying "verified on this run" for the same click contract. The status
+        // chip now shows only a real reproduction status; the verification chip alone says
+        // whether the click is verified, with the full reason on hover.
         var statusChip = document.createElement('span'); statusChip.className = 'map-tools-chip';
-        statusChip.textContent = payload.status_chip || 'not verified on this run'; header.appendChild(statusChip);
+        statusChip.textContent = payload.status_chip || '';
+        if (payload.status_chip) header.appendChild(statusChip);
         var contractChip = document.createElement('span'); contractChip.className = 'map-tools-chip';
-        contractChip.textContent = payload.clickable && payload.clickable.evidence_tier === 'proposed' ? 'proposed, not applied' :
-            (payload.display_only_reason || (!payload.clickable ? 'not verified on this run' : 'verified on this run'));
+        contractChip.textContent = verification(payload);
+        contractChip.title = (payload.clickable && payload.clickable.verification_note) || payload.display_only_reason || '';
         header.appendChild(contractChip);
         maps.forEach(function (_, index) { var opt = document.createElement('option'); opt.value = index; opt.textContent = 'Map ' + (index + 1); control('panel').appendChild(opt); });
         control('panel').parentElement.hidden = maps.length === 1;
