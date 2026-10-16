@@ -439,6 +439,61 @@ def test_a_text_keeps_the_box_the_lab_drew_behind_it():
     assert (summary.get("bgcolor"), summary.get("bordercolor")) == ("#ffff00", "#ff0000")
 
 
+def _shown(view):
+    return [(t.get("legend", "legend"), t["name"]) for t in view["data"] if t.get("showlegend")]
+
+
+def test_a_multi_row_lab_legend_becomes_one_legend_per_row():
+    # Plotly drew a 2-column x 2-row figure legend as one row as wide as the figure, which ran
+    # into the legend beside it; each lab row is now its own legend, columns filled first
+    def build(fig):
+        ax = fig.subplots()
+        lines = [ax.plot([0, 1], [i, i + 1])[0] for i in range(3)]
+        fig.legend(lines, ["band", "in force", "chosen"], loc="lower left", ncol=2)
+    fig_json = _figure(build)
+    view = mpljson_to_plotly(fig_json)
+    assert sorted(_shown(view)) == [("legend", "band"), ("legend", "chosen"), ("legend2", "in force")]
+    top, bottom = view["layout"]["legend"], view["layout"]["legend2"]
+    box = fig_json["figure_legends"][0]["box"]
+    assert top["orientation"] == bottom["orientation"] == "h"
+    assert (top["xanchor"], top["x"]) == (bottom["xanchor"], bottom["x"])
+    assert top["yanchor"] == bottom["yanchor"]
+    assert top["y"] - bottom["y"] == pytest.approx((box[3] - box[1]) / 2)   # the lab's row pitch
+
+
+@pytest.mark.parametrize("ncol,entries,legends", [(3, 3, 1), (2, 4, 2), (1, 3, 1)])
+def test_an_axes_legend_splits_only_when_its_columns_wrap(ncol, entries, legends):
+    def build(fig):
+        ax = fig.subplots()
+        for i in range(entries):
+            ax.plot([0, 1], [i, i + 1], label=f"series {i}")
+        ax.legend(loc="upper left", ncol=ncol)
+    view = mpljson_to_plotly(_figure(build))
+    assert len({name for name, _ in _shown(view)}) == legends
+    assert len(_shown(view)) == entries
+
+
+def test_a_crowded_secondary_axis_keeps_every_kth_lab_tick_upright():
+    # eight long RF labels over a narrow panel: matplotlib overlaps them, Plotly rotated them
+    # into the panel caption; every k-th lab tick is kept, upright, and they fit the panel
+    def build(fig):
+        for ax in fig.subplots(1, 2):
+            ax.plot([-1.0, 0.9], [0, 1])
+            ax.set_xlim(-1.0, 0.9)
+            ax.set_title("f_opt")
+            ax.secondary_xaxis("top", functions=(lambda d: 6828.7 + d, lambda f: f - 6828.7)).set_xlabel("RF")
+    fig_json = _figure(build, size=(6, 3), canvas=False)
+    lab = fig_json["axes"][0]["secondary_axes"][0]["ticks"]
+    top = mpljson_to_plotly(fig_json)["layout"]["xaxis201"]
+    assert top.get("tickangle") == 0
+    assert set(top["ticktext"]) <= set(lab["labels"]) and 2 <= len(top["ticktext"]) < len(lab["labels"])
+    index = [lab["labels"].index(t) for t in top["ticktext"]]
+    assert len({b - a for a, b in zip(index, index[1:])}) == 1                # a uniform stride
+    panel_pt = fig_json["axes"][0]["position"][2] * 6 * 72
+    widest = max(len(t) for t in top["ticktext"]) * 10 * 0.6 + 10
+    assert len(top["ticktext"]) * widest <= panel_pt
+
+
 def test_figure_legend_keeps_only_its_explicit_entries():
     def build(fig):
         ax = fig.subplots()

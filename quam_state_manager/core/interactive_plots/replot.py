@@ -779,6 +779,68 @@ def _legend_place(legend: dict, bounds) -> dict:
     return out
 
 
+def _legend_box_ok(box) -> bool:
+    return isinstance(box, list) and len(box) == 4 \
+        and all(isinstance(v, (int, float)) and math.isfinite(v) for v in box) \
+        and box[0] < box[2] and box[1] < box[3]
+
+
+def _split_legend_rows(data: list, layout: dict, grids: dict) -> None:
+    """A lab legend laid out in ``ncol`` columns over several rows, as one Plotly legend per row.
+
+    Plotly lays a horizontal legend out in one row as wide as the whole figure, so a lab legend
+    of 2 columns x 3 rows became one long row that ran into the legend beside it (v1.5.1, D3
+    class T). Each row of the lab's grid becomes its own horizontal legend at the lab's row
+    pitch, held by the same edge as the whole legend; matplotlib fills a legend's columns
+    first, so entry k sits in row k % rows."""
+    used = {k for k in layout if re.fullmatch(r"legend\d*", k)}
+
+    def free():
+        k = 2
+        while f"legend{k}" in used:
+            k += 1
+        used.add(f"legend{k}")
+        return f"legend{k}"
+
+    for name, lab in list(grids.items()):
+        own, box = layout.get(name), (lab or {}).get("box")
+        ncol = int((lab or {}).get("ncol") or 1)
+        if ncol < 2 or not isinstance(own, dict) or not _legend_box_ok(box):
+            continue
+        entries = [t for t in data if t.get("showlegend") and t.get("name")
+                   and t.get("legend", "legend") == name]
+        rows = -(-len(entries) // ncol)
+        if rows < 2:
+            continue
+        pitch = (box[3] - box[1]) / rows
+        anchor, y = own.get("yanchor", "top"), own.get("y", box[3])
+        names = [name] + [free() for _ in range(rows - 1)]
+        for r, row_name in enumerate(names):
+            step = {"bottom": rows - 1 - r, "middle": (rows - 1) / 2 - r}.get(anchor, -r)
+            layout[row_name] = {**own, "orientation": "h", "y": y + step * pitch,
+                                "font": dict(own.get("font") or {})}
+        for k, trace in enumerate(entries):
+            if k % rows:
+                trace["legend"] = names[k % rows]
+
+
+def _thin_ticks(values, labels, width_pt, size_pt):
+    """Every k-th of the drawn ticks, so the labels fit side by side in ``width_pt``: Plotly
+    rotates labels that do not fit, which matplotlib never does, and a crowded top axis then
+    climbed into the panel caption. Keeps the "0" tick when there is one."""
+    if not values or not (width_pt > 0):
+        return values, labels
+    widest = max(len(str(t)) for t in labels) * size_pt * 0.6 + size_pt
+    step = 1
+    while step < len(values) and -(-len(values) // step) * widest > width_pt:
+        step += 1
+    if step == 1:
+        return values, labels
+    zero = next((i for i, t in enumerate(labels) if str(t).replace("\u2212", "-") in ("0", "-0", "0.0")), 0)
+    keep = list(range(zero % step, len(values), step))
+    return [values[i] for i in keep], [labels[i] for i in keep]
+
+
 def _legend_once(data: list) -> None:
     """One legend entry per distinct artist kind: a lab figure that labels the same line
     in every panel draws one legend per panel, but Plotly has one legend for the figure,
@@ -892,12 +954,19 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 # v1.5.1 (D3 class P): the ticks matplotlib drew (round values, the lab's
                 # labels), not samples at the axis ends (bin-edge values such as -20.25)
                 tickvals, ticktext = list(drawn["parent"]), [str(v) for v in drawn["labels"]]
+                size = fig_json.get("size_inches")
+                if kind == "x" and isinstance(size, list) and len(size) == 2 \
+                        and isinstance(size[0], (int, float)) and size[0] > 0:
+                    font_pt = (base.get("x_ticks") or {}).get("size") or 10
+                    tickvals, ticktext = _thin_ticks(tickvals, ticktext, (x1 - x0) * size[0] * 72, font_pt)
             layout[_axis_id(kind + "axis", sid)] = {
                 **_axis_props(base, log_key=kind), "title": {"text": sec.get("label", "")},
                 "overlaying": ref, "matches": ref,
                 "anchor": yref if kind == "x" else xref, "side": sec.get("side", "top"),
                 "tickmode": "array", "tickvals": tickvals, "ticktext": ticktext,
                 "showgrid": False, "zeroline": False}
+            if drawn.get("parent") and kind == "x":
+                layout[_axis_id(kind + "axis", sid)]["tickangle"] = 0   # matplotlib's upright labels
             if values:
                 endpoints = [values[0], values[-1]]
                 other = base.get("ylim" if kind == "x" else "xlim", [0, 1])[0]
@@ -997,6 +1066,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
     layout["legend"] = {"orientation": "h", "y": -0.12 / nrows, "x": 0.0}
     layout["margin"] = {"l": 60, "r": 60, "t": 92 if has_top_axis else 44, "b": 50}
     figure_links = []
+    grids = {}   # legend name -> the lab legend (its column count and drawn box)
     if positions:
         # Source fractions already contain the margins around axes and headers.
         layout["margin"] = {"l": 0, "r": 0, "t": 0, "b": 0}
@@ -1006,6 +1076,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         source_legend = axes[_pick_base(axes, panels[holders[0]])].get("legend") if len(holders) == 1 else None
         if source_legend:
             layout["legend"].update(_legend_place(source_legend, positions[1][holders[0]]))
+            grids["legend"] = source_legend
         elif len(holders) > 1:
             # v1.5.1 (D3 classes P/T): several panels each drew their OWN legend (a T2* value,
             # an RB summary per qubit). One footer legend merged them: per-panel numbers lost
@@ -1016,6 +1087,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 own = axes[_pick_base(axes, panels[i])]["legend"]
                 layout[name] = {"font": {"size": own.get("size") or 10},
                                 **_legend_place(own, positions[1][i])}
+                grids[name] = own
                 for trace in data[spans[i]:spans[i + 1]]:
                     if trace.get("showlegend") and n:
                         trace["legend"] = name
@@ -1039,6 +1111,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             own.update(orientation="h" if (figure_legend.get("ncol") or 1) > 1 else "v",
                        font={"size": figure_legend.get("size") or 10})
             layout[name] = own
+            grids[name] = figure_legend
             for entry in figure_legend.get("entries", []):
                 proxy = (_scatter_to_plotly(entry, "x", "y") if entry.get("type") == "scatter"
                          else _line_to_plotly(entry, "x", "y"))
@@ -1080,6 +1153,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 axis["title"].setdefault("font", {}).setdefault("size", 10)
                 axis["title"].update(standoff=4 if name.startswith("y") else 0)
     _legend_once(data)
+    _split_legend_rows(data, layout, grids)
     for proxy, linked in figure_links:
         for trace in linked:
             trace["legendgroup"] = proxy.get("legendgroup", "")
