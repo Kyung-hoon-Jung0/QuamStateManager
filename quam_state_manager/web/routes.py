@@ -20755,6 +20755,190 @@ def cz_plan_map():
     return jsonify(ok=True, unavailable=unavailable, **czp.chip_map(rows, convs, op))
 
 
+# ---- A14 S3: measured population loss (file-derived; never waits for the ledger)
+#: the ledger fields a run's frequency axis was placed with besides f_01 (the idle
+#: check covers f_01; a Ramsey moves it by kHz) and the anharmonicity (not used)
+_CZ_LOSS_SKIP_FIELDS = (".f_01", ".anharmonicity")
+
+
+def _cz_loss_roots(ctx) -> list[tuple[str, str]]:
+    """The chip's data folders, ``[(path, source)]``: the ones the open registered
+    (``ctx["hub_roots"]``), else -- an archive the open did not register -- the
+    ones it would declare (:func:`_hub_roots_for`). Never the Datasets store,
+    which picks the folder with the most runs (possibly another chip's). Every
+    root is searched: a chip may declare a folder WITHOUT these runs while they
+    sit in its project's storage."""
+    if not ctx or not ctx.get("path"):
+        return []
+    roots = ctx.get("hub_roots")
+    if roots is None:
+        try:
+            roots = _hub_roots_for(ctx)
+        except Exception:  # noqa: BLE001 -- no declared roots: no curves, said so
+            logger.debug("cz loss: the data folders of %s could not be listed", ctx.get("path"),
+                         exc_info=True)
+            roots = []
+    return [(str(r), str(src)) for r, src in roots]
+
+
+def _cz_loss_judges(ctx, store):
+    """``(identity, names)`` for :func:`cz_loss.build`.
+
+    identity: the ledger's own verdict (``value_history.run_chip_uncertain`` over
+    the runs it holds) when it is ready; else -- building, warming, no ledger, a
+    run it does not hold -- ``extras.chip_name`` of the run's saved state against
+    the chip's, when both declare one; else unchecked.
+    names: the run's qubit names in today's (``_rename_scope`` +
+    ``value_history.run_era``); None for a chip that was never renamed."""
+    from quam_state_manager.core import cz_loss, hub_sync, value_history as vh
+    from quam_state_manager.core.run_names import RunNames
+    if not ctx or not ctx.get("path"):
+        return None, None
+    try:
+        chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    except Exception:  # noqa: BLE001 -- no history dir: the files decide
+        chip_dir = None
+    with store._lock:
+        merged = store.merged
+    extras = merged.get("extras") if isinstance(merged, dict) else None
+    mine = extras.get("chip_name") if isinstance(extras, dict) else None
+    mine = mine.strip() if isinstance(mine, str) and mine.strip() else None
+    known = uncertain = binding = None
+    if (chip_dir is not None and (Path(chip_dir) / "ledger.sqlite").exists()
+            and hub_sync.status(Path(chip_dir)).get("state") != "building"):
+        try:
+            binding = _vh_binding(ctx, chip_dir)
+            known = vh.run_eras_known(chip_dir, binding)[1]
+            uncertain = vh.run_chip_uncertain(chip_dir, binding)
+        except Exception:  # noqa: BLE001 -- building, warming or unreadable: the files decide
+            known = uncertain = None
+
+    def identity(folder):
+        key = vh.norm_folder(folder)
+        if known is not None and key in known:
+            if key in uncertain:
+                return False, "ledger", "the ledger marks this run as another chip's"
+            return True, "ledger", None
+        theirs = cz_loss.run_chip_name(folder)
+        if mine and theirs:
+            return (theirs == mine, "chip_name",
+                    None if theirs == mine else "saved by a chip of another name")
+        return True, "unchecked", None
+
+    scope = _rename_scope(ctx, chip_dir)
+    if not scope:
+        return identity, None
+    lineage, era = scope["lineage"], tuple(scope.get("era") or ())
+    qubits_now = merged.get("qubits") if isinstance(merged.get("qubits"), dict) else {}
+    pairs_now = merged.get("qubit_pairs") if isinstance(merged.get("qubit_pairs"), dict) else {}
+    seen: dict = {}
+
+    def names(folder):
+        key = vh.norm_folder(folder)
+        if key not in seen:
+            try:
+                src = vh.run_era(chip_dir, folder, binding)
+            except Exception:  # noqa: BLE001 -- the era cannot be told: the run is skipped
+                src = None
+            seen[key] = RunNames(lineage, src, era, qubits_now, pairs_now)
+        return seen[key]
+
+    return identity, names
+
+
+def _cz_loss_build(ctx, store, convs) -> dict:
+    """:func:`cz_loss.build` over the chip's data folders and today's qubits."""
+    from quam_state_manager.core import cz_loss
+    roots = _cz_loss_roots(ctx)
+    chip = {}
+    for path, conv in convs.items():
+        extras = (conv.qubit or {}).get("extras") or {}
+        entry = {"f01_hz": conv.f01}
+        if "population_loss_defects_json" in extras:
+            entry["stored"] = extras["population_loss_defects_json"]
+        chip[path.split(".")[-1]] = entry
+    identity, names = _cz_loss_judges(ctx, store) if roots else (None, None)
+    out = cz_loss.build([r for r, _src in roots], chip, identity=identity, names=names)
+    out["roots"] = [{"path": r, "source": src} for r, src in roots]
+    return out
+
+
+def _cz_loss_staleness(ctx, payload: dict, convs) -> dict:
+    """Whether the flux model a curve's axis was placed with changed after the run:
+    the qubit's ``lffem_flux_model`` fields, ``freq_vs_flux_01_quad_term`` and its
+    park offset (``cz_gate_plan.dependency_paths`` without f_01 / anharmonicity),
+    read from the ledger like /cz-plan/history (``limit=3``, the same memo slot).
+    ``mode`` as there: ``building`` / ``preparing`` -> ask again."""
+    from quam_state_manager.core import cz_gate_plan as czp
+    by_name = {p.split(".")[-1]: (p, c) for p, c in convs.items()}
+    wanted: dict[str, list[str]] = {}
+    for q, entry in payload["curves"].items():
+        if (entry.get("scan") or entry.get("marker_curve")) and q in by_name:
+            path, conv = by_name[q]
+            wanted[q] = [d for d in czp.dependency_paths(path, conv.qubit or {})
+                         if not d.endswith(_CZ_LOSS_SKIP_FIELDS)]
+    paths = sorted({p for ps in wanted.values() for p in ps})
+    if not ctx or not paths:
+        # nothing to check (no curve) is not a ledger answer
+        return {"mode": "unavailable" if not ctx else "none", "note": None, "qubits": {}}
+    hist = _value_history(ctx, {p: p for p in paths}, limit=3)
+    mode = hist.get("mode")
+    out = {"mode": mode, "note": hist.get("unavailable_note") or None, "qubits": {}}
+    if mode != "ledger":
+        return out
+    for q, ps in wanted.items():
+        lines = []
+        for which in ("scan", "marker_curve"):
+            curve = payload["curves"][q].get(which)
+            if not curve or curve.get("t_us") is None:
+                continue
+            changed = []
+            for p in ps:
+                series = hist["rows"].get(p) or {}
+                pts = series.get("effective") or series.get("points") or []
+                after = [x for x in pts if czp.is_setting(x) and x.get("t_us") is not None
+                         and x["t_us"] > curve["t_us"] + czp.STALE_SLACK_US]
+                if after:
+                    changed.append((p, after[-1]))
+            if not changed:
+                continue
+            newest = max(changed, key=lambda c: c[1]["t_us"])[1]
+            k = len(changed)
+            when = (f"run #{newest['run_id']}" if newest.get("run_id") is not None
+                    else (newest.get("t") or "time unknown"))
+            text = (f"axis of run #{curve['run_id']} predates {k} flux-model input"
+                    f"{'' if k == 1 else 's'} changed ({when})")
+            if not curve.get("order_proven"):
+                text += "; order not proven"
+            lines.append({"which": which, "run_id": curve["run_id"], "text": text,
+                          "fields": [p[len(by_name[q][0]) + 1:] for p, _pt in changed],
+                          "changed_run_id": newest.get("run_id"), "changed_t": newest.get("t")})
+        if lines:
+            out["qubits"][q] = lines
+    return out
+
+
+@bp.route("/cz-plan/loss")
+def cz_plan_loss():
+    """Every qubit's measured population loss from the chip's own data folders (the
+    newest population-loss scan, the run the stored defects came from, the idle
+    check) plus ``staleness``: the ledger's word on whether a curve's flux model
+    changed after the run (``mode`` building -> ask again; the curves never wait)."""
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    ctx = _active_ctx()
+    _rows, convs, _unavailable = _cz_plan_ops(store)
+    payload = _cz_loss_build(ctx, store, convs)
+    try:
+        payload["staleness"] = _cz_loss_staleness(ctx, payload, convs)
+    except Exception:  # noqa: BLE001 -- the ledger check is optional; the curves stand
+        logger.warning("cz loss: the staleness check failed", exc_info=True)
+        payload["staleness"] = {"mode": "unavailable", "note": "the change history could not be read",
+                                "qubits": {}}
+    return jsonify(ok=True, **payload)
+
+
 @bp.route("/cz-plan/history")
 def cz_plan_history():
     """When each operation's amplitudes were last set, and every staleness warning."""
@@ -20849,17 +21033,103 @@ def cz_plan_data():
         elif ln["duration_unknown"]:
             notes.append(f"{ln['name']}: drawn waveform is the nominal one; played duration is unknown")
         traj.append({"amplitude_v": samples, "playback_known": playback_known, **conv.trajectory(samples)})
+    # A14 S4: which figure each note explains -- the chip's unreadable entries go to
+    # the status line, the operation's own notes (routing, pair refusal, unreadable
+    # amplitude, coupler shift) concern both figures, everything the waveform loop
+    # added concerns the frequency-in-time figure
+    head = len(unavailable)
+    notes_figure = (["status"] * head + ["both"] * len(row["notes"])
+                    + ["time"] * (len(notes) - head - len(row["notes"])))
+    info_figure = ["time"] * len(info)
     hist = _cz_plan_history([row])
     cal = czp.calibration(row, hist)
     card = {"last_set": _cz_plan_point_view(cal["last_set"]) if cal["last_set"] else None,
             "proven": bool(cal["last_calibrated"]), "unknown": cal["unknown"], "warnings": cal["warnings"],
+            "warning_count": len(cal["warnings"]), "warning_groups": _cz_warning_groups(row, cal["warnings"]),
             "mode": hist.get("mode"), "note": cal["reason"],
             "fields": {p: _cz_plan_point_view(f) for p, f in cal["fields"].items() if f.get("t_us") is not None}}
     others = [{"path": r["path"], "operation": r["operation"],
                "points": [{"amplitude_v": ln["amplitude_v"], "frequency_hz": ln["point"].get("frequency_hz")}
                           for ln in r["lines"]]} for r in pair_rows]
+    try:
+        gate_loss = _cz_gate_loss(row, traj, convs, _cz_loss_build(_active_ctx(), store, convs))
+    except Exception:  # noqa: BLE001 -- the loss block is advisory; the figures stand
+        logger.warning("cz plan: the gate's loss block could not be built", exc_info=True)
+        gate_loss = []
     return jsonify(ok=True, row=row, qubits=qubits, trajectory=traj, notes=notes, info=info,
-                   calibration=card, pair_ops=others, amax_v=amax)
+                   notes_figure=notes_figure, info_figure=info_figure, unavailable=unavailable,
+                   calibration=card, pair_ops=others, amax_v=amax, gate_loss=gate_loss)
+
+
+def _cz_warning_groups(row: dict, warnings: list[dict]) -> list[dict]:
+    """The staleness warnings grouped per qubit (the operation's member order) and
+    per run, newest run first: ``[{"qubit", "runs": [{"run_id", "t", "fields"}]}]``."""
+    order = [ln["qubit_path"] for ln in row["lines"] if ln.get("qubit_path")]
+    groups: dict[str, dict] = {}
+    for w in warnings:
+        path = w.get("path") or ""
+        owner = next((q for q in order if path.startswith(q + ".")), None)
+        key = owner or ""
+        field = path[len(owner) + 1:] if owner else path
+        runs = groups.setdefault(key, {})
+        rk = (w.get("run_id"), w.get("t"))
+        runs.setdefault(rk, {"run_id": w.get("run_id"), "t": w.get("t"), "fields": []})["fields"].append(field)
+    out = []
+    for key in sorted(groups, key=lambda k: order.index(k) if k in order else len(order)):
+        runs = sorted(groups[key].values(), key=lambda r: r["t"] or "", reverse=True)
+        out.append({"qubit": key.split(".")[-1] if key else None, "runs": runs})
+    return out
+
+
+def _cz_gate_loss(row: dict, traj: list, convs: dict, loss: dict) -> list[dict]:
+    """A14 S5, per member of the operation: the scan's loss at the operating frequency
+    (:func:`cz_loss.loss_at`) and the stored defects the gate's frequency excursion
+    touches (:func:`cz_loss.defects_swept`) -- both [derived]. The excursion is
+    ``[min, max]`` of the member's own f(t) over the operation's waveform (SNZ lobes
+    included) together with its idle f_01, else SM's f(amplitude) over ``[0, A]``,
+    labelled "from the amplitude only"."""
+    from quam_state_manager.core import cz_loss
+    out = []
+    for k, ln in enumerate(row["lines"]):
+        q, conv = ln["name"], convs.get(ln["qubit_path"])
+        f_op = ln["point"].get("frequency_hz")
+        curves = (loss.get("curves") or {}).get(q) or {}
+        entry = {"role": ln["role"], "qubit": q, "moves": ln["moves"], "operating_hz": f_op,
+                 "marker": curves.get("marker"), "scan": None, "sweep": None, "defects_touched": [],
+                 "reason": None}
+        if ln.get("refusal") or not ln["moves"] or f_op is None or conv is None:
+            entry["reason"] = (ln.get("refusal") or ("stays at idle" if not ln["moves"] else None)
+                               or ln["point"].get("reason") or "no operating frequency")
+            out.append(entry)
+            continue
+        scan = curves.get("scan")
+        if scan:
+            entry["scan"] = {"run_id": scan["run_id"], "interaction_time_ns": scan["interaction_time_ns"],
+                             **cz_loss.loss_at(scan["pieces"], f_op)}
+        else:
+            entry["scan"] = {"run_id": None, "interaction_time_ns": None, "loss": None, "pieces": [],
+                             "reason": curves.get("reason") or loss.get("reason") or "no scan"}
+        t = traj[k] if k < len(traj) else None
+        freqs = [f for f in ((t or {}).get("frequency_hz") or ()) if f is not None]
+        source = "trajectory"
+        if not freqs:
+            amp = ln.get("amplitude_v")
+            source = "amplitude only"
+            if amp:
+                freqs = [f for f in conv.trajectory([amp * i / 200 for i in range(201)])["frequency_hz"]
+                         if f is not None]
+        if conv.f01 is not None:
+            freqs.append(conv.f01)
+        if freqs:
+            lo, hi = min(freqs), max(freqs)
+            entry["sweep"] = {"f_min_hz": lo, "f_max_hz": hi, "source": source,
+                              "label": ("from the gate's own waveform" if source == "trajectory"
+                                        else "from the amplitude only"),
+                              "note": cz_loss.AXIS_NOTE}
+            raw = ((conv.qubit or {}).get("extras") or {}).get("population_loss_defects_json")
+            entry["defects_touched"] = cz_loss.defects_swept(cz_loss.stored_defects(raw), lo, hi)
+        out.append(entry)
+    return out
 
 
 @bp.route("/pulses")

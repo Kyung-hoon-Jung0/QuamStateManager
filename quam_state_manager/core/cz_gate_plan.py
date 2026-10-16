@@ -812,6 +812,14 @@ def _plan(plan, lines):
 
 
 # ---------------------------------------------------------------- when set
+def is_setting(p):
+    """A ledger point that SET the value (SM, a proven or saving run, an uncertain chip's
+    run): not a removal, not undone, and not a no-op write of the same value."""
+    return (p.get("provenance") in ("sm", "run_proven", "run_saved", "run_uncertain_chip")
+            and not p.get("removed") and not p.get("undone")
+            and ("old" not in p or "value" not in p or p["old"] != p["value"]))
+
+
 def calibration(row, history):
     """When each value this operation uses was last set (effective change points).
 
@@ -821,11 +829,7 @@ def calibration(row, history):
     Unknown stays unknown: no amplitude history -> ``unknown``."""
     rows = history.get("rows") or {}
     fields, changes, observations, notes = {}, {}, {}, []
-
-    def setting(p):
-        return (p.get("provenance") in ("sm", "run_proven", "run_saved", "run_uncertain_chip")
-                and not p.get("removed") and not p.get("undone")
-                and ("old" not in p or "value" not in p or p["old"] != p["value"]))
+    setting = is_setting
 
     def view(p):
         return {"t": p.get("t"), "t_us": p.get("t_us"), "run_id": p.get("run_id"),

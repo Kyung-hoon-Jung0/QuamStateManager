@@ -139,6 +139,20 @@ def test_every_route_answers_on_a_real_chip(tmp_path, folder):
         assert picked.status_code == 200 and {s["operation"] for s in picked.get_json()["segments"]} <= {name}
 
 
+@pytest.mark.skipif(not _REAL, reason="no real chip folders named in SM_CZ_PLAN_CHIPS")
+@pytest.mark.parametrize("folder", _REAL, ids=lambda p: p.name)
+def test_the_loss_route_answers_on_a_real_chip(tmp_path, folder):
+    """A14 S3: /cz-plan/loss on a real chip folder: 200, one entry per qubit, every curve's
+    pieces in sample order with one frequency per loss value."""
+    c = _client(tmp_path, folder)
+    d = c.get("/cz-plan/loss").get_json()
+    assert d["ok"] and set(d["curves"]) == {q["name"] for q in c.get("/cz-plan/map").get_json()["qubits"]}
+    for entry in d["curves"].values():
+        for which in ("scan", "marker_curve"):
+            for piece in (entry[which] or {}).get("pieces") or ():
+                assert len(piece["frequency_hz"]) == len(piece["loss"]) <= 400
+
+
 @pytest.mark.parametrize("shape", ["pair_alias", "macros_alias", "pairs_alias", "bad_pairs", "bad_pair", "bad_macros", "bad_macro"])
 def test_collection_shapes_never_crash_and_unavailable_entries_are_explained(tmp_path, monkeypatch, shape):
     from quam_state_manager.core.loader import QuamStore
