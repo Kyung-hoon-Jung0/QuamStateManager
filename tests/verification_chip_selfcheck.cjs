@@ -44,9 +44,9 @@ assert.deepStrictEqual(t, ['not verified on this run'], 'an unchecked recipe say
 assert.strictEqual(tile.querySelector('.map-tools-chip').title, note, 'the full reason is on hover'); n++;
 t = honest(chips({ clickable: { n_verified: 1, targets: [{ evidence_tier: 'applied' }] } }), 'verified recipe');
 assert.deepStrictEqual(t, ['verified on this run'], 'a verified recipe says verified, once'); n++;
-t = honest(chips({ clickable: { n_verified: 1, verified_against: 'proposals', targets: [] } }), 'proposal-checked recipe');
+t = honest(chips({ clickable: { n_verified: 1, verified_against: 'proposals', targets: [{evidence_tier: 'proposed'}] } }), 'proposal-checked recipe');
 assert.deepStrictEqual(t, ['proposed, not applied'], 'a recipe checked against a proposal says so'); n++;
-t = honest(chips({ status_chip: 'Reproduced with the current analysis code', clickable: { evidence_tier: 'proposed' } }), 'replot');
+t = honest(chips({ status_chip: 'Reproduced with the current analysis code', clickable: { n_verified: 1, evidence_tier: 'proposed', targets: [{evidence_tier: 'proposed'}] } }), 'replot');
 assert.deepStrictEqual(t, ['Reproduced with the current analysis code', 'proposed, not applied'], 'a replot keeps its reproduction status'); n++;
 t = honest(chips({ status_chip: 'raw data', clickable: null, display_only_reason: 'this run wrote no state: click-to-apply off' }), 'display only');
 assert.deepStrictEqual(t, ['raw data', 'not verified on this run'], 'a display-only figure is not verified, reason on hover'); n++;

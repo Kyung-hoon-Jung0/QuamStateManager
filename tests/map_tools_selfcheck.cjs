@@ -53,8 +53,9 @@ w._runChipExpect = () => ({token: 'scratch-token'});
 w._openPlotApplyPopup = (...args) => popups.push(args);
 w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/map-tools.js'), 'utf8'));
 const tile = d.getElementById('tile'), plot = d.getElementById('plot');
+// v1.4.1: a tier alone -> positive count and targets, because verification now fails closed.
 const payload = {data: [{type: 'heatmap', x: [0, 1, 2], y: [1, 2, 3], z: [[0, 1, 0], [1, 0, 1], [0, 1, 0]], colorscale: 'Viridis'}],
-    layout: {}, status_chip: 'current code', clickable: {evidence_tier: 'proposed'}};
+    layout: {}, status_chip: 'current code', clickable: {evidence_tier: 'proposed', n_verified: 1, targets: [{evidence_tier: 'proposed'}]}};
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const c = name => tile.querySelector('[data-map="' + name + '"]');
 function input(name, value) { const el = c(name); if (el.type === 'checkbox') el.checked = value; else el.value = value; el.dispatchEvent(new w.Event('input', {bubbles: true})); }

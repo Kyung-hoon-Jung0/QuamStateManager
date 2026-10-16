@@ -40,6 +40,19 @@
         var c = payload.clickable;
         if (!c) return 'not verified on this run';
         if (c.verification_note) return 'not verified on this run';
+        // v1.5.1 (R5 P2-10): verified only with positive, consistent proof -- a count of verified
+        // writes between the distinct target paths (a learned contract counts paths, one target
+        // per panel) and the number of targets (a recipe counts targets)
+        var targets = c.targets;
+        if (!Number.isInteger(c.n_verified) || c.n_verified <= 0 || !Array.isArray(targets) || !targets.length ||
+            c.n_verified > targets.length) return 'not verified on this run';
+        if (targets.every(function (t) { return t && t.path; }) &&
+            new Set(targets.map(function (t) { return t.path; })).size > c.n_verified) return 'not verified on this run';
+        if (c.verified_against && c.verified_against !== 'patches' && c.verified_against !== 'proposals') return 'not verified on this run';
+        var tier = c.verified_against === 'proposals' ? 'proposed' : c.verified_against === 'patches' ? 'applied' : c.evidence_tier;
+        if (!tier) tier = targets[0] && targets[0].evidence_tier;
+        if (!/^(applied|proposed)$/.test(tier) || (c.evidence_tier && c.evidence_tier !== tier) ||
+            targets.some(function (t) { return !t || t.evidence_tier !== tier; })) return 'not verified on this run';
         if (c.evidence_tier === 'proposed' || c.verified_against === 'proposals') return 'proposed, not applied';
         return 'verified on this run';
     }
@@ -139,7 +152,19 @@
         }
         function draw(local) {
             if (!alive || !document.body.contains(plot) || !window.Plotly) return;
-            var traces = copy(base);
+            // Data remain raw; presentation follows the live resize/theme/legend state.
+            var raw = base.map(function (trace, index) {
+                var live = plot.data && plot.data[index];
+                var out = copy(live || trace);
+                if (trace.type === 'heatmap') {
+                    ['x', 'y', 'z', 'customdata'].forEach(function (key) {
+                        if (key in trace) out[key] = copy(trace[key]);
+                        else delete out[key];
+                    });
+                }
+                return out;
+            });
+            var traces = copy(raw);
             maps.forEach(function (m, i) {
                 var result = local ? local[i] : results[i], trace = traces[m.index];
                 if (!result || !(control('smooth').checked || !local)) return;
@@ -161,7 +186,7 @@
             if (!plot.layout && window.PlotTheme) layout = window.PlotTheme.houseLayout(layout);
             var mode = control('view').value;
             side.hidden = mode !== 'side';
-            Promise.resolve(window.Plotly.react(plot, mode === 'smoothed' ? traces : copy(base), layout, {responsive: true})).catch(function () {});
+            Promise.resolve(window.Plotly.react(plot, mode === 'smoothed' ? traces : raw, layout, {responsive: true})).catch(function () {});
             if (mode === 'side') Promise.resolve(window.Plotly.react(side, traces, layout, {responsive: true})).catch(function () {});
         }
         function invalidate() {

@@ -110,16 +110,42 @@
             return !!(axis && axis.type === 'log');
         }
         return data.some(function (t) {
-            if (!t || t.type !== 'heatmap' || (t.xaxis || 'x') !== xref || (t.yaxis || 'y') !== yref) return false;
+            if (!t || t.type !== 'heatmap' || t.visible === false || t.visible === 'legendonly' || t.opacity === 0 ||
+                (t.xaxis || 'x') !== xref || (t.yaxis || 'y') !== yref) return false;
             var z = Array.isArray(t.z) ? t.z : [];
             var cols = z.reduce(function (m, row) { return Math.max(m, Array.isArray(row) ? row.length : 0); }, 0);
-            return inExtent(note.x, t.x, cols, isLog(xref)) && inExtent(note.y, t.y, z.length, isLog(yref));
+            var x = cellIndex(note.x, t.x, cols, isLog(xref), t.x0, t.dx);
+            var y = cellIndex(note.y, t.y, z.length, isLog(yref), t.y0, t.dy);
+            var value = y >= 0 && x >= 0 && z[y] ? z[y][x] : null;
+            return typeof value === 'number' && isFinite(value);
         });
+    }
+
+    function cellIndex(value, coords, n, log, start, step) {
+        if (!Array.isArray(coords) || !coords.length) {
+            coords = Array.from({length: n}, function (_, i) { return (start || 0) + i * (step === undefined ? 1 : step); });
+        }
+        if (!inExtent(value, coords, n, log)) return -1;
+        if (coords.some(function (c) { return typeof c === 'string'; })) return coords.map(String).indexOf(String(value));
+        var points = coords.map(function (v) { return log ? Math.log10(v) : v; });
+        var edges = points.length === n + 1 ? points : points.map(function (v, i) {
+            return i ? (points[i - 1] + v) / 2 : v - (points.length > 1 ? points[1] - v : 1) / 2;
+        }).concat([points[n - 1] + (n > 1 ? points[n - 1] - points[n - 2] : 1) / 2]);
+        for (var i = 0; i < n; i++) {
+            if (value >= Math.min(edges[i], edges[i + 1]) && value <= Math.max(edges[i], edges[i + 1])) return i;
+        }
+        return -1;
     }
 
     function onOwnBox(note) {
         var bg = note && note.bgcolor;
-        return typeof bg === 'string' && bg !== '' && !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(bg);
+        if (typeof bg !== 'string') return false;
+        bg = bg.trim().toLowerCase();
+        if (!bg || bg === 'transparent' || bg === 'none') return false;
+        if (/^#[0-9a-f]{4}$/.test(bg)) return bg[4] !== '0';
+        if (/^#[0-9a-f]{8}$/.test(bg)) return parseInt(bg.slice(7), 16) > 0;
+        var alpha = /\/\s*([\d.]+)%?\s*\)$/.exec(bg) || /^\w+a\([^)]*,\s*([\d.]+)%?\s*\)$/.exec(bg);
+        return !alpha || +alpha[1] > 0;
     }
 
     /** Base layout -- deep-merged under caller overrides. `data` (optional) are the traces
@@ -301,7 +327,7 @@
                     });
                 }
                 if (el._houseSourceLayout) {
-                    var themed = houseLayout(el._houseSourceLayout, el._houseSourceData), updates = {};
+                    var themed = houseLayout(el._houseSourceLayout, el.data || el._houseSourceData), updates = {};
                     Object.keys(themed).forEach(function (key) {
                         if (!/^[xy]axis\d*$/.test(key)) return;
                         var axis = themed[key];
