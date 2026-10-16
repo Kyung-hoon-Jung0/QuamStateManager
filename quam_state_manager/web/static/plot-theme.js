@@ -162,6 +162,10 @@
             if (/^xaxis/.test(k) && ax.side === 'top') dflt.ticklabelstandoff = 8;
             out[k] = Object.assign(dflt, ax);
         });
+        if (out.shapes) out.shapes = out.shapes.map(function (shape) {
+            return shape.name === 'legend-backing' ? Object.assign({}, shape,
+                {fillcolor: cssVar('--plot-hover-bg', cssVar('--pico-card-background-color', '#222'))}) : shape;
+        });
         // v1.5.1 (D3 class G): a SUBPLOT axis (xaxis2..N beside the first panel) got no
         // theme either, so every panel after the first drew Plotly's near-white default
         // grid. Same dim grid as the first panel; a grid colour the caller (the lab
@@ -316,6 +320,7 @@
                     });
                     (themed.shapes || []).forEach(function (shape, index) {
                         if (shape.line && 'color' in shape.line) updates['shapes[' + index + '].line.color'] = shape.line.color;
+                        if (shape.name === 'legend-backing') updates['shapes[' + index + '].fillcolor'] = shape.fillcolor;
                     });
                     if (Object.keys(updates).length) window.Plotly.relayout(el, updates);
                 }

@@ -15945,6 +15945,10 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             // click handler only once the figure exists.
             Promise.resolve(_plotlyRender(inner, themedData, layout, {responsive: true})).then(function() {
                 if (stale()) { _purgeInteractiveTile(div); return; }
+                if (inner.on && (layout.shapes || []).some(function (s) { return s.name === 'legend-backing'; })) {
+                    inner.on('plotly_afterplot', function () { requestAnimationFrame(function () { _fitLegendBackings(inner); }); });
+                    _fitLegendBackings(inner);
+                }
                 if (window.PlotHost) window.PlotHost.observe(inner);
                 if (window.MapTools) window.MapTools.mount(div.closest('.ds-interactive-fig') || div, inner, d,
                     {uid: runId, fig: figKey, source: endpoint === 'replot/plot' ? 'replot' : 'recipe'});
@@ -16102,6 +16106,35 @@ function _replotLayoutAt(d, width) {
     return _replotFigureLayout(layout, d.source_size_inches, width, layout.height);
 }
 window._replotLayoutAt = _replotLayoutAt;
+
+/** One frame encloses all drawn rows, including Plotly's minimum row height. */
+function _fitLegendBackings(plot) {
+    if (!document.body.contains(plot) || !plot._fullLayout || plot._fittingLegendBacking) return;
+    var size = plot._fullLayout._size, rect = plot.getBoundingClientRect(), updates = {};
+    if (!size || !(size.w > 0) || !(size.h > 0)) return;
+    (plot.layout.shapes || []).forEach(function (shape, i) {
+        if (shape.name !== 'legend-backing' || !shape.legendgroup) return;
+        var boxes = shape.legendgroup.split(',').map(function (name) {
+            var el = plot.querySelector('g.' + name);
+            return el && el.getBoundingClientRect();
+        }).filter(Boolean);
+        if (!boxes.length) return;
+        var bounds = {
+            x0: (Math.min.apply(null, boxes.map(function (b) { return b.left; })) - rect.left - size.l - 3) / size.w,
+            x1: (Math.max.apply(null, boxes.map(function (b) { return b.right; })) - rect.left - size.l + 3) / size.w,
+            y0: 1 - (Math.max.apply(null, boxes.map(function (b) { return b.bottom; })) - rect.top - size.t + 3) / size.h,
+            y1: 1 - (Math.min.apply(null, boxes.map(function (b) { return b.top; })) - rect.top - size.t - 3) / size.h
+        };
+        Object.keys(bounds).forEach(function (key) {
+            if (Math.abs(bounds[key] - shape[key]) * (key[0] === 'x' ? size.w : size.h) > .5) {
+                updates['shapes[' + i + '].' + key] = bounds[key];
+            }
+        });
+    });
+    if (!Object.keys(updates).length) return;
+    plot._fittingLegendBacking = true;
+    return Promise.resolve(Plotly.relayout(plot, updates)).finally(function () { plot._fittingLegendBacking = false; });
+}
 
 /**
  * The relayout that moves a drawn tile to `fit` (a _replotLayoutAt result): its height and

@@ -69,6 +69,19 @@ def _legend_ncol(leg):
         return 1
 
 
+def _legend_grid(leg):
+    """Entry rows from the drawn packing, with balanced columns as a public fallback."""
+    try:
+        columns = leg._legend_handle_box.get_children()
+        lengths = [len(col.get_children()) for col in columns]
+        if sum(lengths) != len(leg.get_texts()):
+            raise ValueError("legend packing changed")
+    except Exception:
+        n, cols = len(leg.get_texts()), _legend_ncol(leg)
+        lengths = [n // cols + (i < n % cols) for i in range(cols)]
+    return [row for length in lengths for row in range(length)]
+
+
 def _legend_proxies(leg):
     """``[(label, proxy trace)]`` for every legend entry, from what the legend DREW for it.
 
@@ -452,6 +465,8 @@ def _shared_index(ax, axes, which):
 
 def extract_axes(ax, axes):
     leg = ax.get_legend()
+    if leg is not None and not leg.get_visible():
+        leg = None
     show_legend = leg is not None
     traces = []
     skipped = []
@@ -562,13 +577,22 @@ def extract_axes(ax, axes):
         else:
             trace["role"] = "markers" if trace.get("mode") == "markers" else "curve"
     if leg is not None:
-        names = {t.get("name") for t in traces}
-        for name, proxy in _legend_proxies(leg):
-            if name in names or not proxy:
+        # v1.5.1 (R5 P0-1/P1-4): the entries are what the legend DREW, in its order: an artist
+        # is an entry only when its label and look match one, else the drawn key is a proxy
+        # (custom handles, a restyled key, a text-only key); every other artist stays out
+        for trace in traces:
+            trace["legend_shown"] = False
+        for rank, (name, proxy) in enumerate(_legend_proxies(leg)):
+            if not proxy:
                 continue
-            proxy.update(name=name, x=[None], y=[None], legend_only=True)
-            traces.append(proxy)
-            names.add(name)
+            candidates = [t for t in traces if not t.get("legend_shown") and t.get("name") == name
+                          and _entry_style(t) == _entry_style(proxy)]
+            if candidates and leg.handlelength > 0:
+                entry = candidates[0]
+            else:
+                entry = dict(proxy, name=name, x=[None], y=[None], legend_only=True)
+                traces.append(entry)
+            entry.update(legend_shown=True, legend_entry=rank)
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
@@ -580,6 +604,8 @@ def extract_axes(ax, axes):
         "aspect": _f(ax.get_aspect()),
         "legend": ({"loc": leg._loc, "size": _f(leg.get_texts()[0].get_fontsize()), "box": _legend_box(leg),
                     "frame": bool(leg.get_frame_on()), "ncol": _legend_ncol(leg),
+                    "entry_rows": _legend_grid(leg),
+                    "handlelength": _f(leg.handlelength), "handletextpad": _f(leg.handletextpad),
                     "markerscale": _f(getattr(leg, "markerscale", 1))}
                    if leg is not None and leg.get_texts() else None),
         "position": _figure_position(ax),
@@ -676,7 +702,8 @@ def extract_figure(fig, key, title=None):
                                   for a in axes)],
         "texts": _figure_texts(f),
         "figure_legend": _figure_legend(f),
-        "figure_legends": [_figure_legend(f, leg) for leg in getattr(f, "legends", []) if leg.get_texts()],
+        "figure_legends": _figure_legends(f),
+        "legends_present": any(ax.get_legend() is not None for ax in axes) or _has_figure_legend(f),
         "skipped": [{"artist": type(a).__name__, "n": 1, "reason": "unsupported figure artist"}
                     for a in list(f.artists) + list(f.images) + list(f.patches) + list(f.lines)] +
                    [{"artist": "FigureText", "n": 1, "reason": "unsupported text transform"}
@@ -702,15 +729,47 @@ def _figure_position(ax):
 def _figure_legend(root, leg=None):
     """A figure-level legend (``fig.legend``): where it was drawn and how; None without one."""
     if leg is None:
-        legends = [item for item in getattr(root, "legends", []) if item.get_texts()]
+        legends = [item for item in getattr(root, "legends", []) if item.get_visible() and item.get_texts()]
         if not legends:
             return None
         leg = legends[0]
+    if not leg.get_visible() or not leg.get_texts():
+        return None
     return {"box": _legend_box(leg), "ncol": _legend_ncol(leg),
+            "entry_rows": _legend_grid(leg),
+            "handlelength": _f(leg.handlelength), "handletextpad": _f(leg.handletextpad),
             "size": _f(leg.get_texts()[0].get_fontsize()), "frame": bool(leg.get_frame_on()),
             "markerscale": _f(getattr(leg, "markerscale", 1)),
-            "entries": [dict(proxy, name=name, x=[None], y=[None], legend_only=True)
-                        for name, proxy in _legend_proxies(leg) if proxy]}
+            "entries": [dict(proxy, name=name, x=[None], y=[None], legend_only=True,
+                             legend_shown=True, legend_entry=rank)
+                        for rank, (name, proxy) in enumerate(_legend_proxies(leg)) if proxy]}
+
+
+def _entry_style(trace):
+    """The look a legend key copies from its artist (matplotlib's handler update_from)."""
+    return (trace.get("type"), trace.get("mode"), trace.get("color"), trace.get("dash"),
+            trace.get("width"), str(trace.get("marker_color")), trace.get("marker_symbol"),
+            str(trace.get("marker_face")), str(trace.get("marker_edge")), trace.get("opacity", 1))
+
+
+def _figure_legends(root):
+    """Every visible figure-level legend, subfigures included, with the axes it may speak for."""
+    out = []
+    def visit(owner):
+        for leg in owner.legends:
+            item = _figure_legend(root, leg)
+            if item:
+                item["axes_indices"] = [i for i, ax in enumerate(root.get_axes()) if ax in owner.get_axes()]
+                out.append(item)
+        for sub in owner.subfigs:
+            visit(sub)
+    visit(root)
+    return out
+
+
+def _has_figure_legend(owner):
+    """Whether the figure or a subfigure carries a legend, hidden ones included."""
+    return bool(owner.legends) or any(_has_figure_legend(sub) for sub in owner.subfigs)
 
 
 def _figure_texts(root):

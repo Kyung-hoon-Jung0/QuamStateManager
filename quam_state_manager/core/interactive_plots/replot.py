@@ -13,7 +13,7 @@ extraction contract and ``docs/`` for the design rationale.
 from __future__ import annotations
 
 import json
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 import math
 import logging
 import os
@@ -405,6 +405,7 @@ def _line_to_plotly(t, xref, yref):
                  "width": t.get("width", 1.5),
                  "shape": {"steps-pre": "vh", "steps-post": "hv", "steps-mid": "hvh"}.get(t.get("drawstyle"), "linear")},
         "opacity": t.get("opacity", 1.0),
+        "meta": {"source_kind": "line"},
     }
     if "zorder" in t:
         d["zorder"] = int(t.get("zorder") or 0)
@@ -477,6 +478,7 @@ def _scatter_to_plotly(t, xref, yref):
         "marker": {"size": t.get("marker_size") or 6,
                    "color": mc, "opacity": t.get("opacity", 1.0)},
         "showlegend": bool(t.get("name")),
+        "meta": {"source_kind": "scatter"},
     }
     _marker_paint(d["marker"], t)
     if t.get("name"):
@@ -490,7 +492,7 @@ def _scatter_to_plotly(t, xref, yref):
         for zkey, ckey in (("zmin", "cmin"), ("zmax", "cmax"), ("zauto", "cauto")):
             if zkey in mapped:
                 d["marker"][ckey] = mapped[zkey]
-        d["meta"] = mapped["meta"]
+        d["meta"].update(mapped["meta"])
         if "customdata" in mapped:
             d.update(customdata=t["marker_values"],
                      hovertemplate="x=%{x}<br>y=%{y}<br>value=%{customdata}<extra></extra>")
@@ -791,8 +793,7 @@ def _split_legend_rows(data: list, layout: dict, grids: dict) -> None:
     Plotly lays a horizontal legend out in one row as wide as the whole figure, so a lab legend
     of 2 columns x 3 rows became one long row that ran into the legend beside it (v1.5.1, D3
     class T). Each row of the lab's grid becomes its own horizontal legend at the lab's row
-    pitch, held by the same edge as the whole legend; matplotlib fills a legend's columns
-    first, so entry k sits in row k % rows."""
+    pitch, held by the same edge as the whole legend. Entry rows come from the drawn packing."""
     used = {k for k in layout if re.fullmatch(r"legend\d*", k)}
 
     def free():
@@ -807,14 +808,32 @@ def _split_legend_rows(data: list, layout: dict, grids: dict) -> None:
         ncol = int((lab or {}).get("ncol") or 1)
         if ncol < 2 or not isinstance(own, dict) or not _legend_box_ok(box):
             continue
-        entries = [t for t in data if t.get("showlegend") and t.get("name")
+        entries = [t for t in data if t.get("showlegend") and t.get("name") is not None
                    and t.get("legend", "legend") == name]
-        rows = -(-len(entries) // ncol)
+        entries.sort(key=lambda t: t.get("legendrank", 1000))
+        # the row matplotlib drew each entry in, by its place in the lab's legend: columns are
+        # balanced (7 in 3 columns are 3/2/2 long), and an entry this converter cannot draw
+        # keeps its seat empty instead of moving every later entry up
+        drawn_rows = lab.get("entry_rows") or []
+        ranks = [t.get("legendrank") for t in entries]
+        if drawn_rows and all(isinstance(r, int) and 0 <= r < len(drawn_rows) for r in ranks):
+            row_ids = [drawn_rows[r] for r in ranks]
+        else:   # an extraction without the drawn packing: matplotlib's balanced columns
+            lengths = [len(entries) // ncol + (c < len(entries) % ncol) for c in range(ncol)]
+            row_ids = [r for length in lengths for r in range(length)]
+        rows = max(row_ids, default=0) + 1
         if rows < 2:
             continue
         pitch = (box[3] - box[1]) / rows
         anchor, y = own.get("yanchor", "top"), own.get("y", box[3])
         names = [name] + [free() for _ in range(rows - 1)]
+        if lab.get("frame"):
+            layout.setdefault("shapes", []).append({
+                "type": "rect", "name": "legend-backing", "xref": "paper", "yref": "paper",
+                "legendgroup": ",".join(names),
+                "x0": box[0], "x1": box[2], "y0": box[1], "y1": box[3],
+                "fillcolor": "#ffffff", "line": {"color": "rgba(128,128,128,0.6)", "width": 1},
+                "layer": "above"})
         for r, row_name in enumerate(names):
             step = {"bottom": rows - 1 - r, "middle": (rows - 1) / 2 - r}.get(anchor, -r)
             # every row is held by the same edge as the whole legend; Plotly sizes each entry
@@ -824,9 +843,8 @@ def _split_legend_rows(data: list, layout: dict, grids: dict) -> None:
             row = {k: v for k, v in own.items() if k not in ("borderwidth", "bordercolor", "bgcolor")}
             layout[row_name] = {**row, "orientation": "h", "y": y + step * pitch,
                                 "font": dict(own.get("font") or {})}
-        for k, trace in enumerate(entries):
-            if k % rows:
-                trace["legend"] = names[k % rows]
+        for r, trace in zip(row_ids, entries):
+            trace["legend"] = names[r]
 
 
 def _thin_ticks(values, labels, width_pt, size_pt):
@@ -848,19 +866,65 @@ def _thin_ticks(values, labels, width_pt, size_pt):
     return [values[i] for i in keep], [labels[i] for i in keep]
 
 
-def _legend_once(data: list) -> None:
+def _legend_style(trace):
+    """Only an entry with the same name, artist kind and paint can control a measurement."""
+    line, marker = trace.get("line") or {}, trace.get("marker") or {}
+    return (trace.get("name"), trace.get("mode"),
+            (trace.get("meta") or {}).get("source_kind"),
+            trace.get("opacity", (marker or {}).get("opacity", 1)),
+            str(line.get("color")) if "lines" in trace.get("mode", "") else None,
+            line.get("dash", "solid") if "lines" in trace.get("mode", "") else None,
+            line.get("width") if "lines" in trace.get("mode", "") else None,
+            str(marker.get("color")) if "markers" in trace.get("mode", "") else None,
+            str((marker.get("line") or {}).get("color")) if "markers" in trace.get("mode", "") else None,
+            marker.get("symbol", "circle") if "markers" in trace.get("mode", "") else None)
+
+
+def _axes_legend_links(data: list, axes: list, owner_spans: dict, end: int) -> list:
+    """``(entry, [trace])``: the measurements an axes legend's entry stands for besides itself.
+
+    A lab legend drawn in one panel names the kinds plotted in every panel: its entry also
+    controls the same name drawn the same way in panels and twin axes without a legend of their
+    own. In its own axes it controls the hidden traces of the same name and look, and a redrawn
+    key (an opaque key for a translucent cloud) the one trace of its name and artist kind. The
+    caller leaves a trace two entries claim to neither."""
+    owners = [i for i in owner_spans if axes[i].get("legend")]
+    owned = {k for i in owners for k in range(*owner_spans[i])}
+    outside = [t for k, t in enumerate(data[:end]) if k not in owned and not t.get("showlegend") and t.get("name")]
+    links = []
+    for i in owners:
+        span = data[slice(*owner_spans[i])]
+        entries = [t for t in span if t.get("showlegend") and t.get("name") is not None]
+        hidden = [t for t in span if not t.get("showlegend") and t.get("name")]
+        names = Counter(t["name"] for t in entries)
+        for entry in entries:
+            style = _legend_style(entry)
+            linked = [t for t in hidden if _legend_style(t) == style]
+            if not linked and entry.get("x") == [None] and names[entry["name"]] == 1:
+                kind = (entry.get("meta") or {}).get("source_kind")
+                named = [t for t in hidden if t.get("name") == entry["name"]
+                         and (t.get("meta") or {}).get("source_kind") == kind]
+                linked = named if len(named) == 1 else []
+            links.append((entry, linked + [t for t in outside if _legend_style(t) == style]))
+    return links
+
+
+def _legend_once(data: list, preserve=()) -> None:
     """One legend entry per distinct artist kind: a lab figure that labels the same line
     in every panel draws one legend per panel, but Plotly has one legend for the figure,
     so the entry repeated once per panel. Same name and same look share a legend group,
-    so the one entry still shows or hides that kind in every panel."""
+    so the one entry still shows or hides that kind in every panel. A legend in ``preserve``
+    is a lab legend drawn entry by entry: its entries stay as many as the lab drew."""
     groups: dict = {}
-    for trace in data:
-        if not trace.get("showlegend") or not trace.get("name"):
+    for index, trace in enumerate(data):
+        if not trace.get("showlegend") or trace.get("name") is None:
             continue
         line, marker = trace.get("line") or {}, trace.get("marker") or {}
         # one entry per kind PER LEGEND: a panel that drew its own legend keeps its entries
         key = (trace.get("legend"), trace["name"], trace.get("mode"), trace.get("type"), str(line.get("color")),
                str(line.get("dash")), str(marker.get("color")), str(marker.get("symbol")))
+        if trace.get("legend", "legend") in preserve:
+            key += (index,)
         if key in groups:
             trace["showlegend"] = False
         trace["legendgroup"] = groups.setdefault(key, f"lg{len(groups)}")
@@ -897,6 +961,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
 
     data, layout, notes = [], {}, []
     spans = []   # per panel: the [start, end) of its traces in `data`
+    owner_spans = {}
     for p_idx, panel in enumerate(panels):
         spans.append(len(data))
         pid = p_idx + 1
@@ -913,6 +978,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
 
         panel_width = 1080 * (x1 - x0)
         _add_artists(base, xref, yref, data, layout, notes, panel_width)
+        owner_spans[base_i] = (spans[-1], len(data))
         layout[_axis_id("xaxis", pid)] = {**_axis_props(base, log_key="x"),
                                           "anchor": yref, "domain": [max(x0, 0), min(x1, 1)]}
         layout[_axis_id("yaxis", pid)] = {**_axis_props(base, log_key="y"),
@@ -928,6 +994,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             if i == base_i:
                 continue
             sec = axes[i]
+            first = len(data)
             if sec.get("shares_y_with") is not None:   # twiny → secondary top X
                 xref2 = _ref("x", 100 + pid)
                 layout[_axis_id("xaxis", 100 + pid)] = {
@@ -942,6 +1009,7 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                     "overlaying": yref, "side": sec.get("y_side", "right"),
                     "domain": [max(y0, 0), min(y1, 1)]}
                 _add_artists(sec, xref, yref2, data, layout, notes, panel_width)
+            owner_spans[i] = (first, len(data))
 
         for j, sec in enumerate(base.get("secondary_axes", [])):
             kind = sec["axis"]
@@ -1078,31 +1146,41 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         # Source fractions already contain the margins around axes and headers.
         layout["margin"] = {"l": 0, "r": 0, "t": 0, "b": 0}
         layout["legend"].update(y=0, yanchor="bottom")
-        # The one panel that carries the lab's legend keeps it; several legends share the footer.
-        holders = [i for i, p in enumerate(panels) if axes[_pick_base(axes, p)].get("legend")]
-        source_legend = axes[_pick_base(axes, panels[holders[0]])].get("legend") if len(holders) == 1 else None
+        # Every axes that drew a legend holds one -- a twin axes beside its base keeps its own
+        # (R5 P1-6) -- and a legend lists only the entries its own axes drew.
+        holders = [(p, i) for p, panel in enumerate(panels) for i in panel if axes[i].get("legend")]
+        source_legend = axes[holders[0][1]].get("legend") if len(holders) == 1 else None
         if source_legend:
-            layout["legend"].update(_legend_place(source_legend, positions[1][holders[0]]))
+            layout["legend"].update(_legend_place(source_legend, positions[1][holders[0][0]]))
             grids["legend"] = source_legend
+            start, end = owner_spans[holders[0][1]]
+            for k, trace in enumerate(data):
+                if not start <= k < end:
+                    trace["showlegend"] = False
         elif len(holders) > 1:
             # v1.5.1 (D3 classes P/T): several panels each drew their OWN legend (a T2* value,
             # an RB summary per qubit). One footer legend merged them: per-panel numbers lost
             # their panel, and the footer sat on the bottom row's axis titles. Each panel now
             # keeps its legend where the lab drew it, with that panel's entries only.
-            for n, i in enumerate(holders):
+            for n, (p, i) in enumerate(holders):
                 name = "legend" if n == 0 else f"legend{n + 1}"
-                own = axes[_pick_base(axes, panels[i])]["legend"]
+                own = axes[i]["legend"]
                 layout[name] = {"font": {"size": own.get("size") or 10},
-                                **_legend_place(own, positions[1][i])}
+                                **_legend_place(own, positions[1][p])}
                 grids[name] = own
-                for trace in data[spans[i]:spans[i + 1]]:
+                start, end = owner_spans[i]
+                for trace in data[start:end]:
                     if trace.get("showlegend") and n:
                         trace["legend"] = name
-            held = {k for i in holders for k in range(spans[i], spans[i + 1])}
+            held = {k for _, i in holders for k in range(*owner_spans[i])}
             for k, trace in enumerate(data[:spans[-1]]):
                 if k not in held:
                     trace["showlegend"] = False   # the lab drew no legend for that panel
         figure_legends = fig_json.get("figure_legends") or [fig_json.get("figure_legend") or {}]
+        if fig_json.get("legends_present") and not holders:
+            # the lab's only legends are hidden or figure-level: no axes entry is drawn
+            for trace in data:
+                trace["showlegend"] = False
         if any(legend.get("entries") for legend in figure_legends) and not holders:
             for trace in data:
                 trace["showlegend"] = False
@@ -1123,7 +1201,13 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 proxy = (_scatter_to_plotly(entry, "x", "y") if entry.get("type") == "scatter"
                          else _line_to_plotly(entry, "x", "y"))
                 proxy["legend"] = name
-                figure_links.append((proxy, [trace for trace in data if trace.get("name") == entry.get("name")
+                proxy["showlegend"] = entry.get("legend_shown", proxy.get("showlegend", False))
+                proxy["name"] = entry.get("name", "")
+                proxy["legendrank"] = entry.get("legend_entry", 1000)
+                allowed = {k for i in figure_legend.get("axes_indices", owner_spans) if i in owner_spans
+                           for k in range(*owner_spans[i])}
+                figure_links.append((proxy, [trace for k, trace in enumerate(data) if k in allowed
+                                              and _legend_style(trace) == _legend_style(proxy)
                                               and not trace.get("showlegend")]))
                 data.append(proxy)
     layout["height"] = max(320, 320 * nrows) + (64 * nrows if has_top_axis else 0)
@@ -1159,11 +1243,19 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                 axis.setdefault("tickfont", {}).setdefault("size", 10)
                 axis["title"].setdefault("font", {}).setdefault("size", 10)
                 axis["title"].update(standoff=4 if name.startswith("y") else 0)
-    _legend_once(data)
+    _legend_once(data, grids)
+    links = figure_links + _axes_legend_links(data, axes, owner_spans, spans[-1])
     _split_legend_rows(data, layout, grids)
-    for proxy, linked in figure_links:
+    # A legend entry controls the measurements it stands for; a measurement two entries could
+    # stand for (the same name and look in two legends) is left to neither (R5 P0-1).
+    claims = {}
+    for entry, linked in links:
         for trace in linked:
-            trace["legendgroup"] = proxy.get("legendgroup", "")
+            claims.setdefault(id(trace), set()).add(id(entry))
+    for entry, linked in links:
+        for trace in linked:
+            if len(claims[id(trace)]) == 1:
+                trace["legendgroup"] = entry.get("legendgroup", "")
     from .mathtext import plotly_text
     return _hover_guides(plotly_text({"data": data, "layout": layout, "title": fig_json.get("title", ""),
                                       "skipped": skipped, "notices": notices, "source_aspect": source_aspect,
@@ -1300,6 +1392,7 @@ def _add_artists(ax, xref, yref, data, layout, notes, width=1080):
     first_trace = len(data)
     for t in sorted(ax.get("traces", []), key=lambda t: t.get("zorder") or 0):
         coord = t.get("coord")
+        drawn = len(data)
         if coord and t["type"] == "polygon":
             layout.setdefault("shapes", []).append({"type": "rect", "x0": min(t["x"]), "x1": max(t["x"]),
                 "y0": min(t["y"]), "y1": max(t["y"]),
@@ -1325,6 +1418,14 @@ def _add_artists(ax, xref, yref, data, layout, notes, width=1080):
             trace = _trace_to_plotly(t, xref, yref)
             if trace:
                 data.append(trace)
+        if len(data) > drawn and "legend_shown" in t:
+            # only the trace THIS artist drew: an unlabelled axhline or span after a labelled
+            # line draws a shape, and must not take that line's legend entry and name
+            data[-1]["showlegend"] = bool(t["legend_shown"])
+            if t["legend_shown"]:
+                data[-1]["name"] = t.get("name") or ""
+            if "legend_entry" in t:
+                data[-1]["legendrank"] = t["legend_entry"]
     # Plotly only instantiates Cartesian pairs referenced by a trace. Null points
     # keep text-only and shape-only panels alive without affecting their ranges.
     if len(data) == first_trace:

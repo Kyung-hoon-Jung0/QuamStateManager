@@ -475,6 +475,8 @@ def test_a_framed_multi_row_legend_keeps_no_frame_per_row():
     layout = mpljson_to_plotly(fig_json)["layout"]
     rows = [layout[k] for k in layout if k.startswith("legend") and isinstance(layout[k], dict)]
     assert len(rows) == 2 and not any(row.get("borderwidth") for row in rows)
+    backs = [s for s in layout.get("shapes", []) if s.get("name") == "legend-backing"]
+    assert len(backs) == 1 and backs[0].get("fillcolor") and backs[0]["line"]["width"] > 0
     # a centred lab legend: every row centred under the lab box, as the whole legend is
     assert all((row["x"], row["xanchor"]) == (pytest.approx((box[0] + box[2]) / 2), "center") for row in rows)
 
