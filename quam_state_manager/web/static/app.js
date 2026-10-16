@@ -15639,7 +15639,17 @@ window.PlotHost = (function () {
             var w = el.clientWidth;
             if (!w) return;
             var cur = el._fullLayout && el._fullLayout.width;
-            if (cur && Math.abs(cur - w) < 2) return;   // already matched
+            // v1.5.1 (D3 class R): a reproduced lab figure is matched only when its HEIGHT is
+            // the one its lab aspect gives at this width too -- Plotly's own responsive window
+            // handler moves the width first (and drops layout.height), so a width-only test
+            // skipped every window resize and the old height stayed.
+            var due = null;
+            if (typeof el._replotLayoutAt === 'function') {
+                try { due = el._replotLayoutAt(w).height; } catch (e) { due = null; }
+            }
+            var curH = el._fullLayout && el._fullLayout.height;
+            var heightDue = due && curH && Math.abs(curH - due) >= 2;
+            if (cur && Math.abs(cur - w) < 2 && !heightDue) return;   // already matched
             try {
                 var prev = el.__plotlyRenderChain || Promise.resolve();
                 el.__plotlyRenderChain = prev.catch(function () {}).then(function () {
@@ -15970,10 +15980,10 @@ function _replotHeight(aspect, width, fallback, keepAspect) {
     if (typeof aspect !== 'number' || !isFinite(aspect) || aspect <= 0 || !(width > 0)) return fallback;
     // v1.5.1 (D3 class H): a figure seated by the lab's own panel positions keeps its
     // aspect below 320 px too -- the floor stretched a very wide strip of panels to half
-    // again its height. A figure laid out by Plotly margins (no source size) keeps the
-    // floor, or its margins would leave no plot area.
+    // again its height. Tall source stacks also keep their aspect and scroll. A figure
+    // laid out by Plotly margins (no source size) keeps the original limits.
     var floor = keepAspect ? 100 : 320;
-    return Math.round(Math.max(floor, Math.min(2200, width * aspect)));
+    return Math.round(Math.max(floor, keepAspect ? width * aspect : Math.min(2200, width * aspect)));
 }
 window._replotHeight = _replotHeight;
 

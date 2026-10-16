@@ -140,6 +140,18 @@ function texts(l) {
     await flush();
     eq(a.layout.height, 742, 'widened back to 1600: the 1600 height again');
     near(a.layout.font.size, 10 * Math.min(1237 / 1440, 742 / 864) * 96 / 72, 1e-6, '...and the 1600 text size');
+    // Real Chrome: Plotly's own responsive window handler moves the width FIRST (and drops
+    // layout.height), so a width-only "already matched" test skipped every window resize.
+    paneWidth = 919;
+    a._fullLayout.width = 919;
+    delete a.layout.height;
+    w.PlotHost.resizeWithin(list);
+    await flush();
+    eq(a.layout.height, 551, 'after Plotly\'s responsive resize the lab aspect still sets the height');
+    eq(a._fullLayout.height, 551, '...and the figure is drawn that tall');
+    paneWidth = 1237;
+    w.PlotHost.resizeWithin(list);
+    await flush();
 
     // H: a very wide strip of panels keeps its aspect below the old 320 px floor
     const strip = { data: [], source_aspect: 0.1761, source_size_inches: [15.48, 2.73], layout: { height: 320, font: { size: 10 } } };
@@ -154,6 +166,8 @@ function texts(l) {
     eq(s.parentElement.style.minHeight, '162px', 'H: the tile reserve follows a resize');
     eq(w._replotHeight(0.1761, 1237, 320), 320, 'H: a figure laid out by Plotly margins (no source size) keeps the 320 px floor');
     eq(w._replotHeight(0.01, 1237, 320, true), 100, 'H: a degenerate strip stops at 100 px');
+    eq(w._replotHeight(2, 1237, 320, true), 2474, 'H: a tall source stack keeps its aspect above 2200 px');
+    eq(w._replotHeight(2, 1237, 320), 2200, 'H: layouts without source positions retain the height limit');
     console.log(`replot_resize_width_selfcheck: ${n} assertions passed`);
     w.close();
 })().catch(e => { console.error(e); process.exitCode = 1; w.close(); });
