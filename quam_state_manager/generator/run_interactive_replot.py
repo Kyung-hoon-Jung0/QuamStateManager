@@ -235,14 +235,73 @@ def _report_value(value):
     return {"type": type(value).__name__}
 
 
+class SavedInputMissing(AttributeError):
+    """A plot read an attribute the saved (data.json) record does not have: the node built
+    that input in its analysis and saved only a summary of it."""
+
+    def __init__(self, path, name):
+        super().__init__(f"{path} has no {name!r}")
+        self.path, self.name = path, name
+
+
 class _SavedNamespace(dict):
-    """Saved namespace records retain mapping access and expose saved attributes."""
+    """Saved namespace records retain mapping access and expose saved attributes.
+
+    Nested records (dicts inside dicts, lists or tuples) are wrapped too: a lab plot reads
+    ``plan.control`` of every saved plan, not only attributes of the top-level mapping."""
+
+    def __init__(self, value=(), path="saved"):
+        super().__init__()
+        self._saved_path = path
+        for key, item in dict(value).items():
+            self[key] = _saved_view(item, f"{path}[{key!r}]")
 
     def __getattr__(self, name):
+        if name.startswith("__") or name == "_saved_path":
+            raise AttributeError(name)
         try:
             return self[name]
-        except KeyError as error:
-            raise AttributeError(name) from error
+        except KeyError:
+            raise SavedInputMissing(self._saved_path, name) from None
+
+
+def _saved_view(value, path):
+    """Saved JSON as the attribute-readable records a lab plot expects, at every depth."""
+    if isinstance(value, dict):
+        return _SavedNamespace(value, path)
+    if isinstance(value, (list, tuple)):
+        items = [_saved_view(item, f"{path}[{i}]") for i, item in enumerate(value)]
+        return tuple(items) if isinstance(value, tuple) else items
+    return value
+
+
+def _plot_error_trace(error, report):
+    """The traceback of a failed plot (call inside ``except``). The tile shows its last line,
+    so a plot a saved summary could not feed ends on the missing input, not the Python error."""
+    trace = traceback.format_exc()
+    reason = _saved_input_reason(error, report)
+    return trace.rstrip() + "\n" + reason if reason else trace
+
+
+def _saved_input_reason(error, report):
+    """The tile reason for a plot that a saved summary could not feed, or None.
+
+    A plot bound to a saved stand-in for ``node.namespace[...]`` (data.json keeps a summary of
+    what the node's analysis built) names that input instead of a Python error."""
+    missing = error if isinstance(error, SavedInputMissing) else None
+    cause = error.__cause__ or error.__context__
+    while missing is None and cause is not None:
+        missing = cause if isinstance(cause, SavedInputMissing) else None
+        cause = cause.__cause__ or cause.__context__
+    inputs = [(name, d["source"].split(" via ", 1)[1]) for name, d in (report or {}).items()
+              if isinstance(d, dict) and " via node.namespace." in str(d.get("source", ""))]
+    if missing is None or not inputs:
+        return None
+    root = missing.path.split("[", 1)[0].removeprefix("data.")
+    name, path = next(((n, p) for n, p in inputs if p == "node.namespace." + root), inputs[0])
+    key = path.removeprefix("node.namespace.")
+    return (f"missing input {name!r}: the plot needs node.namespace[{key!r}] as the node's analysis built it; "
+            f"data.json saves only a summary (no {missing.path.removeprefix('data.')}.{missing.name})")
 
 
 def _mapping_hint(hint):
@@ -431,9 +490,7 @@ def _bind_args(fn, *, ds_raw, ds_fit, qubits, params, results=None, machine=None
             value, source = SimpleNamespace(**params), "parameters"
         elif path.startswith("node.namespace.") and path.removeprefix("node.namespace.") in results:
             key = path.removeprefix("node.namespace.")
-            value = results[key]
-            if isinstance(value, dict):
-                value = _SavedNamespace(value)
+            value = _saved_view(results[key], "data." + key)
             source = "data." + key + " via " + path
         elif path.startswith("node.parameters.") and path.removeprefix("node.parameters.") in params:
             key = path.removeprefix("node.parameters.")
@@ -778,8 +835,8 @@ def _execute(args):
             result["figures"].extend(produced)
             import matplotlib.pyplot as plt
             plt.close("all")
-        except Exception:
-            result["errors"].append({"stage": f"plot:{key}", "trace": traceback.format_exc()})
+        except Exception as error:
+            result["errors"].append({"stage": f"plot:{key}", "trace": _plot_error_trace(error, report)})
 
     result["archive_match"] = _match_archive(result["figures"], saved, aliases)
     if args.only:
