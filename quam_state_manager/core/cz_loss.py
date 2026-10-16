@@ -3,9 +3,10 @@
 Read-only and file-derived: every curve comes from a run of the lab's
 population-loss family (node name containing ``population_loss``) in one of
 the chip's own data folders, never from SM's ledger, so the curves draw while
-the ledger is still being built. The family is the defect spectroscopy of
-[paper: arXiv:2112.03708v1, p.11, Fig. 6c] (one gray loss trace per qubit on
-the shared interaction-frequency axis).
+the ledger is still being built. The family is the measurement behind each
+qubit's column of [paper: arXiv:2112.03708v1, p.11, Fig. 6c] "Measured
+population loss (gray areas)" ... "for a duration of 100 ns" -- the duration is
+a property of each run here (``interaction_time_ns``), so every curve carries it.
 
 What a run holds (the lab's own analysis writes it): ``ds_fit.h5`` with
 ``p_loss`` and the coordinates ``frequency`` (absolute Hz, placed by the lab
