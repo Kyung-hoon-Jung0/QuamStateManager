@@ -117,6 +117,11 @@
         });
     }
 
+    function onOwnBox(note) {
+        var bg = note && note.bgcolor;
+        return typeof bg === 'string' && bg !== '' && !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(bg);
+    }
+
     /** Base layout -- deep-merged under caller overrides. `data` (optional) are the traces
      *  the layout is drawn with: text on a heatmap of theirs keeps the lab colour. */
     function houseLayout(overrides, data) {
@@ -185,6 +190,9 @@
             if (out.title) out.title = Object.assign({}, out.title, { font: artistStyle(out.title.font, text) });
             if (out.annotations) out.annotations = out.annotations.map(function (note) {
                 if (onHeatmap(note, data, out)) return Object.assign({}, note);
+                // text on the box the lab drew behind it keeps the lab colour (black on a
+                // white fit-summary box would turn light on light)
+                if (onOwnBox(note)) return Object.assign({}, note);
                 return Object.assign({}, note, { font: artistStyle(note.font, text) });
             });
             if (out.shapes) out.shapes = out.shapes.map(function (shape) {

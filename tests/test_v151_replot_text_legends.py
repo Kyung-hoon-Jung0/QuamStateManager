@@ -334,6 +334,23 @@ def test_a_secondary_axis_keeps_the_ticks_matplotlib_drew():
     assert [t.replace("\u2212", "-") for t in top["ticktext"]] == [f"{d:g}" for d in detuning]
 
 
+def test_a_text_keeps_the_box_the_lab_drew_behind_it():
+    def build(fig):
+        ax = fig.subplots()
+        ax.plot([0, 1], [0, 1])
+        ax.text(.5, .5, "T1 = 21.8 us", fontsize=10, bbox={"facecolor": "white", "alpha": .5})
+        ax.text(.2, .8, "plain", fontsize=10)
+        fig.text(.5, .02, "summary", fontsize=8, bbox={"facecolor": "yellow", "edgecolor": "red"})
+    notes = mpljson_to_plotly(_figure(build))["layout"]["annotations"]
+    boxed = next(n for n in notes if n["text"] == "T1 = 21.8 us")
+    assert boxed.get("bgcolor") == "rgba(255,255,255,0.5)" and boxed.get("bordercolor") == "rgba(0,0,0,0.5)"
+    assert boxed["borderwidth"] == 1 and boxed["borderpad"] == pytest.approx(4)   # matplotlib: 4 pt
+    plain = next(n for n in notes if n["text"] == "plain")
+    assert "bgcolor" not in plain and "bordercolor" not in plain
+    summary = next(n for n in notes if n["text"] == "summary")
+    assert (summary.get("bgcolor"), summary.get("bordercolor")) == ("#ffff00", "#ff0000")
+
+
 def test_figure_legend_keeps_only_its_explicit_entries():
     def build(fig):
         ax = fig.subplots()

@@ -1137,6 +1137,14 @@ def _text_note(a, xref, yref, width=1080):
               "yanchor": {"center": "middle", "top": "top"}.get(a.get("va"), "bottom")}
     if a.get("color"):
         result["font"]["color"] = a["color"]
+    box = a.get("box") or {}
+    if box.get("face") or box.get("edge"):
+        # v1.5.1 (D3 classes P/T): the box the lab drew behind the text (a fit summary, a T1
+        # value): without it the text ran over the curve it sits on
+        result.update(bgcolor=box.get("face") or "rgba(0,0,0,0)",
+                      bordercolor=box.get("edge") or "rgba(0,0,0,0)",
+                      borderwidth=(box.get("width") or 0) if box.get("edge") else 0,
+                      borderpad=round(box.get("pad") or 0, 2))
     return result
 
 

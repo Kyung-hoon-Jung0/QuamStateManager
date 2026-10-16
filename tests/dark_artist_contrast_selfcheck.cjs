@@ -37,6 +37,12 @@ eq(colour(L, 0), '#000', 'a recipe confusion cell keeps its black text on the br
 eq(colour(L, 1), '#fff', '...and its white text on a dark cell');
 eq(colour(L, 2), FG, 'a category outside the matrix follows the theme');
 eq(colour(H(recipeLayout), 0), FG, 'without the traces the old rule stands (near-black -> foreground)');
+// text on the box the lab drew behind it (a fit summary) keeps the lab colour
+const boxed = H({ annotations: [
+    { x: 0.5, y: 0.5, text: 'T1 = 21.8 us', showarrow: false, font: { color: '#000000' }, bgcolor: 'rgba(255,255,255,0.5)' },
+    { x: 0.5, y: 0.2, text: 'plain', showarrow: false, font: { color: '#000000' }, bgcolor: 'rgba(0,0,0,0)' }] });
+eq(colour(boxed, 0), '#000000', 'text on its own lab box keeps the lab colour');
+eq(colour(boxed, 1), FG, 'a see-through box is no box: the text follows the theme');
 
 const lab = [{ type: 'heatmap', x: [0, 1], y: [0, 1], z: [[0.9, 0.1], [0.1, 0.9]], xaxis: 'x2', yaxis: 'y2' },
              { type: 'heatmap', x: [-0.5, 0.5, 1.5], y: [-0.5, 0.5, 1.5], z: [[1, 0], [0, 1]], xaxis: 'x3', yaxis: 'y3' },

@@ -392,12 +392,42 @@ def _annotations(ax):
             "ha": t.get_ha(), "va": t.get_va(),
             "wrap": t.get_wrap(),
         }
+        a.update(_text_box(t))
         if isinstance(t, Annotation):
             a.update(arrow=t.arrow_patch is not None, xy=_flist(t.xy),
                      xycoords=t.xycoords if isinstance(t.xycoords, str) else "unsupported",
                      textcoords=t.anncoords if isinstance(t.anncoords, str) else "unsupported")
         out.append(a)
     return out
+
+
+def _paint_rgba(color):
+    """A colour as "#rrggbb", or an rgba() string when it is translucent; None when unset."""
+    try:
+        from matplotlib.colors import to_rgba
+        r, g, b, a = to_rgba(color)
+    except (ValueError, TypeError):
+        return None
+    if a <= 0:
+        return None
+    return _hex((r, g, b)) if a >= 1 else f"rgba({r * 255:g},{g * 255:g},{b * 255:g},{a:g})"
+
+
+def _text_box(t):
+    """The box a lab drew behind a text (``bbox=dict(...)``: a fit summary, a T1 value), so
+    the text keeps its background and outline; {} without one."""
+    try:
+        patch = t.get_bbox_patch()
+        if patch is None or not patch.get_visible():
+            return {}
+        style = patch.get_boxstyle()
+        pad = float(getattr(style, "pad", 0.3) or 0.0) * float(t.get_fontsize())
+        width = _f(patch.get_linewidth()) or 0.0
+        return {"box": {"face": _paint_rgba(patch.get_facecolor()) if patch.get_fill() else None,
+                        "edge": _paint_rgba(patch.get_edgecolor()) if width else None,
+                        "width": width, "pad": _f(pad)}}
+    except (AttributeError, TypeError, ValueError):
+        return {}
 
 
 def _shared_index(ax, axes, which):
@@ -690,7 +720,7 @@ def _figure_texts(root):
             x, y = root.transFigure.inverted().transform(t.get_transform().transform(t.get_position()))
             out.append({"text": t.get_text(), "x": _f(x), "y": _f(y),
                         "color": _hex(t.get_color()), "size": _f(t.get_fontsize()),
-                        "ha": t.get_ha(), "va": t.get_va(), "wrap": t.get_wrap()})
+                        "ha": t.get_ha(), "va": t.get_va(), "wrap": t.get_wrap(), **_text_box(t)})
         for sub in owner.subfigs:
             visit(sub)
     visit(root)
