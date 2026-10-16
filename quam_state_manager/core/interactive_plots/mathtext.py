@@ -15,7 +15,7 @@ def readable(text):
 
     def render(expression):
         expression = escape(expression, quote=False)
-        expression = re.sub(r"\\(?:mathrm|mathregular|mathbf|mathit|text|operatorname)\b", "", expression)
+        expression = re.sub(r"\\(?:mathrm|mathregular|mathdefault|mathbf|mathit|text|operatorname)\b", "", expression)
         expression = re.sub(r"\\([A-Za-z]+)", lambda m: _SYMBOLS.get(m[1], m[1]), expression)
         expression = expression.replace(r"\,", " ").replace(r"\;", " ").replace(r"\!", "")
         expression = re.sub(r"([_^])(?:\{([^{}]*)\}|([^\s{}]))",

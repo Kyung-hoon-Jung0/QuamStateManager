@@ -850,12 +850,18 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
             if kind == "x" and ncols > 1 and len(values) >= 5:
                 tick_indices = [round((len(values) - 1) * fraction) for fraction in (.1, .5, .9)]
             sid = 200 + pid + j * len(panels)
+            tickvals = [values[k] for k in tick_indices]
+            ticktext = [f"{labels[k]:.6g}" if labels[k] is not None else "" for k in tick_indices]
+            drawn = sec.get("ticks") or {}
+            if len(drawn.get("parent") or []) >= 2 and len(drawn["parent"]) == len(drawn.get("labels") or []):
+                # v1.5.1 (D3 class P): the ticks matplotlib drew (round values, the lab's
+                # labels), not samples at the axis ends (bin-edge values such as -20.25)
+                tickvals, ticktext = list(drawn["parent"]), [str(v) for v in drawn["labels"]]
             layout[_axis_id(kind + "axis", sid)] = {
                 **_axis_props(base, log_key=kind), "title": {"text": sec.get("label", "")},
                 "overlaying": ref, "matches": ref,
                 "anchor": yref if kind == "x" else xref, "side": sec.get("side", "top"),
-                "tickmode": "array", "tickvals": [values[k] for k in tick_indices],
-                "ticktext": [f"{labels[k]:.6g}" if labels[k] is not None else "" for k in tick_indices],
+                "tickmode": "array", "tickvals": tickvals, "ticktext": ticktext,
                 "showgrid": False, "zeroline": False}
             if values:
                 endpoints = [values[0], values[-1]]

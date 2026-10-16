@@ -319,6 +319,21 @@ def test_an_unfilled_patch_is_drawn_as_its_outline():
     assert span["fillcolor"] == "rgba(0,0,0,0)" and span["line"]["width"] == 1
 
 
+def test_a_secondary_axis_keeps_the_ticks_matplotlib_drew():
+    # a detuning axis over an RF axis: matplotlib draws round detuning ticks; samples at the
+    # axis ends gave bin-edge labels (-20.25 ... 19.75)
+    def build(fig):
+        ax = fig.subplots()
+        ax.plot([5000.0 - 20.25, 5000.0 + 19.75], [0, 1])
+        ax.set_xlim(5000.0 - 20.25, 5000.0 + 19.75)
+        ax.secondary_xaxis("top", functions=(lambda f: f - 5000.0, lambda d: d + 5000.0)).set_xlabel("detuning")
+    fig_json = _figure(build, canvas=False)
+    top = mpljson_to_plotly(fig_json)["layout"]["xaxis201"]
+    detuning = [round(v - 5000.0, 6) for v in top["tickvals"]]
+    assert len(detuning) >= 3 and 0 in detuning and all(float(d).is_integer() for d in detuning)
+    assert [t.replace("\u2212", "-") for t in top["ticktext"]] == [f"{d:g}" for d in detuning]
+
+
 def test_figure_legend_keeps_only_its_explicit_entries():
     def build(fig):
         ax = fig.subplots()

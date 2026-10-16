@@ -2,6 +2,7 @@
 import sys
 import ast
 import json
+import re
 import math
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -193,7 +194,11 @@ def test_renderer_artist_meaning_and_notes():
     assert "xaxis201" in layout
     assert any(t.get("xaxis") == "x201" for t in data)
     assert layout["xaxis201"]["overlaying"] == "x" and layout["xaxis201"]["title"]["text"] == "squared"
-    assert layout["xaxis201"]["ticktext"] == [f"{v ** 2:.6g}" for v in layout["xaxis201"]["tickvals"]]
+    # v1.4.1: samples "f(v):.6g" -> the ticks matplotlib drew on the secondary axis (on this log
+    # parent: 10<sup>k</sup> labels, the \mathdefault wrapper removed).
+    for v, text in zip(layout["xaxis201"]["tickvals"], layout["xaxis201"]["ticktext"]):
+        power = re.fullmatch(r"10<sup>(-?\d+)</sup>", text.replace("\u2212", "-"))
+        assert power and 10 ** int(power[1]) == pytest.approx(v ** 2)
     assert "shapes" in layout
     assert any(s["type"] == "line" and s["yref"] == "y domain" for s in layout["shapes"])
     assert any(s["type"] == "line" and s["xref"] == "x domain" for s in layout["shapes"])

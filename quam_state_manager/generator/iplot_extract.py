@@ -508,7 +508,8 @@ def extract_axes(ax, axes):
             secondary.append({"axis": which, "side": child._loc,
                               "label": child.get_xlabel() if which == "x" else child.get_ylabel(),
                               "map": {"parent": _flist(values), "forward": _flist(mapped),
-                                      "inverse": _flist(inverse(mapped))}})
+                                      "inverse": _flist(inverse(mapped))},
+                              "ticks": _secondary_ticks(child, which, limits, inverse)})
         else:
             skip(child, "unsupported child axes")
     for artist in list(ax.artists) + list(ax.tables):
@@ -711,6 +712,26 @@ def _polygon_trace(vertices, artist):
     return {"type": "polygon", "x": _flist(vertices[:, 0]), "y": _flist(vertices[:, 1]),
             "color": _hex(color), "opacity": artist.get_alpha() if artist.get_alpha() is not None else _opacity(color),
             "zorder": _f(artist.get_zorder())}
+
+
+def _secondary_ticks(child, which, limits, inverse):
+    """The ticks matplotlib drew on a secondary axis, at their parent-axis positions, with the
+    lab's own labels. Sampled ticks put labels at the axis ends (bin-edge values such as
+    -20.25 .. 19.75) where the lab figure shows round ones. None when they cannot be read."""
+    try:
+        child.apply_aspect()   # a secondary axis takes its limits from its parent at draw time
+        axis = child.xaxis if which == "x" else child.yaxis
+        locs = np.asarray(axis.get_majorticklocs(), dtype=float)
+        labels = axis.get_major_formatter().format_ticks(list(locs))
+        parent = np.asarray(inverse(locs), dtype=float)
+        lo, hi = min(limits), max(limits)
+        tol = (hi - lo) * 1e-9
+        keep = [i for i, p in enumerate(parent) if np.isfinite(p) and lo - tol <= p <= hi + tol]
+        if len(keep) < 2:
+            return None
+        return {"parent": [float(parent[i]) for i in keep], "labels": [str(labels[i]) for i in keep]}
+    except Exception:
+        return None   # a private or changed secondary-axis structure: sampled ticks remain
 
 
 def _patch_edge(patch):
