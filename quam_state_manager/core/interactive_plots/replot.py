@@ -388,6 +388,14 @@ def _decimate(x, y, max_pts=_MAX_LINE_PTS):
 
 def _line_to_plotly(t, xref, yref):
     x, y = (t["x"], t["y"]) if "zorder" in t else _decimate(t["x"], t["y"])
+    if t.get("name") and not any(v is not None for v in (x or [])):
+        # v1.5.1 (D3 class P): a label-only line (``ax.plot([], [], " ", label="T2* = ...")``,
+        # how a lab puts a fit value in a legend) has no point, and Plotly leaves a trace
+        # without points out of the legend. One null point keeps the entry; a line with
+        # neither line nor marker keeps an empty symbol, as matplotlib draws it.
+        x, y = [None], [None]
+        if t.get("mode") == "none":
+            t = {**t, "mode": "markers", "opacity": 0.0}
     d = {
         "type": "scattergl" if len(x) > 400 and "zorder" not in t else "scatter",
         "x": x, "y": y, "mode": t.get("mode", "lines"),
@@ -684,6 +692,25 @@ def _position_domains(axes, panels):
     return domain, [domain(b) for b in bounds]
 
 
+def _legend_place(legend: dict, bounds) -> dict:
+    """Plotly placement of one lab legend: the box matplotlib drew it in (figure fractions),
+    else its location code inside its panel ``bounds`` (x0, x1, y0, y1). A framed lab legend
+    keeps a frame (the theme fills it, so it reads over the data as the lab's does)."""
+    x0, x1, y0, y1 = bounds
+    box = legend.get("box")
+    if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box) \
+            and 0 <= box[0] < box[2] <= 1 and 0 <= box[1] < box[3] <= 1:
+        out = {"orientation": "v", "x": box[0], "y": box[3], "xanchor": "left", "yanchor": "top"}
+    else:
+        loc = legend.get("loc", 1)
+        left, bottom = loc in (2, 3, 6, 9), loc in (3, 4, 8)
+        out = {"orientation": "v", "x": x0 if left else x1, "y": y0 if bottom else y1,
+               "xanchor": "left" if left else "right", "yanchor": "bottom" if bottom else "top"}
+    if legend.get("frame"):
+        out.update(borderwidth=1, bordercolor="rgba(128,128,128,0.6)")
+    return out
+
+
 def _legend_once(data: list) -> None:
     """One legend entry per distinct artist kind: a lab figure that labels the same line
     in every panel draws one legend per panel, but Plotly has one legend for the figure,
@@ -694,7 +721,8 @@ def _legend_once(data: list) -> None:
         if not trace.get("showlegend") or not trace.get("name"):
             continue
         line, marker = trace.get("line") or {}, trace.get("marker") or {}
-        key = (trace["name"], trace.get("mode"), trace.get("type"), str(line.get("color")),
+        # one entry per kind PER LEGEND: a panel that drew its own legend keeps its entries
+        key = (trace.get("legend"), trace["name"], trace.get("mode"), trace.get("type"), str(line.get("color")),
                str(line.get("dash")), str(marker.get("color")), str(marker.get("symbol")))
         if key in groups:
             trace["showlegend"] = False
@@ -731,7 +759,9 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         ypad = .04
 
     data, layout, notes = [], {}, []
+    spans = []   # per panel: the [start, end) of its traces in `data`
     for p_idx, panel in enumerate(panels):
+        spans.append(len(data))
         pid = p_idx + 1
         row, col = cells[p_idx]
         x0 = col / ncols + xpad
@@ -807,12 +837,26 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         if base.get("title"):  # axes captions also belong to single-panel figures
             ttl = base.get("title") or ""
             if ttl:
-                notes.append({"text": ttl, "showarrow": False, "xref": "paper",
-                              "yref": "paper", "x": (x0 + x1) / 2, "y": y1,
-                              "yshift": 64 if has_secondary_top else 6 if positions else 12,
-                              "xanchor": "center", "yanchor": "bottom",
-                              "font": {"size": 10 if positions else 11}})
+                note = {"text": ttl, "showarrow": False, "xref": "paper",
+                        "yref": "paper", "x": (x0 + x1) / 2, "y": y1,
+                        "yshift": 64 if has_secondary_top else 6 if positions else 12,
+                        "xanchor": "center", "yanchor": "bottom",
+                        "font": {"size": 10 if positions else 11}}
+                box = base.get("title_box")
+                if positions and _position_bounds(box and [box[0], box[1], box[2] - box[0], box[3] - box[1]]):
+                    # v1.5.1 (D3 class T): where the lab drew it. A fixed lift (64 px over a
+                    # top axis) put a caption on the figure heading.
+                    note.update(x=(box[0] + box[2]) / 2, y=box[1], yshift=0)
+                if positions and base.get("title_size"):
+                    size = base["title_size"]
+                    # Plotly sets lines 1.3 em apart, matplotlib 1.2 em (as _text_note)
+                    note["font"]["size"] = round(size * 1.2 / 1.3, 3) if "\n" in ttl else size
+                if base.get("title_color"):
+                    # v1.5.1 (D3 class P): a crimson warning title kept its colour only in the PNG
+                    note["font"]["color"] = base["title_color"]
+                notes.append(note)
 
+    spans.append(len(data))
     for scale in fig_json.get("colorbars", []):
         norm = scale.get("norm") or {}
         data.append(_scatter_to_plotly({**scale, "type": "scatter", "x": [None, None],
@@ -881,18 +925,24 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         holders = [i for i, p in enumerate(panels) if axes[_pick_base(axes, p)].get("legend")]
         source_legend = axes[_pick_base(axes, panels[holders[0]])].get("legend") if len(holders) == 1 else None
         if source_legend:
-            x0, x1, y0, y1 = positions[1][holders[0]]
-            box = source_legend.get("box")
-            if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box) \
-                    and 0 <= box[0] < box[2] <= 1 and 0 <= box[1] < box[3] <= 1:
-                layout["legend"].update(orientation="v", x=box[0], y=box[3], xanchor="left", yanchor="top")
-            else:
-                loc = source_legend.get("loc", 1)
-                left, bottom = loc in (2, 3, 6, 9), loc in (3, 4, 8)
-                layout["legend"].update(orientation="v", x=x0 if left else x1,
-                                        y=y0 if bottom else y1,
-                                        xanchor="left" if left else "right",
-                                        yanchor="bottom" if bottom else "top")
+            layout["legend"].update(_legend_place(source_legend, positions[1][holders[0]]))
+        elif len(holders) > 1:
+            # v1.5.1 (D3 classes P/T): several panels each drew their OWN legend (a T2* value,
+            # an RB summary per qubit). One footer legend merged them: per-panel numbers lost
+            # their panel, and the footer sat on the bottom row's axis titles. Each panel now
+            # keeps its legend where the lab drew it, with that panel's entries only.
+            for n, i in enumerate(holders):
+                name = "legend" if n == 0 else f"legend{n + 1}"
+                own = axes[_pick_base(axes, panels[i])]["legend"]
+                layout[name] = {"font": {"size": own.get("size") or 10},
+                                **_legend_place(own, positions[1][i])}
+                for trace in data[spans[i]:spans[i + 1]]:
+                    if trace.get("showlegend") and n:
+                        trace["legend"] = name
+            held = {k for i in holders for k in range(spans[i], spans[i + 1])}
+            for k, trace in enumerate(data[:spans[-1]]):
+                if k not in held:
+                    trace["showlegend"] = False   # the lab drew no legend for that panel
     layout["height"] = max(320, 320 * nrows) + (64 * nrows if has_top_axis else 0)
     size = fig_json.get("size_inches")
     source_aspect = None
@@ -904,14 +954,21 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
         layout["height"] = round(max(320, min(2200, 1200 * source_aspect)))
     if notes:
         layout["annotations"] = notes
+    heading_style = next((t for t in fig_json.get("texts", []) if t.get("text") == heading), {})
+    if heading_style.get("color"):
+        # the heading's colour stands with or without the lab's panel positions
+        layout["title"].setdefault("font", {})["color"] = heading_style["color"]
     if positions and source_aspect:
         layout["font"] = {"size": 10}
-        heading_style = next((t for t in fig_json.get("texts", []) if t.get("text") == heading), {})
-        layout["title"]["y"] = min(.98, heading_style.get("y", .98))
+        # v1.5.1 (D3 class T): the heading hangs where the lab put it (a suptitle sits at
+        # y ~0.99, top-anchored). Capped at 0.98 it sat on the first row's panel titles.
+        layout["title"]["y"] = min(1.0, heading_style.get("y", .98))
+        layout["title"]["yanchor"] = {"center": "middle", "bottom": "bottom",
+                                      "baseline": "bottom"}.get(heading_style.get("va"), "top")
         layout["title"]["font"] = {"size": heading_style.get("size", 12)}
         if heading_style.get("color"):
             layout["title"]["font"]["color"] = heading_style["color"]
-        layout["legend"]["font"] = {"size": 10}
+        layout["legend"]["font"] = {"size": (layout["legend"].get("font") or {}).get("size") or 10}
         if source_legend:
             layout["legend"]["font"]["size"] = source_legend.get("size") or 10
         for name, axis in layout.items():

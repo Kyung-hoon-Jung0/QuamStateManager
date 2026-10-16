@@ -166,6 +166,13 @@
             if (!/^[xy]axis\d+$/.test(k) || !ax || typeof ax !== 'object' || ax.overlaying) return;
             out[k] = Object.assign({ gridcolor: grid, zerolinecolor: grid }, ax);
         });
+        // v1.5.1: a framed legend (a lab legend drawn inside its panel) is filled like the
+        // lab's, with the theme's card colour, so it reads over the data in both themes
+        Object.keys(out).forEach(function (k) {
+            var lg = out[k];
+            if (!/^legend\d*$/.test(k) || !lg || typeof lg !== 'object' || !(lg.borderwidth > 0) || lg.bgcolor) return;
+            out[k] = Object.assign({}, lg, { bgcolor: cssVar('--plot-hover-bg', cssVar('--pico-card-background-color', '#222')) });
+        });
         if (isDark()) {
             out.font = artistStyle(out.font, text);
             Object.keys(out).forEach(function (key) {
@@ -290,6 +297,12 @@
                         if (axis.title && axis.title.font) updates[key + '.title.font.color'] = axis.title.font.color || L.font.color;
                     });
                     if (themed.title && themed.title.font) updates['title.font.color'] = themed.title.font.color || L.font.color;
+                    Object.keys(themed).forEach(function (key) {
+                        var src = (el._houseSourceLayout || {})[key];
+                        if (/^legend\d*$/.test(key) && themed[key] && themed[key].bgcolor && !(src && src.bgcolor)) {
+                            updates[key + '.bgcolor'] = themed[key].bgcolor;
+                        }
+                    });
                     (themed.annotations || []).forEach(function (note, index) {
                         updates['annotations[' + index + '].font.color'] = (note.font || {}).color || L.font.color;
                     });

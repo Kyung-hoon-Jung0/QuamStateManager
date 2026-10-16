@@ -16010,8 +16010,9 @@ function _replotFigureLayout(layout, size, width, height) {
     }
     font(out.font);
     if (out.title) font(out.title.font);
-    if (out.legend) font(out.legend.font);
     Object.keys(out).forEach(function (key) {
+        // every legend: a panel that drew its own legend has legend2..N (v1.5.1)
+        if (/^legend\d*$/.test(key) && out[key]) font(out[key].font);
         if (!/^[xy]axis\d*$/.test(key)) return;
         var axis = out[key];
         font(axis.tickfont);
@@ -16104,7 +16105,9 @@ function _replotSizeUpdate(fit) {
     }
     size('font', fit.font);
     if (fit.title) size('title.font', fit.title.font);
-    if (fit.legend) size('legend.font', fit.legend.font);
+    Object.keys(fit).forEach(function (key) {
+        if (/^legend\d*$/.test(key) && fit[key]) size(key + '.font', fit[key].font);
+    });
     Object.keys(fit).forEach(function (key) {
         if (!/^[xy]axis\d*$/.test(key) || !fit[key]) return;
         size(key + '.tickfont', fit[key].tickfont);

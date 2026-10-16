@@ -61,6 +61,22 @@ def _legend_box(leg):
         return None
 
 
+def _title_box(ax):
+    """Where the axes title was drawn, in figure fractions [x0, y0, x1, y1]: matplotlib lifts
+    it above a top axis's labels only at draw time. None when there is no renderer."""
+    try:
+        fig = ax.get_figure(root=True) if "root" in ax.get_figure.__code__.co_varnames else ax.figure
+        renderer = fig.canvas.get_renderer()
+        update = getattr(ax, "_update_title_position", None)
+        if update is not None:
+            update(renderer)
+        box = ax.title.get_window_extent(renderer).transformed(fig.transFigure.inverted())
+        values = [_f(box.x0), _f(box.y0), _f(box.x1), _f(box.y1)]
+        return values if all(v is not None for v in values) else None
+    except Exception:
+        return None
+
+
 def _marker_fill(c):
     """A marker face colour, or "none" for a hollow marker (to_hex would make it black)."""
     if isinstance(c, str) and c.lower() == "none":
@@ -434,8 +450,14 @@ def extract_axes(ax, axes):
     return {
         "xlabel": ax.get_xlabel(), "ylabel": ax.get_ylabel(),
         "title": ax.get_title(),
+        # the lab's title style and where it drew it (a crimson warning title, a title lifted
+        # above a top axis): the converter used a fixed size, no colour and a fixed offset
+        "title_color": _hex(ax.title.get_color()) if ax.get_title() else None,
+        "title_size": _f(ax.title.get_fontsize()) if ax.get_title() else None,
+        "title_box": _title_box(ax) if ax.get_title() else None,
         "aspect": _f(ax.get_aspect()),
-        "legend": ({"loc": leg._loc, "size": _f(leg.get_texts()[0].get_fontsize()), "box": _legend_box(leg)}
+        "legend": ({"loc": leg._loc, "size": _f(leg.get_texts()[0].get_fontsize()), "box": _legend_box(leg),
+                    "frame": bool(leg.get_frame_on())}
                    if leg is not None and leg.get_texts() else None),
         "position": _figure_position(ax),
         "axison": bool(ax.axison),

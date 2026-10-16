@@ -80,12 +80,20 @@ def test_reference_marker_and_proxy_legends_deduplicate():
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(handles + [Line2D([], [], marker='s', color='orange')], labels + ['Flux = 0.2'])
     view = mpljson_to_plotly(extract_figure(fig, 'references'))
-    legends = [t['name'] for t in view['data'] if t.get('showlegend')]
-    assert sorted(legends) == sorted(['Signal', 'Center = 0.5', 'Idle = 1.5', 'Peak = 1.4',
-                                     'Selected = 1.2', 'Flux = 0.2'])
+    # v1.5.1: one footer legend for both panels -> each panel keeps its own legend (a panel's
+    # numbers belong to that panel); the entries still deduplicate within each legend.
+    by_legend = {}
+    for t in view['data']:
+        if t.get('showlegend'):
+            by_legend.setdefault(t.get('legend', 'legend'), []).append(t['name'])
+    assert sorted(by_legend) == ['legend', 'legend2']
+    for legends in by_legend.values():
+        assert sorted(legends) == sorted(['Signal', 'Center = 0.5', 'Idle = 1.5', 'Peak = 1.4',
+                                         'Selected = 1.2', 'Flux = 0.2'])
     assert len(view['layout']['shapes']) == 4
-    for name in legends:
-        assert len({t['legendgroup'] for t in view['data'] if t.get('name') == name}) == 1
+    for name in by_legend['legend']:
+        assert len({t['legendgroup'] for t in view['data'] if t.get('name') == name
+                    and t.get('showlegend') and t.get('legend', 'legend') == 'legend'}) == 1
 
 
 def test_single_axes_caption_is_distinct_from_figure_heading():
