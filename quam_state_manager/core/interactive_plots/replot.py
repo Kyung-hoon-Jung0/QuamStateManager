@@ -404,6 +404,11 @@ def _line_to_plotly(t, xref, yref):
     if t.get("mode", "lines") != "lines":
         symbol = t.get("marker_symbol", "circle")
         d["marker"] = {"color": t.get("color"), "size": t.get("marker_size") or 6, "symbol": symbol}
+        if t.get("mode") == "markers" and d["opacity"] < 1:
+            # Matplotlib applies alpha to each marker, so a cloud's dense core builds up to
+            # the full colour; a TRACE opacity fades the whole layer at once and the core
+            # never does (an IQ cloud read as one dim mass on the dark theme).
+            d["marker"]["opacity"] = d.pop("opacity")
         _marker_paint(d["marker"], t)
         if symbol in _STROKE_SYMBOLS:
             # Plotly draws these symbols with the marker outline only.

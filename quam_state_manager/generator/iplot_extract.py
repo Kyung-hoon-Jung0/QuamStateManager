@@ -103,7 +103,9 @@ def _line_trace(ln):
         "zorder": _f(ln.get_zorder()),
         "visible": ln.get_visible(),
         "marker_symbol": _mpl_marker(ln.get_marker()),
-        "marker_size": _f((ln.get_markersize() or 6)),
+        # the "." point marker is a circle half the marker size across (an IQ cloud of
+        # "." dots drew twice as wide, four times the area, and blended into one mass)
+        "marker_size": _f((ln.get_markersize() or 6) * (0.5 if ln.get_marker() == "." else 1.0)),
         # The marker's own colours: a hollow shortlist ring or a star with a black edge is
         # not the line colour.
         "marker_face": _marker_fill(ln.get_markerfacecolor()),
@@ -130,6 +132,17 @@ def _mpl_marker(m):
     return _MARKER.get(m, "circle")
 
 
+def _path_width(coll):
+    """0.5 for a scatter of "." points (their path is half as wide as "o"), else 1: the
+    Plotly symbols of the other markers already match matplotlib's at the same size."""
+    try:
+        extent = coll.get_paths()[0].get_extents()
+        width = float(max(extent.width, extent.height))
+    except (IndexError, AttributeError, ValueError, TypeError):
+        return 1.0
+    return width if np.isfinite(width) and 0.05 <= width < 0.75 else 1.0
+
+
 def _scatter_trace(coll):
     coll.update_scalarmappable()
     offs = np.asarray(coll.get_offsets())
@@ -141,7 +154,8 @@ def _scatter_trace(coll):
     ec = coll.get_edgecolors()
     edges = [_marker_fill(c) for c in ec] if len(ec) else []
     widths = coll.get_linewidths()
-    sizes = coll.get_sizes()
+    # s is the area of the marker's unit path: a "." path is half as wide as "o"
+    sizes = np.asarray(coll.get_sizes(), dtype=float) * _path_width(coll) ** 2
     label = coll.get_label()
     mapping = ({"marker_values": _flist(coll.get_array()), **_map_metadata(coll)}
                if coll.get_array() is not None else {})

@@ -42,7 +42,10 @@
         if (!maps.length) return;
         var template = document.getElementById('map-tools-template');
         if (!template) return;
-        var strip = template.content.firstElementChild.cloneNode(true), base = copy(payload.data);
+        // v1.5.1: the traces AS DRAWN (dark-theme artist colours, marker sizes scaled with the
+        // canvas), so a smoothing redraw does not hand back the raw server traces
+        var drawn = plot && Array.isArray(plot.data) && plot.data.length === (payload.data || []).length;
+        var strip = template.content.firstElementChild.cloneNode(true), base = copy(drawn ? plot.data : payload.data);
         var id = 'map-tools-' + (++serial), button = document.createElement('button');
         button.type = 'button'; button.textContent = 'Map tools'; button.className = 'map-tools-button secondary';
         button.setAttribute('aria-expanded', 'false'); button.setAttribute('aria-controls', id); strip.id = id;

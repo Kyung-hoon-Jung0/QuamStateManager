@@ -51,6 +51,13 @@ w.Plotly = {
         if (typeof upd.height === 'number') el._fullLayout.height = upd.height;
         return Promise.resolve();
     },
+    restyle(el, upd, indices) {
+        Object.keys(upd).forEach(k => indices.forEach((ti, j) => {
+            el.data[ti] = JSON.parse(JSON.stringify(el.data[ti]));
+            setPath(el.data[ti], k, upd[k][j]);
+        }));
+        return Promise.resolve();
+    },
     purge() {},
 };
 w._plotlyRender = (el, data, layout) => {
@@ -80,7 +87,7 @@ async function mount(id, body) {
     return tile.querySelector('.js-plotly-plot');
 }
 // a 15 x 9 in lab figure seated by its own panel positions, with every scaled text kind
-const lab = { data: [{ type: 'scatter', x: [0, 1], y: [0, 1] }], source_aspect: 0.6, source_size_inches: [15, 9],
+const lab = { data: [{ type: 'scatter', x: [0, 1], y: [0, 1], mode: 'markers', marker: { size: 4, line: { width: 1 } } }], source_aspect: 0.6, source_size_inches: [15, 9],
     layout: { height: 720, font: { size: 10 }, title: { text: 'T', font: { size: 12 } }, legend: { font: { size: 10 } },
         xaxis: { tickfont: { size: 10 }, title: { text: 'x', font: { size: 10 } } },
         xaxis2: { tickfont: { size: 10 }, title: { text: 'x2', font: { size: 10 } } },
@@ -112,6 +119,8 @@ function texts(l) {
     eq(a._fullLayout.width, 919, 'the width follows the row');
     const ta = texts(a.layout), tf = texts(fresh.layout);
     ta.forEach((v, i) => near(v, tf[i], 1e-6, 'text size / offset #' + i + ' equals a fresh open'));
+    near(a.data[0].marker.size, fresh.data[0].marker.size, 1e-9, 'K: the dots are the size a fresh 1280 open draws');
+    near(a.data[0].marker.line.width, fresh.data[0].marker.line.width, 1e-9, 'K: and their edges');
     eq(a.layout.width, undefined, 'layout.width is handed back absent (the window-resize path stays alive)');
     eq(a.layout.height, 551, 'the new height is the declared one from now on');
     eq(a.parentElement.style.minHeight, '340px', 'a figure taller than the skeleton keeps its 340 px reserve');

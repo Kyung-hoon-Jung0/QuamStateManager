@@ -15692,6 +15692,12 @@ window.PlotHost = (function () {
                         ['width', 'height', 'autosize'].forEach(function (k) {
                             if (snap[k] === undefined) delete l2[k]; else l2[k] = snap[k];
                         });
+                        // ...and its markers, which are points like its text (D3 class K)
+                        if (fit && typeof el._replotMarkersAt === 'function' && Plotly.restyle) {
+                            return el._replotMarkersAt(w2, fit.height).reduce(function (chain, r) {
+                                return chain.then(function () { return Plotly.restyle(el, r.update, r.indices); });
+                            }, Promise.resolve());
+                        }
                     });
                 }).catch(function () {});
                 n++;
@@ -15921,6 +15927,10 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             inner._houseSourceLayout = d.layout || {};
             var themedData = (window.PlotTheme && PlotTheme.houseData)
                 ? window.PlotTheme.houseData(d.data) : d.data;
+            themedData = _replotFigureData(themedData, d.source_size_inches, inner.clientWidth, layout.height);
+            inner._replotMarkersAt = function (width, height) {
+                return _replotMarkerRestyle(d.data, d.source_size_inches, width, height);
+            };
             // _plotlyRender lazy-loads Plotly and returns a promise; attach the
             // click handler only once the figure exists.
             Promise.resolve(_plotlyRender(inner, themedData, layout, {responsive: true})).then(function() {
@@ -16019,6 +16029,52 @@ function _replotFigureLayout(layout, size, width, height) {
     return out;
 }
 window._replotFigureLayout = _replotFigureLayout;
+
+/**
+ * Marker sizes and marker edge widths are points, like the text: scale them with the canvas
+ * by the same factor _replotFigureLayout gives the text (v1.5.1, D3 class K -- an IQ cloud's
+ * 4 pt dots drew as 8 px discs at any width and blended into one mass). Returns new trace
+ * objects for the traces it changes; the data arrays are shared, never copied.
+ */
+function _replotFigureData(data, size, width, height) {
+    if (!Array.isArray(size) || size.length !== 2 ||
+        !size.every(function (v) { return typeof v === 'number' && isFinite(v) && v > 0; }) ||
+        !(width > 0) || !(height > 0) || !Array.isArray(data)) return data;
+    var k = Math.min(1.2, width / (size[0] * 96), height / (size[1] * 96)) * 96 / 72;
+    function times(v) {
+        if (typeof v === 'number') return v * k;
+        return Array.isArray(v) ? v.map(function (s) { return typeof s === 'number' ? s * k : s; }) : v;
+    }
+    return data.map(function (trace) {
+        if (!trace || !trace.marker || typeof trace.marker !== 'object') return trace;
+        var marker = Object.assign({}, trace.marker);
+        if ('size' in marker) marker.size = times(marker.size);
+        if (marker.line && typeof marker.line === 'object' && 'width' in marker.line) {
+            marker.line = Object.assign({}, marker.line, { width: times(marker.line.width) });
+        }
+        return Object.assign({}, trace, { marker: marker });
+    });
+}
+window._replotFigureData = _replotFigureData;
+
+/**
+ * The marker restyle that moves a drawn tile's markers to `width` x `height` (a resize):
+ * sizes and edge widths of the source traces, by trace index.
+ */
+function _replotMarkerRestyle(source, size, width, height) {
+    var scaled = _replotFigureData(source, size, width, height);
+    if (scaled === source || !Array.isArray(scaled)) return [];
+    var sizes = { update: { 'marker.size': [] }, indices: [] };
+    var lines = { update: { 'marker.line.width': [] }, indices: [] };
+    scaled.forEach(function (trace, i) {
+        var m = trace && trace.marker;
+        if (!m || !source[i] || m === source[i].marker) return;
+        if ('size' in m) { sizes.update['marker.size'].push(m.size); sizes.indices.push(i); }
+        if (m.line && 'width' in m.line) { lines.update['marker.line.width'].push(m.line.width); lines.indices.push(i); }
+    });
+    return [sizes, lines].filter(function (r) { return r.indices.length; });
+}
+window._replotMarkerRestyle = _replotMarkerRestyle;
 
 /**
  * The layout a tile mounts with at `width`: the house theme (r16 5-1 -- the raw server

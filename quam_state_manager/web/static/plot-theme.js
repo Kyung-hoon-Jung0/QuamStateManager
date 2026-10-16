@@ -71,8 +71,55 @@
         });
     }
 
-    /** Base layout — deep-merged under caller overrides. */
-    function houseLayout(overrides) {
+    /* v1.5.1 (D3 class K): text written ON a heatmap cell sits on the lab's own colour
+       scale, which the theme never changes -- the lab picked black for the bright cells and
+       white for the dark ones. Mapping that black to the light foreground put light text on
+       yellow cells (a confusion matrix's diagonal). Such text keeps the lab colour.
+       In: a no-arrow annotation in the data coordinates of a heatmap's own axes, inside the
+       heatmap's extent (category, cell edges, or centres plus half a cell). */
+    function inExtent(v, coords, n, log) {
+        if (!(n > 0)) return false;
+        if (!Array.isArray(coords) || !coords.length) coords = null;
+        if (coords && coords.some(function (c) { return typeof c === 'string'; })) {
+            return coords.map(String).indexOf(String(v)) !== -1;
+        }
+        if (typeof v !== 'number' || !isFinite(v)) return false;
+        if (!coords) {                                      // no coordinates: cell indices
+            if (log) return false;
+            return v >= -0.5 && v <= n - 0.5;
+        }
+        // a log axis places the cells (and the annotation, see the converter) in log10
+        var nums = coords.filter(function (c) { return typeof c === 'number' && isFinite(c) && (!log || c > 0); })
+            .map(function (c) { return log ? Math.log10(c) : c; });
+        if (!nums.length) return false;
+        var lo = Math.min.apply(null, nums), hi = Math.max.apply(null, nums);
+        if (coords.length !== n + 1) {                      // centres: half a cell beyond each end
+            var half = nums.length > 1 ? (hi - lo) / (nums.length - 1) / 2 : 0.5;
+            lo -= half; hi += half;
+        }
+        var tol = (hi - lo) * 1e-9;
+        return v >= lo - tol && v <= hi + tol;
+    }
+
+    function onHeatmap(note, data, layout) {
+        if (!note || note.showarrow !== false || !Array.isArray(data)) return false;
+        var xref = note.xref || 'x', yref = note.yref || 'y';
+        if (!/^x\d*$/.test(xref) || !/^y\d*$/.test(yref)) return false;   // paper / domain
+        function isLog(ref) {
+            var axis = layout[ref.charAt(0) + 'axis' + ref.slice(1)];
+            return !!(axis && axis.type === 'log');
+        }
+        return data.some(function (t) {
+            if (!t || t.type !== 'heatmap' || (t.xaxis || 'x') !== xref || (t.yaxis || 'y') !== yref) return false;
+            var z = Array.isArray(t.z) ? t.z : [];
+            var cols = z.reduce(function (m, row) { return Math.max(m, Array.isArray(row) ? row.length : 0); }, 0);
+            return inExtent(note.x, t.x, cols, isLog(xref)) && inExtent(note.y, t.y, z.length, isLog(yref));
+        });
+    }
+
+    /** Base layout — deep-merged under caller overrides. `data` (optional) are the traces
+     *  the layout is drawn with: text on a heatmap of theirs keeps the lab colour. */
+    function houseLayout(overrides, data) {
         var text = cssVar('--plot-axis-text', cssVar('--pico-color', '#ccc'));
         var grid = cssVar('--plot-grid', 'rgba(128,128,128,0.18)');
         var base = {
@@ -130,6 +177,7 @@
             });
             if (out.title) out.title = Object.assign({}, out.title, { font: artistStyle(out.title.font, text) });
             if (out.annotations) out.annotations = out.annotations.map(function (note) {
+                if (onHeatmap(note, data, out)) return Object.assign({}, note);
                 return Object.assign({}, note, { font: artistStyle(note.font, text) });
             });
             if (out.shapes) out.shapes = out.shapes.map(function (shape) {
@@ -234,7 +282,7 @@
                     });
                 }
                 if (el._houseSourceLayout) {
-                    var themed = houseLayout(el._houseSourceLayout), updates = {};
+                    var themed = houseLayout(el._houseSourceLayout, el._houseSourceData), updates = {};
                     Object.keys(themed).forEach(function (key) {
                         if (!/^[xy]axis\d*$/.test(key)) return;
                         var axis = themed[key];
