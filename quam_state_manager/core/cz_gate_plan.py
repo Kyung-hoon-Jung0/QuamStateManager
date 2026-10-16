@@ -820,6 +820,24 @@ def is_setting(p):
             and ("old" not in p or "value" not in p or p["old"] != p["value"]))
 
 
+def change_words(p):
+    """How a ledger point that set a value is named without claiming more than the
+    ledger proves: only a run whose own patch wrote it "changed" it; a run whose saved
+    state merely carried it first is named as that (the ledger's ``run_saved``, which
+    every SM surface words as "the first to carry this value"). Shared by every CZ
+    gate plan staleness line (map, notes box, card)."""
+    rid, prov = p.get("run_id"), p.get("provenance")
+    if rid is not None and prov == "run_proven":
+        return f"changed by run #{rid}"
+    if rid is not None and prov in ("run_saved", "run_uncertain_chip"):
+        return f"first seen in run #{rid}'s saved state"
+    if prov == "sm":
+        return "changed in SM"
+    if rid is not None:
+        return f"seen in run #{rid}"
+    return "changed"
+
+
 def calibration(row, history):
     """When each value this operation uses was last set (effective change points).
 
@@ -868,6 +886,7 @@ def calibration(row, history):
             dep = changes[path]
             if dep["t_us"] is not None and dep["t_us"] > oldest["t_us"] + STALE_SLACK_US:
                 warnings.append({"path": path, "t": dep["t"], "run_id": dep["run_id"],
+                                 "provenance": dep["provenance"], "words": change_words(dep),
                                  "text": "calibrated against an older "
                                          + (path[len("qubits."):] if path.startswith("qubits.") else path)})
     return {"fields": fields, "last_set": newest,

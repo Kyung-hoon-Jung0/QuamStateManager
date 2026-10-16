@@ -173,8 +173,20 @@ def test_the_marker_source_is_the_newest_run_whose_defects_equal_the_stored_list
     out = L.build([root], chip_qubits(q1=stored))
     q1 = out["curves"]["q1"]
     assert of(q1["scan"], "run_id") == 20
-    assert q1["marker"]["status"] == "match" and q1["marker"]["run_id"] == 17 and q1["marker"]["matches"] == 2
+    # v1.4.1 (A14 fix3 P2-3): "match" -> "ambiguous": runs #17 and #16 both carry the list (a re-analysis
+    # reproduces a non-empty list too), so the newest is named as one of two, not as THE source
+    assert q1["marker"]["status"] == "ambiguous" and q1["marker"]["run_id"] == 17 and q1["marker"]["matches"] == 2
+    assert q1["marker"]["label"] == "stored defects match 2 runs; newest #17"
     assert of(q1["marker_curve"], "run_id") == 17 and not q1["marker"]["same_as_scan"]
+
+
+def test_a_stored_list_carried_by_one_run_names_that_run(tmp_path):
+    root = tmp_path / "data"
+    pl_run(root, 21, {"q1": sweep(4.5e9)})
+    pl_run(root, 17, {"q1": sweep(4.5e9, peak_at=3)}, fits={"q1": {"defects": [defect(4.70e9), defect(4.62e9)]}})
+    m = L.build([root], chip_qubits(q1=json.dumps([defect(4.62e9), defect(4.70e9)])))["curves"]["q1"]["marker"]
+    assert m["status"] == "match" and m["run_id"] == 17 and m["matches"] == 1
+    assert m["label"] == "stored defects match run #17"
 
 
 def test_an_empty_stored_list_matching_several_runs_is_named_ambiguous(tmp_path):
@@ -270,6 +282,21 @@ def test_a_transient_read_failure_is_not_kept_for_unchanged_files(tmp_path, monk
     run = L.read_run(folder)                                         # the same files, read again
     assert run["ok"] and run["qubits"]["q1"]["pieces"]
     assert L.read_run(folder) is run                                 # a success is kept
+
+
+def test_every_curve_says_how_its_run_was_judged_this_chips(tmp_path):
+    root = tmp_path / "data"
+    pl_run(root, 85, {"q1": sweep(4.5e9)})
+    pl_run(root, 84, {"q2": sweep(4.4e9)})
+    hows = {"#85_": "ledger", "#84_": "unchecked"}
+
+    def identity(folder):
+        return True, next(v for k, v in hows.items() if k in str(folder)), None
+    out = L.build([root], chip_qubits(), identity=identity)
+    assert of(out["curves"]["q1"]["scan"], "identity") == "ledger"
+    assert of(out["curves"]["q2"]["scan"], "identity") == "unchecked"
+    # no judge at all (no ledger, no names): unchecked, said so
+    assert of(L.build([root], chip_qubits())["curves"]["q1"]["scan"], "identity") == "unchecked"
 
 
 def test_another_chips_run_and_a_run_of_unknown_names_are_skipped(tmp_path):
@@ -406,6 +433,7 @@ def test_a_run_of_another_chip_name_is_skipped_when_the_ledger_cannot_judge(tmp_
     _app, c, _ctx = _client(tmp_path, roots=[(storage, "declared")])
     d = c.get("/cz-plan/loss").get_json()
     assert of(d["curves"]["q1"]["scan"], "run_id") == 99
+    assert of(d["curves"]["q1"]["scan"], "identity") == "chip_name"     # fix3 P2-6: judged by the chip name
     assert d["skipped"] == [{"run_id": 100, "name": "#100_" + FAMILY + "_040000",
                              "reason": "saved by a chip of another name"}]
 
@@ -431,8 +459,42 @@ def test_staleness_names_flux_model_inputs_changed_after_the_run(tmp_path, monke
     assert seen["paths"] == ["qubits.q1.freq_vs_flux_01_quad_term", "qubits.q1.z.joint_offset"]
     assert seen["limit"] == 3
     (line,) = d["staleness"]["qubits"]["q1"]
-    assert line["text"] == "axis of run #100 predates 2 flux-model inputs changed (run #130)"
+    # v1.4.1 (A14 fix3 P1-2): "... changed (run #130)" -> what the ledger proves: #130 is a run_saved point,
+    # the first saved state that carried the value, not its writer
+    assert line["text"] == "axis of run #100 predates 2 flux-model input changes (first seen in run #130's saved state)"
+    assert line["changed_provenance"] == "run_saved" and line["changed_words"] == "first seen in run #130's saved state"
     assert line["fields"] == ["freq_vs_flux_01_quad_term", "z.joint_offset"] and line["which"] == "scan"
+
+
+@pytest.mark.parametrize("provenance, words", [
+    ("run_proven", "changed by run #130"),
+    ("run_saved", "first seen in run #130's saved state"),
+    ("run_uncertain_chip", "first seen in run #130's saved state"),
+    ("sm", "changed in SM"),
+])
+def test_staleness_names_a_writer_only_when_the_ledger_proves_it(tmp_path, monkeypatch, provenance, words):
+    from quam_state_manager.web import routes
+    storage = tmp_path / "storage"
+    _q1_scan(storage)
+    _app, c, _ctx = _client(tmp_path, roots=[(storage, "declared")])
+    run_us = 1767240000 * 10**6
+    rid = None if provenance == "sm" else 130
+    monkeypatch.setattr(routes, "_value_history", lambda ctx, pm, limit=None, **kw: {"mode": "ledger", "rows": {
+        "qubits.q1.z.joint_offset": {"effective": [{"t_us": run_us + 7200 * 10**6, "t": "x", "run_id": rid,
+                                                    "provenance": provenance}]}}})
+    (line,) = c.get("/cz-plan/loss").get_json()["staleness"]["qubits"]["q1"]
+    assert line["changed_words"] == words and line["changed_provenance"] == provenance
+    assert line["text"] == f"axis of run #100 predates 1 flux-model input change ({words})"
+
+
+def test_change_words_never_name_a_run_that_only_carried_the_value():
+    from quam_state_manager.core import cz_gate_plan as czp
+    assert czp.change_words({"run_id": 5, "provenance": "run_proven"}) == "changed by run #5"
+    assert czp.change_words({"run_id": 5, "provenance": "run_saved"}) == "first seen in run #5's saved state"
+    assert czp.change_words({"run_id": 5, "provenance": "run_uncertain_chip"}) == "first seen in run #5's saved state"
+    assert czp.change_words({"run_id": None, "provenance": "sm"}) == "changed in SM"
+    assert czp.change_words({"run_id": 5, "provenance": "first_record"}) == "seen in run #5"
+    assert czp.change_words({}) == "changed"
 
 
 def test_a_renamed_chip_reads_an_old_run_in_todays_names(tmp_path):
@@ -521,10 +583,35 @@ def test_the_card_counts_its_staleness_and_groups_it_per_qubit_and_run(tmp_path,
     monkeypatch.setattr(routes, "_cz_plan_history", history)
     card = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz").get_json()["calibration"]
     assert card["warning_count"] == len(card["warnings"]) == 3
+    # v1.4.1 (A14 fix3 P1-2): each run group also carries the ledger's provenance and its words
+    proven = {"provenance": "run_proven"}
     assert card["warning_groups"] == [
-        {"qubit": "q1", "runs": [{"run_id": 9, "t": "2026-01-01T00:01:30Z", "fields": ["z.joint_offset"]},
-                                 {"run_id": 7, "t": "2026-01-01T00:00:50Z", "fields": ["f_01"]}]},
-        {"qubit": "q2", "runs": [{"run_id": 7, "t": "2026-01-01T00:00:50Z", "fields": ["anharmonicity"]}]}]
+        {"qubit": "q1", "runs": [{"run_id": 9, "t": "2026-01-01T00:01:30Z", "fields": ["z.joint_offset"],
+                                  "words": "changed by run #9", **proven},
+                                 {"run_id": 7, "t": "2026-01-01T00:00:50Z", "fields": ["f_01"],
+                                  "words": "changed by run #7", **proven}]},
+        {"qubit": "q2", "runs": [{"run_id": 7, "t": "2026-01-01T00:00:50Z", "fields": ["anharmonicity"],
+                                  "words": "changed by run #7", **proven}]}]
+
+
+def test_the_card_names_a_saved_state_as_one_not_as_the_writer(tmp_path, monkeypatch):
+    from quam_state_manager.web import routes
+    _app, c, _ctx = _client(tmp_path)
+    pt = lambda t_us, rid, prov: {"t_us": t_us, "t": "2026-01-01T00:00:00Z", "run_id": rid, "provenance": prov,
+                                  "proven": prov == "run_proven"}
+
+    def history(rows):
+        out = {"mode": "ledger", "rows": {}}
+        for row in rows:
+            for p in row["amplitudes"]:
+                out["rows"][p] = {"effective": [pt(10 * 10**6, 5, "run_proven")]}
+            out["rows"]["qubits.q1.f_01"] = {"effective": [pt(50 * 10**6, 7, "run_saved")]}
+        return out
+    monkeypatch.setattr(routes, "_cz_plan_history", history)
+    card = c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz").get_json()["calibration"]
+    (w,) = card["warnings"]
+    assert w["provenance"] == "run_saved" and w["words"] == "first seen in run #7's saved state"
+    assert card["warning_groups"][0]["runs"][0]["words"] == "first seen in run #7's saved state"
 
 
 # ---------------------------------------------------------------- the contract

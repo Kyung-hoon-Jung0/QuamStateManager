@@ -6,7 +6,7 @@ on three chip copies, frozen for the map / detail clients and asserted against t
 
 | file | chip | data | what it shows |
 |---|---|---|---|
-| `*_rig5q.json` | 5 qubits, a chain | 15 population-loss runs | the customer layout: the chip declares an EMPTY data folder; the runs sit in the qualibrate project storage (two roots, both searched); a curve split in two pieces (q4); content-matched marker runs; an ambiguous `[]` |
+| `*_rig5q.json` | 5 qubits, a chain | 15 population-loss runs | the customer layout: the chip declares an EMPTY data folder; the runs sit in the qualibrate project storage (two roots, both searched); a curve split in two pieces (q4); content-matched marker runs; an ambiguous `[]`; every curve's `identity` |
 | `*_rig21.json` | 21 qubits, a grid | 30 population-loss runs | a full grid (32 pairs), ledger staleness lines, a card with staleness warnings |
 | `*_rig13.json` | 13 qubits | none | stored defects only: every curve `null` with its reason |
 
@@ -45,16 +45,18 @@ File-derived; never waits for the ledger. Fetch once per page.
   unreadable / non-HDF5 `ds_fit.h5`, another chip's run, a renamed chip's run whose names cannot be told).
 * `curves` -- `{qubit (today's name): entry}`, one entry per qubit of the chip:
   * `scan` -- curve|null: the NEWEST run with a usable curve for the qubit (draw it filled);
-  * `marker` -- where the stored defect list (`extras.population_loss_defects_json`) came from:
-    * `status` -- `match` (the newest run that measured the qubit -- in `ds_fit.h5` and in
+  * `marker` -- which run's defects equal the stored defect list (`extras.population_loss_defects_json`),
+    matched by CONTENT (the node writes no patches, so no run is proven to have written the list):
+    * `status` -- `match` (the one run that measured the qubit -- in `ds_fit.h5` and in
       `fit_results` -- whose defect frequencies equal the stored list, 1 Hz, order-free), `ambiguous`
-      (the stored list is `[]` and several runs match: the newest is named), `no_match` (no run in the
-      data folders has that list), `none` (no stored list), `unreadable` (the stored list is not JSON);
+      (several runs match -- an empty list, or a re-analysis that reproduces a non-empty one: the newest
+      is named), `no_match` (no run in the data folders has that list), `none` (no stored list),
+      `unreadable` (the stored list is not JSON);
     * `run_id` -- int|null, `run_name` -- string (only on `match` / `ambiguous`), `matches` -- int (how
       many read runs match), `same_as_scan` -- bool (only on `match` / `ambiguous`);
     * `label` -- string, ready to show: `"stored defects match run #1390"`, `"ambiguous (empty list
-      matches 3 runs); newest #1905"`, `"source of the stored defects not in the data folder"`,
-      `"no stored defects"`.
+      matches 3 runs); newest #1905"`, `"stored defects match 2 runs; newest #17"`, `"source of the
+      stored defects not in the data folder"`, `"no stored defects"`.
   * `marker_curve` -- curve|null: the marker run's curve when it is not the scan (draw it as a thin
     outline);
   * `reason` -- string|null: why `scan` is null (`"run #N has no frequency axis for q"`, `"no
@@ -69,6 +71,9 @@ File-derived; never waits for the ledger. Fetch once per page.
     unknown" is in `notes`); T differs per run (100 or 1000 ns on the real data) -- show it in every label;
   * `run_qubit` string: the qubit's name IN THE RUN (differs from the key after a rename);
   * `flux_conversion` string|null: what placed the run's axis (`model` / `quad`);
+  * `identity` string: how the run was judged this chip's -- `ledger` (the change history holds it),
+    `chip_name` (its saved state's `extras.chip_name` equals the chip's), `unchecked` (neither: no
+    history holds it and one side declares no chip name -- say so wherever the run is named);
   * `n_samples` int, `dropped` int (samples with a non-finite frequency or loss, left out);
   * `range_hz` [min, max]|null, `median_step_hz` number|null (over non-zero steps);
   * `loss_min`, `loss_max` -- number|null: the TRUE extremes (losses are not clipped; real data spans
@@ -89,11 +94,15 @@ File-derived; never waits for the ledger. Fetch once per page.
   * `mode` -- `ledger` (answered), `building` / `preparing` (ask again), `unavailable` (no ledger;
     `note` says why), `none` (no curve to check);
   * `note` -- string|null;
-  * `qubits` -- `{qubit: [{which, run_id, text, fields[], changed_run_id, changed_t}]}`: one line per
-    curve (`which`: `scan` or `marker_curve`) whose qubit's `lffem_flux_model` fields,
-    `freq_vs_flux_01_quad_term` or park offset (`z.<point>_offset`) changed after the run; `text` is
-    ready to show (`"axis of run #824 predates 1 flux-model input changed (run #3450)"`); `fields` are
-    relative to the qubit (`z.joint_offset`). f_01 is not checked here (the idle check covers it).
+  * `qubits` -- `{qubit: [{which, run_id, text, fields[], changed_run_id, changed_t,
+    changed_provenance, changed_words}]}`: one line per curve (`which`: `scan` or `marker_curve`) whose
+    qubit's `lffem_flux_model` fields, `freq_vs_flux_01_quad_term` or park offset (`z.<point>_offset`)
+    changed after the run; `changed_provenance` is the ledger's (`run_proven`, `run_saved`, `sm`, ...),
+    `changed_words` names the change without claiming more than that (`cz_gate_plan.change_words`:
+    `"changed by run #M"` only for `run_proven`, `"first seen in run #M's saved state"` for a run that
+    only carried the value first); `text` is ready to show (`"axis of run #824 predates 1 flux-model
+    input change (first seen in run #3450's saved state)"`); `fields` are relative to the qubit
+    (`z.joint_offset`). f_01 is not checked here (the idle check covers it).
 
 ## `/cz-plan/data` (new fields; `row`, `qubits`, `trajectory`, `pair_ops`, `amax_v` unchanged)
 
@@ -104,8 +113,9 @@ File-derived; never waits for the ledger. Fetch once per page.
   nominal waveform, transcription). The client tags its own summary notes as `flux`.
 * `unavailable` -- [string]: the chip's unreadable entries (the same texts as the `status` notes).
 * `calibration.warning_count` -- int: the card's staleness count (`len(warnings)`);
-  `calibration.warning_groups` -- `[{qubit, runs: [{run_id, t, fields[]}]}]`: the warnings per member
-  (operation order) and per run, newest run first; `fields` relative to the qubit.
+  `calibration.warning_groups` -- `[{qubit, runs: [{run_id, t, provenance, words, fields[]}]}]`: the
+  warnings per member (operation order) and per run, newest run first; `fields` relative to the qubit;
+  `words` as `changed_words` above. Each of `calibration.warnings` carries `provenance` and `words` too.
 * `gate_loss` -- one entry per member, in `row.lines` order:
   * `role`, `qubit`, `moves` bool, `operating_hz` number|null;
   * `reason` -- string|null: why there is no loss reading (`"stays at idle"`, a refusal, no

@@ -523,7 +523,7 @@ def clear_caches() -> None:
 
 
 # ---------------------------------------------------------------- the chip
-def _curve_view(run: dict, run_name: str, today_f01: float | None) -> dict:
+def _curve_view(run: dict, run_name: str, today_f01: float | None, identity: str = "unchecked") -> dict:
     c = run["qubits"][run_name]
     t_ns = run["interaction_time_ns"]
     notes = []
@@ -546,12 +546,15 @@ def _curve_view(run: dict, run_name: str, today_f01: float | None) -> dict:
             "range_hz": c["range_hz"], "median_step_hz": c["median_step_hz"],
             "loss_min": c["loss_min"], "loss_max": c["loss_max"],
             "idle_at_run_hz": idle, "idle_now_hz": today_f01, "idle_moved_hz": moved, "idle_note": idle_note,
-            "defects": c["defects"], "pieces": c["pieces"], "notes": notes}
+            "defects": c["defects"], "pieces": c["pieces"], "notes": notes,
+            # fix3 P2-6: how the run was judged this chip's -- "ledger", "chip_name" or
+            # "unchecked" (no ledger verdict and no chip name on one side)
+            "identity": identity}
 
 
 def build(roots: list, chip_qubits: dict, *, identity: Callable | None = None,
           names: Callable | None = None, cap: int = MAX_RUNS) -> dict:
-    """Every qubit's measured loss curve and the run its stored defects came from.
+    """Every qubit's measured loss curve and the run whose defects equal the stored list.
 
     *roots*: the chip's data folders (strongest first, all searched).
     *chip_qubits*: ``{today's name: {"f01_hz", "stored"}}`` -- ``stored`` is the
@@ -564,7 +567,9 @@ def build(roots: list, chip_qubits: dict, *, identity: Callable | None = None,
     newest run that MEASURED the qubit (in both ``fit_results`` and
     ``ds_fit.h5``) whose defect frequencies equal the stored list (1 Hz,
     order-free), ``ambiguous`` when the stored list is empty and several runs
-    match; ``marker_curve`` -- that run's curve when it is not the scan. The
+    match, or when a non-empty list is matched by several runs (a re-analysis
+    reproduces the list); ``marker_curve`` -- that run's curve when it is not the
+    scan. Every curve says how its run was judged this chip's (``identity``). The
     newest :data:`MAX_RUNS` candidates are read."""
     out = {"roots": [str(r) for r in roots], "reason": None, "cap": cap, "runs_listed": 0, "runs_read": 0,
            "skipped": [], "curves": {}}
@@ -588,8 +593,9 @@ def build(roots: list, chip_qubits: dict, *, identity: Callable | None = None,
         if not run.get("ok"):
             out["skipped"].append({"run_id": cand["run_id"], "name": cand["name"], "reason": run["reason"]})
             continue
+        how = "unchecked"
         if identity is not None:
-            ok, _how, why = identity(cand["folder"])
+            ok, how, why = identity(cand["folder"])
             if not ok:
                 out["skipped"].append({"run_id": run["run_id"], "name": run["name"],
                                        "reason": why or "another chip's run"})
@@ -604,27 +610,27 @@ def build(roots: list, chip_qubits: dict, *, identity: Callable | None = None,
             if today is None or today not in curves:
                 continue
             if c["pieces"] and today not in scans:
-                scans[today] = (run, run_name)
+                scans[today] = (run, run_name, how)
             elif not c["pieces"]:
                 no_axis.setdefault(today, run["run_id"])
             st = stored.get(today)
             if (c["in_fit_results"] and isinstance(st, list) and c["defect_freqs"] is not None
                     and defects_match(st, c["defect_freqs"])):
-                matches[today].append((run, run_name))
+                matches[today].append((run, run_name, how))
     for q, entry in curves.items():
         f01 = chip_qubits[q].get("f01_hz")
         if q in scans:
-            run, rname = scans[q]
-            entry["scan"] = _curve_view(run, rname, f01)
+            run, rname, how = scans[q]
+            entry["scan"] = _curve_view(run, rname, f01, how)
         else:
             entry["reason"] = (f"run #{no_axis[q]} has no frequency axis for {q}" if q in no_axis
                                else "no population-loss run in the chip's data folders" if not listed
                                else f"no population-loss run of {q} among the {out['runs_read']} newest read")
         entry["marker"] = _marker(stored[q], matches[q], entry["scan"])
         if matches[q] and entry["marker"]["run_id"] != (entry["scan"] or {}).get("run_id"):
-            run, rname = matches[q][0]
+            run, rname, how = matches[q][0]
             if run["qubits"][rname]["pieces"]:
-                entry["marker_curve"] = _curve_view(run, rname, f01)
+                entry["marker_curve"] = _curve_view(run, rname, f01, how)
     out["curves"] = curves
     return out
 
@@ -648,4 +654,8 @@ def _marker(st, found: list, scan: dict | None) -> dict:
            "label": f"stored defects match run #{run['run_id']}"}
     if not st and n > 1:
         out.update(status="ambiguous", label=f"ambiguous (empty list matches {n} runs); newest #{run['run_id']}")
+    elif n > 1:
+        # fix3 P2-3: a re-analysis (load_data_id) reproduces a non-empty list too, so
+        # several runs carrying it are as ambiguous as several empty ones
+        out.update(status="ambiguous", label=f"stored defects match {n} runs; newest #{run['run_id']}")
     return out

@@ -20904,15 +20904,19 @@ def _cz_loss_staleness(ctx, payload: dict, convs) -> dict:
                 continue
             newest = max(changed, key=lambda c: c[1]["t_us"])[1]
             k = len(changed)
-            when = (f"run #{newest['run_id']}" if newest.get("run_id") is not None
-                    else (newest.get("t") or "time unknown"))
+            # fix3 P1-2: "changed by run #M" only when the ledger proves that run wrote it;
+            # a run whose saved state merely carried it first is named as that
+            words = czp.change_words(newest)
+            if words == "changed":
+                words = f"changed ({newest.get('t') or 'time unknown'})"
             text = (f"axis of run #{curve['run_id']} predates {k} flux-model input"
-                    f"{'' if k == 1 else 's'} changed ({when})")
+                    f" change{'' if k == 1 else 's'} ({words})")
             if not curve.get("order_proven"):
                 text += "; order not proven"
             lines.append({"which": which, "run_id": curve["run_id"], "text": text,
                           "fields": [p[len(by_name[q][0]) + 1:] for p, _pt in changed],
-                          "changed_run_id": newest.get("run_id"), "changed_t": newest.get("t")})
+                          "changed_run_id": newest.get("run_id"), "changed_t": newest.get("t"),
+                          "changed_provenance": newest.get("provenance"), "changed_words": words})
         if lines:
             out["qubits"][q] = lines
     return out
@@ -20921,7 +20925,7 @@ def _cz_loss_staleness(ctx, payload: dict, convs) -> dict:
 @bp.route("/cz-plan/loss")
 def cz_plan_loss():
     """Every qubit's measured population loss from the chip's own data folders (the
-    newest population-loss scan, the run the stored defects came from, the idle
+    newest population-loss scan, the run whose defects equal the stored list, the idle
     check) plus ``staleness``: the ledger's word on whether a curve's flux model
     changed after the run (``mode`` building -> ask again; the curves never wait)."""
     store = _store()
@@ -21063,7 +21067,10 @@ def cz_plan_data():
 
 def _cz_warning_groups(row: dict, warnings: list[dict]) -> list[dict]:
     """The staleness warnings grouped per qubit (the operation's member order) and
-    per run, newest run first: ``[{"qubit", "runs": [{"run_id", "t", "fields"}]}]``."""
+    per run, newest run first: ``[{"qubit", "runs": [{"run_id", "t", "provenance",
+    "words", "fields"}]}]`` -- ``words`` from :func:`cz_gate_plan.change_words` (a
+    run that only carried the value first is never said to have changed it)."""
+    from quam_state_manager.core import cz_gate_plan as czp
     order = [ln["qubit_path"] for ln in row["lines"] if ln.get("qubit_path")]
     groups: dict[str, dict] = {}
     for w in warnings:
@@ -21072,8 +21079,9 @@ def _cz_warning_groups(row: dict, warnings: list[dict]) -> list[dict]:
         key = owner or ""
         field = path[len(owner) + 1:] if owner else path
         runs = groups.setdefault(key, {})
-        rk = (w.get("run_id"), w.get("t"))
-        runs.setdefault(rk, {"run_id": w.get("run_id"), "t": w.get("t"), "fields": []})["fields"].append(field)
+        rk = (w.get("run_id"), w.get("t"), w.get("provenance"))
+        runs.setdefault(rk, {"run_id": w.get("run_id"), "t": w.get("t"), "provenance": w.get("provenance"),
+                             "words": czp.change_words(w), "fields": []})["fields"].append(field)
     out = []
     for key in sorted(groups, key=lambda k: order.index(k) if k in order else len(order)):
         runs = sorted(groups[key].values(), key=lambda r: r["t"] or "", reverse=True)
