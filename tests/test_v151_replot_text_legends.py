@@ -75,7 +75,8 @@ def test_lab_legend_font_sizes_are_kept():
     assert mpljson_to_plotly(_figure(figure_legend))["layout"]["legend"]["font"]["size"] == pytest.approx(7)
 
 
-def test_a_title_over_a_top_axis_sits_where_matplotlib_drew_it():
+@pytest.mark.parametrize("canvas", [True, False])   # most lab plots build a bare Figure
+def test_a_title_over_a_top_axis_sits_where_matplotlib_drew_it(canvas):
     def build(fig):
         ax = fig.subplots()
         ax.plot([0, 1], [0, 1])
@@ -84,7 +85,7 @@ def test_a_title_over_a_top_axis_sits_where_matplotlib_drew_it():
         top.set_xlabel("Detuning [MHz]")
         ax.set_title("qubit = q5")
         fig.suptitle("Chevron")
-    fig_json = _figure(build, layout="constrained")
+    fig_json = _figure(build, layout="constrained", canvas=canvas)
     box = next(a.get("title_box") for a in fig_json["axes"] if a.get("title"))
     assert box is not None and len(box) == 4, "the extractor records where the title was drawn"
     note =_note(mpljson_to_plotly(fig_json), "qubit = q5")
@@ -258,6 +259,21 @@ def test_a_line_drawn_with_marker_none_has_no_markers():
         fig.subplots().plot([0, 1, 2], [0, 1, 0], marker="none", label="fit")
     trace = next(t for t in mpljson_to_plotly(_figure(build))["data"] if t.get("name") == "fit")
     assert trace["mode"] == "lines" and "marker" not in trace
+
+
+@pytest.mark.parametrize("ncol,orientation", [(3, "h"), (1, "v")])
+def test_a_multi_column_axes_legend_reads_across(ncol, orientation):
+    def build(fig):
+        ax = fig.subplots()
+        for i in range(3):
+            ax.plot([0, 1], [i, i + 1], label=f"series {i}")
+        ax.legend(loc="lower center", ncol=ncol)
+    fig_json = _figure(build, canvas=False)
+    legend = mpljson_to_plotly(fig_json)["layout"]["legend"]
+    box = fig_json["axes"][0]["legend"]["box"]
+    assert box is not None, "a bare Figure is measured too"
+    assert legend["orientation"] == orientation
+    assert (legend["x"], legend["y"]) == pytest.approx((box[0], box[3]))
 
 
 def test_figure_legend_keeps_only_its_explicit_entries():

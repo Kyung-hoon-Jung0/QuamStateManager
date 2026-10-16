@@ -179,11 +179,16 @@ def test_source_legend_stays_inside_a_single_axes():
     ax = fig.subplots()
     ax.axvline(.5, label='Center = 0.5')
     ax.legend(loc='upper left', fontsize=8)
-    view = mpljson_to_plotly(extract_figure(fig, 'reference'))
+    figure = extract_figure(fig, 'reference')
+    view = mpljson_to_plotly(figure)
     legend = view['layout']['legend']
     assert legend['orientation'] == 'v'
-    assert legend['x'] == pytest.approx(ax.get_position().x0)
-    assert legend['y'] == pytest.approx(ax.get_position().y1)
+    # v1.4.1: the axes corner (a bare Figure was not measured) -> the box matplotlib drew,
+    # a border pad inside that corner (a bare Figure is measured now).
+    box, pos = figure['axes'][0]['legend']['box'], ax.get_position()
+    assert box is not None
+    assert (legend['x'], legend['y']) == pytest.approx((box[0], box[3]))
+    assert pos.x0 < box[0] < pos.x0 + 0.05 and pos.y1 - 0.05 < box[3] < pos.y1
     assert legend['font']['size'] == 8
 
 

@@ -32,13 +32,29 @@ def test_one_legend_panel_keeps_its_drawn_box():
     assert (legend["xanchor"], legend["yanchor"], legend["orientation"]) == ("left", "top", "v")
 
 
-def test_without_a_renderer_the_location_code_places_it_in_that_panel():
+def test_a_bare_figure_is_measured_too():
+    # v1.4.1: a bare Figure had no renderer, so its legend box was None -> the extractor
+    # measures it (most lab plots build a bare Figure; the fixed fallback misplaced them).
     figure, layout = _view([None, "lower right"], with_renderer=False)
-    assert figure["axes"][1]["legend"]["box"] is None
-    legend = layout["legend"]
-    x0, y0, w, _h = figure["axes"][1]["position"]
-    assert legend["x"] == pytest.approx(x0 + w) and legend["y"] == pytest.approx(y0)
-    assert (legend["xanchor"], legend["yanchor"]) == ("right", "bottom")
+    box = figure["axes"][1]["legend"]["box"]
+    assert box is not None
+    assert (layout["legend"]["x"], layout["legend"]["y"]) == pytest.approx((box[0], box[3]))
+
+
+@pytest.mark.parametrize("loc,anchors", [(4, ("right", "bottom")), (8, ("center", "bottom")),
+                                         (9, ("center", "top")), (6, ("left", "middle")),
+                                         (10, ("center", "middle")), (2, ("left", "top"))])
+def test_without_a_box_the_location_code_places_it_in_that_panel(loc, anchors):
+    # v1.4.1: reached through a bare Figure -> through a removed box (bare figures are measured
+    # now); the centre codes (lower/upper center, center left, center) were read as a corner.
+    figure, _layout = _view([None, "lower right"], with_renderer=True)
+    figure["axes"][1]["legend"].update(box=None, loc=loc)
+    legend = mpljson_to_plotly(figure)["layout"]["legend"]
+    x0, y0, w, h = figure["axes"][1]["position"]
+    xs = {"left": x0, "center": x0 + w / 2, "right": x0 + w}
+    ys = {"bottom": y0, "middle": y0 + h / 2, "top": y0 + h}
+    assert (legend["xanchor"], legend["yanchor"]) == anchors
+    assert (legend["x"], legend["y"]) == pytest.approx((xs[anchors[0]], ys[anchors[1]]))
 
 
 def test_several_legends_each_stay_in_their_panel():

@@ -61,6 +61,14 @@ def _legend_box(leg):
         return None
 
 
+def _legend_ncol(leg):
+    """How many columns the lab's legend was laid out in (a private attribute; 1 if unknown)."""
+    try:
+        return max(1, int(getattr(leg, "_ncols", None) or getattr(leg, "_ncol", None) or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 def _legend_proxies(leg):
     """``[(label, proxy trace)]`` for every legend entry, from what the legend DREW for it.
 
@@ -539,7 +547,7 @@ def extract_axes(ax, axes):
         "title_box": _title_box(ax) if ax.get_title() else None,
         "aspect": _f(ax.get_aspect()),
         "legend": ({"loc": leg._loc, "size": _f(leg.get_texts()[0].get_fontsize()), "box": _legend_box(leg),
-                    "frame": bool(leg.get_frame_on())}
+                    "frame": bool(leg.get_frame_on()), "ncol": _legend_ncol(leg)}
                    if leg is not None and leg.get_texts() else None),
         "position": _figure_position(ax),
         "axison": bool(ax.axison),
@@ -597,6 +605,15 @@ def extract_figure(fig, key, title=None):
     if getattr(f, "_suptitle", None) is not None:
         sup = f._suptitle.get_text()
     axes = f.get_axes()
+    # A lab figure built as a bare ``Figure()`` (no pyplot) has a base canvas without a
+    # renderer, so every box drawn at draw time (a legend, an axes title) read as None and
+    # the converter fell back to fixed offsets. An Agg canvas only measures here.
+    if not callable(getattr(getattr(f, "canvas", None), "get_renderer", None)):
+        try:
+            from matplotlib.backends.backend_agg import FigureCanvasAgg
+            FigureCanvasAgg(f)
+        except Exception:
+            pass   # boxes stay None; the converter keeps its fallbacks
     # A layout engine (constrained / tight layout) places the axes only when the figure
     # is drawn -- that is how the saved PNG gets room for a multi-line title. Read the
     # positions after that placement, not the default subplot box.
@@ -652,7 +669,7 @@ def _figure_legend(root, leg=None):
         if not legends:
             return None
         leg = legends[0]
-    return {"box": _legend_box(leg), "ncol": int(getattr(leg, "_ncols", 1) or 1),
+    return {"box": _legend_box(leg), "ncol": _legend_ncol(leg),
             "size": _f(leg.get_texts()[0].get_fontsize()), "frame": bool(leg.get_frame_on()),
             "entries": [dict(proxy, name=name, x=[None], y=[None], legend_only=True)
                         for name, proxy in _legend_proxies(leg) if proxy]}

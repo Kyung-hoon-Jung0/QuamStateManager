@@ -699,14 +699,21 @@ def _legend_place(legend: dict, bounds) -> dict:
     keeps a frame (the theme fills it, so it reads over the data as the lab's does)."""
     x0, x1, y0, y1 = bounds
     box = legend.get("box")
+    # a legend the lab laid out in several columns reads across, not down
+    orientation = "h" if (legend.get("ncol") or 1) > 1 else "v"
     if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box) \
             and 0 <= box[0] < box[2] <= 1 and 0 <= box[1] < box[3] <= 1:
-        out = {"orientation": "v", "x": box[0], "y": box[3], "xanchor": "left", "yanchor": "top"}
+        out = {"orientation": orientation, "x": box[0], "y": box[3], "xanchor": "left", "yanchor": "top"}
     else:
+        # matplotlib location codes: 1 upper right, 2 upper left, 3 lower left, 4 lower right,
+        # 5 right, 6 center left, 7 center right, 8 lower center, 9 upper center, 10 center
         loc = legend.get("loc", 1)
-        left, bottom = loc in (2, 3, 6, 9), loc in (3, 4, 8)
-        out = {"orientation": "v", "x": x0 if left else x1, "y": y0 if bottom else y1,
-               "xanchor": "left" if left else "right", "yanchor": "bottom" if bottom else "top"}
+        across = "left" if loc in (2, 3, 6) else "center" if loc in (8, 9, 10) else "right"
+        down = "bottom" if loc in (3, 4, 8) else "middle" if loc in (5, 6, 7, 10) else "top"
+        out = {"orientation": orientation,
+               "x": {"left": x0, "center": (x0 + x1) / 2, "right": x1}[across],
+               "y": {"bottom": y0, "middle": (y0 + y1) / 2, "top": y1}[down],
+               "xanchor": across, "yanchor": down}
     if legend.get("frame"):
         out.update(borderwidth=1, bordercolor="rgba(128,128,128,0.6)")
     return out
