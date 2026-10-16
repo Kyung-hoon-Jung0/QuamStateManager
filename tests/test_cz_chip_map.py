@@ -161,3 +161,19 @@ def test_inventory_includes_unpaired_qubits_and_pairs_without_cz(no_rows):
     assert "empty" in m["missing"]
     if no_rows:
         assert m["segments"] == [] and set(m["missing"]) == set(s["qubit_pairs"])
+
+
+def test_every_pair_names_its_members_and_every_qubit_its_grid_location():
+    """A14 S2: the map's chip drawing needs every qubit's place and both ends of EVERY pair,
+    including pairs without the drawn operation (or without any CZ macro)."""
+    s = chip()
+    s["qubits"]["q10"]["grid_location"] = "0,1"
+    s["qubits"]["q2"]["grid_location"] = "#/where"
+    s["where"] = "1,1"
+    s["qubit_pairs"]["empty"] = {"qubit_control": "#/qubits/q3", "qubit_target": "#/qubits/q10", "macros": {}}
+    _, m = mapped(s, "cz_b")
+    assert {q["name"]: q["grid_location"] for q in m["qubits"]} == {"q2": "1,1", "q3": None, "q10": "0,1"}
+    assert set(m["pairs"]) == {"q10-2", "q3-2", "empty"}
+    assert m["pairs"]["empty"] == {"control_path": "qubits.q3", "target_path": "qubits.q10",
+                                   "control": "q3", "target": "q10"}
+    assert "q3-2" in m["missing"] and m["pairs"]["q3-2"]["target"] == "q2"

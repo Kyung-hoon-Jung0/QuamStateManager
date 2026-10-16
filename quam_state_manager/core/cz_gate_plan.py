@@ -531,7 +531,7 @@ def chip_map(rows, conversions, op_name=None):
         defects, safe = tls_bands(q), safe_intervals(q)
         qubits[path] = {"name": name, "path": path, "f01_hz": conv.f01, "defects": defects, "safe": safe,
                         "loss_data": bool(defects or safe), "tier": conv.model_kind or QUAD_LABEL,
-                        "direction": conv.frame["reason"]}
+                        "direction": conv.frame["reason"], "grid_location": q.get("grid_location")}
     by_pair = {name: [] for name in getattr(rows, "pair_names", ())}
     for r in rows:
         by_pair.setdefault(r["pair"], []).append(r)
@@ -571,9 +571,16 @@ def chip_map(rows, conversions, op_name=None):
                                 "frequency_hz": row["interaction_frequency_hz"],
                                 "what": "stored interaction frequency"})
     order = sorted(qubits, key=lambda q: _natural(qubits[q]["name"]))
+    # every pair with its members, drawn op or not (the map's bars need both ends)
+    members = getattr(rows, "pair_members", {})
+    pairs = {}
+    for pair in by_pair:
+        cp, tp = members.get(pair, ("", ""))
+        pairs[pair] = {"control_path": cp or None, "target_path": tp or None,
+                       "control": cp.split(".")[-1] if cp else None, "target": tp.split(".")[-1] if tp else None}
     return {"qubits": [qubits[q] for q in order], "segments": segments, "planned": planned,
             "refused": refused, "missing": sorted(missing, key=_natural), "op": op_name or None,
-            "operations": sorted({r["operation"] for r in rows}, key=_natural)}
+            "operations": sorted({r["operation"] for r in rows}, key=_natural), "pairs": pairs}
 
 
 # ---------------------------------------------------------------- the chip
@@ -593,6 +600,8 @@ def qubit_at(doc, path):
                 ("flux_point", "joint_offset", "min_offset", "independent_offset")}
     out["extras"] = {k: resolved_tree(doc, path + ".extras." + k) for k in _EXTRAS_USED
                      if read(doc, path + ".extras." + k).get("has_current")}
+    # where the qubit sits on the chip (the map's drawing); the raw "col,row" text
+    out["grid_location"] = current(doc, path + ".grid_location")
     return out
 
 
@@ -613,11 +622,14 @@ def _is_cz(name, macro):
 
 
 class OperationRows(list):
-    """Operation rows plus the resolved pair inventory, including pairs without CZ macros."""
+    """Operation rows plus the resolved pair inventory, including pairs without CZ macros:
+    ``pair_names`` in state order and ``pair_members`` ``{pair: (control path, target path)}``
+    (an unresolved role is ``""``)."""
 
     def __init__(self):
         super().__init__()
         self.pair_names = []
+        self.pair_members = {}
 
 
 def operations(doc, conversions=None, unavailable=None):
@@ -658,6 +670,7 @@ def operations(doc, conversions=None, unavailable=None):
             if path and path not in conversions:
                 conversions[path] = Conversion(q)
             roles[role] = {"path": path, "name": path.split(".")[-1] if path else "?", "qubit": q}
+        rows.pair_members[pair_name] = (roles["control"]["path"], roles["target"]["path"])
         pair_refusal = ("pair roles resolve to the same qubit" if roles["control"]["path"]
                         and roles["control"]["path"] == roles["target"]["path"] else None)
         plan = resolved_tree(doc, pp + ".extras.cz_plan")

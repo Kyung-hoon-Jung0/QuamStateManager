@@ -20657,13 +20657,37 @@ def _zline_payload(store, line: str, model: str = "sum", op: str = "",
 # operates. The physics, the tiers and every refusal live in core/cz_gate_plan.py;
 # these routes only resolve the chip once, add the history and the waveforms.
 
+#: A14 S1: ``{store serial: (token, (rows, conversions, unavailable))}`` -- the
+#: newest few stores' operations (newest last)
+_CZ_PLAN_OPS: dict = {}
+_CZ_PLAN_OPS_LOCK = threading.Lock()
+_CZ_PLAN_OPS_MAX = 4
+
+
 def _cz_plan_ops(store):
-    from quam_state_manager.core import cz_gate_plan as czp
+    """``czp.operations`` over the chip, memoized per store at its ``(serial,
+    mutation_seq)`` and the identity of ``merged`` (A14 S1: every /cz-plan*
+    route recomputed it, 80-86 ms on a 21-qubit chip; any edit, reload or
+    revert moves the token). Rows and conversions are shared and read-only for
+    every caller; ``unavailable`` is a fresh list per call."""
+    from quam_state_manager.core import cz_gate_plan as czp, store_revs
     with store._lock:
         merged = store.merged
+        token = (store_revs.seq_token(store), id(merged))
+    serial = token[0][0]
+    with _CZ_PLAN_OPS_LOCK:
+        hit = _CZ_PLAN_OPS.get(serial)
+    if hit is not None and hit[0] == token:
+        rows, convs, unavailable = hit[1]
+        return rows, convs, list(unavailable)
     unavailable = []
     rows, convs = czp.operations(merged, unavailable=unavailable)
-    return rows, convs, unavailable
+    with _CZ_PLAN_OPS_LOCK:
+        _CZ_PLAN_OPS.pop(serial, None)
+        _CZ_PLAN_OPS[serial] = (token, (rows, convs, tuple(unavailable)))
+        while len(_CZ_PLAN_OPS) > _CZ_PLAN_OPS_MAX:
+            _CZ_PLAN_OPS.pop(next(iter(_CZ_PLAN_OPS)))
+    return rows, convs, list(unavailable)
 
 
 def _cz_plan_table(rows) -> list[dict]:
