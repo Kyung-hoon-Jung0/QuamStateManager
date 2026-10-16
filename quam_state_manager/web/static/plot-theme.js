@@ -110,6 +110,15 @@
             if (/^xaxis/.test(k) && ax.side === 'top') dflt.ticklabelstandoff = 8;
             out[k] = Object.assign(dflt, ax);
         });
+        // v1.5.1 (D3 class G): a SUBPLOT axis (xaxis2..N beside the first panel) got no
+        // theme either, so every panel after the first drew Plotly's near-white default
+        // grid. Same dim grid as the first panel; a grid colour the caller (the lab
+        // figure) set itself stays.
+        Object.keys(out).forEach(function (k) {
+            var ax = out[k];
+            if (!/^[xy]axis\d+$/.test(k) || !ax || typeof ax !== 'object' || ax.overlaying) return;
+            out[k] = Object.assign({ gridcolor: grid, zerolinecolor: grid }, ax);
+        });
         if (isDark()) {
             out.font = artistStyle(out.font, text);
             Object.keys(out).forEach(function (key) {
@@ -192,14 +201,25 @@
             : document.querySelectorAll('.js-plotly-plot');
         Array.prototype.forEach.call(divs, function (el) {
             try {
-                window.Plotly.relayout(el, {
+                var base = {
                     paper_bgcolor: L.paper_bgcolor, plot_bgcolor: L.plot_bgcolor,
                     'font.color': L.font.color,
-                    'xaxis.gridcolor': L.xaxis.gridcolor,
-                    'yaxis.gridcolor': L.yaxis.gridcolor,
                     'hoverlabel.bgcolor': L.hoverlabel.bgcolor,
                     'hoverlabel.font.color': L.hoverlabel.font.color,
+                };
+                // v1.5.1 (D3 class G): EVERY axis of the plot follows the toggle, not only
+                // the first panel's -- the ones the plot has (layout or fullLayout) plus
+                // xaxis/yaxis; a grid colour the source layout set itself stays.
+                var source = el._houseSourceLayout || {}, names = { xaxis: 1, yaxis: 1 };
+                [el.layout, el._fullLayout].forEach(function (lay) {
+                    Object.keys(lay || {}).forEach(function (k) { if (/^[xy]axis\d*$/.test(k)) names[k] = 1; });
                 });
+                Object.keys(names).forEach(function (k) {
+                    var own = source[k] || {};
+                    if (!own.gridcolor) base[k + '.gridcolor'] = L.xaxis.gridcolor;
+                    if (!own.zerolinecolor) base[k + '.zerolinecolor'] = L.xaxis.zerolinecolor;
+                });
+                window.Plotly.relayout(el, base);
                 if (el._houseSourceData && window.Plotly.restyle) {
                     var data = houseData(el._houseSourceData);
                     data.forEach(function (trace, index) {
