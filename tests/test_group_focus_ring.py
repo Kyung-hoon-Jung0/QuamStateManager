@@ -144,9 +144,13 @@ def test_every_group_on_the_pages_is_a_role_group_the_rule_selects(tmp_path):
         for m in re.finditer(r'<(\w+)\b[^>]*\brole="group"[^>]*>', f.read_text(encoding="utf-8")):
             cls = re.search(r'(?:class|id)="([^"]+)"', m.group(0))
             found[cls.group(1) if cls else m.group(0)] = f.name
-    for want in ("sidebar-tools", "sidebar-tree-toolbar", "bulk-segmented", "ds-interactive-colbtns",
+    # v1.4.1: column counts use a compact toolbar instead of Pico's full-width group.
+    for want in ("sidebar-tools", "sidebar-tree-toolbar", "bulk-segmented",
                  "cmp-tabs", "cmp-context", "cmp-strictness", "bulk-chipbar", "bulk-docbadges", "wb-seg"):
         assert any(k.split()[0] == want for k in found), (want, found)
+    for template in ('_dataset_interactive.html', '_dataset_replot.html'):
+        tag = re.search(r'<div class="ds-interactive-colbtns"[^>]*>', (_TPL / template).read_text(encoding='utf8'))
+        assert tag and 'role="toolbar"' in tag[0], (template, tag)
     # a rendered page carries them as [role=group] (the sidebar tools + rows toolbar)
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     html = app.test_client().get("/").get_data(as_text=True)

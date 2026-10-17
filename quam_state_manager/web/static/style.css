@@ -5584,8 +5584,9 @@ p.ds-replot-fatal { padding: 0 0.2rem; overflow-wrap: anywhere; }
 .ds-interactive-toolbar-label {
     font-size: 0.85em; color: var(--pico-muted-color);
 }
-.ds-interactive-colbtns { display: inline-flex; gap: 0.25rem; }
+.ds-interactive-colbtns { display: inline-flex; flex: 0 0 auto; width: auto; gap: 0.25rem; }
 .ds-col-btn {
+    width: auto; flex: 0 0 auto;
     margin: 0; padding: 0.2rem 0.65rem;
     font-size: 0.85em; line-height: 1.25;
     background: transparent;
