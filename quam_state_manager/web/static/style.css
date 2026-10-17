@@ -5610,6 +5610,12 @@ p.ds-replot-fatal { padding: 0 0.2rem; overflow-wrap: anywhere; }
 .ds-interactive-list > .ds-interactive-fig:only-child {
     grid-column: 1 / -1;
 }
+/* A lab legend split into rows is one Plotly legend per row; a row's background box is taller
+   than its text and covered the row above, so a click on a key there hit that box and toggled
+   nothing. The keys keep their own click targets. */
+.ds-interactive-fig .infolayer > g[class^="legend"] > rect.bg {
+    pointer-events: none;
+}
 
 .json-tree {
     font-family: var(--font-mono);
