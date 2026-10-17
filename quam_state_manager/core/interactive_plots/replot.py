@@ -773,6 +773,10 @@ def _legend_place(legend: dict, bounds) -> dict:
                "x": {"left": x0, "center": (x0 + x1) / 2, "right": x1}[across],
                "y": {"bottom": y0, "middle": (y0 + y1) / 2, "top": y1}[down],
                "xanchor": across, "yanchor": down}
+    # the lab's order, one item after another: Plotly's default "grouped" order would stack the
+    # keys of one group (the same key listed twice, as fig.legend() does for every panel) into
+    # a block that runs over the next row
+    out["traceorder"] = "normal"
     if legend.get("frame"):
         out.update(borderwidth=1, bordercolor="rgba(128,128,128,0.6)")
     if (legend.get("markerscale") or 1) > 1:

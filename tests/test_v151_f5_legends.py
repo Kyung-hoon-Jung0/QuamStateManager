@@ -274,3 +274,32 @@ def test_each_panel_legend_keeps_its_own_drawn_rows():
         actual = [[t["name"] for t in sorted(result["data"], key=lambda t: t.get("legendrank", 1000))
                    if t.get("showlegend") and t.get("legend", "legend") == key] for key in keys]
         assert actual == rows
+
+
+def test_a_figure_legend_that_lists_every_panel_keeps_its_rows_and_order():
+    # fig.legend() with no handles lists every panel's artists: the same key twice per panel pair
+    fig = Figure(figsize=(15, 9))
+    for ax in fig.subplots(1, 2):
+        ax.plot([0, 1], [0, 1], color="b", label="I")
+        ax.plot([0, 1], [1, 0], color="r", label="Q")
+        ax.axvline(.5, color="k", ls="--", label="TOF")
+        ax.fill_between([0, 1], -.5, .5, color="grey", alpha=.2, label="ADC Range")
+    leg = fig.legend(loc="upper right", ncols=4, bbox_to_anchor=(.5, 1.0))
+    columns = [[next(c.get_text() for c in row.get_children() if callable(getattr(c, "get_text", None)))
+                for row in column.get_children()] for column in leg._legend_handle_box.get_children()]
+    expected = [[col[r] for col in columns if r < len(col)] for r in range(max(map(len, columns)))]
+    result = view(fig)
+    keys = sorted({t.get("legend", "legend") for t in result["data"] if t.get("showlegend")},
+                  key=lambda k: result["layout"][k]["y"], reverse=True)
+    actual = [[t["name"] for t in sorted(result["data"], key=lambda t: t.get("legendrank", 1000))
+               if t.get("showlegend") and t.get("legend", "legend") == key] for key in keys]
+    assert actual == expected
+    # the same key twice is one group, and every row keeps the lab's order instead of
+    # stacking a group's keys into a block (Plotly's default "grouped" order)
+    assert all(result["layout"][k].get("traceorder") == "normal" for k in keys)
+    groups = {}
+    for t in result["data"]:
+        if t.get("showlegend"):
+            groups.setdefault(t["name"], set()).add(t.get("legendgroup"))
+    # (the ADC Range band is a filled region no key can show or hide: its two keys stay apart)
+    assert all(len(groups[name]) == 1 for name in ("I", "Q", "TOF"))
