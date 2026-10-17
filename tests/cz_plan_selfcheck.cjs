@@ -97,7 +97,8 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     const time = renders.filter(x => x.id === 'czp-time').at(-1);
     const delta = time.traces.find(t => t.yaxis === 'y2');
     check(time.layout.xaxis.anchor === 'y2' && time.layout.annotations.map(a => a.x).join() === '1,0.8,0.6' &&
-          time.layout.annotations.map(a => a.y).join() === '200,0,-210',
+          time.layout.annotations.map(a => a.y).join() === '200,0,-210' &&
+          time.layout.shapes.filter(s => s.type === 'rect').every(s => s.fillcolor === 'rgba(173,50,107,0.08)' && (s.opacity || 1) === 1),
           'time label sits below both panels; resonance names stay at their levels with separate horizontal positions');
     // v1.4.1: identical operation detuning -> distinct detuning, a wrong-operation plot must fail.
     check(delta && delta.y[1] === 210 && delta.y[0] === 300, 'the selected detuning in time comes from both trajectories');
