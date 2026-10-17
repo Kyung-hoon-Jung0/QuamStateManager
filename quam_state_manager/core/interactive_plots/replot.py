@@ -1417,17 +1417,19 @@ def _heading_clear_of_captions(text, fitted, size_pt, axes, size_inches):
         return None
     top = text.get("y", .98)
     height_pt = size_inches[1] * 72
-    # where each caption's drawn box ends: the converter hangs it from the lab's caption bottom
-    # and Plotly gives every line 1.3 em (matplotlib's glyph box is about 1 em), plus its padding
-    captions = [a["title_box"][1] * height_pt + 1.2 * (a.get("title") or "").count("\n") * (a.get("title_size") or 10)
-                + 1.3 * (a.get("title_size") or 10) + _NOTE_PAD_PT
-                for a in axes if a.get("title") and _legend_box_ok(a.get("title_box")) and a["title_box"][3] < top]
-    if not captions:
+    below = [a for a in axes if a.get("title") and _legend_box_ok(a.get("title_box")) and a["title_box"][3] < top]
+    if not below:
         return None
     lines = len(fitted.split("\n"))
-    floor = max(captions) + 3 + _NOTE_PAD_PT       # a 3 pt gap between the two drawn boxes
-    if top * height_pt - 1.2 * lines * size_pt >= floor:
+    # only a heading that reaches the captions in the lab's own geometry moves: a layout that left
+    # it room (constrained layout) keeps the lab's size and place
+    if top * height_pt - 1.2 * lines * size_pt >= max(a["title_box"][3] for a in below) * height_pt + 3:
         return None
+    # it then clears each caption's DRAWN box: the converter hangs the caption from the lab's
+    # caption bottom and Plotly gives every line 1.3 em (matplotlib's glyph box is about 1 em)
+    captions = [a["title_box"][1] * height_pt + 1.2 * (a.get("title") or "").count("\n") * (a.get("title_size") or 10)
+                + 1.3 * (a.get("title_size") or 10) + _NOTE_PAD_PT for a in below]
+    floor = max(captions) + 3 + _NOTE_PAD_PT       # a 3 pt gap between the two drawn boxes
     lab = text.get("size") or size_pt
     size = max(min(size_pt, (height_pt - floor) / (1.2 * lines)), min(size_pt, _HEADING_MIN_SCALE * lab))
     return min(1.0, (floor + 1.2 * lines * size) / height_pt), round(size, 3)
