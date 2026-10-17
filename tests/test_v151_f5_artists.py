@@ -6,6 +6,18 @@ from quam_state_manager.generator.iplot_extract import extract_figure, _MARKER
 from quam_state_manager.core.interactive_plots.replot import mpljson_to_plotly
 
 
+def drawn_boxes(result, height_pt):
+    """(heading box bottom, highest caption box top) in figure points, as Plotly draws the notes:
+    1.3 em per line plus 1.5 pt of padding around each."""
+    notes = result["layout"]["annotations"]
+    heading = next(n for n in notes if n["text"].startswith("Heading"))
+    lines = heading["text"].count("<br>") + 1
+    bottom = heading["y"] * height_pt - heading["font"]["size"] * 1.3 * lines - 1.5
+    captions = [n for n in notes if (n.get("name") or "").startswith("axes-caption:")]
+    top = max(n["y"] * height_pt + n["font"]["size"] * 1.3 * (n["text"].count("<br>") + 1) + 1.5 for n in captions)
+    return heading, bottom, top
+
+
 def test_heading_fits_height_above_tall_stack():
     fig = Figure(figsize=(7.5, 30))
     for i, ax in enumerate(fig.subplots(5, 1)):
@@ -13,12 +25,8 @@ def test_heading_fits_height_above_tall_stack():
         ax.set_title("Panel caption", fontsize=16)
     fig.subplots_adjust(top=.965)
     fig.suptitle("Heading line one\nHeading line two", fontsize=24, y=.99)
-    source = extract_figure(fig, "stack")
-    result = mpljson_to_plotly(source)
-    heading = next(n for n in result["layout"]["annotations"] if n["text"].startswith("Heading"))
-    caption_top = max(a["title_box"][3] for a in source["axes"])
-    bottom = heading["y"] - (heading["font"]["size"] * 1.3 * 2) / (30 * 72)
-    assert bottom > caption_top + 2 / (30 * 72)
+    heading, bottom, top = drawn_boxes(mpljson_to_plotly(extract_figure(fig, "stack")), 30 * 72)
+    assert bottom >= top + 2.9   # the drawn heading box ends above every drawn caption box
     assert heading["font"]["size"] < 24 * 1.2 / 1.3
 
 
@@ -31,12 +39,10 @@ def test_heading_rises_into_the_room_above_the_captions_at_the_lab_size():
         ax.set_title("Panel caption", fontsize=10)
     fig.subplots_adjust(top=.965)
     fig.suptitle("Heading line one\nHeading line two", fontsize=12, y=.98)
-    source = extract_figure(fig, "stack")
-    heading = next(n for n in mpljson_to_plotly(source)["layout"]["annotations"] if n["text"].startswith("Heading"))
-    caption_top = max(a["title_box"][3] for a in source["axes"]) * 25 * 72
+    heading, bottom, top = drawn_boxes(mpljson_to_plotly(extract_figure(fig, "stack")), 25 * 72)
     assert heading["font"]["size"] == pytest.approx(12 * 1.2 / 1.3, abs=1e-3)
     assert heading["y"] > .98 and heading["y"] <= 1
-    assert heading["y"] * 25 * 72 - heading["font"]["size"] * 1.3 * 2 >= caption_top + 2
+    assert bottom >= top + 2.9
 
 
 @pytest.mark.parametrize("kind,size", [("x", 17), ("y", 7)])

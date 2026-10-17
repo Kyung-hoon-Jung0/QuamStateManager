@@ -1369,6 +1369,7 @@ def _hover_guides(fig: dict) -> dict:
 
 
 _HEADING_EM = 0.54        # mean glyph width of the browser plot font, in em (measured)
+_NOTE_PAD_PT = 1.5        # the padding Plotly draws around an annotation's text (2 px), in pt
 _HEADING_MIN_SCALE = 0.6  # below this a heading wraps instead of shrinking further
 
 
@@ -1411,13 +1412,16 @@ def _heading_clear_of_captions(text, fitted, size_pt, axes, size_inches):
             or text.get("va", "top") != "top" or not size_pt:
         return None
     top = text.get("y", .98)
-    captions = [a["title_box"][3] for a in axes if a.get("title") and _legend_box_ok(a.get("title_box"))
-                and a["title_box"][3] < top]
+    height_pt = size_inches[1] * 72
+    # where each caption's drawn box ends: the converter hangs it from the lab's caption bottom
+    # and Plotly gives every line 1.3 em (matplotlib's glyph box is about 1 em), plus its padding
+    captions = [a["title_box"][1] * height_pt + 1.2 * (a.get("title") or "").count("\n") * (a.get("title_size") or 10)
+                + 1.3 * (a.get("title_size") or 10) + _NOTE_PAD_PT
+                for a in axes if a.get("title") and _legend_box_ok(a.get("title_box")) and a["title_box"][3] < top]
     if not captions:
         return None
-    height_pt = size_inches[1] * 72
     lines = len(fitted.split("\n"))
-    floor = max(captions) * height_pt + 3          # a 3 pt gap above the highest caption
+    floor = max(captions) + 3 + _NOTE_PAD_PT       # a 3 pt gap between the two drawn boxes
     if top * height_pt - 1.2 * lines * size_pt >= floor:
         return None
     lab = text.get("size") or size_pt
