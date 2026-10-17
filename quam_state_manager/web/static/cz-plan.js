@@ -25,9 +25,13 @@
         return esc(s).replace(/%/g, '&#37;');
     }
     function colors() {
-        var P = (window.PlotTheme && window.PlotTheme.palette()) || ['#4f9cf9', '#f97316', '#22c55e', '#a855f7'];
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        var P = dark ? ['#79b4fa', '#f49c67', '#57b65f', '#f285b4'] : ['#245ec4', '#a34712', '#006d2c', '#ad326b'];
         var muted = getComputedStyle(document.documentElement).getPropertyValue('--pico-muted-color').trim() || '#8a8a8a';
         return { q: [P[0], P[1]], plan: P[2] || '#22c55e', res: P[3] || '#a855f7', muted: muted };
+    }
+    function tint(hex, alpha) {
+        return 'rgba(' + [1, 3, 5].map(function (i) { return parseInt(hex.slice(i, i + 2), 16); }).join(',') + ',' + alpha + ')';
     }
     function layout(over) {
         var base = window.PlotTheme ? window.PlotTheme.houseLayout({}) : {};
@@ -234,8 +238,8 @@
                 flush();
             });
             if (!xs.length) return;
-            traces.push({ type: 'scatter', mode: 'lines', xaxis: 'x2', x: xs, y: ys, text: ts, fill: 'toself', fillcolor: C.q[k],
-                          opacity: 0.45, line: { color: C.q[k], width: 1 }, name: q.name + ' · scan loss (run #' + c.run_id + ')',
+            traces.push({ type: 'scatter', mode: 'lines', xaxis: 'x2', x: xs, y: ys, text: ts, fill: 'toself', fillcolor: tint(C.q[k], 0.16),
+                          line: { color: C.q[k], width: 1 }, name: q.name + ' · scan loss (run #' + c.run_id + ')',
                           hovertemplate: '%{text}<extra></extra>', showlegend: false });
         });
         if (!traces.length) return null;
@@ -281,7 +285,7 @@
                 hovertemplate: hoverEsc(q.name) + ' idle f_01: %{y:.4f} GHz<extra></extra>' });
             (q.tls || []).forEach(function (b) {
                 shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
-                    fillcolor: col, opacity: 0.18, line: { width: 0 }, layer: 'below' });
+                    fillcolor: tint(col, 0.08), line: { color: col, width: 1 }, layer: 'below' });
             });
             if ((q.tls || []).length) notes.push(q.name + ': ' + q.tls.length + ' measured defect band' + (q.tls.length === 1 ? '' : 's') + ' shaded');
         });
@@ -290,7 +294,7 @@
             op.points.forEach(function (p, k) {
                 if (p.frequency_hz == null || !p.amplitude_v) return;
                 traces.push({ type: 'scatter', mode: 'markers', x: [p.amplitude_v], y: [ghz(p.frequency_hz)], showlegend: false,
-                    marker: { color: C.q[k], size: 7, opacity: 0.35 },
+                    marker: { color: C.q[k], size: 7, symbol: 'circle-open', line: { color: C.q[k], width: 1 } },
                     hovertemplate: hoverEsc(op.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra></extra>' });
             });
         });
@@ -400,11 +404,12 @@
             hovertemplate: 't = %{x} ns<br>Δ: %{y:.1f} MHz<extra></extra>' });
         var ac = d.qubits[0].summary && d.qubits[0].summary.anharmonicity_hz, at = d.qubits[1].summary && d.qubits[1].summary.anharmonicity_hz;
         var shapes = [], annotations = [];
-        [['|11>-|20>', ac == null ? null : Math.abs(ac) / 1e6], ['iSWAP', 0], ['|11>-|02>', at == null ? null : -Math.abs(at) / 1e6]].forEach(function (lv) {
+        [['|11>-|20>', ac == null ? null : Math.abs(ac) / 1e6], ['iSWAP', 0], ['|11>-|02>', at == null ? null : -Math.abs(at) / 1e6]].forEach(function (lv, index) {
             if (lv[1] == null) return;
-            shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: lv[1] - 5, y1: lv[1] + 5, fillcolor: C.res, opacity: 0.18, line: { width: 0 }, layer: 'below' });
+            shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: lv[1] - 5, y1: lv[1] + 5, fillcolor: tint(C.res, 0.08), line: { width: 0 }, layer: 'below' });
             shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: lv[1], y1: lv[1], line: { color: C.res, width: 1, dash: 'dot' } });
-            annotations.push({ xref: 'paper', x: 1, xanchor: 'right', yref: 'y2', y: lv[1], yanchor: 'bottom', showarrow: false, text: lv[0], font: { size: 10, color: C.res } });
+            // Spread the labels along their own levels: a large idle detuning packs them vertically.
+            annotations.push({ xref: 'paper', x: 1 - index * 0.2, xanchor: 'right', yref: 'y2', y: lv[1], yanchor: 'bottom', showarrow: false, text: lv[0], font: { size: 10, color: C.res } });
         });
         // the time Delta(t) spends within 5 MHz of each resonance
         var dwell = [['|11>-|20>', ac == null ? null : Math.abs(ac) / 1e6], ['iSWAP', 0], ['|11>-|02>', at == null ? null : -Math.abs(at) / 1e6]].map(function (lv) {
@@ -416,7 +421,7 @@
         var L = layout({
             margin: { l: 64, r: 16, t: 10, b: 90 }, showlegend: true,
             legend: { orientation: 'h', y: -0.22, x: 0, font: { size: 11 } },
-            xaxis: { title: { text: 'time (ns, 1 sample per ns)' } },
+            xaxis: { title: { text: 'time (ns, 1 sample per ns)' }, anchor: 'y2' },
             yaxis: { title: { text: 'frequency (GHz)' }, domain: [0.42, 1] },
             yaxis2: { title: { text: 'Δ (MHz)' }, domain: [0, 0.34], anchor: 'x' },
             shapes: shapes, annotations: annotations, hovermode: 'x unified'
@@ -624,6 +629,19 @@
         if (!last || !active(root, last.token)) return Promise.resolve();
         return drawFlux(root, last.d, last.token);
     }
+
+    // Theme-specific marks and label backings must follow a toggle as well as the axes.
+    new MutationObserver(function (changes) {
+        if (!changes.some(function (c) { return c.attributeName === 'data-theme'; })) return;
+        setTimeout(function () {
+            var root = document.getElementById('czp-root'), last = root && root._czLast;
+            if (window.CzMap) window.CzMap.paint(root);
+            if (last && active(root, last.token)) {
+                drawFlux(root, last.d, last.token);
+                drawTime(root, last.d, last.token);
+            }
+        }, 0);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     /* The table's "Last set" column: one ledger read for every operation. While the chip's
        history is still being built, say so and ask again. */

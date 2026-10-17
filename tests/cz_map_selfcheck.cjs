@@ -321,9 +321,12 @@ const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB
           bm.text[bm.customdata.findIndex(c => c[1] === 'q3-4')].includes('selected below: cz_custom (this map shows cz_unipolar)') &&
           segments(SM.last()).filter(s => s.pair === 'q3-4').every(s => s.text.includes('selected below: cz_custom')),
           'P1-1: a selected name the map cannot draw: no refetch; the key and the hovers of the outlined pair name both');
+    const defaultKey = SM.d.getElementById('czp-map-key').textContent;
     SM.close();
     const opt0 = fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_cz_plan.html'), 'utf8');
-    check(opt0.includes('<option value="">Each pair\'s cz (else its first CZ operation)</option>'),
+    // v1.4.1: long closed label -> compact label with the full default rule on hover.
+    check(opt0.includes('<option value="">cz per pair</option>') && opt0.includes('title="cz per pair: each pair\'s cz, else its first CZ operation"') &&
+          defaultKey.includes("cz per pair = each pair's cz, else its first CZ operation"),
           'P1-1: the default picker entry says what it draws when a pair has no cz');
     check(r5.layout.xaxis.ticktext.join(' ') === 'q1 q2 q3 q4 q5' && r13.layout.xaxis.ticktext.join(' ') === ORDER_13 &&
           r21.layout.xaxis.ticktext.join(' ') === ORDER_21, 'by chip position: the grid sheared into one column per qubit (13 and 21 qubits pinned)');
@@ -512,14 +515,67 @@ const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB
     check(multi.length >= 2 && overprint.length === 0 && wide.length === 0 && p21.text.some(t => t.includes('<br>')),
           'P1-4: one partner label lists every partner of a shared row ("' + multi[0] + '"), wrapped to its column; no two partner labels print over each other ' + overprint.join(', '));
 
-    // partner names at a segment's right end, only when a column is at least 40 px wide
+    // v1.4.1: fixed 40 px cutoff -> compact names when their boxes fit the column.
     const pt5 = r5.traces.find(t => t.meta === 'partners');
     const s12 = segments(r5).find(s => s.pair === 'q1-2' && near(s.x0, 0.12));
     check(pt5 && pt5.x.some((x, k) => near(x, 0.88) && near(pt5.y[k], s12.y) && pt5.text[k] === 'q2'), 'each segment names its partner at its right end');
     S21.width = 900; await S21.w.CzMap.paint(S21.root);
-    check(!S21.last().traces.some(t => t.meta === 'partners'), 'columns under 40 px: no partner names');
+    check(S21.last().traces.some(t => t.meta === 'partners' && t.text.some(s => /[A-D]\d/.test(s) && !/q[A-D]/.test(s))), 'columns under 40 px: compact partner names');
     S21.width = 1000; await S21.w.CzMap.paint(S21.root);
     check(S21.last().traces.some(t => t.meta === 'partners'), 'columns of 40 px and more: partner names');
+    for (const width of [919, 1237]) {
+        S21.width = width; await S21.w.CzMap.paint(S21.root);
+        const r = S21.last(), p = r.traces.find(t => t.meta === 'partners');
+        check(p && p.text.length >= 35, '21 columns retain partner labels at map width ' + width);
+        const col = (width - 80) / 21, scale = clusters(r).pxPerGHz;
+        const boxes = p.text.map((text, i) => {
+            const lines = text.split('<br>'), w = Math.max(...lines.map(s => S21.w.CzMap.partnerWidth(s)));
+            const x = p.x[i] * col, y = p.y[i] * scale;
+            return {x0: x - (p.textposition[i] === 'top left' ? w : 0), x1: x + (p.textposition[i] === 'top left' ? 0 : w), y0: y, y1: y + lines.length * 11, w};
+        });
+        check(boxes.every((a, i) => a.w <= 0.76 * col && boxes.every((b, j) => j <= i || !(a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1))),
+              'computed partner boxes fit without overlap at viewport ' + (width === 919 ? 1280 : 1600));
+    }
+    S21.width = 1000; await S21.w.CzMap.paint(S21.root);
+
+    S21.width = 240; await S21.w.CzMap.paint(S21.root);
+    check(!S21.last().traces.some(t => t.meta === 'partners'), 'a partner name wider than its column stays in hover');
+    S21.width = 1000; await S21.w.CzMap.paint(S21.root);
+
+    function rgb(c) {
+        if (c.startsWith('#')) { let s = c.slice(1); if (s.length === 3) s = s.split('').map(x => x + x).join(''); return [0, 2, 4].map(i => parseInt(s.slice(i, i + 2), 16)); }
+        return c.match(/[\d.]+/g).map(Number);
+    }
+    function ratio(c, bg) {
+        const b = rgb(bg), f = rgb(c), a = f.length > 3 ? f[3] : 1;
+        const lum = v => v.map(x => x / 255).map(x => x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4).reduce((s, x, i) => s + x * [.2126, .7152, .0722][i], 0);
+        const l = lum(f.slice(0, 3).map((x, i) => x * a + b[i] * (1 - a))), l2 = lum(b);
+        return (Math.max(l, l2) + .05) / (Math.min(l, l2) + .05);
+    }
+    for (const theme of ['light', 'dark']) {
+        const dark = theme === 'dark', bg = dark ? '#181c25' : '#ffffff', ink = dark ? '#d0d5de' : '#373c44', muted = dark ? '#98a1b3' : '#646b79';
+        S5.d.documentElement.style.cssText = '--pico-color:' + ink + ';--pico-muted-color:' + muted + ';--pico-card-background-color:' + bg;
+        const n = S5.renders.length, fetches = S5.fetched.length;
+        S5.d.documentElement.setAttribute('data-theme', theme); await wait(40);
+        const r = S5.last();
+        check(S5.renders.length > n && S5.fetched.length === fetches && r.traces.find(t => t.meta === 'nodes').marker.color === bg &&
+              r.layout.annotations.filter(a => String(a.name).startsWith('bar-label:')).every(a => a.bgcolor === bg && (a.opacity || 1) === 1),
+              'theme toggle redraws marks, node and label backings without requests: ' + theme);
+        check(S5.w.CzMap.pairColors().slice(0, 8).every(c => ratio(c, bg) >= 4.5), 'all pair hues clear text contrast in ' + theme);
+        check(['loss-line', 'loss-source'].every(meta => { const t = r.traces.find(t => t.meta === meta); return t && ratio(t.line.color, bg) >= 3 && (t.opacity || 1) === 1; }),
+              'scan and reference boundaries clear mark contrast in ' + theme);
+        check(r.traces.filter(t => t.meta === 'connector').every(t => (t.opacity || 1) === 1 && ratio(t.line.color, bg) >= 3), 'connector contrast in ' + theme);
+        check(r.traces.find(t => t.meta === 'partners').textfont.color === ink && ratio(ink, bg) >= 4.5 &&
+              r.traces.find(t => t.meta === 'loss-fill').fillcolor === 'rgba(128,128,128,0.16)', 'partner text keeps contrast over a pale scan fill in ' + theme);
+        S13.d.documentElement.style.cssText = S5.d.documentElement.style.cssText;
+        S13.d.documentElement.setAttribute('data-theme', theme); await wait(40);
+        await S13.w.CzMap.paint(S13.root);
+        const defect = S13.last().traces.find(t => t.meta === 'defect-bars');
+        check((defect.opacity || 1) === 1 && ratio(defect.line.color, bg) >= 3, 'stored-only marks keep their contrast: ' + theme);
+        check(r.layout.shapes.filter(s => s.type === 'rect').every(s => (s.opacity || 1) === 1 && ratio(s.fillcolor, bg) >= 3), 'safe strips keep their contrast: ' + theme);
+    }
+    S5.d.documentElement.style.cssText = '';
+    S5.d.documentElement.removeAttribute('data-theme'); await wait(40);
     check(r21.traces.length <= 30, 'the 21-qubit map stays within 30 traces (' + r21.traces.length + ')');
 
     // the selected operation stays outlined; hover (map or table row) lights a pair by restyle only

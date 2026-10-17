@@ -14809,7 +14809,7 @@ html.sm-in-frame .topbar .wb-link { display: none; }
     border: 1px solid var(--pico-muted-border-color, #888); border-radius: 0.4rem; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
 .czp-table-wrap { max-height: 45vh; overflow: auto; }
 .czp-table .czp-row { cursor: pointer; }
-.czp-table .czp-row-selected td { background: var(--pico-primary-focus, rgba(79, 156, 249, 0.14)); }
+.czp-table .czp-row-selected td { background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
 .czp-table .czp-row-selected td:first-child { box-shadow: inset 3px 0 0 var(--pico-primary, #4f9cf9); }
 .czp-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .czp-mover { display: inline-block; margin-right: 0.3rem; font-weight: 600; }

@@ -20,7 +20,8 @@ def test_cz_plan_client():
     # loss panel (D2) and the card's scan-loss and defects-touched lines (D3).
     # v1.4.1 (A14 fix3): 61 -> 67, the merged and provenance-worded staleness, the loss panel's clip tick, the
     # failed load clearing the notes, the re-ask budget's final line, the Last set column's "saved in".
-    assert "67 assertions passed" in result.stdout
+    # v1.4.1: 67 -> 71, time label placement, both-theme contrast and redraws without a refetch.
+    assert "71 assertions passed" in result.stdout
 
 
 def test_cz_chip_map_client():
@@ -40,7 +41,8 @@ def test_cz_chip_map_client():
     # v1.4.1 (A14 fix3): 76 -> 95, the map following the selected operation, the drawing height and bar
     # labels by geometry, coinciding segments side by side, merged staleness, the no-scan scale, escaped ticks,
     # the content-match wording and the unchecked chip identity.
-    assert "95 assertions passed" in result.stdout
+    # v1.4.1: 95 -> 114, compact partner geometry and both-theme mark/text contrast.
+    assert "114 assertions passed" in result.stdout
 
 
 def test_the_page_reads_title_status_figures_card_then_the_collapsed_notes(tmp_path):
@@ -72,3 +74,22 @@ def test_notes_never_uppercase_a_qubit_name():
     name, spelled as the chip spells it (qA2, not QA2)."""
     css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
     assert ".czp-notes li strong.czp-note-q { text-transform: none;" in css
+
+
+def test_default_map_operation_is_compact_and_explained(tmp_path):
+    import re
+    from tests.test_cz_plan_page import _client
+
+    page = _client(tmp_path).get('/cz-plan').get_data(as_text=True)
+    picker = re.search(r'<select id="czp-map-op"([^>]*)>(.*?)</select>', page, re.S)
+    assert picker is not None
+    assert '<option value="">cz per pair</option>' in picker[2]
+    assert 'title="cz per pair: each pair\'s cz, else its first CZ operation"' in picker[1]
+
+
+def test_selected_row_keeps_muted_text_readable():
+    import re
+
+    css = (Path(__file__).resolve().parents[1] / 'quam_state_manager/web/static/style.css').read_text(encoding='utf8')
+    rule = re.search(r'\.czp-table \.czp-row-selected td\s*\{([^}]*)\}', css)[1]
+    assert 'color-mix(in srgb, var(--pico-primary) 8%, transparent)' in rule

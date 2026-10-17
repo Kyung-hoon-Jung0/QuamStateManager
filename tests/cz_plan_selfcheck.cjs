@@ -44,7 +44,8 @@ function payload(op, stale) {
         calibration: stale ? {last_set: {t: '2026-01-02T03:04:05Z', run_id: 41, proven: true, provenance: 'run_proven'}, proven: true, unknown: false, mode: 'ledger', note: null,
                               warnings: [{path: 'qubits.qa.f_01', t: '2026-01-03T00:00:00Z', run_id: 50, text: 'calibrated against an older qa.f_01'}]}
                            : {last_set: null, proven: false, unknown: true, mode: 'unavailable', note: 'No change history has been built for this chip yet.', warnings: []},
-        pair_ops: [{path: 'qubit_pairs.p.macros.a', operation: 'a', points: []}, {path: 'qubit_pairs.p.macros.b', operation: 'b', points: []}]};
+        // v1.4.1: empty comparison points -> one point, so secondary marker contrast is checked.
+        pair_ops: [{path: 'qubit_pairs.p.macros.a', operation: 'a', points: []}, {path: 'qubit_pairs.p.macros.b', operation: 'b', points: [{frequency_hz: 4.8e9, amplitude_v: .05}]}]};
     if (op.endsWith('.b')) {
         result.row.lines[0].point = point(4.81e9, 'quad-term estimate');
         result.row.lines[1].point = point(4.6e9, 'idle f_01');
@@ -95,6 +96,9 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     check(flux.layout.shapes.some(s => s.type === 'rect') && flux.layout.annotations.some(a => /control on \|11>-\|20>/.test(a.text)), 'defect band and resonance levels drawn');
     const time = renders.filter(x => x.id === 'czp-time').at(-1);
     const delta = time.traces.find(t => t.yaxis === 'y2');
+    check(time.layout.xaxis.anchor === 'y2' && time.layout.annotations.map(a => a.x).join() === '1,0.8,0.6' &&
+          time.layout.annotations.map(a => a.y).join() === '200,0,-210',
+          'time label sits below both panels; resonance names stay at their levels with separate horizontal positions');
     // v1.4.1: identical operation detuning -> distinct detuning, a wrong-operation plot must fail.
     check(delta && delta.y[1] === 210 && delta.y[0] === 300, 'the selected detuning in time comes from both trajectories');
     check(flux.traces.find(t => /qa.*quad-term/.test(t.name || '')).y[1] === 4.9, 'the flux panel uses the selected curve');
@@ -335,8 +339,10 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     const fx = E.flux();
     // v1.4.1 (A14 fix3 P2-2): every x2 trace -> the filled ones (the panel now also carries its clip ticks)
     const side = fx.traces.filter(t => t.xaxis === 'x2' && t.fill);
+    // v1.4.1: mock palette -> contrast-checked CZ colours with an opaque boundary and pale fill.
     check(fx.layout.xaxis.domain.join() === '0,0.76' && fx.layout.xaxis2.domain.join() === '0.8,1' && fx.layout.xaxis2.range.join() === '0,25' &&
-          side.length === 1 && side[0].fill === 'toself' && side[0].x.slice(0, 5).join() === '0,1,25,0,0' && side[0].line.color === '#111',
+          side.length === 1 && side[0].fill === 'toself' && side[0].x.slice(0, 5).join() === '0,1,25,0,0' && side[0].line.color === '#245ec4' &&
+          (side[0].opacity || 1) === 1 && side[0].fillcolor === 'rgba(36,94,196,0.16)',
           'D2: the flux figure carries the qubits\' scan loss in a right panel, in their colours, clipped to the map\'s scale');
     check(fx.layout.shapes.some(sh => sh.name === 'operating:qa' && sh.y0 === 4.92 && sh.x0 === 0.8), 'D2: the operating frequency is a tick across the loss panel');
     const clip = fx.traces.find(t => t.xaxis === 'x2' && t.mode === 'markers');
@@ -351,6 +357,24 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
           E.flux().traces.find(t => t.xaxis === 'x2').x[2] === 40 && E.data.length === 2, 'D2: the loss scale select redraws the panel at its scale, without a request');
     check(!E.flux().traces.some(t => t.xaxis === 'x2' && t.mode === 'markers') && E.flux().layout.xaxis2.title.text === 'scan loss (0–50 %)',
           'fix3 P2-2: inside a wider scale nothing is clipped and the title follows the scale');
+    const fetchN = E.data.length, renderN = E.renders.length;
+    E.D.documentElement.setAttribute('data-theme', 'dark'); await wait(40);
+    check(E.renders.length >= renderN + 2 && E.data.length === fetchN &&
+          E.flux().traces.find(t => t.xaxis === 'x2' && t.fill).line.color === '#79b4fa' &&
+          E.flux().layout.shapes.some(s => s.type === 'rect' && s.line.color === '#f49c67' && s.fillcolor === 'rgba(244,156,103,0.08)'),
+          'theme toggle redraws both detail figures and defect boundaries from the cached answer');
+    function contrast(c, bg) {
+        const lum = c => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16) / 255).map(x => x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4).reduce((s, x, i) => s + x * [.2126, .7152, .0722][i], 0);
+        const a = lum(c), b = lum(bg); return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+    }
+    for (const theme of ['light', 'dark']) {
+        E.D.documentElement.setAttribute('data-theme', theme); await wait(40);
+        const f = E.flux(), bg = theme === 'dark' ? '#181c25' : '#ffffff';
+        check(f.traces.filter(t => t.line && /^#/.test(t.line.color)).every(t => contrast(t.line.color, bg) >= 3 && (t.opacity || 1) === 1) &&
+              f.traces.filter(t => t.marker && t.marker.size === 7).every(t => (t.marker.opacity || 1) === 1 && t.marker.symbol === 'circle-open' && contrast(t.marker.line.color, bg) >= 3) &&
+              f.layout.annotations.filter(a => a.text && a.font).every(a => contrast(a.font.color, bg) >= 4.5),
+              'detail marks and coloured text clear WCAG contrast in ' + theme);
+    }
     // a failed load: the reason is a visible line, the caveats and the chip go
     E.root.querySelector('.czp-row').dispatchEvent(new E.W.MouseEvent('click', {bubbles: true})); await wait(10);
     await E.answer({ok: false, error: 'Unavailable operation'});

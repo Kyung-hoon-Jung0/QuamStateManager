@@ -24,7 +24,6 @@
     var DRAW_PX = 150, ROW_PX = 44, DRAW_MAX_FRAC = 0.45, GAP_PX = 26, MIN_H = 460, MAX_H = 640;
     var MARGIN = { l: 64, r: 16, t: 30, b: 6 };
     var LOSS_W = 0.9;          // a column's loss scale spans 90 % of the column
-    var LABEL_GATE_PX = 40;    // partner names only when a column is at least this wide
     var SHORT_BAR_PX = 60;     // a bar shorter than this never carries its label on itself
     var ROW_LABEL_MIN_PX = 36; // below this row pitch a short bar's label is hover only
     var NODE_R = 12.5;         // a node's radius in the drawing (marker size 24 + its line)
@@ -33,16 +32,10 @@
     var CLUSTER_PX = 6;        // segments of one column this close share the row side by side
     var PARTNER_H = 11;        // a partner name's height (9 px font)
     var RETRY_N = 20, RETRY_MS = 3000;   // re-asks while the change history is being built
-    /* Pair colours: green, violet, magenta, yellow first -- the four-hue subset of the
-       docs/93 categorical hues that passes the dataviz validator on ALL pairs in both themes
-       (CVD dE 6.9, normal-vision dE 19.3; light surface #ffffff, dark #181c25), since any
-       two colours can meet at one qubit. Blue comes last: it is the selection accent. A
-       fifth colour (21-qubit grid) cannot pass all pairs with any hue; aqua keeps the best
-       normal-vision distance (>= 11.9) and the partner name at each segment's end is the
-       secondary encoding. Light-theme magenta/yellow sit below 3:1 on white: the bar and
-       partner labels are the relief. */
-    var PAIR_LIGHT = ['#008300', '#4a3aa7', '#e87ba4', '#eda100', '#1baf7a', '#e34948', '#eb6834', '#2a78d6'];
-    var PAIR_DARK = ['#008300', '#9085e9', '#d55181', '#c98500', '#199e70', '#e66767', '#d95926', '#3987e5'];
+    /* Each hue clears text contrast on its theme's surfaces; partner names and the framed
+       frequency labels also identify pairs without relying on colour alone. */
+    var PAIR_LIGHT = ['#006d2c', '#5440a0', '#ad326b', '#926000', '#007c78', '#b33737', '#b94d10', '#245ec4'];
+    var PAIR_DARK = ['#57b65f', '#aa9bf4', '#f285b4', '#e2b34d', '#48c5ad', '#f58b8b', '#f49c67', '#79b4fa'];
     var MAP_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf',
                       '#bcbd22', '#7f7f7f'];
     var KEY = 'solid fitted model, dashed quad-term estimate, thin stays at idle, diamond planned; ' +
@@ -65,8 +58,7 @@
         return P.concat(MAP_COLORS.filter(function (c) { return P.indexOf(c) < 0; }));
     }
     function plan() {
-        var P = (window.PlotTheme && window.PlotTheme.palette()) || ['#4f9cf9', '#f97316', '#22c55e'];
-        return P[2] || '#22c55e';
+        return pairColors()[0];
     }
     function layout(over) {
         var base = window.PlotTheme ? window.PlotTheme.houseLayout({}) : {};
@@ -478,7 +470,7 @@
                                  line: { color: muted, width: 0.6 }, layer: 'below' });
             (q.safe || []).forEach(function (b) {
                 shapes.push({ type: 'rect', xref: 'x', x0: i + 0.93, x1: i + 0.98, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
-                              fillcolor: plan(), opacity: 0.3, line: { width: 0 }, layer: 'below' });
+                              fillcolor: plan(), line: { width: 0 }, layer: 'below' });
             });
         });
         var G = { fillX: [], fillY: [], lineX: [], lineY: [], lineT: [], clipX: [], clipY: [], clipT: [] };
@@ -509,19 +501,19 @@
             });
         });
         if (G.fillX.length) {
-            traces.push({ type: 'scatter', mode: 'lines', x: G.fillX, y: G.fillY, fill: 'toself', fillcolor: 'rgba(128,128,128,0.55)',
+            traces.push({ type: 'scatter', mode: 'lines', x: G.fillX, y: G.fillY, fill: 'toself', fillcolor: 'rgba(128,128,128,0.16)',
                           line: { width: 0, color: 'rgba(128,128,128,0)' }, hoverinfo: 'skip', showlegend: false, meta: 'loss-fill' });
             traces.push({ type: 'scatter', mode: 'lines', x: G.lineX, y: G.lineY, text: G.lineT, showlegend: false,
                           line: { color: muted, width: 0.8 }, hovertemplate: '%{text}<extra></extra>', meta: 'loss-line' });
         }
         if (O.lineX.length) {
             traces.push({ type: 'scatter', mode: 'lines', x: O.lineX, y: O.lineY, text: O.lineT, showlegend: false,
-                          line: { color: ink, width: 0.6, dash: 'dot' }, opacity: 0.4,
+                          line: { color: ink, width: 0.8, dash: 'dot' },
                           hovertemplate: '%{text}<br>(the run whose defects equal the stored list)<extra></extra>', meta: 'loss-source' });
         }
         if (bars.x.length) {
             traces.push({ type: 'scatter', mode: 'lines', x: bars.x, y: bars.y, text: bars.t, showlegend: false,
-                          line: { color: muted, width: 3 }, opacity: 0.75, hovertemplate: '%{text}<extra></extra>', meta: 'defect-bars' });
+                          line: { color: muted, width: 3 }, hovertemplate: '%{text}<extra></extra>', meta: 'defect-bars' });
         }
 
         // ---- the columns' frequency range, set here (not autoranged) so a segment's pixel
@@ -569,7 +561,8 @@
                 if (!names.length) return;
                 var top = Math.max.apply(null, gk.map(function (k) { return m.segments[k].frequency_hz / 1e9; }));
                 // a list wider than the column wraps onto lines inside it (never into the next column)
-                var pl = partnerLines(names, 0.76 * colPx);
+                var pl = partnerLines(names.map(function (name) { return colPx < 40 ? name.replace(/^q(?=[A-Z0-9])/i, '') : name; }), 0.76 * colPx);
+                if (pl.w > 0.76 * colPx) return;
                 wanted.push({ i: i, y: top, ypx: (top - (yr ? yr[0] : 0)) * pxPerGHz, w: pl.w, h: pl.h,
                               t: pl.lines.map(function (l) { return l.map(esc).join(' '); }).join('<br>') });
             });
@@ -641,7 +634,7 @@
             });
             Object.keys(connectors).forEach(function (c) {
                 traces.push({ type: 'scatter', mode: 'lines', x: connectors[c].x, y: connectors[c].y, showlegend: false, hoverinfo: 'skip',
-                              line: { color: P[c % P.length], width: 1, dash: 'dot' }, opacity: 0.6, meta: 'connector' });
+                              line: { color: P[c % P.length], width: 1, dash: 'dot' }, meta: 'connector' });
             });
         }
         var planned = (m.planned || []).filter(function (p) { return col[p.qubit_path] != null; });
@@ -662,10 +655,10 @@
                                     line: { color: ink, width: 2 } },
                           hovertemplate: '%{text}<extra></extra>', meta: 'defects-clips' });
         }
-        if (partners.length && colPx >= LABEL_GATE_PX) {
+        if (partners.length) {
             traces.push({ type: 'scatter', mode: 'text', x: partners.map(function (p) { return p.x; }), y: partners.map(function (p) { return p.y; }),
                           text: partners.map(function (p) { return p.t; }), textposition: partners.map(function (p) { return p.pos; }),
-                          textfont: { size: 9, color: muted }, hoverinfo: 'skip', showlegend: false, cliponaxis: false, meta: 'partners' });
+                          textfont: { size: 9, color: ink }, hoverinfo: 'skip', showlegend: false, cliponaxis: false, meta: 'partners' });
         }
 
         // ---- the chip drawing: leaders, bars, nodes ----
@@ -726,7 +719,7 @@
                 if (!sp) { hidden++; return; }
                 annotations.push({ xref: 'x', yref: 'y2', x: it.x, y: it.y, text: esc(it.text), showarrow: false,
                                    font: { size: LABEL_FONT, color: ink }, bgcolor: card, bordercolor: it.color, borderwidth: 1,
-                                   borderpad: 1, opacity: 0.92, xshift: sp.dx, yshift: sp.dy, name: 'bar-label:' + it.pair });
+                                   borderpad: 1, xshift: sp.dx, yshift: sp.dy, name: 'bar-label:' + it.pair });
             });
             traces.push({ type: 'scatter', mode: 'markers', x: barPts.x, y: barPts.y, yaxis: 'y2', text: barPts.t, customdata: barPts.cd,
                           marker: { size: 16, color: 'rgba(0,0,0,0)' }, showlegend: false, hovertemplate: '%{text}<extra></extra>', meta: 'bars' });
@@ -810,7 +803,7 @@
         if (nEl) nEl.textContent = notes.join('\n');
         var kEl = root.querySelector('#czp-map-key');
         if (kEl) {
-            kEl.textContent = 'Key: ' + KEY + (lossDrawn ? '; gray = measured population loss of the newest scan, ' +
+            kEl.textContent = 'Key: ' + KEY + (!m.op ? '; cz per pair = each pair\'s cz, else its first CZ operation' : '') + (lossDrawn ? '; gray = measured population loss of the newest scan, ' +
                 'dotted = the run whose defects equal the stored list (matched by content), short dash = a stored defect, ' +
                 '▸ = past the column scale' : '') + (hidden ? '; a bar without a label: hover it' : '') + '.' +
                 (mismatch ? ' Outline: the map shows ' + mismatch.shown + ' for ' + mismatch.pair + '; selected below: ' +
@@ -1098,7 +1091,7 @@
         scale: scaleOf, loss: function (root) { return (root && root._czLoss) || null; },
         edgeColours: edgeColours, chipLayout: chipLayout, natCmp: natCmp, pairOf: pairOf, pairColors: pairColors,
         placeLabels: placeLabels, labelSize: labelSize, partnerWidth: partnerWidth, partnerLines: partnerLines, followName: followName, drawnOp: drawnOp,
-        DRAW_PX: DRAW_PX, ROW_PX: ROW_PX, DRAW_MAX_FRAC: DRAW_MAX_FRAC, LOSS_W: LOSS_W, LABEL_GATE_PX: LABEL_GATE_PX,
+        DRAW_PX: DRAW_PX, ROW_PX: ROW_PX, DRAW_MAX_FRAC: DRAW_MAX_FRAC, LOSS_W: LOSS_W,
         SHORT_BAR_PX: SHORT_BAR_PX, ROW_LABEL_MIN_PX: ROW_LABEL_MIN_PX, NODE_R: NODE_R, BAR_HALF: BAR_HALF,
         CLUSTER_PX: CLUSTER_PX, RETRY_N: RETRY_N, _esc: esc
     };
