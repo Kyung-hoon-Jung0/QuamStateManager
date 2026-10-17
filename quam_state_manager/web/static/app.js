@@ -15914,17 +15914,23 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                 // v1.5.1 (D3 #810): why click-to-apply is off is the same for every lab figure of
                 // the run, so it is said once, above the figures (each chip keeps it on hover)
                 if (container && endpoint === 'replot/plot' && message === d.display_only_reason) {
-                    var seen = Array.prototype.some.call(container.querySelectorAll('.ds-replot-run-note'), function (note) {
-                        return note.dataset.runId === String(runId) && note.textContent === message;
+                    // one note per run: each figure's reasons ("path: why; path: why") join it once
+                    var shared = Array.prototype.find.call(container.querySelectorAll('.ds-replot-run-note'), function (note) {
+                        return note.dataset.runId === String(runId);
                     });
-                    if (!seen) {
-                        var shared = document.createElement('p');
+                    if (!shared) {
+                        shared = document.createElement('p');
                         shared.className = 'muted ds-replot-note ds-replot-run-note';
-                        shared.dataset.runId = String(runId); shared.textContent = message;
+                        shared.dataset.runId = String(runId); shared._clauses = [];
                         var list = container.querySelector('.ds-interactive-list');
                         if (list && list.parentNode) list.parentNode.insertBefore(shared, list);
                         else container.insertBefore(shared, container.firstChild);
                     }
+                    shared._clauses = shared._clauses || [];
+                    message.split('; ').forEach(function (clause) {
+                        if (clause && shared._clauses.indexOf(clause) === -1) shared._clauses.push(clause);
+                    });
+                    shared.textContent = shared._clauses.join('; ');
                     return;
                 }
                 var note = document.createElement('p');

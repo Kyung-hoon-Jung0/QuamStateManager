@@ -139,16 +139,21 @@ function pause() { return new Promise(resolve => setTimeout(resolve, 50)); }
     const head = w.document.createElement('div'); head.className = 'ds-replot-head';
     const list = w.document.createElement('div'); list.className = 'ds-interactive-list';
     container.prepend(head); container.appendChild(list);
-    w.fetch = () => Promise.resolve({json: () => Promise.resolve({data: [], layout: {},
-        display_only_reason: 'No proven target', notices: ['No proven target', 'Artist omitted']})});
-    for (let i = 0; i < 2; i++) {
+    // three figures: a refusal, one that adds a clause and repeats it, then the first again
+    const reasons = ['a.x: no proof', 'b.y: ambiguous; a.x: no proof', 'a.x: no proof'];
+    let call = 0;
+    w.fetch = () => { const reason = reasons[call++]; return Promise.resolve({json: () => Promise.resolve({data: [], layout: {},
+        display_only_reason: reason, notices: [reason, 'Artist omitted']})}); };
+    for (let i = 0; i < 3; i++) {
         const div = w.document.createElement('div'); div.dataset.endpoint = 'replot/plot'; list.appendChild(div);
         w._fetchInteractiveFig(div, 'run:1', 'f' + i, 1, container); await pause();
     }
     equal(container.querySelectorAll('.ds-replot-run-note').length, 1, 'refusal appears once per run');
+    equal(container.querySelector('.ds-replot-run-note').textContent, 'a.x: no proof; b.y: ambiguous',
+        'each refusal clause is said once, however many figures give it');
     equal(container.querySelector('.ds-replot-run-note').nextElementSibling === list && container.firstElementChild === head,
         true, 'the run note sits under the run header, above the figures');
-    equal(Array.from(container.querySelectorAll('.ds-replot-note')).filter(n => n.textContent === 'Artist omitted').length, 2,
+    equal(Array.from(container.querySelectorAll('.ds-replot-note')).filter(n => n.textContent === 'Artist omitted').length, 3,
         'per-figure unsupported content still has its own notice');
     console.log('f5_plot_selfcheck: ' + checks + ' assertions passed');
     w.close();
