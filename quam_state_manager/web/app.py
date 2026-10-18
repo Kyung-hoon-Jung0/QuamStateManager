@@ -688,6 +688,20 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         search_hint as _search_hint, search_title as _search_title)
     app.jinja_env.globals["search_hint"] = _search_hint
     app.jinja_env.globals["search_title"] = _search_title
+
+    def _refresh_url(default: str) -> str:
+        """R2 M6: the GET that re-reads THIS pane's rows -- the request that
+        rendered it (chain tab, page, per-page, props and sort included: the
+        chain tabs and the pagination links swap the pane without pushing a
+        URL, so the address bar does not name it). A pane rendered by a POST
+        (an open, an action) re-reads *default*, the page's plain address."""
+        try:
+            if request.method == "GET":
+                return request.full_path.rstrip("?")
+        except RuntimeError:              # rendered outside a request
+            pass
+        return default
+    app.jinja_env.globals["refresh_url"] = _refresh_url
     app.jinja_env.filters["value_delta"] = _value_delta.compute
     app.jinja_env.filters["delta_describe"] = _value_delta.describe
     # S10 walk: a before/after value beside a delta, by the delta's own rule

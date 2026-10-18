@@ -84,7 +84,7 @@ function syncGroupCheckbox(groupEl) {
 {% include "_pagination.html" %}
 
 <div class="table-scroll">
-<table id="comparison-table" data-refresh-rows class="data-table comparison-table" role="grid">
+<table id="comparison-table" data-refresh-rows data-refresh-url="{{ refresh_url('/table') }}" class="data-table comparison-table" role="grid">
     <thead>
         <tr>
             <th>ID</th>

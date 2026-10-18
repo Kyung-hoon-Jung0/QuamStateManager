@@ -134,11 +134,21 @@ function t1(q) {
     ok(ajaxCalls.length === 2 && t1('q2') === '45.00',
        'C2: ...and it catches up once focus leaves (' + ajaxCalls.length + ', ' + t1('q2') + ')');
 
+    /* E (R2 M6): a table that names the request that rendered it (a chain
+       tab or a page swapped in without pushing a URL) re-reads THAT, not the
+       address bar's view */
+    table.setAttribute('data-refresh-url', '/qubits?chain=B&per_page=50');
+    wcMoves();
+    await wait(400);
+    const e = ajaxCalls[ajaxCalls.length - 1] || {};
+    ok(ajaxCalls.length === 3 && e.url === '/qubits?chain=B&per_page=50',
+       'E1: the rows re-read are the view of the pane itself -- ' + JSON.stringify(ajaxCalls.map((x) => x.url)));
+
     /* D */
     table.removeAttribute('data-refresh-rows');
     wcMoves();
     await wait(400);
-    ok(ajaxCalls.length === 2, 'D1: a table without data-refresh-rows is never re-read (' + ajaxCalls.length + ')');
+    ok(ajaxCalls.length === 3, 'D1: a table without data-refresh-rows is never re-read (' + ajaxCalls.length + ')');
 
     if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
     console.log('v151_entity_rows_refresh_selfcheck: all checks passed (' + n + ' assertions)');

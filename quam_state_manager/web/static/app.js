@@ -5735,11 +5735,15 @@ window.EntityRowsRefresh = (function () {
             return Promise.resolve(false);
         }
         var my = ++seq;
-        var url = location.pathname + location.search;
         return Promise.all(tbls.map(function (t) {
             var tb = t.querySelector("tbody");
             if (!tb) return null;
             var selKey = rowKey(t.querySelector("tbody tr.row-selected"));
+            // R2 M6: the request that rendered THIS pane (chain tab, page,
+            // props, sort). The chain tabs and the pagination links swap the
+            // pane without pushing a URL, so the address bar may name another
+            // view; it is used only for a table that does not say.
+            var url = t.getAttribute("data-refresh-url") || (location.pathname + location.search);
             var p = window.htmx.ajax("GET", url, { target: tb, select: "#" + t.id + " > tbody",
                                                   swap: "outerHTML" });
             return Promise.resolve(p).then(function () { if (my === seq) after(t, selKey); });
