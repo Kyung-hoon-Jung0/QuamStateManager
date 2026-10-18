@@ -72,7 +72,8 @@
       {% for e in entries %}
       <tr class="diff-row-{{ e.change_type }}">
           <td><span class="diff-type-badge diff-type-{{ e.change_type }}">{{ e.change_type }}</span></td>
-          <td class="diff-path-cell"><code class="dot-path" title="{{ e.dot_path }}">{{ e.dot_path }}</code></td>
+          {#- v1.5.1 (T1-F10): the WHOLE path, wrapping at its dots ("ports.anal" said nothing) -#}
+          <td class="diff-path-cell"><code class="dot-path" title="{{ e.dot_path }}">{{ (e.dot_path | e).replace('.', '.<wbr>' | safe) }}</code></td>
           {# v1.3.0 A12: a stored null is "null", a key that is not there is
              "(absent)" -- both used to print "-" (the history detail's rule) #}
           <td class="diff-val">

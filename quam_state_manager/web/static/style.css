@@ -7569,6 +7569,18 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 }
 .state-review .diff-path-cell .dot-path,
 .live-drift .diff-path-cell .dot-path { word-break: normal; }   /* not break-all */
+/* v1.5.1 (T1-F10): the State History drift table shows the WHOLE path -- a
+   10-character ellipsis ("ports.anal", "qubit_pairs.q1-") could not say which
+   port or pair changed. It wraps at its dots (<wbr>), never mid-name. */
+.live-drift td.diff-path-cell {
+    max-width: none;
+    min-width: 22ch;
+    width: 40%;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+}
+.live-drift .diff-path-cell .dot-path { overflow-wrap: anywhere; }
 /* ── Review list — "Live chip vs your working copy" (VSCode Source-Control style) ──
    Borderless hairline rows: a restrained gutter letter M/A/D + a 2px left accent
    (not a loud filled pill); the path dims its parent dirs and emphasises a soft-blue
