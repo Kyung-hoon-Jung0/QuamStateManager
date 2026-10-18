@@ -211,7 +211,7 @@ def test_a_folderless_chip_gets_its_ledger_and_its_observed_states(folderless):
     assert st["state"] == "ready" and st["roots"] == [], st
     assert (chip_dir(folderless) / "ledger.sqlite").is_file(), "opening the chip created its ledger"
     got = rows(drawer(folderless, "qubits.qA1.T1"))
-    assert [r["value"] for r in got] == ["3e-05", "2e-05", "1e-05"], got
+    assert [r["value"] for r in got] == ["30 µs", "20 µs", "10 µs"], got   # v1.5.1 U P2-12
     assert all(r["label"].startswith("seen by SM (") for r in got), [r["label"] for r in got]
     assert [r["label"] for r in got][:2] == ["seen by SM (auto snapshot)"] * 2
     assert all("writer unknown" in r["body"] and not r["data"] for r in got), \
@@ -277,7 +277,7 @@ def test_a_snapshot_taken_after_the_open_is_imported_at_the_next_look(folderless
     cs = hub_sync.sync_for(chip_dir(folderless))
     assert hub_sync.periodic(now=time.monotonic() + hub_sync.LISTING_EVERY_S + 1) >= 1
     assert cs.status()["state"] == "ready"
-    assert [r["value"] for r in rows(drawer(folderless, "qubits.qA1.T1"))][:2] == ["4e-05", "3e-05"]
+    assert [r["value"] for r in rows(drawer(folderless, "qubits.qA1.T1"))][:2] == ["40 µs", "30 µs"]
 
 
 # ======================================================================

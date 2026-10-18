@@ -25605,7 +25605,10 @@ window.FieldHistory = (function () {
                 size: 7,
                 color: pts.map(function (d) { return cssVar(d.trigger); }),
             },
-            hovertemplate: "%{customdata}<br>%{y}<extra></extra>",
+            /* v1.5.1 (U P2-12): the values arrive in the field's display
+               unit; the hover and the axis title say it */
+            hovertemplate: "%{customdata}<br>%{y}" + (mount.getAttribute("data-unit")
+                ? " " + mount.getAttribute("data-unit") : "") + "<extra></extra>",
         };
         // docs/296: where a Re-generate rename happened -- the line on each
         // side is the same qubit, the dashed mark says the name changed there
@@ -25625,7 +25628,8 @@ window.FieldHistory = (function () {
             // rather than spelled again -- this chart had reached the
             // right answer on its own, which is how a rule ends up with
             // three copies that can drift apart.
-            yaxis: Object.assign({ automargin: true, tickfont: { size: 9 } },
+            yaxis: Object.assign({ automargin: true, tickfont: { size: 9 },
+                                   title: { text: mount.getAttribute("data-y-title") || "", font: { size: 9 } } },
                 (window.PlotTheme && PlotTheme.axisNumberFormat)
                     ? PlotTheme.axisNumberFormat() : {}),
             showlegend: false,

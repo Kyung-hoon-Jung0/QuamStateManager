@@ -703,7 +703,7 @@ class TestSurfaces:
         s = _surfaces(moved, "qubits.qA1.f_01")
         html = s["drawer"]
         assert ">from labA/quam_state<" in html, "the old path's write: before the move, labelled"
-        assert any(r["value"].startswith("5,010,000,000") for r in rows(html))
+        assert any(r["value"] == "5.01 GHz" for r in rows(html))   # v1.5.1 U P2-12
         for name in _LISTING:
             assert ">from labA/quam_state<" in s[name], name
         # the run of the data folder both paths declared stays in the history

@@ -13639,15 +13639,41 @@ def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
     tgt = ans["targets"][key]
     row = ans["rows"][key]
     pts = _vh_points_view(ans, key, uid_roots, uid_memo)
+    # v1.5.1 (U P2-12): values in the unit the field itself is shown in (the
+    # inspector's "16.04 µs", not raw seconds), the stored digits on hover; the
+    # chart in that unit with the unit on its axis. No known unit: as stored.
+    from quam_state_manager.core import units as _units
+    spec = _units.display_spec(dot_path)
+
+    def in_unit(v: Any) -> str | None:
+        if (spec is None or isinstance(v, bool) or not isinstance(v, (int, float))
+                or not math.isfinite(v)):
+            return None
+        return f"{v * spec['scale']:.9g} {spec['unit']}"
+
+    for pt in pts:
+        if pt.get("removed") or pt.get("via_holder") or pt.get("retarget"):
+            continue
+        shown = in_unit(pt.get("value"))
+        if shown is not None and pt.get("display") == _vh_value_strings(pt.get("value"), False)[0]:
+            pt["display"] = shown
     chart = []
     for pt in reversed(pts):
         f = _vh_numeric(None if pt["removed"] else pt["value"])
         if f is None or not pt.get("t"):
             continue
-        chart.append({"t": pt["t"], "v": f, "trigger": pt["trigger"]})
+        chart.append({"t": pt["t"], "v": float(f"{f * spec['scale']:.12g}") if spec else f,
+                      "trigger": pt["trigger"]})
     current = tgt.get("current")
     cur_display = _vh_value_strings(current, False)[0] if tgt.get("has_current") else "—"
+    cur_raw = cur_display
+    if tgt.get("has_current") and in_unit(current) is not None:
+        cur_display = in_unit(current)
+    leaf = dot_path.split(".")[-1]
     return {"dot_path": dot_path, "tgt": tgt, "points": pts, "total": len(row["effective"]),
+            "current_raw": cur_raw,
+            "chart_title": f"{leaf} ({spec['unit']})" if spec else leaf,
+            "chart_unit": spec["unit"] if spec else "",
             "via": _vh_via_view(ans, key, uid_roots, uid_memo),
             "notes": ans["notes"].get(key) or [],
             "renames": _vh_rename_view(row.get("renames") or [], tgt.get("holder")),

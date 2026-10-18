@@ -406,8 +406,9 @@ class TestTheSurfaces:
     def test_the_value_drawer_leaves_it_out_and_lists_it(self, sm):
         html = drawer(sm, "qubits.qA1.f_01")
         rows = rows_of(html)
-        assert len(rows) == 1 and "5,000,000,000" in rows[0] and "first recorded in #1" in rows[0], rows
-        assert "5,200,000,000" not in " ".join(rows), "no Revert / Use offers a value the chip never held"
+        assert len(rows) == 1 and "5 GHz" in rows[0] and "first recorded in #1" in rows[0], rows   # v1.5.1 U P2-12
+        assert "5.2 GHz" not in " ".join(rows) and "5200000000" not in " ".join(rows), \
+            "no Revert / Use offers a value the chip never held"
         assert '<details class="vh-not-kept">' in html, "what was left out is listed, never silent"
         listed = text(html.split('<details class="vh-not-kept">', 1)[1].split("</details>", 1)[0])
         # S10 walk (round 4): "not kept on the chip" -> "not in the next recorded state":
@@ -423,22 +424,22 @@ class TestTheSurfaces:
 
     def test_a_kept_value_reads_as_before(self, sm):
         rows = rows_of(drawer(sm, "qubits.qA1.T1"))
-        assert [r.split()[0] for r in rows] == ["3e-05", "1e-05"] and "saved in #2" in rows[0]
+        assert [" ".join(r.split()[:2]) for r in rows] == ["30 µs", "10 µs"] and "saved in #2" in rows[0]
         assert "read the chip" not in rows[0], "a confirmed change carries no doubt"
 
     def test_the_live_tail_on_the_drawer(self, tmp_path):
         env = chip(tmp_path, state(t1=3e-5, t2=2.2e-5))      # the lab did not keep #5's qA2 T1
         unproven = rows_of(drawer(env, "qubits.qA2.T1"))    # no live read has judged the chip yet
-        assert unproven[0].split()[0] == "2.4e-05" and "no later run has read the chip yet" in unproven[0]
+        assert " ".join(unproven[0].split()[:2]) == "24 µs" and "no later run has read the chip yet" in unproven[0]
         html = drawer(env, "qubits.qA2.T1", poll=True)       # the live files read equal to the copy
         rows = rows_of(html)
-        assert rows[0].split()[0] == "2.2e-05" and "saved in #3" in rows[0] and "current" in rows[0], rows
+        assert " ".join(rows[0].split()[:2]) == "22 µs" and "saved in #3" in rows[0] and "current" in rows[0], rows
         # S10 walk (round 4): old -> new wording (what the read proves, see above)
         assert "not in the next recorded state (the chip holds 2.2e-05 now)" in text(html)
 
     def test_unproven_live_leaves_the_newest_open(self, sm):
         rows = rows_of(drawer(sm, "qubits.qA2.T1"))
-        assert rows[0].split()[0] == "2.4e-05" and "no later run has read the chip yet" in rows[0]
+        assert " ".join(rows[0].split()[:2]) == "24 µs" and "no later run has read the chip yet" in rows[0]
 
     def test_column_history_changes_and_by_run(self, sm):
         r = sm["client"].post("/bulk/column-history", data={
@@ -799,9 +800,9 @@ class TestTheExcursionOnTheSurfaces:
     def test_the_drawer(self, chain):
         html = drawer(chain, "qubits.qA1.T1")
         rows = rows_of(html)
-        assert [r.split()[0] for r in rows] == ["3e-05", "1e-05"], rows
+        assert [" ".join(r.split()[:2]) for r in rows] == ["30 µs", "10 µs"], rows
         assert "current" in rows[0] and "saved in #2" in rows[0]
-        assert "3.3e-05" not in " ".join(rows) and "3.4e-05" not in " ".join(rows), \
+        assert not any(v in " ".join(rows) for v in ("3.3e-05", "3.4e-05", "33 µs", "34 µs")), \
             "no Revert / Use offers a value no read of the chip confirmed"
         assert '<details class="vh-not-kept vh-excursions">' in html
         listed = text(html.split('<details class="vh-not-kept vh-excursions">', 1)[1].split("</details>", 1)[0])

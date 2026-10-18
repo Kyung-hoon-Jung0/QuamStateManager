@@ -171,7 +171,7 @@ class TestDrawerOnTheLedger:
         assert "from the change ledger" in html and "Older snapshot history" not in html
         got = rows(html)
         assert [(r["value"], r["prov"]) for r in got] == [
-            ("3e-05", "run_proven"), ("1e-05", "first_record")], got
+            ("30 µs", "run_proven"), ("10 µs", "first_record")], got   # v1.5.1 U P2-12: the display unit
         proven, first = got
         assert "its own patch set it" in proven["body"]
         assert "writer unknown" in first["body"]
@@ -183,7 +183,7 @@ class TestDrawerOnTheLedger:
     def test_an_unproven_run_is_never_named_as_the_writer(self, sm):
         got = rows(drawer(sm, "qubits.qA1.f_01"))
         new = got[0]
-        assert new["value"] == "5,100,000,000.0" and new["prov"] == "run_saved"
+        assert new["value"] == "5.1 GHz" and new["prov"] == "run_saved"
         assert new["label"].startswith("saved in #3") and "not proven" in new["title"]
         assert '<span class="vh-sub"' in new["body"] and "writer not proven" in new["body"], \
             "the row SAYS the writer is not proven, not only on hover"
@@ -270,10 +270,10 @@ class TestSmWrites:
         assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "operator"}).status_code == 200
         got = rows(drawer(sm, "qubits.qA1.T1"))
         assert (got[0]["value"], got[0]["prov"], got[0]["label"]) == (
-            "4.5e-05", "sm", "applied by operator")
+            "45 µs", "sm", "applied by operator")
         assert c.post("/undo", headers={"X-SM-Actor": "operator"}).status_code == 200
         got = rows(drawer(sm, "qubits.qA1.T1"))
-        assert got[0]["label"] == "undo by operator" and got[0]["value"] == "3e-05"
+        assert got[0]["label"] == "undo by operator" and got[0]["value"] == "30 µs"
         assert got[1]["label"] == "applied by operator (undone)" and "vh-undone" in got[1]["cls"]
         assert "A later undo took this write back" in got[1]["title"]
 
@@ -347,7 +347,7 @@ class TestHonesty:
         cs.request(full=True)
         hub_sync._kick(cs)
         got = rows(drawer(sm, "qubits.qA1.T1"))
-        assert got[0]["prov"] == "run_proven" and got[0]["value"] == "3e-05"
+        assert got[0]["prov"] == "run_proven" and got[0]["value"] == "30 µs"
         assert "run folder deleted" in got[0]["body"]
         assert not got[0]["data"], "a Data link to a deleted folder would open nothing"
 
@@ -818,7 +818,7 @@ class TestReviewObserved:
             hub_sync.on_roots_moved([str(sm["data"])])
         got = rows(drawer(sm, "qubits.qA1.T1"))
         assert [(r["value"], r["prov"]) for r in got][:3] == [
-            ("8e-05", "run_saved"), ("7e-05", "observed"), ("3e-05", "run_proven")], got
+            ("80 µs", "run_saved"), ("70 µs", "observed"), ("30 µs", "run_proven")], got
         assert got[1]["label"] == "seen by SM (auto snapshot)" and "writer unknown" in got[1]["body"]
         assert not got[1]["data"], "no run is named for a state SM only saw"
 
@@ -976,7 +976,7 @@ class TestReviewMore:
         cs.request(listing=True)
         hub_sync._kick(cs)
         got = rows(drawer(sm, "qubits.qA1.T1"))
-        assert (got[0]["value"], got[0]["label"]) == ("8e-05", "saved in #5 scan"), got[:2]
+        assert (got[0]["value"], got[0]["label"]) == ("80 µs", "saved in #5 scan"), got[:2]
         assert "observed" not in [r["prov"] for r in got]
 
     def test_p1_2_a_run_landing_after_its_own_early_observation_takes_it_back(self, sm):
@@ -995,7 +995,7 @@ class TestReviewMore:
         with sm["app"].app_context():
             hub_sync.on_roots_moved([str(sm["data"])])
         got = rows(drawer(sm, "qubits.qA1.T1"))
-        assert (got[0]["value"], got[0]["label"]) == ("8e-05", "saved in #5 scan"), got[:2]
+        assert (got[0]["value"], got[0]["label"]) == ("80 µs", "saved in #5 scan"), got[:2]
         assert "observed" not in [r["prov"] for r in got], "the run's own save, seen early, is the run's"
 
 

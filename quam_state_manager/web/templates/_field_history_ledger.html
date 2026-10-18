@@ -15,7 +15,7 @@
           title="Close (Esc)">&times;</button>
 </div>
 {% if current_display and current_display != '—' %}
-<div class="fh-currentline">now: <code>{{ current_display }}</code></div>
+<div class="fh-currentline">now: <code{% if current_raw and current_raw != current_display %} title="stored: {{ current_raw }}"{% endif %}>{{ current_display }}</code></div>
 {% endif %}
 {% if via %}
 <div class="vh-via">
@@ -41,9 +41,8 @@
   {% endif %}
 </p>
 {% endfor %}
-{% include '_hub_notes.html' %}
 {% if chart and chart|length >= 2 %}
-<div class="fh-chart" id="fh-chart" aria-label="Value trend"></div>
+<div class="fh-chart" id="fh-chart" aria-label="Value trend" data-y-title="{{ chart_title }}" data-unit="{{ chart_unit }}"></div>
 <script id="fh-chart-data" type="application/json">{{ chart | tojson }}</script>
 {% if renames %}<script id="fh-chart-renames" type="application/json">{{ renames | map(attribute='t') | list | tojson }}</script>{% endif %}
 {% endif %}
@@ -94,6 +93,8 @@
   </tbody>
 </table>
 {% endif %}
+{#- v1.5.1 (U P2-12): the answer (chart, rows) first; what is left out after it -#}
+{% include '_hub_notes.html' %}
 {% if excursions %}
 {# P0-1: saves nothing confirmed before the saved value came back EXACTLY
    to what it was before: not chip history, never silent. S10 walk (round 4):
