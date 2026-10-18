@@ -1483,6 +1483,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
             pre_pull = (None if (in_mem_dirty or not auto_adopt)
                         else (copy.deepcopy(store.state), copy.deepcopy(store.wiring)))
         seen: dict = {}
+        _sp0 = working_copy.sync_point(wc)   # v1.5.1 (SB-F1), see below
         result = working_copy.reconcile_with_live(
             wc, sync_if_clean=auto_adopt and not in_mem_dirty, out=seen, store=store)
         if result == working_copy.RECONCILE_SYNCED:
@@ -1506,8 +1507,15 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                     # the in-memory content back onto the working folder so disk ==
                     # in-memory; otherwise a later LRU evict + rehydrate would read
                     # the new-live working files, compute working_dirty=False, and
-                    # SILENTLY DROP the un-applied edit (audit C29). synced_live_hash
-                    # stays at new-live, so the rehydrate correctly sees it dirty.
+                    # SILENTLY DROP the un-applied edit (audit C29).
+                    #
+                    # v1.5.1 (SB-F1): the sync point goes back with it. Left at
+                    # new-live, the apply gate saw live == sync point and the
+                    # next Apply wrote the old content over the live chip's
+                    # newer values; restored, the rehydrate still sees the
+                    # copy dirty (working != old point) AND the gate sees live
+                    # moved.
+                    working_copy.restore_sync_point(wc, _sp0)
                     try:
                         working_copy.repersist_working(
                             wc, store.state, store.wiring, store=store)
@@ -28446,6 +28454,7 @@ def auto_sync_pull():
             return "", 204
     ctx.pop("_auto_pull_torn", None)
     build_lock = _active_wc_lock(ctx)
+    _sp0 = None
     try:
         with build_lock:
             # RE-CHECK INSIDE THE LOCK. /field/edit takes only store._lock, and
@@ -28497,6 +28506,9 @@ def auto_sync_pull():
                         project=_scope_for(ctx["path"], ctx))
                 except Exception:      # noqa: BLE001 — never block the pull
                     logger.warning("pre-pull snapshot failed", exc_info=True)
+            # v1.5.1 (SB-F1): the sync point before the pull, put back
+            # whenever the pulled content is not adopted below.
+            _sp0 = working_copy.sync_point(wc)
             working_copy.sync_from_live(wc)
             # RE-CHECK AGAIN, NOW THAT THE I/O IS DONE. The check above closed
             # the lock-acquisition window; it did NOT close the window the
@@ -28510,30 +28522,44 @@ def auto_sync_pull():
             # disk == memory (audit C29 — otherwise an LRU evict + rehydrate
             # reads the new-live working files and silently drops it), and let
             # the banner ask.
+            #
+            # v1.5.1 (SB-F1): ...and put the SYNC POINT back as well. The pull
+            # advanced it to the live content it read; kept there while the
+            # working copy goes back to the old content, the apply gate saw
+            # live == sync point and the next Apply (or the Auto-Sync push)
+            # wrote the old values over the lab's newer ones, reporting "in
+            # sync". Restored, live differs from it: the next Apply pulls
+            # first and replays the edit, or is refused as stale.
+            #
+            # The re-check and the rebuild below run under ONE store-lock hold
+            # (an RLock; the rebuild's reload takes it again): an edit landing
+            # between them was cleared by the reload with no word.
             _st = ctx.get("store")
-            if _st is not None:
-                with _st._lock:
-                    if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
-                        try:
-                            working_copy.repersist_working(
-                                wc, _st.state, _st.wiring, store=_st)
-                        except OSError:
-                            logger.exception("post-pull re-persist failed")
-                        ctx["live_diverged"] = True
-                        return "", 204
-            # docs/187 R10: an edit can land INSIDE `sync_from_live` -- it holds
-            # no `store._lock`, which is why the re-check above exists -- and
-            # with `replace` ON that re-check does not keep it, so the rebuild
-            # below drops it. Every count was taken BEFORE the pull, so a
-            # context that was clean then reported nothing and the work
-            # vanished in silence. Fold it into what the response reports.
-            _late = ctx.get("store")
-            _late_n = len(getattr(_late, "change_log", None) or []) if _late else 0
-            if _late_n:
-                _discarded_n = max(_discarded_n, _late_n)
-                discarding = True
-            ctx["_alarm_reason"] = "live-pull"
-            _rebuild_after_working_copy_replaced(ctx)
+            with (_st._lock if _st is not None else contextlib.nullcontext()):
+                if _st is not None and _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
+                    working_copy.restore_sync_point(wc, _sp0)
+                    try:
+                        working_copy.repersist_working(
+                            wc, _st.state, _st.wiring, store=_st)
+                    except OSError:
+                        logger.exception("post-pull re-persist failed")
+                    ctx["live_diverged"] = True
+                    return "", 204
+                # docs/187 R10: an edit can land INSIDE `sync_from_live` -- it
+                # holds no `store._lock`, which is why the re-check above
+                # exists -- and with `replace` ON that re-check does not keep
+                # it, so the rebuild below drops it. Every count was taken
+                # BEFORE the pull, so a context that was clean then reported
+                # nothing and the work vanished in silence. Fold it into what
+                # the response reports.
+                _late = ctx.get("store")
+                _late_n = len(getattr(_late, "change_log", None) or []) if _late else 0
+                if _late_n:
+                    _discarded_n = max(_discarded_n, _late_n)
+                    discarding = True
+                ctx["_alarm_reason"] = "live-pull"
+                _rebuild_after_working_copy_replaced(ctx)
+                _sp0 = None          # adopted: nothing to put back
             # Every other caller of the rebuild pairs it with this. Leaving the
             # stash behind lets a later "Pull & apply (merge)" replay the very
             # values the user was told had been replaced -- back onto the chip.
@@ -28558,8 +28584,15 @@ def auto_sync_pull():
         # re-persist the in-memory content onto the working folder (C29's move)
         # so disk == memory whichever step failed, and raise the banner. The
         # eviction stays as belt-and-braces, no longer load-bearing.
+        #
+        # v1.5.1 (SB-F1): re-persisting the old content is half of it -- the
+        # sync point the pull advanced goes back too, or the gate compares
+        # live with a point the working copy no longer holds and the next
+        # Apply writes the old values over the live chip's.
         try:
             _st = ctx.get("store")
+            if _sp0 is not None and wc is not None:
+                working_copy.restore_sync_point(wc, _sp0)
             if _st is not None and wc is not None:
                 with _st._lock:
                     working_copy.repersist_working(
@@ -30032,24 +30065,36 @@ def state_sync():
             # live. Only when there is something to lose.
             backup = None
             _pulled = working_copy.sync_from_live(wc)
-            # The store still holds the pre-pull view until the rebuild.
-            # A refused read must publish neither a version nor a replay map.
-            if mode == "discard" and (pending or ctx.get("working_dirty")):
-                backup = _take_live_backup(ctx, store, pending)
-            try:
-                ctx["_pulled_docs"] = (_pulled, safe_io._pair_fingerprint(
-                    Path(wc.working_folder)))
-            except OSError:
-                ctx.pop("_pulled_docs", None)
-            pulled_other_changes = (_pre_sync_hash is not None
-                                    and wc.synced_live_hash != _pre_sync_hash)
-            # Rebuild the store + derived objects from the freshly-synced copy.
-            ctx["_alarm_reason"] = "live-pull"
-            _rebuild_after_working_copy_replaced(ctx)   # the pull consumed the change
-            if mode in ("reapply", "apply") and pending:
-                replay = _replay_updates(ctx["modifier"], pending)
-                _invalidate_engine_cache(ctx)  # replay used _defer_hooks — refresh caches (ctx-pinned, r16 6)
-                ctx["working_dirty"] = False  # edits unsaved in the change log, not saved
+            # v1.5.1 (SB-F1): `pending` was captured before the pull, and
+            # /field/edit takes only the store lock -- an edit committed
+            # while the pull read and wrote was dropped by the rebuild (the
+            # Auto-Sync merge presses this door). It is captured again here,
+            # and the backup, the rebuild and the replay run under ONE store
+            # lock hold, so no edit lands between them.
+            with store._lock:
+                _late = {k: v for k, v in _capture_change_log_as_updates(store).items()
+                         if pending.get(k) != v
+                         and not any(k == p or k.startswith(p + ".") for p in _use_live)}
+                if _late:
+                    pending = _merge_reapply(pending, _late)
+                # The store still holds the pre-pull view until the rebuild.
+                # A refused read must publish neither a version nor a replay map.
+                if mode == "discard" and (pending or ctx.get("working_dirty")):
+                    backup = _take_live_backup(ctx, store, pending)
+                try:
+                    ctx["_pulled_docs"] = (_pulled, safe_io._pair_fingerprint(
+                        Path(wc.working_folder)))
+                except OSError:
+                    ctx.pop("_pulled_docs", None)
+                pulled_other_changes = (_pre_sync_hash is not None
+                                        and wc.synced_live_hash != _pre_sync_hash)
+                # Rebuild the store + derived objects from the freshly-synced copy.
+                ctx["_alarm_reason"] = "live-pull"
+                _rebuild_after_working_copy_replaced(ctx)   # the pull consumed the change
+                if mode in ("reapply", "apply") and pending:
+                    replay = _replay_updates(ctx["modifier"], pending)
+                    _invalidate_engine_cache(ctx)  # replay used _defer_hooks — refresh caches (ctx-pinned, r16 6)
+                    ctx["working_dirty"] = False  # edits unsaved in the change log, not saved
     except FileNotFoundError:
         # SA-F9 (b): say WHICH part is gone -- a missing state.json is not a
         # missing folder

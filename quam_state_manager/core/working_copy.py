@@ -918,6 +918,40 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     return state, wiring
 
 
+def sync_point(wc: WorkingCopy) -> tuple:
+    """The sync point as it stands: (state mtime, wiring mtime, live hash,
+    working fingerprint). Taken before a pull so a pull whose result is NOT
+    adopted can put it back (:func:`restore_sync_point`)."""
+    return (wc.synced_state_mtime, wc.synced_wiring_mtime,
+            wc.synced_live_hash, wc.synced_working_fp)
+
+
+def restore_sync_point(wc: WorkingCopy, point: tuple) -> None:
+    """Put back a sync point :func:`sync_point` took (v1.5.1, SB-F1).
+
+    A pull advances the sync point to the live content it read. When the
+    caller then KEEPS the content it held before (an edit landed during the
+    pull, or the rebuild failed) and re-persists it, the sync point must go
+    back too: left at the new live content, the apply gate compares live with
+    it, sees no move, and the next Apply writes the old values over the live
+    chip's newer ones -- silently. Restored, live differs from the sync point,
+    so the next Apply pulls first (or is refused as stale) and the banner asks.
+
+    The in-memory point is restored even when the meta write fails: it is
+    what this session's apply gate reads, and the restored (older) point can
+    only make that gate see MORE drift, never less."""
+    st, wi, h, fp = point
+    wc.synced_state_mtime = st
+    wc.synced_wiring_mtime = wi
+    wc.synced_live_hash = h
+    wc.synced_working_fp = fp
+    try:
+        wc._write_meta()
+    except OSError:
+        logger.exception("Restoring the sync point's meta failed for %s -- this "
+                         "session holds the restored point; the next may not", wc.key)
+
+
 def _check_working_bytes(record, pair) -> None:
     """The payload must be the bytes the caller's own store loaded or saved."""
     expected = getattr(record, "expect_digest", None)
