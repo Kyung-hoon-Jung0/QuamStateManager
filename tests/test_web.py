@@ -5196,8 +5196,11 @@ class TestConfigViewerWiring:
         assert "quam_config_nav_collapsed" in js
         assert "window.toggleNavSub" in js
         assert "window.toggleChipStatusSub" in js  # wrapper kept
-        # Command palette entry survives as a power-user access path.
-        assert '"label": "Config Viewer"' in base
+        # Command palette entry survives as a power-user access path (the
+        # palette reads routes._NAV_PAGES via nav_pages() since v1.5.1).
+        from quam_state_manager.web.routes import _NAV_PAGES
+        assert "nav_pages() | tojson" in base
+        assert any(p["label"] == "Config Viewer" for p in _NAV_PAGES)
 
     def test_waveform_js_lifted_into_appjs(self):
         js = self._read("web", "static", "app.js")
@@ -7545,12 +7548,18 @@ class TestSidebarIAr15:
         assert not hits, hits
 
     def test_palette_covers_every_nav_page(self):
+        # v1.5.1 (U P2-19): the palette's list is routes._NAV_PAGES (shared
+        # with header Search), rendered into base.html by nav_pages().
+        from quam_state_manager.web.routes import _NAV_PAGES
         base = self._base()
+        assert "nav_pages() | tojson" in base
+        labels = {p["label"] for p in _NAV_PAGES}
         for label in ("Re-generate config", "Diagnostics", "Resonators",
                       "Couplers", "Live edit - Json Tree view", "Experiment Runner",
                       "Fit Replay", "Auto Calibrate"):
-            assert '"label": "%s"' % label in base, label
-        assert '"Qubit Pairs"' not in base            # label drift fixed
+            assert label in labels, label
+        assert "Qubit Pairs" not in labels            # label drift fixed
+        assert '"Qubit Pairs"' not in base
 
 
 class TestActiveMarkingR15:

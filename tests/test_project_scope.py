@@ -335,8 +335,12 @@ class TestSidebarReorg:
                "quam_qualibrate_nav_collapsed" in appjs
 
     def test_command_palette_lists_projects(self):
+        # v1.5.1 (U P2-19): the palette reads the ONE page list header Search
+        # also reads (routes._NAV_PAGES via nav_pages()).
+        from quam_state_manager.web.routes import _NAV_PAGES
         base = self._src("quam_state_manager/web/templates/base.html")
-        assert '{"label": "Projects",          "url": "/qualibrate"}' in base
+        assert "nav_pages() | tojson" in base
+        assert {"label": "Projects", "url": "/qualibrate"} in _NAV_PAGES
 
     def test_subnav_caps_at_three_with_show_all(self, scoped):
         """r8 feedback: with many projects the expanded subnav buried the
@@ -447,7 +451,10 @@ class TestHistoryLens:
         raw_key = hm._key_for(scoped["chip_a"])
         m = re.search(r'data-loaded-chip-key="([^"]*)"', body)
         assert m and m.group(1) == raw_key
-        assert f"alpha · {raw_key}" in body          # scoped display name
+        # scoped display name: the project, then the chip's NAME (v1.5.1
+        # T1-F4: its declared name, else its folder -- never the history key)
+        from quam_state_manager.web.routes import _chip_label
+        assert f"alpha · {_chip_label(scoped['chip_a'])}" in body
         assert f"/param-history?chip_key={raw_key}" in body  # raw URL contract
         assert "scope-suffix" in body and "Param History" in body
 
