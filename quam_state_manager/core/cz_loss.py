@@ -361,18 +361,24 @@ def _fail(reason: str) -> dict:
     return {"ok": False, "reason": reason}
 
 
+class _H5Content(ValueError):
+    """v1.5.1 (T34-F3): what a readable ds_fit.h5 LACKS, said by name -- a
+    legacy population-loss file without a frequency coordinate was reported
+    as "cannot be read (ValueError)"."""
+
+
 def _read_h5(raw: bytes) -> dict:
     import h5py
     with h5py.File(io.BytesIO(raw), "r") as f:
         if "p_loss" not in f or "qubit" not in f:
-            raise ValueError("no p_loss for any qubit")
+            raise _H5Content("no p_loss for any qubit")
         names = [_text(x) for x in np.atleast_1d(f["qubit"][()])]
         nq = len(names)
 
         def grid(key, required=True):
             if key not in f:
                 if required:
-                    raise ValueError(f"no {key} coordinate")
+                    raise _H5Content(f"no {key} coordinate")
                 return None
             a = np.asarray(f[key][()], dtype=float)
             if a.ndim == 1:                         # a legacy shared axis
@@ -380,7 +386,7 @@ def _read_h5(raw: bytes) -> dict:
             elif a.ndim == 2 and a.shape[0] != nq and a.shape[1] == nq:
                 a = a.T
             if a.ndim != 2 or a.shape[0] != nq:
-                raise ValueError(f"{key} has an unexpected shape {a.shape}")
+                raise _H5Content(f"{key} has an unexpected shape {a.shape}")
             return a
         loss = grid("p_loss")
         freq = grid("frequency")
@@ -463,6 +469,8 @@ def read_run(folder: Any) -> dict:
         return _fail("ds_fit.h5 is not an HDF5 file")
     try:
         h5 = _read_h5(raw)
+    except _H5Content as exc:
+        return _fail(f"{exc} in ds_fit.h5")
     except Exception as exc:  # noqa: BLE001 -- a truncated or foreign file is a skip, never a 500
         return _fail(f"ds_fit.h5 cannot be read ({type(exc).__name__})")
     data = safe_io.scan_json(folder / "data.json")
