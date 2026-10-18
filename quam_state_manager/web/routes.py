@@ -11207,6 +11207,7 @@ def _render_qubit_detail(name: str, *, focus_path: str | None = None):
         return render_template("_status.html", message=str(e), level="error"), 404
 
     sections = _build_qubit_sections(name, data, store)
+    _attach_section_pulses(sections, store)
 
     port_info = {}
     for ch in ("xy", "rr", "z"):
@@ -11227,6 +11228,46 @@ def _render_qubit_detail(name: str, *, focus_path: str | None = None):
             ro_freq=_resonator_lo_if(store, [name]).get(name) or {},
         ),
     )
+
+
+def _attach_section_pulses(sections: list[dict], store) -> None:
+    """P1-14 (UX round): each inspector section that shows a pulse's fields
+    gets ``pulses`` -- ``[{"name", "url", "spark"}]`` per pulse it touches --
+    so the section carries "Edit <pulse> in Pulses" (the Pulses page opened
+    at that pulse, ``_pulses_url_for``) and the Pulses page's own cached
+    sparkline. A pulse the Pulses index does not list gets no link. Never
+    raises: a missing link is the worst case."""
+    pulse_index = _pulse_index()
+    if pulse_index is None:
+        return
+    try:
+        from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
+    except Exception:  # noqa: BLE001
+        sparkline_svg = synth_for_operation = None
+    for sec in sections:
+        roots: list[str] = []
+        for p in sec.get("props") or []:
+            parts = str(p.get("dot_path") or "").split(".")
+            if len(parts) >= 6 and parts[0] == "qubits" and parts[3] == "operations":
+                root = ".".join(parts[:5])
+                if root not in roots:
+                    roots.append(root)
+        out = []
+        for root in roots:
+            try:
+                row = pulse_index.row(root)
+                if row is None:
+                    continue
+                spark = None
+                if (sparkline_svg is not None and row.get("known") and not row.get("is_alias")):
+                    spark = pulse_index.sparkline(
+                        root, lambda p=root: sparkline_svg(synth_for_operation(store, p)))
+                out.append({"name": root.rsplit(".", 1)[-1],
+                            "url": _pulses_url_for(pulse_index, root), "spark": spark})
+            except Exception:  # noqa: BLE001 -- a link never breaks the inspector
+                logger.debug("pulse link for %s failed", root, exc_info=True)
+        if out:
+            sec["pulses"] = out
 
 
 # The qubit-detail quick add-pulse form was removed — the Pulses page

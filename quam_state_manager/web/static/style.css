@@ -2887,6 +2887,11 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 /* P1-13: the readout LO / IF line in the qubit inspector */
 .ro-lo-if { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin: .5rem 0; font-size: .88em; }
 .calc-s4-src { display: block; min-height: 1em; }
+/* P1-14: a pulse section's way to the Pulses page */
+.section-pulses { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin: .25rem 0 .35rem; font-size: .85em; }
+.section-pulse-link { display: inline-flex; align-items: center; gap: .35rem; }
+.section-pulse-spark { display: inline-block; width: 64px; }
+.section-pulse-spark svg { width: 64px; height: auto; display: block; }
 .table-filter input {
     font-family: var(--font-ui);
     font-size: 0.88em; padding: 0.25rem 0.5rem; margin: 0;
