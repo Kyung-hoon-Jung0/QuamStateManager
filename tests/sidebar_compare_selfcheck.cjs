@@ -25,7 +25,8 @@ function treeHtml(n, keep) {
 const DOM = '<div id="sidebar-tree">' + treeHtml(8) + '</div>' +
   '<form id="compare-form"><button type="submit" class="btn-compare">Compare Selected</button>' +
   '<button type="submit" class="btn-trend">Trend Tracker</button><button type="button" id="compare-clear" hidden>Clear</button>' +
-  '<span class="compare-hint" id="compare-hint">Tick runs…</span></form>';
+  '<span class="compare-hint" id="compare-hint">Tick runs…</span>' +
+  '<span class="compare-offview" id="compare-offview" hidden></span></form>';
 
 function makeWorld(seed) {
   const dom = new JSDOM('<!doctype html><html><body>' + DOM + '</body></html>', { url: 'http://localhost/datasets', pretendToBeVisual: true });
@@ -167,8 +168,10 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   tree.dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
   await settle();
   ok(checked(win) === 0, 'fixture: the filter shows none of the three');
-  ok(/not in view/.test(label(win)) && /\(3/.test(label(win)),
-     'the button says three are selected but off screen (' + label(win) + ')');
+  // v1.5.1 (U P2-7): the label is the count; the off-view runs have their own line
+  const offLine = win.document.getElementById('compare-offview');
+  ok(label(win) === 'Compare Selected (3)' && !offLine.hidden && /^3 of the 3 selected are not in view/.test(offLine.textContent),
+     'three are selected but off screen (' + label(win) + ' / ' + offLine.textContent + ')');
 
   click(win, boxes(win)[0]);                      // tick run5 while filtered
   await settle();

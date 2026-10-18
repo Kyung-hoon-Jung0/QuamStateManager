@@ -874,6 +874,8 @@
                     {# docs/161: what the tick boxes are FOR, said once, only
                        while nothing is ticked (app.js syncCompareCount) #}
                     <span class="compare-hint" id="compare-hint">&#9744; Tick runs in the list below to compare or trend them (2–5).</span>
+                    {#- v1.5.1 (U P2-7): selected runs the list does not show now, on their own line -#}
+                    <span class="compare-offview" id="compare-offview" role="status" hidden></span>
                 </form>
                 <div class="sidebar-filter">
                     <div class="ds-search-wrap">

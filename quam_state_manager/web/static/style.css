@@ -4344,6 +4344,9 @@ td.col-delta .val-delta { margin-left: 0; }
     margin-top: 0.5rem;
 }
 .compare-buttons button { flex: 1; }
+/* v1.5.1 (U P2-7): the off-view count is a line under the buttons, not in the label */
+.compare-offview { flex: 1 1 100%; font-size: .75rem; color: var(--pico-muted-color); }
+.compare-offview[hidden] { display: none; }
 
 /* Trend charts */
 .trend-chart-container { margin-bottom: 1rem; }
@@ -6774,7 +6777,9 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
    sidebar's copy renders INLINE (pushes the tree down) rather than floating,
    and the text input is padded for the ? button (which targets type=search
    elsewhere, but the sidebar input is type=text). */
-#sidebar-filter-input { padding-right: 2rem; }
+/* v1.5.1 (U P2-7): room for the ? AND the box's own scrollbar once it wraps --
+   a wrapped run name ran on under the ? at 2rem */
+#sidebar-filter-input { padding-right: 2.7rem; }
 #sidebar-search-help {
     position: static; left: auto; right: auto;
     width: auto; max-width: none;
