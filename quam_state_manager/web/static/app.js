@@ -3822,18 +3822,45 @@ window.SyncPanel = (function () {
         }
         Array.prototype.forEach.call(document.querySelectorAll("[data-armed='1']"), disarm);
         var lab = btn.querySelector(".sp-choice-label") || btn;
+        _clearExpired(btn);
         btn._armOrig = lab.innerHTML;
         lab.textContent = btn.getAttribute("data-arm-label") || "Press again to confirm";
         btn.setAttribute("data-armed", "1");
         btn.classList.add("sync-armed");
-        btn._armTimer = setTimeout(function () { disarm(btn); }, 5000);
+        // v1.5.1 (U P2-32): the seconds left show on the button (a corner
+        // badge: the label keeps its width), and running out is SAID -- a
+        // second press that came too late used to re-arm without a word
+        var left = ARM_S;
+        btn.setAttribute("data-arm-left", String(left));
+        btn._armTimer = setInterval(function () {
+            left -= 1;
+            if (left > 0) { btn.setAttribute("data-arm-left", String(left)); return; }
+            disarm(btn);
+            _expired(btn);
+        }, 1000);
+    }
+    var ARM_S = 5;
+    function _expired(btn) {
+        btn.classList.add("sync-arm-expired");
+        btn.setAttribute("data-arm-left", "expired");
+        btn._expTimer = setTimeout(function () { _clearExpired(btn); }, 2500);
+        if (window.showToast) {
+            window.showToast("Not done: the confirm press did not come within " + ARM_S
+                             + " s, so nothing was changed. Press twice to do it.", "info");
+        }
+    }
+    function _clearExpired(btn) {
+        clearTimeout(btn._expTimer);
+        btn.classList.remove("sync-arm-expired");
+        if (btn.getAttribute("data-armed") !== "1") btn.removeAttribute("data-arm-left");
     }
     function disarm(btn) {
         if (!btn || btn.getAttribute("data-armed") !== "1") return;
-        clearTimeout(btn._armTimer);
+        clearInterval(btn._armTimer);
         var lab = btn.querySelector(".sp-choice-label") || btn;
         if (btn._armOrig != null) lab.innerHTML = btn._armOrig;
         btn.removeAttribute("data-armed");
+        btn.removeAttribute("data-arm-left");
         btn.classList.remove("sync-armed");
     }
     function picks() {
@@ -3959,7 +3986,7 @@ window.SyncPanel = (function () {
         if (action === "discard") { arm(btn, null, function () { send(false); }); return; }
         send(btn.getAttribute("data-force") === "1");
     }
-    return { refresh: refresh, arm: arm, disarm: disarm, picks: picks, picked: picked,
+    return { refresh: refresh, arm: arm, disarm: disarm, armSeconds: ARM_S, picks: picks, picked: picked,
              merge: merge, reapply: reapply, retry: retry, takeOne: takeOne,
              recovery: recovery, isOpen: _syncPanelOpen };
 })();
