@@ -1402,6 +1402,8 @@ class HistoryManager:
         self._source_owner_memo: dict[str, tuple[str, str] | None] = {}
         # R2 M4: dir -> (dir mtime_ns, the folder its snapshots came from)
         self._holder_memo: dict[str, tuple[int, str | None]] = {}
+        # R2 M4: (folder, dir key, alias-file mtime) an explicit open claimed
+        self._claimed: set = set()
         self._sources_cache: dict[str, tuple[object, dict, str | None]] = {}
 
     def snapshot_ts_for_current_content(
@@ -2220,12 +2222,24 @@ class HistoryManager:
             me = self._folder_key(path)
             if me is not None and (self._load_aliases().get("owners") or {}).get(key) == me:
                 return key
+            # a dir this rule does not record a holder for (a named chip's, a
+            # swap-routed one) is claimed once per process, not on every open
+            done = (str(path), key, self._alias_mtime())
+            if done in self._claimed:
+                return key
             result = self._resolve_from_ident(self._cached_identity(path), path, claim=True)
         except OSError:
             return None
         with self._lock:
             self._chip_dir_memo.pop(str(path), None)
+            self._claimed.add((str(path), result[1], self._alias_mtime()))
         return result[1]
+
+    def _alias_mtime(self) -> int:
+        try:
+            return self._alias_path().stat().st_mtime_ns
+        except OSError:
+            return -1
 
     def _resolve_chip_dir_uncached(
         self, path: Path,
