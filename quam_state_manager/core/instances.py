@@ -102,6 +102,61 @@ def pid_alive(pid) -> bool:
         return False
 
 
+def process_start(pid) -> int | None:
+    """When the OS started *pid*, as an opaque integer (Windows: the creation
+    FILETIME; Linux: the start tick since boot), or None when it cannot be
+    read. With the pid it names ONE process: a later process that reuses the
+    pid has another start (v1.5.1 R2 M2). Only ever compared for equality."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(0x1000, False, pid)        # QUERY_LIMITED_INFORMATION
+            if not h:
+                return None
+            try:
+                times = [wintypes.FILETIME() for _ in range(4)]
+                if not k32.GetProcessTimes(h, *[ctypes.byref(t) for t in times]):
+                    return None
+                c = times[0]
+                return (int(c.dwHighDateTime) << 32) | int(c.dwLowDateTime)
+            finally:
+                k32.CloseHandle(h)
+        except Exception:   # noqa: BLE001 -- unknown, never a crash
+            return None
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+        return int(raw[raw.rindex(")") + 2:].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def process_alive(pid, start=None) -> bool:
+    """:func:`pid_alive`, and -- when *start* (a :func:`process_start` value
+    recorded by that process) is given and the OS can say -- still the SAME
+    process: a pid an unrelated process reuses reads as gone (R2 M2)."""
+    if not pid_alive(pid):
+        return False
+    if start is None:
+        return True
+    now = process_start(pid)
+    return now is None or now == start
+
+
+#: v1.5.1 (R2 MINOR 3): a registry entry carrying this field was written by an
+#: SM that keeps one tray checkpoint per process (owner file + peer files).
+#: An entry without it is an older SM: it writes the plain checkpoint whoever
+#: holds it.
+TRAY_PROTOCOL = 2
+
+
 # ----------------------------------------------------------------------
 # Records
 # ----------------------------------------------------------------------
@@ -119,6 +174,9 @@ class Peer:
     chip_name: str = ""
     project: str = ""
     roots: list[str] = field(default_factory=list)
+    #: R2 MINOR 3: ``TRAY_PROTOCOL`` for an SM that keeps per-process tray
+    #: checkpoints; 0 for an older SM
+    tray_protocol: int = 0
 
     @property
     def label(self) -> str:
@@ -176,6 +234,7 @@ def register(instance_path, *, port: int | None = None) -> None:
             "chip_name": (existing or {}).get("chip_name", ""),
             "project": (existing or {}).get("project", ""),
             "roots": list((existing or {}).get("roots") or []),
+            "tray_protocol": TRAY_PROTOCOL,
         }
         safe_io.atomic_write_json(path, record)
     except Exception:       # noqa: BLE001 — never block startup on bookkeeping
@@ -205,6 +264,7 @@ def update(instance_path, **fields) -> None:
         if "chip_path" in fields:
             record["chip_fs_key"] = _fs_key(fields["chip_path"])
         record["pid"] = os.getpid()
+        record["tray_protocol"] = TRAY_PROTOCOL
         record["updated_utc"] = _now_iso()
         safe_io.atomic_write_json(path, record)
     except Exception:       # noqa: BLE001
@@ -263,6 +323,8 @@ def peers(instance_path, *, include_self: bool = False) -> list[Peer]:
             chip_name=record.get("chip_name", "") or "",
             project=record.get("project", "") or "",
             roots=list(record.get("roots") or []),
+            tray_protocol=(record.get("tray_protocol")
+                           if isinstance(record.get("tray_protocol"), int) else 0),
         ))
     out.sort(key=lambda p: p.updated_utc, reverse=True)
     return out
