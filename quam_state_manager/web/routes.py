@@ -29470,6 +29470,8 @@ def state_review():
         "_state_review.html",
         sync=sv,
         read_error=read_error,
+        # v1.5.1 (SB-P2-1): what the panel's values were read from
+        live_hash=(_lp.content_hash() if _lp is not None else ""),
         total=len(entries),
         conflict_rows=conflict_rows,
         external_rows=external_rows,
@@ -30632,6 +30634,7 @@ def state_sync():
     _pre_sync_hash = wc.synced_live_hash
     pulled_other_changes = False
     replay = None
+    _moved_since_panel = False
     try:
         # Hold the build lock across sync + rebuild + replay (not just sync): the
         # scheduler worker's post-node _reconcile_cached_quam_ctx takes this SAME
@@ -30657,6 +30660,19 @@ def state_sync():
                 _unseen = _unseen_edit_refusal(ctx)
                 if _unseen is not None and not _unseen.get("nothing_pending"):
                     return jsonify(_discard_unseen_body(_unseen)), 409
+            # v1.5.1 (SB-P2-1): a merge with a "Keep mine" pick replaces the
+            # live value the panel NAMED in its Lost line. A lab write since
+            # the panel read live would be replaced unnamed: refused, under
+            # the build lock right before the pull.
+            _expect_live = (request.values.get("expect_live_hash") or "").strip()
+            _keeps = mode == "apply" and any(side == "mine" for side in picks.values())
+            if _keeps and _expect_live:
+                try:
+                    _live_now = working_copy.live_content_hash(wc)
+                except (OSError, ValueError):
+                    _live_now = None
+                if _live_now != _expect_live:
+                    return jsonify(_live_moved_since_panel_body()), 409
             _pre_leaves = _leaf_snapshot(ctx, lazy=True)   # the reload below replaces the docs
             # sync-ux 2026-09-25 (user decision 4): ↓ Take live used to drop the pending
             # edits for good. It keeps a backup first -- a labelled History
@@ -30692,6 +30708,10 @@ def state_sync():
                     ctx.pop("_pulled_docs", None)
                 pulled_other_changes = (_pre_sync_hash is not None
                                         and wc.synced_live_hash != _pre_sync_hash)
+                # v1.5.1 (SB-P2-1): a write that landed between the check above
+                # and the pull: the edits are re-applied in SM, nothing written
+                _moved_since_panel = bool(_keeps and _expect_live
+                                          and wc.synced_live_hash != _expect_live)
                 # Rebuild the store + derived objects from the freshly-synced copy.
                 ctx["_alarm_reason"] = "live-pull"
                 _rebuild_after_working_copy_replaced(ctx)   # the pull consumed the change
@@ -30720,6 +30740,13 @@ def state_sync():
                                     "changed (a pull never writes it); reload the page to see "
                                     "what SM holds now."),
                         "tray_html": _tray_html()}), 409
+
+    # v1.5.1 (SB-P2-1): live moved during the press -- the edits stay staged
+    # on the pulled content (a reapply), nothing is written, the panel re-reads
+    if mode == "apply" and _moved_since_panel:
+        _clear_reapply(ctx)
+        return jsonify({**_live_moved_since_panel_body(), "replay": replay,
+                        "tray_html": _tray_html(), **_sync_patch(ctx, _pre_leaves)}), 409
 
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
@@ -30754,6 +30781,15 @@ def state_sync():
                    if backup else None),
         **_sync_patch(ctx, _pre_leaves),
     })
+
+
+def _live_moved_since_panel_body() -> dict:
+    """v1.5.1 (SB-P2-1): the answer of a Keep-mine merge whose panel read an
+    older live chip than the one there now."""
+    return {"status": "live_moved", "mode": "apply",
+            "message": ("Nothing was written: the live chip changed after the panel "
+                        "showed its values, so Keep mine would replace a value it did "
+                        "not name. The panel now shows the live chip; pick again.")}
 
 
 def _live_unreadable_message(exc) -> str:

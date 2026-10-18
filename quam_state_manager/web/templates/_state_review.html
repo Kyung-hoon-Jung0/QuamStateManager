@@ -219,6 +219,10 @@
     {% if _can_merge %}
     <button type="button" class="sp-choice sp-choice-primary btn-sync primary sp-merge"
             id="sp-merge" {% if _nc %}disabled data-needs-picks="{{ _nc }}"{% endif %}
+            {#- v1.5.1 (SB-P2-1): the live chip this panel read; a Keep-mine
+                merge is refused when live moved since, so its "Lost:" line
+                names the value it actually replaces -#}
+            {% if live_hash is defined and live_hash %}data-live-hash="{{ live_hash }}"{% endif %}
             onclick="SyncPanel.merge(this)">
       <span class="sp-choice-label">&#8644; Pull &amp; apply <span class="sync-btn-sub">(merge)</span></span>
       <span class="sp-choice-what">{% if _nl - _nc > 0 %}Takes the live chip's {{ _nl - _nc }} other change{{ 's' if (_nl - _nc) != 1 }}, then writes your edits on top{% if _nc %}, with the side you picked for each field above{% endif %}.{% else %}Writes your edits to the live chip, with the side you picked for each field above.{% endif %}</span>

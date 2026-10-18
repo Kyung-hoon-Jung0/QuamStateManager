@@ -3917,9 +3917,12 @@ window.SyncPanel = (function () {
     function merge(btn) {
         var n0 = need(), p = picks();
         if (Object.keys(p).length < n0) { picked(); return; }
+        // v1.5.1 (SB-P2-1): the live chip this panel read -- the server
+        // refuses a Keep-mine merge over a live chip that moved since
+        var lh = btn.getAttribute("data-live-hash") || "";
         var run = function () {
             window.doStateSync("apply", false, false, null,
-                               n0 ? { informed: true, picks: p } : { informed: true });
+                               n0 ? { informed: true, picks: p, expectLiveHash: lh } : { informed: true });
         };
         if (!n0) { run(); return; }
         if (!btn.getAttribute("data-arm-label"))
@@ -4300,6 +4303,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
               + (opts && opts.ackCollision ? "&ack_collision=1" : "")
               + (opts && opts.ackTorn ? "&ack_torn=1" : "")
               + (opts && opts.picks ? "&picks=" + encodeURIComponent(JSON.stringify(opts.picks)) : "")
+              + (opts && opts.expectLiveHash ? "&expect_live_hash=" + encodeURIComponent(opts.expectLiveHash) : "")
               // v1.5.1 (SB-F4): the grid push confirm's own set, when it showed one
               + (opts && opts.seenPaths && opts.seenPaths.length
                  ? "&seen_paths=" + encodeURIComponent(JSON.stringify(opts.seenPaths)) : "")
@@ -4402,6 +4406,23 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 // the user's own press hit a collision: answer it where the
                 // choice lives (the panel re-reads with the fields to pick)
                 window.openReview({ force: true });
+                return;
+            }
+            if (data.status === "live_moved") {
+                // v1.5.1 (SB-P2-1): the live chip moved after the panel named
+                // what Keep mine replaces -- nothing written; the panel
+                // re-reads with the live values now
+                if (data.tray_html) {
+                    window._bulkSelfEdit = true;
+                    try { _swapPendingTray(data.tray_html); }
+                    finally { window._bulkSelfEdit = false; }
+                }
+                if (window.showToast) window.showToast(data.message, "warning", -1);
+                if (window.SyncPanel && window.SyncPanel.isOpen && window.SyncPanel.isOpen()) {
+                    window.SyncPanel.refresh();
+                } else if (window.openReview) {
+                    window.openReview({ force: true });
+                }
                 return;
             }
             if (data.status === "torn_live") {
