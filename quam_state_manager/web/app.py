@@ -518,6 +518,11 @@ def _purge_test_leftovers(instance_path: str) -> None:
                     pass
 
 
+#: how long the template warm-up yields to pages in all before it compiles on
+#: regardless (a server polled without pause still gets its templates warmed)
+_TPL_WARM_YIELD_MAX_S = 60.0
+
+
 def warm_templates(app: Flask) -> int:
     """Compile every template the app can render into Jinja's cache; returns
     how many compiled. Best-effort: a template that fails to compile here
@@ -527,9 +532,18 @@ def warm_templates(app: Flask) -> int:
         names = app.jinja_env.list_templates()
     except Exception:  # noqa: BLE001 -- a loader that cannot list: nothing to warm
         return 0
+    from quam_state_manager.core import activity
+    deadline = time.monotonic() + _TPL_WARM_YIELD_MAX_S
     for name in names:
         if not name.endswith(".html"):
             continue
+        # v1.5.1 (perf): yield to a page being served (the one yield-to-
+        # foreground rule). The warm starts with the server, exactly when the
+        # first page renders, and compiling every template beside it held the
+        # interpreter for most of that page's time (measured: the landing's
+        # first request 1.06 s with it running, the warm busy the whole time).
+        while activity.busy() and time.monotonic() < deadline:
+            time.sleep(0.05)
         try:
             app.jinja_env.get_template(name)
             n += 1
