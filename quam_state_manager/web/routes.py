@@ -1883,6 +1883,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _hub_sync_open(current)                 # docs/275
         _arm_type_alarm(current, "chip-open")   # docs/78
         _publish_instance_chip(current)         # docs/80
+        _claim_history_dir(current)             # R2 M4
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             _set_active_context(ctx_name, current)
@@ -1966,6 +1967,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _hub_sync_open(ctx)                 # docs/275
         _arm_type_alarm(ctx, "chip-open")   # docs/78
         _publish_instance_chip(ctx)         # docs/80
+        _claim_history_dir(ctx)             # R2 M4
         with _quam_cache_lock:
             if key not in _quam_cache:
                 # Evict the oldest CLEAN in-memory entry if the cache is full.
@@ -5440,6 +5442,20 @@ _ALARM_REASONS = {
     "run-state-load": "a run's state was loaded",
     "node-finished": "SM picked up an external write to the live chip",
 }
+
+
+def _claim_history_dir(ctx: dict | None) -> None:
+    """R2 M4: opening a live chip folder records which folder holds the
+    history dir it resolves to -- the explicit act a capture is the other of.
+    A read-only resolve (a list, a value history, a probe) never records it,
+    so a backup copy merely looked at cannot take the live chip's history.
+    Never raises; an archive or a run folder records nothing."""
+    if not ctx or ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
+        return
+    try:
+        _history().claim_history_dir(ctx["path"])
+    except Exception:  # noqa: BLE001 -- bookkeeping never blocks an open
+        logger.debug("history dir claim failed for %s", ctx.get("path"), exc_info=True)
 
 
 def _publish_instance_chip(ctx: dict | None) -> None:

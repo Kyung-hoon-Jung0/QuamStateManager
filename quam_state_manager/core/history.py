@@ -1400,6 +1400,8 @@ class HistoryManager:
         # and per shown folder the classified rows keyed on the snapshot
         # LIST OBJECT (the _content_ts_cache lifetime rule).
         self._source_owner_memo: dict[str, tuple[str, str] | None] = {}
+        # R2 M4: dir -> (dir mtime_ns, the folder its snapshots came from)
+        self._holder_memo: dict[str, tuple[int, str | None]] = {}
         self._sources_cache: dict[str, tuple[object, dict, str | None]] = {}
 
     def snapshot_ts_for_current_content(
@@ -2196,11 +2198,34 @@ class HistoryManager:
         Capture must key on exactly the content it snapshots — resolving
         from the live files again would race an experiment's rewrite (and
         an mtime-granularity-equal rewrite would even defeat the identity
-        cache). No memo: captures are rare and the dicts are in hand."""
+        cache). No memo: captures are rare and the dicts are in hand.
+
+        A capture is one of the two acts that RECORD which folder holds a
+        path-candidate dir (R2 M4); the other is an explicit open
+        (:meth:`claim_history_dir`). Every other resolve only reads."""
         ident = identity_from_dicts(state, wiring, Path(quam_state_path))
-        result = self._resolve_from_ident(ident, Path(quam_state_path))
+        result = self._resolve_from_ident(ident, Path(quam_state_path), claim=True)
         self._remember_chip_path(Path(quam_state_path), result)
         return result
+
+    def claim_history_dir(self, quam_state_path: str | Path) -> str | None:
+        """R2 M4: an explicit open of the chip folder *quam_state_path*
+        records which folder holds the dir it resolves to (as a capture
+        does). A read-only resolve never records it. Returns the dir key, or
+        None when the chip cannot be read. Cheap once recorded: the memoised
+        resolve already names a dir this folder holds."""
+        path = Path(quam_state_path)
+        try:
+            key = self.resolve_chip_dir(path)[1]
+            me = self._folder_key(path)
+            if me is not None and (self._load_aliases().get("owners") or {}).get(key) == me:
+                return key
+            result = self._resolve_from_ident(self._cached_identity(path), path, claim=True)
+        except OSError:
+            return None
+        with self._lock:
+            self._chip_dir_memo.pop(str(path), None)
+        return result[1]
 
     def _resolve_chip_dir_uncached(
         self, path: Path,
@@ -2208,7 +2233,7 @@ class HistoryManager:
         return self._resolve_from_ident(self._cached_identity(path), path)
 
     def _resolve_from_ident(
-        self, ident: ChipIdentity, path: Path | None = None,
+        self, ident: ChipIdentity, path: Path | None = None, *, claim: bool = False,
     ) -> tuple[Path, str, str, dict | None]:
         candidate_key = _sanitize_name(ident.path_name)
         conflict: dict | None = None
@@ -2260,7 +2285,12 @@ class HistoryManager:
                 # Unclaimed name. Adopt the chip's EXISTING dir first
                 # (fingerprint continuity — naming/renaming must never
                 # orphan history), else claim a pretty name-keyed dir.
-                existing = self._existing_dir_for(ident, candidate_key)
+                # R2 M3: from THIS folder's own path-candidate dir -- a copy
+                # under a same-named parent that gets a name must not adopt
+                # the other copy's history (nor any dir another existing
+                # folder holds)
+                existing = self._existing_dir_for(ident, candidate_key, path=path,
+                                                  claim=claim)
                 if existing is not None:
                     self._record_alias(name_key, existing.name, tok, ident.name)
                     return existing, existing.name, "extras", None
@@ -2278,7 +2308,7 @@ class HistoryManager:
             # name, so two copies of one chip whose parents share a name
             # landed in ONE dir (same design, same fingerprint) -- each
             # copy's value history listed the other's saves
-            dir_ = self._own_dir_for_folder(dir_, path)
+            dir_ = self._own_dir_for_folder(dir_, path, claim=claim)
         if conflict is not None:
             swap = dict(swap or {})
             swap.update(conflict)
@@ -2296,61 +2326,165 @@ class HistoryManager:
         except (OSError, ValueError):
             return False
 
-    def _own_dir_for_folder(self, dir_: Path, path: Path) -> Path:
-        """SB-F7: which folder a path-candidate dir belongs to.
-
-        The first live chip folder that resolves to a dir holds it (recorded
-        in the alias registry under ``owners``). Another folder that still
-        exists -- a copy whose parent folder has the same name -- gets its
-        own dir, ``<dir>__<path hash>``. The holder's folder gone (the chip
-        was moved or renamed) hands the dir to the folder asking, unless that
-        folder already has a dir of its own with history. Upgrading keeps
-        a single chip's history where it is: the first folder to ask after
-        the upgrade holds its dir. A run folder is never routed by this."""
-        from quam_state_manager.core import path_match
-        if "__chip_key__" in path.parts or self._is_run_folder(path):
-            return dir_
+    def _routes_as_folder(self, path: Path) -> bool:
+        """Does *path* take part in the per-folder dir rule (SB-F7)? Not a
+        history link, a dataset run folder or SM's own temporary capture."""
+        if "__chip_key__" in Path(path).parts or self._is_run_folder(path):
+            return False
         try:
             if self._root.parent.resolve() in Path(path).resolve().parents:
-                return dir_                 # SM's own temporary capture folder
+                return False                # SM's own temporary capture folder
         except OSError:
             pass
+        return True
+
+    @staticmethod
+    def _folder_key(path) -> str | None:
+        from quam_state_manager.core import path_match
         try:
-            me = path_match.fs_key(path)
+            return path_match.fs_key(path)
         except Exception:  # noqa: BLE001 -- no identity, no routing change
-            return dir_
+            return None
+
+    @staticmethod
+    def _same_holder(holder: str, path: Path) -> bool:
+        from quam_state_manager.core import path_match
+        hk, pk = _source_key(holder), _source_key(str(path))
+        if hk is not None and hk == pk:
+            return True
+        try:
+            return path_match.same_folder(holder, path)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _inferred_holder(self, dir_: Path) -> str | None:
+        """R2 M4: the folder a dir with NO recorded holder belongs to, read
+        off its snapshots' ``source_path`` -- the folder most of them were
+        captured from (the newest capture breaks a tie). Run ingests, run
+        folders and SM's own temporary captures are not evidence; a take-live
+        backup stands for its live chip. None when nothing says. Memoised per
+        dir mtime (a capture adds a subdir, which moves it)."""
+        try:
+            mt = dir_.stat().st_mtime_ns
+        except OSError:
+            return None
+        memo = self._holder_memo
+        hit = memo.get(str(dir_))
+        if hit is not None and hit[0] == mt:
+            return hit[1]
+        counts: dict = {}
+        try:
+            metas = self._list_snapshots_in_dir(dir_)
+        except Exception:  # noqa: BLE001 -- unreadable: nothing inferred
+            metas = []
+        for m in metas:
+            if m.trigger == "experiment":
+                continue
+            owner = self._source_owner(m.source_path)
+            if owner is None:
+                continue
+            key, shown = owner
+            try:
+                if not self._routes_as_folder(Path(shown)):
+                    continue
+            except (OSError, ValueError):
+                continue
+            n, newest, _shown = counts.get(key, (0, "", shown))
+            counts[key] = (n + 1, max(newest, m.timestamp or ""), shown)
+        best = None
+        if counts:
+            best = max(counts.values(), key=lambda t: (t[0], t[1]))[2]
+        memo[str(dir_)] = (mt, best)
+        return best
+
+    def _holder_of(self, dir_: Path) -> tuple[str | None, bool]:
+        """(the folder that holds *dir_*, whether that is RECORDED). The
+        record wins; with none, the snapshots' sources say (R2 M4)."""
+        holder = (self._load_aliases().get("owners") or {}).get(dir_.name)
+        if holder is not None:
+            return holder, True
+        return self._inferred_holder(dir_), False
+
+    @staticmethod
+    def _holder_there(holder: str) -> bool:
+        try:
+            return Path(holder).exists()
+        except OSError:
+            return True                      # unknown: never take it over
+
+    def _record_owners(self, updates: dict) -> None:
         data = self._load_aliases()
         owners = dict(data.get("owners") or {})
-        holder = owners.get(dir_.name)
-        if holder == me:
+        if all(owners.get(k) == v for k, v in updates.items()):
+            return
+        owners.update(updates)
+        self._save_aliases(dict(data, owners=owners))
+
+    def _own_dir_for_folder(self, dir_: Path, path: Path, *, claim: bool = False) -> Path:
+        """SB-F7: which folder a path-candidate dir belongs to.
+
+        One live chip folder holds a dir; another folder that still exists --
+        a copy whose parent folder has the same name -- gets its own dir,
+        ``<dir>__<path hash>``. The holder's folder gone (the chip was moved
+        or renamed) hands the dir to the folder asking, unless that folder
+        already has a dir of its own with history.
+
+        R2 M4: the holder is the one recorded in the alias registry
+        (``owners``); a dir with none recorded (an instance from before
+        v1.5.1) belongs to the folder its snapshots were captured from, never
+        simply to whichever folder happens to be resolved first. Ownership is
+        RECORDED only when *claim* (a live capture, an explicit open) -- a
+        read-only resolve (a list, a value history, a probe) never records
+        it. A run folder is never routed by this."""
+        if not self._routes_as_folder(path):
+            return dir_
+        me = self._folder_key(path)
+        if me is None:
+            return dir_
+        holder, recorded = self._holder_of(dir_)
+        if holder is None:
+            if claim:
+                self._record_owners({dir_.name: me})     # first to claim an unowned dir
+            return dir_
+        if holder == me or self._same_holder(holder, path):
+            if claim and not recorded:
+                self._record_owners({dir_.name: me})
             return dir_
         own_key = _sanitize_name(
             f"{dir_.name}__{hashlib.sha1(me.encode('utf-8')).hexdigest()[:6]}")
-        if holder is not None:
-            try:
-                same = path_match.same_folder(holder, path)
-            except Exception:  # noqa: BLE001
-                same = False
-            if same:
-                return dir_
-            try:
-                holder_there = Path(holder).exists()
-            except OSError:
-                holder_there = True          # unknown: never take it over
-            if holder_there or self._dir_has_snapshots(self._root / own_key):
-                if owners.get(own_key) != me:
-                    owners[own_key] = me
-                    self._save_aliases(dict(data, owners=owners))
-                return self._root / own_key
-        owners[dir_.name] = me              # first to ask, or the holder moved
-        self._save_aliases(dict(data, owners=owners))
+        if self._holder_there(holder) or self._dir_has_snapshots(self._root / own_key):
+            if claim:
+                upd = {own_key: me}
+                if not recorded:
+                    upd[dir_.name] = self._folder_key(holder) or holder
+                self._record_owners(upd)
+            return self._root / own_key
+        if claim:
+            self._record_owners({dir_.name: me})          # the holder moved
         return dir_
 
-    def _existing_dir_for(self, ident: ChipIdentity,
-                          candidate_key: str) -> Path | None:
-        """An EXISTING dir already holding this chip's snapshots, or None."""
+    def _held_elsewhere(self, dir_: Path, path: Path | None) -> bool:
+        """R2 M3: *dir_* is held (recorded, or by its snapshots' sources) by
+        another chip folder that still exists."""
+        if path is None or not self._routes_as_folder(path):
+            return False
+        holder, _rec = self._holder_of(dir_)
+        if holder is None or self._same_holder(holder, path):
+            return False
+        return self._holder_there(holder)
+
+    def _existing_dir_for(self, ident: ChipIdentity, candidate_key: str, *,
+                          path: Path | None = None, claim: bool = False) -> Path | None:
+        """An EXISTING dir already holding this chip's snapshots, or None.
+
+        R2 M3: with *path*, the candidate is that folder's OWN path-candidate
+        dir (:meth:`_own_dir_for_folder`) and a matching dir another existing
+        folder holds is never adopted -- naming one of two copies used to
+        file it back into the other copy's history."""
         fp = ident.fingerprint
         candidate = self._root / candidate_key
+        if path is not None:
+            candidate = self._own_dir_for_folder(candidate, path, claim=claim)
         if self._dir_has_snapshots(candidate):
             if fp is None:
                 return candidate
@@ -2359,7 +2493,7 @@ class HistoryManager:
                 return candidate
         if fp is None:
             return None
-        return self._find_matching_chip_dir(fp, exclude=candidate)
+        return self._find_matching_chip_dir(fp, exclude=candidate, asking=path)
 
     def _claim_name_dir(self, name_key: str, tok: str | None,
                         display: str) -> str | None:
@@ -2501,8 +2635,11 @@ class HistoryManager:
 
     def _find_matching_chip_dir(
         self, fp: ChipFingerprint, *, exclude: Path | None = None,
+        asking: Path | None = None,
     ) -> Path | None:
-        """Find an existing chip dir whose latest snapshot's fingerprint == fp."""
+        """Find an existing chip dir whose latest snapshot's fingerprint == fp.
+        With *asking* (a chip folder), a dir another existing folder holds is
+        skipped (R2 M3)."""
         if not self._root.exists():
             return None
         try:
@@ -2516,6 +2653,8 @@ class HistoryManager:
                     continue
                 sample = self._sample_fingerprint(d)
                 if sample is not None and align(fp, sample) == ALIGN_ALIGNED:
+                    if asking is not None and self._held_elsewhere(d, asking):
+                        continue
                     return d
         except OSError:
             return None
