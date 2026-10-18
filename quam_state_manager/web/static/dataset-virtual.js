@@ -1900,6 +1900,32 @@
         return best;
     }
 
+    /* v1.5.1 (SB-P2-6): a data folder found GONE while the page is open --
+       its runs arrive as vanished, the note names the folder as the sidebar
+       does; a folder whose runs arrive again is no longer named. */
+    function _showGone(gone, updated) {
+        var el = document.getElementById('ds-gone-note');
+        if (!el) return;
+        var back = {};
+        (updated || []).forEach(function (r) { if (r && r.f) back[r.f] = true; });
+        el.querySelectorAll('.ds-gone-one').forEach(function (s) {
+            if (back[s.getAttribute('data-folder-key')]) s.remove();
+        });
+        gone.forEach(function (g) {
+            if (!g || !g.key || el.querySelector('.ds-gone-one[data-folder-key="' + g.key + '"]')) return;
+            var s = document.createElement('span');
+            s.className = 'ds-gone-one';
+            s.setAttribute('data-folder-key', g.key);
+            s.appendChild(document.createTextNode('Data folder not found: '));
+            var c = document.createElement('code');
+            c.textContent = g.path || '';
+            s.appendChild(c);
+            s.appendChild(document.createTextNode('. Its runs are not listed; re-point or remove it in the sidebar.'));
+            el.appendChild(s);
+        });
+        el.hidden = !el.querySelector('.ds-gone-one');
+    }
+
     function applyDelta(data) {
         var changed = false;
         var newUids = [];          // genuinely-new runs (insert, not in-place update)
@@ -1953,6 +1979,7 @@
             }
             state.rows = compact;
         }
+        _showGone(data.gone || [], updated);   // v1.5.1 (SB-P2-6)
         state.pollTs = Math.max(state.pollTs, data.now);   // monotonic — out-of-order responses can't rewind
         // Arrival visibility (docs/104 #3): inserted rows flash on their next
         // render, and stay counted in the pill until acknowledged (pill click

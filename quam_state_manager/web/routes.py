@@ -40255,6 +40255,30 @@ def _active_dataset_stores(*, fast: bool = False,
     return result
 
 
+def _folder_gone(path) -> bool:
+    """v1.5.1 (SB-P2-6): the folder is not found any more (moved, renamed,
+    deleted) -- the scanner's rule for the sidebar's "not found"; a folder
+    that is only unreadable for now is not gone."""
+    try:
+        os.stat(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _gone_dataset_folders() -> list[dict]:
+    """v1.5.1 (SB-P2-6): the Datasets roots the workspace lists whose folder
+    is gone -- the page names them instead of dropping their runs silently."""
+    ws = current_app.config.get("workspace")
+    out: list[dict] = []
+    for r in (getattr(ws, "root_folders", None) or ()):
+        if _folder_gone(r):
+            out.append({"key": _folder_key(Path(r)), "path": str(r)})
+    return out
+
+
 def _retired_dataset_keys() -> set[str]:
     """QA datasets-r2-26: folder keys the user took out of the workspace with
     the sidebar x (cleared again by a re-add). Only the single-folder drift
@@ -40694,7 +40718,8 @@ def _datasets_view(view_mode: str):
                                active_folder="", folders=[], folders_json="[]",
                                no_workspace=True, curated_keys_json="[]",
                                view_mode=view_mode, collection_tags=[],
-                               search=search, search_value=search_value)
+                               search=search, search_value=search_value,
+                               gone_folders=_gone_dataset_folders())
     import time as _t
     poll_ts = _t.time()
     date = request.values.get("date")
@@ -40721,6 +40746,7 @@ def _datasets_view(view_mode: str):
         scope_project=scope_project,
         scope_keys=scope_keys,
         scope_keys_json=json.dumps(scope_keys, separators=(",", ":")),
+        gone_folders=_gone_dataset_folders(),     # v1.5.1 (SB-P2-6)
         view_mode=view_mode,
         collection_tags=pl["collection_tags"],
         scan_partial=scan_partial,
@@ -41222,7 +41248,19 @@ def datasets_changes_since():
     if names is not None and not names.active:
         names = None
     from quam_state_manager.core.dataset import yielding_scan
+    gone: list[dict] = []
     for fol in active:
+        # v1.5.1 (SB-P2-6): a data folder that is GONE (not found) while a page
+        # shows it: its runs leave the table (as vanished) and the folder is
+        # named, as the sidebar names it -- an open page kept listing them
+        if _folder_gone(fol["path"]):
+            gone.append({"key": fol["key"], "path": fol["path"]})
+            try:
+                vanished.extend(_dataset_uid(fol["key"], r.run_id)
+                                for r in fol["store"].runs_snapshot())
+            except Exception:  # noqa: BLE001 -- the note still says it
+                logger.warning("changes-since: runs of gone %s", fol.get("path"), exc_info=True)
+            continue
         if time.monotonic() >= deadline:
             skipped += 1
             now = ts if now is None else min(now, ts)
@@ -41295,7 +41333,10 @@ def datasets_changes_since():
                     # symptom on this path used to present identically as
                     # "the table stopped updating".
                     "scan_ms": round(scan_ms_total, 1),
-                    "folders": len(active)})
+                    "folders": len(active),
+                    # v1.5.1 (SB-P2-6): only when a folder IS gone, so the
+                    # pinned contract keys stay as they were otherwise
+                    **({"gone": gone} if gone else {})})
 
 
 @bp.route("/datasets/rescan", methods=["POST"])
