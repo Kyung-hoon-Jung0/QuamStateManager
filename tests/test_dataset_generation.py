@@ -219,9 +219,9 @@ class TestMetaGeneration:
         seen = {}
         real_save = store._save_tags
 
-        def spying_save(touched=None):
+        def spying_save(touched=None, **kw):
             seen["gen"], seen["meta"] = store.meta_generation, _meta(store)
-            return real_save(touched)
+            return real_save(touched, **kw)
 
         monkeypatch.setattr(store, "_save_tags", spying_save)
         args = {"toggle_bookmark": (1,), "add_tag": (1, "new"), "remove_tag": (1, "good"),
@@ -239,7 +239,7 @@ class TestMetaGeneration:
             store.add_tag(1, "good")
         seen = {}
 
-        def failing_save(touched=None):
+        def failing_save(touched=None, **kw):
             seen["gen"] = store.meta_generation
             seen["meta"] = _meta(store)
             raise OSError("read-only")

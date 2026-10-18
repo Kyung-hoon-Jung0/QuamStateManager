@@ -2825,7 +2825,7 @@ class DatasetStore:
                 self.runs[rid].note = note
         self._note_meta_change()
 
-    def _save_tags(self, touched: int | None = None):
+    def _save_tags(self, touched: int | None = None, op: tuple | None = None):
         """Atomically save quashboard_tags.json, merging over what is on disk.
 
         Uses :func:`safe_io.atomic_write_json` so the write goes through the
@@ -2847,35 +2847,82 @@ class DatasetStore:
 
         ``touched=None`` keeps the whole-file write, which is what the
         legacy-bookmark migration needs (it rewrites every key by design).
+
+        **v1.5.1 (SB-F9).** The per-run merge still lost tags: each process
+        wrote ITS whole list for the run, so four tags added from two
+        processes ended as the last two. With *op* -- ``("add", tag)``,
+        ``("remove", tag)``, ``("favorite", bool)``, ``("note", text)`` -- the
+        change itself is applied to what is on disk, under a lock every SM
+        process on this machine takes, and this store adopts the result.
         """
-        if touched is None:
-            safe_io.atomic_write_json(self._tags_path, self._tags_data)
-            return
+        from quam_state_manager.core import xlock
+        with xlock.held(self._tags_xlock_path(), timeout=10.0):
+            if touched is None:
+                safe_io.atomic_write_json(self._tags_path, self._tags_data)
+                return
 
-        rid_str = str(touched)
-        # scan_json: our own sidecar, normally absent on a fresh folder — the
-        # live-file retry ladder would charge 0.9s for that normality.
-        on_disk = safe_io.scan_json(self._tags_path) if self._tags_path.exists() else None
-        if not isinstance(on_disk, dict):
-            safe_io.atomic_write_json(self._tags_path, self._tags_data)
-            return
+            rid_str = str(touched)
+            # scan_json: our own sidecar, normally absent on a fresh folder — the
+            # live-file retry ladder would charge 0.9s for that normality.
+            on_disk = safe_io.scan_json(self._tags_path) if self._tags_path.exists() else None
+            if not isinstance(on_disk, dict):
+                safe_io.atomic_write_json(self._tags_path, self._tags_data)
+                return
 
-        merged = dict(on_disk)
-        for section in ("tags", "notes"):
-            disk_section = dict(merged.get(section) or {})
-            mine = (self._tags_data.get(section) or {}).get(rid_str)
-            if mine in (None, [], ""):
-                disk_section.pop(rid_str, None)
+            merged = dict(on_disk)
+            for section in ("tags", "notes"):
+                merged[section] = dict(merged.get(section) or {})
+            if op is None:
+                for section in ("tags", "notes"):
+                    mine = (self._tags_data.get(section) or {}).get(rid_str)
+                    if mine in (None, [], ""):
+                        merged[section].pop(rid_str, None)
+                    else:
+                        merged[section][rid_str] = mine
+            elif op[0] == "note":
+                if op[1]:
+                    merged["notes"][rid_str] = op[1]
+                else:
+                    merged["notes"].pop(rid_str, None)
             else:
-                disk_section[rid_str] = mine
-            merged[section] = disk_section
-        # Our migration clears `bookmarks`; never resurrect it from a stale read.
-        merged["bookmarks"] = self._tags_data.get("bookmarks") or []
-        safe_io.atomic_write_json(self._tags_path, merged)
+                tags = [t for t in (merged["tags"].get(rid_str) or []) if isinstance(t, str)]
+                kind, arg = op
+                if kind == "add" and arg not in tags:
+                    tags.append(arg)
+                elif kind == "remove":
+                    tags = [t for t in tags if t != arg]
+                elif kind == "favorite":
+                    if arg and FAVORITE_TAG not in tags:
+                        tags.append(FAVORITE_TAG)
+                    elif not arg:
+                        tags = [t for t in tags if t != FAVORITE_TAG]
+                if tags:
+                    merged["tags"][rid_str] = tags
+                else:
+                    merged["tags"].pop(rid_str, None)
+            # Our migration clears `bookmarks`; never resurrect it from a stale read.
+            merged["bookmarks"] = self._tags_data.get("bookmarks") or []
+            safe_io.atomic_write_json(self._tags_path, merged)
         # Adopt the union so entries another window added are visible here too,
         # without waiting for the next rescan to reload the file.
         self._tags_data = merged
+        run = self.runs.get(int(touched)) if str(touched).lstrip("-").isdigit() else None
+        if run is not None:              # its key may have gone (last tag removed)
+            run.tags = list(merged["tags"].get(rid_str) or [])
+            run.bookmarked = FAVORITE_TAG in run.tags
+            run.note = merged["notes"].get(rid_str) or ""
         self._apply_tags_to_runs()
+
+    def _tags_xlock_path(self) -> Path:
+        """The machine-wide lock of this folder's tags file -- in the user's
+        temp dir, never a second file inside the data folder."""
+        import tempfile
+        try:
+            resolved = str(self._tags_path.resolve())
+        except OSError:
+            resolved = os.path.abspath(str(self._tags_path))
+        digest = hashlib.sha1(os.path.normcase(resolved).encode("utf-8")).hexdigest()[:20]
+        return Path(tempfile.gettempdir()) / "quam-sm-locks" / f"tags-{digest}.lock"
 
     def _apply_tags_to_runs(self):
         """Re-project ``self._tags_data`` onto the loaded RunInfo objects.
@@ -2932,7 +2979,7 @@ class DatasetStore:
                 self.runs[run_id].bookmarked = new_state
             self._note_meta_change()
             try:
-                self._save_tags(run_id)
+                self._save_tags(run_id, op=("favorite", new_state))
             except (OSError, ValueError, TypeError):
                 # Roll back to the prior state so the user sees the failure
                 # rather than a half-applied toggle. Catch any write failure
@@ -2967,7 +3014,7 @@ class DatasetStore:
                 self.runs[run_id].bookmarked = FAVORITE_TAG in tags_dict[rid_str]
             self._note_meta_change()
             try:
-                self._save_tags(run_id)
+                self._save_tags(run_id, op=("add", tag))
             except (OSError, ValueError, TypeError):
                 # Any write failure rolls back the in-memory mutation (C34).
                 if not already_present:
@@ -2977,7 +3024,8 @@ class DatasetStore:
                         self.runs[run_id].bookmarked = FAVORITE_TAG in tags_dict[rid_str]
                 self._note_meta_change()
                 raise
-            return list(tags_dict[rid_str])
+            # SB-F9: the run's tags as stored, another window's included
+            return list((self._tags_data.get("tags") or {}).get(rid_str) or [])
 
     def remove_tag(self, run_id: int, tag: str) -> list[str]:
         """Remove a tag from a run. Returns updated tag list."""
@@ -2995,7 +3043,7 @@ class DatasetStore:
                 self.runs[run_id].bookmarked = FAVORITE_TAG in self.runs[run_id].tags
             self._note_meta_change()
             try:
-                self._save_tags(run_id)
+                self._save_tags(run_id, op=("remove", tag))
             except (OSError, ValueError, TypeError):
                 # Any write failure rolls back the in-memory mutation (C34).
                 if removed:
@@ -3005,7 +3053,7 @@ class DatasetStore:
                         self.runs[run_id].bookmarked = FAVORITE_TAG in tags_dict[rid_str]
                 self._note_meta_change()
                 raise
-            return list(tags_dict.get(rid_str, []))
+            return list((self._tags_data.get("tags") or {}).get(rid_str) or [])
 
     class NoteConflict(Exception):
         """datasets-r2-12: the note changed since the editor rendered it (another
@@ -3048,7 +3096,7 @@ class DatasetStore:
                 self.runs[run_id].note = note
             self._note_meta_change()
             try:
-                self._save_tags(run_id)
+                self._save_tags(run_id, op=("note", note))
             except (OSError, ValueError, TypeError):
                 # Any write failure rolls back the in-memory mutation (C34).
                 if previous is None:
