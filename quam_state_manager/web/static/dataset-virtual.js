@@ -707,12 +707,48 @@
     }
 
     // ── colgroup + header builders (rebuilt on any visibility/sort change) ──
+    /* v1.5.1 (U P2-2): the default columns sum to ~1088 px, wider than the
+       959 px pane at 1280, and Tags sat off-screen behind a scrollbar. Until
+       the user sizes them, Experiment, Tags and Folder give up width -- in
+       proportion to what each has above its floor -- so the table fits its
+       pane; a column the user resized keeps the user's width. */
+    var FIT_FLOOR = { exp: 150, tags: 96, folder: 72 };
+    function fittedWidths(cols) {
+        var w = cols.map(colWidth);
+        var scroll = document.getElementById('datasets-scroll');
+        var avail = scroll ? scroll.clientWidth : 0;
+        if (!(avail > 0)) return w;
+        var over = w.reduce(function (a, b) { return a + b; }, 0) - avail;
+        if (over <= 0) return w;
+        var spare = [], total = 0;
+        cols.forEach(function (c, i) {
+            var s = (FIT_FLOOR[c.key] != null && colState.widths[c.key] == null)
+                ? Math.max(0, w[i] - FIT_FLOOR[c.key]) : 0;
+            spare.push(s);
+            total += s;
+        });
+        if (!total) return w;
+        var give = Math.min(over, total);
+        return w.map(function (x, i) { return spare[i] ? Math.floor(x - give * spare[i] / total) : x; });
+    }
     function buildColgroup() {
         var cg = document.getElementById('datasets-colgroup');
         if (!cg) return;
-        cg.innerHTML = visibleColumns().map(function (c) {
-            return '<col data-col-key="' + c.key + '" style="width:' + colWidth(c) + 'px">';
+        var cols = visibleColumns(), widths = fittedWidths(cols);
+        cg.innerHTML = cols.map(function (c, i) {
+            return '<col data-col-key="' + c.key + '" style="width:' + widths[i] + 'px">';
         }).join('');
+        // the pane can change width (split bar, window): fit again when it does
+        var scroll = document.getElementById('datasets-scroll');
+        if (scroll && !scroll._dsFitRO && typeof ResizeObserver !== 'undefined') {
+            scroll._dsFitW = scroll.clientWidth;
+            scroll._dsFitRO = new ResizeObserver(function () {
+                if (!scroll.isConnected) { scroll._dsFitRO.disconnect(); return; }
+                var cw = scroll.clientWidth;
+                if (cw !== scroll._dsFitW) { scroll._dsFitW = cw; buildColgroup(); }
+            });
+            scroll._dsFitRO.observe(scroll);
+        }
     }
     function buildHeader() {
         var thead = document.getElementById('datasets-thead');
