@@ -4627,6 +4627,41 @@ def _redo_mark(ctx, store) -> None:
         ctx["redo_seq"] = store.mutation_seq
 
 
+def _redo_across_pull(ctx, store, pre_seq, pre_leaves) -> None:
+    """v1.5.1 (SB-P2-2): a pull (Auto-Sync, Take live, re-apply) rebuilds the
+    store, and the seq handshake then treated the redo history as a dead
+    timeline: "Nothing to redo" after any Auto-Sync pull. The pull is not an
+    edit of the user's: when the redo history was intact before it, holds
+    only in-SM frames, and the pull changed none of the paths a redo would
+    write, it stays valid. Otherwise it is dropped and the next redo SAYS why
+    (``redo_fork_note``), naming the path the pull took."""
+    frames = _redo_stack(ctx)
+    if ctx is None or store is None or not frames or ctx.get("redo_seq") != pre_seq:
+        return
+    plain = all(f.get("kind") != "jrn_live" and not f.get("gid") for f in frames)
+    redo_paths = {e.get("path") for f in frames for e in (f.get("entries") or ())}
+    patch = _sync_patch(ctx, pre_leaves) if plain else {"structural": True, "changes": []}
+    changed = [c.get("dot_path") for c in (patch.get("changes") or ())]
+    hit = None
+    if patch.get("structural"):
+        hit = ""
+    else:
+        for c in changed:
+            if any(p and (c == p or c.startswith(p + ".") or p.startswith(c + "."))
+                   for p in redo_paths):
+                hit = c
+                break
+    if hit is None:
+        _redo_mark(ctx, store)            # the pull is not a fork: redo stays
+        return
+    frames.clear()
+    ctx["redo_fork_note"] = {
+        "seq": store.mutation_seq,
+        "text": ("the live chip's update changed " + hit + ", which the redo would "
+                 "have overwritten" if hit else
+                 "the live chip's update changed the document's shape")}
+
+
 def _redo_push_group(ctx, store, entries, *, mark: bool = True,
                      keep_jrn: bool = True) -> None:
     """Push one popped user action (entries newest-first, exactly as
@@ -28307,6 +28342,13 @@ def redo():
         _invalidate_engine_cache()
         all_fents.append(fents)
     if not all_fents:
+        # v1.5.1 (SB-P2-2): a pull that had to drop the redo history said why
+        _note = ctx.pop("redo_fork_note", None) if ctx else None
+        if _note and _note.get("seq") == store.mutation_seq:
+            return _redo_response(
+                f"Nothing to redo — {_note['text']}.", [],
+                extra={"requested": n_req, "consumed": 0, "stopped": "forked",
+                       "level": "warning", "live": False})
         if _forked:
             return _redo_response(
                 "Nothing to redo — the state changed after your undo "
@@ -29085,7 +29127,9 @@ def auto_sync_pull():
                     _discarded_n = max(_discarded_n, _late_n)
                     discarding = True
                 ctx["_alarm_reason"] = "live-pull"
+                _seq0 = getattr(_st, "mutation_seq", None)
                 _rebuild_after_working_copy_replaced(ctx)
+                _redo_across_pull(ctx, ctx.get("store"), _seq0, _pre_leaves)   # v1.5.1 (SB-P2-2)
                 _sp0 = None          # adopted: nothing to put back
             # Every other caller of the rebuild pairs it with this. Leaving the
             # stash behind lets a later "Pull & apply (merge)" replay the very
@@ -30714,11 +30758,17 @@ def state_sync():
                                           and wc.synced_live_hash != _expect_live)
                 # Rebuild the store + derived objects from the freshly-synced copy.
                 ctx["_alarm_reason"] = "live-pull"
+                _seq0 = store.mutation_seq
                 _rebuild_after_working_copy_replaced(ctx)   # the pull consumed the change
                 if mode in ("reapply", "apply") and pending:
                     replay = _replay_updates(ctx["modifier"], pending)
                     _invalidate_engine_cache(ctx)  # replay used _defer_hooks — refresh caches (ctx-pinned, r16 6)
                     ctx["working_dirty"] = False  # edits unsaved in the change log, not saved
+                if mode == "reapply":
+                    # v1.5.1 (SB-P2-2): taking the live chip's other changes
+                    # (the Auto-Sync merge presses this) keeps a redo whose
+                    # paths it did not touch
+                    _redo_across_pull(ctx, store, _seq0, _pre_leaves)
     except FileNotFoundError:
         # SA-F9 (b): say WHICH part is gone -- a missing state.json is not a
         # missing folder
