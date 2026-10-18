@@ -846,6 +846,15 @@ def checkpoint(ctx) -> None:
     _flush_one(p)
 
 
+def durable(ctx) -> bool:
+    """v1.5.1 (SB-P2-8): *ctx*'s staged rows survive a closed tab and a
+    restart -- its tray is bound to a checkpoint whose writes are not
+    failing. A page then has nothing of the tray's to warn about on leave."""
+    p = (ctx or {}).get("_pending_tray")
+    return bool(p is not None and not p.gone() and not p.failing
+                and p.store is ctx.get("store"))
+
+
 def note_flags(ctx) -> None:
     """A request may have moved the context flags (dirty / stash / wholesale
     base) after its last log mutation: include them in the chip's next write."""

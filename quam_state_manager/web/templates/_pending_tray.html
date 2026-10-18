@@ -17,6 +17,8 @@
      {% if last_live_undo is defined and last_live_undo %}data-live-undo-seq="{{ last_live_undo.seq }}"
      data-live-undo-msg="{{ last_live_undo.message }}"{% endif %}
      data-working-dirty="{{ '1' if working_dirty else '0' }}"
+     {# v1.5.1 (SB-P2-8): the staged rows are checkpointed on disk #}
+     {% if tray_durable is defined and tray_durable %}data-tray-durable="1"{% endif %}
      {# sync-ux 2026-09-25: what the status control shows. The drift poll re-renders the
         tray exactly when the server's signature differs -- raised OR lowered
         (SE-05), dirty OR clean (SE-01). #}

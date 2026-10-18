@@ -6038,6 +6038,8 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # v1.5.1 (3b): and what the tray's undo button removes next, same rule
         "undo_top": (_undo_top_of(_modifier().get_change_log())
                      if _modifier() else None),
+        # v1.5.1 (SB-P2-8): and whether the staged rows are checkpointed, same rule
+        "tray_durable": _tray_durable(),
         # QA liveedit-r2-09: and the drift poll's edit_seq, same rule
         "edit_seq": _edit_seq(),
         # QA liveedit-r2-16: and which ✕ takes an FSP bundle, same rule
@@ -6867,6 +6869,8 @@ def _home_landing(config_exists, session):
         last_project=session.get("last_project"),
         resume_path=resume_path,
         resume_name=_chip_display_name(Path(resume_path)) if resume_path else "",
+        # v1.5.1 (U P2-31): the edits waiting in it, named on the Resume card
+        resume_waiting=_waiting_note(resume_path) if resume_path else "",
         recent_paths=recents[:3],
         # True first run (no session history at all) → the landing's
         # "Getting started" manual starts expanded; any history collapses it.
@@ -10455,6 +10459,18 @@ def _change_paths_of(changes) -> list | None:
     return out if len(out) <= _TRAY_PATHS_MAX else None
 
 
+def _tray_durable() -> bool:
+    """v1.5.1 (SB-P2-8): the active chip's staged rows are checkpointed on
+    disk (they survive a closed tab and a restart), so leaving a page loses
+    nothing of the tray's -- the page's "Leave site?" asks only for what is
+    truly unsaved there (typed, not committed)."""
+    try:
+        from quam_state_manager.core import pending_tray
+        return pending_tray.durable(_active_ctx())
+    except Exception:  # noqa: BLE001 -- unknown is "not durable": the guard stays
+        return False
+
+
 def _undo_top_of(changes) -> dict | None:
     """v1.5.1 (3b): what the tray undo button removes next when the change log holds
     edits -- the newest entry's path, how many entries share its group (one
@@ -10546,9 +10562,40 @@ def _resume_offer() -> dict | None:
         path = data.get("last_quam_state_path")
         if not isinstance(path, str) or not path or not (Path(path) / "state.json").is_file():
             return None
-        return {"path": path, "name": _chip_display_name(Path(path))}
+        return {"path": path, "name": _chip_display_name(Path(path)),
+                # v1.5.1 (U P2-31): the edits waiting in it are named
+                "waiting": _waiting_note(path)}
     except (OSError, ValueError, TypeError):
         return None
+
+
+def _waiting_note(path) -> str:
+    """v1.5.1 (U P2-31, SB-P2-5): what unapplied work SM keeps for the chip
+    at *path*, as a short phrase ("" when none): staged edits waiting in its
+    tray checkpoint, and/or a saved version not applied yet."""
+    try:
+        from quam_state_manager.core import moved_work
+        w = moved_work.pending_work(current_app.instance_path, path)
+    except Exception:  # noqa: BLE001 -- a notice never breaks a page
+        return ""
+    bits = []
+    if w.get("rows"):
+        n = int(w["rows"])
+        bits.append(f"{n} staged edit{'s' if n != 1 else ''} waiting")
+    if w.get("saved"):
+        bits.append("a saved version not applied yet")
+    return " and ".join(bits)
+
+
+@bp.app_template_global("gone_last_chip")
+def _gone_last_chip() -> dict | None:
+    """v1.5.1 (SB-P2-5): the chip open last time whose folder was gone at
+    startup (the session forgets it), with the unapplied work SM keeps for
+    it -- shown on the landing while no chip is open, instead of a clean
+    landing that says nothing."""
+    if _active_ctx():
+        return None
+    return current_app.config.get("_gone_last_chip")
 
 
 def _safe_next(raw) -> str | None:
@@ -10822,6 +10869,7 @@ def _render_tray(*, oob: bool) -> str:
         # is told (the tray re-renders on every foreign edit_seq move).
         undo_next=_undo_next_preview(_active_ctx(), changes),
         undo_top=_undo_top_of(changes),
+        tray_durable=_tray_durable(),
         last_live_undo=(_active_ctx() or {}).get("last_live_undo"),
         # sync-ux 2026-09-25: the ONE status control's verdict (core/sync_status.py)
         sync=_sync_view(),
@@ -38873,6 +38921,15 @@ def _ensure_workspace_loaded() -> None:
             if last:
                 last_path = Path(last)
                 if not (last_path.is_dir() and (last_path / "state.json").exists()):
+                    # v1.5.1 (SB-P2-5): say so on the landing, with the work
+                    # SM keeps for it, before the session forgets the path
+                    try:
+                        current_app.config["_gone_last_chip"] = {
+                            "path": str(last), "name": _chip_display_name(last_path),
+                            "waiting": _waiting_note(last),
+                            "where": str(working_copy.working_state_root(current_app.instance_path))}
+                    except Exception:  # noqa: BLE001 -- a notice never blocks startup
+                        logger.debug("gone last chip note failed", exc_info=True)
                     _drop_bad_path(last)
 
         if not _rehydrated:

@@ -2737,6 +2737,11 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .landing-resume { display: flex; align-items: center; gap: 0.5rem; margin: 0.6rem 0; }
 .landing-resume-form { margin: 0; }
 .landing-resume-btn { width: auto; margin: 0; }
+/* v1.5.1 (SB-P2-5, U P2-31): a gone last chip, and the edits waiting in one */
+.landing-gone { margin: 0.6rem 0; padding: 0.5rem 0.75rem; border-left: 3px solid var(--pico-del-color, #c0392b);
+    background: var(--pico-card-background-color); font-size: 0.9rem; }
+.landing-gone code { overflow-wrap: anywhere; }
+.resume-offer-waiting { margin-left: 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--pico-ins-color, #2e7d32); }
 .landing-standalone { font-size: 0.85em; margin-top: 0.8rem; }
 .landing-recents { display: inline-flex; flex-wrap: wrap; gap: 0.3rem; margin-left: 0.4rem; }
 .landing-recent-form { display: inline; margin: 0; }

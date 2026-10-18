@@ -549,7 +549,13 @@ window.addEventListener('beforeunload', function (ev) {
     if (window.__smIntentionalReload) return;
     var tray = document.getElementById('pending-tray');
     var n = tray ? parseInt(tray.getAttribute('data-change-count') || '0', 10) : 0;
-    if (n > 0) { ev.preventDefault(); ev.returnValue = ''; return ''; }
+    // v1.5.1 (SB-P2-8): staged rows the server has checkpointed on disk
+    // survive this tab closing and a restart -- nothing of the tray's is
+    // lost, so no "Leave site?" on every full navigation. Rows whose
+    // checkpoint is not working (no data-tray-durable) still ask.
+    if (n > 0 && tray.getAttribute('data-tray-durable') !== '1') {
+        ev.preventDefault(); ev.returnValue = ''; return '';
+    }
 });
 
 /* ------------------------------------------------------------------ */

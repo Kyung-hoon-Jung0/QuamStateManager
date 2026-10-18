@@ -4,4 +4,6 @@
     <input type="hidden" name="folder" value="{{ _ro.path }}">
     <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') if request.full_path else request.path }}">
     <button type="submit" class="btn-sm resume-offer-btn" title="{{ _ro.path }}">Re-open {{ _ro.name }}</button>
+    {#- v1.5.1 (U P2-31): the edits waiting in it are named before the press -#}
+    {% if _ro.waiting %}<span class="resume-offer-waiting" title="Kept by SM since the last session; re-open the chip to see them in the sync panel">{{ _ro.waiting }}</span>{% endif %}
 </form>

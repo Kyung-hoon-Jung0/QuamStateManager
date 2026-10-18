@@ -63,6 +63,7 @@
         <p class="muted">loading projects&hellip;</p>
     </div>
 
+    {% include '_gone_last_chip.html' %}
     {% if resume_path %}
     <div class="landing-resume">
         <span class="muted">Last session:</span>
@@ -72,6 +73,7 @@
             <button type="submit" class="btn-sm landing-resume-btn"
                     title="{{ resume_path }}">Resume {{ resume_name }}{% if last_project %} ({{ last_project }}){% endif %}</button>
         </form>
+        {% if resume_waiting %}<span class="resume-offer-waiting">{{ resume_waiting }}</span>{% endif %}
     </div>
     {% endif %}
 

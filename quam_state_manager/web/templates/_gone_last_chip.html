@@ -1,0 +1,13 @@
+{#- v1.5.1 (SB-P2-5): the chip open last time is gone -- the landing says so,
+    and what SM keeps for it, instead of a clean landing that says nothing.
+    Shared by both landings. -#}
+{% set _gone = gone_last_chip() if gone_last_chip is defined else None %}
+{% if _gone %}
+<div class="landing-gone" role="status">
+    The chip open last time, <b>{{ _gone.name }}</b>, cannot be found at
+    <code>{{ _gone.path }}</code> (moved, renamed or deleted).
+    {% if _gone.waiting %}It had {{ _gone.waiting }}: SM keeps them in
+    <code>{{ _gone.where }}</code>. Open the chip at its new place and SM offers them there.
+    {% else %}It had no unapplied edits.{% endif %}
+</div>
+{% endif %}

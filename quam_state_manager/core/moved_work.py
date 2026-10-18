@@ -344,3 +344,48 @@ def note_once(old_key: str, new_key: str) -> bool:
         return False
     _NOTED.add(k)
     return True
+
+
+#: (meta mtime, working state mtime, working wiring mtime) -> saved-unapplied
+_SAVED_MEMO: dict = {}
+
+
+def pending_work(instance_path, live_folder) -> dict:
+    """v1.5.1 (SB-P2-5, U P2-31): the unapplied work SM keeps for the chip at
+    *live_folder*, read from the instance only (the folder itself may be
+    gone): ``{"rows": fields staged in its tray checkpoints, "saved": the
+    working copy holds saved-but-unapplied changes, "where": the folder that
+    keeps them}``. Reads the small checkpoint files; the working pair is
+    hashed once per (meta, working files) mtimes."""
+    out = {"rows": 0, "saved": False, "where": ""}
+    try:
+        root = working_copy.working_state_root(instance_path)
+        key = working_copy.key_for(live_folder)
+    except Exception:  # noqa: BLE001 -- a notice never breaks a page
+        return out
+    out["where"] = str(root)
+    # the FIELDS staged (two commits to one field are one edit, as the top bar counts)
+    out["rows"] = len({r.dot_path for f in working_copy.tray_checkpoints(root, key)
+                       for r in _tray_rows(f)})
+    meta_path, working = root / f"{key}.meta.json", root / key
+    try:
+        stamp = (meta_path.stat().st_mtime_ns, (working / "state.json").stat().st_mtime_ns,
+                 (working / "wiring.json").stat().st_mtime_ns)
+    except OSError:
+        return out
+    memo = _SAVED_MEMO.get(str(meta_path))
+    if memo is not None and memo[0] == stamp:
+        out["saved"] = memo[1]
+        return out
+    saved = False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        synced = meta.get("synced_live_hash")
+        if isinstance(synced, str):
+            w_state, w_wiring = safe_io.read_state_wiring(working)
+            saved = working_copy.content_hash(w_state, w_wiring) != synced
+    except (OSError, ValueError):
+        return out
+    _SAVED_MEMO[str(meta_path)] = (stamp, saved)
+    out["saved"] = saved
+    return out
