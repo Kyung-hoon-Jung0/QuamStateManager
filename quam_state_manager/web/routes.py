@@ -1716,6 +1716,41 @@ def _set_active_context(ctx_name: str, ctx: dict) -> None:
         current_app.config["agent_seq"] = int(current_app.config.get("agent_seq") or 0) + 1
 
 
+def _offer_moved_work(ctx: dict) -> None:
+    """v1.5.1 (SB-F6): a chip opened at a path whose OLD folder is gone, while
+    the old folder's working copy holds unapplied work -- the draft and the
+    staged rows used to stay under the old key, and the chip opened "In
+    sync" with no word. They are handed to this chip as one refused
+    checkpoint (the sync panel lists it, naming the old folder, with Restore
+    -- staged, collision-checked -- and Discard) and said once now. Saved
+    changes that cannot be matched to this folder's content are named, with
+    the folder that keeps them. Never raises; writes no chip folder."""
+    try:
+        from quam_state_manager.core import moved_work
+        store, wc = ctx["store"], ctx["working_copy"]
+        found = moved_work.find(current_app.instance_path, ctx["path"], store.state, store.wiring)
+        if not found:
+            return
+        parts, any_rows = [], False
+        for o in found:
+            res = moved_work.hand_over(o, wc, store)
+            any_rows = any_rows or bool(res["rows"])
+            n = len(res["rows"])
+            said = (f"{n} unapplied edit{'s' if n != 1 else ''} "
+                    f"({', '.join(list(dict.fromkeys(res['rows']))[:4])}"
+                    f"{', …' if len(set(res['rows'])) > 4 else ''})") if n else ""
+            unmatched = (f"saved changes that no longer match this folder's content (kept in "
+                         f"{o['working_folder']})") if res["saved_unmatched"] else ""
+            what = " and ".join(x for x in (said, unmatched) if x)
+            parts.append(f"{what} from {o['live_folder']}, which is not there any more")
+        tail = " Restore or Discard them in the sync panel." if any_rows else ""
+        ctx["_tray_recovery_notice"] = {
+            "level": "warning",
+            "text": "This chip's unapplied work was left behind: " + "; ".join(parts) + "." + tail}
+    except Exception:  # noqa: BLE001 -- an offer never blocks opening a chip
+        logger.warning("moved-work check failed for %s", ctx.get("path"), exc_info=True)
+
+
 def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
     """Load a QUAM state folder and register it as the active context.
 
@@ -1915,6 +1950,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
             from quam_state_manager.core import pending_tray
             pending_tray.attach(ctx, build_lock=build_lock)
             if origin == "live":
+                _offer_moved_work(ctx)      # v1.5.1 (SB-F6)
                 _hub_catch_up(folder)       # docs/271
         # Project lens (docs/63): fresh builds (first load, LRU-eviction
         # rehydrates, restarts) derive their scope here — BEFORE publication

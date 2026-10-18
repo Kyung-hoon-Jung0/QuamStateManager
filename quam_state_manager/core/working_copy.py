@@ -1459,6 +1459,35 @@ def scan_working_copies(instance_path: str | Path) -> list[dict]:
     return records
 
 
+def _tray_files(root: Path, key: str) -> list[Path]:
+    """Every ``<key>.pending_tray*`` file beside the working copies."""
+    stem = f"{key}.pending_tray"
+    try:
+        with os.scandir(root) as it:
+            return [Path(e.path) for e in it
+                    if e.name.startswith(stem) and e.is_file()
+                    and e.name[len(stem):len(stem) + 1] in (".", "")]
+    except OSError:
+        return []
+
+
+def tray_checkpoints(root: Path, key: str) -> list[Path]:
+    """The tray checkpoints of working copy *key* that hold undecided rows:
+    the plain one, each process's peer file, and refused ones the sync panel
+    lists (v1.5.1, SB-F3/F6). Archived ones (restored, discarded, handed
+    over) are not among them."""
+    stem = f"{key}.pending_tray"
+    out = []
+    for f in _tray_files(root, key):
+        rest = f.name[len(stem):]
+        if not rest.endswith(".json"):
+            continue
+        if (rest == ".json" or rest.startswith(".peer-")
+                or rest.startswith(".kept.unrecovered-") or rest.startswith(".unrecovered-")):
+            out.append(f)
+    return out
+
+
 def gc_working_copies(
     instance_path: str | Path,
     *,
@@ -1512,11 +1541,23 @@ def gc_working_copies(
                 continue
         if key in protected:
             continue
+        # v1.5.1 (SB-F6): a copy whose edits are staged only in a tray
+        # checkpoint (or in one the sync panel lists) reads "clean" on its
+        # files -- it is kept, never deleted from under its checkpoint
+        if tray_checkpoints(root, key):
+            by_status["pending"] = by_status.get("pending", 0) + 1
+            continue
         shutil.rmtree(target, ignore_errors=True)
         try:
             (root / f"{key}.meta.json").unlink(missing_ok=True)
         except OSError:
             pass
+        # ...and a deleted copy's tray bookkeeping goes with it
+        for leftover in _tray_files(root, key):
+            try:
+                leftover.unlink(missing_ok=True)
+            except OSError:
+                pass
         deleted += 1
     logger.info("Working-copy GC: deleted %d of %d (%s)",
                 deleted, len(records), by_status)
