@@ -76,8 +76,10 @@
   {% endif %}
 
   {#- v1.5.1: staged edits a restart could not restore stay here until the user
-      decides. Restore stages them (nothing reaches the live chip until Apply);
-      Discard sets the file aside (renamed, never deleted). -#}
+      decides. Restore stages them (nothing reaches the live chip until Apply --
+      unless Auto-Sync push is armed, which writes what is staged at once:
+      the title says so, v1.5.1 MINOR 6); Discard sets the file aside
+      (renamed, never deleted). -#}
   {%- set _unrec = tray_unrecovered() if (tray_unrecovered is defined and not _archive) else [] -%}
   {% for u in _unrec %}
   <div class="sp-note sp-note-warn sp-unrecovered" data-recovery-id="{{ u.id }}">
@@ -94,7 +96,7 @@
     <div class="sp-unrec-msg" role="status" aria-live="polite"></div>
     <div class="sp-unrec-acts">
       {% if u.restorable %}<button type="button" class="btn-sm sp-unrec-restore" onclick="SyncPanel.recovery(this, 'restore', event)"
-        title="Stage these edits in the tray again. Nothing is written to the live chip until Apply.">Restore</button>{% endif %}
+        title="Stage these edits in the tray again.{% if auto_apply %} Auto-Sync (push) is ARMED: they are written to the live chip right away.{% else %} Nothing is written to the live chip until Apply.{% endif %}">Restore</button>{% endif %}
       <button type="button" class="btn-sm outline secondary sp-unrec-discard" onclick="SyncPanel.recovery(this, 'discard', event)"
         data-arm-label="Press again to discard"
         title="Set the file aside without staging it (renamed, not deleted)">Discard</button>

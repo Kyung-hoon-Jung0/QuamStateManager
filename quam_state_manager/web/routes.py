@@ -3363,7 +3363,12 @@ def _hub_pending(ctx, src: str, *, log=None, wholesale: bool = False, kind: str 
         def entries(post_state=None):
             before = before_ref.get("tree")
             if before is None:
-                before = _live_merged_tree(wc) or {}
+                before = _live_merged_tree(wc)
+                if before is None:
+                    # v1.5.1 (MINOR 2): "could not read live files that ARE
+                    # there" is not "there were none" -- the gate words it
+                    before_ref["tree_unread"] = _live_files_present(wc)
+                    before = {}
                 before_ref["tree"] = before
             with store._lock:
                 aft = after
@@ -3420,7 +3425,8 @@ def _capture_working_for_rollback(ctx) -> dict:
         rows = list(store.change_log)
         flags = {k: copy.deepcopy(ctx[k]) for k in _ROLLBACK_FLAGS if k in ctx}
     out = {"rows": rows, "flags": flags, "state": None, "wiring": None,
-           "saved_units": _hub_saved_unit_ids(ctx)}
+           "saved_units": _hub_saved_unit_ids(ctx), "wc": wc,
+           "row_ids": {id(e) for e in rows}}
     try:
         from quam_state_manager.core import doc_cache
         pair = doc_cache.read_pair(wc.working_folder, mode="fresh")
@@ -3430,16 +3436,55 @@ def _capture_working_for_rollback(ctx) -> dict:
     return out
 
 
+def _foreign_rows(ctx, snap: dict) -> list:
+    """v1.5.1 (MINOR 9): edits ANOTHER window staged while a wholesale press
+    ran (after its stage cleared the tray): the rows in the change log now,
+    and the rows the press's own save took out of it -- its re-apply stash
+    names them. Neither is the user's pre-press tray, and a rollback must not
+    drop them unnamed."""
+    from quam_state_manager.core import pending_tray as _pt
+    from quam_state_manager.core.loader import ChangeEntry
+    store = ctx["store"]
+    mine = snap.get("row_ids") or set()
+    pre = (snap.get("flags") or {}).get("pending_reapply") or {}
+    with store._lock:
+        out = [e for e in store.change_log if id(e) not in mine]
+        held = {e.dot_path for e in out}
+        stash = dict(ctx.get("pending_reapply") or {})
+    for path, tag in stash.items():
+        if path in held or (path in pre and pre[path] == tag):
+            continue                # the user's own stash, from before the press
+        op, value, gid = _untag(tag)
+        try:
+            in_wiring = _pt._current(store.wiring, path)[1]
+        except Exception:  # noqa: BLE001
+            in_wiring = False
+        out.append(ChangeEntry(dot_path=path, old_value=None, new_value=copy.deepcopy(value),
+                               source_file="wiring" if in_wiring else "state",
+                               created=op == "create", deleted=op == "delete",
+                               group_id=gid))
+    return out
+
+
 def _rollback_working(ctx, snap: dict) -> str:
     """v1.5.1 (SA-F3): put back what :func:`_capture_working_for_rollback`
     captured -- the working pair, the flags, the tray's rows verbatim. Returns
-    the sentence the failure message carries about the user's edits."""
+    the sentence the failure message carries about the user's edits; sets
+    ``snap["rolled_back"]`` when the rows are back in the tray.
+
+    v1.5.1 (MINOR 9): an edit another window staged during the press is put
+    back on top (or set aside and named) -- never dropped."""
     from quam_state_manager.core import pending_tray
     rows = snap.get("rows") or []
     n = len(rows)
     noun = f"{n} unapplied edit{'s' if n != 1 else ''}"
     wc = ctx["working_copy"]
     diverged = bool(ctx.get("live_diverged"))
+    try:
+        foreign = _foreign_rows(ctx, snap)
+    except Exception:  # noqa: BLE001 -- the rollback itself must still run
+        logger.warning("could not collect edits staged during the press", exc_info=True)
+        foreign = []
     try:
         if snap.get("state") is None:
             raise OSError("the working files could not be read before the press")
@@ -3453,6 +3498,7 @@ def _rollback_working(ctx, snap: dict) -> str:
                     ctx.pop(key, None)
             ctx["live_diverged"] = diverged
             pending_tray.reapply_rows(ctx["modifier"], rows)
+        snap["rolled_back"] = True
         if snap.get("saved_units"):
             try:
                 undo_journal.mark_units(
@@ -3461,21 +3507,64 @@ def _rollback_working(ctx, snap: dict) -> str:
             except Exception:  # noqa: BLE001 -- advisory
                 logger.warning("could not re-claim saved journal units", exc_info=True)
         _invalidate_engine_cache(ctx)
+        other = _put_back_foreign(ctx, wc, foreign)
         if n:
             return (f"Your {noun} {'are' if n != 1 else 'is'} back in the tray, unchanged "
-                    "(the run's state was not staged).")
-        return "Your saved version is back in the working copy (the run's state was not staged)."
+                    "(the run's state was not staged)." + other)
+        return ("Your saved version is back in the working copy (the run's state was not "
+                "staged)." + other)
     except Exception as exc:  # noqa: BLE001 -- never silent: name where they are
         logger.warning("rolling back a failed Apply to chip failed", exc_info=True)
+        other = _keep_foreign(wc, foreign, "could not be put back")
         if not n:
-            return f"Your saved version could not be put back ({exc})."
-        try:
-            kept = pending_tray.set_aside(wc, rows)
-            where = f"they are kept in {kept} — restore them from the sync panel"
-        except Exception as exc2:  # noqa: BLE001
-            where = f"they could not be kept either ({exc2})"
+            return f"Your saved version could not be put back ({exc})." + other
+        aside = snap.get("aside")
+        if aside is not None:
+            where = f"they are kept in {aside} — restore them from the sync panel"
+        else:
+            try:
+                kept = pending_tray.set_aside(
+                    wc, rows, reason=("set aside: a failed Apply to chip could not put "
+                                      "them back into the tray"))
+                where = f"they are kept in {kept} — restore them from the sync panel"
+            except Exception as exc2:  # noqa: BLE001
+                where = f"they could not be kept either ({exc2})"
         shown = ", ".join(dict.fromkeys(r.dot_path for r in rows))
-        return f"Your {noun} ({shown}) could not be put back into the tray ({exc}); {where}."
+        return (f"Your {noun} ({shown}) could not be put back into the tray ({exc}); "
+                f"{where}." + other)
+
+
+def _put_back_foreign(ctx, wc, foreign: list) -> str:
+    """MINOR 9: re-stage another window's edits on top of the rolled-back
+    tray (``""`` when there were none); set aside and named when they cannot."""
+    if not foreign:
+        return ""
+    from quam_state_manager.core import pending_tray
+    shown = ", ".join(dict.fromkeys(r.dot_path for r in foreign))
+    try:
+        pending_tray.reapply_rows(ctx["modifier"], foreign)
+        m = len(foreign)
+        return (f" {m} edit{'s' if m != 1 else ''} staged from another window during "
+                f"the press ({shown}) {'are' if m != 1 else 'is'} in the tray too.")
+    except Exception:  # noqa: BLE001
+        logger.warning("could not re-stage edits from another window", exc_info=True)
+        return _keep_foreign(wc, foreign, "could not be staged again")
+
+
+def _keep_foreign(wc, foreign: list, why: str) -> str:
+    if not foreign:
+        return ""
+    from quam_state_manager.core import pending_tray
+    m = len(foreign)
+    shown = ", ".join(dict.fromkeys(r.dot_path for r in foreign))
+    try:
+        kept = pending_tray.set_aside(
+            wc, foreign, reason="staged from another window while a failed Apply to chip ran")
+        where = f"kept in {kept} — restore from the sync panel"
+    except Exception as exc:  # noqa: BLE001
+        where = f"not kept ({exc})"
+    return (f" {m} edit{'s' if m != 1 else ''} staged from another window during the "
+            f"press ({shown}) {why}; {where}.")
 
 
 def _hub_discard_saved_units(ctx) -> None:
@@ -10382,7 +10471,10 @@ def state_recovery_restore():
     same = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_SAME]
     skipped = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_MISSING]
     n = len(staged)
-    msg = (f"Restored {n} edit{'s' if n != 1 else ''} to the tray (not on the live chip yet)."
+    # v1.5.1 (MINOR 6): with Auto-Sync push armed, staged rows are written at once
+    msg = ((f"Restored {n} edit{'s' if n != 1 else ''} to the tray"
+            + (". Auto-Sync (push) is ARMED: they are being written to the live chip."
+               if _auto_apply_state(ctx) else " (not on the live chip yet)."))
            if n else "Nothing to restore: the chip already holds these values.")
     if same and n:
         msg += f" {len(same)} already held."
@@ -16977,6 +17069,26 @@ def state_history_stage(timestamp: str):
     return resp
 
 
+def _put_back_working_bytes(ctx, wbytes) -> str:
+    """v1.5.1 (M2): write back the working pair a press read before it wrote
+    the working folder (:func:`working_copy.read_working_bytes`) -- byte for
+    byte, mtimes too, so the digest the store holds matches its files again
+    (nothing else changed: the store and the tray were never touched).
+    ``""`` when done or nothing was captured; else a sentence that names the
+    failure (the caller appends it to its message)."""
+    if not wbytes:
+        return ""
+    wc = ctx["working_copy"]
+    try:
+        with _active_wc_lock(ctx):
+            working_copy.restore_working_bytes(wc, wbytes)
+        return ""
+    except OSError as exc:
+        logger.warning("putting the working pair back failed", exc_info=True)
+        return (f" The working copy could not be put back either ({exc}); Take live "
+                "(top bar) before editing further.")
+
+
 def _restore_failure(message: str, code: str):
     """restore-live's known failures (v1.5.1, SA-F2): 409 with the code, the
     persistent error where the button rendered its answer, and the tray (a
@@ -17094,6 +17206,14 @@ def state_history_restore_live(timestamp: str):
     # means "no backup was taken" — treat it identically to the exception branch,
     # never fall through to overwrite the live chip while telling the user it's
     # reversible (matches the sibling /state/archive route's `if meta is None`).
+    # v1.5.1 (M2): the working pair as this press found it. The press writes
+    # the version into the working folder BEFORE the live write; a refused or
+    # failed live write puts these bytes back, so the store and the tray (which
+    # the press never touched) match their files again -- else every later
+    # Apply / Save is refused as "another window changed the working copy".
+    _wbytes = None
+    _pend = None
+    _landed_ok = False
     try:
         with _active_wc_lock(ctx):
             try:
@@ -17126,7 +17246,22 @@ def state_history_restore_live(timestamp: str):
             # docs/301 F6: the chip keeps its own name and data folder
             state, _kept_note = _keep_identity_extras(ctx, state)
 
-            safe_io.write_state_wiring(wc.working_folder, state, wiring)
+            try:
+                _wbytes = working_copy.read_working_bytes(wc)
+            except (OSError, ValueError) as exc:
+                return _restore_failure(
+                    ("Restore to live failed: the working copy could not be read before "
+                     f"the restore ({exc}). Nothing was written to the live chip."),
+                    WORKING_SAVE_FAILED)
+            try:
+                safe_io.write_state_wiring(wc.working_folder, state, wiring)
+            except (OSError, ValueError) as exc:
+                # v1.5.1 (MINOR 3): the WORKING folder failed -- not the live
+                # chip; no read-only pill, and the working pair is put back
+                return _restore_failure(
+                    ("Restore to live failed: the working copy could not be written "
+                     f"({exc}). Nothing was written to the live chip."
+                     + _put_back_working_bytes(ctx, _wbytes)), WORKING_SAVE_FAILED)
             _before_tree = _live_merged_tree(wc)      # docs/160 B: the chip, before
             # docs/271: a restore is an SM write -- recorded as the tree
             # difference between the chip and the snapshot it puts back
@@ -17141,18 +17276,57 @@ def state_history_restore_live(timestamp: str):
                 wc, force=True, record=_pend,
                 backup_check=_forced_write_gate(wc, backup_meta.timestamp,
                                                 backup_meta.state_hash, _rbref))
+            _landed_ok = True
             ctx["_alarm_reason"] = "restore-live"
             _rebuild_after_working_copy_replaced(ctx)
     except working_copy.StaleLiveError as exc:
         # docs/271 review: an outside write landed while the restore was
-        # being journaled -- nothing was written; the backup stands
+        # being journaled -- nothing was written; the backup stands.
+        # v1.5.1 (M2): the working pair goes back, and the chip is marked
+        # diverged (live moved under SM: the banner offers the choices)
+        ctx["live_diverged"] = True
+        _note = _put_back_working_bytes(ctx, _wbytes)
         return render_template("_status.html",
-                               message=f"Restore to live refused: {exc} Retry the restore.",
+                               message=f"Restore to live refused: {exc}{_note} Retry the restore.",
                                level="warning"), 409
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
         # v1.5.1 (SA-F2): named, never a 500
-        return _restore_failure(_live_write_failure_text(ctx, exc, "Restore to live"),
-                                LIVE_WRITE_FAILED)
+        if _landed_ok:
+            # the live chip holds the version; SM's own reload failed
+            ctx["live_diverged"] = True
+            return _restore_failure(
+                (f"Restore to live: the live chip holds the restored {_noun}, but SM "
+                 f"could not reload it ({exc}). Take live (top bar) to re-sync."),
+                WORKING_SAVE_FAILED)
+        _outcome = _write_outcome(_pend) if _pend is not None else "none"
+        _msg = _live_write_failure_text(ctx, exc, "Restore to live", outcome=_outcome)
+        if _outcome == "landed":
+            # v1.5.1 (M1/M2): it reached the chip -- SM shows what the chip
+            # holds (the version). The sync point did not advance; the next
+            # write finds the chip already holding it and adopts it.
+            # the chip changed: Revert last apply puts back the backup taken above
+            ctx["last_apply"] = {
+                "pre_ts": backup_meta.timestamp,
+                "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+            try:
+                with _active_wc_lock(ctx):
+                    _rebuild_after_working_copy_replaced(ctx)
+                _clear_reapply(ctx)
+                _msg += " SM now shows the restored version; Take live (top bar) to re-sync."
+            except Exception as exc2:  # noqa: BLE001 -- named
+                _msg += (f" SM could not reload the restored version ({exc2}); "
+                         "Take live (top bar) to re-sync.")
+        else:
+            # nothing reached the chip (or nobody can tell): the working copy
+            # goes back to what this press found, the edits with it
+            if _outcome == "unknown":
+                ctx["live_diverged"] = True
+            _put = _put_back_working_bytes(ctx, _wbytes)
+            _msg += _put
+            if _outcome != "unknown" and not _put:
+                _msg += " Nothing was written to the live chip; your working copy is as it was."
+        return _restore_failure(_msg, LIVE_WRITE_FAILED)
     _live_write_landed(ctx)
     # The restored snapshot is now both the working copy and live; any stash of
     # pre-restore edits is stale (it targeted the old state) — drop it so a
@@ -29743,7 +29917,14 @@ def state_sync():
         return jsonify({"status": "error", "transient": True,
                         "message": _live_unreadable_message(exc)}), 409
     except (OSError, ValueError) as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        # v1.5.1 (MINOR 10): known and named -- a 409 with its code, never a
+        # 500. A pull never writes the live chip.
+        logger.warning("sync (%s) failed", mode, exc_info=True)
+        return jsonify({"status": "error", "error_code": SYNC_FAILED,
+                        "message": (f"{str(exc) or type(exc).__name__}. The live chip was not "
+                                    "changed (a pull never writes it); reload the page to see "
+                                    "what SM holds now."),
+                        "tray_html": _tray_html()}), 409
 
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
@@ -30040,20 +30221,28 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     except (OSError, ValueError) as exc:
         _commit_journal()          # a failed write is not a refusal: the save stands
         # v1.5.1 (SA-F2): a 409 with its code; the tray it carries shows the
-        # read-only pill when this write discovered the denial
+        # read-only pill when this write discovered the denial.
+        # v1.5.1 (M1): these two branches are the only ones where the chip
+        # may have been written -- each names what the journal line says
+        # (``write_outcome``), so a caller rolls back only what provably
+        # never reached the chip.
+        _outcome = _write_outcome(_pend)
+        _detail = _live_write_failure_text(ctx, exc, outcome=_outcome)
         return jsonify({"status": "error", "error_code": LIVE_WRITE_FAILED,
-                        "message": _live_write_failure_text(ctx, exc) + " Your edits are kept.",
+                        "message": _detail + " Your edits are kept.",
+                        "detail": _detail, "write_outcome": _outcome,
                         "tray_html": _tray_html()}), 409
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live (sync) unexpected failure")
         _commit_journal()
-        return jsonify({"status": "error",
+        return jsonify({"status": "error", "write_outcome": _write_outcome(_pend),
                         "message": f"Apply to live failed unexpectedly: "
                                    f"{type(exc).__name__}: {exc}"}), 500
 
     _hub_stamp_units(_pend, _jrn_units)     # docs/271: before the commit writes them
     _commit_journal()              # docs/107 (docs/255: once the push is decided)
     _hub_mark_units(ctx, _pend, _saved_ids)
+    _live_write_landed(ctx)        # v1.5.1 (M3): every door that lands clears the pill
     _set_working_dirty(False, ctx)
     # docs/160 B: staged wholesale content (a snapshot / a run's state) just
     # reached the chip with no change-log entries to journal -- record the
@@ -30147,6 +30336,13 @@ _LIVE_APPEARED_MSG = (
     "Nothing was written — live state files appeared in the live folder while SM "
     "was writing (it had found none, so it had nothing backed up). Overwriting them "
     "could not be undone. Look at the live chip, then choose again.")
+#: v1.5.1 (MINOR 2): the chip could not be READ right before the write (gone
+#: for a moment, held by another program) -- not "there were no files"
+_LIVE_UNREAD_BEFORE_WRITE_MSG = (
+    "Nothing was written — SM could not read the live chip right before writing "
+    "(it may have been replaced, or held open by another program), so it could not "
+    "record what this write would replace. The backup taken for this press is kept. "
+    "Retry.")
 #: v1.5.1 (SA-F1): the live chip changed after its backup was taken
 _LIVE_MOVED_AFTER_BACKUP_MSG = (
     "Nothing was written — the live chip changed after SM backed it up, so no "
@@ -30159,34 +30355,91 @@ _LIVE_MOVED_AFTER_BACKUP_MSG = (
 LIVE_WRITE_FAILED = "live_write_failed"
 BACKUP_FAILED = "backup_failed"
 WORKING_SAVE_FAILED = "working_save_failed"
+#: v1.5.1 (MINOR 10): a pull (Take live / re-apply / Pull & apply) that failed
+SYNC_FAILED = "sync_failed"
 _HELD_WINERRORS = (32, 33)        # another program holds the file open / locked a range
 _DENIED_WINERRORS = (5, 19)       # access denied (ACL, read-only attribute), write-protected
 
 
-def _write_denial(exc) -> str:
+def _names_path_in(err, folder) -> bool:
+    """True when *err* names a file inside *folder* -- or names no file at all
+    (then it is the door's own write, which is the only thing a door asks
+    about)."""
+    names = [n for n in (getattr(err, "filename", None), getattr(err, "filename2", None))
+             if isinstance(n, (str, bytes, os.PathLike))]
+    if not names or folder is None:
+        return True
+    try:
+        root = os.path.normcase(os.path.abspath(os.fspath(folder)))
+        for n in names:
+            n = os.fsdecode(n) if isinstance(n, bytes) else os.fspath(n)
+            if not os.path.isabs(n):
+                return True             # a bare name cannot be placed: the door's own
+            full = os.path.normcase(os.path.abspath(n))
+            if full == root or full.startswith(root.rstrip(os.sep + "/") + os.sep):
+                return True
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
+def _write_denial(exc, live_folder=None) -> str:
     """What a failed write's OS error says, through its cause chain:
     ``"held"`` (another program holds a file open -- transient, NOT read-only),
-    ``"denied"`` (no write permission, a read-only attribute or share) or ``""``."""
+    ``"denied"`` (no write permission, a read-only attribute or share) or ``""``.
+
+    v1.5.1 (MINOR 3): only the LIVE folder's errors count. SM's own history
+    journal (a ``hub.RecordError``: the instance folder) and an error naming a
+    file outside *live_folder* (the working copy, the instance) are not the
+    live chip refusing anything -- ``""``."""
+    from quam_state_manager.core import hub as _hub
     seen: set = set()
     e = exc
     while e is not None and id(e) not in seen:
         seen.add(id(e))
+        if isinstance(e, _hub.RecordError):
+            return ""
         win = getattr(e, "winerror", None)
+        kind = ""
         if win in _HELD_WINERRORS:
-            return "held"
-        if win in _DENIED_WINERRORS:
-            return "denied"
-        if isinstance(e, PermissionError) or getattr(e, "errno", None) in (1, 13, 30):
-            return "denied"
+            kind = "held"
+        elif win in _DENIED_WINERRORS:
+            kind = "denied"
+        elif isinstance(e, PermissionError) or getattr(e, "errno", None) in (1, 13, 30):
+            kind = "denied"
+        if kind:
+            return kind if _names_path_in(e, live_folder) else ""
         e = e.__cause__ or e.__context__
     return ""
 
 
-def _live_write_failure_text(ctx, exc, what: str = "Apply to live") -> str:
+def _write_outcome(pending) -> str:
+    """What a live write's journal line says happened (docs/271): ``landed``
+    (the chip holds the written content), ``failed`` (it still holds the old
+    content, read back), ``unknown`` (nobody can tell), or ``none`` -- no line
+    was committed, so the write was never attempted (or rewrote content the
+    chip already held): the chip did not change."""
+    rec = getattr(pending, "recorded", None)
+    if rec is None:
+        return "none"
+    return rec.outcome or "unknown"
+
+
+def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str = "") -> str:
     """The honest message of a failed live write. A denial discovered NOW
     raises the read-only pill (the open-time probe cannot see an NTFS deny
-    ACL, and a folder can turn read-only after the chip was opened)."""
-    kind = _write_denial(exc)
+    ACL, and a folder can turn read-only after the chip was opened).
+
+    *outcome* (:func:`_write_outcome`, v1.5.1 M1): a write that LANDED and
+    then failed its read-back or bookkeeping is not "failed" -- it says so,
+    and proves the folder writable (the pill goes); one nobody can verify
+    says that."""
+    if outcome == "landed":
+        _live_write_landed(ctx)
+        return (f"{what} is UNVERIFIED: the write reached the live chip, but SM could "
+                f"not finish confirming it — {exc}")
+    wc = (ctx or {}).get("working_copy")
+    kind = _write_denial(exc, getattr(wc, "live_folder", None))
     if kind == "denied":
         if ctx is not None:
             ctx["live_readonly_hint"] = True
@@ -30195,6 +30448,9 @@ def _live_write_failure_text(ctx, exc, what: str = "Apply to live") -> str:
         why = "another program holds a live file open — "
     else:
         why = ""
+    if outcome == "unknown":
+        return (f"{what} is UNVERIFIED: SM cannot tell whether the live chip holds "
+                f"the write — {why}{exc}")
     return f"{what} failed: {why}{exc}"
 
 
@@ -30262,6 +30518,12 @@ def _forced_write_gate(wc, backup_ts, backup_hash, before_ref: dict | None = Non
         if not backup_ts or not backup_hash:
             return _LIVE_APPEARED_MSG
         if before_ref is not None and "tree" in before_ref and not before_ref["tree"]:
+            # v1.5.1 (MINOR 2): no "before" tree. Files there that could not be
+            # read is not "there were none" -- with a backup taken, say that,
+            # never "it had found none"
+            if before_ref.get("tree_unread") or (
+                    before_ref["tree"] is None and _live_files_present(wc)):
+                return _LIVE_UNREAD_BEFORE_WRITE_MSG
             return _LIVE_APPEARED_MSG
         live = Path(wc.live_folder)
         try:
@@ -30715,7 +30977,8 @@ def state_apply_to_live():
         # v1.5.1 (SA-F2): a 409 with its code; the tray it carries shows the
         # read-only pill when this write discovered the denial.
         return _live_write_failure_response(
-            ctx, _live_write_failure_text(ctx, exc) + " Your edits are kept.",
+            ctx, _live_write_failure_text(ctx, exc, outcome=_write_outcome(_pend))
+            + " Your edits are kept.",
             LIVE_WRITE_FAILED, auto=_auto)
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live unexpected failure")
@@ -40986,6 +41249,57 @@ def dataset_neighbor(uid):
                    run_id=nid)
 
 
+#: v1.5.1 (MINOR 10): a run's quam_state that cannot be read (Apply to chip)
+RUN_STATE_UNREADABLE = "run_state_unreadable"
+
+
+def _named_failure(message: str, code: str, status: int = 409):
+    """A known failure of a dataset door: the message where the button answers,
+    the tray (OOB), ``X-SM-Error-Code`` -- a 409, never a 500."""
+    resp = make_response(render_template("_status.html", message=message, level="error")
+                         + "\n" + _tray_oob(), status)
+    resp.headers["X-SM-Error-Code"] = code
+    return resp
+
+
+def _archive_aside(wc, path, outcome: str) -> None:
+    """v1.5.1 (MINOR 8): rows set aside before a stage are back in the tray
+    (``restored``) or were replaced by a press that landed (``replaced``):
+    the file leaves the sync panel's list; its bytes stay on disk."""
+    from quam_state_manager.core import pending_tray
+    try:
+        pending_tray.archive_unrecovered(wc, pending_tray._file_id(Path(path), wc), outcome)
+    except FileNotFoundError:
+        pass                        # restored or discarded from the panel already
+    except Exception:  # noqa: BLE001 -- it then simply stays listed
+        logger.warning("could not archive the set-aside rows %s", path, exc_info=True)
+
+
+def _replaced_rows_kept(snap: dict, aside) -> str:
+    """M1: the sentence for rows a press replaced and did not put back."""
+    from quam_state_manager.core import pending_tray
+    rows = snap.get("rows") or []
+    n = len(rows)
+    if not n:
+        return ("Your saved-but-unapplied version was replaced by the run's state "
+                "(the pre-apply backup in State History holds the chip's previous state).")
+    shown = ", ".join(dict.fromkeys(r.dot_path for r in rows))
+    noun = f"{n} unapplied edit{'s' if n != 1 else ''}"
+    if aside is not None:
+        return (f"Your {noun} ({shown}) {'were' if n != 1 else 'was'} replaced by the "
+                f"run's state; {'they are' if n != 1 else 'it is'} kept in {aside} — "
+                "restore from the sync panel.")
+    try:
+        kept = (pending_tray.set_aside(
+            snap["wc"], rows, reason=("replaced by a run's state in an Apply to chip "
+                                      "whose live write could not be verified"))
+            if snap.get("wc") is not None else None)
+    except Exception:  # noqa: BLE001
+        kept = None
+    where = f"kept in {kept} — restore from the sync panel" if kept else "not kept"
+    return f"Your {noun} ({shown}) {'were' if n != 1 else 'was'} replaced by the run's state ({where})."
+
+
 def _replaced_edits_note(entries: list, saved_unapplied: bool) -> str:
     """datasets-r2-19: the result-line clause for what an Apply-to-chip press
     replaced (docs/126 ⑤: applied over without asking, but NAMED).
@@ -41163,9 +41477,9 @@ def dataset_load_state(uid):
     try:
         state, wiring = safe_io.read_state_wiring(Path(state_path))
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
-        return render_template("_status.html",
-                               message=f"Could not read the run's quam_state: {exc}",
-                               level="error"), 500
+        # v1.5.1 (MINOR 10): known and named -- a 409, never a 500
+        return _named_failure(f"Could not read the run's quam_state: {exc}. Nothing was changed.",
+                              RUN_STATE_UNREADABLE)
     # docs/296: a run saved before a qubit rename names its qubits by their
     # OLD ids. Staged as it is, it would undo the rename and land each value
     # on the qubit that holds that name now -- so it is carried into today's
@@ -41202,6 +41516,21 @@ def dataset_load_state(uid):
     # it LANDS -- a press that fails puts them (and the working pair) back
     _undo_stage = (_capture_working_for_rollback(ctx)
                    if (apply_req and has_pending) else None)
+    # v1.5.1 (MINOR 8): ...and the rows are on disk, set aside, BEFORE the
+    # stage clears the tray: a crash between the stage and the rollback
+    # leaves them listed in the sync panel (Restore / Discard), never gone.
+    _aside = None
+    if _undo_stage is not None and _undo_stage["rows"]:
+        from quam_state_manager.core import pending_tray
+        try:
+            _aside = pending_tray.set_aside(
+                wc, _undo_stage["rows"],
+                reason=(f"set aside when Apply to chip staged run #{run_id}'s state "
+                        "over them"))
+            _undo_stage["aside"] = _aside
+        except Exception:  # noqa: BLE001 -- the in-memory copy still rolls back
+            logger.warning("could not set the tray's rows aside before a stage",
+                           exc_info=True)
     try:
         with _active_wc_lock(ctx):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
@@ -41214,9 +41543,15 @@ def dataset_load_state(uid):
                                   "ref": {"run_id": run_id}}
             _clear_reapply(ctx)
     except (OSError, ValueError) as exc:
-        return render_template("_status.html",
-                               message=f"Loading run state failed: {exc}",
-                               level="error"), 500
+        # v1.5.1 (MINOR 10): a 409 naming it, never a 500 -- and what the
+        # stage replaced goes back (the working pair, the rows, the flags)
+        logger.warning("staging a run's state failed", exc_info=True)
+        _back = (" " + _rollback_working(ctx, _undo_stage)
+                 if _undo_stage is not None else
+                 " If the working copy changed, Take live (top bar) re-syncs it.")
+        if _aside is not None and _undo_stage.get("rolled_back"):
+            _archive_aside(wc, _aside, "restored")
+        return _named_failure(f"Loading run state failed: {exc}." + _back, WORKING_SAVE_FAILED)
     logger.info("dataset run %s staged into the working copy of %s",
                 uid, ctx["path"])
 
@@ -41234,9 +41569,11 @@ def dataset_load_state(uid):
         try:
             result = _sync_pull_apply_to_live(ctx, None)
             body = (result[0] if isinstance(result, tuple) else result).get_json()
-        except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, and rolled back below
+        except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, judged below
             logger.exception("dataset Apply to chip failed")
-            body = {"status": "error", "message": f"Apply to live failed: {exc}"}
+            # nobody can say whether it reached the chip (M1): unverified
+            body = {"status": "error", "message": f"Apply to live failed: {exc}",
+                    "write_outcome": "unknown"}
         status = (body or {}).get("status")
         drift_note = ""
         if status == "conflict":
@@ -41250,9 +41587,10 @@ def dataset_load_state(uid):
             try:
                 result = _sync_pull_apply_to_live(ctx, None, force=True)
                 body = (result[0] if isinstance(result, tuple) else result).get_json()
-            except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, rolled back below
+            except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, judged below
                 logger.exception("dataset Apply to chip (over drift) failed")
-                body = {"status": "error", "message": f"Apply to live failed: {exc}"}
+                body = {"status": "error", "message": f"Apply to live failed: {exc}",
+                        "write_outcome": "unknown"}
             status = (body or {}).get("status")
             drift_note = (" The live chip HAD changed since it was loaded — "
                           "those changes were overwritten (the run's state "
@@ -41283,6 +41621,10 @@ def dataset_load_state(uid):
                            "stages the pre-apply state; Apply puts it "
                            "back on the chip."),
                 level="success")
+            # v1.5.1 (MINOR 8): the press landed, so the rows it replaced (named
+            # in the result line) leave the sync panel; their file is kept
+            if _aside is not None:
+                _archive_aside(wc, _aside, "replaced")
             # QA F1 (verification): live now holds the run's state, so a drift
             # banner raised before the press ("you may be viewing an older
             # chip") is answered -- take it down in place, like the tray's own
@@ -41294,17 +41636,33 @@ def dataset_load_state(uid):
         # v1.5.1 (SA-F2): a 409 naming the failure (never a 500), with the
         # tray (a read-only pill raised by the failure shows)
         _fail = (body or {}).get("message") or "Apply to live failed"
-        if _undo_stage is not None:
+        # v1.5.1 (M1): only a push that provably changed nothing on the chip
+        # is rolled back. A write that landed (or that nobody can verify)
+        # keeps the run's state staged -- rolling back would make the run's
+        # own write look like outside drift, and "nothing was applied" false.
+        _outcome = (body or {}).get("write_outcome")
+        if _outcome in ("landed", "unknown"):
+            if _outcome == "unknown":
+                ctx["live_diverged"] = True   # nobody knows what the chip holds
+            _fail = ((body or {}).get("detail") or _fail).rstrip(".") + (
+                ". The run's state stays staged in the working copy; Take live (top "
+                "bar) shows what the live chip holds, Apply pushes the staged state again.")
+            if _undo_stage is not None:
+                _fail += " " + _replaced_rows_kept(_undo_stage, _aside)
+        elif _undo_stage is not None:
             # v1.5.1 (SA-F3): the press replaced the tray's edits; it failed,
             # so they come back -- never silently gone
             _fail = (_fail.rstrip(".") + ". Nothing was applied to the live chip. "
                      + _rollback_working(ctx, _undo_stage))
+            if _aside is not None and _undo_stage.get("rolled_back"):
+                _archive_aside(wc, _aside, "restored")
         else:
             _fail += (" — the run's state IS staged in the working copy; retry from "
                       "the top bar.")
         resp = make_response(render_template(
             "_status.html", message=_fail,
-            level="error") + "\n" + _tray_oob(), 409)
+            level="error") + "\n" + _tray_oob()
+            + (_diverged_oob() if _outcome == "unknown" else ""), 409)
         resp.headers["X-SM-Error-Code"] = ((body or {}).get("error_code")
                                            or (body or {}).get("conflict") or LIVE_WRITE_FAILED)
         return resp
@@ -45891,7 +46249,8 @@ def _autofit_start_real(inst, p, data, auditor):
                         # docs/271: every autofit live write is recorded in
                         # this chip's history, under the plan's name
                         hub_dir=_hub_chip_dir(live_path), hub_plan=f"autofit:{p.name}",
-                        origin=ctx.get("origin") or "live")
+                        origin=ctx.get("origin") or "live",
+                        on_live_landed=lambda: _live_write_landed(ctx))   # v1.5.1 (M3)
     adapter = RealAdapter(instance_path=inst, reconcile=reconcile,
                           rescan_and_list_runs=rescan_and_list_runs)
     backend = RealBackend(adapter, resolved)

@@ -1109,6 +1109,8 @@ DOOR_SITES = {
     ("web/routes.py", "_take_live_backup", "pair"): (1, "a temp folder captured as a backup version"),
     ("web/routes.py", "_autofit_start_sim", "pair"): (1, "the simulator's synthetic chip"),
     ("web/routes.py", "dataset_load_state", "pair"): (1, "working copy (stage a run's state)"),
+    # v1.5.1: a failed dataset Apply to chip puts the working pair back
+    ("web/routes.py", "_rollback_working", "pair"): (1, "working copy (a failed Apply to chip put back)"),
     ("web/routes.py", "compare_hub_stash", "pair"): (1, "a compare stash folder"),
     # ---- named chip-file writes
     ("core/autofit/replay.py", "evaluate_run", "named"): (1, "a replay sandbox (copy of a run's quam_state)"),

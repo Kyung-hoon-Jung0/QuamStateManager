@@ -912,6 +912,23 @@ def _present(sig: tuple) -> bool:
     return any(mt is not None for _n, mt, _sz in sig)
 
 
+def _same_backed_content(before: tuple, now: tuple, backup_check) -> bool:
+    """v1.5.1 (MINOR 1): the live pair's stat moved since the forced-write
+    gate judged it, but the same files are there -- a touch, or a re-save of
+    the same content. The CONTENT decides, by the gate's own test (the live
+    pair against the backup's stored content hash): still what the backup
+    holds -- nothing would be lost. A file that appeared or vanished, or an
+    unreadable pair, is never this case."""
+    if backup_check is None or not _present(before) or not _present(now):
+        return False
+    if [n for n, mt, _ in before if mt is not None] != [n for n, mt, _ in now if mt is not None]:
+        return False
+    try:
+        return backup_check(True) is None
+    except Exception:  # noqa: BLE001 -- unknown proves nothing: refuse
+        return False
+
+
 def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                   expect_live_hash: str | None = None, record=None,
                   backup_check=None) -> None:
@@ -1155,7 +1172,9 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                         "refusing to overwrite an out-of-band write.")
                     rec.failed(err)
                     raise err
-        if gate_sig is not None and _live_presence(wc.live_folder) != gate_sig:
+        now_sig = _live_presence(wc.live_folder) if gate_sig is not None else None
+        if gate_sig is not None and now_sig != gate_sig and not _same_backed_content(
+                gate_sig, now_sig, backup_check):
             # v1.5.1: the pair the gate judged moved (or appeared) since --
             # the mtime check above cannot see a pair that was absent when the
             # lock was taken

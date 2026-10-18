@@ -61,6 +61,9 @@ class ChipHandle:
     hub_fp1: Any = None
     # v1.5.1 (SA-F6): the context's origin; anything but "live" is refused
     origin: str = "live"
+    # v1.5.1 (M3): told after every live write that landed (the web layer
+    # takes down a read-only marker a refused write raised earlier)
+    on_live_landed: Callable[[], None] = lambda: None
 
 
 def _archive_refusal(chip: ChipHandle) -> str | None:
@@ -235,6 +238,7 @@ def _apply_live_with_one_retry(chip: ChipHandle,
     build lock the caller already holds."""
     try:
         working_copy.apply_to_live(chip.wc, record=_pending(chip, src, mine()))
+        _landed(chip)
         return None
     except working_copy.StaleLiveError:
         logger.info("apply_to_live stale — one pull + re-stage retry")
@@ -248,9 +252,17 @@ def _apply_live_with_one_retry(chip: ChipHandle,
             return f"re-stage after pull refused: {err}"
         _save(chip)
         working_copy.apply_to_live(chip.wc, record=_pending(chip, src, mine()))
+        _landed(chip)
         return None
     except Exception as exc:  # noqa: BLE001
         return f"apply_to_live failed after pull+re-stage: {exc}"
+
+
+def _landed(chip: ChipHandle) -> None:
+    try:
+        chip.on_live_landed()
+    except Exception:  # noqa: BLE001 -- a UI marker never fails a landed write
+        logger.warning("on_live_landed hook failed", exc_info=True)
 
 
 def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,

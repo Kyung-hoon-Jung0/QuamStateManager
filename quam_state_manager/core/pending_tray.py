@@ -1071,6 +1071,9 @@ def _describe(path: Path, wc) -> dict:
             _rows_of(raw)
         except ValueError as exc:
             reason = str(exc)
+    aside = doc.get("set_aside")
+    if not reason and isinstance(aside, str) and aside.strip():
+        reason = aside.strip()[:300]        # MINOR 7: SM set them aside, and why
     if not reason:
         if doc.get("synced_live_hash") != wc.synced_live_hash:
             reason = "the chip was synced with its live folder after these edits were staged"
@@ -1126,9 +1129,10 @@ def unrecovered_file(wc, file_id) -> Path | None:
 
 def archive_unrecovered(wc, file_id: str, outcome: str) -> Path:
     """Set a refused checkpoint aside as ``<key>.pending_tray.<outcome>-<id>.json``
-    (``restored`` / ``discarded``): it leaves the list, its bytes stay on disk.
-    Raises FileNotFoundError when it is no longer there."""
-    if outcome not in ("restored", "discarded"):
+    (``restored`` / ``discarded``; ``replaced`` -- rows an Apply to chip that
+    landed replaced, named in its result): it leaves the list, its bytes stay
+    on disk. Raises FileNotFoundError when it is no longer there."""
+    if outcome not in ("restored", "discarded", "replaced"):
         raise ValueError(outcome)
     path = unrecovered_file(wc, file_id)
     if path is None:
@@ -1268,16 +1272,19 @@ def reapply_rows(modifier, rows: list[ChangeEntry]) -> list[ChangeEntry]:
     return _apply_rows(modifier, list(rows), regroup=False)
 
 
-def set_aside(wc, rows: list[ChangeEntry]) -> Path:
+def set_aside(wc, rows: list[ChangeEntry], *, reason: str | None = None) -> Path:
     """v1.5.1 (SA-F3): rows that could not be put back into the tray, kept as
     a refused checkpoint -- the sync panel then lists them with Restore /
-    Discard (never silently gone)."""
+    Discard (never silently gone). *reason* (v1.5.1 MINOR 7) is what the panel
+    says about them; without it, a set-aside file would be judged like a
+    restart's checkpoint ("the working files changed..."), which it is not."""
     path = sidecar_path(wc)
     target = path.with_name(f"{path.stem}{_KEPT_TAG}{uuid.uuid4().hex[:8]}.json")
     doc = {"version": VERSION, "live_folder": str(wc.live_folder), "base_hash": None,
            "applied": 0, "synced_live_hash": wc.synced_live_hash,
            "entries": [_row_doc(r) for r in rows], "mutation_seq": 0,
-           "flags": {"working_dirty": False, "pending_reapply": None}}
+           "flags": {"working_dirty": False, "pending_reapply": None},
+           "set_aside": str(reason or "set aside by SM: they could not be put back into the tray")}
     safe_io.atomic_write_json(target, doc, compact=True)
     return target
 
