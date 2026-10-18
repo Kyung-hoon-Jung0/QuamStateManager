@@ -751,18 +751,22 @@ html[data-font-size="large"] { --font-size-base: 19px; }
 /* elapsed seconds stay where they already were, in the top bar's     */
 /* NavProgress. It never takes a click (pointer-events none).         */
 /* ---------------------------------------------------------------- */
+/* v1.5.1 (U P2-5): it hung 4 px BELOW the bar, on the page title ("Param
+   History"). It now straddles the bar's bottom edge: its lower part fits in
+   the pane's top padding (--table-pane-pad-v), above where any title starts. */
 .quam-loader {
     position: fixed;
-    top: calc(var(--topbar-height, 48px) + 4px);
+    top: calc(var(--topbar-height, 48px) - 0.62rem);
     left: 50%;
     transform: translate(-50%, -4px);
     display: flex;
     align-items: center;
     gap: 0.5rem;
     max-width: calc(100vw - 32px);
-    padding: 0.22rem 0.75rem 0.22rem 0.55rem;
-    font-size: 0.78rem;
-    line-height: 1.3;
+    height: 1.12rem;
+    padding: 0 0.7rem 0 0.5rem;
+    font-size: 0.74rem;
+    line-height: 1;
     white-space: nowrap;
     background: var(--pico-card-background-color, var(--pico-background-color));
     border: 1px solid var(--pico-muted-border-color);
@@ -776,6 +780,9 @@ html[data-font-size="large"] { --font-size-base: 19px; }
                 visibility 0.15s ease,
                 transform 0.15s ease;
 }
+/* with the bars collapsed (--topbar-height 0) it sits in the band the pane
+   reserves for the floating card (--floating-chrome-h) */
+html.topbar-hidden .quam-loader { top: 0.7rem; }
 .quam-loader.visible {
     opacity: 1;
     visibility: visible;

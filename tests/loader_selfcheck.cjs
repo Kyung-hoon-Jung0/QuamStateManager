@@ -269,9 +269,9 @@ function fireCancelable(name, path) {
        'reduced-motion users get a static ring');
     // queue #7 (2026-09-26): a slim strip under the top bar, not a centred card
     const rule = (css.match(/\n\.quam-loader \{[^}]*\}/) || [''])[0];
-    ok(/top: calc\(var\(--topbar-height[^)]*\) \+ \d+px\)/.test(rule) && !/top: 50%/.test(rule)
+    ok(/top: calc\(var\(--topbar-height[^)]*\) [+-] [\d.]+(px|rem)\)/.test(rule) && !/top: 50%/.test(rule)   // v1.5.1 U P2-5: it straddles the bar's edge
        && !/translate\(-50%, -50%\)/.test(rule),
-       'q#7 the loader is pinned just below the MEASURED top bar, not centred (' + rule.replace(/\s+/g, ' ').slice(0, 90) + ')');
+       'q#7 the loader is pinned at the edge of the MEASURED top bar, not centred (' + rule.replace(/\s+/g, ' ').slice(0, 90) + ')');
     ok(/white-space: nowrap/.test(rule) && /pointer-events: none/.test(rule) && /font-size: 0\.\d+rem/.test(rule),
        'q#7 one small line that never takes a click');
     ok(base.indexOf('quam-loader-text') === -1 && base.indexOf('>Q</span><span>U</span>') === -1,
