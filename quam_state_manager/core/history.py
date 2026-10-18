@@ -2663,7 +2663,25 @@ class HistoryManager:
             return None
         # Recent snapshots may already hold the WIPED state — walk back to
         # the newest one that still carries the declared name (capped).
+        # v1.5.1 (SB-P2-4): only a snapshot taken from THIS folder speaks for
+        # it. Same-design copies share one fingerprint dir, and the banner
+        # proposed the newest name seen there -- another folder's name,
+        # with another chip's data folder.
+        from quam_state_manager.core import path_match
+        try:
+            here = path_match.fs_key(path)
+        except (OSError, ValueError):
+            return None
         for snap in snaps[:20]:
+            try:
+                src = (safe_io.read_json(snap / "meta.json") or {}).get("source_path")
+            except (OSError, ValueError):
+                continue
+            try:
+                if not src or path_match.fs_key(src) != here:
+                    continue
+            except (OSError, ValueError):
+                continue
             try:
                 state = safe_io.read_json(snap / "state.json")
             except (OSError, ValueError):
