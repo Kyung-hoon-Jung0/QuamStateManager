@@ -7415,9 +7415,12 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     overflow-y: auto;
     flex: 1 1 auto;
 }
+/* v1.5.1 (U P2-8): the columns' floors summed past the popup (a horizontal
+   scrollbar on every row); the path breaks anywhere and the old value wraps,
+   so only the input keeps a floor */
 .plot-apply-row {
     display: grid;
-    grid-template-columns: minmax(140px, 1.8fr) minmax(110px, 1fr) minmax(180px, 1.6fr) auto;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(9rem, 1.6fr) auto;
     gap: 0.5rem 0.8rem;
     align-items: center;
     padding: 0.45rem 0.55rem;
@@ -7465,6 +7468,9 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     width: 100%;
 }
 .plot-apply-row-btn { margin: 0; padding: 0.3rem 0.8rem; }
+/* v1.5.1 (U P2-8): "Changed since this run by #N ..." and the domain warning
+   span the row -- in the path column they wrapped into a narrow strip */
+.plot-apply-row-history, .plot-apply-row-domainwarn { grid-column: 1 / -1; }
 .plot-apply-row-error {
     grid-column: 1 / -1;
     color: var(--pico-del-color, #c33);
