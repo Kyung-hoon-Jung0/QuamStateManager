@@ -11665,6 +11665,13 @@ _TAB_CHIP_DOORS = frozenset({
     "main.auto_apply_arm", "main.auto_apply_revert", "main.auto_sync_set",
     "main.dataset_load_state", "main.chip_name_set", "main.chip_data_folder_set",
     "main.chip_profile_set", "main.note_save",
+    # R2 MINOR 1: the other presses that write this chip's records -- the
+    # drift baseline, a bookmark / snapshot / version label, notes, spec
+    # thresholds, and the identity / name / data-folder banners' declines
+    "main.state_baseline_reset", "main.state_archive", "main.note_delete",
+    "main.note_readdress", "main.chip_spec_set", "main.chip_spec_clear",
+    "main.state_history_label", "main.state_history_snapshot", "main.history_snapshot",
+    "main.chip_name_decline", "main.chip_identity_decline", "main.chip_data_folder_decline",
 })
 
 #: ...and which of them answer JSON (their callers parse it).
@@ -11673,6 +11680,8 @@ _TAB_CHIP_JSON_DOORS = frozenset({
     "main.field_type_assign", "main.field_type_unassign", "main.api_pulse_delete_together",
     "main.type_fix_apply", "main.diagnostics_apply_fix", "main.state_sync",
     "main.state_recovery_restore", "main.state_recovery_discard", "main.note_save",
+    "main.state_baseline_reset", "main.note_delete", "main.note_readdress",
+    "main.chip_spec_set", "main.chip_spec_clear",
 })
 
 
@@ -28659,6 +28668,12 @@ def auto_sync_pull():
     made this due), so refusing is not silent: the user is being asked.
     """
     ctx = _active_ctx()
+    # R2 MINOR 1: a tab showing another chip reports ITS grid (dom_dirty /
+    # dom_path) -- never evidence about the chip open now. Its automatic
+    # press does nothing; the tab showing this chip presses for it.
+    _want = _tab_chip_key()
+    if _want and _want != _ctx_chip_key(ctx):
+        return "", 204
     sess = _auto_sync_state(ctx)
     if not sess or not sess.get("pull"):
         return "", 204

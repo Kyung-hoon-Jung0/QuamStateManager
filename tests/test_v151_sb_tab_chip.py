@@ -177,6 +177,48 @@ class TestAStaleTabIsRefusedByName:
             assert routes._tab_chip_gate().status_code == 409
 
 
+#: R2 MINOR 1: the other presses that write the open chip's records
+B_PRESSES = [
+    ("reset drift baseline", "/state/baseline/reset", {}),
+    ("bookmark", "/state/archive", {"label": "x"}),
+    ("delete note", "/note/delete", {"subject": "qubits.q1"}),
+    ("readdress note", "/note/readdress", {"subject": "qubits.q1", "new_subject": "qubits.q2"}),
+    ("set spec", "/chip-status/spec", {"metrics": "{}"}),
+    ("clear spec", "/chip-status/spec/clear", {}),
+    ("label version", "/state-history/20260101_000000_0000/label", {"label": "x"}),
+    ("State History snapshot", "/state-history/snapshot", {}),
+    ("Param History snapshot", "/api/history/snapshot", {}),
+    ("decline chip name", "/chip-name/decline", {}),
+    ("decline identity", "/chip-identity/decline", {}),
+    ("decline data folder", "/chip-data-folder/decline", {}),
+]
+
+
+class TestTheOtherWriteDoorsToo:
+    @pytest.mark.parametrize("what,url,form", B_PRESSES, ids=[p[0] for p in B_PRESSES])
+    def test_a_press_from_chip_x_is_refused_by_name(self, env, what, url, form):
+        hm = env["app"].config["history_manager"]
+        before = len(hm.list_snapshots(env["y"]))
+        r = env["c"].post(url, data=form, headers={H: env["key_x"]})
+        _refused(r, env, what)
+        assert len(hm.list_snapshots(env["y"])) == before, f"{what} wrote chip Y's history"
+
+    def test_a_stale_tabs_grid_report_never_feeds_the_open_chips_pull(self, env):
+        c = env["c"]
+        assert c.post("/auto-sync/set", data={"pull": "1"}, headers={H: env["key_y"]}).status_code == 200
+        st = _state(t2=4.4e-05)                          # the lab moved q2 on chip Y
+        (env["y"] / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        ctx = _ctx(env)
+        ctx["live_diverged"] = True
+        before = (ctx["store"].state["qubits"]["q2"]["T1"], list(ctx["store"].change_log))
+        r = c.post("/auto-sync/pull", data={"dom_dirty": "1", "dom_path": "qubits.q2.T1"},
+                   headers={H: env["key_x"]})
+        assert r.status_code == 204 and not r.headers.get("HX-Trigger"), r.headers
+        assert not ctx.get("live_conflicts") and not ctx.get("live_auto_at"), \
+            "chip X's grid report decided chip Y's pull"
+        assert (ctx["store"].state["qubits"]["q2"]["T1"], list(ctx["store"].change_log)) == before
+
+
 class TestThePressOnItsOwnChipWorks:
     def test_the_matching_key_passes_and_the_live_toast_names_the_chip(self, env):
         c = env["c"]
