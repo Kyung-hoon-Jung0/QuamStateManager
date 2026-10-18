@@ -22,7 +22,10 @@
        29 px apart, so every vertical neighbour's bar hid under its label): ROW_PX per row,
        at least DRAW_PX, never more than DRAW_MAX_FRAC of the plot. */
     var DRAW_PX = 150, ROW_PX = 44, DRAW_MAX_FRAC = 0.45, GAP_PX = 26, MIN_H = 460, MAX_H = 640;
-    var MARGIN = { l: 64, r: 16, t: 30, b: 6 };
+    /* v1.5.1 (U P2-4): the top margin holds Plotly's toolbar (~28 px, top
+       right) AND the column names above it -- at 30 px the toolbar sat on the
+       last column's name */
+    var MARGIN = { l: 64, r: 16, t: 52, b: 6 };
     var LOSS_W = 0.9;          // a column's loss scale spans 90 % of the column
     var SHORT_BAR_PX = 60;     // a bar shorter than this never carries its label on itself
     var ROW_LABEL_MIN_PX = 36; // below this row pitch a short bar's label is hover only

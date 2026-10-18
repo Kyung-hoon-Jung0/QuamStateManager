@@ -7700,7 +7700,9 @@ window.ChipTrends = (function () {
                 return tr;
             });
             var layout = {
-                margin: { l: 58, r: 12, t: 8, b: 64 },
+                /* v1.5.1 (U P2-4): t clears Plotly's toolbar (~28 px, top
+                   right), which sat on the newest points and caught their hover */
+                margin: { l: 58, r: 12, t: 32, b: 64 },
                 height: 300,
                 showlegend: true,
                 legend: { orientation: 'h', y: -0.28, font: { size: 10 } },

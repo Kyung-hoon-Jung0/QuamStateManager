@@ -349,7 +349,7 @@
                 text: 'stored interaction frequency', font: { size: 10, color: C.plan } });
         }
         var over = {
-            margin: { l: 64, r: 16, t: 10, b: 90 }, showlegend: true,
+            margin: { l: 64, r: 16, t: 32, b: 90 }, showlegend: true,   // t: clear of the toolbar (U P2-4)
             legend: { orientation: 'h', y: -0.22, x: 0, font: { size: 11 } },
             xaxis: { title: { text: 'flux amplitude (V)' }, zeroline: true, domain: [0, right] },
             yaxis: { title: { text: 'frequency (GHz)' } },
@@ -434,7 +434,7 @@
         }).filter(Boolean);
         el.setAttribute('data-dwell', dwell.join('; '));
         var L = layout({
-            margin: { l: 64, r: 16, t: 10, b: 90 }, showlegend: true,
+            margin: { l: 64, r: 16, t: 32, b: 90 }, showlegend: true,   // t: clear of the toolbar (U P2-4)
             legend: { orientation: 'h', y: -0.22, x: 0, font: { size: 11 } },
             xaxis: { title: { text: 'time (ns, 1 sample per ns)' }, anchor: 'y2' },
             yaxis: { title: { text: 'frequency (GHz)' }, domain: [0.42, 1] },
