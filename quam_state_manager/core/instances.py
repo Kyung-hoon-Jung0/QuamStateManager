@@ -138,6 +138,53 @@ def process_start(pid) -> int | None:
         return None
 
 
+#: FILETIME (100 ns since 1601-01-01 UTC) of the Unix epoch
+_FILETIME_EPOCH = 116444736000000000
+
+
+def process_start_epoch(pid) -> float | None:
+    """When the OS started *pid*, as Unix seconds (UTC), or None when it
+    cannot be said. R3 M1: a registry record last written BEFORE the process
+    now holding its pid started cannot be that process's."""
+    start = process_start(pid)
+    if start is None:
+        return None
+    if os.name == "nt":
+        return (start - _FILETIME_EPOCH) / 1e7
+    try:
+        ticks = os.sysconf("SC_CLK_TCK")
+        with open("/proc/stat", encoding="ascii", errors="replace") as fh:
+            btime = next(int(ln.split()[1]) for ln in fh if ln.startswith("btime "))
+        return btime + start / float(ticks)
+    except (OSError, ValueError, StopIteration, AttributeError):
+        return None
+
+
+#: R3 M1: how much later than a record's last write the pid's process may
+#: have started and still be its writer (clock rounding, not a policy)
+_STALE_RECORD_SLACK_S = 2.0
+
+
+def _record_predates_process(pid: int, record: dict) -> bool:
+    """True when the process now holding *pid* started after *record* was
+    last written: the record is a dead process's, its pid reused (R3 M1).
+    Unknown either way is False (the record is judged by its pid, as
+    before)."""
+    raw = record.get("updated_utc") or record.get("started_utc")
+    if not isinstance(raw, str) or not raw:
+        return False
+    try:
+        written = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if written.tzinfo is None:
+        written = written.replace(tzinfo=timezone.utc)
+    started = process_start_epoch(pid)
+    if started is None:
+        return False
+    return started > written.timestamp() + _STALE_RECORD_SLACK_S
+
+
 def process_alive(pid, start=None) -> bool:
     """:func:`pid_alive`, and -- when *start* (a :func:`process_start` value
     recorded by that process) is given and the OS can say -- still the SAME
@@ -311,6 +358,13 @@ def peers(instance_path, *, include_self: bool = False) -> list[Peer]:
             _drop(path)
             continue
         if pid != me and not pid_alive(pid):
+            _drop(path)
+            continue
+        # R3 M1: a pid alive now is not the record's process when that
+        # process started after the record was last written (Windows reuses
+        # pids). A killed older SM's record otherwise read as "running" for
+        # ever -- and hid every crashed window's tray checkpoint.
+        if pid != me and _record_predates_process(pid, record):
             _drop(path)
             continue
         out.append(Peer(

@@ -129,7 +129,7 @@ class TestRegistry:
         (d / f"{foreign_pid}.json").write_text(json.dumps({
             "pid": foreign_pid, "port": 5174, "chip_path": "C:/chips/alpha",
             "chip_fs_key": "", "chip_name": "Alpha", "roots": [],
-            "updated_utc": "2026-08-05T00:00:00+00:00"}), encoding="utf-8")
+            "updated_utc": instances._now_iso()}), encoding="utf-8")
         peers = instances.peers(tmp_path)
         assert [p.pid for p in peers] == [foreign_pid]
         assert peers[0].label == f"port 5174 · PID {foreign_pid}"
@@ -177,7 +177,7 @@ class TestConflicts:
         (d / f"{foreign_pid}.json").write_text(json.dumps({
             "pid": foreign_pid, "port": 5174, "chip_path": str(chip),
             "chip_fs_key": instances._fs_key(chip), "chip_name": "Alpha",
-            "roots": [], "updated_utc": "2026-08-05T00:00:00+00:00"}),
+            "roots": [], "updated_utc": instances._now_iso()}),
             encoding="utf-8")
         out = instances.conflicts(tmp_path, chip_path=chip)
         assert [p.pid for p in out["same_chip"]] == [foreign_pid]
@@ -192,7 +192,7 @@ class TestConflicts:
         (d / f"{foreign_pid}.json").write_text(json.dumps({
             "pid": foreign_pid, "port": 5174, "chip_path": str(b),
             "chip_fs_key": instances._fs_key(b), "chip_name": "Beta",
-            "roots": [], "updated_utc": "2026-08-05T00:00:00+00:00"}),
+            "roots": [], "updated_utc": instances._now_iso()}),
             encoding="utf-8")
         out = instances.conflicts(tmp_path, chip_path=a)
         assert out["same_chip"] == []
@@ -214,7 +214,7 @@ class TestConflicts:
         (d / f"{foreign_pid}.json").write_text(json.dumps({
             "pid": foreign_pid, "port": 5174, "chip_path": str(b),
             "chip_fs_key": instances._fs_key(b), "chip_name": "Beta",
-            "roots": [str(shared)], "updated_utc": "2026-08-05T00:00:00+00:00"}),
+            "roots": [str(shared)], "updated_utc": instances._now_iso()}),
             encoding="utf-8")
         out = instances.conflicts(tmp_path, chip_path=a)
         assert out["same_chip"] == []
@@ -422,7 +422,7 @@ class TestSameChipBanner:
         (d / f"{pid}.json").write_text(json.dumps({
             "pid": pid, "port": port, "chip_path": str(chip),
             "chip_fs_key": instances._fs_key(chip), "chip_name": "Alpha",
-            "roots": [], "updated_utc": "2026-08-05T00:00:00+00:00"}),
+            "roots": [], "updated_utc": instances._now_iso()}),
             encoding="utf-8")
 
     def test_no_banner_when_this_is_the_only_window(self, tmp_path):
@@ -503,7 +503,7 @@ class TestGcPeerProtection:
         (d / f"{pid}.json").write_text(json.dumps({
             "pid": pid, "port": port, "chip_path": chip_path,
             "chip_fs_key": "", "chip_name": "Peer", "roots": [],
-            "updated_utc": "2026-08-09T00:00:00+00:00"}), encoding="utf-8")
+            "updated_utc": instances._now_iso()}), encoding="utf-8")
 
     def test_a_live_peers_chip_survives_gc(self, tmp_path, foreign_pid):
         """THE fix: a registered live peer's chip is kept — and the
