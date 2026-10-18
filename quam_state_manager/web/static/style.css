@@ -2038,15 +2038,15 @@ details.tree-branch-active > summary {
 .tree-entry-label input[type=checkbox]:checked {
     background: var(--pico-primary); border-color: var(--pico-primary);
 }
-/* docs/165 (customer): the tick exists in EVERY state — what changes is how
-   loud it is. Empty, it is a faint grey ghost, which is what tells a person
-   the box is tickable at all; under the pointer it comes up; ticked it turns
-   white on the filled blue box. Three steps, so the control announces itself
-   instead of waiting to be discovered. */
-.tree-entry-label input[type=checkbox]::after { content: ""; position: absolute; left: 6.5px; top: 2.5px; width: 6px; height: 11px; border: solid var(--pico-muted-color); border-width: 0 2.6px 2.6px 0; transform: rotate(45deg); opacity: 0.34; transition: opacity .12s, border-color .12s; }
+/* docs/165 (customer): the box announces itself -- the square, its blue
+   border and tint say "tickable"; under the pointer a grey tick previews the
+   press; ticked it is white on the filled blue box.
+   v1.5.1 (U P2-1): the resting box carries NO tick. A faint grey one there
+   read as ticked in a list where ticked and unticked rows alternate. */
+.tree-entry-label input[type=checkbox]::after { content: ""; position: absolute; left: 6.5px; top: 2.5px; width: 6px; height: 11px; border: solid var(--pico-muted-color); border-width: 0 2.6px 2.6px 0; transform: rotate(45deg); opacity: 0; transition: opacity .12s, border-color .12s; }
 .tree-entry-label:hover input[type=checkbox]::after,
 .tree-entry-label input[type=checkbox]:hover::after,
-.tree-entry-label input[type=checkbox]:focus-visible::after { opacity: 0.8; }
+.tree-entry-label input[type=checkbox]:focus-visible::after { opacity: 0.55; }
 .tree-entry-label input[type=checkbox]:checked::after { border-color: #fff; opacity: 1; }
 /* the compare hint under the buttons: shown only while nothing is ticked (app.js) */
 .compare-hint {

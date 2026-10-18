@@ -45,16 +45,19 @@ class TestTickBox:
         assert "var(--pico-primary)" in r                          # the theme's own blue, no literal
 
     def test_the_tick_has_three_states_and_is_visible_before_it_is_ticked(self):
-        """docs/165 (customer): an empty box did not say it was tickable. The
-        tick mark now EXISTS in every state and only its loudness changes --
-        a faint grey ghost when empty, brighter under the pointer, white on
-        the filled blue box when ticked. The geometry lives on the base rule
-        so the three states cannot drift into three different shapes."""
+        """docs/165 (customer): an empty box did not say it was tickable --
+        the square, its blue border and tint say so, and a grey tick comes up
+        under the pointer; white on the filled blue box when ticked. The
+        geometry lives on the base rule so the states cannot drift into
+        different shapes.
+        v1.5.1 (U P2-1): the RESTING box shows no tick at all: the faint grey
+        ghost of docs/165 read as ticked in a list where ticked and unticked
+        rows alternate (tests/test_v151_p2_checkbox_rest.py)."""
         base = _rule(".tree-entry-label input[type=checkbox]::after")
         assert "rotate(45deg)" in base                 # the tick's shape, defined once
-        assert "var(--pico-muted-color)" in base       # grey while empty, no literal
+        assert "var(--pico-muted-color)" in base       # grey under the pointer, no literal
         ghost = float(re.search(r"opacity:\s*([0-9.]+)", base).group(1))
-        assert 0 < ghost < 0.5, f"empty must be a HINT, not a tick: {ghost}"
+        assert ghost == 0, f"a resting box shows no tick: {ghost}"
 
         css = re.sub(r"/\*.*?\*/", "", _CSS, flags=re.S)
         m = re.search(r"\.tree-entry-label:hover input\[type=checkbox\]::after[^{]*\{([^}]*)\}", css)
