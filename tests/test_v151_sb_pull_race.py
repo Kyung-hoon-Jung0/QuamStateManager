@@ -230,6 +230,50 @@ class TestTheMergeDoorRace:
             assert (_live_t1(env, "q2"), _live_t1(env, "q3")) == (LAB, EDIT)
 
 
+class TestAnUndoInsideThePull:
+    """R2 (the gap the review left open under SB-F1): the merge door replays
+    the edits it captured BEFORE the pull. An undo pressed while the pull read
+    and wrote took a row out of the change log -- and the stale capture put
+    it back on the pulled content (and, with apply, on the live chip)."""
+
+    @pytest.mark.parametrize("mode", ["reapply", "apply"])
+    def test_it_stays_undone(self, env, monkeypatch, mode):
+        c = env["c"]
+        assert c.post("/field/edit", data={"dot_path": "qubits.q1.T1",
+                                           "value": "1.7e-05"}).status_code == 200
+        assert c.post("/field/edit", data={"dot_path": "qubits.q3.T1",
+                                           "value": repr(EDIT)}).status_code == 200
+        _write(env["live"], _state(q2=LAB))            # the lab writes
+        real_dc = WC.doc_cache
+        fired: list = []
+
+        class _Hooked:
+            def __getattr__(self, name):
+                return getattr(real_dc, name)
+
+            def read_pair(self, folder, *a, **k):
+                pair = real_dc.read_pair(folder, *a, **k)
+                if not fired and k.get("mode") == "fresh":
+                    out = {}
+                    t = threading.Thread(target=lambda: out.update(r=c.post("/undo")))
+                    t.start()
+                    t.join(20)
+                    assert out.get("r") is not None and out["r"].status_code == 200
+                    fired.append(1)
+                return pair
+        monkeypatch.setattr(WC, "doc_cache", _Hooked())
+        r = c.post("/state/sync", data={"mode": mode, "ack_unseen": "1", "ack_collision": "1"})
+        monkeypatch.undo()
+        assert fired and r.status_code == 200, r.data
+        st = _ctx(env)["store"].state["qubits"]
+        assert st["q2"]["T1"] == LAB and st["q1"]["T1"] == 1.7e-5
+        assert st["q3"]["T1"] == 1.0e-5 * 3, "the undo pressed during the pull was reverted"
+        if mode == "reapply":
+            assert [e.dot_path for e in _ctx(env)["store"].change_log] == ["qubits.q1.T1"]
+        else:
+            assert (_live_t1(env, "q1"), _live_t1(env, "q3")) == (1.7e-5, 1.0e-5 * 3)
+
+
 class TestMachineReconcileRace:
     """The Runner's post-node hook adopts live by itself (auto_adopt=True) and
     keeps a late edit the same way -- the same sync point was left behind."""

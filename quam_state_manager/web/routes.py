@@ -30494,11 +30494,15 @@ def state_sync():
             # and the backup, the rebuild and the replay run under ONE store
             # lock hold, so no edit lands between them.
             with store._lock:
-                _late = {k: v for k, v in _capture_change_log_as_updates(store).items()
-                         if pending.get(k) != v
-                         and not any(k == p or k.startswith(p + ".") for p in _use_live)}
-                if _late:
-                    pending = _merge_reapply(pending, _late)
+                # R2: captured AGAIN, whole -- not only what was added. An
+                # undo pressed during the pull took a row out of the change
+                # log, and the pre-pull capture put it back on the pulled
+                # content (with apply, on the live chip too).
+                pending = _merge_reapply(_pending_reapply(),
+                                         _capture_change_log_as_updates(store))
+                if _use_live and mode in ("apply", "reapply"):
+                    pending = {k: v for k, v in pending.items()
+                               if not any(k == p or k.startswith(p + ".") for p in _use_live)}
                 # The store still holds the pre-pull view until the rebuild.
                 # A refused read must publish neither a version nor a replay map.
                 if mode == "discard" and (pending or ctx.get("working_dirty")):
