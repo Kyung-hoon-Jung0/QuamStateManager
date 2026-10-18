@@ -115,7 +115,7 @@ class TestTheNote:
         assert c.post("/state-history/snapshot").status_code == 200
         c.post("/auto-apply/arm")
         html = c.get("/state-history").data.decode()
-        assert "Load as working state" in html, "no snapshot row rendered"
+        assert "Load for review" in html, "no snapshot row rendered"
         with env["app"].test_request_context():
             note = routes_mod._auto_push_note()
 
@@ -123,7 +123,7 @@ class TestTheNote:
         # are two separate promises on the same button, and a page-wide search
         # cannot tell which of them carries the warning.
         def _attr(name: str) -> str:
-            i = html.index("Load as working state")
+            i = html.index("Load for review")
             frag = html[max(0, i - 1200):i]
             j = frag.rindex(name + '="') + len(name) + 2
             return frag[j:frag.index('"', j)]

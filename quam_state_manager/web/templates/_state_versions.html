@@ -169,7 +169,7 @@
                         hx-post="/state-history/{{ r.ts }}/stage?target=status&amp;chip_key={{ chip_key | urlencode }}"
                         hx-target="#status-bar" hx-swap="innerHTML"
                         onclick="StateVersions.close()"
-                        title="Load this version as your working state to review it, then Apply. Unsaved edits ask first; the live chip is untouched until you Apply.">Stage</button>
+                        title="Load this version into SM to review it, then Apply. Unsaved edits ask first; the live chip is untouched until you press Apply.">Load for review</button>
                 {# The same route State History uses, gates and all — but it
                    WRITES THE LIVE CHIP, and docs/86/97 established one visual
                    language for that: error-tinted, never the primary action.
@@ -186,7 +186,7 @@
                            overwriting the live chip — stays named in the
                            title, and the button keeps the one error-tinted
                            overwrite style (docs/86/97). #}
-                        title="Overwrite the LIVE chip with this version. Unsaved edits and a wiring-topology mismatch each ask first, and the current live state is snapshotted so this is reversible.">&#8593; Pull to Live</button>
+                        title="Overwrite the LIVE chip with this version. Unsaved edits and a wiring-topology mismatch each ask first, and the current live state is snapshotted so this is reversible.">&#8593; Restore to live</button>
                 {% endif %}
             </span>
             <span class="sv-meta">

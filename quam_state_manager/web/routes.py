@@ -17129,6 +17129,14 @@ def state_history(snapshot_note: str | None = None):
     snapshots = hm.list_snapshots(_active_path())
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _STATE_HISTORY_PER_PAGE, minimum=1)
+    # P1-9 (UX round): "Go to date" -- the page holding that day's newest row
+    goto_day = (request.args.get("date") or "").strip()[:10]
+    if goto_day and "page" not in request.args:
+        try:
+            page = _state_history_page_for(_active_ctx(), snapshots, goto_day, per_page)
+        except Exception:  # noqa: BLE001 -- an unreadable date lands on page 1
+            logger.debug("state history go-to-date %r failed", goto_day, exc_info=True)
+            goto_day = ""
     # docs/284: the rows come from the chip's change ledger (runs, SM writes,
     # observed states + older snapshots it does not cover); while it cannot
     # answer, every snapshot as an older row under the mode's note. S10 C6:
@@ -17152,7 +17160,7 @@ def state_history(snapshot_note: str | None = None):
                total=total, current_page=min(page, total_pages),
                total_pages=total_pages, per_page=per_page,
                chip_origin=_active_origin(), hist_chip_key=versions["chip_key"],
-               disk_stats=disk_stats, snapshot_note=snapshot_note)
+               disk_stats=disk_stats, snapshot_note=snapshot_note, goto_day=goto_day)
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body
     # without disturbing the detail/result pane beside it.
@@ -17160,6 +17168,38 @@ def state_history(snapshot_note: str | None = None):
         return render_template("_state_history_body.html", **ctx)
     template = "_state_history.html" if _is_htmx() else "state_history.html"
     return render_template(template, **ctx)
+
+
+def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
+    """P1-9 (UX round): the State History page that holds *day*'s newest row
+    (the rows run newest first): every row at or after the END of that day,
+    in the page's display zone, comes before it. ``ValueError`` for a date
+    that does not parse."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from quam_state_manager.core import hub_versions
+    d = datetime.strptime(day, "%Y-%m-%d")
+    zone = (_display_zone() or {}).get("zone")
+    try:
+        tz = ZoneInfo(zone) if zone else datetime.now().astimezone().tzinfo
+    except Exception:  # noqa: BLE001 -- no tzdata / not a zone: the machine's
+        tz = datetime.now().astimezone().tzinfo
+    end = datetime(d.year, d.month, d.day, tzinfo=tz) + timedelta(days=1)
+    cutoff_us = int((end.astimezone(timezone.utc)
+                     - datetime(1970, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1_000_000)
+    probe = _versions_read_rows(ctx, snapshots, limit=1, offset=0, lane_notes=False)
+    if probe.get("mode") == "ledger" and probe.get("chip_dir") is not None:
+        chip_dir = probe["chip_dir"]
+        binding = _vh_binding(ctx, chip_dir)
+        n_events = hub_versions.count_newer(chip_dir, [], cutoff_us, binding=binding)
+        # the older snapshot rows as the page around that offset lists them
+        near = _versions_read_rows(ctx, snapshots, limit=1, offset=n_events, lane_notes=False)
+        n = hub_versions.count_newer(chip_dir, snapshots, cutoff_us, binding=binding,
+                                     older=near.get("older") or frozenset())
+    else:
+        n = sum(1 for s in snapshots
+                if hub_versions._snapshot_instant(s.timestamp) >= cutoff_us)
+    return n // max(1, per_page) + 1
 
 
 def _keep_identity_extras(ctx: dict | None, state: dict,

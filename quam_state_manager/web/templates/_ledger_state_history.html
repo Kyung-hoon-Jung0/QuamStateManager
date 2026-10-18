@@ -14,10 +14,23 @@
     <button id="sh-compare-btn" class="outline btn-sm" disabled
             onclick="StateHistory.compareSelected()">Compare 2 selected</button>
     <small class="muted sh-count">{{ version_count(lv) }}</small>
+    {# P1-9 (UX round): jump to the page holding a day, instead of guessing pages #}
+    <form class="sh-goto" hx-get="/state-history" hx-target="#table-pane" hx-swap="innerHTML"
+          hx-sync="#table-pane:replace" hx-push-url="true">
+        <label class="sh-goto-label">Go to date
+            <input type="date" name="date" value="{{ goto_day or '' }}" required aria-label="Go to date"></label>
+        <input type="hidden" name="per_page" value="{{ per_page }}">
+        <button type="submit" class="outline btn-sm">Go</button>
+    </form>
 </div>
 
 <div class="sh-timeline">
 {% for r in lv.rows %}
+{#- P1-9: a header above the first row of each day, in the page's zone -#}
+{% set _day = (r.when | format_ts_zone)[:10] %}
+{% if loop.first or _day != ((loop.previtem.when | format_ts_zone)[:10]) %}
+<div class="sh-day" id="sh-day-{{ _day }}" role="heading" aria-level="3">{{ _day }}</div>
+{% endif %}
 <div class="sh-entry{% if r.legacy %} sh-older{% endif %}{% if r.foreign %} sh-foreign{% endif %}{% if r.pinned %} sh-pinned{% endif %}" data-ts="{{ r.ts }}">
     <div class="sh-entry-main">
         <input type="checkbox" class="sh-cb" value="{{ r.ts }}"
@@ -71,13 +84,13 @@
         <button class="outline btn-sm sh-stage"
                 hx-post="/state-history/{{ r.ts }}/stage?target=status&amp;chip_key={{ hist_chip_key | urlencode }}"
                 hx-target="#status-bar" hx-swap="innerHTML"
-                hx-confirm="Load the version of {{ r.when | format_ts_zone }} as the working state? You can then review the diff and Apply to live.{{ auto_push_note }}"
-                title="Load this version as the working state to review it; the live chip is untouched until you apply.{{ auto_push_note }}">Load as working state</button>
+                hx-confirm="Load the version of {{ r.when | format_ts_zone }} for review? It replaces SM's working state; the live chip changes only when you press Apply.{{ auto_push_note }}"
+                title="Load this version into SM to review it; the live chip is untouched until you press Apply.{{ auto_push_note }}">Load for review</button>
         <button class="outline btn-sm sh-restore-live"
                 hx-post="/state-history/{{ r.ts }}/restore-live?chip_key={{ hist_chip_key | urlencode }}"
                 hx-target="#state-history-detail" hx-swap="innerHTML"
                 hx-confirm="Restore the LIVE chip to the version of {{ r.when | format_ts_zone }} now? The current state is snapshotted first (reversible)."
-                title="Replace the live chip with this version now (the current live state is snapshotted first, so this can be undone)">Restore to live</button>
+                title="Write this version to the live chip now (the current live state is snapshotted first, so this can be undone)">&#8593; Restore to live</button>
         {% endif %}
         {% if hist_chip_key and not r.why_diff %}
         <button class="outline btn-sm"
@@ -91,6 +104,17 @@
 </div>
 
 {{ history_pager('/state-history', current_page, total_pages, '#table-pane', per_page, 'innerHTML scroll:top') }}
+{% if goto_day %}
+{#- P1-9: land on the day asked for (or the newest day before it) -#}
+<script>(function () {
+    var heads = document.querySelectorAll('#state-history-body .sh-day');
+    var want = {{ goto_day | tojson }}, hit = null;
+    for (var i = 0; i < heads.length; i++) {
+        if (heads[i].id.slice(7) <= want) { hit = heads[i]; break; }
+    }
+    if (hit) { hit.classList.add('sh-day-goto'); try { hit.scrollIntoView({block: 'start'}); } catch (e) {} }
+})();</script>
+{% endif %}
 {% else %}
 {% if lv.mode == 'ledger' %}
 <p class="muted" style="padding:1rem">No recorded states yet. The change history records
