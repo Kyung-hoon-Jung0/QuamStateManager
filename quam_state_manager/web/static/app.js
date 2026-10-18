@@ -19592,7 +19592,23 @@ window.saveDatasetNote = function(runId, note, el) {
     if (saved !== undefined && note === saved) { _noteSettle(el); return; }
     // v1.5.1 (U P2-22): the same text already on its way is not sent twice
     if (el && el.dataset && el.dataset.inflight === note) return;
+    // R3 MINOR 7: one save of a note at a time. A second save sent while the
+    // first was on its way carried the text stored BEFORE the first as its
+    // `expected`, so the server refused it as a conflict and the user was
+    // told their own save came from "another window" -- the newer text was
+    // not saved. It waits now, and goes once the first has landed.
+    if (el && el.dataset && el.dataset.inflight !== undefined) {
+        el._noteNext = note;
+        _noteState(el, 'saving');
+        return;
+    }
     if (el && el.dataset) el.dataset.inflight = note;
+    var _next = function (ok) {
+        if (!el) return;
+        var nx = el._noteNext;
+        el._noteNext = undefined;
+        if (ok && nx !== undefined && nx !== el.dataset.saved) window.saveDatasetNote(runId, nx, el);
+    };
     _noteState(el, 'saving');
     fetch('/dataset/' + runId + '/note', {
         method: 'POST',
@@ -19621,6 +19637,7 @@ window.saveDatasetNote = function(runId, note, el) {
             } else if (window.showToast) {
                 window.showToast('Note not saved: ' + (d.error || ('HTTP ' + r.status)), 'error');
             }
+            _next(false);      // the box keeps the text; a leave or Save sends it
             return;
         }
         if (el && el.dataset) { el.dataset.saved = note; delete el.dataset.conflict; }
@@ -19642,9 +19659,11 @@ window.saveDatasetNote = function(runId, note, el) {
                 else btn.removeAttribute('title');
             }
         }
+        _next(true);           // R3 MINOR 7: the save that waited for this one
     }).catch(function() {
         if (el && el.dataset && el.dataset.inflight === note) delete el.dataset.inflight;
         _noteState(el, 'failed');
+        _next(false);
     });
 };
 /* v1.5.1 (U P2-22): the note's state beside its Save -- typed but not saved,
@@ -19692,6 +19711,19 @@ function _flushDirtyNotes() {
         var ta = tas[i];
         if (ta.dataset.conflict || ta.value === ta.dataset.saved
                 || ta.value === ta.dataset.inflight) continue;
+        if (ta.dataset.inflight !== undefined) {
+            // R3 MINOR 7: a save is on its way and the page is going -- the
+            // newer text cannot wait for it: sent now, after the text the
+            // first save stores
+            try {
+                fetch('/dataset/' + ta.getAttribute('data-uid') + '/note', {
+                    method: 'POST', keepalive: (ta.value || '').length < 60000,
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({note: ta.value, expected: ta.dataset.inflight})
+                }).catch(function () {});
+            } catch (e) { /* the page is going */ }
+            continue;
+        }
         window.saveDatasetNote(ta.getAttribute('data-uid'), ta.value, ta);
     }
 }
