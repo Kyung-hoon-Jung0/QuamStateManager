@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import copy
 import math
+import threading
 from typing import Any, Callable
 
 import numpy as np
@@ -51,17 +52,96 @@ def _gaussian_window(*args, **kwargs):
     return _f(*args, **kwargs)
 
 
+def _import_scipy() -> None:
+    try:
+        import scipy.ndimage  # noqa: F401
+        import scipy.signal.windows  # noqa: F401
+    except ImportError:
+        pass
+
+
 def preload_scipy() -> None:
     """Import the scipy modules the functions above use (a no-op once they
     are loaded). A caller that synthesizes while holding a lock calls this
     first, so a cold import never runs under that lock (S10 walk: the first
     lint held the chip's state lock through it). No scipy: nothing to do --
     the synthesis that needs it reports its own failure as before."""
-    try:
-        import scipy.ndimage  # noqa: F401
-        import scipy.signal.windows  # noqa: F401
-    except ImportError:
-        pass
+    _import_scipy()
+
+
+_PRELOAD_LOCK = threading.Lock()
+_PRELOAD = {"thread": None}
+#: what ``scipy.ndimage`` and ``scipy.signal.windows`` pull in, imported one
+#: at a time (the heaviest, ``scipy.stats``, ~0.45 s) so a page that starts
+#: meanwhile shares the interpreter with one of them at most
+_PRELOAD_STEPS = ("scipy", "scipy.linalg", "scipy.sparse", "scipy.spatial", "scipy.ndimage",
+                  "scipy.special", "scipy.optimize", "scipy.interpolate", "scipy.stats",
+                  "scipy.signal.windows")
+
+
+def _scipy_loaded() -> bool:
+    import sys
+    return "scipy.signal.windows" in sys.modules and "scipy.ndimage" in sys.modules
+
+
+def _import_step(name: str) -> None:
+    import importlib
+    importlib.import_module(name)
+
+
+def _preload_steps(max_wait_s: float) -> None:
+    import time
+    from quam_state_manager.core import activity
+    deadline = time.monotonic() + max_wait_s
+    for name in _PRELOAD_STEPS:
+        while activity.busy() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        try:
+            _import_step(name)
+        except Exception:  # noqa: BLE001 -- a module this scipy lacks: the next one
+            continue
+    _import_scipy()
+
+
+def _claim_preload(thread) -> bool:
+    if _scipy_loaded():
+        return False
+    with _PRELOAD_LOCK:
+        if _PRELOAD["thread"] is not None:
+            return False
+        _PRELOAD["thread"] = thread
+    return True
+
+
+def preload_scipy_quietly(*, max_wait_s: float = 60.0) -> bool:
+    """v1.5.1 (perf): import what :func:`preload_scipy` imports, on THIS
+    (background) thread, while no page is being served, so the first lint of
+    a chip finds the modules loaded. Measured on a restart: the import was
+    2.1 s of the 2.3 s the Diagnostics badge, banner and findings each waited
+    at chip open (they share one lint). The imports are the same; only their
+    thread and moment change, so no result can differ.
+
+    Each module waits until no foreground request has been in flight for a
+    moment (``activity.busy``, the one yield-to-foreground rule; at most
+    *max_wait_s* in all), so a page is never slowed by more than the one
+    module being imported when it arrived; a lint that comes first imports
+    what is left itself, exactly as before. Once per process: False (and
+    nothing done) when another thread has it or the modules are loaded."""
+    if not _claim_preload(threading.current_thread()):
+        return False
+    _preload_steps(max_wait_s)
+    return True
+
+
+def preload_scipy_soon(*, max_wait_s: float = 60.0) -> bool:
+    """:func:`preload_scipy_quietly` on a daemon thread of its own (a chip
+    open whose server start did not begin it). True when this call started it."""
+    t = threading.Thread(target=_preload_steps, args=(max_wait_s,), daemon=True,
+                         name="sm-scipy-preload")
+    if not _claim_preload(t):
+        return False
+    t.start()
+    return True
 
 from quam_state_manager.core.pulse_catalog import (
     PULSE_CATALOG,
