@@ -46,6 +46,12 @@
            hx-sync="#table-pane:replace" hx-push-url="true"
            title="Open in CZ gate plan">CZ gate plan →</a>
         {% endif %}
+        {% if inspector_type == 'pair' %}
+        {# P1-12 (UX round): filled only when the moving qubit has
+           population-loss runs in the chip's data folders #}
+        <span class="pair-loss-slot" hx-get="/pair/{{ inspector_label | urlencode }}/loss-scans"
+              hx-trigger="load" hx-swap="innerHTML"></span>
+        {% endif %}
         {% if inspector_type == "dataset" and not (inspector_compare is defined and inspector_compare) %}
         {# Up/down run navigation — walks the sidebar tree's run entries in
            the order the user SEES them (r13: newest-first, so ↑ = newer,

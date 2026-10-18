@@ -21723,6 +21723,52 @@ def cz_plan_loss():
     return jsonify(ok=True, **payload)
 
 
+@bp.route("/pair/<name>/loss-scans")
+def pair_loss_scans(name: str):
+    """P1-12 (UX round): the pair's way to its population-loss data -- the
+    moving qubit's newest population-loss scan (and the run its stored
+    defects came from, when that is another run) plus the CZ gate plan, which
+    carries the loss per operation. Found by the CZ plan's own discovery
+    (``cz_loss`` over the chip's data folders, never the Datasets store); an
+    empty answer when no such run exists, so the inspector offers nothing."""
+    store = _store()
+    engine = _engine()
+    ctx = _active_ctx()
+    if not store or not engine or not ctx:
+        return ""
+    try:
+        pair = engine.get_pair(name)
+    except Exception:  # noqa: BLE001 -- no pair, no link
+        return ""
+    ends = {"control": pair.get("qubit_control"), "target": pair.get("qubit_target")}
+    mv = pair.get("moving_qubit")
+    movers = [ends.get(mv) or mv] if mv else [ends["control"], ends["target"]]
+    movers = [m for m in movers if isinstance(m, str) and m]
+    try:
+        _rows, convs, _unavailable = _cz_plan_ops(store)
+        payload = _cz_loss_build(ctx, store, convs)
+    except Exception:  # noqa: BLE001 -- the inspector never breaks on this
+        logger.debug("pair loss scans for %s failed", name, exc_info=True)
+        return ""
+    runs = []
+    for q in movers:
+        entry = (payload.get("curves") or {}).get(q) or {}
+        for kind in ("scan", "marker_curve"):
+            c = entry.get(kind)
+            if not c or not c.get("folder") or c.get("run_id") is None:
+                continue
+            try:
+                uid = _dataset_uid(_folder_key(Path(c["folder"]).parent.parent), int(c["run_id"]))
+            except Exception:  # noqa: BLE001
+                continue
+            runs.append({"qubit": q, "run_id": c["run_id"], "name": c.get("run_name") or "",
+                         "uid": uid, "kind": kind})
+    if not runs:
+        return ""
+    return render_template("_pair_loss_scans.html", runs=runs, pair_name=name,
+                           cz_plan_op=_pair_cz_plan_ops(store).get(name))
+
+
 @bp.route("/cz-plan/history")
 def cz_plan_history():
     """When each operation's amplitudes were last set, and every staleness warning."""
