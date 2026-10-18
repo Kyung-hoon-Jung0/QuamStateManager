@@ -76,6 +76,7 @@ _NON_STAGING_POSTS = {
     'main.env_schema_dismiss',
     'main.env_schema_verdict',
     'main.env_schema_verdict_revoke',
+    'main.export_csv',      # v1.5.1 UX B2: the grid's CSV, POSTed for a long column list; read only
     'main.field_lab_watch',
     'main.field_type_assign',
     'main.field_type_unassign',
