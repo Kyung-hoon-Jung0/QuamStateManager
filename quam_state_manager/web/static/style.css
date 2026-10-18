@@ -2882,6 +2882,7 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .table-filter {
     display: flex; align-items: center; gap: 0.4rem;
 }
+.table-filter .table-export { margin: 0; white-space: nowrap; }
 .table-filter input {
     font-family: var(--font-ui);
     font-size: 0.88em; padding: 0.25rem 0.5rem; margin: 0;

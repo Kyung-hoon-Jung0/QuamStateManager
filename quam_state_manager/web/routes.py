@@ -31803,27 +31803,121 @@ def state_overwrite_live_preflight():
 # ======================================================================
 
 
-@bp.route("/export")
+@bp.route("/export", methods=["GET", "POST"])
 def export_csv():
+    """The one CSV export (UX round, B2: reachable from the Qubits, Pairs and
+    Resonators tables and Live State Edit, not only from /table).
+
+    * ``?props=`` (default): one row per qubit, the stored values of those
+      summary properties -- what /table exports; ``?chain=`` keeps one chain.
+    * ``?entity=pairs&props=``: the same, one row per qubit pair.
+    * ``grid=qubits|pairs`` (Live State Edit, POSTed: the column list can be
+      long): the grid's own columns, only those named in ``cols``, read
+      through the same cell pipeline the grid renders from. Stored values,
+      never the display strings.
+    """
     engine = _engine()
     if not engine:
         return render_template("_status.html", message="No state loaded", level="warning")
 
+    body = request.get_json(silent=True) if request.method == "POST" else None
+    if request.method == "POST" or request.args.get("grid"):
+        return _export_grid_csv(body or {})
+
+    entity = request.args.get("entity") or "qubits"
     props = request.args.getlist("props") or [
         "f_01", "readout_frequency", "T1", "T2ramsey",
         "readout_amplitude", "readout_threshold", "gate_fidelity_avg",
     ]
-    rows = engine.summary_table(props)
-    fieldnames = ["id"] + props
+    if entity == "pairs":
+        rows = _export_pair_rows(engine, props)
+        name = "quam_pairs.csv"
+    else:
+        rows = engine.summary_table(props)
+        chain = request.args.get("chain")
+        if chain:
+            rows = [r for r in rows if str(r.get("id", "")).startswith(f"q{chain}")]
+        name = "quam_summary.csv"
+    return _csv_download(["id"] + props, rows, name)
 
+
+def _csv_download(fieldnames: list, rows: list, name: str):
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(rows)
-
     mem = io.BytesIO(output.getvalue().encode("utf-8"))
     mem.seek(0)
-    return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="quam_summary.csv")
+    return send_file(mem, mimetype="text/csv", as_attachment=True, download_name=name)
+
+
+def _export_pair_rows(engine, props: list) -> list[dict]:
+    """One row per qubit pair -- the Pairs table's own record (``get_pair`` +
+    the Bell summary), unreadable pairs skipped as the table skips them."""
+    store = _store()
+    rows = []
+    for name in (store.qubit_pair_names if store else []):
+        try:
+            p = engine.get_pair(name)
+            _pair_bell(p)
+        except Exception:  # noqa: BLE001 -- the table shows such a pair as an error row
+            continue
+        rows.append({"id": name, **{k: p.get(k) for k in props}})
+    return rows
+
+
+def _export_grid_csv(body: dict):
+    """Live State Edit's grid as CSV: the columns the user sees (``cols``),
+    one row per qubit (or pair), each cell's STORED value read at the path
+    the grid resolved it to; a pointer with no scalar behind it is written as
+    the pointer, a missing field as blank."""
+    store = _store()
+    if not store:
+        return render_template("_status.html", message="No state loaded", level="warning")
+    src = body or request.args
+    grid = (src.get("grid") or "qubits")
+    cols = src.get("cols")
+    if isinstance(cols, str):
+        cols = [c for c in cols.split(",") if c]
+    want = [str(c) for c in (cols or [])]
+    dynhide = src.get("dynhide") or []
+    if isinstance(dynhide, str):
+        dynhide = [k for k in dynhide.split(",") if k]
+    modified = _modified_map()
+    if grid == "pairs":
+        columns, _groups, rows = _pair_grid_entry(store, modified)["grid"]
+    else:
+        g = _bulk_grid_entry(store, {str(k) for k in dynhide}, modified)["grid"]
+        columns, rows = g["columns"], g["rows"]
+    by_key = {c["key"]: i for i, c in enumerate(columns)}
+    idx = [by_key[k] for k in want if k in by_key] if want else list(range(len(columns)))
+    header = ["id"] + [
+        columns[i]["key"] + (f" [{columns[i]['unit']}]" if columns[i].get("unit") else "")
+        for i in idx]
+    out = []
+    for row in rows:
+        cells = row.get("cells") or []
+        rec = {"id": row.get("id")}
+        for i, h in zip(idx, header[1:]):
+            rec[h] = _export_cell_value(store, cells[i] if i < len(cells) else None)
+        out.append(rec)
+    return _csv_download(header, out, f"quam_live_edit_{'pairs' if grid == 'pairs' else 'qubits'}.csv")
+
+
+def _export_cell_value(store, cell: dict | None):
+    if not cell or cell.get("missing"):
+        return ""
+    if cell.get("ptr_kind"):
+        return cell.get("display", "")
+    path = cell.get("resolved_path")
+    if path:
+        try:
+            v = store.get_value(path)
+            if not isinstance(v, (dict, list)):
+                return v
+        except (KeyError, TypeError, IndexError, ValueError):
+            pass
+    return cell.get("display", "")
 
 
 _SPARK_POINTS = 40   # the popup sparkline's LTTB budget

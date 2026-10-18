@@ -5,6 +5,10 @@
                aria-label="Filter resonators" autocomplete="off"
                oninput="filterTable(this, 'resonators-table')">
         <small id="resonators-table-filter-count" class="muted"></small>
+        {# B2 (UX round): the table's stored values as CSV, through /export #}
+        <a class="outline btn-sm table-export" role="button" download
+           href="/export?props=is_active&props=readout_frequency&props=readout_amplitude&props=readout_length&props=readout_threshold&props=time_of_flight&props=grid_location{% if active_chain %}&chain={{ active_chain | urlencode }}{% endif %}"
+           title="Download this table as CSV (stored values, SI units)">Export CSV</a>
     </div>
 </div>
 

@@ -23,6 +23,10 @@
                aria-label="Filter qubits" autocomplete="off"
                oninput="filterTable(this, 'qubits-table')">
         <small id="qubits-table-filter-count" class="muted"></small>
+        {# B2 (UX round): the table's stored values as CSV, through /export #}
+        <a class="outline btn-sm table-export" role="button" download
+           href="/export?props=is_active&props=f_01&props=T1&props=T2ramsey&props=xy_intermediate_frequency&props=x180_amplitude&props=x90_amplitude&props=x180_length&props=x180_alpha&props=readout_amplitude&props=gate_fidelity_avg&props=grid_location{% if active_chain %}&chain={{ active_chain | urlencode }}{% endif %}"
+           title="Download this table as CSV (stored values, SI units)">Export CSV</a>
     </div>
 </div>
 

@@ -9,6 +9,15 @@
     </div>
     {% include '_landing_getting_started.html' %}
 
+    <div class="help-export" id="help-export">
+        <h3>Export</h3>
+        <p><b>Export CSV</b> sits above the Qubits, Pairs and Resonators tables and in
+           Live State Edit (the columns you see). For any set of columns, use the
+           <a href="/table" hx-get="/table" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Parameter table</a>.
+           The <a href="/chip-status/report" target="_blank" rel="noopener">printable chip report</a>
+           downloads as HTML.</p>
+    </div>
+
     <div class="help-shortcuts">
         <h3>Keyboard shortcuts</h3>
         <div class="help-sc-grid">

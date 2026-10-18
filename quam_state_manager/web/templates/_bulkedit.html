@@ -122,6 +122,9 @@
         {% endif %}
         <button type="button" class="btn-sm outline" id="bulk-reset" onclick="BulkEdit.resetDirty()" disabled
                 title="Discard the unsaved (not-yet-applied) edits in this table">Reset</button>
+        {# B2 (UX round): the qubit grid's visible columns as CSV #}
+        <button type="button" class="btn-sm outline" id="bulk-export-csv" onclick="BulkEdit.exportCsv(this)"
+                title="Download the visible columns of the qubit grid as CSV (stored values)">Export CSV</button>
         {% endif %}
         {% if rows %}
         <label class="bulk-freqsync-ctl"

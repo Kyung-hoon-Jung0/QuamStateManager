@@ -3962,6 +3962,36 @@
             });
         },
 
+        /* B2 (UX round): the qubit grid's VISIBLE columns as CSV, through
+           /export. POSTed (a chip with every derived column shown names
+           hundreds of keys) and saved from the response, so the page stays. */
+        exportCsv: function (btn) {
+            var cols = [];
+            document.querySelectorAll('#bulk-table thead th.bulk-col-head[data-col-key]').forEach(function (th) {
+                if (th.classList.contains('bulk-col-hidden') || th.classList.contains('bulk-search-hidden')) return;
+                var k = th.getAttribute('data-col-key');
+                if (k && cols.indexOf(k) < 0) cols.push(k);
+            });
+            var dh = (QMETA && Array.isArray(QMETA.dynhide)) ? QMETA.dynhide : _dynHidden();
+            if (btn) btn.disabled = true;
+            return fetch('/export', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({grid: 'qubits', cols: cols, dynhide: dh})
+            }).then(function (r) {
+                if (!r.ok) throw new Error('Export failed (' + r.status + ')');
+                return r.blob();
+            }).then(function (blob) {
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'quam_live_edit_qubits.csv';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+            }).catch(function (e) {
+                if (window.showToast) window.showToast(String((e && e.message) || e), 'error');
+            }).then(function () { if (btn) btn.disabled = false; });
+        },
         resetDirty: function () {
             var t = table(); if (!t) return;
             var statKeys = {};   // QA F9: a restored column's header follows it
