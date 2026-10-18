@@ -30646,18 +30646,29 @@ def _unseen_edit_refusal(ctx) -> dict | None:
             # v1.5.1 (SB-P2-3): no window is blamed -- the user's own Save
             # folds the rows into the working state too. A saved working
             # state still differs from live: Apply writes it.
-            saved = bool(ctx.get("working_dirty"))
+            # R3 M5: a STAGE sets working_dirty too -- and discards the rows.
+            # "Your edits were saved, press again" was then false, and doing
+            # what it said wrote the staged version the presser never saw.
+            staged = bool(ctx.get("staged_base"))
+            saved = bool(ctx.get("working_dirty")) and not staged
+            if staged:
+                _msg = ("Nothing was written: the edits this screen showed are gone. "
+                        f"{_staged_version_words(ctx)} was loaded into the working "
+                        "state since (another window?), replacing them. Apply would "
+                        "write that version, not your edits: review it before you "
+                        "apply, or Take live to drop it.")
+            elif saved:
+                _msg = ("Nothing was written: the edits this screen showed were "
+                        "saved into the working state (Save), so they are no longer "
+                        "separate rows. Apply writes the saved version; press it again.")
+            else:
+                _msg = ("Nothing was written: the edits this screen showed are no "
+                        "longer pending; they were applied or discarded since this "
+                        "screen was drawn (here or in another window).")
             return {"status": "unseen_changes", "have": 0,
                     "seen": seen if seen is not None else 0,
                     "paths": [], "nothing_pending": True, "saved": saved,
-                    "message": (
-                        "Nothing was written: the edits this screen showed were "
-                        "saved into the working state (Save), so they are no longer "
-                        "separate rows. Apply writes the saved version; press it again."
-                        if saved else
-                        "Nothing was written: the edits this screen showed are no "
-                        "longer pending; they were applied or discarded since this "
-                        "screen was drawn (here or in another window).")}
+                    "staged": staged, "message": _msg}
         return {"status": "unseen_changes", "have": have,
                 "seen": seen if seen is not None else 0,
                 "paths": extra[:8],
@@ -30677,6 +30688,17 @@ def _unseen_edit_refusal(ctx) -> dict | None:
                 f"{have - seen} edit(s) were made in another State Manager "
                 f"window and are not shown on this screen. Applying now would "
                 f"write them to the live chip too.")}
+
+
+def _staged_version_words(ctx) -> str:
+    """R3 M5: what the staged working state is, in words."""
+    src = ctx.get("staged_from") or {}
+    ref = src.get("ref") or {}
+    if src.get("src") == "revert_last_apply":
+        return "The version before the last apply (Revert last apply)"
+    if ref.get("run_id") is not None:
+        return f"The state of run #{ref['run_id']}"
+    return "A version from State History"
 
 
 def _unseen_by_paths(ctx):
