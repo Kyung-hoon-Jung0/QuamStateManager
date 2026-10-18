@@ -31213,6 +31213,11 @@ def state_sync():
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
     if mode == "apply":
+        # R3 M3: the pull consumed the stash -- its edits are rows now. The
+        # press below must find it consumed: a refused write puts back the
+        # stash the press FOUND, and the pre-merge one beside its own rows
+        # made an edit the user then undid come back on the next Apply.
+        _clear_reapply(ctx)
         # w7/livewrite: the patch (a response detail) is computed after the
         # live write, not before it -- nothing in between touches the store
         return _sync_pull_apply_to_live(ctx, replay, patch=lambda: _sync_patch(ctx, _pre_leaves),
