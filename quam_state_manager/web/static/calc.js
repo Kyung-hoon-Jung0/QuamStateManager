@@ -222,6 +222,35 @@
     }
     window.calcSolveRfLoIf = calcSolveRfLoIf;   // exposed for the node self-check
 
+    /* P1-13 (UX round): "fill from this resonator" -- RF / LO / IF in Hz, any
+       of them null. Opens the Calculator (and its RF = LO + IF section) and
+       derives the missing one, exactly as typing them would. */
+    window.calcFillRfLoIf = function (rfHz, loHz, ifHz, label) {
+        var pop = document.getElementById('calc-popover');
+        if (pop && pop.classList.contains('calc-hidden') && window.toggleCalc) window.toggleCalc();
+        var rf = document.getElementById('calc-s4-rf');
+        var sec = rf && rf.closest('details');
+        if (sec && !sec.open) sec.open = true;
+        function put(id, v, scale) {
+            var el = document.getElementById(id);
+            if (el) el.value = (v == null || !isFinite(v)) ? '' : fmt(v / scale);
+        }
+        put('calc-s4-rf', rfHz, 1e9);
+        put('calc-s4-lo', loHz, 1e9);
+        put('calc-s4-if', ifHz, 1e6);
+        recompute4(isFinite(rfHz) && isFinite(loHz) ? 'lo' : (isFinite(ifHz) ? 'if' : null));
+        var note = document.getElementById('calc-s4-src');
+        if (note) note.textContent = label ? 'from ' + label : '';
+        return true;
+    };
+    window.calcFillFromEl = function (el) {
+        function n(k) {
+            var v = parseFloat(el.getAttribute('data-' + k));
+            return isFinite(v) ? v : null;
+        }
+        return window.calcFillRfLoIf(n('rf'), n('lo'), n('if'), el.getAttribute('data-label') || '');
+    };
+
     function recompute4(role) {
         var s = calcSolveRfLoIf(role, num('calc-s4-rf'), num('calc-s4-lo'),
                                 num('calc-s4-if'));

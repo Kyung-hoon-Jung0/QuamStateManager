@@ -8650,10 +8650,38 @@ def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
     )
 
 
+def _resonator_lo_if(store, qids) -> dict[str, dict]:
+    """P1-13 (UX round): each resonator's readout LO / RF / IF in Hz, read the
+    way quam computes them (``cr_semantics``: the channel's own LO_frequency or
+    its output port's upconverter; IF = RF - LO for the inferred alias).
+    ``None`` parts where the port chain does not resolve -- never a guess."""
+    from quam_state_manager.core import cr_semantics
+    out: dict[str, dict] = {}
+    if store is None:
+        return out
+    with store._lock:
+        qubits = store.merged.get("qubits") or {}
+        for qid in qids:
+            q = qubits.get(qid)
+            rr = q.get("resonator") if isinstance(q, dict) else None
+            base = ("qubits", str(qid), "resonator")
+            lo = rf = if_ = None
+            try:
+                lo = cr_semantics.channel_lo_hz(store, rr, base)
+                rf, if_ = cr_semantics.channel_effective_rf_if(store, rr, base)
+            except Exception as exc:  # noqa: BLE001 -- a cell degrades, never the page
+                logger.warning("resonator LO/IF(%r) failed: %s", qid, exc)
+            out[str(qid)] = {"lo_hz": lo, "rf_hz": rf, "if_hz": if_}
+    return out
+
+
 @bp.route("/resonators")
 def resonators():
+    store = _store()
+    ro = _resonator_lo_if(store, list(store.qubit_names)) if store else {}
     return _channel_scoped_qubits_page(
-        has_key="has_resonator", page_name="resonators", template_stub="resonators")
+        has_key="has_resonator", page_name="resonators", template_stub="resonators",
+        ro_freq=ro)
 
 
 @bp.route("/flux")
@@ -11196,6 +11224,7 @@ def _render_qubit_detail(name: str, *, focus_path: str | None = None):
             modified_map=_modified_map(),
             focus_path=focus_path,
             entity_note=_entity_note("qubits." + name),
+            ro_freq=_resonator_lo_if(store, [name]).get(name) or {},
         ),
     )
 

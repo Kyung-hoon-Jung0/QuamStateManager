@@ -2884,6 +2884,9 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 }
 .table-filter .table-export { margin: 0; white-space: nowrap; }
 .pair-czplan-link { margin-left: .4rem; font-size: .8em; white-space: nowrap; }
+/* P1-13: the readout LO / IF line in the qubit inspector */
+.ro-lo-if { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin: .5rem 0; font-size: .88em; }
+.calc-s4-src { display: block; min-height: 1em; }
 .table-filter input {
     font-family: var(--font-ui);
     font-size: 0.88em; padding: 0.25rem 0.5rem; margin: 0;
