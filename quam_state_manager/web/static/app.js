@@ -450,6 +450,24 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     }
 });
 
+/* v1.5.1 (SA-F2): a live write that failed answers 409 + X-SM-Error-Code
+   with the tray (a read-only pill raised by the failure) and a persistent
+   error in #status-bar. Swap it into the tray like any answer -- never the
+   generic "didn't go through" toast -- and tell an in-flight Keep mine that
+   nothing was written. */
+document.addEventListener('htmx:beforeSwap', function (evt) {
+    var det = evt.detail;
+    var xhr = det && det.xhr;
+    if (!xhr || xhr.status !== 409 || !xhr.getResponseHeader) return;
+    var code = xhr.getResponseHeader('X-SM-Error-Code');
+    if (!code) return;
+    if (window._keepMineInFlight) window._keepMineInFlight._writeFailed = code;
+    if (det.target && det.target.id === 'pending-tray') {
+        det.shouldSwap = true;
+        det.isError = false;
+    }
+});
+
 /* Surface a toast on ANY htmx error response. htmx 2.x drops error-response
    bodies, so a POST that 500s (e.g. "Apply to live chip" when the live file is
    locked by a running experiment) used to swap nothing → the click looked dead
@@ -466,6 +484,7 @@ document.addEventListener('htmx:responseError', function(evt) {
             && xhr.getResponseHeader("HX-Trigger") === "undo-foreign" && window.htmx) {
         try { window.htmx.ajax("GET", "/state/tray", {target: "#pending-tray", swap: "outerHTML"}); } catch (e) {}
     }
+    var _code = (xhr && xhr.getResponseHeader) ? xhr.getResponseHeader("X-SM-Error-Code") : null;
     var msg = "That action didn't go through — please try again.";
     if (xhr && xhr.responseText) {
         var m = xhr.responseText.match(/<p[^>]*>([\s\S]*?)<\/p>/);
@@ -477,6 +496,15 @@ document.addEventListener('htmx:responseError', function(evt) {
             var clean = ta.value.trim();
             if (clean) msg = clean;
         }
+    }
+    if (_code) {
+        // v1.5.1 (SA-F2): a failed live write stays on screen, and the tray
+        // re-reads (the failure may have raised the read-only pill)
+        if (window.showToast) window.showToast(msg, "error", -1);
+        if (window.htmx) {
+            try { window.htmx.ajax("GET", "/state/tray", {target: "#pending-tray", swap: "outerHTML"}); } catch (e) {}
+        }
+        return;
     }
     if (window.showToast) window.showToast(msg, "error");
 });
@@ -3478,6 +3506,19 @@ window.showToast = function(message, level, ms) {
     p.textContent = message;
     div.appendChild(p);
     bar.appendChild(div);
+    if (ms < 0) {
+        // v1.5.1 (SA-F2): a failed live write stays until it is closed --
+        // a 4-6 s toast was gone before it was read
+        div.classList.add("toast-sticky");
+        var x = document.createElement("button");
+        x.type = "button";
+        x.className = "toast-x";
+        x.setAttribute("aria-label", "Dismiss");
+        x.textContent = "\u00d7";
+        x.onclick = function () { div.remove(); };
+        div.appendChild(x);
+        return div;
+    }
     var duration = ms > 0 ? ms : ((level === "error" || level === "warning") ? 6000 : 3500);
     setTimeout(function() { div.style.opacity = "0"; }, duration);
     setTimeout(function() { div.remove(); }, duration + 500);
@@ -4347,6 +4388,18 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 }
                 return;
             }
+            if (data.status === "error" && data.error_code) {
+                // v1.5.1 (SA-F2): the live write (or its save) failed. The
+                // tray it hands back may carry the read-only pill this very
+                // failure discovered; the message stays until it is closed.
+                if (data.tray_html) {
+                    window._bulkSelfEdit = true;
+                    try { _swapPendingTray(data.tray_html); }
+                    finally { window._bulkSelfEdit = false; }
+                }
+                window.showToast("Sync failed: " + (data.message || "unknown error"), "error", -1);
+                return;
+            }
             if (data.status === "error") {
                 window.showToast("Sync failed: " + (data.message || "unknown error"), "error");
                 return;
@@ -4654,7 +4707,8 @@ function _keepMinePush(d, ackUnseen) {
         .then(function () {
             var t = document.getElementById("pending-tray");
             // a refusal by the unseen-edit gate wrote nothing: never say it did
-            if (t && !t.classList.contains("pending-tray-conflict") && !d._unseenRefused) {
+            if (t && !t.classList.contains("pending-tray-conflict") && !d._unseenRefused
+                    && !d._writeFailed) {
                 window.closeReview();
                 if (window.SyncControl) window.SyncControl.flash("✓ Written to live · kept mine");
             }

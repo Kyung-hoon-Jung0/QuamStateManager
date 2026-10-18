@@ -16854,6 +16854,16 @@ def state_history_stage(timestamp: str):
     return resp
 
 
+def _restore_failure(message: str, code: str):
+    """restore-live's known failures (v1.5.1, SA-F2): 409 with the code, the
+    persistent error where the button rendered its answer, and the tray (a
+    read-only pill raised by the failure shows)."""
+    body = render_template("_status.html", message=message, level="error")
+    resp = make_response(body + "\n" + _tray_oob(), 409)
+    resp.headers["X-SM-Error-Code"] = code
+    return resp
+
+
 @bp.route("/state-history/<timestamp>/restore-live", methods=["POST"])
 def state_history_restore_live(timestamp: str):
     """Mode 2 (gated): replace the LIVE chip with a snapshot in one step.
@@ -16969,24 +16979,20 @@ def state_history_restore_live(timestamp: str):
                                                     project=_scope_for(path, ctx))
             except Exception as exc:
                 logger.warning("Pre-restore snapshot failed", exc_info=True)
-                return render_template(
-                    "_status.html",
-                    message=(f"Could not snapshot the current state before restoring "
-                             f"({exc}). Aborted so the restore stays reversible — retry, "
-                             "or use 'Load as working state' to review first."),
-                    level="error"), 500
+                return _restore_failure(
+                    (f"Could not snapshot the current state before restoring "
+                     f"({exc}). Aborted so the restore stays reversible — retry, "
+                     "or use 'Load as working state' to review first."), BACKUP_FAILED)
             if backup_meta is None:
                 logger.warning(
                     "Pre-restore snapshot returned None (no backup taken) — aborting "
                     "restore to keep it reversible")
-                return render_template(
-                    "_status.html",
-                    message=("Could not snapshot the current state before restoring "
-                             "(the live files may be locked by a running experiment, or "
-                             "the snapshot could not be written). Aborted so the restore "
-                             "stays reversible — retry, or use 'Load as working state' to "
-                             "review first."),
-                    level="error"), 500
+                return _restore_failure(
+                    ("Could not snapshot the current state before restoring "
+                     "(the live files may be missing, unreadable or locked by a running "
+                     "experiment, or the snapshot could not be written). Aborted so the "
+                     "restore stays reversible — retry, or use 'Load as working state' "
+                     "to review first."), BACKUP_FAILED)
 
             try:
                 state, wiring = _snapshot_state_wiring(hm, path, timestamp)
@@ -17021,8 +17027,10 @@ def state_history_restore_live(timestamp: str):
                                message=f"Restore to live refused: {exc} Retry the restore.",
                                level="warning"), 409
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
-        return render_template("_status.html",
-                               message=f"Restore to live failed: {exc}", level="error"), 500
+        # v1.5.1 (SA-F2): named, never a 500
+        return _restore_failure(_live_write_failure_text(ctx, exc, "Restore to live"),
+                                LIVE_WRITE_FAILED)
+    _live_write_landed(ctx)
     # The restored snapshot is now both the working copy and live; any stash of
     # pre-restore edits is stale (it targeted the old state) — drop it so a
     # later sync 'reapply' can't replay it onto the restored chip.
@@ -29784,13 +29792,15 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                 "pull-apply save failed with %d unsaved entries: %s",
                 len(store.change_log), exc,
             )
+            # v1.5.1 (SA-F2): named, never a 500
             return jsonify({
-                "status": "error",
+                "status": "error", "error_code": WORKING_SAVE_FAILED,
                 "message": (
                     f"Save failed: {exc}. Your edits are still in memory — "
                     "close any program that has state.json open and retry."
                 ),
-            }), 500
+                "tray_html": _tray_html(),
+            }), 409
         # docs/107's journal commit happens where the push is DECIDED (docs/255)
         _set_working_dirty(True, ctx)
 
@@ -29904,10 +29914,11 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         })
     except (OSError, ValueError) as exc:
         _commit_journal()          # a failed write is not a refusal: the save stands
-        _pd = ("the live folder is READ-ONLY (network share?) — "
-               if getattr(exc, "errno", None) in (13, 1) else "")
-        return jsonify({"status": "error",
-                        "message": f"Apply to live failed: {_pd}{exc}"}), 500
+        # v1.5.1 (SA-F2): a 409 with its code; the tray it carries shows the
+        # read-only pill when this write discovered the denial
+        return jsonify({"status": "error", "error_code": LIVE_WRITE_FAILED,
+                        "message": _live_write_failure_text(ctx, exc) + " Your edits are kept.",
+                        "tray_html": _tray_html()}), 409
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live (sync) unexpected failure")
         _commit_journal()
@@ -30016,6 +30027,82 @@ _LIVE_MOVED_AFTER_BACKUP_MSG = (
     "Nothing was written — the live chip changed after SM backed it up, so no "
     "version holds what it holds now. Choose again; the next press backs up what "
     "is there.")
+
+
+#: v1.5.1 (SA-F2): the machine-readable answer of a live write that failed
+#: (never an HTTP 500: the failure is known, named and nothing was lost)
+LIVE_WRITE_FAILED = "live_write_failed"
+BACKUP_FAILED = "backup_failed"
+WORKING_SAVE_FAILED = "working_save_failed"
+_HELD_WINERRORS = (32, 33)        # another program holds the file open / locked a range
+_DENIED_WINERRORS = (5, 19)       # access denied (ACL, read-only attribute), write-protected
+
+
+def _write_denial(exc) -> str:
+    """What a failed write's OS error says, through its cause chain:
+    ``"held"`` (another program holds a file open -- transient, NOT read-only),
+    ``"denied"`` (no write permission, a read-only attribute or share) or ``""``."""
+    seen: set = set()
+    e = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        win = getattr(e, "winerror", None)
+        if win in _HELD_WINERRORS:
+            return "held"
+        if win in _DENIED_WINERRORS:
+            return "denied"
+        if isinstance(e, PermissionError) or getattr(e, "errno", None) in (1, 13, 30):
+            return "denied"
+        e = e.__cause__ or e.__context__
+    return ""
+
+
+def _live_write_failure_text(ctx, exc, what: str = "Apply to live") -> str:
+    """The honest message of a failed live write. A denial discovered NOW
+    raises the read-only pill (the open-time probe cannot see an NTFS deny
+    ACL, and a folder can turn read-only after the chip was opened)."""
+    kind = _write_denial(exc)
+    if kind == "denied":
+        if ctx is not None:
+            ctx["live_readonly_hint"] = True
+        why = "the live folder refused the write (read-only, or no write permission) — "
+    elif kind == "held":
+        why = "another program holds a live file open — "
+    else:
+        why = ""
+    return f"{what} failed: {why}{exc}"
+
+
+def _live_write_landed(ctx) -> None:
+    """A live write landed: the folder is writable, whatever an earlier
+    failure (or the open-time probe) said."""
+    if ctx is not None and ctx.get("live_readonly_hint"):
+        ctx["live_readonly_hint"] = False
+
+
+def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
+                                 tray: bool = True):
+    """v1.5.1 (SA-F2): a known live-write failure answers 409 (never 500),
+    names itself in ``X-SM-Error-Code`` and carries the tray (so a read-only
+    pill raised by this very failure shows) plus a persistent error in the
+    status bar -- an error there stays until closed. JSON callers get
+    ``{ok: false, error: <code>, message, tray_html}``. *auto*: an armed
+    auto-apply session is ended first (a background writer never keeps
+    pushing at a chip that refused it)."""
+    if auto is not None and ctx is not None:
+        ctx.pop("auto_apply", None)
+    if request.headers.get("Accept", "").startswith("application/json"):
+        resp = make_response(jsonify(ok=False, error=code, message=message,
+                                     tray_html=_tray_html()), 409)
+    else:
+        err = render_template("_status.html", level="error", message=message)
+        body = (_tray_html() + "\n" if tray else "") + \
+            f'<div id="status-bar" hx-swap-oob="innerHTML">{err}</div>'
+        resp = make_response(body, 409)
+    resp.headers["X-SM-Error-Code"] = code
+    if auto is not None:
+        resp.headers["HX-Trigger"] = json.dumps({"autoApplyDisarm": {"reason": "error"}})
+    return resp
 
 
 def _snapshot_content_hash(hm, path, ts) -> str | None:
@@ -30317,14 +30404,11 @@ def state_apply_to_live():
             # read-only share is the common cause and the OS says so.
             _pd = ("the WORKING folder is not writable — "
                    if getattr(exc, "errno", None) in (13, 1) else "")
-            return render_template(
-                "_status.html",
-                message=(
-                    f"Save failed: {_pd}{exc}. Your edits are still in memory — "
-                    "close any program that has state.json open and retry."
-                ),
-                level="error",
-            ), 500
+            # v1.5.1 (SA-F2): a known failure is a 409 with its code, not a 500
+            return _live_write_failure_response(
+                ctx, (f"Save failed: {_pd}{exc}. Your edits are still in memory — "
+                      "close any program that has state.json open and retry."),
+                WORKING_SAVE_FAILED, auto=_auto)
         # docs/107's journal commit moved to where the push is DECIDED
         # (docs/255): a refused press must not leave a unit for a write that
         # never happened. Every exit below commits or puts the save back.
@@ -30503,14 +30587,11 @@ def state_apply_to_live():
         _commit_journal()
         # docs/114 (#16): the read-only case fails HERE (the LIVE write), not
         # in the working-copy save — name it where it actually happens.
-        _pd = ("the live folder is READ-ONLY (network share?) — "
-               if getattr(exc, "errno", None) in (13, 1) else "")
-        _body = render_template("_status.html",
-                                message=f"Apply to live failed: {_pd}{exc}",
-                                level="error")
-        if _auto:
-            return _auto_disarm_response(ctx, _body, "error", status=500)
-        return _body, 500
+        # v1.5.1 (SA-F2): a 409 with its code; the tray it carries shows the
+        # read-only pill when this write discovered the denial.
+        return _live_write_failure_response(
+            ctx, _live_write_failure_text(ctx, exc) + " Your edits are kept.",
+            LIVE_WRITE_FAILED, auto=_auto)
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live unexpected failure")
         _commit_journal()                  # the save stands (see above)
@@ -30525,6 +30606,7 @@ def state_apply_to_live():
     _hub_stamp_units(_pend, _jrn_units)     # docs/271: before the commit writes them
     _commit_journal()                  # docs/107 (docs/255: once the push is decided)
     _hub_mark_units(ctx, _pend, _saved_ids)
+    _live_write_landed(ctx)            # v1.5.1: a landed write proves the folder writable
     if _backup_deferred and not pre_apply_ts:
         # QA F5: the deferred case landed -- the adopt (live already held the
         # payload), so the "pre-apply" content is what live holds now
@@ -41072,12 +41154,17 @@ def dataset_load_state(uid):
             resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, _pre_leaves)
             return resp
         # error — the staging succeeded; say exactly how far things got.
-        return render_template(
+        # v1.5.1 (SA-F2): a 409 naming the failure (never a 500), with the
+        # tray (a read-only pill raised by the failure shows)
+        resp = make_response(render_template(
             "_status.html",
             message=((body or {}).get("message") or "Apply to live failed")
             + " — the run's state IS staged in the working copy; retry from "
               "the top bar.",
-            level="error"), 500
+            level="error") + "\n" + _tray_oob(), 409)
+        resp.headers["X-SM-Error-Code"] = ((body or {}).get("error_code")
+                                           or (body or {}).get("conflict") or LIVE_WRITE_FAILED)
+        return resp
 
     msg = render_template(
         "_status.html",

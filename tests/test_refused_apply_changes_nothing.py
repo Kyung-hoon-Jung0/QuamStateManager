@@ -445,7 +445,8 @@ class TestAFailedWriteIsNotARefusal:
             return real(folder, *a, **k)
         monkeypatch.setattr(safe_io, "write_state_wiring_bytes", locked)
         r = _apply(env)
-        assert r.status_code == 500
+        # v1.5.1 (SA-F2): a known write failure is a named 409, never a 500
+        assert r.status_code == 409
         ctx = _ctx(env)
         assert ctx["store"].change_log == [] and ctx.get("working_dirty")
         assert len(undo_journal.load(_sidecar(env))) == 1

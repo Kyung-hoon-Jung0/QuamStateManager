@@ -415,9 +415,11 @@ def _replace_into_place(tmp: Path, dst: Path) -> None:
         tmp.unlink(missing_ok=True)
     except OSError:
         pass
+    # v1.5.1 (SA-F2): chained, so a door can tell a denied write (the
+    # read-only pill) from a file held open by another program
     raise LiveFileError(
         f"Could not write {dst} after {_WRITE_ATTEMPTS} attempts: {last_exc}"
-    )
+    ) from last_exc
 
 
 _TMP_SEQ = 0

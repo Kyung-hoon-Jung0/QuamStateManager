@@ -95,7 +95,8 @@ class TestRestoreLiveNoBackupAborts:
                             lambda self, *a, **k: None)
         r = client.post(f"/state-history/{ts}/restore-live", data={"force": "1"})
 
-        assert r.status_code == 500
+        # v1.5.1 (SA-F2): a named 409 (backup_failed), never a 500
+        assert r.status_code == 409 and r.headers.get("X-SM-Error-Code") == "backup_failed"
         assert b"reversible" in r.data.lower()
         # Crucially: the live chip was NOT overwritten with the old snapshot.
         assert json.loads((live / "state.json").read_text())["qubits"]["q1"]["f_01"] == 7.0e9
