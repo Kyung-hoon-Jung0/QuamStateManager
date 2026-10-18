@@ -199,6 +199,9 @@ def chip():
                    declared_name=_declared_chip_name(store), pin=_chip_key(),
                    qubits=list(store.qubit_names), pairs=list(store.qubit_pair_names),
                    pending=r._change_count(),
+                   # v1.5.1 (SA-F4): a saved or staged version that is not on
+                   # the live chip -- not a tray row, but a pull drops it too
+                   working_dirty=bool(ctx.get("working_dirty")),
                    live_diverged=diverged,
                    stale_since=_stale_since() if diverged else None,
                    live_readonly=bool(ctx.get("live_readonly")),

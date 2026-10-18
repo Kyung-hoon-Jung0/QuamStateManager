@@ -29736,7 +29736,9 @@ def state_sync():
         "tray_html": _tray_html(),
         "replay": replay,
         # sync-ux 2026-09-25: what Take live kept, so the control can say so
-        "backup": ({"n": backup["n"], "snapshot": backup.get("snapshot")}
+        # (v1.5.1, SA-F4: and which edits it dropped, for a caller that reports)
+        "backup": ({"n": backup["n"], "snapshot": backup.get("snapshot"),
+                    "paths": sorted(backup.get("updates") or {})[:200]}
                    if backup else None),
         **_sync_patch(ctx, _pre_leaves),
     })

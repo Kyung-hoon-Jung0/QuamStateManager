@@ -207,6 +207,13 @@ def t_take_live(_a: dict) -> Any:
     if int(chip.get("pending") or 0) > 0:
         return {"taken": False, "note": "the tray is not empty -- undo or apply first; a pull over staged "
                                         "edits is a merge only a human should decide in the SM window"}
+    if chip.get("working_dirty"):
+        # v1.5.1 (SA-F4): a saved (or staged) version that is not on the live
+        # chip is not a tray row, but a pull drops it all the same
+        return {"taken": False, "would_drop": "saved_version",
+                "note": "SM holds a saved or staged version that is not on the live chip; taking live "
+                        "would drop it -- a person decides that in the SM window (Apply it, or Take live "
+                        "there, which keeps a backup)"}
     if not chip.get("live_diverged"):
         return {"taken": False, "note": "SM already matches the live files"}
     changed, overlap = [], []
@@ -218,13 +225,26 @@ def t_take_live(_a: dict) -> Any:
         pass
     code, body = sm.post_form("/state/sync", {"mode": "discard"})
     _ok(code, body)
+    # v1.5.1 (SA-F4): whatever the pull dropped is reported -- a draft saved
+    # between the check above and the pull is not "nothing"
+    backup = body.get("backup") if isinstance(body, dict) else None
+    dropped = int((backup or {}).get("n") or 0)
+    reverted = list((backup or {}).get("paths") or []) if dropped else []
+    if dropped and not reverted:
+        # a saved version, not tray rows: what it held differently from live
+        reverted = [c["path"] for c in changed[:200]] or ["(saved version)"]
     after = _chip_facts()
-    _journal("sm", f"took the live files into SM ({len(changed)} value(s) had moved outside SM)",
+    _journal("sm", f"took the live files into SM ({len(changed)} value(s) had moved outside SM)"
+             + (f"; dropped {dropped} unapplied change(s), kept in backup "
+                f"{backup.get('snapshot') or '(not recorded)'}" if dropped else ""),
              paths=[c["path"] for c in changed[:20]])
     return {"taken": True, "live_diverged": after.get("live_diverged"), "changed": changed[:200],
-            "overlap": overlap, "reverted": [],
-            "note": "changed = live vs what SM held; overlap = also in the tray (empty: the tray was empty); "
-                    "reverted = staged edits dropped (none: take_live needs an empty tray)"}
+            "overlap": overlap, "reverted": reverted,
+            **({"dropped": dropped, "backup_version": (backup or {}).get("snapshot"),
+                "bring_back": "the SM window's sync panel offers Bring back; State History holds "
+                              "the backup version"} if dropped else {}),
+            "note": "changed = live vs what SM held; overlap = also in the tray; reverted = unapplied "
+                    "changes this pull dropped (kept in backup_version)"}
 
 
 def t_state_get(a: dict) -> Any:
