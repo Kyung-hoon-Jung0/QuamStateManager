@@ -117,18 +117,43 @@ def test_a_yes_for_another_unit_is_not_a_yes(env, monkeypatch):
     assert _live(env) == 0.10
 
 
-def test_asked_once_per_session(env, monkeypatch):
+def test_asked_once_per_window(env, monkeypatch):
+    """R2 MINOR 4: the yes belongs to the window that gave it (the page
+    sends ack_prev_window once it said yes); it was kept per chip context,
+    so one window's yes covered every window on that chip."""
     c = env["client"]
     _edit_apply(c, 0.10)
     _edit_apply(c, 5.1e9, "qubits.qA1.f_01")
+    _edit_apply(c, 0.12)
     _age_units(env, monkeypatch)
     q = _trig(c.post("/undo"))["undoAskPrevSession"]
-    assert _trig(c.post("/undo", data={"ack_prev_session": q["unit_id"]}))["cellsReverted"]["live"] is True
-    assert _live(env, "f_01") == 5.0e9
-    r = c.post("/undo")                       # the next earlier-session unit: no second question
-    t = _trig(r)
+    assert _trig(c.post("/undo", data={"ack_prev_session": q["unit_id"],
+                                       "ack_prev_window": "1"}))["cellsReverted"]["live"] is True
+    assert _live(env) == 0.10
+    # another window (it never said yes) is asked about the next one
+    t = _trig(c.post("/undo"))
+    assert "undoAskPrevSession" in t and _live(env, "f_01") == 5.1e9, t
+    # the window that said yes is not asked again
+    t = _trig(c.post("/undo", data={"ack_prev_window": "1"}))
     assert "undoAskPrevSession" not in t and t["cellsReverted"]["live"] is True, t
-    assert _live(env) == 0.08
+    assert _live(env, "f_01") == 5.0e9
+
+
+def test_an_edit_older_than_8_hours_of_this_session_is_asked(env, monkeypatch):
+    """R2 MINOR 4: an SM left running overnight undid yesterday's edit on
+    the live chip without asking -- the ask keyed on the process start."""
+    c = env["client"]
+    _edit_apply(c, 0.10)
+    then = time.time() - 9 * 3600
+    for u in _ctx(env)["undo_units"]:
+        u["ts"] = then
+        (u.setdefault("meta", {}))["at"] = then
+    monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", then - 60)    # the same session
+    t = _trig(c.post("/undo"))
+    assert "undoAskPrevSession" in t, t
+    q = t["undoAskPrevSession"]
+    assert "9 h ago" in q["message"] and "earlier SM session" not in q["message"], q
+    assert _live(env) == 0.10
 
 
 def test_this_sessions_edit_is_undone_live_without_a_question(env):
@@ -190,4 +215,4 @@ def test_the_page_asks_and_shows_the_age_selfcheck():
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.count("ok - ") >= 9, r.stdout
+    assert r.stdout.count("ok - ") >= 13, r.stdout

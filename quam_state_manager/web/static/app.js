@@ -8631,6 +8631,13 @@ window.UndoQueue = (function () {
     var MAX = 20;
     var q = [], busy = false, waiting = false, _fullToastAt = 0;
     var _ackPrev = "";        // T1-F2: the earlier-session unit the user said yes to
+    /* R2 MINOR 4: the yes to undoing an old edit on the live chip belongs to
+       THIS window (sessionStorage, per chip folder) -- it was kept per chip
+       context on the server, so one window's yes covered every window. */
+    function _yesKey() { return "sm.undoOldOk." + String(window.__chipKey || ""); }
+    function _windowSaidYes() {
+        try { return window.sessionStorage.getItem(_yesKey()) === "1"; } catch (e) { return false; }
+    }
     /* The queue's OWN htmx sync source (docs/124 M-11). It must NOT be the
        tray: htmx 2.0.4's per-element sync (default strategy "last") lives on
        the SOURCE element, and both the grid ⚡ apply (applyEditsToLive) and
@@ -8725,7 +8732,9 @@ window.UndoQueue = (function () {
                               var a = _ackPrev;
                               _ackPrev = "";
                               return a;
-                          })() },
+                          })(),
+                          // R2 MINOR 4: this window already said yes once
+                          ack_prev_window: (item.path === "/undo" && _windowSaidYes()) ? "1" : "" },
             });
         } catch (e) { done(); return; }
         /* A /undo that never settles used to hold `busy` FOREVER — every
@@ -8778,6 +8787,14 @@ window.UndoQueue = (function () {
         busy: function () { return busy; },
         /* T1-F2: the next /undo carries the user's yes for this unit */
         ackPrevSession: function (unitId) { _ackPrev = String(unitId || ""); },
+        /* R2 MINOR 4: remember this window's yes (per chip folder) */
+        rememberPrevSessionYes: function () {
+            try { window.sessionStorage.setItem(_yesKey(), "1"); } catch (e) {}
+        },
+        /* R2 MINOR 4: drop the presses queued behind one the server asked
+           about -- they were pressed before the answer; a Cancel must not
+           ask again for each of them. Returns how many were dropped. */
+        drain: function () { var k = pending(); q.length = 0; return k; },
         /* w8: a write this window makes with fetch (not htmx) -- the Pulses
            page's "Delete together" batch -- holds a press exactly like an
            htmx write in flight: a Ctrl+Z pressed while the lab check is
@@ -8804,10 +8821,13 @@ window.UndoQueue = (function () {
    wrote nothing; OK sends the same press again with this unit's yes. */
 document.addEventListener("undoAskPrevSession", function (evt) {
     var d = (evt && evt.detail) || {};
+    // R2 MINOR 4: presses queued behind the asked one wait for this answer
+    if (window.UndoQueue && window.UndoQueue.drain) window.UndoQueue.drain();
     var yes = window.confirm(String(d.message || "This Ctrl+Z writes the live chip.")
         + "\n\nOK = undo it on the live chip.\nCancel = leave the chip as it is.");
     if (yes && window.UndoQueue) {
         window.UndoQueue.ackPrevSession(d.unit_id);
+        if (window.UndoQueue.rememberPrevSessionYes) window.UndoQueue.rememberPrevSessionYes();
         window.UndoQueue.push("/undo");
     } else if (!yes && window.showToast) {
         window.showToast("Not undone — nothing was written.", "info");

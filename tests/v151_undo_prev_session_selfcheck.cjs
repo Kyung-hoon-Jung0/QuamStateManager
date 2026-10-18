@@ -4,7 +4,11 @@
  *  A  the server's undoAskPrevSession question is asked (window.confirm with
  *     the server's sentence); OK sends ONE /undo carrying that unit's yes
  *     (ack_prev_session), Cancel sends nothing and says so;
- *  B  a later /undo does not carry the yes again;
+ *  B  a later /undo does not carry that unit's yes again, but carries the
+ *     WINDOW's yes (R2 MINOR 4: kept per window in sessionStorage, keyed by
+ *     the chip folder -- not per chip context on the server);
+ *  E  presses queued behind the asked one are dropped when it asks (R2
+ *     MINOR 4: a Cancel used to be asked again for each of them);
  *  C  the Undo / Redo panel names the edit's age;
  *  D  while the panel is open the toast sink is lifted above it
  *     (body.undo-trail-on + --undo-trail-h), and closing it drops the lift.
@@ -33,18 +37,28 @@ global.Event = window.Event; global.CustomEvent = window.CustomEvent; global.Key
 Object.defineProperty(global, 'navigator', { value: window.navigator, configurable: true, writable: true });
 global.location = window.location;
 const STORE = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-[[global, 'localStorage'], [global, 'sessionStorage'], [window, 'localStorage'], [window, 'sessionStorage']]
+const SESSION = (function () {
+    const m = new Map();
+    return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)),
+             removeItem: (k) => m.delete(k), _m: m };
+})();
+[[global, 'localStorage'], [window, 'localStorage']]
     .forEach(function (t) { Object.defineProperty(t[0], t[1], { value: STORE, configurable: true, writable: true }); });
+[[global, 'sessionStorage'], [window, 'sessionStorage']]
+    .forEach(function (t) { Object.defineProperty(t[0], t[1], { value: SESSION, configurable: true, writable: true }); });
 global.fetch = () => new Promise(() => {}); window.fetch = global.fetch;
 global.requestAnimationFrame = (f) => setTimeout(f, 0); window.requestAnimationFrame = global.requestAnimationFrame;
 global.MutationObserver = window.MutationObserver;
 global.IntersectionObserver = class { observe() {} disconnect() {} unobserve() {} }; window.IntersectionObserver = global.IntersectionObserver;
 global.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} }; window.ResizeObserver = global.ResizeObserver;
 const ajaxCalls = [];
-window.htmx = { ajax: (m, u, o) => { ajaxCalls.push({ m: m, u: u, o: o }); return Promise.resolve(); },
+let hold = null;                  // a pending /undo (the server has not answered yet)
+window.htmx = { ajax: (m, u, o) => { ajaxCalls.push({ m: m, u: u, o: o });
+                                     return hold ? hold.p : Promise.resolve(); },
                 trigger: () => {}, process: () => {} };
 global.htmx = window.htmx;
 
+window.__chipKey = 'chip_k-0123abcd';
 window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(STATIC, 'undo-trail.js'), 'utf8'));
 const d = window.document;
@@ -83,6 +97,33 @@ function ask(unit) {
     const undo2 = ajaxCalls.filter((c) => c.u === '/undo');
     ok(undo2.length === 2 && !undo2[1].o.values.ack_prev_session,
        'B1: the next press does not carry the yes again -- ' + JSON.stringify(undo2[1] && undo2[1].o.values));
+    ok(undo2[1].o.values.ack_prev_window === '1' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === '1',
+       'B2: ...it carries the yes of THIS window, kept per window -- ' + JSON.stringify(undo2[1].o.values));
+    SESSION._m.clear();
+    window.UndoQueue.push('/undo');
+    await tick(80);
+    const undo3 = ajaxCalls.filter((c) => c.u === '/undo');
+    ok(undo3.length === 3 && undo3[2].o.values.ack_prev_window === '',
+       'B3: a window that never said yes sends none -- ' + JSON.stringify(undo3[2].o.values));
+
+    /* E: presses queued behind the asked one */
+    let release;
+    hold = { p: new Promise((r) => { release = r; }) };
+    window.UndoQueue.push('/undo');            // in flight
+    await tick(20);
+    window.UndoQueue.push('/undo');            // queued behind it
+    window.UndoQueue.push('/undo');
+    ok(window.UndoQueue.depth() === 2, 'E setup: two presses wait behind the asked one');
+    answer = false;
+    ask('u-old-3');                            // the in-flight press was asked about
+    hold = null;
+    release();
+    await tick(120);
+    const undo4 = ajaxCalls.filter((c) => c.u === '/undo' || /^\/undo\?/.test(c.u));
+    ok(undo4.length === 4 && window.UndoQueue.depth() === 0,
+       'E1: Cancel sends nothing more -- the queued presses were dropped (' + undo4.length + ')');
+    answer = true;
+    asked.length = 0;
     /* A: Cancel */
     answer = false;
     const before = ajaxCalls.length;

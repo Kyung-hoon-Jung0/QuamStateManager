@@ -3231,6 +3231,22 @@ def _unit_ts(unit: dict) -> float | None:
     return None
 
 
+#: R2 MINOR 4: an edit older than this is asked about before a Ctrl+Z writes
+#: it on the live chip, even inside one SM session (an SM left running
+#: overnight undid yesterday's edit on live without a word).
+_UNIT_ASK_AFTER_S = 8 * 3600
+
+
+def _unit_needs_ask(unit: dict) -> bool:
+    """T1-F2 / R2 MINOR 4: a Ctrl+Z writing this unit's inverse on the live
+    chip asks first -- the unit was recorded before this SM process started,
+    or more than ``_UNIT_ASK_AFTER_S`` ago."""
+    if _unit_from_previous_session(unit):
+        return True
+    ts = _unit_ts(unit)
+    return ts is not None and time.time() - ts > _UNIT_ASK_AFTER_S
+
+
 def _unit_from_previous_session(unit: dict) -> bool:
     """T1-F2: a unit recorded before this SM process started (a unit with no
     time is treated as old: it can only come from an older sidecar)."""
@@ -27397,7 +27413,9 @@ def _undo_journal_step(ctx, n_req: int = 1):
             "unit_id": str(unit.get("id") or ""),
             "age": _age,
             "message": (f"This Ctrl+Z writes the live chip: {_what}. It undoes an edit "
-                        f"{_unit_age(unit) or 'of unknown age'}, made in an earlier SM session.")}})
+                        f"{_unit_age(unit) or 'of unknown age'}"
+                        + (", made in an earlier SM session." if _unit_from_previous_session(unit)
+                           else "."))}})
         return resp
     if flush.get("rolled_back"):
         # the chip refused (it moved) and the step was undone again: NOTHING
@@ -27700,14 +27718,16 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     # reaches the live chip only after the user said yes once: one keypress
     # on reopening wrote a days-old edit's inverse to the chip. Nothing is
     # staged or written while the question is open; the cursor stays.
-    if (_unit_from_previous_session(unit) and not ctx.get("undo_prev_session_ack")
+    # R2 MINOR 4: also an edit older than 8 h of THIS session; and the yes is
+    # the presser's WINDOW's (it sends ack_prev_window once it said yes), not
+    # the chip context's -- a yes in one window was a yes in every window.
+    if (_unit_needs_ask(unit)
+            and request.values.get("ack_prev_window", "") != "1"
             and request.values.get("ack_prev_session", "") != str(unit.get("id") or "")):
         _rollback_walk_step(ctx, store, modifier, staged)
         ctx["undo_cursor"] = cursor_before
         _redo_mark(ctx, store)
         return {"live": False, "ask": True}
-    if _unit_from_previous_session(unit):
-        ctx["undo_prev_session_ack"] = True          # asked once: not again this session
     # docs/271: a live Ctrl+Z is an SM write that takes back the recorded
     # event this unit was applied by (its `meta.hub` stamp; none for a unit
     # applied before S4 -- then the link is honestly absent, not guessed)
