@@ -5951,6 +5951,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # chip is caught server-side by _chip_mismatch_response (409) instead of
         # silently landing on the wrong chip. "" when no chip is loaded → no gate.
         "chip_token": _active_chip_token() or "",
+        # v1.5.1 (SB-F2/F5): the per-folder key -- window.__chipKey, sent on
+        # every write request (tab-chip.js) and checked at _TAB_CHIP_DOORS
+        "chip_key": _ctx_chip_key(_active_ctx()) or "",
         "context_type": _context_type(),
         "change_count": _change_count(),
         # docs/160: the Settings toggle reflects the machine-wide setting
@@ -11491,6 +11494,109 @@ def _active_chip_token() -> str | None:
             seen.append(token)
             del seen[:-32]
     return token
+
+
+#: v1.5.1 (SB-F2/F5): the per-folder chip key (``working_copy.key_for``) of
+#: the chip a PAGE was rendered on. ``tab-chip.js`` sends it on every write
+#: request the page makes; the doors in :data:`_TAB_CHIP_DOORS` refuse a press
+#: from a tab whose chip is not the one the server has open. The fingerprint
+#: token cannot tell two copies of one design apart -- the key can.
+TAB_CHIP_HEADER = "X-SM-Chip-Key"
+
+
+def _ctx_chip_key(ctx) -> str | None:
+    """The per-folder key of *ctx*'s chip (memoised per path), or None."""
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return None
+    path = str(ctx["path"])
+    memo = ctx.get("_chip_key_memo")
+    if memo and memo[0] == path:
+        return memo[1]
+    try:
+        key = working_copy.key_for(path)
+    except Exception:  # noqa: BLE001 -- no key, no gate (as before)
+        return None
+    ctx["_chip_key_memo"] = (path, key)
+    return key
+
+
+def _tab_chip_key() -> str:
+    """The chip key the presser's page declared (header, or the form field
+    the agent bridge sends), or ""."""
+    return ((request.headers.get(TAB_CHIP_HEADER) or "").strip()
+            or (request.values.get("expect_chip_key") or "").strip())
+
+
+def _chip_name_of(ctx) -> str:
+    try:
+        return _chip_display_name(Path(ctx["path"])) or Path(ctx["path"]).name
+    except Exception:  # noqa: BLE001
+        return str((ctx or {}).get("path") or "?")
+
+
+def _chip_ctx_for_key(key: str):
+    """A context SM holds for the chip with *key* (open or cached), or None."""
+    cands = list((current_app.config.get("contexts") or {}).values())
+    with _quam_cache_lock:
+        cands += list(_quam_cache.values())
+    for c in cands:
+        if _ctx_chip_key(c) == key:
+            return c
+    return None
+
+
+def _tab_chip_refusal(ctx=None, *, json_body: bool | None = None):
+    """409 when the presser's page shows another chip than the one open now.
+
+    Names both chips (and their folders when the names agree -- two copies
+    of one chip). Never blames another window for edits: the chip is what
+    changed. None when no key was declared (every caller that sends none is
+    judged as before) or it matches."""
+    want = _tab_chip_key()
+    if not want:
+        return None
+    if ctx is None:
+        ctx = _active_ctx()
+    have = _ctx_chip_key(ctx)
+    if have == want:
+        return None
+    tab_ctx = _chip_ctx_for_key(want)
+    tab_name = (_chip_name_of(tab_ctx) if tab_ctx is not None
+                else (re.sub(r"-[0-9a-f]{8}$", "", want) or want))
+    now_name = _chip_name_of(ctx) if have else None
+    if now_name is None:
+        msg = (f"Not done: this tab shows chip '{tab_name}', and the server has no chip "
+               "open now. Reload this page. Nothing was written.")
+    else:
+        tab_said, now_said = f"'{tab_name}'", f"'{now_name}'"
+        if tab_name == now_name:
+            tab_said += f" ({tab_ctx['path'] if tab_ctx is not None else want})"
+            now_said += f" ({ctx['path']})"
+        msg = (f"Not done: this tab shows chip {tab_said}; the server has chip {now_said} "
+               "open now. Reload this page. Nothing was written.")
+    if json_body is None:
+        json_body = (request.endpoint in _TAB_CHIP_JSON_DOORS or request.is_json
+                     or "application/json" in (request.headers.get("Accept") or ""))
+    if json_body:
+        resp = make_response(jsonify(
+            ok=False, status="chip_mismatch", conflict="chip_mismatch", chip_mismatch=True,
+            tab_chip=tab_name, tab_chip_key=want, expected_chip_key=want,
+            loaded_chip=now_name or "", loaded_chip_key=have,
+            message=msg, error=msg), 409)
+    else:
+        resp = make_response(render_template("_status.html", message=msg, level="error"), 409)
+    resp.headers["X-SM-Chip-Mismatch"] = "1"
+    resp.headers["HX-Reswap"] = "none"
+    return resp
+
+
+#: The doors a press from another chip's page is refused at (SB-F2/F5): every
+#: route that writes the open chip's tray, working copy or live files on a
+#: person's press. A chip SWITCH (/load, a dataset archive open) is not here.
+_TAB_CHIP_DOORS = frozenset({"main.undo", "main.redo"})
+
+#: ...and which of them answer JSON (their callers parse it).
+_TAB_CHIP_JSON_DOORS: frozenset = frozenset()
 
 
 def _chip_token_ok(expect_chip: str) -> bool:
@@ -27241,7 +27347,8 @@ def _undo_journal_step(ctx, n_req: int = 1):
     # means it is restored now — and old_value_str is the value now in place.
     n = len(uents)
     anchor = uents[-1]
-    head = "Undone → live" if live else "Undone (staged)"
+    # v1.5.1 (SB-F2): a live step names the chip it wrote
+    head = f"Undone → live on '{_chip_name_of(ctx)}'" if live else "Undone (staged)"
     if n > 1:
         message = f"{head}: {n:,} changes ({anchor['path']} …)"
     elif anchor.get("deleted"):
@@ -27666,14 +27773,16 @@ def _live_redo_response(fw: list, why: str | None, n_req: int, *, consumed: int 
         return _redo_response("Redo: " + (why or "nothing to redo"), [], extra=extra)
     anchor = fw[0]
     n = len(fw)
+    # v1.5.1 (SB-F2): a live step names the chip it wrote
+    _head = f"Redone → live on '{_chip_name_of(_active_ctx())}'"
     if n > 1:
-        message = f"Redone → live: {n:,} changes ({anchor.dot_path} …)"
+        message = f"{_head}: {n:,} changes ({anchor.dot_path} …)"
     elif anchor.deleted:
-        message = f"Redone → live: {anchor.dot_path} removed"
+        message = f"{_head}: {anchor.dot_path} removed"
     elif anchor.created:
-        message = f"Redone → live: {anchor.dot_path} restored"
+        message = f"{_head}: {anchor.dot_path} restored"
     else:
-        message = f"Redone → live: {anchor.dot_path} → {_fmt_msg_val(anchor.new_value)}"
+        message = f"{_head}: {anchor.dot_path} → {_fmt_msg_val(anchor.new_value)}"
     # round 2, F15: one press = one unit, so a coalesced burst must be told it
     # stopped at the journal boundary or the remaining k-1 presses vanish
     _burst = _walk_burst_extra(n_req)
@@ -38518,6 +38627,21 @@ def _ensure_workspace_loaded() -> None:
                 _rehydrate_workspace_from_recents()
             except Exception:
                 logger.warning("Workspace rehydration failed", exc_info=True)
+
+
+@bp.before_request
+def _tab_chip_gate():
+    """v1.5.1 (SB-F2/F5): a write press from a page rendered on another chip
+    than the one the server has open is refused by name, before the door's
+    own gates run -- so a chip switch is never reported as "edits from
+    another window". Registered after the startup hook (it may rehydrate).
+    A dataset run opened as an archive (``mode=archive``) is a switch, not a
+    write."""
+    if request.method in ("GET", "HEAD", "OPTIONS") or request.endpoint not in _TAB_CHIP_DOORS:
+        return None
+    if request.endpoint == "main.dataset_load_state" and request.values.get("mode") == "archive":
+        return None
+    return _tab_chip_refusal()
 
 
 # ======================================================================

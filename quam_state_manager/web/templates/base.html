@@ -23,6 +23,9 @@
        A chip switch always does a full reload (HX-Redirect), refreshing this. #}
     <script>
       window.__chipToken = {{ (chip_token if chip_token is defined else '')|tojson }};
+      {# v1.5.1 (SB-F2/F5): this page's chip FOLDER (two copies of one design
+         share a token, never a key); tab-chip.js sends it on every write. #}
+      window.__chipKey = {{ (chip_key if chip_key is defined else '')|tojson }};
       window.__activePath = {{ (active_path if active_path is defined and active_path else '')|tojson }};
       // docs/231: framed by Sync-Qualibrate (/workbench) -> its own ⌗ link is redundant
       try { if (window.self !== window.top) document.documentElement.classList.add('sm-in-frame'); } catch (e) { document.documentElement.classList.add('sm-in-frame'); }
@@ -59,6 +62,7 @@
        tests/v130_history_cache_selfcheck.cjs. #}
     <meta name="htmx-config" content='{"attributesToSettle":["width","height"],"historyCacheSize":0}'>
     <script src="{{ url_for('static', filename='htmx.min.js') }}"></script>
+    <script src="{{ asset_url('tab-chip.js') }}"></script>
     <script src="{{ url_for('static', filename='split.min.js') }}"></script>
     {# The one query grammar (space=AND, standalone |=OR) — must precede every
        matcher that consumes it: app.js (trees), bulk/pair-edit, dataset-virtual. #}

@@ -475,9 +475,12 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
    (handled in beforeSwap above) to avoid a double-report. */
 document.addEventListener('htmx:responseError', function(evt) {
     var t = evt.detail && evt.detail.target;
-    if (t && t.classList && t.classList.contains('config-status-host')) return;
-    if (t && t.id === 'state-history-detail') return;
     var xhr = evt.detail && evt.detail.xhr;
+    // v1.5.1 (SB-F2/F5): a wrong-chip refusal is said wherever it came from
+    // (the hosts below render other errors themselves, not this one)
+    var _tabChipEarly = (xhr && xhr.getResponseHeader) ? xhr.getResponseHeader("X-SM-Chip-Mismatch") : null;
+    if (!_tabChipEarly && t && t.classList && t.classList.contains('config-status-host')) return;
+    if (!_tabChipEarly && t && t.id === 'state-history-detail') return;
     // docs/190 F06: a refused Ctrl+Z (the log moved under another window)
     // refreshes this window's tray so the next press declares what it sees.
     if (xhr && xhr.status === 409 && xhr.getResponseHeader
@@ -485,6 +488,10 @@ document.addEventListener('htmx:responseError', function(evt) {
         try { window.htmx.ajax("GET", "/state/tray", {target: "#pending-tray", swap: "outerHTML"}); } catch (e) {}
     }
     var _code = (xhr && xhr.getResponseHeader) ? xhr.getResponseHeader("X-SM-Error-Code") : null;
+    // v1.5.1 (SB-F2/F5): this tab shows another chip than the server has
+    // open -- the refusal names both and stays until closed (no tray
+    // re-read: it would paint the other chip's tray into this page)
+    var _tabChip = (xhr && xhr.getResponseHeader) ? xhr.getResponseHeader("X-SM-Chip-Mismatch") : null;
     var msg = "That action didn't go through — please try again.";
     if (xhr && xhr.responseText) {
         var m = xhr.responseText.match(/<p[^>]*>([\s\S]*?)<\/p>/);
@@ -495,7 +502,13 @@ document.addEventListener('htmx:responseError', function(evt) {
             ta.innerHTML = m[1].replace(/<[^>]+>/g, '');
             var clean = ta.value.trim();
             if (clean) msg = clean;
+        } else if (_tabChip) {
+            try { msg = JSON.parse(xhr.responseText).message || msg; } catch (e) {}
         }
+    }
+    if (_tabChip) {
+        if (window.showToast) window.showToast(msg, "error", -1);
+        return;
     }
     if (_code) {
         // v1.5.1 (SA-F2): a failed live write stays on screen, and the tray
