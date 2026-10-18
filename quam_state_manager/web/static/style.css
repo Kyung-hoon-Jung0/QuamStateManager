@@ -2900,6 +2900,12 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .sh-day { font-weight: 700; font-size: .82em; letter-spacing: .03em; margin: .7rem 0 .25rem;
     padding-bottom: .15rem; border-bottom: 1px solid var(--pico-muted-border-color); }
 .sh-day-goto { color: var(--pico-primary); }
+/* P1-2: runs that wrote state, the filter chip, the clickable-figure badge */
+.ds-wrote { margin-left: .3rem; color: var(--pico-primary); font-size: .9em; }
+.ds-wrote-chip { margin: 0; white-space: nowrap; }
+.ds-fig-click-badge { margin-left: .4rem; padding: 0 .35rem; border-radius: 999px; font-size: .8em;
+    border: 1px solid var(--pico-primary); color: var(--pico-primary); white-space: nowrap; }
+.ds-replot-run-lead { font-weight: 600; }
 .table-filter input {
     font-family: var(--font-ui);
     font-size: 0.88em; padding: 0.25rem 0.5rem; margin: 0;

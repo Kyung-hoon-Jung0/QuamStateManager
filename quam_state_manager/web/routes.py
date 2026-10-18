@@ -41561,7 +41561,10 @@ def dataset_interactive(uid):
         return render_template("_dataset_replot.html", uid=uid, run_id=run_id,
             available=True, util=result.get("util", ""), figures=reproduced,
             errors=result.get("errors", []), outcome=replot.replot_outcome(result)) + (
-                '<p class="muted">Legacy recipes and saved figures</p>' + render_template(
+                # P1-2 (UX round): a name a newcomer reads, and what it offers
+                '<p class="muted ds-recipe-head"><b>SM fit figures and saved images</b>'
+                ' &mdash; a figure marked <span class="ds-fig-click-badge">click a point to apply</span>'
+                ' takes clicks</p>' + render_template(
                     "_dataset_interactive.html", run_id=run_id, uid=uid, figures=legacy) if legacy else "")
     return render_template("_dataset_interactive.html", run_id=run_id, uid=uid, figures=figures,
                            reproduction_hint=capability["reason"])

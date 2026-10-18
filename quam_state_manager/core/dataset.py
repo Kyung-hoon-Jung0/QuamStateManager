@@ -57,7 +57,10 @@ _COLD_SCAN_BUDGET_S = 3.0
 # re-serve it on every warm start.
 # v3 (docs/262): every run carries its raw ``created_at`` and its resolved
 # instant -- a v2 row has neither, and would serve the folder clock.
-_STORE_CACHE_V = 3
+# v4 (UX round, P1-2): every run carries ``writes`` -- how many state patches
+# its node.json lists -- for the run list's "wrote state" mark; a v3 row has
+# none and would mark nothing.
+_STORE_CACHE_V = 4
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
 # The persisted index is only an accelerator (docs/171): losing 30 s on a
@@ -194,6 +197,9 @@ class RunInfo:
     # From data.json
     fit_results: dict[str, Any] = field(default_factory=dict)
     figure_names: list[str] = field(default_factory=list)
+    # P1-2 (UX round): how many values the run wrote into the chip's state
+    # (node.json ``patches``); 0 = it wrote none, so its fits cannot be applied
+    writes: int = 0
     has_ds_raw: bool = False
     has_ds_fit: bool = False
     has_quam_state: bool = False
@@ -308,6 +314,7 @@ def _compact_row(run: "RunInfo") -> dict:
         "note": run.note,
         "parent": run.parent_id,
         "hs": run.has_quam_state,
+        "ws": run.writes,         # P1-2: values the run wrote into the chip's state
         "cap": f"{int(run.has_ds_raw)}{int(run.has_ds_fit)}{int(run.has_quam_state)}:{run.files_version}",
         "sm": run.sort_scalars,   # sparse {fit_key: scalar | [first,max,min]} for the Sort banner
         "pm": run.filter_params,  # sparse {param_key: bool|str|int} for the Parameters facet filter
@@ -848,6 +855,9 @@ class DatasetStore:
 
         fit_results = data_json.get("fit_results", {})
         figure_names = _extract_figure_names(data_json)
+        patches = node_data.get("patches")
+        writes = (sum(1 for p in patches if isinstance(p, dict))
+                  if isinstance(patches, list) else 0)
 
         info = RunInfo(
             run_id=run_id,
@@ -870,6 +880,7 @@ class DatasetStore:
             instant_q=instant_q,
             fit_results=fit_results,
             figure_names=figure_names,
+            writes=writes,
             has_ds_raw=(run_entry / "ds_raw.h5").exists(),
             has_ds_fit=(run_entry / "ds_fit.h5").exists(),
             has_quam_state=(run_entry / "quam_state").is_dir(),

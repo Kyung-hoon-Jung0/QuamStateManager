@@ -16276,6 +16276,10 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                         shared = document.createElement('p');
                         shared.className = 'muted ds-replot-note ds-replot-run-note';
                         shared.dataset.runId = String(runId); shared._clauses = [];
+                        // P1-2 (UX round): say plainly that clicks are off, why,
+                        // and (once one is known) which figure does take them
+                        shared.innerHTML = '<span class="ds-replot-run-lead">Click-to-apply is off on these figures: </span>'
+                            + '<span class="ds-replot-run-why"></span><span class="ds-replot-run-ptr"></span>';
                         var list = container.querySelector('.ds-interactive-list');
                         if (list && list.parentNode) list.parentNode.insertBefore(shared, list);
                         else container.insertBefore(shared, container.firstChild);
@@ -16284,7 +16288,8 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                     message.split('; ').forEach(function (clause) {
                         if (clause && shared._clauses.indexOf(clause) === -1) shared._clauses.push(clause);
                     });
-                    shared.textContent = shared._clauses.join('; ');
+                    shared.querySelector('.ds-replot-run-why').textContent = shared._clauses.map(_plainClickRefusal).join('; ') + '.';
+                    _pointToClickableFig(container);
                     return;
                 }
                 var note = document.createElement('p');
@@ -16332,6 +16337,7 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                     _attachInteractivePlotClickHandler(inner, d.clickable, runId);
                     inner.style.cursor = 'pointer';
                     div.setAttribute('title', 'Click a point to edit the corresponding parameter');
+                    _markClickableFig(div, container);
                 }
             });
             // Track in the keep-alive pool (most-recent last) + prune offscreen.
@@ -16574,6 +16580,46 @@ function _replotSizeUpdate(fit) {
     return upd;
 }
 window._replotSizeUpdate = _replotSizeUpdate;
+
+/* P1-2 (UX round): the run's click-to-apply refusals in plain words (the
+   phrases learn_click / recipe_gate state for the record), and a pointer to
+   the figure that DOES take clicks. */
+var _CLICK_REFUSAL_WORDS = [
+    ['this run wrote no state: click-to-apply off', 'this run wrote no values into the chip, so there is no fit value to apply'],
+    ['no common verified marker transform', 'the figure\'s markers could not be matched to the values this run wrote'],
+    ['ambiguous transforms', 'the figure\'s markers match the values this run wrote in more than one way'],
+    ['missing numeric pre-update value', 'the run did not record the value before its update']
+];
+function _plainClickRefusal(clause) {
+    var out = String(clause || '');
+    _CLICK_REFUSAL_WORDS.forEach(function (w) { out = out.split(w[0]).join(w[1]); });
+    return out;
+}
+function _markClickableFig(div, container) {
+    var tile = div.closest && div.closest('.ds-interactive-fig');
+    var title = tile && tile.querySelector('.ds-interactive-fig-title');
+    if (title && !title.querySelector('.ds-fig-click-badge')) {
+        var badge = document.createElement('small');
+        badge.className = 'ds-fig-click-badge';
+        badge.textContent = 'click a point to apply';
+        title.appendChild(badge);
+    }
+    if (container) {
+        container._clickTitles = container._clickTitles || [];
+        var name = title ? (title.firstChild && title.firstChild.nodeType === 3
+            ? title.firstChild.textContent : title.textContent).trim() : '';
+        if (name && container._clickTitles.indexOf(name) === -1) container._clickTitles.push(name);
+        _pointToClickableFig(container);
+    }
+}
+function _pointToClickableFig(container) {
+    var names = (container && container._clickTitles) || [];
+    container.querySelectorAll('.ds-replot-run-note .ds-replot-run-ptr').forEach(function (ptr) {
+        ptr.textContent = names.length
+            ? ' Click a point on ' + names.map(function (n) { return '\u201c' + n + '\u201d'; }).join(', ') + ' below instead.'
+            : '';
+    });
+}
 
 /**
  * Fetch a single plot from the backend and render it into container.
