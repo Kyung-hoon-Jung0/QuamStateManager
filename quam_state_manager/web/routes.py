@@ -1597,8 +1597,13 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                 ctx.pop("live_auto_at", None)
 
 
-def _probe_readonly(folder) -> bool:
+def _probe_readonly(folder, *, origin: str = "live") -> bool:
     """True when the live chip's files are NOT writable (docs/114 #16).
+
+    v1.5.1 (SA-F12): never for a dataset run's frozen quam_state (an archive
+    origin, or a folder whose run folder holds node.json / data.json). SM
+    never writes one, so the hint means nothing there -- and the probe's
+    open-for-update must not touch the record at all.
 
     NON-DESTRUCTIVE by construction. Two rejected designs first, because the
     reason matters:
@@ -1618,6 +1623,8 @@ def _probe_readonly(folder) -> bool:
     size and no mtime. Anything unexpected answers False: this is a HINT,
     and a false alarm is worse than no alarm.
     """
+    if (origin or "live") != "live" or working_copy.is_run_archive(folder):
+        return False
     target = Path(folder) / "state.json"
     try:
         with open(target, "r+", encoding="utf-8"):
@@ -1817,7 +1824,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # share was remounted read-only (or repaired) must not keep the answer
         # from the first open.
         try:
-            current["live_readonly_hint"] = _probe_readonly(current["path"])
+            current["live_readonly_hint"] = _probe_readonly(
+                current["path"], origin=current.get("origin") or "live")
         except Exception:  # noqa: BLE001 — a hint never blocks activation
             pass
         _acquire_project_scope(current)
@@ -1888,7 +1896,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
             # os.access is attribute-only for directories on Windows)
             if parked is not None and parked.pulse_index is not None:
                 ctx["pulse_index"] = parked.pulse_index
-            ctx["live_readonly_hint"] = _probe_readonly(folder)
+            ctx["live_readonly_hint"] = _probe_readonly(folder, origin=origin)
             # (docs/87) The "✓ Live chip updated — N params pulled" one-shot that
             # used to be stashed here is gone with the silent pull it announced.
             # A toast that reports a fait accompli is strictly worse than the
@@ -2607,17 +2615,23 @@ def _archive_run_reason(target: str | None = None) -> str:
     writes its quam_state, and an archive is the record of what a past run
     saw."""
     ctx = _active_ctx()
-    if ctx and ctx.get("type") == "quam" and (ctx.get("origin") or "live") != "live":
-        return (f"The open chip is a dataset run's frozen quam_state ({ctx.get('path')}), "
+    open_msg = (f"The open chip is a dataset run's frozen quam_state ({(ctx or {}).get('path')}), "
                 "opened read-only. A run would rewrite that record. Load the chip's "
                 "live folder (State Load) and run from there.")
-    if target:
-        other = _find_quam_ctx_by_path(target)
-        if (other is not None and (other.get("origin") or "live") != "live") \
-                or working_copy.is_run_archive(target):
-            return (f"The run target {target} is a dataset run's frozen quam_state. "
-                    "A run would rewrite that record. Point the runner at the chip's "
-                    "live folder.")
+    if not target:
+        if ctx and ctx.get("type") == "quam" and (ctx.get("origin") or "live") != "live":
+            return open_msg
+        return ""
+    # v1.5.1 (MINOR 11): the folder the run WRITES decides -- an archive open
+    # in this window does not refuse a run whose target is a live chip folder
+    other = _find_quam_ctx_by_path(target)
+    if other is not None and other is ctx and (ctx.get("origin") or "live") != "live":
+        return open_msg
+    if ((other is not None and (other.get("origin") or "live") != "live")
+            or working_copy.is_run_archive(target)):
+        return (f"The run target {target} is a dataset run's frozen quam_state. "
+                "A run would rewrite that record. Point the runner at the chip's "
+                "live folder.")
     return ""
 
 

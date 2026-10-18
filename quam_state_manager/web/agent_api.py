@@ -202,6 +202,9 @@ def chip():
                    # v1.5.1 (SA-F4): a saved or staged version that is not on
                    # the live chip -- not a tray row, but a pull drops it too
                    working_dirty=bool(ctx.get("working_dirty")),
+                   # v1.5.1 (MINOR 4): edits a refused Apply stashed for
+                   # re-apply -- no tray row, no dirty flag, a pull drops them
+                   reapply_stash=len(ctx.get("pending_reapply") or {}),
                    live_diverged=diverged,
                    stale_since=_stale_since() if diverged else None,
                    live_readonly=bool(ctx.get("live_readonly")),

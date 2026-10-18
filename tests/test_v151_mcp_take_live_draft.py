@@ -109,7 +109,7 @@ def test_a_pull_that_drops_a_draft_names_it_and_its_backup(env, monkeypatch):
         f = real()
         calls["n"] += 1
         if calls["n"] == 1:
-            f = {**f, "working_dirty": False, "pending": 0}
+            f = {**f, "working_dirty": False, "pending": 0, "reapply_stash": 0}
         return f
 
     monkeypatch.setattr(mcp, "_chip_facts", facts)

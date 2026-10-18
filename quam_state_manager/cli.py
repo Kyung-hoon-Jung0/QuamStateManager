@@ -553,8 +553,22 @@ def set_value(
     instance: Path | None = typer.Option(
         None, "--instance",
         help="SM instance folder whose history records this write (default: the app's)"),
+    write_archive: bool = typer.Option(
+        False, "--write-archive",
+        help="With --save: write a dataset run's frozen quam_state anyway"),
 ):
     """Set a single value by dot-path."""
+    if save_now and not write_archive:
+        # v1.5.1 (SA-F11): a dataset run's quam_state is the record of what
+        # that run saw; the web app opens it read-only, and --save writes the
+        # folder directly -- refused unless explicitly asked for
+        from quam_state_manager.core import working_copy
+        if working_copy.is_run_archive(Path(folder).resolve()):
+            console.print(
+                f"[red]Refused:[/red] {folder} is a dataset run's frozen quam_state (its run "
+                "folder holds node.json / data.json); --save would rewrite that record. "
+                "Nothing was written. Pass --write-archive to write it anyway.")
+            raise typer.Exit(1)
     store = _load_store(folder)
     mod = Modifier(store)
 

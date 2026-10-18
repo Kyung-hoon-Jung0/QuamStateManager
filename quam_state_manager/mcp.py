@@ -214,6 +214,12 @@ def t_take_live(_a: dict) -> Any:
                 "note": "SM holds a saved or staged version that is not on the live chip; taking live "
                         "would drop it -- a person decides that in the SM window (Apply it, or Take live "
                         "there, which keeps a backup)"}
+    if int(chip.get("reapply_stash") or 0) > 0:
+        # v1.5.1 (MINOR 4): edits a refused Apply kept for re-apply are not
+        # tray rows either, and a pull drops them too
+        return {"taken": False, "would_drop": "reapply_stash",
+                "note": "SM holds edits a refused Apply kept for re-apply; taking live would drop "
+                        "them -- a person decides that in the SM window (Pull & apply re-applies them)"}
     if not chip.get("live_diverged"):
         return {"taken": False, "note": "SM already matches the live files"}
     changed, overlap = [], []
@@ -225,6 +231,14 @@ def t_take_live(_a: dict) -> Any:
         pass
     code, body = sm.post_form("/state/sync", {"mode": "discard"})
     _ok(code, body)
+    status = body.get("status") if isinstance(body, dict) else None
+    if status != "ok":
+        # v1.5.1 (MINOR 4): SM asked for a confirmation (a staged version
+        # arrived between the look above and the pull) or refused: nothing
+        # was pulled, and the agent never answers that question for a person
+        return {"taken": False, "status": status,
+                "note": "nothing was pulled: " + str((body or {}).get("message") or status)
+                        + " -- a person decides that in the SM window"}
     # v1.5.1 (SA-F4): whatever the pull dropped is reported -- a draft saved
     # between the check above and the pull is not "nothing"
     backup = body.get("backup") if isinstance(body, dict) else None
