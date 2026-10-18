@@ -10430,6 +10430,8 @@ html.topbar-hidden .chrome-reveal { display: block; }
 .settings-slider { display: flex; align-items: center; gap: 0.3rem;
     margin: 0.2rem 0 0; }
 .settings-slider input[type=range] { width: 100%; margin: 0; }
+/* v1.5.1 (U P2-27): each slider names what it sets ("Aa / <-> / ^v" said nothing) */
+.settings-slider-name { flex: 0 0 4.4rem; font-size: 0.72rem; white-space: nowrap; }
 .bulk-font-ctl { display: inline-flex; align-items: center; gap: 0.25rem; }
 .bulk-font-ctl .bulk-font-label { font-size: 0.78em; color: var(--pico-muted-color); }
 .bulk-font-ctl .btn-xs { margin: 0; padding: 0.05rem 0.45rem; width: auto; }

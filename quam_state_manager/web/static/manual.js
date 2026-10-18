@@ -599,6 +599,18 @@ window.ConfigManual = (function () {
         window.openConfigManual({ path: path, trigger: trig });
     });
 
+    /* v1.5.1 (U P2-27): opened by F1 on a value, the window does not take
+       focus (the value keeps it), so its own Escape listener never heard the
+       key. Escape anywhere closes it -- unless a modal is up (its Escape) or
+       something already handled the key. */
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape' || e.defaultPrevented || !isOpen()) return;
+        var p = pop();
+        if (p && p.contains(e.target)) return;         // the window's own listener
+        if (window.smModalOpen && window.smModalOpen()) return;
+        setOpen(false, null);
+    });
+
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
     else wire();
 
