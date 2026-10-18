@@ -17,8 +17,11 @@ checkpoints an older working-copy GC left without their copy (R2 MINOR 7).
 only out of reach for a while -- a network share reconnecting, a USB disk, a
 parent folder renamed for a minute. The work is brought over only when the
 new folder holds exactly the content the old copy was last synced with (its
-``synced_live_hash``); otherwise the notice names the old folder and where
-its work is kept, and nothing moves.
+``synced_live_hash``) AND the old folder's drive or share answers (R3 M7:
+content alone cannot tell a move from an identical copy beside a share that
+is offline, or the same folder under another spelling -- a drive letter not
+mapped now); otherwise the notice names the old folder and where its work is
+kept, and nothing moves. The offer says "if this is the same chip".
 
 **A copy, never a move (R2 M5).** :func:`hand_over` COPIES that work into
 ONE refused checkpoint of the new chip -- the sync panel lists it,
@@ -62,6 +65,21 @@ def folders_present(paths) -> dict:
     """{path: True / False / None}: :func:`folder_probe.folders_present`
     (parallel, bounded, memoised; None = no answer, counted as there)."""
     return folder_probe.folders_present(paths)
+
+
+def _anchor(folder) -> str:
+    """The drive or share a folder lives on (a drive root, a UNC share root,
+    or the POSIX root); "" when it has none."""
+    try:
+        return Path(str(folder)).anchor
+    except (TypeError, ValueError):
+        return ""
+
+
+def _anchor_answers(folder, present: dict) -> bool:
+    """R3 M7: the drive or share *folder* lives on answered the probe."""
+    a = _anchor(folder)
+    return bool(a) and present.get(a) is True
 
 
 def _checkpoints(root: Path, key: str) -> list[Path]:
@@ -174,8 +192,11 @@ def find(instance_path, live_folder, state: dict, wiring: dict) -> list[dict]:
                 break
         if isinstance(doc, dict) and doc.get("live_folder"):
             orphan_docs[key] = doc
-    present = folders_present([c[3] for c in cands]
-                              + [d["live_folder"] for d in orphan_docs.values()])
+    olds = [c[3] for c in cands] + [d["live_folder"] for d in orphan_docs.values()]
+    # R3 M7: the old folder's drive or share (its anchor) is asked too -- an
+    # offline share, an unplugged disk or a drive letter not mapped now is
+    # not a move, whatever the content says
+    present = folders_present(olds + [a for a in (_anchor(o) for o in olds) if a])
 
     want = history.fingerprint_from_dicts(state, wiring)
     out = []
@@ -199,13 +220,15 @@ def find(instance_path, live_folder, state: dict, wiring: dict) -> list[dict]:
         out.append({"key": key, "live_folder": old, "working_folder": str(working),
                     "meta_path": str(meta_path), "meta": meta, "synced": synced,
                     "state": w_state, "wiring": w_wiring, "saved": saved, "tray": tray,
-                    "evidence": isinstance(synced, str) and synced == _here()})
+                    "evidence": (isinstance(synced, str) and synced == _here()
+                                 and _anchor_answers(old, present))})
     for key, doc in orphan_docs.items():
         old = doc["live_folder"]
         synced = doc.get("synced_live_hash")
         if present.get(str(old)) is not False:
             continue
-        if not (isinstance(synced, str) and synced == _here()):
+        if not (isinstance(synced, str) and synced == _here()
+                and _anchor_answers(old, present)):
             continue                         # no copy to compare a design with: evidence only
         out.append({"key": key, "live_folder": old, "working_folder": None,
                     "meta_path": None, "meta": {}, "synced": synced, "state": None,
@@ -285,8 +308,8 @@ def hand_over(orphan: dict, wc, store) -> dict:
     if not rows:
         return out
     reason = (f"unapplied work copied from {orphan['live_folder']}, which could not be "
-              "found when this chip was opened (moved, renamed or offline); that "
-              "folder's own copy stays with it")
+              "found when this chip was opened (moved or renamed?). Restore it only "
+              "if this is the same chip; that folder's own copy stays with it")
     target = pending_tray.set_aside(wc, rows, reason=reason)
     try:
         doc = safe_io.read_json(target, attempts=1)

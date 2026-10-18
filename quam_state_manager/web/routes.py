@@ -1806,8 +1806,10 @@ def _offer_moved_work(ctx: dict) -> None:
                     f"{', ...' if len(set(res['rows'])) > 4 else ''})") if n else ""
             if res["copied"]:
                 any_rows = True
+                # R3 M7: a copy of the same design with the same content can
+                # be another chip: the offer says so
                 parts.append(f"{said} copied from {o['live_folder']}, which could not be "
-                             "found (moved, renamed or offline)")
+                             "found (moved or renamed?), in case this is the same chip")
                 continue
             if not moved_work.note_once(o["key"], wc.key):
                 continue
@@ -1819,7 +1821,8 @@ def _offer_moved_work(ctx: dict) -> None:
                              "folder's, so nothing was brought here)")
         text = ""
         if parts:
-            tail = " Restore or Discard them in the sync panel." if any_rows else ""
+            tail = (" Restore them in the sync panel only if this is the same chip; "
+                    "Discard otherwise." if any_rows else "")
             text = "This chip's unapplied work was left behind: " + "; ".join(parts) + "." + tail
         if back:
             text = (text + " " + back).strip()
