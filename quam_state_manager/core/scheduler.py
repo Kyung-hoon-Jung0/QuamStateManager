@@ -407,23 +407,39 @@ def settings_path(scope) -> Path:
     return Path(scope) / _SETTINGS_FILENAME
 
 
-def _read_settings_file(path: Path) -> dict:
-    if not path.exists():
-        return {}
+class SettingsUnreadable(RuntimeError):
+    """v1.5.1 (SB-P2-7): a settings file exists but could not be read (held
+    open by another SM process, torn, not JSON). The run path and a save
+    refuse on it: defaults stand in for what is stored only where nothing
+    acts on them."""
+
+
+def _read_settings_file(path: Path, *, strict: bool = False) -> dict:
+    """One settings file. v1.5.1 (SB-P2-7): read share-delete with the
+    transient-retry ladder -- a second SM process's write (a sharing
+    violation) used to fail the read at once, and the defaults (a dry run)
+    replaced the stored settings for the run that read them."""
     try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-        return loaded if isinstance(loaded, dict) else {}
-    except (OSError, ValueError):
+        return safe_io.read_json(path)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, safe_io.LiveFileError) as exc:
+        if strict:
+            raise SettingsUnreadable(
+                f"the Runner settings file {path.name} could not be read ({exc})") from exc
         logger.warning("Could not read scheduler settings %s", path, exc_info=True)
         return {}
 
 
-def load_settings(scope) -> dict:
-    """Settings for this scope: defaults ← machine-level ← this chip's."""
+def load_settings(scope, *, strict: bool = False) -> dict:
+    """Settings for this scope: defaults ← machine-level ← this chip's.
+
+    *strict*: a file that exists but cannot be read raises
+    :class:`SettingsUnreadable` instead of reading as defaults."""
     merged = dict(_DEFAULTS)
-    shared = _read_settings_file(shared_settings_path(scope))
+    shared = _read_settings_file(shared_settings_path(scope), strict=strict)
     merged.update({k: v for k, v in shared.items() if k in _SHARED_KEYS})
-    own = _read_settings_file(settings_path(scope))
+    own = _read_settings_file(settings_path(scope), strict=strict)
     merged.update({k: v for k, v in own.items()
                    if k in _DEFAULTS and k not in _SHARED_KEYS})
     return merged
@@ -438,7 +454,8 @@ def save_settings(scope, settings: dict) -> dict:
     run watchdog can never be silently disabled.
     """
     with _QLOCK:
-        current = load_settings(scope)
+        # v1.5.1 (SB-P2-7): an unreadable file is never rewritten as defaults
+        current = load_settings(scope, strict=True)
         current.update({k: v for k, v in (settings or {}).items() if k in _DEFAULTS})
         try:
             t = int(current.get("default_timeout_s"))
@@ -448,7 +465,7 @@ def save_settings(scope, settings: dict) -> dict:
 
         Path(scope).mkdir(parents=True, exist_ok=True)
         shared_path = shared_settings_path(scope)
-        shared = _read_settings_file(shared_path)
+        shared = _read_settings_file(shared_path, strict=True)
         shared.update({k: current[k] for k in _SHARED_KEYS})
         safe_io.atomic_write_json(shared_path, shared)
         safe_io.atomic_write_json(
@@ -1718,7 +1735,16 @@ def _worker(instance_path: str) -> None:
                                          "pause_requested": False, "current_id": None})
                     save_queue(instance_path, state)
                     break
-                settings = load_settings(instance_path)
+                try:
+                    settings = load_settings(instance_path, strict=True)
+                except SettingsUnreadable as exc:
+                    # v1.5.1 (SB-P2-7): never run on defaults (a dry run, or
+                    # another chip's path) because a read failed -- pause, named
+                    state["run"].update({"status": "paused", "current_id": None,
+                                         "message": f"paused: {exc} -- nothing ran; "
+                                                    "press Start to retry"})
+                    save_queue(instance_path, state)
+                    break
                 # Heartbeat: pause if the browser stopped polling (unless tmux mode).
                 if not settings.get("continue_without_ui"):
                     seen = _LAST_UI_SEEN.get(instance_path)

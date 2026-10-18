@@ -45967,7 +45967,12 @@ def scheduler_settings():
                 "error": ("Can't change " + ", ".join(changed) + " while the "
                           "scheduler is running — pause or cancel the queue first."),
             }), 409
-    return jsonify({"ok": True, "settings": scheduler.save_settings(inst, patch)})
+    try:
+        saved = scheduler.save_settings(inst, patch)
+    except scheduler.SettingsUnreadable as exc:
+        # v1.5.1 (SB-P2-7): never overwrite stored settings with defaults
+        return jsonify({"ok": False, "error": f"Nothing was saved: {exc}. Retry in a moment."}), 409
+    return jsonify({"ok": True, "settings": saved})
 
 
 @bp.route("/scheduler/effective-config", methods=["GET", "POST"])
@@ -45987,7 +45992,10 @@ def scheduler_effective_config():
         return jsonify({"ok": False, "error": "No interpreter selected."}), 400
     result = scheduler.read_effective_config(python_path)
     if result.get("ok"):
-        scheduler.save_settings(inst, {"effective_config": result.get("config")})
+        try:
+            scheduler.save_settings(inst, {"effective_config": result.get("config")})
+        except scheduler.SettingsUnreadable:      # v1.5.1 (SB-P2-7): shown, not stored
+            logger.warning("effective config not stored: settings unreadable", exc_info=True)
     return jsonify(result)
 
 
@@ -46512,6 +46520,11 @@ def scheduler_start():
     if not scheduler.is_active(inst):
         try:
             scheduler.save_settings(inst, _sched_settings_patch(data))
+        except scheduler.SettingsUnreadable as exc:
+            # v1.5.1 (SB-P2-7): the run would read settings other than the
+            # ones on screen (Dry run among them) -- start nothing, say why
+            return jsonify({"ok": False, "reason": "settings_unreadable",
+                            "error": f"Nothing started: {exc}. Retry in a moment."}), 409
         except Exception:  # noqa: BLE001
             logger.warning("start settings persist failed", exc_info=True)
     # Strict gate: re-run the identity/safety preflight server-side and refuse to
