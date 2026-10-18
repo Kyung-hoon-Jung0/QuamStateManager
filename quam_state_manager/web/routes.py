@@ -5506,16 +5506,20 @@ def _publish_instance_chip(ctx: dict | None) -> None:
     """
     if not ctx or ctx.get("type") != "quam":
         return
+    # v1.5.1 (U P2-26): the name of THIS context's chip. Both callers publish
+    # before the context becomes active, so the active identity named the
+    # chip open before (a switch back recorded the other chip's name) or none
+    # (after a restart: "").
     try:
-        identity = _active_chip_identity() or {}
+        name = _chip_name_of(ctx) if ctx.get("path") else ""
     except Exception:       # noqa: BLE001 — a name lookup must not fail a load
-        identity = {}
+        name = ""
     try:
         from quam_state_manager.core import instances
         instances.update(
             current_app.instance_path,
             chip_path=str(ctx.get("path") or ""),
-            chip_name=str(identity.get("name") or ""),
+            chip_name=str(name or ""),
             project=str(ctx.get("qualibrate_project") or ""),
         )
     except Exception:       # noqa: BLE001
