@@ -33,6 +33,17 @@ window.UndoTrail = (function () {
         if (typeof v === 'object') { try { return JSON.stringify(v); } catch (e) { return String(v); } }
         return String(v);
     }
+    /* T1-F2: the toast sink sits ABOVE an open panel (body.undo-trail-on +
+       --undo-trail-h, style.css) -- a multi-line undo toast used to cover the
+       panel's "go to field" button. Re-measured whenever the panel changes. */
+    function liftToasts() {
+        var on = !!(_panel && !_panel.hidden && document.body.contains(_panel));
+        document.body.classList.toggle('undo-trail-on', on);
+        if (on) {
+            var h = Math.ceil(_panel.getBoundingClientRect().height || 0);
+            document.body.style.setProperty('--undo-trail-h', h + 'px');
+        }
+    }
     function panel() {
         if (_panel && document.body.contains(_panel)) return _panel;
         var p = document.createElement('div');
@@ -47,11 +58,14 @@ window.UndoTrail = (function () {
         p.addEventListener('click', function (ev) {
             var go = ev.target.closest && ev.target.closest('.undo-trail-goto');
             if (go) { ev.preventDefault(); goTo(go.getAttribute('data-path')); return; }
-            if (ev.target.closest && ev.target.closest('.undo-trail-close')) { _hidden = true; p.hidden = true; return; }
+            if (ev.target.closest && ev.target.closest('.undo-trail-close')) { _hidden = true; p.hidden = true; liftToasts(); return; }
             if (ev.target.closest && ev.target.closest('.undo-trail-clear')) { _steps = []; render(); }
         });
         document.body.appendChild(p);
         _panel = p;
+        if (window.ResizeObserver) {
+            try { new ResizeObserver(liftToasts).observe(p); } catch (e) {}
+        }
         return p;
     }
 
@@ -77,12 +91,14 @@ window.UndoTrail = (function () {
     function render() {
         var p = panel();
         var body = p.querySelector('.undo-trail-body');
-        if (!_steps.length) { body.innerHTML = '<p class="muted undo-trail-empty">nothing undone yet</p>'; return; }
+        if (!_steps.length) { body.innerHTML = '<p class="muted undo-trail-empty">nothing undone yet</p>'; liftToasts(); return; }
         var h = '';
         _steps.forEach(function (st, i) {
             h += '<div class="undo-trail-step' + (i === 0 ? ' undo-trail-latest' : '') + '" data-kind="' + esc(st.kind) + '">';
             h += '<div class="undo-trail-kind">' + (st.kind === 'redo' ? '↷ redo' : st.kind === 'discard' ? '✕ discarded' : '↶ undo')
-               + '<span class="muted"> · ' + esc(st.tier === 'memory' ? 'typed' : st.tier === 'live' ? '→ live' : 'staged') + (st.label ? ' · ' + esc(st.label) : '') + '</span></div>';
+               + '<span class="muted"> · ' + esc(st.tier === 'memory' ? 'typed' : st.tier === 'live' ? '→ live' : 'staged')
+               + (st.age ? ' · <span class="undo-trail-age">edit ' + esc(st.age) + '</span>' : '')
+               + (st.label ? ' · ' + esc(st.label) : '') + '</span></div>';
             st.entries.slice(0, 6).forEach(function (e) {
                 h += '<div class="undo-trail-row"><code class="undo-trail-path" title="' + esc(e.dot_path) + '">' + esc(e.dot_path) + '</code>'
                    + '<span class="undo-trail-vals">' + (e.from !== undefined ? '<span class="undo-trail-from">' + esc(fmt(e.from)) + '</span> → ' : '')
@@ -93,6 +109,7 @@ window.UndoTrail = (function () {
             h += '</div>';
         });
         body.innerHTML = h;
+        liftToasts();
     }
 
     function push(step) {
@@ -125,6 +142,7 @@ window.UndoTrail = (function () {
             }
             _follow = 0;
             _panel.hidden = true;
+            liftToasts();
         }, 0);
     }
     document.addEventListener('htmx:afterSwap', function (evt) {
@@ -158,7 +176,9 @@ window.UndoTrail = (function () {
         // server step read "staged", which after an apply was the whole reason
         // users thought Ctrl+Z was broken.
         var tier = d.live === true ? 'live' : 'server';
-        push({ kind: kind, tier: tier, entries: entries, label: d.tier_note || null });
+        // T1-F2: a journal step says how old the edit it undid is
+        push({ kind: kind, tier: tier, entries: entries, label: d.tier_note || null,
+               age: d.age || null });
     });
     // in-memory tier: LiveEditUndo announces each step
     document.addEventListener('quam:undo-step', function (evt) {
@@ -168,5 +188,6 @@ window.UndoTrail = (function () {
     // a full state replace makes the trail meaningless
     document.addEventListener('stateRestored', function () { _steps = []; if (_panel) render(); });
 
-    return { push: push, goTo: goTo, steps: function () { return _steps.slice(); }, _render: render };
+    return { push: push, goTo: goTo, steps: function () { return _steps.slice(); }, _render: render,
+             _liftToasts: liftToasts };
 })();

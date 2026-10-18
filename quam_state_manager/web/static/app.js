@@ -8513,6 +8513,7 @@ document.addEventListener("focusout", function(evt) {
 window.UndoQueue = (function () {
     var MAX = 20;
     var q = [], busy = false, waiting = false, _fullToastAt = 0;
+    var _ackPrev = "";        // T1-F2: the earlier-session unit the user said yes to
     /* The queue's OWN htmx sync source (docs/124 M-11). It must NOT be the
        tray: htmx 2.0.4's per-element sync (default strategy "last") lives on
        the SOURCE element, and both the grid ⚡ apply (applyEditsToLive) and
@@ -8599,6 +8600,14 @@ window.UndoQueue = (function () {
                           expect_sig: (function () {
                               var t = document.getElementById("pending-tray");
                               return (t && t.getAttribute("data-change-sig")) || "";
+                          })(),
+                          // T1-F2: the user's yes to undoing an earlier
+                          // session's edit on the live chip (one press only)
+                          ack_prev_session: (function () {
+                              if (item.path !== "/undo") return "";
+                              var a = _ackPrev;
+                              _ackPrev = "";
+                              return a;
                           })() },
             });
         } catch (e) { done(); return; }
@@ -8650,6 +8659,8 @@ window.UndoQueue = (function () {
         },
         depth: function () { return pending(); },
         busy: function () { return busy; },
+        /* T1-F2: the next /undo carries the user's yes for this unit */
+        ackPrevSession: function (unitId) { _ackPrev = String(unitId || ""); },
         /* w8: a write this window makes with fetch (not htmx) -- the Pulses
            page's "Delete together" batch -- holds a press exactly like an
            htmx write in flight: a Ctrl+Z pressed while the lab check is
@@ -8670,6 +8681,21 @@ window.UndoQueue = (function () {
         },
     };
 })();
+
+/* T1-F2: a Ctrl+Z that would undo an edit from an EARLIER SM session on the
+   live chip (the journal survives a restart) asks once. The server staged and
+   wrote nothing; OK sends the same press again with this unit's yes. */
+document.addEventListener("undoAskPrevSession", function (evt) {
+    var d = (evt && evt.detail) || {};
+    var yes = window.confirm(String(d.message || "This Ctrl+Z writes the live chip.")
+        + "\n\nOK = undo it on the live chip.\nCancel = leave the chip as it is.");
+    if (yes && window.UndoQueue) {
+        window.UndoQueue.ackPrevSession(d.unit_id);
+        window.UndoQueue.push("/undo");
+    } else if (!yes && window.showToast) {
+        window.showToast("Not undone — nothing was written.", "info");
+    }
+});
 
 document.addEventListener("keydown", function(evt) {
     if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")

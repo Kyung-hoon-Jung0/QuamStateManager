@@ -15235,3 +15235,10 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 /* docs/290: the wiring diagram's title follows the theme (a stylesheet rule beats the
    SVG fill attribute, which stays as the fallback where this sheet is absent) */
 svg .iw-title { fill: var(--pico-muted-color); }
+
+/* T1-F2: while the Undo / Redo panel is open, toasts stack ABOVE it (its
+   measured height, --undo-trail-h, set by undo-trail.js) -- a multi-line undo
+   toast at the sink's usual bottom: 1rem covered the panel's buttons. Last in
+   the file so it also wins over the composer lift (body.ag-composer-on). */
+body.undo-trail-on #status-bar { bottom: calc(5rem + var(--undo-trail-h, 0px) + 0.5rem); }
+.undo-trail-age { white-space: nowrap; }

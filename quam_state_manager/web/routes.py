@@ -3150,6 +3150,62 @@ def _journal_persist_cursor(ctx: dict) -> None:
         logger.warning("undo journal cursor persist failed", exc_info=True)
 
 
+#: T1-F2: when this SM process started. A journal unit recorded before it
+#: was made in an earlier session (the journal survives a restart).
+_PROCESS_STARTED_AT = time.time()
+
+
+def _unit_ts(unit: dict) -> float | None:
+    for v in (unit.get("ts"), (unit.get("meta") or {}).get("at")):
+        try:
+            if v is not None:
+                return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _unit_from_previous_session(unit: dict) -> bool:
+    """T1-F2: a unit recorded before this SM process started (a unit with no
+    time is treated as old: it can only come from an older sidecar)."""
+    ts = _unit_ts(unit)
+    return ts is None or ts < _PROCESS_STARTED_AT
+
+
+def _unit_age(unit: dict) -> str:
+    """T1-F2: how old a journal unit is, said the way the toast says it --
+    "from 2 days ago". Empty when the unit carries no time."""
+    ts = _unit_ts(unit)
+    if ts is None:
+        return ""
+    s = max(0.0, time.time() - ts)
+    if s < 60:
+        ago = "seconds ago"
+    elif s < 3600:
+        ago = f"{int(s // 60)} min ago"
+    elif s < 86400:
+        ago = f"{int(s // 3600)} h ago"
+    else:
+        d = int(s // 86400)
+        ago = f"{d} day{'s' if d != 1 else ''} ago"
+    return "from " + ago
+
+
+#: T1-F2: a journal step from this session younger than this needs no age in
+#: its toast (the user just made it); an older one, or any from an earlier
+#: session, says how old it is.
+_UNIT_AGE_SAY_AFTER_S = 600
+
+
+def _unit_age_said(unit: dict) -> str:
+    """T1-F2: the age a walk step's toast says ("from 2 days ago"), or ""."""
+    ts = _unit_ts(unit)
+    if (not _unit_from_previous_session(unit) and ts is not None
+            and time.time() - ts < _UNIT_AGE_SAY_AFTER_S):
+        return ""
+    return _unit_age(unit)
+
+
 def _journal_unit_foreign(unit: dict) -> int | None:
     """docs/160 C: the pid of ANOTHER live SM process that applied this unit,
     else None. A unit with no owner (older sidecar) or whose owner is gone
@@ -27019,6 +27075,20 @@ def _undo_journal_step(ctx, n_req: int = 1):
                              drift=drift, log_was_empty=log_was_empty,
                              cursor_before=cursor)
     live = bool(flush.get("live"))
+    _age = _unit_age_said(unit)
+    _age_note = f" ({'edit ' + _age})" if _age else ""
+    if flush.get("ask"):
+        # T1-F2: ask once before a previous session's edit is undone on the chip
+        _a = uents[-1]
+        _what = (f"{_a['path']} → {_fmt_msg_val(_a.get('old'))}" if len(uents) == 1
+                 else f"{len(uents):,} changes ({_a['path']} …)")
+        resp = make_response(_tray_html())
+        resp.headers["HX-Trigger"] = json.dumps({"undoAskPrevSession": {
+            "unit_id": str(unit.get("id") or ""),
+            "age": _age,
+            "message": (f"This Ctrl+Z writes the live chip: {_what}. It undoes an edit "
+                        f"{_unit_age(unit) or 'of unknown age'}, made in an earlier SM session.")}})
+        return resp
     if flush.get("rolled_back"):
         # the chip refused (it moved) and the step was undone again: NOTHING
         # changed anywhere -- say so; the status control is the door forward
@@ -27033,7 +27103,9 @@ def _undo_journal_step(ctx, n_req: int = 1):
         resp = make_response(_tray_html())
         resp.headers["HX-Trigger"] = json.dumps({
             "cellsReverted": {
-                "message": "Not undone — " + (flush.get("note") or "the chip refused the write"),
+                "message": ("Not undone — " + (flush.get("note") or "the chip refused the write")
+                            + _age_note),
+                "age": _age,
                 "entries": [], "level": "warning", "live": False,
                 # a refused write must not be retried by the burst's remaining
                 # presses -- they would hammer the same refusal (round 2, F15)
@@ -27080,7 +27152,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
     elif drift:
         message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
 
-    message += _skip_note
+    message += _skip_note + _age_note
     live_undo_seq = None
     if live:
         # QA F1 (windows): another window showing this value is told, once,
@@ -27093,6 +27165,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
     resp.headers["HX-Trigger"] = json.dumps({
         "cellsReverted": {
             "message": message,
+            "age": _age,
             "live": live,
             "live_undo_seq": live_undo_seq,
             "tier_note": flush.get("note") if not live else None,
@@ -27312,6 +27385,18 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     if foreign:
         return {"live": False,
                 "note": f"staged only: this change was applied from another SM window (pid {foreign}) — press Apply to write it from here"}
+    # T1-F2: a unit from an EARLIER session (the journal survived a restart)
+    # reaches the live chip only after the user said yes once: one keypress
+    # on reopening wrote a days-old edit's inverse to the chip. Nothing is
+    # staged or written while the question is open; the cursor stays.
+    if (_unit_from_previous_session(unit) and not ctx.get("undo_prev_session_ack")
+            and request.values.get("ack_prev_session", "") != str(unit.get("id") or "")):
+        _rollback_walk_step(ctx, store, modifier, staged)
+        ctx["undo_cursor"] = cursor_before
+        _redo_mark(ctx, store)
+        return {"live": False, "ask": True}
+    if _unit_from_previous_session(unit):
+        ctx["undo_prev_session_ack"] = True          # asked once: not again this session
     # docs/271: a live Ctrl+Z is an SM write that takes back the recorded
     # event this unit was applied by (its `meta.hub` stamp; none for a unit
     # applied before S4 -- then the link is honestly absent, not guessed)
