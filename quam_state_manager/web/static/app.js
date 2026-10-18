@@ -19274,8 +19274,11 @@ window.saveDatasetNote = function(runId, note, el) {
     // saw (a stale tab gets a 409, never a silent overwrite), and keepalive
     // lets a save started by a reload / close still land.
     var saved = el && el.dataset ? el.dataset.saved : undefined;
-    if (saved !== undefined && note === saved) return;
+    if (saved !== undefined && note === saved) { _noteSettle(el); return; }
+    // v1.5.1 (U P2-22): the same text already on its way is not sent twice
+    if (el && el.dataset && el.dataset.inflight === note) return;
     if (el && el.dataset) el.dataset.inflight = note;
+    _noteState(el, 'saving');
     fetch('/dataset/' + runId + '/note', {
         method: 'POST',
         keepalive: (note || '').length < 60000,
@@ -19290,6 +19293,7 @@ window.saveDatasetNote = function(runId, note, el) {
         var r = res.r, d = res.d;
         if (el && el.dataset && el.dataset.inflight === note) delete el.dataset.inflight;
         if (!r.ok) {
+            _noteState(el, 'failed');
             var bad = el || document.querySelector('.ds-note-textarea');
             if (bad) bad.style.borderColor = '#c0392b';
             if (r.status === 409 && d.note_conflict) {
@@ -19305,6 +19309,7 @@ window.saveDatasetNote = function(runId, note, el) {
             return;
         }
         if (el && el.dataset) { el.dataset.saved = note; delete el.dataset.conflict; }
+        _noteState(el, el && el.value !== note ? 'dirty' : 'saved');
         if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
         // Brief ✓ feedback on the edited textarea (el is passed from onblur so it
         // targets the right one in split/pinned view; falls back to the first).
@@ -19324,7 +19329,41 @@ window.saveDatasetNote = function(runId, note, el) {
         }
     }).catch(function() {
         if (el && el.dataset && el.dataset.inflight === note) delete el.dataset.inflight;
+        _noteState(el, 'failed');
     });
+};
+/* v1.5.1 (U P2-22): the note's state beside its Save -- typed but not saved,
+ * saving, saved (with the time), or not saved. */
+function _noteState(ta, kind) {
+    var block = ta && ta.closest && ta.closest('.ds-note-block');
+    var out = block && block.querySelector('.ds-note-state');
+    if (!out) return;
+    var t = new Date();
+    var hhmm = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2);
+    out.textContent = kind === 'dirty' ? 'Not saved yet'
+        : kind === 'saving' ? 'Saving…'
+        : kind === 'saved' ? 'Saved ' + hhmm
+        : kind === 'failed' ? 'Not saved' : '';
+    out.setAttribute('data-state', kind || '');
+}
+/* back at the stored text: a "not saved yet" no longer holds (a "Saved" does) */
+function _noteSettle(ta) {
+    var block = ta && ta.closest && ta.closest('.ds-note-block');
+    var out = block && block.querySelector('.ds-note-state');
+    if (out && out.getAttribute('data-state') === 'dirty') _noteState(ta, 'clean');
+}
+window.saveNoteNow = function (btn) {
+    var block = btn && btn.closest('.ds-note-block');
+    var ta = block && block.querySelector('.ds-note-textarea');
+    if (!ta) return;
+    window.saveDatasetNote(ta.getAttribute('data-uid'), ta.value, ta);
+    ta.focus();
+};
+window.noteKeydown = function (e, ta) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        window.saveDatasetNote(ta.getAttribute('data-uid'), ta.value, ta);
+    }
 };
 /* datasets-r2-12: F5 / close with the caret still in a note fires no blur, so
  * the typed text used to vanish. Flush every note that differs from what is
@@ -19351,6 +19390,11 @@ window.addEventListener('pagehide', _flushDirtyNotes);
  */
 window.autoGrowNote = function(ta) {
     if (!ta || ta.hidden) return;
+    // v1.5.1 (U P2-22): typing says the note is not saved yet
+    if (ta.dataset && ta.dataset.saved !== undefined) {
+        if (ta.value !== ta.dataset.saved) _noteState(ta, 'dirty');
+        else _noteSettle(ta);
+    }
     ta.style.height = 'auto';
     ta.style.height = ta.scrollHeight + 'px';
 };
@@ -19368,6 +19412,8 @@ window.toggleNoteEditor = function(btn) {
     if (!ta) return;
     var willOpen = ta.hidden;
     ta.hidden = !willOpen;
+    var acts = block.querySelector('.ds-note-actions');     // v1.5.1 (U P2-22)
+    if (acts) acts.hidden = !willOpen;
     btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
     if (willOpen) {
         autoGrowNote(ta);

@@ -7084,6 +7084,12 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 }
 .ds-note-textarea:focus { border-color: var(--pico-primary); background: var(--pico-card-background-color); outline: none; }
 .ds-note-textarea::placeholder { color: var(--pico-muted-color); }
+/* v1.5.1 (U P2-22): the note's Save and its saved state */
+.ds-note-actions { display: flex; align-items: center; gap: .5rem; }
+.ds-note-actions[hidden] { display: none; }
+.ds-note-actions .ds-note-save { width: auto; margin: 0; padding: .1rem .6rem; font-size: .8rem; }
+.ds-note-state { font-size: .78rem; }
+.ds-note-state[data-state="dirty"], .ds-note-state[data-state="failed"] { color: var(--pico-del-color, #c0392b); }
 .ds-note-textarea[hidden] { display: none; }
 
 /* ---------------------------------------------------------------- */

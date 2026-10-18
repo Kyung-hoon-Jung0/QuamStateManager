@@ -73,8 +73,17 @@
     </button>
     <textarea class="ds-note-input ds-note-textarea" rows="1" placeholder="Add a note…"
               hidden oninput="autoGrowNote(this)" data-uid="{{ uid }}" data-saved="{{ run.note or '' }}"
-              onkeydown="if (event.key === 'Escape') this.blur();"
+              onkeydown="if (event.key === 'Escape') this.blur(); else noteKeydown(event, this);"
               onblur="saveDatasetNote('{{ uid }}', this.value, this)">{{ run.note or '' }}</textarea>
+    {# v1.5.1 (U P2-22): a visible Save and the note's saved state; leaving the
+       box, Esc and Ctrl+Enter still save. mousedown keeps the focus in the box,
+       so the press is one save, not a blur-save and a click-save. #}
+    <div class="ds-note-actions" hidden>
+        <button type="button" class="btn-sm ds-note-save" onmousedown="event.preventDefault()"
+                onclick="saveNoteNow(this)"
+                title="Save the note. Leaving the box, Esc or Ctrl+Enter saves it too.">Save</button>
+        <span class="ds-note-state muted" role="status" aria-live="polite"></span>
+    </div>
 </div>
 
 {# Tag this dataset — the primary tagging entry point. The inner .col-tags div
