@@ -81,6 +81,22 @@
     }
 
     function table() { return document.getElementById('bulk-table'); }
+    /* P1-7: the first editable cell the search and the column picker leave
+       on screen, in reading order (rows, then columns), or null. */
+    function _firstShownCell() {
+        if (!table()) return null;
+        var rows = _navRows();      // the search's AND the qubit picker's hidden rows left out
+        for (var i = 0; i < rows.length; i++) {
+            var tds = rows[i].querySelectorAll('td.bulk-td');
+            for (var j = 0; j < tds.length; j++) {
+                var td = tds[j];
+                if (td.classList.contains('bulk-col-hidden') || td.classList.contains('bulk-search-hidden')) continue;
+                var inp = td.querySelector('input.bulk-cell:not([readonly])');
+                if (inp) return inp;
+            }
+        }
+        return null;
+    }
     function _cells(scope) { return Array.prototype.slice.call(scope.querySelectorAll('.bulk-cell')); }
     function _rows() { var t = table(); return t ? Array.prototype.slice.call(t.querySelectorAll('tbody tr')) : []; }
     function _isDirty(c) { return c.value !== c.getAttribute('data-orig'); }
@@ -3779,6 +3795,20 @@
                 if (_searchTimer) clearTimeout(_searchTimer);
                 _searchTimer = setTimeout(applySearch, window.__bulkSearchDebounce || 200);   // 200: user-directed 2026-08-28 (docs/141 4d measured 120 vs 200 equal in cost)
             });
+            // P1-7 (UX round): Enter or Down in the search box goes to the
+            // first matching cell -- it took ~70 Tabs through the chip strip
+            // and the header buttons to reach one. A search still waiting on
+            // its debounce runs first, so the cell is one the search kept.
+            if (search) search.addEventListener('keydown', function (e) {
+                if ((e.key !== 'Enter' && e.key !== 'ArrowDown')
+                        || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+                if (_searchTimer) { clearTimeout(_searchTimer); _searchTimer = null; applySearch(); }
+                var first = _firstShownCell();
+                if (!first) return;
+                e.preventDefault();
+                first.focus();
+                if (first.select) first.select();
+            });
             ChipBar.mount();
 
             // nav guard: warn before losing unapplied edits
@@ -3992,6 +4022,7 @@
                 if (window.showToast) window.showToast(String((e && e.message) || e), 'error');
             }).then(function () { if (btn) btn.disabled = false; });
         },
+        _firstShownCell: _firstShownCell,   // P1-7 (selfcheck)
         resetDirty: function () {
             var t = table(); if (!t) return;
             var statKeys = {};   // QA F9: a restored column's header follows it
@@ -4602,4 +4633,49 @@
         if (!table()) return;                       // not the grid's pane
         try { _pinBarsToScroll(); } catch (e) {}
     });
+})();
+
+/* P1-7 (UX round): the quick-filter chip strip is ONE tab stop (roving
+   tabindex) -- Tab walked ~30 chips to reach the grid. Left / Right / Home /
+   End move inside it; the chip that last had focus is the strip's stop. */
+(function () {
+    function chips(bar) {
+        return Array.prototype.filter.call(bar.querySelectorAll('.bulk-chip'),
+            function (c) { return !c.hidden; });
+    }
+    function rove(bar, active) {
+        chips(bar).forEach(function (c) { c.setAttribute('tabindex', c === active ? '0' : '-1'); });
+    }
+    function barOf(t) {
+        var c = t && t.closest && t.closest('.bulk-chip');
+        return c ? { chip: c, bar: c.closest('#bulk-chipbar') } : null;
+    }
+    document.addEventListener('focusin', function (e) {
+        var o = barOf(e.target);
+        if (o && o.bar) rove(o.bar, o.chip);
+    });
+    document.addEventListener('keydown', function (e) {
+        var o = barOf(e.target);
+        if (!o || !o.bar || e.ctrlKey || e.metaKey || e.altKey) return;
+        var list = chips(o.bar), i = list.indexOf(o.chip), j = -1;
+        if (e.key === 'ArrowRight') j = Math.min(i + 1, list.length - 1);
+        else if (e.key === 'ArrowLeft') j = Math.max(i - 1, 0);
+        else if (e.key === 'Home') j = 0;
+        else if (e.key === 'End') j = list.length - 1;
+        if (j < 0) return;
+        e.preventDefault();
+        rove(o.bar, list[j]);
+        list[j].focus();
+    });
+    function init() {
+        var bar = document.getElementById('bulk-chipbar');
+        if (!bar) return;
+        var list = chips(bar);
+        var stops = list.filter(function (c) { return c.getAttribute('tabindex') !== '-1'; });
+        if (list.length && stops.length !== 1) rove(bar, stops[0] || list[0]);
+    }
+    window._bulkChipRoveInit = init;      // (selfcheck)
+    document.addEventListener('htmx:afterSettle', init);
+    if (document.readyState !== 'loading') init();
+    else document.addEventListener('DOMContentLoaded', init);
 })();

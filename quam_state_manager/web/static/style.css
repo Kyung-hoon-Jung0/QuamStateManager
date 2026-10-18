@@ -2906,6 +2906,14 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .ds-fig-click-badge { margin-left: .4rem; padding: 0 .35rem; border-radius: 999px; font-size: .8em;
     border: 1px solid var(--pico-primary); color: var(--pico-primary); white-space: nowrap; }
 .ds-replot-run-lead { font-weight: 600; }
+/* P1-7: keyboard path -- a skip link, and a visible focus ring on the chips */
+.skip-link { position: absolute; left: .5rem; top: -3rem; z-index: 1000; padding: .35rem .7rem;
+    background: var(--pico-background-color); color: var(--pico-primary);
+    border: 2px solid var(--pico-primary); border-radius: 4px; }
+.skip-link:focus { top: .5rem; }
+#table-pane:focus { outline: none; }
+.bulk-chip:focus-visible, .bulk-chip-mode:focus-visible {
+    outline: 2px solid var(--pico-primary); outline-offset: 2px; }
 .table-filter input {
     font-family: var(--font-ui);
     font-size: 0.88em; padding: 0.25rem 0.5rem; margin: 0;

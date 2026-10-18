@@ -7068,7 +7068,8 @@ window.PhysAmp = (function () {
             ['Ctrl+Shift+↑ / ↓', 'extend the selection one row (same column)'],
             ['Ctrl+D', 'fill selection from the anchor cell'],
             ['Ctrl+V (multi-line)', 'paste a column downward'],
-            ['Ctrl+Enter', 'Apply all (when armed)'],
+            ['Ctrl+Enter', 'Apply: the grid\'s un-applied cells, else the top-bar Apply'],
+            ['/ then Enter or \u2193', 'from the grid search to the first matching cell'],
             ['Json tree (Live edit)', ''],
             ['Ctrl+D', 'select this field, then the same field of the next entity'],
             ['Ctrl+Shift+L', 'select that field in every entity'],
@@ -7121,6 +7122,30 @@ window.PhysAmp = (function () {
         if (window.trapFocus) wrap._releaseTrap = window.trapFocus(wrap, _closeSheet);
         close.focus();
     };
+    /* P1-7 (UX round): Ctrl+Enter is "Apply". The grid's Apply all when it
+       has un-applied cells; else -- the edit already staged, which is where a
+       keyboard user stood after Tab committed the row -- the top bar's Apply
+       button, pressed as a click (its own confirm, its own arm step), from a
+       grid cell or from no field at all, never from another text field. */
+    function _ctrlEnterApply(ev, mayUseTopBar) {
+        var btn = document.getElementById('bulk-apply-all');
+        if (btn && !btn.disabled) { ev.preventDefault(); btn.click(); return true; }
+        if (!mayUseTopBar) return false;
+        var top = document.querySelector('#pending-tray .sync-control-act.btn-apply-live');
+        if (top && !top.disabled) { ev.preventDefault(); top.click(); return true; }
+        return false;
+    }
+    window._ctrlEnterApply = _ctrlEnterApply;     // (selfcheck)
+    /* P1-7: "Skip to content" moves focus into the page, past the sidebar */
+    document.addEventListener('click', function (ev) {
+        var a = ev.target && ev.target.closest && ev.target.closest('a.skip-link');
+        if (!a) return;
+        var pane = document.getElementById('table-pane');
+        if (!pane) return;
+        ev.preventDefault();
+        if (!pane.hasAttribute('tabindex')) pane.setAttribute('tabindex', '-1');
+        pane.focus();
+    });
     function _modalOpen() {
         // a second focus trap over an open modal breaks BOTH (the older
         // capture-phase trap runs first, so Escape closed the wrong thing).
@@ -7141,16 +7166,13 @@ window.PhysAmp = (function () {
         if (_typing()) {
             // Ctrl+Enter works FROM a grid cell too — that is where the user is
             if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
-                var btn0 = document.getElementById('bulk-apply-all');
-                if (btn0 && !btn0.disabled) { ev.preventDefault(); btn0.click(); }
+                var a0 = document.activeElement;
+                _ctrlEnterApply(ev, !!(a0 && a0.classList && a0.classList.contains('bulk-cell')));
             }
             return;
         }
         if (ev.ctrlKey || ev.metaKey || ev.altKey) {
-            if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
-                var btn = document.getElementById('bulk-apply-all');
-                if (btn && !btn.disabled) { ev.preventDefault(); btn.click(); }
-            }
+            if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) _ctrlEnterApply(ev, true);
             return;
         }
         if (ev.key === '/') {

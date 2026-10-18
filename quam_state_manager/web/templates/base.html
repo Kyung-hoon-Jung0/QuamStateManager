@@ -173,6 +173,8 @@
     <noscript><style>.ts-local{visibility:visible}</style></noscript>
 </head>
 <body class="app-shell exp-list-compact" data-plotly-src="{{ url_for('static', filename='plotly.min.js') }}">
+    {# P1-7 (UX round): past the ~80 sidebar stops to the page itself #}
+    <a href="#table-pane" class="skip-link" id="skip-link">Skip to content</a>
     {# queue #8 follow-up: the body renders compact so a first visit never flashes
        wrapped rows -- but a user who chose Full names ('0' in localStorage) got
        the REVERSE flash until app.js restored it. Read the key here, first thing

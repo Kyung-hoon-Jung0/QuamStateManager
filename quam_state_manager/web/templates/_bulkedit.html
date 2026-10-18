@@ -164,8 +164,9 @@
                 title="How selected chips combine. AND = a column must match every chip. OR = matching any chip is enough.">AND</button>
         <span class="bulk-chip-scroll">
         {% for ch in filter_chips %}
+            {#- P1-7 (UX round): the strip is ONE tab stop; arrows move inside it -#}
             <button type="button" class="bulk-chip bulk-chip-{{ ch.kind|default('kw') }}"
-                    data-chip-term="{{ ch.term }}" aria-pressed="false"
+                    data-chip-term="{{ ch.term }}" aria-pressed="false" tabindex="{{ 0 if loop.first else -1 }}"
                     title="{{ ch.n }} column{{ '' if ch.n == 1 else 's' }} match &quot;{{ ch.term }}&quot;">{{ ch.label }}</button>
         {% endfor %}
         </span>
