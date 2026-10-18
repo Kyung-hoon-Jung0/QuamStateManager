@@ -248,7 +248,8 @@ def test_versions_rows_do_not_print_their_id_and_tooltips_speak_plainly(b_view):
         assert re.search(r'class="sv-check" value="\d{8}_\d{6}_\d{6}_event-\d+"', r) or "older snapshot" in r
     sh = get(c, "/state-history?body=1")
     assert "Mode 1" not in sh and "Mode 2" not in sh
-    assert "the live chip is untouched until you apply" in sh and "can be undone" in sh
+    # UX round P1-9 (20f00c5c) spelled the action: "until you press Apply"
+    assert "the live chip is untouched until you press Apply" in sh and "can be undone" in sh
 
 
 # ----------------------------------------------------------------------
