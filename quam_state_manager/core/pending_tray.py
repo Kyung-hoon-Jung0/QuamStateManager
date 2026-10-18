@@ -1182,13 +1182,40 @@ def stage_rows(modifier, rows: list[ChangeEntry], plan: list[dict], *,
             or (include_collisions and item["status"] == PLAN_COLLIDE)]
     if not take:
         return []
+    return _apply_rows(modifier, take, regroup=True)
+
+
+def reapply_rows(modifier, rows: list[ChangeEntry]) -> list[ChangeEntry]:
+    """v1.5.1 (SA-F3): rows put back into the tray as they were -- same order,
+    same group ids, same actor and origin -- verbatim, onto the documents they
+    were first staged on. All or nothing; raises what a row raises."""
+    if not rows:
+        return []
+    return _apply_rows(modifier, list(rows), regroup=False)
+
+
+def set_aside(wc, rows: list[ChangeEntry]) -> Path:
+    """v1.5.1 (SA-F3): rows that could not be put back into the tray, kept as
+    a refused checkpoint -- the sync panel then lists them with Restore /
+    Discard (never silently gone)."""
+    path = sidecar_path(wc)
+    target = path.with_name(f"{path.stem}{_UNRECOVERED_TAG}{uuid.uuid4().hex[:8]}.json")
+    doc = {"version": VERSION, "live_folder": str(wc.live_folder), "base_hash": None,
+           "applied": 0, "synced_live_hash": wc.synced_live_hash,
+           "entries": [_row_doc(r) for r in rows], "mutation_seq": 0,
+           "flags": {"working_dirty": False, "pending_reapply": None}}
+    safe_io.atomic_write_json(target, doc, compact=True)
+    return target
+
+
+def _apply_rows(modifier, take: list[ChangeEntry], *, regroup: bool) -> list[ChangeEntry]:
     store = modifier.store
     applied: list[ChangeEntry] = []
     with batch(store):
-        gid = modifier.new_group_id() if len(take) > 1 else None
+        gid = (modifier.new_group_id() if len(take) > 1 else None) if regroup else None
         try:
             for r in take:
-                e = _stage_row(modifier, r, gid)
+                e = _stage_row(modifier, r, gid if regroup else r.group_id)
                 if isinstance(r.actor, str) and r.actor != e.actor:
                     e.actor = r.actor
                 if r.origin is not None:

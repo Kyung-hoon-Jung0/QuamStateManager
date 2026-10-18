@@ -3355,6 +3355,93 @@ def _hub_pending(ctx, src: str, *, log=None, wholesale: bool = False, kind: str 
                         expect_digest=store.working_digest if press is not None else None)
 
 
+def _hub_saved_unit_ids(ctx) -> list[str]:
+    """The saved-but-not-landed journal units a wholesale replace would mark
+    discarded (the same query :func:`_hub_discard_saved_units` runs)."""
+    try:
+        if (ctx.get("origin") or "live") != "live":
+            return []
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        return [str(u.get("id")) for u in undo_journal.load(path)
+                if (u.get("meta") or {}).get("saved") and not (u.get("meta") or {}).get("hub")
+                and not (u.get("meta") or {}).get("discarded")]
+    except Exception:  # noqa: BLE001 -- advisory, like every journal read
+        return []
+
+
+#: v1.5.1 (SA-F3): what a wholesale stage replaces besides the files and rows
+_ROLLBACK_FLAGS = ("working_dirty", "staged_base", "staged_from", "pending_reapply",
+                   "pending_reapply_orig")
+
+
+def _capture_working_for_rollback(ctx) -> dict:
+    """v1.5.1 (SA-F3): what a wholesale stage (dataset "Apply to chip") is
+    about to replace -- the working pair, the tray's rows, the flags -- so a
+    press that then fails can put it back. ``state`` is None when the
+    working pair cannot be read (the rows are then set aside instead)."""
+    store, wc = ctx["store"], ctx["working_copy"]
+    with store._lock:
+        rows = list(store.change_log)
+        flags = {k: copy.deepcopy(ctx[k]) for k in _ROLLBACK_FLAGS if k in ctx}
+    out = {"rows": rows, "flags": flags, "state": None, "wiring": None,
+           "saved_units": _hub_saved_unit_ids(ctx)}
+    try:
+        from quam_state_manager.core import doc_cache
+        pair = doc_cache.read_pair(wc.working_folder, mode="fresh")
+        out["state"], out["wiring"] = pair.state, pair.wiring
+    except Exception:  # noqa: BLE001 -- named in the result instead
+        logger.warning("could not read the working pair before a stage", exc_info=True)
+    return out
+
+
+def _rollback_working(ctx, snap: dict) -> str:
+    """v1.5.1 (SA-F3): put back what :func:`_capture_working_for_rollback`
+    captured -- the working pair, the flags, the tray's rows verbatim. Returns
+    the sentence the failure message carries about the user's edits."""
+    from quam_state_manager.core import pending_tray
+    rows = snap.get("rows") or []
+    n = len(rows)
+    noun = f"{n} unapplied edit{'s' if n != 1 else ''}"
+    wc = ctx["working_copy"]
+    diverged = bool(ctx.get("live_diverged"))
+    try:
+        if snap.get("state") is None:
+            raise OSError("the working files could not be read before the press")
+        with _active_wc_lock(ctx):
+            safe_io.write_state_wiring(wc.working_folder, snap["state"], snap["wiring"])
+            _rebuild_after_working_copy_replaced(ctx)
+            for key in _ROLLBACK_FLAGS:
+                if key in snap["flags"]:
+                    ctx[key] = snap["flags"][key]
+                else:
+                    ctx.pop(key, None)
+            ctx["live_diverged"] = diverged
+            pending_tray.reapply_rows(ctx["modifier"], rows)
+        if snap.get("saved_units"):
+            try:
+                undo_journal.mark_units(
+                    undo_journal.sidecar_path(current_app.instance_path, ctx["path"]),
+                    snap["saved_units"], {"discarded": False})
+            except Exception:  # noqa: BLE001 -- advisory
+                logger.warning("could not re-claim saved journal units", exc_info=True)
+        _invalidate_engine_cache(ctx)
+        if n:
+            return (f"Your {noun} {'are' if n != 1 else 'is'} back in the tray, unchanged "
+                    "(the run's state was not staged).")
+        return "Your saved version is back in the working copy (the run's state was not staged)."
+    except Exception as exc:  # noqa: BLE001 -- never silent: name where they are
+        logger.warning("rolling back a failed Apply to chip failed", exc_info=True)
+        if not n:
+            return f"Your saved version could not be put back ({exc})."
+        try:
+            kept = pending_tray.set_aside(wc, rows)
+            where = f"they are kept in {kept} — restore them from the sync panel"
+        except Exception as exc2:  # noqa: BLE001
+            where = f"they could not be kept either ({exc2})"
+        shown = ", ".join(dict.fromkeys(r.dot_path for r in rows))
+        return f"Your {noun} ({shown}) could not be put back into the tray ({exc}); {where}."
+
+
 def _hub_discard_saved_units(ctx) -> None:
     """docs/271 review P2-6: the working copy was replaced wholesale (a pull,
     a stage, a restore): units a /save committed but no press landed are gone
@@ -41073,6 +41160,10 @@ def dataset_load_state(uid):
     if request.values.get("force_chip") != "1":
         state, _kept_note = _keep_identity_extras(ctx, state, "run")
     wc = ctx["working_copy"]
+    # v1.5.1 (SA-F3): the one-press Apply replaces the tray's edits only when
+    # it LANDS -- a press that fails puts them (and the working pair) back
+    _undo_stage = (_capture_working_for_rollback(ctx)
+                   if (apply_req and has_pending) else None)
     try:
         with _active_wc_lock(ctx):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
@@ -41102,8 +41193,12 @@ def dataset_load_state(uid):
         # docs/108 one-click: push the just-staged snapshot through the SHARED
         # apply core — same pre-apply snapshot (arms ↺ Revert last apply),
         # same staleness handling, same bookkeeping as the ⚡ button.
-        result = _sync_pull_apply_to_live(ctx, None)
-        body = (result[0] if isinstance(result, tuple) else result).get_json()
+        try:
+            result = _sync_pull_apply_to_live(ctx, None)
+            body = (result[0] if isinstance(result, tuple) else result).get_json()
+        except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, and rolled back below
+            logger.exception("dataset Apply to chip failed")
+            body = {"status": "error", "message": f"Apply to live failed: {exc}"}
         status = (body or {}).get("status")
         drift_note = ""
         if status == "conflict":
@@ -41114,8 +41209,12 @@ def dataset_load_state(uid):
             # the overwrite in the result (docs/86: report, never block —
             # reversibility via ↺ Revert last apply is what licenses this).
             # The unforced first attempt is what tells us drift existed at all.
-            result = _sync_pull_apply_to_live(ctx, None, force=True)
-            body = (result[0] if isinstance(result, tuple) else result).get_json()
+            try:
+                result = _sync_pull_apply_to_live(ctx, None, force=True)
+                body = (result[0] if isinstance(result, tuple) else result).get_json()
+            except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, rolled back below
+                logger.exception("dataset Apply to chip (over drift) failed")
+                body = {"status": "error", "message": f"Apply to live failed: {exc}"}
             status = (body or {}).get("status")
             drift_note = (" The live chip HAD changed since it was loaded — "
                           "those changes were overwritten (the run's state "
@@ -41156,11 +41255,17 @@ def dataset_load_state(uid):
         # error — the staging succeeded; say exactly how far things got.
         # v1.5.1 (SA-F2): a 409 naming the failure (never a 500), with the
         # tray (a read-only pill raised by the failure shows)
+        _fail = (body or {}).get("message") or "Apply to live failed"
+        if _undo_stage is not None:
+            # v1.5.1 (SA-F3): the press replaced the tray's edits; it failed,
+            # so they come back -- never silently gone
+            _fail = (_fail.rstrip(".") + ". Nothing was applied to the live chip. "
+                     + _rollback_working(ctx, _undo_stage))
+        else:
+            _fail += (" — the run's state IS staged in the working copy; retry from "
+                      "the top bar.")
         resp = make_response(render_template(
-            "_status.html",
-            message=((body or {}).get("message") or "Apply to live failed")
-            + " — the run's state IS staged in the working copy; retry from "
-              "the top bar.",
+            "_status.html", message=_fail,
             level="error") + "\n" + _tray_oob(), 409)
         resp.headers["X-SM-Error-Code"] = ((body or {}).get("error_code")
                                            or (body or {}).get("conflict") or LIVE_WRITE_FAILED)
