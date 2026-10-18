@@ -1695,11 +1695,37 @@
             return pane && pane.querySelector("#ds-detail-root");
         }
 
+        // P1-1 (UX round): the entity inspectors a page can show beside it.
+        // A qubit / pair / pulse / search inspector left open by the previous
+        // page covered the next one (Datasets got 121 px under a 748 px qubit
+        // inspector), so leaving for a page that cannot show that entity
+        // closes it and the page gets its full height. Closing is not a split
+        // choice: inspector-closed -> initSplit only hides the pane, the
+        // user's remembered split (quam_split_user) is never written here.
+        var INSPECTOR_PAGES = {
+            qubit: ["/qubits", "/resonators", "/flux", "/qdac", "/bulk", "/topology"],
+            pair: ["/pairs", "/couplers", "/bulk", "/topology"],
+            pulse: ["/pulses"],
+            search: []
+        };
+        function inspectorKind() {
+            var head = document.querySelector("#inspector-pane > .inspector-header, #inspector-pane .inspector-header");
+            if (!head) return null;
+            var m = /\binspector-header-(qubit|pair|pulse|search)\b/.exec(head.className || "");
+            return m ? m[1] : null;
+        }
+        window.__smInspectorPages = INSPECTOR_PAGES;      // (selfcheck)
+
         function navigateSplit(href) {
             var url;
             try { url = new URL(href, window.location.href); } catch (e) { return; }
             if (url.origin !== window.location.origin || url.pathname === navigation.page) return;
             navigation.page = url.pathname;
+            var kind = inspectorKind();
+            if (kind && INSPECTOR_PAGES[kind].indexOf(url.pathname) === -1) {
+                if (window.closeInspector) window.closeInspector();
+                return;
+            }
             if (!datasetInspector()) return;
             // A low drag is still an open run: the old >30% flag skipped it.
             navigation.collapsed = true;
