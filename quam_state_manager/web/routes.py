@@ -4665,9 +4665,10 @@ def _redo_across_pull(ctx, store, pre_seq, pre_leaves) -> None:
     frames = _redo_stack(ctx)
     if ctx is None or store is None or not frames or ctx.get("redo_seq") != pre_seq:
         return
-    plain = all(f.get("kind") != "jrn_live" and not f.get("gid") for f in frames)
+    if not all(f.get("kind") != "jrn_live" and not f.get("gid") for f in frames):
+        return            # journal-walk frames: the fork rule stands, its own words
     redo_paths = {e.get("path") for f in frames for e in (f.get("entries") or ())}
-    patch = _sync_patch(ctx, pre_leaves) if plain else {"structural": True, "changes": []}
+    patch = _sync_patch(ctx, pre_leaves)
     changed = [c.get("dot_path") for c in (patch.get("changes") or ())]
     hit = None
     if patch.get("structural"):
