@@ -14900,6 +14900,7 @@ def pairs():
             page="pairs",
             pairs=page_pairs,
             pair_vocab=pair_vocab,
+            cz_ops=_pair_cz_plan_ops(store),
             current_page=page,
             total_pages=total_pages,
             total=total,
@@ -15128,6 +15129,7 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
             focus_path=focus_path,
             entity_note=_entity_note("qubit_pairs." + name),
             gi=gi_ctx,
+            cz_plan_op=_pair_cz_plan_ops(store).get(name),
         ),
     )
 
@@ -21448,6 +21450,24 @@ def _cz_plan_ops(store):
         while len(_CZ_PLAN_OPS) > _CZ_PLAN_OPS_MAX:
             _CZ_PLAN_OPS.pop(next(iter(_CZ_PLAN_OPS)))
     return rows, convs, list(unavailable)
+
+
+def _pair_cz_plan_ops(store) -> dict[str, str]:
+    """P1-11 (UX round): pair id -> the CZ gate plan address (``?op=``) of its
+    operation -- its ``cz`` when it has one, else its first -- for the pair
+    inspector's and the Pairs table's "Open in CZ gate plan". Empty when the
+    plan cannot be read (the link is then simply not offered)."""
+    try:
+        rows, _convs, _unavailable = _cz_plan_ops(store)
+    except Exception:  # noqa: BLE001 -- a link never breaks a page
+        logger.debug("cz plan ops for pair links failed", exc_info=True)
+        return {}
+    out: dict[str, str] = {}
+    for r in rows:
+        pair, path = r.get("pair"), r.get("path")
+        if pair and path and (pair not in out or r.get("operation") == "cz"):
+            out[pair] = path
+    return out
 
 
 def _cz_plan_table(rows) -> list[dict]:

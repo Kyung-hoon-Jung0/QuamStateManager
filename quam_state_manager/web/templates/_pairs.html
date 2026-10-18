@@ -114,7 +114,11 @@
     </tr>
     {% else %}
     <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
-        <td><strong>{{ p.id }}</strong></td>
+        <td><strong>{{ p.id }}</strong>{% set _czop = (cz_ops or {}).get(p.id) %}{% if _czop %}
+            <a class="pair-czplan-link" href="/cz-plan?op={{ _czop | urlencode }}"
+               hx-get="/cz-plan?op={{ _czop | urlencode }}" hx-target="#table-pane"
+               hx-sync="#table-pane:replace" hx-push-url="true"
+               onclick="event.stopPropagation()" title="Open in CZ gate plan">CZ plan</a>{% endif %}</td>
         <td>{{ p.qubit_control or '-' }}</td>
         <td>{{ p.qubit_target or '-' }}</td>
         <td>{% if p.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_pair_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_pair_names">off</span>{% endif %}</td>

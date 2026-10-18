@@ -2883,6 +2883,7 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     display: flex; align-items: center; gap: 0.4rem;
 }
 .table-filter .table-export { margin: 0; white-space: nowrap; }
+.pair-czplan-link { margin-left: .4rem; font-size: .8em; white-space: nowrap; }
 .table-filter input {
     font-family: var(--font-ui);
     font-size: 0.88em; padding: 0.25rem 0.5rem; margin: 0;
@@ -4609,7 +4610,12 @@ html.topbar-hidden .topo-subnav {
 .cm-hl-qubits .cm-stone { stroke: var(--pico-primary); stroke-width: 2.2; }
 
 .cm-hl-pairs .cm-res, .cm-hl-pairs .cm-flux, .cm-hl-pairs .cm-feed, .cm-hl-pairs .cm-coupler { opacity: .22; }
-.cm-hl-pairs .cm-stone, .cm-hl-pairs .cm-id { opacity: .5; }
+/* P1-11: the qubits stay readable under the pairs highlight (they were .5,
+   near invisible in both themes) and the pair ids are written on the map */
+.cm-hl-pairs .cm-stone { opacity: .8; }
+.cm-pair-label { opacity: 0; pointer-events: none; font-weight: 600; fill: var(--pico-color);
+    paint-order: stroke; stroke: var(--pico-background-color); stroke-width: 3px; }
+.cm-hl-pairs .cm-pair-label { opacity: 1; }
 .cm-hl-pairs .cm-edge-line { stroke: var(--pico-primary); stroke-width: 3; }
 .cm-hl-pairs .cm-arrow { fill: var(--pico-primary); }
 .cm-hl-pairs .cm-freq .cm-freqchev { stroke: var(--pico-primary); }
