@@ -17263,7 +17263,8 @@ def _labels_said(names) -> str:
     return ", ".join(names[:6]) + (f", +{len(names) - 6} more" if len(names) > 6 else "")
 
 
-def _version_source_question(ctx, hm, timestamp: str, state: dict, wiring: dict) -> str:
+def _version_source_question(ctx, hm, timestamp: str, state: dict | None, wiring: dict | None,
+                              *, designs: bool = True, restore: bool = False) -> str:
     """SB-F8: why loading this version into the open chip needs a yes, or "".
 
     * saved from another chip folder that is still there (a Re-generate
@@ -17272,7 +17273,11 @@ def _version_source_question(ctx, hm, timestamp: str, state: dict, wiring: dict)
       (the chip moved);
     * another design: its network or qubit / pair labels do not align with
       the open chip's (after the rename lineage, docs/296).
-    The sentence names the source folder and what Apply would then do."""
+    The sentence names the source folder and what Apply would then do.
+
+    R2 MINOR 5: restore-live (Mode 2) asks the FOLDER question too
+    (*restore*: the sentence says it writes the live chip now); its own align
+    gate already asks about another design (*designs* False)."""
     from quam_state_manager.core import history, hub_versions, path_match
     here = Path(ctx["path"])
     why = []
@@ -17296,6 +17301,8 @@ def _version_source_question(ctx, hm, timestamp: str, state: dict, wiring: dict)
         if elsewhere:
             why.append(f"It was saved from {src}, not from this chip's folder ({here}).")
     try:
+        if not designs:
+            raise LookupError("the caller asks about designs itself")
         store = ctx["store"]
         with store._lock:
             now = history.fingerprint_from_dicts(store.state, store.wiring)
@@ -17311,6 +17318,9 @@ def _version_source_question(ctx, hm, timestamp: str, state: dict, wiring: dict)
         why.append("It holds another chip (its network or qubit labels differ).")
     if not why:
         return ""
+    if restore:
+        return (" ".join(why) + f" Restoring it writes that version into this chip's live "
+                f"files ({here}) now.")
     return (" ".join(why) + f" Loading it replaces this chip's working state with that "
             f"design; ↑ Apply would then write it into {here}.")
 
@@ -17542,6 +17552,25 @@ def state_history_restore_live(timestamp: str):
             confirm=f"Discard your unsaved edits and continue restoring this {_noun}?",
         ), 409
 
+    # R2 MINOR 5: a version saved from ANOTHER chip folder that is still
+    # there (a copy, a Re-generate output) -- stage asked about it, restore
+    # wrote it to live unasked. Its own token (ack_source), never implied by
+    # force_pending or force_align (docs/41); a bare ?force=1 is the master
+    # override, as for the other gates.
+    if request.values.get("ack_source") != "1" and not force_all:
+        _q = _version_source_question(ctx, hm, timestamp, None, None,
+                                      designs=False, restore=True)
+        if _q:
+            return render_template(
+                "_sh_confirm.html", message=_q,
+                action_url=(f"/state-history/{timestamp}/restore-live?ack_source=1"
+                            + ("&force_pending=1" if force_pending else "")
+                            + ("&force_align=1" if request.values.get("force_align") == "1" else "")
+                            + _chip_key_qs()),
+                action_label="Restore it to this chip anyway",
+                confirm=f"Write this {_noun} from another folder into this chip's live files?",
+            ), 409
+
     # Fingerprint-align gate: a single chip dir can hold snapshots routed by
     # fingerprint from a different wiring topology. Never overwrite live wiring
     # with a non-aligned snapshot unless explicitly forced — a SEPARATE
@@ -17566,7 +17595,9 @@ def state_history_restore_live(timestamp: str):
                      f"({alignment}). Loading it as the working state to review the "
                      "diff first is safer than a direct restore."),
             action_url=(f"/state-history/{timestamp}/restore-live"
-                        "?force_pending=1&force_align=1" + _chip_key_qs()),
+                        "?force_pending=1&force_align=1"
+                        + ("&ack_source=1" if request.values.get("ack_source") == "1" else "")
+                        + _chip_key_qs()),
             action_label="Restore to live anyway",
             confirm="The wiring topology differs — overwrite the live chip regardless?",
         ), 409

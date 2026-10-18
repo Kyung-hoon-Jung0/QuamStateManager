@@ -95,3 +95,44 @@ class TestThisChipsOwnVersionsLoadAsBefore:
         shutil.rmtree(gone)
         r = env["c"].post(f"/state-history/{ts}/stage")
         assert r.status_code == 200, r.get_data(as_text=True)[:400]
+
+
+class TestRestoreLiveAsksToo:
+    """R2 MINOR 5: restore-live (Mode 2) of a SAME-design version saved from
+    another existing folder wrote it to the live chip unasked; only stage
+    asked (a design mismatch is still the align gate's)."""
+
+    @pytest.fixture
+    def same(self, tmp_path):
+        old = tmp_path / "quam_states" / "chip_h"
+        copy = tmp_path / "quam_states" / "chip_h_copy"
+        _write(old, _state(1))
+        _write(copy, _state(1, t1=7.0e-5))                 # same design, another folder
+        routes._quam_cache.clear()
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        hm = app.config["history_manager"]
+        assert c.post("/load", data={"folder": str(old)}).status_code in (200, 302)
+        hm.check_and_snapshot(old, "manual", force=True)
+        ts = hm.check_and_snapshot(copy, "manual", force=True).timestamp
+        assert hm._key_for(old) == hm._key_for(copy)
+        return {"c": c, "old": old, "copy": copy, "ts": ts}
+
+    @staticmethod
+    def _live_t1(folder):
+        return json.loads((folder / "state.json").read_text(encoding="utf-8"))["qubits"]["q1"]["T1"]
+
+    def test_the_source_folder_is_named_and_nothing_written(self, same):
+        r = same["c"].post(f"/state-history/{same['ts']}/restore-live")
+        body = r.get_data(as_text=True)
+        assert r.status_code == 409 and str(same["copy"]) in body and "ack_source=1" in body, body[:600]
+        assert self._live_t1(same["old"]) == 1.0e-5, "restored to live without asking"
+
+    def test_the_yes_restores_it(self, same):
+        r = same["c"].post(f"/state-history/{same['ts']}/restore-live?ack_source=1")
+        assert r.status_code == 200, r.get_data(as_text=True)[:400]
+        assert self._live_t1(same["old"]) == 7.0e-5
+
+    def test_the_unsaved_edits_token_never_answers_it(self, same):
+        r = same["c"].post(f"/state-history/{same['ts']}/restore-live?force_pending=1&force_align=1")
+        assert r.status_code == 409 and self._live_t1(same["old"]) == 1.0e-5
