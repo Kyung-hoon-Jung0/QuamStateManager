@@ -42344,7 +42344,7 @@ def dataset_bookmark(uid):
     except OSError as exc:
         # The store already rolled back the in-memory toggle; the disk write
         # failed (read-only archive / permissions) — a 400, not a 500.
-        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
+        return _dataset_write_refusal(exc)
     run = ds.runs.get(run_id)
     tags = list(run.tags) if run else []
     return jsonify({"bookmarked": new_state, "tags": tags, "run_id": run_id, "uid": uid})
@@ -42365,7 +42365,7 @@ def dataset_add_tag(uid):
     except OSError as exc:
         # In-memory change already rolled back by the store (docs: _tags_lock
         # rollback contract) — surface the read-only folder as a 400.
-        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
+        return _dataset_write_refusal(exc)
     return jsonify({"tags": tags, "run_id": run_id, "uid": uid})
 
 
@@ -42382,7 +42382,7 @@ def dataset_remove_tag(uid):
     try:
         tags = ds.remove_tag(run_id, tag)
     except OSError as exc:
-        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
+        return _dataset_write_refusal(exc)
     return jsonify({"tags": tags, "run_id": run_id, "uid": uid})
 
 
@@ -42760,6 +42760,18 @@ def debug_ram():
     return jsonify(snap)
 
 
+def _dataset_write_refusal(exc: OSError):
+    """A tag / favorite / note write the store refused (its in-memory change
+    already rolled back). R2 MINOR 2: a busy tags lock -- another SM process
+    on this machine writing this folder's tags for the whole wait -- is said
+    as busy, never as a read-only folder."""
+    from quam_state_manager.core import xlock
+    if isinstance(exc, xlock.LockTimeout):
+        return jsonify({"busy": True, "error": "busy -- another SM window is saving this "
+                        "folder's tags right now. Try again."}), 409
+    return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
+
+
 @bp.route("/dataset/<uid>/note", methods=["POST"])
 def dataset_set_note(uid):
     """Set a note on a run."""
@@ -42779,7 +42791,7 @@ def dataset_set_note(uid):
         return jsonify({"note_conflict": True, "current": exc.current,
                         "error": "Somebody else changed this note since you opened it."}), 409
     except OSError as exc:
-        return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
+        return _dataset_write_refusal(exc)
     return jsonify({"note": note, "run_id": run_id, "uid": uid})
 
 

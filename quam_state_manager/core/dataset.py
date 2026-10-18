@@ -2914,8 +2914,14 @@ class DatasetStore:
         self._apply_tags_to_runs()
 
     def _tags_xlock_path(self) -> Path:
-        """The machine-wide lock of this folder's tags file -- in the user's
-        temp dir, never a second file inside the data folder."""
+        """The lock of this folder's tags file -- in the user's temp dir,
+        never a second file inside the data folder.
+
+        R2 MINOR 2, its scope said honestly: it excludes the SM processes of
+        ONE user on ONE machine. Another user, or another machine sharing the
+        data folder, takes another lock file: its change is still applied to
+        what is on disk (read, apply one op, write), so it is merged, but two
+        writes landing within the same few milliseconds can still lose one."""
         import tempfile
         try:
             resolved = str(self._tags_path.resolve())

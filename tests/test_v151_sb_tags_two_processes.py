@@ -111,3 +111,40 @@ def test_a_real_second_process(tmp_path):
     assert "DONE" in r.stdout, r.stderr[-3000:]
     a.add_tag(1, "here-2")
     assert _on_disk(root)["tags"]["1"] == ["here-1", "there-1", "there-2", "here-2"]
+
+
+# ---- R2 MINOR 2: a busy tags lock is said as busy, not as a read-only folder
+
+def test_a_busy_tags_lock_is_said_as_busy(tmp_path, monkeypatch):
+    import contextlib
+
+    from quam_state_manager.core import xlock
+    from quam_state_manager.web import routes
+    from tests.test_multifolder_datasets import _app_with_folders
+    fa = tmp_path / "chipA"
+    _seed_run(fa, 1)
+    app, c = _app_with_folders(tmp_path, [fa])
+    with app.app_context():
+        key = routes._folder_key(fa)
+
+    @contextlib.contextmanager
+    def busy(path, **kw):
+        raise xlock.LockTimeout(f"{path} stayed locked for 10 s")
+        yield  # pragma: no cover
+    monkeypatch.setattr(xlock, "held", busy)
+    for method, url, body in (("post", f"/dataset/{key}:1/tag", {"tag": "t"}),
+                              ("delete", f"/dataset/{key}:1/tag", {"tag": "t"}),
+                              ("post", f"/dataset/{key}:1/note", {"note": "n"}),
+                              ("post", f"/dataset/{key}:1/bookmark", None)):
+        r = getattr(c, method)(url, json=body) if body is not None else getattr(c, method)(url)
+        d = r.get_json() or {}
+        assert r.status_code == 409 and d.get("busy"), (url, r.status_code, d)
+        assert "read-only" not in d.get("error", "") and "busy" in d.get("error", ""), d
+
+
+def test_the_tag_picker_says_a_refused_write():
+    src = (ROOT / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+    i = src.index("function _tagWriteFailed(data)")
+    body = src[i:src.index("}", src.index("return true;", i)) + 1]
+    assert "Tag not saved: " in body and "data.error" in body
+    assert src.count("if (_tagWriteFailed(data)) return;") == 3

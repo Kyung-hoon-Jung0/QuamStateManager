@@ -19069,6 +19069,7 @@ function _showTagPicker(runId, btnEl, td, allTags, currentTags) {
             })
             .then(function(r) { return r.json(); })
             .then(function(data) {
+                if (_tagWriteFailed(data)) return;    // R2 MINOR 2: say why, keep the cell
                 if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
                 if (window.DatasetVirtual && typeof window.DatasetVirtual.patchTags === 'function') {
                     window.DatasetVirtual.patchTags(runId, data.tags);
@@ -19103,6 +19104,7 @@ function _showTagPicker(runId, btnEl, td, allTags, currentTags) {
                 })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
+                    if (_tagWriteFailed(data)) return;    // R2 MINOR 2: say why, keep the cell
                     if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
                     if (window.DatasetVirtual && typeof window.DatasetVirtual.patchTags === 'function') {
                         window.DatasetVirtual.patchTags(runId, data.tags);
@@ -19140,6 +19142,15 @@ function _tagPickerEscapeHandler(e) {
     if (e.key === 'Escape') closeTagPicker();
 }
 
+/* R2 MINOR 2: a refused tag write (a busy tags lock, a read-only folder)
+   used to rebuild the cell from an answer with no tags. Say the server's
+   reason and leave the cell as it was. */
+function _tagWriteFailed(data) {
+    if (data && !data.error && Array.isArray(data.tags)) return false;
+    if (window.showToast) window.showToast('Tag not saved: ' + ((data && data.error) || 'no answer'), 'error');
+    return true;
+}
+
 window.closeTagPicker = function() {
     var picker = document.getElementById('active-tag-picker');
     if (picker) picker.remove();
@@ -19159,6 +19170,7 @@ window.removeDatasetTag = function(runId, tag, spanEl) {
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
+        if (_tagWriteFailed(data)) return;    // R2 MINOR 2: say why, keep the cell
         if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
         if (window.DatasetVirtual && typeof window.DatasetVirtual.patchTags === 'function') {
             window.DatasetVirtual.patchTags(runId, data.tags);
