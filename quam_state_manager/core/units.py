@@ -137,6 +137,26 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
 # SI base-unit label per dimension, for "you are editing raw X" hints.
 _STORED_LABEL = {"freq": "Hz", "time": "s", "volt": "V", "duration_ns": "ns"}
 
+# A key that NAMES its unit (``gaussian_filter_frequency_mhz``) is stored in
+# that unit, not in the SI base the generic patterns assume: reading it as a
+# Hz "frequency" printed 200 MHz as "0.0000 GHz" (UX round, P1-8). The suffix
+# is anchored on its underscore, so ``_ghz`` never matches ``_hz`` and ``_ms``
+# never matches ``_s``.
+_NAME_UNIT_SUFFIXES: tuple[tuple[str, str], ...] = (
+    ("_ghz", "GHz"), ("_mhz", "MHz"), ("_khz", "kHz"), ("_hz", "Hz"),
+    ("_ns", "ns"), ("_us", MICRO + "s"), ("_ms", "ms"), ("_s", "s"),
+    ("_dbm", "dBm"), ("_db", "dB"), ("_mv", "mV"), ("_v", "V"),
+)
+
+
+def name_unit(field: str) -> str:
+    """The unit a key's own name declares (``*_mhz`` -> ``"MHz"``), or ``""``."""
+    f = str(field or "").lower()
+    for suffix, label in _NAME_UNIT_SUFFIXES:
+        if f.endswith(suffix) and len(f) > len(suffix):
+            return label
+    return ""
+
 
 def _resolve_field(field: str) -> tuple[Optional[str], Optional[str]]:
     """Return ``(dimension, fixed_suffix)`` for *field*, or ``(None, None)``."""
@@ -147,6 +167,10 @@ def _resolve_field(field: str) -> tuple[Optional[str], Optional[str]]:
         return ("duration_ns", "ns")
     if f.endswith("_delay_ns") or f.endswith("_delay"):
         return ("duration_ns", "ns")
+    if name_unit(f):
+        # the name states its own unit; the patterns below would guess an SI
+        # base it is not stored in. Display goes through name_unit instead.
+        return (None, None)
     if "frequency" in f:
         if any(tok in f for tok in ("intermediate", "anharm", "detun", "chi")):
             return ("freq", "MHz")
@@ -184,8 +208,14 @@ def format_quantity(value: Any, field: str) -> Optional[tuple[str, str]]:
     uses the SI micro sign U+00B5 where applicable.
     """
     dimension, fixed = _resolve_field(field)
-    if dimension is None or not _is_number(value):
+    if not _is_number(value):
         return None
+    if dimension is None:
+        declared = name_unit(field)
+        if not declared:
+            return None
+        # stored in the unit its name states: shown as stored, never rescaled
+        return (str(value) if isinstance(value, int) else f"{value:.6g}", declared)
     if dimension == "duration_ns":
         return (_fmt_duration_ns(value), "ns")
     factor, decimals = _FIXED[fixed]
@@ -205,9 +235,12 @@ def fixed_scale(field: str) -> Optional[tuple[float, str]]:
 
 
 def stored_unit_label(field: str) -> str:
-    """SI base unit a *field* is stored in (for 'editing raw X' hints), or ''."""
+    """Unit a *field* is stored in (for 'editing raw X' hints), or ''. The
+    SI base of its dimension, or the unit its own name declares."""
     dimension, _ = _resolve_field(field)
-    return _STORED_LABEL.get(dimension or "", "")
+    if dimension is None:
+        return name_unit(field)
+    return _STORED_LABEL.get(dimension, "")
 
 
 def pair_field_key(field: str) -> str:
