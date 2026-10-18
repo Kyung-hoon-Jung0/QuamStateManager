@@ -541,7 +541,34 @@ document.addEventListener('htmx:sendError', function(evt) {
 // tab/window discards those edits with no warning. Warn whenever the tray shows
 // pending changes. (The per-grid beforeunload guards cover cells the user typed
 // but hasn't POSTed yet; this covers the committed-but-unsaved change_log.)
+/* R3 MINOR 5: a value typed and not committed in the inspector forms (qubit,
+   pair, pulse fields) or the Json Tree editors is lost on leave whatever the
+   tray says -- the grids have their own guards; these had only the tray's. */
+window._typedUncommitted = function () {
+    var els = document.querySelectorAll(
+        ".inline-edit input.edit-input, input.tree-edit-input, textarea.tree-json-textarea");
+    var same = function (a, b) {
+        if (a === b) return true;
+        // the app's own regrouping of a number ("5000" -> "5,000") is not typing
+        var NI = window.NumberInput;
+        var sa = NI ? NI.strip(a) : String(a), sb = NI ? NI.strip(b) : String(b);
+        if (sa === sb) return true;
+        return sa.trim() !== "" && sb.trim() !== "" && isFinite(+sa) && isFinite(+sb) && +sa === +sb;
+    };
+    for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (el.disabled || el.readOnly) continue;
+        // the app's baseline rule: data-committed when the field has one
+        var base = el.hasAttribute("data-committed") ? el.getAttribute("data-committed")
+                                                     : el.defaultValue;
+        if (!same(el.value, base)) return true;
+    }
+    return false;
+};
 window.addEventListener('beforeunload', function (ev) {
+    if (window._typedUncommitted()) {
+        ev.preventDefault(); ev.returnValue = ''; return '';
+    }
     // docs/237: the top bar's Reload reloads the PAGE on purpose, and the
     // server keeps the change log across it (the popup said so) -- no prompt
     // for that one. Typed-but-unposted cells keep their own guards (bulk-edit /
@@ -5566,6 +5593,15 @@ window.livePushExtrasLine = function (typedPaths) {
                 // THIS window's tray and the values on screen -- in place, never
                 // swapping what the reader is looking at (docs/87/144).
                 onEditSeq(d, _trayAtIssue);
+                // R3 MINOR 4: the leave guard reads data-tray-durable; the
+                // checkpoint can start (or stop) failing with no re-render
+                if (d && typeof d.tray_durable === "boolean") {
+                    var _tr = document.getElementById("pending-tray");
+                    if (_tr) {
+                        if (d.tray_durable) _tr.setAttribute("data-tray-durable", "1");
+                        else _tr.removeAttribute("data-tray-durable");
+                    }
+                }
                 // (the diagnostics-r2-11 banner re-render is retired: the banner
                 // itself is gone, sync-ux 2026-09-25 -- the status control and the
                 // "live now" cell marks carry that signal now)
@@ -11688,6 +11724,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         input.type = "text";
         input.autocomplete = "off";     // never a target of Back's form restore
         input.className = "tree-edit-input";
+        input.defaultValue = shownVal;  // R3 MINOR 5: what "typed, not committed" compares to
         input.value = shownVal;
         input.size = Math.max(10, shownVal.length + 2);
 
@@ -12174,6 +12211,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         ta.className = "tree-json-textarea";
         ta.spellcheck = false;
         try { ta.value = JSON.stringify(value, null, 2); } catch (e) { ta.value = String(value); }
+        ta.defaultValue = ta.value;   // R3 MINOR 5: the leave guard's "unchanged"
         var initialText = ta.value;   // JT-13: Save with nothing changed is a no-op
         ta.rows = Math.min(18, Math.max(3, ta.value.split("\n").length + 1));
 

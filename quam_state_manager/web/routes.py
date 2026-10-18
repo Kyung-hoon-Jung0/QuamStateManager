@@ -30461,6 +30461,10 @@ def state_drift():
     # have diverged, and dropping the flag there would make auto-pull work only
     # for chips that happen to be tracked.
     auto_pull = _auto_pull_due(ctx)
+    # R3 MINOR 4: whether the staged rows are checkpointed rides the poll --
+    # a tray rendered "durable" before its background write failed kept
+    # saying so (the poll's signature did not move, nothing re-rendered it)
+    _dur = _tray_durable()
     try:
         _note_live_write_for_ingest(ctx)
     except Exception:   # noqa: BLE001
@@ -30468,18 +30472,18 @@ def state_drift():
     if not _drift_tracked(ctx):
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync)
+                       live_diverged=ld, sync=sync, tray_durable=_dur)
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
         logger.debug("drift compute failed", exc_info=True)
         return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync)
+                       live_diverged=ld, sync=sync, tray_durable=_dur)
     if info is None:
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync)
+                       live_diverged=ld, sync=sync, tray_durable=_dur)
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
@@ -30488,7 +30492,7 @@ def state_drift():
                     "baseline_utc": info["baseline_utc"],
                     "auto_pull": auto_pull, "hist_seq": hist_seq,
                     "edit_seq": _edit_seq(), "live_diverged": ld,
-                    "sync": sync})
+                    "sync": sync, "tray_durable": _dur})
 
 
 @bp.route("/state/drift/view")
