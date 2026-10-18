@@ -27469,15 +27469,31 @@ def search():
                            ptr_targets=_search_pointer_targets(results))
 
 
-def _search_pointer_targets(results) -> dict[str, str]:
+def _pointer_target_exists(root, segs: list) -> bool:
+    """Whether the field at *segs* (a resolved pointer target) is in *root*."""
+    node = root
+    for seg in segs:
+        if isinstance(node, dict) and seg in node:
+            node = node[seg]
+        elif isinstance(node, list) and str(seg).isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
+        else:
+            return False
+    return True
+
+
+def _search_pointer_targets(results) -> dict[str, dict]:
     """B1 (UX round): a pointer row says where it points -- "points to
     x180_DragCosine.amplitude" -- written relative to the row's own path when
     they share a prefix, so a reader never takes the pointer for the field it
-    names. Display only: a pointer that cannot be followed is left out."""
+    names. R3B MINOR 1: the target is looked up; a pointer to a field that
+    is not there says "dangling pointer to ..." (docs/114), never a
+    confident "points to". ``{dot_path: {"target", "dangling"}}``; a pointer
+    whose target cannot be computed is left out."""
     from quam_state_manager.core.pointer_resolver import _compute_resolved_path, is_pointer
     store = _store()
     root = store.merged if store else {}
-    out: dict[str, str] = {}
+    out: dict[str, dict] = {}
     for r in results:
         raw = r.raw_value
         if not is_pointer(raw) or raw.startswith("#./"):
@@ -27492,7 +27508,8 @@ def _search_pointer_targets(results) -> dict[str, str]:
         n = 0
         while n < min(len(own), len(target)) - 1 and own[n] == target[n]:
             n += 1
-        out[r.dot_path] = ".".join(target[n:])
+        out[r.dot_path] = {"target": ".".join(str(t) for t in target[n:]),
+                           "dangling": not _pointer_target_exists(root, target)}
     return out
 
 

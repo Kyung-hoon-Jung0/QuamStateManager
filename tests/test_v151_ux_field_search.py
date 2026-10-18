@@ -206,3 +206,30 @@ class TestPointerRowsDoNotCrowdOut:
         p = next(r for r in allhits if _is_ptr(r) and r.dot_path.endswith("cz_q2.amplitude"))
         q = next(r for r in allhits if not _is_ptr(r) and r.dot_path.endswith("coupler.operations.cz.amplitude"))
         assert p.score <= q.score, (p.score, q.score)
+
+
+# --------------------------------------------------------------------------
+# R3B MINOR 1: a pointer whose target is not there says so -- "dangling
+# pointer to ..." (docs/114) -- never a confident "points to".
+# --------------------------------------------------------------------------
+def test_a_dangling_pointer_says_dangling(tmp_path):
+    st = _merged()
+    ops = st["qubits"]["q1"]["xy"]["operations"]
+    ops["y90_DragCosine"] = {"amplitude": "#../x90_Missing/amplitude", "length": 40}
+    ops["x90_DragCosine"]["alpha"] = "#/qubits/q9/xy/operations/x90_DragCosine/alpha"
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    (chip / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    (chip / "wiring.json").write_text("{}", encoding="utf-8")
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    assert c.post("/load", data={"folder": str(chip)}).status_code < 400
+    html = c.get("/search?q=amplitude+%7C+alpha", headers={"HX-Request": "true"}).get_data(as_text=True)
+    by = dict(re.findall(r'<tr class="clickable-row" data-dot-path="([^"]+)"(.*?)</tr>', html, re.S))
+    y90 = by["qubits.q1.xy.operations.y90_DragCosine.amplitude"]
+    assert "dangling pointer to <code>x90_Missing.amplitude</code>" in y90, y90
+    assert "points to" not in y90
+    alpha = by["qubits.q1.xy.operations.x90_DragCosine.alpha"]
+    assert "dangling pointer to <code>q9.xy.operations.x90_DragCosine.alpha</code>" in alpha, alpha
+    # a pointer to a field that is there still says where it points
+    y180 = by["qubits.q1.xy.operations.y180_DragCosine.amplitude"]
+    assert "points to <code>x180_DragCosine.amplitude</code>" in y180 and "dangling" not in y180, y180

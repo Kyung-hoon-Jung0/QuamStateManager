@@ -56,7 +56,7 @@
             <td><strong>{{ r.parent_id }}</strong> <small class="cat-badge cat-{{ r.category }}">{{ r.category }}</small></td>
             <td><code>{{ r.leaf_key }}</code></td>
             <td class="search-value">
-                {% if r.dot_path in ptr_targets %}<span class="search-ptr" title="{{ r.raw_value }}">points to <code>{{ ptr_targets[r.dot_path] }}</code></span>
+                {% if r.dot_path in ptr_targets %}{% set _pt = ptr_targets[r.dot_path] %}<span class="search-ptr{% if _pt.dangling %} search-ptr-dangling{% endif %}" title="{{ r.raw_value }}">{% if _pt.dangling %}dangling pointer to{% else %}points to{% endif %} <code>{{ _pt.target }}</code></span>
                 {% elif r.raw_value is none %}N/A
                 {% elif r.raw_value is number and r.raw_value is float and (r.raw_value|abs >= 1e6 or (0 < r.raw_value|abs < 1e-3)) %}
                     {{ "%.4e" | format(r.raw_value) }}
