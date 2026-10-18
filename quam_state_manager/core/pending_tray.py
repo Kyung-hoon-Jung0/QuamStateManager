@@ -59,15 +59,39 @@ _ROW_FIELDS = tuple(f.name for f in _dc_fields(ChangeEntry))
 #: ``None`` default. An older SM builds ``ChangeEntry(**row)`` and rejects a
 #: keyword it does not know (``origin`` arrived after v1.3.0), even a null one;
 #: a missing optional field reads back as its default in every version.
+#: Only rows WITHOUT a plot origin become readable that way: a row that has one
+#: still carries ``origin`` and an older SM still refuses the file (safe).
 _OMIT_IF_NONE = frozenset(f.name for f in _dc_fields(ChangeEntry) if f.default is None)
+#: The re-apply stash tags an SM before v1.5.1 turns back into tags: 2 or 3
+#: elements. A plot-click edit's tag has a 4th (its origin); that SM keeps it
+#: as a plain LIST and its replay writes the list into the chip as the value.
+_OLDER_SM_TAG_LENGTHS = (2, 3)
 
 
-def _row_doc(entry) -> dict:
-    """One change-log row as the file stores it (see ``_OMIT_IF_NONE``)."""
+def _older_sm_decodes(flags: dict) -> bool:
+    """True when an SM before v1.5.1 reads every re-apply stash tag in *flags*
+    as the tag it is. False when one has more elements than that SM decodes:
+    the rows then keep their null optional fields, so that SM refuses the
+    whole checkpoint (it names an unknown row field) instead of replaying a
+    tag as a value."""
+    stash = flags.get("pending_reapply")
+    if not isinstance(stash, dict):
+        return True
+    for value in stash.values():
+        if (isinstance(value, (tuple, list)) and value
+                and len(value) not in _OLDER_SM_TAG_LENGTHS
+                and value[0] in ("set", "literal", "create", "delete", "replace")):
+            return False
+    return True
+
+
+def _row_doc(entry, *, full: bool = False) -> dict:
+    """One change-log row as the file stores it (see ``_OMIT_IF_NONE``).
+    *full* keeps every field, null ones included."""
     out = {}
     for name in _ROW_FIELDS:
         value = getattr(entry, name)
-        if value is None and name in _OMIT_IF_NONE:
+        if value is None and name in _OMIT_IF_NONE and not full:
             continue
         out[name] = value
     return out
@@ -363,8 +387,11 @@ def _snapshot(p: _Persister, timeout: float):
             log = p.store.change_log
             if not log:
                 return _EMPTY
-            rows = [_row_doc(e) for e in log]
             flags = {k: p.ctx[k] for k in _FLAGS if k in p.ctx}
+            # v1.5.1 (C1): null fields are left out only when an older SM
+            # decodes the whole checkpoint; else it must refuse the file
+            full = not _older_sm_decodes(flags)
+            rows = [_row_doc(e, full=full) for e in log]
             data = (rows, flags, p.store.mutation_seq)
             try:
                 blob = marshal.dumps(data, 2)
@@ -887,10 +914,11 @@ def _restore(ctx, p: _Persister) -> None:
                 pass
             ctx["_tray_recovery_notice"] = {"level": "info", "text": text}
             return
-        retained = path.with_name(f"{path.stem}.unrecovered-{uuid.uuid4().hex[:8]}.json")
+        retained = path.with_name(f"{path.stem}{_KEPT_TAG}{uuid.uuid4().hex[:8]}.json")
         try:
             os.replace(path, retained)
-            # v1.5.1: never pruned -- the file stays listed in the sync panel
+            # v1.5.1: this SM never prunes it, and its name is outside the
+            # pattern an older SM prunes -- it stays listed in the sync panel
             # (Restore / Discard) until the user decides.
             retention = f"Recovery file retained at {retained}."
         except OSError as retain_exc:
@@ -938,19 +966,62 @@ def _restore(ctx, p: _Persister) -> None:
 # Refused checkpoints: listed until the user restores or discards them (v1.5.1)
 # ---------------------------------------------------------------------------
 
+#: The name this SM gives a refused checkpoint: ``<key>.pending_tray.kept.unrecovered-<id>.json``.
+#: An SM before v1.5.1 deletes ``<key>.pending_tray.unrecovered-*.json`` beyond
+#: its newest five each time it refuses one; this name is outside that pattern,
+#: so in an instance both versions open, a refused checkpoint stays until the
+#: user restores or discards it.
+_KEPT_TAG = ".kept.unrecovered-"
+#: The name an older SM (and the first v1.5.1 builds) gave one. Still listed;
+#: renamed to the kept name when this SM opens the chip (:func:`keep_older_refusals`).
+#: Until then the older SM's own prune can still remove it -- nothing this SM
+#: does can stop that.
 _UNRECOVERED_TAG = ".unrecovered-"
 _UNRECOVERED_CACHE: dict = {}             # file path -> (stat signature, description)
 _UNRECOVERED_LOCK = threading.Lock()
 
 
-def _unrecovered_prefix(wc) -> str:
-    return f"{sidecar_path(wc).stem}{_UNRECOVERED_TAG}"
+def _unrecovered_prefixes(wc) -> tuple[str, str]:
+    stem = sidecar_path(wc).stem
+    return (f"{stem}{_KEPT_TAG}", f"{stem}{_UNRECOVERED_TAG}")
+
+
+def keep_older_refusals(wc) -> list[Path]:
+    """Rename this chip's refused checkpoints that carry the older name to the
+    kept name (same id), so an older SM opening this instance never prunes
+    them. Returns the new paths; a file that cannot be renamed stays listed
+    under its old name."""
+    stem = sidecar_path(wc).stem
+    old_prefix = f"{stem}{_UNRECOVERED_TAG}"
+    folder = Path(wc.working_folder).parent
+    try:
+        with os.scandir(folder) as it:
+            names = [e.name for e in it
+                     if e.name.startswith(old_prefix) and e.name.endswith(".json")]
+    except OSError:
+        return []
+    moved = []
+    for name in names:
+        file_id = name[len(old_prefix):-len(".json")]
+        target = folder / f"{stem}{_KEPT_TAG}{file_id}.json"
+        if target.exists():
+            target = folder / f"{stem}{_KEPT_TAG}{file_id}-{uuid.uuid4().hex[:6]}.json"
+        try:
+            os.replace(folder / name, target)
+        except OSError:
+            logger.warning("could not rename the refused checkpoint %s", folder / name,
+                           exc_info=True)
+            continue
+        with _UNRECOVERED_LOCK:
+            _UNRECOVERED_CACHE.pop(str(folder / name), None)
+        moved.append(target)
+    return moved
 
 
 def _unrecovered_files(wc) -> list[Path]:
     """This chip's refused checkpoints, newest first. A plain prefix/suffix
     match (a chip key may hold glob metacharacters)."""
-    prefix = _unrecovered_prefix(wc)
+    prefix = _unrecovered_prefixes(wc)
     folder = Path(wc.working_folder).parent
     found = []
     try:
@@ -967,7 +1038,10 @@ def _unrecovered_files(wc) -> list[Path]:
 
 
 def _file_id(path: Path, wc) -> str:
-    return path.name[len(_unrecovered_prefix(wc)):-len(".json")]
+    for prefix in _unrecovered_prefixes(wc):
+        if path.name.startswith(prefix):
+            return path.name[len(prefix):-len(".json")]
+    return ""
 
 
 def _describe(path: Path, wc) -> dict:
@@ -1199,7 +1273,7 @@ def set_aside(wc, rows: list[ChangeEntry]) -> Path:
     a refused checkpoint -- the sync panel then lists them with Restore /
     Discard (never silently gone)."""
     path = sidecar_path(wc)
-    target = path.with_name(f"{path.stem}{_UNRECOVERED_TAG}{uuid.uuid4().hex[:8]}.json")
+    target = path.with_name(f"{path.stem}{_KEPT_TAG}{uuid.uuid4().hex[:8]}.json")
     doc = {"version": VERSION, "live_folder": str(wc.live_folder), "base_hash": None,
            "applied": 0, "synced_live_hash": wc.synced_live_hash,
            "entries": [_row_doc(r) for r in rows], "mutation_seq": 0,
@@ -1268,6 +1342,7 @@ def attach(ctx, build_lock=None):
                     p.base = None
         _restore(ctx, p)
         store.change_log = PendingLog(store.change_log, p.mark)
+    keep_older_refusals(p.wc)       # v1.5.1: out of an older SM's prune
     ctx["_pending_tray"] = p
     _OWNERS[key] = p
     _ALL.add(p)

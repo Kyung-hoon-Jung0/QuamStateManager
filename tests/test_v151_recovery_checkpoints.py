@@ -13,7 +13,9 @@ silently gone. Pinned here:
   file aside, never deletes it; nothing is pruned behind the user's back;
 * the reason tells an older format from another chip folder;
 * the checkpoint is written without null optional row fields, so an older SM
-  (whose rows have no ``origin``) can still read it.
+  (whose rows have no ``origin``) can still read a checkpoint of plain edits
+  (the real v1.3.0 reader is driven in test_v151_older_sm_reads_checkpoint.py,
+  which also pins that it refuses one it cannot decode).
 """
 import json
 from dataclasses import dataclass
@@ -76,7 +78,9 @@ def _refused(tmp_path, **changes):
 
 
 def _unrecovered(wc):
-    return sorted(wc.working_folder.parent.glob(f"{wc.key}.pending_tray.unrecovered-*.json"))
+    # v1.5.1 C1/MINOR 5: this SM names them ``.kept.unrecovered-`` (outside an
+    # older SM's prune); an older name is listed too, and renamed at open
+    return sorted(wc.working_folder.parent.glob(f"{wc.key}.pending_tray*.unrecovered-*.json"))
 
 
 # --------------------------------------------------------------------------
