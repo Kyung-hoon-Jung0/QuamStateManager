@@ -214,8 +214,10 @@
           '<button class="btn-sm outline" onclick="autofitForce()">Run anyway</button>';
         window._autofitLastPayload = payload;
       } else {
+        // v1.5.1 (SA-F6): the server's sentence (an archive refusal names
+        // the folder and the way out), not just its code
         msg.innerHTML = '<span class="autofit-bad">' +
-          esc((r.body || {}).error || "start failed") + "</span>";
+          esc((r.body || {}).message || (r.body || {}).error || "start failed") + "</span>";
       }
       poll();
     });

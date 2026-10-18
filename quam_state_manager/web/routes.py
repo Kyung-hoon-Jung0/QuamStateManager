@@ -2591,12 +2591,34 @@ def _is_run_archive(folder: str | Path) -> bool:
     workspace entry and ``/workspace/select`` (or ``/load``) would open it as a
     live-editable copy, letting an edit+Apply overwrite the run's record. A
     normal live chip (``.../quam_states/<chip>``) has no such sibling, so this
-    never misfires on real chips."""
-    try:
-        parent = Path(folder).parent
-        return (parent / "node.json").is_file() or (parent / "data.json").is_file()
-    except OSError:
-        return False
+    never misfires on real chips. (The rule lives in
+    :func:`working_copy.is_run_archive`, shared with the runner and autofit.)"""
+    return working_copy.is_run_archive(folder)
+
+
+#: v1.5.1 (SA-F5/F6): the named refusal of a run against a frozen record
+ARCHIVE_TARGET = "archive_target"
+
+
+def _archive_run_reason(target: str | None = None) -> str:
+    """Why a node run (Experiment Runner, Auto Calibrate) must not start: the
+    open chip, or the quam_state it would run against, is a dataset run's
+    frozen record. ``""`` for a live chip. No ``force`` answers this -- a run
+    writes its quam_state, and an archive is the record of what a past run
+    saw."""
+    ctx = _active_ctx()
+    if ctx and ctx.get("type") == "quam" and (ctx.get("origin") or "live") != "live":
+        return (f"The open chip is a dataset run's frozen quam_state ({ctx.get('path')}), "
+                "opened read-only. A run would rewrite that record. Load the chip's "
+                "live folder (State Load) and run from there.")
+    if target:
+        other = _find_quam_ctx_by_path(target)
+        if (other is not None and (other.get("origin") or "live") != "live") \
+                or working_copy.is_run_archive(target):
+            return (f"The run target {target} is a dataset run's frozen quam_state. "
+                    "A run would rewrite that record. Point the runner at the chip's "
+                    "live folder.")
+    return ""
 
 
 _GENERIC_FOLDER_NAMES = {"quam_state", "quam_states", "state", "states"}
@@ -44895,6 +44917,8 @@ def _gather_preflight(inst: str, data: dict) -> dict:
             diag_errors, diag_examples = None, []
 
     result = scheduler.build_preflight({
+        # v1.5.1 (SA-F5): a frozen run record is never a run target
+        "archive_reason": _archive_run_reason(target or open_folder),
         "chip_open": open_folder is not None,
         "chip_type": ctx_type,
         "open_chip_folder": open_folder,
@@ -45355,6 +45379,15 @@ def scheduler_start():
     # the queue to a new chip / LIVE mode, bypassing the mid-run settings lock
     # (/scheduler/settings 409). start() below already no-ops a duplicate worker,
     # but only AFTER this persist would have landed, so the guard must be here.
+    # v1.5.1 (SA-F5): a dataset run archive (the open chip, or the target) is
+    # refused BEFORE anything is persisted, and no `force` passes this -- the
+    # run would rewrite a frozen record
+    _arch = _archive_run_reason(json_text(data, "quam_state_path")
+                                or str(scheduler.load_settings(inst).get("quam_state_path") or "")
+                                or _active_path())
+    if _arch:
+        return jsonify({"ok": False, "reason": "archive", "error": ARCHIVE_TARGET,
+                        "message": _arch}), 409
     if not scheduler.is_active(inst):
         try:
             scheduler.save_settings(inst, _sched_settings_patch(data))
@@ -45760,6 +45793,10 @@ def _autofit_start_real(inst, p, data, auditor):
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return None, {"error": "no chip loaded"}, 409
+    # v1.5.1 (SA-F6): never against a frozen run record -- not even forced
+    _arch = _archive_run_reason(ctx.get("live_path") or ctx.get("path"))
+    if _arch:
+        return None, {"error": ARCHIVE_TARGET, "reason": "archive", "message": _arch}, 409
     # a foreign queue would run BEFORE our items on the hardware — refuse
     qstate = scheduler.load_queue(inst)
     foreign = [i for i in qstate.get("queue", [])
@@ -45839,7 +45876,8 @@ def _autofit_start_real(inst, p, data, auditor):
                         reconcile=reconcile,
                         # docs/271: every autofit live write is recorded in
                         # this chip's history, under the plan's name
-                        hub_dir=_hub_chip_dir(live_path), hub_plan=f"autofit:{p.name}")
+                        hub_dir=_hub_chip_dir(live_path), hub_plan=f"autofit:{p.name}",
+                        origin=ctx.get("origin") or "live")
     adapter = RealAdapter(instance_path=inst, reconcile=reconcile,
                           rescan_and_list_runs=rescan_and_list_runs)
     backend = RealBackend(adapter, resolved)

@@ -268,7 +268,17 @@
     // For Start, send the live form values so the server-side preflight checks
     // exactly what the user sees (not stale persisted settings).
     var body = which === "start" ? self.collect() : {};
+    // v1.5.1 (SA-F5): a refusal no `force` can answer (the target is a run
+    // archive) is said, and stays until closed -- never a silent no-op
+    var refusedForGood = function (r) {
+      if (!(r && r.ok === false && r.reason === "archive")) return false;
+      var text = r.message || "Refused: the run target is a dataset run archive.";
+      if (window.showToast) window.showToast(text, "error", -1);
+      else window.alert(text);
+      return true;
+    };
     postJSON("/scheduler/" + which, body).then(function (r) {
+      if (which === "start" && refusedForGood(r)) return;
       // Strict gate: the server refuses Start when the safety preflight fails.
       // Surface the failing checks and let the user force past them.
       if (which === "start" && r && r.ok === false && r.reason === "preflight") {
@@ -282,6 +292,7 @@
         if (window.confirm(txt)) {
           body.force = true;
           postJSON("/scheduler/start", body).then(function (r2) {
+            if (refusedForGood(r2)) return;
             if (r2 && r2.state) self.renderQueue(r2.state);
           });
         }

@@ -60,6 +60,19 @@ class LiveStateMissingError(FileNotFoundError):
     """An unforced apply cannot recreate a missing live state or folder."""
 
 
+def is_run_archive(folder) -> bool:
+    """True if *folder* is a dataset run's frozen ``quam_state`` snapshot: a
+    qualibrate run folder carries ``node.json`` / ``data.json`` beside the
+    ``quam_state`` subfolder it records. A live chip folder has no such
+    sibling. (Moved here from the web layer in v1.5.1 so the Experiment
+    Runner and the autofit writer refuse by the same rule.)"""
+    try:
+        parent = Path(folder).parent
+        return (parent / "node.json").is_file() or (parent / "data.json").is_file()
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def missing_live_message(wc: WorkingCopy) -> str | None:
     if not wc.live_folder.is_dir():
         return "The live chip folder is missing. Nothing was applied."

@@ -59,6 +59,21 @@ class ChipHandle:
     hub_fp0: Any = None
     # ...and right after it: the bytes the live write reads must be these
     hub_fp1: Any = None
+    # v1.5.1 (SA-F6): the context's origin; anything but "live" is refused
+    origin: str = "live"
+
+
+def _archive_refusal(chip: ChipHandle) -> str | None:
+    """v1.5.1 (SA-F6): the writer never writes a dataset run's frozen record --
+    by the handle's origin, and by the folder itself (a handle built without
+    an origin still names its folder)."""
+    folders = (getattr(chip, "live_path", None),
+               getattr(getattr(chip, "wc", None), "live_folder", None))
+    if ((getattr(chip, "origin", None) or "live") != "live"
+            or any(f and working_copy.is_run_archive(f) for f in folders)):
+        return ("refused: this chip is a dataset run archive (a frozen record); "
+                "the writer writes only a live chip")
+    return None
 
 
 @dataclass
@@ -161,6 +176,9 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
     autonomy, promote to live. All-or-nothing via ``batch_set``."""
     if not rows:
         return WriteOutcome(ok=True, action="noop")
+    refused = _archive_refusal(chip)
+    if refused:
+        return WriteOutcome(ok=False, action="staged", error=refused)
     updates = {r["path"]: r["value"] for r in rows}
     with chip.build_lock:
         try:
@@ -245,6 +263,9 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
     """
     if not patches:
         return WriteOutcome(ok=True, action="noop")
+    refused = _archive_refusal(chip)
+    if refused:
+        return WriteOutcome(ok=False, action="reverted", error=refused)
     revertible: list[tuple[str, Any, Any]] = []      # (dotted, old, expect_new)
     conflicts: list[dict] = []
     for p in patches:
@@ -348,6 +369,9 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
     exact-typed (coerce=False) like reverts. Every write is logged old→new."""
     if not rows:
         return WriteOutcome(ok=True, action="noop")
+    refused = _archive_refusal(chip)
+    if refused:
+        return WriteOutcome(ok=False, action="restored", error=refused)
     with chip.build_lock:
         entries = []
         gid = f"afrestore{chip.store.mutation_seq}"

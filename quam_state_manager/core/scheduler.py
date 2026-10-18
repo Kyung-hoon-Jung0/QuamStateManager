@@ -633,6 +633,12 @@ def build_preflight(ctx: dict) -> dict:
         checks.append(_check("chip_open", "A QUAM chip is open", "fail",
                              "Load a quam_state chip in the State Manager first."))
 
+    # v1.5.1 (SA-F5): a dataset run's frozen quam_state is never a run target
+    # (the route also refuses it at start, whatever `force` says)
+    if ctx.get("archive_reason"):
+        checks.append(_check("archive", "The target is a live chip, not a run archive",
+                             "fail", ctx["archive_reason"]))
+
     # 2. quam_state path matches the open chip (Strict)
     if not target:
         checks.append(_check("path_match", "quam_state matches the open chip", "fail",
