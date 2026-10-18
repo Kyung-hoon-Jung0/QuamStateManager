@@ -518,18 +518,43 @@ def _purge_test_leftovers(instance_path: str) -> None:
                     pass
 
 
-def warm_templates(app: Flask) -> int:
+#: how long the template warm-up yields to pages in all before it compiles on
+#: regardless (a server polled without pause still gets its templates warmed)
+_TPL_WARM_YIELD_MAX_S = 60.0
+
+
+def _preload_synth() -> None:
+    from quam_state_manager.core import waveform_synth
+    waveform_synth.preload_scipy_quietly()
+
+
+def warm_templates(app: Flask, *, first=None) -> int:
     """Compile every template the app can render into Jinja's cache; returns
     how many compiled. Best-effort: a template that fails to compile here
-    fails the same way on its first render, where the error belongs."""
+    fails the same way on its first render, where the error belongs.
+    *first*: a warm-up that matters more, run on this thread before them."""
+    if first is not None:
+        try:
+            first()
+        except Exception:  # noqa: BLE001 -- a warm-up never fails the server
+            logging.getLogger(__name__).debug("warm-up before the templates failed", exc_info=True)
     n = 0
     try:
         names = app.jinja_env.list_templates()
     except Exception:  # noqa: BLE001 -- a loader that cannot list: nothing to warm
         return 0
+    from quam_state_manager.core import activity
+    deadline = time.monotonic() + _TPL_WARM_YIELD_MAX_S
     for name in names:
         if not name.endswith(".html"):
             continue
+        # v1.5.1 (perf): yield to a page being served (the one yield-to-
+        # foreground rule). The warm starts with the server, exactly when the
+        # first page renders, and compiling every template beside it held the
+        # interpreter for most of that page's time (measured: the landing's
+        # first request 1.06 s with it running, the warm busy the whole time).
+        while activity.busy() and time.monotonic() < deadline:
+            time.sleep(0.05)
         try:
             app.jinja_env.get_template(name)
             n += 1
@@ -1114,8 +1139,11 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # the landing page leaves the process idle long enough to do all of
     # them. Same gate as the env warm-up (the suite sets the variable).
     if not testing and os.environ.get("SM_DISABLE_ENV_WARMUP") != "1":
-        threading.Thread(target=warm_templates, args=(app,), name="sm-tpl-warm",
-                         daemon=True).start()
+        # v1.5.1 (perf): first the waveform-synthesis modules every chip's
+        # first lint needs (the Diagnostics a chip open fetches wait on it),
+        # then the templates; both only while no page is being served
+        threading.Thread(target=warm_templates, args=(app,), kwargs={"first": _preload_synth},
+                         name="sm-tpl-warm", daemon=True).start()
     # docs/172: the JSON door for a terminal agent / the MCP bridge / the hook
     from quam_state_manager.web.agent_api import agent_bp
     app.register_blueprint(agent_bp)

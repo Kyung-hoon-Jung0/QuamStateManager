@@ -1874,6 +1874,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
     # opened as a live-editable copy and overwrite the experiment's record.
     if origin == "live" and _is_run_archive(folder):
         origin = "dataset_archive"
+    _preload_synth_modules()        # v1.5.1 (perf): the chip's first lint needs them
 
     # Fast path — cache hit. Guarded by a stat-only staleness pre-check:
     # the cache is keyed by *path*, so without it a live folder whose files
@@ -2326,6 +2327,24 @@ def _lab_prewarm_classes(store) -> list[str]:
         if isinstance(root, str) and "." in root:
             out.add(root)
     return sorted(out)
+
+
+def _preload_synth_modules() -> None:
+    """v1.5.1 (perf): make sure the waveform-synthesis modules are being
+    imported off the request path (``waveform_synth.preload_scipy_soon``,
+    between pages) when a chip opens -- the server start normally began it;
+    the Diagnostics badge, banner and findings that the opened page fetches
+    at once all wait on the chip's first lint, which needs them. The suite
+    imports nothing in the background unless a pin asks for it
+    (``SM_SYNTH_PRELOAD_IN_TESTS``)."""
+    app = current_app
+    if app.config.get("TESTING") and not app.config.get("SM_SYNTH_PRELOAD_IN_TESTS"):
+        return
+    try:
+        from quam_state_manager.core import waveform_synth
+        waveform_synth.preload_scipy_soon()
+    except Exception:  # noqa: BLE001 -- a warm-up never blocks an open
+        logger.debug("synthesis module preload did not start", exc_info=True)
 
 
 def _maybe_prewarm_lab_worker(ctx, inst, *, reason: str = "chip-open") -> None:

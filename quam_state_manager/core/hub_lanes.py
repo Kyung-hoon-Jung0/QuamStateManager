@@ -37,8 +37,9 @@ FAST PATH: a chip whose every event is in the lane, with no foreign event and
 no seam, gets the ledger's own index back -- its answers are byte-identical to
 reading the ledger with no view.
 
-Nothing here writes. A view is built from one read snapshot and kept on that
-snapshot's index (dropped with it when the ledger grows); seam rows and the
+Nothing here writes the ledger (the declared-chip verdicts are kept in a
+cache file beside it, ``DECLARED_FILE``). A view is built from one read
+snapshot and kept on that snapshot's index (dropped with it when the ledger grows); seam rows and the
 flats they diff are kept in small LRUs keyed by the states they came from (an
 event's state never changes in place without its own identity changing).
 """
@@ -461,6 +462,119 @@ def _table_rows(conn, sql: str, args=()) -> list:
 
 _DECLARED: "OrderedDict[tuple, bool]" = OrderedDict()
 _DECLARED_MAX = 4096
+#: how many verdicts were judged (not served from the memo); a build that
+#: judged any saves them (:func:`_declared_persist`)
+_DECLARED_JUDGED = [0]
+
+#: v1.5.1 (perf): the declared-chip verdicts of a ledger outlive the process,
+#: in this file beside the ledger. Judging one rebuilds the run's whole saved
+#: state (``state_at``): measured 2.2 s of the first ledger read after every
+#: restart on a 5-qubit chip with 30 flagged runs, paid by whichever surface
+#: read first (the version chip, the Calibration log, Param History). An entry
+#: is the memo's own key (ledger, chip identity, event, the hash of the run's
+#: saved state); the file is believed only for the same ledger and rewrite
+#: epoch, and only while the ledger's rewrite log (docs/298) shows nothing
+#: rewritten in place since it was written -- otherwise every verdict is
+#: judged again. The same check drops this process's own verdicts when the
+#: ledger was rewritten under them.
+DECLARED_FILE = "lanes_declared.json"
+_DECLARED_FILE_V = 1
+#: ledger file -> (ledger id, rewrite epoch, rewrite log position, newest
+#: event) its verdicts in ``_DECLARED`` are vouched for at
+_DECLARED_AT: dict[str, tuple] = {}
+
+
+def _declared_path(conn) -> Path | None:
+    """The sidecar of the ledger *conn* reads, or None (no file: in memory)."""
+    try:
+        for _seq, name, file in conn.execute("PRAGMA database_list"):
+            if name == "main" and file:
+                return Path(file).with_name(DECLARED_FILE)
+    except Exception:  # noqa: BLE001 -- no file to keep them beside
+        return None
+    return None
+
+
+def _declared_restore(conn, ledger_id: str) -> tuple | None:
+    """Vouch for the declared-chip verdicts of *ledger_id* at this read
+    snapshot: drop the ones a rewrite since could have changed (in RAM and
+    on disk) and load the file's into the memo. Returns the stamp to save
+    under, or None when nothing can be vouched for (no rewrite log, no file)."""
+    from quam_state_manager.core.hub_store import rewrite_mark, rewritten_since
+    path = _declared_path(conn)
+    if path is None:
+        return None
+    try:
+        mark = rewrite_mark(conn)
+        high = conn.execute("SELECT COALESCE(MAX(eid), 0) FROM events").fetchone()[0]
+    except Exception:  # noqa: BLE001 -- a ledger that cannot vouch: judge as before
+        mark = None
+    if mark is None:
+        return None
+    epoch, seq, trimmed = mark
+
+    def holds(at) -> bool:
+        # (ledger id, epoch, log position, newest event) it was vouched at: the
+        # same ledger and epoch, a log that still covers that position, and no
+        # in-place change logged since among the events it had (an appended
+        # run is a new key, never a reason to judge the old ones again)
+        if (not isinstance(at, (list, tuple)) or len(at) != 4 or at[0] != ledger_id or at[1] != epoch
+                or not isinstance(at[2], int) or not isinstance(at[3], int)):
+            return False
+        if not trimmed <= at[2] <= seq or at[3] > high:
+            return False
+        if at[2] == seq:
+            return True
+        every, eids, paths = rewritten_since(conn, at[2], at[3])
+        return not (every or eids or paths)
+
+    key = str(path)
+    now = (ledger_id, epoch, seq, high)
+    with _LOCK:
+        mine = _DECLARED_AT.get(key)
+    if mine is not None:
+        if holds(mine):
+            with _LOCK:
+                _DECLARED_AT[key] = now
+            return (key, *now)
+        with _LOCK:
+            for k in [k for k in _DECLARED if k[0] == ledger_id]:
+                del _DECLARED[k]
+            _DECLARED_AT.pop(key, None)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = None
+    entries, chips = [], []
+    if (isinstance(raw, dict) and raw.get("v") == _DECLARED_FILE_V and holds(raw.get("at"))
+            and isinstance(raw.get("chips"), list) and isinstance(raw.get("entries"), list)):
+        chips, entries = raw["chips"], raw["entries"]
+    with _LOCK:
+        for e in entries:
+            if (isinstance(e, list) and len(e) == 4 and isinstance(e[0], int) and 0 <= e[0] < len(chips)
+                    and isinstance(chips[e[0]], str) and isinstance(e[1], int)
+                    and (e[2] is None or isinstance(e[2], str)) and isinstance(e[3], bool)):
+                _DECLARED.setdefault((ledger_id, chips[e[0]], e[1], e[2]), e[3])
+        while len(_DECLARED) > _DECLARED_MAX:
+            _DECLARED.popitem(last=False)
+        _DECLARED_AT[key] = now
+    return (key, *now)
+
+
+def _declared_persist(stamp: tuple) -> None:
+    """Write the memo's verdicts of the stamp's ledger beside it (atomic; a
+    failed write only means the next process judges them again)."""
+    from quam_state_manager.core import safe_io
+    key, ledger_id = stamp[0], stamp[1]
+    chips: dict[str, int] = {}
+    with _LOCK:
+        entries = [[chips.setdefault(k[1], len(chips)), k[2], k[3], v]
+                   for k, v in _DECLARED.items() if k[0] == ledger_id and k[2] <= stamp[4]]
+    try:
+        safe_io.atomic_write_json(Path(key), {"v": _DECLARED_FILE_V, "at": list(stamp[1:]),
+                                              "chips": list(chips), "entries": entries}, compact=True)
+    except Exception:  # noqa: BLE001 -- a cache that cannot be written is judged again
+        pass
 
 
 def _ledger_identity(conn) -> dict | None:
@@ -506,6 +620,7 @@ def declares_another_chip(conn, ledger_id: str, f: dict, chip: dict | None) -> b
             out = identity_disagrees(chip, {"name": name.strip(), "fingerprint": None,
                                             "qubits": sorted(qubits)})
     with _LOCK:
+        _DECLARED_JUDGED[0] += 1
         _DECLARED[key] = out
         while len(_DECLARED) > _DECLARED_MAX:
             _DECLARED.popitem(last=False)
@@ -557,6 +672,8 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
     lives = {v: k for k, v in index.names.get("live", {}).items()}
     owners: dict[int, Any] = {}
     chip = _ledger_identity(conn)
+    declared = _declared_restore(conn, index.ledger_id) if chip and chip.get("name") else None
+    judged = _DECLARED_JUDGED[0]
     out: dict[int, tuple] = {}
     for pos, eid in enumerate(index.eids):
         f = facts.get(eid)
@@ -606,6 +723,8 @@ def classify(index, view: FolderView, conn, facts: dict) -> tuple[dict, dict, di
                  "label": source_folder_label(folder) if kind == SOURCE_OTHER else None,
                  "lineage": lineage}
         out[eid] = (lineage == LINEAGE_EARLIER, entry)
+    if declared is not None and _DECLARED_JUDGED[0] != judged:
+        _declared_persist(declared)
     return out, roots, links
 
 

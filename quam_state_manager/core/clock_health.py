@@ -6,10 +6,12 @@ Public interface. A UI is coded against these exact shapes; do not change them::
                          "offset_s": float|None, "detail": str},
                  "os_zone": {"iana": str|None, "utc_offset": "+09:00", "windows_name": str|None}}
     env_time_check(python_exe) -> {"python", "epoch_delta_s", "utc_offset", "matches_os", "detail"}
+    os_zone() -> status()["os_zone"]'s shape without the NTP probe, or None
 
 Only read-only queries ever run: ``w32tm /query /status /verbose`` and ``tzutil /g``
 on Windows (one cmd.exe child per 60 s), ``timedatectl show`` elsewhere, and
-``<python> -c`` for an environment check. Nothing here can change the clock, the
+``<python> -c`` for an environment check (``os_zone`` reads the OS's own zone record,
+no child process). Nothing here can change the clock, the
 time zone or the NTP configuration. Stdlib only; the public functions never raise.
 """
 from __future__ import annotations
@@ -94,6 +96,11 @@ class _TimeZoneInformation(ctypes.Structure):
                 ("StandardDate", _SystemTime), ("StandardBias", ctypes.c_long),
                 ("DaylightName", ctypes.c_wchar * 32), ("DaylightDate", _SystemTime),
                 ("DaylightBias", ctypes.c_long)]
+
+
+class _DynamicTimeZoneInformation(ctypes.Structure):
+    _fields_ = _TimeZoneInformation._fields_ + [
+        ("TimeZoneKeyName", ctypes.c_wchar * 128), ("DynamicDaylightTimeDisabled", ctypes.c_ubyte)]
 
 
 @functools.lru_cache(maxsize=1)
@@ -392,6 +399,38 @@ def status() -> dict:
     except Exception as exc:
         result["ntp"] = _unknown(f"Clock status unavailable: {type(exc).__name__}: {exc}")
     return result
+
+
+def os_zone() -> dict | None:
+    """``status()["os_zone"]`` without the NTP probe (v1.5.1, perf), or None
+    when the OS cannot be asked directly -- the caller then asks ``status()``.
+
+    A page that needs only the zone (the ledger's days) used to run the whole
+    probe (cmd.exe + w32tm + tzutil: 0.3-3 s, again every minute) on its own
+    request. On Windows the zone key ``tzutil /g`` prints is the one
+    ``GetDynamicTimeZoneInformation`` returns -- its ``TimeZoneKeyName``, with
+    tzutil's ``_dstoff`` suffix when automatic daylight saving is off -- so it
+    maps through the same table; elsewhere it is the IANA zone ``status()``
+    finds before it asks ``timedatectl``. Read-only; never raises."""
+    try:
+        if os.name == "nt":
+            kernel32 = _kernel32()
+            kernel32.GetDynamicTimeZoneInformation.restype = ctypes.c_uint32
+            info = _DynamicTimeZoneInformation()
+            if kernel32.GetDynamicTimeZoneInformation(ctypes.byref(info)) == 0xFFFFFFFF:
+                return None
+            name = info.TimeZoneKeyName.split("\x00", 1)[0].strip()
+            if not name:
+                return None
+            if info.DynamicDaylightTimeDisabled:
+                name += "_dstoff"
+            return {"iana": WINDOWS_TO_IANA.get(name), "utc_offset": _os_offset(), "windows_name": name}
+        iana = _iana_zone()
+        if not iana:
+            return None
+        return {"iana": iana, "utc_offset": _os_offset(), "windows_name": None}
+    except Exception:  # noqa: BLE001 -- the caller falls back to the probe
+        return None
 
 
 _ENV_SCRIPT = ("import datetime,json,time; "
