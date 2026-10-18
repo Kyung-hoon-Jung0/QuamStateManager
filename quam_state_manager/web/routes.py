@@ -1717,36 +1717,56 @@ def _set_active_context(ctx_name: str, ctx: dict) -> None:
 
 
 def _offer_moved_work(ctx: dict) -> None:
-    """v1.5.1 (SB-F6): a chip opened at a path whose OLD folder is gone, while
-    the old folder's working copy holds unapplied work -- the draft and the
-    staged rows used to stay under the old key, and the chip opened "In
-    sync" with no word. They are handed to this chip as one refused
-    checkpoint (the sync panel lists it, naming the old folder, with Restore
-    -- staged, collision-checked -- and Discard) and said once now. Saved
-    changes that cannot be matched to this folder's content are named, with
-    the folder that keeps them. Never raises; writes no chip folder."""
+    """v1.5.1 (SB-F6): a chip opened at a path whose OLD folder cannot be
+    found, while the old folder's working copy holds unapplied work -- the
+    draft and the staged rows used to stay under the old key, and the chip
+    opened "In sync" with no word.
+
+    R2 M5: they are COPIED to this chip as one refused checkpoint (the sync
+    panel lists it, naming the old folder, with Restore -- staged,
+    collision-checked -- and Discard) only on evidence of a move: this folder
+    holds exactly the content the old copy was last synced with. The old
+    copy keeps its own checkpoints; when its folder is back (a share that
+    was offline) it opens with its tray and is told where the copy went.
+    Without evidence nothing is copied; the notice names the old folder and
+    where its work is kept, once per process. Never raises; writes no chip
+    folder."""
     try:
         from quam_state_manager.core import moved_work
         store, wc = ctx["store"], ctx["working_copy"]
+        back = moved_work.said_to_original(current_app.instance_path, wc)
         found = moved_work.find(current_app.instance_path, ctx["path"], store.state, store.wiring)
-        if not found:
-            return
         parts, any_rows = [], False
         for o in found:
             res = moved_work.hand_over(o, wc, store)
-            any_rows = any_rows or bool(res["rows"])
             n = len(res["rows"])
             said = (f"{n} unapplied edit{'s' if n != 1 else ''} "
                     f"({', '.join(list(dict.fromkeys(res['rows']))[:4])}"
-                    f"{', …' if len(set(res['rows'])) > 4 else ''})") if n else ""
-            unmatched = (f"saved changes that no longer match this folder's content (kept in "
-                         f"{o['working_folder']})") if res["saved_unmatched"] else ""
+                    f"{', ...' if len(set(res['rows'])) > 4 else ''})") if n else ""
+            if res["copied"]:
+                any_rows = True
+                parts.append(f"{said} copied from {o['live_folder']}, which could not be "
+                             "found (moved, renamed or offline)")
+                continue
+            if not moved_work.note_once(o["key"], wc.key):
+                continue
+            unmatched = ("saved changes" if res["saved_unmatched"] else "")
             what = " and ".join(x for x in (said, unmatched) if x)
-            parts.append(f"{what} from {o['live_folder']}, which is not there any more")
-        tail = " Restore or Discard them in the sync panel." if any_rows else ""
-        ctx["_tray_recovery_notice"] = {
-            "level": "warning",
-            "text": "This chip's unapplied work was left behind: " + "; ".join(parts) + "." + tail}
+            if what:
+                parts.append(f"{what} of {o['live_folder']}, which could not be found, stay "
+                             f"in {o['working_folder']} (its content differs from this "
+                             "folder's, so nothing was brought here)")
+        text = ""
+        if parts:
+            tail = " Restore or Discard them in the sync panel." if any_rows else ""
+            text = "This chip's unapplied work was left behind: " + "; ".join(parts) + "." + tail
+        if back:
+            text = (text + " " + back).strip()
+        if text:
+            prev = ctx.get("_tray_recovery_notice")
+            if isinstance(prev, dict) and prev.get("text"):
+                text = prev["text"] + " " + text
+            ctx["_tray_recovery_notice"] = {"level": "warning", "text": text}
     except Exception:  # noqa: BLE001 -- an offer never blocks opening a chip
         logger.warning("moved-work check failed for %s", ctx.get("path"), exc_info=True)
 

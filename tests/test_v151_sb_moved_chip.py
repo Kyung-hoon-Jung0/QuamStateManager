@@ -6,8 +6,9 @@ copy, reachable only by opening a path that is gone. The working-copy GC then
 deleted that copy (its files equal its sync point: "clean") and left its tray
 checkpoint orphaned.
 
-Now the first open at the new path hands the old copy's unapplied work to the
-chip as one refused checkpoint: the sync panel lists it, naming the old
+Now the first open at the new path COPIES the old copy's unapplied work to
+the chip as one refused checkpoint when the new folder holds the content the
+old copy was synced with (R2 M5): the sync panel lists it, naming the old
 folder, with Restore (staged, collision-checked) and Discard; a notice says
 so once. GC keeps any copy that still has a checkpoint, and a copy it does
 delete takes its tray bookkeeping with it.
@@ -135,7 +136,9 @@ class TestTheWorkFollowsTheChip:
         app, c = _app(inst)
         c.post("/load", data={"folder": str(tmp_path / "a2" / "quam_state")})
         note = (_ctx(app).get("_tray_recovery_notice") or {}).get("text", "")
-        assert "no longer match" in note and old_wf in note, note
+        # R2 M5: no evidence of a move (the lab wrote since): nothing is
+        # brought over, the notice names where the work stays
+        assert "content differs" in note and old_wf in note, note
         assert pending_tray.unrecovered(_ctx(app)["working_copy"]) == []
 
     def test_another_chip_in_a_vanished_folder_is_left_alone(self, moved):

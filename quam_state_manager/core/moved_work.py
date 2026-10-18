@@ -7,27 +7,42 @@ the tray rows sat under the old key, reachable only by opening a path that
 is no longer there.
 
 On a chip's first open at a path, :func:`find` looks for working copies
-whose live folder is GONE, that hold the same chip (network and labels
-align), and that carry unapplied work: staged rows (a tray checkpoint, of
-any process, or one already set aside) and/or saved-but-unapplied changes
-(the working files differ from their sync point). :func:`hand_over` turns
-that work into ONE refused checkpoint of the new chip -- the sync panel then
-lists it, persistently, naming the old folder, with Restore (staged,
-collision-checked against what the chip holds now) and Discard -- and marks
-the old copy as handed over, so it is offered once. The old copy's files
-stay where they are; nothing is written to any chip folder.
+whose live folder cannot be found, that hold the same chip (network and
+labels align), and that carry unapplied work: staged rows (a tray checkpoint,
+of any process, or one already set aside) and/or saved-but-unapplied changes
+(the working files differ from their sync point). It also looks at tray
+checkpoints an older working-copy GC left without their copy (R2 MINOR 7).
 
-Saved-but-unapplied changes become rows only when they can be told apart:
-when the new folder still holds the content the old copy was last synced
-with (a plain move). Otherwise the notice says the old copy's saved changes
-could not be matched and names its folder.
+**Only on evidence of a move (R2 M5).** A folder that cannot be found may be
+only out of reach for a while -- a network share reconnecting, a USB disk, a
+parent folder renamed for a minute. The work is brought over only when the
+new folder holds exactly the content the old copy was last synced with (its
+``synced_live_hash``); otherwise the notice names the old folder and where
+its work is kept, and nothing moves.
+
+**A copy, never a move (R2 M5).** :func:`hand_over` COPIES that work into
+ONE refused checkpoint of the new chip -- the sync panel lists it,
+persistently, naming the old folder, with Restore (staged, collision-checked
+against what the chip holds now) and Discard. The old copy's checkpoints stay
+where they are, so the original folder, when it is back, opens with its own
+tray. The offer is recorded under both keys: beside the old copy
+(``<old key>.pending_tray.moved-offer.json``: offered once, and the old
+folder is told on its next open) and in the new checkpoint (``moved_from``).
+Nothing is written to any chip folder.
+
+**Bounded probes (R2 M5).** "Can the old folder be found" is asked in
+parallel threads, at most ``PROBE_WAIT_S`` in all, and memoised per process
+for ``PROBE_TTL_S``: an unreachable UNC path took 5-42 s per ``exists()``,
+paid for every stale copy on every fresh build under that chip's build lock.
+An unanswered probe counts as "there" (nothing is brought over).
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
-import uuid
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
 
 from . import pending_tray, safe_io, working_copy
@@ -35,10 +50,60 @@ from .loader import ChangeEntry
 
 logger = logging.getLogger(__name__)
 
-_MOVED_TAG = ".moved-"
 #: (meta path, its mtime, the chip asked about) already judged "another
 #: chip" -- not read again until that meta changes
 _SKIP: set = set()
+#: The offer record beside the old copy (R2 M5). The GC deletes it with the
+#: copy (it is one of the copy's ``<key>.pending_tray*`` files).
+_OFFER_SUFFIX = ".pending_tray.moved-offer.json"
+#: At most this long, in all, for the existence probes of one open ...
+PROBE_WAIT_S = 1.0
+#: ... and an answer is reused for this long by every open in this process.
+PROBE_TTL_S = 300.0
+_PROBES: dict = {}                     # path -> (monotonic time, True/False/None)
+_INFLIGHT: dict = {}                   # path -> the probe thread still asking
+_PROBES_LOCK = threading.Lock()
+#: (old key, new key) a no-evidence note was already said for, this process
+_NOTED: set = set()
+
+
+def _probe(path: str) -> None:
+    try:
+        verdict = Path(path).exists()
+    except OSError:
+        verdict = None
+    with _PROBES_LOCK:
+        _PROBES[path] = (time.monotonic(), verdict)
+        _INFLIGHT.pop(path, None)
+
+
+def folders_present(paths) -> dict:
+    """{path: True / False / None} -- can each folder be found? None: no
+    answer within ``PROBE_WAIT_S`` in all (a slow share); counted as there by
+    every caller. Probes run in parallel daemon threads, one per folder at a
+    time; a late answer is kept for the next open."""
+    now = time.monotonic()
+    out, waits = {}, []
+    with _PROBES_LOCK:
+        for p in dict.fromkeys(str(x) for x in paths):
+            hit = _PROBES.get(p)
+            if hit is not None and now - hit[0] < PROBE_TTL_S and hit[1] is not None:
+                out[p] = hit[1]
+                continue
+            t = _INFLIGHT.get(p)
+            if t is None or not t.is_alive():
+                t = threading.Thread(target=_probe, args=(p,), daemon=True,
+                                     name="moved-work-probe")
+                _INFLIGHT[p] = t
+                t.start()
+            waits.append((p, t))
+    deadline = time.monotonic() + PROBE_WAIT_S
+    for p, t in waits:
+        t.join(max(0.0, deadline - time.monotonic()))
+        with _PROBES_LOCK:
+            hit = _PROBES.get(p)
+        out[p] = hit[1] if hit is not None and not t.is_alive() else None
+    return out
 
 
 def _checkpoints(root: Path, key: str) -> list[Path]:
@@ -54,11 +119,47 @@ def holds_checkpoint(instance_path, key: str) -> bool:
     return bool(_checkpoints(working_copy.working_state_root(instance_path), key))
 
 
+def _offer_path(root: Path, key: str) -> Path:
+    return root / f"{key}{_OFFER_SUFFIX}"
+
+
+def _read_offer(root: Path, key: str) -> dict | None:
+    try:
+        doc = json.loads(_offer_path(root, key).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _orphan_keys(root: Path, keys_with_meta: set) -> dict:
+    """R2 MINOR 7: {key: [checkpoints]} for tray checkpoints whose working
+    copy is gone (no meta, no working folder) -- an older GC deleted the copy
+    and left them."""
+    out: dict = {}
+    try:
+        names = [p.name for p in root.iterdir() if p.is_file()]
+    except OSError:
+        return out
+    for name in names:
+        i = name.find(".pending_tray")
+        if i <= 0:
+            continue
+        key = name[:i]
+        if key in keys_with_meta or key in out or (root / key).exists():
+            continue
+        cps = _checkpoints(root, key)
+        if cps:
+            out[key] = cps
+    return out
+
+
 def find(instance_path, live_folder, state: dict, wiring: dict) -> list[dict]:
-    """The vanished-folder working copies of this chip that hold unapplied
-    work, oldest first. Cheap when there are none: one directory listing and
-    the small meta files; working files are read only for a copy whose live
-    folder is gone."""
+    """The working copies (and orphaned checkpoints) of this chip whose live
+    folder cannot be found and that hold unapplied work, oldest first. Each
+    carries ``evidence``: the new folder holds the content the old copy was
+    last synced with (only then is anything brought over). Cheap when there
+    are none: one directory listing and the small meta files; working files
+    are read only for a copy whose folder cannot be found."""
     from . import history
     root = working_copy.working_state_root(instance_path)
     try:
@@ -69,10 +170,22 @@ def find(instance_path, live_folder, state: dict, wiring: dict) -> list[dict]:
         metas = sorted(root.glob("*.meta.json"))
     except OSError:
         return []
-    want = history.fingerprint_from_dicts(state, wiring)
-    out = []
+    here_hash = None
+
+    def _here() -> str | None:
+        nonlocal here_hash
+        if here_hash is None:
+            try:
+                here_hash = working_copy.content_hash(state, wiring)
+            except Exception:  # noqa: BLE001
+                here_hash = ""
+        return here_hash or None
+
+    cands = []                               # (key, meta path, meta, old folder)
+    keys_with_meta = set()
     for meta_path in metas:
         key = meta_path.name[: -len(".meta.json")]
+        keys_with_meta.add(key)
         if key == me:
             continue
         try:
@@ -86,13 +199,31 @@ def find(instance_path, live_folder, state: dict, wiring: dict) -> list[dict]:
         except (OSError, ValueError):
             continue
         old = meta.get("live_folder")
-        if not old or meta.get("moved_to"):
-            continue
-        try:
-            if Path(old).exists():
-                continue                    # not moved: that folder is still there
-        except OSError:
-            continue
+        if not old or meta.get("moved_to") or _offer_path(root, key).exists():
+            continue                         # offered once already
+        cands.append((key, meta_path, meta, old, skip))
+    orphans = {k: v for k, v in _orphan_keys(root, keys_with_meta).items()
+               if k != me and not _offer_path(root, k).exists()}
+    orphan_docs = {}
+    for key, cps in orphans.items():
+        doc = None
+        for f in cps:
+            try:
+                doc = safe_io.read_json(f, attempts=1)
+            except (OSError, ValueError):
+                continue
+            if isinstance(doc, dict) and doc.get("live_folder"):
+                break
+        if isinstance(doc, dict) and doc.get("live_folder"):
+            orphan_docs[key] = doc
+    present = folders_present([c[3] for c in cands]
+                              + [d["live_folder"] for d in orphan_docs.values()])
+
+    want = history.fingerprint_from_dicts(state, wiring)
+    out = []
+    for key, meta_path, meta, old, skip in cands:
+        if present.get(str(old)) is not False:
+            continue                         # there, or no answer: not moved
         working = root / key
         try:
             w_state, w_wiring = safe_io.read_state_wiring(working)
@@ -109,7 +240,19 @@ def find(instance_path, live_folder, state: dict, wiring: dict) -> list[dict]:
             continue                        # nothing unapplied
         out.append({"key": key, "live_folder": old, "working_folder": str(working),
                     "meta_path": str(meta_path), "meta": meta, "synced": synced,
-                    "state": w_state, "wiring": w_wiring, "saved": saved, "tray": tray})
+                    "state": w_state, "wiring": w_wiring, "saved": saved, "tray": tray,
+                    "evidence": isinstance(synced, str) and synced == _here()})
+    for key, doc in orphan_docs.items():
+        old = doc["live_folder"]
+        synced = doc.get("synced_live_hash")
+        if present.get(str(old)) is not False:
+            continue
+        if not (isinstance(synced, str) and synced == _here()):
+            continue                         # no copy to compare a design with: evidence only
+        out.append({"key": key, "live_folder": old, "working_folder": None,
+                    "meta_path": None, "meta": {}, "synced": synced, "state": None,
+                    "wiring": None, "saved": False, "tray": orphans[key],
+                    "evidence": True, "orphan": True})
     return out
 
 
@@ -164,40 +307,82 @@ def _tray_rows(path: Path) -> list[ChangeEntry]:
 
 
 def hand_over(orphan: dict, wc, store) -> dict:
-    """Turn *orphan*'s unapplied work into a refused checkpoint of *wc* (the
-    sync panel lists it with Restore / Discard) and mark the old copy handed
-    over. Returns ``{"rows": [paths], "saved_unmatched": bool, "file": str}``."""
+    """COPY *orphan*'s unapplied work into a refused checkpoint of *wc* (the
+    sync panel lists it with Restore / Discard) when ``orphan["evidence"]``
+    holds, and record the offer under both keys. Without evidence nothing is
+    copied: the result names where the work is kept. The old checkpoints are
+    never moved or archived. Returns ``{"rows": [paths], "saved_unmatched":
+    bool, "file": str, "copied": bool}``."""
+    out = {"rows": [], "saved_unmatched": False, "file": "", "copied": False}
+    if not orphan.get("evidence"):
+        out["saved_unmatched"] = bool(orphan.get("saved"))
+        out["rows"] = [r.dot_path for f in orphan["tray"] for r in _tray_rows(f)]
+        return out
     rows: list[ChangeEntry] = []
-    saved_unmatched = False
     if orphan["saved"]:
-        if working_copy.content_hash(store.state, store.wiring) == orphan["synced"] or \
-                working_copy.live_content_hash(wc) == orphan["synced"]:
-            rows += _saved_rows(orphan, store)
-        else:
-            saved_unmatched = True
+        rows += _saved_rows(orphan, store)
     for f in orphan["tray"]:
         rows += _tray_rows(f)
-    out = {"rows": [r.dot_path for r in rows], "saved_unmatched": saved_unmatched, "file": ""}
-    if rows:
-        reason = (f"unapplied work left at {orphan['live_folder']}, which is not there any "
-                  "more (moved or deleted)")
-        out["file"] = str(pending_tray.set_aside(wc, rows, reason=reason))
-    # handed over: the old checkpoints are archived beside the old copy (their
-    # bytes stay), and its meta records where the work went -- offered once
-    root = Path(orphan["meta_path"]).parent
-    for f in orphan["tray"]:
-        try:
-            os.replace(f, root / f"{orphan['key']}.pending_tray{_MOVED_TAG}{uuid.uuid4().hex[:8]}.json")
-        except OSError:
-            logger.warning("moved work: could not archive %s", f, exc_info=True)
-    if not saved_unmatched:
-        # (saved changes that could not be matched are not handed over: the
-        # next open of this chip names them again)
-        try:
-            meta = dict(orphan["meta"])
-            meta["moved_to"] = wc.key
-            safe_io.atomic_write_json(Path(orphan["meta_path"]), meta)
-        except OSError:
-            logger.warning("moved work: could not mark %s handed over", orphan["key"],
-                           exc_info=True)
+    out["rows"] = [r.dot_path for r in rows]
+    if not rows:
+        return out
+    reason = (f"unapplied work copied from {orphan['live_folder']}, which could not be "
+              "found when this chip was opened (moved, renamed or offline); that "
+              "folder's own copy stays with it")
+    target = pending_tray.set_aside(wc, rows, reason=reason)
+    try:
+        doc = safe_io.read_json(target, attempts=1)
+        doc["moved_from"] = {"key": orphan["key"], "folder": str(orphan["live_folder"])}
+        safe_io.atomic_write_json(target, doc, compact=True)
+    except (OSError, ValueError):
+        logger.warning("moved work: could not record the source in %s", target, exc_info=True)
+    out["file"] = str(target)
+    out["copied"] = True
+    root = Path(wc.working_folder).parent
+    rec = _read_offer(root, orphan["key"]) or {"to": {}}
+    rec.setdefault("to", {})[wc.key] = {
+        "folder": str(wc.live_folder), "file": target.name, "rows": out["rows"][:50],
+        "at": datetime.now().astimezone().isoformat(timespec="seconds"), "noticed": False}
+    rec["from_folder"] = str(orphan["live_folder"])
+    try:
+        safe_io.atomic_write_json(_offer_path(root, orphan["key"]), rec)
+    except OSError:
+        logger.warning("moved work: could not record the offer of %s", orphan["key"],
+                       exc_info=True)
     return out
+
+
+def said_to_original(instance_path, wc) -> str | None:
+    """R2 M5: the original folder is back. Its work was also copied to another
+    chip while it could not be found: say so once (where, how many rows).
+    None when there is nothing to say."""
+    root = working_copy.working_state_root(instance_path)
+    rec = _read_offer(root, wc.key)
+    if not rec:
+        return None
+    fresh = [(k, v) for k, v in (rec.get("to") or {}).items()
+             if isinstance(v, dict) and not v.get("noticed")]
+    if not fresh:
+        return None
+    parts = []
+    for _k, v in fresh:
+        n = len(v.get("rows") or [])
+        parts.append(f"{n} edit{'s' if n != 1 else ''} to {v.get('folder')}")
+        v["noticed"] = True
+    try:
+        safe_io.atomic_write_json(_offer_path(root, wc.key), rec)
+    except OSError:
+        pass
+    return ("While this folder could not be found, its unapplied work was also copied: "
+            + "; ".join(parts) + ". That chip lists it in its sync panel; this chip "
+            "keeps its own.")
+
+
+def note_once(old_key: str, new_key: str) -> bool:
+    """True the first time this process names *old_key*'s kept work to the
+    chip *new_key* (a note without evidence is said once per process)."""
+    k = (old_key, new_key)
+    if k in _NOTED:
+        return False
+    _NOTED.add(k)
+    return True
