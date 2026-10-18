@@ -128,7 +128,10 @@
       {% endfor %}
     </tbody>
     {% endif %}
-    {% if external_rows %}
+    {#- v1.5.1 (U P2-24): the live chip's changes render AFTER the user's own
+        unapplied edits (31 live rows pushed "Your unapplied edits" off the
+        bottom of the panel); captured here, output below the mine group -#}
+    {% set _external_group %}{% if external_rows %}
     <tbody class="sp-group sp-group-live">
       <tr class="sp-group-head"><td colspan="5">{% if mixed %}Differs between here and the live chip{% else %}Live chip changed{% endif %} ({{ _ne }}) <small class="muted sp-delta-dir">&Delta; = live chip &minus; here</small>{% if _ne > external_rows | length %} <small class="muted">showing {{ external_rows | length }}</small>{% endif %}</td></tr>
       {% for r in external_rows %}
@@ -154,7 +157,7 @@
       </tr>
       {% endfor %}
     </tbody>
-    {% endif %}
+    {% endif %}{% endset %}
     {% if mine_rows %}
     <tbody class="sp-group sp-group-mine">
       <tr class="sp-group-head"><td colspan="5">Your unapplied edits ({% set _mf = mine_rows | map(attribute='path') | unique | list | length %}{{ _mf }}{% if mine_rows | length > _mf %} field{{ 's' if _mf != 1 }}, {{ mine_rows | length }} changes{% endif %}) <small class="muted sp-delta-dir">&Delta; = your edit &minus; live chip</small></td></tr>
@@ -182,6 +185,7 @@
       {% endfor %}
     </tbody>
     {% endif %}
+    {{ _external_group }}
     {% if staged_rows %}
     <tbody class="sp-group sp-group-staged">
       <tr class="sp-group-head"><td colspan="5">{% if working_dirty %}Staged / saved version vs the live chip{% else %}Here vs the live chip{% endif %} ({{ staged_rows | length }}) <small class="muted sp-delta-dir">&Delta; = here &minus; live chip</small></td></tr>
