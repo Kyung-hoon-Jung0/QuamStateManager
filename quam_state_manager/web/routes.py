@@ -27436,12 +27436,16 @@ def _nav_pages() -> list[dict]:
 
 def _search_pages(query: str) -> list[dict]:
     """The pages / actions whose name holds every word of *query* (header
-    Search finds "export", "trends", "version" as Ctrl+K does)."""
-    words = [w for w in re.split(r"\s+", query.lower()) if w]
-    if not words:
+    Search finds "export", "trends", "version" as Ctrl+K does). R3B MINOR 4:
+    the words are read with the one search grammar (docs/96: space = AND, a
+    standalone ``|`` = OR), as the fields below them are."""
+    from quam_state_manager.core.search_query import groups as _q_groups, matches_hay
+    # an inert pipe (one being typed) vanishes, as in the field search
+    grps = [g for g in _q_groups(query) if g != ["|"]]
+    if not grps:
         return []
     hits = [p for p in _nav_pages()
-            if all(w in (p["label"] + " " + p.get("sub", "")).lower() for w in words)]
+            if matches_hay((p["label"] + " " + p.get("sub", "")).lower(), grps)]
     return hits[:6]
 
 
