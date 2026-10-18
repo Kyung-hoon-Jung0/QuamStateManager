@@ -55,6 +55,12 @@ class SearchResult:
     matched_terms: list[str]
 
 
+def _is_pointer_entry(e) -> bool:
+    """A QUAM pointer row (its stored value is a ``#...`` reference)."""
+    v = e.raw_value
+    return isinstance(v, str) and v.startswith("#")
+
+
 class SearchIndex:
     """In-memory search index over a flattened QUAM state dict.
 
@@ -250,7 +256,13 @@ class SearchIndex:
         # decides both the printed order AND which `limit` results survive.
         # A plain string compare read `weights_imag.1009` before `.101` and
         # `qubits.q10` before `qubits.q2` (measured on a real 10-qubit chip).
-        scored.sort(key=lambda x: (-x[0], natural_key(self.entries[x[1]].dot_path)))
+        # R3B M4: within a tier (the +1000 own-path tier, or the rest) a
+        # pointer row sorts below every real value -- on a 21-qubit chip "cz
+        # amplitude" listed 50 of 50 pointers and the first real value at
+        # rank 155, past the limit.
+        entries = self.entries
+        scored.sort(key=lambda x: (-(x[0] // 1000), _is_pointer_entry(entries[x[1]]), -x[0],
+                                   natural_key(entries[x[1]].dot_path)))
         results: list[SearchResult] = []
         for score, idx in scored[:limit]:
             e = self.entries[idx]
@@ -341,6 +353,9 @@ class SearchIndex:
             total += 1000
         lk = e.leaf_key.lower()
         pid = e.parent_id.lower()
+        # R3B M4: a pointer's value is another field's path, not a value:
+        # it earns no value-match bonus
+        value_str = "" if _is_pointer_entry(e) else e.value_str
 
         for term in terms:
             if lk == term:
@@ -351,7 +366,7 @@ class SearchIndex:
                 total += 70
             elif pid.startswith(term):
                 total += 60
-            elif term in e.value_str:
+            elif term in value_str:
                 total += 40
             elif term in e.dot_path.lower():
                 total += 20
