@@ -115,8 +115,10 @@
             + p2(d.getUTCHours()) + ':' + p2(d.getUTCMinutes()) + ':' + p2(d.getUTCSeconds());
     }
     /* Zones matching *query*: words match the name (a "_" reads as a space),
-       an offset ("+9", "UTC-7", "-3:30") matches the current offset. City
-       prefix hits first. At most *limit* (12). */
+       an offset ("+9", "UTC-7", "-3:30") matches the current offset. A zone
+       NAMED exactly the query comes first (v1.5.1 T34-F2: "UTC" was read as
+       offset zero and the zone UTC fell past the cap), then city prefix
+       hits. At most *limit* (12). */
     function search(query, date, limit) {
         date = date || new Date();
         limit = limit || 12;
@@ -132,7 +134,10 @@
             var mins = offsetMinutes(z, date);
             if (mins == null) return;
             var hit, rank = 2;
-            if (offQ != null) {
+            if (q && name === q.replace(/_/g, ' ')) {
+                hit = true;
+                rank = -1;
+            } else if (offQ != null) {
                 hit = mins === offQ;
                 rank = 1;
             } else if (!words.length) {

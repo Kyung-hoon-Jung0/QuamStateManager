@@ -2682,7 +2682,9 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .landing-tz-list { display: flex; flex-direction: column; max-height: 14rem; overflow-y: auto; }
 .landing-tz-row { display: grid; grid-template-columns: 1fr auto 3.2rem auto; align-items: center; gap: 0.6rem;
     width: 100%; margin: 0; padding: 0.18rem 0.35rem; font-size: 0.82em; text-align: left;
-    background: none; color: var(--pico-color); border: 0; border-bottom: 1px solid var(--pico-muted-border-color);
+    /* v1.5.1 (T34-F1): `inherit`, not var(--pico-color) -- on a <button> Pico sets
+       --pico-color to the primary-inverse (white), white names on the light list */
+    background: none; color: inherit; border: 0; border-bottom: 1px solid var(--pico-muted-border-color);
     border-radius: 0; cursor: pointer; }
 .landing-tz-row:hover, .landing-tz-row:focus-visible { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
 .landing-tz-row.selected { background: color-mix(in srgb, var(--pico-primary) 8%, transparent); font-weight: 600; }
