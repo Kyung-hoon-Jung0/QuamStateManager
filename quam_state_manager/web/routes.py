@@ -17050,6 +17050,63 @@ def _chip_key_qs(prefix: str = "&") -> str:
     return f"{prefix}chip_key={quote(asked)}" if asked else ""
 
 
+def _labels_said(names) -> str:
+    names = sorted(names, key=natural_key)
+    return ", ".join(names[:6]) + (f", +{len(names) - 6} more" if len(names) > 6 else "")
+
+
+def _version_source_question(ctx, hm, timestamp: str, state: dict, wiring: dict) -> str:
+    """SB-F8: why loading this version into the open chip needs a yes, or "".
+
+    * saved from another chip folder that is still there (a Re-generate
+      output, a copy) -- not this folder, not one of this chip's run folders,
+      not SM's own temporary capture of it, not a folder that has since gone
+      (the chip moved);
+    * another design: its network or qubit / pair labels do not align with
+      the open chip's (after the rename lineage, docs/296).
+    The sentence names the source folder and what Apply would then do."""
+    from quam_state_manager.core import history, hub_versions, path_match
+    here = Path(ctx["path"])
+    why = []
+    src = None
+    if not hub_versions.is_ref(timestamp):
+        try:
+            meta = json.loads((hm.snapshot_dir(here, timestamp) / "meta.json")
+                              .read_text(encoding="utf-8"))
+            src = meta.get("source_path") or None
+        except (OSError, ValueError, KeyError):
+            src = None
+    if src:
+        try:
+            srcp = Path(src)
+            inst = Path(current_app.instance_path).resolve()
+            elsewhere = (srcp.exists() and not path_match.same_folder(srcp, here)
+                         and not history.HistoryManager._is_run_folder(srcp)
+                         and inst not in srcp.resolve().parents)
+        except (OSError, ValueError):
+            elsewhere = False
+        if elsewhere:
+            why.append(f"It was saved from {src}, not from this chip's folder ({here}).")
+    try:
+        store = ctx["store"]
+        with store._lock:
+            now = history.fingerprint_from_dicts(store.state, store.wiring)
+        then = history.fingerprint_from_dicts(state, wiring)
+        verdict = history.align(now, then)
+    except Exception:  # noqa: BLE001 -- unknown is not a reason to ask
+        now = then = None
+        verdict = history.ALIGN_ALIGNED
+    if verdict == history.ALIGN_RENAMED and now is not None and then is not None:
+        why.append(f"Its qubits ({_labels_said(then.qubits) or 'none'}) and pairs are not "
+                   f"this chip's ({_labels_said(now.qubits) or 'none'}).")
+    elif verdict == history.ALIGN_DIFFERENT_CHIP:
+        why.append("It holds another chip (its network or qubit labels differ).")
+    if not why:
+        return ""
+    return (" ".join(why) + f" Loading it replaces this chip's working state with that "
+            f"design; ↑ Apply would then write it into {here}.")
+
+
 @bp.route("/state-history/<timestamp>/stage", methods=["POST"])
 def state_history_stage(timestamp: str):
     """Mode 1 (safe): load a snapshot into the WORKING COPY so the user can
@@ -17108,6 +17165,23 @@ def state_history_stage(timestamp: str):
         return render_template("_status.html",
                                message=f"Could not load snapshot {timestamp}: {exc}",
                                level="error"), 404
+    # v1.5.1 (SB-F8): a version saved from ANOTHER folder (a Re-generate
+    # output, a copy) or of another design is named and asked about -- one
+    # Apply would otherwise write that design into this chip's folder. Its
+    # own token (ack_source), never implied by force (docs/41).
+    if request.values.get("from") != "tray" and request.values.get("ack_source") != "1":
+        _q = _version_source_question(ctx, hm, timestamp, state, wiring)
+        if _q:
+            _to_status = request.values.get("target") == "status"
+            return render_template(
+                "_sh_confirm.html", message=_q,
+                action_url=(f"/state-history/{timestamp}/stage?ack_source=1"
+                            + ("&force=1" if request.values.get("force") == "1" else "")
+                            + ("&target=status" if _to_status else "")
+                            + _chip_key_qs()),
+                action_label="Load it into this chip anyway",
+                **({"target": "#status-bar"} if _to_status else {}),
+            ), 409
     # docs/301 F6: a version of this chip keeps the chip's own name and data
     # folder; Revert last apply (from=tray) restores the pre-apply files exactly
     _kept_note = ""
