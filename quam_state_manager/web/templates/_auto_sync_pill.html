@@ -21,6 +21,8 @@
         onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
         title="Auto-Sync is ON. Click to change what it does, or turn it off.">
   {{ icon_bolt(13) }} <span class="aa-label">Auto<span class="aa-long">-Sync</span></span>
+  {#- P1-10: the state in words, not by colour alone -#}
+  <span class="aa-state">on:</span>
   <b>{% if _as.pull and _as.push %}both{% elif _as.push %}push{% else %}pull{% endif %}</b>
   {%- if _as.pull and not _as.pull_replace %} <span class="aa-hint">(asks before replacing)</span>{% endif %}
   {%- if _as.flushes %} <span class="aa-count">{{ _as.flushes }}</span>{% endif %}
@@ -32,10 +34,12 @@
   {#- sync-ux 2026-09-25: no "(N pending)" here any more -- the status control beside it
       says how many edits are unapplied, once. -#}
   {{ icon_bolt(13) }} <span class="aa-label">Auto<span class="aa-long">-Sync</span></span>
+  <span class="aa-state">off</span>
 </button>
 {% elif auto_apply_armable %}
 <span class="auto-apply-pill auto-apply-blocked" title="{{ auto_apply_armable[1] }}">
-  {{ icon_bolt(13) }} <span class="aa-label">Auto<span class="aa-long">-Sync</span></span></span>
+  {{ icon_bolt(13) }} <span class="aa-label">Auto<span class="aa-long">-Sync</span></span>
+  <span class="aa-state">off</span></span>
 {% endif %}
 
 </span>

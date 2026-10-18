@@ -567,8 +567,10 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(editCalls.length === 1, 'Apply All posts once');
     ok(popup.style.display === 'none',
        'popup CLOSES after one successful Apply All (was: needs a second press)');
-    ok(window.document.getElementById('status-bar').textContent.indexOf('Applied 2') >= 0,
-       'success toast reports the applied count');
+    // P1-3 (UX round): the press only STAGED them (no armed Auto-Sync here),
+    // so the toast counts them as staged, never "applied"
+    ok(window.document.getElementById('status-bar').textContent.indexOf('Staged 2') >= 0,
+       'success toast reports the staged count');
 
     /* single-row path: the LAST applied row also closes the popup */
     rowsBox.innerHTML = mkRow('qubits.q1.f_01');

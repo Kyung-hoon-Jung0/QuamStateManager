@@ -17,7 +17,11 @@
      docs/75 document-level armor, so even the native fallback was gone. #}
   <form hx-post="/auto-sync/set" hx-target="#pending-tray" hx-swap="outerHTML"
         data-after-request="autoSyncClose">
-    <strong class="as-title">Auto-Sync</strong>
+    {# P1-10 (UX round): the first line says whether it is on. Off, the boxes
+       below are the choices it WOULD turn on with -- a ticked box on an off
+       panel read as "this is on". #}
+    <strong class="as-title" id="as-state">Auto-Sync is {% if _as %}ON{% else %}OFF{% endif %}</strong>
+    {% if not _as %}<small class="as-sub muted">Tick what it should do, then turn it on.</small>{% endif %}
     {# sync-ux 2026-09-25 (user decision 3, 2026-09-25): when first armed, Auto-Sync TAKES
        live changes and keeps the user's unapplied edits on top. "Replace" and
        "push" start unticked: a live write still needs a press unless push is
@@ -40,7 +44,7 @@
       <span>&#8593; Write my edits to the live chip automatically
         <small class="muted">each Enter writes; a live change meanwhile is merged (if Take is on) or stops and asks</small></span></label>
     <div class="as-actions">
-      <button type="submit" class="btn-sm">Save</button>
+      <button type="submit" class="btn-sm">{% if _as %}Save{% else %}Turn on with these choices{% endif %}</button>
       {% if _as %}
       <button type="button" class="btn-sm outline"
               hx-post="/auto-apply/disarm" hx-target="#pending-tray" hx-swap="outerHTML"

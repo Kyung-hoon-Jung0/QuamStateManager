@@ -32,7 +32,10 @@
     {% if s.counts.failed %}<span class="jr-stat jr-stat-bad"><b>{{ '{:,}'.format(s.counts.failed) }}</b> failed</span>{% endif %}
     {% if s.counts.gate_fail %}<span class="jr-stat jr-stat-bad">gate fail <b>{{ '{:,}'.format(s.counts.gate_fail) }}</b></span>{% endif %}
     {% set n_cards = s.counts.write_cards if s.counts.write_cards is defined else s.counts.writes %}
-    <span class="jr-stat"><b>{{ '{:,}'.format(n_cards) }}</b> write{{ 's' if n_cards != 1 }}{% if s.counts.write_cards is defined and s.counts.writes != n_cards %} ({{ '{:,}'.format(s.counts.writes) }} values){% endif %}</span>
+    {#- P1-4 (UX round): this count is SM's own writes (Apply, Undo, Auto-Sync);
+        what the runs changed is counted beside it, so a lab day never reads "0 writes" -#}
+    <span class="jr-stat jr-stat-sm" title="Writes SM made to the chip on this day (Apply, Undo, Auto-Sync)"><b>{{ '{:,}'.format(n_cards) }}</b> SM write{{ 's' if n_cards != 1 }}{% if s.counts.write_cards is defined and s.counts.writes != n_cards %} ({{ '{:,}'.format(s.counts.writes) }} values){% endif %}</span>
+    {% if s.counts.run_values is defined %}<span class="jr-stat jr-stat-runvals" title="Values the day's runs changed in the chip state, run by run. Which program wrote them is not proven."><b>{{ '{:,}'.format(s.counts.run_values) }}</b> value{{ 's' if s.counts.run_values != 1 }} changed by runs <span class="muted">(writer not proven)</span></span>{% endif %}
     {% if s.counts.other_chip %}<span class="jr-stat jr-stat-bad" title="runs whose saved state may be another chip's, not counted above"><b>{{ '{:,}'.format(s.counts.other_chip) }}</b> maybe another chip's</span>{% endif %}
     {% if s.counts.biggest_write %}<span class="jr-stat muted">largest Δ <code class="jr-path" data-path="{{ s.counts.biggest_write.path }}">{{ s.counts.biggest_write.path }}</code>
         {{ before_after(s.counts.biggest_write.old, s.counts.biggest_write.new) }}</span>{% endif %}

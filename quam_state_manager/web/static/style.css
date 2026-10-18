@@ -1035,6 +1035,8 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .settings-header:active { cursor: grabbing; }
 .settings-title { font-size: 0.85rem; font-weight: 700; }
 .settings-header-tools { display: flex; gap: 0.15rem; cursor: default; }
+/* B3: the running version is the first line of Settings */
+.settings-version { padding: 0.3rem 0.55rem 0; font-size: 0.78em; }
 
 .settings-label {
     display: block; font-size: 0.75em; font-weight: 600;
@@ -2894,6 +2896,38 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .table-filter {
     display: flex; align-items: center; gap: 0.4rem;
 }
+.table-filter .table-export { margin: 0; white-space: nowrap; }
+.pair-czplan-link { margin-left: .4rem; font-size: .8em; white-space: nowrap; }
+/* P1-13: the readout LO / IF line in the qubit inspector */
+.ro-lo-if { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin: .5rem 0; font-size: .88em; }
+.calc-s4-src { display: block; min-height: 1em; }
+/* P1-14: a pulse section's way to the Pulses page */
+.section-pulses { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin: .25rem 0 .35rem; font-size: .85em; }
+.section-pulse-link { display: inline-flex; align-items: center; gap: .35rem; }
+.section-pulse-spark { display: inline-block; width: 64px; }
+.section-pulse-spark svg { width: 64px; height: auto; display: block; }
+/* P1-9: State History day headers and the go-to-date form */
+.sh-goto { display: inline-flex; align-items: center; gap: .35rem; margin: 0 0 0 auto; }
+.sh-goto-label { display: inline-flex; align-items: center; gap: .35rem; margin: 0; font-size: .85em; white-space: nowrap; }
+.sh-goto input[type=date] { margin: 0; padding: .15rem .4rem; width: auto; font-size: .9em; }
+.sh-goto button { margin: 0; }
+.sh-day { font-weight: 700; font-size: .82em; letter-spacing: .03em; margin: .7rem 0 .25rem;
+    padding-bottom: .15rem; border-bottom: 1px solid var(--pico-muted-border-color); }
+.sh-day-goto { color: var(--pico-primary); }
+/* P1-2: runs that wrote state, the filter chip, the clickable-figure badge */
+.ds-wrote { margin-left: .3rem; color: var(--pico-primary); font-size: .9em; }
+.ds-wrote-chip { margin: 0; white-space: nowrap; }
+.ds-fig-click-badge { margin-left: .4rem; padding: 0 .35rem; border-radius: 999px; font-size: .8em;
+    border: 1px solid var(--pico-primary); color: var(--pico-primary); white-space: nowrap; }
+.ds-replot-run-lead { font-weight: 600; }
+/* P1-7: keyboard path -- a skip link, and a visible focus ring on the chips */
+.skip-link { position: absolute; left: .5rem; top: -3rem; z-index: 1000; padding: .35rem .7rem;
+    background: var(--pico-background-color); color: var(--pico-primary);
+    border: 2px solid var(--pico-primary); border-radius: 4px; }
+.skip-link:focus { top: .5rem; }
+#table-pane:focus { outline: none; }
+.bulk-chip:focus-visible, .bulk-chip-mode:focus-visible {
+    outline: 2px solid var(--pico-primary); outline-offset: 2px; }
 .table-filter input {
     font-family: var(--font-ui);
     font-size: 0.88em; padding: 0.25rem 0.5rem; margin: 0;
@@ -4620,7 +4654,12 @@ html.topbar-hidden .topo-subnav {
 .cm-hl-qubits .cm-stone { stroke: var(--pico-primary); stroke-width: 2.2; }
 
 .cm-hl-pairs .cm-res, .cm-hl-pairs .cm-flux, .cm-hl-pairs .cm-feed, .cm-hl-pairs .cm-coupler { opacity: .22; }
-.cm-hl-pairs .cm-stone, .cm-hl-pairs .cm-id { opacity: .5; }
+/* P1-11: the qubits stay readable under the pairs highlight (they were .5,
+   near invisible in both themes) and the pair ids are written on the map */
+.cm-hl-pairs .cm-stone { opacity: .8; }
+.cm-pair-label { opacity: 0; pointer-events: none; font-weight: 600; fill: var(--pico-color);
+    paint-order: stroke; stroke: var(--pico-background-color); stroke-width: 3px; }
+.cm-hl-pairs .cm-pair-label { opacity: 1; }
 .cm-hl-pairs .cm-edge-line { stroke: var(--pico-primary); stroke-width: 3; }
 .cm-hl-pairs .cm-arrow { fill: var(--pico-primary); }
 .cm-hl-pairs .cm-freq .cm-freqchev { stroke: var(--pico-primary); }
@@ -7421,6 +7460,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     font-weight: 600; font-size: 0.95em;
     white-space: nowrap;
 }
+.plot-apply-row-check.plot-apply-row-staged { white-space: normal; font-size: 0.85em; }
 .plot-apply-footer {
     display: flex; justify-content: flex-end; gap: 0.5rem;
     padding-top: 0.6rem;
@@ -10553,6 +10593,7 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
    baseline. The no-config Welcome page keeps its centred hero. */
 .help-page.welcome { text-align: left; }
 .help-page > .table-header-row { justify-content: flex-start; align-items: baseline; }
+.help-version { margin-left: auto; font-size: .82em; white-space: nowrap; }
 .help-shortcuts { margin-top: 1.5rem; }
 .help-sc-grid { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; align-items: baseline; }
 .help-sc-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .6rem; }
@@ -13008,6 +13049,9 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 @keyframes leuFlash { 0% { background: var(--pico-primary); opacity: .35; }
                       100% { background: transparent; opacity: 1; } }
 .bulk-cell.leu-flash { animation: leuFlash .65s ease-out; }
+/* B1: an inspector row opened from a search result is marked for a moment */
+.prop-table tr.field-found > td { background: var(--pico-primary-focus); }
+.search-ptr { font-size: .92em; }
 
 /* tray ↶ (next-undo tooltip refreshed on hover) */
 .tray-undo-btn {
@@ -13248,6 +13292,9 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
 .auto-apply-on .icon-bolt { color: #f59e0b;
     filter: drop-shadow(0 0 3px rgba(245, 158, 11, .55)); }
 .auto-apply-off .aa-hint { color: var(--text-muted); font-size: .92em; }
+/* P1-10: on/off in words beside the bolt, so the state is not colour-only */
+.auto-apply-pill .aa-state { font-weight: 600; }
+.auto-apply-off .aa-state { color: var(--text-muted); font-weight: 400; }
 .auto-apply-blocked { cursor: not-allowed; opacity: .45; }
 .auto-apply-on {
     color: var(--warning-text, var(--text-primary));
@@ -13638,6 +13685,7 @@ td.vc-cell-takeable:focus-within .vc-take,
     font-size: 0.8rem; }
 .auto-sync-pop[hidden] { display: none; }
 .as-title { display: block; margin-bottom: 0.45rem; font-size: 0.9rem; }
+.as-sub { display: block; margin: -0.3rem 0 0.45rem; font-size: 0.8em; }
 .as-row { display: flex; align-items: flex-start; gap: 0.5rem;
     margin: 0.25rem 0; cursor: pointer; padding: 0.4rem 0.5rem;
     border: 1px solid var(--pico-muted-border-color); border-radius: 9px;

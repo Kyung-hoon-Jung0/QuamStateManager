@@ -444,6 +444,7 @@
             }
             case 'is':
                 if (value === 'bookmarked' || value === 'starred') return !!row.bm;
+                if (value === 'wrote' || value === 'writes') return !!row.ws;
                 if (value === 'failed' || value === 'error')
                     return /(error|fail|abort|crash)/.test(String(row.status || '').toLowerCase());
                 return false;
@@ -618,7 +619,12 @@
         {key: 'bookmark', structural: true, w: 30, cls: 'col-bookmark',
          render: function (r) { return '<span class="bookmark-star' + (r.bm ? ' bookmarked' : '') + '" title="' + (r.bm ? 'Bookmarked' : 'Click to bookmark') + '">' + (r.bm ? '★' : '☆') + '</span>'; }},
         {key: 'id', label: 'ID', on: true, w: 58, sortKey: 'id', type: 'num',
-         render: function (r) { return '<strong>#' + r.id + '</strong>'; }},
+         // P1-2 (UX round): a run that wrote values into the chip's state is
+         // the one whose fits can be applied -- marked, and `is:wrote` filters
+         render: function (r) {
+             return '<strong>#' + r.id + '</strong>' + (r.ws ? '<span class="ds-wrote" title="This run wrote '
+                 + r.ws + ' value' + (r.ws === 1 ? '' : 's') + ' into the chip state (its fits can be applied)">&#9998;</span>' : '');
+         }},
         // Multi-folder only: which data folder a run belongs to. Auto-hidden by
         // visibleColumns() when a single folder is active (no disambiguation needed).
         {key: 'folder', label: 'Folder', on: true, w: 110, cls: 'col-folder', sortKey: 'f', type: 'str',

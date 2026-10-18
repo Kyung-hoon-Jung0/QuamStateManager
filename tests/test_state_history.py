@@ -70,7 +70,8 @@ class TestStateHistoryPage:
         ts = _take_snapshot(client)
         assert ts
         html = client.get("/state-history").data.decode()
-        assert "Load as working state" in html
+        # P1-9 (UX round): one label per action across State History and Versions
+        assert "Load for review" in html
         assert "Restore to live" in html
         assert "View changes vs current" in html
 

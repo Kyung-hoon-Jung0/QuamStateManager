@@ -308,9 +308,10 @@ class TestTheAuditsHonestyFindings:
         body = client.get("/state/versions").get_data(as_text=True)
         assert "restore-live" in body
         assert "live-diverged-overwrite" in body, "not the shared overwrite style"
-        # Label concise per the user (2026-08-20, "Pull to Live"); the ACT —
-        # overwriting the live chip — stays named in the button's title.
-        assert "Pull to Live" in body
+        # Label concise per the user (2026-08-20); P1-9 (UX round): one label
+        # per action across State History and Versions -- "Restore to live".
+        # The ACT -- overwriting the live chip -- stays named in the title.
+        assert "Restore to live" in body and "Pull to Live" not in body
         assert "Overwrite the LIVE chip" in body, "the title must name the act"
 
     def test_the_gates_are_untouched_by_the_restyle(self, client):
@@ -600,15 +601,15 @@ class TestVersionDiff:
         mid, cur = ts[1], ts[2]     # mid: differs from working, not current
         d_mid = client.get(f"/state/versions/{mid}/diff").get_data(as_text=True)
         assert "review-row" in d_mid           # a real, non-empty diff
-        assert "Pull to Live" in d_mid         # the row DOES offer the button
+        assert "Restore to live" in d_mid      # the row DOES offer the button
         d_cur = client.get(f"/state/versions/{cur}/diff").get_data(as_text=True)
         assert "review-row" in d_cur           # non-empty too (stale working)
-        assert "Pull to Live" not in d_cur     # but this row has no button
+        assert "Restore to live" not in d_cur  # but this row has no button
         ctx = (client.application.config.get("contexts") or {}).get(
             client.application.config.get("active_context"))
         ctx["origin"] = "dataset_archive"
         d_arch = client.get(f"/state/versions/{mid}/diff").get_data(as_text=True)
-        assert "Pull to Live" not in d_arch    # archives offer it nowhere
+        assert "Restore to live" not in d_arch  # archives offer it nowhere
 
 
 class TestVersionsCompareNway:

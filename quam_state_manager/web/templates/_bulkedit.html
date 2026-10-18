@@ -122,6 +122,9 @@
         {% endif %}
         <button type="button" class="btn-sm outline" id="bulk-reset" onclick="BulkEdit.resetDirty()" disabled
                 title="Discard the unsaved (not-yet-applied) edits in this table">Reset</button>
+        {# B2 (UX round): the qubit grid's visible columns as CSV #}
+        <button type="button" class="btn-sm outline" id="bulk-export-csv" onclick="BulkEdit.exportCsv(this)"
+                title="Download the visible columns of the qubit grid as CSV (stored values)">Export CSV</button>
         {% endif %}
         {% if rows %}
         <label class="bulk-freqsync-ctl"
@@ -161,8 +164,9 @@
                 title="How selected chips combine. AND = a column must match every chip. OR = matching any chip is enough.">AND</button>
         <span class="bulk-chip-scroll">
         {% for ch in filter_chips %}
+            {#- P1-7 (UX round): the strip is ONE tab stop; arrows move inside it -#}
             <button type="button" class="bulk-chip bulk-chip-{{ ch.kind|default('kw') }}"
-                    data-chip-term="{{ ch.term }}" aria-pressed="false"
+                    data-chip-term="{{ ch.term }}" aria-pressed="false" tabindex="{{ 0 if loop.first else -1 }}"
                     title="{{ ch.n }} column{{ '' if ch.n == 1 else 's' }} match &quot;{{ ch.term }}&quot;">{{ ch.label }}</button>
         {% endfor %}
         </span>

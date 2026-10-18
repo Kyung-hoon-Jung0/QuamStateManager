@@ -182,7 +182,7 @@ async function main() {
     const oldest = es[es.length - 1].ts;
     ctxOut.oldest = oldest; ctxOut.newest = es[0].ts;
     const before = f01();
-    // press "Load as working state" on the OLDEST row
+    // press "Load for review" on the OLDEST row
     const pressed = await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${oldest}"]'); if(!row) return null;
       var b=Array.prototype.find.call(row.querySelectorAll('button'), function(x){return /load as working state/i.test(x.innerText||'')});
       if(!b) return null; b.click(); return b.innerText.trim();})()`);

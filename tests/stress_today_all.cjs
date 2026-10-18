@@ -373,7 +373,7 @@ async function main() {
                 pullOnly: null, doorFound: null };
     try {
       var d0 = await door();
-      out.doorFound = d0.indexOf('Load as working state') >= 0;
+      out.doorFound = d0.indexOf('Load for review') >= 0;
       out.before = d0.indexOf(SAYS) >= 0;
       var r = await armed(true, true);
       out.armStatus = r.status;

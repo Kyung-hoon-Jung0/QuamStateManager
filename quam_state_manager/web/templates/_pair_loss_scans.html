@@ -1,0 +1,13 @@
+{# P1-12 (UX round): the pair's population-loss data -- the moving qubit's
+   newest loss scan (and the run its stored defects came from, when that is
+   another run), then the CZ gate plan's loss per operation. Rendered only
+   when such a run exists (the route answers "" otherwise). #}
+<span class="pair-loss-scans muted">loss scans
+{%- for r in runs %} <a class="pair-loss-run" href="/dataset/{{ r.uid }}" hx-get="/dataset/{{ r.uid }}"
+   hx-target="#inspector-pane" hx-swap="innerHTML"
+   title="{% if r.kind == 'scan' %}Newest population-loss scan of {{ r.qubit }}{% else %}The run {{ r.qubit }}'s stored defects came from{% endif %}: run #{{ r.run_id }} {{ r.name }}">#{{ r.run_id }}</a>{% if not loop.last %},{% endif %}
+{%- endfor %}
+{%- if cz_plan_op %} &middot; <a class="pair-loss-plan" href="/cz-plan?op={{ cz_plan_op | urlencode }}"
+   hx-get="/cz-plan?op={{ cz_plan_op | urlencode }}" hx-target="#table-pane"
+   hx-sync="#table-pane:replace" hx-push-url="true"
+   title="The CZ gate plan shows the measured loss at each operation's frequency">loss in CZ plan</a>{% endif %}</span>

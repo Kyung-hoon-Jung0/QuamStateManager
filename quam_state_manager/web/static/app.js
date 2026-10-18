@@ -3350,18 +3350,53 @@ document.addEventListener("stateRestored", function(evt) {
  * Uses requestAnimationFrame so the DOM swap is fully settled before
  * we attempt to focus.  Positions the cursor at the end of the value.
  */
-window.focusEditInput = function(dotPath) {
+window.focusEditInput = function(dotPath, opts) {
+    // B1 (UX round): `reveal` -- opened from a search result -- also opens the
+    // field's section, scrolls it to the middle and marks its row. A field the
+    // inspector shows without an input is found by its key cell; one it does
+    // not show at all is left to the inspector's own search, which then says
+    // "0 of N shown" rather than landing silently at the top.
+    var reveal = !!(opts && opts.reveal);
     requestAnimationFrame(function() {
         var hidden = document.querySelector(
             'input[type="hidden"][name="dot_path"][value="' + dotPath + '"]'
         );
-        if (!hidden) return;
-        var input = hidden.parentElement.querySelector('input[name="value"]');
+        var input = hidden ? hidden.parentElement.querySelector('input[name="value"]') : null;
+        if (reveal) window._revealInspectorField(dotPath, input);
         if (!input) return;
         input.focus();
         var len = input.value.length;
         input.setSelectionRange(len, len);
     });
+};
+
+window._revealInspectorField = function(dotPath, input) {
+    var pane = document.getElementById('inspector-pane') || document;
+    var row = input ? input.closest('tr') : null;
+    if (!row) {
+        var keys = pane.querySelectorAll('code.dot-path[title]');
+        for (var i = 0; i < keys.length; i++) {
+            var t = keys[i].getAttribute('title') || '';
+            if (t === dotPath || t.indexOf(dotPath + ' ') === 0) { row = keys[i].closest('tr'); break; }
+        }
+    }
+    if (!row) {
+        var box = pane.querySelector('.detail-search-input');
+        if (box && window.filterDetailPanel) {
+            box.value = String(dotPath).split('.').slice(-2).join(' ');
+            window.filterDetailPanel(box);
+        }
+        return false;
+    }
+    for (var d = row.parentElement; d && d !== pane; d = d.parentElement) {
+        if (d.tagName === 'DETAILS' && !d.open) d.open = true;
+    }
+    row.classList.add('field-found');
+    setTimeout(function() { row.classList.remove('field-found'); }, 2500);
+    if (row.scrollIntoView) {
+        try { row.scrollIntoView({block: 'center'}); } catch (e) { row.scrollIntoView(); }
+    }
+    return true;
 };
 
 /* ------------------------------------------------------------------ */
@@ -7118,7 +7153,8 @@ window.PhysAmp = (function () {
             ['Ctrl+Shift+↑ / ↓', 'extend the selection one row (same column)'],
             ['Ctrl+D', 'fill selection from the anchor cell'],
             ['Ctrl+V (multi-line)', 'paste a column downward'],
-            ['Ctrl+Enter', 'Apply all (when armed)'],
+            ['Ctrl+Enter', 'Apply: the grid\'s un-applied cells, else the top-bar Apply'],
+            ['/ then Enter or \u2193', 'from the grid search to the first matching cell'],
             ['Json tree (Live edit)', ''],
             ['Ctrl+D', 'select this field, then the same field of the next entity'],
             ['Ctrl+Shift+L', 'select that field in every entity'],
@@ -7171,6 +7207,30 @@ window.PhysAmp = (function () {
         if (window.trapFocus) wrap._releaseTrap = window.trapFocus(wrap, _closeSheet);
         close.focus();
     };
+    /* P1-7 (UX round): Ctrl+Enter is "Apply". The grid's Apply all when it
+       has un-applied cells; else -- the edit already staged, which is where a
+       keyboard user stood after Tab committed the row -- the top bar's Apply
+       button, pressed as a click (its own confirm, its own arm step), from a
+       grid cell or from no field at all, never from another text field. */
+    function _ctrlEnterApply(ev, mayUseTopBar) {
+        var btn = document.getElementById('bulk-apply-all');
+        if (btn && !btn.disabled) { ev.preventDefault(); btn.click(); return true; }
+        if (!mayUseTopBar) return false;
+        var top = document.querySelector('#pending-tray .sync-control-act.btn-apply-live');
+        if (top && !top.disabled) { ev.preventDefault(); top.click(); return true; }
+        return false;
+    }
+    window._ctrlEnterApply = _ctrlEnterApply;     // (selfcheck)
+    /* P1-7: "Skip to content" moves focus into the page, past the sidebar */
+    document.addEventListener('click', function (ev) {
+        var a = ev.target && ev.target.closest && ev.target.closest('a.skip-link');
+        if (!a) return;
+        var pane = document.getElementById('table-pane');
+        if (!pane) return;
+        ev.preventDefault();
+        if (!pane.hasAttribute('tabindex')) pane.setAttribute('tabindex', '-1');
+        pane.focus();
+    });
     function _modalOpen() {
         // a second focus trap over an open modal breaks BOTH (the older
         // capture-phase trap runs first, so Escape closed the wrong thing).
@@ -7191,16 +7251,13 @@ window.PhysAmp = (function () {
         if (_typing()) {
             // Ctrl+Enter works FROM a grid cell too — that is where the user is
             if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
-                var btn0 = document.getElementById('bulk-apply-all');
-                if (btn0 && !btn0.disabled) { ev.preventDefault(); btn0.click(); }
+                var a0 = document.activeElement;
+                _ctrlEnterApply(ev, !!(a0 && a0.classList && a0.classList.contains('bulk-cell')));
             }
             return;
         }
         if (ev.ctrlKey || ev.metaKey || ev.altKey) {
-            if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
-                var btn = document.getElementById('bulk-apply-all');
-                if (btn && !btn.disabled) { ev.preventDefault(); btn.click(); }
-            }
+            if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) _ctrlEnterApply(ev, true);
             return;
         }
         if (ev.key === '/') {
@@ -16371,6 +16428,10 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                         shared = document.createElement('p');
                         shared.className = 'muted ds-replot-note ds-replot-run-note';
                         shared.dataset.runId = String(runId); shared._clauses = [];
+                        // P1-2 (UX round): say plainly that clicks are off, why,
+                        // and (once one is known) which figure does take them
+                        shared.innerHTML = '<span class="ds-replot-run-lead">Click-to-apply is off on these figures: </span>'
+                            + '<span class="ds-replot-run-why"></span><span class="ds-replot-run-ptr"></span>';
                         var list = container.querySelector('.ds-interactive-list');
                         if (list && list.parentNode) list.parentNode.insertBefore(shared, list);
                         else container.insertBefore(shared, container.firstChild);
@@ -16379,7 +16440,8 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                     message.split('; ').forEach(function (clause) {
                         if (clause && shared._clauses.indexOf(clause) === -1) shared._clauses.push(clause);
                     });
-                    shared.textContent = shared._clauses.join('; ');
+                    shared.querySelector('.ds-replot-run-why').textContent = shared._clauses.map(_plainClickRefusal).join('; ') + '.';
+                    _pointToClickableFig(container);
                     return;
                 }
                 var note = document.createElement('p');
@@ -16427,6 +16489,7 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                     _attachInteractivePlotClickHandler(inner, d.clickable, runId);
                     inner.style.cursor = 'pointer';
                     div.setAttribute('title', 'Click a point to edit the corresponding parameter');
+                    _markClickableFig(div, container);
                 }
             });
             // Track in the keep-alive pool (most-recent last) + prune offscreen.
@@ -16669,6 +16732,46 @@ function _replotSizeUpdate(fit) {
     return upd;
 }
 window._replotSizeUpdate = _replotSizeUpdate;
+
+/* P1-2 (UX round): the run's click-to-apply refusals in plain words (the
+   phrases learn_click / recipe_gate state for the record), and a pointer to
+   the figure that DOES take clicks. */
+var _CLICK_REFUSAL_WORDS = [
+    ['this run wrote no state: click-to-apply off', 'this run wrote no values into the chip, so there is no fit value to apply'],
+    ['no common verified marker transform', 'the figure\'s markers could not be matched to the values this run wrote'],
+    ['ambiguous transforms', 'the figure\'s markers match the values this run wrote in more than one way'],
+    ['missing numeric pre-update value', 'the run did not record the value before its update']
+];
+function _plainClickRefusal(clause) {
+    var out = String(clause || '');
+    _CLICK_REFUSAL_WORDS.forEach(function (w) { out = out.split(w[0]).join(w[1]); });
+    return out;
+}
+function _markClickableFig(div, container) {
+    var tile = div.closest && div.closest('.ds-interactive-fig');
+    var title = tile && tile.querySelector('.ds-interactive-fig-title');
+    if (title && !title.querySelector('.ds-fig-click-badge')) {
+        var badge = document.createElement('small');
+        badge.className = 'ds-fig-click-badge';
+        badge.textContent = 'click a point to apply';
+        title.appendChild(badge);
+    }
+    if (container) {
+        container._clickTitles = container._clickTitles || [];
+        var name = title ? (title.firstChild && title.firstChild.nodeType === 3
+            ? title.firstChild.textContent : title.textContent).trim() : '';
+        if (name && container._clickTitles.indexOf(name) === -1) container._clickTitles.push(name);
+        _pointToClickableFig(container);
+    }
+}
+function _pointToClickableFig(container) {
+    var names = (container && container._clickTitles) || [];
+    container.querySelectorAll('.ds-replot-run-note .ds-replot-run-ptr').forEach(function (ptr) {
+        ptr.textContent = names.length
+            ? ' Click a point on ' + names.map(function (n) { return '\u201c' + n + '\u201d'; }).join(', ') + ' below instead.'
+            : '';
+    });
+}
 
 /**
  * Fetch a single plot from the backend and render it into container.
@@ -17734,11 +17837,24 @@ function applyAllPlotRows() {
     _post().then(handleR).catch(_fail);
 }
 
+/* P1-3 (UX round): a plot-apply press STAGES the value in SM; the chip file
+   is written by Apply in the top bar, or at once only inside an armed
+   Auto-Sync push session (docs/117). The row and the toast say which --
+   "applied" for a value that was only staged sent users to the chip file
+   looking for a change that was not there. */
+function _plotApplyWritesLive() {
+    return !!(window.AutoApply && typeof window.AutoApply.armed === 'function'
+              && window.AutoApply.armed());
+}
+
 function _markPlotRowApplied(row) {
     if (!row) return;
     row.classList.add('plot-apply-applied');
     var btnSlot = row.querySelector('.plot-apply-row-action');
-    if (btnSlot) btnSlot.innerHTML = '<span class="plot-apply-row-check">✓ applied</span>';
+    if (btnSlot) btnSlot.innerHTML = _plotApplyWritesLive()
+        ? '<span class="plot-apply-row-check" title="Auto-Sync is on: written to the chip">✓ applied</span>'
+        : '<span class="plot-apply-row-check plot-apply-row-staged" title="Only in SM so far: the chip file is unchanged until you press Apply">'
+          + '✓ staged — press Apply to write the chip</span>';
     var input = row.querySelector('.plot-apply-new-input');
     if (input) input.readOnly = true;
 }
@@ -18150,9 +18266,10 @@ function _closePlotPopupIfDone() {
     if (total && !left) {
         window.closePlotApplyPopup();
         if (window.showToast) {
-            window.showToast(
-                'Applied ' + total + ' value' + (total === 1 ? '' : 's') +
-                ' to the working state — Review (top bar) to push to the live chip.',
+            var _n = total + ' value' + (total === 1 ? '' : 's');
+            window.showToast(_plotApplyWritesLive()
+                ? 'Applied ' + _n + ' — Auto-Sync writes ' + (total === 1 ? 'it' : 'them') + ' to the chip.'
+                : 'Staged ' + _n + ' — press Apply in the top bar to write the chip.',
                 'success');
         }
     }
@@ -22738,8 +22855,11 @@ document.addEventListener('click', function(evt) {
         var data;
         try { data = JSON.parse(script.textContent); } catch (e) { return []; }
         var entries = [];
+        // B1 (UX round): actions sit beside pages -- Settings opens its
+        // popover, the chip report opens in its own tab
         (data.pages || []).forEach(function(p) {
-            entries.push({type: 'page', label: p.label, sub: p.url, url: p.url});
+            entries.push({type: p.action ? 'action' : 'page', label: p.label,
+                          sub: p.sub || p.url || '', url: p.url || '', action: p.action || ''});
         });
         (data.qubits || []).forEach(function(q) {
             entries.push({type: 'qubit', label: q, sub: 'Qubit', url: '/qubit/' + encodeURIComponent(q)});
@@ -22757,8 +22877,11 @@ document.addEventListener('click', function(evt) {
     }
 
     function _pushRecent(entry) {
-        var list = _recents().filter(function(e) { return e.url !== entry.url; });
-        list.unshift({type: entry.type, label: entry.label, sub: entry.sub, url: entry.url});
+        var list = _recents().filter(function(e) {
+            return e.url !== entry.url || (e.action || '') !== (entry.action || '');
+        });
+        list.unshift({type: entry.type, label: entry.label, sub: entry.sub, url: entry.url,
+                      action: entry.action || ''});
         try { localStorage.setItem(_RECENTS_KEY, JSON.stringify(list.slice(0, 10))); }
         catch (e) { /* localStorage full or disabled — silent */ }
     }
@@ -22781,6 +22904,10 @@ document.addEventListener('click', function(evt) {
             _cpFiltered = recent.concat(entries.filter(function(e) { return e.type === 'page' && !seen[e.url]; })).slice(0, 12);
         } else {
             _cpFiltered = entries.filter(function(e) { return _matches(e, query); }).slice(0, 30);
+            // B1: a name the palette does not hold is a chip FIELD question --
+            // hand it to the field search instead of a dead "No matches"
+            _cpFiltered.push({type: 'action', label: 'Search chip fields for "' + query + '"',
+                              sub: 'top-bar Search', action: 'fieldsearch', query: query, url: ''});
         }
         _cpActiveIdx = 0;
         list.innerHTML = '';
@@ -22818,6 +22945,7 @@ document.addEventListener('click', function(evt) {
     }
 
     function _activate(entry) {
+        if (entry.action) { _runAction(entry); return; }
         _pushRecent(entry);
         window.closeCmdPalette();
         if (entry.type === 'qubit' || entry.type === 'pair') {
@@ -22843,6 +22971,25 @@ document.addEventListener('click', function(evt) {
                 _navigateTablePane(entry.url);
             } else {
                 window.location.href = entry.url;
+            }
+        }
+    }
+
+    /* B1 (UX round): a palette ACTION -- Settings opens its popover, the
+       chip report its own tab, an unknown name goes to the field search. */
+    function _runAction(entry) {
+        if (entry.action !== 'fieldsearch') _pushRecent(entry);
+        window.closeCmdPalette();
+        if (entry.action === 'settings') {
+            if (window.toggleSettings) window.toggleSettings();
+        } else if (entry.action === 'newtab') {
+            window.open(entry.url, '_blank', 'noopener');
+        } else if (entry.action === 'fieldsearch') {
+            var gs = document.getElementById('global-search');
+            if (gs) gs.value = entry.query;
+            if (window.htmx) {
+                htmx.ajax('GET', '/search?q=' + encodeURIComponent(entry.query),
+                          {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
             }
         }
     }

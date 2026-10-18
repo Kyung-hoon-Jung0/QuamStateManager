@@ -10,6 +10,17 @@
     {% for section in sections %}
     <details open class="detail-section">
         <summary class="section-header">{{ section.name }}</summary>
+        {% if section.pulses %}
+        {# P1-14 (UX round): the pulse these fields belong to, on the Pulses
+           page (waveform preview + every parameter) #}
+        <div class="section-pulses">
+        {% for sp in section.pulses %}
+            <a class="section-pulse-link" href="{{ sp.url }}" hx-get="{{ sp.url }}"
+               hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+               title="Open {{ sp.name }} on the Pulses page (waveform preview and every parameter)">{% if sp.spark %}<span class="pulse-spark section-pulse-spark" aria-hidden="true">{{ sp.spark | safe }}</span>{% endif %}Edit {{ sp.name }} in Pulses &rarr;</a>
+        {% endfor %}
+        </div>
+        {% endif %}
         <table class="prop-table" role="grid">
             <thead>
                 <tr>
@@ -88,6 +99,23 @@
     </details>
     {% endfor %}
 
+    {# P1-13 (UX round): the readout LO / IF through the port chain, and the
+       Calculator filled from them; a dash where the chain does not resolve. #}
+    {% if ro_freq is defined and ro_freq and (ro_freq.lo_hz is not none or ro_freq.rf_hz is not none or ro_freq.if_hz is not none) %}
+    <div class="ro-lo-if muted" id="ro-lo-if">Readout
+        <span>RF {{ (ro_freq.rf_hz | qty('readout_RF_frequency', 'full')) or '-' }}</span> &middot;
+        <span title="The channel's LO_frequency or its output port's upconverter">LO {{ (ro_freq.lo_hz | qty('LO_frequency', 'full')) or '-' }}</span> &middot;
+        <span title="IF = RF - LO">IF {{ (ro_freq.if_hz | qty('intermediate_frequency', 'full')) or '-' }}</span>
+        <button type="button" class="btn-xs outline ro-calc-fill"
+                data-rf="{{ ro_freq.rf_hz if ro_freq.rf_hz is not none else '' }}"
+                data-lo="{{ ro_freq.lo_hz if ro_freq.lo_hz is not none else '' }}"
+                data-if="{{ ro_freq.if_hz if ro_freq.if_hz is not none else '' }}"
+                data-label="{{ qubit_name }} resonator"
+                onclick="window.calcFillFromEl &amp;&amp; window.calcFillFromEl(this)"
+                title="Open the Calculator's RF = LO + IF with this resonator's values">Fill calculator</button>
+    </div>
+    {% endif %}
+
     {# Add-pulse is the Pulses page's job now (one create surface, no
        duplicate form to maintain — feedback #10). Link opens the unified
        create flow pre-targeted at this qubit's xy channel. #}
@@ -141,5 +169,5 @@
     {% endif %}
 </article>
 {% if focus_path %}
-<script>window.focusEditInput({{ focus_path | tojson }});</script>
+<script>window.focusEditInput({{ focus_path | tojson }}{% if request.args.get('flash') %}, {reveal: true}{% endif %});</script>
 {% endif %}

@@ -97,18 +97,25 @@ function checkRenderLayout() {
   const texts = m.querySelectorAll('svg text');
   const idSet = { qA1: 1, qA2: 1, qA3: 1 };
   const roleSet = { C: 1, T: 1, M: 1 };
+  // P1-11 (UX round): each pair edge carries its pair id -- an id, like the
+  // qubit ids, never a value (the Pairs page named pairs only in a hover title)
+  const pairSet = { 'qA2-qA1': 1, 'qA1-qA3': 1 };
   ok(m.querySelectorAll('text.cm-id').length === 3,
      'exactly one id text per qubit (no value text anywhere)');
+  const pl = Array.prototype.map.call(m.querySelectorAll('text.cm-pair-label'), function (t) { return t.textContent; });
+  ok(pl.length === 2 && pairSet[pl[0]] && pairSet[pl[1]] && pl[0] !== pl[1],
+     'one pair-id label per pair edge: ' + JSON.stringify(pl));
   let onlyIdsOrRoles = true, anyNumeric = false;
   texts.forEach(function (t) {
     const s = t.textContent;
     const cls = t.getAttribute('class') || '';
     const isId = idSet[s] && cls === 'cm-id';
     const isRole = roleSet[s] && cls.indexOf('cm-role-txt') !== -1;
-    if (!isId && !isRole) onlyIdsOrRoles = false;
-    if (/[0-9]/.test(s) && !idSet[s]) anyNumeric = true;
+    const isPair = pairSet[s] && cls === 'cm-pair-label';
+    if (!isId && !isRole && !isPair) onlyIdsOrRoles = false;
+    if (/[0-9]/.test(s) && !idSet[s] && !isPair) anyNumeric = true;
   });
-  ok(onlyIdsOrRoles, 'every rendered text is a qubit id or a C/T/M role letter');
+  ok(onlyIdsOrRoles, 'every rendered text is a qubit id, a pair id or a C/T/M role letter');
   ok(!anyNumeric, 'no NUMBER is ever drawn on the component map (docs/91 §2.4)');
 
   // emphasis never changes content: same drawing under a different highlight

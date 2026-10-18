@@ -38,6 +38,20 @@
            hx-sync="#table-pane:replace" hx-push-url="true"
            title="Show the experiment runs that measured {{ inspector_label }}">runs →</a>
         {% endif %}
+        {% if inspector_type == 'pair' and cz_plan_op is defined and cz_plan_op %}
+        {# P1-11 (UX round): where this pair's CZ gate sits -- frequencies,
+           detuning, nearest resonance -- is the CZ gate plan's answer #}
+        <a class="muted inspector-czplan-link" href="/cz-plan?op={{ cz_plan_op | urlencode }}"
+           hx-get="/cz-plan?op={{ cz_plan_op | urlencode }}" hx-target="#table-pane"
+           hx-sync="#table-pane:replace" hx-push-url="true"
+           title="Open in CZ gate plan">CZ gate plan →</a>
+        {% endif %}
+        {% if inspector_type == 'pair' %}
+        {# P1-12 (UX round): filled only when the moving qubit has
+           population-loss runs in the chip's data folders #}
+        <span class="pair-loss-slot" hx-get="/pair/{{ inspector_label | urlencode }}/loss-scans"
+              hx-trigger="load" hx-swap="innerHTML"></span>
+        {% endif %}
         {% if inspector_type == "dataset" and not (inspector_compare is defined and inspector_compare) %}
         {# Up/down run navigation — walks the sidebar tree's run entries in
            the order the user SEES them (r13: newest-first, so ↑ = newer,

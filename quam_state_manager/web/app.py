@@ -893,6 +893,13 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     def _experimental_flag():
         return {"experimental": os.environ.get("SM_EXPERIMENTAL") == "1"}
 
+    # The running SM version, shown where a user looks for it: the app
+    # title's tooltip, the first line of Settings and the Help header.
+    @app.context_processor
+    def _sm_version_ctx():
+        from quam_state_manager import __version__ as _v
+        return {"sm_version": _v}
+
     # docs/178 — the one sentence every "stage only / live is untouched"
     # surface owes the user while Auto-Sync push is armed. A Jinja global so a
     # label and the route's own result message cannot drift apart.

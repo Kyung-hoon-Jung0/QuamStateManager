@@ -5,6 +5,10 @@
                aria-label="Filter resonators" autocomplete="off"
                oninput="filterTable(this, 'resonators-table')">
         <small id="resonators-table-filter-count" class="muted"></small>
+        {# B2 (UX round): the table's stored values as CSV, through /export #}
+        <a class="outline btn-sm table-export" role="button" download
+           href="/export?props=is_active&props=readout_frequency&props=readout_amplitude&props=readout_length&props=readout_threshold&props=time_of_flight&props=grid_location{% if active_chain %}&chain={{ active_chain | urlencode }}{% endif %}"
+           title="Download this table as CSV (stored values, SI units)">Export CSV</a>
     </div>
 </div>
 
@@ -29,14 +33,17 @@
             <th class="sortable" data-col="0" data-type="str">ID</th>
             <th class="sortable" data-col="1" data-type="str">Active</th>
             <th class="sortable" data-col="2" data-type="num">Readout Freq <span class="unit">(GHz)</span></th>
-            <th class="sortable" data-col="3" data-type="num">Amplitude</th>
+            {# P1-13 (UX round): the readout LO and IF, through the port chain #}
+            <th class="sortable" data-col="3" data-type="num" title="Readout LO: the channel's LO_frequency or its output port's upconverter">LO <span class="unit">(GHz)</span></th>
+            <th class="sortable" data-col="4" data-type="num" title="Readout IF = RF - LO">IF <span class="unit">(MHz)</span></th>
+            <th class="sortable" data-col="5" data-type="num">Amplitude</th>
             {# docs/109: the TRUE readout output power — unit follows the global
                MW-power setting (Settings), sort key stays dBm via data-sort. #}
-            <th class="sortable" data-col="4" data-type="num">P(RO) <span class="unit phys-unit-label">(dBm)</span></th>
-            <th class="sortable" data-col="5" data-type="num">Length <span class="unit">(ns)</span></th>
-            <th class="sortable" data-col="6" data-type="num">Threshold</th>
-            <th class="sortable" data-col="7" data-type="num">Time of Flight <span class="unit">(ns)</span></th>
-            <th class="sortable" data-col="8" data-type="str">Grid</th>
+            <th class="sortable" data-col="6" data-type="num">P(RO) <span class="unit phys-unit-label">(dBm)</span></th>
+            <th class="sortable" data-col="7" data-type="num">Length <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="8" data-type="num">Threshold</th>
+            <th class="sortable" data-col="9" data-type="num">Time of Flight <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="10" data-type="str">Grid</th>
         </tr>
     </thead>
     <tbody>
@@ -46,6 +53,9 @@
             <td><strong>{{ q.id }}</strong></td>
             <td>{% if q.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_names">off</span>{% endif %}</td>
             <td>{{ q.readout_frequency | qty('readout_frequency') }}</td>
+            {% set _rf = (ro_freq or {}).get(q.id) or {} %}
+            {% if _rf.lo_hz is defined and _rf.lo_hz is not none %}<td>{{ _rf.lo_hz | qty('LO_frequency') }}</td>{% else %}<td data-sort="-"><span class="muted" title="The readout channel's LO does not resolve (no LO_frequency and no output-port upconverter)">-</span></td>{% endif %}
+            {% if _rf.if_hz is defined and _rf.if_hz is not none %}<td>{{ _rf.if_hz | qty('intermediate_frequency') }}</td>{% else %}<td data-sort="-"><span class="muted" title="The readout IF cannot be read: RF or LO is not a number">-</span></td>{% endif %}
             <td>{% if q.readout_amplitude is none %}-{% elif q.readout_amplitude is number %}{{ "%.4f" | format(q.readout_amplitude) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ q.readout_amplitude }}&quot;</span>{% endif %}</td>
             {% set _ph = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp(q.readout_amplitude) %}
             <td class="col-phys"{% if _ph and _ph.kind == 'mw' %} data-dbm="{{ _ph.dbm }}" data-sort="{{ _ph.dbm }}"{% endif %}>{% if _ph and _ph.kind == 'mw' %}{{ _ph.text }}{% else %}{% set _pb = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp_blank(q.readout_amplitude) %}<span class="muted" title="{% if _pb %}{{ _pb.text }}{% else %}No MW output power to state: the readout chain does not resolve to an MW-FEM port with full_scale_power_dbm, or the amplitude is 0 / stored as text.{% endif %}">-</span>{% endif %}</td>
@@ -56,7 +66,7 @@
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="9" class="muted" style="text-align:center;padding:2rem">No resonators found in this state file.</td></tr>
+        <tr><td colspan="11" class="muted" style="text-align:center;padding:2rem">No resonators found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

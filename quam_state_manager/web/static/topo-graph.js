@@ -704,6 +704,7 @@ window.TopoGraph = (function () {
     }
 
     // pair edges (+ CR direction arrows, coupler dots)
+    var pairFont = Math.round((CELL * 9 / 64) * 10) / 10;
     for (var ei = 0; ei < edges.length; ei++) {
       var e = edges[ei];
       var a = px(e.source), b = px(e.target);
@@ -737,6 +738,17 @@ window.TopoGraph = (function () {
         svg += '<circle class="cm-coupler" cx="' + ((x1 + x2) / 2) + '" cy="' + ((y1 + y2) / 2) +
                '" r="' + Math.round(R * 0.38) + '"/>';
       }
+      // P1-11 (UX round): the pair's id beside its edge -- the Pairs page
+      // named pairs only in a hover title. Drawn on every map (a highlight
+      // changes emphasis, never the drawing); the stylesheet shows it under
+      // the pairs highlight. An id, never a value (docs/91 section 2.4).
+      var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      var pdx = x2 - x1, pdy = y2 - y1, pl = Math.sqrt(pdx * pdx + pdy * pdy) || 1;
+      var off = R * 0.8 * (e.directed ? 1.6 : 1);
+      svg += '<text class="cm-pair-label" font-size="' + pairFont + '" x="' +
+             Math.round((mx - pdy / pl * off) * 10) / 10 + '" y="' +
+             Math.round((my + pdx / pl * off) * 10) / 10 +
+             '" text-anchor="middle" dominant-baseline="central">' + esc(e.pair_id) + "</text>";
       svg += '<line class="cm-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +
              "<title>" + esc(e.pair_id) + "</title></g>";
     }

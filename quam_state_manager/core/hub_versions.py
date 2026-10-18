@@ -802,6 +802,34 @@ def legacy_rows(snapshots, *, limit: int = 40, offset: int = 0) -> dict:
             "events": 0, "uncertain": 0, "covered": 0, "foreign": {}}
 
 
+def count_newer(directory, snapshots, cutoff_us: int, *, binding=None,
+                older: frozenset = frozenset()) -> int:
+    """How many listed rows are at or after *cutoff_us* (UTC microseconds):
+    the state-bearing events :func:`read` lists, plus the older snapshot rows
+    (``older``, the stamps a read listed as such). The offset of the first
+    row before the cutoff -- the page a "go to date" lands on (P1-9). Walks
+    the timeline newest first and stops after a page wholly before the cutoff."""
+    directory = Path(directory)
+    binding = binding or SimpleNamespace(directory=directory)
+    n = 0
+    cursor = None
+    while True:
+        res = hub_query.timeline(binding, limit=500, cursor=cursor, foreign="label")
+        any_newer = False
+        for e in res["events"]:
+            if not has_state(e) or e["flags"] & CHIP_UNCERTAIN:
+                continue
+            if order_key(e)[0] >= cutoff_us:
+                n += 1
+                any_newer = True
+        cursor = res["cursor"]
+        if not cursor or (res["events"] and not any_newer):
+            break
+    n += sum(1 for s in snapshots
+             if s.timestamp in older and _snapshot_instant(s.timestamp) >= cutoff_us)
+    return n
+
+
 def read(directory, snapshots, *, binding=None, limit: int = 40, offset: int = 0,
          keep: frozenset = frozenset()) -> dict:
     """The rows of one page, newest first, for both surfaces.

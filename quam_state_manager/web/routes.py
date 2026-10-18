@@ -8810,10 +8810,38 @@ def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
     )
 
 
+def _resonator_lo_if(store, qids) -> dict[str, dict]:
+    """P1-13 (UX round): each resonator's readout LO / RF / IF in Hz, read the
+    way quam computes them (``cr_semantics``: the channel's own LO_frequency or
+    its output port's upconverter; IF = RF - LO for the inferred alias).
+    ``None`` parts where the port chain does not resolve -- never a guess."""
+    from quam_state_manager.core import cr_semantics
+    out: dict[str, dict] = {}
+    if store is None:
+        return out
+    with store._lock:
+        qubits = store.merged.get("qubits") or {}
+        for qid in qids:
+            q = qubits.get(qid)
+            rr = q.get("resonator") if isinstance(q, dict) else None
+            base = ("qubits", str(qid), "resonator")
+            lo = rf = if_ = None
+            try:
+                lo = cr_semantics.channel_lo_hz(store, rr, base)
+                rf, if_ = cr_semantics.channel_effective_rf_if(store, rr, base)
+            except Exception as exc:  # noqa: BLE001 -- a cell degrades, never the page
+                logger.warning("resonator LO/IF(%r) failed: %s", qid, exc)
+            out[str(qid)] = {"lo_hz": lo, "rf_hz": rf, "if_hz": if_}
+    return out
+
+
 @bp.route("/resonators")
 def resonators():
+    store = _store()
+    ro = _resonator_lo_if(store, list(store.qubit_names)) if store else {}
     return _channel_scoped_qubits_page(
-        has_key="has_resonator", page_name="resonators", template_stub="resonators")
+        has_key="has_resonator", page_name="resonators", template_stub="resonators",
+        ro_freq=ro)
 
 
 @bp.route("/flux")
@@ -11423,6 +11451,7 @@ def _render_qubit_detail(name: str, *, focus_path: str | None = None):
         return render_template("_status.html", message=str(e), level="error"), 404
 
     sections = _build_qubit_sections(name, data, store)
+    _attach_section_pulses(sections, store)
 
     port_info = {}
     for ch in ("xy", "rr", "z"):
@@ -11440,8 +11469,49 @@ def _render_qubit_detail(name: str, *, focus_path: str | None = None):
             modified_map=_modified_map(),
             focus_path=focus_path,
             entity_note=_entity_note("qubits." + name),
+            ro_freq=_resonator_lo_if(store, [name]).get(name) or {},
         ),
     )
+
+
+def _attach_section_pulses(sections: list[dict], store) -> None:
+    """P1-14 (UX round): each inspector section that shows a pulse's fields
+    gets ``pulses`` -- ``[{"name", "url", "spark"}]`` per pulse it touches --
+    so the section carries "Edit <pulse> in Pulses" (the Pulses page opened
+    at that pulse, ``_pulses_url_for``) and the Pulses page's own cached
+    sparkline. A pulse the Pulses index does not list gets no link. Never
+    raises: a missing link is the worst case."""
+    pulse_index = _pulse_index()
+    if pulse_index is None:
+        return
+    try:
+        from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
+    except Exception:  # noqa: BLE001
+        sparkline_svg = synth_for_operation = None
+    for sec in sections:
+        roots: list[str] = []
+        for p in sec.get("props") or []:
+            parts = str(p.get("dot_path") or "").split(".")
+            if len(parts) >= 6 and parts[0] == "qubits" and parts[3] == "operations":
+                root = ".".join(parts[:5])
+                if root not in roots:
+                    roots.append(root)
+        out = []
+        for root in roots:
+            try:
+                row = pulse_index.row(root)
+                if row is None:
+                    continue
+                spark = None
+                if (sparkline_svg is not None and row.get("known") and not row.get("is_alias")):
+                    spark = pulse_index.sparkline(
+                        root, lambda p=root: sparkline_svg(synth_for_operation(store, p)))
+                out.append({"name": root.rsplit(".", 1)[-1],
+                            "url": _pulses_url_for(pulse_index, root), "spark": spark})
+            except Exception:  # noqa: BLE001 -- a link never breaks the inspector
+                logger.debug("pulse link for %s failed", root, exc_info=True)
+        if out:
+            sec["pulses"] = out
 
 
 # The qubit-detail quick add-pulse form was removed — the Pulses page
@@ -15165,6 +15235,7 @@ def pairs():
             page="pairs",
             pairs=page_pairs,
             pair_vocab=pair_vocab,
+            cz_ops=_pair_cz_plan_ops(store),
             current_page=page,
             total_pages=total_pages,
             total=total,
@@ -15393,6 +15464,7 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
             focus_path=focus_path,
             entity_note=_entity_note("qubit_pairs." + name),
             gi=gi_ctx,
+            cz_plan_op=_pair_cz_plan_ops(store).get(name),
         ),
     )
 
@@ -17322,6 +17394,14 @@ def state_history(snapshot_note: str | None = None):
     snapshots = hm.list_snapshots(_active_path())
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _STATE_HISTORY_PER_PAGE, minimum=1)
+    # P1-9 (UX round): "Go to date" -- the page holding that day's newest row
+    goto_day = (request.args.get("date") or "").strip()[:10]
+    if goto_day and "page" not in request.args:
+        try:
+            page = _state_history_page_for(_active_ctx(), snapshots, goto_day, per_page)
+        except Exception:  # noqa: BLE001 -- an unreadable date lands on page 1
+            logger.debug("state history go-to-date %r failed", goto_day, exc_info=True)
+            goto_day = ""
     # docs/284: the rows come from the chip's change ledger (runs, SM writes,
     # observed states + older snapshots it does not cover); while it cannot
     # answer, every snapshot as an older row under the mode's note. S10 C6:
@@ -17345,7 +17425,7 @@ def state_history(snapshot_note: str | None = None):
                total=total, current_page=min(page, total_pages),
                total_pages=total_pages, per_page=per_page,
                chip_origin=_active_origin(), hist_chip_key=versions["chip_key"],
-               disk_stats=disk_stats, snapshot_note=snapshot_note)
+               disk_stats=disk_stats, snapshot_note=snapshot_note, goto_day=goto_day)
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body
     # without disturbing the detail/result pane beside it.
@@ -17353,6 +17433,38 @@ def state_history(snapshot_note: str | None = None):
         return render_template("_state_history_body.html", **ctx)
     template = "_state_history.html" if _is_htmx() else "state_history.html"
     return render_template(template, **ctx)
+
+
+def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
+    """P1-9 (UX round): the State History page that holds *day*'s newest row
+    (the rows run newest first): every row at or after the END of that day,
+    in the page's display zone, comes before it. ``ValueError`` for a date
+    that does not parse."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from quam_state_manager.core import hub_versions
+    d = datetime.strptime(day, "%Y-%m-%d")
+    zone = (_display_zone() or {}).get("zone")
+    try:
+        tz = ZoneInfo(zone) if zone else datetime.now().astimezone().tzinfo
+    except Exception:  # noqa: BLE001 -- no tzdata / not a zone: the machine's
+        tz = datetime.now().astimezone().tzinfo
+    end = datetime(d.year, d.month, d.day, tzinfo=tz) + timedelta(days=1)
+    cutoff_us = int((end.astimezone(timezone.utc)
+                     - datetime(1970, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1_000_000)
+    probe = _versions_read_rows(ctx, snapshots, limit=1, offset=0, lane_notes=False)
+    if probe.get("mode") == "ledger" and probe.get("chip_dir") is not None:
+        chip_dir = probe["chip_dir"]
+        binding = _vh_binding(ctx, chip_dir)
+        n_events = hub_versions.count_newer(chip_dir, [], cutoff_us, binding=binding)
+        # the older snapshot rows as the page around that offset lists them
+        near = _versions_read_rows(ctx, snapshots, limit=1, offset=n_events, lane_notes=False)
+        n = hub_versions.count_newer(chip_dir, snapshots, cutoff_us, binding=binding,
+                                     older=near.get("older") or frozenset())
+    else:
+        n = sum(1 for s in snapshots
+                if hub_versions._snapshot_instant(s.timestamp) >= cutoff_us)
+    return n // max(1, per_page) + 1
 
 
 def _keep_identity_extras(ctx: dict | None, state: dict,
@@ -21746,6 +21858,24 @@ def _cz_plan_ops(store):
     return rows, convs, list(unavailable)
 
 
+def _pair_cz_plan_ops(store) -> dict[str, str]:
+    """P1-11 (UX round): pair id -> the CZ gate plan address (``?op=``) of its
+    operation -- its ``cz`` when it has one, else its first -- for the pair
+    inspector's and the Pairs table's "Open in CZ gate plan". Empty when the
+    plan cannot be read (the link is then simply not offered)."""
+    try:
+        rows, _convs, _unavailable = _cz_plan_ops(store)
+    except Exception:  # noqa: BLE001 -- a link never breaks a page
+        logger.debug("cz plan ops for pair links failed", exc_info=True)
+        return {}
+    out: dict[str, str] = {}
+    for r in rows:
+        pair, path = r.get("pair"), r.get("path")
+        if pair and path and (pair not in out or r.get("operation") == "cz"):
+            out[pair] = path
+    return out
+
+
 def _cz_plan_table(rows) -> list[dict]:
     """One row per operation for the all-pairs table (no history: that arrives by itself)."""
     out = []
@@ -22023,6 +22153,52 @@ def cz_plan_loss():
         payload["staleness"] = {"mode": "unavailable", "note": "the change history could not be read",
                                 "qubits": {}}
     return jsonify(ok=True, **payload)
+
+
+@bp.route("/pair/<name>/loss-scans")
+def pair_loss_scans(name: str):
+    """P1-12 (UX round): the pair's way to its population-loss data -- the
+    moving qubit's newest population-loss scan (and the run its stored
+    defects came from, when that is another run) plus the CZ gate plan, which
+    carries the loss per operation. Found by the CZ plan's own discovery
+    (``cz_loss`` over the chip's data folders, never the Datasets store); an
+    empty answer when no such run exists, so the inspector offers nothing."""
+    store = _store()
+    engine = _engine()
+    ctx = _active_ctx()
+    if not store or not engine or not ctx:
+        return ""
+    try:
+        pair = engine.get_pair(name)
+    except Exception:  # noqa: BLE001 -- no pair, no link
+        return ""
+    ends = {"control": pair.get("qubit_control"), "target": pair.get("qubit_target")}
+    mv = pair.get("moving_qubit")
+    movers = [ends.get(mv) or mv] if mv else [ends["control"], ends["target"]]
+    movers = [m for m in movers if isinstance(m, str) and m]
+    try:
+        _rows, convs, _unavailable = _cz_plan_ops(store)
+        payload = _cz_loss_build(ctx, store, convs)
+    except Exception:  # noqa: BLE001 -- the inspector never breaks on this
+        logger.debug("pair loss scans for %s failed", name, exc_info=True)
+        return ""
+    runs = []
+    for q in movers:
+        entry = (payload.get("curves") or {}).get(q) or {}
+        for kind in ("scan", "marker_curve"):
+            c = entry.get(kind)
+            if not c or not c.get("folder") or c.get("run_id") is None:
+                continue
+            try:
+                uid = _dataset_uid(_folder_key(Path(c["folder"]).parent.parent), int(c["run_id"]))
+            except Exception:  # noqa: BLE001
+                continue
+            runs.append({"qubit": q, "run_id": c["run_id"], "name": c.get("run_name") or "",
+                         "uid": uid, "kind": kind})
+    if not runs:
+        return ""
+    return render_template("_pair_loss_scans.html", runs=runs, pair_name=name,
+                           cz_plan_op=_pair_cz_plan_ops(store).get(name))
 
 
 @bp.route("/cz-plan/history")
@@ -27141,7 +27317,36 @@ def search():
     limit = _int_arg("limit", 50, minimum=1)
     results = index.search(query, limit=limit, category=category)
 
-    return render_template("_search_results.html", results=results, query=query, active_category=category)
+    return render_template("_search_results.html", results=results, query=query,
+                           active_category=category,
+                           ptr_targets=_search_pointer_targets(results))
+
+
+def _search_pointer_targets(results) -> dict[str, str]:
+    """B1 (UX round): a pointer row says where it points -- "points to
+    x180_DragCosine.amplitude" -- written relative to the row's own path when
+    they share a prefix, so a reader never takes the pointer for the field it
+    names. Display only: a pointer that cannot be followed is left out."""
+    from quam_state_manager.core.pointer_resolver import _compute_resolved_path, is_pointer
+    store = _store()
+    root = store.merged if store else {}
+    out: dict[str, str] = {}
+    for r in results:
+        raw = r.raw_value
+        if not is_pointer(raw) or raw.startswith("#./"):
+            continue
+        own = r.dot_path.split(".")
+        try:
+            target = list(_compute_resolved_path(root, raw, tuple(own)))
+        except Exception:  # noqa: BLE001 -- display only
+            continue
+        if not target:
+            continue
+        n = 0
+        while n < min(len(own), len(target)) - 1 and own[n] == target[n]:
+            n += 1
+        out[r.dot_path] = ".".join(target[n:])
+    return out
 
 
 # ======================================================================
@@ -32249,27 +32454,121 @@ def state_overwrite_live_preflight():
 # ======================================================================
 
 
-@bp.route("/export")
+@bp.route("/export", methods=["GET", "POST"])
 def export_csv():
+    """The one CSV export (UX round, B2: reachable from the Qubits, Pairs and
+    Resonators tables and Live State Edit, not only from /table).
+
+    * ``?props=`` (default): one row per qubit, the stored values of those
+      summary properties -- what /table exports; ``?chain=`` keeps one chain.
+    * ``?entity=pairs&props=``: the same, one row per qubit pair.
+    * ``grid=qubits|pairs`` (Live State Edit, POSTed: the column list can be
+      long): the grid's own columns, only those named in ``cols``, read
+      through the same cell pipeline the grid renders from. Stored values,
+      never the display strings.
+    """
     engine = _engine()
     if not engine:
         return render_template("_status.html", message="No state loaded", level="warning")
 
+    body = request.get_json(silent=True) if request.method == "POST" else None
+    if request.method == "POST" or request.args.get("grid"):
+        return _export_grid_csv(body or {})
+
+    entity = request.args.get("entity") or "qubits"
     props = request.args.getlist("props") or [
         "f_01", "readout_frequency", "T1", "T2ramsey",
         "readout_amplitude", "readout_threshold", "gate_fidelity_avg",
     ]
-    rows = engine.summary_table(props)
-    fieldnames = ["id"] + props
+    if entity == "pairs":
+        rows = _export_pair_rows(engine, props)
+        name = "quam_pairs.csv"
+    else:
+        rows = engine.summary_table(props)
+        chain = request.args.get("chain")
+        if chain:
+            rows = [r for r in rows if str(r.get("id", "")).startswith(f"q{chain}")]
+        name = "quam_summary.csv"
+    return _csv_download(["id"] + props, rows, name)
 
+
+def _csv_download(fieldnames: list, rows: list, name: str):
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(rows)
-
     mem = io.BytesIO(output.getvalue().encode("utf-8"))
     mem.seek(0)
-    return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="quam_summary.csv")
+    return send_file(mem, mimetype="text/csv", as_attachment=True, download_name=name)
+
+
+def _export_pair_rows(engine, props: list) -> list[dict]:
+    """One row per qubit pair -- the Pairs table's own record (``get_pair`` +
+    the Bell summary), unreadable pairs skipped as the table skips them."""
+    store = _store()
+    rows = []
+    for name in (store.qubit_pair_names if store else []):
+        try:
+            p = engine.get_pair(name)
+            _pair_bell(p)
+        except Exception:  # noqa: BLE001 -- the table shows such a pair as an error row
+            continue
+        rows.append({"id": name, **{k: p.get(k) for k in props}})
+    return rows
+
+
+def _export_grid_csv(body: dict):
+    """Live State Edit's grid as CSV: the columns the user sees (``cols``),
+    one row per qubit (or pair), each cell's STORED value read at the path
+    the grid resolved it to; a pointer with no scalar behind it is written as
+    the pointer, a missing field as blank."""
+    store = _store()
+    if not store:
+        return render_template("_status.html", message="No state loaded", level="warning")
+    src = body or request.args
+    grid = (src.get("grid") or "qubits")
+    cols = src.get("cols")
+    if isinstance(cols, str):
+        cols = [c for c in cols.split(",") if c]
+    want = [str(c) for c in (cols or [])]
+    dynhide = src.get("dynhide") or []
+    if isinstance(dynhide, str):
+        dynhide = [k for k in dynhide.split(",") if k]
+    modified = _modified_map()
+    if grid == "pairs":
+        columns, _groups, rows = _pair_grid_entry(store, modified)["grid"]
+    else:
+        g = _bulk_grid_entry(store, {str(k) for k in dynhide}, modified)["grid"]
+        columns, rows = g["columns"], g["rows"]
+    by_key = {c["key"]: i for i, c in enumerate(columns)}
+    idx = [by_key[k] for k in want if k in by_key] if want else list(range(len(columns)))
+    header = ["id"] + [
+        columns[i]["key"] + (f" [{columns[i]['unit']}]" if columns[i].get("unit") else "")
+        for i in idx]
+    out = []
+    for row in rows:
+        cells = row.get("cells") or []
+        rec = {"id": row.get("id")}
+        for i, h in zip(idx, header[1:]):
+            rec[h] = _export_cell_value(store, cells[i] if i < len(cells) else None)
+        out.append(rec)
+    return _csv_download(header, out, f"quam_live_edit_{'pairs' if grid == 'pairs' else 'qubits'}.csv")
+
+
+def _export_cell_value(store, cell: dict | None):
+    if not cell or cell.get("missing"):
+        return ""
+    if cell.get("ptr_kind"):
+        return cell.get("display", "")
+    path = cell.get("resolved_path")
+    if path:
+        try:
+            v = store.get_value(path)
+            if not isinstance(v, (dict, list)):
+                return v
+        except (KeyError, TypeError, IndexError, ValueError):
+            pass
+    return cell.get("display", "")
 
 
 _SPARK_POINTS = 40   # the popup sparkline's LTTB budget
@@ -41734,7 +42033,10 @@ def dataset_interactive(uid):
         return render_template("_dataset_replot.html", uid=uid, run_id=run_id,
             available=True, util=result.get("util", ""), figures=reproduced,
             errors=result.get("errors", []), outcome=replot.replot_outcome(result)) + (
-                '<p class="muted">Legacy recipes and saved figures</p>' + render_template(
+                # P1-2 (UX round): a name a newcomer reads, and what it offers
+                '<p class="muted ds-recipe-head"><b>SM fit figures and saved images</b>'
+                ' &mdash; a figure marked <span class="ds-fig-click-badge">click a point to apply</span>'
+                ' takes clicks</p>' + render_template(
                     "_dataset_interactive.html", run_id=run_id, uid=uid, figures=legacy) if legacy else "")
     return render_template("_dataset_interactive.html", run_id=run_id, uid=uid, figures=figures,
                            reproduction_hint=capability["reason"])

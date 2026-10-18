@@ -1782,6 +1782,10 @@ def _counts(cards: list[dict]) -> dict:
     return {"runs": len(runs), "failed": sum(1 for c in runs if c.get("outcome") == "failed"),
             "gate_fail": sum(1 for c in runs if (c.get("gate") or {}).get("verdict") == "fail"),
             "writes": sum(len(w["entries"]) for w in writes), "write_cards": len(writes),
+            # P1-4 (UX round): the values the day's runs changed, run by run --
+            # what the chip went through, beside the writes SM itself made.
+            # Which program wrote them is not proven (a run's saved state).
+            "run_values": sum(len(c.get("writes") or []) for c in runs if c.get("kind") == "run"),
             "other_chip": sum(1 for c in cards if c.get("kind") == "run" and c.get("other_chip")),
             "biggest_write": biggest,
             "authors": sorted({c.get("author") for c in cards if c.get("author")})}

@@ -5,8 +5,18 @@
     <div class="table-header-row">
         <h2 style="margin:0">Help &amp; getting started</h2>
         <span class="muted">the working-copy model, the feature tour, and every shortcut</span>
+        <span class="help-version muted" id="help-version">QUAM State Manager {{ sm_version }}</span>
     </div>
     {% include '_landing_getting_started.html' %}
+
+    <div class="help-export" id="help-export">
+        <h3>Export</h3>
+        <p><b>Export CSV</b> sits above the Qubits, Pairs and Resonators tables and in
+           Live State Edit (the columns you see). For any set of columns, use the
+           <a href="/table" hx-get="/table" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Parameter table</a>.
+           The <a href="/chip-status/report" target="_blank" rel="noopener">printable chip report</a>
+           downloads as HTML.</p>
+    </div>
 
     <div class="help-shortcuts">
         <h3>Keyboard shortcuts</h3>
@@ -32,7 +42,9 @@
             <div><kbd>Shift</kbd>+click</div><div>select a range in one column</div>
             <div><kbd>Ctrl</kbd>+<kbd>D</kbd></div><div>fill the selection from the anchor</div>
             <div><kbd>Ctrl</kbd>+<kbd>V</kbd></div><div>paste a column of values downward</div>
-            <div><kbd>Ctrl</kbd>+<kbd>Enter</kbd></div><div>Apply all</div>
+            <div><kbd>Ctrl</kbd>+<kbd>Enter</kbd></div><div>Apply: the grid's un-applied cells, else the top-bar <b>Apply</b> (same confirm)</div>
+            <div><kbd>/</kbd> then <kbd>Enter</kbd> or <kbd>↓</kbd></div><div>from the grid search to the first matching cell</div>
+            <div><kbd>←</kbd> / <kbd>→</kbd></div><div>move along the quick-filter chips (one Tab stop)</div>
             <div class="help-sc-group">Datasets</div>
             <div><kbd>j</kbd> / <kbd>k</kbd></div><div>move through runs</div>
             <div><kbd>Enter</kbd> / <kbd>Space</kbd></div><div>open / select the active run</div>

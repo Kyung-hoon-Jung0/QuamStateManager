@@ -495,8 +495,8 @@ def test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write(env):
     entry = page.split(f'data-ts="{env.refs[0]}"')[1].split('data-ts="')[0]
     assert "SOURCE_GONE" in entry and "/stage?" not in entry and "/restore-live?" not in entry
     assert "View changes vs current" in entry
-    assert "Pull to Live" not in c.get(f"/state/versions/{env.refs[0]}/diff").get_data(as_text=True)
-    assert "Pull to Live" in c.get(f"/state/versions/{env.refs[1]}/diff").get_data(as_text=True)
+    assert "Restore to live" not in c.get(f"/state/versions/{env.refs[0]}/diff").get_data(as_text=True)
+    assert "Restore to live" in c.get(f"/state/versions/{env.refs[1]}/diff").get_data(as_text=True)
 
 
 def test_another_chips_version_is_refused(env):

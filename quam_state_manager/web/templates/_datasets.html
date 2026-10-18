@@ -130,6 +130,8 @@
                             <td>Runs whose <b>parameter</b> <code>reset_type</code> = <code>active</code> (also <code>param:</code>/<code>p:</code>). Combine with qubits/fit — all AND. Or pick from the <b>Parameters</b> facets in Sort.</td></tr>
                         <tr><td><button class="ds-help-example" data-example="is:bookmarked">is:bookmarked</button></td>
                             <td>Only bookmarked (starred) runs</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="is:wrote">is:wrote</button></td>
+                            <td>Only runs that wrote values into the chip state (&#9998;) &mdash; the ones whose fits can be applied</td></tr>
                         <tr><td><button class="ds-help-example" data-example="-tag:wip">-tag:wip</button></td>
                             <td>Prefix with <code>-</code> to negate any scope</td></tr>
                         <tr><td><button class="ds-help-example" data-example='tag:"in progress"'>tag:"in progress"</button></td>
@@ -142,6 +144,9 @@
                 </table>
             </div>
         </div>
+        {# P1-2 (UX round): one press to the runs whose fits can be applied #}
+        <button type="button" class="ds-help-example btn-sm outline ds-wrote-chip" data-example="is:wrote"
+                title="Show only the runs that wrote values into the chip state (&#9998;): their figures can apply a fit">&#9998; wrote state</button>
         <details class="bulk-colvis ds-colvis">
             <summary class="btn-sm outline" title="Choose which columns to show">&#9776; Properties</summary>
             <div class="bulk-colvis-menu" id="ds-colvis-menu" role="menu"></div>

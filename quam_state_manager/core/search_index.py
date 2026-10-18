@@ -71,6 +71,7 @@ class SearchIndex:
         "prefix_map",
         "trigram_index",
         "_trigram_built",
+        "_parent_paths",
     )
 
     def __init__(self) -> None:
@@ -86,6 +87,16 @@ class SearchIndex:
         # build reads the already-updated entries). This keeps load / sync /
         # reconcile fast. True = up to date (an empty index is trivially built).
         self._trigram_built: bool = True
+        # B1 (UX round): the lower-cased path segments BETWEEN the entity and
+        # the leaf (``xy.operations.x180_dragcosine``) -> entry indices, so a
+        # word that names a path segment finds the leaf under it ("x180
+        # amplitude" -> ...x180_DragCosine.amplitude). The collection and the
+        # entity id are left out (the prefix map already matches the id; the
+        # collection name narrows nothing), and so is every list element but
+        # the first: an integration-weight array is one hit, not 1,000 -- the
+        # candidate sets stay small enough to score per keystroke. Built
+        # lazily with the first search, like the trigram index.
+        self._parent_paths: dict[str, list[int]] | None = None
         self.key_index: dict[str, list[int]] = {}
         self.category_index: dict[str, list[int]] = {}
         self.parent_index: dict[str, list[int]] = {}
@@ -211,6 +222,7 @@ class SearchIndex:
 
         terms: list[str] = []        # every surviving term, original order —
         candidate_indices: set[int] | None = None
+        self._ensure_paths()
         for g in groups:
             g_matches: set[int] = set()
             for term in g:
@@ -230,7 +242,7 @@ class SearchIndex:
 
         scored: list[tuple[float, int]] = []
         for idx in candidate_indices:
-            score = self._score(idx, terms)
+            score = self._score(idx, terms, groups)
             scored.append((score, idx))
 
         # Tie-break on the dot path NATURALLY (customer rule 2026-09-09):
@@ -256,7 +268,11 @@ class SearchIndex:
         return results
 
     def _find_term(self, term: str) -> set[int]:
-        """Find all entry indices matching a single search term."""
+        """Find all entry indices matching a single search term: its value,
+        leaf key or parent id (prefix / trigram), or any segment of its dot
+        path (B1: a leaf named by its PARENT segment -- the x180 pulse's
+        ``amplitude`` -- was missed, while a pointer whose value spelled
+        ``x180`` matched)."""
         results: set[int] = set()
 
         if len(term) <= MAX_PREFIX:
@@ -268,12 +284,61 @@ class SearchIndex:
             trigram_hits = _trigram_lookup(self.trigram_index, term)
             results.update(trigram_hits)
 
+        results.update(self._path_hits(term))
         return results
 
-    def _score(self, idx: int, terms: list[str]) -> float:
-        """Score an entry against search terms. Higher = better match."""
+    def _ensure_paths(self) -> None:
+        """Build the deferred path-segment index from the current entries."""
+        if self._parent_paths is not None:
+            return
+        pp: dict[str, list[int]] = {}
+        p2i = self.path_to_idx
+        for i, e in enumerate(self.entries):
+            if p2i.get(e.dot_path) != i:          # a removed slot
+                continue
+            head = _path_head(e.dot_path, e.category, e.leaf_key)
+            if not head:
+                continue
+            lst = pp.get(head)
+            if lst is None:
+                pp[head] = [i]
+            else:
+                lst.append(i)
+        self._parent_paths = pp
+
+    def _path_hits(self, term: str) -> set[int]:
+        """Entries whose dot path holds *term* in a parent segment. A term
+        that spans into the leaf key (``x180_dragcosine.amplitude``) is
+        matched against the full path of the entries under a parent that
+        holds its part before the last dot."""
+        self._ensure_paths()
+        out: set[int] = set()
+        pp = self._parent_paths or {}
+        if "." in term:
+            left = term.rpartition(".")[0]
+            for head, idxs in pp.items():
+                if left in head:
+                    out.update(i for i in idxs
+                               if term in self.entries[i].dot_path.lower())
+            return out
+        for head, idxs in pp.items():
+            if term in head:
+                out.update(idxs)
+        return out
+
+    def _score(self, idx: int, terms: list[str],
+               groups: list[list[str]] | None = None) -> float:
+        """Score an entry against search terms. Higher = better match.
+
+        B1: an entry whose OWN dot path holds every word (one term of every
+        OR group) ranks in a tier above every entry that matched a word only
+        through its value -- a pointer whose value mentions ``x180`` never
+        outranks the x180 leaf itself."""
         e = self.entries[idx]
         total = 0.0
+        path_l = e.dot_path.lower()
+        if all(any(t in path_l for t in g) for g in (groups or [[t] for t in terms])):
+            total += 1000
         lk = e.leaf_key.lower()
         pid = e.parent_id.lower()
 
@@ -394,6 +459,9 @@ class SearchIndex:
         self.key_index.setdefault(leaf_key.lower(), []).append(idx)
         self.category_index.setdefault(category, []).append(idx)
         self.parent_index.setdefault(parent_id.lower(), []).append(idx)
+        head = _path_head(dot_path, category, leaf_key)
+        if self._parent_paths is not None and head:   # else: the lazy build reads it
+            self._parent_paths.setdefault(head, []).append(idx)
 
     def remove_entry(self, dot_path: str) -> None:
         """Remove a leaf from the index (used after deletion via undo).
@@ -426,6 +494,13 @@ class SearchIndex:
                 lst.remove(idx)
                 if not lst:
                     del inv[key]
+        if self._parent_paths is not None:
+            head = _path_head(dot_path, entry.category, entry.leaf_key)
+            lst = self._parent_paths.get(head)
+            if lst is not None and idx in lst:
+                lst.remove(idx)
+                if not lst:
+                    del self._parent_paths[head]
 
     # ------------------------------------------------------------------
     # Stats
@@ -635,6 +710,24 @@ def _walk_leaves(obj: Any, prefix: str = ""):
             yield from _walk_leaves(value, child)
         else:
             yield child, value
+
+
+# How many leading segments name the collection + entity, per category (the
+# prefix map already matches the entity id; see SearchIndex._parent_paths).
+_HEAD_SKIP = {"qubit": 2, "pair": 2, "twpa": 2, "port": 5}
+
+
+def _path_head(dot_path: str, category: str, leaf_key: str) -> str:
+    """The lower-cased segments between the entity and the leaf, or "" when
+    there are none or the leaf is a list element past the first."""
+    if leaf_key.isdigit() and leaf_key != "0":
+        return ""
+    parts = dot_path.split(".")[:-1]
+    if category == "wiring":
+        skip = 3 if len(parts) > 2 and parts[1] in ("qubits", "qubit_pairs", "twpas") else 2
+    else:
+        skip = _HEAD_SKIP.get(category, 1)
+    return ".".join(parts[skip:]).lower()
 
 
 def _categorize(dot_path: str) -> str:

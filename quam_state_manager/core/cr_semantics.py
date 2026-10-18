@@ -510,6 +510,31 @@ _INFERRED_RF = "#./inferred_RF_frequency"
 _UPCONVERTER_LO = "#./upconverter_frequency"
 
 
+def channel_lo_hz(store: Any, chan: Any, base: tuple[str, ...]) -> float | None:
+    """The LO in Hz of one MW output channel -- its own ``LO_frequency``, or
+    (``#./upconverter_frequency`` / absent) its output port's upconverter,
+    exactly as :func:`channel_effective_rf_if` reads it. ``None`` whenever the
+    port chain does not resolve to a number."""
+    if not isinstance(chan, dict):
+        return None
+    lo_raw = chan.get("LO_frequency")
+    if lo_raw is None or lo_raw == _UPCONVERTER_LO:
+        port = _port_dict(store, chan, base)
+        if isinstance(port, dict):
+            lo = _num(port.get("upconverter_frequency"))
+            ups = port.get("upconverters")
+            if lo is None and isinstance(ups, dict):
+                key = chan.get("upconverter", 1)
+                entry = ups.get(str(key), ups.get(key))
+                if isinstance(entry, dict):
+                    lo = _num(entry.get("frequency"))
+            return lo
+        return None
+    if is_self_ref(lo_raw):
+        return None
+    return _num(_resolve_leaf(store, lo_raw, base + ("LO_frequency",)))
+
+
 def channel_effective_rf_if(store: Any, chan: Any,
                             base: tuple[str, ...]) -> tuple[float | None, float | None]:
     """(RF, IF) in Hz of one MW output channel, the ``#./inferred_*`` aliases
@@ -546,20 +571,7 @@ def channel_effective_rf_if(store: Any, chan: Any,
             return None
         return _num(_resolve_leaf(store, raw, base + (key,)))
 
-    lo_raw = chan.get("LO_frequency")
-    lo: float | None = None
-    if lo_raw is None or lo_raw == _UPCONVERTER_LO:
-        port = _port_dict(store, chan, base)
-        if isinstance(port, dict):
-            lo = _num(port.get("upconverter_frequency"))
-            ups = port.get("upconverters")
-            if lo is None and isinstance(ups, dict):
-                key = chan.get("upconverter", 1)
-                entry = ups.get(str(key), ups.get(key))
-                if isinstance(entry, dict):
-                    lo = _num(entry.get("frequency"))
-    else:
-        lo = _lit("LO_frequency")
+    lo = channel_lo_hz(store, chan, base)
 
     if_hz = _lit("intermediate_frequency")
     rf_hz = _lit("RF_frequency")

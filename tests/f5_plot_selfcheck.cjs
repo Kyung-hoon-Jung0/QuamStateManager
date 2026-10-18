@@ -149,8 +149,11 @@ function pause() { return new Promise(resolve => setTimeout(resolve, 50)); }
         w._fetchInteractiveFig(div, 'run:1', 'f' + i, 1, container); await pause();
     }
     equal(container.querySelectorAll('.ds-replot-run-note').length, 1, 'refusal appears once per run');
-    equal(container.querySelector('.ds-replot-run-note').textContent, 'a.x: no proof; b.y: ambiguous',
+    // P1-2 (UX round): the note leads with what it means, then the clauses
+    equal(container.querySelector('.ds-replot-run-note .ds-replot-run-why').textContent, 'a.x: no proof; b.y: ambiguous.',
         'each refusal clause is said once, however many figures give it');
+    equal(/^Click-to-apply is off on these figures: /.test(container.querySelector('.ds-replot-run-note').textContent), true,
+        'the note says plainly that clicks are off');
     equal(container.querySelector('.ds-replot-run-note').nextElementSibling === list && container.firstElementChild === head,
         true, 'the run note sits under the run header, above the figures');
     equal(Array.from(container.querySelectorAll('.ds-replot-note')).filter(n => n.textContent === 'Artist omitted').length, 3,
