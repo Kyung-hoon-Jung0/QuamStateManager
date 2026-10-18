@@ -411,7 +411,22 @@ class SettingsUnreadable(RuntimeError):
     """v1.5.1 (SB-P2-7): a settings file exists but could not be read (held
     open by another SM process, torn, not JSON). The run path and a save
     refuse on it: defaults stand in for what is stored only where nothing
-    acts on them."""
+    acts on them.
+
+    R3 MINOR 9: ``path`` names the file in full; ``damaged`` says its content
+    is not settings (not JSON / not an object, every retry) -- retrying never
+    helps that one, :func:`reset_damaged_settings` does."""
+
+    def __init__(self, message: str, *, path=None, damaged: bool = False):
+        super().__init__(message)
+        self.path = str(path) if path else ""
+        self.damaged = bool(damaged)
+
+
+def _is_damaged(exc: BaseException) -> bool:
+    """The read failed on the CONTENT (not JSON / not an object), not on
+    access (a sharing violation, a denied file)."""
+    return isinstance(exc, ValueError) or isinstance(getattr(exc, "__cause__", None), ValueError)
 
 
 def _read_settings_file(path: Path, *, strict: bool = False) -> dict:
@@ -425,8 +440,11 @@ def _read_settings_file(path: Path, *, strict: bool = False) -> dict:
         return {}
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
         if strict:
+            damaged = _is_damaged(exc)
             raise SettingsUnreadable(
-                f"the Runner settings file {path.name} could not be read ({exc})") from exc
+                (f"the Runner settings file {path} is damaged ({exc})" if damaged else
+                 f"the Runner settings file {path} could not be read ({exc})"),
+                path=path, damaged=damaged) from exc
         logger.warning("Could not read scheduler settings %s", path, exc_info=True)
         return {}
 
@@ -443,6 +461,32 @@ def load_settings(scope, *, strict: bool = False) -> dict:
     merged.update({k: v for k, v in own.items()
                    if k in _DEFAULTS and k not in _SHARED_KEYS})
     return merged
+
+
+def reset_damaged_settings(scope) -> list[str]:
+    """R3 MINOR 9: set every DAMAGED settings file of *scope* aside (renamed
+    ``<name>.damaged-<UTC time>.json`` beside it, never deleted), so the next
+    save writes fresh settings. A file that reads, or is only out of reach
+    for a moment, is left alone. Returns the new names."""
+    out = []
+    with _QLOCK:
+        for path in (settings_path(scope), shared_settings_path(scope)):
+            path = Path(path)
+            if not path.exists():
+                continue
+            try:
+                safe_io.read_json(path, attempts=1)
+                continue                       # it reads: not damaged
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError) as exc:
+                if not _is_damaged(exc):
+                    continue                   # held open / denied: not ours to move
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            aside = path.with_name(f"{path.stem}.damaged-{stamp}{path.suffix}")
+            os.replace(path, aside)
+            out.append(str(aside))
+    return out
 
 
 def save_settings(scope, settings: dict) -> dict:
@@ -1740,9 +1784,12 @@ def _worker(instance_path: str) -> None:
                 except SettingsUnreadable as exc:
                     # v1.5.1 (SB-P2-7): never run on defaults (a dry run, or
                     # another chip's path) because a read failed -- pause, named
+                    # (R3 MINOR 9: a damaged file is no "retry": Start offers
+                    # to set it aside)
                     state["run"].update({"status": "paused", "current_id": None,
-                                         "message": f"paused: {exc} -- nothing ran; "
-                                                    "press Start to retry"})
+                                         "message": (f"paused: {exc} -- nothing ran; "
+                                                     + ("press Start to reset it" if exc.damaged
+                                                        else "press Start to retry"))})
                     save_queue(instance_path, state)
                     break
                 # Heartbeat: pause if the browser stopped polling (unless tmux mode).

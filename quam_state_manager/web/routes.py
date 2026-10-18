@@ -47032,8 +47032,41 @@ def scheduler_settings():
         saved = scheduler.save_settings(inst, patch)
     except scheduler.SettingsUnreadable as exc:
         # v1.5.1 (SB-P2-7): never overwrite stored settings with defaults
-        return jsonify({"ok": False, "error": f"Nothing was saved: {exc}. Retry in a moment."}), 409
+        return jsonify(_settings_unreadable_body("Nothing was saved", exc)), 409
     return jsonify({"ok": True, "settings": saved})
+
+
+def _settings_unreadable_body(head: str, exc) -> dict:
+    """R3 MINOR 9: a refusal on unreadable Runner settings. A file that is
+    only held for a moment says retry; a DAMAGED one (retrying never helps)
+    names the file and offers the reset that sets it aside."""
+    if getattr(exc, "damaged", False):
+        return {"ok": False, "reason": "settings_unreadable", "damaged": True,
+                "file": getattr(exc, "path", ""), "reset_url": "/scheduler/settings/reset",
+                "error": (f"{head}: {exc}. Reset it to set it aside (renamed, kept) and "
+                          "start again from the default settings.")}
+    return {"ok": False, "reason": "settings_unreadable",
+            "error": f"{head}: {exc}. Retry in a moment."}
+
+
+@bp.route("/scheduler/settings/reset", methods=["POST"])
+def scheduler_settings_reset():
+    """R3 MINOR 9: set a damaged Runner settings file aside (renamed beside
+    it, never deleted) so the next save writes fresh settings. Refused while
+    a queue runs."""
+    inst = _sched_inst()
+    if scheduler.is_active(inst):
+        return jsonify({"ok": False, "error": "A queue is running: pause or cancel it first."}), 409
+    try:
+        moved = scheduler.reset_damaged_settings(inst)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": f"The settings file could not be set aside: {exc}"}), 409
+    if not moved:
+        return jsonify({"ok": True, "set_aside": [],
+                        "message": "No damaged settings file: nothing was changed."})
+    return jsonify({"ok": True, "set_aside": moved,
+                    "message": ("Set aside: " + "; ".join(moved)
+                                + ". The Runner uses the default settings until you save.")})
 
 
 @bp.route("/scheduler/effective-config", methods=["GET", "POST"])
@@ -47584,8 +47617,7 @@ def scheduler_start():
         except scheduler.SettingsUnreadable as exc:
             # v1.5.1 (SB-P2-7): the run would read settings other than the
             # ones on screen (Dry run among them) -- start nothing, say why
-            return jsonify({"ok": False, "reason": "settings_unreadable",
-                            "error": f"Nothing started: {exc}. Retry in a moment."}), 409
+            return jsonify(_settings_unreadable_body("Nothing started", exc)), 409
         except Exception:  # noqa: BLE001
             logger.warning("start settings persist failed", exc_info=True)
     # Strict gate: re-run the identity/safety preflight server-side and refuse to
