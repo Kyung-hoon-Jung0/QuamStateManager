@@ -142,7 +142,8 @@ const REGEN_MARKUP = REGEN_TPL.slice(0, REGEN_TPL.indexOf('<script>'))
   .replace(/\{#[\s\S]*?#\}/g, '')
   .replace("{% include '_generate.html' %}", HTML)
   .replace(/\{\{ active_path or '' \}\}/, '')
-  .replace(/\{\{ active_name or [^}]*\}\}/, 'LOADED_CHIP');
+  // v1.5.1 (T1-F4): the chip slot reads the declared name first -- any expression over active_name
+  .replace(/\{\{[^}]*active_name[^}]*\}\}/, 'LOADED_CHIP');
 const REGEN_SCRIPT = REGEN_TPL.slice(REGEN_TPL.indexOf('<script>') + 8,
                                      REGEN_TPL.lastIndexOf('</script>'))
   .replace(/\{\{ \(regen_step[^}]*\}\}/g, 'null');   // every occurrence (gen-wiring added one)
