@@ -4270,6 +4270,18 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
+            if (data && data.chip_mismatch) {
+                // v1.5.1 (SB-F2/F5): this tab shows another chip than the
+                // server has open -- nothing was pulled or written. The
+                // automatic merge (expectChip) says nothing; a press is told
+                // until the toast is closed.
+                if (!expectChip && window.showToast) {
+                    window.showToast(data.message || data.error
+                        || "This tab shows another chip than the one open now — reload this page.",
+                        "error", -1);
+                }
+                return;
+            }
             if (data.status === "unseen_changes") {
                 // docs/190 F45: nothing is pending, so there is nothing to
                 // confirm. Offering "Apply everything, including those?"

@@ -110,6 +110,30 @@ function hdr(call) {
     ok(!det.headers['X-SM-Chip-Key'], 'a page with no chip sends no key (no gate, as before)');
     window.__chipKey = 'chip_x-1a2b3c4d';
 
+    // ---- the page's own code ----------------------------------------------
+    window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
+    await tick(30);
+    const confirms = [];
+    let confirmAnswer = true;
+    window.confirm = function (m) { confirms.push(String(m)); return confirmAnswer; };
+    const toasts = [];
+    window.showToast = function (msg, level, ms) { toasts.push({ msg: String(msg), level: level, ms: ms }); };
+    function setTray(attrs, rows) {
+        document.getElementById('topbar-tray-slot').innerHTML = tray(attrs, rows);
+    }
+
+    // ---- F5: a wrong-chip answer to a sync press stays on screen -----------
+    toasts.length = 0;
+    fetchAnswer = { ok: false, status: 'chip_mismatch', chip_mismatch: true,
+                    message: "Not done: this tab shows chip 'chip_x'; the server has chip 'chip_y' open now." };
+    window._applyInFlight = false;
+    window.doStateSync('discard');
+    await tick(40);
+    const t = toasts.find(function (x) { return /chip_x/.test(x.msg); });
+    ok(t && t.level === 'error' && t.ms === -1, 'a refused Take live says which chips, until closed -- '
+       + JSON.stringify(toasts));
+    ok(!toasts.some(function (x) { return /Took live|Written/.test(x.msg); }), 'and never claims it pulled');
+
     if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
     console.log('v151_tab_chip_selfcheck: all checks passed (' + n + ' assertions)');
     process.exit(0);

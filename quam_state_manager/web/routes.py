@@ -11593,10 +11593,30 @@ def _tab_chip_refusal(ctx=None, *, json_body: bool | None = None):
 #: The doors a press from another chip's page is refused at (SB-F2/F5): every
 #: route that writes the open chip's tray, working copy or live files on a
 #: person's press. A chip SWITCH (/load, a dataset archive open) is not here.
-_TAB_CHIP_DOORS = frozenset({"main.undo", "main.redo"})
+_TAB_CHIP_DOORS = frozenset({
+    "main.field_edit", "main.field_edit_batch", "main.qubit_edit", "main.pair_edit",
+    "main.field_create", "main.field_delete", "main.field_type_assign",
+    "main.field_type_unassign", "main.pair_add_gate", "main.pulse_edit",
+    "main.api_pulse_create", "main.api_pulse_delete", "main.api_pulse_duplicate",
+    "main.api_pulse_rename", "main.pair_gate_inspector_switch", "main.api_pulse_copy",
+    "main.api_pulse_gaussian_cz", "main.api_pulse_delete_together",
+    "main.type_fix_apply", "main.diagnostics_apply_fix",
+    "main.save", "main.undo", "main.redo", "main.discard", "main.discard_all",
+    "main.state_sync", "main.state_apply_to_live", "main.state_take_live_restore",
+    "main.state_recovery_restore", "main.state_recovery_discard",
+    "main.state_history_stage", "main.state_history_restore_live",
+    "main.auto_apply_arm", "main.auto_apply_revert", "main.auto_sync_set",
+    "main.dataset_load_state", "main.chip_name_set", "main.chip_data_folder_set",
+    "main.chip_profile_set", "main.note_save",
+})
 
 #: ...and which of them answer JSON (their callers parse it).
-_TAB_CHIP_JSON_DOORS: frozenset = frozenset()
+_TAB_CHIP_JSON_DOORS = frozenset({
+    "main.field_edit", "main.field_edit_batch", "main.field_create", "main.field_delete",
+    "main.field_type_assign", "main.field_type_unassign", "main.api_pulse_delete_together",
+    "main.type_fix_apply", "main.diagnostics_apply_fix", "main.state_sync",
+    "main.state_recovery_restore", "main.state_recovery_discard", "main.note_save",
+})
 
 
 def _chip_token_ok(expect_chip: str) -> bool:

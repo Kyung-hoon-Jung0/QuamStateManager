@@ -107,6 +107,16 @@ def _refused(r, env, what):
 A_PRESSES = [
     ("Ctrl+Z", "/undo", {}, None),
     ("Ctrl+Shift+Z", "/redo", {}, None),
+    ("grid commit", "/field/edit", {"dot_path": "qubits.q3.T1", "value": "3.3e-05"}, None),
+    ("grid batch", "/field/edit-batch", None,
+     {"updates": [{"dot_path": "qubits.q3.T1", "value": "3.3e-05"}]}),
+    ("Apply", "/state/apply-to-live", {}, None),
+    ("Keep mine", "/state/apply-to-live?force=1", {}, None),
+    ("Take live", "/state/sync", {"mode": "discard", "force": "1"}, None),
+    ("Pull & apply", "/state/sync", {"mode": "apply"}, None),
+    ("Take live, keep edits", "/state/sync", {"mode": "reapply"}, None),
+    ("Save", "/save", {}, None),
+    ("Auto-Sync arm", "/auto-sync/set", {"pull": "1", "push": "1"}, None),
 ]
 
 
@@ -140,6 +150,31 @@ class TestAStaleTabIsRefusedByName:
         _refused(r, env, "Ctrl+Z")
         assert _sha(env["y"]) == before
         assert int(_ctx(env).get("undo_cursor") or 0) == 1, "the walk moved"
+
+    def test_the_agent_bridge_field_is_honoured_too(self, env):
+        r = env["c"].post("/state/apply-to-live", data={"expect_chip_key": env["key_x"]},
+                          headers={"Accept": "application/json"})
+        assert r.status_code == 409 and r.get_json()["conflict"] == "chip_mismatch"
+
+    def test_the_chip_check_runs_before_the_unseen_edit_gate(self, env):
+        """F5: Apply's refusal named Y's edit as "another State Manager
+        window changed them". The chip is what changed."""
+        c = env["c"]
+        c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "1.9e-05"})
+        r = c.post("/state/sync", data={"mode": "apply", "seen_changes": "0", "seen_sig": "0" * 16},
+                   headers={H: env["key_x"]})
+        assert r.get_json()["status"] == "chip_mismatch", r.get_json()
+
+    def test_a_dataset_archive_open_is_a_switch_not_a_write(self, env):
+        from flask import request
+        app = env["app"]
+        with app.test_request_context("/dataset/x/load-state", method="POST",
+                                      data={"mode": "archive"}, headers={H: env["key_x"]}):
+            assert request.endpoint == "main.dataset_load_state"
+            assert routes._tab_chip_gate() is None
+        with app.test_request_context("/dataset/x/load-state", method="POST",
+                                      data={}, headers={H: env["key_x"]}):
+            assert routes._tab_chip_gate().status_code == 409
 
 
 class TestThePressOnItsOwnChipWorks:
@@ -195,4 +230,4 @@ def _node_selfcheck(name: str, minimum: int):
 
 
 def test_every_write_request_carries_the_page_chip_selfcheck():
-    _node_selfcheck("v151_tab_chip_selfcheck.cjs", 7)
+    _node_selfcheck("v151_tab_chip_selfcheck.cjs", 9)
