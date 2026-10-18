@@ -224,3 +224,51 @@ def test_a_forced_write_on_a_save_that_began_after_its_backup_is_refused_by_name
     state, wiring = _read(env["live"])
     assert state["qubits"]["q1"]["T1"] == LAB_T1 and wiring == OLD_WIRING   # untouched
     assert [e.dot_path for e in _ctx(env)["store"].change_log] == ["qubits.q1.T1"]
+
+
+# ---- R2 MINOR 6: no false call on a coarse clock or a big save -------------
+
+def _fp(s_t: float, w_t: float, s_sz: int = 1000, w_sz: int = 1000):
+    return ((int(s_t * 1e9), s_sz), (int(w_t * 1e9), w_sz))
+
+
+def test_a_coarse_mtime_clock_is_not_a_straddle():
+    """FAT keeps 2 s mtimes: one save written in milliseconds can show its
+    two files a whole tick apart."""
+    now = 1_700_000_100.5
+    assert safe_io.pair_mid_save(_fp(1_700_000_100.0, 1_700_000_098.0), now=now) is None
+    # a real straddle on the same clock: the previous save was minutes ago
+    assert safe_io.pair_mid_save(_fp(1_700_000_100.0, 1_699_999_800.0), now=now) is not None
+
+
+def test_a_big_save_is_not_a_straddle():
+    """quam streams state.json after wiring.json: ~0.9 s at 19 MB, more above."""
+    now = 1_700_000_100.3
+    w_t = 1_700_000_098.123
+    s_t = w_t + 1.6                             # 25 MB took 1.6 s to stream
+    assert safe_io.pair_mid_save(_fp(s_t, w_t, s_sz=25_000_000), now=now) is None
+    assert safe_io.pair_mid_save(_fp(s_t, w_t - 300, s_sz=25_000_000), now=now) is not None
+    # a small file with the same spread is still a straddle
+    assert safe_io.pair_mid_save(_fp(s_t, w_t, s_sz=600_000), now=now) is not None
+
+
+def test_a_malformed_fingerprint_judges_nothing():
+    assert safe_io.pair_mid_save(("A", "A")) is None
+    assert safe_io.pair_mid_save(None) is None
+
+
+def test_a_forced_write_after_a_big_completed_save_is_not_refused(tmp_path):
+    live = tmp_path / "big"
+    _write_chip(live, _state())
+    t = time.time() - 0.4
+    os.utime(live / "wiring.json", (t - 1.6, t - 1.6))
+    with open(live / "state.json", "ab") as f:          # a 25 MB state, streamed last
+        f.write(b" " * 25_000_000)
+    os.utime(live / "state.json", (t, t))
+    assert safe_io.live_mid_save(live) is None
+
+
+@pytest.mark.mid_save_guard
+def test_a_marked_test_runs_with_the_guard_on(request):
+    assert request.node.get_closest_marker("mid_save_guard") is not None
+    assert safe_io._MID_SAVE_WINDOW_S == 3.0

@@ -13,6 +13,9 @@ import pytest
 from quam_state_manager.core import safe_io
 from quam_state_manager.core.history import HistoryManager
 
+# R2 MINOR 6: these door tests run with the mid-save guard ON (conftest)
+pytestmark = pytest.mark.mid_save_guard
+
 
 def _seed(folder: Path, state: dict, wiring: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)

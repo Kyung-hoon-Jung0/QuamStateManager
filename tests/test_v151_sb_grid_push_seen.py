@@ -20,6 +20,9 @@ import pytest
 from quam_state_manager.web import routes
 from quam_state_manager.web.app import create_app
 
+# R2 MINOR 6: these door tests run with the mid-save guard ON (conftest)
+pytestmark = pytest.mark.mid_save_guard
+
 _WIRING = {"network": {"host": "127.0.0.1", "cluster_name": "C1"}}
 JSON = {"Accept": "application/json"}
 

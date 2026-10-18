@@ -96,10 +96,21 @@ _PAIR_READ_ATTEMPTS = 4
 # pair read pays only when it lands inside that window: it catches the real,
 # millisecond-scale gap without making a poll wait seconds. A pair that is not
 # straddling (the normal path) costs one stat and a subtraction.
+#
+# R2 MINOR 6: two things widen the one-save spread a completed save can show,
+# and a forced write was refused on them for up to the whole window:
+#   * a big state.json: quam streams it AFTER wiring.json, so the spread
+#     grows with its size (0.27 s at 5.8 MB, ~0.9 s at 19 MB). The allowance
+#     grows by _MID_SAVE_S_PER_MB (over 3x the measured rate) per MB of the
+#     newer file, and the window by as much, so a real straddle is still seen;
+#   * a coarse mtime clock: FAT keeps 2 s, some shares 1 s. A pair whose two
+#     mtimes are both whole multiples of 2 s (or of 1 s) is given that grain
+#     on top. A real torn pair is minutes apart, never one grain.
 _MID_SAVE_SPREAD_S = 1.0
 _MID_SAVE_WINDOW_S = 3.0
 _MID_SAVE_READ_SETTLE_S = 0.3
 _MID_SAVE_POLL_S = 0.05
+_MID_SAVE_S_PER_MB = 0.15
 
 
 class LiveFileError(OSError):
@@ -902,13 +913,30 @@ def pair_mid_save(fp: tuple, now: float | None = None) -> float | None:
     mtime far in the future (a share whose clock runs ahead) judges nothing."""
     if _MID_SAVE_WINDOW_S <= 0:
         return None
-    (s_ns, _s_sz), (w_ns, _w_sz) = fp
-    if abs(s_ns - w_ns) <= _MID_SAVE_SPREAD_S * 1e9:
+    try:
+        (s_ns, s_sz), (w_ns, w_sz) = fp
+        s_ns, w_ns, s_sz, w_sz = int(s_ns), int(w_ns), int(s_sz), int(w_sz)
+    except (TypeError, ValueError):
+        return None                       # not a pair fingerprint: judge nothing
+    allow = _mid_save_allowance(s_ns, w_ns, s_sz if s_ns >= w_ns else w_sz)
+    if abs(s_ns - w_ns) <= allow * 1e9:
         return None
     age = (time.time() if now is None else now) - max(s_ns, w_ns) / 1e9
-    if age < -_MID_SAVE_SPREAD_S or age >= _MID_SAVE_WINDOW_S:
+    if age < -allow or age >= _MID_SAVE_WINDOW_S + (allow - _MID_SAVE_SPREAD_S):
         return None
     return max(age, 0.0)
+
+
+def _mid_save_allowance(s_ns: int, w_ns: int, newer_size: int) -> float:
+    """R2 MINOR 6: how far apart (s) one completed save's two mtimes may be:
+    the base spread, plus the time to stream a file of the newer one's size,
+    plus the mtime grain when both stamps sit on a whole 2 s (or 1 s) tick."""
+    grain = 0.0
+    if s_ns % 2_000_000_000 == 0 and w_ns % 2_000_000_000 == 0:
+        grain = 2.0
+    elif s_ns % 1_000_000_000 == 0 and w_ns % 1_000_000_000 == 0:
+        grain = 1.0
+    return _MID_SAVE_SPREAD_S + grain + _MID_SAVE_S_PER_MB * max(newer_size, 0) / 1e6
 
 
 def live_mid_save(folder: Path | str) -> tuple[str, float] | None:
@@ -940,6 +968,14 @@ def wait_pair_settled(folder: Path | str, *, max_wait: float | None = None) -> b
     wait ran out. The normal path is one stat."""
     folder = Path(folder)
     limit = _MID_SAVE_WINDOW_S if max_wait is None else max_wait
+    if max_wait is None:
+        # R2 MINOR 6: a big file's (or a coarse clock's) window is longer
+        try:
+            (s_ns, s_sz), (w_ns, w_sz) = _pair_fingerprint(folder)
+            limit += _mid_save_allowance(int(s_ns), int(w_ns),
+                                         int(s_sz if s_ns >= w_ns else w_sz)) - _MID_SAVE_SPREAD_S
+        except (OSError, TypeError, ValueError):
+            pass
     deadline = time.monotonic() + limit
     while True:
         try:
@@ -952,7 +988,7 @@ def wait_pair_settled(folder: Path | str, *, max_wait: float | None = None) -> b
         left = deadline - time.monotonic()
         if left <= 0:
             return False
-        time.sleep(max(0.005, min(_MID_SAVE_POLL_S, left, _MID_SAVE_WINDOW_S - age)))
+        time.sleep(max(0.005, min(_MID_SAVE_POLL_S, left)))
 
 
 def _pair_fingerprint_quiet(folder: Path) -> tuple:

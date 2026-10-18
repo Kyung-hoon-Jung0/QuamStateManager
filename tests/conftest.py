@@ -180,14 +180,23 @@ def _isolate_runner_shared_settings(tmp_path_factory):
     yield
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "mid_save_guard: run with SA-F7's mid-save guard ON (see _no_mid_save_window)")
+
+
 @pytest.fixture(autouse=True)
-def _no_mid_save_window(monkeypatch):
+def _no_mid_save_window(request, monkeypatch):
     """SA-F7's mid-save guard judges a live pair by how far apart its two
     files' mtimes are and how recently the newer one landed. A fixture that
     builds a chip and, a second or more later, rewrites only state.json (the
     usual way a test plays "the lab wrote a field") would then wait or be
-    refused depending on how fast the suite ran. Off for every test; the
-    guard's own pins (tests/test_v151_mid_save.py) turn it on."""
+    refused depending on how fast the suite ran. Off by default; the guard's
+    own pins (tests/test_v151_mid_save.py) turn it on, and R2 MINOR 6: a test
+    or module marked ``mid_save_guard`` runs with it ON, so a few door tests
+    keep the suite from being blind to it."""
+    if request.node.get_closest_marker("mid_save_guard") is not None:
+        return
     from quam_state_manager.core import safe_io
 
     monkeypatch.setattr(safe_io, "_MID_SAVE_WINDOW_S", 0.0)

@@ -39,6 +39,9 @@ import pytest
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
 
+# R2 MINOR 6: these door tests run with the mid-save guard ON (conftest)
+pytestmark = pytest.mark.mid_save_guard
+
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 _ROOT = Path(__file__).resolve().parent.parent
 
