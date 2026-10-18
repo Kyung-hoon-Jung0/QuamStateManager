@@ -89,6 +89,10 @@ _NON_STAGING_POSTS = {
     'main.history_snapshot',
     'main.hub_link_folder',
     'main.hub_unlink_folder',
+    # v1.5.1 (T1-F9): records a data folder for the chip's history; stages nothing
+    'main.hub_link_root',
+    # UX round B2: the grid CSV export is POSTed (a long column list); it reads, never stages
+    'main.export_csv',
     'main.instrument_compare',
     'main.instrument_preview',
     'main.load',

@@ -37976,6 +37976,79 @@ def hub_unlink_folder():
     return "Folder unlinked.", 200, {"HX-Trigger": "hubLinked"}
 
 
+@bp.app_template_global("active_hub_chip_key")
+def _active_hub_chip_key() -> str:
+    """The open live chip's history dir name (the ``chip_key`` a hub link press
+    declares), or ``""``."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
+        return ""
+    d = _hub_chip_dir(ctx["path"])
+    return d.name if d is not None else ""
+
+
+@bp.route("/hub/link-root", methods=["POST"])
+def hub_link_root():
+    """v1.5.1 (T1-F9): link a data folder a history note names as "not linked
+    to this folder" -- one press from the note, through the roots the hub
+    already reads (``hub_sync.roots_for_chip``): the open project's dataset
+    roots (``project_dataset_roots.json``) when the chip is opened in a
+    QUAlibrate project, else a Datasets root decided to be this chip's (the
+    Link dialog's own decision). Only a folder the chip's ledger already holds
+    runs of is accepted. Always 200 with the words to show; ``hubLinked``
+    re-reads the surfaces only when it linked."""
+    from markupsafe import escape
+    from quam_state_manager.core import hub_versions
+    from quam_state_manager.core.history import save_chip_decision
+
+    def said(text: str, ok: bool = False):
+        body = f'<span class="hub-link-result" role="status">{escape(text)}</span>'
+        return (body, 200, {"HX-Trigger": "hubLinked"}) if ok else (body, 200)
+
+    ctx, chip_dir, error = _hub_link_context()
+    if error:
+        return said(error[0] if error[0] != "read-only" else "A read-only chip cannot be linked.")
+    root = (request.form.get("root") or "").strip()
+    if not root or not Path(root).is_dir():
+        return said("That folder is not there any more.")
+    key = _hub_root_key(root)
+    try:
+        with hub_versions._ledger(chip_dir) as store:
+            held = {_hub_root_key(p) for (p,) in store.conn.execute("SELECT path FROM roots")}
+    except Exception:  # noqa: BLE001 -- building / unreadable: nothing is linked
+        return said("The change history is not readable right now. Try again in a moment.")
+    if key not in held:
+        return said("This chip's history holds no runs of that folder.")
+    resolved = str(Path(root).resolve())
+    project = ctx.get("qualibrate_project")
+    if project:
+        data = _load_project_roots()
+        cur = data.get(project, [])
+        if all(path_match.fs_key(r) != path_match.fs_key(resolved) for r in cur):
+            data[project] = cur + [resolved]
+            try:
+                safe_io.atomic_write_json(_project_roots_file(), data)
+            except OSError as exc:
+                return said(f"The project's data folders could not be saved: {exc}")
+        current_app.config.pop("dataset_store", None)
+        where = f"project {project}'s data folders"
+    else:
+        ws = _ws()
+        if ws is not None and all(_hub_root_key(str(r)) != key for r in ws.root_folders):
+            try:
+                ws.add_root(resolved, defer_parse=True)
+            except Exception as exc:  # noqa: BLE001 -- said, nothing linked
+                return said(f"The folder could not be added to Datasets: {exc}")
+            current_app.config.pop("dataset_store", None)
+            _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
+            _save_workspace_roots()
+        save_chip_decision(current_app.instance_path, chip_dir.name, f"root:{key}", "same")
+        where = "this chip's Datasets folders"
+    _hub_sync_open(ctx)
+    return said(f"Linked: {resolved} is now one of {where}; its runs join the timeline "
+                "as the history catches up.", ok=True)
+
+
 def _alignment_jobs():
     """The app's one ``AlignmentJobs`` (RAM P7)."""
     from quam_state_manager.core.alignment_job import AlignmentJobs

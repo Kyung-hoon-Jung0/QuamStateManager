@@ -12,6 +12,17 @@
 <button type="button" class="outline btn-sm" hx-get="/hub/link-folder"
         hx-target="#hub-folder-body" hx-swap="innerHTML" onclick="HubFolders.open(this)">Link a data folder...</button>
 {% endif %}
+{% if note.code == 'unlinked_roots' and note.roots %}
+{#- v1.5.1 (T1-F9): the folder a note names as not linked gets its link, one
+    press (/hub/link-root: the project's data folders, else a Datasets
+    decision); the answer replaces the button -#}
+{% set _hk = active_hub_chip_key() %}
+{% if _hk %}{% for r in note.roots[:3] %}
+<button type="button" class="outline btn-sm hub-link-root" hx-post="/hub/link-root"
+        hx-vals='{{ {"root": r.path, "chip_key": _hk} | tojson }}' hx-target="this" hx-swap="outerHTML"
+        title="Add {{ r.path }} to the data folders of this chip, so its runs join this timeline">Link {{ r.label or r.path }}</button>
+{% endfor %}{% endif %}
+{% endif %}
 {% if note.open_chip_path %}
 {# S10 C5 (C3 review P1): opening an archived chip builds its ledger #}
 <form method="post" action="/load" class="hub-open-chip">
