@@ -43776,7 +43776,7 @@ def _dataset_write_refusal(exc: OSError):
     as busy, never as a read-only folder."""
     from quam_state_manager.core import xlock
     if isinstance(exc, xlock.LockTimeout):
-        return jsonify({"busy": True, "error": "busy -- another SM window is saving this "
+        return jsonify({"busy": True, "error": "busy: another SM window is saving this "
                         "folder's tags right now. Try again."}), 409
     return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
 

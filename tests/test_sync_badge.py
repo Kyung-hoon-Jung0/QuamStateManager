@@ -202,7 +202,10 @@ class TestWhatWasDeliberatelyLeftOut:
         import re
         routes = (_ROOT / "quam_state_manager" / "web" / "routes.py").read_text(
             encoding="utf-8")
-        drift = routes[routes.index("def state_drift("):][:5200]
+        # The whole function body, up to the next route: a fixed character window
+        # silently lost the last return once the function grew (v1.5.1).
+        _start = routes.index("def state_drift(")
+        drift = routes[_start:routes.index("\n@bp.route", _start)]
         # QA review of regenerate-r2-36 argued for the key: an open page's pill
         # kept reading "Synced" above a Re-generate note saying the live chip
         # had moved. It rides the payload ONLY for a clean context -- where the

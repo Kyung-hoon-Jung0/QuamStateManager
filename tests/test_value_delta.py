@@ -491,10 +491,13 @@ class TestTrayShowsTheDelta:
         r = loaded_client.post("/field/edit", data={
             "dot_path": "qubits.qA1.T1", "value": "0.000025"})
         assert r.status_code in (200, 409), r.data[:400]
-        tray = loaded_client.get("/state/tray")
-        if tray.status_code != 200:
-            pytest.skip("tray endpoint unavailable in this fixture")
-        body = tray.get_data(as_text=True)
-        if "qubits.qA1.T1" not in body:
+        # sync-ux: the unapplied rows are listed in the sync panel (/state/review),
+        # not in the top-bar tray, which since v1.5.1 carries the staged paths as
+        # a data attribute only -- so the row (and its delta) is checked there.
+        review = loaded_client.get("/state/review")
+        if review.status_code != 200:
+            pytest.skip("sync panel unavailable in this fixture")
+        body = review.get_data(as_text=True)
+        if 'data-path="qubits.qA1.T1"' not in body:
             pytest.skip("edit did not stage in this fixture")
         assert "val-delta" in body, body[:800]
