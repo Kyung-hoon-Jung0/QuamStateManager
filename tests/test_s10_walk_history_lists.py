@@ -320,7 +320,7 @@ def test_the_baseline_is_a_badge_never_a_pin(live_chip):
     sh = get(c, "/state-history?body=1")
     assert len(_baseline_rows(sh, SH)) == 1, "one badge"
     assert "Unpin" not in sh and LIVE_BASELINE_LABEL not in sh
-    assert "baseline of the live-change tracker" in sh
+    assert "start of &quot;Live changes since baseline&quot;" in sh   # v1.5.1 U P2-13
     assert len(_baseline_rows(get(c, "/state/versions"), SV)) == 1
     assert len(_baseline_rows(get(c, "/api/history"), HP)) == 1
 

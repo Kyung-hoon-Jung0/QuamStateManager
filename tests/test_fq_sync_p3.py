@@ -60,10 +60,10 @@ def test_a_capture_that_lands_after_the_chip_looked_is_named(app_client, tmp_pat
     doc["qubits"]["q1"]["f_01"] = 6.4e9
     live.write_text(json.dumps(doc), encoding="utf-8")    # a live write...
     body = c.get("/state/version").get_data(as_text=True)
-    assert "unrecorded" in body                           # ...not captured yet
+    assert "live not recorded" in body                    # ...not captured yet
     c.post("/api/history/snapshot")                       # the capture lands; live files untouched
     body = c.get("/state/version").get_data(as_text=True)
-    assert "unrecorded" not in body
+    assert "live not recorded" not in body and "unrecorded" not in body
     assert re.search(r'data-version="(\d{8}_\d{6}[^"]*)"', body), body
 
 

@@ -10,6 +10,11 @@
 window.AgentPill = (function () {
   var SAFETY_MS = 60000;
   var el = null, lastSeq = -1, timer = null, inFlight = false;
+  // the reservation modes in words (v1.5.1, U P2-13)
+  var MODE_WORDS = { "auto": "acts alone", "ask-writes": "asks to write", "ask-all": "asks first" };
+  var MODE_SAYS = { "auto": "the agent runs and writes within its limits without asking",
+                    "ask-writes": "a run that would write the chip waits for your approval",
+                    "ask-all": "every run the agent starts waits for your approval" };
 
   function $() { if (!el) el = document.getElementById("agent-pill"); return el; }
 
@@ -111,7 +116,13 @@ window.AgentPill = (function () {
     p.title = v.text + (v.title ? " · " + v.title : "") + " — " + (waiting ? DEST.approvals : DEST.log).says;
     var modeEl = p.querySelector(".agent-pill-mode");
     if (modeEl) {
-      if (d && d.mode) { modeEl.hidden = false; modeEl.textContent = d.mode; }
+      // v1.5.1 (U P2-13): the mode in words ("ask-writes" was jargon); its
+      // setting name stays in the title
+      if (d && d.mode) {
+        modeEl.hidden = false;
+        modeEl.textContent = MODE_WORDS[d.mode] || d.mode;
+        modeEl.title = "Agent mode: " + d.mode + (MODE_SAYS[d.mode] ? " (" + MODE_SAYS[d.mode] + ")" : "");
+      }
       else modeEl.hidden = true;
     }
     var res = p.querySelector(".agent-pill-res");

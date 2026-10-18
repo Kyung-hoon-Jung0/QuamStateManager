@@ -59,6 +59,6 @@
     "baseline: 03:49:40", when the row is the nearest recorded holder of that state -#}
 {% macro baseline_tag(r, lv, cls='') -%}
 {%- if r.baseline and lv and lv.baseline -%}
-<span class="snap-baseline {{ cls }}" title="The live-change tracker compares the live chip against this state (its baseline, set {{ lv.baseline.captured_utc | format_ts_zone }}). Reset it from the tracker's Reset baseline button.">baseline of the live-change tracker, set {{ lv.baseline.captured_utc | ts_local }}</span>
+<span class="snap-baseline {{ cls }}" title="The live-change tracker compares the live chip against this state (its baseline, set {{ lv.baseline.captured_utc | format_ts_zone }}). Reset it from the tracker's Reset baseline button.">start of &quot;Live changes since baseline&quot;, set {{ lv.baseline.captured_utc | ts_local }}</span>
 {%- endif -%}
 {%- endmacro %}

@@ -1,0 +1,8 @@
+{# v1.5.1 (U P2-13): a visible "?" beside a term whose meaning used to live
+   only in a hover title ("writer not proven", "gate", ...). A press opens
+   the explanation as text right after it; a second press closes it. A
+   <details>, so it needs no script and works in the shareable report too.
+   The explanation is plain text, never markup. #}
+{% macro jargon_q(text) -%}
+<details class="jargon"><summary class="jargon-q" aria-label="What does this mean?" title="What does this mean?">?</summary><span class="jargon-explain" role="note">{{ text }}</span></details>
+{%- endmacro %}

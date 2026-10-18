@@ -39,7 +39,8 @@
     <span class="state-version-id">Versions</span>
     {#- docs/301 F14: ``count`` may be the ledger's; "unrecorded" stays the
         snapshot fact ``ts`` was read from (``unmatched``) -#}
-    {% if ver.unmatched %}<span class="state-version-none">unrecorded</span>{% endif %}
+    {#- v1.5.1 (U P2-13): says WHAT is not recorded -#}
+    {% if ver.unmatched %}<span class="state-version-none">live not recorded</span>{% endif %}
     {% if ver.dirty %}<span class="state-version-edits" aria-label="unapplied edits">+</span>{% endif %}
     {#- S10 walk: the one history count (routes._versions_count), written as every
         history surface writes it; while the change history catches up there is

@@ -109,7 +109,7 @@ class TestVersionChip:
         # the badge appears only when history exists and live matches none of
         # it. "unsaved" stays banned (review finding 4: never name a culprit).
         assert ">Versions<" in body
-        assert "unrecorded" not in body
+        assert "unrecorded" not in body and "not recorded" not in body
         assert "unsaved" not in body
 
     def test_nothing_at_all_without_a_chip(self, tmp_path):

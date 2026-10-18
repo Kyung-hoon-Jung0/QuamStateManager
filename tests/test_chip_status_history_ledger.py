@@ -75,7 +75,7 @@ class TestHistoryDrawer:
         with sm["app"].test_request_context():
             snaps = routes._history().list_snapshots(routes._active_path())
         assert snaps == [], "fixture: a chip with a ledger and no snapshot"
-        assert "unrecorded" not in chip
+        assert "unrecorded" not in chip and "not recorded" not in chip
 
     def test_snapshots_of_one_content_count_once(self, tmp_path):
         """Review: max(snapshots, ledger states) overstated the drawer --

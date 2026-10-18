@@ -167,7 +167,7 @@ def test_the_baseline_badge_names_the_banners_time(live_chip):
     assert c.post("/state/baseline/reset").get_json()["ok"]
     sh = c.get("/state-history?body=1", headers=HX).get_data(as_text=True)
     badge = re.search(r'<span class="snap-baseline[^"]*"[^>]*>(.*?)</span></span>', sh, flags=re.S)
-    assert badge and "baseline of the live-change tracker, set" in badge.group(1)
+    assert badge and "start of &quot;Live changes since baseline&quot;, set" in badge.group(1)   # v1.5.1 U P2-13
     badge_utc = re.search(r'data-utc="([^"]+)"', badge.group(1)).group(1)
     banner = c.get("/state/drift/view?embed=1").get_data(as_text=True)
     banner_utc = re.search(r'baseline: <span class="ts-local" data-utc="([^"]+)"', banner).group(1)

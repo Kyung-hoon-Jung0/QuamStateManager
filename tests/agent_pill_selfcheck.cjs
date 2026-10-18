@@ -63,7 +63,8 @@ const now = Date.now() / 1000;
      'a running pill drops the backend and the mode from the label (they are the chip and the title)');
   window.AgentPill.render({ state: 'limited', limited_resets: '14:00', mode: 'ask-writes', session: { owner: 'human' } });
   ok(el.querySelector('.agent-pill-text').textContent === 'limited → 14:00', 'the pill renders the SHORT form');
-  ok(el.querySelector('.agent-pill-mode').hidden === false && el.querySelector('.agent-pill-mode').textContent === 'ask-writes',
+  ok(el.querySelector('.agent-pill-mode').hidden === false && el.querySelector('.agent-pill-mode').textContent === 'asks to write'
+     && /^Agent mode: ask-writes \(a run that would write/.test(el.querySelector('.agent-pill-mode').title),   // v1.5.1 U P2-13: words, the setting in the title
      'the mode rides its own chip (CSS drops it on a narrow window)');
   ok(/Agent: limited · resets 14:00 · ask-writes/.test(el.title) && /Calibration log/.test(el.title),
      'nothing is lost: the whole sentence is the tooltip: ' + el.title);

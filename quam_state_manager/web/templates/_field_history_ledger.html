@@ -1,4 +1,4 @@
-{% from '_delta_macros.html' import delta_chip, delta_pct %}{% from '_snapshot_source.html' import source_badge %}
+{% from '_jargon.html' import jargon_q %}{% from '_delta_macros.html' import delta_chip, delta_pct %}{% from '_snapshot_source.html' import source_badge %}
 {# docs/282: the value drawer on the chip's change ledger. Rows are the
    ledger's change points for the value's holder, newest first. "Set by" names
    only what the ledger proves (routes._vh_present): a run is named as the
@@ -65,7 +65,7 @@
         {% for f in pt.flag_text %}<span class="vh-flag">{{ f }}</span>{% endfor %}{{ source_badge(pt.source, 'fh-srcfolder') }}
       </td>
       <td class="fh-ts">{{ pt.t | ts_local(short=True) }}</td>
-      <td class="fh-src"><span class="fh-exp vh-by" title="{{ pt.title }}">{%- for ch in pt.label -%}{{ ch }}{% if ch in "_- " %}<wbr>{% endif %}{%- endfor -%}</span><span class="vh-sub" title="{{ pt.title }}">{{ pt.sub }}</span></td>
+      <td class="fh-src"><span class="fh-exp vh-by" title="{{ pt.title }}">{%- for ch in pt.label -%}{{ ch }}{% if ch in "_- " %}<wbr>{% endif %}{%- endfor -%}</span><span class="vh-sub" title="{{ pt.title }}">{{ pt.sub }}</span>{% if 'not proven' in pt.sub or 'unknown' in pt.sub %}{{ jargon_q(pt.title) }}{% endif %}</td>
       <td class="fh-act">
         {% if not pt.is_current and pt.usable and pt.fill %}
         <button type="button" class="fh-revert" data-value="{{ pt.fill }}"

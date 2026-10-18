@@ -475,7 +475,7 @@ class TestTheSurfaces:
                 "{% from '_journal_changes.html' import run_changes %}{{ run_changes(c) }}").render(
                 c={"writes": [], "not_kept": by_run[4]["not_kept"], "first_state_n": None})
         # S10 walk (round 4): old -> new wording (what the next read proves)
-        assert "Saved in its own folder, not in the next recorded state" in html
+        assert "Saved by this run, not in the next recorded state" in html   # v1.5.1 U P2-13
         assert "#5 still had the earlier value" in text(html)
         assert "not kept" not in html and "stayed on the chip" not in html
 

@@ -15348,3 +15348,24 @@ svg .iw-title { fill: var(--pico-muted-color); }
    the file so it also wins over the composer lift (body.ag-composer-on). */
 body.undo-trail-on #status-bar { bottom: calc(5rem + var(--undo-trail-h, 0px) + 0.5rem); }
 .undo-trail-age { white-space: nowrap; }
+
+/* v1.5.1 (U P2-13): a visible "?" beside a term (templates/_jargon.html, a
+   <details>): its press shows the meaning as text. Pico's details/summary
+   chrome (block, margin, arrow) is undone so it sits inline after the term. */
+details.jargon { display: inline; margin: 0; padding: 0; border: 0; }
+details.jargon > summary.jargon-q {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.15em; height: 1.15em; margin: 0 0 0 .25em; padding: 0;
+    font-size: .78em; font-weight: 700; line-height: 1; vertical-align: .05em;
+    text-transform: none; color: var(--pico-muted-color); list-style: none;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 50%; cursor: pointer;
+}
+details.jargon > summary.jargon-q::-webkit-details-marker { display: none; }
+details.jargon > summary.jargon-q::after { display: none; }
+details.jargon > summary.jargon-q:hover, details.jargon > summary.jargon-q:focus-visible,
+details.jargon[open] > summary.jargon-q { color: var(--pico-primary); border-color: var(--pico-primary); }
+details.jargon > .jargon-explain {
+    display: block; margin: .2rem 0 .1rem; padding: .25rem .45rem; font-size: .78rem; font-weight: 400;
+    text-transform: none; letter-spacing: normal; color: var(--pico-color); white-space: normal;
+    background: color-mix(in srgb, var(--pico-primary) 8%, transparent); border-radius: 4px;
+}

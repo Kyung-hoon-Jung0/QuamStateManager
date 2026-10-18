@@ -1,3 +1,4 @@
+{% from '_jargon.html' import jargon_q %}
 {# The day's body: counts, unassigned lines, digest strip, cards. #}
 {% from '_delta_macros.html' import before_after %}
 {% from '_journal_card.html' import card, more_row %}{% from '_journal_strip.html' import strip %}
@@ -35,7 +36,7 @@
     {#- P1-4 (UX round): this count is SM's own writes (Apply, Undo, Auto-Sync);
         what the runs changed is counted beside it, so a lab day never reads "0 writes" -#}
     <span class="jr-stat jr-stat-sm" title="Writes SM made to the chip on this day (Apply, Undo, Auto-Sync)"><b>{{ '{:,}'.format(n_cards) }}</b> SM write{{ 's' if n_cards != 1 }}{% if s.counts.write_cards is defined and s.counts.writes != n_cards %} ({{ '{:,}'.format(s.counts.writes) }} values){% endif %}</span>
-    {% if s.counts.run_values is defined %}<span class="jr-stat jr-stat-runvals" title="Values the day's runs changed in the chip state, run by run. Which program wrote them is not proven."><b>{{ '{:,}'.format(s.counts.run_values) }}</b> value{{ 's' if s.counts.run_values != 1 }} changed by runs <span class="muted">(writer not proven)</span></span>{% endif %}
+    {% if s.counts.run_values is defined %}<span class="jr-stat jr-stat-runvals" title="Values the day's runs changed in the chip state, run by run. Which program wrote them is not proven."><b>{{ '{:,}'.format(s.counts.run_values) }}</b> value{{ 's' if s.counts.run_values != 1 }} changed by runs <span class="muted">(writer not proven)</span>{{ jargon_q("Values the day's runs changed in the chip state, run by run. A run's saved state carries the new value, but nothing proves which program wrote it (the run, or an edit made outside SM before it).") }}</span>{% endif %}
     {% if s.counts.other_chip %}<span class="jr-stat jr-stat-bad" title="runs whose saved state may be another chip's, not counted above"><b>{{ '{:,}'.format(s.counts.other_chip) }}</b> maybe another chip's</span>{% endif %}
     {% if s.counts.biggest_write %}<span class="jr-stat muted">largest Δ <code class="jr-path" data-path="{{ s.counts.biggest_write.path }}">{{ s.counts.biggest_write.path }}</code>
         {{ before_after(s.counts.biggest_write.old, s.counts.biggest_write.new) }}</span>{% endif %}
@@ -85,7 +86,7 @@
 
 <div class="jr-sec-head jr-runs-head"{% if not s.runs_shown %} hidden style="display:none"{% endif %}>
     <span class="jr-sec-title">Runs <span class="jr-sec-count">{{ '{:,}'.format(s.runs_shown) }}</span></span>
-    <span class="jr-sec-note muted">time · node · targets · outcome · gate · run · who — click a row for what it wrote and why</span>
+    <span class="jr-sec-note muted">time · node · targets · outcome · gate{{ jargon_q("gate: Auto Calibrate's automatic checks of a run's fit (its outcome, physical ranges, the raw data), with the run's own saved state as reference: pass, suspect, fail or unknown; checking while it is computed.") }} · run · who — click a row for what it wrote and why</span>
 </div>
 
 {% if s.window %}<p class="muted jr-window-note">Showing <b class="jr-window-n">{{ '{:,}'.format(s.cards_shown|length) }}</b> of {{ '{:,}'.format(s.window.n) }} rows {{ 'that match' if s.window.filtered else 'on this day' }}.</p>
