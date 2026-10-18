@@ -2185,6 +2185,9 @@
                 }).catch(function () {})
                 .then(function () { _schedPolling = false; });
         }
+        // R3 MINOR 6: the drift poll (every page) wakes this one when a run
+        // starts on the chip after this tab stopped asking
+        window._schedulerWake = function () { _schedLive = true; poll(); };
         scope.ready(function () {
             poll();
             scope.interval(poll, 2500);

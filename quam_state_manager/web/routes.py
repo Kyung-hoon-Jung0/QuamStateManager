@@ -30400,6 +30400,29 @@ def _auto_pull_due(ctx: dict | None) -> bool:
     return True
 
 
+def _runner_sig() -> str:
+    """R3 MINOR 6: a cheap token that moves when a run starts or ends on the
+    open chip -- the scheduler queue file's mtime (an Agent run_node and the
+    Experiment Runner both write it) and whether this process runs a queue
+    or a plan. Without the runner UI a tab polls /scheduler/status once and
+    stops; the drift poll (every page) carries this so the tab asks again
+    when it moves. One os.stat; never raises."""
+    try:
+        inst = _sched_inst()
+        try:
+            mt = scheduler.queue_path(inst).stat().st_mtime_ns
+        except OSError:
+            mt = 0
+        live = scheduler.is_running(inst)
+        mod = sys.modules.get("quam_state_manager.core.autofit.engine")
+        if not live and mod is not None:
+            eng = mod.get_engine(inst)
+            live = bool(eng is not None and eng.is_running())
+        return f"{mt}:{int(live)}"
+    except Exception:  # noqa: BLE001 -- a poll rider never breaks the poll
+        return ""
+
+
 @bp.route("/state/drift")
 def state_drift():
     """Cheap poll: how many params the live chip changed since the baseline.
@@ -30465,6 +30488,7 @@ def state_drift():
     # a tray rendered "durable" before its background write failed kept
     # saying so (the poll's signature did not move, nothing re-rendered it)
     _dur = _tray_durable()
+    _rsig = _runner_sig()
     try:
         _note_live_write_for_ingest(ctx)
     except Exception:   # noqa: BLE001
@@ -30472,18 +30496,21 @@ def state_drift():
     if not _drift_tracked(ctx):
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync, tray_durable=_dur)
+                       live_diverged=ld, sync=sync, tray_durable=_dur,
+                       runner_sig=_rsig)
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
         logger.debug("drift compute failed", exc_info=True)
         return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync, tray_durable=_dur)
+                       live_diverged=ld, sync=sync, tray_durable=_dur,
+                       runner_sig=_rsig)
     if info is None:
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync, tray_durable=_dur)
+                       live_diverged=ld, sync=sync, tray_durable=_dur,
+                       runner_sig=_rsig)
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
@@ -30492,7 +30519,7 @@ def state_drift():
                     "baseline_utc": info["baseline_utc"],
                     "auto_pull": auto_pull, "hist_seq": hist_seq,
                     "edit_seq": _edit_seq(), "live_diverged": ld,
-                    "sync": sync, "tray_durable": _dur})
+                    "sync": sync, "tray_durable": _dur, "runner_sig": _rsig})
 
 
 @bp.route("/state/drift/view")

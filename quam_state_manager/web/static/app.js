@@ -5593,6 +5593,16 @@ window.livePushExtrasLine = function (typedPaths) {
                 // THIS window's tray and the values on screen -- in place, never
                 // swapping what the reader is looking at (docs/87/144).
                 onEditSeq(d, _trayAtIssue);
+                // R3 MINOR 6: a run started (or ended) on this chip since the
+                // scheduler poll last asked -- that poll stops when nothing
+                // runs (no runner UI), so this every-page poll wakes it
+                if (d && typeof d.runner_sig === "string" && d.runner_sig) {
+                    if (window._runnerSigSeen !== undefined && d.runner_sig !== window._runnerSigSeen
+                            && window._schedulerWake) {
+                        try { window._schedulerWake(); } catch (e) {}
+                    }
+                    window._runnerSigSeen = d.runner_sig;
+                }
                 // R3 MINOR 4: the leave guard reads data-tray-durable; the
                 // checkpoint can start (or stop) failing with no re-render
                 if (d && typeof d.tray_durable === "boolean") {
