@@ -1487,6 +1487,7 @@ window.showWaveformPlot = function(btn) {
         table.setAttribute('data-sorted-dir', dir);
     });
 
+    window._reapplyTableSort = function (t) { _reapplySort(t); };   // SA-F10
     function _reapplySort(table) {
         if (!table) return;
         var col = table.getAttribute('data-sorted-col');
@@ -5560,6 +5561,87 @@ window.wcGcDismiss = function() {
    surface is open; only a structural change (keys added/removed, or an
    uncapped diff) still falls back to the wholesale refresh — with the
    scroll position carried across it. */
+/* SA-F10: a page that renders chip values server-side into a plain table
+   (Qubits, Pairs, Resonators, Flux, Couplers, the comparison table) has no
+   leaf LiveSurfacePatch can reach, so after a Take live or an Auto-Sync merge
+   it kept the old values while the top bar said "In sync". On the one "the
+   working copy moved" signal (sm:wc-moved, wc-moved.js) -- the one the
+   Live-Edit physical-unit cells, Chip Status and the CZ plan follow -- each
+   such table (marked [data-refresh-rows]) re-reads its ROWS only: the table
+   element, its header, the search box, the sort and the selected row stay,
+   and the typed filter is applied again. The pane is never swapped, and a
+   table the user is typing into is left alone until focus leaves it. */
+window.EntityRowsRefresh = (function () {
+    var timer = null, waitingOn = null, seq = 0;
+    function tables() {
+        var pane = document.getElementById("table-pane");
+        return pane ? Array.prototype.slice.call(
+            pane.querySelectorAll("table[data-refresh-rows][id]")) : [];
+    }
+    function typingIn(tbls) {
+        var a = document.activeElement;
+        if (!a || a === document.body) return null;
+        if (!(a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return null;
+        for (var i = 0; i < tbls.length; i++) if (tbls[i].contains(a)) return tbls[i];
+        return null;
+    }
+    function rowKey(tr) {
+        return tr && (tr.getAttribute("hx-get") || tr.getAttribute("data-qubit-id")
+                      || tr.getAttribute("data-pair-id"));
+    }
+    function after(t, selKey) {
+        if (!t.isConnected) return;
+        if (window._reapplyTableSort) window._reapplyTableSort(t);
+        var inp = document.querySelector('input[oninput*="\'' + t.id + '\'"]');
+        if (inp && inp.value && window.filterTable) window.filterTable(inp, t.id);
+        if (selKey) {
+            Array.prototype.forEach.call(t.querySelectorAll("tbody tr"), function (tr) {
+                if (rowKey(tr) === selKey) tr.classList.add("row-selected");
+            });
+        }
+    }
+    function refresh() {
+        timer = null;
+        var tbls = tables();
+        if (!tbls.length || !window.htmx) return Promise.resolve(false);
+        var pane = document.getElementById("table-pane");
+        if (pane && pane.classList.contains("htmx-request")) {   // the pane is being re-read anyway
+            schedule(400);
+            return Promise.resolve(false);
+        }
+        var held = typingIn(tbls);
+        if (held) {
+            if (waitingOn !== held) {
+                waitingOn = held;
+                held.addEventListener("focusout", function once() {
+                    held.removeEventListener("focusout", once);
+                    waitingOn = null;
+                    schedule();
+                });
+            }
+            return Promise.resolve(false);
+        }
+        var my = ++seq;
+        var url = location.pathname + location.search;
+        return Promise.all(tbls.map(function (t) {
+            var tb = t.querySelector("tbody");
+            if (!tb) return null;
+            var selKey = rowKey(t.querySelector("tbody tr.row-selected"));
+            var p = window.htmx.ajax("GET", url, { target: tb, select: "#" + t.id + " > tbody",
+                                                  swap: "outerHTML" });
+            return Promise.resolve(p).then(function () { if (my === seq) after(t, selKey); });
+        })).then(function () { return true; }, function () { return false; });
+    }
+    function schedule(ms) {
+        clearTimeout(timer);
+        timer = setTimeout(refresh, ms || 120);
+    }
+    document.addEventListener("sm:wc-moved", function () { schedule(); });
+    // a parked pane brought back by PaneState was drawn before the move
+    document.addEventListener("paneRestored", function () { schedule(); });
+    return { refresh: refresh, _schedule: schedule };
+})();
+
 window.LiveSurfacePatch = (function () {
     function _esc(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s; }
     function _kindClass(v) {

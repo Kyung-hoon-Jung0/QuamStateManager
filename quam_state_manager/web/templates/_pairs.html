@@ -16,7 +16,7 @@
 {# CR-native columns (docs/54): drive levers + canonical 2Q fidelity + the
    emulated effective IF; rows arrive adjacency-sorted so both DIRECTIONS of
    one physical edge sit together. #}
-<table id="pairs-table" class="data-table" role="grid">
+<table id="pairs-table" data-refresh-rows class="data-table" role="grid">
     <thead>
         <tr>
             <th class="sortable" data-col="0" data-type="str">Pair</th>
@@ -81,7 +81,7 @@
     </tbody>
 </table>
 {% else %}
-<table id="pairs-table" class="data-table" role="grid">
+<table id="pairs-table" data-refresh-rows class="data-table" role="grid">
     <thead>
         <tr>
             <th class="sortable" data-col="0" data-type="str">Pair</th>
