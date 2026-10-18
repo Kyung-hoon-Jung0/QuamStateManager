@@ -9,9 +9,23 @@
    fixed at the source, so warning about it would only teach users to ignore
    this strip. #}
 {% if instance_peers and compact is defined and compact %}
-{#- sync-ux 2026-09-25 (default 3): the one-row top bar carries a marker, not a strip -#}
-<span class="sync-marker sync-marker-peers" role="status"
-      title="{{ active_name or 'This chip' }} is also open in {% if instance_peers|length == 1 %}another State Manager ({{ instance_peers[0].label }}){% else %}{{ instance_peers|length }} other State Managers ({{ instance_peers|map(attribute='label')|join(', ') }}){% endif %}. Edits there and here overwrite each other (one shared working copy)">&#10697;&nbsp;{{ instance_peers|length + 1 }}</span>
+{#- sync-ux 2026-09-25 (default 3): the one-row top bar carries a marker, not a strip.
+    v1.5.1 (U P2-14): the marker says what it counts ("2 windows") and a click
+    lists them; it was a glyph and a number with its meaning in a hover title -#}
+{%- set _n = instance_peers|length + 1 -%}
+{%- set _who = active_chip_label() or active_name or 'This chip' -%}
+<details class="sync-peers">
+<summary class="sync-marker sync-marker-peers" role="status"
+      title="{{ _who }} is also open in {% if instance_peers|length == 1 %}another State Manager ({{ instance_peers[0].label }}){% else %}{{ instance_peers|length }} other State Managers ({{ instance_peers|map(attribute='label')|join(', ') }}){% endif %}. Edits there and here overwrite each other (one shared working copy). Click for the list">&#10697;&nbsp;{{ _n }} windows</summary>
+<div class="sync-peers-list" role="group" aria-label="State Manager windows on this chip">
+  <p><b>{{ _who }}</b> is open in {{ _n }} State Manager windows. Edits in one overwrite the other's: they share one working copy.</p>
+  <ul>
+    <li>this window</li>
+    {% for p in instance_peers %}<li>{{ p.label }}{% if p.started_utc %} &middot; open since {{ p.started_utc | format_ts_zone }}{% endif %}</li>{% endfor %}
+  </ul>
+  <p class="muted">Close the others, or keep editing in one window only.</p>
+</div>
+</details>
 {% elif instance_peers %}
 <div class="topo-change-banner multi-instance-banner" id="multi-instance-banner" role="alert">
     <span class="topo-change-banner-text">

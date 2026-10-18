@@ -14656,7 +14656,19 @@ tr.diag-row-collapsed { display: none; }
 .sp-unrecovered .sp-unrec-acts { display: flex; gap: .4rem; }
 .sp-unrecovered .sp-unrec-acts button { width: auto; margin: 0; }
 .multi-instance-slot:empty { display: none; }
-.multi-instance-slot .sync-marker-peers { border-color: #f59e0b; color: #f59e0b; cursor: help; font-size: .78em; }
+.multi-instance-slot .sync-marker-peers { border-color: #f59e0b; color: #f59e0b; cursor: pointer; font-size: .78em; white-space: nowrap; }
+/* v1.5.1 (U P2-14): the peers marker opens the list of windows */
+.multi-instance-slot details.sync-peers { position: relative; display: inline-block; margin: 0; padding: 0; border: 0; }
+.multi-instance-slot details.sync-peers > summary { list-style: none; margin: 0; }
+.multi-instance-slot details.sync-peers > summary::-webkit-details-marker { display: none; }
+.multi-instance-slot details.sync-peers > summary::after { display: none; }
+.multi-instance-slot .sync-peers-list { position: absolute; top: calc(100% + 6px); right: 0; z-index: 1200;
+    width: max-content; max-width: 22rem; padding: .5rem .7rem; font-size: .8rem; font-weight: 400;
+    background: var(--pico-card-background-color); color: var(--pico-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+.multi-instance-slot .sync-peers-list p { margin: 0 0 .3rem; }
+.multi-instance-slot .sync-peers-list ul { margin: 0 0 .3rem 1rem; padding: 0; }
+.multi-instance-slot .sync-peers-list li { margin: 0; list-style: disc; }
 /* the collapsed top bar floats the control (html.topbar-hidden rules above) */
 html.topbar-hidden #pending-tray > .sync-control { display: inline-flex; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap):not(.sync-control) { display: none; }
