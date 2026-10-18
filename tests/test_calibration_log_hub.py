@@ -982,7 +982,7 @@ def test_gates_are_checked_in_the_background_for_a_person(world, monkeypatch):
     monkeypatch.setattr(story, "_compute_gate", slow_gate)
     _run_event(world, {"v": 1}, clock="11:00:00", run_id=1)
     html = world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True)
-    assert "gate ...</span>" in html and "Checking 1 gate in the background" in html
+    assert "checking gate</span>" in html and "Checking 1 gate in the background" in html   # v1.5.1 U P2-25
     deadline = _time.monotonic() + 30
     while story.gates_pending() and _time.monotonic() < deadline:
         _time.sleep(0.05)

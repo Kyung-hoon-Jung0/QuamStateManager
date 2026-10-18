@@ -70,7 +70,7 @@
             <span class="jr-targets">{{ c.targets|join(' ') }}</span>
             <span class="jr-pills">
                 <span class="jr-badge jr-out-{{ c.outcome or 'none' }}" title="the node's own outcome">{% if c.outcome == 'ok' %}✓ ok{% elif c.outcome == 'failed' %}✗ failed{% elif c.outcome == 'mixed' %}mixed{% else %}no outcome{% endif %}</span>
-                {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}" title="{% if c.gate.verdict == 'pending' %}the gate is being checked; the page refreshes when it is done{% else %}deterministic gate, anchored on the run's own saved state{% if c.gate.reason %} — {{ c.gate.reason }}{% endif %}{% endif %}">gate {{ '...' if c.gate.verdict == 'pending' else c.gate.verdict }}</span>{% endif %}
+                {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}" title="{% if c.gate.verdict == 'pending' %}the gate is being checked; the page refreshes when it is done{% else %}deterministic gate, anchored on the run's own saved state{% if c.gate.reason %} — {{ c.gate.reason }}{% endif %}{% endif %}">{{ 'checking gate' if c.gate.verdict == 'pending' else 'gate ' ~ c.gate.verdict }}</span>{% endif %}
                 {% for f in c.flags or [] %}<span class="jr-badge jr-flag jr-flag-{{ f.key }}" title="{{ f.note }}">{{ f.label }}</span>{% endfor %}
             </span>
             {% set run_url = '/dataset/' ~ c.uid if c.eid and c.uid else '/dataset/by-run/' ~ c.run_id %}
