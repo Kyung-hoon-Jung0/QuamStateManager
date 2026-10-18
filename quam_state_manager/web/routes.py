@@ -32648,24 +32648,49 @@ def export_csv():
         "f_01", "readout_frequency", "T1", "T2ramsey",
         "readout_amplitude", "readout_threshold", "gate_fidelity_avg",
     ]
+    from quam_state_manager.core import units as _units
     if entity == "pairs":
         rows = _export_pair_rows(engine, props)
         name = "quam_pairs.csv"
+        unit_of = lambda p: _units.stored_unit_label(_units.pair_field_key(p))  # noqa: E731
     else:
         rows = engine.summary_table(props)
         chain = request.args.get("chain")
         if chain:
             rows = [r for r in rows if str(r.get("id", "")).startswith(f"q{chain}")]
         name = "quam_summary.csv"
-    return _csv_download(["id"] + props, rows, name)
+        unit_of = _units.stored_unit_label
+    # R3B MINOR 2: the values are the STORED ones, so each header names the
+    # unit a field is stored in where it is known (f_01 [Hz], T1 [s],
+    # x180_length [ns]) -- as the Live State Edit grid export does
+    heads = {}
+    for p in props:
+        u = unit_of(p)
+        heads[p] = f"{p} [{u}]" if u else p
+    rows = [{"id": r.get("id"), **{heads[p]: r.get(p) for p in props}} for r in rows]
+    return _csv_download(["id"] + [heads[p] for p in props], rows, name)
+
+
+#: R3B MINOR 2: a text cell a spreadsheet would read as a formula (OWASP CSV
+#: injection) is written with a leading apostrophe
+_CSV_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value):
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_LEAD):
+        return "'" + value
+    return value
 
 
 def _csv_download(fieldnames: list, rows: list, name: str):
+    """A CSV download: text cells that start like a formula are neutralised,
+    and the file starts with a UTF-8 BOM so a spreadsheet reads non-ASCII
+    text (a chip name, a unit's micro sign) correctly."""
     output = io.StringIO()
+    csv.writer(output).writerow([_csv_cell(f) for f in fieldnames])
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    writer.writerows(rows)
-    mem = io.BytesIO(output.getvalue().encode("utf-8"))
+    writer.writerows({k: _csv_cell(v) for k, v in r.items()} for r in rows)
+    mem = io.BytesIO(output.getvalue().encode("utf-8-sig"))
     mem.seek(0)
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name=name)
 
