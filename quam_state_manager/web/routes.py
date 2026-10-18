@@ -12022,7 +12022,8 @@ def _no_chip_msg() -> str:
     if ro:
         return (f"No chip is open (SM restarted?). Re-open {ro['name']}: "
                 "the Resume button on the start page.")
-    return "No chip is open. Open one: Projects, or State Load in the sidebar."
+    return ("No chip is open (SM restarted?). To reopen the chip: Projects, "
+            "or State Load in the sidebar.")
 
 
 @bp.route("/field/lab-watch", methods=["GET", "POST"])
