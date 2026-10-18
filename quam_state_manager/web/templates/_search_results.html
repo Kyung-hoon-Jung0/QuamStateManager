@@ -7,7 +7,7 @@
     {#- v1.5.1 (U P2-19): a page or an action named by the query (the Ctrl+K
         list, routes._NAV_PAGES) is offered above the chip's fields -#}
     {% if pages %}
-    <div class="search-pages" role="group" aria-label="Pages and actions">
+    <div class="search-pages">
         <span class="muted">Pages and actions:</span>
         {% for p in pages %}
         {% if p.action == 'settings' %}<button type="button" class="outline btn-sm search-page" onclick="toggleSettings(this)">{{ p.label }}</button>
