@@ -64,7 +64,7 @@ def test_a_capture_that_lands_after_the_chip_looked_is_named(app_client, tmp_pat
     c.post("/api/history/snapshot")                       # the capture lands; live files untouched
     body = c.get("/state/version").get_data(as_text=True)
     assert "unrecorded" not in body
-    assert re.search(r"The live chip is on recorded version (\d{8}_\d{6}\S*)", body), body
+    assert re.search(r'data-version="(\d{8}_\d{6}[^"]*)"', body), body
 
 
 # --------------------------------------------------------------------- (b)

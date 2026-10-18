@@ -122,7 +122,7 @@ class TestVersionChip:
         body = client.get("/state/version").get_data(as_text=True)
         # docs/126: the version id moved to the TOOLTIP — the button label is
         # the word, the id is detail on demand.
-        m = re.search(r"The live chip is on recorded version (\d{8}_\d{6}\S*)", body)
+        m = re.search(r'data-version="(\d{8}_\d{6}[^"]*)"', body)
         assert m, body
         assert ">Versions<" in body
 
@@ -272,13 +272,13 @@ class TestReviewFindings:
         assert "state-version-edits" in dirty
         # the version id itself is still shown (in the tooltip since docs/126)
         # -- it is still true, just no longer the whole truth
-        assert re.search(r"recorded version \d{8}_", dirty)
+        assert re.search(r'data-version="\d{8}_', dirty)
         assert "not in it yet" in dirty
 
     def test_the_tooltip_never_calls_the_live_id_the_working_state(self, client):
         client.post("/state/archive", data={"tag": "t"})
         body = client.get("/state/version").get_data(as_text=True)
-        assert "The live chip is on recorded version" in body
+        assert "The live chip is on the version recorded" in body
 
 
 class TestTheAuditsHonestyFindings:

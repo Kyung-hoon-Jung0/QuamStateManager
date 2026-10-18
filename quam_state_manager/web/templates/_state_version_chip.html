@@ -27,7 +27,11 @@
         hx-get="/state/versions" hx-target="#state-version-panel" hx-swap="innerHTML"
         onclick="StateVersions.toggle()"
         aria-haspopup="dialog" aria-expanded="false"
-        title="{% if ver.ts %}The live chip is on recorded version {{ ver.ts }}.{% else %}No recorded version holds exactly the live chip's content (an out-of-band write or an applied edit puts it here).{% endif %}{% if ver.dirty %} State Manager holds edits that are not in it yet — apply them and a new version is recorded.{% endif %} Click for the history — compare any two, or go back to one.">
+        {#- v1.5.1 (U P2-17): the version is named by WHEN it was recorded, in the
+            page's zone -- the raw id is UTC digits and read as a wrong clock;
+            it stays machine-readable on data-version -#}
+        {% if ver.ts %}data-version="{{ ver.ts }}"{% endif %}
+        title="{% if ver.ts %}The live chip is on the version recorded {{ ver.ts | format_ts_zone }}.{% else %}No recorded version holds exactly the live chip's content (an out-of-band write or an applied edit puts it here).{% endif %}{% if ver.dirty %} State Manager holds edits that are not in it yet — apply them and a new version is recorded.{% endif %} Click for the history — compare any two, or go back to one.">
     {# docs/126: the label is a WORD, not the snapshot token — the raw
        `20260819_114833_6782` carried no information a user can read. The
        exact version id still lives in the tooltip and in the panel rows. #}

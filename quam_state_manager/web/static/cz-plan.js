@@ -49,13 +49,28 @@
     function fmtMHz(v, sign) { return v == null ? '—' : (sign && v > 0 ? '+' : '') + (v / 1e6).toFixed(1) + ' MHz'; }
     function fmtV(v) { return v == null ? '—' : Number(v).toFixed(4) + ' V'; }
     function pct(v) { return v == null ? '—' : (100 * v).toFixed(1) + ' %'; }
+    /* v1.5.1 (T1-F3): a time is shown in the app's display zone with its
+       offset (SnapTime, docs/244) like every other surface; the UTC text is
+       only the fallback when SnapTime is not loaded. */
+    function zoned(t, minutes) {
+        var S = window.SnapTime, d = S && S.instant ? S.instant(t) : null;
+        if (!d) return null;
+        if (!minutes) return S.display(d);
+        return S.format(d).slice(0, 16) + ' (' + S.offsetLabel(d) + ')';
+    }
+    /* an ISO time inside a server note ("first recorded <t>") reads the same */
+    function zoneText(s) {
+        return String(s == null ? '' : s).replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:?\d\d)/g,
+            function (m) { return zoned(m, false) || m; });
+    }
     function when(p) {
         if (!p || !p.t) return 'unknown';
-        var t = String(p.t).replace('T', ' ').replace(/\.\d+/, '').replace('Z', ' UTC');
+        var t = zoned(p.t, false) || String(p.t).replace('T', ' ').replace(/\.\d+/, '').replace('Z', ' UTC');
         return (p.run_id != null ? 'run #' + p.run_id + ' · ' : '') + t;
     }
     function stamp(t) {
-        return t ? String(t).replace('T', ' ').replace(/:\d\d(\.\d+)?Z$/, ' UTC').replace(/\.\d+/, '') : 'time unknown';
+        if (!t) return 'time unknown';
+        return zoned(t, true) || String(t).replace('T', ' ').replace(/:\d\d(\.\d+)?Z$/, ' UTC').replace(/\.\d+/, '');
     }
     function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
@@ -512,7 +527,7 @@
             '<dt>Fidelity</dt><dd>' + (fl.length ? fl.join('<br>') : '—') + '</dd>' +
             '<dt>Last set</dt><dd>' + (cal.last_set ? esc(when(cal.last_set)) + ' <small class="muted">(' +
                 esc(setWords(cal.last_set, cal.proven)) + ')</small>' :
-                '<span class="muted">unknown' + (cal.note ? ' — ' + esc(cal.note) : '') + '</span>') + '</dd>' +
+                '<span class="muted">unknown' + (cal.note ? ' — ' + esc(zoneText(cal.note)) : '') + '</span>') + '</dd>' +
             (count ? '<dt>Staleness</dt><dd><a href="#czp-notes-box" class="czp-notes-link czp-warn-text">' +
                 plural(count, 'input changed', 'inputs changed') + ' after this operation was set</a></dd>' : '') +
             '</dl></div>');
@@ -666,7 +681,7 @@
                     if (!o || !o.last_set) {
                         // compact in the table; what is known (first record, a value that differs) on hover
                         var first = !!(o && o.note && /first recorded/.test(o.note));
-                        td.innerHTML = '<span class="muted"' + (o && o.note ? ' title="' + esc(o.note) + '"' : '') + '>unknown' +
+                        td.innerHTML = '<span class="muted"' + (o && o.note ? ' title="' + esc(zoneText(o.note)) + '"' : '') + '>unknown' +
                             (first ? ' · first recorded only' : '') + '</span>';
                         return;
                     }
