@@ -33673,6 +33673,11 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
     # (the note carries a short-delay self-refetch; the 60 s version poll
     # would otherwise leave placeholders visible for up to a minute).
     hydrating = ws.hydrating_roots() if ws is not None else set()
+    # v1.5.1 (SB-P2-6): roots whose folder is gone (filtered trees pass no
+    # ws: the app's workspace answers for them)
+    from flask import has_app_context as _has_app
+    _wsm = ws if ws is not None else (current_app.config.get("workspace") if _has_app() else None)
+    missing = _wsm.missing_roots() if _wsm is not None and hasattr(_wsm, "missing_roots") else set()
     # docs/142 B4: collapsed DATE groups ship an empty <ul> and fetch their
     # rows on first open -- 5,000 runs was ~4 MB / ~45k DOM nodes of markup
     # nobody had expanded. Only the unfiltered tree (a filtered tree must
@@ -33707,7 +33712,7 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
             pass
     return {"tree": tree or {}, "nested": nested, "tree_truncated": truncated,
             "tree_hydrating": hydrating, "lazy_groups": lazy_groups,
-            "eager_tpaths": eager_tpaths}
+            "eager_tpaths": eager_tpaths, "tree_missing": missing}
 
 
 @bp.route("/workspace/add", methods=["POST"])
@@ -33734,6 +33739,18 @@ def workspace_add():
         entries = ws.add_root(folder, defer_parse=True)   # docs/142 listing-first
     except Exception as e:
         return render_template("_status.html", message=str(e), level="error"), 400
+    # v1.5.1 (SB-P2-6): "Re-point" on a folder that is gone -- the new folder
+    # is added, then the gone one stops being listed (only when it is still
+    # gone: a press never removes a folder that is there)
+    _replace = (request.form.get("replace") or "").strip()
+    _removed = []
+    if _replace and _replace in getattr(ws, "missing_roots", set)():
+        _keys_before = {_folder_key(c) for c in _dataset_candidate_folders(fast=True)}
+        ws.remove_root(_replace)
+        _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
+        _removed = sorted(_keys_before - {_folder_key(c) for c in _dataset_candidate_folders(fast=True)})
+        _retired_dataset_keys().update(_removed)
+        _strip_project_root(_replace)
 
     # Invalidate cached DatasetStore so it rebuilds with new roots
     current_app.config.pop("dataset_store", None)
@@ -33750,7 +33767,7 @@ def workspace_add():
         message=f"Added {len(entries)} experiment(s)"))
     # QA datasets-r2-26: an open Datasets page re-reads its table (rows,
     # folder chips, count) -- it only rebuilds from a full payload.
-    resp.headers["HX-Trigger"] = json.dumps({"workspaceRootsChanged": {"removed": []}})
+    resp.headers["HX-Trigger"] = json.dumps({"workspaceRootsChanged": {"removed": _removed}})
     return resp
 
 

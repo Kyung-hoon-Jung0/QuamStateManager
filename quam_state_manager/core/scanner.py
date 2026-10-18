@@ -322,6 +322,10 @@ class Workspace:
         # run stayed standalone until an unrelated run landed. A few stats.
         self._incomplete: dict[str, dict[str, float]] = {}
         self._rescan_gates: dict[str, threading.Lock] = {}
+        # v1.5.1 (SB-P2-6): roots whose folder is GONE (not found, as opposed
+        # to transiently unreadable). The sidebar marks them and offers
+        # Remove / Re-point instead of listing their last-scanned runs.
+        self._missing: set[str] = set()
 
     @property
     def version(self) -> int:
@@ -330,6 +334,11 @@ class Workspace:
         cheaply and re-fetches the tree only when it actually changed, instead
         of rebuilding the DOM every 60 s regardless."""
         return self._version
+
+    def missing_roots(self) -> set[str]:
+        """v1.5.1 (SB-P2-6): root keys whose folder was not found at the
+        last staleness check (moved, renamed or deleted)."""
+        return set(self._missing)
 
     def hydrating_roots(self) -> set[str]:
         """docs/142: roots whose listing-first scan is still parsing
@@ -693,6 +702,7 @@ class Workspace:
             self.tree = {k: v for k, v in self.tree.items() if k != key}
             self._scan_spines.pop(key, None)
             self._scan_probes.pop(key, None)
+            self._missing.discard(key)          # v1.5.1 (SB-P2-6)
             for entry in removed_entries:
                 resolved = entry.quam_state_path.resolve()
                 self._entries_by_path.pop(resolved, None)
@@ -817,6 +827,29 @@ class Workspace:
         """
         rescanned = False
         for root in list(self.root_folders):
+            # v1.5.1 (SB-P2-6): a root that is GONE (not found -- a moved or
+            # deleted folder, not a transient read error) is marked, with a
+            # version bump so the sidebar re-renders; one that comes back is
+            # rescanned
+            key = str(root)
+            try:
+                os.stat(root)
+                gone = False
+            except FileNotFoundError:
+                gone = True
+            except OSError:
+                gone = False                 # unreadable for now: keep the tree
+            if gone != (key in self._missing):
+                with self._lock:
+                    (self._missing.add if gone else self._missing.discard)(key)
+                    self._version += 1
+                if not gone:
+                    with self._rescan_gate(root):
+                        self.rescan_root(root)
+                    rescanned = True
+                    continue
+            if gone:
+                continue
             if not self._is_root_stale(root):
                 continue
             # RAM P7: single-flight per root. The run-watch worker rescans on

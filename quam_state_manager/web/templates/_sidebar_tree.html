@@ -17,14 +17,30 @@
 {% set _parts = _rp.rstrip('\\/').rsplit(_sep, 1) %}
 {% set _name = _parts[-1] if _parts[-1] else _rp %}
 {% set _dir = (_parts[0] ~ _sep) if _parts | length == 2 else '' %}
-<details class="tree-root" open>
+{# v1.5.1 (SB-P2-6): a folder that is gone is marked, with Re-point / Remove,
+   instead of listing the runs it held when last scanned #}
+{% set _gone = root_path in (tree_missing or ()) %}
+<details class="tree-root{% if _gone %} tree-root-missing{% endif %}" open>
     <summary class="tree-root-label" title="{{ root_path }}">
-        <span class="tree-root-path"><span class="tree-root-name">{{ _name }}</span>{% if _dir %}<span class="tree-root-dir">{{ _dir }}</span>{% endif %}</span>
+        <span class="tree-root-path"><span class="tree-root-name">{{ _name }}</span>{% if _dir %}<span class="tree-root-dir">{{ _dir }}</span>{% endif %}</span>{% if _gone %}<span class="tree-root-missing-tag">not found</span>{% endif %}
     </summary>
     {# Button kept out of <summary> (not a valid summary descendant) — CSS
        pins it to the summary row. #}
     <button type="button" hx-post="/workspace/remove" hx-target="#sidebar-tree"
             hx-vals='{"folder": {{ root_path | string | tojson }}}' class="btn-remove" title="Remove">&times;</button>
+    {% if _gone %}
+    <div class="tree-missing-note" role="status">
+        <small>&#9888; Folder not found: moved, renamed, deleted or out of reach. Its runs are not listed.</small>
+        <form class="tree-repoint" hx-post="/workspace/add" hx-target="#sidebar-tree" hx-swap="innerHTML">
+            <input type="hidden" name="replace" value="{{ root_path }}">
+            <input type="text" name="folder" required placeholder="Its new location"
+                   aria-label="New location of {{ _name }}">
+            <button type="submit" class="btn-sm" title="Use this folder instead of the one that is gone">Re-point</button>
+        </form>
+        <button type="button" class="btn-sm outline tree-missing-remove" hx-post="/workspace/remove" hx-target="#sidebar-tree"
+                hx-vals='{"folder": {{ root_path | string | tojson }}}' title="Stop listing this folder">Remove</button>
+    </div>
+    {% else %}
     {# docs/105 #9: the discovery walk's 50k-dir bound used to be a log line
        only — runs silently missing from this tree with no UI trace. #}
     {% if (tree_hydrating or ()) and root_path in tree_hydrating %}
@@ -70,6 +86,7 @@
        run, or one whose runs were removed) says so instead of a bare row. #}
     {% if not name_filter and not date_groups and not ((tree_hydrating or ()) and root_path in tree_hydrating) %}
     <p class="muted tree-empty-root-note"><small>No runs found under this folder yet.</small></p>
+    {% endif %}
     {% endif %}
 </details>
 {% endfor %}

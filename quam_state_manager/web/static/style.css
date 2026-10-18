@@ -1931,6 +1931,13 @@ hr.sidebar-section-divider { margin: 0.6rem 0; border-color: var(--pico-muted-bo
 .tree-root-path { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: .35em; overflow: hidden; }
 .tree-root-name { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .tree-root-dir { flex: 1 1 6ch; min-width: 4ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.62; font-size: 0.86em; direction: rtl; text-align: left; unicode-bidi: plaintext; }
+/* v1.5.1 (SB-P2-6): a workspace folder that is gone */
+.tree-root-missing-tag { flex: 0 0 auto; margin-left: .3rem; padding: 0 .3rem; border-radius: .3rem; font-size: .72em;
+    background: var(--pico-del-color, #c0392b); color: #fff; }
+.tree-missing-note { padding: .2rem .4rem .4rem; display: flex; flex-direction: column; gap: .3rem; }
+.tree-repoint { display: flex; gap: .3rem; margin: 0; }
+.tree-repoint input[type="text"] { margin: 0; padding: .15rem .4rem; font-size: .8rem; height: auto; }
+.tree-repoint .btn-sm, .tree-missing-remove { width: auto; margin: 0; padding: .1rem .5rem; font-size: .78rem; }
 /* Remove button — pinned to the <summary> row, kept out of <summary> itself.
    Sits to the LEFT of Pico's summary::after disclosure chevron (a 1rem icon at
    the far right of the flex summary) so the two no longer overlap. */
