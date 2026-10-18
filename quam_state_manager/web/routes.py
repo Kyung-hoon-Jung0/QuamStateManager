@@ -45,6 +45,7 @@ from urllib.parse import quote, urlencode
 from flask import (
     Blueprint,
     current_app,
+    g,
     has_request_context,
     jsonify,
     make_response,
@@ -570,11 +571,34 @@ def _request_actor() -> str:
 
 
 def _active_ctx() -> dict[str, Any] | None:
-    """Return the currently active context dict, or *None*."""
+    """Return the currently active context dict, or *None*.
+
+    Inside a door that pinned its captured ctx (:func:`_pin_request_ctx`),
+    the pinned one: another window's ``/load`` flipping the active context
+    mid-request must never divert this request's reads to another chip."""
+    try:
+        pinned = g.get("_sm_pinned_ctx")
+    except RuntimeError:          # no app context (a plain helper call)
+        pinned = None
+    if pinned is not None:
+        return pinned
     name = current_app.config["active_context"]
     if name is None:
         return None
     return current_app.config["contexts"].get(name)
+
+
+def _pin_request_ctx(ctx: dict | None) -> dict | None:
+    """v1.5.1 (R3 C1): pin *ctx* as this request's active context.
+
+    A door that captured its ctx at the start and then reads or writes for a
+    while (a pull, a live write) calls this, so every helper below it that
+    reads "the active context" (the tray render, the reapply stash, the
+    chip identity) reads the chip the press was made on, not whichever chip
+    another window opened meanwhile. Request-scoped (``flask.g``)."""
+    if ctx is not None:
+        g._sm_pinned_ctx = ctx
+    return ctx
 
 
 def _ctx_obj(key: str) -> Any:
@@ -3036,8 +3060,14 @@ def _capture_change_log_as_updates(store) -> dict:
     return updates
 
 
-def _pending_reapply() -> dict:
-    """The accumulated user-edit map kept for a possible re-apply after a pull."""
+def _pending_reapply(ctx: dict | None = None) -> dict:
+    """The accumulated user-edit map kept for a possible re-apply after a pull.
+
+    Pass the CAPTURED ctx (R3 C1): the active context is whichever chip the
+    last ``/load`` opened, which a merge that pulls for a while must never
+    read -- it replayed another chip's stash onto this one."""
+    if ctx is not None:
+        return ctx.get("pending_reapply") or {}
     return _ctx_obj("pending_reapply") or {}
 
 
@@ -17703,7 +17733,7 @@ def state_history_stage(timestamp: str):
     """Mode 1 (safe): load a snapshot into the WORKING COPY so the user can
     review the diff and then Apply to live through the normal flow. Never
     writes the live chip directly. Confirms over a dirty working copy."""
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     mismatch = _history_chip_mismatch(ctx)
@@ -17878,7 +17908,7 @@ def state_history_restore_live(timestamp: str):
         (the single live writer), then rebuild every derived cache.
     """
     _kept_note = ""   # docs/301 F6: set where the version is read
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
@@ -27670,11 +27700,11 @@ def _undo_head(verb: str, live: bool, ctx=None) -> str:
 
 @bp.route("/undo", methods=["POST"])
 def undo():
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: the chip this press was made on
     modifier = _modifier()
     if not modifier:
         return render_template("_status.html", message="No state loaded", level="warning")
 
-    ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     # F-CHIPID (final review): since docs/160 a Ctrl+Z WRITES the active chip's
     # live files, but two windows share one server context (docs/120) -- a press
@@ -28529,10 +28559,10 @@ def redo():
     Like every undo/redo/discard, this stages into the tray only — the live
     chip is untouched until an explicit Apply-to-live.
     """
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: the chip this press was made on
     modifier = _modifier()
     if not modifier:
         return render_template("_status.html", message="No state loaded", level="warning")
-    ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     if store is None:
         return _tray_html()
@@ -29305,7 +29335,7 @@ def auto_sync_pull():
     that last case the drift banner is already up (``live_diverged`` is what
     made this due), so refusing is not silent: the user is being asked.
     """
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     # R2 MINOR 1: a tab showing another chip reports ITS grid (dom_dirty /
     # dom_path) -- never evidence about the chip open now. Its automatic
     # press does nothing; the tab showing this chip presses for it.
@@ -30874,7 +30904,7 @@ def state_sync():
     Returns JSON ``{"status": "ok"|"conflict"|"error", "mode", "tray_html",
     "replay"}``. The client soft-refreshes from this — no page reload.
     """
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     if not ctx or ctx.get("type") != "quam":
         return jsonify({"status": "error", "message": "No state loaded"}), 400
     mode = request.values.get("mode", "discard")
@@ -31006,7 +31036,7 @@ def state_sync():
     # log no longer holds) plus any still-unsaved change-log edits, with the
     # latter winning per path. Snapshot BEFORE the sync's reload clears them.
     with store._lock:
-        pending = _merge_reapply(_pending_reapply(), _capture_change_log_as_updates(store))
+        pending = _merge_reapply(_pending_reapply(ctx), _capture_change_log_as_updates(store))
     _use_live = [p for p, side in picks.items() if side == "live"]
     if _use_live and mode in ("apply", "reapply"):
         pending = {k: v for k, v in pending.items()
@@ -31118,7 +31148,7 @@ def state_sync():
                 # undo pressed during the pull took a row out of the change
                 # log, and the pre-pull capture put it back on the pulled
                 # content (with apply, on the live chip too).
-                pending = _merge_reapply(_pending_reapply(),
+                pending = _merge_reapply(_pending_reapply(ctx),
                                          _capture_change_log_as_updates(store))
                 if _use_live and mode in ("apply", "reapply"):
                     pending = {k: v for k, v in pending.items()
@@ -31947,7 +31977,7 @@ def state_apply_to_live():
     conflict (the live files changed since the last sync) the user is shown a
     warning and an explicit force-overwrite option.
     """
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
@@ -43009,6 +43039,7 @@ def dataset_load_state(uid):
         return resp
 
     # ---- stage into the ACTIVE chip's working copy ----
+    _pin_request_ctx(ctx)               # R3 C1: the chip this press was made on
     _pre_leaves = _leaf_snapshot(ctx)   # docs/144: name what the load changes
     base_url = f"/dataset/{uid}/load-state"
     chip_label = _chip_display_name(Path(ctx["path"]))
