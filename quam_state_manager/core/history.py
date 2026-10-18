@@ -67,6 +67,8 @@ logger = logging.getLogger(__name__)
 # lock.
 _INDEX_WRITE_LOCKS: dict[str, "threading.RLock"] = {}
 _INDEX_WRITE_LOCKS_GUARD = threading.Lock()
+#: v1.5.1 (U4 soak): per-connection WAL cap of the param-history index
+INDEX_WAL_SIZE_LIMIT = 4 * 1024 * 1024
 
 
 def _index_write_lock(idx_path: Path) -> "threading.RLock":
@@ -4111,6 +4113,9 @@ class HistoryManager:
         conn.execute("PRAGMA mmap_size=1073741824")  # 1 GB memory-mapped reads
         conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA synchronous=NORMAL")
+        # v1.5.1 (U4 soak): after a checkpoint resets the WAL it is truncated
+        # to this size instead of keeping its high-water mark (default -1)
+        conn.execute(f"PRAGMA journal_size_limit={INDEX_WAL_SIZE_LIMIT}")
         with self._lock:
             already_init = key in self._db_initialised
         if not already_init:

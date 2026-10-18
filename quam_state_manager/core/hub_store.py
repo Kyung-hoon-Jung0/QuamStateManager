@@ -341,6 +341,21 @@ def _enable_wal(connection, *, timeout_s=30):
             time.sleep(0.01)
 
 
+#: v1.5.1 (U4 soak): the ledger's one writer connection lives as long as SM.
+#: SQLite's automatic checkpoint fires only at 1000 WAL pages, and the default
+#: journal_size_limit (-1) keeps the WAL at its high-water size for ever -- a
+#: 3.5 h soak saw the WAL grow and the database file untouched. After a reset
+#: the WAL is truncated to this size, and a PASSIVE checkpoint (never waits,
+#: never blocks a reader) runs after a write at most this often.
+WAL_SIZE_LIMIT = 4 * 1024 * 1024
+PASSIVE_CHECKPOINT_S = 300.0
+
+
+def tune_wal(connection) -> None:
+    """Per-connection WAL settings (not persisted in the file)."""
+    connection.execute(f"PRAGMA journal_size_limit={WAL_SIZE_LIMIT}")
+
+
 class HubStore:
     """One SQLite projection, with atomic event/rows/checkpoint/watermark writes.
 
@@ -365,6 +380,8 @@ class HubStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
         _enable_wal(self.conn)
+        tune_wal(self.conn)
+        self._last_checkpoint = time.monotonic()
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA cache_size=-16384")
         if not self._schema_current():
@@ -481,6 +498,20 @@ class HubStore:
 
     def close(self):
         self.conn.close()
+
+    def checkpoint_if_due(self, now: float | None = None) -> bool:
+        """v1.5.1 (U4): a PASSIVE checkpoint after a write, at most every
+        ``PASSIVE_CHECKPOINT_S``. Cheap: it copies what no reader still needs
+        and never waits. A failure is never the write's failure."""
+        now = time.monotonic() if now is None else now
+        if self.conn.in_transaction or now - self._last_checkpoint < PASSIVE_CHECKPOINT_S:
+            return False
+        self._last_checkpoint = now
+        try:
+            self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
+        except sqlite3.Error:
+            return False
+        return True
 
     def meta(self, key: str) -> str | None:
         row = self.conn.execute("SELECT v FROM meta WHERE k=?", (key,)).fetchone()
@@ -678,10 +709,11 @@ class HubStore:
                     self.conn.execute("INSERT INTO checkpoints VALUES(?,?)", (eid, digest))
                 self.set_meta(f"watermark:{event['root_id']}", json_bytes(
                     {"eid": eid, "t_utc_us": event["t_utc_us"], "rel_path": event["rel_path"]}).decode("utf-8"))
-                return eid
         except BaseException:
             self._pids = old_pids
             raise
+        self.checkpoint_if_due()
+        return eid
 
     # ------------------------------------------------------------------
     # SM events (S4, docs/271)
@@ -822,13 +854,14 @@ class HubStore:
                 if journal_end is not None:
                     self.set_meta("journal_offset", str(journal_end))
                 self.conn.execute("COMMIT")
-                return eid
             except BaseException:
                 self.conn.execute("ROLLBACK")
                 raise
         except BaseException:
             self._pids = old_pids
             raise
+        self.checkpoint_if_due()
+        return eid
 
     # ------------------------------------------------------------------
     # S5 (docs/275): every event takes its place by its instant; an
