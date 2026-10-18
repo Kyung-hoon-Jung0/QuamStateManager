@@ -40274,27 +40274,51 @@ def _active_dataset_stores(*, fast: bool = False,
     return result
 
 
-def _folder_gone(path) -> bool:
-    """v1.5.1 (SB-P2-6): the folder is not found any more (moved, renamed,
-    deleted) -- the scanner's rule for the sidebar's "not found"; a folder
-    that is only unreadable for now is not gone."""
+def _root_reachable(path) -> bool:
+    """Whether the drive or network share *path* lives on answers (its
+    anchor: a drive root, a share root, or ``/``)."""
+    anchor = Path(path).anchor
+    if not anchor:
+        return True
+    try:
+        os.stat(anchor)
+    except OSError:
+        return False
+    return True
+
+
+def _folder_state(path) -> str:
+    """v1.5.1 (SB-P2-6, R3B M5): ``"gone"`` when the folder is not found any
+    more (moved, renamed, deleted) on a drive or share that answers;
+    ``"unreachable"`` when it is not found because its share or mapped drive
+    does not answer (Windows raises the same not-found error for an
+    unreachable share, WinError 53/67, and a disconnected drive, WinError
+    3/15); else ``"ok"`` -- a folder only unreadable for now is not gone."""
     try:
         os.stat(path)
     except FileNotFoundError:
-        return True
+        return "gone" if _root_reachable(path) else "unreachable"
     except OSError:
-        return False
-    return False
+        return "ok"
+    return "ok"
+
+
+def _folder_gone(path) -> bool:
+    """v1.5.1 (SB-P2-6): the folder is not found any more (moved, renamed,
+    deleted) -- not merely on a share or drive that does not answer now."""
+    return _folder_state(path) == "gone"
 
 
 def _gone_dataset_folders() -> list[dict]:
     """v1.5.1 (SB-P2-6): the Datasets roots the workspace lists whose folder
-    is gone -- the page names them instead of dropping their runs silently."""
+    is gone or unreachable (``state``) -- the page names them instead of
+    dropping their runs silently."""
     ws = current_app.config.get("workspace")
     out: list[dict] = []
     for r in (getattr(ws, "root_folders", None) or ()):
-        if _folder_gone(r):
-            out.append({"key": _folder_key(Path(r)), "path": str(r)})
+        state = _folder_state(r)
+        if state != "ok":
+            out.append({"key": _folder_key(Path(r)), "path": str(r), "state": state})
     return out
 
 
@@ -41268,17 +41292,30 @@ def datasets_changes_since():
         names = None
     from quam_state_manager.core.dataset import yielding_scan
     gone: list[dict] = []
+    unreachable: list[dict] = []
+    # R3B M5: the folders the page saw gone or unreachable that are back: the
+    # client asks for ALL their rows again (it dropped them; an unchanged run
+    # is never in a delta), answered as ``resent`` once served
+    resend = {k for k in (request.args.get("resend") or "").split(",") if k}
+    resent: list[str] = []
     for fol in active:
         # v1.5.1 (SB-P2-6): a data folder that is GONE (not found) while a page
         # shows it: its runs leave the table (as vanished) and the folder is
         # named, as the sidebar names it -- an open page kept listing them
-        if _folder_gone(fol["path"]):
-            gone.append({"key": fol["key"], "path": fol["path"]})
+        state = _folder_state(fol["path"])
+        if state == "gone":
+            gone.append({"key": fol["key"], "path": fol["path"], "state": state})
             try:
                 vanished.extend(_dataset_uid(fol["key"], r.run_id)
                                 for r in fol["store"].runs_snapshot())
             except Exception:  # noqa: BLE001 -- the note still says it
                 logger.warning("changes-since: runs of gone %s", fol.get("path"), exc_info=True)
+            continue
+        if state == "unreachable":
+            # R3B M5: its share or drive does not answer: nothing is known
+            # about its runs -- they stay as last read, its cursor is held
+            unreachable.append({"key": fol["key"], "path": fol["path"], "state": state})
+            now = ts if now is None else min(now, ts)
             continue
         if time.monotonic() >= deadline:
             skipped += 1
@@ -41309,10 +41346,13 @@ def datasets_changes_since():
             hold = filling and fol["store"].run_count > 0 and _catch_up_should_yield()
             if hold:
                 _kick_dataset_index_warmer()
+            again = fol["key"] in resend
             with yielding_scan(_catch_up_should_yield):
-                delta = fol["store"].changes_since(ts, date=date,
+                delta = fol["store"].changes_since(0.0 if again else ts, date=date,
                                                    deadline=deadline,
                                                    rescan=not hold)
+            if again and not delta.get("partial"):
+                resent.append(fol["key"])
             owned = names is not None and names.owns(fol["store"].folder_path)
             for row in delta.get("updated", []):
                 row["f"] = fol["key"]
@@ -41338,6 +41378,20 @@ def datasets_changes_since():
             skipped += 1
             sample = ts
         now = sample if now is None else min(now, sample)
+    # R3B M5: a workspace root the loop above did not cover is named too, so
+    # an open page's note for it stays while it is gone or unreachable
+    listed = {g["key"] for g in (*gone, *unreachable)}
+    try:
+        for g in _gone_dataset_folders():
+            if g["key"] not in listed:
+                (gone if g["state"] == "gone" else unreachable).append(g)
+                listed.add(g["key"])
+    except Exception:  # noqa: BLE001 -- the poll never fails on a note
+        logger.warning("changes-since: workspace root states", exc_info=True)
+    # a resend no listed folder can serve is answered, so the page stops
+    # asking; one still gone or unreachable is asked again later
+    served = {f["key"] for f in active}
+    resent.extend(k for k in sorted(resend) if k not in listed and k not in served)
     # Unconditional: with no new candidates this is a no-op in production
     # (the 30s worker wake owns retries), while under TESTING it gives a
     # parked mid-write candidate its next attempt on the next poll.
@@ -41355,7 +41409,9 @@ def datasets_changes_since():
                     "folders": len(active),
                     # v1.5.1 (SB-P2-6): only when a folder IS gone, so the
                     # pinned contract keys stay as they were otherwise
-                    **({"gone": gone} if gone else {})})
+                    **({"gone": gone} if gone else {}),
+                    **({"unreachable": unreachable} if unreachable else {}),
+                    **({"resent": resent} if resent else {})})
 
 
 @bp.route("/datasets/rescan", methods=["POST"])

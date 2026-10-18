@@ -1792,6 +1792,9 @@
         var dateVal = dateInp ? (dateInp.value || '') : '';
         var url = '/datasets/changes-since?ts=' + encodeURIComponent(state.pollTs);
         if (dateVal) url += '&date=' + encodeURIComponent(dateVal);
+        if (state.resendKeys && state.resendKeys.size) {                  // R3B M5
+            url += '&resend=' + encodeURIComponent(Array.from(state.resendKeys).join(','));
+        }
         var ctl = null, timer = null;
         try {
             if (typeof AbortController === 'function') {
@@ -1902,25 +1905,42 @@
 
     /* v1.5.1 (SB-P2-6): a data folder found GONE while the page is open --
        its runs arrive as vanished, the note names the folder as the sidebar
-       does; a folder whose runs arrive again is no longer named. */
-    function _showGone(gone, updated) {
+       does. R3B M5: a folder whose share or drive does not answer is named
+       UNREACHABLE (its runs stay as last read); a named folder the answer no
+       longer lists is back: its note goes and the next poll asks for all its
+       rows again (`resend`) until an answer says they were sent. */
+    var GONE_TEXT = {
+        gone: ['Data folder not found: ', '. Its runs are not listed; re-point or remove it in the sidebar.'],
+        unreachable: ['Data folder unreachable: ', '. Its drive or network share does not answer; its runs show as last read.']
+    };
+    function _showGone(data) {
         var el = document.getElementById('ds-gone-note');
         if (!el) return;
-        var back = {};
-        (updated || []).forEach(function (r) { if (r && r.f) back[r.f] = true; });
+        if (!state.resendKeys) state.resendKeys = new Set();
+        var now = {};
+        (data.gone || []).forEach(function (g) { if (g && g.key) now[g.key] = Object.assign({ state: 'gone' }, g); });
+        (data.unreachable || []).forEach(function (g) { if (g && g.key) now[g.key] = Object.assign({ state: 'unreachable' }, g); });
+        (data.resent || []).forEach(function (k) { state.resendKeys.delete(k); });
         el.querySelectorAll('.ds-gone-one').forEach(function (s) {
-            if (back[s.getAttribute('data-folder-key')]) s.remove();
+            var k = s.getAttribute('data-folder-key');
+            var g = now[k];
+            if (!g) { s.remove(); state.resendKeys.add(k); return; }      // back
+            if ((s.getAttribute('data-state') || 'gone') !== g.state) s.remove();
         });
-        gone.forEach(function (g) {
-            if (!g || !g.key || el.querySelector('.ds-gone-one[data-folder-key="' + g.key + '"]')) return;
+        Object.keys(now).forEach(function (k) {
+            var g = now[k];
+            state.resendKeys.delete(k);
+            if (el.querySelector('.ds-gone-one[data-folder-key="' + k + '"]')) return;
+            var t = GONE_TEXT[g.state] || GONE_TEXT.gone;
             var s = document.createElement('span');
             s.className = 'ds-gone-one';
-            s.setAttribute('data-folder-key', g.key);
-            s.appendChild(document.createTextNode('Data folder not found: '));
+            s.setAttribute('data-folder-key', k);
+            s.setAttribute('data-state', g.state);
+            s.appendChild(document.createTextNode(t[0]));
             var c = document.createElement('code');
             c.textContent = g.path || '';
             s.appendChild(c);
-            s.appendChild(document.createTextNode('. Its runs are not listed; re-point or remove it in the sidebar.'));
+            s.appendChild(document.createTextNode(t[1]));
             el.appendChild(s);
         });
         el.hidden = !el.querySelector('.ds-gone-one');
@@ -1979,7 +1999,7 @@
             }
             state.rows = compact;
         }
-        _showGone(data.gone || [], updated);   // v1.5.1 (SB-P2-6)
+        _showGone(data);   // v1.5.1 (SB-P2-6), R3B M5
         state.pollTs = Math.max(state.pollTs, data.now);   // monotonic — out-of-order responses can't rewind
         // Arrival visibility (docs/104 #3): inserted rows flash on their next
         // render, and stay counted in the pill until acknowledged (pill click

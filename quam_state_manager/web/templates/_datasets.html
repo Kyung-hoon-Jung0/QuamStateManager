@@ -168,7 +168,7 @@
     names it ("not found"); its runs are not listed. dataset-virtual.js fills
     the same note when the delta poll finds a folder gone while the page is
     open (its rows leave the table then) -#}
-<p class="ds-gone-note" id="ds-gone-note" role="status"{% if not gone_folders %} hidden{% endif %}>{% for g in gone_folders or [] %}<span class="ds-gone-one" data-folder-key="{{ g.key }}">Data folder not found: <code>{{ g.path }}</code>. Its runs are not listed; re-point or remove it in the sidebar.</span>{% endfor %}</p>
+<p class="ds-gone-note" id="ds-gone-note" role="status"{% if not gone_folders %} hidden{% endif %}>{% for g in gone_folders or [] %}{% if g.state == 'unreachable' %}<span class="ds-gone-one" data-folder-key="{{ g.key }}" data-state="unreachable">Data folder unreachable: <code>{{ g.path }}</code>. Its drive or network share does not answer; its runs show as last read.</span>{% else %}<span class="ds-gone-one" data-folder-key="{{ g.key }}" data-state="gone">Data folder not found: <code>{{ g.path }}</code>. Its runs are not listed; re-point or remove it in the sidebar.</span>{% endif %}{% endfor %}</p>
 {# Folder multi-select filter (multi-folder workspaces only) — mirrors the
    Experiments chip row. Empty selection = all folders. Chips show the leaf
    folder name (truncated to 6 + …); the full registered path is the hover title. #}
