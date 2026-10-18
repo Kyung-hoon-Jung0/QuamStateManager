@@ -43470,6 +43470,51 @@ def trends_param_diff():
     return resp
 
 
+#: v1.5.1 (T1-F7): a fit file's declared units, by (path, mtime_ns, size)
+_TRENDS_FIT_UNITS: dict[tuple, list] = {}
+_TRENDS_UNITS_RUNS = 3          # the newest runs with a ds_fit file that are read
+
+
+@bp.route("/trends/units")
+def trends_units():
+    """``{"units": {metric: unit}}`` for the Trends y axes (v1.5.1, T1-F7):
+    the unit each fit-result metric's OWN ``ds_fit`` file declares
+    (``core.units.fit_metric_units``), read from the newest few runs of the
+    selection that have one. A metric no file declares gets none -- the axis
+    then says just its name, as before. Asked after the charts, never on
+    their path."""
+    from quam_state_manager.core import ndview, units as _units
+    sel, experiment, _qubit, err = _trends_data_request()
+    if err is not None:
+        return jsonify({"units": {}, "error": err[0]}), err[1]
+    runs = []
+    for f in sel:
+        try:
+            _gen, _touched, rs = f["store"].experiment_snapshot(experiment)
+        except Exception:  # noqa: BLE001 -- no units is an honest answer
+            continue
+        runs.extend(r for r in rs if getattr(r, "has_ds_fit", False))
+    runs.sort(key=lambda r: (getattr(r, "instant_us", None) or 0, r.run_id), reverse=True)
+    out: dict[str, str] = {}
+    for r in runs[:_TRENDS_UNITS_RUNS]:
+        p = Path(r.folder_path) / "ds_fit.h5"
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        key = (str(p), st.st_mtime_ns, st.st_size)
+        variables = _TRENDS_FIT_UNITS.get(key)
+        if variables is None:
+            variables = ndview.probe_file(p).get("vars") or []
+            if len(_TRENDS_FIT_UNITS) > 256:
+                _TRENDS_FIT_UNITS.clear()
+            _TRENDS_FIT_UNITS[key] = variables
+        metrics = {m for qv in (r.fit_results or {}).values() if isinstance(qv, dict) for m in qv}
+        for m, u in _units.fit_metric_units(variables, sorted(metrics)).items():
+            out.setdefault(m, u)
+    return jsonify({"units": out})
+
+
 @bp.route("/debug/ram")
 def debug_ram():
     """Read-only: what the RAM caches hold (design §1.3) -- the budget, the

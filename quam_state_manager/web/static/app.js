@@ -19888,6 +19888,7 @@ window.DatasetTrends = (function () {
         if (notes) { notes.textContent = notesFor(d); notes.hidden = !notes.textContent; }
         var charts = part(root, 'charts');
         charts.innerHTML = '';
+        st.boxes = [];          // a re-render (zone change) starts a fresh slot list
         if (!d.n_runs) {
             charts.innerHTML = '<p class="muted section-placeholder">No runs found for this experiment.</p>';
             return;
@@ -19918,7 +19919,10 @@ window.DatasetTrends = (function () {
                 var code = document.createElement('code');
                 code.textContent = s.q;
                 label.appendChild(code);
-                label.appendChild(document.createTextNode(' — ' + s.m));
+                var metric = document.createElement('span');
+                metric.className = 'trend-chart-metric';
+                metric.textContent = ' — ' + metricTitle(st, s.m);
+                label.appendChild(metric);
                 var host = document.createElement('div');
                 host.id = 'trend-chart-' + idx;
                 host.className = 'trend-mini-chart';
@@ -19947,6 +19951,7 @@ window.DatasetTrends = (function () {
         }
         setupFigureTimeline(st);
         if (!d.series.length) askParams(st);
+        askUnits(st);
     }
 
     /* ---- the y range: a few extreme values must not flatten the rest ----
@@ -20081,7 +20086,11 @@ window.DatasetTrends = (function () {
         var lay = {
             margin: mini.margin,
             xaxis: xaxis,
-            yaxis: yaxisFor(st, idx, { title: s.m, tickfont: mini.yTickFont }),
+            /* v1.5.1 (T1-F7): the axis title carries the unit the run's own fit
+               file declares, and the numbers follow the one axis rule
+               (PlotTheme.axisNumberFormat: SI prefixes, never "B") */
+            yaxis: yaxisFor(st, idx, Object.assign({ title: metricTitle(st, s.m), tickfont: mini.yTickFont },
+                (window.PlotTheme && window.PlotTheme.axisNumberFormat) ? window.PlotTheme.axisNumberFormat() : {})),
             height: mini.height,
             colorway: UI_CONFIG.plotly.colorway,
             showlegend: false,
@@ -20091,6 +20100,41 @@ window.DatasetTrends = (function () {
         // Plotly drew this page's grid in its near-white default on the dark page
         return (window.PlotTheme && window.PlotTheme.houseLayout)
             ? window.PlotTheme.houseLayout(lay) : lay;
+    }
+
+    /* v1.5.1 (T1-F7): the unit of a metric, from /trends/units (the run's own
+       ds_fit file); '' until it answers, and for a metric no file declares */
+    function unitOf(st, m) {
+        var u = st.units && Object.prototype.hasOwnProperty.call(st.units, m) ? st.units[m] : '';
+        return typeof u === 'string' ? u : '';
+    }
+    function metricTitle(st, m) { var u = unitOf(st, m); return u ? m + ' (' + u + ')' : m; }
+    function askUnits(st) {
+        if (st.unitsAsked) { applyUnits(st); return; }
+        st.unitsAsked = true;
+        var url = String(st.root.getAttribute('data-series-url') || '').replace('/trends/series?', '/trends/units?');
+        if (url.indexOf('/trends/units?') !== 0) return;
+        Promise.resolve(window.fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } }))
+            .then(function (r) { return r && r.ok ? r.json() : null; })
+            .then(function (j) {
+                if (!j || !j.units || !st.root.isConnected) return;
+                st.units = j.units;
+                applyUnits(st);
+            })
+            .catch(function () { /* no unit is said as no unit */ });
+    }
+    /* units that arrive after a chart was drawn: its label and axis title */
+    function applyUnits(st) {
+        if (!st.units || !st.data) return;
+        st.boxes.forEach(function (el, idx) {
+            var s = st.data.series[idx];
+            if (!s || !unitOf(st, s.m)) return;
+            var lab = el.parentNode && el.parentNode.querySelector('.trend-chart-metric');
+            if (lab) lab.textContent = ' — ' + metricTitle(st, s.m);
+            if (el.layout && window.Plotly && typeof window.Plotly.relayout === 'function') {
+                try { window.Plotly.relayout(el, { 'yaxis.title.text': metricTitle(st, s.m) }); } catch (e) {}
+            }
+        });
     }
 
     /* a few off-scale values: the axis is the rest's (robustRange) */

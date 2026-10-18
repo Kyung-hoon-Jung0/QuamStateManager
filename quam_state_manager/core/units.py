@@ -428,3 +428,37 @@ def export_value(field: str, value: Any) -> Any:
     if dimension is None or dimension == "duration_ns" or not _is_number(value):
         return value
     return value * _FIXED[fixed][0]
+
+
+# ---------------------------------------------------------------------------
+# Units a run's own fit file declares (Datasets > Trends axes)
+# ---------------------------------------------------------------------------
+def _fit_key(text: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(text or "").lower()).strip("_")
+
+
+def fit_metric_units(variables: Any, metrics: Any) -> dict[str, str]:
+    """v1.5.1 (T1-F7): ``{metric: unit}`` for the fit-result *metrics* of a
+    run, read from the ``units`` attribute its own ``ds_fit`` file gives a
+    variable -- matched by the variable's name OR its ``long_name``
+    (lower-cased, non-alphanumerics folded to ``_``): qualibration stores the
+    fit result ``t1`` as the variable ``tau`` with ``long_name="T1"``,
+    ``units="ns"``. A metric two variables claim with different units, and a
+    metric no variable names, get no unit -- a unit is read, never guessed.
+    ``variables`` is ``ndview.probe_file``'s ``vars`` list."""
+    claims: dict[str, set] = {}
+    for v in variables or ():
+        if not isinstance(v, dict):
+            continue
+        unit = v.get("units")
+        if not isinstance(unit, str) or not unit.strip():
+            continue
+        for k in {_fit_key(v.get("name")), _fit_key(v.get("long_name"))}:
+            if k:
+                claims.setdefault(k, set()).add(unit.strip())
+    out: dict[str, str] = {}
+    for m in metrics or ():
+        got = claims.get(_fit_key(m))
+        if got and len(got) == 1:
+            out[str(m)] = next(iter(got))
+    return out
