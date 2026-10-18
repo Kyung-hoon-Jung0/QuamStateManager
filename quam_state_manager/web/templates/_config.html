@@ -43,7 +43,7 @@
 <div class="config-empty">
     <p class="muted">No config generated for the loaded chip yet — this is the exact
         QM config <code>machine.generate_config()</code> produces from
-        {% if active_name %}<strong>{{ active_name }}</strong>{% else %}the loaded state{% endif %},
+        {% if active_name %}<strong>{{ active_chip_label() or active_name }}</strong>{% else %}the loaded state{% endif %},
         i.e. what the experiment actually runs.</p>
     {# The Generate CTA lives in the status banner above (one filled CTA, VSCode-clean
        canon) — don't duplicate it here. When no env is picked yet the banner's CTA

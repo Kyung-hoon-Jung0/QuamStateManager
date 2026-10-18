@@ -10,12 +10,13 @@
       {# no workspace experiments yet -- no banner #}
     {% elif c.aligned == c.total %}
       <div class="alignment-banner alignment-green">
-        ✓ All {{ '{:,}'.format(c.total) }} workspace experiments are for chip <code>{{ loaded_chip_key }}</code>.
+        ✓ All {{ '{:,}'.format(c.total) }} workspace experiments are for chip <strong title="History folder {{ loaded_chip_key }}">{{ loaded_chip_label or loaded_chip_key }}</strong>.
       </div>
     {% elif c.aligned == 0 and c.different_chip > 0 %}
       <div class="alignment-banner alignment-red">
-        ✗ <strong>No experiments in this workspace match chip <code>{{ loaded_chip_key }}</code>.</strong>
-        Workspace contains:
+        ✗ <strong>No experiments in this workspace match chip {{ loaded_chip_label or loaded_chip_key }}.</strong>
+        {#- v1.5.1 (T1-F4): a run is grouped by its FOLDER; its hardware fingerprint differs (another chip, or this one rewired) -#}
+        Their hardware fingerprint differs (another chip, or this chip rewired). By folder:
         {% for other_chip, entries in alignment.different_chip.items() %}
           <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
              hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
@@ -34,8 +35,8 @@
       {% endif %}
       {% if c.different_chip > 0 %}
         <div class="alignment-banner alignment-yellow">
-          {{ '{:,}'.format(c.aligned) }} of {{ '{:,}'.format(c.total) }} experiments are for <code>{{ loaded_chip_key }}</code>.
-          {{ c.different_chip }} are for other chips:
+          {{ '{:,}'.format(c.aligned) }} of {{ '{:,}'.format(c.total) }} experiments are for chip <strong title="History folder {{ loaded_chip_key }}">{{ loaded_chip_label or loaded_chip_key }}</strong>.
+          {{ c.different_chip }} have a different hardware fingerprint (another chip, or this chip rewired). By folder:
           {% for other_chip, entries in alignment.different_chip.items() %}
             <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
                hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"

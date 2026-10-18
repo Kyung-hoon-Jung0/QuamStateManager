@@ -2760,6 +2760,38 @@ def _chip_display_name(path: str | Path) -> str:
     return derived or p.parent.name or own or "chip"
 
 
+def _chip_label(path: str | Path | None, store: Any = None) -> str:
+    """v1.5.1 (T1-F4, U P2-11): the name a PERSON reads for a chip -- its
+    declared ``extras.chip_name`` when it has one, else the folder rule of
+    :func:`_chip_display_name`. DISPLAY ONLY: the chip gates and tokens keep
+    the folder-derived ``name`` (a page rendered before a rename must still
+    match)."""
+    declared = None
+    if store is not None:
+        from quam_state_manager.core import history as _h
+        # Read WITHOUT the store lock: two dict lookups on the current state
+        # reference (atomic under the GIL), and a surface that must answer
+        # "building" while a writer holds the lock may not wait on it here
+        # (test_hub_building_fast).
+        try:
+            declared = _h.extras_chip_name(getattr(store, "state", None))
+        except Exception:  # noqa: BLE001 -- a label never breaks a page
+            declared = None
+    if declared:
+        return declared
+    return _chip_display_name(path) if path else "chip"
+
+
+@bp.app_template_global("active_chip_label")
+def _active_chip_label() -> str | None:
+    """The open chip's :func:`_chip_label` for the templates (top bar, panels,
+    banners); None when no quam chip is open."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return None
+    return _chip_label(ctx["path"], ctx.get("store"))
+
+
 def _active_chip_identity() -> dict | None:
     """Single source of truth for "which chip am I editing, and how dirty".
 
@@ -16272,7 +16304,8 @@ class _ReportCtx:
         self.zone = (_display_zone() or {}).get("zone")
         from quam_state_manager.core import timefmt as _tf
         self.generated = _tf.local_text(zone=self.zone)
-        self.chip_name = _chip_display_name(self.path) if self.path else "chip"
+        # v1.5.1 (U P2-11): the chip's declared name, not its folder
+        self.chip_name = _chip_label(self.path, self.store) if self.path else "chip"
         self._pairs: list | None = None
 
     def text(self, s: Any) -> Any:
@@ -16576,7 +16609,7 @@ def chip_status_report_finalize():
                  lambda m: m.group(1) + "".join(f"<li>{_html_escape(x)}</li>" for x in labels)
                  + m.group(2), doc, count=1, flags=re.S)
     path = _active_path()
-    chip = _chip_display_name(path) if path else "chip"
+    chip = _chip_label(path, store) if path else "chip"
     if "overview" not in sections:
         # the chip's name is the Overview's content: an unchecked Overview
         # takes it out of the title and the file name too
@@ -32694,7 +32727,8 @@ def export_report():
     path = _active_path()
     # The chip header's rule, like the config exports (QA regenerate-r2-33):
     # chip_name_for named a flat chip folder after its PARENT ("chip").
-    chip = _chip_display_name(path) if path else "chip"
+    # v1.5.1 (U P2-11): the declared extras.chip_name first.
+    chip = _chip_label(path, store) if path else "chip"
     # QA F-16: the Diagnostics page's finding set, like the on-screen tile.
     diag_findings = [f.as_dict() for f in _active_chip_findings(store)] if store else []
     # QA F-14: the bands are the lab spec the on-screen header scores against
@@ -37648,9 +37682,12 @@ def param_history():
     # selector is what the user has loaded right now.
     if loaded_key not in active_keys:
         info = disk_by_key.get(loaded_key, {})
+        # v1.5.1 (T1-F4): the pill reads the chip's name (extras.chip_name, else
+        # the folder rule), not its history dir key ("quam_states")
+        loaded_label = _chip_label(loaded_path, store)
         active_chips.insert(0, {
             "key": loaded_key,
-            "name": f"{scope_project} · {loaded_key}" if scope_project else loaded_key,
+            "name": f"{scope_project} · {loaded_label}" if scope_project else loaded_label,
             "snapshot_count": info.get("snapshot_count", 0),
             "latest_timestamp": info.get("latest_timestamp", ""),
             "qubits": info.get("qubits", []),
@@ -37712,6 +37749,7 @@ def param_history():
             # history folder second
             active_chip_name=(archive_chip or {}).get("display") or active_chip_key,
             loaded_chip_key=loaded_key,
+            loaded_chip_label=_chip_label(loaded_path, store),
             legacy_chip_key=legacy_chip_key,
             is_loaded_chip=is_loaded_chip,
             # One-time docs/20-v2 notice (popped: shown on the first render
@@ -37982,6 +38020,8 @@ def param_history_alignment():
         "_param_history_alignment.html",
         alignment=alignment,
         loaded_chip_key=loaded_key,
+        # v1.5.1 (T1-F4): the banner names the chip, never its history dir key
+        loaded_chip_label=_chip_label(loaded_path, _store()),
         importable_count=importable_count,
         pending_import_count=pending_import_count,
         summary_total=summary_total,

@@ -45,7 +45,8 @@
         title="{{ _t[0] }} · {{ _t[1] }}{% if _cn %}&#10;Changed on both sides: {{ _sv.conflicts[:4] | join(', ') }}{% if _cn > 4 %} and {{ _cn - 4 }} more{% endif %}{% endif %}{% if _st == 'unreadable' and _sv and _sv.unreadable %}&#10;{{ _sv.unreadable }}{% endif %}{% if _st not in ('archive',) %}&#10;Click for the sync panel{% if auto_apply %}{{ '&#10;Auto-Sync ON: leaving an edited field writes it to the live chip. Revert one change with its ✕, or the session with ↺.' | safe }}{% else %}{{ '&#10;Edits stay in your private working copy until Apply to live (↺ Revert last apply undoes it).' | safe }}{% endif %}{% endif %}">
   <span class="state-status-dot" aria-hidden="true">&#9679;</span>
   <span class="sync-control-text">{{ _t[0] }}</span>
-  {% if active_name %}<span class="state-status-name" title="{{ active_name }}">{{ active_name }}</span>{% endif %}
+  {#- v1.5.1 (T1-F4): the chip's declared name (extras.chip_name), its folder on hover -#}
+  {% if active_name %}{% set _lbl = active_chip_label() or active_name %}<span class="state-status-name" data-chip-folder="{{ active_name }}" title="{{ _lbl }}{% if _lbl != active_name %} · folder {{ active_name }}{% endif %}">{{ _lbl }}</span>{% endif %}
   {% if qualibrate_tray is defined and qualibrate_tray and qualibrate_tray.match == false and not qualibrate_tray.standalone %}<span class="sync-marker sync-marker-elsewhere" title="QUAlibrate's active project writes a different folder; its runs won't show up here as live changes">&#9879; elsewhere</span>{% endif %}
   {#- v1.5.1: refused recovery checkpoints stay marked until restored or discarded -#}
   {%- set _unrec = tray_unrecovered() if (tray_unrecovered is defined and _st != 'archive') else [] -%}

@@ -35,7 +35,7 @@ window.ConfigManual = (function () {
     }
     function currentChip() {
         var el = document.querySelector('#pending-tray .state-status-name');
-        return el ? el.textContent.trim() : '';
+        return el ? (el.getAttribute('data-chip-folder') || el.textContent).trim() : '';
     }
 
     /* ── data ────────────────────────────────────────────────────── */

@@ -5,7 +5,7 @@
 <div class="regen" id="regen-surface" data-source-path="{{ active_path or '' }}">
   <div class="regen-bar">
     <span class="regen-k">Source</span>
-    <span class="regen-chip" id="regen-chip">{{ active_name or '— no chip loaded —' }}</span>
+    <span class="regen-chip" id="regen-chip">{{ (active_chip_label() if active_name else none) or active_name or '— no chip loaded —' }}</span>
     <span class="regen-meta muted" id="regen-meta"></span>
     <span class="regen-spacer"></span>
     <input type="text" id="regen-src-input" class="visually-hidden" tabindex="-1" aria-hidden="true">
