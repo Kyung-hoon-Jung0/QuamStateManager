@@ -116,3 +116,58 @@ def test_one_label_per_action(client):
     tpl = (Path(R.__file__).parent / "templates" / "_state_versions.html").read_text(encoding="utf-8")
     assert ">Load for review</button>" in tpl and ">Stage</button>" not in tpl
     assert "&#8593; Restore to live</button>" in tpl and "Pull to Live</button>" not in tpl
+
+
+# --------------------------------------------------------------------------
+# R3B MINOR 5: Go to date never undercounts, and with no display zone the
+# day ends at that date's own offset (DST-correct).
+# --------------------------------------------------------------------------
+def test_count_newer_reads_past_a_page_of_left_out_newer_events(monkeypatch):
+    day = 86_400_000_000
+
+    def ev(us, eid, **kw):
+        e = {"eid": eid, "error": None, "kind": "run", "status": None, "state_hash": "h",
+             "flags": 0, "t_ord": None, "t_utc_us": us, "ord": 0}
+        e.update(kw)
+        return e
+    # a full page of newer events that are all left out (stateless or
+    # uncertain), then the state-bearing ones
+    left_out = [ev(20 * day - i, 1000 + i, state_hash=None if i % 2 else "h",
+                   flags=0 if i % 2 else hub_versions.CHIP_UNCERTAIN) for i in range(500)]
+    pages = [left_out, [ev(12 * day, 3), ev(11 * day, 2), ev(5 * day, 1)]]
+
+    def timeline(binding, limit=50, cursor=None, foreign=None):
+        i = int(cursor or 0)
+        return {"events": pages[i], "cursor": str(i + 1) if i + 1 < len(pages) else None}
+    monkeypatch.setattr(hub_versions.hub_query, "timeline", timeline)
+    assert hub_versions.count_newer("x", [], 10 * day, binding=object()) == 2
+
+
+def test_without_a_display_zone_the_day_ends_at_that_dates_own_offset(app, monkeypatch):
+    """A machine in a DST zone: the end of a winter day is at the winter
+    offset even when today is summer (the fixed current offset was an hour
+    off). Simulated with a real DST zone's rules for the machine's zone."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    berlin = ZoneInfo("Europe/Berlin")
+    monkeypatch.setattr(R, "_display_zone", lambda: None)
+    monkeypatch.setattr(R, "_machine_day_end",
+                        lambda d: datetime(d.year, d.month, d.day, tzinfo=berlin) + timedelta(days=1),
+                        raising=False)
+    monkeypatch.setattr(R, "_versions_read_rows", lambda *a, **k: {"mode": "unavailable"})
+    # the end of 2026-01-15 in Berlin is 23:00 UTC (winter, UTC+1): a row at
+    # 22:30 UTC is that day's, one at 23:30 UTC is the next day's
+    snaps = [_snap("20260115_233000_000000"), _snap("20260115_223000_000000")]
+    with app.test_request_context():
+        assert R._state_history_page_for({}, snaps, "2026-01-15", 1) == 2
+
+
+def test_the_machine_day_end_follows_the_os_rules_for_that_date():
+    import time
+    from datetime import datetime
+    for day in ("2026-01-15", "2026-07-15", "2026-03-29", "2026-10-25"):
+        d = datetime.strptime(day, "%Y-%m-%d")
+        end = R._machine_day_end(d)
+        nxt = (d.replace(hour=0) + __import__("datetime").timedelta(days=1)).timetuple()
+        assert end.tzinfo is not None
+        assert end.timestamp() == time.mktime(nxt), (day, end)

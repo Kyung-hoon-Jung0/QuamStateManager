@@ -17513,6 +17513,14 @@ def state_history(snapshot_note: str | None = None):
     return render_template(template, **ctx)
 
 
+def _machine_day_end(d: datetime) -> datetime:
+    """The end of day *d* (its next midnight) in this machine's local time,
+    aware, at that date's own UTC offset (DST-correct: the OS's rules for
+    that date, not today's offset)."""
+    from datetime import timedelta
+    return (datetime(d.year, d.month, d.day) + timedelta(days=1)).astimezone()
+
+
 def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
     """P1-9 (UX round): the State History page that holds *day*'s newest row
     (the rows run newest first): every row at or after the END of that day,
@@ -17524,10 +17532,15 @@ def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
     d = datetime.strptime(day, "%Y-%m-%d")
     zone = (_display_zone() or {}).get("zone")
     try:
-        tz = ZoneInfo(zone) if zone else datetime.now().astimezone().tzinfo
+        tz = ZoneInfo(zone) if zone else None
     except Exception:  # noqa: BLE001 -- no tzdata / not a zone: the machine's
-        tz = datetime.now().astimezone().tzinfo
-    end = datetime(d.year, d.month, d.day, tzinfo=tz) + timedelta(days=1)
+        tz = None
+    if tz is not None:
+        end = datetime(d.year, d.month, d.day, tzinfo=tz) + timedelta(days=1)
+    else:
+        # R3B MINOR 5: the machine's zone at THAT date's own offset -- the
+        # offset of today was an hour off for a date across a DST change
+        end = _machine_day_end(d)
     cutoff_us = int((end.astimezone(timezone.utc)
                      - datetime(1970, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1_000_000)
     probe = _versions_read_rows(ctx, snapshots, limit=1, offset=0, lane_notes=False)
