@@ -135,6 +135,11 @@ def test_a_stash_older_sm_cannot_decode_makes_it_refuse_the_checkpoint(tmp_path,
         return real(folder, *a, **kw)
 
     monkeypatch.setattr(safe_io, "write_state_wiring_bytes", deny)
+    # U P1-6: a write that provably never reached the chip now puts its save
+    # back (the rows stay rows). The save -- and with it the stash -- still
+    # stands when nobody can tell whether the write landed: that is the
+    # case that leaves a 4-element tag in the stash.
+    monkeypatch.setattr(routes, "_write_outcome", lambda _pend: "unknown")
     r = c.post("/state/apply-to-live", headers={"Accept": "application/json"})
     monkeypatch.setattr(safe_io, "write_state_wiring_bytes", real)
     assert r.status_code == 409
