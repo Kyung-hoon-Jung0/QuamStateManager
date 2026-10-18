@@ -23554,7 +23554,10 @@ document.addEventListener('click', function(evt) {
             lead.textContent = ""; what.textContent = differ;
             tail.textContent = " \u2014 the live chip has not changed since your last sync, so these are your own unapplied values: \u2713 puts the live value back, \u2717 keeps yours.";
         } else if (!n.mine && !n.both) {
-            lead.textContent = "Qualibrate changed "; what.textContent = " field(s)";
+            // T1-F6: the live chip moved, but nothing names WHO wrote it (an
+            // experiment, another tool, a hand edit) -- the bar says what is
+            // known, as the top bar does ("Live chip changed")
+            lead.textContent = "The live chip changed "; what.textContent = " field(s)";
             tail.textContent = " \u2014 review before\u2192after, then accept.";
         } else {
             var parts = [];

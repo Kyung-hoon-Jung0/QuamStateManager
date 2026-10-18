@@ -315,8 +315,9 @@ ok(cnt.textContent !== '2',
        'r2-01: an element of the shortened list reads "removed" without a second ✓');
     ok(/\[2 items\]/.test(rowAt(sHost, 'qubits.q1.gef').textContent),
        'r2-01: the shortened list shows its live length');
-    ok(/^Qualibrate changed 6 field\(s\)/.test(barText()),
-       'JT-03: with only live-side changes the bar keeps "Qualibrate changed" (' + barText() + ')');
+    // T1-F6: the writer is unknown, so the bar names the chip, not a program
+    ok(/^The live chip changed 6 field\(s\)/.test(barText()) && !/Qualibrate/i.test(barText()),
+       'JT-03/T1-F6: with only live-side changes the bar says "The live chip changed" (' + barText() + ')');
 
     // 6. per-row ✓ create / delete
     accOf(sHost, 'qubits.q1.extras.qa_added').click();
