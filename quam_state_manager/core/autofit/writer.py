@@ -157,6 +157,19 @@ def _pending(chip: ChipHandle, src: str, mine: list) -> Any:
                        expect_fp=chip.hub_fp1, expect_digest=chip.store.working_digest)
 
 
+def _paths_of(entries) -> list[dict]:
+    return [{"path": e.dot_path, "old": e.old_value, "new": e.new_value}
+            for e in entries]
+
+
+def _written_paths(paths: list[dict], restaged: list) -> list[dict]:
+    """v1.5.1 (SA-F8): what the live write REPLACED. A stale first try pulls
+    live and stages again, so an outside write to the same field is what the
+    write overwrote -- the re-stage's entries carry it; the first staging's
+    ``old`` is the pre-pull value nobody held any more."""
+    return _paths_of(restaged) if restaged else paths
+
+
 def _values_equal(a, b) -> bool:
     # docs/117: ONE comparator, shared with the applied-log revert. Kept as a
     # module-level name because the doctrine block above and several call
@@ -220,7 +233,7 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             return WriteOutcome(ok=False, action="staged", group_id=gid,
                                 paths=paths, error=err)
         return WriteOutcome(ok=True, action="applied", group_id=gid,
-                            paths=paths)
+                            paths=_written_paths(paths, restaged))
 
 
 def _apply_live_with_one_retry(chip: ChipHandle,
@@ -369,6 +382,7 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
             if err:
                 return WriteOutcome(ok=False, action="reverted", group_id=gid,
                                     paths=paths, error=err, conflicts=conflicts)
+            paths = _written_paths(paths, restaged)
         return WriteOutcome(ok=True, action="reverted", group_id=gid,
                             paths=paths, conflicts=conflicts)
 
@@ -433,6 +447,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             if err:
                 return WriteOutcome(ok=False, action="restored", group_id=gid,
                                     paths=paths, error=err)
+            paths = _written_paths(paths, restaged)
         return WriteOutcome(ok=True, action="restored", group_id=gid,
                             paths=paths)
 
