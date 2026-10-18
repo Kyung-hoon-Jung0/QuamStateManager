@@ -221,7 +221,7 @@ def _make_leaf(qid: str, real_segs: list[str], tmpl_segs: list[str], value: Any,
         # `settle_time` is exactly that. `_derive` promotes a column to the
         # QDAC section only when EVERY leaf under its template is QDAC-owned.
         "qdac": in_qdac,
-        "label": label, "unit": _unit_of(str(real_segs[-1])),
+        "label": label, "unit": _unit_of(str(real_segs[-1]), value),
         # A port leaf's real_path is the ALIAS (qubits.q1.z.opx_output.<leaf>),
         # which `_walk` cannot traverse — it stops at the opx_output pointer —
         # so the chain probe would be silently inert for the whole port class.

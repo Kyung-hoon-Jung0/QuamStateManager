@@ -149,9 +149,20 @@ _NAME_UNIT_SUFFIXES: tuple[tuple[str, str], ...] = (
 )
 
 
-def name_unit(field: str) -> str:
-    """The unit a key's own name declares (``*_mhz`` -> ``"MHz"``), or ``""``."""
+def unit_compound(field: str) -> bool:
+    """A ``*_per_<unit>`` key (``slope_control_hz_per_v``) names a compound
+    unit (Hz/V): its last token is the denominator, never the unit it is
+    stored in (R3B M3: 4.7e9 Hz/V read "4.68844e+09 V")."""
     f = str(field or "").lower()
+    return "_per_" in f or f.startswith("per_")
+
+
+def name_unit(field: str) -> str:
+    """The unit a key's own name declares (``*_mhz`` -> ``"MHz"``), or ``""``
+    (also for a ``*_per_<unit>`` compound, :func:`unit_compound`)."""
+    f = str(field or "").lower()
+    if unit_compound(f):
+        return ""
     for suffix, label in _NAME_UNIT_SUFFIXES:
         if f.endswith(suffix) and len(f) > len(suffix):
             return label
@@ -163,6 +174,8 @@ def _resolve_field(field: str) -> tuple[Optional[str], Optional[str]]:
     if field in _FIELD_FIXED:
         return _FIELD_FIXED[field]
     f = field.lower()
+    if unit_compound(f):
+        return (None, None)     # Hz/V is not a frequency, s^-1 not a time
     if f == "length" or f.endswith("_length"):
         return ("duration_ns", "ns")
     if f.endswith("_delay_ns") or f.endswith("_delay"):
