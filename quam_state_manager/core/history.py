@@ -2340,11 +2340,23 @@ class HistoryManager:
         except (OSError, ValueError):
             return False
 
-    def _routes_as_folder(self, path: Path) -> bool:
+    def _routes_as_folder(self, path: Path, *, recorded: bool = False) -> bool:
         """Does *path* take part in the per-folder dir rule (SB-F7)? Not a
-        history link, a dataset run folder or SM's own temporary capture."""
+        history link, a dataset run folder or SM's own temporary capture.
+
+        *recorded*: *path* is a RECORDED folder (a snapshot's source) -- judged
+        on its spelling alone, never resolved: it may be an old share that no
+        longer answers, and a resolve would wait for the SMB timeout."""
         if "__chip_key__" in Path(path).parts or self._is_run_folder(path):
             return False
+        if recorded:
+            try:
+                inst_dir = str(self._root.parent.resolve())     # local: SM's own dir
+            except OSError:
+                inst_dir = str(self._root.parent)
+            k, inst = _source_key(str(path)), _source_key(inst_dir)
+            sep = "\\" if os.name == "nt" else "/"
+            return not (k and inst and (k + sep).startswith(inst + sep))
         try:
             if self._root.parent.resolve() in Path(path).resolve().parents:
                 return False                # SM's own temporary capture folder
@@ -2361,15 +2373,29 @@ class HistoryManager:
             return None
 
     @staticmethod
-    def _same_holder(holder: str, path: Path) -> bool:
-        from quam_state_manager.core import path_match
-        hk, pk = _source_key(holder), _source_key(str(path))
-        if hk is not None and hk == pk:
+    def _same_holder(holder: str, path: Path, me: str | None = None) -> bool:
+        """Is *holder* (a recorded folder) the folder *path*? By spelling
+        first; the filesystem is asked only when the holder's folder answered
+        the bounded probe (an unreachable share is never stat'ed here)."""
+        from quam_state_manager.core import folder_probe, path_match
+        hk = _source_key(holder)
+        if hk is not None and hk in (_source_key(str(path)), _source_key(me or "")):
             return True
+        # no wait here: the caller's own presence check waits (once)
+        if folder_probe.folders_present([holder], wait_s=0.0).get(str(holder)) is not True:
+            return False
         try:
             return path_match.same_folder(holder, path)
         except Exception:  # noqa: BLE001
             return False
+
+    def _holder_key(self, holder: str) -> str:
+        """The key a holder is RECORDED under: its fs_key when its folder
+        answers the bounded probe, else its spelling as recorded."""
+        from quam_state_manager.core import folder_probe
+        if folder_probe.folder_present(holder) is True:
+            return self._folder_key(holder) or holder
+        return holder
 
     def _inferred_holder(self, dir_: Path) -> str | None:
         """R2 M4: the folder a dir with NO recorded holder belongs to, read
@@ -2399,7 +2425,7 @@ class HistoryManager:
                 continue
             key, shown = owner
             try:
-                if not self._routes_as_folder(Path(shown)):
+                if not self._routes_as_folder(Path(shown), recorded=True):
                     continue
             except (OSError, ValueError):
                 continue
@@ -2421,10 +2447,12 @@ class HistoryManager:
 
     @staticmethod
     def _holder_there(holder: str) -> bool:
-        try:
-            return Path(holder).exists()
-        except OSError:
-            return True                      # unknown: never take it over
+        """Can the holder's folder be found? Asked bounded (an inferred holder
+        may be an old share path that no longer answers: a bare exists() held
+        a history resolve for the whole SMB timeout); no answer = there,
+        never taken over."""
+        from quam_state_manager.core import folder_probe
+        return folder_probe.folder_present(holder) is not False
 
     def _record_owners(self, updates: dict) -> None:
         data = self._load_aliases()
@@ -2460,17 +2488,22 @@ class HistoryManager:
             if claim:
                 self._record_owners({dir_.name: me})     # first to claim an unowned dir
             return dir_
-        if holder == me or self._same_holder(holder, path):
+        there = None
+        if not (holder == me or self._same_holder(holder, path, me)):
+            # the presence probe waits once (bounded); a holder that answered
+            # may still be this very folder under another spelling
+            there = self._holder_there(holder)
+        if there is None or (there and self._same_holder(holder, path, me)):
             if claim and not recorded:
                 self._record_owners({dir_.name: me})
             return dir_
         own_key = _sanitize_name(
             f"{dir_.name}__{hashlib.sha1(me.encode('utf-8')).hexdigest()[:6]}")
-        if self._holder_there(holder) or self._dir_has_snapshots(self._root / own_key):
+        if there or self._dir_has_snapshots(self._root / own_key):
             if claim:
                 upd = {own_key: me}
                 if not recorded:
-                    upd[dir_.name] = self._folder_key(holder) or holder
+                    upd[dir_.name] = self._holder_key(holder)
                 self._record_owners(upd)
             return self._root / own_key
         if claim:
@@ -2483,9 +2516,10 @@ class HistoryManager:
         if path is None or not self._routes_as_folder(path):
             return False
         holder, _rec = self._holder_of(dir_)
-        if holder is None or self._same_holder(holder, path):
+        me = self._folder_key(path)
+        if holder is None or self._same_holder(holder, path, me):
             return False
-        return self._holder_there(holder)
+        return self._holder_there(holder) and not self._same_holder(holder, path, me)
 
     def _existing_dir_for(self, ident: ChipIdentity, candidate_key: str, *,
                           path: Path | None = None, claim: bool = False) -> Path | None:

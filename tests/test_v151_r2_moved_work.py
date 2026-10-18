@@ -74,10 +74,14 @@ def _note(ctx):
 
 @pytest.fixture(autouse=True)
 def _fresh_probes():
-    for name in ("_PROBES", "_INFLIGHT"):
-        getattr(moved_work, name, {}).clear()
+    try:
+        from quam_state_manager.core import folder_probe
+    except ImportError:                        # before R2: nothing remembered
+        yield
+        return
+    folder_probe.forget()
     yield
-    getattr(moved_work, "_PROBES", {}).clear()
+    folder_probe.forget()
 
 
 @pytest.fixture

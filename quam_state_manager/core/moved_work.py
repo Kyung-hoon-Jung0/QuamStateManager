@@ -30,22 +30,20 @@ tray. The offer is recorded under both keys: beside the old copy
 folder is told on its next open) and in the new checkpoint (``moved_from``).
 Nothing is written to any chip folder.
 
-**Bounded probes (R2 M5).** "Can the old folder be found" is asked in
-parallel threads, at most ``PROBE_WAIT_S`` in all, and memoised per process
-for ``PROBE_TTL_S``: an unreachable UNC path took 5-42 s per ``exists()``,
-paid for every stale copy on every fresh build under that chip's build lock.
-An unanswered probe counts as "there" (nothing is brought over).
+**Bounded probes (R2 M5).** "Can the old folder be found" is asked through
+:mod:`folder_probe` -- parallel threads, at most 1 s in all, memoised per
+process: an unreachable UNC path took 5-42 s per ``exists()``, paid for every
+stale copy on every fresh build under that chip's build lock. An unanswered
+probe counts as "there" (nothing is brought over).
 """
 from __future__ import annotations
 
 import json
 import logging
-import threading
-import time
 from datetime import datetime
 from pathlib import Path
 
-from . import pending_tray, safe_io, working_copy
+from . import folder_probe, pending_tray, safe_io, working_copy
 from .loader import ChangeEntry
 
 logger = logging.getLogger(__name__)
@@ -56,54 +54,14 @@ _SKIP: set = set()
 #: The offer record beside the old copy (R2 M5). The GC deletes it with the
 #: copy (it is one of the copy's ``<key>.pending_tray*`` files).
 _OFFER_SUFFIX = ".pending_tray.moved-offer.json"
-#: At most this long, in all, for the existence probes of one open ...
-PROBE_WAIT_S = 1.0
-#: ... and an answer is reused for this long by every open in this process.
-PROBE_TTL_S = 300.0
-_PROBES: dict = {}                     # path -> (monotonic time, True/False/None)
-_INFLIGHT: dict = {}                   # path -> the probe thread still asking
-_PROBES_LOCK = threading.Lock()
 #: (old key, new key) a no-evidence note was already said for, this process
 _NOTED: set = set()
 
 
-def _probe(path: str) -> None:
-    try:
-        verdict = Path(path).exists()
-    except OSError:
-        verdict = None
-    with _PROBES_LOCK:
-        _PROBES[path] = (time.monotonic(), verdict)
-        _INFLIGHT.pop(path, None)
-
-
 def folders_present(paths) -> dict:
-    """{path: True / False / None} -- can each folder be found? None: no
-    answer within ``PROBE_WAIT_S`` in all (a slow share); counted as there by
-    every caller. Probes run in parallel daemon threads, one per folder at a
-    time; a late answer is kept for the next open."""
-    now = time.monotonic()
-    out, waits = {}, []
-    with _PROBES_LOCK:
-        for p in dict.fromkeys(str(x) for x in paths):
-            hit = _PROBES.get(p)
-            if hit is not None and now - hit[0] < PROBE_TTL_S and hit[1] is not None:
-                out[p] = hit[1]
-                continue
-            t = _INFLIGHT.get(p)
-            if t is None or not t.is_alive():
-                t = threading.Thread(target=_probe, args=(p,), daemon=True,
-                                     name="moved-work-probe")
-                _INFLIGHT[p] = t
-                t.start()
-            waits.append((p, t))
-    deadline = time.monotonic() + PROBE_WAIT_S
-    for p, t in waits:
-        t.join(max(0.0, deadline - time.monotonic()))
-        with _PROBES_LOCK:
-            hit = _PROBES.get(p)
-        out[p] = hit[1] if hit is not None and not t.is_alive() else None
-    return out
+    """{path: True / False / None}: :func:`folder_probe.folders_present`
+    (parallel, bounded, memoised; None = no answer, counted as there)."""
+    return folder_probe.folders_present(paths)
 
 
 def _checkpoints(root: Path, key: str) -> list[Path]:

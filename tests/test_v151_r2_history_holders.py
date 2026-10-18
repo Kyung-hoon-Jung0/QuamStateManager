@@ -192,3 +192,37 @@ def test_a_real_shaped_instance_keeps_the_live_chips_mixed_dir(tmp_path):
     assert fresh._key_for(live) == "lab"
     assert len(fresh.list_snapshots(live)) == len(snaps), "the live chip lost its history"
     assert fresh._key_for(backup) != "lab"
+
+
+def test_a_holder_on_a_share_that_does_not_answer_never_stalls_a_resolve(tmp_path, monkeypatch):
+    """An inferred holder may be an old share path: its exists() blocked a
+    history resolve for the whole SMB timeout (5-42 s measured). The probe is
+    bounded; no answer counts as "there" (the dir is never taken over)."""
+    import pathlib
+
+    from quam_state_manager.core import folder_probe
+    folder_probe.forget()
+    inst = tmp_path / "inst"
+    hm = HistoryManager(inst, max_snapshots=50, cache_size=3)
+    live = tmp_path / "share" / "lab" / "quam_state"
+    for i in range(3):
+        _write(live, 1.0e-5 + i * 1e-7)
+        hm.check_and_snapshot(live, "manual", force=True)
+    backup = _write(tmp_path / "backup" / "lab" / "quam_state", 2.0e-5)
+    key = hm._key_for(live)
+    _forget_holders(hm)
+    slow = {os.path.normcase(str(live)), os.path.normcase(str(live.resolve()))}
+    real = pathlib.Path.exists
+
+    def exists(self, *a, **k):
+        if os.path.normcase(str(self)) in slow:
+            time.sleep(4.0)
+            return True
+        return real(self, *a, **k)
+    monkeypatch.setattr(pathlib.Path, "exists", exists)
+    up = HistoryManager(inst, max_snapshots=50, cache_size=3)
+    t0 = time.monotonic()
+    got = up._key_for(backup)
+    assert time.monotonic() - t0 < 2.5, "the resolve waited for the share"
+    assert got != key, "the backup took the dir of a holder that did not answer"
+    folder_probe.forget()
