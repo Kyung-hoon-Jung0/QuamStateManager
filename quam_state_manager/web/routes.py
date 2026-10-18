@@ -17008,7 +17008,10 @@ def state_history_restore_live(timestamp: str):
                                  journal_unit={"src": "restore-live", "edit_units": []},
                                  units=lambda: [_rbref["wh_unit"]["id"]] if _rbref.get("wh_unit") else [],
                                  ref={"snapshot": timestamp, "backup": backup_meta.timestamp})
-            working_copy.apply_to_live(wc, force=True, record=_pend)
+            working_copy.apply_to_live(
+                wc, force=True, record=_pend,
+                backup_check=_forced_write_gate(wc, backup_meta.timestamp,
+                                                backup_meta.state_hash, _rbref))
             ctx["_alarm_reason"] = "restore-live"
             _rebuild_after_working_copy_replaced(ctx)
     except working_copy.StaleLiveError as exc:
@@ -29805,6 +29808,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     # CONTENT MATCH — check_and_snapshot dedups against every hash ever seen,
     # so "newest snapshot" is the wrong revert target after an A-B-A cycle.
     pre_apply_ts = None
+    _backup_hash = None       # v1.5.1: what the backup holds (the forced-write gate)
     if not walk:      # a walk step keeps the apply's own anchor (F6)
         try:
             _hm = _history()
@@ -29814,8 +29818,10 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
                 pre_apply_ts = _pre.timestamp
+                _backup_hash = _pre.state_hash
             else:
                 pre_apply_ts = _hm.snapshot_ts_for_current_content(ctx["path"])
+                _backup_hash = _snapshot_content_hash(_hm, ctx["path"], pre_apply_ts)
         except Exception:
             logger.warning("Pre-apply snapshot failed", exc_info=True)
 
@@ -29859,10 +29865,18 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
             if journal and ctx.get("staged_base"):
                 _before_tree = _live_merged_tree(wc)
                 _bref["tree"] = _before_tree
-            working_copy.apply_to_live(wc, force=force, record=_pend)
+            working_copy.apply_to_live(
+                wc, force=force, record=_pend,
+                **({"backup_check": _forced_write_gate(wc, pre_apply_ts, _backup_hash, _bref)}
+                   if force else {}))
     except working_copy.LiveStateMissingError as exc:
         _refused_after_save()
         return jsonify(status="error", conflict="missing_live", message=str(exc)), 409
+    except working_copy.UnbackedLiveError as exc:
+        # v1.5.1 (SA-F1): live content no backup holds -- nothing written
+        _refused_after_save()
+        ctx["live_diverged"] = True
+        return jsonify(status="error", conflict="live_unbacked", message=str(exc)), 409
     except working_copy.WorkingCopyChangedError:
         _press_keep_tray(ctx, _press)
         return jsonify(status="error", conflict="shared_working_copy",
@@ -29991,6 +30005,61 @@ _UNBACKED_OVERWRITE_MSG = (
     "Nothing was written — SM could not back up the current live state in "
     "history. Without that backup the overwrite could not be undone. "
     "Retry after checking that the live files can be read and history can be written.")
+
+#: v1.5.1 (SA-F1): live files appeared while a forced write was under way
+_LIVE_APPEARED_MSG = (
+    "Nothing was written — live state files appeared in the live folder while SM "
+    "was writing (it had found none, so it had nothing backed up). Overwriting them "
+    "could not be undone. Look at the live chip, then choose again.")
+#: v1.5.1 (SA-F1): the live chip changed after its backup was taken
+_LIVE_MOVED_AFTER_BACKUP_MSG = (
+    "Nothing was written — the live chip changed after SM backed it up, so no "
+    "version holds what it holds now. Choose again; the next press backs up what "
+    "is there.")
+
+
+def _snapshot_content_hash(hm, path, ts) -> str | None:
+    """The stored content hash of version *ts* of *path* (None when unknown)."""
+    if not ts:
+        return None
+    try:
+        for meta in hm.list_snapshots(path):
+            if meta.timestamp == ts:
+                return meta.state_hash
+    except Exception:  # noqa: BLE001 -- unknown is honest; the gate then refuses
+        logger.warning("reading the backup's content hash failed", exc_info=True)
+    return None
+
+
+def _forced_write_gate(wc, backup_ts, backup_hash, before_ref: dict | None = None):
+    """v1.5.1 (SA-F1): ``apply_to_live``'s ``backup_check`` for a FORCED push.
+
+    Called under the chip's write lock right before the write, with whether
+    live files exist then. No files: nothing to lose. Files: the door's backup
+    must hold exactly what they hold (the version's stored content hash,
+    compared with the live pair read now) -- otherwise a "delete the folder
+    and recreate it" (or any write) landing during the press would be
+    overwritten with no version holding it. A press whose recorded "before"
+    tree is empty while files exist now is refused too: its undo unit would
+    claim there was no previous state."""
+    from quam_state_manager.core import history as _hist
+
+    def check(present: bool) -> str | None:
+        if not present:
+            return None
+        if not backup_ts or not backup_hash:
+            return _LIVE_APPEARED_MSG
+        if before_ref is not None and "tree" in before_ref and not before_ref["tree"]:
+            return _LIVE_APPEARED_MSG
+        live = Path(wc.live_folder)
+        try:
+            now = _hist._canonical_content_hash(live / "state.json", live / "wiring.json")
+        except Exception:  # noqa: BLE001 -- unreadable proves nothing: refuse
+            now = None
+        if now != backup_hash:
+            return _LIVE_MOVED_AFTER_BACKUP_MSG
+        return None
+    return check
 
 
 _LIVE_MOVED_DURING_CONFIRM_MSG = (
@@ -30280,7 +30349,10 @@ def state_apply_to_live():
     # "revert last apply" means "put back what the chip held when I armed it"
     # (the user's own choice; per-change revert is the applied log's X). Taking
     # it once is also what stops a 10-minute session writing 200 full snapshots.
+    _bk: dict = {}              # v1.5.1: this press's own backup (ts, content hash)
+
     def _take_pre_apply_backup():
+        _bk["tried"] = True
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
@@ -30288,8 +30360,11 @@ def state_apply_to_live():
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
+                _bk.update(ts=_pre.timestamp, hash=_pre.state_hash)
                 return _pre.timestamp
-            return _hm.snapshot_ts_for_current_content(ctx["path"])
+            ts = _hm.snapshot_ts_for_current_content(ctx["path"])
+            _bk.update(ts=ts, hash=_snapshot_content_hash(_hm, ctx["path"], ts))
+            return ts
         except Exception:
             logger.warning("Pre-apply snapshot failed", exc_info=True)
             return None
@@ -30316,6 +30391,10 @@ def state_apply_to_live():
             pre_apply_ts = _take_pre_apply_backup()
         if _auto is not None and pre_apply_ts:
             _auto["pre_ts"] = pre_apply_ts
+    if force and not _bk.get("tried"):
+        # v1.5.1 (SA-F1): a forced push needs a backup of what IT replaces --
+        # a session's revert anchor is an older content
+        _take_pre_apply_backup()
 
     # QA correctness-r2-01: a FORCED push skips every staleness check, so the
     # pre-apply backup above is the only thing standing between it and the
@@ -30328,7 +30407,7 @@ def state_apply_to_live():
     # restore stays reversible"). A folder with NO live files has nothing to
     # lose and still proceeds (docs/86 point 7). The edits stay saved in the
     # working copy and the conflict tray re-offers the choice.
-    if force and not pre_apply_ts and _live_files_present(wc):
+    if force and not _bk.get("ts") and _live_files_present(wc):
         logger.warning("Refusing a forced apply-to-live of %s: no pre-apply "
                        "backup could be taken", ctx.get("path"))
         _refused_after_save()          # docs/255: the press changes nothing
@@ -30380,12 +30459,29 @@ def state_apply_to_live():
             # every other push keeps the exact call it always made
             working_copy.apply_to_live(
                 wc, force=force, record=_pend,
-                **({"expect_live_hash": expect_live_hash} if expect_live_hash else {}))
+                **({"expect_live_hash": expect_live_hash} if expect_live_hash else {}),
+                **({"backup_check": _forced_write_gate(wc, _bk.get("ts"), _bk.get("hash"), _bref)}
+                   if force else {}))
     except working_copy.LiveStateMissingError as exc:
         _refused_after_save()
         if request.headers.get("Accept", "").startswith("application/json"):
             return jsonify(ok=False, conflict="missing_live", message=str(exc)), 409
         return render_template("_status.html", level="warning", message=str(exc)), 409
+    except working_copy.UnbackedLiveError as exc:
+        # v1.5.1 (SA-F1): the live folder came back (or changed) during this
+        # forced press, holding content no version holds -- nothing written;
+        # the user chooses again with the live chip in view
+        _refused_after_save()
+        ctx["live_diverged"] = True
+        if request.headers.get("Accept", "").startswith("application/json"):
+            return jsonify(ok=False, conflict="live_unbacked", message=str(exc)), 409
+        _err = render_template("_status.html", level="error", message=str(exc))
+        resp = make_response(
+            _conflict_tray(ctx, store, staged_conflict=bool(ctx.get("working_dirty")) and (
+                bool(ctx.get("staged_base")) or not ctx.get("pending_reapply")))
+            + "\n" + f'<div id="status-bar" hx-swap-oob="innerHTML">{_err}</div>')
+        resp.headers["HX-Trigger"] = "liveDriftChanged"
+        return resp                    # swapped like the no_backup refusal above
     except working_copy.WorkingCopyChangedError:
         _press_keep_tray(ctx, _press)
         return _shared_working_refusal()

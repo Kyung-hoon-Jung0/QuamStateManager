@@ -41,6 +41,13 @@ class StaleLiveError(Exception):
     """Applying to live would clobber an out-of-band change to the live files."""
 
 
+class UnbackedLiveError(StaleLiveError):
+    """v1.5.1: a FORCED write found live content its door's backup does not
+    hold -- live files appeared after the door found none (a lab deleting and
+    recreating the folder), or changed after the backup was taken. Nothing
+    was written; overwriting would leave that content in no version."""
+
+
 class EmptyStateError(ValueError):
     """An absent or empty document cannot be written as the chip state."""
 
@@ -875,8 +882,26 @@ def _check_working_bytes(record, pair) -> None:
             raise WorkingCopyChangedError(SHARED_WORKING_MSG)
 
 
+def _live_presence(folder) -> tuple:
+    """Which live files exist, with their stat -- the cheap witness that the
+    live pair stayed as the forced-write gate judged it (v1.5.1)."""
+    out = []
+    for name in ("state.json", "wiring.json"):
+        try:
+            st = os.stat(Path(folder) / name)
+            out.append((name, st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append((name, None, None))
+    return tuple(out)
+
+
+def _present(sig: tuple) -> bool:
+    return any(mt is not None for _n, mt, _sz in sig)
+
+
 def apply_to_live(wc: WorkingCopy, *, force: bool = False,
-                  expect_live_hash: str | None = None, record=None) -> None:
+                  expect_live_hash: str | None = None, record=None,
+                  backup_check=None) -> None:
     """Push the working copy's state + wiring to the live folder.
 
     ``record`` (S4, docs/271) is the door's ``hub.Pending``: what this write
@@ -916,6 +941,16 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     -- ``synced_*`` is intentionally NOT updated, so the next staleness
     check will flag the divergence rather than silently treat the live as
     in-sync.
+
+    ``backup_check`` (v1.5.1, forced pushes): the door's word on whether its
+    backup holds what the write is about to replace. Called under the chip's
+    write lock, right before the write is recorded, with whether live files
+    exist NOW; it returns a refusal message (raised as
+    :class:`UnbackedLiveError`, nothing written, nothing recorded) or None.
+    A door that found no live files, took no backup, and finds files now --
+    a lab deleting and recreating the folder during the press -- is refused
+    instead of overwriting a pair no version holds. The live pair is checked
+    once more after the record's fsync; a change there is refused too.
     """
     from quam_state_manager.core import hub, xlock
 
@@ -1060,6 +1095,16 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                     "The live state files changed after the overwrite was confirmed "
                     "— refusing to replace values the confirm did not name.")
 
+        # v1.5.1: a forced push decides "is there live content to lose" HERE,
+        # under the write lock, after the door's backup (and its retries) --
+        # never from a look taken before them.
+        gate_sig = None
+        if force and backup_check is not None:
+            gate_sig = _live_presence(wc.live_folder)
+            why = backup_check(_present(gate_sig))
+            if why:
+                raise UnbackedLiveError(why)
+
         # S4 (docs/271): write-ahead. Every refusal is behind us; the journal
         # line is durable before the chip is touched. Base = what the chip
         # held: the sync point (the gates above proved live still equals it),
@@ -1070,6 +1115,8 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                 base_hash = wc.synced_live_hash
             elif expect_live_hash is not None:
                 base_hash = expect_live_hash
+            elif gate_sig is not None and not _present(gate_sig):
+                base_hash = None     # the gate saw no live files (no retry wait here)
             else:
                 try:
                     base_hash = live_content_hash(wc)
@@ -1095,6 +1142,16 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                         "refusing to overwrite an out-of-band write.")
                     rec.failed(err)
                     raise err
+        if gate_sig is not None and _live_presence(wc.live_folder) != gate_sig:
+            # v1.5.1: the pair the gate judged moved (or appeared) since --
+            # the mtime check above cannot see a pair that was absent when the
+            # lock was taken
+            err = UnbackedLiveError(
+                "Nothing was written — the live files changed while SM was writing, "
+                "so no version holds what they hold now. Choose again.")
+            if rec is not None:
+                rec.failed(err)
+            raise err
 
         try:
             safe_io.write_state_wiring_bytes(wc.live_folder, state_b, wiring_b)
