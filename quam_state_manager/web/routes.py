@@ -929,7 +929,13 @@ def _sync_live_refresh(ctx) -> None:
         try:
             _lp = working_copy.read_live_shared(wc)
         except FileNotFoundError:
-            _note_live_unreadable(ctx, key, "the live folder has no state.json / wiring.json")
+            # v1.5.1 (SB-P2-3): a folder that is gone is said as gone
+            if not os.path.isdir(str(wc.live_folder)):
+                _note_live_unreadable(ctx, key, "the live chip folder was not found "
+                                      f"(moved, renamed or deleted): {wc.live_folder}",
+                                      missing=True)
+            else:
+                _note_live_unreadable(ctx, key, "the live folder has no state.json / wiring.json")
             return
         except (OSError, ValueError, safe_io.LiveFileError) as exc:
             _note_live_unreadable(ctx, key, str(exc))
@@ -1094,7 +1100,7 @@ def _store_sync_live(ctx, live_state: dict, live_wiring: dict, *, key=None,
     return facts, entries, verdict
 
 
-def _note_live_unreadable(ctx, key, reason: str) -> None:
+def _note_live_unreadable(ctx, key, reason: str, missing: bool = False) -> None:
     """Count a failed live read; after two failures at least
     ``_LIVE_UNREADABLE_AFTER_S`` apart the control says so (SE-02). The key is
     kept, so a file that STAYS broken is not re-read every poll -- the next
@@ -1109,6 +1115,7 @@ def _note_live_unreadable(ctx, key, reason: str) -> None:
     if bad["n"] >= 2 and (now - bad["since"]) >= _LIVE_UNREADABLE_AFTER_S:
         prev = dict(ctx.get("sync_live") or {})
         prev["unreadable"] = bad["reason"]
+        prev["missing"] = bool(missing)       # v1.5.1 (SB-P2-3)
         prev["_key"] = key
         prev["_sig"] = None
         ctx["sync_live"] = prev
@@ -1125,8 +1132,10 @@ def _sync_view(ctx=None) -> dict | None:
     log = list(getattr(store, "change_log", None) or []) if store is not None else []
     facts = ctx.get("sync_live")
     unreadable = None
+    missing = False
     if facts:
         unreadable = facts.get("unreadable")
+        missing = bool(facts.get("missing"))
         # facts read at a sync point that has since moved (a pull, an apply)
         # describe a live chip SM has already reconciled with
         k = facts.get("_key")
@@ -1158,6 +1167,7 @@ def _sync_view(ctx=None) -> dict | None:
         flag_conflicts=ctx.get("live_conflicts") or (),
         archive=(ctx.get("origin") or "live") == "dataset_archive",
         unreadable=unreadable,
+        missing=missing and bool(unreadable),
         refused=refused,
         change_paths=paths,
         unapplied=len(paths),
@@ -4938,6 +4948,9 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
         from quam_state_manager.core.history import extras_data_folder
         with store._lock:
             declared = extras_data_folder(store.state)
+        # v1.5.1 (SB-P2-3): what these roots were derived from, so a reader
+        # can tell they are stale after the declared folder was re-pointed
+        ctx["extras_data_declared"] = list(declared or [])
         if not declared:
             return
         resolved: list[str] = []
@@ -8610,7 +8623,7 @@ def explorer_model():
     copy, exactly as /explorer renders it."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     with store._lock:
         # the same text json.dumps of the whole dict makes (default separators)
         body = ('{"ok": true, "state": ' + _state_json_text(store)
@@ -10658,7 +10671,7 @@ def _recovery_target():
     """(ctx, file id, error response) for the recovery routes."""
     ctx = _active_ctx()
     if not ctx or not ctx.get("modifier") or not ctx.get("working_copy"):
-        return None, "", (jsonify(ok=False, error=_NO_CHIP_MSG), 400)
+        return None, "", (jsonify(ok=False, error=_no_chip_msg()), 400)
     if (ctx.get("origin") or "live") != "live":
         return None, "", (jsonify(
             ok=False, error_kind="archive_read_only",
@@ -11936,7 +11949,18 @@ def chip_active_token():
 # SM restart nothing auto-loads (docs/63 decision 3), so the page still shows
 # the chip the server no longer has -- "No active context" named neither the
 # cause nor the way back.
-_NO_CHIP_MSG = "No chip open (SM restarted?) — reopen the chip: Projects → Resume."
+def _no_chip_msg() -> str:
+    """v1.5.1 (SB-P2-3): the refusal of a write with no chip open names a
+    way back that EXISTS -- the old text sent the user to "Projects ->
+    Resume" when no Resume card was offered (the last chip was gone)."""
+    try:
+        ro = _resume_offer()
+    except Exception:  # noqa: BLE001 -- the plain sentence then
+        ro = None
+    if ro:
+        return (f"No chip is open (SM restarted?). Re-open {ro['name']}: "
+                "the Resume button on the start page.")
+    return "No chip is open. Open one: Projects, or State Load in the sidebar."
 
 
 @bp.route("/field/lab-watch", methods=["GET", "POST"])
@@ -12018,7 +12042,7 @@ def field_edit():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     _lk = _agent_edit_lock_refusal(ctx)
     if _lk is not None:
         return _lk
@@ -12471,7 +12495,7 @@ def field_peek():
     """
     store = _store()
     if not store:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
 
     from quam_state_manager.core.pointer_path import find_shared_by, resolve_field_target
 
@@ -13704,7 +13728,7 @@ def field_type_assignments():
     """The chip's user type assignments + whether the env manifest is warm."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     policy = getattr(store, "type_policy", None)
     assignments = dict(policy.assignments) if policy else {}
     return jsonify(ok=True, assignments=assignments, count=len(assignments),
@@ -13725,7 +13749,7 @@ def field_type_assign():
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     if not store or not ctx.get("path"):
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
         request.form.get("force_chip") in ("1", "true", "True"),
@@ -14008,7 +14032,7 @@ def field_type_unassign():
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     if not store or not ctx.get("path"):
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
@@ -14085,7 +14109,7 @@ def field_refs():
     """Pointer references into a path (the delete-confirm blast radius)."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     dot_path = _normalize_dot_path(request.args.get("dot_path", "").strip())
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
@@ -14115,7 +14139,7 @@ def field_create():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
         request.form.get("force_chip") in ("1", "true", "True"),
@@ -14241,7 +14265,7 @@ def field_delete():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
         request.form.get("force_chip") in ("1", "true", "True"),
@@ -14302,7 +14326,7 @@ def schema_missing_keys():
     Explorer add-key datalist ('your class has these unset fields')."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     scope = _normalize_dot_path(request.args.get("scope", "").strip())
     policy = getattr(store, "type_policy", None)
     manifest = policy.manifest if policy is not None else None
@@ -14575,7 +14599,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     _lk = _agent_edit_lock_refusal(ctx)
     if _lk is not None:
         return _lk
@@ -21739,6 +21763,20 @@ def _cz_loss_roots(ctx) -> list[tuple[str, str]]:
     if not ctx or not ctx.get("path"):
         return []
     roots = ctx.get("hub_roots")
+    # v1.5.1 (SB-P2-3): the roots registered at open are stale once the chip
+    # declares another data folder (Set + Apply after a move): derive them
+    # again from what the chip declares now
+    store = ctx.get("store")
+    if store is not None and (ctx.get("origin") or "live") == "live":
+        try:
+            from quam_state_manager.core.history import extras_data_folder
+            with store._lock:
+                now = list(extras_data_folder(store.state) or [])
+            if now != list(ctx.get("extras_data_declared") or []):
+                _adopt_extras_data_folders(ctx)
+                roots = None
+        except Exception:  # noqa: BLE001 -- the registered roots stand
+            logger.debug("cz loss: the declared data folder could not be re-read", exc_info=True)
     if roots is None:
         try:
             roots = _hub_roots_for(ctx)
@@ -21828,6 +21866,18 @@ def _cz_loss_build(ctx, store, convs) -> dict:
     identity, names = _cz_loss_judges(ctx, store) if roots else (None, None)
     out = cz_loss.build([r for r, _src in roots], chip, identity=identity, names=names)
     out["roots"] = [{"path": r, "source": src} for r, src in roots]
+    # v1.5.1 (SB-P2-3): a folder that IS declared but cannot be found is not
+    # "no data folder is declared"
+    dangling = list((ctx or {}).get("extras_data_dangling") or [])
+    if out.get("reason") == cz_loss.NO_ROOTS and dangling:
+        why = "the data folder this chip declares cannot be found: " + ", ".join(dangling)
+        out["reason"] = why
+        for cur in (out.get("curves") or {}).values():
+            if cur.get("reason") == cz_loss.NO_ROOTS:
+                cur["reason"] = why
+            mk = cur.get("marker")
+            if isinstance(mk, dict) and mk.get("label") == cz_loss.NO_ROOTS:
+                mk["label"] = why
     return out
 
 
@@ -26036,7 +26086,7 @@ def api_pulse_delete_together():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+        return jsonify(ok=False, error=_no_chip_msg()), 400
     pj = request.get_json(silent=True)
     if not isinstance(pj, dict):
         return jsonify(ok=False, error="A JSON body is required"), 400
@@ -29347,12 +29397,18 @@ def state_review():
     store = ctx["store"]
     archive = (ctx.get("origin") or "live") == "dataset_archive"
     read_error = None
+    read_missing = False
     entries, verdict, facts = [], None, None
     _lp = None
     try:
         _lp = working_copy.read_live_shared(wc)
     except FileNotFoundError:
-        read_error = "The live state folder has no state.json / wiring.json — it may have been moved or deleted."
+        # v1.5.1 (SB-P2-3): a folder that is gone is said as gone
+        read_missing = not os.path.isdir(str(wc.live_folder))
+        read_error = (f"The live chip folder was not found (moved, renamed or deleted): "
+                      f"{wc.live_folder}. Your edits are kept here; open the chip at its "
+                      "new place and SM offers them there." if read_missing else
+                      "The live state folder has no state.json / wiring.json — it may have been moved or deleted.")
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
         read_error = f"Could not read the live chip: {exc}"
     else:
@@ -29363,7 +29419,7 @@ def state_review():
             facts, entries, verdict = _store_sync_live(ctx, None, None, pair=_lp)
     sv = _sync_view(ctx)
     if read_error and sv is not None and sv["state"] not in ("archive",):
-        sv = dict(sv, state="unreadable", unreadable=read_error)
+        sv = dict(sv, state="unreadable", unreadable=read_error, missing=read_missing)
 
     with store._lock:
         log = list(store.change_log or [])
@@ -30129,13 +30185,21 @@ def _unseen_edit_refusal(ctx) -> dict | None:
             # there are none. Seen once in a simultaneous-Apply race;
             # reproduced without one by applying from a second client
             # between this screen's render and its press.
+            # v1.5.1 (SB-P2-3): no window is blamed -- the user's own Save
+            # folds the rows into the working state too. A saved working
+            # state still differs from live: Apply writes it.
+            saved = bool(ctx.get("working_dirty"))
             return {"status": "unseen_changes", "have": 0,
                     "seen": seen if seen is not None else 0,
-                    "paths": [], "nothing_pending": True,
+                    "paths": [], "nothing_pending": True, "saved": saved,
                     "message": (
-                        "Another State Manager window has already applied "
-                        "(or discarded) the edits this screen was showing, "
-                        "so there is nothing left here to apply.")}
+                        "Nothing was written: the edits this screen showed were "
+                        "saved into the working state (Save), so they are no longer "
+                        "separate rows. Apply writes the saved version; press it again."
+                        if saved else
+                        "Nothing was written: the edits this screen showed are no "
+                        "longer pending; they were applied or discarded since this "
+                        "screen was drawn (here or in another window).")}
         return {"status": "unseen_changes", "have": have,
                 "seen": seen if seen is not None else 0,
                 "paths": extra[:8],
@@ -41850,7 +41914,7 @@ def dataset_apply_selected_preview(uid):
     ctx = _active_ctx()
     store = ctx.get("store") if ctx and ctx.get("type") == "quam" else None
     if store is None:
-        return jsonify(ok=False, error=_NO_CHIP_MSG), 409
+        return jsonify(ok=False, error=_no_chip_msg()), 409
     if (ctx.get("origin") or "live") != "live":
         return jsonify(ok=False, error="The open chip is a read-only archive — open your chip to apply into it"), 409
     snap = safe_io.read_json(qs / f"{which}.json")

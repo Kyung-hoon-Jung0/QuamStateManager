@@ -590,7 +590,7 @@ class TestNothingLeftToApply:
         assert out["status"] == "unseen_changes"
         assert out["have"] == 0 and out["paths"] == []
         assert out["nothing_pending"] is True
-        assert "already applied" in out["message"]
+        assert "applied or discarded" in out["message"]   # v1.5.1 (SB-P2-3): no window is blamed
         # the general sentence is the OPPOSITE of the truth here
         assert "would write ITS edits" not in out["message"]
 

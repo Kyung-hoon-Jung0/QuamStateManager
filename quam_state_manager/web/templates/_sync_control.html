@@ -35,6 +35,8 @@
   'archive': ('Archive · read-only' ~ ((' · run ' ~ _ai.run_label) if (_ai is defined and _ai and _ai.run_label) else ''), "a dataset run's frozen quam_state."),
 } -%}
 {%- set _t = _texts.get(_st, _texts['synced']) -%}
+{#- v1.5.1 (SB-P2-3): a live folder that is gone is not "unreadable" -#}
+{%- if _st == 'unreadable' and _sv and _sv.missing %}{% set _t = ("Live chip folder not found — your edits are safe", 'the folder was moved, renamed or deleted; open it at its new place.') %}{% endif -%}
 <span class="sync-control sync-st-{{ _st }}" aria-label="Sync status"
       data-sync-state="{{ _st }}">
 <button type="button"
