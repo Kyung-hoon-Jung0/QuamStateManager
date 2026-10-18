@@ -29845,6 +29845,9 @@ def _unseen_edit_refusal(ctx) -> dict | None:
     """
     seen_raw = request.values.get("seen_changes")
     seen_sig = (request.values.get("seen_sig") or "").strip()
+    _by_paths = _unseen_by_paths(ctx)
+    if _by_paths is not False:
+        return _by_paths
     if (seen_raw is None or seen_raw == "") and not seen_sig:
         return None
     # ONE TOKEN NEVER COLLAPSES TWO GATES (docs/41). `force=1` already means
@@ -29914,6 +29917,56 @@ def _unseen_edit_refusal(ctx) -> dict | None:
                 f"{have - seen} edit(s) were made in another State Manager "
                 f"window and are not shown on this screen. Applying now would "
                 f"write them to the live chip too.")}
+
+
+def _unseen_by_paths(ctx):
+    """v1.5.1 (SB-F4): the grids' "Apply to live now" declares the PATHS its
+    confirm showed (``seen_paths``, JSON): the cells typed plus the tray's
+    rows at that moment. A count or signature taken at the push cannot be
+    used there -- the grid's own commit refreshes the tray from the server
+    first, so another window's edit staged meanwhile was in the "seen" set and
+    went to the chip unnamed. Every pending row whose path is not among them
+    (as written, or as the edit door resolves it) is unseen.
+
+    ``False`` when no paths were declared (the count/signature rules
+    decide), else the refusal or None."""
+    raw = request.values.get("seen_paths")
+    if not raw:
+        return False
+    if request.values.get("ack_unseen") == "1":
+        return None
+    try:
+        declared = [str(p) for p in json.loads(raw) if p]
+    except (TypeError, ValueError):
+        return False
+    store = (ctx or {}).get("store")
+    if store is None:
+        return None
+    seen = set(declared)
+    for p in declared:
+        try:
+            seen.add(_resolve_edit_path(store, p))
+        except Exception:  # noqa: BLE001 -- an unresolvable path is seen as written
+            pass
+    with store._lock:
+        rows = [(str(getattr(c, "dot_path", None) or "?"), getattr(c, "group_id", None))
+                for c in (store.change_log or [])]
+    paths = [p for p, _g in rows]
+    # a row the same press staged alongside a declared one (an FSP edit's
+    # compensated amplitudes, a linked port written once) shares its group
+    groups = {g for p, g in rows if g is not None and p in seen}
+    extra = []
+    for p, g in rows:
+        if p not in seen and g not in groups and p not in extra:
+            extra.append(p)
+    if not extra:
+        return None
+    n = len(extra)
+    return {"status": "unseen_changes", "have": len(paths), "seen": len(paths) - n,
+            "paths": extra[:8],
+            "message": (f"{n} pending edit{'s' if n != 1 else ''} not shown in this "
+                        f"confirm (staged in another State Manager window?): applying now "
+                        f"would write {'them' if n != 1 else 'it'} to the live chip too.")}
 
 
 def _discard_unseen_body(refusal: dict) -> dict:

@@ -4267,6 +4267,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
               + (opts && opts.ackCollision ? "&ack_collision=1" : "")
               + (opts && opts.ackTorn ? "&ack_torn=1" : "")
               + (opts && opts.picks ? "&picks=" + encodeURIComponent(JSON.stringify(opts.picks)) : "")
+              // v1.5.1 (SB-F4): the grid push confirm's own set, when it showed one
+              + (opts && opts.seenPaths ? "&seen_paths=" + encodeURIComponent(JSON.stringify(opts.seenPaths)) : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -4870,6 +4872,84 @@ document.addEventListener("keepMineReask", function () {
  *     merge in one shot (qualibrate's other live changes survive).
  *   - nothing pending (all edits already matched live) → a small "nothing to apply" toast
  *     so the click still gives feedback. */
+/* v1.5.1 (SB-F4): what the grid push confirm showed -- the typed cells plus the
+ * tray's rows at that moment -- so the push declares exactly that set
+ * (seen_paths). The grid's commit refreshes the tray from the server BEFORE
+ * the push, so a count or signature read at the push already includes an
+ * edit another window staged meanwhile; the paths the confirm named do not.
+ * Consumed by the next push; stale after two minutes (then the push declares
+ * the tray it finds, as before). */
+window.livePushSeen = function (paths) {
+    var tray = document.getElementById("pending-tray");
+    var all = {}, out = [];
+    (paths || []).forEach(function (p) { if (p && !all[p]) { all[p] = 1; out.push(p); } });
+    if (tray) {
+        Array.prototype.forEach.call(
+            tray.querySelectorAll("#tray-drawer .tray-change-item .tray-change-path"),
+            function (el) {
+                var p = el.getAttribute("title") || el.textContent || "";
+                if (p && !all[p]) { all[p] = 1; out.push(p); }
+            });
+    }
+    window._livePushSeen = { paths: out, t: Date.now() };
+};
+function _takeLivePushSeen() {
+    var s = window._livePushSeen;
+    window._livePushSeen = null;
+    return (s && Date.now() - s.t < 120000) ? s.paths : null;
+}
+function _gridDirectPush(seenPaths, ackUnseen) {
+    // Same direct push the tray's "Apply to live chip" button uses, but without
+    // a second confirm (applyAll already confirmed). htmx.ajax handles the tray
+    // swap + OOB status toast + HX-Trigger natively.
+    var vals = {};
+    if (seenPaths) vals.seen_paths = JSON.stringify(seenPaths);
+    else {
+        var _s = _keepMineSeen(null);
+        if (_s) { vals.seen_changes = _s.n; vals.seen_sig = _s.sig; }
+    }
+    if (ackUnseen) vals.ack_unseen = "1";
+    window._applyInFlight = true;
+    window._gridPushInFlight = { seen: seenPaths };
+    htmx.ajax("POST", "/state/apply-to-live", { source: "#pending-tray", target: "#pending-tray",
+                                                swap: "outerHTML", values: vals })
+        .finally(function () { window._applyInFlight = false; window._gridPushInFlight = null; });
+}
+/* The unseen-edit gate refused the grid's direct push: name the edits the confirm
+ * never showed; OK writes them too (ack_unseen), Cancel writes nothing. */
+document.addEventListener("htmx:beforeSwap", function (evt) {
+    var det = evt.detail;
+    if (!det || !det.xhr || det.xhr.status !== 409 || !window._gridPushInFlight) return;
+    if (!det.target || det.target.id !== "pending-tray") return;
+    var path = (det.requestConfig && det.requestConfig.path) || "";
+    if (path.indexOf("/state/apply-to-live") !== 0 || path.indexOf("force=1") >= 0) return;
+    var data = null;
+    try { data = JSON.parse(det.xhr.responseText || ""); } catch (e) { return; }
+    if (!data || data.status !== "unseen_changes") return;
+    var push = window._gridPushInFlight;
+    det.shouldSwap = false;
+    det.isError = false;
+    setTimeout(function () {
+        var refresh = function () {
+            if (window.htmx) window.htmx.ajax("GET", "/state/tray",
+                                              { target: "#pending-tray", swap: "outerHTML" });
+        };
+        if (data.nothing_pending) {
+            if (window.showToast) window.showToast(data.message || "Nothing was written.", "warning");
+            refresh();
+            return;
+        }
+        var lines = (data.paths || []).slice(0, 6).join("\n  ");
+        if (window.confirm((data.message || "") + "\n\n  " + lines
+                + "\n\nOK = apply them too."
+                + "\nCancel = write nothing; the tray will show them.")) {
+            _gridDirectPush(push && push.seen, true);
+        } else {
+            if (window.showToast) window.showToast("Nothing was written — the tray now shows those edits.", "info");
+            refresh();
+        }
+    }, 0);
+});
 window.applyEditsToLive = function () {
     if (window._applyInFlight) return;   // double-submit guard (shared with doStateSync)
     var tray = document.getElementById("pending-tray");
@@ -4877,19 +4957,16 @@ window.applyEditsToLive = function () {
     var dirty = !!(tray && tray.getAttribute("data-working-dirty") === "1");
     if (dirty) {
         if (window.htmx) {
-            // Same direct push the tray's "Apply to live chip" button uses, but without
-            // a second confirm (applyAll already confirmed). htmx.ajax handles the tray
-            // swap + OOB status toast + HX-Trigger natively.
-            window._applyInFlight = true;
-            htmx.ajax("POST", "/state/apply-to-live", { source: "#pending-tray", target: "#pending-tray", swap: "outerHTML" })
-                .finally(function () { window._applyInFlight = false; });
+            _gridDirectPush(_takeLivePushSeen(), false);
         } else if (window.showToast) {
             window.showToast("Click the sync status in the top bar and press “↑ Apply” to push your saved edits to the live chip.", "info");
         }
         return;
     }
     if (cc > 0) {
-        if (window.doStateSync) window.doStateSync("apply");
+        var _sp = _takeLivePushSeen();
+        if (window.doStateSync) window.doStateSync("apply", false, false, null,
+                                                    _sp ? { seenPaths: _sp } : undefined);
         return;
     }
     // r16 ⑥: the tray's data-* can be STALE (a missed OOB swap) — "nothing
@@ -4927,6 +5004,7 @@ window.applyEditsToLive = function () {
  * whole thing). '' when the push carries nothing beyond what was typed. */
 window.livePushExtrasLine = function (typedPaths) {
     var tray = document.getElementById("pending-tray");
+    window.livePushSeen(typedPaths);     // SB-F4: what this confirm shows
     if (!tray) return "";
     var skip = {};
     (typedPaths || []).forEach(function (p) { if (p) skip[p] = true; });

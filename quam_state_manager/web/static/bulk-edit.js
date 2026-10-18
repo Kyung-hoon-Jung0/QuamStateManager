@@ -3956,6 +3956,8 @@
                 if (dirty) ex += (ex ? '\n' : '\n\n') + 'It also pushes the saved, not-yet-applied working state.';
                 if (!window.confirm('Apply ' + (cc ? (cc + ' unapplied edit' + (cc === 1 ? '' : 's'))
                         : 'the saved edits') + ' and push to the live chip?' + ex)) return;
+                // v1.5.1 (SB-F4): the push declares exactly what this confirm listed
+                if (window.livePushSeen) window.livePushSeen(paths);
                 if (window.applyEditsToLive) window.applyEditsToLive();
             });
         },

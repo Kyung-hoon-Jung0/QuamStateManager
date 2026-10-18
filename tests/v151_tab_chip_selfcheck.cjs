@@ -122,6 +122,75 @@ function hdr(call) {
         document.getElementById('topbar-tray-slot').innerHTML = tray(attrs, rows);
     }
 
+    // ---- F4: what the grid push declares -----------------------------------
+    // the confirm is built on this tab's stale tray: nothing pending, a saved draft
+    setTray('data-change-count="0" data-working-dirty="1"', []);
+    window.livePushExtrasLine(['qubits.q1.T1']);
+    // the grid's commit swaps in the server's tray: it now holds another window's q4
+    setTray('data-change-count="2" data-change-sig="abc" data-working-dirty="1"',
+            ['qubits.q4.T1', 'qubits.q1.T1']);
+    ajaxCalls.length = 0;
+    window._applyInFlight = false;
+    window.applyEditsToLive();
+    let a = ajaxCalls[0];
+    let vals = (a && a.opts.values) || {};
+    ok(a && a.url === '/state/apply-to-live' && vals.seen_paths === JSON.stringify(['qubits.q1.T1']),
+       'the direct push declares only what its confirm showed -- ' + JSON.stringify(vals));
+
+    // the server refuses (q4 unseen): the user is asked, and OK writes them too
+    window._gridPushInFlight = { seen: ['qubits.q1.T1'] };
+    const evt = new window.CustomEvent('htmx:beforeSwap', { detail: {
+        xhr: { status: 409, responseText: JSON.stringify({ status: 'unseen_changes',
+               paths: ['qubits.q4.T1'], message: '1 pending edit not shown in this confirm' }) },
+        target: document.getElementById('pending-tray'),
+        requestConfig: { path: '/state/apply-to-live' }, shouldSwap: true, isError: true } });
+    ajaxCalls.length = 0;
+    confirmAnswer = true;
+    document.dispatchEvent(evt);
+    await tick(20);
+    ok(evt.detail.shouldSwap === false && evt.detail.isError === false, 'the refusal is not swapped as an error');
+    ok(confirms.length && /qubits\.q4\.T1/.test(confirms[confirms.length - 1]),
+       'the confirm names the other window\'s edit -- ' + confirms[confirms.length - 1]);
+    a = ajaxCalls[0];
+    vals = (a && a.opts.values) || {};
+    ok(a && vals.ack_unseen === '1' && vals.seen_paths === JSON.stringify(['qubits.q1.T1']),
+       'OK re-posts with ack_unseen -- ' + JSON.stringify(vals));
+    window._gridPushInFlight = { seen: ['qubits.q1.T1'] };
+    ajaxCalls.length = 0;
+    confirmAnswer = false;
+    document.dispatchEvent(new window.CustomEvent('htmx:beforeSwap', { detail: {
+        xhr: { status: 409, responseText: JSON.stringify({ status: 'unseen_changes', paths: ['qubits.q4.T1'] }) },
+        target: document.getElementById('pending-tray'),
+        requestConfig: { path: '/state/apply-to-live' }, shouldSwap: true, isError: true } }));
+    await tick(20);
+    ok(!ajaxCalls.some(function (x) { return x.verb === 'POST'; }), 'Cancel writes nothing');
+    window._gridPushInFlight = null;
+
+    // pending edits only: the merge press declares the same set
+    setTray('data-change-count="0" data-working-dirty="0"', []);
+    window.livePushExtrasLine(['qubits.q1.T1']);
+    setTray('data-change-count="2" data-change-sig="abc" data-working-dirty="0"',
+            ['qubits.q4.T1', 'qubits.q1.T1']);
+    fetchCalls.length = 0;
+    window._applyInFlight = false;
+    window.applyEditsToLive();
+    await tick(30);
+    const sync = fetchCalls.find(function (x) { return x.input === '/state/sync'; });
+    const body = sync ? String(sync.init.body) : '';
+    ok(/mode=apply/.test(body) && body.indexOf('seen_paths=' + encodeURIComponent(JSON.stringify(['qubits.q1.T1']))) >= 0,
+       'the merge press declares the confirm\'s set -- ' + body);
+    ok(sync && hdr(sync) === 'chip_x-1a2b3c4d', 'and names the page chip');
+
+    // a push with no confirm record declares the tray it finds (as before)
+    window._livePushSeen = null;
+    setTray('data-change-count="1" data-change-sig="def" data-working-dirty="1"', ['qubits.q1.T1']);
+    ajaxCalls.length = 0;
+    window._applyInFlight = false;
+    window.applyEditsToLive();
+    vals = (ajaxCalls[0] && ajaxCalls[0].opts.values) || {};
+    ok(vals.seen_changes === '1' && vals.seen_sig === 'def' && !vals.seen_paths,
+       'without a confirm the push declares the tray -- ' + JSON.stringify(vals));
+
     // ---- F5: a wrong-chip answer to a sync press stays on screen -----------
     toasts.length = 0;
     fetchAnswer = { ok: false, status: 'chip_mismatch', chip_mismatch: true,

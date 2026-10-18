@@ -230,4 +230,4 @@ def _node_selfcheck(name: str, minimum: int):
 
 
 def test_every_write_request_carries_the_page_chip_selfcheck():
-    _node_selfcheck("v151_tab_chip_selfcheck.cjs", 9)
+    _node_selfcheck("v151_tab_chip_selfcheck.cjs", 17)
