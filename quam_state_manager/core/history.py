@@ -2034,7 +2034,7 @@ class HistoryManager:
         with self._lock:
             if self._alias_cache is not None and self._alias_cache[0] == mt:
                 return self._alias_cache[1]
-        data: dict = {"version": 1, "names": {}, "dirs": {}, "paths": {}}
+        data: dict = {"version": 1, "names": {}, "dirs": {}, "paths": {}, "owners": {}}
         if mt != -1:
             try:
                 raw = safe_io.read_json(path)
@@ -2047,6 +2047,8 @@ class HistoryManager:
                 data["dirs"] = dirs if isinstance(dirs, dict) else {}
                 paths = raw.get("paths")
                 data["paths"] = paths if isinstance(paths, dict) else {}
+                owners = raw.get("owners")      # v1.5.1 (SB-F7)
+                data["owners"] = owners if isinstance(owners, dict) else {}
         with self._lock:
             self._alias_cache = (mt, data)
         return data
@@ -2196,17 +2198,17 @@ class HistoryManager:
         an mtime-granularity-equal rewrite would even defeat the identity
         cache). No memo: captures are rare and the dicts are in hand."""
         ident = identity_from_dicts(state, wiring, Path(quam_state_path))
-        result = self._resolve_from_ident(ident)
+        result = self._resolve_from_ident(ident, Path(quam_state_path))
         self._remember_chip_path(Path(quam_state_path), result)
         return result
 
     def _resolve_chip_dir_uncached(
         self, path: Path,
     ) -> tuple[Path, str, str, dict | None]:
-        return self._resolve_from_ident(self._cached_identity(path))
+        return self._resolve_from_ident(self._cached_identity(path), path)
 
     def _resolve_from_ident(
-        self, ident: ChipIdentity,
+        self, ident: ChipIdentity, path: Path | None = None,
     ) -> tuple[Path, str, str, dict | None]:
         candidate_key = _sanitize_name(ident.path_name)
         conflict: dict | None = None
@@ -2271,11 +2273,78 @@ class HistoryManager:
 
         # ── tiers 2+3: fingerprint routing over the path candidate ─────
         dir_, swap = self._route_by_fingerprint(ident, candidate_key)
+        if not swap and conflict is None and path is not None:
+            # v1.5.1 (SB-F7): the path candidate is the parent folder's
+            # name, so two copies of one chip whose parents share a name
+            # landed in ONE dir (same design, same fingerprint) -- each
+            # copy's value history listed the other's saves
+            dir_ = self._own_dir_for_folder(dir_, path)
         if conflict is not None:
             swap = dict(swap or {})
             swap.update(conflict)
         source = "fingerprint" if (swap or {}).get("to_key") else "path"
         return dir_, dir_.name, source, swap
+
+    @staticmethod
+    def _is_run_folder(path: Path) -> bool:
+        """A dataset run's quam_state (``<chip>/<date>/#N_<exp>/quam_state``):
+        it files under its chip by design, never claims a dir of its own."""
+        try:
+            parent = Path(path).parent
+            return bool(_EXPERIMENT_PATTERN.match(parent.name)
+                        and _DATE_PATTERN.match(parent.parent.name))
+        except (OSError, ValueError):
+            return False
+
+    def _own_dir_for_folder(self, dir_: Path, path: Path) -> Path:
+        """SB-F7: which folder a path-candidate dir belongs to.
+
+        The first live chip folder that resolves to a dir holds it (recorded
+        in the alias registry under ``owners``). Another folder that still
+        exists -- a copy whose parent folder has the same name -- gets its
+        own dir, ``<dir>__<path hash>``. The holder's folder gone (the chip
+        was moved or renamed) hands the dir to the folder asking, unless that
+        folder already has a dir of its own with history. Upgrading keeps
+        a single chip's history where it is: the first folder to ask after
+        the upgrade holds its dir. A run folder is never routed by this."""
+        from quam_state_manager.core import path_match
+        if "__chip_key__" in path.parts or self._is_run_folder(path):
+            return dir_
+        try:
+            if self._root.parent.resolve() in Path(path).resolve().parents:
+                return dir_                 # SM's own temporary capture folder
+        except OSError:
+            pass
+        try:
+            me = path_match.fs_key(path)
+        except Exception:  # noqa: BLE001 -- no identity, no routing change
+            return dir_
+        data = self._load_aliases()
+        owners = dict(data.get("owners") or {})
+        holder = owners.get(dir_.name)
+        if holder == me:
+            return dir_
+        own_key = _sanitize_name(
+            f"{dir_.name}__{hashlib.sha1(me.encode('utf-8')).hexdigest()[:6]}")
+        if holder is not None:
+            try:
+                same = path_match.same_folder(holder, path)
+            except Exception:  # noqa: BLE001
+                same = False
+            if same:
+                return dir_
+            try:
+                holder_there = Path(holder).exists()
+            except OSError:
+                holder_there = True          # unknown: never take it over
+            if holder_there or self._dir_has_snapshots(self._root / own_key):
+                if owners.get(own_key) != me:
+                    owners[own_key] = me
+                    self._save_aliases(dict(data, owners=owners))
+                return self._root / own_key
+        owners[dir_.name] = me              # first to ask, or the holder moved
+        self._save_aliases(dict(data, owners=owners))
+        return dir_
 
     def _existing_dir_for(self, ident: ChipIdentity,
                           candidate_key: str) -> Path | None:
@@ -2506,8 +2575,13 @@ class HistoryManager:
         project: str | None = None,
         kind: str | None = None,
         actor: str | None = None,
+        route_as: str | Path | None = None,
     ) -> SnapshotMeta | None:
         """Create a snapshot if the state files changed (or if *force* is True).
+
+        ``route_as`` (v1.5.1, SB-F7): the chip folder a capture of a TEMPORARY
+        folder stands for (Take live's backup of the working copy) -- the
+        history dir is chosen as for that folder.
 
         ``kind`` — the user-vocabulary reason ("exp"/"manual"/"backup",
         docs/132) stamped into the meta; ``None`` leaves legacy display
@@ -2574,7 +2648,7 @@ class HistoryManager:
             # snapshotted — re-reading the live files here would race an
             # experiment's rewrite.
             hist_dir, _key, _source, swap_info = self.resolve_chip_dir_for_content(
-                path, snap_state, snap_wiring)
+                Path(route_as) if route_as else path, snap_state, snap_wiring)
             snap_dir = hist_dir / ts
             # w7/livewrite: the dedup verdict needs only the captured bytes'
             # hash, so it is decided BEFORE the copy -- a duplicate used to

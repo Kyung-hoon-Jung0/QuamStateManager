@@ -29797,7 +29797,8 @@ def _take_live_backup(ctx, store, pending: dict) -> dict | None:
         meta = _history().check_and_snapshot(
             tmp, "manual", force=True, kind="backup",
             defer_index=not current_app.config.get("TESTING"),
-            project=_scope_for(ctx["path"], ctx))
+            project=_scope_for(ctx["path"], ctx),
+            route_as=ctx["path"])           # v1.5.1 (SB-F7): filed as the chip's own
         if meta is not None:
             rec["snapshot"] = meta.timestamp
             try:
