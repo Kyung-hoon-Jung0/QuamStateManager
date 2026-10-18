@@ -14809,6 +14809,12 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                     // Physical input port: show assignment or placeholder circle
                     _renderPortCell(svg, inCx, ipy, inR, roleColors, inPorts[String(portNumAtRow)] || [], rawWiring,
                                     {con: ctrlName, slot: femId, port: portNumAtRow, io: 'input'}, editable, onPortHover);
+                    // v1.5.1 (U P2-20): the input's OWN number -- drawn where the
+                    // front panel has it (MW-FEM input 2 at the last row), it read
+                    // as "IN 8" against the output row numbers on the left
+                    var inLbl = _svgText(inCx, ipy + inR + 9, 'in ' + portNumAtRow, 8, '700', iw.subLabelColor, 'middle');
+                    inLbl.setAttribute('class', 'iw-in-port-label');
+                    svg.appendChild(inLbl);
                 } else {
                     // Non-physical row: tiny dot
                     var dot = _svgEl('circle');
@@ -14820,6 +14826,9 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
 
         container.appendChild(svg);
     });
+
+    // v1.5.1 (U P2-20): what each colour means -- only the roles drawn here
+    _appendWiringLegend(container, roleColors);
 
     // docs/135: size the rack(s) now that they are in the document, and offer
     // the overview when the rack is wider than its host.
@@ -14910,6 +14919,43 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
     }
     }
     svg.appendChild(cell);
+}
+
+/* v1.5.1 (U P2-20): the Instrument Wiring colour legend. One swatch per role
+   the drawn racks use (data-role on each port circle; a bias-tee flux port
+   is its own colour), in the roleColors order. */
+var _WIRING_ROLE_WORDS = {
+    xy: 'XY drive', rr: 'Readout out', rr_in: 'Readout in', z: 'Flux (Z)',
+    coupler: 'Coupler', cr: 'Cross-resonance drive', twpa_pump: 'TWPA pump',
+    twpa_ro: 'TWPA readout', twpa_in: 'TWPA input', digital: 'Digital / trigger',
+    z_qdac: 'Flux + QDAC-II bias'
+};
+function _appendWiringLegend(container, roleColors) {
+    var used = {};
+    container.querySelectorAll('.iw-port-circle[data-role]').forEach(function (g) {
+        used[g.getAttribute('data-qdac-shared') ? 'z_qdac' : g.getAttribute('data-role')] = true;
+    });
+    var roles = Object.keys(roleColors).filter(function (r) { return used[r] && _WIRING_ROLE_WORDS[r]; });
+    Object.keys(used).forEach(function (r) {
+        if (!_WIRING_ROLE_WORDS[r] && roles.indexOf('other') < 0) roles.push('other');
+    });
+    if (!roles.length) return;
+    var box = document.createElement('div');
+    box.className = 'iw-legend';
+    box.setAttribute('role', 'list');
+    box.setAttribute('aria-label', 'Port colours');
+    roles.forEach(function (r) {
+        var item = document.createElement('span');
+        item.className = 'iw-legend-item';
+        item.setAttribute('role', 'listitem');
+        var sw = document.createElement('span');
+        sw.className = 'iw-legend-swatch';
+        sw.style.background = r === 'other' ? (roleColors.fallback || '#999') : roleColors[r];
+        item.appendChild(sw);
+        item.appendChild(document.createTextNode(r === 'other' ? 'Other' : _WIRING_ROLE_WORDS[r]));
+        box.appendChild(item);
+    });
+    container.appendChild(box);
 }
 
 /** Create a colored SVG circle for a port assignment with hover and double-click handlers. */

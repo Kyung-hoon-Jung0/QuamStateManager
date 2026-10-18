@@ -15411,3 +15411,8 @@ details.jargon > .jargon-explain {
 .ds-gone-note { margin: .3rem 0 .5rem; padding: .35rem .6rem; font-size: .85rem; border-radius: 6px;
     border: 1px solid #f59e0b; background: color-mix(in srgb, #f59e0b 10%, transparent); }
 .ds-gone-note .ds-gone-one { display: block; overflow-wrap: anywhere; }
+
+/* v1.5.1 (U P2-20): the Instrument Wiring colour legend (app.js _appendWiringLegend) */
+.iw-legend { display: flex; flex-wrap: wrap; gap: .3rem .9rem; margin: .5rem 0 .2rem; font-size: .78rem; color: var(--pico-muted-color); }
+.iw-legend-item { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
+.iw-legend-swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; border: 1px solid rgba(0,0,0,.2); }
