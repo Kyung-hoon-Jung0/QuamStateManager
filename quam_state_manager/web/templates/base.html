@@ -172,7 +172,7 @@
        off, reveal them so the UTC fallback text still shows. #}
     <noscript><style>.ts-local{visibility:visible}</style></noscript>
 </head>
-<body class="app-shell exp-list-compact" data-plotly-src="{{ url_for('static', filename='plotly.min.js') }}">
+<body class="app-shell exp-list-compact" data-plotly-src="{{ url_for('static', filename='plotly.min.js') }}"{% if experimental %} data-sm-runner="1"{% endif %}>
     {# queue #8 follow-up: the body renders compact so a first visit never flashes
        wrapped rows -- but a user who chose Full names ('0' in localStorage) got
        the REVERSE flash until app.js restored it. Read the key here, first thing
@@ -419,8 +419,10 @@
             </ul>
         </nav>
     </header>
+    {# v1.5.1 (U P2-28): data-poll-visible -- no request while the tab is
+       hidden; one on return (smVisible, app.js) #}
     <div id="qualibrate-running-slot" hx-get="/qualibrate/running-banner"
-         hx-trigger="load, every 3s" hx-swap="innerHTML">
+         hx-trigger="load, every 3s, smVisible" data-poll-visible hx-swap="innerHTML">
         {% include '_qualibrate_running_banner.html' %}
     </div>
     {# Reveal handle: the "Hide top bar" toggle lives INSIDE the top bar (which is
@@ -2131,9 +2133,15 @@
         var runStatus = null;   // docs/167 baseline, like chipRev above
         var _schedPolling = false;
         var _schedActive = false;   // last poll saw a running queue
+        // v1.5.1 (U P2-28): without the runner UI (no SM_EXPERIMENTAL) no
+        // queue or plan is started from a page -- one poll finds one left
+        // running (then it is followed); otherwise this tab stops asking.
+        var _runnerUi = document.body.getAttribute("data-sm-runner") === "1";
+        var _schedOnce = false, _schedLive = false;
         function poll() {
             // In-flight guard (don't stack overlapping requests if one is slow).
             if (!scope.alive || _schedPolling) return;
+            if (!_runnerUi && _schedOnce && !_schedLive) return;
             // This poll ALSO carries the browser-alive heartbeat (touch_ui). Skip
             // while hidden ONLY when no queue is running — a running queue MUST keep
             // heartbeating from a hidden/minimized window, else the worker pauses it
@@ -2146,6 +2154,9 @@
                 .then(function (s) {
                     if (!scope.alive) return;
                     _schedActive = !!(s && s.run && s.run.status === "running");
+                    _schedOnce = true;
+                    _schedLive = _schedActive || !!(s && s.run && s.run.status === "paused")
+                        || !!(s && s.autofit && s.autofit.running);
                     apply(s);
                 }).catch(function () {})
                 .then(function () { _schedPolling = false; });

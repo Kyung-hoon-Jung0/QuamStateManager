@@ -5,7 +5,7 @@
 {% set page_title = 'Collections' if is_collections else 'Datasets' %}
 {% if not is_collections %}
 <div id="qualibrate-running-data-slot" hx-get="/qualibrate/running-data-hint"
-     hx-trigger="load, every 3s" hx-swap="innerHTML">
+     hx-trigger="load, every 3s, smVisible" data-poll-visible hx-swap="innerHTML">
     {% include '_qualibrate_running_data_hint.html' %}
 </div>
 {% endif %}

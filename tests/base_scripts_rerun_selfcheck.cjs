@@ -45,7 +45,7 @@ const markup = `
 
 const tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 async function scenario(mode) {
-    const dom = new JSDOM(`<!doctype html><html><body class="exp-list-compact">${markup}</body></html>`, {
+    const dom = new JSDOM(`<!doctype html><html><body class="exp-list-compact" data-sm-runner="1">${markup}</body></html>`, {
         url: 'https://example.invalid/view', runScripts: 'outside-only', pretendToBeVisual: true,
     });
     const w = dom.window;
@@ -206,6 +206,7 @@ async function scenario(mode) {
         if (mode === 'fetch') {
             const replacement = d.createElement('body');
             replacement.className = 'exp-list-compact';
+            replacement.setAttribute('data-sm-runner', '1');   // v1.5.1: the runner UI page polls
             replacement.innerHTML = markup;
             oldBody.replaceWith(replacement);
         }

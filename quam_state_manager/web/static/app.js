@@ -8463,6 +8463,22 @@ window.InlineCommit = (function () {
              _pending: function () { return pending; } };
 })();
 
+/* v1.5.1 (U P2-28): an htmx poll marked data-poll-visible asks nothing while
+   the tab is hidden (a background tab polled the QUAlibrate banner 20 times a
+   minute); on return it asks once at once (smVisible in its hx-trigger).
+   A visible tab polls exactly as before. */
+document.addEventListener("htmx:beforeRequest", function (evt) {
+    var elt = evt.detail && evt.detail.elt;
+    if (document.hidden && elt && elt.hasAttribute && elt.hasAttribute("data-poll-visible")) {
+        evt.preventDefault();
+    }
+});
+document.addEventListener("visibilitychange", function () {
+    if (document.hidden) return;
+    var els = document.querySelectorAll("[data-poll-visible]");
+    for (var i = 0; i < els.length; i++) els[i].dispatchEvent(new CustomEvent("smVisible"));
+});
+
 document.addEventListener("htmx:beforeRequest", function (evt) {
     var elt = evt.detail && evt.detail.elt;
     if (elt && elt.matches && elt.matches("form.inline-edit") && elt.dataset) {
