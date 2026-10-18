@@ -442,14 +442,34 @@ def view(inst, project: str | None) -> dict:
     return out
 
 
+def os_zone() -> dict:
+    """This PC's zone record (``clock_status()["os_zone"]``'s shape), read
+    from the OS directly (``clock_health.os_zone``, no child process); the
+    clock status answers only when the OS cannot be asked that way. v1.5.1
+    (perf): the clock status runs the NTP probe -- cmd.exe + w32tm + tzutil,
+    0.3-3 s, again every minute -- and the ledger's day binding asked it on
+    the request of every Calibration log / history page of a lab with no
+    project zone. Same source module, same zone table, same answer."""
+    try:
+        # import_module honours sys.modules, like clock_status does
+        import importlib  # noqa: PLC0415
+        fast = getattr(importlib.import_module("quam_state_manager.core.clock_health"), "os_zone", None)
+        got = fast() if fast is not None else None
+    except Exception:  # noqa: BLE001 -- the clock status answers then
+        got = None
+    if isinstance(got, dict):
+        return _normalize_status({"os_zone": got})["os_zone"]
+    return (clock_status() or {}).get("os_zone") or {}
+
+
 def pc_zone() -> str | None:
     """This PC's own zone as an IANA name, for a lab that set no project zone.
 
-    The OS's IANA zone when ``clock_status`` knows it; else a whole-hour UTC
+    The OS's IANA zone when :func:`os_zone` knows it; else a whole-hour UTC
     offset as a fixed ``Etc/GMT`` zone (no daylight-saving rules -- an honest
     approximation, never a guess at a region); else None.
     """
-    osz = (clock_status() or {}).get("os_zone") or {}
+    osz = os_zone()
     iana = osz.get("iana")
     if isinstance(iana, str) and valid_zone(iana):
         return iana

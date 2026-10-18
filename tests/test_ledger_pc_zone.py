@@ -46,5 +46,8 @@ def test_without_any_zone_it_still_refuses(tmp_path, monkeypatch):
     ({"iana": "Not/AZone", "utc_offset": None}, None),
 ])
 def test_pc_zone_from_the_clock_status(monkeypatch, os_zone, expected):
+    # v1.5.1: the clock status answers when the OS cannot be asked directly
+    from quam_state_manager.core import clock_health
+    monkeypatch.setattr(clock_health, "os_zone", lambda: None)
     monkeypatch.setattr(project_time, "clock_status", lambda force=False: {"os_zone": os_zone})
     assert project_time.pc_zone() == expected
