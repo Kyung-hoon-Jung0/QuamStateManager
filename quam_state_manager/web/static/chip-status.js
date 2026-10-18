@@ -5776,11 +5776,17 @@ window.ChipStatus.mount = function (opts) {
                                     + (lc.fidelity_source === 'macro' ? ' Bell' : ' gate fid.')
                                     + (lc.best_gate ? ' (' + lc.best_gate + ')' : ''),
                                  vr: _verdict(_mval(lc, 'cz_fidelity'), thresholds.cz_fidelity), kind: 'p' });
-            var oq = nodes.filter(function(n) { return n.last_calibrated; });
+            // v1.5.1 (U P2-18): the same set as the "oldest calibration" tile
+            // (query.py summary: qubits AND pairs) -- read over qubits alone,
+            // the chip named "q1 today" beside a tile saying "2 days ago"
+            var oq = nodes.filter(function(n) { return n.last_calibrated; })
+                .map(function(n) { return { id: n.id, at: n.last_calibrated, kind: 'q' }; })
+                .concat(edges.filter(function(e) { return e.last_calibrated; })
+                    .map(function(e) { return { id: e.pair_id, at: e.last_calibrated, kind: 'p' }; }));
             if (oq.length) {
-                var o = oq.reduce(function(a, b) { return b.last_calibrated < a.last_calibrated ? b : a; });
-                items.push({ id: o.id, v: _ageLabel(o.last_calibrated), t: 'oldest calibration',
-                             vr: _ageClass(o.last_calibrated), kind: 'q' });
+                var o = oq.reduce(function(a, b) { return b.at < a.at ? b : a; });
+                items.push({ id: o.id, v: _ageLabel(o.at), t: 'oldest calibration',
+                             vr: _ageClass(o.at), kind: o.kind });
             }
             var wh = '<span class="worst-label muted">Needs attention:</span>';
             items.forEach(function(it) {
