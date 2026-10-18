@@ -1035,6 +1035,8 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .settings-header:active { cursor: grabbing; }
 .settings-title { font-size: 0.85rem; font-weight: 700; }
 .settings-header-tools { display: flex; gap: 0.15rem; cursor: default; }
+/* B3: the running version is the first line of Settings */
+.settings-version { padding: 0.3rem 0.55rem 0; font-size: 0.78em; }
 
 .settings-label {
     display: block; font-size: 0.75em; font-weight: 600;
@@ -10533,6 +10535,7 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
    baseline. The no-config Welcome page keeps its centred hero. */
 .help-page.welcome { text-align: left; }
 .help-page > .table-header-row { justify-content: flex-start; align-items: baseline; }
+.help-version { margin-left: auto; font-size: .82em; white-space: nowrap; }
 .help-shortcuts { margin-top: 1.5rem; }
 .help-sc-grid { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; align-items: baseline; }
 .help-sc-group { grid-column: 1 / -1; font-weight: 700; font-size: .82em; opacity: .65; text-transform: uppercase; letter-spacing: .04em; margin-top: .6rem; }

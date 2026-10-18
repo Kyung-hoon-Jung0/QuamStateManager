@@ -284,7 +284,7 @@
                    long you have actually been waiting. NavProgress (app.js)
                    drives it off htmx's own request events; pointer-events
                    none keeps the link clickable. #}
-                <li><a href="/?landing=1" class="app-title-link" title="Projects landing"><strong class="app-title">QUAM State Manager</strong><span
+                <li><a href="/?landing=1" class="app-title-link" title="QUAM State Manager {{ sm_version }} &#8212; Projects landing"><strong class="app-title">QUAM State Manager</strong><span
                         id="nav-progress" class="nav-progress" hidden aria-hidden="true"><span
                         class="nav-progress-bar"></span><span class="nav-progress-time">0.0 s</span></span></a></li>
                 {# Workbench: a standalone co-display shell that puts Qualibrate
@@ -1133,6 +1133,7 @@
         <button type="button" class="calc-close" onclick="toggleSettings()" title="Close" aria-label="Close">&times;</button>
         </span>
         </div>
+        <div class="settings-version muted" id="settings-version">QUAM State Manager {{ sm_version }}</div>
         <div class="settings-group">
         <small class="settings-label">Font size</small>
         <div class="settings-options">
