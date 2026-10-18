@@ -685,6 +685,9 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
     return {
         "config_exists": True,
         "active": active,
+        # v1.5.1 (U P2-21): the root config can name a project that has no
+        # projects/<name> folder -- not a project SM can open by name
+        "project_exists": (cfg_dir / "projects" / active).is_dir(),
         "state_raw": st["raw"],
         "state_native": st["native"],
         "state_exists": bool(st["native"] and Path(st["native"]).is_dir()),

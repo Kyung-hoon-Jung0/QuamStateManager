@@ -56,6 +56,24 @@
                 title="Load the chip QUAlibrate's active project points at, then open its Qubits page">
             Open QUAlibrate's current project: {{ active_project }}</button>
     </form>
+    {% elif active_project_orphan is defined and active_project_orphan %}
+    {#- v1.5.1 (U P2-21): the active project has no projects/<name> folder --
+        open what the root config points at, or say why nothing can open -#}
+    {% set _ap = active_project_orphan %}
+    {% if _ap.native %}
+    <form method="post" action="/load" hx-post="/load" hx-target="#table-pane"
+          class="landing-current-project">
+        <input type="hidden" name="folder" value="{{ _ap.native }}">
+        <button type="submit" class="btn-sm landing-current-btn"
+                title="QUAlibrate's active project '{{ _ap.name }}' has no projects/{{ _ap.name }} folder; this opens the chip its root config points at ({{ _ap.native }})">
+            Open QUAlibrate's current chip: {{ _ap.label }}</button>
+        <span class="muted landing-current-note">project '{{ _ap.name }}' has no folder; its root config's state_path is used</span>
+    </form>
+    {% else %}
+    <p class="muted landing-current-missing">QUAlibrate's active project '{{ _ap.name }}' has no
+        projects/{{ _ap.name }} folder, and its state_path ({{ _ap.raw or 'not set' }}) is not a folder.
+        Fix it in QUAlibrate (Manage / doctor).</p>
+    {% endif %}
     {% endif %}
 
     <div id="landing-cards"

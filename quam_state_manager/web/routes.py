@@ -6839,6 +6839,24 @@ def agent_summary_page():
                                                summary=data))
 
 
+def _landing_current_project() -> dict:
+    """v1.5.1 (U P2-21): the landing's "Open QUAlibrate's current project"
+    is offered only for a project SM can open by name. A root config whose
+    active project has no projects/<name> folder answered that button with a
+    404; it now offers the chip the root config's state_path points at (a
+    plain load), or says why there is none."""
+    ts = qualibrate_config.tray_status()
+    active = ts.get("active")
+    if not active or ts.get("project_exists", True):
+        return {"active_project": active, "active_project_orphan": None}
+    native = ts.get("state_native")
+    return {"active_project": None,
+            "active_project_orphan": {
+                "name": active, "raw": ts.get("state_raw") or "",
+                "native": native if ts.get("state_exists") else None,
+                "label": _chip_display_name(Path(native)) if native and ts.get("state_exists") else ""}}
+
+
 def _home_landing(config_exists, session):
     """The Projects landing half of home() (split out so /agent can share the
     chip-open branch without duplicating the landing)."""
@@ -6875,7 +6893,7 @@ def _home_landing(config_exists, session):
         # True first run (no session history at all) → the landing's
         # "Getting started" manual starts expanded; any history collapses it.
         first_run=not (session.get("last_project") or resume_path or recents),
-        active_project=qualibrate_config.tray_status().get("active"),
+        **_landing_current_project(),
         # docs/263 "Without projects": with no qualibrate config the Welcome shows the
         # zone picker itself (scope "default") -- the lazy project cards stay out
         # (nothing to list), so GET / still reads no ~/.qualibrate listing
