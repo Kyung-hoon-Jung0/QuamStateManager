@@ -22133,6 +22133,13 @@ def _cz_loss_roots(ctx) -> list[tuple[str, str]]:
             if now != list(ctx.get("extras_data_declared") or []):
                 _adopt_extras_data_folders(ctx)
                 roots = None
+                # R3 MINOR 8: and they are REPLACED -- the re-adoption moved
+                # the marker, so the next view kept the stale open-time roots
+                # again ("no data folder is declared" on the second view)
+                try:
+                    ctx["hub_roots"] = roots = list(_hub_roots_for(ctx))
+                except Exception:  # noqa: BLE001 -- derived again below
+                    logger.debug("cz loss: re-deriving the data folders failed", exc_info=True)
         except Exception:  # noqa: BLE001 -- the registered roots stand
             logger.debug("cz loss: the declared data folder could not be re-read", exc_info=True)
     if roots is None:
