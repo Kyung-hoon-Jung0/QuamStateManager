@@ -238,7 +238,7 @@ def read_pair(folder: Path | str, *, attempts: int | None = None,
     n = attempts if attempts is not None else safe_io._PAIR_READ_ATTEMPTS
     sp, wp = folder / "state.json", folder / "wiring.json"
     for attempt in range(n):
-        before = safe_io._pair_fingerprint_settled(folder)
+        before = safe_io._pair_fingerprint_quiet(folder)
         s, sb, ds = _read_json_bytes(sp, mode)
         w, wb, dw = _read_json_bytes(wp, mode)
         after = safe_io._pair_fingerprint_settled(folder)

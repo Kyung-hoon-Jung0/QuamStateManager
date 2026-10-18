@@ -180,6 +180,19 @@ def _isolate_runner_shared_settings(tmp_path_factory):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_mid_save_window(monkeypatch):
+    """SA-F7's mid-save guard judges a live pair by how far apart its two
+    files' mtimes are and how recently the newer one landed. A fixture that
+    builds a chip and, a second or more later, rewrites only state.json (the
+    usual way a test plays "the lab wrote a field") would then wait or be
+    refused depending on how fast the suite ran. Off for every test; the
+    guard's own pins (tests/test_v151_mid_save.py) turn it on."""
+    from quam_state_manager.core import safe_io
+
+    monkeypatch.setattr(safe_io, "_MID_SAVE_WINDOW_S", 0.0)
+
+
 @pytest.fixture
 def any_project_env_chosen(monkeypatch):
     """Opening a qualibrate project needs an env the user chose for it

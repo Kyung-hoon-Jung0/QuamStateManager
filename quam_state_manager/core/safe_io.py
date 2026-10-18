@@ -72,6 +72,35 @@ _WRITE_BACKOFF_S = 0.5
 # enough for typical writers; we surface a warning if we still can't settle.
 _PAIR_READ_ATTEMPTS = 4
 
+# SA-F7 (v1.5.1): a writer that replaces the two files one after the other
+# leaves a moment in which the folder holds the NEW first file next to the
+# PREVIOUS save's second file -- a pair that never existed. The bracket of
+# the pair read cannot see it (nothing changes DURING the read), but the
+# pair's own stat does:
+#   * one save writes both files back to back, so their mtimes sit close
+#     together. SM's pair writers stage both tmps first (milliseconds apart);
+#     quam's JSONSerialiser writes wiring.json and then streams state.json,
+#     so its spread is one json.dump(indent=4) of state.json -- measured
+#     0.02 s (0.6 MB), 0.08 s (2.3 MB) and 0.27 s (5.8 MB) on this project's
+#     Windows machine (2026-10-18);
+#   * so a pair whose mtimes are more than _MID_SAVE_SPREAD_S apart while the
+#     newer one is younger than _MID_SAVE_WINDOW_S is the first half of a
+#     save. A single-file write (a hand edit of state.json) looks the same by
+#     stat; the price of that false call is a bounded wait or a named "try
+#     again", never data.
+# _MID_SAVE_SPREAD_S is over 3x the slowest measured one-save spread.
+# _MID_SAVE_WINDOW_S bounds how long a pull or a forced write waits for the
+# second file (the QA rig's split writer used a 2 s gap; real saves close in
+# milliseconds); after it a still-straddling pair is a single-file write and
+# is taken as it is. _MID_SAVE_READ_SETTLE_S is the much shorter wait every
+# pair read pays only when it lands inside that window: it catches the real,
+# millisecond-scale gap without making a poll wait seconds. A pair that is not
+# straddling (the normal path) costs one stat and a subtraction.
+_MID_SAVE_SPREAD_S = 1.0
+_MID_SAVE_WINDOW_S = 3.0
+_MID_SAVE_READ_SETTLE_S = 0.3
+_MID_SAVE_POLL_S = 0.05
+
 
 class LiveFileError(OSError):
     """A live state/wiring file could not be read or written after retries."""
@@ -742,7 +771,7 @@ def read_state_wiring_raw(folder: Path | str, *, attempts: int | None = None
     state_path = folder / "state.json"
     wiring_path = folder / "wiring.json"
     for attempt in range(n):
-        before = _pair_fingerprint_settled(folder)
+        before = _pair_fingerprint_quiet(folder)
         state, state_bytes = read_json_raw(state_path)
         wiring, wiring_bytes = read_json_raw(wiring_path)
         after = _pair_fingerprint_settled(folder)
@@ -864,6 +893,78 @@ def _pair_fingerprint_settled(folder: Path) -> tuple:
         except FileNotFoundError:
             time.sleep(delay)
     return _pair_fingerprint(folder)       # still absent: genuinely missing
+
+
+def pair_mid_save(fp: tuple, now: float | None = None) -> float | None:
+    """SA-F7: the age (s) of the newer file when the pair fingerprint *fp*
+    (:func:`_pair_fingerprint`) looks like the first half of a two-file save,
+    else None. Pure; see ``_MID_SAVE_SPREAD_S`` for the thresholds. A newer
+    mtime far in the future (a share whose clock runs ahead) judges nothing."""
+    if _MID_SAVE_WINDOW_S <= 0:
+        return None
+    (s_ns, _s_sz), (w_ns, _w_sz) = fp
+    if abs(s_ns - w_ns) <= _MID_SAVE_SPREAD_S * 1e9:
+        return None
+    age = (time.time() if now is None else now) - max(s_ns, w_ns) / 1e9
+    if age < -_MID_SAVE_SPREAD_S or age >= _MID_SAVE_WINDOW_S:
+        return None
+    return max(age, 0.0)
+
+
+def live_mid_save(folder: Path | str) -> tuple[str, float] | None:
+    """SA-F7: ``(newer file's name, its age in s)`` when the pair in *folder*
+    looks mid-save, else None (also when a file is missing -- the caller's own
+    read judges that). Stat only."""
+    try:
+        fp = _pair_fingerprint(Path(folder))
+    except OSError:
+        return None
+    age = pair_mid_save(fp)
+    if age is None:
+        return None
+    return ("state.json" if fp[0][0] >= fp[1][0] else "wiring.json"), age
+
+
+def mid_save_message(found: tuple[str, float]) -> str:
+    """The one sentence for a pair caught mid-save."""
+    newer, age = found
+    other = "wiring.json" if newer == "state.json" else "state.json"
+    return (f"Nothing was written — the live chip looks mid-save: {newer} changed "
+            f"{age:.1f} s ago and {other} has not followed. Try again in a few seconds.")
+
+
+def wait_pair_settled(folder: Path | str, *, max_wait: float | None = None) -> bool:
+    """SA-F7: wait (stat only) while the pair in *folder* looks mid-save, at
+    most *max_wait* s (default ``_MID_SAVE_WINDOW_S``). True when the pair is
+    settled (or a file is missing: the caller's read says so), False when the
+    wait ran out. The normal path is one stat."""
+    folder = Path(folder)
+    limit = _MID_SAVE_WINDOW_S if max_wait is None else max_wait
+    deadline = time.monotonic() + limit
+    while True:
+        try:
+            fp = _pair_fingerprint(folder)
+        except OSError:
+            return True
+        age = pair_mid_save(fp)
+        if age is None:
+            return True
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return False
+        time.sleep(max(0.005, min(_MID_SAVE_POLL_S, left, _MID_SAVE_WINDOW_S - age)))
+
+
+def _pair_fingerprint_quiet(folder: Path) -> tuple:
+    """:func:`_pair_fingerprint_settled` for the BEFORE side of a pair read:
+    a pair that landed less than ``_MID_SAVE_READ_SETTLE_S`` ago looking
+    mid-save is given the rest of that time for its second file (SA-F7)."""
+    fp = _pair_fingerprint_settled(folder)
+    age = pair_mid_save(fp)
+    if age is not None and age < _MID_SAVE_READ_SETTLE_S:
+        time.sleep(_MID_SAVE_READ_SETTLE_S - age)
+        fp = _pair_fingerprint_settled(folder)
+    return fp
 
 
 def _json_pieces():

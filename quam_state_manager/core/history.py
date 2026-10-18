@@ -2530,6 +2530,11 @@ class HistoryManager:
         that never runs is healed by the same self-heal on the next trend read.
         """
         path = Path(quam_state_path)
+        if kind == "backup":
+            # SA-F7: the backup a live write takes first must hold a pair
+            # that existed -- a two-file save caught between its replaces is
+            # given the (bounded) time for its second file
+            safe_io.wait_pair_settled(path)
 
         with self._lock:
             try:

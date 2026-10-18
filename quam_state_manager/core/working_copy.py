@@ -47,6 +47,16 @@ class UnbackedLiveError(StaleLiveError):
     recreating the folder), or changed after the backup was taken. Nothing
     was written; overwriting would leave that content in no version."""
 
+    conflict = "live_unbacked"
+
+
+class LiveMidSaveError(UnbackedLiveError):
+    """SA-F7: a FORCED write found the live pair half-saved (one file just
+    replaced, the other still from the previous save). Writing now would leave
+    SM's file next to the lab's late one. Nothing was written."""
+
+    conflict = "live_mid_save"
+
 
 class EmptyStateError(ValueError):
     """An absent or empty document cannot be written as the chip state."""
@@ -859,6 +869,10 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     session is correct, but the failure is logged loudly because the next
     session's staleness tracking will be wrong.
     """
+    # SA-F7: a pull adopts what it reads as the working copy AND the sync
+    # point -- a pair caught between a two-file save's replaces is given the
+    # (bounded) time for its second file, never adopted half-saved
+    safe_io.wait_pair_settled(wc.live_folder)
     state_mt, wiring_mt = safe_io.state_wiring_mtimes(wc.live_folder)
     pair = doc_cache.read_pair(wc.live_folder, mode="fresh")
     state, wiring = pair.state, pair.wiring
@@ -1115,6 +1129,15 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
         missing = missing_live_message(wc) if not force else None
         if missing:
             raise LiveStateMissingError(missing)
+        if force:
+            # SA-F7: a forced push skips the staleness gates, so it alone
+            # could land between a two-file save's replaces -- leaving SM's
+            # pair with the lab's late file on top. Refused, named, nothing
+            # recorded (the door's backup waited for the pair to settle, so
+            # this fires only for a save that began after it).
+            _mid = safe_io.live_mid_save(wc.live_folder)
+            if _mid is not None:
+                raise LiveMidSaveError(safe_io.mid_save_message(_mid))
         if expect_live_hash is not None:
             try:
                 now_hash = live_content_hash(wc)

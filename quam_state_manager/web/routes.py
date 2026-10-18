@@ -30192,7 +30192,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         # v1.5.1 (SA-F1): live content no backup holds -- nothing written
         _refused_after_save()
         ctx["live_diverged"] = True
-        return jsonify(status="error", conflict="live_unbacked", message=str(exc)), 409
+        return jsonify(status="error", conflict=exc.conflict, message=str(exc)), 409
     except working_copy.WorkingCopyChangedError:
         _press_keep_tray(ctx, _press)
         return jsonify(status="error", conflict="shared_working_copy",
@@ -30945,7 +30945,7 @@ def state_apply_to_live():
         _refused_after_save()
         ctx["live_diverged"] = True
         if request.headers.get("Accept", "").startswith("application/json"):
-            return jsonify(ok=False, conflict="live_unbacked", message=str(exc)), 409
+            return jsonify(ok=False, conflict=exc.conflict, message=str(exc)), 409
         _err = render_template("_status.html", level="error", message=str(exc))
         resp = make_response(
             _conflict_tray(ctx, store, staged_conflict=bool(ctx.get("working_dirty")) and (
