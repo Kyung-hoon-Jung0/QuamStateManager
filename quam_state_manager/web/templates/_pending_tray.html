@@ -85,6 +85,10 @@
            so the button carries what that step would undo, to name it. #}
         {% if undo_next is defined and undo_next %}data-jrn-what="{{ undo_next.what }}"
         data-jrn-n="{{ undo_next.n }}" data-jrn-live="{{ '1' if undo_next.live else '0' }}"{% endif %}
+        {# v1.5.1 (3b): the rows render only in the sync panel, so the button
+           carries what the next press removes when edits are pending #}
+        {% if undo_top is defined and undo_top %}data-top-path="{{ undo_top.path }}"
+        data-top-n="{{ undo_top.n }}" data-top-jrn="{{ '1' if undo_top.jrn else '0' }}"{% endif %}
         title="Undo last edit (Ctrl+Z)" aria-label="Undo last edit">&#8630;</button>
 {% endif %}
 {# sync-ux 2026-09-25: Revert last apply, the applied log, the unapplied-edit list, Save

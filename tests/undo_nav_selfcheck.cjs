@@ -190,15 +190,11 @@ function mkCell(dp, value, orig) {
        'U7: the go-to-field press (UndoNav.handle) navigates to the owning surface');
 
     /* U8 — tray tooltip names the next server-undo target */
-    const tray = window.document.getElementById('pending-tray');
-    tray.innerHTML =
-        '<div class="tray-change-item" data-group-id="g1">' +
-        '<code class="tray-change-path">qubits.q1.T1</code></div>' +
-        '<div class="tray-change-item" data-group-id="g2">' +
-        '<code class="tray-change-path">qubits.q1.f_01</code></div>' +
-        '<div class="tray-change-item" data-group-id="g2">' +
-        '<code class="tray-change-path">qubits.q2.f_01</code></div>';
+    // v1.5.1 (3b): the rows render only in the sync panel; the button
+    // carries the newest group itself (_pending_tray.html data-top-*)
     const btn = window.document.createElement('button');
+    btn.setAttribute('data-top-path', 'qubits.q2.f_01');
+    btn.setAttribute('data-top-n', '2');
     window.LiveEditUndo.refreshTip(btn);
     ok(btn.title.indexOf('qubits.q2.f_01') >= 0, 'U8: tooltip names the target path');
     ok(btn.title.indexOf('+1 more') >= 0, 'U8: tooltip counts the group mates');

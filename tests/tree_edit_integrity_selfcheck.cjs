@@ -36,7 +36,9 @@ function jsonResp(obj, delay) {
   return delay ? new Promise(function (res) { setTimeout(function () { res(r); }, delay); }) : Promise.resolve(r);
 }
 function trayHtml(paths) {
-  return '<div id="pending-tray" data-change-count="' + paths.length + '" data-change-sig="s' + paths.join('|') + '">'
+  // v1.5.1 (3b): the tray publishes its pending paths (data-change-paths)
+  return '<div id="pending-tray" data-change-count="' + paths.length + '" data-change-sig="s' + paths.join('|')
+    + '" data-change-paths="' + JSON.stringify(paths).replace(/"/g, '&quot;') + '">'
     + paths.map(function (p) {
       return '<div class="tray-change-item"><code class="tray-change-path" title="' + p + '">' + p + '</code></div>';
     }).join('') + '</div>';

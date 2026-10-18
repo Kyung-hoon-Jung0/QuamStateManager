@@ -6031,6 +6031,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # R2 M1: and the pending paths the grid push declares, same rule
         "change_paths": (_change_paths_of(_modifier().get_change_log())
                          if _modifier() else []),
+        # v1.5.1 (3b): and what the tray's undo button removes next, same rule
+        "undo_top": (_undo_top_of(_modifier().get_change_log())
+                     if _modifier() else None),
         # QA liveedit-r2-09: and the drift poll's edit_seq, same rule
         "edit_seq": _edit_seq(),
         # QA liveedit-r2-16: and which ✕ takes an FSP bundle, same rule
@@ -10448,6 +10451,27 @@ def _change_paths_of(changes) -> list | None:
     return out if len(out) <= _TRAY_PATHS_MAX else None
 
 
+def _undo_top_of(changes) -> dict | None:
+    """v1.5.1 (3b): what the tray undo button removes next when the change log holds
+    edits -- the newest entry's path, how many entries share its group (one
+    press undoes the group), and whether that group is a staged journal step
+    (the press then walks deeper into history). The rows render only in the
+    sync panel, so the button carries this itself."""
+    if not changes:
+        return None
+    last = changes[-1]
+    gid = getattr(last, "group_id", None)
+    n = 1
+    if gid is not None:
+        n = 0
+        for c in reversed(changes):
+            if getattr(c, "group_id", None) != gid:
+                break
+            n += 1
+    return {"path": str(getattr(last, "dot_path", None) or ""), "n": n,
+            "jrn": isinstance(gid, str) and gid.startswith("jrn:")}
+
+
 def _fsp_bundle_gids(changes) -> dict:
     """{gid: {"n": unit size, "paths": unit dot-paths}} for every FSP
     compensation bundle in the log -- the tray ✕ on a unit member discards
@@ -10793,6 +10817,7 @@ def _render_tray(*, oob: bool) -> str:
         # window whose applied value another window undid on the live chip
         # is told (the tray re-renders on every foreign edit_seq move).
         undo_next=_undo_next_preview(_active_ctx(), changes),
+        undo_top=_undo_top_of(changes),
         last_live_undo=(_active_ctx() or {}).get("last_live_undo"),
         # sync-ux 2026-09-25: the ONE status control's verdict (core/sync_status.py)
         sync=_sync_view(),

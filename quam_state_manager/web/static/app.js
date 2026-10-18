@@ -10618,10 +10618,19 @@ window.clearDetailPanelSearch = function(btnEl) {
         if (isNaN(parseInt(tray.getAttribute("data-change-count") || "", 10))) return false;
         var sig = tray.getAttribute("data-change-count") + "|" + (tray.getAttribute("data-change-sig") || "");
         if (!_pendingMemo || _pendingMemo.tray !== tray || _pendingMemo.sig !== sig) {
+            // v1.5.1 (3b): the rows render only in the sync panel; the tray
+            // publishes its pending paths (data-change-paths). Too many to
+            // publish (data-change-paths-over) is no opinion.
+            var raw = tray.getAttribute("data-change-paths");
+            var els = [];
+            if (parseInt(tray.getAttribute("data-change-count"), 10) > 0) {
+                if (raw === null) return false;
+                try { els = JSON.parse(raw); } catch (e) { return false; }
+            }
+            if (!Array.isArray(els)) return false;
             var st = Object.create(null), an = Object.create(null);
-            var els = tray.querySelectorAll(".tray-change-path[title]");
             for (var i = 0; i < els.length; i++) {
-                var p = els[i].getAttribute("title");
+                var p = String(els[i] || "");
                 if (!p) continue;
                 st[p] = true;
                 for (var j = p.lastIndexOf("."); j > 0; j = p.lastIndexOf(".", j - 1)) {
@@ -25917,20 +25926,11 @@ window.LiveEditUndo = (function () {
             tip = "Undo " + stack[stack.length - 1].label + " (Ctrl+Z)";
         } else if (_changeCount() > 0) {
             // r16 ⓪-2 (docs/73): NAME the target — /undo pops the newest
-            // change-log group, i.e. the LAST tray item (+ its group mates).
-            var items = document.querySelectorAll(
-                "#pending-tray .tray-change-item");
-            var last = items.length ? items[items.length - 1] : null;
-            var pathEl = last && last.querySelector(".tray-change-path");
-            var path = pathEl ? pathEl.textContent : "";
-            var n = 1;
-            var gid = last ? last.getAttribute("data-group-id") : "";
-            if (gid) {
-                n = 0;
-                for (var i = items.length - 1; i >= 0
-                     && items[i].getAttribute("data-group-id") === gid; i--) n++;
-            }
-            if (gid && gid.indexOf("jrn:") === 0) {
+            // change-log group. v1.5.1 (3b): the rows render only in the sync
+            // panel, so the button itself carries that group (data-top-*).
+            var path = btn.getAttribute("data-top-path") || "";
+            var n = parseInt(btn.getAttribute("data-top-n") || "1", 10) || 1;
+            if (btn.getAttribute("data-top-jrn") === "1") {
                 // docs/107: with a staged journal step on top, the next press
                 // walks DEEPER into history (stages the previous save's
                 // inverse) — it does not remove the shown entry. The tooltip
