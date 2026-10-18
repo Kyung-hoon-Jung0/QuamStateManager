@@ -197,7 +197,11 @@
 
       var splitInstance = null, gutterEl = null;
       var view = "split";
-      var prevSizes = [55, 45];
+      // v1.5.1 (U P2-10): State Manager gets the larger half by default -- at
+      // 1280 px its 45 % left ~280 px beside its own sidebar ("QSM", "Re",
+      // the Agent page clipped). A dragged ratio is still remembered.
+      var DEFAULT_SIZES = [42, 58];
+      var prevSizes = DEFAULT_SIZES.slice();
 
       // ── helpers ──
       function ls(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -208,7 +212,7 @@
       }
       function readSizes() {
         try { var s = JSON.parse(ls(SIZ_KEY)); if (Array.isArray(s) && s.length === 2) return s; } catch (e) {}
-        return [55, 45];
+        return DEFAULT_SIZES.slice();
       }
       // ── Qualibrate URL / load (preserved) ──
       function currentUrl() { return ls(URL_KEY) || QB_DEFAULT; }

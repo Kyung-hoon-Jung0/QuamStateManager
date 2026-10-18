@@ -918,6 +918,12 @@ html.topbar-hidden { --topbar-height: 0px; }
    the top of the pane (card top 6px + ~42px tall: bottom measured 48px at a
    20px root). A bar that PINS there reserves it -- see .topo-subnav. */
 html.topbar-hidden { --floating-chrome-h: 2.5rem; }
+/* v1.5.1 (U P2-6): the pane reserves that band too, so the floating card no
+   longer sits on the page title ("Qubits (5)"). A page with a pinned bar
+   (.topo-subnav) reserves it in the bar instead (QA chipstatus-r2-10). */
+html.topbar-hidden #table-pane:not(:has(.topo-subnav))::before {
+    content: ""; display: block; height: var(--floating-chrome-h);
+}
 /* Always-reachable handle to bring the bar back (the Hide toggle is in the bar).
    It's a <button>, so set explicit colors — Pico would otherwise white-on-blue it. */
 .topbar-reveal {
@@ -14823,7 +14829,8 @@ td.cell-live-stale .cell-live-now {
 .topbar > nav > ul.topbar-right { flex: 0 1 auto; min-width: 0; }
 .topbar .search-box { min-width: 7rem; }
 .topbar #agent-pill, .topbar .state-version-wrap, .topbar .diag-tray-slot { flex-shrink: 0; }
-@media (max-width: 1100px) { .sync-control .state-status-name { display: none; } }
+/* v1.5.1 (U P2-3): the chip's name is what says WHICH chip -- it narrows, never goes */
+@media (max-width: 1100px) { .sync-control .state-status-name { max-width: 6ch; } }
 @media (max-width: 1000px) {
     .topbar .app-title { font-size: 0; }
     .topbar .app-title::after { content: "QSM"; font-size: .95rem; }
@@ -14848,13 +14855,16 @@ td.cell-live-stale .cell-live-now {
 .topbar.tb-fit-1 > nav > ul > li { padding-left: .15rem; padding-right: .15rem; }
 /* .9rem is no smaller than the title already is at the default UI scale */
 .topbar.tb-fit-2 .app-title { font-size: .72rem; }
-.topbar.tb-fit-2 .sync-control .state-status-name { max-width: 3.5rem; }
+/* v1.5.1 (U P2-3): the chip name is the last thing to give way -- it narrows to
+   10ch here, to 6ch only after the title, the agent pill and the search box
+   have given theirs (level 9), and is never hidden */
+.topbar.tb-fit-2 .sync-control .state-status-name { max-width: 10ch; }
 .topbar.tb-fit-3 .agent-pill-mode { display: none !important; }
 .topbar.tb-fit-3 .auto-apply-pill .aa-long, .topbar.tb-fit-3 .state-version-chip .state-version-id,
 .topbar.tb-fit-3 .state-version-chip .state-version-none { display: none; }
 .topbar.tb-fit-3 { --search-box-width: 200px; }
+.topbar.tb-fit-3 .tray-ro-text { display: none; }   /* v1.5.1 U P2-3: the lock stays, its word goes first */
 .topbar.tb-fit-4 { --search-box-width: 150px; }
-.topbar.tb-fit-4 .sync-control .state-status-name { display: none; }
 .topbar.tb-fit-5 .app-title { font-size: 0; }
 .topbar.tb-fit-5 .app-title::after { content: "QSM"; font-size: .95rem; }
 .topbar.tb-fit-5 .agent-pill-text { display: none; }
@@ -14865,6 +14875,7 @@ td.cell-live-stale .cell-live-now {
 .topbar.tb-fit-7 .state-version-wrap { display: none; }
 .topbar.tb-fit-8 .diag-badge-word { display: none; }
 .topbar.tb-fit-9 .search-box { flex: 0 0 2.6rem; min-width: 2.6rem; }
+.topbar.tb-fit-9 .sync-control .state-status-name { max-width: 6ch; }
 .topbar.tb-fit-10 #agent-pill { display: none; }
 /* the floor: a frame too narrow for one row (the Sync-Qualibrate Split pane at
    the L size) gets TWO rows rather than items painted over each other */
@@ -14874,6 +14885,9 @@ td.cell-live-stale .cell-live-now {
 .topbar.tb-fit-11 > nav > ul.topbar-right > li:first-child { margin-left: auto; }
 /* inside the Sync-Qualibrate frame the ⌗ link opens the frame you are in */
 html.sm-in-frame .topbar .wb-link { display: none; }
+/* v1.5.1 (U P2-10): inside the Sync-Qualibrate split the sidebar starts narrower, so the
+   page keeps room beside it (a dragged width still wins: it is set inline) */
+html.sm-in-frame { --sidebar-width: 220px; }
 .sp-live-input { width: 100%; margin: 0 !important; padding: .02rem .2rem !important; height: auto !important;
     font-size: inherit !important; color: #38bdf8; background: transparent !important;
     border: 1px solid transparent !important; border-radius: 4px; box-shadow: none !important; }

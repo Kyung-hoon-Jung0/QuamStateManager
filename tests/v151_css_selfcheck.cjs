@@ -4,8 +4,9 @@
  * jsdom does no layout, so a pin here reads the COMPUTED declarations that
  * decide a layout (white-space, max-width, min-width, display, overflow,
  * colours), never a measured box. Each case comes from a pytest driver
- * (tests/test_v151_p2_*.py) as {name, html, theme?, width?, checks}; a check is
- * {sel, prop, eq|neq|in|not_in|min_px|max_px, all?, why}.
+ * (tests/test_v151_p2_*.py) as {name, html, theme?, html_class?, checks}; a check is
+ * {sel, prop, eq|neq|in|not_in|min_px|max_px, all?, why} (a --custom prop reads its
+ * computed value), or {sel, matches: bool, why}: does the selector reach the page.
  *
  * Run: node tests/v151_css_selfcheck.cjs <fixture.json>
  */
@@ -37,12 +38,19 @@ function world(theme) {
 
 FX.cases.forEach(function (cs) {
     const w = world(cs.theme || 'dark');
+    w.document.documentElement.className = cs.html_class || '';
     w.document.body.innerHTML = cs.html;
     cs.checks.forEach(function (ck) {
+        if ('matches' in ck) {      // does the shipped selector reach this real page?
+            const hit = !!w.document.querySelector(ck.sel);
+            ok(hit === ck.matches, cs.name + ': ' + ck.sel + (ck.matches ? ' matches' : ' does not match') + ' -- ' + (ck.why || ''));
+            return;
+        }
         const els = Array.from(w.document.querySelectorAll(ck.sel));
         if (!els.length) { ok(false, cs.name + ': ' + ck.sel + ' is in the real markup'); return; }
         (ck.all ? els : [els[0]]).forEach(function (el) {
-            const v = w.getComputedStyle(el)[ck.prop];
+            const st = w.getComputedStyle(el);
+            const v = ck.prop.indexOf('--') === 0 ? st.getPropertyValue(ck.prop).trim() : st[ck.prop];
             let good = true;
             if ('eq' in ck) good = v === ck.eq;
             if ('neq' in ck) good = good && v !== ck.neq;
