@@ -211,7 +211,8 @@
     {% set _can_merge = (_nm > 0 and not mixed and _nl > 0) %}
     {% if _st == 'mine' and not working_dirty %}
     <button type="button" class="sp-choice sp-choice-primary btn-sync primary"
-            onclick="doStateSync('apply', false, false, null, {informed: true})">
+            {#- R3 M4: the same-field check and the live chip this panel read -#}
+            onclick="doStateSync('apply', false, false, null, {expectLiveHash: '{{ live_hash if (live_hash is defined and live_hash) else '' }}'})">
       <span class="sp-choice-label">&#8593; Apply to live</span>
       <span class="sp-choice-what">Writes your {{ _nf }} edit{{ 's' if _nf != 1 }} to the live chip.</span>
       <span class="sp-lost">Lost: nothing (the live chip is backed up first).</span></button>

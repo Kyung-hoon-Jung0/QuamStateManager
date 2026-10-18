@@ -3968,9 +3968,12 @@ window.SyncPanel = (function () {
         // v1.5.1 (SB-P2-1): the live chip this panel read -- the server
         // refuses a Keep-mine merge over a live chip that moved since
         var lh = btn.getAttribute("data-live-hash") || "";
+        // R3 M4: every merge declares the live chip it read and asks the
+        // same-field check (no `informed` opt-out): a lab write landing after
+        // the panel was read is never replaced unnamed, picks or not
         var run = function () {
             window.doStateSync("apply", false, false, null,
-                               n0 ? { informed: true, picks: p, expectLiveHash: lh } : { informed: true });
+                               n0 ? { picks: p, expectLiveHash: lh } : { expectLiveHash: lh });
         };
         if (!n0) { run(); return; }
         if (!btn.getAttribute("data-arm-label"))

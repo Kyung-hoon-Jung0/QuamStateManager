@@ -31142,9 +31142,12 @@ def state_sync():
             # live value the panel NAMED in its Lost line. A lab write since
             # the panel read live would be replaced unnamed: refused, under
             # the build lock right before the pull.
+            # R3 M4: checked whenever the press declares the live chip it
+            # read -- not only with a "mine" pick. The panel's merge with no
+            # pick replaced a lab value written after the panel read too.
             _expect_live = (request.values.get("expect_live_hash") or "").strip()
-            _keeps = mode == "apply" and any(side == "mine" for side in picks.values())
-            if _keeps and _expect_live:
+            _keeps = mode == "apply" and bool(_expect_live)
+            if _keeps:
                 try:
                     _live_now = working_copy.live_content_hash(wc)
                 except (OSError, ValueError):
@@ -31188,8 +31191,7 @@ def state_sync():
                                         and wc.synced_live_hash != _pre_sync_hash)
                 # v1.5.1 (SB-P2-1): a write that landed between the check above
                 # and the pull: the edits are re-applied in SM, nothing written
-                _moved_since_panel = bool(_keeps and _expect_live
-                                          and wc.synced_live_hash != _expect_live)
+                _moved_since_panel = bool(_keeps and wc.synced_live_hash != _expect_live)
                 # Rebuild the store + derived objects from the freshly-synced copy.
                 ctx["_alarm_reason"] = "live-pull"
                 _seq0 = store.mutation_seq
@@ -31273,12 +31275,13 @@ def state_sync():
 
 
 def _live_moved_since_panel_body() -> dict:
-    """v1.5.1 (SB-P2-1): the answer of a Keep-mine merge whose panel read an
-    older live chip than the one there now."""
+    """v1.5.1 (SB-P2-1): the answer of a merge whose panel read an older live
+    chip than the one there now (R3 M4: any merge that declares it)."""
     return {"status": "live_moved", "mode": "apply",
             "message": ("Nothing was written: the live chip changed after the panel "
-                        "showed its values, so Keep mine would replace a value it did "
-                        "not name. The panel now shows the live chip; pick again.")}
+                        "showed its values, so the merge could replace a value the "
+                        "panel did not name. The panel now shows the live chip; "
+                        "check it and merge again.")}
 
 
 def _live_unreadable_message(exc) -> str:
