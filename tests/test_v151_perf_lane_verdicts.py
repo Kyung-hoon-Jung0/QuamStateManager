@@ -15,7 +15,12 @@ Pinned on generic synthetic runs:
   written makes every verdict judged again -- neither the file nor this
   process's own RAM memo is believed -- and the verdict follows the ledger;
 * a run appended since keeps the old verdicts (only the new run is judged);
-* another ledger's file is never believed.
+* another ledger's file is never believed;
+* (R3B M1) a flags-only change of one old event (an undo mark, a gone
+  source, a mid-chain mark) judges NO run again, in RAM or from the file --
+  the verdict is keyed by the run's saved-state hash, which did not change;
+  a rewrite of one run's stored values judges only that run; a change of
+  every event (the order) judges them all.
 """
 
 from __future__ import annotations
@@ -157,3 +162,49 @@ def test_another_ledgers_file_is_never_believed(ledger, monkeypatch):
     side.write_text(json.dumps(raw), encoding="utf-8")
     restart(monkeypatch)
     assert judge(ledger) == {1: True, 2: False, 3: True}
+
+
+def set_flag_on(chip: Path, run_id: int, bit: int = 1 << 20) -> None:
+    """An in-place flags change of one old event (its saved state unchanged):
+    an undo mark, SOURCE_GONE and a mid-chain mark all take this shape."""
+    with HubStore(chip) as st:
+        n = st.conn.execute("UPDATE events SET flags = flags | ? WHERE run_id=?", (bit, run_id)).rowcount
+        st.conn.commit()
+    assert n == 1
+
+
+def test_a_flags_only_change_of_one_old_event_judges_no_run_again(ledger, monkeypatch):
+    assert judge(ledger) == {1: True, 2: False, 3: True}
+    set_flag_on(ledger["chip"], 1)
+    ledger["calls"]["n"] = 0
+    assert judge(ledger) == {1: True, 2: False, 3: True}
+    assert ledger["calls"]["n"] == 0, "a flags-only change re-judged unrelated runs (RAM)"
+    # and from the file, in a new process, after another such change
+    set_flag_on(ledger["chip"], 3)
+    restart(monkeypatch)
+    ledger["calls"]["n"] = 0
+    assert judge(ledger) == {1: True, 2: False, 3: True}
+    assert ledger["calls"]["n"] == 0, "a flags-only change re-judged unrelated runs (file)"
+
+
+def test_a_rewrite_of_one_runs_values_judges_only_that_run(ledger, monkeypatch):
+    judge(ledger)
+    rewrite_declared_name(ledger["chip"], 2, "alpha")
+    ledger["calls"]["n"] = 0
+    assert judge(ledger) == {1: True, 2: True, 3: True}
+    assert ledger["calls"]["n"] == 1, "a rewrite of one run's values re-judged the others"
+    rewrite_declared_name(ledger["chip"], 2, "beta")
+    restart(monkeypatch)
+    ledger["calls"]["n"] = 0
+    assert judge(ledger) == {1: True, 2: False, 3: True}
+    assert ledger["calls"]["n"] == 1
+
+
+def test_a_change_of_every_event_judges_them_all(ledger, monkeypatch):
+    judge(ledger)
+    with HubStore(ledger["chip"]) as st:
+        st.renumber()                     # logged as a change of every event
+        st.conn.commit()
+    ledger["calls"]["n"] = 0
+    assert judge(ledger) == {1: True, 2: False, 3: True}
+    assert ledger["calls"]["n"] == 3
