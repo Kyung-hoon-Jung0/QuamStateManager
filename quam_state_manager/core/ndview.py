@@ -492,7 +492,7 @@ def probe_file(h5_path: Path) -> dict:
                         continue
                     is_scale = r.is_dim_coord(key, h)
                     if is_scale and key not in coord_names:
-                        # plain dim coord — an axis, not a plottable; its
+                        # plain dim coord -- an axis, not a plottable; its
                         # declared unit is kept (a unit another variable only
                         # inherited from it is not that variable's, R3B M2)
                         out["axes"].append({"name": key, "units": r.var_attr(h, "units"),
