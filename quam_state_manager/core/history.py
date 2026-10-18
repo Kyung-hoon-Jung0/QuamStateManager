@@ -2289,8 +2289,9 @@ class HistoryManager:
                 if (sample is None
                         or verdict in (ALIGN_ALIGNED, ALIGN_RENAMED)
                         or same_labels):
-                    self._record_alias(name_key, claimed_dir_key, tok,
-                                       ident.name)
+                    if claim:     # R3 M2: a read-only resolve records nothing
+                        self._record_alias(name_key, claimed_dir_key, tok,
+                                           ident.name)
                     return (self._root / claimed_dir_key, claimed_dir_key,
                             "extras", None)
                 # A provably DIFFERENT chip owns this name — refuse tier 1
@@ -2308,9 +2309,11 @@ class HistoryManager:
                 existing = self._existing_dir_for(ident, candidate_key, path=path,
                                                   claim=claim)
                 if existing is not None:
-                    self._record_alias(name_key, existing.name, tok, ident.name)
+                    if claim:     # R3 M2: a read-only resolve records nothing
+                        self._record_alias(name_key, existing.name, tok, ident.name)
                     return existing, existing.name, "extras", None
-                claimed_key = self._claim_name_dir(name_key, tok, ident.name)
+                claimed_key = self._claim_name_dir(name_key, tok, ident.name,
+                                                   record=claim)
                 if claimed_key is not None:
                     return (self._root / claimed_key, claimed_key,
                             "extras", None)
@@ -2491,16 +2494,26 @@ class HistoryManager:
                 self._record_owners({dir_.name: me})     # first to claim an unowned dir
             return dir_
         there = None
-        if not (holder == me or self._same_holder(holder, path, me)):
+        same = holder == me or self._same_holder(holder, path, me)
+        if not same:
             # the presence probe waits once (bounded); a holder that answered
             # may still be this very folder under another spelling
             there = self._holder_there(holder)
-        if there is None or (there and self._same_holder(holder, path, me)):
+            same = bool(there) and self._same_holder(holder, path, me)
+        if same:
             if claim and not recorded:
                 self._record_owners({dir_.name: me})
             return dir_
         own_key = _sanitize_name(
             f"{dir_.name}__{hashlib.sha1(me.encode('utf-8')).hexdigest()[:6]}")
+        if there is None or (not there and not self._moved_here(dir_, holder, path)):
+            # R3 M2: a holder that cannot be found may only be OFFLINE (a
+            # share reconnecting, a USB disk): exists() reads an unreachable
+            # share or a missing drive as "not there", and a slow one does
+            # not answer at all. Without evidence of a move the dir stays its
+            # holder's, as when it answers -- and the asker, another folder,
+            # gets its own (it is never filed into the holder's history).
+            there = True
         if there or self._dir_has_snapshots(self._root / own_key):
             if claim:
                 upd = {own_key: me}
@@ -2511,6 +2524,32 @@ class HistoryManager:
         if claim:
             self._record_owners({dir_.name: me})          # the holder moved
         return dir_
+
+    def _moved_here(self, dir_: Path, holder: str, path: Path) -> bool:
+        """R3 M2: evidence that the holder's folder MOVED to *path* rather
+        than being out of reach for a while. The holder's drive or share
+        (its anchor) answers -- an offline share or an unplugged disk does
+        not -- and either *path* holds content one of the dir's snapshots
+        holds, or the holder's parent folder answers while the holder itself
+        does not (it was renamed or removed in a place that is reachable).
+        Bounded probes; no answer is no evidence."""
+        from quam_state_manager.core import folder_probe
+        hp = Path(holder)
+        anchor, parent = hp.anchor, str(hp.parent)
+        asks = [a for a in (anchor, parent) if a and a != str(holder)]
+        if not asks:
+            return False
+        present = folder_probe.folders_present(asks)
+        if anchor and present.get(anchor) is not True:
+            return False
+        try:
+            here = _canonical_content_hash(Path(path) / "state.json",
+                                           Path(path) / "wiring.json")
+        except Exception:  # noqa: BLE001 -- unreadable: no evidence from it
+            here = None
+        if here is not None and here in self._known_hashes_for_chip(dir_):
+            return True
+        return parent != str(holder) and present.get(parent) is True
 
     def _held_elsewhere(self, dir_: Path, path: Path | None) -> bool:
         """R2 M3: *dir_* is held (recorded, or by its snapshots' sources) by
@@ -2546,21 +2585,24 @@ class HistoryManager:
         return self._find_matching_chip_dir(fp, exclude=candidate, asking=path)
 
     def _claim_name_dir(self, name_key: str, tok: str | None,
-                        display: str) -> str | None:
+                        display: str, *, record: bool = True) -> str | None:
         """Claim a name-keyed dir for a newly named chip.
 
         Prefers the bare name; a dir already holding a DIFFERENT chip's
         snapshots forces a ``__2``/``__3``… suffix. Returns the claimed dir
-        key (alias recorded), or None when unresolvable."""
+        key (alias recorded when *record* -- R3 M2: never by a read-only
+        resolve), or None when unresolvable."""
         for suffix in ("", "__2", "__3", "__4"):
             dir_key = name_key + suffix
             d = self._root / dir_key
             if not self._dir_has_snapshots(d):
-                self._record_alias(name_key, dir_key, tok, display)
+                if record:
+                    self._record_alias(name_key, dir_key, tok, display)
                 return dir_key
             sample = self._sample_fingerprint(d)
             if tok is not None and fingerprint_token(sample) == tok:
-                self._record_alias(name_key, dir_key, tok, display)
+                if record:
+                    self._record_alias(name_key, dir_key, tok, display)
                 return dir_key
         return None
 
