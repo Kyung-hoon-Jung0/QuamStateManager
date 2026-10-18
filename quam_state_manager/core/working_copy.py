@@ -83,6 +83,24 @@ def is_run_archive(folder) -> bool:
         return False
 
 
+def missing_live_what(folder) -> str | None:
+    """SA-F9 (b): which part of the live chip is missing, named -- the
+    folder, state.json, wiring.json or both files -- or None when both
+    files are there. Stat only."""
+    folder = Path(folder)
+    try:
+        if not folder.is_dir():
+            return "The live chip folder is missing"
+        gone = [n for n in ("state.json", "wiring.json") if not (folder / n).is_file()]
+    except OSError:
+        return None
+    if not gone:
+        return None
+    if len(gone) == 2:
+        return "The live chip's state.json and wiring.json are missing"
+    return f"The live chip's {gone[0]} is missing"
+
+
 def missing_live_message(wc: WorkingCopy) -> str | None:
     if not wc.live_folder.is_dir():
         return "The live chip folder is missing. Nothing was applied."

@@ -179,6 +179,12 @@ def _load_store(folder: Path) -> QuamStore:
     except FileNotFoundError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
+    except (OSError, ValueError) as e:
+        # SA-F9 (h): a torn / half-written state.json (a save in progress, a
+        # crashed writer) is a clean one-line error, never a traceback
+        console.print(f"[red]Error:[/red] could not read the chip in {folder}: {e}. "
+                      "If a program is saving it, try again in a moment.", highlight=False)
+        raise typer.Exit(1)
 
 
 def _format_cell(value, field: str | None = None) -> str:

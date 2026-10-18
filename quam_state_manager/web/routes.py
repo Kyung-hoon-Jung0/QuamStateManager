@@ -26942,6 +26942,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
     ops = undo_journal.inverse_ops(unit)
 
     staged: list = []
+    kept: list = []          # the unit entries whose inverse changed something
     drift = 0
     with store._lock:
         # docs/160: a live flush is only honest onto a chip that holds EXACTLY
@@ -26968,11 +26969,20 @@ def _undo_journal_step(ctx, n_req: int = 1):
                     # walk restores with enforce=False the same way.
                     e = modifier.set_value(path, value, coerce=False,
                                            enforce=False, group_id=gid)
+                    if (not _differs(e.old_value, e.new_value)
+                            and type(e.old_value) is type(e.new_value)):
+                        # SA-F9 (e): the field already holds the value this
+                        # step restores (an earlier walk or a pull put it
+                        # back) -- a row whose old equals its new changes
+                        # nothing, so it is taken back out of the tray
+                        modifier.undo()
+                        continue
                     if _differs(e.old_value, uent.get("new")):
                         drift += 1
                 if uent.get("origin") is not None:
                     e.origin = copy.deepcopy(uent["origin"])
                 staged.append(e)
+                kept.append(uent)
         except Exception as exc:   # noqa: BLE001 — any failure un-stages all
             for _ in staged:
                 try:
@@ -26989,6 +26999,19 @@ def _undo_journal_step(ctx, n_req: int = 1):
     ctx["undo_cursor"] = cursor - 1
     _redo_mark(ctx, store)
     _invalidate_engine_cache()
+
+    if not staged:
+        # SA-F9 (e): every field already holds this step's earlier value --
+        # nothing to stage or write; walk past it like an empty unit (RAM
+        # only, with its redo frame)
+        _push_jrn_live_frame(ctx, store, cursor - 1, unit.get("id"))
+        resp = make_response(_tray_html())
+        resp.headers["HX-Trigger"] = json.dumps({"cellsReverted": {
+            "message": ("Nothing to undo in this step — the chip already holds its "
+                        "earlier values; skipped" + _skip_note),
+            "entries": [], "level": "info", **_walk_burst_extra(n_req)}})
+        return resp
+    uents = kept
 
     # docs/160: push the staged inverse to the chip through the one door, or
     # say exactly why it stays in the tray.
@@ -27211,13 +27234,46 @@ def _flush_walk_step_live(ctx, gid: str | None = None, hub: dict | None = None) 
                     "message": ("an edit from another window arrived meanwhile ("
                                 + ", ".join(stray[:3]) + ("…" if len(stray) > 3 else "")
                                 + ") — review the tray, then undo again")}
+    # SA-F9 (d): the door's refusal marks "Apply wrote nothing" on the status
+    # control -- true of an Apply press, not of this keypress: the walk rolls
+    # its step back and says why in its own toast, so the mark is put back
+    _refused_before = ctx.get("apply_refused")
     try:
         result = _sync_pull_apply_to_live(ctx, None, journal=False, walk=True, hub=hub)
         body = (result[0] if isinstance(result, tuple) else result).get_json() or {}
     except Exception as exc:  # noqa: BLE001 — never lose the step over a write error
         logger.warning("walk-step live flush failed", exc_info=True)
         body = {"status": "error", "message": str(exc)}
+    if body.get("status") != "ok":
+        if _refused_before is None:
+            ctx.pop("apply_refused", None)
+        else:
+            ctx["apply_refused"] = _refused_before
     return body
+
+
+def _walk_conflict_note(ctx, verb: str) -> str:
+    """SA-F9 (c): why a live walk step was refused, with a way forward that
+    works. Take live refuses too while the live chip cannot be read (or a
+    file is missing), so then the note says that instead of sending the user
+    to it."""
+    wc = (ctx or {}).get("working_copy")
+    unreadable = None
+    if wc is not None:
+        unreadable = working_copy.missing_live_what(wc.live_folder)
+        if unreadable:
+            unreadable = unreadable[0].lower() + unreadable[1:]
+        else:
+            try:
+                working_copy.live_content_hash(wc)
+            except (OSError, ValueError):
+                unreadable = ("the live chip cannot be read right now (another program "
+                              "may be saving it)")
+    if unreadable:
+        return f"{unreadable}; nothing was written — {verb} again once the live chip can be read"
+    return ("the live chip changed since it was synced; nothing was written — click the "
+            "sync status in the top bar (Live chip changed) and choose ↓ Take live, then "
+            f"{verb} again")
 
 
 def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
@@ -27271,7 +27327,7 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     ctx["undo_cursor"] = cursor_before
     _redo_mark(ctx, store)
     if body.get("status") == "conflict":
-        note = "the live chip changed since it was synced; nothing was written — click the sync status in the top bar (Live chip changed) and choose ↓ Take live, then undo again"
+        note = _walk_conflict_note(ctx, "undo")
     else:
         note = f"{body.get('message') or 'apply failed'}; nothing was written"
     if not clean:
@@ -27379,7 +27435,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
     if body.get("status") != "ok":
         _rollback_walk_step(ctx, store, modifier, staged)
         _redo_mark(ctx, store)
-        why = ("the live chip changed since it was synced; nothing was written — click the sync status in the top bar (Live chip changed) and choose ↓ Take live, then redo again"
+        why = (_walk_conflict_note(ctx, "redo")
                if body.get("status") == "conflict" else f"{body.get('message') or 'apply failed'}; nothing was written")
         return [], why
     ctx["undo_cursor"] = index + 1
@@ -28850,7 +28906,8 @@ def state_live_diff():
     try:
         _lp = working_copy.read_live_shared(wc, attempts=8)
     except FileNotFoundError:
-        return jsonify(ok=False, transient=False, error="Live state folder not found"), 404
+        _what = working_copy.missing_live_what(wc.live_folder) or "A live chip file is missing"
+        return jsonify(ok=False, transient=False, error=f"{_what}."), 404
     except (safe_io.LiveFileError, OSError):
         logger.info("live-diff read deferred (live being written) — client will retry")
         return jsonify(ok=False, transient=True,
@@ -29909,7 +29966,11 @@ def state_sync():
                 _invalidate_engine_cache(ctx)  # replay used _defer_hooks — refresh caches (ctx-pinned, r16 6)
                 ctx["working_dirty"] = False  # edits unsaved in the change log, not saved
     except FileNotFoundError:
-        return jsonify({"status": "error", "message": "Live state folder not found"}), 404
+        # SA-F9 (b): say WHICH part is gone -- a missing state.json is not a
+        # missing folder
+        _what = working_copy.missing_live_what(wc.live_folder) or "A live chip file is missing"
+        return jsonify({"status": "error",
+                        "message": f"{_what}. Nothing was taken."}), 404
     except safe_io.LiveFileError as exc:
         # v1.3.0: a live file another program is saving right now (it does not
         # parse yet, or it is locked) is a moment, not a crash -- the read
@@ -37404,24 +37465,58 @@ def _topology_for_chip_status(engine):
     return _with_ledger_calibration(_topology_with_derived_rb(engine))
 
 
+#: SA-F9 (g): the last run-change times each chip's ledger answered, keyed by
+#: chip path -- what Calibration Age shows (marked pending) while a pull has
+#: the ledger rebuilding. Every time in it is a real run change of that
+#: entity; at worst a newer one is not in yet, which ``calibration_pending``
+#: says and the page re-asks for.
+_LEDGER_CAL_LAST: dict = {}
+_LEDGER_CAL_LAST_MAX = 16
+
+
 def _with_ledger_calibration(topo):
     """docs/301 F11: a qubit's / pair's ``last_calibrated`` is the newer of
     its own ``*_updated_at`` stamps and the last time a run's saved state
     changed one of its values (``LedgerTable.run_change_times``). A lab whose
     nodes stamp nothing showed "8 days ago" for a chip re-measured yesterday.
     Each entity says which one it is (``last_calibrated_from``: "run" /
-    "stamp"). No ledger, or one still being built: the stamps, unchanged.
+    "stamp"). No ledger: the stamps, unchanged. A ledger still being built
+    (SA-F9 (g): a Take live rebuilds it): the last times it answered for this
+    chip, and ``calibration_pending`` so the page asks again -- it showed
+    "no timestamps" until a reload.
     The cached topology is never mutated -- the touched rows are copies."""
+    key = None
     try:
         ctx = _active_ctx()
         if not (ctx and ctx.get("type") == "quam" and ctx.get("path")):
             return topo
-        _ans, table = _hub_status_table(ctx)
+        key = str(ctx.get("path"))
+        ans, table = _hub_status_table(ctx)
         if table is None:
+            if (ans or {}).get("mode") in ("building", "preparing"):
+                return _ledger_calibration_pending(topo, key)
             return topo
         times = table.run_change_times()
-    except Exception:  # noqa: BLE001 -- Warming / an unreadable ledger: the stamps stand
+    except _ramcache.Warming:
+        return _ledger_calibration_pending(topo, key)
+    except Exception:  # noqa: BLE001 -- an unreadable ledger: the stamps stand
         return topo
+    _LEDGER_CAL_LAST.pop(key, None)
+    _LEDGER_CAL_LAST[key] = times
+    while len(_LEDGER_CAL_LAST) > _LEDGER_CAL_LAST_MAX:
+        del _LEDGER_CAL_LAST[next(iter(_LEDGER_CAL_LAST))]
+    return _fold_ledger_times(topo, times)
+
+
+def _ledger_calibration_pending(topo, key):
+    """SA-F9 (g): the topology while the chip's ledger is being read."""
+    times = _LEDGER_CAL_LAST.get(key) if key else None
+    out = dict(_fold_ledger_times(topo, times) if times else topo)
+    out["calibration_pending"] = True
+    return out
+
+
+def _fold_ledger_times(topo, times):
     if not (times["q"] or times["p"]):
         return topo
 
@@ -40946,6 +41041,26 @@ def dataset_map_replay(uid, digest):
     return jsonify(result) if result else (jsonify(error="Analysis expired; analyze again."), 404)
 
 
+def _no_run_state_message(ds, run_id) -> str:
+    """SA-F9 (a): why a run has no state to load -- its folder deleted from
+    disk is not a run that never saved a quam_state."""
+    run = ds.runs.get(run_id) if ds is not None else None
+    if run is None:
+        # the dataset dropped it on its last scan: its folder is gone
+        return "This run's folder is no longer on disk (deleted or moved)."
+    folder = getattr(run, "folder_path", None)
+    if folder is not None:
+        try:
+            if not Path(folder).is_dir():
+                return f"This run's folder is no longer on disk: {folder}"
+            if getattr(run, "has_quam_state", False) and not (Path(folder) / "quam_state").is_dir():
+                return ("This run's quam_state folder is no longer on disk: "
+                        f"{Path(folder) / 'quam_state'}")
+        except OSError:
+            pass
+    return "No quam_state in this run"
+
+
 @bp.route("/dataset/<uid>/json")
 def dataset_json_file(uid):
     """Return a raw JSON file from a run's folder."""
@@ -40961,7 +41076,7 @@ def dataset_json_file(uid):
     if file in ("state", "wiring"):
         qs = ds.get_quam_state_path(run_id)
         if not qs:
-            return jsonify({"error": "No quam_state in this run"}), 404
+            return jsonify({"error": _no_run_state_message(ds, run_id)}), 404
         json_path = qs / f"{file}.json"
     elif file in ("node", "data"):
         json_path = run.folder_path / f"{file}.json"
@@ -41383,7 +41498,10 @@ def dataset_load_state(uid):
         state_path = ds.get_quam_state_path(run_id)
     if not state_path:
         return render_template("_status.html",
-                               message="No quam_state in this run", level="error")
+                               message=(_no_run_state_message(ds, run_id) if resolved
+                                        else "This run is no longer in the dataset "
+                                             "(its folder was deleted or moved)."),
+                               level="error")
 
     ctx = _active_ctx()
     can_stage = (ctx is not None and ctx.get("type") == "quam"

@@ -4502,19 +4502,26 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                     }
                 });
             }
+            // SA-F9 (f): a count of 0 is never spoken ("re-applied 0 edits,
+            // and applied them") -- a merge whose edits were already saved
+            // replays none and writes the working state as it is
+            var _nEdits = function (k) { return k + " edit" + (k === 1 ? "" : "s"); };
             if (data.mode === "apply") {
                 if (failed.length) {
                     window.showToast(
-                        "Pulled the live state, applied " + applied + " edit" +
-                        (applied === 1 ? "" : "s") + " to the live chip; " + failed.length +
+                        "Pulled the live state" +
+                        (applied ? ", applied " + _nEdits(applied) + " to the live chip" : "") +
+                        "; " + failed.length +
                         " could not be re-applied and were dropped — the field changed or no " +
                         "longer exists on the new live chip." + _failedPathsSummary(failed) +
                         " Re-enter them if still needed." + crash,
                         "warning");
                 } else if (crash) {
                     window.showToast(
-                        "Pulled the live state, re-applied " + applied + " edit" +
-                        (applied === 1 ? "" : "s") + ", and applied them to the live chip." + crash,
+                        (applied
+                            ? "Pulled the live state, re-applied " + _nEdits(applied) +
+                              ", and applied them to the live chip."
+                            : "Pulled the live state and wrote to the live chip.") + crash,
                         "warning");
                 } else if (window.SyncControl) {
                     // sync-ux 2026-09-25 default 2: the control says it for 4 s instead
@@ -4526,8 +4533,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
             } else if (data.mode === "reapply") {
                 if (failed.length) {
                     window.showToast(
-                        "Pulled the live state and re-applied " + applied + " edit" +
-                        (applied === 1 ? "" : "s") + "; " + failed.length +
+                        "Pulled the live state" +
+                        (applied ? " and re-applied " + _nEdits(applied) : "") + "; " + failed.length +
                         " could not be re-applied (the field changed or no longer exists)." +
                         _failedPathsSummary(failed),
                         "warning");

@@ -776,6 +776,11 @@ window.ChipStatus.mount = function (opts) {
     // What this render was built from, so liveDetection's refresh can tell a
     // real topology change from a mutation that moved nothing on this page.
     window.ChipStatus._renderedSig = window.ChipStatus._topoSig(topo);
+    // SA-F9 (g): the chip's change ledger was still being read (a Take live
+    // rebuilds it), so the calibration ages are missing or a pull old -- ask
+    // again until it answers, instead of showing "no timestamps" until a reload.
+    if (topo.calibration_pending) window.ChipStatus._awaitCalibration(1);
+    else clearTimeout(window.ChipStatus._calPendingTimer);
     var rawWiring = opts.rawWiring || {};
     var _defaultThresholds = opts.defaultThresholds || {};
     var diagFindings = opts.diagFindings || [];
@@ -1458,6 +1463,8 @@ window.ChipStatus.mount = function (opts) {
                      + (byRun ? byRun + ' moved in a run, ' + (stamps.length - byRun) + ' stamped'
                               : stamps.length + ' stamped') + ')',
                 color: '#76b7b2' };
+        } else if (topo.calibration_pending) {
+            freshTile = { id: 'cal_age', composite: true, title: 'Calibration Age', value: '…', sub: 'reading history', muted: true };
         } else {
             freshTile = { id: 'cal_age', composite: true, title: 'Calibration Age', value: '—', sub: 'no timestamps', muted: true };
         }
@@ -5634,7 +5641,8 @@ window.ChipStatus.mount = function (opts) {
         var html = '';
         html += _hTile('qubits', nodes.length, 'neutral', edges.length + ' pairs');
         html += _hTile('oldest calibration', _ageLabel(oc), _ageClass(oc),
-                       summ.newest_calibration ? 'newest ' + _ageLabel(summ.newest_calibration) : 'no timestamps');
+                       summ.newest_calibration ? 'newest ' + _ageLabel(summ.newest_calibration)
+                           : (topo.calibration_pending ? 'reading history' : 'no timestamps'));
         html += _hTile('qubits below spec', belowCount,
                        belowCount ? (failCount ? 'fail' : 'warn')
                                   : (measuredCount ? 'pass' : 'neutral'),
@@ -6469,6 +6477,26 @@ window.ChipStatus.reportHref = function (linkEl, fmt) {
 // Canonical (sorted-key) serialization of a topology payload: the page embeds
 // json.dumps(topology) and /api/topology goes through jsonify, which sorts
 // keys, so a plain JSON.stringify would call two equal payloads different.
+/* SA-F9 (g): while /api/topology says its calibration ages are pending (the
+ * ledger is being rebuilt after a pull), re-ask every 2 s -- at most 15 times
+ * -- and hand the first settled answer to liveDetection's refresh, which
+ * re-renders only when the topology changed. */
+window.ChipStatus._awaitCalibration = function (tries) {
+    clearTimeout(window.ChipStatus._calPendingTimer);
+    if (tries > 15) return;
+    window.ChipStatus._calPendingTimer = setTimeout(function () {
+        if (!document.getElementById('topo-health-tiles')) return;   // left the page
+        fetch('/api/topology', { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+                if (!data || data.error) return;
+                if (data.calibration_pending) { window.ChipStatus._awaitCalibration(tries + 1); return; }
+                if (typeof window.ChipStatus._refreshMetrics === 'function') window.ChipStatus._refreshMetrics();
+            })
+            .catch(function () {});
+    }, 2000);
+};
+
 window.ChipStatus._topoSig = function (o) {
     function canon(v) {
         if (Array.isArray(v)) return v.map(canon);
@@ -6619,6 +6647,7 @@ window.ChipStatus.liveDetection = function () {
             })
             .catch(function() {});
     }
+    window.ChipStatus._refreshMetrics = refreshMetrics;   // SA-F9 (g)
     function onStateMutated() {
         clearTimeout(metricsRefreshTimer);
         metricsRefreshTimer = setTimeout(refreshMetrics, 250);
