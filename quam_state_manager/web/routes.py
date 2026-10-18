@@ -27118,6 +27118,20 @@ def _agent_undo_refusal(store, presser: str | None = None) -> dict | None:
     return None
 
 
+def _undo_head(verb: str, live: bool, ctx=None) -> str:
+    """v1.5.1 (U P1-5): ONE phrasing for every undo / redo result, saying
+    whether the chip file was written. *live*: this press wrote the live
+    files (the "Ctrl+Z writes live" journal step); the chip is named
+    (SB-F2). Otherwise the change is in SM only -- unless Auto-Sync push is
+    armed, which writes it within a second: the head says so instead of a
+    promise the session would break."""
+    if live:
+        return f"{verb} — written to the chip file of '{_chip_name_of(ctx or _active_ctx())}'"
+    if _auto_apply_state(ctx):
+        return f"{verb} — staged; Auto-Sync writes it to the chip file"
+    return f"{verb} — in SM only, the chip file is unchanged"
+
+
 @bp.route("/undo", methods=["POST"])
 def undo():
     modifier = _modifier()
@@ -27255,20 +27269,22 @@ def undo():
     # revert every affected cell/tree-node visually (reuses the /discard path).
     anchor = entries[-1]
     n = len(entries)
+    # v1.5.1 (U P1-5): an un-applied edit's undo never writes the chip file
+    head = _undo_head("Undone", False, ctx)
     if groups > 1:
-        message = f"Undone: {groups:,} actions, {n:,} changes ({anchor.dot_path} …)"
+        message = f"{head}: {groups:,} actions, {n:,} changes ({anchor.dot_path} …)"
     elif n > 1:
-        message = f"Undone: {n:,} changes ({anchor.dot_path} …)"
+        message = f"{head}: {n:,} changes ({anchor.dot_path} …)"
     elif anchor.deleted:
-        message = f"Undone: {anchor.dot_path} restored"
+        message = f"{head}: {anchor.dot_path} restored"
     elif anchor.created:
-        message = f"Undone: {anchor.dot_path} removed"
+        message = f"{head}: {anchor.dot_path} removed"
     else:
         # docs/76: say how far the undo moved the value, not just where it
         # landed — "→ 5,100,000,000" alone doesn't tell you what was lost.
         from quam_state_manager.core import value_delta as _vd
         _d = _vd.compute(anchor.new_value, anchor.old_value)
-        message = f"Undone: {anchor.dot_path} → {_fmt_msg_val(anchor.old_value)}"
+        message = f"{head}: {anchor.dot_path} → {_fmt_msg_val(anchor.old_value)}"
         if _d and _d["dir"] != "same":
             message += f" ({_d['text']}"
             message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
@@ -27507,8 +27523,9 @@ def _undo_journal_step(ctx, n_req: int = 1):
     # means it is restored now — and old_value_str is the value now in place.
     n = len(uents)
     anchor = uents[-1]
-    # v1.5.1 (SB-F2): a live step names the chip it wrote
-    head = f"Undone → live on '{_chip_name_of(ctx)}'" if live else "Undone (staged)"
+    # v1.5.1 (SB-F2, U P1-5): a live step names the chip it wrote; a staged
+    # one says the chip file is unchanged
+    head = _undo_head("Undone", live, ctx)
     if n > 1:
         message = f"{head}: {n:,} changes ({anchor['path']} …)"
     elif anchor.get("deleted"):
@@ -27935,8 +27952,8 @@ def _live_redo_response(fw: list, why: str | None, n_req: int, *, consumed: int 
         return _redo_response("Redo: " + (why or "nothing to redo"), [], extra=extra)
     anchor = fw[0]
     n = len(fw)
-    # v1.5.1 (SB-F2): a live step names the chip it wrote
-    _head = f"Redone → live on '{_chip_name_of(_active_ctx())}'"
+    # v1.5.1 (SB-F2, U P1-5): a live step names the chip it wrote
+    _head = _undo_head("Redone", True)
     if n > 1:
         message = f"{_head}: {n:,} changes ({anchor.dot_path} …)"
     elif anchor.deleted:
@@ -28014,8 +28031,9 @@ def redo():
         _redo_mark(ctx, store)
         anchor = entries[-1]
         n = len(entries)
-        message = (f"Redone: un-staged {n:,} change(s) ({anchor.dot_path} …)"
-                   if n > 1 else f"Redone: un-staged {anchor.dot_path}")
+        _rh = _undo_head("Redone", False, ctx)     # v1.5.1 (U P1-5)
+        message = (f"{_rh}: un-staged {n:,} change(s) ({anchor.dot_path} …)"
+                   if n > 1 else f"{_rh}: un-staged {anchor.dot_path}")
         return _redo_response(message, [
             _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
                                   deleted=e.deleted, source_file=e.source_file)
@@ -28182,16 +28200,17 @@ def redo():
     n = len(fents)
     total = sum(len(f) for f in all_fents)
     anchor = fents[0]
+    _rh = _undo_head("Redone", False, ctx)         # v1.5.1 (U P1-5)
     if len(all_fents) > 1:
-        message = f"Redone: {len(all_fents):,} actions, {total:,} changes ({anchor['path']} …)"
+        message = f"{_rh}: {len(all_fents):,} actions, {total:,} changes ({anchor['path']} …)"
     elif n > 1:
-        message = f"Redone: {n:,} changes ({anchor['path']} …)"
+        message = f"{_rh}: {n:,} changes ({anchor['path']} …)"
     elif anchor["deleted"]:
-        message = f"Redone: {anchor['path']} removed"
+        message = f"{_rh}: {anchor['path']} removed"
     elif anchor["created"]:
-        message = f"Redone: {anchor['path']} restored"
+        message = f"{_rh}: {anchor['path']} restored"
     else:
-        message = f"Redone: {anchor['path']} → {_fmt_msg_val(anchor['new'])}"
+        message = f"{_rh}: {anchor['path']} → {_fmt_msg_val(anchor['new'])}"
     # Client flags describe what happened to the CELL now: a re-applied
     # create restored it (deleted=True in undo-speak), a re-applied delete
     # removed it (created=True) — the exact inversion of the frame's flags.

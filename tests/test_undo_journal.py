@@ -188,7 +188,7 @@ class TestSidecarPersistence:
         ctx = _ctx(env)
         assert len(ctx["undo_units"]) == 1 and ctx["undo_cursor"] == 1
         r = c.post("/undo")
-        assert "staged" in _trigger(r)["cellsReverted"]["message"]
+        assert "in SM only, the chip file is unchanged" in _trigger(r)["cellsReverted"]["message"]
         assert _off(env) == 0.08
 
 
@@ -205,7 +205,7 @@ class TestEditorWalk:
         assert not store.change_log            # the save boundary
         r = c.post("/undo")
         trig = _trigger(r)["cellsReverted"]
-        assert "staged" in trig["message"]
+        assert "in SM only, the chip file is unchanged" in trig["message"]
         assert trig["entries"][0]["dot_path"] == "qubits.qA1.z.joint_offset"
         # STAGED, not applied: the working value moved, the tray holds it,
         # and the LIVE file is untouched (the covenant).
@@ -258,12 +258,12 @@ class TestEditorWalk:
             _edit(c, v)
         r = c.post("/undo?n=2")
         trig = _trigger(r)["cellsReverted"]
-        assert trig["message"].startswith("Undone: 2 actions, 2 changes")
+        assert trig["message"].startswith("Undone — in SM only, the chip file is unchanged: 2 actions, 2 changes")
         assert [e["dot_path"] for e in trig["entries"]] == ["qubits.qA1.z.joint_offset"] * 2
         assert _off(env) == 0.09 and len(_ctx(env)["store"].change_log) == 1
         r = c.post("/redo?n=2")                # the two frames come back, in order
         trig = _trigger(r)["cellsReverted"]
-        assert trig["message"].startswith("Redone: 2 actions, 2 changes")
+        assert trig["message"].startswith("Redone — in SM only, the chip file is unchanged: 2 actions, 2 changes")
         assert _off(env) == 0.11 and len(_ctx(env)["store"].change_log) == 3
         # The client writes the entries IN ORDER, last one wins: a redo burst
         # over one path must therefore end with the NEWEST value (real-Chrome
@@ -271,12 +271,12 @@ class TestEditorWalk:
         assert [e["old_value_str"] for e in trig["entries"]] == ["0.1", "0.11"]
         # more than there is: undoes what exists, says so, never errors
         r = c.post("/undo?n=50")
-        assert _trigger(r)["cellsReverted"]["message"].startswith("Undone: 3 actions")
+        assert _trigger(r)["cellsReverted"]["message"].startswith("Undone — in SM only, the chip file is unchanged: 3 actions")
         assert _off(env) == 0.08 and not _ctx(env)["store"].change_log
         # n is clamped and non-numeric n is one press
         _edit(c, 0.2)
         r = c.post("/undo?n=zzz")
-        assert "Undone:" in _trigger(r)["cellsReverted"]["message"] and _off(env) == 0.08
+        assert "Undone " + "— in SM only, the chip file is unchanged:" in _trigger(r)["cellsReverted"]["message"] and _off(env) == 0.08
 
     def test_undo_burst_stops_at_the_journal_boundary(self, env):
         # a cross-save (jrn:) step is its own press, never a side effect of a burst
@@ -286,7 +286,7 @@ class TestEditorWalk:
         _edit(c, 0.10)
         r = c.post("/undo?n=5")
         trig = _trigger(r)["cellsReverted"]
-        assert trig["message"].startswith("Undone: qubits.qA1.z.joint_offset")   # ONE ordinary action
+        assert trig["message"].startswith("Undone — in SM only, the chip file is unchanged: qubits.qA1.z.joint_offset")   # ONE ordinary action
         assert _off(env) == 0.09
         # ... and the response SAYS the burst stopped, so the client can
         # re-queue the four remaining presses (review of eaa0f05)
@@ -343,7 +343,7 @@ class TestEditorWalk:
         assert len(ctx["undo_units"]) == 4 and ctx["undo_cursor"] == 4
         assert not ctx["store"].change_log
         r = c.post("/undo")                    # inverse of the LAST jrn step
-        assert "staged" in _trigger(r)["cellsReverted"]["message"]
+        assert "in SM only, the chip file is unchanged" in _trigger(r)["cellsReverted"]["message"]
         assert _off(env) == 0.10
 
 

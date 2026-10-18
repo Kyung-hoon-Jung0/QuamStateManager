@@ -17,10 +17,16 @@
             <div><kbd>?</kbd></div><div>shortcut cheat sheet</div>
             <div><kbd>Alt</kbd>+<kbd>C</kbd></div><div>calculator</div>
             <div><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></div>
-            <div>undo / redo — crosses saves by STAGING into Review; the live chip
-                 is written by an explicit <b>Apply to live</b>, or inside a
-                 session you armed yourself with <b>Auto-Sync</b> (default off,
-                 always visible in the top bar)</div>
+            {# v1.5.1 (U P1-5): what Ctrl+Z writes depends on a setting whose
+               default is ON -- say the setting, its default and its value now #}
+            <div class="help-undo">undo / redo — an edit not applied yet is undone in SM
+                 only; the chip file is unchanged. An applied edit: with
+                 <b>Ctrl+Z writes live</b> ON (Settings; the default) Ctrl+Z
+                 writes the chip file at once, refused if the chip moved since;
+                 OFF, the undo waits in the tray until <b>Apply</b>.
+                 Now: <b class="help-undo-now">{{ 'ON' if undo_live else 'OFF' }}</b>.
+                 With <b>Auto-Sync</b> push armed, a staged undo is written too.
+                 The toast says which happened.</div>
             <div class="help-sc-group">Live State Edit <span class="muted" style="text-transform:none;font-weight:400">— the Qubits grid</span></div>
             <div><kbd>Tab</kbd></div><div>hop between edit cells</div>
             <div><kbd>Shift</kbd>+click</div><div>select a range in one column</div>

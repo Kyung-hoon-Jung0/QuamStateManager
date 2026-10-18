@@ -226,11 +226,11 @@ class TestThePressOnItsOwnChipWorks:
         r = c.post("/undo", headers={H: env["key_y"]})
         assert r.status_code == 200, r.get_data(as_text=True)[:300]
         trig = json.loads(r.headers["HX-Trigger"])["cellsReverted"]
-        assert trig["live"] is True and trig["message"].startswith("Undone → live on 'chip_y'"), trig
+        assert trig["live"] is True and trig["message"].startswith("Undone — written to the chip file of 'chip_y'"), trig
         assert _sha(env["y"]) != before
         r = c.post("/redo", headers={H: env["key_y"]})
         trig = json.loads(r.headers["HX-Trigger"])["cellsReverted"]
-        assert trig["message"].startswith("Redone → live on 'chip_y'"), trig
+        assert trig["message"].startswith("Redone — written to the chip file of 'chip_y'"), trig
 
     def test_no_key_is_judged_as_before(self, env):
         r = env["c"].post("/field/edit", data={"dot_path": "qubits.q3.T1", "value": "3.3e-05"})

@@ -699,7 +699,7 @@ class TestAnUndoBackToNullSaysNotSet:
         c = null_env["client"]
         _edit(null_env, self.P, "200")
         cr = _trigger(c.post("/undo"))["cellsReverted"]
-        assert cr["message"] == f"Undone: {self.P} → not set", cr["message"]
+        assert cr["message"] == f"Undone — in SM only, the chip file is unchanged: {self.P} → not set", cr["message"]
         e = {x["dot_path"]: x for x in cr["entries"]}[self.P]
         assert e["old_value_str"] == "", "the cell itself still repaints EMPTY"
 

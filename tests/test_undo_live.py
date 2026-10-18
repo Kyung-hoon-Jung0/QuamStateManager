@@ -179,7 +179,7 @@ class TestLiveWalk:
         assert ctx["undo_cursor"] == 1 and not ctx["store"].change_log
         r = c.post("/undo")
         t = _trig(r)["cellsReverted"]
-        assert t["live"] is True and t["message"].startswith("Undone → live")
+        assert t["live"] is True and t["message"].startswith("Undone — written to the chip file of")
         assert t["entries"][0]["dot_path"] == "qubits.qA1.z.joint_offset"
         assert _live_off(env) == 0.08                 # the CHIP took it
         assert _work_off(env) == 0.08
@@ -198,7 +198,7 @@ class TestLiveWalk:
         assert _live_off(env) == 0.08
         r = c.post("/redo")
         t = _trig(r)["cellsReverted"]
-        assert t["message"].startswith("Redone → live"), t["message"]
+        assert t["message"].startswith("Redone — written to the chip file of"), t["message"]
         assert t.get("live") is True
         assert _live_off(env) == 0.10 and _work_off(env) == 0.10
         ctx = _ctx(env)
@@ -245,7 +245,7 @@ class TestLiveWalk:
         _edit(c, 0.10); _apply(c)
         r = c.post("/undo")
         t = _trig(r)["cellsReverted"]
-        assert t["live"] is False and t["message"].startswith("Undone (staged)")
+        assert t["live"] is False and t["message"].startswith("Undone — in SM only, the chip file is unchanged")
         assert t.get("tier_note") is None            # OFF is not a refusal, no note
         assert _live_off(env) == 0.10                # chip untouched (docs/107)
         assert _work_off(env) == 0.08

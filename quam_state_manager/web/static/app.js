@@ -7040,7 +7040,13 @@ window.PhysAmp = (function () {
             ['/', 'focus the page search'],
             ['?', 'this cheat sheet'],
             ['Alt+C', 'calculator'],
-            ['Ctrl+Z / Ctrl+Shift+Z', 'undo / redo (crosses saves — staged into Review)'],
+            // v1.5.1 (U P1-5): say what the setting makes Ctrl+Z do now
+            ['Ctrl+Z / Ctrl+Shift+Z', (function () {
+                var t = document.getElementById('undo-live-toggle');
+                var on = !t || t.getAttribute('data-on') !== '0';
+                return on ? 'undo / redo (an applied edit: writes the chip file; Settings "Ctrl+Z writes live" ON)'
+                          : 'undo / redo (an applied edit: staged until Apply; Settings "Ctrl+Z writes live" OFF)';
+            })()],
             ['Live State Edit — the Qubits grid', ''],
             ['Tab / Shift+Tab', 'hop between edit cells'],
             ['Shift+click / Ctrl+click', 'select a range / toggle cells in ONE column'],
