@@ -1640,8 +1640,31 @@
             // Allow 0 so a full-cover drag ([0,100]) persists.
             return isFinite(a) && isFinite(b) && a >= 0 && b >= 0 && Math.abs(a + b - 100) <= 1;
         }
+        // v1.5.1 (T2-F3): an SM older than USER_KEY kept a dragged split only
+        // in quam_split_sizes, so its user's drag was lost on upgrade. ONCE per
+        // browser (MIGRATED_KEY), with no choice recorded yet, those sizes are
+        // taken as the last action -- unless they are one of SM's own fixed
+        // positions (a programmatic move is never a choice).
+        var MIGRATED_KEY = "quam_split_migrated";
+        var _oldSplitChecked = false;
+        function migrateOldSplit() {
+            if (_oldSplitChecked) return;
+            _oldSplitChecked = true;
+            try {
+                if (localStorage.getItem(MIGRATED_KEY)) return;
+                localStorage.setItem(MIGRATED_KEY, "1");
+                if (localStorage.getItem(USER_KEY)) return;
+                var old = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+                if (!validSizes(old)) return;
+                var S = (window.UI_CONFIG && UI_CONFIG.split) || {};
+                var fixed = [S.defaultSizes, S.expandedSizes, S.collapsedSizes, S.datasetExpandedSizes];
+                for (var i = 0; i < fixed.length; i++) if (sameSizes(old, fixed[i])) return;
+                localStorage.setItem(USER_KEY, JSON.stringify([Number(old[0]), Number(old[1])]));
+            } catch (e) {}
+        }
         // The stored choice: dragged sizes, "up", "down", or null (none yet).
         function loadUserChoice() {
+            migrateOldSplit();
             try {
                 var raw = localStorage.getItem(USER_KEY);
                 if (raw) {
