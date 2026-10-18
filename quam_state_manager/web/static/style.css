@@ -12993,6 +12993,9 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 @keyframes leuFlash { 0% { background: var(--pico-primary); opacity: .35; }
                       100% { background: transparent; opacity: 1; } }
 .bulk-cell.leu-flash { animation: leuFlash .65s ease-out; }
+/* B1: an inspector row opened from a search result is marked for a moment */
+.prop-table tr.field-found > td { background: var(--pico-primary-focus); }
+.search-ptr { font-size: .92em; }
 
 /* tray ↶ (next-undo tooltip refreshed on hover) */
 .tray-undo-btn {

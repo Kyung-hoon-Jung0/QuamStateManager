@@ -3344,18 +3344,53 @@ document.addEventListener("stateRestored", function(evt) {
  * Uses requestAnimationFrame so the DOM swap is fully settled before
  * we attempt to focus.  Positions the cursor at the end of the value.
  */
-window.focusEditInput = function(dotPath) {
+window.focusEditInput = function(dotPath, opts) {
+    // B1 (UX round): `reveal` -- opened from a search result -- also opens the
+    // field's section, scrolls it to the middle and marks its row. A field the
+    // inspector shows without an input is found by its key cell; one it does
+    // not show at all is left to the inspector's own search, which then says
+    // "0 of N shown" rather than landing silently at the top.
+    var reveal = !!(opts && opts.reveal);
     requestAnimationFrame(function() {
         var hidden = document.querySelector(
             'input[type="hidden"][name="dot_path"][value="' + dotPath + '"]'
         );
-        if (!hidden) return;
-        var input = hidden.parentElement.querySelector('input[name="value"]');
+        var input = hidden ? hidden.parentElement.querySelector('input[name="value"]') : null;
+        if (reveal) window._revealInspectorField(dotPath, input);
         if (!input) return;
         input.focus();
         var len = input.value.length;
         input.setSelectionRange(len, len);
     });
+};
+
+window._revealInspectorField = function(dotPath, input) {
+    var pane = document.getElementById('inspector-pane') || document;
+    var row = input ? input.closest('tr') : null;
+    if (!row) {
+        var keys = pane.querySelectorAll('code.dot-path[title]');
+        for (var i = 0; i < keys.length; i++) {
+            var t = keys[i].getAttribute('title') || '';
+            if (t === dotPath || t.indexOf(dotPath + ' ') === 0) { row = keys[i].closest('tr'); break; }
+        }
+    }
+    if (!row) {
+        var box = pane.querySelector('.detail-search-input');
+        if (box && window.filterDetailPanel) {
+            box.value = String(dotPath).split('.').slice(-2).join(' ');
+            window.filterDetailPanel(box);
+        }
+        return false;
+    }
+    for (var d = row.parentElement; d && d !== pane; d = d.parentElement) {
+        if (d.tagName === 'DETAILS' && !d.open) d.open = true;
+    }
+    row.classList.add('field-found');
+    setTimeout(function() { row.classList.remove('field-found'); }, 2500);
+    if (row.scrollIntoView) {
+        try { row.scrollIntoView({block: 'center'}); } catch (e) { row.scrollIntoView(); }
+    }
+    return true;
 };
 
 /* ------------------------------------------------------------------ */
@@ -22564,8 +22599,11 @@ document.addEventListener('click', function(evt) {
         var data;
         try { data = JSON.parse(script.textContent); } catch (e) { return []; }
         var entries = [];
+        // B1 (UX round): actions sit beside pages -- Settings opens its
+        // popover, the chip report opens in its own tab
         (data.pages || []).forEach(function(p) {
-            entries.push({type: 'page', label: p.label, sub: p.url, url: p.url});
+            entries.push({type: p.action ? 'action' : 'page', label: p.label,
+                          sub: p.sub || p.url || '', url: p.url || '', action: p.action || ''});
         });
         (data.qubits || []).forEach(function(q) {
             entries.push({type: 'qubit', label: q, sub: 'Qubit', url: '/qubit/' + encodeURIComponent(q)});
@@ -22583,8 +22621,11 @@ document.addEventListener('click', function(evt) {
     }
 
     function _pushRecent(entry) {
-        var list = _recents().filter(function(e) { return e.url !== entry.url; });
-        list.unshift({type: entry.type, label: entry.label, sub: entry.sub, url: entry.url});
+        var list = _recents().filter(function(e) {
+            return e.url !== entry.url || (e.action || '') !== (entry.action || '');
+        });
+        list.unshift({type: entry.type, label: entry.label, sub: entry.sub, url: entry.url,
+                      action: entry.action || ''});
         try { localStorage.setItem(_RECENTS_KEY, JSON.stringify(list.slice(0, 10))); }
         catch (e) { /* localStorage full or disabled — silent */ }
     }
@@ -22607,6 +22648,10 @@ document.addEventListener('click', function(evt) {
             _cpFiltered = recent.concat(entries.filter(function(e) { return e.type === 'page' && !seen[e.url]; })).slice(0, 12);
         } else {
             _cpFiltered = entries.filter(function(e) { return _matches(e, query); }).slice(0, 30);
+            // B1: a name the palette does not hold is a chip FIELD question --
+            // hand it to the field search instead of a dead "No matches"
+            _cpFiltered.push({type: 'action', label: 'Search chip fields for "' + query + '"',
+                              sub: 'top-bar Search', action: 'fieldsearch', query: query, url: ''});
         }
         _cpActiveIdx = 0;
         list.innerHTML = '';
@@ -22644,6 +22689,7 @@ document.addEventListener('click', function(evt) {
     }
 
     function _activate(entry) {
+        if (entry.action) { _runAction(entry); return; }
         _pushRecent(entry);
         window.closeCmdPalette();
         if (entry.type === 'qubit' || entry.type === 'pair') {
@@ -22669,6 +22715,25 @@ document.addEventListener('click', function(evt) {
                 _navigateTablePane(entry.url);
             } else {
                 window.location.href = entry.url;
+            }
+        }
+    }
+
+    /* B1 (UX round): a palette ACTION -- Settings opens its popover, the
+       chip report its own tab, an unknown name goes to the field search. */
+    function _runAction(entry) {
+        if (entry.action !== 'fieldsearch') _pushRecent(entry);
+        window.closeCmdPalette();
+        if (entry.action === 'settings') {
+            if (window.toggleSettings) window.toggleSettings();
+        } else if (entry.action === 'newtab') {
+            window.open(entry.url, '_blank', 'noopener');
+        } else if (entry.action === 'fieldsearch') {
+            var gs = document.getElementById('global-search');
+            if (gs) gs.value = entry.query;
+            if (window.htmx) {
+                htmx.ajax('GET', '/search?q=' + encodeURIComponent(entry.query),
+                          {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
             }
         }
     }

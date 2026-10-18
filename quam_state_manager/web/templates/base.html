@@ -1423,7 +1423,7 @@
         <div class="cmd-palette-backdrop" onclick="window.closeCmdPalette()"></div>
         <div class="cmd-palette-box">
             <input id="cmd-palette-input" class="cmd-palette-input" type="text"
-                   autocomplete="off" placeholder="Jump to qubit, pair, or page..." aria-label="Command palette search">
+                   autocomplete="off" placeholder="Jump to a qubit, pair, page or action..." aria-label="Command palette search">
             <ul id="cmd-palette-results" class="cmd-palette-results" role="listbox"
                 aria-live="polite" aria-label="Search results"></ul>
             <div class="cmd-palette-hint">
@@ -1470,7 +1470,11 @@
                 {% endif %}
                 {"label": "Datasets",          "url": "/datasets"},
                 {"label": "Collections",       "url": "/collections"},
-                {"label": "Trends",            "url": "/trends"}
+                {"label": "Trends",            "url": "/trends"},
+                {"label": "Help",              "url": "/help"},
+                {"label": "About - version {{ sm_version }}", "url": "/help", "sub": "QUAM State Manager {{ sm_version }}"},
+                {"label": "Settings",          "action": "settings", "sub": "theme, font, time zone"},
+                {"label": "Chip report (print)", "url": "/chip-status/report", "action": "newtab"}
             ]
         }
     </script>

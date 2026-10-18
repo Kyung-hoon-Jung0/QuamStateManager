@@ -29,12 +29,23 @@
     <table class="data-table search-table" role="grid">
         <thead><tr><th>Entity</th><th>Key</th><th>Value</th><th>Path</th><th class="col-score">Score</th></tr></thead>
         <tbody>
+        {% set ptr_targets = ptr_targets | default({}) %}
         {% for r in results %}
-        <tr class="clickable-row" hx-get="/qubit/{{ r.parent_id }}" hx-target="#inspector-pane" hx-swap="innerHTML">
+        {# B1 (UX round): a click opens the field's own home AT the field --
+           the inspector scrolled to it and highlighted; ports / wiring /
+           top-level leaves open the Json Tree view at that path. #}
+        {% if r.category == 'qubit' %}
+        <tr class="clickable-row" data-dot-path="{{ r.dot_path }}" hx-get="/qubit/{{ r.parent_id | urlencode }}?focus={{ r.dot_path | urlencode }}&flash=1" hx-target="#inspector-pane" hx-swap="innerHTML">
+        {% elif r.category == 'pair' %}
+        <tr class="clickable-row" data-dot-path="{{ r.dot_path }}" hx-get="/pair/{{ r.parent_id | urlencode }}?focus={{ r.dot_path | urlencode }}&flash=1" hx-target="#inspector-pane" hx-swap="innerHTML">
+        {% else %}
+        <tr class="clickable-row" data-dot-path="{{ r.dot_path }}" onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-dot-path'))">
+        {% endif %}
             <td><strong>{{ r.parent_id }}</strong> <small class="cat-badge cat-{{ r.category }}">{{ r.category }}</small></td>
             <td><code>{{ r.leaf_key }}</code></td>
             <td class="search-value">
-                {% if r.raw_value is none %}N/A
+                {% if r.dot_path in ptr_targets %}<span class="search-ptr" title="{{ r.raw_value }}">points to <code>{{ ptr_targets[r.dot_path] }}</code></span>
+                {% elif r.raw_value is none %}N/A
                 {% elif r.raw_value is number and r.raw_value is float and (r.raw_value|abs >= 1e6 or (0 < r.raw_value|abs < 1e-3)) %}
                     {{ "%.4e" | format(r.raw_value) }}
                 {% else %}{{ r.raw_value }}{% endif %}

@@ -26819,7 +26819,36 @@ def search():
     limit = _int_arg("limit", 50, minimum=1)
     results = index.search(query, limit=limit, category=category)
 
-    return render_template("_search_results.html", results=results, query=query, active_category=category)
+    return render_template("_search_results.html", results=results, query=query,
+                           active_category=category,
+                           ptr_targets=_search_pointer_targets(results))
+
+
+def _search_pointer_targets(results) -> dict[str, str]:
+    """B1 (UX round): a pointer row says where it points -- "points to
+    x180_DragCosine.amplitude" -- written relative to the row's own path when
+    they share a prefix, so a reader never takes the pointer for the field it
+    names. Display only: a pointer that cannot be followed is left out."""
+    from quam_state_manager.core.pointer_resolver import _compute_resolved_path, is_pointer
+    store = _store()
+    root = store.merged if store else {}
+    out: dict[str, str] = {}
+    for r in results:
+        raw = r.raw_value
+        if not is_pointer(raw) or raw.startswith("#./"):
+            continue
+        own = r.dot_path.split(".")
+        try:
+            target = list(_compute_resolved_path(root, raw, tuple(own)))
+        except Exception:  # noqa: BLE001 -- display only
+            continue
+        if not target:
+            continue
+        n = 0
+        while n < min(len(own), len(target)) - 1 and own[n] == target[n]:
+            n += 1
+        out[r.dot_path] = ".".join(target[n:])
+    return out
 
 
 # ======================================================================

@@ -141,5 +141,5 @@
     {% endif %}
 </article>
 {% if focus_path %}
-<script>window.focusEditInput({{ focus_path | tojson }});</script>
+<script>window.focusEditInput({{ focus_path | tojson }}{% if request.args.get('flash') %}, {reveal: true}{% endif %});</script>
 {% endif %}
