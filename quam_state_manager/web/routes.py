@@ -27358,6 +27358,74 @@ def api_pulse_ground_truth():
 # ======================================================================
 
 
+#: v1.5.1 (U P2-19): the pages and actions SM opens by NAME -- ONE list, read
+#: by Ctrl+K (base.html's cmd-palette-data) and by header Search, so a name
+#: found in one is found in the other. ``exp``: shown only with SM_EXPERIMENTAL.
+_NAV_PAGES = (
+    {"label": "Projects", "url": "/qualibrate"},
+    {"label": "Generate Config", "url": "/generate"},
+    {"label": "Config Viewer", "url": "/config"},
+    {"label": "Re-generate config", "url": "/regenerate"},
+    {"label": "Instrument Wiring", "url": "/instrument"},
+    {"label": "Qubits", "url": "/qubits"},
+    {"label": "Pairs", "url": "/pairs"},
+    {"label": "Resonators", "url": "/resonators"},
+    {"label": "Flux", "url": "/flux"},
+    {"label": "Couplers", "url": "/couplers"},
+    {"label": "QDAC-II", "url": "/qdac"},
+    {"label": "Diagnostics", "url": "/diagnostics"},
+    {"label": "Chip Status", "url": "/topology"},
+    {"label": "Z-line distortion", "url": "/zline"},
+    {"label": "CZ gate plan", "url": "/cz-plan"},
+    {"label": "Compare", "url": "/diff"},
+    {"label": "Live State Edit", "url": "/bulk"},
+    {"label": "Live edit - Json Tree view", "url": "/explorer"},
+    {"label": "Pulses", "url": "/pulses"},
+    {"label": "State History", "url": "/state-history"},
+    {"label": "Calibration log", "url": "/journal"},
+    {"label": "Export... (CSV)", "url": "/table"},
+    {"label": "Parameter table", "url": "/table"},
+    {"label": "Agent home", "url": "/agent"},
+    {"label": "Param History", "url": "/param-history"},
+    {"label": "Experiment Runner", "url": "/scheduler", "exp": True},
+    {"label": "Fit Replay", "url": "/fit-audit", "exp": True},
+    {"label": "Auto Calibrate", "url": "/autofit", "exp": True},
+    {"label": "Datasets", "url": "/datasets"},
+    {"label": "Collections", "url": "/collections"},
+    {"label": "Trends", "url": "/trends"},
+    {"label": "Help", "url": "/help"},
+    {"label": "About - version {v}", "url": "/help", "sub": "QUAM State Manager {v}"},
+    {"label": "Settings", "action": "settings", "sub": "theme, font, time zone"},
+    {"label": "Chip report (print)", "url": "/chip-status/report", "action": "newtab"},
+)
+
+
+@bp.app_template_global("nav_pages")
+def _nav_pages() -> list[dict]:
+    """``_NAV_PAGES`` as this process shows it: the running version filled
+    in, the experimental pages only when SM_EXPERIMENTAL is set."""
+    import quam_state_manager as _sm
+    ver = getattr(_sm, "__version__", "?")
+    exp = os.environ.get("SM_EXPERIMENTAL") == "1"
+    out = []
+    for p in _NAV_PAGES:
+        if p.get("exp") and not exp:
+            continue
+        out.append({k: (v.format(v=ver) if isinstance(v, str) else v) for k, v in p.items() if k != "exp"})
+    return out
+
+
+def _search_pages(query: str) -> list[dict]:
+    """The pages / actions whose name holds every word of *query* (header
+    Search finds "export", "trends", "version" as Ctrl+K does)."""
+    words = [w for w in re.split(r"\s+", query.lower()) if w]
+    if not words:
+        return []
+    hits = [p for p in _nav_pages()
+            if all(w in (p["label"] + " " + p.get("sub", "")).lower() for w in words)]
+    return hits[:6]
+
+
 @bp.route("/search")
 def search():
     index = _index()
@@ -27365,19 +27433,20 @@ def search():
 
     if not query:
         return render_template("_search_results.html", results=[], query=query, active_category=None)
+    pages = _search_pages(query)
     if not index:
         # Distinguish "no chip loaded" from a genuine miss so the user isn't told
         # "No results" (which reads as: the value isn't in this chip) when in fact
         # nothing is loaded to search.
         return render_template("_search_results.html", results=[], query=query,
-                               active_category=None, no_state=True)
+                               active_category=None, no_state=True, pages=pages)
 
     category = request.args.get("category")
     limit = _int_arg("limit", 50, minimum=1)
     results = index.search(query, limit=limit, category=category)
 
     return render_template("_search_results.html", results=results, query=query,
-                           active_category=category,
+                           active_category=category, pages=pages,
                            ptr_targets=_search_pointer_targets(results))
 
 

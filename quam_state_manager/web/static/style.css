@@ -4349,6 +4349,7 @@ td.col-delta .val-delta { margin-left: 0; }
 /* ---------------------------------------------------------------- */
 .topology-toolbar { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
 .topology-toolbar h2 { margin: 0; }
+.topology-toolbar .topo-report-link { width: auto; margin: 0; white-space: nowrap; }   /* v1.5.1 U P2-23 */
 
 /* Chip Status sub-view segmented control: pick a section instead of rendering
    all of them. "Full View" reproduces the all-at-once layout. */
@@ -15369,3 +15370,7 @@ details.jargon > .jargon-explain {
     text-transform: none; letter-spacing: normal; color: var(--pico-color); white-space: normal;
     background: color-mix(in srgb, var(--pico-primary) 8%, transparent); border-radius: 4px;
 }
+
+/* v1.5.1 (U P2-19): pages / actions header Search found by name */
+.search-pages { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem; margin: 0 0 .5rem; font-size: .85rem; }
+.search-pages .search-page { width: auto; margin: 0; }

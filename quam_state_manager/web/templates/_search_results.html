@@ -4,6 +4,18 @@
 {% set inspector_sub = "no chip loaded" if no_state else ((results | length) ~ " result(s)" if results else "No results") %}
 {% include '_inspector_header.html' %}
 <div class="search-panel">
+    {#- v1.5.1 (U P2-19): a page or an action named by the query (the Ctrl+K
+        list, routes._NAV_PAGES) is offered above the chip's fields -#}
+    {% if pages %}
+    <div class="search-pages" role="group" aria-label="Pages and actions">
+        <span class="muted">Pages and actions:</span>
+        {% for p in pages %}
+        {% if p.action == 'settings' %}<button type="button" class="outline btn-sm search-page" onclick="toggleSettings(this)">{{ p.label }}</button>
+        {% elif p.action == 'newtab' %}<a class="search-page" href="{{ p.url }}" target="_blank" rel="noopener">{{ p.label }}</a>
+        {% else %}<a class="search-page" href="{{ p.url }}">{{ p.label }}</a>{% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
     <nav class="category-tabs">
         <ul>
             {% set cats = ["all", "qubit", "pair", "port", "wiring", "config"] %}

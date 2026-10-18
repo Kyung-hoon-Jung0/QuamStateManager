@@ -1441,45 +1441,8 @@
         {
             "qubits": {{ qubit_names | tojson }},
             "pairs":  {{ pair_names  | tojson }},
-            "pages": [
-                {"label": "Projects",          "url": "/qualibrate"},
-                {"label": "Generate Config",   "url": "/generate"},
-                {"label": "Config Viewer",     "url": "/config"},
-                {"label": "Re-generate config", "url": "/regenerate"},
-                {"label": "Instrument Wiring", "url": "/instrument"},
-                {"label": "Qubits",            "url": "/qubits"},
-                {"label": "Pairs",             "url": "/pairs"},
-                {"label": "Resonators",        "url": "/resonators"},
-                {"label": "Flux",              "url": "/flux"},
-                {"label": "Couplers",          "url": "/couplers"},
-                {"label": "QDAC-II",           "url": "/qdac"},
-                {"label": "Diagnostics",       "url": "/diagnostics"},
-                {"label": "Chip Status",       "url": "/topology"},
-                {"label": "Z-line distortion", "url": "/zline"},
-                {"label": "CZ gate plan",      "url": "/cz-plan"},
-                {"label": "Compare",           "url": "/diff"},
-                {"label": "Live State Edit",   "url": "/bulk"},
-                {"label": "Live edit - Json Tree view", "url": "/explorer"},
-                {"label": "Pulses",            "url": "/pulses"},
-                {"label": "State History",     "url": "/state-history"},
-                {"label": "Calibration log",   "url": "/journal"},
-                {"label": "Export... (CSV)",   "url": "/table"},
-                {"label": "Parameter table",   "url": "/table"},
-                {"label": "Agent home",         "url": "/agent"},
-                {"label": "Param History",     "url": "/param-history"},
-                {% if experimental %}
-                {"label": "Experiment Runner", "url": "/scheduler"},
-                {"label": "Fit Replay",        "url": "/fit-audit"},
-                {"label": "Auto Calibrate",    "url": "/autofit"},
-                {% endif %}
-                {"label": "Datasets",          "url": "/datasets"},
-                {"label": "Collections",       "url": "/collections"},
-                {"label": "Trends",            "url": "/trends"},
-                {"label": "Help",              "url": "/help"},
-                {"label": "About - version {{ sm_version }}", "url": "/help", "sub": "QUAM State Manager {{ sm_version }}"},
-                {"label": "Settings",          "action": "settings", "sub": "theme, font, time zone"},
-                {"label": "Chip report (print)", "url": "/chip-status/report", "action": "newtab"}
-            ]
+            {#- v1.5.1 (U P2-19): ONE list with header Search (routes._NAV_PAGES) -#}
+            "pages": {{ nav_pages() | tojson }}
         }
     </script>
 

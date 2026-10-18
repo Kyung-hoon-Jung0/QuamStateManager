@@ -97,6 +97,10 @@
                 the change history catches up -#}
             History (<span id="history-count">{% if history_count is none %}&hellip;{% else %}{{ '{:,}'.format(history_count | default(0)) }}{% endif %}</span>)
         </button>
+        {#- v1.5.1 (U P2-23): the printable chip report had only a 24x13 px
+            printer icon in the sidebar -- a labelled entry where the chip is -#}
+        <a class="outline btn-sm topo-report-link" role="button" href="/chip-status/report" target="_blank" rel="noopener"
+           title="Open the printable chip report in a new tab: pick its sections, print it or download it as one HTML file">Chip report</a>
         {# docs/120 item 11: the "Edge labels" checkbox went with the card
            diagram it controlled. The hero has no text labels on its edges —
            direction is the C/T/M markers and the chevrons — so the toggle
