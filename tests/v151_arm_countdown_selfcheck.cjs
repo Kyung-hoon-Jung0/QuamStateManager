@@ -43,7 +43,10 @@ w.setInterval = (cb) => { ivals.set(++nid, cb); return nid; };
 w.clearInterval = (id) => { ivals.delete(id); };
 w.setTimeout = (cb) => { touts.set(++nid, cb); return nid; };
 w.clearTimeout = (id) => { touts.delete(id); };
-const second = () => { [...ivals.values()].forEach((cb) => cb()); };
+// R3 M6: a fake clock too -- a confirm needs SyncPanel.config.armMinMs since arming
+let now = 1.7e12;
+w.Date.now = () => now;
+const second = () => { now += 1000; [...ivals.values()].forEach((cb) => cb()); };
 
 let fails = 0, n = 0;
 function ok(c, m) { n++; if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
@@ -67,6 +70,10 @@ ok(triggered.length === 0, 'nothing ran');
 w.SyncPanel.arm(btn, null);
 ok(btn.getAttribute('data-armed') === '1' && !btn.classList.contains('sync-arm-expired'),
    'a press after the expiry arms afresh, the expiry mark cleared');
+w.SyncPanel.arm(btn, null);
+ok(triggered.length === 0 && btn.getAttribute('data-armed') === '1',
+   'a second press at once (a double click, a held Enter) is not the confirm');
+now += w.SyncPanel.config.armMinMs;
 w.SyncPanel.arm(btn, null);
 ok(triggered.indexOf('armed') >= 0, 'a second press in the window runs the action');
 ok(!btn.hasAttribute('data-arm-left') && btn.getAttribute('data-armed') !== '1', 'and clears the countdown');

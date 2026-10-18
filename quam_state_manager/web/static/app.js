@@ -3869,6 +3869,9 @@ window.SyncPanel = (function () {
         if (ev) { ev.preventDefault(); ev.stopPropagation(); }
         if (!btn || btn.disabled) return;
         if (btn.getAttribute("data-armed") === "1") {
+            // R3 M6: a double click or a held Enter is not a confirm -- the
+            // second press must come after the armed label could be read
+            if (confirmTooSoon(btn)) return;
             disarm(btn);
             if (typeof fn === "function") fn();
             else if (window.htmx) window.htmx.trigger(btn, "armed");
@@ -3880,33 +3883,73 @@ window.SyncPanel = (function () {
         btn._armOrig = lab.innerHTML;
         lab.textContent = btn.getAttribute("data-arm-label") || "Press again to confirm";
         btn.setAttribute("data-armed", "1");
+        btn._armedAt = Date.now();
         btn.classList.add("sync-armed");
         // v1.5.1 (U P2-32): the seconds left show on the button (a corner
         // badge: the label keeps its width), and running out is SAID -- a
         // second press that came too late used to re-arm without a word
         var left = ARM_S;
-        btn.setAttribute("data-arm-left", String(left));
+        _badge(btn, String(left));
         btn._armTimer = setInterval(function () {
+            // R3 MINOR 3: a re-render replaced this button -- its countdown
+            // ends quietly (the press that matters is on the new button)
+            if (!btn.isConnected) { clearInterval(btn._armTimer); return; }
             left -= 1;
-            if (left > 0) { btn.setAttribute("data-arm-left", String(left)); return; }
+            if (left > 0) { _badge(btn, String(left)); return; }
             disarm(btn);
             _expired(btn);
         }, 1000);
     }
     var ARM_S = 5;
+    // R3 M6: the least time between arming and a confirm that counts
+    var _cfg = { armMinMs: 400 };
+    function confirmTooSoon(btn) {
+        return !!(btn && btn._armedAt && (Date.now() - btn._armedAt) < _cfg.armMinMs);
+    }
+    /* The seconds left, as a corner badge the screen reader skips (R3 MINOR
+       7: CSS generated content landed in the button's accessible name). */
+    function _badge(btn, text) {
+        btn.setAttribute("data-arm-left", text);
+        var b = btn.querySelector(":scope > .arm-left-badge");
+        if (!b) {
+            b = document.createElement("span");
+            b.className = "arm-left-badge";
+            b.setAttribute("aria-hidden", "true");
+            btn.appendChild(b);
+        }
+        b.textContent = text;
+    }
+    function _dropBadge(btn) {
+        btn.removeAttribute("data-arm-left");
+        var b = btn.querySelector(":scope > .arm-left-badge");
+        if (b) b.remove();
+    }
+    /* R3 MINOR 7: said to a screen reader too (an info toast is not). */
+    function _srSay(text) {
+        var r = document.getElementById("sr-live-polite");
+        if (!r) {
+            r = document.createElement("div");
+            r.id = "sr-live-polite";
+            r.className = "visually-hidden";
+            r.setAttribute("role", "status");
+            r.setAttribute("aria-live", "polite");
+            document.body.appendChild(r);
+        }
+        r.textContent = text;
+    }
     function _expired(btn) {
         btn.classList.add("sync-arm-expired");
-        btn.setAttribute("data-arm-left", "expired");
+        _badge(btn, "expired");
         btn._expTimer = setTimeout(function () { _clearExpired(btn); }, 2500);
-        if (window.showToast) {
-            window.showToast("Not done: the confirm press did not come within " + ARM_S
-                             + " s, so nothing was changed. Press twice to do it.", "info");
-        }
+        var msg = "Not done: the confirm press did not come within " + ARM_S
+                  + " s, so nothing was changed. Press twice to do it.";
+        if (window.showToast) window.showToast(msg, "info");
+        _srSay(msg);
     }
     function _clearExpired(btn) {
         clearTimeout(btn._expTimer);
         btn.classList.remove("sync-arm-expired");
-        if (btn.getAttribute("data-armed") !== "1") btn.removeAttribute("data-arm-left");
+        if (btn.getAttribute("data-armed") !== "1") _dropBadge(btn);
     }
     function disarm(btn) {
         if (!btn || btn.getAttribute("data-armed") !== "1") return;
@@ -3914,7 +3957,8 @@ window.SyncPanel = (function () {
         var lab = btn.querySelector(".sp-choice-label") || btn;
         if (btn._armOrig != null) lab.innerHTML = btn._armOrig;
         btn.removeAttribute("data-armed");
-        btn.removeAttribute("data-arm-left");
+        btn._armedAt = 0;
+        _dropBadge(btn);
         btn.classList.remove("sync-armed");
     }
     function picks() {
@@ -4047,6 +4091,7 @@ window.SyncPanel = (function () {
         send(btn.getAttribute("data-force") === "1");
     }
     return { refresh: refresh, arm: arm, disarm: disarm, armSeconds: ARM_S, picks: picks, picked: picked,
+             confirmTooSoon: confirmTooSoon, config: _cfg,
              merge: merge, reapply: reapply, retry: retry, takeOne: takeOne,
              recovery: recovery, isOpen: _syncPanelOpen };
 })();
@@ -4729,6 +4774,8 @@ window.overwriteLiveWithWorking = function (btn) {
     // of the decisions). Its SECOND press writes; the first reads the preflight
     // and rewrites the button's own "Lost:" line with what disappears.
     if (btn && btn.getAttribute("data-armed") === "1" && btn._keepMine) {
+        // R3 M6: a double click / held Enter is not the confirm
+        if (window.SyncPanel.confirmTooSoon(btn)) return;
         var ready = btn._keepMine;
         window.SyncPanel.disarm(btn);
         btn._keepMine = null;
@@ -4738,9 +4785,18 @@ window.overwriteLiveWithWorking = function (btn) {
     // docs/120/179: what THIS screen showed, read when the user looked at it
     // (the first press) -- the panel the button sits in, else the tray.
     var _seenView = _keepMineSeen(btn);
+    // R3 M6: one preflight at a time per button -- a double click's second
+    // answer armed the button the first had just armed, and that counted as
+    // the confirm: live was overwritten before the label could be read
+    if (btn) {
+        if (btn._kmPending) return;
+        btn._kmPending = true;
+    }
+    var _done = function () { if (btn) btn._kmPending = false; };
     fetch("/state/overwrite-live/preflight", { headers: { "HX-Request": "true" } })
         .then(function (r) { return r.json(); })
         .then(function (d) {
+            _done();
             if (!d || !d.ok) {
                 window.showToast((d && d.message) || "Cannot overwrite the live chip.", "error");
                 return;
@@ -4768,6 +4824,7 @@ window.overwriteLiveWithWorking = function (btn) {
             _keepMinePush(d);
         })
         .catch(function () {
+            _done();
             window.showToast("Could not check the live chip (network error).", "error");
         });
 };

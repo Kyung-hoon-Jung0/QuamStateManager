@@ -59,6 +59,7 @@ function world(bodyHtml) {
     w.confirm = function () { return false; };
     w.LiveEditUndo = { record: function () {}, clear: function () {}, _updateTrayBtn: function () {} };
     w.eval(APP);
+    w.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pin (v151_r3_two_press_selfcheck.cjs)
     w.showToast = function (m, l) { S.toasts.push({ m: String(m), l: l }); };
     return { w: w, S: S };
 }

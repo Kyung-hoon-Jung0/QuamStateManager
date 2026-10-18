@@ -111,6 +111,7 @@ let confirmAnswer = false, lastConfirm = '';
 window.confirm = function (msg) { lastConfirm = String(msg == null ? '' : msg); return confirmAnswer; };
 
 window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
+window.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pin (v151_r3_two_press_selfcheck.cjs)
 
 (async function () {
     /* ── 1. doStateSync needs_confirm ─────────────────────────────────── */

@@ -14802,13 +14802,15 @@ html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap
 /* v1.5.1 (U P2-32): the seconds a two-press confirm has left, and its expiry,
    as a corner badge -- the armed label keeps the button's width */
 [data-arm-left] { position: relative; }
-[data-arm-left]::after {
-    content: attr(data-arm-left); position: absolute; top: -.55rem; right: -.4rem;
+/* R3 MINOR 7: a child span marked aria-hidden, not ::after -- generated
+   content was read as part of the button's name */
+[data-arm-left] > .arm-left-badge {
+    position: absolute; top: -.55rem; right: -.4rem;
     min-width: 1.1rem; padding: 0 .25rem; border-radius: .6rem; font-size: .65rem;
     line-height: 1.1rem; font-weight: 700; text-align: center; pointer-events: none;
     background: #ef4444; color: #fff;
 }
-.sync-arm-expired::after { background: var(--pico-muted-color, #8891a0); }
+.sync-arm-expired > .arm-left-badge { background: var(--pico-muted-color, #8891a0); }
 .sync-panel.sp-busy .sp-choice { opacity: .5; pointer-events: none; }
 .sp-hist-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-size: .78rem; }
 .sp-hist-row .btn-sm { width: auto; margin: 0; font-size: .74rem; padding: .1rem .5rem; }
