@@ -17604,11 +17604,24 @@ function applyAllPlotRows() {
     _post().then(handleR).catch(_fail);
 }
 
+/* P1-3 (UX round): a plot-apply press STAGES the value in SM; the chip file
+   is written by Apply in the top bar, or at once only inside an armed
+   Auto-Sync push session (docs/117). The row and the toast say which --
+   "applied" for a value that was only staged sent users to the chip file
+   looking for a change that was not there. */
+function _plotApplyWritesLive() {
+    return !!(window.AutoApply && typeof window.AutoApply.armed === 'function'
+              && window.AutoApply.armed());
+}
+
 function _markPlotRowApplied(row) {
     if (!row) return;
     row.classList.add('plot-apply-applied');
     var btnSlot = row.querySelector('.plot-apply-row-action');
-    if (btnSlot) btnSlot.innerHTML = '<span class="plot-apply-row-check">✓ applied</span>';
+    if (btnSlot) btnSlot.innerHTML = _plotApplyWritesLive()
+        ? '<span class="plot-apply-row-check" title="Auto-Sync is on: written to the chip">✓ applied</span>'
+        : '<span class="plot-apply-row-check plot-apply-row-staged" title="Only in SM so far: the chip file is unchanged until you press Apply">'
+          + '✓ staged — press Apply to write the chip</span>';
     var input = row.querySelector('.plot-apply-new-input');
     if (input) input.readOnly = true;
 }
@@ -18020,9 +18033,10 @@ function _closePlotPopupIfDone() {
     if (total && !left) {
         window.closePlotApplyPopup();
         if (window.showToast) {
-            window.showToast(
-                'Applied ' + total + ' value' + (total === 1 ? '' : 's') +
-                ' to the working state — Review (top bar) to push to the live chip.',
+            var _n = total + ' value' + (total === 1 ? '' : 's');
+            window.showToast(_plotApplyWritesLive()
+                ? 'Applied ' + _n + ' — Auto-Sync writes ' + (total === 1 ? 'it' : 'them') + ' to the chip.'
+                : 'Staged ' + _n + ' — press Apply in the top bar to write the chip.',
                 'success');
         }
     }

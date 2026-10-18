@@ -7403,6 +7403,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     font-weight: 600; font-size: 0.95em;
     white-space: nowrap;
 }
+.plot-apply-row-check.plot-apply-row-staged { white-space: normal; font-size: 0.85em; }
 .plot-apply-footer {
     display: flex; justify-content: flex-end; gap: 0.5rem;
     padding-top: 0.6rem;
