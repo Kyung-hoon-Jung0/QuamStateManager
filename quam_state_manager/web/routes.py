@@ -1660,10 +1660,59 @@ def _reprobe_readonly(ctx) -> None:
     try:
         wc = ctx.get("working_copy")
         folder = getattr(wc, "live_folder", None) or ctx.get("path")
-        if folder and not _probe_readonly(folder, origin=ctx.get("origin") or "live"):
+        # R3 MINOR 1: what an Apply needs is to CREATE (and replace) a file
+        # in the folder, not to open state.json for update -- a deny on
+        # creating files dropped the pill while every Apply still failed
+        if (folder and not _probe_readonly(folder, origin=ctx.get("origin") or "live")
+                and _folder_accepts_new_file(folder) is not False):
             ctx["live_readonly_hint"] = False
     except Exception:  # noqa: BLE001 -- a hint never breaks the poll
         logger.debug("read-only re-probe failed", exc_info=True)
+
+
+def _folder_accepts_new_file(folder) -> bool | None:
+    """R3 MINOR 1: can a file be created (and removed) in *folder*? None when
+    the answer is not evidence either way (no folder, an exotic error).
+
+    Asked only by the re-probe, i.e. only while the read-only pill is up and
+    at most every ``_READONLY_REPROBE_S``. Never leaves a file behind: on
+    Windows the probe file is opened delete-on-close (the OS removes it when
+    the handle closes, even if this process dies), on Linux it is an unnamed
+    file where the filesystem supports one, else a uniquely named file
+    unlinked at once. Its name never collides with a lab writer's
+    ``state.json.tmp``, and state.json and wiring.json are not touched."""
+    d = Path(folder)
+    if not d.is_dir():
+        return None
+    otmp = getattr(os, "O_TMPFILE", 0)
+    if otmp:
+        try:
+            fd = os.open(str(d), otmp | os.O_WRONLY, 0o600)
+            os.close(fd)
+            return True
+        except PermissionError:
+            return False
+        except OSError as exc:
+            if getattr(exc, "errno", None) in (13, 30):
+                return False
+            # no unnamed files here (a network share): a named one below
+    name = d / f".sm-write-probe-{os.getpid()}-{uuid.uuid4().hex[:8]}.tmp"
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_TEMPORARY", 0)
+    try:
+        fd = os.open(str(name), flags, 0o600)
+    except PermissionError:
+        return False
+    except OSError as exc:
+        return False if getattr(exc, "errno", None) in (13, 30) else None
+    try:
+        os.close(fd)
+    finally:
+        if not getattr(os, "O_TEMPORARY", 0):
+            try:
+                os.unlink(name)
+            except OSError:
+                logger.debug("write probe could not remove %s", name, exc_info=True)
+    return True
 
 
 def _probe_readonly(folder, *, origin: str = "live") -> bool:
@@ -1684,7 +1733,11 @@ def _probe_readonly(folder, *, origin: str = "live") -> bool:
       but WRITES INTO THE CUSTOMER'S LIVE CHIP FOLDER on every activation.
       That breaks the docs/28 rule (the live files are touched only on an
       explicit Apply), litters a directory labs keep under version control,
-      and leaves the file behind if the process dies mid-probe.
+      and leaves the file behind if the process dies mid-probe. (R3 MINOR 1:
+      the RE-probe, only while the pill is up and at most every 10 s, does
+      create one -- delete-on-close, so it is never left behind -- because
+      opening state.json cannot see a deny on creating files; see
+      :func:`_folder_accepts_new_file`.)
 
     So: open the EXISTING ``state.json`` for update (``r+``) and close it
     immediately. Opening for update needs the same permission the apply
