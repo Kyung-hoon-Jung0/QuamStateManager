@@ -3857,9 +3857,56 @@ window.SyncPanel = (function () {
         if (window.htmx) window.htmx.ajax("GET", "/state/tray", { target: "#pending-tray", swap: "outerHTML" });
         if (_syncPanelOpen()) refresh();
     }
+    /* v1.5.1: a refused recovery checkpoint -- Restore stages its rows again
+       (a collision or a missing path is named first; the second press stages
+       over them), Discard sets the file aside after a second press. The answer
+       stays written in the row (role=status), never only in a toast. */
+    function recovery(btn, action, ev) {
+        if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+        var box = btn && btn.closest ? btn.closest(".sp-unrecovered") : null;
+        if (!box || btn.disabled) return;
+        var id = box.getAttribute("data-recovery-id") || "";
+        var msg = box.querySelector(".sp-unrec-msg");
+        var say = function (t, bad) {
+            if (!msg) return;
+            msg.textContent = t || "";
+            msg.classList.toggle("sp-unrec-msg-bad", !!bad);
+        };
+        var send = function (force) {
+            btn.disabled = true;
+            var body = { id: id };
+            if (force) body.force = "1";
+            return fetch("/state/recovery/" + action, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            }).then(function (r) {
+                return r.json().catch(function () { return { ok: false, error: "HTTP " + r.status }; });
+            }).then(function (d) {
+                btn.disabled = false;
+                if (d && d.ok) {
+                    if (d.tray_html && window._swapPendingTray) window._swapPendingTray(d.tray_html);
+                    if (window.showToast && d.message) window.showToast(d.message, "success", 8000);
+                    refresh();
+                    return;
+                }
+                if (d && d.tray_html && window._swapPendingTray) window._swapPendingTray(d.tray_html);
+                say((d && (d.error || d.message)) || "The request failed.", true);
+                if (d && d.error_kind === "recovery_collision") {
+                    btn.setAttribute("data-force", "1");
+                    btn.textContent = (d.collisions && d.collisions.length) ? "Restore over them" : "Restore the rest";
+                }
+                if (d && d.error_kind === "recovery_gone") refresh();
+            }).catch(function () {
+                btn.disabled = false;
+                say("Network error: nothing changed.", true);
+            });
+        };
+        if (action === "discard") { arm(btn, null, function () { send(false); }); return; }
+        send(btn.getAttribute("data-force") === "1");
+    }
     return { refresh: refresh, arm: arm, disarm: disarm, picks: picks, picked: picked,
              merge: merge, reapply: reapply, retry: retry, takeOne: takeOne,
-             isOpen: _syncPanelOpen };
+             recovery: recovery, isOpen: _syncPanelOpen };
 })();
 
 /* sync-ux 2026-09-25 -- a press of the user's own that the server refused

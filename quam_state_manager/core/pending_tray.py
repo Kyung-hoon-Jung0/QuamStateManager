@@ -55,6 +55,22 @@ logger = logging.getLogger(__name__)
 VERSION = 2
 _FLAGS = ("working_dirty", "staged_base", "pending_reapply", "pending_reapply_orig")
 _ROW_FIELDS = tuple(f.name for f in _dc_fields(ChangeEntry))
+#: v1.5.1: optional row fields left out of the file while they hold their
+#: ``None`` default. An older SM builds ``ChangeEntry(**row)`` and rejects a
+#: keyword it does not know (``origin`` arrived after v1.3.0), even a null one;
+#: a missing optional field reads back as its default in every version.
+_OMIT_IF_NONE = frozenset(f.name for f in _dc_fields(ChangeEntry) if f.default is None)
+
+
+def _row_doc(entry) -> dict:
+    """One change-log row as the file stores it (see ``_OMIT_IF_NONE``)."""
+    out = {}
+    for name in _ROW_FIELDS:
+        value = getattr(entry, name)
+        if value is None and name in _OMIT_IF_NONE:
+            continue
+        out[name] = value
+    return out
 
 #: A chip is written this long after its last change ...
 DEBOUNCE_S = 0.10
@@ -347,7 +363,7 @@ def _snapshot(p: _Persister, timeout: float):
             log = p.store.change_log
             if not log:
                 return _EMPTY
-            rows = [{f: getattr(e, f) for f in _ROW_FIELDS} for e in log]
+            rows = [_row_doc(e) for e in log]
             flags = {k: p.ctx[k] for k in _FLAGS if k in p.ctx}
             data = (rows, flags, p.store.mutation_seq)
             try:
@@ -705,11 +721,6 @@ def _store_hash(store) -> str:
         return working_copy.content_hash(store.state, store.wiring)
 
 
-#: v1.3.0: how many refused recovery files are kept beside a chip's working
-#: copy (newest first). Each one was named in a notice when it was kept.
-KEEP_UNRECOVERED = 5
-
-
 def _where_rows_are(ctx, rows, applied, base_hash) -> str:
     """After a refused restore, where the checkpoint's rows ended up (v1.3.0).
 
@@ -735,19 +746,46 @@ def _where_rows_are(ctx, rows, applied, base_hash) -> str:
         return ""
 
 
-def _prune_unrecovered(path: Path, keep: int = KEEP_UNRECOVERED) -> None:
-    """Keep the newest *keep* refused recovery files of this sidecar; older
-    ones go (each was named in the notice shown when it was kept)."""
-    try:
-        found = sorted(path.parent.glob(f"{path.stem}.unrecovered-*.json"),
-                       key=lambda f: f.stat().st_mtime, reverse=True)
-    except OSError:
-        return
-    for old in found[keep:]:
+def header_problem(doc, wc) -> str:
+    """Why a checkpoint's header rules out an automatic restore here, in words
+    that tell the cases apart (v1.5.1: "older format" and "another chip folder"
+    used to read the same); ``""`` when the header fits this chip."""
+    if not isinstance(doc, dict):
+        return "the recovery file is not a checkpoint"
+    version = doc.get("version")
+    if type(version) is not int:
+        return "the recovery checkpoint has no format version"
+    if version < VERSION:
+        return (f"it was written in an older format (version {version}; "
+                f"this SM reads version {VERSION})")
+    if version > VERSION:
+        return (f"it was written by a newer SM in format version {version} "
+                f"(this SM reads version {VERSION})")
+    folder = doc.get("live_folder")
+    if not isinstance(folder, str) or not folder:
+        return "the recovery checkpoint names no chip folder"
+    if not working_copy._same_live(folder, wc.live_folder):
+        return f"it belongs to another chip folder ({folder})"
+    return ""
+
+
+def _rows_of(raw) -> list[ChangeEntry]:
+    """The checkpoint's rows. A field this SM does not know is named (a newer
+    SM wrote it) instead of surfacing as a bare constructor error."""
+    known = set(_ROW_FIELDS)
+    rows = []
+    for e in raw:
+        if not isinstance(e, dict):
+            raise ValueError("the recovery rows are invalid")
+        extra = sorted(str(k) for k in e if k not in known)
+        if extra:
+            raise ValueError("a row carries a field this SM does not know "
+                             f"({', '.join(extra)}); a newer SM wrote it")
         try:
-            old.unlink()
-        except OSError:
-            pass
+            rows.append(ChangeEntry(**e))
+        except TypeError as exc:
+            raise ValueError(f"the recovery rows are invalid ({exc})") from None
+    return rows
 
 
 def _restore(ctx, p: _Persister) -> None:
@@ -764,10 +802,10 @@ def _restore(ctx, p: _Persister) -> None:
             raise ValueError("the recovery rows are invalid")
         paths = [e["dot_path"] for e in raw
                  if isinstance(e, dict) and isinstance(e.get("dot_path"), str)]
-        if (type(doc["version"]) is not int or doc["version"] != VERSION
-                or not working_copy._same_live(doc["live_folder"], wc.live_folder)):
-            raise ValueError("the recovery checkpoint is invalid")
-        rows = [ChangeEntry(**e) for e in raw]
+        problem = header_problem(doc, wc)
+        if problem:
+            raise ValueError(problem)
+        rows = _rows_of(raw)
         for row in rows:
             if (not isinstance(row.dot_path, str) or not row.dot_path
                     or row.source_file not in ("state", "wiring")
@@ -852,8 +890,9 @@ def _restore(ctx, p: _Persister) -> None:
         retained = path.with_name(f"{path.stem}.unrecovered-{uuid.uuid4().hex[:8]}.json")
         try:
             os.replace(path, retained)
+            # v1.5.1: never pruned -- the file stays listed in the sync panel
+            # (Restore / Discard) until the user decides.
             retention = f"Recovery file retained at {retained}."
-            _prune_unrecovered(path)
         except OSError as retain_exc:
             retention = (f"Recovery file left at {path}; could not rename it: "
                          f"{retain_exc}.")
@@ -861,7 +900,7 @@ def _restore(ctx, p: _Persister) -> None:
             f"Staged edits could not be recovered: {exc}. No rows were restored. "
             f"Paths: {', '.join(paths) or 'unreadable checkpoint'}. "
             f"Live folder: {wc.live_folder}. Working copy: {wc.working_folder}. "
-            f"{retention}")
+            f"{retention} Restore or discard it from the sync panel.")
         return
     from .store_revs import note as _revs_note
     store.state, store.wiring, store.merged = state, wiring, merged
@@ -893,6 +932,280 @@ def _restore(ctx, p: _Persister) -> None:
         p.base = (fp, disk_hash)
     p.applied = (disk_hash, tuple(rows[:held])) if held else None
     p.written = None
+
+
+# ---------------------------------------------------------------------------
+# Refused checkpoints: listed until the user restores or discards them (v1.5.1)
+# ---------------------------------------------------------------------------
+
+_UNRECOVERED_TAG = ".unrecovered-"
+_UNRECOVERED_CACHE: dict = {}             # file path -> (stat signature, description)
+_UNRECOVERED_LOCK = threading.Lock()
+
+
+def _unrecovered_prefix(wc) -> str:
+    return f"{sidecar_path(wc).stem}{_UNRECOVERED_TAG}"
+
+
+def _unrecovered_files(wc) -> list[Path]:
+    """This chip's refused checkpoints, newest first. A plain prefix/suffix
+    match (a chip key may hold glob metacharacters)."""
+    prefix = _unrecovered_prefix(wc)
+    folder = Path(wc.working_folder).parent
+    found = []
+    try:
+        with os.scandir(folder) as it:
+            for entry in it:
+                if entry.name.startswith(prefix) and entry.name.endswith(".json"):
+                    try:
+                        found.append((entry.stat().st_mtime_ns, Path(entry.path)))
+                    except OSError:
+                        continue
+    except OSError:
+        return []
+    return [f for _m, f in sorted(found, key=lambda t: t[0], reverse=True)]
+
+
+def _file_id(path: Path, wc) -> str:
+    return path.name[len(_unrecovered_prefix(wc)):-len(".json")]
+
+
+def _describe(path: Path, wc) -> dict:
+    """What a refused checkpoint holds and why it is not restored automatically."""
+    out = {"id": _file_id(path, wc), "file": str(path), "rows": [], "reason": "",
+           "restorable": False, "saved_at": ""}
+    try:
+        st = path.stat()
+        out["saved_at"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))
+        doc = safe_io.read_json(path, attempts=1)
+    except (OSError, ValueError) as exc:
+        out["reason"] = f"the file cannot be read ({exc})"
+        return out
+    raw = doc.get("entries") if isinstance(doc, dict) else None
+    if not isinstance(raw, list) or not raw:
+        out["reason"] = header_problem(doc, wc) or "the file holds no rows"
+        return out
+    for e in raw:
+        if isinstance(e, dict) and isinstance(e.get("dot_path"), str) and e["dot_path"]:
+            out["rows"].append({
+                "path": e["dot_path"], "old": e.get("old_value"),
+                "new": e.get("new_value"),
+                "created": e.get("created") is True, "deleted": e.get("deleted") is True})
+    reason = header_problem(doc, wc)
+    if not reason:
+        try:
+            _rows_of(raw)
+        except ValueError as exc:
+            reason = str(exc)
+    if not reason:
+        if doc.get("synced_live_hash") != wc.synced_live_hash:
+            reason = "the chip was synced with its live folder after these edits were staged"
+        else:
+            try:
+                same = working_copy.working_content_hash(wc) == doc.get("base_hash")
+            except (OSError, ValueError):
+                same = False
+            reason = ("set aside by an earlier start (another SM window or version "
+                      "could not restore it)" if same else
+                      "the working files changed after these edits were staged")
+    out["reason"] = reason
+    out["restorable"] = bool(out["rows"]) and len(out["rows"]) == len(raw)
+    return out
+
+
+def unrecovered(wc) -> list[dict]:
+    """Every refused checkpoint of this chip, described (newest first). Cheap
+    on the tray's hot path: one directory scan; a file is parsed again only
+    when its stat (or the chip's sync point) changes."""
+    if wc is None:
+        return []
+    out = []
+    for path in _unrecovered_files(wc):
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        sig = (st.st_mtime_ns, st.st_size, wc.synced_live_hash)
+        key = str(path)
+        with _UNRECOVERED_LOCK:
+            hit = _UNRECOVERED_CACHE.get(key)
+        if hit is not None and hit[0] == sig:
+            out.append(hit[1])
+            continue
+        desc = _describe(path, wc)
+        with _UNRECOVERED_LOCK:
+            _UNRECOVERED_CACHE[key] = (sig, desc)
+        out.append(desc)
+    return out
+
+
+def unrecovered_file(wc, file_id) -> Path | None:
+    """The refused checkpoint *file_id* of this chip, or None."""
+    if (not isinstance(file_id, str) or not file_id
+            or any(c in file_id for c in ("/", chr(92), ":", ".."))):
+        return None
+    for path in _unrecovered_files(wc):
+        if _file_id(path, wc) == file_id:
+            return path
+    return None
+
+
+def archive_unrecovered(wc, file_id: str, outcome: str) -> Path:
+    """Set a refused checkpoint aside as ``<key>.pending_tray.<outcome>-<id>.json``
+    (``restored`` / ``discarded``): it leaves the list, its bytes stay on disk.
+    Raises FileNotFoundError when it is no longer there."""
+    if outcome not in ("restored", "discarded"):
+        raise ValueError(outcome)
+    path = unrecovered_file(wc, file_id)
+    if path is None:
+        raise FileNotFoundError(file_id)
+    target = path.with_name(f"{sidecar_path(wc).stem}.{outcome}-{file_id}.json")
+    if target.exists():
+        target = target.with_name(f"{target.stem}-{uuid.uuid4().hex[:6]}.json")
+    os.replace(path, target)
+    with _UNRECOVERED_LOCK:
+        _UNRECOVERED_CACHE.pop(str(path), None)
+    return target
+
+
+def read_unrecovered_rows(wc, file_id: str) -> list[ChangeEntry]:
+    """The rows of refused checkpoint *file_id*, built with the fields this SM
+    knows (a field a newer SM added is metadata, never the value). Raises
+    FileNotFoundError / ValueError."""
+    path = unrecovered_file(wc, file_id)
+    if path is None:
+        raise FileNotFoundError(file_id)
+    doc = safe_io.read_json(path, attempts=1)
+    raw = doc.get("entries") if isinstance(doc, dict) else None
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("the recovery file holds no rows")
+    known = set(_ROW_FIELDS)
+    rows = []
+    for e in raw:
+        if not isinstance(e, dict) or not isinstance(e.get("dot_path"), str) or not e["dot_path"]:
+            raise ValueError("a recovery row has no path")
+        if e.get("source_file") not in ("state", "wiring"):
+            raise ValueError(f"{e['dot_path']}: the row names no source file")
+        fields = {k: v for k, v in e.items() if k in known}
+        fields.setdefault("old_value", None)
+        fields.setdefault("new_value", None)
+        fields["created"] = fields.get("created") is True
+        fields["deleted"] = fields.get("deleted") is True
+        if not isinstance(fields.get("actor"), str):
+            fields["actor"] = "human"
+        if fields.get("group_id") is not None and not isinstance(fields["group_id"], str):
+            fields["group_id"] = None
+        if fields.get("origin") is not None and not _valid_plot_origin(fields["origin"]):
+            fields["origin"] = None
+        rows.append(ChangeEntry(**fields))
+    return rows
+
+
+#: restore_plan statuses
+PLAN_OK, PLAN_SAME, PLAN_COLLIDE, PLAN_MISSING = "ok", "same", "collision", "missing"
+
+
+def _current(root, dot_path):
+    """(value, present) of *dot_path* in *root*."""
+    from .modifier import _key_for, _navigate_to_parent
+    try:
+        parent, leaf = _navigate_to_parent(root, dot_path)
+        return parent[_key_for(parent, leaf, dot_path)], True
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None, False
+
+
+def _stage_row(mod, r: ChangeEntry, group_id):
+    """One recovered row through the Modifier, verbatim (it was accepted when
+    it was first staged). A create whose key exists by now sets it instead."""
+    if r.deleted:
+        return mod.delete_subtree(r.dot_path, group_id=group_id)
+    if r.created and not _current(mod.store.merged, r.dot_path)[1]:
+        return mod.create_subtree(r.dot_path, copy.deepcopy(r.new_value),
+                                  group_id=group_id, enforce=False)
+    return mod.set_value(r.dot_path, copy.deepcopy(r.new_value), _defer_hooks=True,
+                         coerce=False, enforce=False, group_id=group_id)
+
+
+def restore_plan(store, rows: list[ChangeEntry]) -> list[dict]:
+    """How each recovered row would land on what the chip holds NOW, judged in
+    order on a copy (a later row on the same path sees the earlier one):
+
+    * ``ok`` -- the field still holds the value the row replaced: staged;
+    * ``same`` -- the field already holds the row's value: nothing to stage;
+    * ``collision`` -- the field holds a third value (someone changed it
+      since): staged only when the user says so;
+    * ``missing`` -- the path is not on this chip (or not in that file).
+    """
+    from .modifier import Modifier
+    scratch = QuamStore.from_dicts(*_copy_docs(store))
+    mod = Modifier(scratch)
+    plan = []
+    for r in rows:
+        current, present = _current(scratch.merged, r.dot_path)
+        item = {"path": r.dot_path, "old": r.old_value, "new": r.new_value,
+                "current": current, "created": r.created, "deleted": r.deleted}
+        if r.deleted:
+            status = (PLAN_SAME if not present else
+                      PLAN_OK if _canon(current) == _canon(r.old_value) else PLAN_COLLIDE)
+        elif r.created and not present:
+            status = PLAN_OK
+        elif not present:
+            status, item["why"] = PLAN_MISSING, "the path is not on this chip"
+        elif _canon(current) == _canon(r.new_value):
+            status = PLAN_SAME
+        elif r.created or _canon(current) != _canon(r.old_value):
+            status = PLAN_COLLIDE
+        else:
+            status = PLAN_OK
+        if status in (PLAN_OK, PLAN_COLLIDE):
+            try:
+                e = _stage_row(mod, r, None)
+                if e.source_file != r.source_file:
+                    status = PLAN_MISSING
+                    item["why"] = (f"it is in {e.source_file}.json here, "
+                                   f"not {r.source_file}.json")
+            except Exception as exc:  # noqa: BLE001 -- named, never raised
+                status, item["why"] = PLAN_MISSING, str(exc)
+        item["status"] = status
+        plan.append(item)
+    return plan
+
+
+def stage_rows(modifier, rows: list[ChangeEntry], plan: list[dict], *,
+               include_collisions: bool) -> list[ChangeEntry]:
+    """Stage the planned rows into the tray as ONE group (one Ctrl+Z), all or
+    nothing. Rows planned ``same`` / ``missing`` are skipped; a ``collision``
+    is staged only with *include_collisions*."""
+    take = [r for r, item in zip(rows, plan)
+            if item["status"] == PLAN_OK
+            or (include_collisions and item["status"] == PLAN_COLLIDE)]
+    if not take:
+        return []
+    store = modifier.store
+    applied: list[ChangeEntry] = []
+    with batch(store):
+        gid = modifier.new_group_id() if len(take) > 1 else None
+        try:
+            for r in take:
+                e = _stage_row(modifier, r, gid)
+                if isinstance(r.actor, str) and r.actor != e.actor:
+                    e.actor = r.actor
+                if r.origin is not None:
+                    e.origin = r.origin
+                applied.append(e)
+        except BaseException:
+            modifier._rollback(applied)
+            raise
+        store._clear_pointer_cache()
+        index = getattr(store, "search_index", None)
+        if index is not None:
+            for e in applied:
+                try:
+                    index.update_entry(e.dot_path, e.new_value)
+                except Exception:  # noqa: BLE001 -- the index rebuilds lazily
+                    pass
+    return applied
 
 
 def attach(ctx, build_lock=None):

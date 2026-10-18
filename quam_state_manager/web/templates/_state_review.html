@@ -75,6 +75,33 @@
   <p class="sp-note">Your saved version and the live chip's changes cannot be told apart field by field, so they are listed together. Pull &amp; apply is not offered: it would drop the saved version.</p>
   {% endif %}
 
+  {#- v1.5.1: staged edits a restart could not restore stay here until the user
+      decides. Restore stages them (nothing reaches the live chip until Apply);
+      Discard sets the file aside (renamed, never deleted). -#}
+  {%- set _unrec = tray_unrecovered() if (tray_unrecovered is defined and not _archive) else [] -%}
+  {% for u in _unrec %}
+  <div class="sp-note sp-note-warn sp-unrecovered" data-recovery-id="{{ u.id }}">
+    <div class="sp-unrec-head"><b>{{ u.rows | length }} staged edit{{ 's' if (u.rows | length) != 1 }} not recovered</b>
+      <span class="muted">{{ u.saved_at }}</span></div>
+    <div class="sp-unrec-why">Not restored automatically: {{ u.reason }}.</div>
+    {% if u.rows %}<table class="sp-diff sp-unrec-rows"><tbody>
+      {% for r in u.rows[:8] %}<tr><td><code>{{ r.path }}</code></td>
+        <td class="sp-val">{% if r.deleted %}delete{% else %}{{ r.new | tojson | truncate(40, true, '…') }}{% endif %}</td>
+        <td class="sp-val muted">{% if not r.created %}was {{ r.old | tojson | truncate(30, true, '…') }}{% else %}new{% endif %}</td></tr>{% endfor %}
+      {% if (u.rows | length) > 8 %}<tr><td colspan="3" class="muted">and {{ (u.rows | length) - 8 }} more</td></tr>{% endif %}
+    </tbody></table>{% endif %}
+    <div class="sp-unrec-file muted" title="{{ u.file }}">{{ u.file }}</div>
+    <div class="sp-unrec-msg" role="status" aria-live="polite"></div>
+    <div class="sp-unrec-acts">
+      {% if u.restorable %}<button type="button" class="btn-sm sp-unrec-restore" onclick="SyncPanel.recovery(this, 'restore', event)"
+        title="Stage these edits in the tray again. Nothing is written to the live chip until Apply.">Restore</button>{% endif %}
+      <button type="button" class="btn-sm outline secondary sp-unrec-discard" onclick="SyncPanel.recovery(this, 'discard', event)"
+        data-arm-label="Press again to discard"
+        title="Set the file aside without staging it (renamed, not deleted)">Discard</button>
+    </div>
+  </div>
+  {% endfor %}
+
   {% if conflict_rows or external_rows or mine_rows or staged_rows %}
 {#- docs/301 F25: a text value (a folder path) may wrap -- numbers never split, but one
     long path stretched the table past the panel and the delta column was clipped

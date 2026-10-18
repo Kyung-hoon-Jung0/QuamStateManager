@@ -10155,7 +10155,159 @@ def _resume_offer_context():
 def _tray_recovery_context():
     # Consume only when the tray actually renders, including full-page loads.
     return {"tray_recovery_notice": lambda: (_active_ctx() or {}).pop(
-        "_tray_recovery_notice", "")}
+        "_tray_recovery_notice", ""),
+            # v1.5.1: refused recovery checkpoints stay listed (marker on the
+            # status control, Restore / Discard in the sync panel) until the
+            # user decides -- a notice popped on first render was gone ~150 ms
+            # later, and the edits with it.
+            "tray_unrecovered": _tray_unrecovered}
+
+
+def _tray_unrecovered() -> list[dict]:
+    ctx = _active_ctx()
+    if not ctx or (ctx.get("origin") or "live") != "live" or not ctx.get("working_copy"):
+        return []
+    from quam_state_manager.core import pending_tray
+    try:
+        return pending_tray.unrecovered(ctx["working_copy"])
+    except Exception:  # noqa: BLE001 -- a listing never breaks the tray
+        logger.warning("listing refused recovery checkpoints failed", exc_info=True)
+        return []
+
+
+def _recovery_target():
+    """(ctx, file id, error response) for the recovery routes."""
+    ctx = _active_ctx()
+    if not ctx or not ctx.get("modifier") or not ctx.get("working_copy"):
+        return None, "", (jsonify(ok=False, error=_NO_CHIP_MSG), 400)
+    if (ctx.get("origin") or "live") != "live":
+        return None, "", (jsonify(
+            ok=False, error_kind="archive_read_only",
+            error="A dataset run archive is read-only; load the chip folder to restore edits."), 409)
+    payload = json_object(request.form.to_dict)
+    file_id = json_text(payload, "id")
+    from quam_state_manager.core import pending_tray
+    if pending_tray.unrecovered_file(ctx["working_copy"], file_id) is None:
+        return None, "", (jsonify(
+            ok=False, error_kind="recovery_gone",
+            error="That recovery file is no longer there (restored or discarded elsewhere).",
+            tray_html=_tray_html()), 404)
+    return ctx, file_id, None
+
+
+@bp.route("/state/recovery/restore", methods=["POST"])
+def state_recovery_restore():
+    """Stage a refused recovery checkpoint's rows into the tray (v1.5.1).
+
+    Staging only -- the live chip is untouched; the rows go through the usual
+    Apply afterwards. Each row is judged against what the chip holds now: a
+    field that still holds the value the row replaced is staged; one that
+    already holds the row's value is skipped; one that holds a third value
+    (a collision) or a path this chip lacks is named, and nothing is staged
+    until the user presses again (``force=1``: collisions are staged over the
+    current value, missing paths are skipped). One group, one Ctrl+Z. The
+    file is then set aside as ``...restored-<id>.json``, never deleted."""
+    ctx, file_id, err = _recovery_target()
+    if err is not None:
+        return err
+    _lk = _agent_edit_lock_refusal(ctx)
+    if _lk is not None:
+        return _lk
+    from quam_state_manager.core import pending_tray
+    payload = json_object(request.form.to_dict)
+    force = str(payload.get("force") or "") in ("1", "true", "True")
+    wc, modifier = ctx["working_copy"], ctx["modifier"]
+    try:
+        rows = pending_tray.read_unrecovered_rows(wc, file_id)
+    except (OSError, ValueError) as exc:
+        return jsonify(ok=False, error_kind="recovery_unreadable",
+                       error=f"The recovery file cannot be restored: {exc}. "
+                             "Discard sets it aside; its bytes stay on disk."), 409
+    with modifier.store._lock:
+        plan = pending_tray.restore_plan(modifier.store, rows)
+        collide = [i for i in plan if i["status"] == pending_tray.PLAN_COLLIDE]
+        missing = [i for i in plan if i["status"] == pending_tray.PLAN_MISSING]
+        if (collide or missing) and not force:
+            bits = []
+            if collide:
+                bits.append(f"{len(collide)} field{'s' if len(collide) != 1 else ''} changed "
+                            "since: " + ", ".join(i["path"] for i in collide[:6])
+                            + (" …" if len(collide) > 6 else ""))
+            if missing:
+                bits.append(f"{len(missing)} not on this chip: "
+                            + ", ".join(i["path"] for i in missing[:6])
+                            + (" …" if len(missing) > 6 else ""))
+            return jsonify(
+                ok=False, error_kind="recovery_collision",
+                collisions=_jsonable(collide), missing=_jsonable(missing),
+                error=("Nothing staged yet. " + "; ".join(bits) + ". Press again to "
+                       + ("stage the recovered values over them" if collide else "stage the rest")
+                       + (" and skip the missing paths" if collide and missing else "")
+                       + ".")), 409
+        try:
+            staged = pending_tray.stage_rows(modifier, rows, plan, include_collisions=force)
+        except Exception as exc:  # noqa: BLE001 -- all or nothing, named
+            return jsonify(ok=False, error_kind="recovery_failed",
+                           error=f"Nothing was staged: {exc}. The recovery file is kept."), 409
+    if staged:
+        _invalidate_engine_cache(ctx)
+    try:
+        kept = pending_tray.archive_unrecovered(wc, file_id, "restored")
+    except OSError as exc:
+        kept = None
+        logger.warning("could not set the restored recovery file aside: %s", exc)
+    same = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_SAME]
+    skipped = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_MISSING]
+    n = len(staged)
+    msg = (f"Restored {n} edit{'s' if n != 1 else ''} to the tray (not on the live chip yet)."
+           if n else "Nothing to restore: the chip already holds these values.")
+    if same and n:
+        msg += f" {len(same)} already held."
+    if skipped:
+        msg += f" Skipped {len(skipped)} not on this chip: {', '.join(skipped[:6])}."
+    changes = []
+    for e in staged:
+        c = _revert_entry_payload(e.dot_path, e.new_value,
+                                  source_file=getattr(e, "source_file", "state"))
+        c["value"] = e.new_value
+        changes.append(c)
+    return jsonify(ok=True, staged=[e.dot_path for e in staged], same=same,
+                   skipped=skipped, message=msg, changes=changes,
+                   kept=str(kept) if kept else None, tray_html=_tray_html())
+
+
+@bp.route("/state/recovery/discard", methods=["POST"])
+def state_recovery_discard():
+    """Set a refused recovery checkpoint aside without staging it (v1.5.1).
+    Never a delete: the file is renamed ``...discarded-<id>.json`` and the
+    answer names where it is."""
+    ctx, file_id, err = _recovery_target()
+    if err is not None:
+        return err
+    from quam_state_manager.core import pending_tray
+    try:
+        kept = pending_tray.archive_unrecovered(ctx["working_copy"], file_id, "discarded")
+    except OSError as exc:
+        return jsonify(ok=False, error_kind="recovery_failed",
+                       error=f"Could not set the recovery file aside: {exc}."), 409
+    return jsonify(ok=True, kept=str(kept),
+                   message=f"Discarded. The file is kept at {kept}.",
+                   tray_html=_tray_html())
+
+
+def _jsonable(items: list[dict]) -> list[dict]:
+    """Plan rows with values JSON can carry (a non-JSON value as its repr)."""
+    out = []
+    for item in items:
+        row = {}
+        for k, v in item.items():
+            try:
+                json.dumps(v)
+                row[k] = v
+            except (TypeError, ValueError):
+                row[k] = repr(v)
+        out.append(row)
+    return out
 
 
 @bp.before_app_request
@@ -44180,6 +44332,8 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     "main.api_pulse_gaussian_cz", "main.api_pulse_delete_together",
     "main.type_fix_apply", "main.auto_apply_revert",
     "main.state_take_live_restore", "main.chip_profile_set", "main.app_reload",
+    # v1.5.1: a refused recovery checkpoint staged back into the tray (or set aside)
+    "main.state_recovery_restore", "main.state_recovery_discard",
     "agent.undo_mine", "agent.run_node", "agent.approvals_decide", "agent.plan_start",
     # state-history writers (stage -> working copy, restore-live -> live files)
     "main.state_history_stage", "main.state_history_restore_live",

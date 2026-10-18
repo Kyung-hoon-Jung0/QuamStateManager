@@ -88,7 +88,9 @@ def test_rows_that_are_not_on_disk_keep_the_error_and_the_file(tmp_path):
     assert len(list(path.parent.glob("*.unrecovered-*.json"))) == 1
 
 
-def test_only_the_newest_refused_files_are_kept(tmp_path):
+def test_refused_files_are_all_kept_for_the_user_to_decide(tmp_path):
+    # v1.5.1 R1: pruning deleted stranded edits nobody had seen; every refused
+    # file now stays listed (sync panel: Restore / Discard) until decided.
     ctx, path = _checkpoint(tmp_path)
     now = time.time()
     for i in range(7):
@@ -100,10 +102,10 @@ def test_only_the_newest_refused_files_are_kept(tmp_path):
     ctx["working_copy"].synced_live_hash = "new-sync-point"
     pending_tray.attach(ctx)
     kept = sorted(f.name for f in path.parent.glob("*.unrecovered-*.json"))
-    assert len(kept) == pending_tray.KEEP_UNRECOVERED, kept
-    assert not any(n.endswith(("old0.json", "old1.json", "old2.json")) for n in kept), kept
+    assert len(kept) == 8, kept
     # the one this restart kept -- the one its notice names -- is among them
     assert any(n in ctx["_tray_recovery_notice"] for n in kept)
+    assert len(pending_tray.unrecovered(ctx["working_copy"])) == 8
 
 
 def test_the_tray_renders_the_information_without_an_error_role(tmp_path):
@@ -114,8 +116,8 @@ def test_the_tray_renders_the_information_without_an_error_role(tmp_path):
            '{% if _recovery_notice is mapping %}<div role="status" class="tray-recovery-notice '
            'tray-recovery-{{ _recovery_notice.level }}" data-toast="{{ _recovery_notice.level }}" '
            'hidden>{{ _recovery_notice.text }}</div>'
-           '{% elif _recovery_notice %}<div role="alert" class="status-error tray-recovery-notice '
-           'tray-recovery-error">{{ _recovery_notice }}</div>{% endif %}{% endif %}')
+           '{% elif _recovery_notice %}<div role="alert" class="tray-recovery-notice '
+           'tray-recovery-error" data-toast="error" hidden>{{ _recovery_notice }}</div>{% endif %}{% endif %}')
     src = (__import__("pathlib").Path(app.template_folder) / "_pending_tray.html").read_text(encoding="utf-8")
     assert tpl in src, "the tray template's notice line changed; update this pin with it"
     with app.app_context():
@@ -124,4 +126,6 @@ def test_the_tray_renders_the_information_without_an_error_role(tmp_path):
     assert 'role="status"' in info and "tray-recovery-info" in info and "status-error" not in info
     # information rides a toast (app.js TrayNoticeToast), never the one-row top bar
     assert 'data-toast="info"' in info and " hidden>" in info
-    assert 'role="alert"' in err and "status-error" in err
+    # v1.5.1 R1: the one-shot error text is a toast too (the persistent marker
+    # and the sync panel's Restore / Discard carry the decision)
+    assert 'role="alert"' in err and 'data-toast="error"' in err and " hidden>" in err

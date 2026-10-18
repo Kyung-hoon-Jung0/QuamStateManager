@@ -2,7 +2,6 @@
 import copy
 import json
 import threading
-from dataclasses import asdict
 from types import SimpleNamespace
 
 import pytest
@@ -107,7 +106,9 @@ def test_save_interruption_recovers_complete_snapshot_without_writing(tmp_path, 
     monkeypatch.setattr(safe_io, "write_state_wiring", forbidden)
     monkeypatch.setattr(safe_io, "atomic_write_json", forbidden)
     pending_tray.attach(ctx)
-    assert [asdict(e) for e in ctx["store"].change_log] == doc["entries"]
+    # v1.5.1: the file leaves null optional fields out (an older SM rejects them)
+    assert [pending_tray._row_doc(e) for e in ctx["store"].change_log] == doc["entries"]
+    assert [ChangeEntry(**row) for row in doc["entries"]] == list(ctx["store"].change_log)
     assert ctx["store"].state == {"value": 3, "other": 4}
     assert "_tray_recovery_notice" not in ctx
 
@@ -163,7 +164,7 @@ def test_each_log_mutation_checkpoints_complete_rows(tmp_path, operation):
     elif operation == "sort":
         log.sort(key=lambda row: row.dot_path)
     if log:
-        assert json.loads(path.read_text(encoding="utf-8"))["entries"] == [asdict(e) for e in log]
+        assert json.loads(path.read_text(encoding="utf-8"))["entries"] == [pending_tray._row_doc(e) for e in log]
     else:
         assert not path.exists()
 

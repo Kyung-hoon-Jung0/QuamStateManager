@@ -14561,6 +14561,16 @@ tr.diag-row-collapsed { display: none; }
     border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color);
 }
 .sync-marker-elsewhere { border-color: #f59e0b; color: #f59e0b; }
+/* v1.5.1: staged edits a restart could not restore -- stays until decided */
+.sync-marker-unrecovered { border-color: var(--color-error-text, #ef4444); color: var(--color-error-text, #ef4444); white-space: nowrap; }
+.sp-unrecovered { display: flex; flex-direction: column; gap: .25rem; }
+.sp-unrecovered .sp-unrec-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.sp-unrecovered .sp-unrec-rows { margin: .1rem 0; }
+.sp-unrecovered .sp-unrec-file { font-size: .72rem; overflow-wrap: anywhere; }
+.sp-unrecovered .sp-unrec-msg:empty { display: none; }
+.sp-unrecovered .sp-unrec-msg-bad { color: var(--color-error-text, #ef4444); }
+.sp-unrecovered .sp-unrec-acts { display: flex; gap: .4rem; }
+.sp-unrecovered .sp-unrec-acts button { width: auto; margin: 0; }
 .multi-instance-slot:empty { display: none; }
 .multi-instance-slot .sync-marker-peers { border-color: #f59e0b; color: #f59e0b; cursor: help; font-size: .78em; }
 /* the collapsed top bar floats the control (html.topbar-hidden rules above) */
