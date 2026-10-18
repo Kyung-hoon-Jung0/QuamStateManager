@@ -115,6 +115,138 @@ def sidecar_path(wc) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# One checkpoint per SM process (v1.5.1, SB-F3)
+# ---------------------------------------------------------------------------
+#
+# Two SM processes on one instance share the chip's working copy, but each
+# holds its OWN tray. Both wrote ``<key>.pending_tray.json``: the last writer
+# won, and a process restarted after a kill restored the OTHER one's rows as
+# its own while its own were gone, unnamed.
+#
+# The plain name is now held by ONE process at a time, recorded in
+# ``<key>.pending_tray.owner.json`` (pid + a per-process nonce); every other
+# process writes ``<key>.pending_tray.peer-<pid>-<nonce>.json``. The choice is
+# made under a cross-process lock at every write, so two processes never
+# write one file. A process that opens the chip restores the plain file only
+# when its holder has stopped (or never recorded itself: an older SM, a
+# checkpoint from before this), and a stopped process's peer file; one is
+# restored into the tray, every other one is listed in the sync panel
+# (Restore / Discard). A live process's file is never touched.
+
+#: This process: its pid and a nonce (a later process that reuses the pid is
+#: not this one).
+_SELF = {"pid": os.getpid(), "nonce": uuid.uuid4().hex[:12]}
+_PEER_TAG = ".peer-"
+
+
+def _owner_file(main: Path) -> Path:
+    return main.with_name(f"{main.stem}.owner.json")
+
+
+def _tray_lock(main: Path) -> Path:
+    return main.with_name(f"{main.stem}.lock")
+
+
+def _peer_file(main: Path, owner: dict | None = None) -> Path:
+    o = owner or _SELF
+    return main.with_name(f"{main.stem}{_PEER_TAG}{o['pid']}-{o['nonce']}.json")
+
+
+def _read_owner(main: Path) -> dict | None:
+    try:
+        doc = safe_io.read_json(_owner_file(main), attempts=1)
+    except (OSError, ValueError):
+        return None
+    if isinstance(doc, dict) and isinstance(doc.get("pid"), int) and isinstance(doc.get("nonce"), str):
+        return {"pid": doc["pid"], "nonce": doc["nonce"]}
+    return None
+
+
+def _owner_state(owner: dict | None) -> str:
+    """``self`` / ``live`` (another running process) / ``dead`` / ``none``."""
+    if not owner:
+        return "none"
+    if owner.get("pid") == _SELF["pid"]:
+        return "self" if owner.get("nonce") == _SELF["nonce"] else "dead"
+    from . import instances
+    return "live" if instances.pid_alive(owner.get("pid")) else "dead"
+
+
+def _peer_owner(main: Path, path: Path) -> dict | None:
+    """The (pid, nonce) a peer file's name records, or None."""
+    prefix = f"{main.stem}{_PEER_TAG}"
+    name = path.name
+    if not (name.startswith(prefix) and name.endswith(".json")):
+        return None
+    pid, _, nonce = name[len(prefix):-len(".json")].partition("-")
+    try:
+        return {"pid": int(pid), "nonce": nonce} if nonce else None
+    except ValueError:
+        return None
+
+
+def _peer_files(main: Path) -> list[Path]:
+    prefix = f"{main.stem}{_PEER_TAG}"
+    try:
+        with os.scandir(main.parent) as it:
+            return sorted((Path(e.path) for e in it
+                           if e.name.startswith(prefix) and e.name.endswith(".json")),
+                          key=lambda q: q.stat().st_mtime_ns if q.exists() else 0,
+                          reverse=True)
+    except OSError:
+        return []
+
+
+def _write_target(p) -> Path:
+    """The file THIS process writes now. Caller holds the tray lock. The plain
+    name when it is free (absent, its holder stopped, or this process holds
+    it) -- claimed by recording this process as its holder -- else this
+    process's peer file."""
+    main = p.path
+    owner = _read_owner(main) if main.exists() else None
+    state = _owner_state(owner) if main.exists() else "free"
+    if state == "live":
+        return _peer_file(main)
+    if state in ("dead", "none"):
+        # a stopped process's rows nobody restored yet (it stopped after
+        # this process opened the chip), or an older SM's: never written
+        # over -- listed in the sync panel first
+        shown = _set_aside_stopped(p.wc, main, owner)
+        if shown and not p.ctx.get("_tray_recovery_notice"):
+            n = len(shown)
+            p.ctx["_tray_recovery_notice"] = {
+                "level": "warning",
+                "text": (f"{n} unapplied edit{'s' if n != 1 else ''} staged in another SM "
+                         f"window that has stopped ({', '.join(dict.fromkeys(shown))}) "
+                         f"{'are' if n != 1 else 'is'} listed in the sync panel: "
+                         "Restore or Discard.")}
+    if state != "self":
+        safe_io.atomic_write_json(_owner_file(main), dict(_SELF))
+    return main
+
+
+def _drop_own(p, timeout: float = _FLUSH_WAIT_S) -> None:
+    """Unlink the checkpoint THIS process wrote (an emptied tray). The plain
+    file is unlinked only while this process holds it; another process's
+    checkpoint is never touched. Caller holds ``p.wlock``. Raises
+    ``xlock.LockTimeout`` when another process holds the tray lock."""
+    from . import xlock
+    main = p.path
+    with xlock.held(_tray_lock(main), timeout=timeout):
+        if _owner_state(_read_owner(main)) == "self":
+            main.unlink(missing_ok=True)
+            _owner_file(main).unlink(missing_ok=True)
+        elif p.target is not None and p.target != main:
+            p.target.unlink(missing_ok=True)
+        elif p.target is None and not _owner_file(main).exists():
+            # nothing recorded a holder (a checkpoint from before this, or an
+            # older SM's): the historical behaviour -- the plain file is ours
+            main.unlink(missing_ok=True)
+        _peer_file(main).unlink(missing_ok=True)
+    p.target = None
+
+
+# ---------------------------------------------------------------------------
 # The change log's hook
 # ---------------------------------------------------------------------------
 
@@ -251,6 +383,7 @@ class _Persister:
         self.written = None                 # what the file holds, to skip identical rewrites
         self.failing = False
         self.misses = 0                     # writes in a row that found a lock busy / the pair moving
+        self.target = None                  # the file this process last wrote (SB-F3)
 
     def gone(self) -> bool:
         return self.retired or bool(self.ctx.get("_pending_tray_retired"))
@@ -468,7 +601,11 @@ def _write(p: _Persister, *, timeout: float) -> bool:
         if snap is None:
             return False
         if snap is _EMPTY:
-            p.path.unlink(missing_ok=True)
+            from . import xlock
+            try:
+                _drop_own(p, timeout)
+            except xlock.LockTimeout:
+                return False
             p.written = None
             p.applied = None
             _settle(p, gen)
@@ -501,10 +638,21 @@ def _write(p: _Persister, *, timeout: float) -> bool:
                "base_hash": base, "applied": applied,
                "synced_live_hash": snap["sync"], "entries": rows,
                "mutation_seq": seq, "flags": flags}
-        key = (snap["key"], base, applied, snap["sync"])
-        if snap["key"] is None or key != p.written or not p.path.exists():
-            safe_io.atomic_write_json(p.path, doc, compact=True)
-            p.written = key
+        from . import xlock
+        # SB-F3: which file is this process's is decided, and written, under
+        # the chip's tray lock -- two processes never write one checkpoint
+        try:
+            with xlock.held(_tray_lock(p.path), timeout=timeout):
+                target = _write_target(p)
+                key = (snap["key"], base, applied, snap["sync"], str(target))
+                if snap["key"] is None or key != p.written or not target.exists():
+                    safe_io.atomic_write_json(target, doc, compact=True)
+                    p.written = key
+                if p.target is not None and p.target != target:
+                    p.target.unlink(missing_ok=True)      # moved: one file per process
+                p.target = target
+        except xlock.LockTimeout:
+            return False                    # another process is writing: again
         _settle(p, gen)
         return True
     finally:
@@ -524,7 +672,7 @@ def _drop_if_empty(p: _Persister) -> None:
         with p.store._lock:
             if p.store.change_log:
                 return
-        p.path.unlink(missing_ok=True)
+        _drop_own(p)
         p.written = None
         p.applied = None
         _settle(p, gen)
@@ -815,14 +963,18 @@ def _rows_of(raw) -> list[ChangeEntry]:
     return rows
 
 
-def _restore(ctx, p: _Persister) -> None:
+def _restore(ctx, p: _Persister, path: Path | None = None) -> bool:
+    """Restore the checkpoint *path* (the chip's plain checkpoint by default)
+    into the tray. True when its rows were published; False when there was
+    nothing, or it was refused (then kept and listed, or dropped when its
+    rows are provably on disk -- the notice says which)."""
     store, wc = ctx["store"], ctx["working_copy"]
-    path = sidecar_path(wc)
+    path = path or sidecar_path(wc)
     paths = []
     rows, applied, base_hash = None, 0, None
     try:
         if not path.exists():
-            return
+            return False
         doc = safe_io.read_json(path, attempts=1)
         raw = doc["entries"]
         if not isinstance(raw, list) or not raw:
@@ -913,8 +1065,11 @@ def _restore(ctx, p: _Persister) -> None:
             except OSError:
                 pass
             ctx["_tray_recovery_notice"] = {"level": "info", "text": text}
-            return
-        retained = path.with_name(f"{path.stem}{_KEPT_TAG}{uuid.uuid4().hex[:8]}.json")
+            return False
+        # (named after the chip's plain checkpoint whichever file it was --
+        # the sync panel lists that name; SB-F3)
+        _main = sidecar_path(wc)
+        retained = _main.with_name(f"{_main.stem}{_KEPT_TAG}{uuid.uuid4().hex[:8]}.json")
         try:
             os.replace(path, retained)
             # v1.5.1: this SM never prunes it, and its name is outside the
@@ -929,7 +1084,7 @@ def _restore(ctx, p: _Persister) -> None:
             f"Paths: {', '.join(paths) or 'unreadable checkpoint'}. "
             f"Live folder: {wc.live_folder}. Working copy: {wc.working_folder}. "
             f"{retention} Restore or discard it from the sync panel.")
-        return
+        return False
     from .store_revs import note as _revs_note
     store.state, store.wiring, store.merged = state, wiring, merged
     store._clear_pointer_cache()
@@ -960,6 +1115,7 @@ def _restore(ctx, p: _Persister) -> None:
         p.base = (fp, disk_hash)
     p.applied = (disk_hash, tuple(rows[:held])) if held else None
     p.written = None
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1347,9 +1503,86 @@ def attach(ctx, build_lock=None):
                     p.base = (safe_io._pair_fingerprint(Path(p.wc.working_folder)), memo[1])
                 except OSError:
                     p.base = None
-        _restore(ctx, p)
+        _restored_from, set_aside_rows = _restore_stopped(ctx, p)
         store.change_log = PendingLog(store.change_log, p.mark)
     keep_older_refusals(p.wc)       # v1.5.1: out of an older SM's prune
     ctx["_pending_tray"] = p
     _OWNERS[key] = p
     _ALL.add(p)
+    if set_aside_rows and not ctx.get("_tray_recovery_notice"):
+        shown = ", ".join(dict.fromkeys(set_aside_rows)) or "unnamed rows"
+        n = len(set_aside_rows)
+        ctx["_tray_recovery_notice"] = {
+            "level": "warning",
+            "text": (f"{n} unapplied edit{'s' if n != 1 else ''} staged in another SM "
+                     f"window that has stopped ({shown}) {'are' if n != 1 else 'is'} "
+                     "listed in the sync panel: Restore or Discard.")}
+
+
+def _restore_stopped(ctx, p: _Persister) -> tuple:
+    """SB-F3: restore the checkpoint of a process that is not running any
+    more -- the plain one when its holder stopped (or never recorded itself),
+    else a stopped process's peer file -- and list every other stopped
+    process's checkpoint in the sync panel. A running process's checkpoint is
+    left alone: that process still holds those rows. Caller holds the store
+    lock. Returns (the file restored from or None, the paths set aside)."""
+    from . import xlock
+    main = p.path
+    restored_from = None
+    aside: list[str] = []
+    try:
+        # one hold for the scan, the restore and the claim: two processes
+        # opening the chip together never restore one checkpoint twice
+        with xlock.held(_tray_lock(main), timeout=_FLUSH_WAIT_S):
+            cands: list[tuple[Path, dict | None]] = []
+            if main.exists() and _owner_state(_read_owner(main)) in ("none", "dead", "self"):
+                cands.append((main, _read_owner(main)))
+            for peer in _peer_files(main):
+                owner = _peer_owner(main, peer)
+                if owner is not None and _owner_state(owner) in ("dead", "self"):
+                    cands.append((peer, owner))
+            for path, owner in cands:
+                if restored_from is None:
+                    if _restore(ctx, p, path):
+                        restored_from = path
+                        # the rows are this process's now: its checkpoint is
+                        # that file, so a third process opening the chip
+                        # meanwhile never restores them a second time
+                        if path == main:
+                            if _owner_state(owner) != "self":
+                                safe_io.atomic_write_json(_owner_file(main), dict(_SELF))
+                            p.target = main
+                        else:
+                            target = _write_target(p)
+                            os.replace(path, target)
+                            p.target = target
+                    continue
+                aside += _set_aside_stopped(p.wc, path, owner)
+    except xlock.LockTimeout:
+        logger.warning("pending tray: %s stayed locked; nothing restored this time", main)
+    except OSError:
+        logger.warning("pending tray: recording the holder of %s failed", main, exc_info=True)
+    return restored_from, aside
+
+
+def _set_aside_stopped(wc, path: Path, owner: dict | None) -> list[str]:
+    """A stopped process's checkpoint this process does not restore: kept as
+    a refused checkpoint the sync panel lists (Restore / Discard), with the
+    reason. Returns its row paths ([] when it could not be read: it stays)."""
+    try:
+        doc = safe_io.read_json(path, attempts=1)
+        rows = doc.get("entries") if isinstance(doc, dict) else None
+        if not isinstance(rows, list) or not rows:
+            path.unlink(missing_ok=True)
+            return []
+        who = f" (PID {owner['pid']})" if owner else ""
+        doc["set_aside"] = (f"staged in another SM window{who} that stopped before "
+                            "applying them")
+        main = sidecar_path(wc)
+        target = main.with_name(f"{main.stem}{_KEPT_TAG}{uuid.uuid4().hex[:8]}.json")
+        safe_io.atomic_write_json(target, doc, compact=True)
+        path.unlink(missing_ok=True)
+        return [str(r.get("dot_path")) for r in rows if isinstance(r, dict)]
+    except (OSError, ValueError):
+        logger.warning("pending tray: could not list %s", path, exc_info=True)
+        return []
