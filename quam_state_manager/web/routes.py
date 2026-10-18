@@ -1168,6 +1168,7 @@ def _sync_view(ctx=None) -> dict | None:
         archive=(ctx.get("origin") or "live") == "dataset_archive",
         unreadable=unreadable,
         missing=missing and bool(unreadable),
+        readonly=bool(ctx.get("live_readonly_hint")),
         refused=refused,
         change_paths=paths,
         unapplied=len(paths),
@@ -1613,6 +1614,32 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                 ctx.pop("live_drift_count", None)
                 ctx.pop("live_conflicts", None)
                 ctx.pop("live_auto_at", None)
+
+
+#: v1.5.1 (U P1-6): how often the drift poll re-asks a raised read-only pill
+_READONLY_REPROBE_S = 10.0
+
+
+def _reprobe_readonly(ctx) -> None:
+    """v1.5.1 (U P1-6): a read-only pill (raised at open or by a refused
+    write) outlived the fix -- it stayed through reloads until the next
+    successful write. The drift poll re-asks it with the same
+    non-destructive probe, at most every ``_READONLY_REPROBE_S``, and drops
+    it once the live file opens for update again. Only while it is up: a
+    writable chip pays nothing."""
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("live_readonly_hint"):
+        return
+    now = time.monotonic()
+    if now - float(ctx.get("_ro_probe_at") or 0.0) < _READONLY_REPROBE_S:
+        return
+    ctx["_ro_probe_at"] = now
+    try:
+        wc = ctx.get("working_copy")
+        folder = getattr(wc, "live_folder", None) or ctx.get("path")
+        if folder and not _probe_readonly(folder, origin=ctx.get("origin") or "live"):
+            ctx["live_readonly_hint"] = False
+    except Exception:  # noqa: BLE001 -- a hint never breaks the poll
+        logger.debug("read-only re-probe failed", exc_info=True)
 
 
 def _probe_readonly(folder, *, origin: str = "live") -> bool:
@@ -29958,6 +29985,7 @@ def state_drift():
     # sync-ux 2026-09-25: the one status control's live facts, for dirty copies too
     # (SE-01) and for a live file that will not parse (SE-02). Passive.
     _sync_live_refresh(ctx)
+    _reprobe_readonly(ctx)          # v1.5.1 (U P1-6)
     _sv = _sync_view(ctx)
     sync = ({"state": _sv["state"], "sig": _sv["sig"], "stale": _sv["stale"],
              "live_n": _sv["live_n"], "unapplied": _sv["unapplied"]}
@@ -31100,7 +31128,6 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
             "replay": replay,
         })
     except (OSError, ValueError) as exc:
-        _commit_journal()          # a failed write is not a refusal: the save stands
         # v1.5.1 (SA-F2): a 409 with its code; the tray it carries shows the
         # read-only pill when this write discovered the denial.
         # v1.5.1 (M1): these two branches are the only ones where the chip
@@ -31108,10 +31135,17 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         # (``write_outcome``), so a caller rolls back only what provably
         # never reached the chip.
         _outcome = _write_outcome(_pend)
-        _detail = _live_write_failure_text(ctx, exc, outcome=_outcome)
+        if _outcome in ("failed", "none"):
+            # v1.5.1 (U P1-6): nothing reached the chip -- the save this press
+            # made is put back, so the edits stay ROWS (a later lab write can
+            # still be merged under them), not a whole saved version
+            _refused_after_save()
+        else:
+            _commit_journal()      # it may have landed: the save stands
+        _head = _live_write_failure_text(ctx, exc, "Apply", outcome=_outcome, with_exc=False)
         return jsonify({"status": "error", "error_code": LIVE_WRITE_FAILED,
-                        "message": _detail + " Your edits are kept.",
-                        "detail": _detail, "write_outcome": _outcome,
+                        "message": _head + " Your edits are kept.",
+                        "detail": _head, "detail_exc": str(exc), "write_outcome": _outcome,
                         "tray_html": _tray_html()}), 409
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live (sync) unexpected failure")
@@ -31306,7 +31340,8 @@ def _write_outcome(pending) -> str:
     return rec.outcome or "unknown"
 
 
-def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str = "") -> str:
+def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str = "",
+                             with_exc: bool = True) -> str:
     """The honest message of a failed live write. A denial discovered NOW
     raises the read-only pill (the open-time probe cannot see an NTFS deny
     ACL, and a folder can turn read-only after the chip was opened).
@@ -31332,6 +31367,10 @@ def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str
     if outcome == "unknown":
         return (f"{what} is UNVERIFIED: SM cannot tell whether the live chip holds "
                 f"the write — {why}{exc}")
+    if not with_exc:
+        # v1.5.1 (U P1-6): the head alone -- the OS error (Errno, the .tmp
+        # path) goes to the notice's details line
+        return f"{what} failed: {why[:-3] if why else 'the live chip was not written'}."
     return f"{what} failed: {why}{exc}"
 
 
@@ -31343,7 +31382,7 @@ def _live_write_landed(ctx) -> None:
 
 
 def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
-                                 tray: bool = True):
+                                 tray: bool = True, detail: str | None = None):
     """v1.5.1 (SA-F2): a known live-write failure answers 409 (never 500),
     names itself in ``X-SM-Error-Code`` and carries the tray (so a read-only
     pill raised by this very failure shows) plus a persistent error in the
@@ -31355,9 +31394,11 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
         ctx.pop("auto_apply", None)
     if request.headers.get("Accept", "").startswith("application/json"):
         resp = make_response(jsonify(ok=False, error=code, message=message,
-                                     tray_html=_tray_html()), 409)
+                                     tray_html=_tray_html(),
+                                     **({"detail": detail} if detail else {})), 409)
     else:
-        err = render_template("_status.html", level="error", message=message)
+        err = render_template("_status.html", level="error", message=message,
+                              detail=detail)
         body = (_tray_html() + "\n" if tray else "") + \
             f'<div id="status-bar" hx-swap-oob="innerHTML">{err}</div>'
         resp = make_response(body, 409)
@@ -31850,17 +31891,23 @@ def state_apply_to_live():
         _refused_after_save()          # docs/255: the press changes nothing
         return _apply_stale_refusal(ctx, store, _auto)
     except (OSError, ValueError) as exc:
-        # A FAILED write is not a refusal: the save stands, as it always did
-        # (the edits are in the working copy; a retry pushes them) -- journal it.
-        _commit_journal()
+        # v1.5.1 (U P1-6): a write that provably never reached the chip puts
+        # the press's save back -- the edits stay ROWS (a later lab write can
+        # still be merged under them), not a whole saved version. One that
+        # may have landed keeps the save and journals it, as before.
+        _outcome = _write_outcome(_pend)
+        if _outcome in ("failed", "none"):
+            _refused_after_save()
+        else:
+            _commit_journal()
         # docs/114 (#16): the read-only case fails HERE (the LIVE write), not
         # in the working-copy save — name it where it actually happens.
         # v1.5.1 (SA-F2): a 409 with its code; the tray it carries shows the
         # read-only pill when this write discovered the denial.
         return _live_write_failure_response(
-            ctx, _live_write_failure_text(ctx, exc, outcome=_write_outcome(_pend))
+            ctx, _live_write_failure_text(ctx, exc, "Apply", outcome=_outcome, with_exc=False)
             + " Your edits are kept.",
-            LIVE_WRITE_FAILED, auto=_auto)
+            LIVE_WRITE_FAILED, auto=_auto, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live unexpected failure")
         _commit_journal()                  # the save stands (see above)

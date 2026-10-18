@@ -111,7 +111,9 @@ function xhr(status, code, text) {
     await tick(40);
     ok(!!window.document.querySelector('#pending-tray .tray-ro-lock'), 'the returned tray (read-only pill) is swapped in');
     const sticky = [...bar().querySelectorAll('.toast-sticky')].pop();
-    ok(sticky && /Sync failed: Apply to live failed/.test(sticky.textContent), 'the sync failure stays on screen');
+    // v1.5.1 (U P1-6): a failed WRITE is said with its own head, never "Sync failed"
+    ok(sticky && /^Apply to live failed/.test(sticky.querySelector('p').textContent)
+       && sticky.textContent.indexOf('Sync failed') < 0, 'the write failure stays on screen, its own head');
     window._applyInFlight = false;
 
     if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }

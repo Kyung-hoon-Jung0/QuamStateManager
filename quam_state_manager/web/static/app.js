@@ -3516,7 +3516,7 @@ document.addEventListener("showToast", function (e) {
     window.showToast(String(msg), (d && typeof d === "object" && d.level) || "info");
 });
 
-window.showToast = function(message, level, ms) {
+window.showToast = function(message, level, ms, detail) {
     var bar = document.getElementById("status-bar");
     if (!bar) return;
     var div = document.createElement("div");
@@ -3525,6 +3525,13 @@ window.showToast = function(message, level, ms) {
     var p = document.createElement("p");
     p.textContent = message;
     div.appendChild(p);
+    if (detail) {
+        // v1.5.1 (U P1-6): the OS error (Errno, a .tmp path) on its own line
+        var dp = document.createElement("p");
+        dp.className = "toast-detail";
+        dp.textContent = "Details: " + detail;
+        div.appendChild(dp);
+    }
     bar.appendChild(div);
     if (ms < 0) {
         // v1.5.1 (SA-F2): a failed live write stays until it is closed --
@@ -4480,7 +4487,11 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                     try { _swapPendingTray(data.tray_html); }
                     finally { window._bulkSelfEdit = false; }
                 }
-                window.showToast("Sync failed: " + (data.message || "unknown error"), "error", -1);
+                // v1.5.1 (U P1-6): a failed WRITE says "Apply failed" (its own
+                // head, from the server) -- "Sync failed" only for a pull
+                window.showToast((data.error_code === "sync_failed" ? "Sync failed: " : "")
+                                 + (data.message || "unknown error"), "error", -1,
+                                 data.detail_exc || "");
                 return;
             }
             if (data.status === "error") {

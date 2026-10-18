@@ -2,6 +2,8 @@
    result banners with no way to close them ("there should at least be an X"). #}
 <div class="toast toast-{{ level }}" style="transition: opacity 0.5s;">
     <p>{{ message }}</p>
+    {#- v1.5.1 (U P1-6): the OS error (Errno, a .tmp path) on its own line -#}
+    {% if detail is defined and detail %}<p class="toast-detail">Details: {{ detail }}</p>{% endif %}
     <button type="button" class="toast-x" aria-label="Dismiss"
             onclick="this.closest('.toast').remove()">&times;</button>
 </div>

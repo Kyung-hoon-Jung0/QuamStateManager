@@ -2369,6 +2369,8 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     font-size: 0.9em; transition: opacity 0.5s;
 }
 .toast p { margin: 0; }
+/* v1.5.1 (U P1-6): the OS error under the head, small and wrapping */
+.toast p.toast-detail { margin-top: .25rem; font-size: .8em; opacity: .8; overflow-wrap: anywhere; }
 .toast-success { color: var(--color-success-text); background: var(--color-success-bg); border-left: 4px solid var(--color-success-border); }
 .toast-error   { color: var(--color-error-text); background: var(--color-error-bg); border-left: 4px solid var(--color-error-border); }
 .toast-warning { color: var(--color-warning-text); background: var(--color-warning-bg); border-left: 4px solid var(--color-warning-border); }

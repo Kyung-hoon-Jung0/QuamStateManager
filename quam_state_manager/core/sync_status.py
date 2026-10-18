@@ -155,6 +155,7 @@ def live_facts(*, entries: Iterable[Any], moved: bool | None,
 def view(*, facts: Mapping[str, Any] | None, flag_moved: bool,
          flag_count: int | None, archive: bool, unreadable: str | None,
          flag_conflicts: Iterable[str] = (), missing: bool = False,
+         readonly: bool = False,
          refused: Mapping[str, Any] | None, change_paths: Iterable[str],
          unapplied: int, working_dirty: bool) -> dict:
     """What the control renders NOW: cached live facts (may be one poll old)
@@ -195,6 +196,9 @@ def view(*, facts: Mapping[str, Any] | None, flag_moved: bool,
         "unreadable": unreadable or None,
         # v1.5.1 (SB-P2-3): the live folder itself is gone (not a torn file)
         "missing": bool(missing and state == "unreadable"),
+        # v1.5.1 (U P1-6): the read-only pill is part of what the control
+        # shows -- a window repaints when it is raised or dropped
+        "readonly": bool(readonly),
         "refused_at": (refused or {}).get("at") if refused else None,
     }
     out["sig"] = signature(out)
@@ -206,8 +210,10 @@ def signature(v: Mapping[str, Any]) -> str:
     one its control was rendered at and re-renders only when it moved -- so a
     lowered state (another window took live, SE-05) repaints exactly like a
     raised one, and nothing repaints for a poll that changed nothing."""
-    key = json.dumps([v.get("state"), v.get("unapplied"), v.get("working_dirty"),
-                      v.get("live_n"), sorted(v.get("conflicts") or ()),
-                      v.get("unreadable"), v.get("refused_at")],
-                     sort_keys=True, default=str)
+    parts = [v.get("state"), v.get("unapplied"), v.get("working_dirty"),
+             v.get("live_n"), sorted(v.get("conflicts") or ()),
+             v.get("unreadable"), v.get("refused_at")]
+    if v.get("readonly"):
+        parts.append("ro")          # v1.5.1 (U P1-6); absent: the old signature
+    key = json.dumps(parts, sort_keys=True, default=str)
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
