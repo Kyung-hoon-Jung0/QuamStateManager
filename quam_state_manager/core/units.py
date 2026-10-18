@@ -437,7 +437,7 @@ def _fit_key(text: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(text or "").lower()).strip("_")
 
 
-def fit_metric_units(variables: Any, metrics: Any) -> dict[str, str]:
+def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any = ()) -> dict[str, str]:
     """v1.5.1 (T1-F7): ``{metric: unit}`` for the fit-result *metrics* of a
     run, read from the ``units`` attribute its own ``ds_fit`` file gives a
     variable -- matched by the variable's name OR its ``long_name``
@@ -445,19 +445,41 @@ def fit_metric_units(variables: Any, metrics: Any) -> dict[str, str]:
     fit result ``t1`` as the variable ``tau`` with ``long_name="T1"``,
     ``units="ns"``. A metric two variables claim with different units, and a
     metric no variable names, get no unit -- a unit is read, never guessed.
-    ``variables`` is ``ndview.probe_file``'s ``vars`` list."""
+    ``variables`` is ``ndview.probe_file``'s ``vars`` list, ``axes`` its
+    ``axes`` list.
+
+    R3B M2: a lab's fit file can copy the sweep axis's attributes onto other
+    variables (``success`` with ``long_name="idle times"``, ``units="ns"``).
+    So a variable whose ``(units, long_name)`` is a coordinate's of the same
+    file -- and is not that coordinate -- declares nothing of its own; and a
+    true/false metric (a ``bool`` variable, or a metric named in *booleans*,
+    whose fit values are true/false) never has a unit."""
+    def sig(v: dict) -> tuple:
+        u, ln = v.get("units"), v.get("long_name")
+        return (u.strip() if isinstance(u, str) else u, ln.strip() if isinstance(ln, str) else ln)
+
+    rows = [v for v in variables or () if isinstance(v, dict)]
+    dim_names = {str(d) for v in rows for d in (v.get("dims") or ())}
+    coords = [v for v in rows if v.get("name") in dim_names] + [a for a in axes or () if isinstance(a, dict)]
+    coord_names = {v.get("name") for v in coords}
+    coord_sigs = {sig(v) for v in coords}
     claims: dict[str, set] = {}
-    for v in variables or ():
-        if not isinstance(v, dict):
-            continue
+    for v in rows:
         unit = v.get("units")
         if not isinstance(unit, str) or not unit.strip():
             continue
+        if str(v.get("dtype") or "") == "bool":
+            continue
+        if v.get("name") not in coord_names and sig(v) in coord_sigs:
+            continue              # inherited from a coordinate, not declared
         for k in {_fit_key(v.get("name")), _fit_key(v.get("long_name"))}:
             if k:
                 claims.setdefault(k, set()).add(unit.strip())
+    skip = {str(b) for b in booleans or ()}
     out: dict[str, str] = {}
     for m in metrics or ():
+        if str(m) in skip:
+            continue
         got = claims.get(_fit_key(m))
         if got and len(got) == 1:
             out[str(m)] = next(iter(got))

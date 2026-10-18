@@ -43699,7 +43699,7 @@ def trends_param_diff():
 
 
 #: v1.5.1 (T1-F7): a fit file's declared units, by (path, mtime_ns, size)
-_TRENDS_FIT_UNITS: dict[tuple, list] = {}
+_TRENDS_FIT_UNITS: dict[tuple, tuple] = {}
 _TRENDS_UNITS_RUNS = 3          # the newest runs with a ds_fit file that are read
 
 
@@ -43731,14 +43731,19 @@ def trends_units():
         except OSError:
             continue
         key = (str(p), st.st_mtime_ns, st.st_size)
-        variables = _TRENDS_FIT_UNITS.get(key)
-        if variables is None:
-            variables = ndview.probe_file(p).get("vars") or []
+        got = _TRENDS_FIT_UNITS.get(key)
+        if got is None:
+            probe = ndview.probe_file(p)
+            got = (probe.get("vars") or [], probe.get("axes") or [])
             if len(_TRENDS_FIT_UNITS) > 256:
                 _TRENDS_FIT_UNITS.clear()
-            _TRENDS_FIT_UNITS[key] = variables
-        metrics = {m for qv in (r.fit_results or {}).values() if isinstance(qv, dict) for m in qv}
-        for m, u in _units.fit_metric_units(variables, sorted(metrics)).items():
+            _TRENDS_FIT_UNITS[key] = got
+        variables, axes = got
+        fits = [qv for qv in (r.fit_results or {}).values() if isinstance(qv, dict)]
+        metrics = {m for qv in fits for m in qv}
+        # R3B M2: a true/false metric (``success``) never has a unit
+        booleans = {m for qv in fits for m, v in qv.items() if isinstance(v, bool)}
+        for m, u in _units.fit_metric_units(variables, sorted(metrics), axes, booleans).items():
             out.setdefault(m, u)
     return jsonify({"units": out})
 
