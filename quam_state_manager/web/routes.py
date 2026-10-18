@@ -5976,6 +5976,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # Ctrl+Z popped a lab-mate's edit exactly as before the fix.
         "change_sig": (_change_log_sig_of(_modifier().get_change_log())
                        if _modifier() else ""),
+        # R2 M1: and the pending paths the grid push declares, same rule
+        "change_paths": (_change_paths_of(_modifier().get_change_log())
+                         if _modifier() else []),
         # QA liveedit-r2-09: and the drift poll's edit_seq, same rule
         "edit_seq": _edit_seq(),
         # QA liveedit-r2-16: and which ✕ takes an FSP bundle, same rule
@@ -10377,6 +10380,22 @@ def _change_log_sig_of(changes) -> str:
     return hashlib.sha1(paths.encode("utf-8")).hexdigest()[:12]
 
 
+#: R2 M1: the most pending paths the tray publishes (``data-change-paths``).
+#: A longer log publishes none (``data-change-paths-over``) and the grid push
+#: declares the count/signature instead, as before.
+_TRAY_PATHS_MAX = 2000
+
+
+def _change_paths_of(changes) -> list | None:
+    """R2 M1: the tray's pending dot-paths, unique, in log order -- what the
+    grids' "Apply to live now" confirm lists and declares (``seen_paths``).
+    The rows themselves render only in the sync panel, so the tray element
+    carries them; None when there are more than ``_TRAY_PATHS_MAX``."""
+    out = list(dict.fromkeys(str(getattr(c, "dot_path", None) or "?")
+                             for c in (changes or [])))
+    return out if len(out) <= _TRAY_PATHS_MAX else None
+
+
 def _fsp_bundle_gids(changes) -> dict:
     """{gid: {"n": unit size, "paths": unit dot-paths}} for every FSP
     compensation bundle in the log -- the tray ✕ on a unit member discards
@@ -10685,6 +10704,8 @@ def _render_tray(*, oob: bool) -> str:
         # docs/179: what this screen is SHOWING, so its own Apply button can
         # declare it. A count cannot tell two different change sets apart.
         change_sig=_change_log_sig_of(changes),
+        # R2 M1: the pending paths the grid push confirm lists and declares
+        change_paths=_change_paths_of(changes),
         fsp_bundle_gids=_fsp_bundle_gids(changes),
         # QA liveedit-r2-09: where the chip was when THIS tray rendered -- the
         # drift poll's edit_seq equal to it means the move was this window's own
@@ -28395,6 +28416,7 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
         auto_apply=_auto_apply_state(ctx),
         change_count=len(store.change_log or []),
         change_sig=_change_log_sig(store),
+        change_paths=_change_paths_of(store.change_log),
         staged_conflict=staged_conflict,
         auto_disarmed=auto_disarmed,
         # docs/187 R4: the tray states what was DECIDED. Inferring "a merge is
@@ -29929,16 +29951,21 @@ def _unseen_by_paths(ctx):
     (as written, or as the edit door resolves it) is unseen.
 
     ``False`` when no paths were declared (the count/signature rules
-    decide), else the refusal or None."""
+    decide), else the refusal or None. An EMPTY list declares nothing
+    (R2 M1): a confirm that captured no rows -- a tray that did not say what
+    it holds -- is no opinion, never "I saw none of them"."""
     raw = request.values.get("seen_paths")
     if not raw:
         return False
-    if request.values.get("ack_unseen") == "1":
-        return None
     try:
-        declared = [str(p) for p in json.loads(raw) if p]
+        parsed = json.loads(raw)
+        declared = [str(p) for p in parsed if p] if isinstance(parsed, list) else []
     except (TypeError, ValueError):
         return False
+    if not declared:
+        return False
+    if request.values.get("ack_unseen") == "1":
+        return None
     store = (ctx or {}).get("store")
     if store is None:
         return None

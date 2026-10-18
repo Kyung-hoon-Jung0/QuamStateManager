@@ -188,9 +188,8 @@ async function settle(win, n) {
   //    tray carries, push it -- never a silent no-op. Both grids.
   for (const grid of ['BulkEdit', 'BulkPairEdit']) {
     const win = world(null);
-    win.document.body.insertAdjacentHTML('beforeend', '<div id="pending-tray" data-change-count="0">'
-      + '<div id="tray-drawer"><div class="tray-change-item"><span class="tray-change-path" '
-      + 'title="qubits.q1.T1">T1</span></div></div></div>');
+    win.document.body.insertAdjacentHTML('beforeend', '<div id="pending-tray" data-change-count="0"'
+      + " data-change-paths='[\"qubits.q1.T1\"]'></div>");
     let release;
     win._pendingGridCommits = [new Promise(function (r) { release = r; })];
     const asked = [], pushed = [];

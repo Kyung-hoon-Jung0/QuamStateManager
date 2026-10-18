@@ -745,13 +745,12 @@ function discard(w, detail) {
     // count only the cells typed on this screen.
     function trayF14(paths, dirty) {
         return '<div id="pending-tray" data-change-count="' + paths.length + '" data-change-sig="S1"'
-            + ' data-working-dirty="' + (dirty ? '1' : '0') + '">'
+            + ' data-working-dirty="' + (dirty ? '1' : '0') + '"'
+            // R2 M1: the real tray publishes its pending paths (the rows
+            // render only in the sync panel)
+            + " data-change-paths='" + JSON.stringify(paths) + "'>"
             // the applied log reuses .tray-change-path inside the same tray
             + '<div class="applied-log"><code class="tray-change-path" title="qubits.q9.T1">qubits.q9.T1</code></div>'
-            + (paths.length ? '<div id="tray-drawer" class="tray-drawer"><div class="tray-change-list">'
-                + paths.map(function (p) {
-                    return '<div class="tray-change-item"><code class="tray-change-path" title="' + p + '">' + p + '</code></div>';
-                }).join('') + '</div></div>' : '')
             + '</div>';
     }
     function setTray(w, paths, dirty) {
@@ -806,8 +805,8 @@ function discard(w, detail) {
 {
     // the pair / entity grids (pair-edit.js factory): the same confirm
     const P = 'bulk-pair';
-    const html = '<div id="pending-tray" data-change-count="1" data-working-dirty="0"><div id="tray-drawer"><div class="tray-change-item">'
-        + '<code class="tray-change-path" title="qubits.q1.T2ramsey">qubits.q1.T2ramsey</code></div></div></div>'
+    const html = '<div id="pending-tray" data-change-count="1" data-working-dirty="0"'
+        + " data-change-paths='[\"qubits.q1.T2ramsey\"]'></div>"
         + '<div id="table-pane"><div class="bulk-panel"><input type="search" id="bulk-search">'
         + '<div class="bulk-pair-divider" id="' + P + '-divider"><div class="bulk-colvis-menu" id="' + P + '-colvis-menu"></div>'
         + '<span id="' + P + '-search-count"></span><span id="' + P + '-dirty-count"></span>'
@@ -833,8 +832,8 @@ function discard(w, detail) {
 }
 {
     // the All values tab
-    const html = '<div id="pending-tray" data-change-count="1" data-working-dirty="0"><div id="tray-drawer"><div class="tray-change-item">'
-        + '<code class="tray-change-path" title="qubits.q1.T2ramsey">qubits.q1.T2ramsey</code></div></div></div>'
+    const html = '<div id="pending-tray" data-change-count="1" data-working-dirty="0"'
+        + " data-change-paths='[\"qubits.q1.T2ramsey\"]'></div>"
         + '<button type="button" class="bulk-seg" data-pane="grid">Grid</button>'
         + '<button type="button" class="bulk-seg" data-pane="allvalues">All values</button>'
         + '<div data-bulk-pane="grid"></div><div data-bulk-pane="allvalues" hidden>'

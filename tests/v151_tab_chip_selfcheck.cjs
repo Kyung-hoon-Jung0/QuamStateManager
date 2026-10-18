@@ -4,11 +4,11 @@
  * folder key (X-SM-Chip-Key, from window.__chipKey), so the server can refuse
  * a press from a tab that shows another chip than the one it has open.
  *
- * F4: the grids' "Apply to live now" declares the paths its confirm showed
- * (seen_paths), taken when the confirm was built -- not the tray the grid's
- * own commit refreshed from the server, which already holds an edit another
- * window staged meanwhile. A refusal naming such an edit asks; OK re-posts
- * with ack_unseen, Cancel writes nothing.
+ * F4: a refusal of the grids' "Apply to live now" naming an edit its confirm
+ * never showed asks; OK re-posts with ack_unseen, Cancel writes nothing. WHAT
+ * the push declares (seen_paths, read from the real tray markup) is pinned in
+ * tests/test_v151_grid_push_real_tray.py (R2 M1) -- this harness renders no
+ * tray rows of its own.
  *
  * Run: node tests/v151_tab_chip_selfcheck.cjs (driven by tests/test_v151_sb_tab_chip.py)
  */
@@ -21,15 +21,15 @@ try { ({ JSDOM } = require('jsdom')); } catch (e) {
     process.exit(2);
 }
 
-function tray(attrs, rows) {
-    return '<div id="pending-tray" ' + attrs + '><div id="tray-drawer">'
-        + (rows || []).map(function (p) {
-            return '<div class="tray-change-item"><span class="tray-change-path" title="' + p + '">' + p + '</span></div>';
-        }).join('') + '</div></div>';
+/* Only the attributes the real _pending_tray.html renders. The pending ROWS
+ * are never invented here: what the grid push reads from the real markup is
+ * pinned by tests/test_v151_grid_push_real_tray.py (R2 M1). */
+function tray(attrs) {
+    return '<div id="pending-tray" ' + attrs + '></div>';
 }
 
 const dom = new JSDOM('<!doctype html><html><body><div id="status-bar"></div>' +
-    '<div id="topbar-tray-slot">' + tray('data-change-count="0" data-working-dirty="1"', []) + '</div>' +
+    '<div id="topbar-tray-slot">' + tray('data-change-count="0" data-working-dirty="1"') + '</div>' +
     '<div id="table-pane"></div></body></html>', { url: 'http://localhost/bulk', pretendToBeVisual: true });
 const { window } = dom;
 global.window = window;
@@ -118,25 +118,14 @@ function hdr(call) {
     window.confirm = function (m) { confirms.push(String(m)); return confirmAnswer; };
     const toasts = [];
     window.showToast = function (msg, level, ms) { toasts.push({ msg: String(msg), level: level, ms: ms }); };
-    function setTray(attrs, rows) {
-        document.getElementById('topbar-tray-slot').innerHTML = tray(attrs, rows);
+    function setTray(attrs) {
+        document.getElementById('topbar-tray-slot').innerHTML = tray(attrs);
     }
 
-    // ---- F4: what the grid push declares -----------------------------------
-    // the confirm is built on this tab's stale tray: nothing pending, a saved draft
-    setTray('data-change-count="0" data-working-dirty="1"', []);
-    window.livePushExtrasLine(['qubits.q1.T1']);
-    // the grid's commit swaps in the server's tray: it now holds another window's q4
-    setTray('data-change-count="2" data-change-sig="abc" data-working-dirty="1"',
-            ['qubits.q4.T1', 'qubits.q1.T1']);
-    ajaxCalls.length = 0;
-    window._applyInFlight = false;
-    window.applyEditsToLive();
-    let a = ajaxCalls[0];
-    let vals = (a && a.opts.values) || {};
-    ok(a && a.url === '/state/apply-to-live' && vals.seen_paths === JSON.stringify(['qubits.q1.T1']),
-       'the direct push declares only what its confirm showed -- ' + JSON.stringify(vals));
-
+    // ---- F4: the refused push asks (what it declares is pinned on the real
+    // markup by tests/test_v151_grid_push_real_tray.py) ---------------------
+    setTray('data-change-count="2" data-change-sig="abc" data-working-dirty="1"');
+    let a, vals;
     // the server refuses (q4 unseen): the user is asked, and OK writes them too
     window._gridPushInFlight = { seen: ['qubits.q1.T1'] };
     const evt = new window.CustomEvent('htmx:beforeSwap', { detail: {
@@ -166,24 +155,9 @@ function hdr(call) {
     ok(!ajaxCalls.some(function (x) { return x.verb === 'POST'; }), 'Cancel writes nothing');
     window._gridPushInFlight = null;
 
-    // pending edits only: the merge press declares the same set
-    setTray('data-change-count="0" data-working-dirty="0"', []);
-    window.livePushExtrasLine(['qubits.q1.T1']);
-    setTray('data-change-count="2" data-change-sig="abc" data-working-dirty="0"',
-            ['qubits.q4.T1', 'qubits.q1.T1']);
-    fetchCalls.length = 0;
-    window._applyInFlight = false;
-    window.applyEditsToLive();
-    await tick(30);
-    const sync = fetchCalls.find(function (x) { return x.input === '/state/sync'; });
-    const body = sync ? String(sync.init.body) : '';
-    ok(/mode=apply/.test(body) && body.indexOf('seen_paths=' + encodeURIComponent(JSON.stringify(['qubits.q1.T1']))) >= 0,
-       'the merge press declares the confirm\'s set -- ' + body);
-    ok(sync && hdr(sync) === 'chip_x-1a2b3c4d', 'and names the page chip');
-
     // a push with no confirm record declares the tray it finds (as before)
     window._livePushSeen = null;
-    setTray('data-change-count="1" data-change-sig="def" data-working-dirty="1"', ['qubits.q1.T1']);
+    setTray('data-change-count="1" data-change-sig="def" data-working-dirty="1"');
     ajaxCalls.length = 0;
     window._applyInFlight = false;
     window.applyEditsToLive();

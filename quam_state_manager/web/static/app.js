@@ -4268,7 +4268,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
               + (opts && opts.ackTorn ? "&ack_torn=1" : "")
               + (opts && opts.picks ? "&picks=" + encodeURIComponent(JSON.stringify(opts.picks)) : "")
               // v1.5.1 (SB-F4): the grid push confirm's own set, when it showed one
-              + (opts && opts.seenPaths ? "&seen_paths=" + encodeURIComponent(JSON.stringify(opts.seenPaths)) : "")
+              + (opts && opts.seenPaths && opts.seenPaths.length
+                 ? "&seen_paths=" + encodeURIComponent(JSON.stringify(opts.seenPaths)) : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -4878,32 +4879,44 @@ document.addEventListener("keepMineReask", function () {
  * the push, so a count or signature read at the push already includes an
  * edit another window staged meanwhile; the paths the confirm named do not.
  * Consumed by the next push; stale after two minutes (then the push declares
- * the tray it finds, as before). */
+ * the tray it finds, as before).
+ *
+ * R2 M1: the tray's rows are read from #pending-tray's data-change-paths
+ * (window.trayPendingPaths) -- the rows themselves render only in the sync
+ * panel. A tray that does not publish them (too many), or a capture that
+ * holds nothing, declares NOTHING: the push then declares the tray's
+ * count/signature, never "I saw none of the rows". */
+window.trayPendingPaths = function (tray) {
+    tray = tray || document.getElementById("pending-tray");
+    if (!tray) return null;
+    var raw = tray.getAttribute("data-change-paths");
+    if (raw === null || raw === "") return null;
+    try {
+        var a = JSON.parse(raw);
+        if (!Array.isArray(a)) return null;
+        return a.filter(function (p) { return typeof p === "string" && p; });
+    } catch (e) { return null; }
+};
 window.livePushSeen = function (paths) {
-    var tray = document.getElementById("pending-tray");
+    var trayPaths = window.trayPendingPaths();
+    if (trayPaths === null) { window._livePushSeen = null; return; }
     var all = {}, out = [];
-    (paths || []).forEach(function (p) { if (p && !all[p]) { all[p] = 1; out.push(p); } });
-    if (tray) {
-        Array.prototype.forEach.call(
-            tray.querySelectorAll("#tray-drawer .tray-change-item .tray-change-path"),
-            function (el) {
-                var p = el.getAttribute("title") || el.textContent || "";
-                if (p && !all[p]) { all[p] = 1; out.push(p); }
-            });
-    }
-    window._livePushSeen = { paths: out, t: Date.now() };
+    (paths || []).concat(trayPaths).forEach(function (p) {
+        if (p && !all[p]) { all[p] = 1; out.push(p); }
+    });
+    window._livePushSeen = out.length ? { paths: out, t: Date.now() } : null;
 };
 function _takeLivePushSeen() {
     var s = window._livePushSeen;
     window._livePushSeen = null;
-    return (s && Date.now() - s.t < 120000) ? s.paths : null;
+    return (s && s.paths && s.paths.length && Date.now() - s.t < 120000) ? s.paths : null;
 }
 function _gridDirectPush(seenPaths, ackUnseen) {
     // Same direct push the tray's "Apply to live chip" button uses, but without
     // a second confirm (applyAll already confirmed). htmx.ajax handles the tray
     // swap + OOB status toast + HX-Trigger natively.
     var vals = {};
-    if (seenPaths) vals.seen_paths = JSON.stringify(seenPaths);
+    if (seenPaths && seenPaths.length) vals.seen_paths = JSON.stringify(seenPaths);
     else {
         var _s = _keepMineSeen(null);
         if (_s) { vals.seen_changes = _s.n; vals.seen_sig = _s.sig; }
@@ -4998,8 +5011,7 @@ window.applyEditsToLive = function () {
  * applyEditsToLive (above) pushes the WHOLE tray -- an edit committed earlier
  * went to the chip under "Apply 1 edit across 1 qubit". This names what else the
  * push carries: the tray's pending paths the typed set does not already cover
- * (scoped to the pending drawer -- `.tray-change-path` is reused by the
- * applied log inside the same tray), plus the saved-but-unapplied working state,
+ * (#pending-tray's data-change-paths; R2 M1), plus the saved-but-unapplied working state,
  * which is stated WITHOUT a number (docs/187 R7: a number only when it is the
  * whole thing). '' when the push carries nothing beyond what was typed. */
 window.livePushExtrasLine = function (typedPaths) {
@@ -5009,13 +5021,11 @@ window.livePushExtrasLine = function (typedPaths) {
     var skip = {};
     (typedPaths || []).forEach(function (p) { if (p) skip[p] = true; });
     var seen = {}, extra = [];
-    Array.prototype.forEach.call(
-        tray.querySelectorAll("#tray-drawer .tray-change-item .tray-change-path"),
-        function (el) {
-            var p = el.getAttribute("title") || el.textContent || "";
-            if (!p || skip[p] || seen[p]) return;
-            seen[p] = true; extra.push(p);
-        });
+    // R2 M1: the tray publishes its pending paths (the rows live in the panel)
+    (window.trayPendingPaths(tray) || []).forEach(function (p) {
+        if (!p || skip[p] || seen[p]) return;
+        seen[p] = true; extra.push(p);
+    });
     var dirty = tray.getAttribute("data-working-dirty") === "1";
     if (!extra.length && !dirty) return "";
     var s = "\n\n";

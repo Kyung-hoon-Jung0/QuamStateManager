@@ -7,6 +7,10 @@
         gate refuses on a set that no longer matches — including one that
         happens to be the same SIZE. #}
      data-change-sig="{{ change_sig | default('') }}"
+     {# R2 M1: the pending PATHS -- the rows render only in the sync panel, so
+        the grids' "Apply to live now" confirm reads them here and its push
+        declares them (seen_paths). Absent (too many) = declare the sig. #}
+     {% if change_paths is defined and change_paths is not none %}data-change-paths='{{ change_paths | tojson }}'{% else %}data-change-paths-over="1"{% endif %}
      data-edit-seq="{{ edit_seq | default('') }}"
      {# QA F1 (windows): the newest undo another window wrote to the LIVE
         chip. A window that did not press it toasts the message once. #}

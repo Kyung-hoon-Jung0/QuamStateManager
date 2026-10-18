@@ -8,7 +8,7 @@ server, and the direct push declared nothing -- live ended up with B's q4.
 The push now declares the paths its confirm showed (``seen_paths``); any
 pending row outside them is unseen and refused by name (docs/120 gate), and
 ``ack_unseen`` is the one answer that writes it too. The client half is
-pinned in tests/v151_tab_chip_selfcheck.cjs.
+pinned on the real tray markup in tests/test_v151_grid_push_real_tray.py.
 """
 from __future__ import annotations
 

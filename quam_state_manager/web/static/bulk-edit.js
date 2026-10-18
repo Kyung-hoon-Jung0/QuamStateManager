@@ -3945,11 +3945,18 @@
                     if (window.showToast) window.showToast('Nothing to apply — no unapplied edits.', 'info');
                     return;
                 }
+                // R2 M1: the tray publishes its pending paths (the rows render
+                // only in the sync panel); none published -> the push declares
+                // the tray's count/signature instead
                 var seen = {}, paths = [];
-                Array.prototype.forEach.call(tray.querySelectorAll(
-                    '#tray-drawer .tray-change-item .tray-change-path'), function (el) {
-                    var p = el.getAttribute('title') || el.textContent || '';
-                    if (p && !seen[p]) { seen[p] = 1; paths.push(p); }
+                var listed = window.trayPendingPaths ? window.trayPendingPaths(tray) : (function () {
+                    try {
+                        var a = JSON.parse(tray.getAttribute('data-change-paths') || 'null');
+                        return Array.isArray(a) ? a : null;
+                    } catch (e) { return null; }
+                })();
+                (listed || []).forEach(function (p) {
+                    if (typeof p === 'string' && p && !seen[p]) { seen[p] = 1; paths.push(p); }
                 });
                 var ex = paths.length ? ('\n\n' + paths.slice(0, 5).join(', ')
                     + (paths.length > 5 ? ', +' + (paths.length - 5) + ' more' : '')) : '';
