@@ -23347,8 +23347,8 @@ def _pulse_marker_names(store) -> set[str] | None:
 def _pulse_marker_note(store) -> str:
     names = _pulse_marker_names(store)
     if names is None:
-        return ("Marker names cannot be determined from this state. Generate a current "
-                "config to check them; edits are allowed without this check.")
+        return ("Marker names cannot be checked from this state: generate a current "
+                "config to list them. You can still edit this field.")
     return "Defined markers: " + (", ".join(sorted(names)) or "(none)")
 
 

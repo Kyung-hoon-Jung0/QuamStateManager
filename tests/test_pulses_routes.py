@@ -239,7 +239,7 @@ class TestPulseDetail:
             "/pulse/detail?path=qubits.qA1.resonator.operations.readout"
         ).data.decode()
         assert "(runtime)" in html
-        assert "readout-only" in html
+        assert "not in preview" in html and "readout-only" not in html   # v1.5.1 U P2-16
 
     def test_detail_pair_slot(self, loaded_client):
         html = loaded_client.get(

@@ -29,8 +29,10 @@
                 <code class="dot-path col-key pulse-copy-path"
                       title="{{ p.dot_path }} — click to copy"
                       data-copy="{{ p.dot_path }}">{{ p.key }}</code>
+                {#- v1.5.1 (U P2-16): "readout-only" read as read-only beside a note
+                    saying edits are allowed; it means "not part of the preview" -#}
                 {% if not p.synth %}<span class="pulse-nosynth-tag muted"
-                    title="Does not affect the waveform shape">readout-only</span>{% endif %}
+                    title="Does not change the waveform drawn above; you can edit it">not in preview</span>{% endif %}
             </td>
             <td class="col-val">
                 {% if p.marker_note %}<p class="muted pulse-marker-note">{{ p.marker_note }}</p>{% endif %}
