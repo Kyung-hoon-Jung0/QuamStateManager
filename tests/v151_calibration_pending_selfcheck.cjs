@@ -1,7 +1,7 @@
 /* v1.5.1 SA-F9 (g): Calibration Age while the change ledger is rebuilt.
  *
  * After a Take live the ledger the ages come from is rebuilt; a topology
- * built in that moment had no ages, and Chip Status showed "— no timestamps"
+ * built in that moment had no ages, and Chip Status showed "- no timestamps"
  * until a reload. The server now marks such a topology calibration_pending
  * (tests/test_v151_messages.py); the page says it is reading, asks again every
  * 2 s while the answer is pending, and re-renders through its one refresh
