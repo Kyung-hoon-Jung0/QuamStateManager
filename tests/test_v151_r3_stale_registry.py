@@ -35,7 +35,9 @@ def test_a_record_written_before_its_pids_process_started_is_not_a_peer(tmp_path
     reg = tmp_path / "instances"
     rec = _record(reg, bystander.pid, "2026-10-01T09:05:00+00:00")
     assert instances.peers(tmp_path) == [], "a reused pid is not the record's process"
-    assert not rec.exists(), "the stale record is cleaned up"
+    # v1.5.1: old -> new, why: deleted -> kept (R4 a5: judged by the clock alone, a
+    # clock set back looks the same, so the record is skipped, never deleted)
+    assert rec.exists(), "a record judged by the clock is skipped, not deleted"
 
 
 def test_a_record_the_running_process_wrote_is_still_a_peer(tmp_path, bystander):

@@ -282,6 +282,9 @@ def register(instance_path, *, port: int | None = None) -> None:
             "project": (existing or {}).get("project", ""),
             "roots": list((existing or {}).get("roots") or []),
             "tray_protocol": TRAY_PROTOCOL,
+            # R4 a5: which process wrote this (its OS start), so a reader
+            # tells a reused pid from a clock set back
+            "process_start": process_start(os.getpid()),
         }
         safe_io.atomic_write_json(path, record)
     except Exception:       # noqa: BLE001 — never block startup on bookkeeping
@@ -312,6 +315,7 @@ def update(instance_path, **fields) -> None:
             record["chip_fs_key"] = _fs_key(fields["chip_path"])
         record["pid"] = os.getpid()
         record["tray_protocol"] = TRAY_PROTOCOL
+        record["process_start"] = process_start(os.getpid())      # R4 a5
         record["updated_utc"] = _now_iso()
         safe_io.atomic_write_json(path, record)
     except Exception:       # noqa: BLE001
@@ -364,9 +368,18 @@ def peers(instance_path, *, include_self: bool = False) -> list[Peer]:
         # process started after the record was last written (Windows reuses
         # pids). A killed older SM's record otherwise read as "running" for
         # ever -- and hid every crashed window's tray checkpoint.
-        if pid != me and _record_predates_process(pid, record):
-            _drop(path)
-            continue
+        if pid != me:
+            rec_start = record.get("process_start")
+            if isinstance(rec_start, int) and not isinstance(rec_start, bool):
+                # R4 a5: the writer named its process -- compared as the OS
+                # says, no clock involved; another process now: a dead record
+                if not process_alive(pid, rec_start):
+                    _drop(path)
+                    continue
+            elif _record_predates_process(pid, record):
+                # R4 a5: an older record judged by the clock. A clock set back
+                # looks the same as a reused pid: not a peer, never deleted
+                continue
         out.append(Peer(
             pid=pid,
             port=record.get("port"),
