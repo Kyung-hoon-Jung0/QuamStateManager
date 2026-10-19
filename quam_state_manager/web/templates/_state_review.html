@@ -213,7 +213,9 @@
     {% if _st == 'mine' and not working_dirty %}
     <button type="button" class="sp-choice sp-choice-primary btn-sync primary"
             {#- R3 M4: the same-field check and the live chip this panel read -#}
-            onclick="doStateSync('apply', false, false, null, {expectLiveHash: '{{ live_hash if (live_hash is defined and live_hash) else '' }}'})">
+            {#- R4 a1: and the live values at the fields it writes -#}
+            {% if live_values is defined and live_values is not none %}data-live-values='{{ live_values | tojson }}'{% endif %}
+            onclick="doStateSync('apply', false, false, null, {expectLiveHash: '{{ live_hash if (live_hash is defined and live_hash) else '' }}', expectLiveValues: this.getAttribute('data-live-values') || ''})">
       <span class="sp-choice-label">&#8593; Apply to live</span>
       <span class="sp-choice-what">Writes your {{ _nf }} edit{{ 's' if _nf != 1 }} to the live chip.</span>
       <span class="sp-lost">Lost: nothing (the live chip is backed up first).</span></button>
@@ -225,6 +227,9 @@
                 merge is refused when live moved since, so its "Lost:" line
                 names the value it actually replaces -#}
             {% if live_hash is defined and live_hash %}data-live-hash="{{ live_hash }}"{% endif %}
+            {#- R4 a1: the live values at the fields the merge writes: a lab write
+                anywhere else no longer refuses it -#}
+            {% if live_values is defined and live_values is not none %}data-live-values='{{ live_values | tojson }}'{% endif %}
             onclick="SyncPanel.merge(this)">
       <span class="sp-choice-label">&#8644; Pull &amp; apply <span class="sync-btn-sub">(merge)</span></span>
       <span class="sp-choice-what">{% if _nl - _nc > 0 %}Takes the live chip's {{ _nl - _nc }} other change{{ 's' if (_nl - _nc) != 1 }}, then writes your edits on top{% if _nc %}, with the side you picked for each field above{% endif %}.{% else %}Writes your edits to the live chip, with the side you picked for each field above.{% endif %}</span>

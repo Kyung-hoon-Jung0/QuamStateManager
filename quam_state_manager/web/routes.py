@@ -30020,6 +30020,8 @@ def state_review():
         read_error=read_error,
         # v1.5.1 (SB-P2-1): what the panel's values were read from
         live_hash=(_lp.content_hash() if _lp is not None else ""),
+        # R4 a1: and what it read at the fields a merge writes
+        live_values=(_panel_live_values(ctx, store, _lp) if _lp is not None else None),
         total=len(entries),
         conflict_rows=conflict_rows,
         external_rows=external_rows,
@@ -31237,6 +31239,7 @@ def state_sync():
     pulled_other_changes = False
     replay = None
     _moved_since_panel = False
+    _moved_paths = None
     try:
         # Hold the build lock across sync + rebuild + replay (not just sync): the
         # scheduler worker's post-node _reconcile_cached_quam_ctx takes this SAME
@@ -31271,13 +31274,25 @@ def state_sync():
             # pick replaced a lab value written after the panel read too.
             _expect_live = (request.values.get("expect_live_hash") or "").strip()
             _keeps = mode == "apply" and bool(_expect_live)
+            # R4 a1: what the panel read at the fields this merge writes. A lab
+            # write elsewhere is taken by the pull below and kept; only a field
+            # the merge writes that moved since the panel read refuses it.
+            _declared = (_declared_live_values(request.values.get("expect_live_values"))
+                         if _keeps else None)
             if _keeps:
                 try:
                     _live_now = working_copy.live_content_hash(wc)
                 except (OSError, ValueError):
                     _live_now = None
                 if _live_now != _expect_live:
-                    return jsonify(_live_moved_since_panel_body()), 409
+                    try:
+                        _lpair = working_copy.read_live_shared(wc)
+                        _moved_paths = _panel_values_moved(_declared, pending,
+                                                           _lpair.state, _lpair.wiring)
+                    except Exception:  # noqa: BLE001 -- unreadable: cannot tell
+                        _moved_paths = None
+                    if _moved_paths is None or _moved_paths:
+                        return jsonify(_live_moved_since_panel_body(_moved_paths)), 409
             _pre_leaves = _leaf_snapshot(ctx, lazy=True)   # the reload below replaces the docs
             # sync-ux 2026-09-25 (user decision 4): ↓ Take live used to drop the pending
             # edits for good. It keeps a backup first -- a labelled History
@@ -31315,7 +31330,14 @@ def state_sync():
                                         and wc.synced_live_hash != _pre_sync_hash)
                 # v1.5.1 (SB-P2-1): a write that landed between the check above
                 # and the pull: the edits are re-applied in SM, nothing written
-                _moved_since_panel = bool(_keeps and wc.synced_live_hash != _expect_live)
+                if _keeps and wc.synced_live_hash != _expect_live:
+                    # R4 a1: the same question of what the pull just read
+                    try:
+                        _moved_paths = _panel_values_moved(_declared, pending,
+                                                           _pulled[0], _pulled[1])
+                    except Exception:  # noqa: BLE001 -- cannot tell: refused
+                        _moved_paths = None
+                    _moved_since_panel = _moved_paths is None or bool(_moved_paths)
                 # Rebuild the store + derived objects from the freshly-synced copy.
                 ctx["_alarm_reason"] = "live-pull"
                 _seq0 = store.mutation_seq
@@ -31355,7 +31377,7 @@ def state_sync():
     # on the pulled content (a reapply), nothing is written, the panel re-reads
     if mode == "apply" and _moved_since_panel:
         _clear_reapply(ctx)
-        return jsonify({**_live_moved_since_panel_body(), "replay": replay,
+        return jsonify({**_live_moved_since_panel_body(_moved_paths), "replay": replay,
                         "tray_html": _tray_html(), **_sync_patch(ctx, _pre_leaves)}), 409
 
     # "apply" goes one step further: save the re-applied edits and push them to
@@ -31398,14 +31420,71 @@ def state_sync():
     })
 
 
-def _live_moved_since_panel_body() -> dict:
+def _live_moved_since_panel_body(moved: list | None = None) -> dict:
     """v1.5.1 (SB-P2-1): the answer of a merge whose panel read an older live
-    chip than the one there now (R3 M4: any merge that declares it)."""
-    return {"status": "live_moved", "mode": "apply",
-            "message": ("Nothing was written: the live chip changed after the panel "
-                        "showed its values, so the merge could replace a value the "
-                        "panel did not name. The panel now shows the live chip; "
-                        "check it and merge again.")}
+    chip than the one there now (R3 M4: any merge that declares it). R4 a1:
+    it names the fields this merge writes that moved (*moved*); without that
+    list SM could not tell, and says so."""
+    if moved:
+        names = ", ".join(moved[:3]) + (f" and {len(moved) - 3} more" if len(moved) > 3 else "")
+        msg = (f"Nothing was written: the live chip changed {names} after the panel "
+               f"showed {'it' if len(moved) == 1 else 'them'}, and the merge would "
+               f"replace {'that new value' if len(moved) == 1 else 'those new values'}. "
+               "The panel now shows the live chip; check it and merge again.")
+    else:
+        msg = ("Nothing was written: the live chip changed after the panel showed its "
+               "values, and SM could not tell whether a field this merge writes was "
+               "among them. The panel now shows the live chip; check it and merge again.")
+    return {"status": "live_moved", "mode": "apply", "message": msg,
+            **({"paths": list(moved[:8])} if moved else {})}
+
+
+#: R4 a1: the most fields a panel declares the live values of (more: the
+#: press is held to the whole live chip, as before)
+_PANEL_VALUES_MAX = 2000
+
+
+def _panel_live_values(ctx, store, pair) -> dict | None:
+    """R4 a1: the live value (digest) at every field a merge from this panel
+    would write -- the stash and the change log, which ``state_sync`` replays
+    -- as the panel read them. The press declares it, so a lab write to a
+    field nobody edited no longer refuses the merge."""
+    try:
+        with store._lock:
+            paths = sorted(_merge_reapply(_pending_reapply(ctx),
+                                          _capture_change_log_as_updates(store)))
+        if len(paths) > _PANEL_VALUES_MAX:
+            return None
+        return working_copy.replaced_values(pair.state, pair.wiring, paths=paths)
+    except Exception:  # noqa: BLE001 -- no declaration: the whole-chip check stands
+        logger.debug("panel live values could not be taken", exc_info=True)
+        return None
+
+
+def _declared_live_values(raw) -> dict | None:
+    """The ``expect_live_values`` a merge press sent, or None."""
+    try:
+        d = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or not all(isinstance(k, str) and isinstance(v, str)
+                                          for k, v in d.items()):
+        return None
+    return d
+
+
+def _panel_values_moved(declared: dict | None, paths, live_state, live_wiring) -> list | None:
+    """R4 a1: the fields this merge writes (*paths*) whose live value is not
+    the one the panel read -- ``[]`` none moved; None SM cannot tell (nothing
+    declared, or a field the panel did not read). Same rule as Keep mine's
+    (``working_copy.replaced_values``)."""
+    if declared is None:
+        return None
+    paths = list(paths)
+    if any(p not in declared for p in paths):
+        return None
+    now = working_copy.replaced_values(live_state, live_wiring, paths=paths)
+    return [p for p in paths if now[p] != declared[p]]
 
 
 def _live_unreadable_message(exc) -> str:

@@ -4073,15 +4073,15 @@ window.SyncPanel = (function () {
     function merge(btn) {
         var n0 = need(), p = picks();
         if (Object.keys(p).length < n0) { picked(); return; }
-        // v1.5.1 (SB-P2-1): the live chip this panel read -- the server
-        // refuses a Keep-mine merge over a live chip that moved since
+        // SB-P2-1, R3 M4, R4 a1: every merge declares the live chip the panel
+        // read (its hash; the values at the fields it writes) and asks the
+        // same-field check: a lab write since is never replaced unnamed
         var lh = btn.getAttribute("data-live-hash") || "";
-        // R3 M4: every merge declares the live chip it read and asks the
-        // same-field check (no `informed` opt-out): a lab write landing after
-        // the panel was read is never replaced unnamed, picks or not
+        var lv = btn.getAttribute("data-live-values") || "";
         var run = function () {
             window.doStateSync("apply", false, false, null,
-                               n0 ? { picks: p, expectLiveHash: lh } : { expectLiveHash: lh });
+                               n0 ? { picks: p, expectLiveHash: lh, expectLiveValues: lv }
+                                  : { expectLiveHash: lh, expectLiveValues: lv });
         };
         if (!n0) { run(); return; }
         if (!btn.getAttribute("data-arm-label"))
@@ -4464,6 +4464,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
               + (opts && opts.ackTorn ? "&ack_torn=1" : "")
               + (opts && opts.picks ? "&picks=" + encodeURIComponent(JSON.stringify(opts.picks)) : "")
               + (opts && opts.expectLiveHash ? "&expect_live_hash=" + encodeURIComponent(opts.expectLiveHash) : "")
+              + (opts && opts.expectLiveHash && opts.expectLiveValues
+                 ? "&expect_live_values=" + encodeURIComponent(opts.expectLiveValues) : "")
               // v1.5.1 (SB-F4): the grid push confirm's own set, when it showed one
               + (opts && opts.seenPaths && opts.seenPaths.length
                  ? "&seen_paths=" + encodeURIComponent(JSON.stringify(opts.seenPaths)) : "")

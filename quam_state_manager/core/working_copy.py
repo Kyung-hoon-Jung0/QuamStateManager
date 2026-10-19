@@ -171,16 +171,43 @@ def _push_replaces(here: Any, live: Any, path: list, out: dict) -> None:
         out[json.dumps(path)] = _live_value_digest(True, live)
 
 
-def replaced_values(live_state: dict, live_wiring: dict, *, payload: tuple) -> dict:
+def _at_dot_path(doc: Any, dot_path: str) -> tuple[bool, Any]:
+    """(present, value) at a merged-view dot path; a numeric segment indexes
+    a list."""
+    node = doc
+    for seg in str(dot_path).split("."):
+        if isinstance(node, dict) and seg in node:
+            node = node[seg]
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
+        else:
+            return False, None
+    return True, node
+
+
+def replaced_values(live_state: dict, live_wiring: dict, *, payload: tuple | None = None,
+                    paths=None) -> dict:
     """R3 MINOR 10: ``{path: digest of the live value}`` for every live value
-    a press would replace -- what its confirm named.
+    a press would replace -- what its confirm named. ONE rule for the doors
+    that hold a press to what the user saw (Keep mine, R3 MINOR 10a; the sync
+    panel's merge, R4 a1).
 
     ``payload=(state, wiring)``: a whole-document push (Keep mine). Every path
     where the payload differs from live counts, so a path that differs only
     since the confirm (a lab write the payload does not carry) is a new
     replaced value. A live change the payload carries too is not one. File
-    ownership and list indices are kept apart in the path."""
+    ownership and list indices are kept apart in the path.
+
+    ``paths``: a merge, which writes only these merged-view dot paths (the
+    user's edits) over whatever live holds elsewhere: the live value at each
+    of them, present or not."""
     out: dict = {}
+    if paths is not None:
+        from quam_state_manager.core.state_merge import merge_state_wiring
+        merged = merge_state_wiring(live_state or {}, live_wiring or {})
+        for p in paths:
+            out[str(p)] = _live_value_digest(*_at_dot_path(merged, p))
+        return out
     state, wiring = payload
     _push_replaces(state, live_state, ["state.json"], out)
     _push_replaces(wiring, live_wiring, ["wiring.json"], out)
