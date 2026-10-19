@@ -5,6 +5,7 @@
 
 
 
+
 <p class="jr-note jr-history-status jr-history-idle">As last recorded: this window is not updating the chip history, so runs saved since are not shown.</p>
 
 
@@ -16,8 +17,8 @@
     <span class="jr-stat"><b>5</b> runs</span>
     
     
-    
-    <span class="jr-stat"><b>1</b> write (2 values)</span>
+    <span class="jr-stat jr-stat-sm" title="Writes SM made to the chip on this day (Apply, Undo, Auto-Sync)"><b>1</b> SM write (2 values)</span>
+    <span class="jr-stat jr-stat-runvals" title="Values the day's runs changed in the chip state, run by run. Which program wrote them is not proven."><b>8</b> values changed by runs <span class="muted">(writer not proven)</span><details class="jargon"><summary class="jargon-q" aria-label="What does this mean?" title="What does this mean?">?</summary><span class="jargon-explain" role="note">Values the day&#39;s runs changed in the chip state, run by run. A run&#39;s saved state carries the new value, but nothing proves which program wrote it (the run, or an edit made outside SM before it).</span></details></span>
     
     
     <span id="jr-since" class="jr-since" hidden></span>
@@ -62,7 +63,7 @@
 
 <div class="jr-sec-head jr-runs-head">
     <span class="jr-sec-title">Runs <span class="jr-sec-count">5</span></span>
-    <span class="jr-sec-note muted">time · node · targets · outcome · gate · run · who — click a row for what it wrote and why</span>
+    <span class="jr-sec-note muted">time · node · targets · outcome · gate<details class="jargon"><summary class="jargon-q" aria-label="What does this mean?" title="What does this mean?">?</summary><span class="jargon-explain" role="note">gate: Auto Calibrate&#39;s automatic checks of a run&#39;s fit (its outcome, physical ranges, the raw data), with the run&#39;s own saved state as reference: pass, suspect, fail or unknown; checking while it is computed.</span></details> · run · who — click a row for what it wrote and why</span>
 </div>
 
 <div class="jr-cards">
