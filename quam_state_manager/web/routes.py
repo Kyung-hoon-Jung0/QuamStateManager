@@ -40852,6 +40852,7 @@ def _datasets_view(view_mode: str):
         view_mode=view_mode,
         collection_tags=pl["collection_tags"],
         scan_partial=scan_partial,
+        reindex_progress=_dataset_reindex_progress(active),
         digest=pl["digest"],
         rows_json=rows_json,
         # Curated fit-key order (from FIT_TARGET_MAP) for the Sort banner's
@@ -41277,6 +41278,18 @@ def _note_live_write_for_ingest(ctx: dict | None) -> None:
         _ensure_exp_worker(st)
 
 
+def _dataset_reindex_progress(active):
+    """R3B MINOR 8: the one-time index rebuild after an upgrade, summed over
+    the active folders (``{"done", "total"}``), or None once every folder's
+    rebuild is done. Read from each store's memory -- the render and every
+    delta poll ask it, so it must never touch the disk."""
+    progress = [p for f in active if (p := getattr(f["store"], "reindex_progress", None))]
+    if not progress or all(p["done"] == p["total"] for p in progress):
+        return None
+    return {"done": sum(p["done"] for p in progress),
+            "total": sum(p["total"] for p in progress)}
+
+
 @bp.route("/datasets/changes-since")
 def datasets_changes_since():
     """Delta poll endpoint for the dataset table.
@@ -41466,6 +41479,7 @@ def datasets_changes_since():
                     # "the table stopped updating".
                     "scan_ms": round(scan_ms_total, 1),
                     "folders": len(active),
+                    **({"reindex": progress} if (progress := _dataset_reindex_progress(active)) else {}),
                     # v1.5.1 (SB-P2-6): only when a folder IS gone, so the
                     # pinned contract keys stay as they were otherwise
                     **({"gone": gone} if gone else {}),

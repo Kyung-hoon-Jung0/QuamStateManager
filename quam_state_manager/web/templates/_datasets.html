@@ -68,7 +68,9 @@
            the table can show the newest dates before the whole archive is
            indexed. Say so; dataset-virtual.js hides this on the first delta
            poll that reports a complete scan. #}
-        {% if scan_partial %}<small class="muted ds-scan-note" id="ds-scan-note" title="The run index is still being built for this folder — older runs appear as the scan continues. Nothing to do.">&#8987; still indexing runs&hellip;</small>{% endif %}</h2>
+        {# R3B MINOR 8: the one-time rebuild after an upgrade that changed the
+           index format says how far it is, counted in memory (never a read). #}
+        {% if reindex_progress %}<small class="muted ds-scan-note" id="ds-scan-note" title="This version indexes runs differently, so every run is read once more. Older runs appear as it continues. Nothing to do.">Re-indexing after upgrade: {{ '{:,}'.format(reindex_progress.done) }} of {{ '{:,}'.format(reindex_progress.total) }} runs</small>{% elif scan_partial %}<small class="muted ds-scan-note" id="ds-scan-note" title="The run index is still being built for this folder — older runs appear as the scan continues. Nothing to do.">&#8987; still indexing runs&hellip;</small>{% endif %}</h2>
     <div class="ds-head-controls">
         <div class="table-filter ds-search-wrap" style="flex:1;position:relative">
             {# `data-preset` is the ARRIVAL marker, not a copy of the value: the
@@ -131,7 +133,7 @@
                         <tr><td><button class="ds-help-example" data-example="is:bookmarked">is:bookmarked</button></td>
                             <td>Only bookmarked (starred) runs</td></tr>
                         <tr><td><button class="ds-help-example" data-example="is:wrote">is:wrote</button></td>
-                            <td>Only runs that wrote values into the chip state (&#9998;) &mdash; the ones whose fits can be applied</td></tr>
+                            <td>Only runs that wrote values into the chip state (&#9998;)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="-tag:wip">-tag:wip</button></td>
                             <td>Prefix with <code>-</code> to negate any scope</td></tr>
                         <tr><td><button class="ds-help-example" data-example='tag:"in progress"'>tag:"in progress"</button></td>
@@ -144,9 +146,11 @@
                 </table>
             </div>
         </div>
-        {# P1-2 (UX round): one press to the runs whose fits can be applied #}
+        {# P1-2 (UX round): one press to the runs that wrote state. R3B MINOR 8:
+           no promise that their fits can be applied -- a reproduced figure
+           can still refuse clicks. #}
         <button type="button" class="ds-help-example btn-sm outline ds-wrote-chip" data-example="is:wrote"
-                title="Show only the runs that wrote values into the chip state (&#9998;): their figures can apply a fit">&#9998; wrote state</button>
+                title="Show only the runs that wrote values into the chip state (&#9998;)">&#9998; wrote state</button>
         <details class="bulk-colvis ds-colvis">
             <summary class="btn-sm outline" title="Choose which columns to show">&#9776; Properties</summary>
             <div class="bulk-colvis-menu" id="ds-colvis-menu" role="menu"></div>

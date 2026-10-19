@@ -606,6 +606,8 @@ class DatasetStore:
         # that were there already), not a run that landed or changed:
         # the delta poll ships those rows, but they are not run arrivals.
         self.index_complete = False
+        self._reindex_total = 0
+        self._reindex_pending: set[int] = set()
         self._load_store_cache()
         for path, fp in self._folder_fp.items():
             self._watch_settling(path, fp[0])
@@ -621,6 +623,19 @@ class DatasetStore:
         stays open after a truncated walk, so the next scan continues and
         clears this once it finishes."""
         return bool(getattr(self, "_last_scan_truncated", False))
+
+    @property
+    def reindex_progress(self) -> dict | None:
+        """R3B MINOR 8: how far the one-time rebuild of an index an older
+        version wrote has come -- ``{"done", "total"}`` counted over the runs
+        that index named (read once, at startup), or None when there is no
+        such rebuild. Memory only: a poll asking costs no disk read. A run
+        the rebuild could not re-read still counts once the walk finished."""
+        if not self._reindex_total:
+            return None
+        return {"done": self._reindex_total if self.index_complete else
+                        self._reindex_total - len(self._reindex_pending),
+                "total": self._reindex_total}
 
     def _cache_data_json(self, run_id: int, data: dict) -> None:
         """Insert *data* into the LRU cache, evicting the oldest if over cap.
@@ -1164,6 +1179,7 @@ class DatasetStore:
                 else:
                     run_info.last_parsed = now
                 self.runs[run_id] = run_info
+                self._reindex_pending.discard(run_id)
                 self._note_run_change(run_id, _old, run_info)
                 real_fp = (folder_fp, node_fp, data_fp)
                 if run_info.incomplete and self._retry_incomplete(run_entry, real_fp):
@@ -1381,7 +1397,19 @@ class DatasetStore:
             if not p.is_file():
                 return False
             raw = json.loads(p.read_text(encoding="utf-8"))
-            if raw.get("v") != _STORE_CACHE_V or raw.get("root") != str(self.folder_path):
+            if raw.get("root") != str(self.folder_path):
+                return False
+            if raw.get("v") != _STORE_CACHE_V:
+                # R3B MINOR 8: an index an older version wrote is rebuilt
+                # (one cold scan), but it names the runs that rebuild will
+                # read -- kept as ids only, so the rebuild can say how far it
+                # is without another read. Its rows are never served.
+                version = raw.get("v")
+                if isinstance(version, int) and 0 < version < _STORE_CACHE_V:
+                    ids = {row.get("run_id") for row in raw.get("runs") or ()
+                           if isinstance(row, dict)}
+                    self._reindex_pending = {i for i in ids if isinstance(i, int)}
+                    self._reindex_total = len(self._reindex_pending)
                 return False
             descs = raw.get("descriptions") or []
             fields = RunInfo.__dataclass_fields__

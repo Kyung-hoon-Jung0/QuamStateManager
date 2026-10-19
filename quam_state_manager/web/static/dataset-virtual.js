@@ -620,10 +620,10 @@
          render: function (r) { return '<span class="bookmark-star' + (r.bm ? ' bookmarked' : '') + '" title="' + (r.bm ? 'Bookmarked' : 'Click to bookmark') + '">' + (r.bm ? '★' : '☆') + '</span>'; }},
         {key: 'id', label: 'ID', on: true, w: 58, sortKey: 'id', type: 'num',
          // P1-2 (UX round): a run that wrote values into the chip's state is
-         // the one whose fits can be applied -- marked, and `is:wrote` filters
+         // marked, and `is:wrote` filters to those runs.
          render: function (r) {
              return '<strong>#' + r.id + '</strong>' + (r.ws ? '<span class="ds-wrote" title="This run wrote '
-                 + r.ws + ' value' + (r.ws === 1 ? '' : 's') + ' into the chip state (its fits can be applied)">&#9998;</span>' : '');
+                 + r.ws + ' value' + (r.ws === 1 ? '' : 's') + ' into the chip state">&#9998;</span>' : '');
          }},
         // Multi-folder only: which data folder a run belongs to. Auto-hidden by
         // visibleColumns() when a single folder is active (no disambiguation needed).
@@ -1818,8 +1818,30 @@
                 // the first poll that reports a complete scan -- and the
                 // header's run count, server-rendered from the partial table,
                 // is corrected to what the table now holds.
-                if (!data.partial) {
-                    var scanNote = document.getElementById('ds-scan-note');
+                // R3B MINOR 8: the one-time rebuild after an upgrade that
+                // changed the index format reports its progress (counted in
+                // the server's memory) until it is done.
+                var scanNote = document.getElementById('ds-scan-note');
+                if (data.reindex) {
+                    if (!scanNote) {
+                        scanNote = document.createElement('small');
+                        scanNote.id = 'ds-scan-note';
+                        scanNote.className = 'muted ds-scan-note';
+                        var head = document.querySelector('.ds-head-title');
+                        if (head) head.appendChild(scanNote);
+                    }
+                    scanNote.hidden = false;
+                    scanNote.title = 'This version indexes runs differently, so every run is read '
+                        + 'once more. Older runs appear as it continues. Nothing to do.';
+                    scanNote.textContent = 'Re-indexing after upgrade: '
+                        + Number(data.reindex.done).toLocaleString('en-US') + ' of '
+                        + Number(data.reindex.total).toLocaleString('en-US') + ' runs';
+                } else if (data.partial && scanNote && !scanNote.hidden) {
+                    // the rebuild finished, the ordinary bounded scan has not
+                    scanNote.title = 'The run index is still being built for this folder — '
+                        + 'older runs appear as the scan continues. Nothing to do.';
+                    scanNote.textContent = '⌛ still indexing runs…';
+                } else if (!data.partial) {
                     if (scanNote && !scanNote.hidden) {
                         scanNote.hidden = true;
                         state.pendingHeadCount = true;
