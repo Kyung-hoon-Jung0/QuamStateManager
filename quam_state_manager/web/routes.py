@@ -909,6 +909,29 @@ def _refresh_live_diverged(ctx) -> None:
 _LIVE_UNREADABLE_AFTER_S = 2.5
 
 
+def _live_folder_failure(folder) -> tuple[str, bool, bool]:
+    """R3 MINOR 10: why the live pair could not be found, as ``(reason,
+    missing, unreachable)``. "Not found" only when the folder's drive or share
+    answers and the folder is not there; a drive/share that does not answer
+    (an offline share, an unplugged disk, an unmapped drive) or a folder probe
+    with no answer within the bounded wait is "unreachable"."""
+    from quam_state_manager.core import folder_probe
+    folder = Path(folder)
+    asks = [str(folder), folder.anchor] if folder.anchor else [str(folder)]
+    # The failed file read invalidates any earlier answer about its location.
+    folder_probe.forget(*asks)
+    present = folder_probe.folders_present(asks)
+    if present.get(str(folder)) is True:
+        return ("The live state folder has no state.json / wiring.json \u2014 it may have been moved or deleted.",
+                False, False)
+    if present.get(str(folder)) is False and present.get(folder.anchor) is True:
+        return (f"The live chip folder was not found (moved, renamed or deleted): {folder}. "
+                "Your edits are kept here; open the chip at its new place and SM offers them there.",
+                True, False)
+    return (f"Live chip folder unreachable (drive/share not answering): {folder}. Your edits are kept here.",
+            False, True)
+
+
 def _sync_live_refresh(ctx) -> None:
     """Poll-time half of the status control: recompute the cached LIVE facts
     (``ctx["sync_live"]``) when what they depend on moved.
@@ -953,13 +976,8 @@ def _sync_live_refresh(ctx) -> None:
         try:
             _lp = working_copy.read_live_shared(wc)
         except FileNotFoundError:
-            # v1.5.1 (SB-P2-3): a folder that is gone is said as gone
-            if not os.path.isdir(str(wc.live_folder)):
-                _note_live_unreadable(ctx, key, "the live chip folder was not found "
-                                      f"(moved, renamed or deleted): {wc.live_folder}",
-                                      missing=True)
-            else:
-                _note_live_unreadable(ctx, key, "the live folder has no state.json / wiring.json")
+            reason, missing, unreachable = _live_folder_failure(wc.live_folder)
+            _note_live_unreadable(ctx, key, reason, missing=missing, unreachable=unreachable)
             return
         except (OSError, ValueError, safe_io.LiveFileError) as exc:
             _note_live_unreadable(ctx, key, str(exc))
@@ -1124,7 +1142,8 @@ def _store_sync_live(ctx, live_state: dict, live_wiring: dict, *, key=None,
     return facts, entries, verdict
 
 
-def _note_live_unreadable(ctx, key, reason: str, missing: bool = False) -> None:
+def _note_live_unreadable(ctx, key, reason: str, missing: bool = False,
+                          unreachable: bool = False) -> None:
     """Count a failed live read; after two failures at least
     ``_LIVE_UNREADABLE_AFTER_S`` apart the control says so (SE-02). The key is
     kept, so a file that STAYS broken is not re-read every poll -- the next
@@ -1140,6 +1159,7 @@ def _note_live_unreadable(ctx, key, reason: str, missing: bool = False) -> None:
         prev = dict(ctx.get("sync_live") or {})
         prev["unreadable"] = bad["reason"]
         prev["missing"] = bool(missing)       # v1.5.1 (SB-P2-3)
+        prev["unreachable"] = bool(unreachable)
         prev["_key"] = key
         prev["_sig"] = None
         ctx["sync_live"] = prev
@@ -1157,9 +1177,11 @@ def _sync_view(ctx=None) -> dict | None:
     facts = ctx.get("sync_live")
     unreadable = None
     missing = False
+    unreachable = False
     if facts:
         unreadable = facts.get("unreadable")
         missing = bool(facts.get("missing"))
+        unreachable = bool(facts.get("unreachable"))
         # facts read at a sync point that has since moved (a pull, an apply)
         # describe a live chip SM has already reconciled with
         k = facts.get("_key")
@@ -1192,6 +1214,7 @@ def _sync_view(ctx=None) -> dict | None:
         archive=(ctx.get("origin") or "live") == "dataset_archive",
         unreadable=unreadable,
         missing=missing and bool(unreadable),
+        unreachable=unreachable and bool(unreadable),
         readonly=bool(ctx.get("live_readonly_hint")),
         refused=refused,
         change_paths=paths,
@@ -29916,17 +29939,13 @@ def state_review():
     archive = (ctx.get("origin") or "live") == "dataset_archive"
     read_error = None
     read_missing = False
+    read_unreachable = False
     entries, verdict, facts = [], None, None
     _lp = None
     try:
         _lp = working_copy.read_live_shared(wc)
     except FileNotFoundError:
-        # v1.5.1 (SB-P2-3): a folder that is gone is said as gone
-        read_missing = not os.path.isdir(str(wc.live_folder))
-        read_error = (f"The live chip folder was not found (moved, renamed or deleted): "
-                      f"{wc.live_folder}. Your edits are kept here; open the chip at its "
-                      "new place and SM offers them there." if read_missing else
-                      "The live state folder has no state.json / wiring.json — it may have been moved or deleted.")
+        read_error, read_missing, read_unreachable = _live_folder_failure(wc.live_folder)
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
         read_error = f"Could not read the live chip: {exc}"
     else:
@@ -29937,7 +29956,8 @@ def state_review():
             facts, entries, verdict = _store_sync_live(ctx, None, None, pair=_lp)
     sv = _sync_view(ctx)
     if read_error and sv is not None and sv["state"] not in ("archive",):
-        sv = dict(sv, state="unreadable", unreadable=read_error, missing=read_missing)
+        sv = dict(sv, state="unreadable", unreadable=read_error, missing=read_missing,
+                  unreachable=read_unreachable)
 
     with store._lock:
         log = list(store.change_log or [])

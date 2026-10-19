@@ -155,7 +155,7 @@ def live_facts(*, entries: Iterable[Any], moved: bool | None,
 def view(*, facts: Mapping[str, Any] | None, flag_moved: bool,
          flag_count: int | None, archive: bool, unreadable: str | None,
          flag_conflicts: Iterable[str] = (), missing: bool = False,
-         readonly: bool = False,
+         readonly: bool = False, unreachable: bool = False,
          refused: Mapping[str, Any] | None, change_paths: Iterable[str],
          unapplied: int, working_dirty: bool) -> dict:
     """What the control renders NOW: cached live facts (may be one poll old)
@@ -196,6 +196,7 @@ def view(*, facts: Mapping[str, Any] | None, flag_moved: bool,
         "unreadable": unreadable or None,
         # v1.5.1 (SB-P2-3): the live folder itself is gone (not a torn file)
         "missing": bool(missing and state == "unreadable"),
+        "unreachable": bool(unreachable and state == "unreadable"),
         # v1.5.1 (U P1-6): the read-only pill is part of what the control
         # shows -- a window repaints when it is raised or dropped
         "readonly": bool(readonly),

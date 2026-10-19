@@ -78,7 +78,11 @@ def folder_present(path) -> bool | None:
     return folders_present([path])[str(path)]
 
 
-def forget() -> None:
-    """Drop every remembered answer (tests; a user-visible rescan)."""
+def forget(*paths) -> None:
+    """Drop named answers, or every answer when no paths are given."""
     with _LOCK:
-        _PROBES.clear()
+        if paths:
+            for path in paths:
+                _PROBES.pop(str(path), None)
+        else:
+            _PROBES.clear()
