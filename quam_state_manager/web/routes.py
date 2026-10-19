@@ -5755,7 +5755,7 @@ def _publish_instance_chip(ctx: dict | None) -> None:
     # chip open before (a switch back recorded the other chip's name) or none
     # (after a restart: "").
     try:
-        name = _chip_name_of(ctx) if ctx.get("path") else ""
+        name = _chip_label(ctx["path"], ctx.get("store")) if ctx.get("path") else ""
     except Exception:       # noqa: BLE001 — a name lookup must not fail a load
         name = ""
     try:
