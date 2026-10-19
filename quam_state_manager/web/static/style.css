@@ -14697,8 +14697,11 @@ tr.diag-row-collapsed { display: none; }
     background: var(--pico-card-background-color); color: var(--pico-color);
     border: 1px solid var(--pico-muted-border-color); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
 .multi-instance-slot .sync-peers-list p { margin: 0 0 .3rem; }
-.multi-instance-slot .sync-peers-list ul { margin: 0 0 .3rem 1rem; padding: 0; }
-.multi-instance-slot .sync-peers-list li { margin: 0; list-style: disc; }
+/* v1.5.1 (r6 P2-5): a plain vertical list -- inside the top bar's nav, Pico
+   lays every ul out as a flex row and every li as a padded inline-block, so
+   "this window" and the peer line sat side by side */
+.multi-instance-slot .sync-peers-list ul { display: block; margin: 0 0 .3rem 1rem; padding: 0; }
+.multi-instance-slot .sync-peers-list li { display: list-item; margin: 0; padding: 0; list-style: disc; }
 /* the collapsed top bar floats the control (html.topbar-hidden rules above) */
 html.topbar-hidden #pending-tray > .sync-control { display: inline-flex; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap):not(.sync-control) { display: none; }
