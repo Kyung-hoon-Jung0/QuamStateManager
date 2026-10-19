@@ -27486,26 +27486,32 @@ def search():
                            ptr_targets=_search_pointer_targets(results))
 
 
-def _pointer_target_exists(root, segs: list) -> bool:
-    """Whether the field at *segs* (a resolved pointer target) is in *root*."""
-    node = root
-    for seg in segs:
-        if isinstance(node, dict) and seg in node:
-            node = node[seg]
-        elif isinstance(node, list) and str(seg).isdigit() and int(seg) < len(node):
-            node = node[int(seg)]
-        else:
-            return False
-    return True
+def _pointer_dangles(root, raw: str, own: tuple, resolve=None) -> bool:
+    """R4 B1: a pointer is dangling only when the pointer resolver cannot
+    resolve it -- it hands the raw string back then (a field that is not
+    there, a cycle). A path that crosses another pointer is followed the way
+    the resolver follows it: a cross-resonance channel's LO_frequency is
+    ``#/qubits/<q>/xy/opx_output/upconverters/2/frequency`` where
+    ``xy.opx_output`` is itself a pointer (to the wiring, then to a shared
+    MW-FEM port). A walk over the raw dicts stopped at that pointer and
+    called a valid wiring dangling. *resolve* is the store's own resolver
+    (its cache); without one the module resolver reads *root*."""
+    from quam_state_manager.core.pointer_resolver import resolve_pointer
+    try:
+        got = resolve(raw, own) if resolve else resolve_pointer(root, raw, own)
+    except Exception:  # noqa: BLE001 -- display only: unknown is not "dangling"
+        return False
+    return isinstance(got, str) and got == raw
 
 
 def _search_pointer_targets(results) -> dict[str, dict]:
     """B1 (UX round): a pointer row says where it points -- "points to
     x180_DragCosine.amplitude" -- written relative to the row's own path when
     they share a prefix, so a reader never takes the pointer for the field it
-    names. R3B MINOR 1: the target is looked up; a pointer to a field that
-    is not there says "dangling pointer to ..." (docs/114), never a
-    confident "points to". ``{dot_path: {"target", "dangling"}}``; a pointer
+    names. R3B MINOR 1: a pointer the resolver cannot resolve says
+    "dangling pointer to ..." (docs/114), never a confident "points to";
+    R4 B1: one whose path crosses another pointer is resolved through it
+    (``_pointer_dangles``). ``{dot_path: {"target", "dangling"}}``; a pointer
     whose target cannot be computed is left out."""
     from quam_state_manager.core.pointer_resolver import _compute_resolved_path, is_pointer
     store = _store()
@@ -27526,7 +27532,9 @@ def _search_pointer_targets(results) -> dict[str, dict]:
         while n < min(len(own), len(target)) - 1 and own[n] == target[n]:
             n += 1
         out[r.dot_path] = {"target": ".".join(str(t) for t in target[n:]),
-                           "dangling": not _pointer_target_exists(root, target)}
+                           "dangling": _pointer_dangles(
+                               root, raw, tuple(own),
+                               store.resolve_pointer if store else None)}
     return out
 
 
