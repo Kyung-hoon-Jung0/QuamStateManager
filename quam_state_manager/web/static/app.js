@@ -3911,6 +3911,9 @@ window.SyncPanel = (function () {
         lab.textContent = btn.getAttribute("data-arm-label") || "Press again to confirm";
         btn.setAttribute("data-armed", "1");
         btn._armedAt = Date.now();
+        // R4 A2: armed by a key or pointer press still held down -- the
+        // confirm waits for it to be let go (keyup / pointerup)
+        btn._armReleased = (_pressDown !== btn);
         btn.classList.add("sync-armed");
         // v1.5.1 (U P2-32): the seconds left show on the button (a corner
         // badge: the label keeps its width), and running out is SAID -- a
@@ -3930,9 +3933,43 @@ window.SyncPanel = (function () {
     var ARM_S = 5;
     // R3 M6: the least time between arming and a confirm that counts
     var _cfg = { armMinMs: 400 };
+    // R4 A2: a held Enter is not a confirm either. The OS repeats a held key
+    // (about every 33 ms after about 500 ms) and each repeat clicks a focused
+    // button, so the 400 ms floor alone let the repeat confirm. A confirm now
+    // also needs the arming press to have been let go, and key repeats on an
+    // armed button do nothing. A click with no key or pointer down (an
+    // assistive tool's) needs no release; the floor still holds for it.
     function confirmTooSoon(btn) {
-        return !!(btn && btn._armedAt && (Date.now() - btn._armedAt) < _cfg.armMinMs);
+        if (!btn || !btn._armedAt) return false;
+        return btn._armReleased === false || (Date.now() - btn._armedAt) < _cfg.armMinMs;
     }
+    var _pressDown = null;          // the button a key or pointer press is down on
+    function _pressButton(e) {
+        var t = e && e.target;
+        return (t && t.closest) ? t.closest("button") : null;
+    }
+    function _isPressKey(e) { return e.key === "Enter" || e.key === " " || e.key === "Spacebar"; }
+    function _letGo(e) {
+        if (e.type === "keyup" && !_isPressKey(e)) return;
+        if (_pressDown) { _pressDown._armReleased = true; _pressDown = null; }
+    }
+    document.addEventListener("keydown", function (e) {
+        if (!_isPressKey(e)) return;
+        var b = _pressButton(e);
+        if (!b) return;
+        if (e.repeat && b.getAttribute("data-armed") === "1") {
+            e.preventDefault();         // the repeat would click the armed button
+            return;
+        }
+        _pressDown = b;
+    }, true);
+    document.addEventListener("keyup", _letGo, true);
+    document.addEventListener("pointerdown", function (e) {
+        var b = _pressButton(e);
+        if (b) _pressDown = b;
+    }, true);
+    document.addEventListener("pointerup", _letGo, true);
+    document.addEventListener("pointercancel", _letGo, true);
     /* The seconds left, as a corner badge the screen reader skips (R3 MINOR
        7: CSS generated content landed in the button's accessible name). */
     function _badge(btn, text) {
