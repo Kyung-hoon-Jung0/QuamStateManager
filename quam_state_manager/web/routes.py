@@ -4843,6 +4843,14 @@ def _redo_across_pull(ctx, store, pre_seq, pre_leaves) -> None:
         _redo_mark(ctx, store)            # the pull is not a fork: redo stays
         return
     frames.clear()
+    # R3 MINOR 10c: over the leaf-walk cap the pull's changes cannot be
+    # compared leaf by leaf; the redo is dropped and the next press says why
+    # (never "the document's shape", which a value-only pull did not change)
+    if patch.get("structural") and _leaf_count_over_cap(store) is True:
+        ctx["redo_fork_note"] = {
+            "seq": store.mutation_seq,
+            "message": "Redo is not available for this change on a chip this large (over 200,000 values)."}
+        return
     ctx["redo_fork_note"] = {
         "seq": store.mutation_seq,
         "text": ("the live chip's update changed " + hit + ", which the redo would "
@@ -28842,8 +28850,10 @@ def redo():
         # v1.5.1 (SB-P2-2): a pull that had to drop the redo history said why
         _note = ctx.pop("redo_fork_note", None) if ctx else None
         if _note and _note.get("seq") == store.mutation_seq:
+            if _note.get("message"):
+                ctx["redo_fork_note"] = _note  # keep the size explanation until the state moves
             return _redo_response(
-                f"Nothing to redo — {_note['text']}.", [],
+                _note.get("message") or f"Nothing to redo — {_note['text']}.", [],
                 extra={"requested": n_req, "consumed": 0, "stopped": "forked",
                        "level": "warning", "live": False})
         if _forked:
