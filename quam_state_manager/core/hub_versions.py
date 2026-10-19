@@ -810,23 +810,28 @@ def count_newer(directory, snapshots, cutoff_us: int, *, binding=None,
     row before the cutoff -- the page a "go to date" lands on (P1-9). Walks
     the timeline newest first and stops after a page wholly before the cutoff
     (R3B MINOR 5: by every event on it -- a page of newer events that are all
-    left out, stateless or uncertain, is not a page before the cutoff)."""
+    left out, stateless or uncertain, is not a page before the cutoff; R4 b9:
+    nor is a page of events with no time at all -- they say nothing about
+    where the cutoff is)."""
     directory = Path(directory)
     binding = binding or SimpleNamespace(directory=directory)
     n = 0
     cursor = None
     while True:
         res = hub_query.timeline(binding, limit=500, cursor=cursor, foreign="label")
-        any_newer = False
+        any_timed = any_newer = False
         for e in res["events"]:
             t = order_key(e)[0]
-            if t is None or t < cutoff_us:
+            if t is None:
+                continue
+            any_timed = True
+            if t < cutoff_us:
                 continue
             any_newer = True
             if has_state(e) and not e["flags"] & CHIP_UNCERTAIN:
                 n += 1
         cursor = res["cursor"]
-        if not cursor or (res["events"] and not any_newer):
+        if not cursor or (any_timed and not any_newer):
             break
     n += sum(1 for s in snapshots
              if s.timestamp in older and _snapshot_instant(s.timestamp) >= cutoff_us)

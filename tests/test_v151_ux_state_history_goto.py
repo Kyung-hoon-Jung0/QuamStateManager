@@ -143,6 +143,24 @@ def test_count_newer_reads_past_a_page_of_left_out_newer_events(monkeypatch):
     assert hub_versions.count_newer("x", [], 10 * day, binding=object()) == 2
 
 
+def test_count_newer_reads_past_a_page_of_untimed_events(monkeypatch):
+    """R4 b9: a page made only of events with no time says nothing about
+    where the cutoff is -- it is not a page before the cutoff either."""
+    day = 86_400_000_000
+
+    def ev(us, eid):
+        return {"eid": eid, "error": None, "kind": "run", "status": None, "state_hash": "h",
+                "flags": 0, "t_ord": None, "t_utc_us": us, "ord": 0}
+    pages = [[ev(None, 2000 + i) for i in range(500)],
+             [ev(12 * day, 3), ev(11 * day, 2), ev(5 * day, 1)]]
+
+    def timeline(binding, limit=50, cursor=None, foreign=None):
+        i = int(cursor or 0)
+        return {"events": pages[i], "cursor": str(i + 1) if i + 1 < len(pages) else None}
+    monkeypatch.setattr(hub_versions.hub_query, "timeline", timeline)
+    assert hub_versions.count_newer("x", [], 10 * day, binding=object()) == 2
+
+
 def test_without_a_display_zone_the_day_ends_at_that_dates_own_offset(app, monkeypatch):
     """A machine in a DST zone: the end of a winter day is at the winter
     offset even when today is summer (the fixed current offset was an hour
