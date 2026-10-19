@@ -75,6 +75,23 @@ def is_plain_value(v: Any) -> bool:
     return True
 
 
+def column_class(v: Any) -> str:
+    """What a Live-Edit column model reads of a plain value besides its
+    presence: a column's unit (``pair_columns._unit_of``) is none for a
+    true/false value and for a text value that is not a number, so a plain
+    write that moves a leaf between these classes moves the column model."""
+    if v is None:
+        return "none"
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, str):
+        try:
+            float(v)
+        except ValueError:
+            return "text"
+    return "num"
+
+
 class StoreRevs:
     """Per-store revision state. Lives ON the store (``store._sm_revs``), so it
     is collected with it and can never be confused with another chip's."""
@@ -88,9 +105,10 @@ class StoreRevs:
         self.last_seq = seq
         self.global_rev = 0
         self.struct_rev = 0
-        # plain writes that flipped a leaf between None and not-None: the one
-        # value property the Live-Edit column models read (a column that is
-        # null on every entity is dropped), see column_token()
+        # plain writes that moved a leaf between value classes (None, a
+        # true/false, text, a number): the value properties the Live-Edit
+        # column models read (a column null on every entity is dropped; a
+        # true/false or text column heads no unit), see column_token()
         self.null_rev = 0
         self.sub_rev: dict[tuple[str, str], int] = {}
         self.top_rev: dict[str, int] = {}
@@ -189,7 +207,7 @@ def note(store, kind: str, path: str | None, old: Any = None, new: Any = None) -
         plain = (kind == "set" and path is not None
                  and is_plain_value(old) and is_plain_value(new)
                  and path.rsplit(".", 1)[-1] != "__class__")
-        if plain and ((old is None) != (new is None)):
+        if plain and column_class(old) != column_class(new):
             r.null_rev += 1
         _record(r, seq, path if kind != "reload" else None, plain)
         if plain:
@@ -389,10 +407,11 @@ def struct_token(store) -> tuple:
 
 
 def column_token(store) -> tuple:
-    """Moves on every non-plain change AND on every plain write that flips a
-    leaf between None and a value -- what the Live-Edit column derivations
-    (``qubit_columns`` / ``pair_columns``) read besides structure: a column
-    null on every entity is dropped, and nothing else about a plain value
+    """Moves on every non-plain change AND on every plain write that moves a
+    leaf between value classes (:func:`column_class`) -- what the Live-Edit
+    column derivations (``qubit_columns`` / ``pair_columns``) read besides
+    structure: a column null on every entity is dropped, a true/false or text
+    column heads no unit (v1.5.1), and nothing else about a plain value
     reaches a column model (list-ness and pointer-ness are structural)."""
     r = _sync(store)
     return (r.serial, r.struct_rev, r.null_rev)
