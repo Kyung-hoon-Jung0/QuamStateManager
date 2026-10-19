@@ -560,15 +560,20 @@ class TestRun:
 
         def locked(*args, **kw):
             calls["n"] += 1
-            raise PermissionError(13, "The process cannot access the file because it is being used "
+            # v1.5.1: old -> new, why: the fake now carries the sharing violation's
+            # winerror 32, as Windows raises it; the door names the cause in its
+            # head and keeps the OS text for the details line (U P1-6)
+            exc = PermissionError(13, "The process cannot access the file because it is being used "
                                       "by another process", "state.json")
+            exc.winerror = 32
+            raise exc
         monkeypatch.setattr(_wc, "apply_to_live", locked)
         d = c.post(f"/api/agent/approvals/{a['id']}/approve", json={}, headers=HUMAN)
         assert calls["n"] == 1, "the door reached the live write"
         assert d.status_code == 409, d.get_json()
         err = d.get_json()["error"]
         # verifier P2: the real reason, not "HTTP 500"
-        assert "being used by another process" in err and "HTTP 500" not in err, err
+        assert "another program holds a live file open" in err and "HTTP 500" not in err, err
         # nothing of the refused press is left in SM
         sv = c.get("/state/drift").get_json()["sync"]
         assert sv["unapplied"] == 0, sv
