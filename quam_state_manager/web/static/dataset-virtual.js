@@ -1993,6 +1993,18 @@
             changed = true;
         }
         var vanished = data.vanished || [];
+        // R4 b4: a folder the answer calls GONE takes every row of it with
+        // it -- also rows another surface's rescan already dropped from the
+        // server's index, which the answer then cannot list as vanished
+        var goneKeys = {};
+        (data.gone || []).forEach(function (g) { if (g && g.key) goneKeys[g.key] = true; });
+        if (Object.keys(goneKeys).length) {
+            var listed = new Set(vanished);
+            vanished = vanished.slice();
+            state.rows.forEach(function (r) {
+                if (r && goneKeys[r.f] && !listed.has(r.uid)) vanished.push(r.uid);
+            });
+        }
         for (var v = 0; v < vanished.length; v++) {
             var vid = vanished[v];
             // A vanished run must not stay counted/flashing — including one

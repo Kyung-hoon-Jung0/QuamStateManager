@@ -24,6 +24,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import time
 from html import unescape
 from pathlib import Path
@@ -32,6 +34,8 @@ import pytest
 
 from quam_state_manager.web import routes
 from quam_state_manager.web.app import create_app
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _run(root: Path, rid: int, name: str) -> None:
@@ -174,3 +178,27 @@ def test_the_poll_waits_at_most_the_probe_on_a_dead_share(env, monkeypatch):
     for d in (d1, d2):
         assert [g["path"] for g in d.get("unreachable", [])] == [str(down)], d
     assert seen["folder_stats"] == 1, "a second probe of a path already in flight"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_an_open_page_drops_a_gone_folders_rows_another_rescan_already_dropped(env, tmp_path):
+    """R4 b4: another surface (a second window's render) rescanned the store
+    of a folder that is gone, so the store no longer holds its runs and the
+    poll that names the folder gone lists none of them as vanished. The open
+    page drops every row of a folder the answer calls gone."""
+    app, c, tmp = env
+    page = _page(c)
+    d0 = c.get("/datasets/changes-since?ts=0").get_json()
+    (tmp / "data_b").rename(tmp / "data_b_moved")
+    _page(c)                                    # another surface rescans
+    delta = c.get(f"/datasets/changes-since?ts={d0['now']}").get_json()
+    key = delta["gone"][0]["key"]
+    assert not any(v.startswith(key + ":") for v in delta["vanished"]), "the scenario: nothing vanished"
+    fx = tmp_path / "fx.json"
+    fx.write_text(json.dumps({"page": page, "delta": delta, "gone_exp": "spectroscopy", "kept_exp": "ramsey",
+                              "gone_path": str(tmp / "data_b")}), encoding="utf-8")
+    p = subprocess.run(["node", str(ROOT / "tests" / "v151_ds_gone_folder_selfcheck.cjs"), str(fx)],
+                       capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT), timeout=120)
+    if p.returncode == 2 and "jsdom not installed" in (p.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert p.returncode == 0, f"stdout:\n{p.stdout}\nstderr:\n{p.stderr}"
