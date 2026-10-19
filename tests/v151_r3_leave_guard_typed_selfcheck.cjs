@@ -49,6 +49,11 @@ function page(extraHtml, drift) {
         }
         return new Promise(() => {});
     };
+    // v1.5.1: old -> new, why: the page's scripts are stripped above, so the
+    // tab's chip key (base.html sets window.__chipKey) is set as the browser
+    // would -- R4 a2 applies the poll's tray_durable to the tab's own chip only
+    const ck = /window\.__chipKey = ("(?:[^"\\]|\\.)*")/.exec(FX.page);
+    w.__chipKey = ck ? JSON.parse(ck[1]) : '';
     w.eval(SQ);
     w.eval(APP);
     return w;

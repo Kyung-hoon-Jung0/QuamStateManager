@@ -5644,8 +5644,11 @@ window.livePushExtrasLine = function (typedPaths) {
                     window._runnerSigSeen = d.runner_sig;
                 }
                 // R3 MINOR 4: the leave guard reads data-tray-durable; the
-                // checkpoint can start (or stop) failing with no re-render
-                if (d && typeof d.tray_durable === "boolean") {
+                // checkpoint can start (or stop) failing with no re-render.
+                // R4 a2: only the chip this tab shows -- the poll answers for
+                // the chip open now, which another window may have switched
+                if (d && typeof d.tray_durable === "boolean"
+                        && String(d.tray_chip || "") === String(window.__chipKey || "")) {
                     var _tr = document.getElementById("pending-tray");
                     if (_tr) {
                         if (d.tray_durable) _tr.setAttribute("data-tray-durable", "1");

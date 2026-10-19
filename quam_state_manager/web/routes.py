@@ -10749,14 +10749,14 @@ def _change_paths_of(changes) -> list | None:
     return out if len(out) <= _TRAY_PATHS_MAX else None
 
 
-def _tray_durable() -> bool:
-    """v1.5.1 (SB-P2-8): the active chip's staged rows are checkpointed on
-    disk (they survive a closed tab and a restart), so leaving a page loses
-    nothing of the tray's -- the page's "Leave site?" asks only for what is
-    truly unsaved there (typed, not committed)."""
+def _tray_durable(ctx=None) -> bool:
+    """v1.5.1 (SB-P2-8): the active chip's (or *ctx*'s) staged rows are
+    checkpointed on disk (they survive a closed tab and a restart), so leaving
+    a page loses nothing of the tray's -- the page's "Leave site?" asks only
+    for what is truly unsaved there (typed, not committed)."""
     try:
         from quam_state_manager.core import pending_tray
-        return pending_tray.durable(_active_ctx())
+        return pending_tray.durable(ctx if ctx is not None else _active_ctx())
     except Exception:  # noqa: BLE001 -- unknown is "not durable": the guard stays
         return False
 
@@ -30526,7 +30526,10 @@ def state_drift():
     # R3 MINOR 4: whether the staged rows are checkpointed rides the poll --
     # a tray rendered "durable" before its background write failed kept
     # saying so (the poll's signature did not move, nothing re-rendered it)
-    _dur = _tray_durable()
+    _dur = _tray_durable(ctx)
+    # R4 a2: whose tray that is -- a tab showing another chip (another window
+    # opened this one meanwhile) must not take it for its own tray
+    _dchip = _ctx_chip_key(ctx) or ""
     _rsig = _runner_sig()
     try:
         _note_live_write_for_ingest(ctx)
@@ -30535,7 +30538,7 @@ def state_drift():
     if not _drift_tracked(ctx):
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync, tray_durable=_dur,
+                       live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
                        runner_sig=_rsig)
     try:
         info = _compute_drift(ctx)
@@ -30543,12 +30546,12 @@ def state_drift():
         logger.debug("drift compute failed", exc_info=True)
         return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync, tray_durable=_dur,
+                       live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
                        runner_sig=_rsig)
     if info is None:
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync, tray_durable=_dur,
+                       live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
                        runner_sig=_rsig)
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
@@ -30558,7 +30561,8 @@ def state_drift():
                     "baseline_utc": info["baseline_utc"],
                     "auto_pull": auto_pull, "hist_seq": hist_seq,
                     "edit_seq": _edit_seq(), "live_diverged": ld,
-                    "sync": sync, "tray_durable": _dur, "runner_sig": _rsig})
+                    "sync": sync, "tray_durable": _dur, "tray_chip": _dchip,
+                    "runner_sig": _rsig})
 
 
 @bp.route("/state/drift/view")
