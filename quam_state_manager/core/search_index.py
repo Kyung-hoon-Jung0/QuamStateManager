@@ -246,10 +246,11 @@ class SearchIndex:
             cat_set = set(self.category_index.get(category, []))
             candidate_indices = candidate_indices & cat_set
 
-        scored: list[tuple[float, int]] = []
+        scored: list[tuple[float, int, bool]] = []
         for idx in candidate_indices:
-            score = self._score(idx, terms, groups)
-            scored.append((score, idx))
+            tier = self._own_path_holds_every_word(self.entries[idx], terms, groups)
+            score = self._score(idx, terms, groups, tier=tier)
+            scored.append((score, idx, tier))
 
         # Tie-break on the dot path NATURALLY (customer rule 2026-09-09):
         # the score buckets are coarse, so ties are the norm and this key
@@ -259,12 +260,14 @@ class SearchIndex:
         # R3B M4: within a tier (the +1000 own-path tier, or the rest) a
         # pointer row sorts below every real value -- on a 21-qubit chip "cz
         # amplitude" listed 50 of 50 pointers and the first real value at
-        # rank 155, past the limit.
+        # rank 155, past the limit. R4 b9: the tier is the own-path test
+        # itself, never ``score // 1000`` -- ten or more words add up to
+        # 1000 on their own and moved a pointer into a tier of its own.
         entries = self.entries
-        scored.sort(key=lambda x: (-(x[0] // 1000), _is_pointer_entry(entries[x[1]]), -x[0],
+        scored.sort(key=lambda x: (not x[2], _is_pointer_entry(entries[x[1]]), -x[0],
                                    natural_key(entries[x[1]].dot_path)))
         results: list[SearchResult] = []
-        for score, idx in scored[:limit]:
+        for score, idx, _tier in scored[:limit]:
             e = self.entries[idx]
             results.append(SearchResult(
                 dot_path=e.dot_path,
@@ -338,18 +341,30 @@ class SearchIndex:
                 out.update(idxs)
         return out
 
+    @staticmethod
+    def _own_path_holds_every_word(e, terms: list[str],
+                                   groups: list[list[str]] | None = None) -> bool:
+        """B1: the entry's OWN dot path holds every word (one term of every
+        OR group) -- the tier that ranks above every entry that matched a word
+        only through its value."""
+        path_l = e.dot_path.lower()
+        return all(any(t in path_l for t in g) for g in (groups or [[t] for t in terms]))
+
     def _score(self, idx: int, terms: list[str],
-               groups: list[list[str]] | None = None) -> float:
+               groups: list[list[str]] | None = None, *, tier: bool | None = None) -> float:
         """Score an entry against search terms. Higher = better match.
 
         B1: an entry whose OWN dot path holds every word (one term of every
         OR group) ranks in a tier above every entry that matched a word only
         through its value -- a pointer whose value mentions ``x180`` never
-        outranks the x180 leaf itself."""
+        outranks the x180 leaf itself. The tier earns +1000 here (the score
+        shown); ``search`` orders by the tier itself. *tier*: the caller's
+        own-path verdict, when it already has one."""
         e = self.entries[idx]
         total = 0.0
-        path_l = e.dot_path.lower()
-        if all(any(t in path_l for t in g) for g in (groups or [[t] for t in terms])):
+        if tier is None:
+            tier = self._own_path_holds_every_word(e, terms, groups)
+        if tier:
             total += 1000
         lk = e.leaf_key.lower()
         pid = e.parent_id.lower()

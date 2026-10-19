@@ -7,6 +7,10 @@ found the sort-key line itself unpinned: reverting it kept every pin green.
 
 The chip is the real QUAM shape of a qubit's pulses: x90's amplitude is a
 pointer to x180's (``#../x180/amplitude``), its length a real value.
+
+R4 b9: the tier was ``score // 1000``. Each word adds up to 100, so ten
+words add up to a tier of their own and a pointer that matched every word
+well jumped above a real value of the same tier.
 """
 from __future__ import annotations
 
@@ -28,3 +32,12 @@ def test_a_pointer_sorts_below_a_real_value_of_its_tier():
     # order alone would list the pointer (x90.amplitude) first
     assert _rows("x90") == [("x90.length", False), ("x90.amplitude", True)]
     assert _rows("x90", limit=1) == [("x90.length", False)]
+
+
+def test_the_tier_holds_at_ten_or_more_words():
+    # all three hold "amplitude" in their own path (one tier); the pointer
+    # x90.amplitude scores 2000 at ten words, the real amplitude_scale 1700
+    rows = _rows(" ".join(["amplitude"] * 10))
+    assert rows == [("x180.amplitude", False), ("x180.amplitude_scale", False),
+                    ("x90.amplitude", True)], rows
+    assert rows == _rows(" ".join(["amplitude"] * 9))
