@@ -4228,6 +4228,9 @@ def _hub_sync_open(ctx) -> None:
         ctx["hub_chip_dir"] = str(chip_dir)
         # S10 C1.5: the folder view's declared roots (_hub_folder_view)
         ctx["hub_roots"] = list(roots)
+        # R4 a4: and the declared folder they were derived from
+        ctx["hub_roots_declared"] = list(ctx.get("extras_data_declared") or [])
+        ctx.pop("cz_loss_roots", None)
         app = current_app._get_current_object()
         # A TESTING app (which syncs inline, on the request thread) runs the
         # catch-up only when a test asks for it: an unrelated test opening a
@@ -22161,16 +22164,21 @@ def _cz_loss_roots(ctx) -> list[tuple[str, str]]:
             from quam_state_manager.core.history import extras_data_folder
             with store._lock:
                 now = list(extras_data_folder(store.state) or [])
+            # what the registered roots were derived from (the open's marker)
+            basis = ctx.get("hub_roots_declared", ctx.get("extras_data_declared"))
             if now != list(ctx.get("extras_data_declared") or []):
                 _adopt_extras_data_folders(ctx)
-                roots = None
-                # R3 MINOR 8: and they are REPLACED -- the re-adoption moved
-                # the marker, so the next view kept the stale open-time roots
-                # again ("no data folder is declared" on the second view)
-                try:
-                    ctx["hub_roots"] = roots = list(_hub_roots_for(ctx))
-                except Exception:  # noqa: BLE001 -- derived again below
-                    logger.debug("cz loss: re-deriving the data folders failed", exc_info=True)
+            if roots is not None and now != list(basis or []):
+                # R3 MINOR 8: on EVERY view, not only the first. R4 a4: as the
+                # CZ plan's own roots -- ctx["hub_roots"] is what the ledger, the
+                # run watcher and the Calibration log's folder view were opened
+                # with, and a read-only view must not re-point them (they follow
+                # the new folder when the chip is opened again)
+                ov = ctx.get("cz_loss_roots")
+                if not ov or ov[0] != now:
+                    ov = (now, list(_hub_roots_for(ctx)))
+                    ctx["cz_loss_roots"] = ov
+                roots = list(ov[1])
         except Exception:  # noqa: BLE001 -- the registered roots stand
             logger.debug("cz loss: the declared data folder could not be re-read", exc_info=True)
     if roots is None:
