@@ -17665,9 +17665,17 @@ def state_history(snapshot_note: str | None = None):
     per_page = _int_arg("per_page", _STATE_HISTORY_PER_PAGE, minimum=1)
     # P1-9 (UX round): "Go to date" -- the page holding that day's newest row
     goto_day = (request.args.get("date") or "").strip()[:10]
+    goto_land = goto_note = ""
     if goto_day and "page" not in request.args:
         try:
-            page = _state_history_page_for(_active_ctx(), snapshots, goto_day, per_page)
+            went = _state_history_goto(_active_ctx(), snapshots, goto_day, per_page)
+            page, goto_land = went["page"], went["land"] or ""
+            # v1.5.1 (r6, P2-10): a day with no versions is said, never landed
+            # beside without a word
+            if went["empty"] and goto_land:
+                goto_note = f"No versions on {goto_day}; showing the nearest: {goto_land}."
+            elif went["empty"]:
+                goto_note = f"No versions on {goto_day}."
         except Exception:  # noqa: BLE001 -- an unreadable date lands on page 1
             logger.debug("state history go-to-date %r failed", goto_day, exc_info=True)
             goto_day = ""
@@ -17694,7 +17702,8 @@ def state_history(snapshot_note: str | None = None):
                total=total, current_page=min(page, total_pages),
                total_pages=total_pages, per_page=per_page,
                chip_origin=_active_origin(), hist_chip_key=versions["chip_key"],
-               disk_stats=disk_stats, snapshot_note=snapshot_note, goto_day=goto_day)
+               disk_stats=disk_stats, snapshot_note=snapshot_note, goto_day=goto_day,
+               goto_land=goto_land, goto_note=goto_note)
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body
     # without disturbing the detail/result pane beside it.
@@ -17716,10 +17725,16 @@ def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
     """P1-9 (UX round): the State History page that holds *day*'s newest row
     (the rows run newest first): every row at or after the END of that day,
     in the page's display zone, comes before it. ``ValueError`` for a date
-    that does not parse."""
+    that does not parse. A day with no rows: the page holding the nearest
+    row (:func:`_state_history_goto`)."""
+    return _state_history_goto(ctx, snapshots, day, per_page)["page"]
+
+
+def _state_history_day_us(day: str) -> tuple[int, int]:
+    """(start, end) of *day* in the page's display zone, as UTC epoch
+    microseconds. ``ValueError`` for a date that does not parse."""
     from datetime import timedelta
     from zoneinfo import ZoneInfo
-    from quam_state_manager.core import hub_versions
     d = datetime.strptime(day, "%Y-%m-%d")
     zone = (_display_zone() or {}).get("zone")
     try:
@@ -17732,21 +17747,68 @@ def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
         # R3B MINOR 5: the machine's zone at THAT date's own offset -- the
         # offset of today was an hour off for a date across a DST change
         end = _machine_day_end(d)
-    cutoff_us = int((end.astimezone(timezone.utc)
-                     - datetime(1970, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1_000_000)
-    probe = _versions_read_rows(ctx, snapshots, limit=1, offset=0, lane_notes=False)
-    if probe.get("mode") == "ledger" and probe.get("chip_dir") is not None:
-        chip_dir = probe["chip_dir"]
-        binding = _vh_binding(ctx, chip_dir)
-        n_events = hub_versions.count_newer(chip_dir, [], cutoff_us, binding=binding)
-        # the older snapshot rows as the page around that offset lists them
-        near = _versions_read_rows(ctx, snapshots, limit=1, offset=n_events, lane_notes=False)
-        n = hub_versions.count_newer(chip_dir, snapshots, cutoff_us, binding=binding,
-                                     older=near.get("older") or frozenset())
+    # v1.5.1 (r6): the day's start is the previous day's end, by the same rule
+    # (DST-correct: never "end minus 24 h")
+    if tz is not None:
+        start = datetime(d.year, d.month, d.day, tzinfo=tz)
     else:
-        n = sum(1 for s in snapshots
-                if hub_versions._snapshot_instant(s.timestamp) >= cutoff_us)
-    return n // max(1, per_page) + 1
+        start = _machine_day_end(d - timedelta(days=1))
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return tuple(int((x.astimezone(timezone.utc) - epoch).total_seconds() * 1_000_000)
+                 for x in (start, end))
+
+
+def _state_history_goto(ctx, snapshots, day: str, per_page: int) -> dict:
+    """Where "Go to date" lands (P1-9; v1.5.1 r6, P2-10): ``{"page", "land",
+    "empty"}``. A day with rows: the page holding its newest row, ``land`` =
+    *day*. A day with none (``empty``): the page holding the nearest row in
+    time -- the newest one before the day or the oldest one after it --
+    and ``land`` its day in the page's zone ("" when the list is empty).
+    ``ValueError`` for a date that does not parse."""
+    from quam_state_manager.core import hub_versions
+    start_us, end_us = _state_history_day_us(day)
+    probe = _versions_read_rows(ctx, snapshots, limit=1, offset=0, lane_notes=False)
+    ledger = probe.get("mode") == "ledger" and probe.get("chip_dir") is not None
+
+    def newer_than(cutoff_us):
+        """Rows at or after *cutoff_us* (they come first, newest first)."""
+        if ledger:
+            chip_dir = probe["chip_dir"]
+            binding = _vh_binding(ctx, chip_dir)
+            n_events = hub_versions.count_newer(chip_dir, [], cutoff_us, binding=binding)
+            # the older snapshot rows as the page around that offset lists them
+            near = _versions_read_rows(ctx, snapshots, limit=1, offset=n_events, lane_notes=False)
+            return hub_versions.count_newer(chip_dir, snapshots, cutoff_us, binding=binding,
+                                            older=near.get("older") or frozenset())
+        return sum(1 for s in snapshots
+                   if hub_versions._snapshot_instant(s.timestamp) >= cutoff_us)
+
+    n = newer_than(end_us)
+    if newer_than(start_us) > n:
+        return {"page": n // max(1, per_page) + 1, "land": day, "empty": False}
+    # no row on that day: rows n-1 (the oldest after it) and n (the newest before it)
+    if ledger:
+        got = _versions_read_rows(ctx, snapshots, limit=2, offset=max(0, n - 1),
+                                  lane_notes=False).get("rows") or []
+        from quam_state_manager.core.timefmt import to_utc
+        stamps = []
+        for r in got:
+            t = to_utc(r.get("when"))
+            stamps.append(None if t is None else int(t.timestamp() * 1_000_000))
+    else:
+        stamps = sorted((hub_versions._snapshot_instant(s.timestamp) for s in snapshots),
+                        reverse=True)[max(0, n - 1):n + 1]
+    after = stamps[0] if n > 0 and stamps else None       # the oldest row after the day
+    i = 1 if n > 0 else 0
+    before = stamps[i] if len(stamps) > i else None        # the newest row before it
+    if after is None and before is None:
+        return {"page": n // max(1, per_page) + 1, "land": "", "empty": True}
+    if before is None or (after is not None and after - end_us < start_us - before):
+        offset, instant = n - 1, after
+    else:
+        offset, instant = n, before
+    land = zone_ts_text(datetime.fromtimestamp(instant / 1_000_000, tz=timezone.utc))[:10]
+    return {"page": offset // max(1, per_page) + 1, "land": land, "empty": True}
 
 
 def _keep_identity_extras(ctx: dict | None, state: dict,
