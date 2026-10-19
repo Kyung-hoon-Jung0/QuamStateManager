@@ -17,8 +17,9 @@ copies it still read, each copied below attribute for attribute:
 
 Controls that keep their own unit: ``opt_amp`` V, ``base_freq`` Hz,
 ``distance_opt`` V, ``optimal_amplitude`` V (its namesake ``readout_amplitude``
-is not a higher-rank variable it can reduce). And a true/false variable as
-xarray writes it (int8 + the attribute ``dtype="bool"``): never a unit.
+is not a higher-rank variable it can reduce). And the two true/false shapes:
+a bool written by xarray (int8 + the attribute ``dtype="bool"``) and a metric
+whose fit values are true/false (the route's ``booleans``).
 """
 from __future__ import annotations
 
@@ -122,6 +123,8 @@ def _gef_power(f):
 def _flags(f):
     # an xarray bool with a unit of its own: only the bool shape refuses it
     _flag(f, "converged", 1, units="ns", long_name="convergence")
+    # a float flag with a unit of its own: only its true/false fit value does
+    _var(f, "locked", [1.0], ("qubit",), units="ns", long_name="lock state")
     _var(f, "t_lock", [120.0], ("qubit",), units="ns", long_name="lock time")
 
 
@@ -137,7 +140,7 @@ CASES = {
     "30b_gef_readout_power_optimization": (
         {"optimal_amp_prefactor": 1.99, "optimal_amplitude": 0.1615, "success": True},
         _gef_power, {"optimal_amplitude": "V"}),
-    "99_flags": ({"converged": 1, "t_lock": 120.0}, _flags, {"t_lock": "ns"}),
+    "99_flags": ({"converged": 1, "locked": True, "t_lock": 120.0}, _flags, {"t_lock": "ns"}),
 }
 
 
