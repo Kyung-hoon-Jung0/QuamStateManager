@@ -46458,6 +46458,8 @@ def _env_change_summary(store) -> tuple[dict | None, int]:
             diff = transition.get("diff") or {}
             summary = {
                 "first": transition.get("first"),
+                # v1.5.1 (r6, P2-12): when the only baseline was recorded
+                "since": transition.get("since") or "",
                 "changed": transition.get("changed"),
                 "count": diff.get("total") or 0,
                 "from_label": transition.get("from_label") or "",

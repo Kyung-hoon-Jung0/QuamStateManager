@@ -129,8 +129,16 @@
     <div class="diag-types-body">
       <span class="diag-types-counts">
         {% if types_card.env_change and types_card.env_change.first %}
-        first baseline recorded ({{ types_card.env_change.to_label }}) — an
-        upgrade can be compared against it from now on
+        {#- v1.5.1 (r6, P2-12): the only baseline on record, and since when --
+            never "first baseline recorded" on every render after that day -#}
+        {% if types_card.env_change.since %}
+        baseline recorded {{ (types_card.env_change.since | format_ts_zone)[:10] }}
+        ({{ types_card.env_change.to_label }}), the only environment on record
+        &mdash; an upgrade will be compared against it
+        {% else %}
+        no baseline on record for this environment yet ({{ types_card.env_change.to_label }});
+        the next probe records it
+        {% endif %}
         {% elif types_card.env_change and types_card.env_change.changed %}
         <strong>{{ types_card.env_change.count }}</strong> schema
         {{ 'items' if types_card.env_change.count != 1 else 'item' }} changed

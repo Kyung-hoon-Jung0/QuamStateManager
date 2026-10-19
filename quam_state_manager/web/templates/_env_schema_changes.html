@@ -20,11 +20,15 @@
      probed yet — probe it from the Diagnostics environment card.</p>
 
   {% elif transition.first %}
+  {#- v1.5.1 (r6, P2-12): the only one on record, and since when -#}
   <p class="tfx-none">
-    This is the first environment schema SM has recorded
-    (<strong>{{ transition.to_label }}</strong>). From now on an upgrade can be
-    compared against it, so SM can tell you what the <em>library</em> changed
-    rather than only what looks wrong in your chip.
+    {% if transition.since %}This is the only environment schema SM has recorded
+    (<strong>{{ transition.to_label }}</strong>, since
+    {{ (transition.since | format_ts_zone)[:10] }}). An upgrade will be compared
+    against it, so SM can tell you what the <em>library</em> changed rather than
+    only what looks wrong in your chip.{% else %}No schema of this environment
+    (<strong>{{ transition.to_label }}</strong>) is on record yet; the next probe
+    records it, and an upgrade is then compared against it.{% endif %}
   </p>
 
   {% elif not transition.changed %}
