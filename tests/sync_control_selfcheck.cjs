@@ -59,6 +59,7 @@ function world(bodyHtml) {
     w.confirm = function () { return false; };
     w.LiveEditUndo = { record: function () {}, clear: function () {}, _updateTrayBtn: function () {} };
     w.eval(APP);
+    w.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pin (v151_r3_two_press_selfcheck.cjs)
     w.showToast = function (m, l) { S.toasts.push({ m: String(m), l: l }); };
     return { w: w, S: S };
 }
@@ -196,8 +197,10 @@ const GRID = '<table id="bulk-table"><tr><td class="bulk-td"><input class="bulk-
         w.SyncPanel.merge(merge);
         await sleep(20);
         const body = decodeURIComponent(S.sync[0] ? S.sync[0].body : '');
-        ok(/"qubits\.q1\.T1":"live"/.test(body) && !/check_collisions/.test(body),
-           'P4 ...and posts the picks (' + body + ')');
+        // R3 M4: and the same-field check -- a lab write after the panel
+        // read is never replaced unnamed (the picked fields are excluded)
+        ok(/"qubits\.q1\.T1":"live"/.test(body) && /check_collisions=1/.test(body),
+           'P4 ...and posts the picks with the same-field check (' + body + ')');
     }
 
     /* ── W. QA fix6 (reviewer P1): the panel grows to its diff table ──

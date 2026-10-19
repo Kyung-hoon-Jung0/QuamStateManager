@@ -139,6 +139,8 @@ class TestLadderTier1:
         _write(tmp_path / "labX" / "quam_b",
                _state("qB1", chip_name="deborah", f01=5.1e9), _wiring("10.0.0.2"))
         assert hm._key_for(pb) == alt.name, "adopt the existing dir"
+        # R3 M2: a read-only resolve records no alias; opening the chip does
+        hm.claim_history_dir(pb)
         assert hm.display_name_for_dir(alt.name) == "deborah"
         mb2 = hm.check_and_snapshot(pb, "manual", force=True)
         assert (alt / mb2.timestamp).is_dir(), "new snapshots continue there"
@@ -151,6 +153,8 @@ class TestLadderTier1:
                _state(chip_name="mount_g", f01=5.2e9), _wiring("10.0.0.1"))
         assert hm._key_for(p) == "deviceC", \
             "rename adopts the OLD dir via fingerprint (history continuity)"
+        # R3 M2: a read-only resolve records no alias; opening the chip does
+        hm.claim_history_dir(p)
         assert hm.display_name_for_dir("deviceC") == "mount_g"
         # legacy URL with the old name key still resolves to the same dir
         legacy = Path("/__chip_key__") / "deviceC" / "quam_state"

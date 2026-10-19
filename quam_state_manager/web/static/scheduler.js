@@ -279,6 +279,7 @@
     };
     postJSON("/scheduler/" + which, body).then(function (r) {
       if (which === "start" && refusedForGood(r)) return;
+      if (which === "start" && settingsDamaged(r)) return;   // R3 MINOR 9
       // Strict gate: the server refuses Start when the safety preflight fails.
       // Surface the failing checks and let the user force past them.
       if (which === "start" && r && r.ok === false && r.reason === "preflight") {
@@ -673,10 +674,36 @@
     };
   };
 
+  /* R3 MINOR 9: a damaged settings file is no "retry in a moment" -- the
+     refusal names it, and one confirm sets it aside (renamed, kept). True when
+     the answer was that refusal. */
+  function settingsDamaged(r, again) {
+    if (!(r && r.ok === false && r.damaged && r.reset_url)) return false;
+    if (window.confirm((r.error || "The Runner settings file is damaged.")
+        + "\n\nOK = set it aside now and use the default settings.")) {
+      postJSON(r.reset_url, {}).then(function (x) {
+        var text = (x && (x.message || x.error)) || "The settings file could not be set aside.";
+        if (window.showToast) window.showToast(text, x && x.ok ? "info" : "error", x && x.ok ? 0 : -1);
+        if (x && x.ok && typeof again === "function") again();
+      });
+    } else if (window.showToast) {
+      window.showToast(r.error, "error", -1);
+    }
+    return true;
+  }
+  window._schedulerSettingsDamaged = settingsDamaged;
+
   SchedulerUI.prototype.persist = function () {
+    var self = this;
     var s = this.collect();
     this.settings.env_python = s.env_python;
-    postJSON("/scheduler/settings", s);
+    postJSON("/scheduler/settings", s).then(function (r) {
+      if (self._damagedAsked) return;
+      if (r && r.damaged) {
+        self._damagedAsked = true;          // asked once per page, not per keystroke
+        settingsDamaged(r, function () { self._damagedAsked = false; self.persist(); });
+      }
+    });
   };
 
   SchedulerUI.prototype.wireInputs = function () {

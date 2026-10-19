@@ -129,6 +129,7 @@ _NON_STAGING_POSTS = {
     'main.scheduler_register_storage',
     'main.scheduler_scan_params',
     'main.scheduler_settings',
+    'main.scheduler_settings_reset',   # v1.4.1: no reset -> non-staging reset; keeps damaged settings aside
     'main.scheduler_start',
     'main.settings_undo_live',
     'main.state_archive',

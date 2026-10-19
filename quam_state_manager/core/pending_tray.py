@@ -258,6 +258,15 @@ def _write_target(p) -> Path:
     state = _owner_state(owner, main) if main.exists() else "free"
     if state == "live":
         return _peer_file(main)
+    if state in ("self", "free"):
+        older = _older_sm_running(main)
+        if older is not None:
+            # R3 MINOR 2: an older SM writes the plain file whoever holds
+            # it (it does not know the owner record), so while one runs this
+            # process keeps its rows in its own file -- the two no longer
+            # overwrite each other from here on -- and says so once
+            _note_older_sm(p, older)
+            return _peer_file(main)
     if state in ("dead", "none"):
         # a stopped process's rows nobody restored yet (it stopped after
         # this process opened the chip), or an older SM's: never written
@@ -280,6 +289,37 @@ def _write_target(p) -> Path:
     return main
 
 
+def _plain_sig(main: Path):
+    try:
+        st = main.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _plain_still_ours(p) -> bool:
+    """R3 MINOR 2: the plain checkpoint still holds exactly what THIS process
+    last wrote there (an older SM that wrote it since made it its own)."""
+    sig = getattr(p, "plain_sig", None)
+    return sig is not None and _plain_sig(p.path) == sig
+
+
+def _note_older_sm(p, pid: int) -> None:
+    """R3 MINOR 2: once per chip and process, the honest note."""
+    if getattr(p, "older_noted", False):
+        return
+    p.older_noted = True
+    if p.ctx.get("_tray_recovery_notice"):
+        return
+    p.ctx["_tray_recovery_notice"] = {
+        "level": "warning",
+        "text": (f"An older State Manager (PID {pid}) is running on this instance. It "
+                 "keeps its unapplied edits in the same file this chip's tray uses, so "
+                 "this window now keeps its own separately -- but edits either window "
+                 "staged before can still be overwritten by, or appear in, the other. "
+                 "Close one of them.")}
+
+
 def _drop_own(p, timeout: float = _FLUSH_WAIT_S) -> None:
     """Unlink the checkpoint THIS process wrote (an emptied tray). The plain
     file is unlinked only while this process holds it; another process's
@@ -289,8 +329,12 @@ def _drop_own(p, timeout: float = _FLUSH_WAIT_S) -> None:
     main = p.path
     with xlock.held(_tray_lock(main), timeout=timeout):
         if _owner_state(_read_owner(main)) == "self":
-            main.unlink(missing_ok=True)
-            _owner_file(main).unlink(missing_ok=True)
+            # R3 MINOR 2: while an older SM runs the plain file may be ITS
+            # rows now (it ignores the owner record): left alone unless it is
+            # still what this process wrote
+            if _older_sm_running(main) is None or _plain_still_ours(p):
+                main.unlink(missing_ok=True)
+                _owner_file(main).unlink(missing_ok=True)
         elif p.target is not None and p.target != main:
             p.target.unlink(missing_ok=True)
         elif (p.target is None and not _owner_file(main).exists()
@@ -441,6 +485,8 @@ class _Persister:
         self.failing = False
         self.misses = 0                     # writes in a row that found a lock busy / the pair moving
         self.target = None                  # the file this process last wrote (SB-F3)
+        self.plain_sig = None               # R3 MINOR 2: (mtime, size) of its last plain write
+        self.older_noted = False
 
     def gone(self) -> bool:
         return self.retired or bool(self.ctx.get("_pending_tray_retired"))
@@ -705,8 +751,17 @@ def _write(p: _Persister, *, timeout: float) -> bool:
                 if snap["key"] is None or key != p.written or not target.exists():
                     safe_io.atomic_write_json(target, doc, compact=True)
                     p.written = key
+                    if target == p.path:
+                        p.plain_sig = _plain_sig(target)
                 if p.target is not None and p.target != target:
-                    p.target.unlink(missing_ok=True)      # moved: one file per process
+                    if p.target != p.path:
+                        p.target.unlink(missing_ok=True)  # moved: one file per process
+                    elif _plain_still_ours(p):
+                        # R3 MINOR 2: off the plain file (an older SM runs):
+                        # this process's rows leave it, so the older SM never
+                        # restores them -- unless that SM wrote it since
+                        p.path.unlink(missing_ok=True)
+                        _owner_file(p.path).unlink(missing_ok=True)
                 p.target = target
         except xlock.LockTimeout:
             return False                    # another process is writing: again
@@ -1618,6 +1673,7 @@ def _restore_stopped(ctx, p: _Persister) -> tuple:
                             if _owner_state(owner) != "self":
                                 safe_io.atomic_write_json(_owner_file(main), dict(_SELF))
                             p.target = main
+                            p.plain_sig = _plain_sig(main)    # R3 MINOR 2
                         else:
                             target = _write_target(p)
                             os.replace(path, target)

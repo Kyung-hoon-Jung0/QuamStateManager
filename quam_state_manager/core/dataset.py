@@ -3080,13 +3080,20 @@ class DatasetStore:
             super().__init__("note changed since it was opened")
             self.current = current
 
-    def set_note(self, run_id: int, note: str, expected: str | None = None):
+    def set_note(self, run_id: int, note: str, expected: str | None = None,
+                 supersedes: str | None = None):
         """Set a note on a run.
 
         ``expected`` (datasets-r2-12) is the note the editor last saw. When
         given, a stored note that differs from it AND from ``note`` raises
         :class:`NoteConflict` instead of silently replacing another window's
         text; ``None`` keeps last-write-wins for every other caller.
+
+        ``supersedes`` (R4 a3) is a second stored text the editor accepts: the
+        text of its own save still on its way. A page that goes while a save
+        is in flight sends its newest text at once, and it must land whether
+        the server stores it before or after that save (the later of the two
+        then finds the other's text and is refused, so the newest stays).
         """
         with self._tags_lock:
             notes = self._tags_data.setdefault("notes", {})
@@ -3102,7 +3109,8 @@ class DatasetStore:
                     current = notes.get(rid_str) or ""
                 if not isinstance(current, str):
                     current = str(current)
-                if _nl(current) != _nl(expected) and _nl(current) != _nl(note):
+                if (_nl(current) != _nl(expected) and _nl(current) != _nl(note)
+                        and (supersedes is None or _nl(current) != _nl(supersedes))):
                     raise DatasetStore.NoteConflict(current)
             previous = notes.get(rid_str)
             if note:

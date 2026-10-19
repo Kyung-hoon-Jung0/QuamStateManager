@@ -45,6 +45,7 @@ from urllib.parse import quote, urlencode
 from flask import (
     Blueprint,
     current_app,
+    g,
     has_request_context,
     jsonify,
     make_response,
@@ -570,11 +571,34 @@ def _request_actor() -> str:
 
 
 def _active_ctx() -> dict[str, Any] | None:
-    """Return the currently active context dict, or *None*."""
+    """Return the currently active context dict, or *None*.
+
+    Inside a door that pinned its captured ctx (:func:`_pin_request_ctx`),
+    the pinned one: another window's ``/load`` flipping the active context
+    mid-request must never divert this request's reads to another chip."""
+    try:
+        pinned = g.get("_sm_pinned_ctx")
+    except RuntimeError:          # no app context (a plain helper call)
+        pinned = None
+    if pinned is not None:
+        return pinned
     name = current_app.config["active_context"]
     if name is None:
         return None
     return current_app.config["contexts"].get(name)
+
+
+def _pin_request_ctx(ctx: dict | None) -> dict | None:
+    """v1.5.1 (R3 C1): pin *ctx* as this request's active context.
+
+    A door that captured its ctx at the start and then reads or writes for a
+    while (a pull, a live write) calls this, so every helper below it that
+    reads "the active context" (the tray render, the reapply stash, the
+    chip identity) reads the chip the press was made on, not whichever chip
+    another window opened meanwhile. Request-scoped (``flask.g``)."""
+    if ctx is not None:
+        g._sm_pinned_ctx = ctx
+    return ctx
 
 
 def _ctx_obj(key: str) -> Any:
@@ -885,6 +909,29 @@ def _refresh_live_diverged(ctx) -> None:
 _LIVE_UNREADABLE_AFTER_S = 2.5
 
 
+def _live_folder_failure(folder) -> tuple[str, bool, bool]:
+    """R3 MINOR 10: why the live pair could not be found, as ``(reason,
+    missing, unreachable)``. "Not found" only when the folder's drive or share
+    answers and the folder is not there; a drive/share that does not answer
+    (an offline share, an unplugged disk, an unmapped drive) or a folder probe
+    with no answer within the bounded wait is "unreachable"."""
+    from quam_state_manager.core import folder_probe
+    folder = Path(folder)
+    asks = [str(folder), folder.anchor] if folder.anchor else [str(folder)]
+    # The failed file read invalidates any earlier answer about its location.
+    folder_probe.forget(*asks)
+    present = folder_probe.folders_present(asks)
+    if present.get(str(folder)) is True:
+        return ("The live state folder has no state.json / wiring.json \u2014 it may have been moved or deleted.",
+                False, False)
+    if present.get(str(folder)) is False and present.get(folder.anchor) is True:
+        return (f"The live chip folder was not found (moved, renamed or deleted): {folder}. "
+                "Your edits are kept here; open the chip at its new place and SM offers them there.",
+                True, False)
+    return (f"Live chip folder unreachable (drive/share not answering): {folder}. Your edits are kept here.",
+            False, True)
+
+
 def _sync_live_refresh(ctx) -> None:
     """Poll-time half of the status control: recompute the cached LIVE facts
     (``ctx["sync_live"]``) when what they depend on moved.
@@ -929,13 +976,8 @@ def _sync_live_refresh(ctx) -> None:
         try:
             _lp = working_copy.read_live_shared(wc)
         except FileNotFoundError:
-            # v1.5.1 (SB-P2-3): a folder that is gone is said as gone
-            if not os.path.isdir(str(wc.live_folder)):
-                _note_live_unreadable(ctx, key, "the live chip folder was not found "
-                                      f"(moved, renamed or deleted): {wc.live_folder}",
-                                      missing=True)
-            else:
-                _note_live_unreadable(ctx, key, "the live folder has no state.json / wiring.json")
+            reason, missing, unreachable = _live_folder_failure(wc.live_folder)
+            _note_live_unreadable(ctx, key, reason, missing=missing, unreachable=unreachable)
             return
         except (OSError, ValueError, safe_io.LiveFileError) as exc:
             _note_live_unreadable(ctx, key, str(exc))
@@ -1100,7 +1142,8 @@ def _store_sync_live(ctx, live_state: dict, live_wiring: dict, *, key=None,
     return facts, entries, verdict
 
 
-def _note_live_unreadable(ctx, key, reason: str, missing: bool = False) -> None:
+def _note_live_unreadable(ctx, key, reason: str, missing: bool = False,
+                          unreachable: bool = False) -> None:
     """Count a failed live read; after two failures at least
     ``_LIVE_UNREADABLE_AFTER_S`` apart the control says so (SE-02). The key is
     kept, so a file that STAYS broken is not re-read every poll -- the next
@@ -1116,6 +1159,7 @@ def _note_live_unreadable(ctx, key, reason: str, missing: bool = False) -> None:
         prev = dict(ctx.get("sync_live") or {})
         prev["unreadable"] = bad["reason"]
         prev["missing"] = bool(missing)       # v1.5.1 (SB-P2-3)
+        prev["unreachable"] = bool(unreachable)
         prev["_key"] = key
         prev["_sig"] = None
         ctx["sync_live"] = prev
@@ -1133,9 +1177,11 @@ def _sync_view(ctx=None) -> dict | None:
     facts = ctx.get("sync_live")
     unreadable = None
     missing = False
+    unreachable = False
     if facts:
         unreadable = facts.get("unreadable")
         missing = bool(facts.get("missing"))
+        unreachable = bool(facts.get("unreachable"))
         # facts read at a sync point that has since moved (a pull, an apply)
         # describe a live chip SM has already reconciled with
         k = facts.get("_key")
@@ -1168,6 +1214,7 @@ def _sync_view(ctx=None) -> dict | None:
         archive=(ctx.get("origin") or "live") == "dataset_archive",
         unreadable=unreadable,
         missing=missing and bool(unreadable),
+        unreachable=unreachable and bool(unreadable),
         readonly=bool(ctx.get("live_readonly_hint")),
         refused=refused,
         change_paths=paths,
@@ -1636,10 +1683,59 @@ def _reprobe_readonly(ctx) -> None:
     try:
         wc = ctx.get("working_copy")
         folder = getattr(wc, "live_folder", None) or ctx.get("path")
-        if folder and not _probe_readonly(folder, origin=ctx.get("origin") or "live"):
+        # R3 MINOR 1: what an Apply needs is to CREATE (and replace) a file
+        # in the folder, not to open state.json for update -- a deny on
+        # creating files dropped the pill while every Apply still failed
+        if (folder and not _probe_readonly(folder, origin=ctx.get("origin") or "live")
+                and _folder_accepts_new_file(folder) is not False):
             ctx["live_readonly_hint"] = False
     except Exception:  # noqa: BLE001 -- a hint never breaks the poll
         logger.debug("read-only re-probe failed", exc_info=True)
+
+
+def _folder_accepts_new_file(folder) -> bool | None:
+    """R3 MINOR 1: can a file be created (and removed) in *folder*? None when
+    the answer is not evidence either way (no folder, an exotic error).
+
+    Asked only by the re-probe, i.e. only while the read-only pill is up and
+    at most every ``_READONLY_REPROBE_S``. Never leaves a file behind: on
+    Windows the probe file is opened delete-on-close (the OS removes it when
+    the handle closes, even if this process dies), on Linux it is an unnamed
+    file where the filesystem supports one, else a uniquely named file
+    unlinked at once. Its name never collides with a lab writer's
+    ``state.json.tmp``, and state.json and wiring.json are not touched."""
+    d = Path(folder)
+    if not d.is_dir():
+        return None
+    otmp = getattr(os, "O_TMPFILE", 0)
+    if otmp:
+        try:
+            fd = os.open(str(d), otmp | os.O_WRONLY, 0o600)
+            os.close(fd)
+            return True
+        except PermissionError:
+            return False
+        except OSError as exc:
+            if getattr(exc, "errno", None) in (13, 30):
+                return False
+            # no unnamed files here (a network share): a named one below
+    name = d / f".sm-write-probe-{os.getpid()}-{uuid.uuid4().hex[:8]}.tmp"
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_TEMPORARY", 0)
+    try:
+        fd = os.open(str(name), flags, 0o600)
+    except PermissionError:
+        return False
+    except OSError as exc:
+        return False if getattr(exc, "errno", None) in (13, 30) else None
+    try:
+        os.close(fd)
+    finally:
+        if not getattr(os, "O_TEMPORARY", 0):
+            try:
+                os.unlink(name)
+            except OSError:
+                logger.debug("write probe could not remove %s", name, exc_info=True)
+    return True
 
 
 def _probe_readonly(folder, *, origin: str = "live") -> bool:
@@ -1660,7 +1756,11 @@ def _probe_readonly(folder, *, origin: str = "live") -> bool:
       but WRITES INTO THE CUSTOMER'S LIVE CHIP FOLDER on every activation.
       That breaks the docs/28 rule (the live files are touched only on an
       explicit Apply), litters a directory labs keep under version control,
-      and leaves the file behind if the process dies mid-probe.
+      and leaves the file behind if the process dies mid-probe. (R3 MINOR 1:
+      the RE-probe, only while the pill is up and at most every 10 s, does
+      create one -- delete-on-close, so it is never left behind -- because
+      opening state.json cannot see a deny on creating files; see
+      :func:`_folder_accepts_new_file`.)
 
     So: open the EXISTING ``state.json`` for update (``r+``) and close it
     immediately. Opening for update needs the same permission the apply
@@ -1782,8 +1882,10 @@ def _offer_moved_work(ctx: dict) -> None:
                     f"{', ...' if len(set(res['rows'])) > 4 else ''})") if n else ""
             if res["copied"]:
                 any_rows = True
+                # R3 M7: a copy of the same design with the same content can
+                # be another chip: the offer says so
                 parts.append(f"{said} copied from {o['live_folder']}, which could not be "
-                             "found (moved, renamed or offline)")
+                             "found (moved or renamed?), in case this is the same chip")
                 continue
             if not moved_work.note_once(o["key"], wc.key):
                 continue
@@ -1795,7 +1897,8 @@ def _offer_moved_work(ctx: dict) -> None:
                              "folder's, so nothing was brought here)")
         text = ""
         if parts:
-            tail = " Restore or Discard them in the sync panel." if any_rows else ""
+            tail = (" Restore them in the sync panel only if this is the same chip; "
+                    "Discard otherwise." if any_rows else "")
             text = "This chip's unapplied work was left behind: " + "; ".join(parts) + "." + tail
         if back:
             text = (text + " " + back).strip()
@@ -3036,8 +3139,14 @@ def _capture_change_log_as_updates(store) -> dict:
     return updates
 
 
-def _pending_reapply() -> dict:
-    """The accumulated user-edit map kept for a possible re-apply after a pull."""
+def _pending_reapply(ctx: dict | None = None) -> dict:
+    """The accumulated user-edit map kept for a possible re-apply after a pull.
+
+    Pass the CAPTURED ctx (R3 C1): the active context is whichever chip the
+    last ``/load`` opened, which a merge that pulls for a while must never
+    read -- it replayed another chip's stash onto this one."""
+    if ctx is not None:
+        return ctx.get("pending_reapply") or {}
     return _ctx_obj("pending_reapply") or {}
 
 
@@ -4119,6 +4228,9 @@ def _hub_sync_open(ctx) -> None:
         ctx["hub_chip_dir"] = str(chip_dir)
         # S10 C1.5: the folder view's declared roots (_hub_folder_view)
         ctx["hub_roots"] = list(roots)
+        # R4 a4: and the declared folder they were derived from
+        ctx["hub_roots_declared"] = list(ctx.get("extras_data_declared") or [])
+        ctx.pop("cz_loss_roots", None)
         app = current_app._get_current_object()
         # A TESTING app (which syncs inline, on the request thread) runs the
         # catch-up only when a test asks for it: an unrelated test opening a
@@ -4734,6 +4846,14 @@ def _redo_across_pull(ctx, store, pre_seq, pre_leaves) -> None:
         _redo_mark(ctx, store)            # the pull is not a fork: redo stays
         return
     frames.clear()
+    # R3 MINOR 10c: over the leaf-walk cap the pull's changes cannot be
+    # compared leaf by leaf; the redo is dropped and the next press says why
+    # (never "the document's shape", which a value-only pull did not change)
+    if patch.get("structural") and _leaf_count_over_cap(store) is True:
+        ctx["redo_fork_note"] = {
+            "seq": store.mutation_seq,
+            "message": "Redo is not available for this change on a chip this large (over 200,000 values)."}
+        return
     ctx["redo_fork_note"] = {
         "seq": store.mutation_seq,
         "text": ("the live chip's update changed " + hit + ", which the redo would "
@@ -5638,7 +5758,7 @@ def _publish_instance_chip(ctx: dict | None) -> None:
     # chip open before (a switch back recorded the other chip's name) or none
     # (after a restart: "").
     try:
-        name = _chip_name_of(ctx) if ctx.get("path") else ""
+        name = _chip_label(ctx["path"], ctx.get("store")) if ctx.get("path") else ""
     except Exception:       # noqa: BLE001 — a name lookup must not fail a load
         name = ""
     try:
@@ -10632,14 +10752,14 @@ def _change_paths_of(changes) -> list | None:
     return out if len(out) <= _TRAY_PATHS_MAX else None
 
 
-def _tray_durable() -> bool:
-    """v1.5.1 (SB-P2-8): the active chip's staged rows are checkpointed on
-    disk (they survive a closed tab and a restart), so leaving a page loses
-    nothing of the tray's -- the page's "Leave site?" asks only for what is
-    truly unsaved there (typed, not committed)."""
+def _tray_durable(ctx=None) -> bool:
+    """v1.5.1 (SB-P2-8): the active chip's (or *ctx*'s) staged rows are
+    checkpointed on disk (they survive a closed tab and a restart), so leaving
+    a page loses nothing of the tray's -- the page's "Leave site?" asks only
+    for what is truly unsaved there (typed, not committed)."""
     try:
         from quam_state_manager.core import pending_tray
-        return pending_tray.durable(_active_ctx())
+        return pending_tray.durable(ctx if ctx is not None else _active_ctx())
     except Exception:  # noqa: BLE001 -- unknown is "not durable": the guard stays
         return False
 
@@ -17703,7 +17823,7 @@ def state_history_stage(timestamp: str):
     """Mode 1 (safe): load a snapshot into the WORKING COPY so the user can
     review the diff and then Apply to live through the normal flow. Never
     writes the live chip directly. Confirms over a dirty working copy."""
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     mismatch = _history_chip_mismatch(ctx)
@@ -17878,7 +17998,7 @@ def state_history_restore_live(timestamp: str):
         (the single live writer), then rebuild every derived cache.
     """
     _kept_note = ""   # docs/301 F6: set where the version is read
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
@@ -22044,9 +22164,21 @@ def _cz_loss_roots(ctx) -> list[tuple[str, str]]:
             from quam_state_manager.core.history import extras_data_folder
             with store._lock:
                 now = list(extras_data_folder(store.state) or [])
+            # what the registered roots were derived from (the open's marker)
+            basis = ctx.get("hub_roots_declared", ctx.get("extras_data_declared"))
             if now != list(ctx.get("extras_data_declared") or []):
                 _adopt_extras_data_folders(ctx)
-                roots = None
+            if roots is not None and now != list(basis or []):
+                # R3 MINOR 8: on EVERY view, not only the first. R4 a4: as the
+                # CZ plan's own roots -- ctx["hub_roots"] is what the ledger, the
+                # run watcher and the Calibration log's folder view were opened
+                # with, and a read-only view must not re-point them (they follow
+                # the new folder when the chip is opened again)
+                ov = ctx.get("cz_loss_roots")
+                if not ov or ov[0] != now:
+                    ov = (now, list(_hub_roots_for(ctx)))
+                    ctx["cz_loss_roots"] = ov
+                roots = list(ov[1])
         except Exception:  # noqa: BLE001 -- the registered roots stand
             logger.debug("cz loss: the declared data folder could not be re-read", exc_info=True)
     if roots is None:
@@ -27670,11 +27802,11 @@ def _undo_head(verb: str, live: bool, ctx=None) -> str:
 
 @bp.route("/undo", methods=["POST"])
 def undo():
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: the chip this press was made on
     modifier = _modifier()
     if not modifier:
         return render_template("_status.html", message="No state loaded", level="warning")
 
-    ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     # F-CHIPID (final review): since docs/160 a Ctrl+Z WRITES the active chip's
     # live files, but two windows share one server context (docs/120) -- a press
@@ -28529,10 +28661,10 @@ def redo():
     Like every undo/redo/discard, this stages into the tray only — the live
     chip is untouched until an explicit Apply-to-live.
     """
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: the chip this press was made on
     modifier = _modifier()
     if not modifier:
         return render_template("_status.html", message="No state loaded", level="warning")
-    ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     if store is None:
         return _tray_html()
@@ -28726,8 +28858,10 @@ def redo():
         # v1.5.1 (SB-P2-2): a pull that had to drop the redo history said why
         _note = ctx.pop("redo_fork_note", None) if ctx else None
         if _note and _note.get("seq") == store.mutation_seq:
+            if _note.get("message"):
+                ctx["redo_fork_note"] = _note  # keep the size explanation until the state moves
             return _redo_response(
-                f"Nothing to redo — {_note['text']}.", [],
+                _note.get("message") or f"Nothing to redo — {_note['text']}.", [],
                 extra={"requested": n_req, "consumed": 0, "stopped": "forked",
                        "level": "warning", "live": False})
         if _forked:
@@ -29305,7 +29439,7 @@ def auto_sync_pull():
     that last case the drift banner is already up (``live_diverged`` is what
     made this due), so refusing is not silent: the user is being asked.
     """
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     # R2 MINOR 1: a tab showing another chip reports ITS grid (dom_dirty /
     # dom_path) -- never evidence about the chip open now. Its automatic
     # press does nothing; the tab showing this chip presses for it.
@@ -29823,17 +29957,13 @@ def state_review():
     archive = (ctx.get("origin") or "live") == "dataset_archive"
     read_error = None
     read_missing = False
+    read_unreachable = False
     entries, verdict, facts = [], None, None
     _lp = None
     try:
         _lp = working_copy.read_live_shared(wc)
     except FileNotFoundError:
-        # v1.5.1 (SB-P2-3): a folder that is gone is said as gone
-        read_missing = not os.path.isdir(str(wc.live_folder))
-        read_error = (f"The live chip folder was not found (moved, renamed or deleted): "
-                      f"{wc.live_folder}. Your edits are kept here; open the chip at its "
-                      "new place and SM offers them there." if read_missing else
-                      "The live state folder has no state.json / wiring.json — it may have been moved or deleted.")
+        read_error, read_missing, read_unreachable = _live_folder_failure(wc.live_folder)
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
         read_error = f"Could not read the live chip: {exc}"
     else:
@@ -29844,7 +29974,8 @@ def state_review():
             facts, entries, verdict = _store_sync_live(ctx, None, None, pair=_lp)
     sv = _sync_view(ctx)
     if read_error and sv is not None and sv["state"] not in ("archive",):
-        sv = dict(sv, state="unreadable", unreadable=read_error, missing=read_missing)
+        sv = dict(sv, state="unreadable", unreadable=read_error, missing=read_missing,
+                  unreachable=read_unreachable)
 
     with store._lock:
         log = list(store.change_log or [])
@@ -29897,6 +30028,8 @@ def state_review():
         read_error=read_error,
         # v1.5.1 (SB-P2-1): what the panel's values were read from
         live_hash=(_lp.content_hash() if _lp is not None else ""),
+        # R4 a1: and what it read at the fields a merge writes
+        live_values=(_panel_live_values(ctx, store, _lp) if _lp is not None else None),
         total=len(entries),
         conflict_rows=conflict_rows,
         external_rows=external_rows,
@@ -30314,6 +30447,29 @@ def _auto_pull_due(ctx: dict | None) -> bool:
     return True
 
 
+def _runner_sig() -> str:
+    """R3 MINOR 6: a cheap token that moves when a run starts or ends on the
+    open chip -- the scheduler queue file's mtime (an Agent run_node and the
+    Experiment Runner both write it) and whether this process runs a queue
+    or a plan. Without the runner UI a tab polls /scheduler/status once and
+    stops; the drift poll (every page) carries this so the tab asks again
+    when it moves. One os.stat; never raises."""
+    try:
+        inst = _sched_inst()
+        try:
+            mt = scheduler.queue_path(inst).stat().st_mtime_ns
+        except OSError:
+            mt = 0
+        live = scheduler.is_running(inst)
+        mod = sys.modules.get("quam_state_manager.core.autofit.engine")
+        if not live and mod is not None:
+            eng = mod.get_engine(inst)
+            live = bool(eng is not None and eng.is_running())
+        return f"{mt}:{int(live)}"
+    except Exception:  # noqa: BLE001 -- a poll rider never breaks the poll
+        return ""
+
+
 @bp.route("/state/drift")
 def state_drift():
     """Cheap poll: how many params the live chip changed since the baseline.
@@ -30375,6 +30531,14 @@ def state_drift():
     # have diverged, and dropping the flag there would make auto-pull work only
     # for chips that happen to be tracked.
     auto_pull = _auto_pull_due(ctx)
+    # R3 MINOR 4: whether the staged rows are checkpointed rides the poll --
+    # a tray rendered "durable" before its background write failed kept
+    # saying so (the poll's signature did not move, nothing re-rendered it)
+    _dur = _tray_durable(ctx)
+    # R4 a2: whose tray that is -- a tab showing another chip (another window
+    # opened this one meanwhile) must not take it for its own tray
+    _dchip = _ctx_chip_key(ctx) or ""
+    _rsig = _runner_sig()
     try:
         _note_live_write_for_ingest(ctx)
     except Exception:   # noqa: BLE001
@@ -30382,18 +30546,21 @@ def state_drift():
     if not _drift_tracked(ctx):
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync)
+                       live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
+                       runner_sig=_rsig)
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
         logger.debug("drift compute failed", exc_info=True)
         return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync)
+                       live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
+                       runner_sig=_rsig)
     if info is None:
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld, sync=sync)
+                       live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
+                       runner_sig=_rsig)
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
@@ -30402,7 +30569,8 @@ def state_drift():
                     "baseline_utc": info["baseline_utc"],
                     "auto_pull": auto_pull, "hist_seq": hist_seq,
                     "edit_seq": _edit_seq(), "live_diverged": ld,
-                    "sync": sync})
+                    "sync": sync, "tray_durable": _dur, "tray_chip": _dchip,
+                    "runner_sig": _rsig})
 
 
 @bp.route("/state/drift/view")
@@ -30616,18 +30784,29 @@ def _unseen_edit_refusal(ctx) -> dict | None:
             # v1.5.1 (SB-P2-3): no window is blamed -- the user's own Save
             # folds the rows into the working state too. A saved working
             # state still differs from live: Apply writes it.
-            saved = bool(ctx.get("working_dirty"))
+            # R3 M5: a STAGE sets working_dirty too -- and discards the rows.
+            # "Your edits were saved, press again" was then false, and doing
+            # what it said wrote the staged version the presser never saw.
+            staged = bool(ctx.get("staged_base"))
+            saved = bool(ctx.get("working_dirty")) and not staged
+            if staged:
+                _msg = ("Nothing was written: the edits this screen showed are gone. "
+                        f"{_staged_version_words(ctx)} was loaded into the working "
+                        "state since (another window?), replacing them. Apply would "
+                        "write that version, not your edits: review it before you "
+                        "apply, or Take live to drop it.")
+            elif saved:
+                _msg = ("Nothing was written: the edits this screen showed were "
+                        "saved into the working state (Save), so they are no longer "
+                        "separate rows. Apply writes the saved version; press it again.")
+            else:
+                _msg = ("Nothing was written: the edits this screen showed are no "
+                        "longer pending; they were applied or discarded since this "
+                        "screen was drawn (here or in another window).")
             return {"status": "unseen_changes", "have": 0,
                     "seen": seen if seen is not None else 0,
                     "paths": [], "nothing_pending": True, "saved": saved,
-                    "message": (
-                        "Nothing was written: the edits this screen showed were "
-                        "saved into the working state (Save), so they are no longer "
-                        "separate rows. Apply writes the saved version; press it again."
-                        if saved else
-                        "Nothing was written: the edits this screen showed are no "
-                        "longer pending; they were applied or discarded since this "
-                        "screen was drawn (here or in another window).")}
+                    "staged": staged, "message": _msg}
         return {"status": "unseen_changes", "have": have,
                 "seen": seen if seen is not None else 0,
                 "paths": extra[:8],
@@ -30647,6 +30826,17 @@ def _unseen_edit_refusal(ctx) -> dict | None:
                 f"{have - seen} edit(s) were made in another State Manager "
                 f"window and are not shown on this screen. Applying now would "
                 f"write them to the live chip too.")}
+
+
+def _staged_version_words(ctx) -> str:
+    """R3 M5: what the staged working state is, in words."""
+    src = ctx.get("staged_from") or {}
+    ref = src.get("ref") or {}
+    if src.get("src") == "revert_last_apply":
+        return "The version before the last apply (Revert last apply)"
+    if ref.get("run_id") is not None:
+        return f"The state of run #{ref['run_id']}"
+    return "A version from State History"
 
 
 def _unseen_by_paths(ctx):
@@ -30874,7 +31064,7 @@ def state_sync():
     Returns JSON ``{"status": "ok"|"conflict"|"error", "mode", "tray_html",
     "replay"}``. The client soft-refreshes from this — no page reload.
     """
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     if not ctx or ctx.get("type") != "quam":
         return jsonify({"status": "error", "message": "No state loaded"}), 400
     mode = request.values.get("mode", "discard")
@@ -31006,7 +31196,7 @@ def state_sync():
     # log no longer holds) plus any still-unsaved change-log edits, with the
     # latter winning per path. Snapshot BEFORE the sync's reload clears them.
     with store._lock:
-        pending = _merge_reapply(_pending_reapply(), _capture_change_log_as_updates(store))
+        pending = _merge_reapply(_pending_reapply(ctx), _capture_change_log_as_updates(store))
     _use_live = [p for p, side in picks.items() if side == "live"]
     if _use_live and mode in ("apply", "reapply"):
         pending = {k: v for k, v in pending.items()
@@ -31061,6 +31251,7 @@ def state_sync():
     pulled_other_changes = False
     replay = None
     _moved_since_panel = False
+    _moved_paths = None
     try:
         # Hold the build lock across sync + rebuild + replay (not just sync): the
         # scheduler worker's post-node _reconcile_cached_quam_ctx takes this SAME
@@ -31090,15 +31281,30 @@ def state_sync():
             # live value the panel NAMED in its Lost line. A lab write since
             # the panel read live would be replaced unnamed: refused, under
             # the build lock right before the pull.
+            # R3 M4: checked whenever the press declares the live chip it
+            # read -- not only with a "mine" pick. The panel's merge with no
+            # pick replaced a lab value written after the panel read too.
             _expect_live = (request.values.get("expect_live_hash") or "").strip()
-            _keeps = mode == "apply" and any(side == "mine" for side in picks.values())
-            if _keeps and _expect_live:
+            _keeps = mode == "apply" and bool(_expect_live)
+            # R4 a1: what the panel read at the fields this merge writes. A lab
+            # write elsewhere is taken by the pull below and kept; only a field
+            # the merge writes that moved since the panel read refuses it.
+            _declared = (_declared_live_values(request.values.get("expect_live_values"))
+                         if _keeps else None)
+            if _keeps:
                 try:
                     _live_now = working_copy.live_content_hash(wc)
                 except (OSError, ValueError):
                     _live_now = None
                 if _live_now != _expect_live:
-                    return jsonify(_live_moved_since_panel_body()), 409
+                    try:
+                        _lpair = working_copy.read_live_shared(wc)
+                        _moved_paths = _panel_values_moved(_declared, pending,
+                                                           _lpair.state, _lpair.wiring)
+                    except Exception:  # noqa: BLE001 -- unreadable: cannot tell
+                        _moved_paths = None
+                    if _moved_paths is None or _moved_paths:
+                        return jsonify(_live_moved_since_panel_body(_moved_paths)), 409
             _pre_leaves = _leaf_snapshot(ctx, lazy=True)   # the reload below replaces the docs
             # sync-ux 2026-09-25 (user decision 4): ↓ Take live used to drop the pending
             # edits for good. It keeps a backup first -- a labelled History
@@ -31118,7 +31324,7 @@ def state_sync():
                 # undo pressed during the pull took a row out of the change
                 # log, and the pre-pull capture put it back on the pulled
                 # content (with apply, on the live chip too).
-                pending = _merge_reapply(_pending_reapply(),
+                pending = _merge_reapply(_pending_reapply(ctx),
                                          _capture_change_log_as_updates(store))
                 if _use_live and mode in ("apply", "reapply"):
                     pending = {k: v for k, v in pending.items()
@@ -31136,8 +31342,14 @@ def state_sync():
                                         and wc.synced_live_hash != _pre_sync_hash)
                 # v1.5.1 (SB-P2-1): a write that landed between the check above
                 # and the pull: the edits are re-applied in SM, nothing written
-                _moved_since_panel = bool(_keeps and _expect_live
-                                          and wc.synced_live_hash != _expect_live)
+                if _keeps and wc.synced_live_hash != _expect_live:
+                    # R4 a1: the same question of what the pull just read
+                    try:
+                        _moved_paths = _panel_values_moved(_declared, pending,
+                                                           _pulled[0], _pulled[1])
+                    except Exception:  # noqa: BLE001 -- cannot tell: refused
+                        _moved_paths = None
+                    _moved_since_panel = _moved_paths is None or bool(_moved_paths)
                 # Rebuild the store + derived objects from the freshly-synced copy.
                 ctx["_alarm_reason"] = "live-pull"
                 _seq0 = store.mutation_seq
@@ -31177,12 +31389,17 @@ def state_sync():
     # on the pulled content (a reapply), nothing is written, the panel re-reads
     if mode == "apply" and _moved_since_panel:
         _clear_reapply(ctx)
-        return jsonify({**_live_moved_since_panel_body(), "replay": replay,
+        return jsonify({**_live_moved_since_panel_body(_moved_paths), "replay": replay,
                         "tray_html": _tray_html(), **_sync_patch(ctx, _pre_leaves)}), 409
 
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
     if mode == "apply":
+        # R3 M3: the pull consumed the stash -- its edits are rows now. The
+        # press below must find it consumed: a refused write puts back the
+        # stash the press FOUND, and the pre-merge one beside its own rows
+        # made an edit the user then undid come back on the next Apply.
+        _clear_reapply(ctx)
         # w7/livewrite: the patch (a response detail) is computed after the
         # live write, not before it -- nothing in between touches the store
         return _sync_pull_apply_to_live(ctx, replay, patch=lambda: _sync_patch(ctx, _pre_leaves),
@@ -31215,13 +31432,71 @@ def state_sync():
     })
 
 
-def _live_moved_since_panel_body() -> dict:
-    """v1.5.1 (SB-P2-1): the answer of a Keep-mine merge whose panel read an
-    older live chip than the one there now."""
-    return {"status": "live_moved", "mode": "apply",
-            "message": ("Nothing was written: the live chip changed after the panel "
-                        "showed its values, so Keep mine would replace a value it did "
-                        "not name. The panel now shows the live chip; pick again.")}
+def _live_moved_since_panel_body(moved: list | None = None) -> dict:
+    """v1.5.1 (SB-P2-1): the answer of a merge whose panel read an older live
+    chip than the one there now (R3 M4: any merge that declares it). R4 a1:
+    it names the fields this merge writes that moved (*moved*); without that
+    list SM could not tell, and says so."""
+    if moved:
+        names = ", ".join(moved[:3]) + (f" and {len(moved) - 3} more" if len(moved) > 3 else "")
+        msg = (f"Nothing was written: the live chip changed {names} after the panel "
+               f"showed {'it' if len(moved) == 1 else 'them'}, and the merge would "
+               f"replace {'that new value' if len(moved) == 1 else 'those new values'}. "
+               "The panel now shows the live chip; check it and merge again.")
+    else:
+        msg = ("Nothing was written: the live chip changed after the panel showed its "
+               "values, and SM could not tell whether a field this merge writes was "
+               "among them. The panel now shows the live chip; check it and merge again.")
+    return {"status": "live_moved", "mode": "apply", "message": msg,
+            **({"paths": list(moved[:8])} if moved else {})}
+
+
+#: R4 a1: the most fields a panel declares the live values of (more: the
+#: press is held to the whole live chip, as before)
+_PANEL_VALUES_MAX = 2000
+
+
+def _panel_live_values(ctx, store, pair) -> dict | None:
+    """R4 a1: the live value (digest) at every field a merge from this panel
+    would write -- the stash and the change log, which ``state_sync`` replays
+    -- as the panel read them. The press declares it, so a lab write to a
+    field nobody edited no longer refuses the merge."""
+    try:
+        with store._lock:
+            paths = sorted(_merge_reapply(_pending_reapply(ctx),
+                                          _capture_change_log_as_updates(store)))
+        if len(paths) > _PANEL_VALUES_MAX:
+            return None
+        return working_copy.replaced_values(pair.state, pair.wiring, paths=paths)
+    except Exception:  # noqa: BLE001 -- no declaration: the whole-chip check stands
+        logger.debug("panel live values could not be taken", exc_info=True)
+        return None
+
+
+def _declared_live_values(raw) -> dict | None:
+    """The ``expect_live_values`` a merge press sent, or None."""
+    try:
+        d = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or not all(isinstance(k, str) and isinstance(v, str)
+                                          for k, v in d.items()):
+        return None
+    return d
+
+
+def _panel_values_moved(declared: dict | None, paths, live_state, live_wiring) -> list | None:
+    """R4 a1: the fields this merge writes (*paths*) whose live value is not
+    the one the panel read -- ``[]`` none moved; None SM cannot tell (nothing
+    declared, or a field the panel did not read). Same rule as Keep mine's
+    (``working_copy.replaced_values``)."""
+    if declared is None:
+        return None
+    paths = list(paths)
+    if any(p not in declared for p in paths):
+        return None
+    now = working_copy.replaced_values(live_state, live_wiring, paths=paths)
+    return [p for p in paths if now[p] != declared[p]]
 
 
 def _live_unreadable_message(exc) -> str:
@@ -31947,7 +32222,7 @@ def state_apply_to_live():
     conflict (the live files changed since the last sync) the user is shown a
     warning and an explicit force-overwrite option.
     """
-    ctx = _active_ctx()
+    ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
@@ -32005,6 +32280,9 @@ def state_apply_to_live():
     # QA correctness-r2-09: "Keep mine" hands back the live content hash its
     # confirm counted; a forced push is held to it (absent -> unchanged).
     expect_live_hash = (request.values.get("expect_live_hash") or None) if force else None
+    # R3 MINOR 10a: or to the live values the push replaces -- a lab write the
+    # push neither replaces nor erases no longer refuses it
+    expect_replaced_hash = (request.values.get("expect_replaced_hash") or None) if force else None
     # docs/117: an armed session turns THIS route into the auto-apply writer.
     # It is still the only thing that writes live; the session just presses it.
     _auto = _auto_apply_state(ctx)
@@ -32022,12 +32300,18 @@ def state_apply_to_live():
     # (keepMineReask). docs/255: checked before the save too (it used to run
     # after it, leaving the tray saved away under a refusal), and still before
     # the backup, so a refused push records no version.
-    if expect_live_hash is not None:
+    if expect_live_hash is not None or expect_replaced_hash is not None:
         try:
-            _now = working_copy.live_content_hash(wc)
+            if expect_replaced_hash is not None:
+                _pair = working_copy.read_live_shared(wc)
+                with store._lock:
+                    _now = working_copy.replaced_values_hash(
+                        _pair.state, _pair.wiring, payload=(store.state, store.wiring))
+            else:
+                _now = working_copy.live_content_hash(wc)
         except (OSError, ValueError):
             _now = None
-        if _now != expect_live_hash:
+        if _now != (expect_replaced_hash or expect_live_hash):
             ctx["live_diverged"] = True
             if request.headers.get("Accept", "").startswith("application/json"):
                 return jsonify(ok=False, conflict="live_moved",
@@ -32207,6 +32491,7 @@ def state_apply_to_live():
             working_copy.apply_to_live(
                 wc, force=force, record=_pend,
                 **({"expect_live_hash": expect_live_hash} if expect_live_hash else {}),
+                **({"expect_replaced_hash": expect_replaced_hash} if expect_replaced_hash else {}),
                 **({"backup_check": _forced_write_gate(wc, _bk.get("ts"), _bk.get("hash"), _bref)}
                    if force else {}))
     except working_copy.LiveStateMissingError as exc:
@@ -32233,7 +32518,7 @@ def state_apply_to_live():
         _press_keep_tray(ctx, _press)
         return _shared_working_refusal()
     except working_copy.StaleLiveError:
-        if expect_live_hash is not None and _auto is None:
+        if (expect_live_hash is not None or expect_replaced_hash is not None) and _auto is None:
             # QA correctness-r2-09: the tight re-check inside apply_to_live --
             # a write landed between the check above and the write
             _refused_after_save()      # docs/255: the press changes nothing
@@ -32510,6 +32795,7 @@ def state_overwrite_live_preflight():
     store = ctx["store"]
     live_changes = None
     live_hash = None
+    replaced_hash = None
     live_paths: list = []
     replaced = None
     try:
@@ -32524,6 +32810,9 @@ def state_overwrite_live_preflight():
         live_paths = _moved_paths[:8] if _facts.get("moved") else []
         replaced = len(_entries)
         live_hash = _lp.content_hash()
+        with store._lock:
+            replaced_hash = working_copy.replaced_values_hash(
+                _lp.state, _lp.wiring, payload=(store.state, store.wiring))
     except (FileNotFoundError, OSError, ValueError, safe_io.LiveFileError):
         logger.info("overwrite-live preflight could not read the live files",
                     exc_info=True)
@@ -32591,6 +32880,7 @@ def state_overwrite_live_preflight():
         # push hands it back so a write landing while the confirm is open is
         # refused and asked about, never overwritten unnamed
         "live_hash": live_hash,
+        "replaced_hash": replaced_hash,
         "run_active": bool(run_active),
         "run_label": run_label,
     })
@@ -43009,6 +43299,7 @@ def dataset_load_state(uid):
         return resp
 
     # ---- stage into the ACTIVE chip's working copy ----
+    _pin_request_ctx(ctx)               # R3 C1: the chip this press was made on
     _pre_leaves = _leaf_snapshot(ctx)   # docs/144: name what the load changes
     base_url = f"/dataset/{uid}/load-state"
     chip_label = _chip_display_name(Path(ctx["path"]))
@@ -43794,8 +44085,12 @@ def dataset_set_note(uid):
     expected = request.json.get("expected") if request.is_json else None
     if not isinstance(expected, str):
         expected = None
+    # R4 a3: the text of the page's own save still on its way (a leave flush)
+    supersedes = request.json.get("supersedes") if request.is_json else None
+    if not isinstance(supersedes, str) or expected is None:
+        supersedes = None
     try:
-        ds.set_note(run_id, note, expected=expected)
+        ds.set_note(run_id, note, expected=expected, supersedes=supersedes)
     except DatasetStore.NoteConflict as exc:
         return jsonify({"note_conflict": True, "current": exc.current,
                         "error": "Somebody else changed this note since you opened it."}), 409
@@ -46877,8 +47172,41 @@ def scheduler_settings():
         saved = scheduler.save_settings(inst, patch)
     except scheduler.SettingsUnreadable as exc:
         # v1.5.1 (SB-P2-7): never overwrite stored settings with defaults
-        return jsonify({"ok": False, "error": f"Nothing was saved: {exc}. Retry in a moment."}), 409
+        return jsonify(_settings_unreadable_body("Nothing was saved", exc)), 409
     return jsonify({"ok": True, "settings": saved})
+
+
+def _settings_unreadable_body(head: str, exc) -> dict:
+    """R3 MINOR 9: a refusal on unreadable Runner settings. A file that is
+    only held for a moment says retry; a DAMAGED one (retrying never helps)
+    names the file and offers the reset that sets it aside."""
+    if getattr(exc, "damaged", False):
+        return {"ok": False, "reason": "settings_unreadable", "damaged": True,
+                "file": getattr(exc, "path", ""), "reset_url": "/scheduler/settings/reset",
+                "error": (f"{head}: {exc}. Reset it to set it aside (renamed, kept) and "
+                          "start again from the default settings.")}
+    return {"ok": False, "reason": "settings_unreadable",
+            "error": f"{head}: {exc}. Retry in a moment."}
+
+
+@bp.route("/scheduler/settings/reset", methods=["POST"])
+def scheduler_settings_reset():
+    """R3 MINOR 9: set a damaged Runner settings file aside (renamed beside
+    it, never deleted) so the next save writes fresh settings. Refused while
+    a queue runs."""
+    inst = _sched_inst()
+    if scheduler.is_active(inst):
+        return jsonify({"ok": False, "error": "A queue is running: pause or cancel it first."}), 409
+    try:
+        moved = scheduler.reset_damaged_settings(inst)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": f"The settings file could not be set aside: {exc}"}), 409
+    if not moved:
+        return jsonify({"ok": True, "set_aside": [],
+                        "message": "No damaged settings file: nothing was changed."})
+    return jsonify({"ok": True, "set_aside": moved,
+                    "message": ("Set aside: " + "; ".join(moved)
+                                + ". The Runner uses the default settings until you save.")})
 
 
 @bp.route("/scheduler/effective-config", methods=["GET", "POST"])
@@ -47429,8 +47757,7 @@ def scheduler_start():
         except scheduler.SettingsUnreadable as exc:
             # v1.5.1 (SB-P2-7): the run would read settings other than the
             # ones on screen (Dry run among them) -- start nothing, say why
-            return jsonify({"ok": False, "reason": "settings_unreadable",
-                            "error": f"Nothing started: {exc}. Retry in a moment."}), 409
+            return jsonify(_settings_unreadable_body("Nothing started", exc)), 409
         except Exception:  # noqa: BLE001
             logger.warning("start settings persist failed", exc_info=True)
     # Strict gate: re-run the identity/safety preflight server-side and refuse to

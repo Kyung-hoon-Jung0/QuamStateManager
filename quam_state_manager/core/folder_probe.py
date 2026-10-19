@@ -27,10 +27,19 @@ _INFLIGHT: dict = {}                   # path -> the probe thread still asking
 _LOCK = threading.Lock()
 
 
+#: R3 M2: a "not there" that took longer than this is a network timeout
+#: (an unreachable share answers ENOENT after 5-42 s), not a folder that is
+#: gone: no answer, never memoised
+SLOW_FALSE_S = WAIT_S
+
+
 def _probe(path: str) -> None:
+    t0 = time.monotonic()
     try:
         verdict = Path(path).exists()
     except OSError:
+        verdict = None
+    if verdict is False and time.monotonic() - t0 > SLOW_FALSE_S:
         verdict = None
     with _LOCK:
         _PROBES[path] = (time.monotonic(), verdict)
@@ -69,7 +78,11 @@ def folder_present(path) -> bool | None:
     return folders_present([path])[str(path)]
 
 
-def forget() -> None:
-    """Drop every remembered answer (tests; a user-visible rescan)."""
+def forget(*paths) -> None:
+    """Drop named answers, or every answer when no paths are given."""
     with _LOCK:
-        _PROBES.clear()
+        if paths:
+            for path in paths:
+                _PROBES.pop(str(path), None)
+        else:
+            _PROBES.clear()

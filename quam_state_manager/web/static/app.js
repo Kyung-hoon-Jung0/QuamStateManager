@@ -541,7 +541,34 @@ document.addEventListener('htmx:sendError', function(evt) {
 // tab/window discards those edits with no warning. Warn whenever the tray shows
 // pending changes. (The per-grid beforeunload guards cover cells the user typed
 // but hasn't POSTed yet; this covers the committed-but-unsaved change_log.)
+/* R3 MINOR 5: a value typed and not committed in the inspector forms (qubit,
+   pair, pulse fields) or the Json Tree editors is lost on leave whatever the
+   tray says -- the grids have their own guards; these had only the tray's. */
+window._typedUncommitted = function () {
+    var els = document.querySelectorAll(
+        ".inline-edit input.edit-input, input.tree-edit-input, textarea.tree-json-textarea");
+    var same = function (a, b) {
+        if (a === b) return true;
+        // the app's own regrouping of a number ("5000" -> "5,000") is not typing
+        var NI = window.NumberInput;
+        var sa = NI ? NI.strip(a) : String(a), sb = NI ? NI.strip(b) : String(b);
+        if (sa === sb) return true;
+        return sa.trim() !== "" && sb.trim() !== "" && isFinite(+sa) && isFinite(+sb) && +sa === +sb;
+    };
+    for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (el.disabled || el.readOnly) continue;
+        // the app's baseline rule: data-committed when the field has one
+        var base = el.hasAttribute("data-committed") ? el.getAttribute("data-committed")
+                                                     : el.defaultValue;
+        if (!same(el.value, base)) return true;
+    }
+    return false;
+};
 window.addEventListener('beforeunload', function (ev) {
+    if (window._typedUncommitted()) {
+        ev.preventDefault(); ev.returnValue = ''; return '';
+    }
     // docs/237: the top bar's Reload reloads the PAGE on purpose, and the
     // server keeps the change log across it (the popup said so) -- no prompt
     // for that one. Typed-but-unposted cells keep their own guards (bulk-edit /
@@ -3869,6 +3896,9 @@ window.SyncPanel = (function () {
         if (ev) { ev.preventDefault(); ev.stopPropagation(); }
         if (!btn || btn.disabled) return;
         if (btn.getAttribute("data-armed") === "1") {
+            // R3 M6: a double click or a held Enter is not a confirm -- the
+            // second press must come after the armed label could be read
+            if (confirmTooSoon(btn)) return;
             disarm(btn);
             if (typeof fn === "function") fn();
             else if (window.htmx) window.htmx.trigger(btn, "armed");
@@ -3880,33 +3910,110 @@ window.SyncPanel = (function () {
         btn._armOrig = lab.innerHTML;
         lab.textContent = btn.getAttribute("data-arm-label") || "Press again to confirm";
         btn.setAttribute("data-armed", "1");
+        btn._armedAt = Date.now();
+        // R4 A2: armed by a key or pointer press still held down -- the
+        // confirm waits for it to be let go (keyup / pointerup)
+        btn._armReleased = (_pressDown !== btn);
         btn.classList.add("sync-armed");
         // v1.5.1 (U P2-32): the seconds left show on the button (a corner
         // badge: the label keeps its width), and running out is SAID -- a
         // second press that came too late used to re-arm without a word
         var left = ARM_S;
-        btn.setAttribute("data-arm-left", String(left));
+        _badge(btn, String(left));
         btn._armTimer = setInterval(function () {
+            // R3 MINOR 3: a re-render replaced this button -- its countdown
+            // ends quietly (the press that matters is on the new button)
+            if (!btn.isConnected) { clearInterval(btn._armTimer); return; }
             left -= 1;
-            if (left > 0) { btn.setAttribute("data-arm-left", String(left)); return; }
+            if (left > 0) { _badge(btn, String(left)); return; }
             disarm(btn);
             _expired(btn);
         }, 1000);
     }
     var ARM_S = 5;
+    // R3 M6: the least time between arming and a confirm that counts
+    var _cfg = { armMinMs: 400 };
+    // R4 A2: a held Enter is not a confirm either. The OS repeats a held key
+    // (about every 33 ms after about 500 ms) and each repeat clicks a focused
+    // button, so the 400 ms floor alone let the repeat confirm. A confirm now
+    // also needs the arming press to have been let go, and key repeats on an
+    // armed button do nothing. A click with no key or pointer down (an
+    // assistive tool's) needs no release; the floor still holds for it.
+    function confirmTooSoon(btn) {
+        if (!btn || !btn._armedAt) return false;
+        return btn._armReleased === false || (Date.now() - btn._armedAt) < _cfg.armMinMs;
+    }
+    var _pressDown = null;          // the button a key or pointer press is down on
+    function _pressButton(e) {
+        var t = e && e.target;
+        return (t && t.closest) ? t.closest("button") : null;
+    }
+    function _isPressKey(e) { return e.key === "Enter" || e.key === " " || e.key === "Spacebar"; }
+    function _letGo(e) {
+        if (e.type === "keyup" && !_isPressKey(e)) return;
+        if (_pressDown) { _pressDown._armReleased = true; _pressDown = null; }
+    }
+    document.addEventListener("keydown", function (e) {
+        if (!_isPressKey(e)) return;
+        var b = _pressButton(e);
+        if (!b) return;
+        if (e.repeat && b.getAttribute("data-armed") === "1") {
+            e.preventDefault();         // the repeat would click the armed button
+            return;
+        }
+        _pressDown = b;
+    }, true);
+    document.addEventListener("keyup", _letGo, true);
+    document.addEventListener("pointerdown", function (e) {
+        var b = _pressButton(e);
+        if (b) _pressDown = b;
+    }, true);
+    document.addEventListener("pointerup", _letGo, true);
+    document.addEventListener("pointercancel", _letGo, true);
+    /* The seconds left, as a corner badge the screen reader skips (R3 MINOR
+       7: CSS generated content landed in the button's accessible name). */
+    function _badge(btn, text) {
+        btn.setAttribute("data-arm-left", text);
+        var b = btn.querySelector(":scope > .arm-left-badge");
+        if (!b) {
+            b = document.createElement("span");
+            b.className = "arm-left-badge";
+            b.setAttribute("aria-hidden", "true");
+            btn.appendChild(b);
+        }
+        b.textContent = text;
+    }
+    function _dropBadge(btn) {
+        btn.removeAttribute("data-arm-left");
+        var b = btn.querySelector(":scope > .arm-left-badge");
+        if (b) b.remove();
+    }
+    /* R3 MINOR 7: said to a screen reader too (an info toast is not). */
+    function _srSay(text) {
+        var r = document.getElementById("sr-live-polite");
+        if (!r) {
+            r = document.createElement("div");
+            r.id = "sr-live-polite";
+            r.className = "visually-hidden";
+            r.setAttribute("role", "status");
+            r.setAttribute("aria-live", "polite");
+            document.body.appendChild(r);
+        }
+        r.textContent = text;
+    }
     function _expired(btn) {
         btn.classList.add("sync-arm-expired");
-        btn.setAttribute("data-arm-left", "expired");
+        _badge(btn, "expired");
         btn._expTimer = setTimeout(function () { _clearExpired(btn); }, 2500);
-        if (window.showToast) {
-            window.showToast("Not done: the confirm press did not come within " + ARM_S
-                             + " s, so nothing was changed. Press twice to do it.", "info");
-        }
+        var msg = "Not done: the confirm press did not come within " + ARM_S
+                  + " s, so nothing was changed. Press twice to do it.";
+        if (window.showToast) window.showToast(msg, "info");
+        _srSay(msg);
     }
     function _clearExpired(btn) {
         clearTimeout(btn._expTimer);
         btn.classList.remove("sync-arm-expired");
-        if (btn.getAttribute("data-armed") !== "1") btn.removeAttribute("data-arm-left");
+        if (btn.getAttribute("data-armed") !== "1") _dropBadge(btn);
     }
     function disarm(btn) {
         if (!btn || btn.getAttribute("data-armed") !== "1") return;
@@ -3914,7 +4021,8 @@ window.SyncPanel = (function () {
         var lab = btn.querySelector(".sp-choice-label") || btn;
         if (btn._armOrig != null) lab.innerHTML = btn._armOrig;
         btn.removeAttribute("data-armed");
-        btn.removeAttribute("data-arm-left");
+        btn._armedAt = 0;
+        _dropBadge(btn);
         btn.classList.remove("sync-armed");
     }
     function picks() {
@@ -3965,12 +4073,15 @@ window.SyncPanel = (function () {
     function merge(btn) {
         var n0 = need(), p = picks();
         if (Object.keys(p).length < n0) { picked(); return; }
-        // v1.5.1 (SB-P2-1): the live chip this panel read -- the server
-        // refuses a Keep-mine merge over a live chip that moved since
+        // SB-P2-1, R3 M4, R4 a1: every merge declares the live chip the panel
+        // read (its hash; the values at the fields it writes) and asks the
+        // same-field check: a lab write since is never replaced unnamed
         var lh = btn.getAttribute("data-live-hash") || "";
+        var lv = btn.getAttribute("data-live-values") || "";
         var run = function () {
             window.doStateSync("apply", false, false, null,
-                               n0 ? { informed: true, picks: p, expectLiveHash: lh } : { informed: true });
+                               n0 ? { picks: p, expectLiveHash: lh, expectLiveValues: lv }
+                                  : { expectLiveHash: lh, expectLiveValues: lv });
         };
         if (!n0) { run(); return; }
         if (!btn.getAttribute("data-arm-label"))
@@ -4044,6 +4155,7 @@ window.SyncPanel = (function () {
         send(btn.getAttribute("data-force") === "1");
     }
     return { refresh: refresh, arm: arm, disarm: disarm, armSeconds: ARM_S, picks: picks, picked: picked,
+             confirmTooSoon: confirmTooSoon, config: _cfg,
              merge: merge, reapply: reapply, retry: retry, takeOne: takeOne,
              recovery: recovery, isOpen: _syncPanelOpen };
 })();
@@ -4352,6 +4464,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
               + (opts && opts.ackTorn ? "&ack_torn=1" : "")
               + (opts && opts.picks ? "&picks=" + encodeURIComponent(JSON.stringify(opts.picks)) : "")
               + (opts && opts.expectLiveHash ? "&expect_live_hash=" + encodeURIComponent(opts.expectLiveHash) : "")
+              + (opts && opts.expectLiveHash && opts.expectLiveValues
+                 ? "&expect_live_values=" + encodeURIComponent(opts.expectLiveValues) : "")
               // v1.5.1 (SB-F4): the grid push confirm's own set, when it showed one
               + (opts && opts.seenPaths && opts.seenPaths.length
                  ? "&seen_paths=" + encodeURIComponent(JSON.stringify(opts.seenPaths)) : "")
@@ -4726,6 +4840,8 @@ window.overwriteLiveWithWorking = function (btn) {
     // of the decisions). Its SECOND press writes; the first reads the preflight
     // and rewrites the button's own "Lost:" line with what disappears.
     if (btn && btn.getAttribute("data-armed") === "1" && btn._keepMine) {
+        // R3 M6: a double click / held Enter is not the confirm
+        if (window.SyncPanel.confirmTooSoon(btn)) return;
         var ready = btn._keepMine;
         window.SyncPanel.disarm(btn);
         btn._keepMine = null;
@@ -4735,9 +4851,18 @@ window.overwriteLiveWithWorking = function (btn) {
     // docs/120/179: what THIS screen showed, read when the user looked at it
     // (the first press) -- the panel the button sits in, else the tray.
     var _seenView = _keepMineSeen(btn);
+    // R3 M6: one preflight at a time per button -- a double click's second
+    // answer armed the button the first had just armed, and that counted as
+    // the confirm: live was overwritten before the label could be read
+    if (btn) {
+        if (btn._kmPending) return;
+        btn._kmPending = true;
+    }
+    var _done = function () { if (btn) btn._kmPending = false; };
     fetch("/state/overwrite-live/preflight", { headers: { "HX-Request": "true" } })
         .then(function (r) { return r.json(); })
         .then(function (d) {
+            _done();
             if (!d || !d.ok) {
                 window.showToast((d && d.message) || "Cannot overwrite the live chip.", "error");
                 return;
@@ -4765,6 +4890,7 @@ window.overwriteLiveWithWorking = function (btn) {
             _keepMinePush(d);
         })
         .catch(function () {
+            _done();
             window.showToast("Could not check the live chip (network error).", "error");
         });
 };
@@ -4841,7 +4967,8 @@ function _keepMinePush(d, ackUnseen) {
     // or missing) keeps the plain forced push.
     window._keepMineInFlight = d;
     htmx.ajax("POST", "/state/apply-to-live?force=1"
-                  + (d.live_hash ? "&expect_live_hash=" + encodeURIComponent(d.live_hash) : "")
+                  + (d.replaced_hash ? "&expect_replaced_hash=" + encodeURIComponent(d.replaced_hash)
+                     : d.live_hash ? "&expect_live_hash=" + encodeURIComponent(d.live_hash) : "")
                   + (d._seen ? "&seen_changes=" + encodeURIComponent(d._seen.n)
                              + "&seen_sig=" + encodeURIComponent(d._seen.sig) : "")
                   + (ackUnseen ? "&ack_unseen=1" : ""),
@@ -5506,6 +5633,28 @@ window.livePushExtrasLine = function (typedPaths) {
                 // THIS window's tray and the values on screen -- in place, never
                 // swapping what the reader is looking at (docs/87/144).
                 onEditSeq(d, _trayAtIssue);
+                // R3 MINOR 6: a run started (or ended) on this chip since the
+                // scheduler poll last asked -- that poll stops when nothing
+                // runs (no runner UI), so this every-page poll wakes it
+                if (d && typeof d.runner_sig === "string" && d.runner_sig) {
+                    if (window._runnerSigSeen !== undefined && d.runner_sig !== window._runnerSigSeen
+                            && window._schedulerWake) {
+                        try { window._schedulerWake(); } catch (e) {}
+                    }
+                    window._runnerSigSeen = d.runner_sig;
+                }
+                // R3 MINOR 4: the leave guard reads data-tray-durable; the
+                // checkpoint can start (or stop) failing with no re-render.
+                // R4 a2: only the chip this tab shows -- the poll answers for
+                // the chip open now, which another window may have switched
+                if (d && typeof d.tray_durable === "boolean"
+                        && String(d.tray_chip || "") === String(window.__chipKey || "")) {
+                    var _tr = document.getElementById("pending-tray");
+                    if (_tr) {
+                        if (d.tray_durable) _tr.setAttribute("data-tray-durable", "1");
+                        else _tr.removeAttribute("data-tray-durable");
+                    }
+                }
                 // (the diagnostics-r2-11 banner re-render is retired: the banner
                 // itself is gone, sync-ux 2026-09-25 -- the status control and the
                 // "live now" cell marks carry that signal now)
@@ -11628,6 +11777,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         input.type = "text";
         input.autocomplete = "off";     // never a target of Back's form restore
         input.className = "tree-edit-input";
+        input.defaultValue = shownVal;  // R3 MINOR 5: what "typed, not committed" compares to
         input.value = shownVal;
         input.size = Math.max(10, shownVal.length + 2);
 
@@ -12114,6 +12264,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         ta.className = "tree-json-textarea";
         ta.spellcheck = false;
         try { ta.value = JSON.stringify(value, null, 2); } catch (e) { ta.value = String(value); }
+        ta.defaultValue = ta.value;   // R3 MINOR 5: the leave guard's "unchanged"
         var initialText = ta.value;   // JT-13: Save with nothing changed is a no-op
         ta.rows = Math.min(18, Math.max(3, ta.value.split("\n").length + 1));
 
@@ -19484,7 +19635,23 @@ window.saveDatasetNote = function(runId, note, el) {
     if (saved !== undefined && note === saved) { _noteSettle(el); return; }
     // v1.5.1 (U P2-22): the same text already on its way is not sent twice
     if (el && el.dataset && el.dataset.inflight === note) return;
+    // R3 MINOR 7: one save of a note at a time. A second save sent while the
+    // first was on its way carried the text stored BEFORE the first as its
+    // `expected`, so the server refused it as a conflict and the user was
+    // told their own save came from "another window" -- the newer text was
+    // not saved. It waits now, and goes once the first has landed.
+    if (el && el.dataset && el.dataset.inflight !== undefined) {
+        el._noteNext = note;
+        _noteState(el, 'saving');
+        return;
+    }
     if (el && el.dataset) el.dataset.inflight = note;
+    var _next = function (ok) {
+        if (!el) return;
+        var nx = el._noteNext;
+        el._noteNext = undefined;
+        if (ok && nx !== undefined && nx !== el.dataset.saved) window.saveDatasetNote(runId, nx, el);
+    };
     _noteState(el, 'saving');
     fetch('/dataset/' + runId + '/note', {
         method: 'POST',
@@ -19513,6 +19680,7 @@ window.saveDatasetNote = function(runId, note, el) {
             } else if (window.showToast) {
                 window.showToast('Note not saved: ' + (d.error || ('HTTP ' + r.status)), 'error');
             }
+            _next(false);      // the box keeps the text; a leave or Save sends it
             return;
         }
         if (el && el.dataset) { el.dataset.saved = note; delete el.dataset.conflict; }
@@ -19534,9 +19702,11 @@ window.saveDatasetNote = function(runId, note, el) {
                 else btn.removeAttribute('title');
             }
         }
+        _next(true);           // R3 MINOR 7: the save that waited for this one
     }).catch(function() {
         if (el && el.dataset && el.dataset.inflight === note) delete el.dataset.inflight;
         _noteState(el, 'failed');
+        _next(false);
     });
 };
 /* v1.5.1 (U P2-22): the note's state beside its Save -- typed but not saved,
@@ -19584,6 +19754,21 @@ function _flushDirtyNotes() {
         var ta = tas[i];
         if (ta.dataset.conflict || ta.value === ta.dataset.saved
                 || ta.value === ta.dataset.inflight) continue;
+        if (ta.dataset.inflight !== undefined) {
+            // R3 MINOR 7: a save is on its way and the page is going -- the
+            // newer text cannot wait for it: sent now. R4 a3: the server may
+            // take it before or after that save, so it expects either the
+            // text stored before that save or that save's own text
+            try {
+                fetch('/dataset/' + ta.getAttribute('data-uid') + '/note', {
+                    method: 'POST', keepalive: (ta.value || '').length < 60000,
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({note: ta.value, expected: ta.dataset.saved,
+                                          supersedes: ta.dataset.inflight})
+                }).catch(function () {});
+            } catch (e) { /* the page is going */ }
+            continue;
+        }
         window.saveDatasetNote(ta.getAttribute('data-uid'), ta.value, ta);
     }
 }

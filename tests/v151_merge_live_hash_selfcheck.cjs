@@ -44,6 +44,7 @@ w.fetch = (url, opts) => {
     return new Promise(() => {});
 };
 w.eval(APP);
+w.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pin (v151_r3_two_press_selfcheck.cjs)
 const toasts = [];
 w.showToast = (m, l) => { toasts.push(String(m)); };
 

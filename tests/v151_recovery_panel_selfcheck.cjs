@@ -64,6 +64,9 @@ window.fetch = global.fetch = fetchStub;
 
 window.eval(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'app.js'), 'utf8'));
 window.fetch = global.fetch = fetchStub;
+// v1.5.1: old -> new, why: presses back to back -> armMinMs = 0; the R3 M6 floor
+// (and R4 A2's release rule) have their own pins (v151_r3_two_press, v151_r4_held_enter)
+window.SyncPanel.config.armMinMs = 0;
 
 let fails = 0, n = 0;
 function ok(c, m) { n++; if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
