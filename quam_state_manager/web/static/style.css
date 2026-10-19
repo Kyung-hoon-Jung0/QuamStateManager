@@ -14983,9 +14983,15 @@ html.sm-in-frame { --sidebar-width: 220px; }
 .czp-map-head label { flex-direction: row; align-items: center; gap: 0.3rem; white-space: nowrap; }
 .czp-map-head select { min-width: 0; width: auto; max-width: 8rem; margin: 0; padding-right: 1.5rem; font-size: 0.8rem; text-overflow: ellipsis; }
 .czp-map { height: 560px; min-height: 460px; min-width: 0; }
-.czp-map-key { font-size: 0.78rem; margin: 0.2rem 0 0; }
-.czp-map-notes { font-size: 0.8rem; margin: 0.15rem 0 0; white-space: pre-line; }
-.czp-map-notes:empty { display: none; }
+.czp-map-footer { display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: baseline; gap: 0.2rem 1rem; margin-top: 0.25rem; font-size: 0.8rem; color: var(--pico-muted-color); --pico-accordion-close-summary-color: var(--pico-muted-color); --pico-accordion-open-summary-color: var(--pico-muted-color); --pico-accordion-active-summary-color: var(--pico-muted-color); }
+.czp-map-footer > details, .czp-map-footer > details::details-content { display: contents; }
+.czp-map-footer > details[hidden], .czp-map-footer > details:not([open]) > p { display: none; }
+.czp-map-footer > details > summary { width: auto; margin: 0; font-size: inherit; color: inherit; cursor: pointer; }
+.czp-map-footer summary::after { display: none; }
+.czp-map-footer summary::before { content: '+ '; }
+.czp-map-footer details[open] > summary::before { content: '- '; }
+.czp-map-key, .czp-map-notes { order: 1; flex: 0 0 100%; min-width: 0; margin: 0; font-size: inherit; color: inherit; overflow-wrap: anywhere; }
+.czp-map-notes { white-space: pre-line; }
 .czp-map-detail { font-size: 0.8rem; margin: 0.25rem 0 0; }
 .czp-map-detail > summary { cursor: pointer; color: var(--pico-muted-color, #888); }
 .czp-map-detail-list { margin: 0.25rem 0 0; padding-left: 1.1rem; }

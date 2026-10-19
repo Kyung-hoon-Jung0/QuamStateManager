@@ -42,7 +42,8 @@ def test_cz_chip_map_client():
     # labels by geometry, coinciding segments side by side, merged staleness, the no-scan scale, escaped ticks,
     # the content-match wording and the unchecked chip identity.
     # v1.4.1: 95 -> 114, compact partner geometry and both-theme mark/text contrast.
-    assert "114 assertions passed" in result.stdout
+    # v1.5.1: 114 -> 123, pin the compact map footer and its redraw lifecycle.
+    assert "123 assertions passed" in result.stdout
 
 
 def test_the_page_reads_title_status_figures_card_then_the_collapsed_notes(tmp_path):

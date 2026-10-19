@@ -38,12 +38,20 @@
         </label>
     </div>
     <div id="czp-map" class="czp-map"></div>
-    <p id="czp-map-key" class="muted czp-map-key"></p>
-    <p id="czp-map-notes" class="muted czp-map-notes" role="status"></p>
     <details id="czp-map-detail" class="czp-map-detail">
         <summary id="czp-map-detail-summary">Measured loss per qubit</summary>
         <div id="czp-map-detail-body"></div>
     </details>
+    <div class="czp-map-footer muted">
+        <details id="czp-map-key-box">
+            <summary>Key</summary>
+            <p id="czp-map-key" class="czp-map-key"></p>
+        </details>
+        <details id="czp-map-notes-box" hidden>
+            <summary><span id="czp-map-notes-summary" aria-live="polite" aria-atomic="true">Notes (0)</span></summary>
+            <p id="czp-map-notes" class="czp-map-notes"></p>
+        </details>
+    </div>
 </section>
 {% if rows %}
 <div class="czp-table-wrap">
