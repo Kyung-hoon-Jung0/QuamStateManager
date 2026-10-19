@@ -42,7 +42,8 @@ w.fetch = (url, opts) => {
     const body = JSON.parse(opts.body);
     sent.push(body);
     return new Promise((res) => queue.push(() => {
-        if (body.expected !== undefined && body.expected !== stored) {
+        if (body.expected !== undefined && body.expected !== stored
+                && !(body.supersedes !== undefined && body.supersedes === stored)) {
             res({ ok: false, status: 409, json: () => Promise.resolve({ note_conflict: true, current: stored }) });
             return;
         }
@@ -83,9 +84,17 @@ const ta = d.querySelector('.ds-note-textarea');
     ctrlEnter();
     ta.value = 'abcdef';
     w.dispatchEvent(new w.Event('beforeunload', { cancelable: true }));
-    ok(sent.length === 4 && sent[3].note === 'abcdef' && sent[3].expected === 'abcde',
-       'an unload during a save sends the newest text after the one on its way: '
-       + JSON.stringify(sent.slice(2)));
+    // v1.5.1: old -> new, why: expected = the in-flight text -> expected = the text
+    // stored before it + supersedes = the in-flight text (R4 a3: the server may
+    // take the flush first, and an `expected` of the in-flight text was refused)
+    ok(sent.length === 4 && sent[3].note === 'abcdef' && sent[3].expected === 'abcd'
+       && sent[3].supersedes === 'abcde',
+       'an unload during a save sends the newest text, expecting either the stored text '
+       + 'or the one on its way: ' + JSON.stringify(sent.slice(2)));
+    // R4 a3: the flush lands FIRST (a threaded server), then the save on its way
+    queue[1](); await tick();
+    queue[0](); await tick();
+    ok(stored === 'abcdef', 'the newest text stays stored either way: ' + JSON.stringify(stored));
     console.log(fails ? ('FAILED: ' + fails + ' of ' + n) : 'DONE (' + n + ' assertions)');
     process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error('UNCAUGHT', e && e.stack || e); process.exit(1); });

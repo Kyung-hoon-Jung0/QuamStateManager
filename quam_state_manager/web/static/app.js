@@ -19756,13 +19756,15 @@ function _flushDirtyNotes() {
                 || ta.value === ta.dataset.inflight) continue;
         if (ta.dataset.inflight !== undefined) {
             // R3 MINOR 7: a save is on its way and the page is going -- the
-            // newer text cannot wait for it: sent now, after the text the
-            // first save stores
+            // newer text cannot wait for it: sent now. R4 a3: the server may
+            // take it before or after that save, so it expects either the
+            // text stored before that save or that save's own text
             try {
                 fetch('/dataset/' + ta.getAttribute('data-uid') + '/note', {
                     method: 'POST', keepalive: (ta.value || '').length < 60000,
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({note: ta.value, expected: ta.dataset.inflight})
+                    body: JSON.stringify({note: ta.value, expected: ta.dataset.saved,
+                                          supersedes: ta.dataset.inflight})
                 }).catch(function () {});
             } catch (e) { /* the page is going */ }
             continue;

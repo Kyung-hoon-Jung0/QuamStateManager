@@ -44077,8 +44077,12 @@ def dataset_set_note(uid):
     expected = request.json.get("expected") if request.is_json else None
     if not isinstance(expected, str):
         expected = None
+    # R4 a3: the text of the page's own save still on its way (a leave flush)
+    supersedes = request.json.get("supersedes") if request.is_json else None
+    if not isinstance(supersedes, str) or expected is None:
+        supersedes = None
     try:
-        ds.set_note(run_id, note, expected=expected)
+        ds.set_note(run_id, note, expected=expected, supersedes=supersedes)
     except DatasetStore.NoteConflict as exc:
         return jsonify({"note_conflict": True, "current": exc.current,
                         "error": "Somebody else changed this note since you opened it."}), 409
