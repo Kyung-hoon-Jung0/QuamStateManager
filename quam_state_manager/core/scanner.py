@@ -326,6 +326,9 @@ class Workspace:
         # to transiently unreadable). The sidebar marks them and offers
         # Remove / Re-point instead of listing their last-scanned runs.
         self._missing: set[str] = set()
+        # R4 B3/b6: roots whose drive or share does not answer -- listed as
+        # last scanned and marked so, as the Datasets page states them
+        self._unreachable: set[str] = set()
 
     @property
     def version(self) -> int:
@@ -339,6 +342,11 @@ class Workspace:
         """v1.5.1 (SB-P2-6): root keys whose folder was not found at the
         last staleness check (moved, renamed or deleted)."""
         return set(self._missing)
+
+    def unreachable_roots(self) -> set[str]:
+        """R4 B3/b6: root keys whose drive or share did not answer at the
+        last staleness check -- their runs are listed as last scanned."""
+        return set(self._unreachable)
 
     def hydrating_roots(self) -> set[str]:
         """docs/142: roots whose listing-first scan is still parsing
@@ -703,6 +711,7 @@ class Workspace:
             self._scan_spines.pop(key, None)
             self._scan_probes.pop(key, None)
             self._missing.discard(key)          # v1.5.1 (SB-P2-6)
+            self._unreachable.discard(key)      # R4 B3
             for entry in removed_entries:
                 resolved = entry.quam_state_path.resolve()
                 self._entries_by_path.pop(resolved, None)
@@ -826,29 +835,36 @@ class Workspace:
         Returns True if any root was rescanned.
         """
         rescanned = False
-        for root in list(self.root_folders):
+        # R4 B3/b5/b6: every root's state through the one bounded rule the
+        # Datasets page uses (core.folder_probe) -- asked together, at most
+        # the probe's wait in all, never a share timeout per root
+        from quam_state_manager.core import folder_probe
+        roots = list(self.root_folders)
+        states = folder_probe.folder_states(roots) if roots else {}
+        for root in roots:
             # v1.5.1 (SB-P2-6): a root that is GONE (not found -- a moved or
             # deleted folder, not a transient read error) is marked, with a
             # version bump so the sidebar re-renders; one that comes back is
-            # rescanned
+            # rescanned. R4 B3: one whose drive or share does not answer is
+            # marked unreachable and keeps its tree as last scanned.
             key = str(root)
-            try:
-                os.stat(root)
-                gone = False
-            except FileNotFoundError:
-                gone = True
-            except OSError:
-                gone = False                 # unreadable for now: keep the tree
+            state = states.get(key, "ok")
+            gone = state == "gone"
+            away = state == "unreachable"
+            if away != (key in self._unreachable):
+                with self._lock:
+                    (self._unreachable.add if away else self._unreachable.discard)(key)
+                    self._version += 1
             if gone != (key in self._missing):
                 with self._lock:
                     (self._missing.add if gone else self._missing.discard)(key)
                     self._version += 1
-                if not gone:
+                if not gone and not away:
                     with self._rescan_gate(root):
                         self.rescan_root(root)
                     rescanned = True
                     continue
-            if gone:
+            if gone or away:
                 continue
             if not self._is_root_stale(root):
                 continue

@@ -34393,6 +34393,9 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
     from flask import has_app_context as _has_app
     _wsm = ws if ws is not None else (current_app.config.get("workspace") if _has_app() else None)
     missing = _wsm.missing_roots() if _wsm is not None and hasattr(_wsm, "missing_roots") else set()
+    # R4 B3/b6: roots whose drive or share does not answer (listed as last read)
+    unreachable = (_wsm.unreachable_roots() if _wsm is not None and hasattr(_wsm, "unreachable_roots")
+                   else set())
     # docs/142 B4: collapsed DATE groups ship an empty <ul> and fetch their
     # rows on first open -- 5,000 runs was ~4 MB / ~45k DOM nodes of markup
     # nobody had expanded. Only the unfiltered tree (a filtered tree must
@@ -34427,7 +34430,8 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
             pass
     return {"tree": tree or {}, "nested": nested, "tree_truncated": truncated,
             "tree_hydrating": hydrating, "lazy_groups": lazy_groups,
-            "eager_tpaths": eager_tpaths, "tree_missing": missing}
+            "eager_tpaths": eager_tpaths, "tree_missing": missing,
+            "tree_unreachable": unreachable}
 
 
 @bp.route("/workspace/add", methods=["POST"])
@@ -40343,33 +40347,15 @@ def _active_dataset_stores(*, fast: bool = False,
     return result
 
 
-def _root_reachable(path) -> bool:
-    """Whether the drive or network share *path* lives on answers (its
-    anchor: a drive root, a share root, or ``/``)."""
-    anchor = Path(path).anchor
-    if not anchor:
-        return True
-    try:
-        os.stat(anchor)
-    except OSError:
-        return False
-    return True
-
-
 def _folder_state(path) -> str:
     """v1.5.1 (SB-P2-6, R3B M5): ``"gone"`` when the folder is not found any
     more (moved, renamed, deleted) on a drive or share that answers;
-    ``"unreachable"`` when it is not found because its share or mapped drive
-    does not answer (Windows raises the same not-found error for an
-    unreachable share, WinError 53/67, and a disconnected drive, WinError
-    3/15); else ``"ok"`` -- a folder only unreadable for now is not gone."""
-    try:
-        os.stat(path)
-    except FileNotFoundError:
-        return "gone" if _root_reachable(path) else "unreachable"
-    except OSError:
-        return "ok"
-    return "ok"
+    ``"unreachable"`` when its share or mapped drive does not answer (or it
+    cannot be read now); else ``"ok"``. R4 B3/b5/b6: the one bounded rule
+    the sidebar, this page and the run index share --
+    ``core.folder_probe.folder_states``."""
+    from quam_state_manager.core import folder_probe
+    return folder_probe.folder_state(path)
 
 
 def _folder_gone(path) -> bool:
@@ -40378,16 +40364,23 @@ def _folder_gone(path) -> bool:
     return _folder_state(path) == "gone"
 
 
-def _gone_dataset_folders() -> list[dict]:
+def _gone_dataset_folders(states: dict | None = None) -> list[dict]:
     """v1.5.1 (SB-P2-6): the Datasets roots the workspace lists whose folder
     is gone or unreachable (``state``) -- the page names them instead of
-    dropping their runs silently."""
+    dropping their runs silently. *states*: ``folder_states`` answers the
+    caller already has (R4 b5: one bounded probe per path per request)."""
+    from quam_state_manager.core import folder_probe
     ws = current_app.config.get("workspace")
+    roots = [str(r) for r in (getattr(ws, "root_folders", None) or ())]
+    states = dict(states or {})
+    ask = [r for r in roots if r not in states]
+    if ask:
+        states.update(folder_probe.folder_states(ask))
     out: list[dict] = []
-    for r in (getattr(ws, "root_folders", None) or ()):
-        state = _folder_state(r)
+    for r in roots:
+        state = states.get(r, "ok")
         if state != "ok":
-            out.append({"key": _folder_key(Path(r)), "path": str(r), "state": state})
+            out.append({"key": _folder_key(Path(r)), "path": r, "state": state})
     return out
 
 
@@ -41380,11 +41373,21 @@ def datasets_changes_since():
     # is never in a delta), answered as ``resent`` once served
     resend = {k for k in (request.args.get("resend") or "").split(",") if k}
     resent: list[str] = []
+    # R4 b5: every folder this poll states -- the ones it serves and the
+    # workspace roots it names -- asked ONCE, through the bounded probe: an
+    # outage costs at most the probe's wait, never a share timeout per stat
+    from quam_state_manager.core import folder_probe
+    _ws_roots = [str(r) for r in (getattr(current_app.config.get("workspace"), "root_folders", None) or ())]
+    try:
+        states = folder_probe.folder_states([str(f["path"]) for f in active] + _ws_roots)
+    except Exception:  # noqa: BLE001 -- unknown is "as last read", never "gone"
+        logger.warning("changes-since: folder states", exc_info=True)
+        states = {}
     for fol in active:
         # v1.5.1 (SB-P2-6): a data folder that is GONE (not found) while a page
         # shows it: its runs leave the table (as vanished) and the folder is
         # named, as the sidebar names it -- an open page kept listing them
-        state = _folder_state(fol["path"])
+        state = states.get(str(fol["path"]), "ok")
         if state == "gone":
             gone.append({"key": fol["key"], "path": fol["path"], "state": state})
             try:
@@ -41464,7 +41467,7 @@ def datasets_changes_since():
     # an open page's note for it stays while it is gone or unreachable
     listed = {g["key"] for g in (*gone, *unreachable)}
     try:
-        for g in _gone_dataset_folders():
+        for g in _gone_dataset_folders(states):
             if g["key"] not in listed:
                 (gone if g["state"] == "gone" else unreachable).append(g)
                 listed.add(g["key"])

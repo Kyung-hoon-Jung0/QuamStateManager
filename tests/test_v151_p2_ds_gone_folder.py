@@ -37,6 +37,16 @@ def _run(root: Path, rid: int, name: str) -> None:
     (run / "quam_state" / "wiring.json").write_text("{}", encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def _fresh_probes():
+    # v1.5.1 (R4 b5): the folder rule remembers a drive root that did not
+    # answer (core.folder_probe); a simulated outage must not outlive its test
+    from quam_state_manager.core import folder_probe
+    folder_probe.forget()
+    yield
+    folder_probe.forget()
+
+
 @pytest.fixture
 def env(tmp_path):
     _run(tmp_path / "data_a", 1, "ramsey")
@@ -132,8 +142,20 @@ def test_an_unreachable_folder_keeps_its_runs_and_says_so(env, monkeypatch):
     # the share drops: the folder is not found AND its share root does not
     # answer (the drive-root half is pinned for real just above)
     (tmp / "data_b").rename(tmp / "data_b_offline")
-    real = routes._root_reachable
-    monkeypatch.setattr(routes, "_root_reachable", lambda p: False if str(p).startswith(down) else real(p))
+    # v1.5.1 (R4 B3/b5): routes._root_reachable -> its drive root answers no
+    # os.stat: the rule moved to core.folder_probe (bounded), so the outage
+    # is made where every version asks it, not at a helper that is gone
+    import os
+    real_stat = os.stat
+    root = os.path.normcase(Path(down).anchor)
+
+    def _stat(p, *a, **kw):
+        if os.path.normcase(os.fspath(p)) == root:
+            raise FileNotFoundError(2, "The network path was not found", os.fspath(p))
+        return real_stat(p, *a, **kw)
+    monkeypatch.setattr(os, "stat", _stat)
+    from quam_state_manager.core import folder_probe
+    folder_probe.forget()
     d = c.get("/datasets/changes-since?ts=0").get_json()
     assert [g["path"] for g in d.get("unreachable", [])] == [down], d
     assert "gone" not in d, d
