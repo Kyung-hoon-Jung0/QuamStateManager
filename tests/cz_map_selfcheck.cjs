@@ -155,7 +155,7 @@ async function footerPins(only) {
                 loss.staleness.mode = 'preparing';
                 // Avoid scheduling retries: paint uses the answer already held by the page.
                 await w.CzMap.paint(S.root);
-                check(mixed && summary.textContent === 'Notes (9): 2 axis checks, 4 data sources, 1 chip identity check, 1 data gap, 1 other note',
+                check(mixed && summary.textContent === 'Notes (9): 1 axis check, 1 pending check, 4 data sources, 1 chip identity check, 1 data gap, 1 other note',
                     'footer/kinds: identity, missing data, pending axis checks and other notes all count');
             }
             if (name === 'hidden') {
