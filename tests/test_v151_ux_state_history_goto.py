@@ -162,12 +162,43 @@ def test_without_a_display_zone_the_day_ends_at_that_dates_own_offset(app, monke
         assert R._state_history_page_for({}, snaps, "2026-01-15", 1) == 2
 
 
-def test_the_machine_day_end_follows_the_os_rules_for_that_date():
-    import time
-    from datetime import datetime
-    for day in ("2026-01-15", "2026-07-15", "2026-03-29", "2026-10-25"):
-        d = datetime.strptime(day, "%Y-%m-%d")
-        end = R._machine_day_end(d)
-        nxt = (d.replace(hour=0) + __import__("datetime").timedelta(days=1)).timetuple()
-        assert end.tzinfo is not None
-        assert end.timestamp() == time.mktime(nxt), (day, end)
+_DST_PROBE = """
+import json, sys, time
+from types import SimpleNamespace
+from quam_state_manager.web import routes as R
+from quam_state_manager.web.app import create_app
+R._display_zone = lambda: None
+R._versions_read_rows = lambda *a, **k: {"mode": "unavailable"}
+app = create_app(testing=True, instance_path=sys.argv[1])
+snaps = lambda *ts: [SimpleNamespace(timestamp=t) for t in ts]
+with app.test_request_context():
+    out = {"zone": [time.timezone, time.altzone],
+           # winter (UTC-5): 01-15 ends at 01-16 05:00 UTC
+           "winter": R._state_history_page_for(
+               {}, snaps("20260116_053000_000000", "20260116_043000_000000"), "2026-01-15", 1),
+           # summer (UTC-4): 07-15 ends at 07-16 04:00 UTC
+           "summer": R._state_history_page_for(
+               {}, snaps("20260716_043000_000000", "20260716_033000_000000"), "2026-07-15", 1)}
+print("RESULT " + json.dumps(out))
+"""
+
+
+def test_the_machine_day_end_follows_the_os_rules_for_that_date(tmp_path):
+    # v1.5.1 (R4 b9): mktime in this process -> a subprocess in its own DST zone
+    # (TZ=EST5EDT), because the old pin compared the machine's rule with itself
+    # and could not fail on a machine whose zone has no DST. Each date's row at
+    # 23:30 local is that day's, at 00:30 the next day's: one row comes first.
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    env = dict(os.environ, TZ="EST5EDT", PYTHONUTF8="1")
+    p = subprocess.run([sys.executable, "-c", _DST_PROBE, str(tmp_path / "_inst")],
+                       cwd=str(Path(__file__).resolve().parent.parent), env=env,
+                       capture_output=True, text=True, encoding="utf-8", timeout=300)
+    line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT ")), None)
+    assert line, p.stdout[-2000:] + p.stderr[-2000:]
+    got = json.loads(line[len("RESULT "):])
+    assert got["zone"] == [18000, 14400], "the DST zone did not take effect: %s" % got
+    assert (got["winter"], got["summer"]) == (2, 2), got
