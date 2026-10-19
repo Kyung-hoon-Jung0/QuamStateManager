@@ -40,7 +40,7 @@ def test_the_grid_csv_heads_a_text_column_without_a_unit(tmp_path):
     assert c.post("/load", data={"folder": str(chip)}).status_code < 400
     r = c.post("/export", json={"grid": "qubits"})
     assert r.status_code == 200 and r.mimetype == "text/csv"
-    head = next(csv.reader(io.StringIO(r.get_data(as_text=True).lstrip("﻿"))))
+    head = next(csv.reader(io.StringIO(r.get_data(as_text=True).lstrip("\ufeff"))))
     text_col = [h for h in head if "hold_time" in h]
     num_col = [h for h in head if "ramp_time" in h]
     assert text_col and num_col, head

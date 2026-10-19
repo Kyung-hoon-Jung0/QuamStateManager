@@ -36,7 +36,7 @@ def test_numbers_stay_numbers_and_formulas_are_neutralised(tmp_path):
     assert c.post("/load", data={"folder": str(chip)}).status_code < 400
     r = c.get("/export?props=f_01&props=grid_location")
     assert r.status_code == 200 and r.mimetype == "text/csv"
-    lines = list(csv.reader(io.StringIO(r.get_data(as_text=True).lstrip("﻿"))))
+    lines = list(csv.reader(io.StringIO(r.get_data(as_text=True).lstrip("\ufeff"))))
     col = lines[0].index("grid_location")
     got = {row[0]: row[col] for row in lines[1:]}
     assert got["q1"] == "-9.5e-05" and float(got["q1"]) == -9.5e-05, got["q1"]
