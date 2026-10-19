@@ -5189,14 +5189,7 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
             return
         resolved: list[str] = []
         for raw in declared:
-            # PUBLIC native_path (r10): unlike the bare 2-arg _to_native it
-            # anchors non-/mnt POSIX values onto the config's distro share
-            # (wsl_root) — a /home/... value was previously never bridged.
-            native = raw
-            try:
-                native = str(qualibrate_config.native_path(raw) or raw)
-            except Exception:  # noqa: BLE001
-                pass
+            native = _extras_native(raw)
             if native and Path(native).is_dir():
                 resolved.append(str(Path(native)))
             else:
@@ -5229,6 +5222,55 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
                 pass
     except Exception:  # noqa: BLE001 — pairing must never break activation
         logger.debug("extras data-folder adoption failed", exc_info=True)
+
+
+def _extras_native(raw: str) -> str:
+    """A declared ``extras.data_folder`` value as a path on this machine."""
+    # PUBLIC native_path (r10): unlike the bare 2-arg _to_native it
+    # anchors non-/mnt POSIX values onto the config's distro share
+    # (wsl_root) -- a /home/... value was previously never bridged.
+    try:
+        return str(qualibrate_config.native_path(raw) or raw)
+    except Exception:  # noqa: BLE001
+        return raw
+
+
+#: v1.5.1 (r6, P2-3): a "still not found" answer for a declared data folder is
+#: reused this long by later renders (memoised), and one render waits at most
+#: this long for a fresh answer (a slow share never stalls a page: no answer
+#: keeps the notice, as before)
+_DANGLING_RECHECK_S = 5.0
+_DANGLING_WAIT_S = 0.25
+
+
+def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False) -> list[str]:
+    """The declared data folders still not found (v1.5.1 r6, P2-3).
+
+    The "Data folder not reachable" notice was the list taken when the chip
+    was opened, so it stayed on every page after the folder was back and
+    re-pointed, until the project was reopened. Each render now asks again
+    through the bounded folder rule (:func:`folder_probe.folders_present`,
+    memoised ``_DANGLING_RECHECK_S``); *fresh* drops the memo first (a
+    re-point). A folder found again is paired exactly as opening the chip
+    pairs it (:func:`_adopt_extras_data_folders`), so the notice and the
+    dataset roots agree."""
+    dangling = list((ctx or {}).get("extras_data_dangling") or [])
+    if not dangling:
+        return []
+    try:
+        from quam_state_manager.core import folder_probe
+        natives = {raw: _extras_native(raw) for raw in dangling}
+        if fresh:
+            folder_probe.forget(*natives.values())
+        here = folder_probe.folders_present(natives.values(), wait_s=_DANGLING_WAIT_S,
+                                            ttl_s=_DANGLING_RECHECK_S)
+        if not any(here.get(n) is True for n in natives.values()):
+            return dangling
+        _adopt_extras_data_folders(ctx)
+        return list(ctx.get("extras_data_dangling") or [])
+    except Exception:  # noqa: BLE001 -- a notice never breaks a page
+        logger.debug("re-checking the declared data folders failed", exc_info=True)
+        return dangling
 
 
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -6353,7 +6395,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # extras.data_folder values (muted note, never an error).
         "chip_name_prompt": (_active_ctx() or {}).get("chip_name_prompt"),
         "identity_confirm": (_active_ctx() or {}).get("identity_confirm"),
-        "extras_data_dangling": (_active_ctx() or {}).get("extras_data_dangling") or [],
+        # v1.5.1 (r6, P2-3): asked again on render (memoised), never the
+        # list taken when the chip was opened
+        "extras_data_dangling": _recheck_extras_dangling(_active_ctx()),
         "data_folder_suggest": (_active_ctx() or {}).get("data_folder_suggest"),
         "data_folder_candidates": (_active_ctx() or {}).get("data_folder_candidates") or [],
         "dataset_roots_ask": _dataset_roots_ask(_active_ctx()),
@@ -34798,9 +34842,19 @@ def workspace_add():
     _retired_dataset_keys().difference_update(
         {_folder_key(c) for c in _dataset_candidate_folders(fast=True)})
 
+    # v1.5.1 (r6, P2-3): a re-point is when a declared data folder that was not
+    # found is most likely back -- asked afresh now, and the "not reachable"
+    # notice on this page goes at once (not on the next page or reopen)
+    _banner_oob = ""
+    _actx = _active_ctx()
+    if ((_actx or {}).get("extras_data_dangling")
+            and not _recheck_extras_dangling(_actx, fresh=True)
+            # the strip showed this notice only when no question outranked it
+            and not _actx.get("identity_confirm") and not _actx.get("chip_name_prompt")):
+        _banner_oob = '<div id="chip-name-banner" hx-swap-oob="delete"></div>'
     resp = make_response(render_template(
         "_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws),
-        message=f"Added {len(entries)} experiment(s)"))
+        message=f"Added {len(entries)} experiment(s)") + _banner_oob)
     # QA datasets-r2-26: an open Datasets page re-reads its table (rows,
     # folder chips, count) -- it only rebuilds from a full payload.
     resp.headers["HX-Trigger"] = json.dumps({"workspaceRootsChanged": {"removed": _removed}})
