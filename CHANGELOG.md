@@ -1117,3 +1117,15 @@ The version stays 1.5.0. Customer feedback on the CZ gate plan and the Datasets 
   shrink or grow with the panel height; the pane scrolls).
 - **Keyboard**: with a run of the left data list clicked, Up/Down step the runs only; the open page's table (e.g. the
   CZ gate plan's operation table) no longer moves and scrolls along with them.
+
+## v1.5.1 (unreleased)
+
+Fixes from the v1.5.1 review rounds; the version is shown in Settings, Help and the app title.
+
+- **Live State Edit**: Enter (or Down) in the grid search puts the caret at the end of the first matching cell with
+  nothing selected, so typing on no longer replaces the value; on a large (virtualized) grid it waits for that cell
+  to load instead of jumping to a later row.
+- **Plot apply under Auto-Sync**: a row says "staged -- Auto-Sync is writing it", then what the live write did
+  (written, refused with the reason, or not written yet while Auto-Sync merges a moved chip).
+- **Datasets**: the "wrote state" mark and filter say what the run did, without promising its fits can be applied;
+  the one-time re-index after an upgrade says "Re-indexing after upgrade: N of M runs".
