@@ -510,6 +510,10 @@ def probe_file(h5_path: Path) -> dict:
                         "shape": list(h.shape),
                         "ndim": h.ndim,
                         "dtype": str(h.dtype),
+                        # R4 B2: a true/false variable -- xarray writes a bool
+                        # as int8 with the attribute dtype="bool" (CF)
+                        "is_bool": (str(h.dtype) == "bool"
+                                    or r.var_attr(h, "dtype") == "bool"),
                         "dims": [d["name"] for d in dims],
                         "units": r.var_attr(h, "units"),
                         "long_name": r.var_attr(h, "long_name"),

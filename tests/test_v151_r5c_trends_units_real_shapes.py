@@ -17,7 +17,8 @@ copies it still read, each copied below attribute for attribute:
 
 Controls that keep their own unit: ``opt_amp`` V, ``base_freq`` Hz,
 ``distance_opt`` V, ``optimal_amplitude`` V (its namesake ``readout_amplitude``
-is not a higher-rank variable it can reduce).
+is not a higher-rank variable it can reduce). And a true/false variable as
+xarray writes it (int8 + the attribute ``dtype="bool"``): never a unit.
 """
 from __future__ import annotations
 
@@ -118,6 +119,12 @@ def _gef_power(f):
     _flag(f, "success", 1)
 
 
+def _flags(f):
+    # an xarray bool with a unit of its own: only the bool shape refuses it
+    _flag(f, "converged", 1, units="ns", long_name="convergence")
+    _var(f, "t_lock", [120.0], ("qubit",), units="ns", long_name="lock time")
+
+
 CASES = {
     "29_power_rabi_ef": ({"opt_amp_prefactor": 1.309, "opt_amp": 0.327, "success": True},
                          _power_rabi_ef, {"opt_amp": "V"}),
@@ -130,6 +137,7 @@ CASES = {
     "30b_gef_readout_power_optimization": (
         {"optimal_amp_prefactor": 1.99, "optimal_amplitude": 0.1615, "success": True},
         _gef_power, {"optimal_amplitude": "V"}),
+    "99_flags": ({"converged": 1, "t_lock": 120.0}, _flags, {"t_lock": "ns"}),
 }
 
 

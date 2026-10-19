@@ -490,9 +490,10 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
       ``optimal_detuning`` with ``("V", "blob distance")`` -- the 2-D data
       variable ``distance``'s, an argmax of it over frequency).
 
-    And no unit at all for a true/false metric (a ``bool`` variable, or a
-    metric named in *booleans*, whose fit values are true/false), nor for a
-    dimensionless name
+    And no unit at all for a true/false metric (a ``bool`` variable -- on
+    disk xarray writes it as int8 with the attribute ``dtype="bool"``, which
+    ``probe_file`` reports as ``is_bool`` -- or a metric named in *booleans*,
+    whose fit values are true/false), nor for a dimensionless name
     (:func:`is_dimensionless_name`) unless the unit is a ratio
     (:data:`RATIO_UNITS`)."""
     def sig(v: dict) -> tuple:
@@ -520,7 +521,7 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
         unit = v.get("units")
         if not isinstance(unit, str) or not unit.strip():
             continue
-        if str(v.get("dtype") or "") == "bool":
+        if v.get("is_bool") or str(v.get("dtype") or "") == "bool":
             continue
         if v.get("name") not in coord_names and sig(v) in coord_sigs:
             continue              # inherited from a coordinate, not declared
