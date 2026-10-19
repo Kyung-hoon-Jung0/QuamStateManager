@@ -47,7 +47,10 @@ def test_a_cz_view_never_re_points_the_other_surfaces(tmp_path):
         ctx = app.config["contexts"][app.config["active_context"]]
         with app.test_request_context():
             view = routes._hub_folder_view(ctx, ctx.get("hub_chip_dir"))
-        regs = [sorted(Path(rs.path).name for rs in cs.roots.values()) for cs in hub_sync.registered()]
+        # this chip's ledger only: the registry is per process
+        mine = Path(ctx["hub_chip_dir"]).resolve()
+        regs = [sorted(Path(rs.path).name for rs in cs.roots.values())
+                for cs in hub_sync.registered() if Path(cs.dir).resolve() == mine]
         return _names(ctx.get("hub_roots")), sorted(Path(k).name for k in view.roots), regs
 
     before = surfaces()
