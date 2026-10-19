@@ -32692,14 +32692,16 @@ def export_csv():
     return _csv_download(["id"] + [heads[p] for p in props], rows, name)
 
 
-#: R3B MINOR 2: a text cell a spreadsheet would read as a formula (OWASP CSV
-#: injection) is written with a leading apostrophe
-_CSV_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
-
-
 def _csv_cell(value):
-    if isinstance(value, str) and value.startswith(_CSV_FORMULA_LEAD):
-        return "'" + value
+    """R3B MINOR 2: a text cell a spreadsheet would read as a formula (OWASP
+    CSV injection) is written with a leading apostrophe. R4 b1: through the
+    one rule the chip report already uses (``report_card.csv_safe_cell``),
+    so a number stored as text ("-9.5e-05", "+5") stays a number -- only a
+    + or - that does not start a number is neutralised. Non-text values pass
+    through as they are."""
+    if isinstance(value, str):
+        from quam_state_manager.core.report_card import csv_safe_cell
+        return csv_safe_cell(value)
     return value
 
 
