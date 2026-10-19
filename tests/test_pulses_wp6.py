@@ -107,12 +107,14 @@ def test_unknown_marker_set_is_disclosed_and_never_blocks(client, source):
     elif source == "missing-map":
         st.generated_config = {"elements": {}}
     html = client.get("/pulse/detail", query_string={"path": MARKER_OP}).data
-    assert b"Marker names cannot be determined" in html
+    # v1.5.1: old -> new, why: the note now reads "cannot be checked ... You can
+    # still edit this field" (UX round: the old ending read as a refusal)
+    assert b"Marker names cannot be checked" in html
     r = client.post("/pulse/edit", data={"path": MARKER_OP, "dot_path": MARKER_OP + ".digital_marker",
                                          "mode": "value", "value": "OFF"})
     assert r.status_code == 200, r.data[:300]
     assert st.get_value(MARKER_OP + ".digital_marker") == "OFF"
-    assert b"Marker names cannot be determined" in r.data
+    assert b"Marker names cannot be checked" in r.data
 
 
 def test_an_empty_defined_marker_set_refuses_names(client):

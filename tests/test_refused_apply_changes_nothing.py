@@ -430,10 +430,10 @@ class TestARefusedApplyChangesNothing:
 
 
 class TestAFailedWriteIsNotARefusal:
-    def test_the_save_stands_journaled_when_the_live_write_fails(self, env, monkeypatch):
+    def test_the_edits_stay_rows_when_the_live_write_fails(self, env, monkeypatch):
         """A write that FAILED (a reader holding state.json on Windows, a
-        read-only share) is not the chip refusing: the edits stay saved in the
-        working copy as before, and that save is journaled (docs/107)."""
+        read-only share) is not the chip refusing: the edits stay tray rows,
+        live is untouched, and nothing is journaled (docs/107)."""
         from quam_state_manager.core import safe_io
         _edit(env)
         live = str(env["live"])
@@ -448,8 +448,13 @@ class TestAFailedWriteIsNotARefusal:
         # v1.5.1 (SA-F2): a known write failure is a named 409, never a 500
         assert r.status_code == 409
         ctx = _ctx(env)
-        assert ctx["store"].change_log == [] and ctx.get("working_dirty")
-        assert len(undo_journal.load(_sidecar(env))) == 1
+        # v1.5.1 (a67eaa0b): old -> new, why: a write that provably never reached the
+        # chip puts the press's save back -- the edit stays a tray row (so Pull & apply
+        # can still merge a later lab write under it), not a whole saved version, and
+        # no undo unit claims a save that was undone
+        assert [c.dot_path for c in ctx["store"].change_log] == ["qubits.qA1.f_01"]
+        assert not ctx.get("working_dirty")
+        assert len(undo_journal.load(_sidecar(env))) == 0
         assert _live_doc(env)["qubits"]["qA1"]["f_01"] == 5.0e9
 
 
