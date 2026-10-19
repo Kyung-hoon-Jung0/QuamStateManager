@@ -501,6 +501,14 @@ _EXPERIMENT_PATTERN = re.compile(r"^#?\d+_.+_\d{6}$")
 _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def _ends_with_names(path: Path, chain: list) -> bool:
+    """R4 A1: does *path* end with the folder names *chain* (compared the way
+    the file system compares them), below at least one more folder?"""
+    parts = [os.path.normcase(x) for x in Path(path).parts]
+    want = [os.path.normcase(x) for x in chain]
+    return bool(want) and len(parts) > len(want) and parts[-len(want):] == want
+
+
 def _canonical_content_hash(state_path: Path, wiring_path: Path) -> str | None:
     """SHA256 of canonicalised state.json + wiring.json content.
 
@@ -2528,15 +2536,25 @@ class HistoryManager:
     def _moved_here(self, dir_: Path, holder: str, path: Path) -> bool:
         """R3 M2: evidence that the holder's folder MOVED to *path* rather
         than being out of reach for a while. The holder's drive or share
-        (its anchor) answers -- an offline share or an unplugged disk does
-        not -- and either *path* holds content one of the dir's snapshots
-        holds, or the holder's parent folder answers while the holder itself
-        does not (it was renamed or removed in a place that is reachable).
+        (its anchor) answers -- an offline share, an unplugged disk or an
+        unmapped drive does not -- and one of:
+
+        * *path* holds content one of the dir's snapshots holds;
+        * the holder's parent folder answers while the holder itself does
+          not (it was renamed or removed in a place that is reachable);
+        * R4 A1: the chip folder moved WITH its parent folder(s)
+          (``.../2026/chipA/quam_state`` -> ``.../archive/chipA/quam_state``):
+          the nearest ancestor below the anchor that answers is reached
+          through folders that answer "not there", and *path* ends with that
+          same chain of folder names. A vanished folder whose name the asker
+          does not carry (another copy of the chip) is no evidence.
+
         Bounded probes; no answer is no evidence."""
         from quam_state_manager.core import folder_probe
         hp = Path(holder)
         anchor, parent = hp.anchor, str(hp.parent)
-        asks = [a for a in (anchor, parent) if a and a != str(holder)]
+        ups = [str(p) for p in hp.parents]           # nearest first, the anchor last
+        asks = [a for a in dict.fromkeys([anchor] + ups) if a and a != str(holder)]
         if not asks:
             return False
         present = folder_probe.folders_present(asks)
@@ -2549,7 +2567,19 @@ class HistoryManager:
             here = None
         if here is not None and here in self._known_hashes_for_chip(dir_):
             return True
-        return parent != str(holder) and present.get(parent) is True
+        if parent != str(holder) and present.get(parent) is True:
+            return True
+        chain = [hp.name]
+        for up in ups:
+            if up == anchor:
+                return False            # only the drive/share root answers
+            seen = present.get(up)
+            if seen is True:
+                return _ends_with_names(Path(path), chain)
+            if seen is not False:
+                return False            # no answer on the way up
+            chain.insert(0, Path(up).name)
+        return False
 
     def _held_elsewhere(self, dir_: Path, path: Path | None) -> bool:
         """R2 M3: *dir_* is held (recorded, or by its snapshots' sources) by
