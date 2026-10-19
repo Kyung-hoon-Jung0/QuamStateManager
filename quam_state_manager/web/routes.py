@@ -32159,6 +32159,9 @@ def state_apply_to_live():
     # QA correctness-r2-09: "Keep mine" hands back the live content hash its
     # confirm counted; a forced push is held to it (absent -> unchanged).
     expect_live_hash = (request.values.get("expect_live_hash") or None) if force else None
+    # R3 MINOR 10a: or to the live values the push replaces -- a lab write the
+    # push neither replaces nor erases no longer refuses it
+    expect_replaced_hash = (request.values.get("expect_replaced_hash") or None) if force else None
     # docs/117: an armed session turns THIS route into the auto-apply writer.
     # It is still the only thing that writes live; the session just presses it.
     _auto = _auto_apply_state(ctx)
@@ -32176,12 +32179,18 @@ def state_apply_to_live():
     # (keepMineReask). docs/255: checked before the save too (it used to run
     # after it, leaving the tray saved away under a refusal), and still before
     # the backup, so a refused push records no version.
-    if expect_live_hash is not None:
+    if expect_live_hash is not None or expect_replaced_hash is not None:
         try:
-            _now = working_copy.live_content_hash(wc)
+            if expect_replaced_hash is not None:
+                _pair = working_copy.read_live_shared(wc)
+                with store._lock:
+                    _now = working_copy.replaced_values_hash(
+                        _pair.state, _pair.wiring, payload=(store.state, store.wiring))
+            else:
+                _now = working_copy.live_content_hash(wc)
         except (OSError, ValueError):
             _now = None
-        if _now != expect_live_hash:
+        if _now != (expect_replaced_hash or expect_live_hash):
             ctx["live_diverged"] = True
             if request.headers.get("Accept", "").startswith("application/json"):
                 return jsonify(ok=False, conflict="live_moved",
@@ -32361,6 +32370,7 @@ def state_apply_to_live():
             working_copy.apply_to_live(
                 wc, force=force, record=_pend,
                 **({"expect_live_hash": expect_live_hash} if expect_live_hash else {}),
+                **({"expect_replaced_hash": expect_replaced_hash} if expect_replaced_hash else {}),
                 **({"backup_check": _forced_write_gate(wc, _bk.get("ts"), _bk.get("hash"), _bref)}
                    if force else {}))
     except working_copy.LiveStateMissingError as exc:
@@ -32387,7 +32397,7 @@ def state_apply_to_live():
         _press_keep_tray(ctx, _press)
         return _shared_working_refusal()
     except working_copy.StaleLiveError:
-        if expect_live_hash is not None and _auto is None:
+        if (expect_live_hash is not None or expect_replaced_hash is not None) and _auto is None:
             # QA correctness-r2-09: the tight re-check inside apply_to_live --
             # a write landed between the check above and the write
             _refused_after_save()      # docs/255: the press changes nothing
@@ -32664,6 +32674,7 @@ def state_overwrite_live_preflight():
     store = ctx["store"]
     live_changes = None
     live_hash = None
+    replaced_hash = None
     live_paths: list = []
     replaced = None
     try:
@@ -32678,6 +32689,9 @@ def state_overwrite_live_preflight():
         live_paths = _moved_paths[:8] if _facts.get("moved") else []
         replaced = len(_entries)
         live_hash = _lp.content_hash()
+        with store._lock:
+            replaced_hash = working_copy.replaced_values_hash(
+                _lp.state, _lp.wiring, payload=(store.state, store.wiring))
     except (FileNotFoundError, OSError, ValueError, safe_io.LiveFileError):
         logger.info("overwrite-live preflight could not read the live files",
                     exc_info=True)
@@ -32745,6 +32759,7 @@ def state_overwrite_live_preflight():
         # push hands it back so a write landing while the confirm is open is
         # refused and asked about, never overwritten unnamed
         "live_hash": live_hash,
+        "replaced_hash": replaced_hash,
         "run_active": bool(run_active),
         "run_label": run_label,
     })

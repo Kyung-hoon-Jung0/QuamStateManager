@@ -117,3 +117,13 @@ offering both directions, and the push landing with *Revert last apply* armed.
 confirm naming the count / the run / the reversibility, decline posting nothing,
 a refused preflight never asking, and the push carrying `force=1` into
 `#pending-tray`.
+
+## Confirmation freshness (v1.5.1 R3 MINOR 10)
+
+The preflight also returns `replaced_hash`: the paths and live values the
+push would replace or delete. The client declares it as `expect_replaced_hash`.
+Both the route and the final write gate compare it again, including newly
+differing paths. An unrelated live write is accepted when the working copy
+carries that value too; otherwise this whole-document push would erase it
+and must ask again. Older clients declaring `expect_live_hash` keep their
+whole-content check. The pre-apply backup still holds the complete live pair.

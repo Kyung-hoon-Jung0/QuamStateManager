@@ -139,6 +139,62 @@ def content_hash(state: dict, wiring: dict) -> str:
     return json_pieces.content_hash_pair(state, wiring)
 
 
+def _live_value_digest(present: bool, value: Any) -> str:
+    """One live value as a short digest (an absent value has its own)."""
+    raw = json.dumps([bool(present), value if present else None], sort_keys=True,
+                     separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _push_replaces(here: Any, live: Any, path: list, out: dict) -> None:
+    """Every place where writing *here* over *live* replaces or deletes a live
+    value, or creates one where live has none, into *out* as
+    ``{json path: digest of the live value}``. Exact: no leaf cap, no float
+    tolerance, and a type change (1 vs 1.0 vs true) is a change."""
+    if isinstance(here, dict) and isinstance(live, dict):
+        for key in sorted(here.keys() | live.keys()):
+            if key not in live:
+                out[json.dumps(path + [key])] = _live_value_digest(False, None)
+            elif key not in here:
+                out[json.dumps(path + [key])] = _live_value_digest(True, live[key])
+            else:
+                _push_replaces(here[key], live[key], path + [key], out)
+    elif isinstance(here, list) and isinstance(live, list):
+        for i in range(max(len(here), len(live))):
+            if i >= len(live):
+                out[json.dumps(path + [i])] = _live_value_digest(False, None)
+            elif i >= len(here):
+                out[json.dumps(path + [i])] = _live_value_digest(True, live[i])
+            else:
+                _push_replaces(here[i], live[i], path + [i], out)
+    elif type(here) is not type(live) or here != live:
+        out[json.dumps(path)] = _live_value_digest(True, live)
+
+
+def replaced_values(live_state: dict, live_wiring: dict, *, payload: tuple) -> dict:
+    """R3 MINOR 10: ``{path: digest of the live value}`` for every live value
+    a press would replace -- what its confirm named.
+
+    ``payload=(state, wiring)``: a whole-document push (Keep mine). Every path
+    where the payload differs from live counts, so a path that differs only
+    since the confirm (a lab write the payload does not carry) is a new
+    replaced value. A live change the payload carries too is not one. File
+    ownership and list indices are kept apart in the path."""
+    out: dict = {}
+    state, wiring = payload
+    _push_replaces(state, live_state, ["state.json"], out)
+    _push_replaces(wiring, live_wiring, ["wiring.json"], out)
+    return out
+
+
+def replaced_values_hash(live_state: dict, live_wiring: dict, **what) -> str:
+    """One digest of :func:`replaced_values` (same arguments): a press is held
+    to the confirm when this is unchanged."""
+    items = sorted(replaced_values(live_state, live_wiring, **what).items())
+    raw = json.dumps(items, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def _sanitize(name: str) -> str:
     """Turn a chip name into a safe directory-name fragment."""
     return re.sub(r"[^\w\-.]", "_", name)
@@ -996,7 +1052,8 @@ def _same_backed_content(before: tuple, now: tuple, backup_check) -> bool:
 
 
 def apply_to_live(wc: WorkingCopy, *, force: bool = False,
-                  expect_live_hash: str | None = None, record=None,
+                  expect_live_hash: str | None = None, expect_replaced_hash: str | None = None,
+                  record=None,
                   backup_check=None) -> None:
     """Push the working copy's state + wiring to the live folder.
 
@@ -1028,6 +1085,10 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     before the write and :class:`StaleLiveError` is raised unless its content
     hash still matches (an unreadable pair does not match). ``None`` (every
     other caller) is byte-identical to before.
+
+    ``expect_replaced_hash`` holds the push to its named paths and live values,
+    including any newly differing path the whole-document write would erase.
+    Unrelated live content carried by the payload does not affect this hash.
 
     The staleness check happens *twice*: once at the top of the function
     (preserves the historical contract), then again immediately before the
@@ -1190,6 +1251,17 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             _mid = safe_io.live_mid_save(wc.live_folder)
             if _mid is not None:
                 raise LiveMidSaveError(safe_io.mid_save_message(_mid))
+        if expect_replaced_hash is not None:
+            try:
+                pair = read_live_shared(wc)
+                replaced = replaced_values_hash(pair.state, pair.wiring,
+                                                payload=(_wpair.state, _wpair.wiring))
+            except (OSError, ValueError):
+                replaced = None
+            if replaced != expect_replaced_hash:
+                raise StaleLiveError(
+                    "The live values this push replaces changed after the overwrite was "
+                    "confirmed -- refusing to replace values the confirm did not name.")
         if expect_live_hash is not None:
             try:
                 now_hash = live_content_hash(wc)

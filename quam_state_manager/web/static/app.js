@@ -4928,7 +4928,8 @@ function _keepMinePush(d, ackUnseen) {
     // or missing) keeps the plain forced push.
     window._keepMineInFlight = d;
     htmx.ajax("POST", "/state/apply-to-live?force=1"
-                  + (d.live_hash ? "&expect_live_hash=" + encodeURIComponent(d.live_hash) : "")
+                  + (d.replaced_hash ? "&expect_replaced_hash=" + encodeURIComponent(d.replaced_hash)
+                     : d.live_hash ? "&expect_live_hash=" + encodeURIComponent(d.live_hash) : "")
                   + (d._seen ? "&seen_changes=" + encodeURIComponent(d._seen.n)
                              + "&seen_sig=" + encodeURIComponent(d._seen.sig) : "")
                   + (ackUnseen ? "&ack_unseen=1" : ""),
