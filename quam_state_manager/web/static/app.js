@@ -18058,6 +18058,10 @@ function _markPlotRowApplied(row, trayHtml) {
     // write has not landed when the staging answer arrives -- the row says
     // so, then what the live write actually did when the flush answers.
     var live = _plotApplyWritesLive() && typeof window.AutoApply.whenFlushed === 'function';
+    // v1.5.1 (r6 P2-1): the outcome takes its own line across the row; in the
+    // auto-width button column a long reason took the width and squeezed the
+    // path and PREVIOUS columns to one character per line
+    if (btnSlot) btnSlot.classList.add('plot-apply-row-outcome');
     if (btnSlot) btnSlot.innerHTML = live
         ? '<span class="plot-apply-row-check plot-apply-row-staged" title="Staged in SM; Auto-Sync is writing it to the live chip now">'
           + 'staged — Auto-Sync is writing it to the chip…</span>'

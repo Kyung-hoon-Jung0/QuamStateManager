@@ -7488,6 +7488,11 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     white-space: nowrap;
 }
 .plot-apply-row-check.plot-apply-row-staged { white-space: normal; font-size: 0.85em; }
+/* v1.5.1 (r6 P2-1): a row's outcome (staged / written / refused + reason) is
+   its own line across the row -- in the auto-width button column a long
+   reason took the width and squeezed path and PREVIOUS to one character per line */
+.plot-apply-row-action.plot-apply-row-outcome { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
+.plot-apply-row-outcome .plot-apply-row-check { white-space: normal; }
 .plot-apply-footer {
     display: flex; justify-content: flex-end; gap: 0.5rem;
     padding-top: 0.6rem;
