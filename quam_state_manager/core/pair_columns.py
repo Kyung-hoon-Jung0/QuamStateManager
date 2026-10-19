@@ -153,6 +153,13 @@ def _unit_of(leaf_name: str, value: Any = None) -> str:
     from quam_state_manager.core import units as _units
     if isinstance(value, bool) or _units.unit_compound(n):
         return ""
+    # R4 b9: a text value (not a pointer, not a number written as text) is
+    # not in the unit its key suggests ("settle_time": "auto" is not ns)
+    if isinstance(value, str) and not value.startswith("#"):
+        try:
+            float(value)
+        except ValueError:
+            return ""
     declared = _units.name_unit(n)
     if declared:
         return declared
