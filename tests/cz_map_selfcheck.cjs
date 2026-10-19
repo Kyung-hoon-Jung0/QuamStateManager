@@ -21,13 +21,10 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 let checks = 0;
 function check(v, m) { checks++; assert.ok(v, m); }
 
+// v1.5.1: copied visible paragraphs -> shipped map section, pin the footer's actual DOM.
 function html(sel, rows) {
     return `<div id="czp-root" class="czp-root" data-selected="${sel || ''}">
-<section class="czp-map-box"><select id="czp-map-op"><option value="">default</option></select>
-<select id="czp-map-order"><option value="chip" selected>chip</option><option value="name">name</option><option value="f01">f01</option></select>
-<select id="czp-map-scale"><option value="0.25" selected>25</option><option value="0.5">50</option><option value="1">100</option></select>
-<div id="czp-map"></div><p id="czp-map-key"></p><p id="czp-map-notes"></p>
-<details id="czp-map-detail"><summary id="czp-map-detail-summary"></summary><div id="czp-map-detail-body"></div></details></section>
+${fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_cz_plan.html'), 'utf8').match(/<section class="czp-map-box"[\s\S]*?<\/section>/)[0]}
 <table id="czp-table"><tbody>${(rows || []).map(op => `<tr class="czp-row" data-op="${op}"><td class="czp-last" data-last="${op}">x</td></tr>`).join('')}</tbody></table>
 <p id="czp-history-note"></p>
 <section><h3 id="czp-title"></h3><button id="czp-stale-chip" hidden></button><select id="czp-op"></select><p id="czp-status" hidden></p>
@@ -124,7 +121,100 @@ const NO_LOSS = {ok: true, reason: null, roots: [], runs_listed: 0, runs_read: 0
 const ORDER_13 = 'q7 q8 q3 q1 q9 q4 q2 q17 q15 q10 q5 q11 q6';
 const ORDER_21 = 'qC5 qD1 qD2 qC2 qC4 qD3 qD4 qD5 qC1 qC3 qA6 qA3 qA1 qB5 qB4 qB3 qA4 qA2 qB2 qB1 qA5';
 
+// v1.5.1: visible paragraphs -> collapsed footer, keep provenance below the loss detail.
+async function footerPins(only) {
+    const names = ['closed', 'words', 'counts', 'kinds', 'hidden', 'live', 'order', 'state', 'wrapping'];
+    for (const name of names.filter(n => !only || n === only)) {
+        const S = await page({map: FX('map_rig5q.json'), loss: FX('loss_rig5q.json'),
+            rows: ['qubit_pairs.q1-2.macros.cz_SNZ', 'qubit_pairs.q3-4.macros.cz_GNZ']});
+        const {d, w} = S, key = d.querySelector('#czp-map-key-box'), notes = d.querySelector('#czp-map-notes-box');
+        const summary = d.querySelector('#czp-map-notes-summary');
+        try {
+            if (name === 'closed') check(key && notes && !key.open && !notes.open && !notes.hidden,
+                'footer/closed: both disclosures start closed, populated notes are available');
+            if (name === 'words') check(key && key.querySelector('summary').textContent === 'Key' &&
+                summary && /^Notes \(\d+\): .*axis check/.test(summary.textContent),
+                'footer/words: compact Key and Notes summaries still disclose axis checks');
+            if (name === 'counts') {
+                const sameChange = JSON.parse(JSON.stringify(S.root._czLoss.staleness.qubits.q5[0]));
+                sameChange.run_id = 1909;
+                S.root._czLoss.staleness.qubits.q4 = [sameChange];
+                await w.CzMap.paint(S.root);
+                check(summary && summary.textContent === 'Notes (5): 1 axis check, 4 data sources' &&
+                    d.querySelector('#czp-map-notes').textContent.split('\n').length === 5 &&
+                    d.querySelector('#czp-map-notes').textContent.includes('after the scans of q4 #1909, q5 #1388'),
+                    'footer/counts: count rendered group lines, not affected qubits or scans');
+            }
+            if (name === 'kinds') {
+                const loss = S.root._czLoss, map = S.root._czMap;
+                loss.curves.q4.scan.identity = 'unchecked';
+                delete loss.curves.q3; map.qubits.find(q => q.name === 'q3').loss_data = false;
+                await w.CzMap.paint(S.root);
+                const mixed = summary && summary.textContent === 'Notes (7): 1 axis check, 4 data sources, 1 chip identity check, 1 data gap';
+                loss.reason = 'Scan unavailable';
+                loss.staleness.mode = 'preparing';
+                // Avoid scheduling retries: paint uses the answer already held by the page.
+                await w.CzMap.paint(S.root);
+                check(mixed && summary.textContent === 'Notes (9): 1 axis check, 1 pending check, 4 data sources, 1 chip identity check, 1 data gap, 1 other note',
+                    'footer/kinds: identity, missing data, pending axis checks and other notes all count');
+            }
+            if (name === 'hidden') {
+                S.root._czLoss = JSON.parse(JSON.stringify(NO_LOSS));
+                await w.CzMap.paint(S.root);
+                const empty = notes && notes.hidden && summary.textContent === 'Notes (0)' && !d.querySelector('#czp-map-notes').textContent;
+                S.root._czLoss = FX('loss_rig5q.json'); await w.CzMap.paint(S.root);
+                check(empty && !notes.hidden && summary.textContent.startsWith('Notes (5)'),
+                    'footer/hidden: hide the whole notes disclosure only while there are no notes');
+            }
+            if (name === 'live') check(summary && summary.closest('summary') && summary.getAttribute('aria-live') === 'polite' &&
+                summary.getAttribute('aria-atomic') === 'true' && !d.querySelector('#czp-map-notes').closest('[aria-live], [role="status"]'),
+                'footer/live: announce only the compact summary, never the long notes');
+            if (name === 'order') {
+                const box = d.querySelector('.czp-map-box'), children = Array.from(box.children), footer = d.querySelector('.czp-map-footer');
+                check(children.indexOf(S.mapEl) + 1 === children.indexOf(d.querySelector('#czp-map-detail')) &&
+                    children.indexOf(d.querySelector('#czp-map-detail')) + 1 === children.indexOf(footer) &&
+                    children.at(-1) === footer && footer.contains(key) && footer.contains(notes) &&
+                    key.contains(d.querySelector('#czp-map-key')) && notes.contains(d.querySelector('#czp-map-notes')),
+                    'footer/order: map then measured loss then the footer containing both text pins');
+            }
+            if (name === 'state') {
+                let kept = !!(key && notes);
+                if (kept) {
+                    key.open = notes.open = true;
+                    for (const [id, value] of [['czp-map-op', 'cz_SNZ'], ['czp-map-order', 'name'], ['czp-map-scale', '0.5']]) {
+                        const before = S.renders.length, el = d.getElementById(id);
+                        el.value = value; el.dispatchEvent(new w.Event('change', {bubbles: true})); await wait(40);
+                        kept = kept && S.renders.length > before && key.open && notes.open;
+                    }
+                    for (const op of ['qubit_pairs.q1-2.macros.cz_SNZ', 'qubit_pairs.q3-4.macros.cz_GNZ']) {
+                        const before = S.renders.length;
+                        if (op.includes('q1-2')) S.root.dispatchEvent(new w.CustomEvent('czp:open', {detail: {op}}));
+                        else d.querySelector('[data-op="' + op + '"]').dispatchEvent(new w.MouseEvent('click', {bubbles: true}));
+                        await wait(40);
+                        kept = kept && S.renders.length > before && key.open && notes.open;
+                    }
+                    const before = S.renders.length;
+                    d.documentElement.setAttribute('data-theme', 'dark'); await wait(40);
+                    kept = kept && S.renders.length > before && key.open && notes.open;
+                    key.open = notes.open = false;
+                    await w.CzMap.paint(S.root); kept = kept && !key.open && !notes.open;
+                }
+                check(kept, 'footer/state: open and closed state survive operation, columns, scale, selection and theme redraws');
+            }
+            if (name === 'wrapping') {
+                const css = STATIC('style.css');
+                check(/\.czp-map-footer\s*\{[^}]*flex-wrap:\s*wrap[^}]*justify-content:\s*flex-start[^}]*font-size:\s*0\.8rem[^}]*color:\s*var\(--pico-muted-color\)/.test(css) &&
+                    /\.czp-map-key, \.czp-map-notes\s*\{[^}]*order:\s*1[^}]*flex:\s*0 0 100%[^}]*overflow-wrap:\s*anywhere/.test(css) &&
+                    /\.czp-map-notes\s*\{[^}]*white-space:\s*pre-line/.test(css),
+                    'footer/wrapping: muted captions share a row; bodies wrap below at section width');
+            }
+        } finally { S.close(); }
+    }
+}
+
 (async () => {
+    await footerPins(process.env.CZ_FOOTER_PIN);
+    if (process.env.CZ_FOOTER_PIN) { console.log(checks + ' footer assertions passed'); return; }
     // ===== Part 1: the columns on a synthetic map (columns by qubit name) =====
     const P1 = await page({map: url => {
         const body = JSON.parse(JSON.stringify(MAP));

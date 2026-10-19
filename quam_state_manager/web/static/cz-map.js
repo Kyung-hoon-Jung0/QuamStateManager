@@ -751,7 +751,7 @@
 
         // ---- notes under the map: one line per qubit, only when something is off; the
         //      ledger's axis changes merged across qubits (same fields, same change) ----
-        var notes = [], detail = [];
+        var notes = [], detail = [], axisNotes = 0, pendingNotes = 0, sourceNotes = 0;
         if (m.refused.length) notes.push('Not drawn: ' + m.refused.map(function (r) {
             return r.qubit + ' in ' + r.pair + ' ' + r.operation + ' (' + r.reason + ')'; }).join('; ') + '.');
         if (m.missing.length) notes.push('No ' + (m.op || 'such') + ' operation on ' + m.missing.join(', ') + '.');
@@ -760,6 +760,7 @@
         if (root._czLossError) notes.push('Measured loss could not be loaded: ' + root._czLossError + '.');
         var stale = (loss && loss.staleness) || {};
         if (stale.mode === 'building' || stale.mode === 'preparing') {
+            pendingNotes++;   // the axis check is not done yet: never counted as one
             // fix3 P2-5: once the re-ask budget is spent the note says so, never "follows" forever
             notes.push(root._czLossGaveUp ? 'The change history was still being prepared after ' + Math.round(RETRY_N * RETRY_MS / 1000) +
                        ' s; the axis check of the loss scans was not done (reload the page to try again).'
@@ -791,11 +792,11 @@
                 if (gr.qs[q.name].indexOf(s.run_id) < 0) gr.qs[q.name].push(s.run_id);
                 if (s.order_proven === false || / order not proven$/.test(s.text || '')) gr.unproven.push(s.run_id);
             });
-            if (parts.length) notes.push(q.name + ': ' + parts.join('; ') + '.');
+            if (parts.length) { notes.push(q.name + ': ' + parts.join('; ') + '.'); sourceNotes++; }
             if (!e.scan && !e.marker_curve && !q.loss_data) none.push(q.name);
             detail.push({ q: q, e: e });
         });
-        sgOrder.forEach(function (k) { notes.push(staleGroupLine(sg[k])); });
+        sgOrder.forEach(function (k) { notes.push(staleGroupLine(sg[k])); axisNotes++; });
         if (unchecked.length) {
             notes.push('Chip identity unchecked for the loss runs of ' + unchecked.join(', ') +
                        ' (no change history holds them and one side declares no chip name).');
@@ -804,6 +805,20 @@
                                     ' (none stored, no scan in the data folders).');
         var nEl = root.querySelector('#czp-map-notes');
         if (nEl) nEl.textContent = notes.join('\n');
+        var notesBox = root.querySelector('#czp-map-notes-box');
+        if (notesBox) notesBox.hidden = !notes.length;
+        var summary = root.querySelector('#czp-map-notes-summary');
+        if (summary) {
+            var kinds = [];
+            function kind(count, label) { if (count) kinds.push(count + ' ' + label + (count === 1 ? '' : 's')); }
+            kind(axisNotes, 'axis check');
+            kind(pendingNotes, 'pending check');
+            kind(sourceNotes, 'data source');
+            kind(unchecked.length ? 1 : 0, 'chip identity check');
+            kind(none.length ? 1 : 0, 'data gap');
+            kind(notes.length - axisNotes - pendingNotes - sourceNotes - (unchecked.length ? 1 : 0) - (none.length ? 1 : 0), 'other note');
+            summary.textContent = 'Notes (' + notes.length + ')' + (kinds.length ? ': ' + kinds.join(', ') : '');
+        }
         var kEl = root.querySelector('#czp-map-key');
         if (kEl) {
             kEl.textContent = 'Key: ' + KEY + (!m.op ? '; cz per pair = each pair\'s cz, else its first CZ operation' : '') + (lossDrawn ? '; gray = measured population loss of the newest scan, ' +
