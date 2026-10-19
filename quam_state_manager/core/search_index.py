@@ -55,6 +55,12 @@ class SearchResult:
     matched_terms: list[str]
 
 
+def _is_pointer_entry(e) -> bool:
+    """A QUAM pointer row (its stored value is a ``#...`` reference)."""
+    v = e.raw_value
+    return isinstance(v, str) and v.startswith("#")
+
+
 class SearchIndex:
     """In-memory search index over a flattened QUAM state dict.
 
@@ -240,19 +246,28 @@ class SearchIndex:
             cat_set = set(self.category_index.get(category, []))
             candidate_indices = candidate_indices & cat_set
 
-        scored: list[tuple[float, int]] = []
+        scored: list[tuple[float, int, bool]] = []
         for idx in candidate_indices:
-            score = self._score(idx, terms, groups)
-            scored.append((score, idx))
+            tier = self._own_path_holds_every_word(self.entries[idx], terms, groups)
+            score = self._score(idx, terms, groups, tier=tier)
+            scored.append((score, idx, tier))
 
         # Tie-break on the dot path NATURALLY (customer rule 2026-09-09):
         # the score buckets are coarse, so ties are the norm and this key
         # decides both the printed order AND which `limit` results survive.
         # A plain string compare read `weights_imag.1009` before `.101` and
         # `qubits.q10` before `qubits.q2` (measured on a real 10-qubit chip).
-        scored.sort(key=lambda x: (-x[0], natural_key(self.entries[x[1]].dot_path)))
+        # R3B M4: within a tier (the +1000 own-path tier, or the rest) a
+        # pointer row sorts below every real value -- on a 21-qubit chip "cz
+        # amplitude" listed 50 of 50 pointers and the first real value at
+        # rank 155, past the limit. R4 b9: the tier is the own-path test
+        # itself, never ``score // 1000`` -- ten or more words add up to
+        # 1000 on their own and moved a pointer into a tier of its own.
+        entries = self.entries
+        scored.sort(key=lambda x: (not x[2], _is_pointer_entry(entries[x[1]]), -x[0],
+                                   natural_key(entries[x[1]].dot_path)))
         results: list[SearchResult] = []
-        for score, idx in scored[:limit]:
+        for score, idx, _tier in scored[:limit]:
             e = self.entries[idx]
             results.append(SearchResult(
                 dot_path=e.dot_path,
@@ -326,21 +341,36 @@ class SearchIndex:
                 out.update(idxs)
         return out
 
+    @staticmethod
+    def _own_path_holds_every_word(e, terms: list[str],
+                                   groups: list[list[str]] | None = None) -> bool:
+        """B1: the entry's OWN dot path holds every word (one term of every
+        OR group) -- the tier that ranks above every entry that matched a word
+        only through its value."""
+        path_l = e.dot_path.lower()
+        return all(any(t in path_l for t in g) for g in (groups or [[t] for t in terms]))
+
     def _score(self, idx: int, terms: list[str],
-               groups: list[list[str]] | None = None) -> float:
+               groups: list[list[str]] | None = None, *, tier: bool | None = None) -> float:
         """Score an entry against search terms. Higher = better match.
 
         B1: an entry whose OWN dot path holds every word (one term of every
         OR group) ranks in a tier above every entry that matched a word only
         through its value -- a pointer whose value mentions ``x180`` never
-        outranks the x180 leaf itself."""
+        outranks the x180 leaf itself. The tier earns +1000 here (the score
+        shown); ``search`` orders by the tier itself. *tier*: the caller's
+        own-path verdict, when it already has one."""
         e = self.entries[idx]
         total = 0.0
-        path_l = e.dot_path.lower()
-        if all(any(t in path_l for t in g) for g in (groups or [[t] for t in terms])):
+        if tier is None:
+            tier = self._own_path_holds_every_word(e, terms, groups)
+        if tier:
             total += 1000
         lk = e.leaf_key.lower()
         pid = e.parent_id.lower()
+        # R3B M4: a pointer's value is another field's path, not a value:
+        # it earns no value-match bonus
+        value_str = "" if _is_pointer_entry(e) else e.value_str
 
         for term in terms:
             if lk == term:
@@ -351,7 +381,7 @@ class SearchIndex:
                 total += 70
             elif pid.startswith(term):
                 total += 60
-            elif term in e.value_str:
+            elif term in value_str:
                 total += 40
             elif term in e.dot_path.lower():
                 total += 20

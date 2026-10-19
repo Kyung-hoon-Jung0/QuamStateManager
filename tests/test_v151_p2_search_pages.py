@@ -72,3 +72,15 @@ def test_chip_status_carries_a_labelled_chip_report_link(tmp_path):
     assert m and m.group(1).strip() == "Chip report", "the report is named where the chip is"
     toolbar = html[html.index('class="topology-toolbar"'):]
     assert toolbar.index("topo-report-link") < toolbar.index("</div>")
+
+
+def test_page_matching_follows_the_one_search_grammar(tmp_path):
+    """R3B MINOR 4: header Search reads page names with the docs/96 grammar
+    (space = AND, a standalone | = OR), as the field results below them."""
+    c = create_app(testing=True, instance_path=str(tmp_path / "_i")).test_client()
+    labels = lambda q: [lbl for _t, _a, lbl in _pages(c.get("/search", query_string={"q": q})  # noqa: E731
+                                                         .get_data(as_text=True))]
+    both = labels("trends | settings")
+    assert "Trends" in both and any(lbl.startswith("Settings") for lbl in both), both
+    assert labels("trends |") == labels("trends"), "an inert pipe changes nothing"
+    assert labels("trends settings") == [], "space is still AND"

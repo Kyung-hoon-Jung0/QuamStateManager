@@ -6,7 +6,7 @@
  * "1 unapplied", state.json unchanged). The REAL app.js under jsdom:
  *   - not armed: the row reads "staged - press Apply to write the chip", never
  *     "applied", and the closing toast says "Staged ... press Apply";
- *   - armed: the row reads "applied" and the toast says Auto-Sync writes it.
+ *   - armed: the row waits for the flush before saying "applied".
  *
  * Run: node tests/plot_apply_staged_selfcheck.cjs
  * (driven by tests/test_v151_ux_plot_apply_staged.py)
@@ -53,8 +53,9 @@ window.eval(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
 
 const toasts = [];
 window.showToast = function (msg) { toasts.push(String(msg)); };
-let armed = false;
-window.AutoApply = { armed: function () { return armed; } };
+let armed = false, finishFlush;
+window.AutoApply = { armed: function () { return armed; },
+    whenFlushed: () => new Promise(resolve => { finishFlush = resolve; }) };
 
 function row(p) { return document.querySelector('#plot-apply-rows .plot-apply-row[data-input-path="' + p + '"]'); }
 
@@ -84,7 +85,8 @@ async function openTwo() {
     ok(/^Staged 2 values/.test(last) && /press Apply/.test(last), 'the closing toast says staged: ' + last);
     ok(!/^Applied/.test(last), 'the closing toast never says "Applied" for staged values');
 
-    // 2. Auto-Sync push armed: the session writes the chip at once
+    // v1.5.1 (R3B MINOR 7): "applied" at once -> staged and writing until the flush answers,
+    // because an armed session does not mean the write landed (v151_plot_outcome_selfcheck).
     armed = true;
     toasts.length = 0;
     await openTwo();
@@ -92,12 +94,16 @@ async function openTwo() {
     window.applyPlotRow(r2);
     await sleep(40);
     const t2 = (r2.querySelector('.plot-apply-row-action') || {}).textContent || '';
-    ok(/✓ applied/.test(t2) && !/staged/.test(t2), 'inside an armed session the row says applied: ' + t2);
+    ok(/staged/.test(t2) && /writing/.test(t2), 'the armed row waits for its flush: ' + t2);
+    finishFlush({ ok: true });
+    await sleep(10);
     window.applyPlotRow(row(P2));
     await sleep(40);
+    finishFlush({ ok: true });
+    await sleep(10);
     const last2 = toasts[toasts.length - 1] || '';
-    ok(/^Applied 2 values/.test(last2) && /Auto-Sync writes them to the chip/.test(last2),
-       'the armed toast names Auto-Sync: ' + last2);
+    ok(/^Applied 2 values/.test(last2) && /written to the chip/.test(last2),
+       'the armed toast confirms the write: ' + last2);
 
     console.log(fails ? ('FAILURES: ' + fails) : 'ALL OK');
     process.exit(fails ? 1 : 0);

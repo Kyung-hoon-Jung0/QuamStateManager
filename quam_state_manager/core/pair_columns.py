@@ -144,8 +144,25 @@ def _group_of(tmpl_segs: list[str], generic: bool = False) -> tuple[str, str]:
     return "general", "General"
 
 
-def _unit_of(leaf_name: str) -> str:
+def _unit_of(leaf_name: str, value: Any = None) -> str:
     n = leaf_name.lower()
+    # R3B M3: a key that names its own unit is stored in it
+    # (``gaussian_filter_frequency_mhz`` is MHz, not the Hz "frequency"
+    # guess below), a ``*_per_<unit>`` compound has no single unit, and a
+    # true/false value has none (``save_to_db`` is not decibels)
+    from quam_state_manager.core import units as _units
+    if isinstance(value, bool) or _units.unit_compound(n):
+        return ""
+    # R4 b9: a text value (not a pointer, not a number written as text) is
+    # not in the unit its key suggests ("settle_time": "auto" is not ns)
+    if isinstance(value, str) and not value.startswith("#"):
+        try:
+            float(value)
+        except ValueError:
+            return ""
+    declared = _units.name_unit(n)
+    if declared:
+        return declared
     # `_lo` is ANCHORED. An unanchored substring made `grid_location` an Hz
     # column the moment a collection outside qubit_pairs was rendered
     # (customer, 2026-09-10: the TWPA grid's first paint) -- no pair leaf
@@ -200,7 +217,7 @@ def _leaf(pair_id: str, real_segs: list[str], tmpl_segs: list[str], value: Any,
         "value": value,
         "headline": leaf_name in _HEADLINE_LEAVES and kind == "edit",
         "label": _label_of(tmpl_segs, group),
-        "unit": _unit_of(leaf_name),
+        "unit": _unit_of(leaf_name, value),
     }
 
 

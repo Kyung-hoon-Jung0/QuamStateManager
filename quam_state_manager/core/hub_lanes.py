@@ -473,10 +473,13 @@ _DECLARED_JUDGED = [0]
 #: read first (the version chip, the Calibration log, Param History). An entry
 #: is the memo's own key (ledger, chip identity, event, the hash of the run's
 #: saved state); the file is believed only for the same ledger and rewrite
-#: epoch, and only while the ledger's rewrite log (docs/298) shows nothing
-#: rewritten in place since it was written -- otherwise every verdict is
-#: judged again. The same check drops this process's own verdicts when the
-#: ledger was rewritten under them.
+#: epoch, and only for the verdicts the ledger's rewrite log (docs/298) shows
+#: nothing rewritten under since it was written (:func:`_declared_stale`): a
+#: flags-only change (an undo mark, a gone source) keeps every verdict, a
+#: rewrite of one run's stored values judges that run again, and only a
+#: change of every event (a deletion, the order) judges them all. The same
+#: check drops this process's own verdicts when the ledger was rewritten
+#: under them.
 DECLARED_FILE = "lanes_declared.json"
 _DECLARED_FILE_V = 1
 #: ledger file -> (ledger id, rewrite epoch, rewrite log position, newest
@@ -495,12 +498,46 @@ def _declared_path(conn) -> Path | None:
     return None
 
 
+def _rewritten_events(conn, seq: int, high: int) -> tuple | None:
+    """What the rewrite log (docs/298) shows rewritten in place since position
+    *seq* among the events up to eid *high*: ``(row_eids, change_eids)`` --
+    the events whose own row changed (flags, an undo mark, a gone source) and
+    the events whose change rows changed -- or None when something moved
+    every event (a deletion, the order, a root, a path, a blob)."""
+    rows, changes = set(), set()
+    for eid, pid, known in conn.execute(
+            "SELECT l.eid, l.pid, p.pid IS NOT NULL FROM rewrite_log l LEFT JOIN paths p ON p.pid = l.pid "
+            "WHERE l.seq > ? AND l.eid <= ?", (seq, high)):
+        if eid == 0:
+            return None
+        if pid is None:
+            rows.add(eid)
+        elif not known:
+            return None           # a row of a path that no longer exists
+        else:
+            changes.add(eid)
+    return frozenset(rows), frozenset(changes)
+
+
+def _declared_stale(k: tuple, got: tuple) -> bool:
+    """Whether verdict *k* (the memo key) can no longer be believed after the
+    rewrites *got* (:func:`_rewritten_events`). A verdict keyed by its run's
+    saved-state hash names its content, so a change of the event's own row
+    (flags) leaves it standing; only a rewrite of that event's own stored
+    values is judged again. A verdict with no content key believes nothing
+    rewritten."""
+    rows, changes = got
+    if k[3] is None:
+        return bool(rows or changes)
+    return k[2] in changes
+
+
 def _declared_restore(conn, ledger_id: str) -> tuple | None:
     """Vouch for the declared-chip verdicts of *ledger_id* at this read
     snapshot: drop the ones a rewrite since could have changed (in RAM and
     on disk) and load the file's into the memo. Returns the stamp to save
     under, or None when nothing can be vouched for (no rewrite log, no file)."""
-    from quam_state_manager.core.hub_store import rewrite_mark, rewritten_since
+    from quam_state_manager.core.hub_store import rewrite_mark
     path = _declared_path(conn)
     if path is None:
         return None
@@ -513,48 +550,53 @@ def _declared_restore(conn, ledger_id: str) -> tuple | None:
         return None
     epoch, seq, trimmed = mark
 
-    def holds(at) -> bool:
+    def since(at):
         # (ledger id, epoch, log position, newest event) it was vouched at: the
-        # same ledger and epoch, a log that still covers that position, and no
-        # in-place change logged since among the events it had (an appended
-        # run is a new key, never a reason to judge the old ones again)
+        # same ledger and epoch, and a log that still covers that position --
+        # else None (nothing it vouched for is believed). Otherwise what was
+        # rewritten in place since among the events it had (an appended run
+        # is a new key, never a reason to judge the old ones again).
         if (not isinstance(at, (list, tuple)) or len(at) != 4 or at[0] != ledger_id or at[1] != epoch
                 or not isinstance(at[2], int) or not isinstance(at[3], int)):
-            return False
+            return None
         if not trimmed <= at[2] <= seq or at[3] > high:
-            return False
+            return None
         if at[2] == seq:
-            return True
-        every, eids, paths = rewritten_since(conn, at[2], at[3])
-        return not (every or eids or paths)
+            return frozenset(), frozenset()
+        return _rewritten_events(conn, at[2], at[3])
 
     key = str(path)
     now = (ledger_id, epoch, seq, high)
     with _LOCK:
         mine = _DECLARED_AT.get(key)
     if mine is not None:
-        if holds(mine):
-            with _LOCK:
-                _DECLARED_AT[key] = now
-            return (key, *now)
+        got = since(mine)
         with _LOCK:
-            for k in [k for k in _DECLARED if k[0] == ledger_id]:
+            for k in [k for k in _DECLARED if k[0] == ledger_id and (got is None or _declared_stale(k, got))]:
                 del _DECLARED[k]
-            _DECLARED_AT.pop(key, None)
+            if got is None:
+                _DECLARED_AT.pop(key, None)
+            else:
+                _DECLARED_AT[key] = now
+        if got is not None:
+            return (key, *now)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raw = None
-    entries, chips = [], []
-    if (isinstance(raw, dict) and raw.get("v") == _DECLARED_FILE_V and holds(raw.get("at"))
-            and isinstance(raw.get("chips"), list) and isinstance(raw.get("entries"), list)):
+    entries, chips, got = [], [], None
+    if isinstance(raw, dict) and raw.get("v") == _DECLARED_FILE_V:
+        got = since(raw.get("at"))
+    if got is not None and isinstance(raw.get("chips"), list) and isinstance(raw.get("entries"), list):
         chips, entries = raw["chips"], raw["entries"]
     with _LOCK:
         for e in entries:
             if (isinstance(e, list) and len(e) == 4 and isinstance(e[0], int) and 0 <= e[0] < len(chips)
                     and isinstance(chips[e[0]], str) and isinstance(e[1], int)
                     and (e[2] is None or isinstance(e[2], str)) and isinstance(e[3], bool)):
-                _DECLARED.setdefault((ledger_id, chips[e[0]], e[1], e[2]), e[3])
+                k = (ledger_id, chips[e[0]], e[1], e[2])
+                if not _declared_stale(k, got):
+                    _DECLARED.setdefault(k, e[3])
         while len(_DECLARED) > _DECLARED_MAX:
             _DECLARED.popitem(last=False)
         _DECLARED_AT[key] = now

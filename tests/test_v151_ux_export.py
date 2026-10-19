@@ -60,7 +60,12 @@ def _export_href(html: str) -> str:
 def _csv(resp):
     assert resp.status_code == 200, resp.status_code
     assert resp.mimetype == "text/csv"
-    return list(csv.DictReader(io.StringIO(resp.get_data(as_text=True))))
+    text = resp.get_data(as_text=True)
+    assert text.startswith("\ufeff"), "the CSV starts with a UTF-8 BOM (R3B MINOR 2)"
+    rows = list(csv.DictReader(io.StringIO(text[1:])))
+    # R3B MINOR 2: a header names the unit its stored values are in
+    # ("f_01 [Hz]"); read a column by its field name
+    return [{k.split(" [")[0]: v for k, v in r.items()} for r in rows]
 
 
 @pytest.mark.parametrize("page", ["/qubits", "/resonators"])
@@ -95,7 +100,7 @@ def test_live_state_edit_exports_the_columns_it_shows(client):
     assert [r["id"] for r in rows] == ["q1", "q2"]
     assert len(rows[0]) == 1 + len(pick), rows[0].keys()
     for k in pick:
-        assert any(h == k or h.startswith(k + " [") for h in rows[0]), (k, list(rows[0]))
+        assert k in rows[0], (k, list(rows[0]))
     # stored values, never the grid's comma-grouped display strings
     for r in rows:
         for v in r.values():
@@ -119,3 +124,31 @@ def test_ctrl_k_and_help_name_export(client):
     assert any(p["label"].lower().startswith("export") and p["url"] == "/table" for p in pages), pages
     helpp = client.get("/help").get_data(as_text=True)
     assert 'id="help-export"' in helpp and "Export CSV" in helpp and 'href="/table"' in helpp
+
+
+# --------------------------------------------------------------------------
+# R3B MINOR 2: the CSV is safe to open in a spreadsheet and says its units.
+# --------------------------------------------------------------------------
+def test_the_csv_neutralises_formulas_and_names_units(tmp_path):
+    st = _state()
+    st["qubits"]["q1"]["grid_location"] = '=HYPERLINK("http://example.invalid","x")'
+    st["qubits"]["q2"]["grid_location"] = "@SUM(A1)"
+    st["extras"] = {"chip_name": "chip \u00b5"}
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    (chip / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    (chip / "wiring.json").write_text("{}", encoding="utf-8")
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    assert c.post("/load", data={"folder": str(chip)}).status_code < 400
+    r = c.get("/export?props=f_01&props=T1&props=x180_length&props=x180_amplitude&props=grid_location")
+    assert r.data.startswith(b"\xef\xbb\xbf"), r.data[:8]
+    lines = list(csv.reader(io.StringIO(r.get_data(as_text=True).lstrip("\ufeff"))))
+    assert lines[0] == ["id", "f_01 [Hz]", "T1 [s]", "x180_length [ns]", "x180_amplitude", "grid_location"], lines[0]
+    cells = {row[0]: row for row in lines[1:]}
+    assert cells["q1"][5] == "'" + st["qubits"]["q1"]["grid_location"], cells["q1"]
+    assert cells["q2"][5] == "'@SUM(A1)", cells["q2"]
+    assert float(cells["q1"][1]) == 5.1e9 and float(cells["q1"][2]) == 2.0e-5     # numbers untouched
+    # the table's link no longer promises SI units (lengths are in ns)
+    html = c.get("/qubits", headers={"HX-Request": "true"}).get_data(as_text=True)
+    m = re.search(r'<a class="outline btn-sm table-export"[^>]*title="([^"]+)"', html, re.S)
+    assert m and "SI units" not in m.group(1), m and m.group(1)

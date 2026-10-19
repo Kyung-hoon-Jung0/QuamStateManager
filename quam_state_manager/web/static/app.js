@@ -17886,7 +17886,7 @@ function applyPlotRow(row) {
         if (r.body && r.body.ok) {
             // Both response shapes land here — single {stored, stored_kind}
             // and the comp batch {results}: only ok/tray_html are consumed.
-            _markPlotRowApplied(row);
+            _markPlotRowApplied(row, r.body.tray_html);
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
             if (_fspAck === 'comp' && window.showToast) {
                 var nAmp = ((_plan && _plan.amps) || []).length;
@@ -17989,7 +17989,7 @@ function applyAllPlotRows() {
     function handleR(r) {
         if (r.body && r.body.ok) {
             _restore();
-            pending.forEach(function(row) { _markPlotRowApplied(row); });
+            pending.forEach(function(row) { _markPlotRowApplied(row, r.body.tray_html); });
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
             if (_fspAck === 'comp' && window.showToast) {
                 var nAmp = ((_plan && _plan.amps) || []).length;
@@ -18050,16 +18050,41 @@ function _plotApplyWritesLive() {
               && window.AutoApply.armed());
 }
 
-function _markPlotRowApplied(row) {
+function _markPlotRowApplied(row, trayHtml) {
     if (!row) return;
     row.classList.add('plot-apply-applied');
     var btnSlot = row.querySelector('.plot-apply-row-action');
-    if (btnSlot) btnSlot.innerHTML = _plotApplyWritesLive()
-        ? '<span class="plot-apply-row-check" title="Auto-Sync is on: written to the chip">✓ applied</span>'
+    // R3B MINOR 7: an armed Auto-Sync session WILL write the value, but the
+    // write has not landed when the staging answer arrives -- the row says
+    // so, then what the live write actually did when the flush answers.
+    var live = _plotApplyWritesLive() && typeof window.AutoApply.whenFlushed === 'function';
+    if (btnSlot) btnSlot.innerHTML = live
+        ? '<span class="plot-apply-row-check plot-apply-row-staged" title="Staged in SM; Auto-Sync is writing it to the live chip now">'
+          + 'staged — Auto-Sync is writing it to the chip…</span>'
         : '<span class="plot-apply-row-check plot-apply-row-staged" title="Only in SM so far: the chip file is unchanged until you press Apply">'
           + '✓ staged — press Apply to write the chip</span>';
     var input = row.querySelector('.plot-apply-new-input');
     if (input) input.readOnly = true;
+    if (!live) return;
+    row.classList.add('plot-apply-writing');
+    window.AutoApply.whenFlushed(trayHtml).then(function (result) {
+        row.classList.remove('plot-apply-writing');
+        row.classList.add(result.ok ? 'plot-apply-landed' : 'plot-apply-refused');
+        var slot = row.querySelector('.plot-apply-row-action');
+        if (slot) {
+            var span = document.createElement('span');
+            span.className = 'plot-apply-row-check' + (result.ok ? '' : ' plot-apply-row-staged');
+            // textContent: the reason is the server's text, never markup
+            span.textContent = result.ok ? '✓ applied — written to the chip'
+                : 'staged — ' + (result.merging ? 'not written yet: '
+                                 : result.refused ? 'the live write was refused: ' : '')
+                  + (result.reason || 'the live write could not be confirmed');
+            slot.innerHTML = '';
+            slot.appendChild(span);
+        }
+        // a popup closed (or reopened on other rows) meanwhile is not this row's
+        if (row.isConnected) _closePlotPopupIfDone();
+    });
 }
 
 /* ── FSP → amplitude compensation popup (docs/20 r12-B) ──
@@ -18466,12 +18491,14 @@ function _closePlotPopupIfDone() {
     if (!rowsBox) return;
     var total = rowsBox.querySelectorAll('.plot-apply-row').length;
     var left = rowsBox.querySelectorAll('.plot-apply-row:not(.plot-apply-applied)').length;
+    if (rowsBox.querySelector('.plot-apply-writing, .plot-apply-refused')) return;
     if (total && !left) {
+        var landed = rowsBox.querySelectorAll('.plot-apply-landed').length === total;
         window.closePlotApplyPopup();
         if (window.showToast) {
             var _n = total + ' value' + (total === 1 ? '' : 's');
-            window.showToast(_plotApplyWritesLive()
-                ? 'Applied ' + _n + ' — Auto-Sync writes ' + (total === 1 ? 'it' : 'them') + ' to the chip.'
+            window.showToast(landed
+                ? 'Applied ' + _n + ' — written to the chip.'
                 : 'Staged ' + _n + ' — press Apply in the top bar to write the chip.',
                 'success');
         }

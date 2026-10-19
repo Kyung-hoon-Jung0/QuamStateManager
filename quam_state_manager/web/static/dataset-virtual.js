@@ -620,10 +620,10 @@
          render: function (r) { return '<span class="bookmark-star' + (r.bm ? ' bookmarked' : '') + '" title="' + (r.bm ? 'Bookmarked' : 'Click to bookmark') + '">' + (r.bm ? '★' : '☆') + '</span>'; }},
         {key: 'id', label: 'ID', on: true, w: 58, sortKey: 'id', type: 'num',
          // P1-2 (UX round): a run that wrote values into the chip's state is
-         // the one whose fits can be applied -- marked, and `is:wrote` filters
+         // marked, and `is:wrote` filters to those runs.
          render: function (r) {
              return '<strong>#' + r.id + '</strong>' + (r.ws ? '<span class="ds-wrote" title="This run wrote '
-                 + r.ws + ' value' + (r.ws === 1 ? '' : 's') + ' into the chip state (its fits can be applied)">&#9998;</span>' : '');
+                 + r.ws + ' value' + (r.ws === 1 ? '' : 's') + ' into the chip state">&#9998;</span>' : '');
          }},
         // Multi-folder only: which data folder a run belongs to. Auto-hidden by
         // visibleColumns() when a single folder is active (no disambiguation needed).
@@ -1792,6 +1792,9 @@
         var dateVal = dateInp ? (dateInp.value || '') : '';
         var url = '/datasets/changes-since?ts=' + encodeURIComponent(state.pollTs);
         if (dateVal) url += '&date=' + encodeURIComponent(dateVal);
+        if (state.resendKeys && state.resendKeys.size) {                  // R3B M5
+            url += '&resend=' + encodeURIComponent(Array.from(state.resendKeys).join(','));
+        }
         var ctl = null, timer = null;
         try {
             if (typeof AbortController === 'function') {
@@ -1815,8 +1818,30 @@
                 // the first poll that reports a complete scan -- and the
                 // header's run count, server-rendered from the partial table,
                 // is corrected to what the table now holds.
-                if (!data.partial) {
-                    var scanNote = document.getElementById('ds-scan-note');
+                // R3B MINOR 8: the one-time rebuild after an upgrade that
+                // changed the index format reports its progress (counted in
+                // the server's memory) until it is done.
+                var scanNote = document.getElementById('ds-scan-note');
+                if (data.reindex) {
+                    if (!scanNote) {
+                        scanNote = document.createElement('small');
+                        scanNote.id = 'ds-scan-note';
+                        scanNote.className = 'muted ds-scan-note';
+                        var head = document.querySelector('.ds-head-title');
+                        if (head) head.appendChild(scanNote);
+                    }
+                    scanNote.hidden = false;
+                    scanNote.title = 'This version indexes runs differently, so every run is read '
+                        + 'once more. Older runs appear as it continues. Nothing to do.';
+                    scanNote.textContent = 'Re-indexing after upgrade: '
+                        + Number(data.reindex.done).toLocaleString('en-US') + ' of '
+                        + Number(data.reindex.total).toLocaleString('en-US') + ' runs';
+                } else if (data.partial && scanNote && !scanNote.hidden) {
+                    // the rebuild finished, the ordinary bounded scan has not
+                    scanNote.title = 'The run index is still being built for this folder — '
+                        + 'older runs appear as the scan continues. Nothing to do.';
+                    scanNote.textContent = '⌛ still indexing runs…';
+                } else if (!data.partial) {
                     if (scanNote && !scanNote.hidden) {
                         scanNote.hidden = true;
                         state.pendingHeadCount = true;
@@ -1902,25 +1927,42 @@
 
     /* v1.5.1 (SB-P2-6): a data folder found GONE while the page is open --
        its runs arrive as vanished, the note names the folder as the sidebar
-       does; a folder whose runs arrive again is no longer named. */
-    function _showGone(gone, updated) {
+       does. R3B M5: a folder whose share or drive does not answer is named
+       UNREACHABLE (its runs stay as last read); a named folder the answer no
+       longer lists is back: its note goes and the next poll asks for all its
+       rows again (`resend`) until an answer says they were sent. */
+    var GONE_TEXT = {
+        gone: ['Data folder not found: ', '. Its runs are not listed; re-point or remove it in the sidebar.'],
+        unreachable: ['Data folder unreachable: ', '. Its drive or network share does not answer; its runs show as last read.']
+    };
+    function _showGone(data) {
         var el = document.getElementById('ds-gone-note');
         if (!el) return;
-        var back = {};
-        (updated || []).forEach(function (r) { if (r && r.f) back[r.f] = true; });
+        if (!state.resendKeys) state.resendKeys = new Set();
+        var now = {};
+        (data.gone || []).forEach(function (g) { if (g && g.key) now[g.key] = Object.assign({ state: 'gone' }, g); });
+        (data.unreachable || []).forEach(function (g) { if (g && g.key) now[g.key] = Object.assign({ state: 'unreachable' }, g); });
+        (data.resent || []).forEach(function (k) { state.resendKeys.delete(k); });
         el.querySelectorAll('.ds-gone-one').forEach(function (s) {
-            if (back[s.getAttribute('data-folder-key')]) s.remove();
+            var k = s.getAttribute('data-folder-key');
+            var g = now[k];
+            if (!g) { s.remove(); state.resendKeys.add(k); return; }      // back
+            if ((s.getAttribute('data-state') || 'gone') !== g.state) s.remove();
         });
-        gone.forEach(function (g) {
-            if (!g || !g.key || el.querySelector('.ds-gone-one[data-folder-key="' + g.key + '"]')) return;
+        Object.keys(now).forEach(function (k) {
+            var g = now[k];
+            state.resendKeys.delete(k);
+            if (el.querySelector('.ds-gone-one[data-folder-key="' + k + '"]')) return;
+            var t = GONE_TEXT[g.state] || GONE_TEXT.gone;
             var s = document.createElement('span');
             s.className = 'ds-gone-one';
-            s.setAttribute('data-folder-key', g.key);
-            s.appendChild(document.createTextNode('Data folder not found: '));
+            s.setAttribute('data-folder-key', k);
+            s.setAttribute('data-state', g.state);
+            s.appendChild(document.createTextNode(t[0]));
             var c = document.createElement('code');
             c.textContent = g.path || '';
             s.appendChild(c);
-            s.appendChild(document.createTextNode('. Its runs are not listed; re-point or remove it in the sidebar.'));
+            s.appendChild(document.createTextNode(t[1]));
             el.appendChild(s);
         });
         el.hidden = !el.querySelector('.ds-gone-one');
@@ -1951,6 +1993,18 @@
             changed = true;
         }
         var vanished = data.vanished || [];
+        // R4 b4: a folder the answer calls GONE takes every row of it with
+        // it -- also rows another surface's rescan already dropped from the
+        // server's index, which the answer then cannot list as vanished
+        var goneKeys = {};
+        (data.gone || []).forEach(function (g) { if (g && g.key) goneKeys[g.key] = true; });
+        if (Object.keys(goneKeys).length) {
+            var listed = new Set(vanished);
+            vanished = vanished.slice();
+            state.rows.forEach(function (r) {
+                if (r && goneKeys[r.f] && !listed.has(r.uid)) vanished.push(r.uid);
+            });
+        }
         for (var v = 0; v < vanished.length; v++) {
             var vid = vanished[v];
             // A vanished run must not stay counted/flashing — including one
@@ -1979,7 +2033,7 @@
             }
             state.rows = compact;
         }
-        _showGone(data.gone || [], updated);   // v1.5.1 (SB-P2-6)
+        _showGone(data);   // v1.5.1 (SB-P2-6), R3B M5
         state.pollTs = Math.max(state.pollTs, data.now);   // monotonic — out-of-order responses can't rewind
         // Arrival visibility (docs/104 #3): inserted rows flash on their next
         // render, and stay counted in the pill until acknowledged (pill click

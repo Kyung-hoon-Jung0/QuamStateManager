@@ -103,3 +103,67 @@ def test_the_trends_axis_carries_the_unit(client, tmp_path):
     if p.returncode == 2 and "jsdom not installed" in (p.stderr or ""):
         pytest.skip("jsdom not installed")
     assert p.returncode == 0, f"stdout:\n{p.stdout}\nstderr:\n{p.stderr}"
+
+
+# --------------------------------------------------------------------------
+# R3B M2: a unit a variable only inherited from the sweep axis, and a unit on
+# a true/false metric, are never shown. Real fit files copy the sweep axis's
+# attributes onto other variables: ``success`` read "(ns)" on 453 ramsey runs.
+# --------------------------------------------------------------------------
+EXP_R = "06_Ramsey"
+
+
+def _ramsey_run(root: Path, rid: int) -> None:
+    run = root / "2026-10-15" / f"#{rid}_{EXP_R}_0{rid % 10}1013"
+    run.mkdir(parents=True)
+    (run / "node.json").write_text(json.dumps({
+        "id": rid, "created_at": f"2026-10-15T0{rid % 10}:10:13+09:00",
+        "metadata": {"name": EXP_R, "status": "finished"},
+        "data": {"parameters": {"model": {"qubits": ["q1", "q2"]}}, "outcomes": {}}}), encoding="utf-8")
+    fit = {q: {"t2_star": 9000.0 + i, "opt_amp_prefactor": 1.02 + i, "success": True}
+           for i, q in enumerate(("q1", "q2"))}
+    (run / "data.json").write_text(json.dumps({"fit_results": fit}), encoding="utf-8")
+    with h5py.File(run / "ds_fit.h5", "w") as f:
+        axis = f.create_dataset("idle_time", data=np.arange(4.0))
+        axis.attrs["long_name"] = "idle times"
+        axis.attrs["units"] = "ns"
+        axis.make_scale("idle_time")
+        sig = f.create_dataset("signal", data=np.zeros((2, 4)))
+        sig.dims[1].attach_scale(axis)
+        t2 = f.create_dataset("t2_star", data=np.array([9000.0, 9001.0]))
+        t2.attrs["long_name"] = "T2*"
+        t2.attrs["units"] = "ns"
+        # the sweep axis's attributes copied onto a true/false and a factor
+        ok = f.create_dataset("success", data=np.array([1, 1], dtype="int8"))
+        ok.attrs["long_name"] = "idle times"
+        ok.attrs["units"] = "ns"
+        pre = f.create_dataset("opt_amp_prefactor", data=np.array([1.02, 2.02]))
+        pre.attrs["long_name"] = "idle times"
+        pre.attrs["units"] = "ns"
+
+
+def test_a_unit_inherited_from_a_coordinate_or_on_a_bool_is_not_read():
+    axes = [{"name": "idle_time", "long_name": "idle times", "units": "ns"}]
+    vs = [{"name": "t2_star", "long_name": "T2*", "units": "ns", "dims": ["qubit"]},
+          {"name": "opt_amp_prefactor", "long_name": "idle times", "units": "ns", "dims": ["qubit"]},
+          {"name": "success", "long_name": "idle times", "units": "ns", "dims": ["qubit"]},
+          {"name": "flag", "long_name": "flag", "units": "V", "dtype": "bool", "dims": ["qubit"]},
+          {"name": "detuning", "long_name": "detuning", "units": "Hz", "dims": ["detuning"]},
+          {"name": "fit_detuning", "long_name": "detuning", "units": "Hz", "dims": ["qubit"]}]
+    got = fit_metric_units(vs, ["t2_star", "opt_amp_prefactor", "success", "flag", "detuning", "rate"],
+                           axes, booleans={"rate"})
+    # a coordinate still declares its own unit (here: the dim coord
+    # ``detuning`` itself); the variable that only copied it does not
+    assert got == {"t2_star": "ns", "detuning": "Hz"}, got
+    assert fit_metric_units([{"name": "rate", "units": "Hz"}], ["rate"], booleans={"rate"}) == {}
+
+
+def test_the_units_route_refuses_inherited_and_bool_units(tmp_path):
+    data = tmp_path / "data"
+    for rid in (1, 2):
+        _ramsey_run(data, rid)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/workspace/add", data={"folder": str(data)}).status_code in (200, 302)
+    j = c.get(f"/trends/units?experiment={EXP_R}").get_json()
+    assert j == {"units": {"t2_star": "ns"}}, j

@@ -34,7 +34,7 @@ const PAIR = head('pair') + '<article class="pair-detail">q1-2</article>';
 const PULSE = head('pulse') + '<div>pulse</div>';
 const SEARCH = head('search') + '<div class="search-panel">results</div>';
 const RUN = head('dataset') + '<div id="ds-detail-root" data-uid="run-a">run</div>';
-const PAGES = ['/qubits', '/resonators', '/pairs', '/datasets', '/cz-plan', '/pulses', '/instrument', '/help'];
+const PAGES = ['/qubits', '/resonators', '/pairs', '/datasets', '/cz-plan', '/pulses', '/instrument', '/help', '/table'];
 
 let checks = 0;
 const eq = (a, b, m) => { assert.deepEqual(a, b, m); checks++; };
@@ -100,6 +100,14 @@ async function boot(page) {
     s.open(QUBIT);
     s.nav('/resonators');
     ok(s.pane().querySelector('.qubit-detail'), 'Qubits -> Resonators keeps the qubit inspector');
+    // R3B MINOR 9: the summary table and Instrument Wiring open qubit
+    // inspectors themselves -- going there keeps one open
+    for (const to of ['/table', '/instrument']) {
+        s = await boot('/qubits');
+        s.open(QUBIT);
+        s.nav(to);
+        ok(s.pane().querySelector('.qubit-detail'), 'Qubits -> ' + to + ' keeps the qubit inspector');
+    }
 
     // the other reported pairs
     for (const [from, html, to] of [['/pairs', PAIR, '/cz-plan'], ['/qubits', QUBIT, '/pulses'],

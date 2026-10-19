@@ -9,11 +9,11 @@
         {% if pair_vocab == 'cr' %}
         <a class="outline btn-sm table-export" role="button" download
            href="/export?entity=pairs&props=qubit_control&props=qubit_target&props=is_active&props=cr_drive_amplitude_scaling&props=cr_drive_phase&props=pair_fidelity&props=cr_effective_if"
-           title="Download this table as CSV (stored values, SI units)">Export CSV</a>
+           title="Download this table as CSV (stored values; each header names its unit)">Export CSV</a>
         {% else %}
         <a class="outline btn-sm table-export" role="button" download
            href="/export?entity=pairs&props=qubit_control&props=qubit_target&props=is_active&props=moving_qubit&props=cz_flattop_amplitude&props=bell_fidelity&props=bell_gate&props=detuning"
-           title="Download this table as CSV (stored values, SI units)">Export CSV</a>
+           title="Download this table as CSV (stored values; each header names its unit)">Export CSV</a>
         {% endif %}
     </div>
 </div>

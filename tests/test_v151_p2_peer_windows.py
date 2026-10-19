@@ -50,3 +50,17 @@ def test_the_marker_says_windows_and_lists_them(tmp_path, foreign_pid):  # noqa:
 def test_no_marker_when_this_is_the_only_window(tmp_path):
     _app, c, _inst, _chip = _B._app_with_chip(tmp_path)
     assert "sync-peers" not in c.get("/instances/banner?compact=1").get_data(as_text=True)
+
+
+def test_no_pico_group_on_the_windows_list_or_the_search_pages(tmp_path, foreign_pid):  # noqa: F811
+    """R3B MINOR 3: Pico lays a [role=group] out as one squeezed button row --
+    the windows list's paragraphs and list, and the header Search's page
+    buttons, are not a button group."""
+    _app, c, inst, chip = _B._app_with_chip(tmp_path)
+    _B._seed_peer(inst, foreign_pid, chip)
+    html = c.get("/instances/banner?compact=1").get_data(as_text=True)
+    tag = re.search(r'<div class="sync-peers-list"[^>]*>', html)
+    assert tag and 'role="group"' not in tag.group(0), tag
+    found = c.get("/search?q=settings").get_data(as_text=True)
+    tag = re.search(r'<div class="search-pages"[^>]*>', found)
+    assert tag and 'role="group"' not in tag.group(0), tag

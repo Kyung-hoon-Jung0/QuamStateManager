@@ -149,9 +149,20 @@ _NAME_UNIT_SUFFIXES: tuple[tuple[str, str], ...] = (
 )
 
 
-def name_unit(field: str) -> str:
-    """The unit a key's own name declares (``*_mhz`` -> ``"MHz"``), or ``""``."""
+def unit_compound(field: str) -> bool:
+    """A ``*_per_<unit>`` key (``slope_control_hz_per_v``) names a compound
+    unit (Hz/V): its last token is the denominator, never the unit it is
+    stored in (R3B M3: 4.7e9 Hz/V read "4.68844e+09 V")."""
     f = str(field or "").lower()
+    return "_per_" in f or f.startswith("per_")
+
+
+def name_unit(field: str) -> str:
+    """The unit a key's own name declares (``*_mhz`` -> ``"MHz"``), or ``""``
+    (also for a ``*_per_<unit>`` compound, :func:`unit_compound`)."""
+    f = str(field or "").lower()
+    if unit_compound(f):
+        return ""
     for suffix, label in _NAME_UNIT_SUFFIXES:
         if f.endswith(suffix) and len(f) > len(suffix):
             return label
@@ -163,6 +174,8 @@ def _resolve_field(field: str) -> tuple[Optional[str], Optional[str]]:
     if field in _FIELD_FIXED:
         return _FIELD_FIXED[field]
     f = field.lower()
+    if unit_compound(f):
+        return (None, None)     # Hz/V is not a frequency, s^-1 not a time
     if f == "length" or f.endswith("_length"):
         return ("duration_ns", "ns")
     if f.endswith("_delay_ns") or f.endswith("_delay"):
@@ -437,7 +450,24 @@ def _fit_key(text: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(text or "").lower()).strip("_")
 
 
-def fit_metric_units(variables: Any, metrics: Any) -> dict[str, str]:
+#: R4 B2: words that name a pure number. A metric whose name holds one as a
+#: whole word (``opt_amp_prefactor``, ``fidelity_opt``, ``snr_opt``,
+#: ``success``) has no unit, whatever its fit file's attribute says: on the
+#: real files those attributes were copied from elsewhere (``Hz`` on a pi-pulse
+#: prefactor, ``V`` on a fidelity).
+DIMENSIONLESS_WORDS = frozenset({"prefactor", "factor", "fidelity", "snr", "success"})
+#: The units a pure number can honestly carry: a ratio (an SNR in dB, a
+#: fidelity in %). Any other unit on a dimensionless name is not read.
+RATIO_UNITS = frozenset({"%", "dB"})
+
+
+def is_dimensionless_name(name: Any) -> bool:
+    """Whether *name* holds a :data:`DIMENSIONLESS_WORDS` word as a whole
+    word (split at anything that is not a letter or digit, ``_`` included)."""
+    return any(w in DIMENSIONLESS_WORDS for w in re.split(r"[^a-z0-9]+", str(name or "").lower()))
+
+
+def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any = ()) -> dict[str, str]:
     """v1.5.1 (T1-F7): ``{metric: unit}`` for the fit-result *metrics* of a
     run, read from the ``units`` attribute its own ``ds_fit`` file gives a
     variable -- matched by the variable's name OR its ``long_name``
@@ -445,20 +475,70 @@ def fit_metric_units(variables: Any, metrics: Any) -> dict[str, str]:
     fit result ``t1`` as the variable ``tau`` with ``long_name="T1"``,
     ``units="ns"``. A metric two variables claim with different units, and a
     metric no variable names, get no unit -- a unit is read, never guessed.
-    ``variables`` is ``ndview.probe_file``'s ``vars`` list."""
+    ``variables`` is ``ndview.probe_file``'s ``vars`` list, ``axes`` its
+    ``axes`` list.
+
+    A unit attribute is only read where it is the variable's OWN. A lab's
+    fit file copies attributes along (xarray keeps them through a reduction),
+    so none is read from a variable whose ``(units, long_name)``:
+
+    * is a coordinate's of the same file, the variable not being that
+      coordinate (R3B M2: ``success`` with ``long_name="idle times"``,
+      ``units="ns"`` -- the sweep axis's);
+    * is that of a HIGHER-RANK variable it can be a reduction of (its dims
+      are a subset of that variable's), the long_name non-empty (R4 B2:
+      ``optimal_detuning`` with ``("V", "blob distance")`` -- the 2-D data
+      variable ``distance``'s, an argmax of it over frequency).
+
+    And no unit at all for a true/false metric (a ``bool`` variable -- on
+    disk xarray writes it as int8 with the attribute ``dtype="bool"``, which
+    ``probe_file`` reports as ``is_bool`` -- or a metric named in *booleans*,
+    whose fit values are true/false), nor for a dimensionless name
+    (:func:`is_dimensionless_name`) unless the unit is a ratio
+    (:data:`RATIO_UNITS`)."""
+    def sig(v: dict) -> tuple:
+        u, ln = v.get("units"), v.get("long_name")
+        return (u.strip() if isinstance(u, str) else u, ln.strip() if isinstance(ln, str) else ln)
+
+    rows = [v for v in variables or () if isinstance(v, dict)]
+    dim_names = {str(d) for v in rows for d in (v.get("dims") or ())}
+    coords = [v for v in rows if v.get("name") in dim_names] + [a for a in axes or () if isinstance(a, dict)]
+    coord_names = {v.get("name") for v in coords}
+    coord_sigs = {sig(v) for v in coords}
+    # (units, long_name) -> the dim sets of the variables carrying it
+    carried: dict[tuple, list] = {}
+    for v in rows:
+        u, ln = sig(v)
+        if isinstance(u, str) and u and isinstance(ln, str) and ln:
+            carried.setdefault((u, ln), []).append({str(d) for d in (v.get("dims") or ())})
+
+    def copied_from_higher_rank(v: dict) -> bool:
+        mine = {str(d) for d in (v.get("dims") or ())}
+        return any(len(other) > len(mine) and mine <= other for other in carried.get(sig(v), ()))
+
     claims: dict[str, set] = {}
-    for v in variables or ():
-        if not isinstance(v, dict):
-            continue
+    for v in rows:
         unit = v.get("units")
         if not isinstance(unit, str) or not unit.strip():
             continue
+        if v.get("is_bool") or str(v.get("dtype") or "") == "bool":
+            continue
+        if v.get("name") not in coord_names and sig(v) in coord_sigs:
+            continue              # inherited from a coordinate, not declared
+        if copied_from_higher_rank(v):
+            continue              # inherited from the variable it reduces
         for k in {_fit_key(v.get("name")), _fit_key(v.get("long_name"))}:
             if k:
                 claims.setdefault(k, set()).add(unit.strip())
+    skip = {str(b) for b in booleans or ()}
     out: dict[str, str] = {}
     for m in metrics or ():
+        if str(m) in skip:
+            continue
         got = claims.get(_fit_key(m))
         if got and len(got) == 1:
-            out[str(m)] = next(iter(got))
+            unit = next(iter(got))
+            if is_dimensionless_name(m) and unit not in RATIO_UNITS:
+                continue          # a pure number: the attribute came from elsewhere
+            out[str(m)] = unit
     return out

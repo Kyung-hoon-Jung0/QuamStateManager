@@ -81,6 +81,59 @@
     }
 
     function table() { return document.getElementById('bulk-table'); }
+    /* R3B MINOR 6: the first td the search shows that can hold an editable
+       cell -- a hot one with its input, or a COLD one (virtualized: its
+       contents are detached or still on the server) that must be hydrated
+       before it can take the focus. */
+    function _firstShownTd() {
+        if (!table()) return null;
+        var rows = _navRows();
+        for (var i = 0; i < rows.length; i++) {
+            var tds = rows[i].querySelectorAll('td.bulk-td');
+            for (var j = 0; j < tds.length; j++) {
+                var td = tds[j];
+                if (td.classList.contains('bulk-col-hidden') || td.classList.contains('bulk-search-hidden')
+                        || _searchHiddenKeys[td.getAttribute('data-col-key')]) continue;
+                if (td.classList.contains('bulk-td-cold')) return td;
+                if (td.querySelector('input.bulk-cell:not([readonly]):not(.bulk-cell-ro)')) return td;
+            }
+        }
+        return null;
+    }
+    /* Enter / Down from the grid search: the caret goes INTO the first
+       matching cell at the end of its text, nothing selected -- typing out of
+       habit after Enter no longer overwrites a value. A cold cell is hydrated
+       first and focused when it has landed. */
+    function _focusFirstShown() {
+        var td = _firstShownTd();
+        if (!td) return false;
+        var search = document.getElementById('bulk-search');
+        var query = search ? search.value : '';
+        var go = function () {
+            // A failed load, a remount, or a new search must not send focus
+            // to a later ready row (or steal it after the user moved on).
+            if (!td.isConnected || (search && (document.activeElement !== search
+                    || search.value !== query))) return;
+            var inp = td.querySelector('input.bulk-cell:not([readonly]):not(.bulk-cell-ro)');
+            if (!inp) {
+                // Still cold (its cells did not arrive): stay in the search.
+                // Landed but blank or read-only: the first shown td is now a
+                // later one -- go there the same way (it may be cold too).
+                if (_firstShownTd() !== td) _focusFirstShown();
+                return;
+            }
+            inp.focus();
+            var n = (inp.value || '').length;
+            try { inp.setSelectionRange(n, n); } catch (e) {}
+        };
+        if (td.classList.contains('bulk-td-cold')) {
+            var k = td.getAttribute('data-col-key');
+            _virtHydrateCols(k ? [k] : []).then(go);
+        } else {
+            go();
+        }
+        return true;
+    }
     /* P1-7: the first editable cell the search and the column picker leave
        on screen, in reading order (rows, then columns), or null. */
     function _firstShownCell() {
@@ -90,7 +143,10 @@
             var tds = rows[i].querySelectorAll('td.bulk-td');
             for (var j = 0; j < tds.length; j++) {
                 var td = tds[j];
-                if (td.classList.contains('bulk-col-hidden') || td.classList.contains('bulk-search-hidden')) continue;
+                // the search hides a column's tds by a stylesheet, not a td
+                // class (docs/126): its keys are the ones navigation reads
+                if (td.classList.contains('bulk-col-hidden') || td.classList.contains('bulk-search-hidden')
+                        || _searchHiddenKeys[td.getAttribute('data-col-key')]) continue;
                 var inp = td.querySelector('input.bulk-cell:not([readonly])');
                 if (inp) return inp;
             }
@@ -3803,11 +3859,9 @@
                 if ((e.key !== 'Enter' && e.key !== 'ArrowDown')
                         || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
                 if (_searchTimer) { clearTimeout(_searchTimer); _searchTimer = null; applySearch(); }
-                var first = _firstShownCell();
-                if (!first) return;
+                if (!_firstShownTd()) return;
                 e.preventDefault();
-                first.focus();
-                if (first.select) first.select();
+                _focusFirstShown();
             });
             ChipBar.mount();
 

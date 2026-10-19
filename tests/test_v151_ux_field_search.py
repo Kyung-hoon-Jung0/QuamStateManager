@@ -146,3 +146,90 @@ def test_palette_and_reveal_in_the_real_app_js():
     if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
         pytest.skip("jsdom not installed")
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+
+# --------------------------------------------------------------------------
+# R3B M4: pointer rows never push the real values out. Real-shaped 21-qubit
+# chip: every CZ pulse a qubit's flux line plays is a POINTER to its pair's
+# macro (and a flat-top copy points to that), so "cz amplitude" listed 50 of
+# 50 pointers -- each earned a value bonus for its pointer text spelling
+# "cz" -- and the first real amplitude at rank 155.
+# --------------------------------------------------------------------------
+def _chip21():
+    names = [f"q{i}" for i in range(1, 22)]
+    qs = {n: {"id": n, "f_01": 5.0e9 + i * 1e7,
+              "xy": {"operations": {"x180": {"amplitude": 0.3, "length": 40}}},
+              "z": {"id": f"{n}.z", "joint_offset": 0.01 * i, "operations": {}}}
+          for i, n in enumerate(names)}
+    pairs = {}
+    for i in range(20):
+        for j in (i + 1, i + 5):
+            if j >= 21 or len(pairs) >= 34:
+                continue
+            c, t = names[i], names[j]
+            p = f"{c}-{t}"
+            pairs[p] = {
+                "id": p, "qubit_control": f"#/qubits/{c}", "qubit_target": f"#/qubits/{t}",
+                "coupler": {"operations": {"cz": {"amplitude": 0.05 + 0.001 * len(pairs), "length": 48}}},
+                "macros": {"cz": {"flux_pulse_control": {"amplitude": 0.12 + 0.001 * len(pairs),
+                                                         "length": 60},
+                                  "coupler_flux_pulse": f"#/qubit_pairs/{p}/coupler/operations/cz",
+                                  "phase_shift_control": 0.1, "phase_shift_target": 0.2}}}
+            zc = qs[c]["z"]["operations"]
+            zc[f"cz_{t}"] = {"amplitude": f"#/qubit_pairs/{p}/macros/cz/flux_pulse_control/amplitude",
+                             "length": f"#/qubit_pairs/{p}/macros/cz/flux_pulse_control/length"}
+            zc[f"cz_flattop_{t}"] = {"amplitude": f"#../cz_{t}/amplitude", "length": f"#../cz_{t}/length"}
+            qs[t]["z"]["operations"][f"cz_spectator_{c}"] = {
+                "amplitude": f"#/qubit_pairs/{p}/coupler/operations/cz/amplitude"}
+    return {"qubits": qs, "qubit_pairs": pairs, "active_qubit_names": names}
+
+
+def _is_ptr(r):
+    return isinstance(r.raw_value, str) and r.raw_value.startswith("#")
+
+
+class TestPointerRowsDoNotCrowdOut:
+    def test_cz_amplitude_lists_the_real_values_first(self):
+        idx = SearchIndex.build(_chip21())
+        hits = idx.search("cz amplitude", limit=50)
+        n_real = sum(1 for r in idx.search("cz amplitude", limit=100000) if not _is_ptr(r))
+        assert n_real >= 50, n_real
+        assert not any(_is_ptr(r) for r in hits), [r.dot_path for r in hits if _is_ptr(r)][:5]
+        assert all(r.dot_path.endswith(".amplitude") for r in hits), [r.dot_path for r in hits][:5]
+
+    def test_pointers_still_listed_below_and_earn_no_value_bonus(self):
+        idx = SearchIndex.build(_chip21())
+        allhits = idx.search("cz amplitude", limit=100000)
+        kinds = [_is_ptr(r) for r in allhits if r.score >= 1000]
+        assert kinds == sorted(kinds), "a pointer sorted above a real value in the same tier"
+        assert any(kinds), "pointer rows must still be found"
+        p = next(r for r in allhits if _is_ptr(r) and r.dot_path.endswith("cz_q2.amplitude"))
+        q = next(r for r in allhits if not _is_ptr(r) and r.dot_path.endswith("coupler.operations.cz.amplitude"))
+        assert p.score <= q.score, (p.score, q.score)
+
+
+# --------------------------------------------------------------------------
+# R3B MINOR 1: a pointer whose target is not there says so -- "dangling
+# pointer to ..." (docs/114) -- never a confident "points to".
+# --------------------------------------------------------------------------
+def test_a_dangling_pointer_says_dangling(tmp_path):
+    st = _merged()
+    ops = st["qubits"]["q1"]["xy"]["operations"]
+    ops["y90_DragCosine"] = {"amplitude": "#../x90_Missing/amplitude", "length": 40}
+    ops["x90_DragCosine"]["alpha"] = "#/qubits/q9/xy/operations/x90_DragCosine/alpha"
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    (chip / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    (chip / "wiring.json").write_text("{}", encoding="utf-8")
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    assert c.post("/load", data={"folder": str(chip)}).status_code < 400
+    html = c.get("/search?q=amplitude+%7C+alpha", headers={"HX-Request": "true"}).get_data(as_text=True)
+    by = dict(re.findall(r'<tr class="clickable-row" data-dot-path="([^"]+)"(.*?)</tr>', html, re.S))
+    y90 = by["qubits.q1.xy.operations.y90_DragCosine.amplitude"]
+    assert "dangling pointer to <code>x90_Missing.amplitude</code>" in y90, y90
+    assert "points to" not in y90
+    alpha = by["qubits.q1.xy.operations.x90_DragCosine.alpha"]
+    assert "dangling pointer to <code>q9.xy.operations.x90_DragCosine.alpha</code>" in alpha, alpha
+    # a pointer to a field that is there still says where it points
+    y180 = by["qubits.q1.xy.operations.y180_DragCosine.amplitude"]
+    assert "points to <code>x180_DragCosine.amplitude</code>" in y180 and "dangling" not in y180, y180

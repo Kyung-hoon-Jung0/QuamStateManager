@@ -26,6 +26,11 @@
     var _queued = false;      // edits arrived while a flush was in flight
     var _stopped = false;     // a disarm signal landed; stop scheduling
     var _observer = null;
+    // R3B MINOR 7: who waits for the answer of a live write -- the plot-apply
+    // popup's rows, each with the mutation sequence its staging answer named.
+    var _flushWaiters = [];
+    // The last confirmed write: its outcome and the clean tray it returned.
+    var _lastWrite = null;
 
     function tray() { return document.getElementById('pending-tray'); }
 
@@ -46,12 +51,94 @@
     // manual Apply and an auto flush unable to race each other.
     function inFlight() { return !!window._applyInFlight; }
 
+    // A tray's mutation sequence (data-seq) and whether it holds nothing
+    // unapplied. `t` is a tray element, or the HTML of an answer carrying one.
+    function receipt(t) {
+        if (typeof t === 'string' || t == null) {
+            t = new DOMParser().parseFromString(t || '', 'text/html').getElementById('pending-tray');
+        }
+        var raw = t && t.getAttribute('data-seq');
+        var seq = raw !== null && raw !== '' ? Number(raw) : NaN;
+        return { seq: isFinite(seq) ? seq : null,
+            clean: !!t && t.getAttribute('data-change-count') === '0'
+                && t.getAttribute('data-working-dirty') !== '1' };
+    }
+
+    // Every row still waiting gets this one answer (one object, so a caller
+    // can tell a shared answer from a new one).
+    function settle(outcome) {
+        _flushWaiters.splice(0).forEach(function (w) { w.resolve(outcome); });
+    }
+
+    var STALE_REASON = 'the live chip changed since SM last synced; nothing was written';
+    var MERGING_REASON = 'the live chip changed; Auto-Sync is merging it in (pull, re-apply, push)';
+    // The conflict tray (data-refused) replaces #pending-tray when a push finds
+    // the live chip moved; its marker says whether the session merges or stopped.
+    function conflictVerdict(t, trigger) {
+        var mark = t.querySelector('.tray-conflict-autosync');
+        if ((trigger || '').indexOf('autoSyncMerge') >= 0
+                || (mark && /merging/.test(mark.textContent || ''))) {
+            return { ok: false, merging: true, reason: MERGING_REASON };
+        }
+        return { ok: false, refused: true, reason: STALE_REASON };
+    }
+    // Why a flush wrote nothing, read from its own answer: a JSON message, the
+    // conflict tray, or the status line the answer carries.
+    function refusal(text, trigger) {
+        try {
+            var body = JSON.parse(text);
+            if (body && typeof body === 'object') return { reason: body.message || body.error || '' };
+        } catch (err) { /* not JSON: an HTML answer */ }
+        var doc = new DOMParser().parseFromString(text || '', 'text/html');
+        var t = doc.getElementById('pending-tray');
+        if (t && t.hasAttribute('data-refused')) return conflictVerdict(t, trigger);
+        var msg = doc.querySelector('#status-bar p, .toast p, p');
+        return { reason: msg ? (msg.textContent || '').trim() : '' };
+    }
+
     function flush() {
         if (_stopped || !armed() || !pending()) return;
         if (inFlight()) { _queued = true; return; }
         if (!window.htmx) return;
         window._applyInFlight = true;
+        // These waiters were staged before this request. Later arrivals
+        // need their sequence confirmed below, or the coalesced request.
+        var waiters = _flushWaiters.splice(0);
+        var outcome = { ok: false, reason: 'the live write could not be confirmed', seq: null };
+        function answered(e) {
+            var d = e.detail || {}, cfg = d.requestConfig || {};
+            if (cfg.path !== '/state/apply-to-live' || !d.xhr) return;
+            var xhr = d.xhr;
+            var trigger = xhr.getResponseHeader ? xhr.getResponseHeader('HX-Trigger') || '' : '';
+            outcome.ok = xhr.status >= 200 && xhr.status < 300
+                && trigger.indexOf('autoApplyApplied') >= 0;
+            if (outcome.ok) {
+                outcome.reason = '';
+                var got = receipt(xhr.responseText);
+                if (got.clean) outcome.seq = got.seq;
+                return;
+            }
+            // status 0: no answer reached the page -- unknown, not refused
+            if (!xhr.status) return;
+            var why = refusal(xhr.responseText || '', trigger);
+            if (why.reason) outcome.reason = why.reason;
+            outcome.merging = !!why.merging;
+            outcome.refused = !why.merging;
+        }
+        document.body.addEventListener('htmx:afterRequest', answered);
         var done = function () {
+            document.body.removeEventListener('htmx:afterRequest', answered);
+            if (outcome.ok && outcome.seq !== null) _lastWrite = outcome;
+            waiters.forEach(function (w) { w.resolve(outcome); });
+            // A request can start before an edit but acquire the state after
+            // it. Its clean tray confirms that edit only with a sequence at
+            // least as new as the edit's own response, never an older tray.
+            _flushWaiters = _flushWaiters.filter(function (w) {
+                if (outcome.ok && outcome.seq !== null && w.seq !== null && outcome.seq >= w.seq) {
+                    w.resolve(outcome); return false;
+                }
+                return true;
+            });
             window._applyInFlight = false;
             if (_queued) { _queued = false; setTimeout(flush, 0); }
             // SB-07: an open sync panel follows the write (an applied-log x
@@ -68,7 +155,8 @@
             if (p && typeof p.then === 'function') { p.then(done, done); }
             else { setTimeout(done, 0); }
         } catch (e) {
-            window._applyInFlight = false;
+            outcome.reason = e.message || String(e);
+            done();
         }
     }
 
@@ -77,7 +165,16 @@
         // that, and only that, releases the stop. (Clearing it on a timer
         // would re-open the window the disarm exists to close: a stale tray
         // still carrying the attribute would schedule another write.)
-        if (!armed()) { _stopped = false; _queued = false; return; }
+        if (!armed()) {
+            _stopped = false; _queued = false; _lastWrite = null;
+            // A conflict tray carries no armed attribute while the merge or
+            // the person decides: say what it says, never "Auto-Sync is off"
+            // for a session that is still merging.
+            var t = tray();
+            settle(t && t.hasAttribute('data-refused') ? conflictVerdict(t, '')
+                : { ok: false, reason: 'Auto-Sync is off; not written' });
+            return;
+        }
         if (_stopped) return;
         if (!pending()) { _queued = false; return; }
         flush();
@@ -120,6 +217,23 @@
         _onTrayChanged: onTrayChanged,
         armed: armed,
         pending: pending,
+        /* R3B MINOR 7: a promise of what the live write did with an edit
+           whose staging answer carried `trayHtml`: {ok: true} once a write
+           carrying it landed, else {ok: false, reason[, merging]}. An answer
+           that arrives after the write that already carried it (a later tray
+           with a sequence at least as new) is told at once -- but only while
+           the tray on screen is still that write's own clean receipt. */
+        whenFlushed: function (trayHtml) {
+            var staged = receipt(trayHtml);
+            var now = receipt(tray());
+            if (_lastWrite && staged.seq !== null && _lastWrite.seq >= staged.seq
+                    && now.clean && now.seq === _lastWrite.seq) {
+                return Promise.resolve(_lastWrite);
+            }
+            return new Promise(function (resolve) {
+                _flushWaiters.push({ resolve: resolve, seq: staged.seq });
+            });
+        },
         /* Someone ELSE held window._applyInFlight and has just released it.
            `_queued` is drained only by this module's own completion handler, so
            without a poke an edit that committed during (say) an Auto-Sync pull
@@ -143,7 +257,10 @@
             // Held until a tray renders WITHOUT the armed attribute (see
             // onTrayChanged) — never released on a timer.
             _stopped = true;
+            _lastWrite = null;
             _queued = false;
+            settle({ ok: false, reason: 'Auto-Sync turned off'
+                     + (reason ? ' (' + reason + ')' : '') + '; not written' });
             if (reason === 'conflict') {
                 toast('The live chip changed — auto-apply is OFF. '
                       + 'Choose how to resolve it.', 'warning');

@@ -474,7 +474,7 @@ def probe_file(h5_path: Path) -> dict:
     """List every plottable entry in the file: data variables AND non-dim
     coordinate variables (fit results ride as coords in real files — a
     vars-only viewer hides them). Never raises."""
-    out: dict = {"ok": True, "vars": [], "attrs": {}}
+    out: dict = {"ok": True, "vars": [], "attrs": {}, "axes": []}
     try:
         with _h5_lock_for(str(h5_path)):
             with _open_reader(h5_path) as r:
@@ -492,7 +492,12 @@ def probe_file(h5_path: Path) -> dict:
                         continue
                     is_scale = r.is_dim_coord(key, h)
                     if is_scale and key not in coord_names:
-                        continue   # plain dim coord — an axis, not a plottable
+                        # plain dim coord -- an axis, not a plottable; its
+                        # declared unit is kept (a unit another variable only
+                        # inherited from it is not that variable's, R3B M2)
+                        out["axes"].append({"name": key, "units": r.var_attr(h, "units"),
+                                            "long_name": r.var_attr(h, "long_name")})
+                        continue
                     if is_scale and r.is_placeholder(h):
                         continue
                     # Coord-var = a dimension scale OR any var referenced by a
@@ -505,6 +510,10 @@ def probe_file(h5_path: Path) -> dict:
                         "shape": list(h.shape),
                         "ndim": h.ndim,
                         "dtype": str(h.dtype),
+                        # R4 B2: a true/false variable -- xarray writes a bool
+                        # as int8 with the attribute dtype="bool" (CF)
+                        "is_bool": (str(h.dtype) == "bool"
+                                    or r.var_attr(h, "dtype") == "bool"),
                         "dims": [d["name"] for d in dims],
                         "units": r.var_attr(h, "units"),
                         "long_name": r.var_attr(h, "long_name"),

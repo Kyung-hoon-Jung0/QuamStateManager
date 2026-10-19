@@ -1694,7 +1694,7 @@
         // choice: inspector-closed -> initSplit only hides the pane, the
         // user's remembered split (quam_split_user) is never written here.
         var INSPECTOR_PAGES = {
-            qubit: ["/qubits", "/resonators", "/flux", "/qdac", "/bulk", "/topology"],
+            qubit: ["/qubits", "/resonators", "/flux", "/qdac", "/bulk", "/topology", "/table", "/instrument"],
             pair: ["/pairs", "/couplers", "/bulk", "/topology"],
             pulse: ["/pulses"],
             search: []
@@ -1706,6 +1706,16 @@
             return m ? m[1] : null;
         }
         window.__smInspectorPages = INSPECTOR_PAGES;      // (selfcheck)
+        // R3B M6: the inspector a navigation closed ({kind, page}). A value
+        // typed but not committed commits on blur -- the click on the sidebar
+        // link -- so its /edit answer lands AFTER the close and would swap that
+        // inspector back over a page that cannot show it.
+        var closedByNav = null;
+        function isEditCommit(evt) {
+            var info = (evt.detail && evt.detail.pathInfo) || {};
+            var path = String(info.requestPath || info.finalRequestPath || "").split(/[?#]/)[0];
+            return /\/edit$/.test(path);
+        }
 
         function navigateSplit(href) {
             var url;
@@ -1714,6 +1724,7 @@
             navigation.page = url.pathname;
             var kind = inspectorKind();
             if (kind && INSPECTOR_PAGES[kind].indexOf(url.pathname) === -1) {
+                closedByNav = { kind: kind, page: url.pathname };
                 if (window.closeInspector) window.closeInspector();
                 return;
             }
@@ -1860,6 +1871,25 @@
             }
 
             if (tid === "inspector-pane") {
+                // R3B M6: an /edit commit answering after its inspector was
+                // closed by a navigation to a page that cannot show it: the
+                // edit landed; the inspector is closed again. Its out-of-band
+                // tray could not land (htmx looks for it beside the form the
+                // close removed), so the tray is asked for. Anything else
+                // swapped into the pane is the user's own new inspector.
+                var editBack = isEditCommit(evt);
+                var k = editBack && closedByNav ? inspectorKind() : null;
+                if (k && closedByNav.page === navigation.page && closedByNav.kind === k
+                        && INSPECTOR_PAGES[k].indexOf(navigation.page) === -1) {
+                    if (window.closeInspector) window.closeInspector();
+                    if (window.htmx && document.getElementById("pending-tray")) {
+                        try {
+                            window.htmx.ajax("GET", "/state/tray", { target: "#pending-tray", swap: "outerHTML" });
+                        } catch (e) {}
+                    }
+                    return;
+                }
+                if (!editBack) closedByNav = null;
                 // v1.3.0 (customer): an inspector opens at the user's last
                 // choice (a drag's height or an arrow's fixed position), else
                 // the expanded default.

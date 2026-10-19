@@ -606,13 +606,19 @@ class DatasetStore:
         # that were there already), not a run that landed or changed:
         # the delta poll ships those rows, but they are not run arrivals.
         self.index_complete = False
+        # R4 B3: the last walk found the root not found but not gone (its
+        # drive or share did not answer): runs AND tags stay as last read
+        self._root_away = False
+        self._reindex_total = 0
+        self._reindex_pending: set[int] = set()
         self._load_store_cache()
         for path, fp in self._folder_fp.items():
             self._watch_settling(path, fp[0])
         self._refresh_settling(deadline=_time.monotonic() + _COLD_SCAN_BUDGET_S)
         self._last_scan_truncated = self._scan(
             deadline=_time.monotonic() + _COLD_SCAN_BUDGET_S)
-        self._load_tags()
+        if not getattr(self, "_root_away", False):
+            self._load_tags()
 
     @property
     def scan_truncated(self) -> bool:
@@ -621,6 +627,19 @@ class DatasetStore:
         stays open after a truncated walk, so the next scan continues and
         clears this once it finishes."""
         return bool(getattr(self, "_last_scan_truncated", False))
+
+    @property
+    def reindex_progress(self) -> dict | None:
+        """R3B MINOR 8: how far the one-time rebuild of an index an older
+        version wrote has come -- ``{"done", "total"}`` counted over the runs
+        that index named (read once, at startup), or None when there is no
+        such rebuild. Memory only: a poll asking costs no disk read. A run
+        the rebuild could not re-read still counts once the walk finished."""
+        if not self._reindex_total:
+            return None
+        return {"done": self._reindex_total if self.index_complete else
+                        self._reindex_total - len(self._reindex_pending),
+                "total": self._reindex_total}
 
     def _cache_data_json(self, run_id: int, data: dict) -> None:
         """Insert *data* into the LRU cache, evicting the oldest if over cap.
@@ -939,6 +958,15 @@ class DatasetStore:
 
         root = self.folder_path
         if not root.is_dir():
+            # R4 B3: a folder whose drive or share does not answer is not
+            # gone -- its runs stay as last read on every rescan path (the
+            # Datasets render, Trends, ingest), as the page's note says. The
+            # one rule the sidebar and the page state (folder_probe).
+            from quam_state_manager.core import folder_probe
+            if folder_probe.folder_state(root) != "gone":
+                logger.warning("Dataset folder unreachable, its runs kept as last read: %s", root)
+                self._root_away = True
+                return False
             logger.warning("Dataset folder not found: %s", root)
             gone = {r.experiment_name for r in self.runs.values()}
             if self.runs:
@@ -952,7 +980,9 @@ class DatasetStore:
             self.dates = []
             self.experiment_types = []
             self._last_mtime = (0.0, -1)
+            self._root_away = False
             return False
+        self._root_away = False
 
         # Discovery pass — walks the date/run hierarchy, classifies each
         # run folder as either "reuse from fingerprint cache" or "needs
@@ -1164,6 +1194,7 @@ class DatasetStore:
                 else:
                     run_info.last_parsed = now
                 self.runs[run_id] = run_info
+                self._reindex_pending.discard(run_id)
                 self._note_run_change(run_id, _old, run_info)
                 real_fp = (folder_fp, node_fp, data_fp)
                 if run_info.incomplete and self._retry_incomplete(run_entry, real_fp):
@@ -1381,7 +1412,19 @@ class DatasetStore:
             if not p.is_file():
                 return False
             raw = json.loads(p.read_text(encoding="utf-8"))
-            if raw.get("v") != _STORE_CACHE_V or raw.get("root") != str(self.folder_path):
+            if raw.get("root") != str(self.folder_path):
+                return False
+            if raw.get("v") != _STORE_CACHE_V:
+                # R3B MINOR 8: an index an older version wrote is rebuilt
+                # (one cold scan), but it names the runs that rebuild will
+                # read -- kept as ids only, so the rebuild can say how far it
+                # is without another read. Its rows are never served.
+                version = raw.get("v")
+                if isinstance(version, int) and 0 < version < _STORE_CACHE_V:
+                    ids = {row.get("run_id") for row in raw.get("runs") or ()
+                           if isinstance(row, dict)}
+                    self._reindex_pending = {i for i in ids if isinstance(i, int)}
+                    self._reindex_total = len(self._reindex_pending)
                 return False
             descs = raw.get("descriptions") or []
             fields = RunInfo.__dataclass_fields__
@@ -1651,7 +1694,8 @@ class DatasetStore:
             # one full stat sweep per scan with identical semantics.
             self._last_scan_truncated = self._scan(deadline=deadline,
                                                    pre_walk=inner)
-            self._load_tags()
+            if not getattr(self, "_root_away", False):  # R4 B3: tags as last read
+                self._load_tags()
             new_max = max(self.runs.keys()) if self.runs else -1
             return new_max > old_max
 
@@ -1685,7 +1729,8 @@ class DatasetStore:
                 p: (None, None, None, fp[3]) for p, fp in self._folder_fp.items()
             }
             truncated = self._scan(deadline=deadline)
-            self._load_tags()
+            if not getattr(self, "_root_away", False):  # R4 B3: tags as last read
+                self._load_tags()
             return truncated
 
     def _stamp(self) -> float:

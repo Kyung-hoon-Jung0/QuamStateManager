@@ -7,7 +7,7 @@
     {#- v1.5.1 (U P2-19): a page or an action named by the query (the Ctrl+K
         list, routes._NAV_PAGES) is offered above the chip's fields -#}
     {% if pages %}
-    <div class="search-pages" role="group" aria-label="Pages and actions">
+    <div class="search-pages">
         <span class="muted">Pages and actions:</span>
         {% for p in pages %}
         {% if p.action == 'settings' %}<button type="button" class="outline btn-sm search-page" onclick="toggleSettings(this)">{{ p.label }}</button>
@@ -56,7 +56,7 @@
             <td><strong>{{ r.parent_id }}</strong> <small class="cat-badge cat-{{ r.category }}">{{ r.category }}</small></td>
             <td><code>{{ r.leaf_key }}</code></td>
             <td class="search-value">
-                {% if r.dot_path in ptr_targets %}<span class="search-ptr" title="{{ r.raw_value }}">points to <code>{{ ptr_targets[r.dot_path] }}</code></span>
+                {% if r.dot_path in ptr_targets %}{% set _pt = ptr_targets[r.dot_path] %}<span class="search-ptr{% if _pt.dangling %} search-ptr-dangling{% endif %}" title="{{ r.raw_value }}">{% if _pt.dangling %}dangling pointer to{% else %}points to{% endif %} <code>{{ _pt.target }}</code></span>
                 {% elif r.raw_value is none %}N/A
                 {% elif r.raw_value is number and r.raw_value is float and (r.raw_value|abs >= 1e6 or (0 < r.raw_value|abs < 1e-3)) %}
                     {{ "%.4e" | format(r.raw_value) }}

@@ -20,9 +20,12 @@
 {# v1.5.1 (SB-P2-6): a folder that is gone is marked, with Re-point / Remove,
    instead of listing the runs it held when last scanned #}
 {% set _gone = root_path in (tree_missing or ()) %}
-<details class="tree-root{% if _gone %} tree-root-missing{% endif %}" open>
+{# R4 B3/b6: a folder whose drive or share does not answer keeps its runs as
+   last read, stated the way the Datasets page states it #}
+{% set _away = not _gone and root_path in (tree_unreachable or ()) %}
+<details class="tree-root{% if _gone %} tree-root-missing{% endif %}{% if _away %} tree-root-unreachable{% endif %}" open>
     <summary class="tree-root-label" title="{{ root_path }}">
-        <span class="tree-root-path"><span class="tree-root-name">{{ _name }}</span>{% if _dir %}<span class="tree-root-dir">{{ _dir }}</span>{% endif %}</span>{% if _gone %}<span class="tree-root-missing-tag">not found</span>{% endif %}
+        <span class="tree-root-path"><span class="tree-root-name">{{ _name }}</span>{% if _dir %}<span class="tree-root-dir">{{ _dir }}</span>{% endif %}</span>{% if _gone %}<span class="tree-root-missing-tag">not found</span>{% elif _away %}<span class="tree-root-missing-tag">unreachable</span>{% endif %}
     </summary>
     {# Button kept out of <summary> (not a valid summary descendant) — CSS
        pins it to the summary row. #}
@@ -30,7 +33,7 @@
             hx-vals='{"folder": {{ root_path | string | tojson }}}' class="btn-remove" title="Remove">&times;</button>
     {% if _gone %}
     <div class="tree-missing-note" role="status">
-        <small>&#9888; Folder not found: moved, renamed, deleted or out of reach. Its runs are not listed.</small>
+        <small>&#9888; Folder not found: moved, renamed or deleted. Its runs are not listed.</small>
         <form class="tree-repoint" hx-post="/workspace/add" hx-target="#sidebar-tree" hx-swap="innerHTML">
             <input type="hidden" name="replace" value="{{ root_path }}">
             <input type="text" name="folder" required placeholder="Its new location"
@@ -41,6 +44,11 @@
                 hx-vals='{"folder": {{ root_path | string | tojson }}}' title="Stop listing this folder">Remove</button>
     </div>
     {% else %}
+    {% if _away %}
+    <div class="tree-missing-note tree-unreachable-note" role="status">
+        <small>&#9888; Folder unreachable: its drive or network share does not answer. Its runs show as last read.</small>
+    </div>
+    {% endif %}
     {# docs/105 #9: the discovery walk's 50k-dir bound used to be a log line
        only — runs silently missing from this tree with no UI trace. #}
     {% if (tree_hydrating or ()) and root_path in tree_hydrating %}

@@ -17633,6 +17633,14 @@ def state_history(snapshot_note: str | None = None):
     return render_template(template, **ctx)
 
 
+def _machine_day_end(d: datetime) -> datetime:
+    """The end of day *d* (its next midnight) in this machine's local time,
+    aware, at that date's own UTC offset (DST-correct: the OS's rules for
+    that date, not today's offset)."""
+    from datetime import timedelta
+    return (datetime(d.year, d.month, d.day) + timedelta(days=1)).astimezone()
+
+
 def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
     """P1-9 (UX round): the State History page that holds *day*'s newest row
     (the rows run newest first): every row at or after the END of that day,
@@ -17644,10 +17652,15 @@ def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
     d = datetime.strptime(day, "%Y-%m-%d")
     zone = (_display_zone() or {}).get("zone")
     try:
-        tz = ZoneInfo(zone) if zone else datetime.now().astimezone().tzinfo
+        tz = ZoneInfo(zone) if zone else None
     except Exception:  # noqa: BLE001 -- no tzdata / not a zone: the machine's
-        tz = datetime.now().astimezone().tzinfo
-    end = datetime(d.year, d.month, d.day, tzinfo=tz) + timedelta(days=1)
+        tz = None
+    if tz is not None:
+        end = datetime(d.year, d.month, d.day, tzinfo=tz) + timedelta(days=1)
+    else:
+        # R3B MINOR 5: the machine's zone at THAT date's own offset -- the
+        # offset of today was an hour off for a date across a DST change
+        end = _machine_day_end(d)
     cutoff_us = int((end.astimezone(timezone.utc)
                      - datetime(1970, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1_000_000)
     probe = _versions_read_rows(ctx, snapshots, limit=1, offset=0, lane_notes=False)
@@ -27568,12 +27581,16 @@ def _nav_pages() -> list[dict]:
 
 def _search_pages(query: str) -> list[dict]:
     """The pages / actions whose name holds every word of *query* (header
-    Search finds "export", "trends", "version" as Ctrl+K does)."""
-    words = [w for w in re.split(r"\s+", query.lower()) if w]
-    if not words:
+    Search finds "export", "trends", "version" as Ctrl+K does). R3B MINOR 4:
+    the words are read with the one search grammar (docs/96: space = AND, a
+    standalone ``|`` = OR), as the fields below them are."""
+    from quam_state_manager.core.search_query import groups as _q_groups, matches_hay
+    # an inert pipe (one being typed) vanishes, as in the field search
+    grps = [g for g in _q_groups(query) if g != ["|"]]
+    if not grps:
         return []
     hits = [p for p in _nav_pages()
-            if all(w in (p["label"] + " " + p.get("sub", "")).lower() for w in words)]
+            if matches_hay((p["label"] + " " + p.get("sub", "")).lower(), grps)]
     return hits[:6]
 
 
@@ -27601,15 +27618,37 @@ def search():
                            ptr_targets=_search_pointer_targets(results))
 
 
-def _search_pointer_targets(results) -> dict[str, str]:
+def _pointer_dangles(root, raw: str, own: tuple, resolve=None) -> bool:
+    """R4 B1: a pointer is dangling only when the pointer resolver cannot
+    resolve it -- it hands the raw string back then (a field that is not
+    there, a cycle). A path that crosses another pointer is followed the way
+    the resolver follows it: a cross-resonance channel's LO_frequency is
+    ``#/qubits/<q>/xy/opx_output/upconverters/2/frequency`` where
+    ``xy.opx_output`` is itself a pointer (to the wiring, then to a shared
+    MW-FEM port). A walk over the raw dicts stopped at that pointer and
+    called a valid wiring dangling. *resolve* is the store's own resolver
+    (its cache); without one the module resolver reads *root*."""
+    from quam_state_manager.core.pointer_resolver import resolve_pointer
+    try:
+        got = resolve(raw, own) if resolve else resolve_pointer(root, raw, own)
+    except Exception:  # noqa: BLE001 -- display only: unknown is not "dangling"
+        return False
+    return isinstance(got, str) and got == raw
+
+
+def _search_pointer_targets(results) -> dict[str, dict]:
     """B1 (UX round): a pointer row says where it points -- "points to
     x180_DragCosine.amplitude" -- written relative to the row's own path when
     they share a prefix, so a reader never takes the pointer for the field it
-    names. Display only: a pointer that cannot be followed is left out."""
+    names. R3B MINOR 1: a pointer the resolver cannot resolve says
+    "dangling pointer to ..." (docs/114), never a confident "points to";
+    R4 B1: one whose path crosses another pointer is resolved through it
+    (``_pointer_dangles``). ``{dot_path: {"target", "dangling"}}``; a pointer
+    whose target cannot be computed is left out."""
     from quam_state_manager.core.pointer_resolver import _compute_resolved_path, is_pointer
     store = _store()
     root = store.merged if store else {}
-    out: dict[str, str] = {}
+    out: dict[str, dict] = {}
     for r in results:
         raw = r.raw_value
         if not is_pointer(raw) or raw.startswith("#./"):
@@ -27624,7 +27663,10 @@ def _search_pointer_targets(results) -> dict[str, str]:
         n = 0
         while n < min(len(own), len(target)) - 1 and own[n] == target[n]:
             n += 1
-        out[r.dot_path] = ".".join(target[n:])
+        out[r.dot_path] = {"target": ".".join(str(t) for t in target[n:]),
+                           "dangling": _pointer_dangles(
+                               root, raw, tuple(own),
+                               store.resolve_pointer if store else None)}
     return out
 
 
@@ -32917,24 +32959,51 @@ def export_csv():
         "f_01", "readout_frequency", "T1", "T2ramsey",
         "readout_amplitude", "readout_threshold", "gate_fidelity_avg",
     ]
+    from quam_state_manager.core import units as _units
     if entity == "pairs":
         rows = _export_pair_rows(engine, props)
         name = "quam_pairs.csv"
+        unit_of = lambda p: _units.stored_unit_label(_units.pair_field_key(p))  # noqa: E731
     else:
         rows = engine.summary_table(props)
         chain = request.args.get("chain")
         if chain:
             rows = [r for r in rows if str(r.get("id", "")).startswith(f"q{chain}")]
         name = "quam_summary.csv"
-    return _csv_download(["id"] + props, rows, name)
+        unit_of = _units.stored_unit_label
+    # R3B MINOR 2: the values are the STORED ones, so each header names the
+    # unit a field is stored in where it is known (f_01 [Hz], T1 [s],
+    # x180_length [ns]) -- as the Live State Edit grid export does
+    heads = {}
+    for p in props:
+        u = unit_of(p)
+        heads[p] = f"{p} [{u}]" if u else p
+    rows = [{"id": r.get("id"), **{heads[p]: r.get(p) for p in props}} for r in rows]
+    return _csv_download(["id"] + [heads[p] for p in props], rows, name)
+
+
+def _csv_cell(value):
+    """R3B MINOR 2: a text cell a spreadsheet would read as a formula (OWASP
+    CSV injection) is written with a leading apostrophe. R4 b1: through the
+    one rule the chip report already uses (``report_card.csv_safe_cell``),
+    so a number stored as text ("-9.5e-05", "+5") stays a number -- only a
+    + or - that does not start a number is neutralised. Non-text values pass
+    through as they are."""
+    if isinstance(value, str):
+        from quam_state_manager.core.report_card import csv_safe_cell
+        return csv_safe_cell(value)
+    return value
 
 
 def _csv_download(fieldnames: list, rows: list, name: str):
+    """A CSV download: text cells that start like a formula are neutralised,
+    and the file starts with a UTF-8 BOM so a spreadsheet reads non-ASCII
+    text (a chip name, a unit's micro sign) correctly."""
     output = io.StringIO()
+    csv.writer(output).writerow([_csv_cell(f) for f in fieldnames])
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    writer.writerows(rows)
-    mem = io.BytesIO(output.getvalue().encode("utf-8"))
+    writer.writerows({k: _csv_cell(v) for k, v in r.items()} for r in rows)
+    mem = io.BytesIO(output.getvalue().encode("utf-8-sig"))
     mem.seek(0)
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name=name)
 
@@ -34614,6 +34683,9 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
     from flask import has_app_context as _has_app
     _wsm = ws if ws is not None else (current_app.config.get("workspace") if _has_app() else None)
     missing = _wsm.missing_roots() if _wsm is not None and hasattr(_wsm, "missing_roots") else set()
+    # R4 B3/b6: roots whose drive or share does not answer (listed as last read)
+    unreachable = (_wsm.unreachable_roots() if _wsm is not None and hasattr(_wsm, "unreachable_roots")
+                   else set())
     # docs/142 B4: collapsed DATE groups ship an empty <ul> and fetch their
     # rows on first open -- 5,000 runs was ~4 MB / ~45k DOM nodes of markup
     # nobody had expanded. Only the unfiltered tree (a filtered tree must
@@ -34648,7 +34720,8 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
             pass
     return {"tree": tree or {}, "nested": nested, "tree_truncated": truncated,
             "tree_hydrating": hydrating, "lazy_groups": lazy_groups,
-            "eager_tpaths": eager_tpaths, "tree_missing": missing}
+            "eager_tpaths": eager_tpaths, "tree_missing": missing,
+            "tree_unreachable": unreachable}
 
 
 @bp.route("/workspace/add", methods=["POST"])
@@ -40564,27 +40637,40 @@ def _active_dataset_stores(*, fast: bool = False,
     return result
 
 
+def _folder_state(path) -> str:
+    """v1.5.1 (SB-P2-6, R3B M5): ``"gone"`` when the folder is not found any
+    more (moved, renamed, deleted) on a drive or share that answers;
+    ``"unreachable"`` when its share or mapped drive does not answer (or it
+    cannot be read now); else ``"ok"``. R4 B3/b5/b6: the one bounded rule
+    the sidebar, this page and the run index share --
+    ``core.folder_probe.folder_states``."""
+    from quam_state_manager.core import folder_probe
+    return folder_probe.folder_state(path)
+
+
 def _folder_gone(path) -> bool:
     """v1.5.1 (SB-P2-6): the folder is not found any more (moved, renamed,
-    deleted) -- the scanner's rule for the sidebar's "not found"; a folder
-    that is only unreadable for now is not gone."""
-    try:
-        os.stat(path)
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    return False
+    deleted) -- not merely on a share or drive that does not answer now."""
+    return _folder_state(path) == "gone"
 
 
-def _gone_dataset_folders() -> list[dict]:
+def _gone_dataset_folders(states: dict | None = None) -> list[dict]:
     """v1.5.1 (SB-P2-6): the Datasets roots the workspace lists whose folder
-    is gone -- the page names them instead of dropping their runs silently."""
+    is gone or unreachable (``state``) -- the page names them instead of
+    dropping their runs silently. *states*: ``folder_states`` answers the
+    caller already has (R4 b5: one bounded probe per path per request)."""
+    from quam_state_manager.core import folder_probe
     ws = current_app.config.get("workspace")
+    roots = [str(r) for r in (getattr(ws, "root_folders", None) or ())]
+    states = dict(states or {})
+    ask = [r for r in roots if r not in states]
+    if ask:
+        states.update(folder_probe.folder_states(ask))
     out: list[dict] = []
-    for r in (getattr(ws, "root_folders", None) or ()):
-        if _folder_gone(r):
-            out.append({"key": _folder_key(Path(r)), "path": str(r)})
+    for r in roots:
+        state = states.get(r, "ok")
+        if state != "ok":
+            out.append({"key": _folder_key(Path(r)), "path": r, "state": state})
     return out
 
 
@@ -41059,6 +41145,7 @@ def _datasets_view(view_mode: str):
         view_mode=view_mode,
         collection_tags=pl["collection_tags"],
         scan_partial=scan_partial,
+        reindex_progress=_dataset_reindex_progress(active),
         digest=pl["digest"],
         rows_json=rows_json,
         # Curated fit-key order (from FIT_TARGET_MAP) for the Sort banner's
@@ -41484,6 +41571,18 @@ def _note_live_write_for_ingest(ctx: dict | None) -> None:
         _ensure_exp_worker(st)
 
 
+def _dataset_reindex_progress(active):
+    """R3B MINOR 8: the one-time index rebuild after an upgrade, summed over
+    the active folders (``{"done", "total"}``), or None once every folder's
+    rebuild is done. Read from each store's memory -- the render and every
+    delta poll ask it, so it must never touch the disk."""
+    progress = [p for f in active if (p := getattr(f["store"], "reindex_progress", None))]
+    if not progress or all(p["done"] == p["total"] for p in progress):
+        return None
+    return {"done": sum(p["done"] for p in progress),
+            "total": sum(p["total"] for p in progress)}
+
+
 @bp.route("/datasets/changes-since")
 def datasets_changes_since():
     """Delta poll endpoint for the dataset table.
@@ -41558,17 +41657,40 @@ def datasets_changes_since():
         names = None
     from quam_state_manager.core.dataset import yielding_scan
     gone: list[dict] = []
+    unreachable: list[dict] = []
+    # R3B M5: the folders the page saw gone or unreachable that are back: the
+    # client asks for ALL their rows again (it dropped them; an unchanged run
+    # is never in a delta), answered as ``resent`` once served
+    resend = {k for k in (request.args.get("resend") or "").split(",") if k}
+    resent: list[str] = []
+    # R4 b5: every folder this poll states -- the ones it serves and the
+    # workspace roots it names -- asked ONCE, through the bounded probe: an
+    # outage costs at most the probe's wait, never a share timeout per stat
+    from quam_state_manager.core import folder_probe
+    _ws_roots = [str(r) for r in (getattr(current_app.config.get("workspace"), "root_folders", None) or ())]
+    try:
+        states = folder_probe.folder_states([str(f["path"]) for f in active] + _ws_roots)
+    except Exception:  # noqa: BLE001 -- unknown is "as last read", never "gone"
+        logger.warning("changes-since: folder states", exc_info=True)
+        states = {}
     for fol in active:
         # v1.5.1 (SB-P2-6): a data folder that is GONE (not found) while a page
         # shows it: its runs leave the table (as vanished) and the folder is
         # named, as the sidebar names it -- an open page kept listing them
-        if _folder_gone(fol["path"]):
-            gone.append({"key": fol["key"], "path": fol["path"]})
+        state = states.get(str(fol["path"]), "ok")
+        if state == "gone":
+            gone.append({"key": fol["key"], "path": fol["path"], "state": state})
             try:
                 vanished.extend(_dataset_uid(fol["key"], r.run_id)
                                 for r in fol["store"].runs_snapshot())
             except Exception:  # noqa: BLE001 -- the note still says it
                 logger.warning("changes-since: runs of gone %s", fol.get("path"), exc_info=True)
+            continue
+        if state == "unreachable":
+            # R3B M5: its share or drive does not answer: nothing is known
+            # about its runs -- they stay as last read, its cursor is held
+            unreachable.append({"key": fol["key"], "path": fol["path"], "state": state})
+            now = ts if now is None else min(now, ts)
             continue
         if time.monotonic() >= deadline:
             skipped += 1
@@ -41599,10 +41721,13 @@ def datasets_changes_since():
             hold = filling and fol["store"].run_count > 0 and _catch_up_should_yield()
             if hold:
                 _kick_dataset_index_warmer()
+            again = fol["key"] in resend
             with yielding_scan(_catch_up_should_yield):
-                delta = fol["store"].changes_since(ts, date=date,
+                delta = fol["store"].changes_since(0.0 if again else ts, date=date,
                                                    deadline=deadline,
                                                    rescan=not hold)
+            if again and not delta.get("partial"):
+                resent.append(fol["key"])
             owned = names is not None and names.owns(fol["store"].folder_path)
             for row in delta.get("updated", []):
                 row["f"] = fol["key"]
@@ -41628,6 +41753,20 @@ def datasets_changes_since():
             skipped += 1
             sample = ts
         now = sample if now is None else min(now, sample)
+    # R3B M5: a workspace root the loop above did not cover is named too, so
+    # an open page's note for it stays while it is gone or unreachable
+    listed = {g["key"] for g in (*gone, *unreachable)}
+    try:
+        for g in _gone_dataset_folders(states):
+            if g["key"] not in listed:
+                (gone if g["state"] == "gone" else unreachable).append(g)
+                listed.add(g["key"])
+    except Exception:  # noqa: BLE001 -- the poll never fails on a note
+        logger.warning("changes-since: workspace root states", exc_info=True)
+    # a resend no listed folder can serve is answered, so the page stops
+    # asking; one still gone or unreachable is asked again later
+    served = {f["key"] for f in active}
+    resent.extend(k for k in sorted(resend) if k not in listed and k not in served)
     # Unconditional: with no new candidates this is a no-op in production
     # (the 30s worker wake owns retries), while under TESTING it gives a
     # parked mid-write candidate its next attempt on the next poll.
@@ -41643,9 +41782,12 @@ def datasets_changes_since():
                     # "the table stopped updating".
                     "scan_ms": round(scan_ms_total, 1),
                     "folders": len(active),
+                    **({"reindex": progress} if (progress := _dataset_reindex_progress(active)) else {}),
                     # v1.5.1 (SB-P2-6): only when a folder IS gone, so the
                     # pinned contract keys stay as they were otherwise
-                    **({"gone": gone} if gone else {})})
+                    **({"gone": gone} if gone else {}),
+                    **({"unreachable": unreachable} if unreachable else {}),
+                    **({"resent": resent} if resent else {})})
 
 
 @bp.route("/datasets/rescan", methods=["POST"])
@@ -43990,7 +44132,7 @@ def trends_param_diff():
 
 
 #: v1.5.1 (T1-F7): a fit file's declared units, by (path, mtime_ns, size)
-_TRENDS_FIT_UNITS: dict[tuple, list] = {}
+_TRENDS_FIT_UNITS: dict[tuple, tuple] = {}
 _TRENDS_UNITS_RUNS = 3          # the newest runs with a ds_fit file that are read
 
 
@@ -44022,14 +44164,19 @@ def trends_units():
         except OSError:
             continue
         key = (str(p), st.st_mtime_ns, st.st_size)
-        variables = _TRENDS_FIT_UNITS.get(key)
-        if variables is None:
-            variables = ndview.probe_file(p).get("vars") or []
+        got = _TRENDS_FIT_UNITS.get(key)
+        if got is None:
+            probe = ndview.probe_file(p)
+            got = (probe.get("vars") or [], probe.get("axes") or [])
             if len(_TRENDS_FIT_UNITS) > 256:
                 _TRENDS_FIT_UNITS.clear()
-            _TRENDS_FIT_UNITS[key] = variables
-        metrics = {m for qv in (r.fit_results or {}).values() if isinstance(qv, dict) for m in qv}
-        for m, u in _units.fit_metric_units(variables, sorted(metrics)).items():
+            _TRENDS_FIT_UNITS[key] = got
+        variables, axes = got
+        fits = [qv for qv in (r.fit_results or {}).values() if isinstance(qv, dict)]
+        metrics = {m for qv in fits for m in qv}
+        # R3B M2: a true/false metric (``success``) never has a unit
+        booleans = {m for qv in fits for m, v in qv.items() if isinstance(v, bool)}
+        for m, u in _units.fit_metric_units(variables, sorted(metrics), axes, booleans).items():
             out.setdefault(m, u)
     return jsonify({"units": out})
 
