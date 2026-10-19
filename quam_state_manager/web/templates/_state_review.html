@@ -83,13 +83,24 @@
       the title says so, v1.5.1 MINOR 6); Discard sets the file aside
       (renamed, never deleted). -#}
   {%- set _unrec = tray_unrecovered() if (tray_unrecovered is defined and not _archive) else [] -%}
+  {%- macro _held_where(held) %}{% if held == 'tray' %}in the tray{% elif working_dirty %}in SM's saved copy{% else %}on the chip{% endif %}{% endmacro -%}
   {% for u in _unrec %}
-  <div class="sp-note sp-note-warn sp-unrecovered" data-recovery-id="{{ u.id }}">
-    <div class="sp-unrec-head"><b>{{ u.rows | length }} staged edit{{ 's' if (u.rows | length) != 1 }} not recovered</b>
+  {#- v1.5.1 (r6): rows SM already holds are tagged; a checkpoint whose every row
+      is held is listed muted (nothing to restore), never as "not recovered" -#}
+  {%- set _un = u.rows | length -%}
+  <div class="sp-note {% if not u.settled %}sp-note-warn {% endif %}sp-unrecovered{% if u.settled %} sp-unrec-settled{% endif %}" data-recovery-id="{{ u.id }}">
+    {% if u.settled %}
+    <div class="sp-unrec-head"><b>{{ _un }} edit{{ 's' if _un != 1 }} from an earlier session: already {% if not u.held_chip %}in the tray{% elif not u.held_tray %}{{ _held_where('chip') }}{% else %}held{% endif %}</b>
+      <span class="muted">{{ u.saved_at }}</span></div>
+    <div class="sp-unrec-why">Nothing to restore: every row already has its value {% if not u.held_chip %}in the tray (not on the live chip yet){% elif not u.held_tray %}{{ _held_where('chip') }}{% else %}in the tray or {{ _held_where('chip') }}{% endif %}. Not restored automatically: {{ u.reason }}.</div>
+    {% else %}
+    <div class="sp-unrec-head"><b>{{ u.pending if u.pending is defined else _un }} staged edit{{ 's' if (u.pending if u.pending is defined else _un) != 1 }} not recovered</b>{% if u.pending is defined and u.pending != _un %}
+      <span class="muted">of {{ _un }}; {{ _un - u.pending }} already held</span>{% endif %}
       <span class="muted">{{ u.saved_at }}</span></div>
     <div class="sp-unrec-why">Not restored automatically: {{ u.reason }}.</div>
+    {% endif %}
     {% if u.rows %}<table class="sp-diff sp-unrec-rows"><tbody>
-      {% for r in u.rows[:8] %}<tr><td><code>{{ r.path }}</code></td>
+      {% for r in u.rows[:8] %}<tr><td><code>{{ r.path }}</code>{% if r.held %} <small class="sp-unrec-held muted">already {{ _held_where(r.held) }}</small>{% endif %}</td>
         <td class="sp-val">{% if r.deleted %}delete{% else %}{{ r.new | tojson | truncate(40, true, '…') }}{% endif %}</td>
         <td class="sp-val muted">{% if not r.created %}was {{ r.old | tojson | truncate(30, true, '…') }}{% else %}new{% endif %}</td></tr>{% endfor %}
       {% if (u.rows | length) > 8 %}<tr><td colspan="3" class="muted">and {{ (u.rows | length) - 8 }} more</td></tr>{% endif %}
@@ -97,11 +108,12 @@
     <div class="sp-unrec-file muted" title="{{ u.file }}">{{ u.file }}</div>
     <div class="sp-unrec-msg" role="status" aria-live="polite"></div>
     <div class="sp-unrec-acts">
-      {% if u.restorable %}<button type="button" class="btn-sm sp-unrec-restore" onclick="SyncPanel.recovery(this, 'restore', event)"
+      {% if u.restorable and not u.settled %}<button type="button" class="btn-sm sp-unrec-restore" onclick="SyncPanel.recovery(this, 'restore', event)"
         title="Stage these edits in the tray again.{% if auto_apply %} Auto-Sync (push) is ARMED: they are written to the live chip right away.{% else %} Nothing is written to the live chip until Apply.{% endif %}">Restore</button>{% endif %}
       <button type="button" class="btn-sm outline secondary sp-unrec-discard" onclick="SyncPanel.recovery(this, 'discard', event)"
-        data-arm-label="Press again to discard"
-        title="Set the file aside without staging it (renamed, not deleted)">Discard</button>
+        {% if u.settled %}data-arm-label="Press again to set aside"
+        title="Set this copy aside (renamed, not deleted). The values it holds stay where they are">Set aside</button>{% else %}data-arm-label="Press again to discard"
+        title="Set the file aside without staging it (renamed, not deleted)">Discard</button>{% endif %}
     </div>
   </div>
   {% endfor %}

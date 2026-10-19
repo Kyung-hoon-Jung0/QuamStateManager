@@ -50,8 +50,10 @@
   {% if active_name %}{% set _lbl = active_chip_label() or active_name %}<span class="state-status-name" data-chip-folder="{{ active_name }}" title="{{ _lbl }}{% if _lbl != active_name %} · folder {{ active_name }}{% endif %}">{{ _lbl }}</span>{% endif %}
   {% if qualibrate_tray is defined and qualibrate_tray and qualibrate_tray.match == false and not qualibrate_tray.standalone %}<span class="sync-marker sync-marker-elsewhere" title="QUAlibrate's active project writes a different folder; its runs won't show up here as live changes">&#9879; QUAlibrate: other folder</span>{% endif %}
   {#- v1.5.1: refused recovery checkpoints stay marked until restored or discarded -#}
-  {%- set _unrec = tray_unrecovered() if (tray_unrecovered is defined and _st != 'archive') else [] -%}
-  {%- if _unrec %}{% set _urn = _unrec | map(attribute='rows') | map('length') | sum %}<span class="sync-marker sync-marker-unrecovered" title="Staged edits from an earlier session could not be restored automatically ({{ _unrec[0].reason }}). Open the sync panel to restore or discard them.">&#9888; {{ _urn }} not recovered</span>{% endif %}
+  {#- v1.5.1 (r6): a checkpoint whose every row SM already holds (the same edit in
+      the tray, or the value on the chip) is not "not recovered"; the panel still lists it -#}
+  {%- set _unrec = (tray_unrecovered() if (tray_unrecovered is defined and _st != 'archive') else []) | rejectattr('settled') | list -%}
+  {%- if _unrec %}{% set _urn = namespace(n=0) %}{% for u in _unrec %}{% set _urn.n = _urn.n + (u.pending if u.pending is defined else (u.rows | length)) %}{% endfor %}<span class="sync-marker sync-marker-unrecovered" title="Staged edits from an earlier session could not be restored automatically ({{ _unrec[0].reason }}). Open the sync panel to restore or discard them.">&#9888; {{ _urn.n }} not recovered</span>{% endif %}
   <span class="sync-control-caret" aria-hidden="true">&#9662;</span>
 </button>
 {%- if _st == 'mine' and not working_dirty %}

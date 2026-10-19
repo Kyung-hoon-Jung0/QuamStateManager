@@ -10923,7 +10923,11 @@ def _tray_unrecovered() -> list[dict]:
         return []
     from quam_state_manager.core import pending_tray
     try:
-        return pending_tray.unrecovered(ctx["working_copy"])
+        listed = pending_tray.unrecovered(ctx["working_copy"])
+        # v1.5.1 (r6): rows SM already holds (the same edit in the tray, or the
+        # value on the chip) are named as such and never counted as not recovered
+        store = ctx.get("store")
+        return pending_tray.with_held(store, listed) if (listed and store is not None) else listed
     except Exception:  # noqa: BLE001 -- a listing never breaks the tray
         logger.warning("listing refused recovery checkpoints failed", exc_info=True)
         return []
@@ -10979,6 +10983,10 @@ def state_recovery_restore():
                              "Discard sets it aside; its bytes stay on disk."), 409
     with modifier.store._lock:
         plan = pending_tray.restore_plan(modifier.store, rows)
+        # v1.5.1 (r6): a row the field already holds is either the same edit
+        # already in the tray or a value already on the chip -- the answer
+        # says which (both used to read "the chip already holds these values")
+        in_tray = {e.dot_path for e in modifier.store.change_log}
         collide = [i for i in plan if i["status"] == pending_tray.PLAN_COLLIDE]
         missing = [i for i in plan if i["status"] == pending_tray.PLAN_MISSING]
         if (collide or missing) and not force:
@@ -11013,13 +11021,32 @@ def state_recovery_restore():
     same = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_SAME]
     skipped = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_MISSING]
     n = len(staged)
+    n_tray = sum(1 for p in same if p in in_tray)
+    n_chip = len(same) - n_tray
+    saved = bool(ctx.get("working_dirty"))
+    where = "in SM's saved working copy" if saved else "on the live chip"
     # v1.5.1 (MINOR 6): with Auto-Sync push armed, staged rows are written at once
-    msg = ((f"Restored {n} edit{'s' if n != 1 else ''} to the tray"
-            + (". Auto-Sync (push) is ARMED: they are being written to the live chip."
-               if _auto_apply_state(ctx) else " (not on the live chip yet)."))
-           if n else "Nothing to restore: the chip already holds these values.")
-    if same and n:
-        msg += f" {len(same)} already held."
+    if n:
+        msg = (f"Restored {n} edit{'s' if n != 1 else ''} to the tray"
+               + (". Auto-Sync (push) is ARMED: they are being written to the live chip."
+                  if _auto_apply_state(ctx) else " (not on the live chip yet)."))
+        if n_tray:
+            msg += f" {n_tray} already in the tray."
+        if n_chip:
+            msg += f" {n_chip} already {where}."
+    elif same and not n_chip:
+        msg = ("Nothing to restore: "
+               + ("these edits are" if n_tray != 1 else "this edit is")
+               + " already in the tray (not on the live chip yet).")
+    elif same and not n_tray:
+        msg = ("Nothing to restore: "
+               + ("SM's saved working copy" if saved else "the live chip")
+               + f" already holds {'these values' if n_chip != 1 else 'this value'}"
+               + (" (not on the live chip yet)." if saved else "."))
+    elif same:
+        msg = f"Nothing to restore: {n_tray} already in the tray, {n_chip} already {where}."
+    else:
+        msg = "Nothing restored."
     if skipped:
         msg += f" Skipped {len(skipped)} not on this chip: {', '.join(skipped[:6])}."
     changes = []
