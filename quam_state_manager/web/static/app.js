@@ -2584,6 +2584,7 @@ window.setTheme = function(newTheme) {
     _applyThemeToPlotly(newTheme);
     if (window.PlotTheme) window.PlotTheme.retheme();
     if (window.FloatWiring) window.FloatWiring.refresh();
+    document.dispatchEvent(new CustomEvent('sm:themechange', {detail: {theme: newTheme}}));
 };
 // Keep the existing two-way shortcut for integrations.
 window.toggleTheme = function() {
@@ -2594,15 +2595,9 @@ window.toggleTheme = function() {
 // in base.html already applied data-theme on <html> to prevent FOUC.
 // This block keeps Plotly and the toggle-button state in sync.
 (function() {
-    var theme = 'dark';
-    try {
-        var saved = localStorage.getItem('quam_theme');
-        if (saved === 'light' || saved === 'dark' || saved === 'qm') theme = saved;
-        // honor a ?theme= override (mirrors the FOUC init in base.html) so a
-        // forced theme stays applied to the toggle/Plotly state too.
-        var qp = new URLSearchParams(location.search).get('theme');
-        if (qp === 'light' || qp === 'dark' || qp === 'qm') theme = qp;
-    } catch(e) {}
+    // Boot owns resolution; storage failure must not suppress a URL override.
+    var theme = window.resolveSMTheme ? window.resolveSMTheme()
+        : document.documentElement.getAttribute('data-theme') || 'dark';
     _applyThemeToPlotly(theme);
     // r16 ⑤-1: retheme() used to run only on the theme TOGGLE — plots
     // rendered before Plotly/theme settled on a dark-mode LOAD kept the

@@ -617,10 +617,20 @@ window.TopoGraph = (function () {
     return svg;
   }
 
+  // Mounted maps share one theme notification listener. Detached hosts are pruned.
+  var themeMaps = new Map();
+  function onTheme(host, repaint) { themeMaps.set(host, repaint); }
+  if (typeof document !== 'undefined') document.addEventListener('sm:themechange', function () {
+    themeMaps.forEach(function (repaint, host) {
+      if (!host.isConnected) themeMaps.delete(host);
+      else repaint();
+    });
+  });
   function renderLayout(mount, opts) {
     var noop = { mode: "none", highlightEntity: function () {} };
     if (!mount) return noop;
     opts = opts || {};
+    onTheme(mount, function () { renderLayout(mount, opts); });
     var nodes = opts.nodes || [], edges = opts.edges || [];
     var lay = layoutFor(nodes, edges);
     if (lay.mode === "none") {
@@ -1253,6 +1263,7 @@ window.TopoGraph = (function () {
   }
 
   return {
+    onTheme: onTheme,
     bindDetails: bindDetails,
     pairState: pairState,
     pairBadgeSvg: pairBadgeSvg,

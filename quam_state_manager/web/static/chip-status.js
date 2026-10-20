@@ -3216,6 +3216,7 @@ window.ChipStatus.mount = function (opts) {
             });
         }
 
+        if (TG.onTheme) TG.onTheme(host, render);
         _rebuildHeroMap = render;
         render();
     })();
