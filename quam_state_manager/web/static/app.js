@@ -3949,6 +3949,7 @@ window.SyncPanel = (function () {
         Array.prototype.forEach.call(document.querySelectorAll("[data-armed='1']"), disarm);
         var lab = btn.querySelector(".sp-choice-label") || btn;
         _clearExpired(btn);
+        _dropExpiredToast(btn);     // v1.5.1 (r6 P2-7): pressed again, "Not done" is answered
         btn._armOrig = lab.innerHTML;
         lab.textContent = btn.getAttribute("data-arm-label") || "Press again to confirm";
         btn.setAttribute("data-armed", "1");
@@ -4043,13 +4044,34 @@ window.SyncPanel = (function () {
         }
         r.textContent = text;
     }
+    /* v1.5.1 (r6 P2-7): one "Not done" toast per button -- they piled up,
+       several identical ones at once. A button is known by what it is (id,
+       or its classes, armed label and action), so the twin a panel
+       re-render puts in its place is the same button. */
+    var _expToasts = {};
+    function _armKey(btn) {
+        if (btn.id) return "#" + btn.id;
+        var cls = String(btn.className || "").split(/\s+/).filter(function (c) {
+            return c && c !== "sync-armed" && c !== "sync-arm-expired";
+        }).sort().join(".");
+        return [cls, btn.getAttribute("data-arm-label") || "", btn.getAttribute("hx-post") || "",
+                btn.getAttribute("onclick") || ""].join("|");
+    }
+    function _dropExpiredToast(btn) {
+        var k = _armKey(btn), t = _expToasts[k];
+        if (t && t.remove) t.remove();
+        delete _expToasts[k];
+    }
     function _expired(btn) {
         btn.classList.add("sync-arm-expired");
         _badge(btn, "expired");
         btn._expTimer = setTimeout(function () { _clearExpired(btn); }, 2500);
         var msg = "Not done: the confirm press did not come within " + ARM_S
                   + " s, so nothing was changed. Press twice to do it.";
-        if (window.showToast) window.showToast(msg, "info");
+        // (an expiry always follows a new press of the button, and that press
+        // already took the button's previous toast down -- see arm())
+        var t = window.showToast ? window.showToast(msg, "info") : null;
+        if (t) _expToasts[_armKey(btn)] = t;
         _srSay(msg);
     }
     function _clearExpired(btn) {
