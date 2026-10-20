@@ -1160,3 +1160,18 @@ Recovery, safer live writes, and clearer everyday controls.
 - **History upgrade**: history folders of chip copies may be split on first open; older entries already mixed together are not automatically separated.
 - **Shared data folders**: tag locking covers one user's processes on one computer. Simultaneous writes from different users or computers can still lose a change.
 - **Recovery and live saves**: Restore stages recovered edits for review; Apply writes them, or armed Auto-Sync push can write them immediately. Mid-save detection is a timing guard, so retry a refused write once the other save finishes.
+
+## v1.5.2 (2026-10-21)
+
+A brand colour theme and a calmer, richer chip map.
+
+### Improved
+
+- **QM theme**: a third colour theme beside Light and Dark, in Quantum Machines' palette (black, white text, QM blue); fonts bundled offline. Choose it in Settings.
+- **Chip map hover**: hovering a qubit or pair shows a small Expand button instead of a panel over the page; Expand opens an anchored, opaque panel with values next to their labels and each trend chart on its own row.
+- **Pairs**: each pair carries a badge with its name and 2Q gate fidelity (same colour scale as the qubits), thicker edges that are easy to hover, solid/dashed/faded by what was measured, its own Expand panel (operating points, last calibration, CZ gate plan link), and linked highlight with its two qubits. Large chips show compact dots that open on hover.
+
+### Fixed
+
+- **Provenance**: a pair panel names the run that set a fidelity only when the current value is proven written by that run; otherwise nothing is claimed. An unknown age says so.
+- **Dialogs**: only the top dialog handles Escape; a theme change repaints the maps; an unknown pair in a CZ plan link says so.
