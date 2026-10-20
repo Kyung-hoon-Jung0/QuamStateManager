@@ -29668,6 +29668,9 @@ def auto_sync_set():
     return resp
 
 
+_VERDICT_FAILED = object()
+
+
 def _auto_pull_verdict(ctx: dict, dom_paths, live_pair=None) -> "object | None":
     """Which of the user's edits the live chip actually collides with.
 
@@ -29678,36 +29681,39 @@ def _auto_pull_verdict(ctx: dict, dom_paths, live_pair=None) -> "object | None":
     prompts confusing, and the sync control changes under you.
 
     Returns a ``sync_conflict.Verdict``, or None when it could not be computed
-    (a live read failure) -- which the caller must treat as "ask", never as
+    (a live read failure), or _VERDICT_FAILED for a comparison failure.
+    Both failures must be treated as "ask", never as
     "no conflict". The live read is the one this route was about to do anyway.
     """
     from quam_state_manager.core import sync_conflict
     wc, store = ctx.get("working_copy"), ctx.get("store")
     if wc is None or store is None:
-        return None
+        logger.warning("auto-pull verdict failed: missing working copy or store")
+        return _VERDICT_FAILED
     try:
         if live_pair is None:
-            _lp = working_copy.read_live_shared(wc)
+            try:
+                _lp = working_copy.read_live_shared(wc)
+            except (OSError, ValueError, safe_io.LiveFileError):
+                logger.info("auto-pull verdict: live unreadable -- asking instead", exc_info=True)
+                return None
             entries = _working_vs_live_entries(ctx, None, None, _lp)
         else:
             entries = _working_vs_live_entries(ctx, live_pair[0], live_pair[1])
-    except (FileNotFoundError, OSError, ValueError, safe_io.LiveFileError):
-        logger.info("auto-pull verdict: live unreadable -- asking instead")
-        return None
+        live_by_path = sync_conflict.live_view(entries)
+        with store._lock:
+            log = list(getattr(store, "change_log", None) or [])
+        return sync_conflict.classify(
+            live_by_path=live_by_path,
+            change_log=log,
+            dom_paths=dom_paths,
+            reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
+            working_dirty=bool(ctx.get("working_dirty")),
+            reapply_originals=ctx.get("pending_reapply_orig"),
+        )
     except Exception:            # noqa: BLE001 -- a verdict is never worth a 500
         logger.warning("auto-pull verdict failed", exc_info=True)
-        return None
-    live_by_path = sync_conflict.live_view(entries)
-    with store._lock:
-        log = list(getattr(store, "change_log", None) or [])
-    return sync_conflict.classify(
-        live_by_path=live_by_path,
-        change_log=log,
-        dom_paths=dom_paths,
-        reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
-        working_dirty=bool(ctx.get("working_dirty")),
-        reapply_originals=ctx.get("pending_reapply_orig"),
-    )
+        return _VERDICT_FAILED
 
 
 def _live_conflict_204(paths):
@@ -29767,7 +29773,7 @@ def auto_sync_pull():
     _dirty = _quam_ctx_dirty(ctx) or dom_dirty
     if _dirty:
         verdict = _auto_pull_verdict(ctx, dom_paths)
-        if verdict is None or verdict.must_ask:
+        if verdict is None or verdict is _VERDICT_FAILED or verdict.must_ask:
             # THE line docs/87 draws, kept: SM does not choose between the
             # user's work and the live chip. The banner is already showing,
             # and now it can name the fields that actually collide.
@@ -31340,6 +31346,11 @@ def state_take_live_restore():
 
 def _sync_replay_refusal(ctx, verdict, picks, mode):
     """R6e: unknown is a refusal; a collision requires its own answer."""
+    if verdict is _VERDICT_FAILED:
+        return jsonify({
+            "status": "error", "mode": mode, "error_code": "verdict_failed",
+            "message": "SM could not compare your edits with the live chip; nothing was written.",
+        }), 409
     if verdict is None:
         return jsonify({
             "status": "error", "mode": mode, "error_code": "live_busy",
