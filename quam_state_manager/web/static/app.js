@@ -3540,6 +3540,7 @@ function _trapContainerGone(c) {
  *      detaches itself and swallows nothing (no focus restore — the opener
  *      context is long stale by then).
  */
+var _focusTrapStack = [];
 window.trapFocus = function(container, onEscape) {
     if (!container) return function() {};
     if (container.__trapRelease) { try { container.__trapRelease(); } catch (e) {} }
@@ -3548,14 +3549,19 @@ window.trapFocus = function(container, onEscape) {
     function detach() {
         if (released) return;
         released = true;
+        _focusTrapStack = _focusTrapStack.filter(function (entry) { return entry.container !== container; });
         document.removeEventListener("keydown", onKey, true);
         if (container.__trapRelease === release) container.__trapRelease = null;
     }
     function onKey(e) {
         if (_trapContainerGone(container)) { detach(); return; }
+        while (_focusTrapStack.length && _trapContainerGone(_focusTrapStack[_focusTrapStack.length - 1].container)) {
+            _focusTrapStack[_focusTrapStack.length - 1].detach();
+        }
+        if (!_focusTrapStack.length || _focusTrapStack[_focusTrapStack.length - 1].container !== container) return;
         var folderModal = document.getElementById('hub-folder-modal');
         if (folderModal && !folderModal.contains(container)) return;
-        if (e.key === "Escape" && onEscape) { e.preventDefault(); onEscape(); return; }
+        if (e.key === "Escape" && onEscape) { e.preventDefault(); e.stopImmediatePropagation(); onEscape(); return; }
         if (e.key !== "Tab") return;
         var f = _focusableIn(container);
         if (!f.length) { e.preventDefault(); return; }
@@ -3570,15 +3576,17 @@ window.trapFocus = function(container, onEscape) {
     }
     function release() {
         if (released) return;
+        var wasTop = _focusTrapStack.length && _focusTrapStack[_focusTrapStack.length - 1].container === container;
         detach();
-        if (opener && typeof opener.focus === "function" && document.body.contains(opener)) {
+        if (wasTop && opener && typeof opener.focus === "function" && document.body.contains(opener)) {
             try { opener.focus(); } catch (e) {}
         }
     }
+    _focusTrapStack.push({container: container, detach: detach});
     document.addEventListener("keydown", onKey, true);
     container.__trapRelease = release;
     requestAnimationFrame(function() {
-        if (released) return;
+        if (released || !_focusTrapStack.length || _focusTrapStack[_focusTrapStack.length - 1].container !== container) return;
         // Don't override focus the caller already placed inside the modal.
         if (container.contains(document.activeElement)) return;
         var f = _focusableIn(container);
@@ -23432,7 +23440,7 @@ document.addEventListener('click', function(evt) {
         _render('');
         // Tab-cycle within the palette + restore focus to the opener on close.
         // (Escape/Arrows/Enter are handled by the dedicated keydown handler below.)
-        pal._releaseTrap = window.trapFocus(pal);
+        pal._releaseTrap = window.trapFocus(pal, window.closeCmdPalette);
         // Focus on the next frame so the dialog is visible.
         requestAnimationFrame(function() { input.focus(); });
     };

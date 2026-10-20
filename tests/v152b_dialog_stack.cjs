@@ -1,0 +1,10 @@
+const assert=require('assert');const {world,chip,mount,key,open}=require('./v152b_ui.cjs');
+const w=world('',false,'<div id="cmd-palette" hidden><input id="cmd-palette-input"><ul id="cmd-palette-results"></ul></div>');
+mount(w,chip());const anchor=w.document.querySelector('[data-hero-qubit]');anchor.focus();open(w,anchor);
+const panel=w.document.querySelector('.topo-card-popup');assert(panel);
+const opener=panel.querySelector('button');opener.focus();
+key(w,opener,'k',{ctrlKey:true});const pal=w.document.getElementById('cmd-palette');assert(!pal.hidden);
+const input=w.document.getElementById('cmd-palette-input');input.focus();key(w,input,'Escape');
+assert(pal.hidden);assert(w.document.body.contains(panel),'first Escape leaves map details open');assert.equal(w.document.activeElement,opener);
+key(w,opener,'Escape');assert(!w.document.body.contains(panel));assert.equal(w.document.activeElement,anchor);
+w.close();
