@@ -718,10 +718,7 @@ window.TopoGraph = (function () {
       }
       var cls = "cm-edge" + (e.has_coupler ? " cm-edge-hascoupler" : "") +
                 (e.active === false ? " cm-off" : "");
-      // docs/166: an invisible fat line under the visible one, so a pair edge
-      // has a real hit target when the map is used as a control. It is inert
-      // by default (`pointer-events: none` in the stylesheet) and only the
-      // pick-mode mount turns it on, so every other map behaves as before.
+      // A wide transparent stroke makes pair hover and touch reachable.
       svg += '<g class="' + cls + '" data-cm="p:' + esc(e.pair_id) + '">' +
              '<line class="cm-edge-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +
              '<line class="cm-edge-line" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>';
@@ -969,7 +966,189 @@ window.TopoGraph = (function () {
       '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">' + svg + '</svg>';
   }
 
+
+  // One small hover affordance and one explicit detail panel across all maps.
+  var detailButton = null, detailAnchor = null, detailPanel = null;
+  var detailTimer = null, releaseDetailTrap = null, closingDetail = false;
+  function positionDetail(surface, anchor) {
+    if (!anchor || !anchor.isConnected) { closeDetails(); return; }
+    var stone = anchor.querySelector('.cm-stone');
+    var a = (stone || anchor).getBoundingClientRect(), b = surface.getBoundingClientRect();
+    if (!a.width && !a.height) a = anchor.getBoundingClientRect();
+    var pair = anchor.matches('[data-hero-pair], [data-cm^="p:"]');
+    if (pair) {
+      var line = anchor.querySelector('.cm-edge-line, .topo-hero-edge-hit');
+      if (line) a = line.getBoundingClientRect();
+      var midX = (a.left + a.right) / 2, midY = (a.top + a.bottom) / 2;
+      a = {left: midX, right: midX, top: midY, bottom: midY, width: 0};
+    }
+    var pad = 8, gap = 5, x, y;
+    if (surface === detailButton) {
+      // Above the stone fits the gap between rows without covering neighbours.
+      x = (a.left + a.right - b.width) / 2;
+      y = a.top - b.height - gap;
+      if (y < pad) y = a.bottom + gap;
+    } else {
+      x = a.right + gap; y = a.top;
+      if (x + b.width > window.innerWidth - pad) x = a.left - b.width - gap;
+    }
+    surface.style.left = Math.round(Math.max(pad, Math.min(x, window.innerWidth - b.width - pad))) + 'px';
+    surface.style.top = Math.round(Math.max(pad, Math.min(y, window.innerHeight - b.height - pad))) + 'px';
+  }
+
+  function hideDetailButton() {
+    clearTimeout(detailTimer);
+    if (detailButton) detailButton.remove();
+    detailButton = null;
+  }
+  function closeDetails() {
+    closingDetail = true;
+    var anchor = detailAnchor;
+    hideDetailButton();
+    if (detailPanel) {
+      var panel = detailPanel;
+      detailPanel = null;
+      if (panel._closeDetail) panel._closeDetail();
+      panel.remove();
+    }
+    if (releaseDetailTrap) { releaseDetailTrap(); releaseDetailTrap = null; }
+    if (anchor) anchor.setAttribute('aria-expanded', 'false');
+    detailAnchor = null;
+    closingDetail = false;
+  }
+  function scheduleDetailHide() {
+    clearTimeout(detailTimer);
+    detailTimer = setTimeout(function () {
+      if (detailButton && detailButton !== document.activeElement &&
+          detailAnchor !== document.activeElement) hideDetailButton();
+    }, 240);
+  }
+  // Standalone reports load the map without app.js and its shared trapFocus.
+  function trapStandaloneDetails(panel, anchor) {
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); closeDetails(); return; }
+      if (e.key !== 'Tab') return;
+      var items = Array.prototype.filter.call(panel.querySelectorAll(
+        'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+        function (el) { return !el.disabled && (el.offsetWidth || el.offsetHeight); });
+      var first = items[0] || panel, last = items[items.length - 1] || panel;
+      if (!panel.contains(document.activeElement) || (!e.shiftKey && document.activeElement === last)) {
+        e.preventDefault(); first.focus();
+      } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      }
+    }
+    document.addEventListener('keydown', onKey, true);
+    return function () {
+      document.removeEventListener('keydown', onKey, true);
+      if (anchor.isConnected) anchor.focus({preventScroll: true});
+    };
+  }
+  function offerDetail(anchor, label, open) {
+    if (closingDetail || detailPanel) return;
+    clearTimeout(detailTimer);
+    if (detailButton && detailAnchor === anchor) return;
+    hideDetailButton();
+    detailAnchor = anchor;
+    var button = document.createElement('button');
+    button.type = 'button'; button.className = 'topo-expand';
+    button.textContent = 'Expand';
+    button.setAttribute('aria-label', 'Expand ' + label);
+    button.setAttribute('aria-haspopup', 'dialog');
+    anchor.setAttribute('aria-haspopup', 'dialog');
+    anchor.setAttribute('aria-expanded', 'false');
+    button.addEventListener('mouseenter', function () { clearTimeout(detailTimer); });
+    button.addEventListener('mouseleave', scheduleDetailHide);
+    button.addEventListener('focus', function () { clearTimeout(detailTimer); });
+    button.addEventListener('blur', scheduleDetailHide);
+    button.addEventListener('click', function (e) {
+      e.stopPropagation();
+      hideDetailButton();
+      // The node survives closing, so trapFocus returns focus to that node.
+      closingDetail = true;
+      anchor.focus({preventScroll: true});
+      closingDetail = false;
+      var panel = open(anchor);
+      if (!panel) return;
+      detailPanel = panel; detailAnchor = anchor;
+      panel.setAttribute('role', 'dialog');
+      panel.setAttribute('aria-modal', 'true');
+      panel.setAttribute('aria-label', label + ' details');
+      panel.setAttribute('tabindex', '-1');
+      anchor.setAttribute('aria-expanded', 'true');
+      positionDetail(panel, anchor);
+      if (window.trapFocus) releaseDetailTrap = window.trapFocus(panel, closeDetails);
+      else releaseDetailTrap = trapStandaloneDetails(panel, anchor);
+      var first = panel.querySelector('button');
+      (first || panel).focus();
+    });
+    detailButton = button;
+    document.body.appendChild(button);
+    positionDetail(button, anchor);
+  }
+  function bindDetails(host, selector, label, open) {
+    host.querySelectorAll(selector).forEach(function (anchor) {
+      anchor.setAttribute('aria-label', label(anchor));
+      Array.prototype.forEach.call(anchor.children, function (child) {
+        if (child.tagName.toLowerCase() === 'title') child.textContent = label(anchor);
+      });
+      if (!anchor.hasAttribute('tabindex')) anchor.setAttribute('tabindex', '0');
+      var touch = false;
+      function offer() { offerDetail(anchor, label(anchor), function () { return open(anchor); }); }
+      anchor.addEventListener('mouseenter', offer);
+      anchor.addEventListener('mouseleave', scheduleDetailHide);
+      anchor.addEventListener('focusin', offer);
+      anchor.addEventListener('focusout', scheduleDetailHide);
+      anchor.addEventListener('pointerdown', function (e) { touch = e.pointerType === 'touch'; });
+      anchor.addEventListener('click', function (e) {
+        var noHover = window.matchMedia && window.matchMedia('(hover: none)').matches;
+        if (!touch && !noHover) return;
+        touch = false; e.preventDefault(); e.stopImmediatePropagation(); offer();
+      }, true);
+      anchor.addEventListener('keydown', function (e) {
+        if (e.key === 'Tab' && !e.shiftKey && detailButton && detailAnchor === anchor) {
+          e.preventDefault(); detailButton.focus();
+        }
+      });
+    });
+  }
+  document.addEventListener('click', function (e) {
+    if (detailPanel && !detailPanel.contains(e.target)) closeDetails();
+    else if (detailButton && e.target !== detailButton &&
+             !(detailAnchor && detailAnchor.contains(e.target))) closeDetails();
+  });
+  document.addEventListener('keydown', function (e) {
+    // Page-level Escape handlers skip a press that belongs to the map details.
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (detailPanel) {
+      e._topoDetail = true;
+      if (!releaseDetailTrap) { e.preventDefault(); closeDetails(); }
+    } else if (detailButton) {
+      // A bare Expand offer is dismissed without consuming the key.
+      hideDetailButton();
+    }
+  }, true);
+  document.addEventListener('htmx:beforeSwap', function (e) {
+    var target = e.detail && e.detail.target;
+    if (detailAnchor && target && target.contains(detailAnchor)) closeDetails();
+  });
+  document.addEventListener('scroll', function (e) {
+    if (detailPanel && detailPanel.contains(e.target)) return;
+    var surface = detailPanel || detailButton;
+    if (!surface || !detailAnchor) return;
+    var a = detailAnchor.getBoundingClientRect();
+    if (a.bottom < 0 || a.top > window.innerHeight || a.right < 0 || a.left > window.innerWidth) closeDetails();
+    else positionDetail(surface, detailAnchor);
+  }, true);
+  window.addEventListener('resize', function () {
+    var surface = detailPanel || detailButton;
+    if (surface) positionDetail(surface, detailAnchor);
+  });
+
   return {
+    bindDetails: bindDetails,
+    closeDetails: closeDetails,
+    positionDetail: positionDetail,
     bareIndex: bareIndex,
     quamPairId: quamPairId,
     normalizeGrid: normalizeGrid,

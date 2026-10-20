@@ -148,9 +148,14 @@ ok(!!q, 'C0: the hero node is there to hover');
 q.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: true }));
 
 setTimeout(function () {
+  // v1.5.2: hover preview -> explicit Expand, so maps stay visible.
+  ok(!doc.querySelector('.topo-card-popup'), 'C1a: hover does not open details');
+  const expand = doc.querySelector('.topo-expand');
+  ok(!!expand, 'C1b: hover offers Expand');
+  if (expand) expand.click();
   const pop = win.document.querySelector('.topo-card-popup');
   ok(!!pop,
-    'C1: hovering a hero qubit STILL opens the detail popup after the cards '
+    'C1: Expand opens the detail popup after the cards '
     + 'were deleted (the silent-regression trap this file exists for)');
   if (pop) {
     ok(/qA1/.test(pop.textContent),

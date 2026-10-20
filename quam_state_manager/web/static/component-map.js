@@ -54,15 +54,8 @@ window.ComponentMap = (function () {
     if (_hotRow) { _hotRow.classList.remove("cm-row-hot"); _hotRow = null; }
   }
 
-  /* docs/109 ③ — hover summary card. The card IS the entity's table row,
-   * re-read as label→value pairs at hover time (headers from the row's own
-   * <thead>), so it can never disagree with the page and needs no endpoint —
-   * and the P(·) physical columns ride along already unit-formatted. Numbers
-   * stay OFF the drawing (docs/92 §2.4 pin — this is transient
-   * detail-on-demand, and the same data lives permanently in the table
-   * below). Body-level singleton (the docs/89 overflow-clip lesson),
-   * pointer-events:none so it can never trap the hover, DOM-API text only
-   * (wiring-borne labels are text, never innerHTML). */
+  // The explicit detail panel reads the current table row, including units.
+  // Shared TopoGraph controls own its affordance, positioning and dismissal.
   var _pop = null;
   var _popEnt = null;          // "kind:id" of the card currently shown
   var _popTitleEl = null;      // the SVG <title> we emptied while showing it
@@ -71,7 +64,7 @@ window.ComponentMap = (function () {
     if (_pop && _pop.isConnected) return _pop;
     _pop = document.createElement("div");
     _pop.className = "cm-popup";
-    _pop.setAttribute("role", "tooltip");
+    _pop.setAttribute("role", "dialog");
     _pop.hidden = true;
     document.body.appendChild(_pop);
     return _pop;
@@ -81,6 +74,7 @@ window.ComponentMap = (function () {
     _popTitleEl = null; _popTitleText = "";
   }
   function _hidePopup() {
+    if (window.TopoGraph) window.TopoGraph.closeDetails();
     if (_pop) _pop.hidden = true;
     _popEnt = null;
     _restoreNativeTitle();
@@ -88,8 +82,8 @@ window.ComponentMap = (function () {
   // Audit: the map is swapped/scrolled under a motionless cursor — no
   // mouseleave fires on a removed container, so the fixed card would float
   // stale. One module-level guard each closes both cases for every mount.
-  document.addEventListener("htmx:beforeSwap", _hidePopup);
-  document.addEventListener("scroll", _hidePopup, true);
+
+
   function _showPopup(ent, row, el, ev) {
     var key = ent.kind + ":" + ent.id;
     if (_popEnt === key) return;   // same entity — no rebuild/reposition churn
@@ -104,10 +98,16 @@ window.ComponentMap = (function () {
       _popTitleEl = nt; _popTitleText = nt.textContent; nt.textContent = "";
     }
     var pop = _popupEl();
+    pop._closeDetail = function () { pop.hidden = true; _popEnt = null; _restoreNativeTitle(); };
     while (pop.firstChild) pop.removeChild(pop.firstChild);
     var title = document.createElement("div");
     title.className = "cm-popup-title";
     title.textContent = (ent.kind === "pair" ? "pair " : "") + ent.id;
+    var close = document.createElement("button");
+    close.type = "button"; close.className = "topo-popup-close";
+    close.textContent = "X"; close.setAttribute("aria-label", "Close details");
+    close.addEventListener("click", function () { window.TopoGraph.closeDetails(); });
+    title.appendChild(close);
     pop.appendChild(title);
     if (row) {
       var table = row.closest("table");
@@ -141,22 +141,30 @@ window.ComponentMap = (function () {
       }
       pop.appendChild(dl);
     }
-    var hint = document.createElement("div");
+    var hint = document.createElement("button");
+    hint.type = "button";
     hint.className = "cm-popup-hint";
-    hint.textContent = _isPick() ? "click to show only its pulses"
+    hint.title = _isPick() ? "click to show only its pulses"
                                  : "click to open in the inspector";
-    pop.appendChild(hint);
+    hint.textContent = _isPick() ? "Show pulses" : "Open inspector";
+    hint.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var pick = _isPick();
+      _hidePopup();
+      if (pick) {
+        if (window.pulsePickOwner) window.pulsePickOwner(ent.id);
+      } else if (window.htmx) {
+        htmx.ajax("GET", (ent.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(ent.id),
+                  { source: "#inspector-pane", target: "#inspector-pane", swap: "innerHTML" });
+      }
+    });
+    if (window.htmx || _isPick()) pop.appendChild(hint);
     pop.hidden = false;
     _popEnt = key;
-    // place near the cursor, clamped to the viewport (flip left/up at edges)
-    var pad = 14;
-    var w = pop.offsetWidth, h = pop.offsetHeight;
-    var x = ev.clientX + pad, y = ev.clientY + pad;
-    if (x + w > window.innerWidth - 8) x = ev.clientX - w - pad;
-    if (y + h > window.innerHeight - 8) y = ev.clientY - h - pad;
-    pop.style.left = Math.max(4, x) + "px";
-    pop.style.top = Math.max(4, y) + "px";
+    window.TopoGraph.positionDetail(pop, el);
+    return pop;
   }
+
   function _clearHotEnt() {
     if (_hotEnt && _active && _active.api) {
       _active.api.highlightEntity(_hotEnt.kind, _hotEnt.id, false);
@@ -169,9 +177,9 @@ window.ComponentMap = (function () {
     body.addEventListener("mouseover", function (ev) {
       var el = ev.target.closest && ev.target.closest("[data-cm]");
       _clearHotRow();
-      if (!el) { _hidePopup(); return; }
+      if (!el) return;
       var e = _parseCm(el);
-      if (!e) { _hidePopup(); return; }
+      if (!e) return;
       var row = _rowFor(e.kind, e.id);
       if (row) {
         row.classList.add("cm-row-hot");
@@ -180,11 +188,16 @@ window.ComponentMap = (function () {
       // Audit: an entity with no row on THIS page (a qubit stone on the
       // couplers page) still gets the minimal card — title + the click
       // hint — so hover never feels dead on any component page.
-      _showPopup(e, row, el, ev);
+      // Details are opened only by the shared Expand button.
     });
     body.addEventListener("mouseleave", function () {
       _clearHotRow();
-      _hidePopup();
+    });
+    window.TopoGraph.bindDetails(body, "[data-cm]", function (el) {
+      return _parseCm(el).id;
+    }, function (el) {
+      var ent = _parseCm(el);
+      return _showPopup(ent, _rowFor(ent.kind, ent.id), el);
     });
     body.addEventListener("click", function (ev) {
       _hidePopup();

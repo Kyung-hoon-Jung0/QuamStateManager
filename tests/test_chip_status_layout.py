@@ -422,7 +422,8 @@ class TestQaLayoutCss:
         Capped at the viewport minus positionPopup's 2 x 6 px pad, the
         existing clamp keeps the whole box on screen and it scrolls."""
         rule = self._rule(".topo-card-popup, .topo-pair-popup")
-        assert "max-height: calc(100vh - 12px)" in rule
+        # v1.5.2: viewport-height preview -> bounded explicit details, keeping map context.
+        assert "max-height: min(75vh, 680px)" in rule
         assert "overflow-y: auto" in rule
         assert "overscroll-behavior: contain" in rule
 

@@ -33629,6 +33629,7 @@ def topology_sparklines(qubit: str):
         rows.append({
             "property": prop, "label": meta["label"], "abbr": meta["abbr"],
             "svg_inner": svg, "n": len(nums), "delta_pct": delta_pct,
+            "low": min(nums), "high": max(nums),
             "trend": None if delta in (None, 0) else ("up" if delta > 0 else "down"),
             "good": good,
         })

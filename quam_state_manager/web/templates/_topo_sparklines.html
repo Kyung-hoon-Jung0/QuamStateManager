@@ -1,3 +1,7 @@
+{% macro spark_value(v, prop) -%}
+{%- if 'fidelity' in prop -%}{{ '%.3f' | format(v * 100) }}%
+{%- else -%}{{ v | qty(prop, 'full') or ((v | qty(prop)) ~ ' (unitless)') }}{%- endif -%}
+{%- endmacro %}
 {% if hub_message %}<p class="vh-wait" data-vh-mode="{{ hub_mode }}">{{ hub_message }}
 {%- if hub_mode == 'unavailable' %} <button type="button" class="btn-sm vh-try-again" data-vh-try-again="1">Try again</button>{% endif %}</p>{% endif %}
 {% if hub_notes %}{% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}{% endif %}
@@ -13,7 +17,11 @@
                 {{ '▲' if r.trend == 'up' else '▼' }}{{ r.delta_pct | pct_change }}
             {%- else -%}–{%- endif -%}
         </span>
-        <svg class="history-cell-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{{ r.svg_inner|safe }}</svg>
+        <div class="topo-spark-chart">
+            <div class="topo-spark-axis"><span>{{ spark_value(r.low, r.property) }}</span><span>{{ spark_value(r.high, r.property) }}</span></div>
+            <svg class="history-cell-spark" viewBox="0 0 100 30" preserveAspectRatio="none" role="img" aria-label="{{ r.label }} trend, {{ r.n }} recorded points">{{ r.svg_inner|safe }}</svg>
+            <div class="topo-spark-axis"><span>Earlier</span><span>Latest</span></div>
+        </div>
     </div>
     {% endfor %}
 </div>
