@@ -39720,11 +39720,21 @@ def _with_fidelity_writers(topo):
              for e in topo.get("edges", []) if e.get("cz_fidelity_path")}
     if not paths:
         return topo
-    ans = _value_history(_active_ctx(), paths, limit=1)
+    ctx = _active_ctx() or {}
+    ans = _value_history(ctx, paths, limit=1)
     out = dict(topo, edges=[dict(e, cz_fidelity_run=None) for e in topo.get("edges", [])])
+    # Saved or staged manual writes are newer than the live ledger, even if
+    # they put back the same number. Equality alone cannot reassign the writer.
+    if ctx.get("working_dirty") or ctx.get("pending_reapply"):
+        return out
+    staged = tuple(getattr(ctx.get("store"), "change_log", ()))
     if ans.get("mode") != "ledger":
         return out
     for edge in out["edges"]:
+        path = edge.get("cz_fidelity_path")
+        if path and any(path == entry.dot_path or path.startswith(entry.dot_path + ".")
+                        or entry.dot_path.startswith(path + ".") for entry in staged):
+            continue
         points = ans.get("rows", {}).get(edge.get("cz_fidelity_path"), {}).get("points", [])
         point = points[-1] if points else {}
         if (point.get("provenance") == "run_proven" and point.get("proven")

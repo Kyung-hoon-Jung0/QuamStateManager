@@ -26,3 +26,16 @@ def test_exact_selected_path_and_current_value_are_required(tmp_path, monkeypatc
         before = dict(point); point.update(change)
         assert _edge(client)["cz_fidelity_run"] is None
         point.clear(); point.update(before)
+    with client.application.app_context():
+        ctx = routes._active_ctx()
+    for key, value in (("working_dirty", True), ("pending_reapply", {path: .999})):
+        original = ctx.get(key)
+        ctx[key] = value
+        assert _edge(client)["cz_fidelity_run"] is None
+        ctx[key] = original
+    # A staged same-value write is still manual, not new evidence for the run.
+    response = client.post("/field/edit", data={"dot_path": path, "value": "0.999"})
+    assert response.status_code == 200
+    ctx["working_dirty"] = False
+    ctx["pending_reapply"] = None
+    assert _edge(client)["cz_fidelity_run"] is None

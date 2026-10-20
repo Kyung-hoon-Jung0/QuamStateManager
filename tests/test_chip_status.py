@@ -75,7 +75,8 @@ def test_get_topology_adds_edge_provenance_and_recency():
     topo = eng.get_topology()
     e = topo["edges"][0]
     assert e["cz_fidelity"] == 0.96
-    assert e["cz_load_id"] == 529           # provenance → dataset run #529
+    # v1.5.2 (v152b): neighboring RB id -> unknown; the selected Bell metric owns its metadata.
+    assert e["cz_load_id"] is None
     # Per-metric recency: the CZ fidelity's OWN timestamp (best gate's Bell_State),
     # both as an edge field and inside the metric record.
     ts = chip_health.epoch_ms("2026-05-14 12:00:00 GMT+2")
