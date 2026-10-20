@@ -6395,6 +6395,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "live_readonly": bool((_active_ctx() or {}).get("live_readonly_hint")),
         # v1.5.1 (r6 P2-6): and when a live write last landed, same rule
         "live_landed": _live_landed_stamp(),
+        "live_landed_chip": _ctx_chip_key(_active_ctx()) or "",
         "qualibrate_tray": _qualibrate_tray_badge(),
         # docs/63 project lens: the qualibrate project this context operates
         # under (explicitly opened, or reverse-matched from its live folder).
@@ -11274,6 +11275,7 @@ def _render_tray(*, oob: bool) -> str:
         # v1.5.1 (r6 P2-6): when a live write last landed -- a page clears the
         # notice of an earlier failed write once a later one landed
         live_landed=_live_landed_stamp(),
+        live_landed_chip=_ctx_chip_key(_active_ctx()) or "",
         # docs/117: the pill and the behaviour read the SAME attribute on the
         # SAME element, so they cannot disagree; an F5 keeps the truth because
         # the server owns it.
@@ -18233,10 +18235,11 @@ def _restore_failure(message: str, code: str):
     read-only pill raised by the failure shows)."""
     _landed = _live_landed_stamp()     # v1.5.1 (r6 P2-6): see _live_write_landed
     body = render_template("_status.html", message=message, level="error",
-                           live_fail_at=_landed)
+                           live_fail_at=_landed, live_fail_chip=_ctx_chip_key(_active_ctx()) or "")
     resp = make_response(body + "\n" + _tray_oob(), 409)
     resp.headers["X-SM-Error-Code"] = code
     resp.headers["X-SM-Live-Landed"] = str(_landed)
+    resp.headers["X-SM-Live-Landed-Chip"] = _ctx_chip_key(_active_ctx()) or ""
     return resp
 
 
@@ -32090,7 +32093,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                         "detail": _head, "detail_exc": str(exc), "write_outcome": _outcome,
                         "tray_html": _tray_html(),
                         # v1.5.1 (r6 P2-6): a later landing takes the notice down
-                        "live_landed": _live_landed_stamp(ctx)}), 409
+                        "live_landed": _live_landed_stamp(ctx),
+                        "live_landed_chip": _ctx_chip_key(ctx) or ""}), 409
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live (sync) unexpected failure")
         _commit_journal()
@@ -32362,15 +32366,17 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
     if request.headers.get("Accept", "").startswith("application/json"):
         resp = make_response(jsonify(ok=False, error=code, message=message,
                                      tray_html=_tray_html(), live_landed=_landed,
+                                     live_landed_chip=_ctx_chip_key(ctx) or "",
                                      **({"detail": detail} if detail else {})), 409)
     else:
         err = render_template("_status.html", level="error", message=message,
-                              detail=detail, live_fail_at=_landed)
+                              detail=detail, live_fail_at=_landed, live_fail_chip=_ctx_chip_key(ctx) or "")
         body = (_tray_html() + "\n" if tray else "") + \
             f'<div id="status-bar" hx-swap-oob="innerHTML">{err}</div>'
         resp = make_response(body, 409)
     resp.headers["X-SM-Error-Code"] = code
     resp.headers["X-SM-Live-Landed"] = str(_landed)
+    resp.headers["X-SM-Live-Landed-Chip"] = _ctx_chip_key(ctx) or ""
     if auto is not None:
         resp.headers["HX-Trigger"] = json.dumps({"autoApplyDisarm": {"reason": "error"}})
     return resp
@@ -44134,11 +44140,12 @@ def dataset_load_state(uid):
         _landed = _live_landed_stamp()     # v1.5.1 (r6 P2-6): see _live_write_landed
         resp = make_response(render_template(
             "_status.html", message=_fail,
-            level="error", live_fail_at=_landed) + "\n" + _tray_oob()
+            level="error", live_fail_at=_landed, live_fail_chip=_ctx_chip_key(_active_ctx()) or "") + "\n" + _tray_oob()
             + (_diverged_oob() if _outcome == "unknown" else ""), 409)
         resp.headers["X-SM-Error-Code"] = ((body or {}).get("error_code")
                                            or (body or {}).get("conflict") or LIVE_WRITE_FAILED)
         resp.headers["X-SM-Live-Landed"] = str(_landed)
+        resp.headers["X-SM-Live-Landed-Chip"] = _ctx_chip_key(_active_ctx()) or ""
         return resp
 
     msg = render_template(
