@@ -19786,8 +19786,9 @@ function _flushDirtyNotes() {
             // newer text cannot wait for it: sent now. R4 a3: the server may
             // take it before or after that save, so it expects either the
             // text stored before that save or that save's own text
+            var noteUid = ta.getAttribute('data-uid');
             try {
-                fetch('/dataset/' + ta.getAttribute('data-uid') + '/note', {
+                fetch('/dataset/' + noteUid + '/note', {
                     method: 'POST', keepalive: (ta.value || '').length < 60000,
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({note: ta.value, expected: ta.dataset.saved,

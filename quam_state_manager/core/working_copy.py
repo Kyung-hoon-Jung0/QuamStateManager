@@ -1288,7 +1288,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             if replaced != expect_replaced_hash:
                 raise StaleLiveError(
                     "The live values this push replaces changed after the overwrite was "
-                    "confirmed -- refusing to replace values the confirm did not name.")
+                    "confirmed — refusing to replace values the confirm did not name.")
         if expect_live_hash is not None:
             try:
                 now_hash = live_content_hash(wc)

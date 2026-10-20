@@ -105,7 +105,9 @@ def test_a_run_ingested_late_takes_back_an_observation_of_its_own_state(sm):
         hub_sync.on_roots_moved([str(sm["data"])])
     got = rows(drawer(sm, "qubits.qA1.T1"))
     assert [r["prov"] for r in got].count("observed") == 0, got
-    assert got[0]["value"] == "7e-05" and got[0]["prov"].startswith("run_"), got
+    # v1.5.1 (ffc10889): old -> new, why: value history shows the field's display
+    # unit (T1 in us), so the run's 7e-05 s reads "70 µs"
+    assert got[0]["value"] == "70 µs" and got[0]["prov"].startswith("run_"), got
     _events, snaps = _ledger(sm)
     assert list(snaps.values()) == ["same_before"], snaps
 
