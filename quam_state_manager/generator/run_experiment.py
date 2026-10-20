@@ -284,6 +284,14 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
 
 # docs/245: what the isolated run proposed and why (copied into _result.json)
 _ISOLATION_REPORT: dict = {}
+_STATE_CAPTURE_WARNING: str | None = None
+
+
+def _record_capture_failure(exc) -> None:
+    """Keep a measured run successful while exposing its missing state."""
+    global _STATE_CAPTURE_WARNING
+    _STATE_CAPTURE_WARNING = f"{type(exc).__name__}: {exc}"
+    sys.stderr.write(f"[run_experiment] state capture skipped: {_STATE_CAPTURE_WARNING}\n")
 
 
 def _config_pinned_to_scratch(config_file: str, state_path: str) -> str:
@@ -789,7 +797,7 @@ def _persist_isolated(ns, state_path: str, original_roots, original_files: dict,
         for ptr, why in skipped[:20]:
             _log_isolation(f"write skipped {ptr}: {why}")
     except Exception as exc:  # noqa: BLE001
-        sys.stderr.write(f"[run_experiment] state capture skipped: {type(exc).__name__}: {exc}\n")
+        _record_capture_failure(exc)
         report["source"] = "error"
         # never leave a reserialized / swapped machine behind as "the node's writes"
         _restore_files(state_path, original_files)
@@ -895,7 +903,7 @@ def _persist_node_state(ns: dict, state_path: str, original_roots: set | None = 
         _strip_phantom_roots(state_path, original_roots, updates)
     except Exception as exc:  # noqa: BLE001
         # never let the capture step fail a run that already measured on hardware
-        sys.stderr.write(f"[run_experiment] state capture skipped: {type(exc).__name__}: {exc}\n")
+        _record_capture_failure(exc)
 
 
 def _set_by_ref(machine, ref: str, value) -> None:
@@ -978,6 +986,8 @@ def run_scan(folder: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def main(argv=None) -> int:
+    global _STATE_CAPTURE_WARNING
+    _STATE_CAPTURE_WARNING = None
     parser = argparse.ArgumentParser(description="Scheduler experiment runner")
     parser.add_argument(
         "--mode", required=True,
@@ -1046,6 +1056,8 @@ def main(argv=None) -> int:
         result["error"] = f"{type(exc).__name__}: {exc}"
         result["traceback"] = traceback.format_exc()
     finally:
+        if _STATE_CAPTURE_WARNING:
+            result["state_capture_warning"] = _STATE_CAPTURE_WARNING
         if _ISOLATION_REPORT:
             result["isolation"] = dict(_ISOLATION_REPORT)
         # Always write _result.json (even on SystemExit / KeyboardInterrupt) so

@@ -135,9 +135,15 @@ def test_a_write_landing_during_the_pull_is_judged_the_same_way(chip, monkeypatc
     r = _press(c, lh, lv)
     body = r.get_json()
     if refused:
-        assert r.status_code == 409 and body["status"] == "live_moved", body
-        assert "qubits.q1.T1" in body["message"], body
+        # v1.5.1 (r6e): live_moved after replay -> collision before replay, preserve the tray.
+        assert r.status_code == 200 and body["status"] == "collision", body
+        assert body["paths"] == ["qubits.q1.T1"] and "Nothing was applied" in body["message"], body
         assert _live(live)["T1"] == 2.5e-5
+        with c.application.app_context():
+            ctx = routes._active_ctx()
+        assert ctx["store"].state["qubits"]["q1"]["T1"] == 3e-5
+        assert [(e.dot_path, e.old_value, e.new_value) for e in ctx["store"].change_log] == [
+            ("qubits.q1.T1", 1e-5, 3e-5)]
     else:
         assert r.status_code == 200 and body["status"] == "ok", body
         assert _live(live)["T2"] == 2.2e-5 and _live(live)["T1"] == 3e-5

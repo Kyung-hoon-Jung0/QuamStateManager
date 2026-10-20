@@ -1707,6 +1707,7 @@ class HistoryManager:
         if cached is None:
             return
         try:
+            hist_dir.mkdir(parents=True, exist_ok=True)
             safe_io.atomic_write_json(
                 hist_dir / "_hashes.json",
                 {"hashes": sorted(cached)},

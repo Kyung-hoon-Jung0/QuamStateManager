@@ -1603,7 +1603,8 @@ def _classify_result(work_dir: Path, returncode: int) -> tuple[str, str | None]:
     except (OSError, ValueError) as exc:
         return "failed", f"could not read _result.json: {exc}"
     if parsed.get("status") == "ok":
-        return "done", None
+        warning = parsed.get("state_capture_warning")
+        return "done", (f"SM could not record the node's state: {warning}" if warning else None)
     return "failed", parsed.get("error") or "the run reported an error"
 
 

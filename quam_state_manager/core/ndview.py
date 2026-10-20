@@ -470,6 +470,39 @@ def _open_reader(h5_path: Path):
             yield _H5Reader(f)
 
 
+def fit_value_rows(h5_path: Path, variables: list) -> list:
+    """Small numeric fit values keyed by their explicit entity coordinates.
+
+    R6e: metadata alone cannot prove a unit belongs to data.json's number.
+    A missing coordinate, an unsupported shape or a failed read proves none.
+    """
+    rows = [dict(v, fit_values={}) for v in variables]
+    try:
+        with _h5_lock_for(str(h5_path)):
+            with _open_reader(h5_path) as reader:
+                for row in rows:
+                    h = reader.get(row.get("name"))
+                    if (h is None or h.dtype.kind not in "iuf" or h.ndim > 1
+                            or int(np.prod(h.shape)) > 4096):
+                        continue
+                    if h.ndim == 0:
+                        row["fit_values"] = {None: float(reader.read(h))}
+                        continue
+                    dims = reader.dim_meta(h)
+                    if not dims or dims[0]["name"] not in _ENTITY_DIM_NAMES:
+                        continue
+                    labels = reader.read_coord(dims[0]["name"])
+                    if labels is None or labels.dtype.kind not in "OSU":
+                        continue
+                    keys = [str(_decode(q)) for q in labels]
+                    if len(set(keys)) != len(keys) or len(keys) != h.shape[0]:
+                        continue
+                    row["fit_values"] = dict(zip(keys, map(float, reader.read(h))))
+    except Exception:  # noqa: BLE001 -- no evidence means no unit
+        return [dict(v, fit_values={}) for v in variables]
+    return rows
+
+
 def probe_file(h5_path: Path) -> dict:
     """List every plottable entry in the file: data variables AND non-dim
     coordinate variables (fit results ride as coords in real files — a
