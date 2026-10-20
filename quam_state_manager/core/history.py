@@ -2746,7 +2746,7 @@ class HistoryManager:
             return None
         for snap in snaps[:20]:
             try:
-                src = (safe_io.read_json(snap / "meta.json") or {}).get("source_path")
+                src = (safe_io.read_json(snap / "meta.json", attempts=1) or {}).get("source_path")
             except (OSError, ValueError):
                 continue
             try:

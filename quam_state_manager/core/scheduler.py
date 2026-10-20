@@ -433,7 +433,14 @@ def _read_settings_file(path: Path, *, strict: bool = False) -> dict:
     """One settings file. v1.5.1 (SB-P2-7): read share-delete with the
     transient-retry ladder -- a second SM process's write (a sharing
     violation) used to fail the read at once, and the defaults (a dry run)
-    replaced the stored settings for the run that read them."""
+    replaced the stored settings for the run that read them.
+
+    A file that is not there is asked once, never through the ladder: the
+    ladder retries a missing file for ~0.9 s (right for a live state.json
+    mid-replace), and SM writes these files atomically, so absent is absent --
+    a chip with no settings file paid 1.8 s per read (every scheduler poll)."""
+    if not path.exists():
+        return {}
     try:
         return safe_io.read_json(path)
     except FileNotFoundError:

@@ -108,3 +108,21 @@ def test_the_settings_route_answers_409_not_500(tmp_path, monkeypatch):
     r = c.post("/scheduler/settings", data={"failure_policy": "continue"})
     assert r.status_code == 409, (r.status_code, r.data[:300])
     assert "could not be read" in r.get_json()["error"]
+
+
+def test_a_missing_settings_file_is_asked_once_not_through_the_retry_ladder(tmp_path, monkeypatch):
+    """v1.5.1 (suite): the transient-retry ladder retries a MISSING file for
+    ~0.9 s; a chip with no settings file paid it twice per read (1.8 s on every
+    scheduler poll; a chat send behind it missed a lingering process's exit).
+    A file that is not there is answered at once, without the ladder."""
+    from quam_state_manager.core import safe_io, scheduler
+
+    calls = []
+    real = safe_io.read_json
+
+    def spy(path, *a, **k):
+        calls.append(str(path))
+        return real(path, *a, **k)
+    monkeypatch.setattr(safe_io, "read_json", spy)
+    assert scheduler.load_settings(str(tmp_path)) == scheduler.load_settings(str(tmp_path), strict=True)
+    assert calls == [], calls
