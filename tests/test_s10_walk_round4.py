@@ -193,4 +193,5 @@ def test_the_hero_trend_percent_stays_on_one_line():
     delta = re.search(r"\.topo-spark-delta \{([^}]*)\}", css).group(1)
     assert "white-space: nowrap" in delta
     cols = re.search(r"\.topo-spark-section \.topo-spark-row \{[^}]*grid-template-columns: ([^;]*);", css).group(1)
-    assert float(cols.split()[1].rstrip("em")) >= 5.8, cols    # 11 monospace characters at 0.82em
+    # v1.5.2: a fixed >= 5.8em delta column -> a flexible one next to the label (chart has its own row)
+    assert "1fr" in cols or float(cols.split()[1].rstrip("em")) >= 5.8, cols

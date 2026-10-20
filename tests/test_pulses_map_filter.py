@@ -118,8 +118,9 @@ class TestTheDrawingIsAControl:
         tg = (_STATIC / "topo-graph.js").read_text(encoding="utf-8")
         assert '<line class="cm-edge-hit"' in tg
         css = _css()
-        assert re.search(r"\.cm-edge-hit \{[^}]*pointer-events: none", css), \
-            "inert by default, so no other map's behaviour changes"
+        # v1.5.2: inert by default -> live on every map, pair hover offers Expand everywhere
+        assert re.search(r"\.cm-edge-hit \{[^}]*pointer-events: stroke", css), \
+            "every map's pair edges are hover targets"
         assert re.search(
             r'\.cmap\[data-cm-pick="1"\] \.cm-edge-hit \{[^}]*pointer-events: stroke', css)
 
