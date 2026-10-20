@@ -417,10 +417,11 @@ class SettingsUnreadable(RuntimeError):
     is not settings (not JSON / not an object, every retry) -- retrying never
     helps that one, :func:`reset_damaged_settings` does."""
 
-    def __init__(self, message: str, *, path=None, damaged: bool = False):
+    def __init__(self, message: str, *, path=None, damaged: bool = False, missing: bool = False):
         super().__init__(message)
         self.path = str(path) if path else ""
         self.damaged = bool(damaged)
+        self.missing = bool(missing)
 
 
 def _is_damaged(exc: BaseException) -> bool:
@@ -469,9 +470,10 @@ def _read_settings_file(path: Path, *, strict: bool = False, configured: bool = 
         if strict:
             damaged = _is_damaged(exc)
             raise SettingsUnreadable(
-                (f"the Runner settings file {path} is damaged ({exc})" if damaged else
+                (f"the Runner settings file {path} is missing" if isinstance(exc, FileNotFoundError) else
+                 f"the Runner settings file {path} is damaged ({exc})" if damaged else
                  f"the Runner settings file {path} could not be read ({exc})"),
-                path=path, damaged=damaged) from exc
+                path=path, damaged=damaged, missing=isinstance(exc, FileNotFoundError)) from exc
         logger.warning("Could not read scheduler settings %s", path, exc_info=True)
         return {}
 
@@ -501,12 +503,14 @@ def reset_damaged_settings(scope) -> list[str]:
     with _QLOCK:
         for path in (settings_path(scope), shared_settings_path(scope)):
             path = Path(path)
-            if not path.exists():
-                continue
             try:
                 safe_io.read_json(path, attempts=1)
                 continue                       # it reads: not damaged
             except FileNotFoundError:
+                if path == settings_path(scope):
+                    with _SETTINGS_SEEN_LOCK:
+                        _SETTINGS_SEEN.discard(_settings_key(path))
+                        _SETTINGS_RESET.add(_settings_key(path))
                 continue
             except (OSError, ValueError) as exc:
                 if not _is_damaged(exc):
@@ -518,6 +522,13 @@ def reset_damaged_settings(scope) -> list[str]:
                 _SETTINGS_SEEN.discard(_settings_key(path))
                 _SETTINGS_RESET.add(_settings_key(path))
             out.append(str(aside))
+        if not settings_path(scope).exists():
+            shared_path = shared_settings_path(scope)
+            shared = _read_settings_file(shared_path, strict=True)
+            scopes = shared.get(_CONFIGURED_SCOPES)
+            if isinstance(scopes, list):
+                shared[_CONFIGURED_SCOPES] = [s for s in scopes if s != Path(scope).name]
+                safe_io.atomic_write_json(shared_path, shared)
     return out
 
 
@@ -531,7 +542,15 @@ def save_settings(scope, settings: dict) -> dict:
     """
     with _QLOCK:
         # v1.5.1 (SB-P2-7): an unreadable file is never rewritten as defaults
-        current = load_settings(scope, strict=True)
+        try:
+            current = load_settings(scope, strict=True)
+        except SettingsUnreadable as exc:
+            # An explicit save recovers only this scope's missing file.
+            if not (exc.missing and _settings_key(exc.path) == _settings_key(settings_path(scope))):
+                raise
+            current = dict(_DEFAULTS)
+            shared = _read_settings_file(shared_settings_path(scope), strict=True)
+            current.update({k: v for k, v in shared.items() if k in _SHARED_KEYS})
         current.update({k: v for k, v in (settings or {}).items() if k in _DEFAULTS})
         try:
             t = int(current.get("default_timeout_s"))
@@ -1829,7 +1848,8 @@ def _worker(instance_path: str) -> None:
                     # to set it aside)
                     state["run"].update({"status": "paused", "current_id": None,
                                          "message": (f"paused: {exc} -- nothing ran; "
-                                                     + ("press Start to reset it" if exc.damaged
+                                                     + ("Reset or Save settings to recover" if exc.missing else
+                                                        "press Start to reset it" if exc.damaged
                                                         else "press Start to retry"))})
                     save_queue(instance_path, state)
                     break
