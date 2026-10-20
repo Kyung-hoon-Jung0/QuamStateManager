@@ -44,7 +44,8 @@ def test_fidelity_run_is_named_only_beside_its_own_metric(tmp_path):
     client = _chip(tmp_path, {"InterleavedRB": 0.991, "InterleavedRB_load_id": 412})
     edge = _edge(client)
     assert edge["cz_fidelity"] == pytest.approx(0.991)
-    assert edge["cz_fidelity_run"] == 412
+    # v1.5.2 (v152b): load id -> unknown; a hint does not prove a write.
+    assert edge["cz_fidelity_run"] is None
 
 
 def test_no_run_when_the_shown_number_came_from_elsewhere(tmp_path):

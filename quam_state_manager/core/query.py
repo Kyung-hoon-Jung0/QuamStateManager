@@ -803,6 +803,7 @@ class QueryEngine:
 
             best_fidelity = None
             best_gate = None
+            best_metric = None
             best_fid_obj = None
             for gate_name, gate in macros.items():
                 if not isinstance(gate, dict):
@@ -825,6 +826,7 @@ class QueryEngine:
                             continue
                         if best_fidelity is None or val > best_fidelity:
                             best_fidelity = val
+                            best_metric = "Bell_State.Fidelity"
                             best_gate = gate_name
                             best_fid_obj = fid
 
@@ -876,6 +878,7 @@ class QueryEngine:
                                 and chip_health.physicality("cz_fidelity", _v)
                                 and (best_fidelity is None or _v > best_fidelity)):
                             best_fidelity = _v
+                            best_metric = _k
                             best_gate = _g
                             best_fid_obj = _f
                             fidelity_source = "interleaved_rb"
@@ -942,12 +945,10 @@ class QueryEngine:
                 "coupler_decouple_offset": coupler.get("decouple_offset"),
                 "mutual_flux_bias": p.get("mutual_flux_bias"),
                 "cz_load_id": cz_load_id,
-                # The run that set the displayed fidelity, only when that run
-                # recorded its id beside the very metric shown (interleaved RB
-                # stores InterleavedRB_load_id); otherwise unknown, never guessed.
-                "cz_fidelity_run": (best_fid_obj.get("InterleavedRB_load_id")
-                                    if fidelity_source == "interleaved_rb"
-                                    and isinstance(best_fid_obj, dict) else None),
+                # A stored load id is a hint, never proof of the current writer.
+                "cz_fidelity_path": (f"qubit_pairs.{pair_name}.macros.{best_gate}.fidelity.{best_metric}"
+                                     if best_metric else None),
+                "cz_fidelity_run": None,
                 "cz_fidelity_updated_at": chip_health.epoch_ms(cz_updated_at),
                 "last_calibrated": chip_health.newest_epoch_ms(p),
             }
