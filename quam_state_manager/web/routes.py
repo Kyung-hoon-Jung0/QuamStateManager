@@ -22374,12 +22374,17 @@ def cz_plan_page():
     rows, _convs, unavailable = _cz_plan_ops(store)
     table = _cz_plan_table(rows)
     want = request.args.get("op", "").strip()
-    if not want and request.args.get("pair"):
-        # a pair's own entry (the map's pair panel links here by pair id)
-        want = _pair_cz_plan_ops(store).get(request.args.get("pair", "").strip(), "")
+    unknown_pair = None
+    if not want and "pair" in request.args:
+        pair = request.args.get("pair", "").strip()
+        want = _pair_cz_plan_ops(store).get(pair, "")
+        if not want:
+            unknown_pair = pair
     paths = [r["path"] for r in table]
-    selected = want if want in paths else (paths[0] if paths else "")
-    return render_template(template, **_ctx(page="czplan", rows=table, selected=selected, unavailable=unavailable))
+    selected = want if want in paths else (paths[0] if paths and unknown_pair is None else "")
+    return render_template(template, **_ctx(page="czplan", rows=table, selected=selected,
+                                           unavailable=unavailable, unknown_pair=unknown_pair))
+
 
 
 def _cz_plan_history(rows: list[dict]) -> dict:

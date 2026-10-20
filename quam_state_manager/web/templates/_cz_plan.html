@@ -3,6 +3,9 @@
    The physics, the estimate tiers and every refusal live in core/cz_gate_plan.py;
    cz-map.js draws the chip map, cz-plan.js the operation below it. #}
 <div id="czp-root" class="czp-root" data-selected="{{ selected }}">
+{% if unknown_pair is not none %}
+<p class="czp-unknown-pair" role="status">Unknown pair: <code>{{ unknown_pair }}</code>. No operation selected.</p>
+{% endif %}
 <div class="table-header-row">
     <h2>CZ gate plan <small class="muted">({{ rows | length }} operation{{ '' if rows|length == 1 else 's' }})</small></h2>
 </div>
