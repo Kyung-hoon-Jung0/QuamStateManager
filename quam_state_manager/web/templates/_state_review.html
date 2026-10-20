@@ -110,7 +110,7 @@
     <div class="sp-unrec-acts">
       {% if u.restorable and not u.settled %}<button type="button" class="btn-sm sp-unrec-restore" onclick="SyncPanel.recovery(this, 'restore', event)"
         title="Stage these edits in the tray again.{% if auto_apply %} Auto-Sync (push) is ARMED: they are written to the live chip right away.{% else %} Nothing is written to the live chip until Apply.{% endif %}">Restore</button>{% endif %}
-      <button type="button" class="btn-sm outline secondary sp-unrec-discard" onclick="SyncPanel.recovery(this, 'discard', event)"
+      <button type="button" class="btn-sm outline secondary sp-unrec-discard" onclick="SyncPanel.recovery(this, '{{ 'set-aside' if u.settled else 'discard' }}', event)"
         {% if u.settled %}data-arm-label="Press again to set aside"
         title="Set this copy aside (renamed, not deleted). The values it holds stay where they are">Set aside</button>{% else %}data-arm-label="Press again to discard"
         title="Set the file aside without staging it (renamed, not deleted)">Discard</button>{% endif %}

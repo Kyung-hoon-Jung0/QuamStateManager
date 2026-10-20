@@ -11105,6 +11105,7 @@ def state_recovery_restore():
                    kept=str(kept) if kept else None, tray_html=_tray_html())
 
 
+@bp.route("/state/recovery/set-aside", methods=["POST"])
 @bp.route("/state/recovery/discard", methods=["POST"])
 def state_recovery_discard():
     """Set a refused recovery checkpoint aside without staging it (v1.5.1).
@@ -11114,13 +11115,21 @@ def state_recovery_discard():
     if err is not None:
         return err
     from quam_state_manager.core import pending_tray
+    settled_intent = request.path.endswith("/set-aside")
     try:
-        kept = pending_tray.archive_unrecovered(ctx["working_copy"], file_id, "discarded")
-    except OSError as exc:
+        with ctx["store"]._lock:
+            if settled_intent:
+                rows = pending_tray.read_unrecovered_rows(ctx["working_copy"], file_id)
+                if not rows or not all(pending_tray.held_rows(ctx["store"], rows)):
+                    return jsonify(ok=False, error_kind="recovery_changed",
+                                   error="These edits are no longer all held. Review Restore or Discard.",
+                                   tray_html=_tray_html()), 409
+            kept = pending_tray.archive_unrecovered(ctx["working_copy"], file_id, "discarded")
+    except (OSError, ValueError) as exc:
         return jsonify(ok=False, error_kind="recovery_failed",
                        error=f"Could not set the recovery file aside: {exc}."), 409
     return jsonify(ok=True, kept=str(kept),
-                   message=f"Discarded. The file is kept at {kept}.",
+                   message=f"{'Set aside' if settled_intent else 'Discarded'}. The file is kept at {kept}.",
                    tray_html=_tray_html())
 
 
