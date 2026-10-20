@@ -86,8 +86,9 @@ def _no_pointer_under_a_unit(head, rows):
 def test_the_qubits_export_writes_the_drive_if_the_table_shows(client):
     html = client.get("/qubits").get_data(as_text=True)
     assert "200.00" in html            # the table's XY IF (MHz) for q1
+    # v1.5.1 (r6): implicit -> explicit Qubits view, Comparison keeps its own pulse semantics.
     head, rows = _csv(client.get(
-        "/export?props=f_01&props=xy_intermediate_frequency&props=x180_amplitude&props=x180_length"))
+        "/export?view=qubits&props=f_01&props=xy_intermediate_frequency&props=x180_amplitude&props=x180_length"))
     assert "xy_intermediate_frequency [Hz]" in head
     assert _num(rows["q1"]["xy_intermediate_frequency [Hz]"]) == pytest.approx(2.0e8)
     assert _num(rows["q2"]["xy_intermediate_frequency [Hz]"]) == pytest.approx(-1.0e8)

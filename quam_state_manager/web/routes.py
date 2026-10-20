@@ -8977,15 +8977,7 @@ def qubits():
 
     # docs/286: the XY drive (x180 / x90 pulse, its dBm, the drive IF) for
     # the rows on THIS page only, read the way the Live-Edit grid reads them.
-    from quam_state_manager.core import xy_drive
-    drive: dict[str, dict] = {}
-    if store is not None:
-        with store._lock:
-            for q in page_qubits:
-                try:
-                    drive[q["id"]] = xy_drive.summary(store, q["id"])
-                except Exception as exc:  # noqa: BLE001 -- a row degrades
-                    logger.warning("qubits page drive(%r) failed: %s", q.get("id"), exc)
+    drive = _qubits_drive_summaries(store, page_qubits)
 
     template = "_qubits.html" if _is_htmx() else "qubits.html"
     return render_template(
@@ -33213,7 +33205,7 @@ def export_csv():
     for p in props:
         u = units[p] = unit_of(p) or ""
         heads[p] = f"{p} [{u}]" if u else p
-    if entity != "pairs":
+    if entity != "pairs" and request.args.get("view") == "qubits":
         rows = _export_table_values(_store(), rows, props)
     from quam_state_manager.core.pointer_resolver import is_pointer
     rows = [{"id": r.get("id"),
@@ -33240,6 +33232,20 @@ _EXPORT_DRIVE_PROPS = {
 }
 
 
+def _qubits_drive_summaries(store, rows: list[dict]) -> dict:
+    """One drive-value builder for the Qubits page and its CSV export."""
+    from quam_state_manager.core import xy_drive
+    drive = {}
+    if store is not None:
+        with store._lock:
+            for row in rows:
+                try:
+                    drive[row["id"]] = xy_drive.summary(store, row["id"])
+                except Exception as exc:  # noqa: BLE001 -- a row degrades
+                    logger.warning("qubits drive(%r) failed: %s", row.get("id"), exc)
+    return drive
+
+
 def _export_table_values(store, rows: list[dict], props: list) -> list[dict]:
     """v1.5.1 (r6, P2-15): the Qubits export writes what the Qubits table
     shows for the drive columns -- the IF it computes (the export wrote
@@ -33248,15 +33254,11 @@ def _export_table_values(store, rows: list[dict], props: list) -> list[dict]:
     want = [p for p in props if p == "xy_intermediate_frequency" or p in _EXPORT_DRIVE_PROPS]
     if not want or store is None:
         return rows
-    from quam_state_manager.core import xy_drive
+    drive = _qubits_drive_summaries(store, rows)
     out = []
     with store._lock:
         for r in rows:
-            try:
-                d = xy_drive.summary(store, r.get("id"))
-            except Exception:  # noqa: BLE001 -- the row keeps what it had
-                out.append(r)
-                continue
+            d = drive.get(r.get("id")) or {}
             r = dict(r)
             for p in want:
                 if p == "xy_intermediate_frequency":
