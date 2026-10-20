@@ -5161,6 +5161,11 @@ def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool, bool
 def _adopt_extras_data_folders(ctx: dict | None) -> None:
     if not ctx or ctx.get("type") != "quam":
         return
+    ctx.setdefault("extras_data_roots", [])
+    ctx.setdefault("extras_data_dangling", [])
+    if has_request_context() and request.method in ("GET", "HEAD"):
+        _recheck_extras_dangling(ctx, adopt=True)
+        return
     with ctx.setdefault("_extras_adoption_lock", threading.Lock()):
         _adopt_extras_data_folders_locked(ctx)
 
@@ -5182,6 +5187,7 @@ def _adopt_extras_data_folders_locked(ctx: dict) -> None:
     # Publish only a completed answer; concurrent readers keep the old list.
     try:
         if (ctx.get("origin") or "live") != "live":
+            ctx.update(extras_data_roots=[], extras_data_dangling=[], extras_data_declared=[])
             return
         store = ctx.get("store")
         if store is None:
@@ -5257,7 +5263,7 @@ _DANGLING_RECHECK_S = 5.0
 _DANGLING_WAIT_S = 0.25
 
 
-def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False) -> list[str]:
+def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False, adopt: bool = False) -> list[str]:
     """The declared data folders still not found (v1.5.1 r6, P2-3).
 
     The "Data folder not reachable" notice was the list taken when the chip
@@ -5270,7 +5276,7 @@ def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False) -> list[s
     dataset roots agree. Adoption runs in one background worker per context;
     concurrent renders keep the last complete list within one wait budget."""
     dangling = list((ctx or {}).get("extras_data_dangling") or [])
-    if not dangling:
+    if not dangling and not adopt:
         return []
     gate = ctx.setdefault("_extras_recheck_lock", threading.Lock())
     if not gate.acquire(blocking=False):
@@ -5280,6 +5286,9 @@ def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False) -> list[s
     def recheck():
         try:
             with app.app_context():
+                if (ctx.get("origin") or "live") != "live":
+                    _adopt_extras_data_folders(ctx)
+                    return
                 from quam_state_manager.core import folder_probe
                 from quam_state_manager.core.history import extras_data_folder
                 # No path translation, stat, or workspace scan on the render thread.
@@ -5292,7 +5301,7 @@ def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False) -> list[s
                                                     ttl_s=_DANGLING_RECHECK_S)
                 if any(here.get(n) is None for n in natives.values()):
                     return
-                if any(here.get(natives.get(raw)) is True for raw in dangling):
+                if adopt or any(here.get(natives.get(raw)) is True for raw in dangling):
                     _adopt_extras_data_folders(ctx)
         except Exception:  # noqa: BLE001 -- keep the last definite notice
             logger.debug("re-checking the declared data folders failed", exc_info=True)
