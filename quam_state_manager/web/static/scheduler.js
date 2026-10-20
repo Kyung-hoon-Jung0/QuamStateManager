@@ -553,6 +553,15 @@
       '<span class="sched-item-status">' + esc(it.status || "queued") + "</span>" +
       '<span class="sched-item-actions">' + inlineActions + overflowMenu + "</span>";
 
+    if (it.status === "done" && it.error) {
+      row.classList.add("sched-item-capture-warning");
+      var warning = document.createElement("span");
+      warning.className = "sched-item-warning";
+      warning.setAttribute("role", "status");
+      warning.textContent = "done -- " + it.error;
+      row.querySelector(".sched-item-name").appendChild(warning);
+    }
+
     var en = row.querySelector(".sched-item-enabled");
     if (en) en.addEventListener("change", function () {
       self.queueAction("toggle", { id: it.id, enabled: en.checked });

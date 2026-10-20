@@ -15445,3 +15445,9 @@ details.jargon > .jargon-explain {
 .iw-legend { display: flex; flex-wrap: wrap; gap: .3rem .9rem; margin: .5rem 0 .2rem; font-size: .78rem; color: var(--pico-muted-color); }
 .iw-legend-item { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
 .iw-legend-swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; border: 1px solid rgba(0,0,0,.2); }
+
+/* R6e: the node measured, but its state capture needs attention. */
+.sched-item-capture-warning .sched-item-name { flex-wrap: wrap; }
+.sched-item-warning { flex: 1 0 100%; min-width: 0; overflow-wrap: anywhere;
+    font-size: .75rem; color: var(--color-warning-text); }
+.sched-item-capture-warning .sched-item-status { color: var(--color-warning-text); }
