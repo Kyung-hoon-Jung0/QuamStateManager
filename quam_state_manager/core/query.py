@@ -830,23 +830,6 @@ class QueryEngine:
                             best_gate = gate_name
                             best_fid_obj = fid
 
-            # Provenance: the RB run id that produced the best gate's numbers, so
-            # the UI can deep-link to the source dataset (no timestamp lives here).
-            cz_load_id = None
-            cz_updated_at = None
-            if isinstance(best_fid_obj, dict):
-                cz_load_id = (best_fid_obj.get("StandardRB_load_id")
-                              or best_fid_obj.get("InterleavedRB_load_id"))
-                # Per-metric recency: the CZ fidelity's OWN measurement time (the
-                # best gate's Bell_State / RB timestamp), so the UI can say "this
-                # number, measured N days ago" — not the freshest unrelated
-                # calibration anywhere in the pair (which over-states freshness).
-                for _src in ("Bell_State", "StandardRB", "InterleavedRB"):
-                    _o = best_fid_obj.get(_src)
-                    if isinstance(_o, dict) and _o.get("updated_at"):
-                        cz_updated_at = _o.get("updated_at")
-                        break
-
             # Channel-fidelity fallback (docs/54): the lo_if CR flavor stores
             # the 2Q Bell fidelity ON the cross_resonance channel — macro-only
             # reading left those edges gray "no fidelity". Channel source ONLY
@@ -889,6 +872,17 @@ class QueryEngine:
                         and chip_health.physicality("cz_fidelity", _fb["value"])):
                     best_fidelity = _fb["value"]
                     fidelity_source = "channel"
+
+            # Choose metadata only after the winning metric and gate are known.
+            cz_load_id = None
+            cz_updated_at = None
+            if best_metric and isinstance(best_fid_obj, dict):
+                family = best_metric.split(".")[0]
+                cz_load_id = best_fid_obj.get(family + "_load_id")
+                metric_obj = best_fid_obj.get(family)
+                cz_updated_at = (metric_obj.get("updated_at") if isinstance(metric_obj, dict) else None)
+                cz_updated_at = (cz_updated_at or best_fid_obj.get(family + "_updated_at")
+                                 or best_fid_obj.get("updated_at"))
 
             gate_fidelities = _extract_pair_gate_fidelities(macros)
             gate_details = _extract_gate_details(macros)

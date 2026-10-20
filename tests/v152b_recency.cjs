@@ -1,0 +1,14 @@
+const assert = require('assert');
+const fs = require('fs'); const {JSDOM} = require('jsdom');
+const w = new JSDOM('<html><body><div id="topo-hero"></div></body></html>', {runScripts:'outside-only', url:'http://localhost/'}).window;
+w.fetch=()=>new w.Promise(()=>{}); w.htmx={process(){}};
+for(const f of ['app.js','topo-graph.js','chip-status.js']) w.eval(fs.readFileSync(require('path').join(__dirname,'../quam_state_manager/web/static',f),'utf8'));
+const e={pair_id:'q1-2',source:'q1',target:'q2',cz_fidelity:.991,has_cz:true};
+assert.equal(w.TopoGraph.pairState(e).age,'unknown');
+assert.equal(w.TopoGraph.pairState(e).stale,false);
+w.ChipStatus.mount({topo:{nodes:[{id:'q1',grid_location:'0,0'},{id:'q2',grid_location:'1,0'}],edges:[e]},rawWiring:{},defaultThresholds:{},diagFindings:[],metricMeta:{}});
+assert.match(w.document.querySelector('.topo-pair-badge title').textContent,/age unknown/);
+assert(!w.document.querySelector('.topo-pair-badge').classList.contains('topo-pair-badge-stale'));
+e.cz_fidelity_updated_at=1577836800000;
+assert.equal(w.TopoGraph.pairState(e).stale,true);
+w.close();

@@ -2357,6 +2357,8 @@ window.ChipStatus.mount = function (opts) {
                     html += '<div class="topo-popup-recency"><span class="topo-recency '
                          + _ageClass(e.cz_fidelity_updated_at) + '">measured '
                          + _ageLabel(e.cz_fidelity_updated_at) + '</span></div>';
+                } else {
+                    html += '<div class="topo-popup-recency">age unknown</div>';
                 }
                 // Which run set the number: only when the run recorded its own
                 // id beside that very metric (never a neighbouring metric's run).
@@ -2917,7 +2919,8 @@ window.ChipStatus.mount = function (opts) {
                     var bTitle = e.pair_id
                         + (pst.value != null ? ' \u2014 2Q gate fidelity ' + fmtPct(pst.value, 2) + '%'
                            : (pst.state === 'pending' ? ' \u2014 2Q gate defined, not measured' : ''))
-                        + (pst.stale ? ' (measured ' + _ageLabel(e.cz_fidelity_updated_at) + ')' : '');
+                        + (pst.age === 'unknown' && pst.value != null ? ' (age unknown)'
+                           : (pst.stale ? ' (measured ' + _ageLabel(e.cz_fidelity_updated_at) + ')' : ''));
                     var badge = TG.pairBadgeSvg({
                         x: (x1 + x2) / 2, y: (y1 + y2) / 2,
                         name: TG.quamPairId([e.source, e.target]),

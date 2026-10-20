@@ -1178,7 +1178,7 @@ window.TopoGraph = (function () {
     if (state === 'measured' && at != null) {
       stale = isStale ? !!isStale(at) : (Date.now() - at) / 86400000 > PAIR_STALE_DAYS;
     }
-    return { state: state, value: v, stale: stale };
+    return { state: state, value: v, stale: stale, age: at == null ? "unknown" : (stale ? "stale" : "fresh") };
   }
   // Midpoint badge: a pill with the pair name over at most one number, or a
   // small dot when the pill does not fit (dense chips). The pill is always in
