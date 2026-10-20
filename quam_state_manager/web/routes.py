@@ -29657,7 +29657,7 @@ def auto_sync_set():
     return resp
 
 
-def _auto_pull_verdict(ctx: dict, dom_paths) -> "object | None":
+def _auto_pull_verdict(ctx: dict, dom_paths, live_pair=None) -> "object | None":
     """Which of the user's edits the live chip actually collides with.
 
     Auto-Sync used to ask one whole-file question -- is the working copy dirty
@@ -29675,8 +29675,11 @@ def _auto_pull_verdict(ctx: dict, dom_paths) -> "object | None":
     if wc is None or store is None:
         return None
     try:
-        _lp = working_copy.read_live_shared(wc)
-        entries = _working_vs_live_entries(ctx, None, None, _lp)
+        if live_pair is None:
+            _lp = working_copy.read_live_shared(wc)
+            entries = _working_vs_live_entries(ctx, None, None, _lp)
+        else:
+            entries = _working_vs_live_entries(ctx, live_pair[0], live_pair[1])
     except (FileNotFoundError, OSError, ValueError, safe_io.LiveFileError):
         logger.info("auto-pull verdict: live unreadable -- asking instead")
         return None
@@ -31324,6 +31327,33 @@ def state_take_live_restore():
     return resp
 
 
+def _sync_replay_refusal(ctx, verdict, picks, mode):
+    """R6e: unknown is a refusal; a collision requires its own answer."""
+    if verdict is None:
+        return jsonify({
+            "status": "error", "mode": mode, "error_code": "live_busy",
+            "message": ("The live chip is being written right now -- nothing was pulled or applied; "
+                        "try again in a moment."),
+            "tray_html": _conflict_tray(ctx, ctx["store"], staged_conflict=False),
+        }), 409
+    _coll = [c for c in verdict.conflicts if c not in picks]
+    if not _coll:
+        return None
+    ctx["live_diverged"] = True
+    ctx["live_conflicts"] = _coll
+    ctx.pop("live_drift_count", None)
+    n = len(_coll)
+    body = {
+        "status": "collision", "mode": mode, "paths": _coll[:8], "count": n,
+        "message": (f"The live chip changed {n} field{'s' if n != 1 else ''} "
+                    "you also edited since SM last read it. Nothing was applied; "
+                    "choose which values to keep in the sync panel."),
+    }
+    if request.values.get("expect_chip"):
+        body["tray_html"] = _conflict_tray(ctx, ctx["store"], staged_conflict=False)
+    return jsonify(body)
+
+
 @bp.route("/state/sync", methods=["POST"])
 @_live_write_critical
 def state_sync():
@@ -31414,7 +31444,8 @@ def state_sync():
     # over whatever the chip holds, so a node that wrote the SAME field the
     # user edited was silently overwritten -- no banner, no question (docs/87,
     # docs/195: a same-field collision is the one case the user decides).
-    # Opt-in (`check_collisions=1`, sent by the one-click presses) and
+    # The early check is opt-in (`check_collisions=1`); every replay is also
+    # checked on the adopted pair under the build and store locks below, and
     # answered by its OWN token -- never implied by force=1 or ack_unseen=1
     # (docs/41). A different-field live change still merges without a word
     # (docs/104's no-confirm press is unchanged there). A reapply stash no
@@ -31424,28 +31455,9 @@ def state_sync():
     if (mode == "apply" and request.values.get("check_collisions") == "1"
             and request.values.get("ack_collision") != "1"):
         _cv = _auto_pull_verdict(ctx, ())
-        _coll = [c for c in (getattr(_cv, "conflicts", ()) or ()) if c not in picks]
-        if _coll:
-            ctx["live_diverged"] = True          # the banner names these
-            ctx["live_conflicts"] = _coll
-            ctx.pop("live_drift_count", None)
-            _n = len(_coll)
-            _body = {
-                "status": "collision", "mode": "apply",
-                "paths": _coll[:8], "count": _n,
-                "message": (
-                    f"The live chip changed {_n} field{'s' if _n != 1 else ''} "
-                    f"you also edited since SM last read it (an experiment "
-                    f"wrote it?). Applying now replaces the chip's value with "
-                    f"yours."),
-            }
-            if request.values.get("expect_chip"):
-                # the automatic merge: the conflict tray on screen says
-                # "Auto-Sync is resolving this itself" -- it is not any more,
-                # the user decides. Hand back the same tray without that line.
-                _body["tray_html"] = _conflict_tray(ctx, ctx["store"],
-                                                    staged_conflict=False)
-            return jsonify(_body)
+        _refusal = _sync_replay_refusal(ctx, _cv, picks, mode)
+        if _refusal is not None:
+            return _refusal
 
     wc = ctx["working_copy"]
     store = ctx["store"]
@@ -31592,6 +31604,7 @@ def state_sync():
             # edits themselves, which "↶ Bring back" replays on top of the new
             # live. Only when there is something to lose.
             backup = None
+            _sync_point_before = working_copy.sync_point(wc)
             _pulled = working_copy.sync_from_live(wc)
             # v1.5.1 (SB-F1): `pending` was captured before the pull, and
             # /field/edit takes only the store lock -- an edit committed
@@ -31630,6 +31643,25 @@ def state_sync():
                     except Exception:  # noqa: BLE001 -- cannot tell: refused
                         _moved_paths = None
                     _moved_since_panel = _moved_paths is None or bool(_moved_paths)
+                # R6e: judge the pair the pull ACTUALLY adopted, before any
+                # replay, while the original edits and originals still exist.
+                # The disk read can outlive the precheck (or a writer can
+                # finish inside it). No second live read can prove this pair.
+                if mode in ("apply", "reapply"):
+                    _refusal = None
+                    if request.values.get("ack_collision") != "1":
+                        _verdict = _auto_pull_verdict(ctx, (), _pulled)
+                        _refusal = _sync_replay_refusal(ctx, _verdict, picks, mode)
+                    if _refusal is None and _moved_since_panel:
+                        _refusal = (jsonify({**_live_moved_since_panel_body(_moved_paths),
+                                             "tray_html": _tray_html()}), 409)
+                    if _refusal is not None:
+                        # Keep the pre-pull view AND its older sync point:
+                        # otherwise a retry could push the refused merge.
+                        working_copy.restore_sync_point(wc, _sync_point_before)
+                        ctx.pop("_pulled_docs", None)
+                        working_copy.repersist_working(wc, store.state, store.wiring, store=store)
+                        return _refusal
                 # Rebuild the store + derived objects from the freshly-synced copy.
                 ctx["_alarm_reason"] = "live-pull"
                 _seq0 = store.mutation_seq
@@ -31664,13 +31696,6 @@ def state_sync():
                                     "changed (a pull never writes it); reload the page to see "
                                     "what SM holds now."),
                         "tray_html": _tray_html()}), 409
-
-    # v1.5.1 (SB-P2-1): live moved during the press -- the edits stay staged
-    # on the pulled content (a reapply), nothing is written, the panel re-reads
-    if mode == "apply" and _moved_since_panel:
-        _clear_reapply(ctx)
-        return jsonify({**_live_moved_since_panel_body(_moved_paths), "replay": replay,
-                        "tray_html": _tray_html(), **_sync_patch(ctx, _pre_leaves)}), 409
 
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.

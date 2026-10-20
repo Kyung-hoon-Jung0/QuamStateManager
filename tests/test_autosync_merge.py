@@ -188,6 +188,7 @@ class TestTheBudget:
             routes_mod._AUTO_MERGE_TRIES, seen
 
     def test_an_apply_that_lands_refills_the_budget(self, env):
+        # v1.5.1 (r6e): implicit overwrite -> refusal then consent before a landed merge.
         """The budget counts CONSECUTIVE failures — otherwise a long, healthy
         session would eventually disarm on its Nth unlucky node write."""
         c = env["client"]
@@ -197,8 +198,12 @@ class TestTheBudget:
         c.post("/state/apply-to-live")
         assert _sess(env)["merge_tries"] == 1
 
-        # resolve it the way the client does, then a clean flush
-        c.post("/state/sync", data={"mode": "apply"})
+        # Resolve the named collision, then a clean flush.
+        refused = c.post("/state/sync", data={"mode": "apply"}).get_json()
+        assert refused["status"] == "collision", refused
+        assert _live_f01(env) == 7.7e9
+        merged = c.post("/state/sync", data={"mode": "apply", "ack_collision": "1"}).get_json()
+        assert merged["status"] == "ok", merged
         _edit(env, value="5.5e9")
         c.post("/state/apply-to-live")
         assert _sess(env)["merge_tries"] == 0, (
@@ -231,6 +236,11 @@ class TestTheBudget:
             assert "autoSyncMerge" in r.headers.get("HX-Trigger", ""), i
             # what the client does with that signal, and nothing more
             m = c.post("/state/sync", data={"mode": "apply"})
+            # v1.5.1 (r6e): node resets edited T1 -> ask before replacing it after the first merge.
+            if i:
+                assert m.get_json()["status"] == "collision", (i, m.get_json())
+                assert json.loads((env["live"] / "state.json").read_text())["qubits"]["qA1"]["T1"] == 2e-5
+                m = c.post("/state/sync", data={"mode": "apply", "ack_collision": "1"})
             assert m.status_code == 200, (i, m.data[:200])
             assert (m.get_json() or {}).get("status") == "ok", (i, m.get_json())
             doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
@@ -693,11 +703,13 @@ class TestTheMergeIsPinnedToItsChip:
         assert body.get("chip_mismatch") is True, body
 
     def test_the_right_token_is_accepted(self, env):
+        # v1.5.1 (r6e): accepted overwrite -> accepted token with a separate collision refusal.
         sig = self._signal(env)
         r = env["client"].post("/state/sync", data={
             "mode": "apply", "expect_chip": sig["chip"]})
         assert r.status_code == 200, (r.status_code, r.data[:200])
-        assert (r.get_json() or {}).get("status") == "ok", r.get_json()
+        assert (r.get_json() or {}).get("status") == "collision", r.get_json()
+        assert _live_f01(env) == 7.7e9
 
     def test_a_caller_naming_nothing_is_judged_as_before(self, env):
         """Back-compatible: every existing presser sends no token."""

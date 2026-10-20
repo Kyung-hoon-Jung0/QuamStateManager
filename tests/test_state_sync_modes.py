@@ -111,8 +111,11 @@ class TestConflictPullFlow:
         assert "Apply wrote nothing" in html
 
     def test_conflict_then_reapply_restores_saved_edit(self, loaded_client, synth_folder):
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         self._make_stale_conflict(loaded_client, synth_folder)
-        data = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "reapply", "ack_collision": "1"}).get_json()
         assert data["replay"]["applied"] == 1
         assert data["replay"]["failed"] == []
         assert "qubits.qA1.f_01" in loaded_client.get("/state/review").data.decode()
@@ -121,8 +124,11 @@ class TestConflictPullFlow:
         # The flow the one-click button exists for: edit, hit a conflict on
         # apply-to-live, then "Pull & apply my edits" pulls the live, re-applies
         # the edit on top, and writes the merged result straight to live.
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         self._make_stale_conflict(loaded_client, synth_folder, value="5.0e9")
-        data = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "apply", "ack_collision": "1"}).get_json()
         assert data["status"] == "ok"
         assert data["mode"] == "apply"
         assert data["replay"]["applied"] == 1
@@ -169,11 +175,14 @@ class TestConflictPullFlow:
     def test_explicit_save_then_conflict_then_reapply(self, loaded_client, synth_folder):
         # User Saves to the working copy first, THEN applies — the change log is
         # already empty at apply time, so the /save stash is what's recovered.
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         _edit(loaded_client, "qubits.qA1.f_01", "5.0e9")
         loaded_client.post("/save")
         _write_live_state(synth_folder, _make_state(f_01=7.0e9))
         assert "Apply wrote nothing" in loaded_client.post("/state/apply-to-live").data.decode()
-        data = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "reapply", "ack_collision": "1"}).get_json()
         assert data["replay"]["applied"] == 1
 
     def test_successful_apply_clears_stash(self, loaded_client, synth_folder):
@@ -215,12 +224,15 @@ class TestSyncDiscard:
 
 class TestSyncReapply:
     def test_reapply_replays_all_edits(self, loaded_client, synth_folder):
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         _edit(loaded_client, "qubits.qA1.f_01", "5.0e9")
         _edit(loaded_client, "qubits.qA1.T1", "12345")
         # An experiment program rewrote the live state in the meantime.
         _write_live_state(synth_folder, _make_state(f_01=7.0e9, t1=4321))
 
-        data = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "reapply", "ack_collision": "1"}).get_json()
         assert data["status"] == "ok"
         assert data["mode"] == "reapply"
         assert data["replay"]["applied"] == 2
@@ -231,6 +243,7 @@ class TestSyncReapply:
         assert "qubits.qA1.T1" in review
 
     def test_reapply_reports_now_invalid_path(self, loaded_client, synth_folder):
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         _edit(loaded_client, "qubits.qA1.f_01", "5.0e9")
         _edit(loaded_client, "qubits.qA1.T1", "12345")
         # Live state pulled in no longer has a T1 field — that replay must fail
@@ -239,7 +252,9 @@ class TestSyncReapply:
         del stale["qubits"]["qA1"]["T1"]
         _write_live_state(synth_folder, stale)
 
-        data = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "reapply", "ack_collision": "1"}).get_json()
         assert data["status"] == "ok"
         assert data["replay"]["applied"] == 1
         failed_paths = [f["dot_path"] for f in data["replay"]["failed"]]
@@ -258,12 +273,15 @@ class TestSyncReapply:
 
 class TestSyncApply:
     def test_apply_replays_then_pushes_to_live(self, loaded_client, synth_folder):
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         _edit(loaded_client, "qubits.qA1.f_01", "5.0e9")
         _edit(loaded_client, "qubits.qA1.T1", "12345")
         # An experiment program rewrote the live state in the meantime.
         _write_live_state(synth_folder, _make_state(f_01=7.0e9, t1=4321))
 
-        data = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "apply", "ack_collision": "1"}).get_json()
         assert data["status"] == "ok"
         assert data["mode"] == "apply"
         assert data["replay"]["applied"] == 2
@@ -276,6 +294,7 @@ class TestSyncApply:
         assert "No differences" in loaded_client.get("/state/review").data.decode()
 
     def test_apply_reports_now_invalid_path_but_still_pushes(self, loaded_client, synth_folder):
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         _edit(loaded_client, "qubits.qA1.f_01", "5.0e9")
         _edit(loaded_client, "qubits.qA1.T1", "12345")
         # Pulled-in live no longer has T1 — that replay fails, f_01 still applies.
@@ -283,7 +302,9 @@ class TestSyncApply:
         del stale["qubits"]["qA1"]["T1"]
         _write_live_state(synth_folder, stale)
 
-        data = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "apply", "ack_collision": "1"}).get_json()
         assert data["status"] == "ok"
         assert data["replay"]["applied"] == 1
         assert [f["dot_path"] for f in data["replay"]["failed"]] == ["qubits.qA1.T1"]
@@ -441,6 +462,7 @@ class TestAcceptThenSyncPreservesEdit:
         # live value to 8e9 in the box, accepts it, then syncs with the
         # edit-preserving button. Live + working copy must end at 8e9 (the user's
         # value), NOT 7e9 (the qualibrate value).
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         self._diverge_clean(synth_folder, f_01=7.0e9)
         accept = loaded_client.post(
             "/field/edit-batch",
@@ -449,7 +471,9 @@ class TestAcceptThenSyncPreservesEdit:
         assert accept["ok"] is True
         assert accept["results"][0]["new_value"] == 8.0e9
 
-        data = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "apply", "ack_collision": "1"}).get_json()
         assert data["status"] == "ok"
         assert data["replay"]["applied"] == 1
         assert data["replay"]["failed"] == []
@@ -464,12 +488,15 @@ class TestAcceptThenSyncPreservesEdit:
     ):
         # The "review first" choice: the accepted edit survives the pull as a
         # pending change (not yet pushed to live).
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         self._diverge_clean(synth_folder, f_01=7.0e9)
         loaded_client.post(
             "/field/edit-batch",
             json={"updates": [{"dot_path": "qubits.qA1.f_01", "value": "8.0e9"}]},
         )
-        data = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "reapply", "ack_collision": "1"}).get_json()
         assert data["status"] == "ok"
         assert data["replay"]["applied"] == 1
         # Live still holds the pulled qualibrate value; the edit is pending.
@@ -486,6 +513,7 @@ class TestAcceptThenSyncPreservesEdit:
         # re-coercing the user's scalar against a list used to raise → the edit
         # was dropped and the list (qualibrate's value) won on live. coerce=False
         # in the 'set' replay branch keeps the user's value.
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         live_state = _make_state()
         live_state["qubits"]["qA1"]["f_01"] = [7.0e9, 7.1e9]
         _write_live_state(synth_folder, live_state)
@@ -493,7 +521,9 @@ class TestAcceptThenSyncPreservesEdit:
             "/field/edit-batch",
             json={"updates": [{"dot_path": "qubits.qA1.f_01", "value": "8.0e9"}]},
         )
-        data = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "apply", "ack_collision": "1"}).get_json()
         assert data["status"] == "ok"
         assert data["replay"]["applied"] == 1
         assert data["replay"]["failed"] == []
@@ -507,6 +537,7 @@ class TestAcceptThenSyncPreservesEdit:
         # path. Re-coercing the user's float against a str used to stringify it to
         # "8000000000.0" and report SUCCESS — corrupting the live file's numeric
         # field. coerce=False writes the real number.
+        # v1.5.1 (r6e): implicit overwrite -> explicit collision answer, to test replay.
         live_state = _make_state()
         live_state["qubits"]["qA1"]["f_01"] = "placeholder"
         _write_live_state(synth_folder, live_state)
@@ -514,7 +545,9 @@ class TestAcceptThenSyncPreservesEdit:
             "/field/edit-batch",
             json={"updates": [{"dot_path": "qubits.qA1.f_01", "value": "8.0e9"}]},
         )
-        data = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        refused = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
+        assert refused["status"] == "collision", refused
+        data = loaded_client.post("/state/sync", data={"mode": "apply", "ack_collision": "1"}).get_json()
         assert data["status"] == "ok"
         assert data["replay"]["applied"] == 1
         live = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))

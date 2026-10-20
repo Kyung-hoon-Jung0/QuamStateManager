@@ -257,11 +257,13 @@ class TestOneClickApplyAsksAboutASameFieldCollision:
         assert live["f_01"] == 5.1e9 and live["T1"] == 9.9e-5
 
     def test_a_press_without_the_flag_is_judged_as_before(self, env):
-        # the review modal / conflict tray (informed) and every legacy caller
+        # v1.5.1 (r6e): legacy bypass -> all pull/replay doors require a collision answer.
         self._collide(env)
         d = env["client"].post("/state/sync", data={"mode": "apply"}).get_json()
-        assert d["status"] == "ok"
-        assert _live(env)["qubits"]["qA1"]["T2ramsey"] == 1.23e-6
+        assert d["status"] == "collision"
+        assert _live(env)["qubits"]["qA1"]["T2ramsey"] == 9.99e-7
+
+        assert len(_ctx(env)["store"].change_log) == 1
 
     def test_the_conflict_tray_retry_asks_about_a_same_field_move(self, env):
         # (review) apply-to-live hit the staleness conflict. The conflict tray

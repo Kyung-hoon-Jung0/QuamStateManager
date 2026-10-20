@@ -358,7 +358,11 @@ class TestStagedStalenessConflict:
         _edit(c, 0.095)
         assert c.post("/save").status_code == 200
         _write_chip(env["live"], _state(off_a=0.070))
-        r = c.post("/state/sync", data={"mode": "apply"})
+        # v1.5.1 (r6e): implicit overwrite -> refuse, then explicit consent replays saved edits.
+        refused = c.post("/state/sync", data={"mode": "apply"}).get_json()
+        assert refused["status"] == "collision", refused
+        assert _live_off(env) == 0.070
+        r = c.post("/state/sync", data={"mode": "apply", "ack_collision": "1"})
         body = r.get_json()
         assert body["status"] == "ok", body
         assert body["replay"] and body["replay"]["applied"] == 1
