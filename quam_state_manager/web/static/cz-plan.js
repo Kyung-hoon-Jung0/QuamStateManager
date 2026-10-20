@@ -25,7 +25,7 @@
         return esc(s).replace(/%/g, '&#37;');
     }
     function colors() {
-        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        var dark = (document.documentElement.getAttribute('data-theme') === 'dark' || document.documentElement.getAttribute('data-theme') === 'qm');
         var P = dark ? ['#79b4fa', '#f49c67', '#57b65f', '#f285b4'] : ['#245ec4', '#a34712', '#006d2c', '#ad326b'];
         var muted = getComputedStyle(document.documentElement).getPropertyValue('--pico-muted-color').trim() || '#8a8a8a';
         return { q: [P[0], P[1]], plan: P[2] || '#22c55e', res: P[3] || '#a855f7', muted: muted };

@@ -2509,7 +2509,7 @@ function _applyThemeToPlotly(theme) {
     if (!window.UI_CONFIG) return;
     var t = UI_CONFIG.plotly.topology;
     var iw = UI_CONFIG.instrumentWiring;
-    if (theme === 'dark') {
+    if (theme === 'dark' || theme === 'qm') {
         t.hoverBg      = '#2a2a3a';
         t.hoverBorder  = '#555';
         t.subLabelFont.color  = '#aaa';
@@ -2532,6 +2532,21 @@ function _applyThemeToPlotly(theme) {
         iw.unassignedFill    = '#1e1e2e';
         iw.unassignedStroke  = '#555';
         t.dashboard.nullCellColor = '#2a2a3a';
+        if (theme === 'qm') {
+            var style = getComputedStyle(document.documentElement);
+            var token = function (name) { return style.getPropertyValue(name).trim(); };
+            t.hoverBg = token('--pico-card-background-color');
+            t.hoverBorder = '#555555';
+            t.subLabelFont.color = token('--pico-muted-color');
+            t.edgeLabelFont.color = token('--pico-color');
+            iw.gridBg = token('--pico-background-color');
+            iw.gridBorder = '#555555';
+            iw.rowLabelColor = iw.subLabelColor = iw.femLabelColor = token('--pico-muted-color');
+            iw.separatorColor = iw.subSeparatorColor = '#555555';
+            iw.emptyPortFill = iw.unassignedFill = token('--pico-card-background-color');
+            iw.emptyPortStroke = iw.unassignedStroke = '#555555';
+            t.dashboard.nullCellColor = token('--pico-card-background-color');
+        }
     } else {
         t.hoverBg      = _lightDefaults.topoHoverBg;
         t.hoverBorder  = _lightDefaults.topoHoverBorder;
@@ -2555,25 +2570,24 @@ function _applyThemeToPlotly(theme) {
     }
 }
 
-/**
- * Toggle between light and dark themes.
- * Persists the choice in localStorage and updates Plotly chart colors.
- */
-window.toggleTheme = function() {
-    var html = document.documentElement;
-    var isDark = html.getAttribute('data-theme') === 'dark';
-    var newTheme = isDark ? 'light' : 'dark';
-    html.setAttribute('data-theme', newTheme);
+/** Select a registered theme and refresh the current figures. */
+window.setTheme = function(newTheme) {
+    var themes = window.SM_THEMES || ['light', 'dark', 'qm'];
+    if (themes.indexOf(newTheme) < 0) return;
+    document.documentElement.setAttribute('data-theme', newTheme);
     try { localStorage.setItem('quam_theme', newTheme); } catch(e) {}
-    var btn = document.getElementById('theme-toggle');
-    if (btn) {
-        btn.classList.toggle('settings-opt-active', newTheme === 'dark');
-        btn.textContent = newTheme === 'dark' ? 'Dark mode' : 'Light mode';   // reflect current state
-    }
+    document.querySelectorAll('[data-theme-choice]').forEach(function(btn) {
+        var active = btn.getAttribute('data-theme-choice') === newTheme;
+        btn.classList.toggle('settings-opt-active', active);
+        btn.setAttribute('aria-pressed', String(active));
+    });
     _applyThemeToPlotly(newTheme);
-    // House-themed plots (ndview + any surface using PlotTheme) follow instantly.
     if (window.PlotTheme) window.PlotTheme.retheme();
     if (window.FloatWiring) window.FloatWiring.refresh();
+};
+// Keep the existing two-way shortcut for integrations.
+window.toggleTheme = function() {
+    window.setTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
 };
 
 // Restore theme on page load. Dark is the default; the inline script
@@ -2583,13 +2597,13 @@ window.toggleTheme = function() {
     var theme = 'dark';
     try {
         var saved = localStorage.getItem('quam_theme');
-        if (saved === 'light' || saved === 'dark') theme = saved;
+        if (saved === 'light' || saved === 'dark' || saved === 'qm') theme = saved;
         // honor a ?theme= override (mirrors the FOUC init in base.html) so a
         // forced theme stays applied to the toggle/Plotly state too.
         var qp = new URLSearchParams(location.search).get('theme');
-        if (qp === 'light' || qp === 'dark') theme = qp;
+        if (qp === 'light' || qp === 'dark' || qp === 'qm') theme = qp;
     } catch(e) {}
-    if (theme === 'dark') _applyThemeToPlotly('dark');
+    _applyThemeToPlotly(theme);
     // r16 ⑤-1: retheme() used to run only on the theme TOGGLE — plots
     // rendered before Plotly/theme settled on a dark-mode LOAD kept the
     // light template's near-black axis text. One pass after load fixes any
@@ -2600,10 +2614,11 @@ window.toggleTheme = function() {
         }, 800);
     });
     document.addEventListener('DOMContentLoaded', function() {
-        var btn = document.getElementById('theme-toggle');
-        if (!btn) return;
-        btn.classList.toggle('settings-opt-active', theme === 'dark');
-        btn.textContent = theme === 'dark' ? 'Dark mode' : 'Light mode';   // correct label on load
+        document.querySelectorAll('[data-theme-choice]').forEach(function(btn) {
+            var active = btn.getAttribute('data-theme-choice') === theme;
+            btn.classList.toggle('settings-opt-active', active);
+            btn.setAttribute('aria-pressed', String(active));
+        });
     });
 })();
 

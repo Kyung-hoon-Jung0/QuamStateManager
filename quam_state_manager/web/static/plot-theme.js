@@ -26,7 +26,7 @@
     }
 
     function isDark() {
-        return document.documentElement.getAttribute('data-theme') === 'dark';
+        return (document.documentElement.getAttribute('data-theme') === 'dark' || document.documentElement.getAttribute('data-theme') === 'qm');
     }
 
     function artistColor(color, foreground) {

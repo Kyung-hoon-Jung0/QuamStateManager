@@ -15459,3 +15459,502 @@ details.jargon > .jargon-explain {
 .sched-item-warning { flex: 1 0 100%; min-width: 0; overflow-wrap: anywhere;
     font-size: .75rem; color: var(--color-warning-text); }
 .sched-item-capture-warning .sched-item-status { color: var(--color-warning-text); }
+
+/* QM: offline brand fonts, black surfaces and semantic colour scales. */
+@font-face { font-family: "Work Sans"; src: url("fonts/work-sans.ttf") format("truetype"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: Poppins; src: url("fonts/poppins-medium.ttf") format("truetype"); font-weight: 500; font-display: swap; }
+:root[data-theme="qm"], [data-theme="qm"] {
+    color-scheme: dark;
+    --pico-background-color: #0e0e0e;
+    --pico-color: #e5e5e5;
+    --pico-text-selection-color: rgba(1, 170, 255, 0.1875);
+    --pico-muted-color: #999999;
+    --pico-muted-border-color: #ffffff1a;
+    --pico-primary: #3a86ff;
+    --pico-primary-background: #1863dc;
+    --pico-primary-border: #1863dc;
+    --pico-primary-underline: #3a86ff80;
+    --pico-primary-hover: #6fa7ff;
+    --pico-primary-hover-background: #165bcb;
+    --pico-primary-hover-border: #165bcb;
+    --pico-primary-hover-underline: var(--pico-primary-hover);
+    --pico-primary-focus: #3a86ff55;
+    --pico-primary-inverse: #ffffff;
+    --pico-secondary: #bdbdbd;
+    --pico-secondary-background: #2a2a2a;
+    --pico-secondary-border: #555555;
+    --pico-secondary-underline: rgba(150, 158, 175, 0.5);
+    --pico-secondary-hover: #ffffff;
+    --pico-secondary-hover-background: #343434;
+    --pico-secondary-hover-border: #999999;
+    --pico-secondary-hover-underline: var(--pico-secondary-hover);
+    --pico-secondary-focus: rgba(144, 158, 190, 0.25);
+    --pico-secondary-inverse: #ffffff;
+    --pico-contrast: #ffffff;
+    --pico-contrast-background: #e5e5e5;
+    --pico-contrast-border: var(--pico-contrast-background);
+    --pico-contrast-underline: rgba(223, 227, 235, 0.5);
+    --pico-contrast-hover: #ffffff;
+    --pico-contrast-hover-background: #ffffff;
+    --pico-contrast-hover-border: var(--pico-contrast-hover-background);
+    --pico-contrast-hover-underline: var(--pico-contrast-hover);
+    --pico-contrast-focus: rgba(207, 213, 226, 0.25);
+    --pico-contrast-inverse: #0e0e0e;
+    --pico-box-shadow: 0.0145rem 0.029rem 0.174rem rgba(7, 8.5, 12, 0.01698),0.0335rem 0.067rem 0.402rem rgba(7, 8.5, 12, 0.024),0.0625rem 0.125rem 0.75rem rgba(7, 8.5, 12, 0.03),0.1125rem 0.225rem 1.35rem rgba(7, 8.5, 12, 0.036),0.2085rem 0.417rem 2.502rem rgba(7, 8.5, 12, 0.04302),0.5rem 1rem 6rem rgba(7, 8.5, 12, 0.06),0 0 0 0.0625rem rgba(7, 8.5, 12, 0.015);
+    --pico-h1-color: #ffffff;
+    --pico-h2-color: #ffffff;
+    --pico-h3-color: #ffffff;
+    --pico-h4-color: #ffffff;
+    --pico-h5-color: #ffffff;
+    --pico-h6-color: #ffffff;
+    --pico-mark-background-color: #014063;
+    --pico-mark-color: #fff;
+    --pico-ins-color: #62af9a;
+    --pico-del-color: rgb(205.5, 126, 123);
+    --pico-blockquote-border-color: #ffffff1a;
+    --pico-blockquote-footer-color: var(--pico-muted-color);
+    --pico-button-box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    --pico-button-hover-box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    --pico-table-border-color: #ffffff1a;
+    --pico-table-row-stripped-background-color: rgba(111, 120, 135, 0.0375);
+    --pico-code-background-color: #141414;
+    --pico-code-color: #e5e5e5;
+    --pico-code-kbd-background-color: var(--pico-color);
+    --pico-code-kbd-color: var(--pico-background-color);
+    --pico-form-element-background-color: #141414;
+    --pico-form-element-selected-background-color: #2a2a2a;
+    --pico-form-element-border-color: #555555;
+    --pico-form-element-color: #e5e5e5;
+    --pico-form-element-placeholder-color: #999999;
+    --pico-form-element-active-background-color: #1d1d1d;
+    --pico-form-element-active-border-color: #3a86ff;
+    --pico-form-element-focus-color: var(--pico-primary-border);
+    --pico-form-element-disabled-opacity: 0.5;
+    --pico-form-element-invalid-border-color: rgb(149.5, 74, 80);
+    --pico-form-element-invalid-active-border-color: rgb(183.25, 63.5, 59);
+    --pico-form-element-invalid-focus-color: var(--pico-form-element-invalid-active-border-color);
+    --pico-form-element-valid-border-color: #2a7b6f;
+    --pico-form-element-valid-active-border-color: rgb(22, 137, 105.5);
+    --pico-form-element-valid-focus-color: var(--pico-form-element-valid-active-border-color);
+    --pico-switch-background-color: #555555;
+    --pico-switch-checked-background-color: #1863dc;
+    --pico-switch-color: #fff;
+    --pico-switch-thumb-box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    --pico-range-border-color: #555555;
+    --pico-range-active-border-color: #999999;
+    --pico-range-thumb-border-color: var(--pico-background-color);
+    --pico-range-thumb-color: #3a86ff;
+    --pico-range-thumb-active-color: #6fa7ff;
+    --pico-accordion-border-color: var(--pico-muted-border-color);
+    --pico-accordion-active-summary-color: var(--pico-primary-hover);
+    --pico-accordion-close-summary-color: var(--pico-color);
+    --pico-accordion-open-summary-color: var(--pico-muted-color);
+    --pico-card-background-color: #1d1d1d;
+    --pico-card-border-color: var(--pico-card-background-color);
+    --pico-card-box-shadow: var(--pico-box-shadow);
+    --pico-card-sectioning-background-color: #141414;
+    --pico-dropdown-background-color: #1d1d1d;
+    --pico-dropdown-border-color: #ffffff1a;
+    --pico-dropdown-box-shadow: var(--pico-box-shadow);
+    --pico-dropdown-color: var(--pico-color);
+    --pico-dropdown-hover-background-color: #2a2a2a;
+    --pico-loading-spinner-opacity: 0.5;
+    --pico-modal-overlay-background-color: rgba(7.5, 8.5, 10, 0.75);
+    --pico-progress-background-color: #202632;
+    --pico-progress-color: var(--pico-primary-background);
+    --pico-tooltip-background-color: var(--pico-contrast-background);
+    --pico-tooltip-color: var(--pico-contrast-inverse);
+    --pico-icon-valid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='rgb(42, 123, 111)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
+    --font-ui: "Work Sans", Arial, sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code",
+                          "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
+                          monospace;
+    --font-size-base: 17px;
+    --body-line-height: 1.5;
+    --dense-line-height: 1.3;
+    --topbar-height: 48px;
+    --topbar-pad-v: 0.2rem;
+    --topbar-pad-h: 0.75rem;
+    --topbar-right-gap: 0.4rem;
+    --search-box-width: 280px;
+    --search-input-pad-v: 0.3rem;
+    --search-input-pad-h: 0.55rem;
+    --search-input-font: 0.92em;
+    --sidebar-width: 300px;
+    --sidebar-min-width: 200px;
+    --sidebar-max-width: 420px;
+    --sidebar-pad-v: 0.4rem;
+    --sidebar-pad-h: 0.6rem;
+    --sidebar-font: 0.92em;
+    --sidebar-summary-pad-v: 0.15rem;
+    --sidebar-summary-pad-h: 0.25rem;
+    --sidebar-summary-lh: 1.4;
+    --sidebar-nav-link-pad-v: 0.3rem;
+    --sidebar-nav-link-pad-h: 0.5rem;
+    --sidebar-nav-li-gap: 0.15rem;
+    --tree-root-label-font: 0.85em;
+    --tree-date-label-font: 1.26em;
+    --tree-entry-label-font: 1.26em;
+    --tree-run-id-font: 1em;
+    --tree-entry-name-font: 1em;
+    --tree-entry-time-font: 0.76em;
+    --tree-entry-status-font: 0.7em;
+    --tree-entry-indent-pl: 0.3rem;
+    --tree-entry-indent-ml: 0.25rem;
+    --tree-entry-pad-v: 0.12rem;
+    --tree-entry-row-gap: 0.3rem;
+    --tree-date-divider-color: #ffffff1a;
+    --tree-collapse-btn-font: 0.75em;
+    --table-pane-pad-v: 0.6rem;
+    --table-pane-pad-h: 1rem;
+    --inspector-pane-pad-v: 0.5rem;
+    --inspector-pane-pad-h: 1rem;
+    --split-gutter-size: 26px;
+    --inspector-toggle-w: 38px;
+    --inspector-toggle-h: 22px;
+    --inspector-toggle-font: 15px;
+    --inspector-toggle-radius: 4px;
+    --data-table-font: 0.88em;
+    --data-table-th-font: 0.8em;
+    --data-table-th-pad-v: 0.1rem;
+    --data-table-th-pad-h: 0.35rem;
+    --data-table-td-pad-v: 0.08rem;
+    --data-table-td-pad-h: 0.35rem;
+    --data-table-td-lh: 1.3;
+    --compact-field-pad-v: 0.05rem;
+    --compact-field-pad-h: 0.35rem;
+    --compact-field-pico-sv: 0.08rem;
+    --compact-field-pico-sh: 0.5rem;
+    --prop-table-font: 0.88em;
+    --prop-table-th-font: 0.8em;
+    --prop-table-th-pad-v: 0.08rem;
+    --prop-table-th-pad-h: 0.3rem;
+    --prop-table-td-pad-v: 0.04rem;
+    --prop-table-td-pad-h: 0.3rem;
+    --prop-table-lh: 1.3;
+    --prop-col-width: 1%;
+    --val-col-width: auto;
+    --prop-table-row-hover-bg: rgba(0,0,0,0.035);
+    --port-table-font: 0.82em;
+    --port-table-td-pad-v: 0.02rem;
+    --port-table-td-pad-h: 0.3rem;
+    --port-key-col-width: 1%;
+    --port-table-row-hover-bg: rgba(0,0,0,0.035);
+    --inspector-badge-font: 0.7em;
+    --inspector-badge-pad-v: 2px;
+    --inspector-badge-pad-h: 6px;
+    --section-header-font: 0.88em;
+    --section-header-pad-v: 0.35rem;
+    --section-header-pad-h: 0.4rem;
+    --section-header-bg: rgba(255, 255, 255, 0.06);
+    --section-header-radius: 4px;
+    --json-tree-font: 0.84em;
+    --json-tree-lh: 1.55;
+    --json-tree-indent: 18px;
+    --compare-legend-font: 0.84em;
+    --topo-section-title-size: 1.64rem;
+    --topo-section-subtitle-size: 1.38em;
+    --topo-card-min-width: 265px;
+    --topo-card-radius: 12px;
+    --topo-card-title-size: 1.23em;
+    --topo-card-value-size: 2.26em;
+    --topo-card-sub-size: 1.23em;
+    --topo-node-header-size: 1.36em;
+    --topo-prop-row-size: 1.20em;
+    --topo-prop-row-height: 32px;
+    --topo-prop-label-width: 84px;
+    --topo-card-more-size: 1.12em;
+    --topo-popup-header-size: 1.25em;
+    --topo-popup-pair-header-size: 1.33em;
+    --topo-popup-section-size: 1.18em;
+    --topo-popup-section-title-size: 1.23em;
+    --topo-edge-label-size: 1.16em;
+    --topo-heatmap-cell-min: 140px;
+    --topo-heatmap-name-size: 1.33em;
+    --topo-heatmap-value-size: 1.25em;
+    --topo-panel-cell-size: 132px;
+    --topo-panel-cell-gap: 5px;
+    --topo-panel-name-size: 1.41em;
+    --topo-panel-value-size: 1.33em;
+    --topo-panel-title-size: 1.56em;
+    --topo-panel-stat-size: 1.0em;
+    --topo-panel-bar-height: 390px;
+    --topo-colorbar-size: 1.33em;
+    --topo-toolbar-label-size: 1.41em;
+    --topo-colorscale-note-size: 1.25em;
+    --role-xy-color: #9b59b6;
+    --role-rr-color: #e67e22;
+    --role-rr-in-color: #9e4f00;
+    --role-z-color: #3498db;
+    --role-coupler-color: #1abc9c;
+    --role-twpa-pump-color: #e74c3c;
+    --role-twpa-ro-color: #a93226;
+    --role-twpa-in-color: #d63384;
+    --role-digital-color: #54617a;
+    --trend-chart-height: 250px;
+    --trends-mini-height: 220px;
+    --dataset-tab-font: 0.85rem;
+    --dataset-tab-pad-v: 0.4rem;
+    --dataset-tab-pad-h: 0.8rem;
+    --dataset-tab-active-border: 2px;
+    --ds-note-font: 0.92rem;
+    --ds-note-pad-v: 0.18rem;
+    --ds-note-pad-h: 0.45rem;
+    --ds-description-pad: 0.5rem 1rem;
+    --ds-description-font: 0.85rem;
+    --ds-description-max-height: 200px;
+    --ds-outcomes-pad: 0.5rem 1rem;
+    --ds-outcomes-gap: 0.5rem;
+    --outcome-badge-font: inherit;
+    --outcome-badge-pad-h: 0.3rem;
+    --outcome-badge-lg-font: inherit;
+    --outcome-badge-lg-pad-v: 0.1rem;
+    --outcome-badge-lg-pad-h: 0.45rem;
+    --outcome-ok-color: #1c7a43;
+    --outcome-fail-color: #c0392b;
+    --outcome-warn-color: #b35900;
+    --sched-graph-accent: #c6a7ff;
+    --color-text-muted: #999999;
+    --color-accent: #3a86ff;
+    --h5-tab-font: 0.78rem;
+    --h5-tab-pad-v: 0.15rem;
+    --h5-tab-pad-h: 0.45rem;
+    --h5-tab-bar-gap: 0.2rem;
+    --h5-dims-font: 0.88em;
+    --h5-coords-font: 0.88em;
+    --h5-table-font: 0.88em;
+    --h5-table-td-pad-v: 0.08rem;
+    --h5-table-td-pad-h: 0.35rem;
+    --h5-table-btn-font: 0.8em;
+    --h5-table-row-hover-bg: rgba(0,0,0,0.035);
+    --bookmark-item-pad-v: 0.1rem;
+    --bookmark-item-pad-h: 0.25rem;
+    --bookmark-item-gap: 0.25rem;
+    --bm-id-font: 0.85em;
+    --bm-exp-font: 0.78em;
+    --bm-meta-font: 0.73em;
+    --bm-note-font: 0.7em;
+    --bm-star-font: 0.9em;
+    --bookmark-empty-font: 0.78em;
+    --tray-drawer-max-height: 280px;
+    --tray-change-item-font: 0.82em;
+    --color-success-text: #75d69c;
+    --color-success-bg: #1a3a2a;
+    --color-success-border: #28a745;
+    --color-error-text: #ff9b9e;
+    --color-error-bg: #341b1c;
+    --color-error-border: #e5484d;
+    --color-warning-text: #d3a55f;
+    --color-warning-bg: #302719;
+    --color-warning-border: #d3a55f;
+    --color-info-text: #6fa7ff;
+    --color-info-bg: #16243a;
+    --color-info-border: #3a86ff;
+    --cm-feed-1: #d95926;
+    --cm-feed-2: #199e70;
+    --cm-feed-3: #c98500;
+    --cm-feed-4: #d55181;
+    --cm-feed-5: #008300;
+    --cm-feed-6: #9085e9;
+    --cm-feed-7: #e66767;
+    --diag-info-text: #6fa7ff;
+    --color-neutral-text: #e5e5e5;
+    --color-neutral-bg: #2a2a2a;
+    --cell-good-text: #75d69c;
+    --cell-ok-text: #d3a55f;
+    --cell-bad-text: #ff9b9e;
+    --cell-best-bg: #1a3a2a;
+    --cell-worst-bg: #302719;
+    --cb-good-text: #6fa7ff;
+    --cb-ok-text: #d3a55f;
+    --cb-bad-text: #ff8a65;
+    --cb-best-bg: #16243a;
+    --cb-worst-bg: #302719;
+    --badge-qubit-bg: #16243a;
+    --badge-qubit-text: #6fa7ff;
+    --badge-pair-bg: #341b1c;
+    --badge-pair-text: #ff9b9e;
+    --badge-search-bg: #302719;
+    --badge-search-text: #d3a55f;
+    --badge-wiring-bg: #1a3a2a;
+    --badge-wiring-text: #81c784;
+    --badge-h5-bg: #281c39;
+    --badge-h5-text: #c6a7ff;
+    --badge-pulse-bg: #281c39;
+    --badge-pulse-text: #c6a7ff;
+    --badge-dataset-bg: #6530b8;
+    --cat-qubit-bg: #16243a;
+    --cat-qubit-text: #6fa7ff;
+    --cat-pair-bg: #341b1c;
+    --cat-pair-text: #ff9b9e;
+    --cat-port-bg: #1a3a2a;
+    --cat-port-text: #81c784;
+    --cat-wiring-bg: #302719;
+    --cat-wiring-text: #d3a55f;
+    --cat-config-bg: #281c39;
+    --cat-config-text: #c6a7ff;
+    --tree-val-string-color: #81c784;
+    --tree-val-number-color: #6fa7ff;
+    --tree-val-boolean-color: #d3a55f;
+    --tree-val-pointer-text: #c6a7ff;
+    --tree-val-pointer-bg: rgba(206, 147, 216, 0.12);
+    --tree-match-bg: rgba(255, 235, 59, 0.12);
+    --tree-match-strong-bg: rgba(255, 235, 59, 0.25);
+    --tree-pending-bg: rgba(255, 193, 7, 0.12);
+    --tree-pending-hover-bg: rgba(255, 193, 7, 0.20);
+    --tree-val-error-bg: #341b1c;
+    --tree-edit-border: #d3a55f;
+    --tree-edit-bg: #302719;
+    --tree-ref-tag-text: #6fa7ff;
+    --tree-ref-tag-bg: rgba(100, 181, 246, 0.12);
+    --tree-delta-up-color: #81c784;
+    --tree-delta-down-color: #ff9b9e;
+    --tree-summary-diff-color: #d3a55f;
+    --state-badge-0: #1976d2;
+    --state-badge-1: #388e3c;
+    --state-badge-2: #e64a19;
+    --state-badge-3: #7b1fa2;
+    --state-badge-4: #00838f;
+    --state-badge-5: #c62828;
+    --state-badge-6: #4e342e;
+    --state-badge-7: #37474f;
+    --diff-added-text: #75d69c;
+    --diff-added-bg: #1a3a2a;
+    --diff-removed-text: #ff9b9e;
+    --diff-removed-bg: #341b1c;
+    --diff-modified-text: #d3a55f;
+    --diff-modified-bg: #302719;
+    --diff-type-added-bg: #28a745;
+    --diff-type-removed-bg: #e5484d;
+    --diff-type-modified-bg: #d3a55f;
+    --diff-cell-bg: rgba(255, 193, 7, 0.12);
+    --diff-cell-border: #d3a55f;
+    --diff-delta-pos-color: #ff9b9e;
+    --diff-delta-neg-color: #6fa7ff;
+    --topo-card-accent: #6fa7ff;
+    --topo-legend-color: #999999;
+    --topo-colorbar-text: #999999;
+    --row-pointer-bg: rgba(100, 181, 246, 0.08);
+    --row-selfref-bg: rgba(255, 255, 255, 0.04);
+    --pointer-badge-bg: #16243a;
+    --pointer-badge-text: #6fa7ff;
+    --selfref-badge-bg: rgba(255, 255, 255, 0.06);
+    --selfref-badge-text: #999999;
+    --selfref-value-color: #999999;
+    --null-value-color: #999999;
+    --tag-runtime-color: #999999;
+    --edit-modified-border: #e5484d;
+    --edit-modified-bg: rgba(239, 83, 80, 0.08);
+    --edit-modified-shadow: rgba(239, 83, 80, 0.15);
+    --cell-modified-bg: rgba(239, 83, 80, 0.08);
+    --cell-modified-border: #e5484d;
+    --bookmark-star-color: #555;
+    --bookmark-star-active: #d3a55f;
+    --bookmark-star-hover: #d3a55f;
+    --tag-badge-bg: rgba(100, 181, 246, 0.15);
+    --tag-badge-text: #6fa7ff;
+    --tag-badge-hover-bg: rgba(239, 83, 80, 0.15);
+    --tag-badge-hover-text: #ff9b9e;
+    --tag-add-hover-border: #6fa7ff;
+    --tag-add-hover-text: #6fa7ff;
+    --save-badge-bg: #e5484d;
+    --save-badge-text: #fff;
+    --h5-caution-bg: #302719;
+    --h5-caution-border: #d3a55f;
+    --h5-caution-text: #d3a55f;
+    --topo-edge-label-bg: rgba(14,14,14,0.92);
+    --trigger-save: #6fa7ff;
+    --trigger-manual: #4ade80;
+    --trigger-auto: #d3a55f;
+    --trigger-experiment: #c6a7ff;
+    --history-cell-border: #ffffff1a;
+    --history-cell-bg: #141414;
+    --history-cell-hover: #2a2a2a;
+    --history-spark-line: #999999;
+    --history-spark-fill: #9999992e;
+    --history-current-line: #ff9b9e;
+    --gen-mw-bg: rgba(80, 140, 220, 0.30);
+    --gen-mw-border: #6f9ee0;
+    --gen-lf-bg: rgba(90, 190, 130, 0.28);
+    --gen-lf-border: #63c98c;
+    --lo-c0: #2563eb;
+    --lo-c1: #a21caf;
+    --lo-c2: #15803d;
+    --lo-c3: #7c3aed;
+    --lo-c4: #475569;
+    --lo-c5: #0e7490;
+    --lo-c6: #57534e;
+    --lo-c7: #065f46;
+    --lo-c8: #4338ca;
+    --lo-c9: #4d7c0f;
+    --lo-c10: #0f766e;
+    --lo-c11: #0369a1;
+    --bulk-fs: 1;
+    --bulk-fw: 500;
+    --bulk-ls: 0;
+    --plot-grid: #ffffff1a;
+    --plot-axis-text: var(--pico-color);
+    --plot-hover-bg: var(--pico-card-background-color);
+    --plot-hover-text: var(--pico-color);
+    --plot-colorway-1: #3a86ff;
+    --plot-colorway-2: #f59e0b;
+    --plot-colorway-3: #34d399;
+    --plot-colorway-4: #e879f9;
+    --plot-colorway-5: #d3a55f;
+    --plot-colorway-6: #2dd4bf;
+    --plot-colorway-7: #fb7185;
+    --plot-colorway-8: #a8a29e;
+    --pico-font-family: "Work Sans", Arial, sans-serif;
+    --pico-range-thumb-hover-color: #6fa7ff;
+}
+[data-theme="qm"] body { font-weight: 300; }
+[data-theme="qm"] :is(h1,h2,h3,h4,h5,h6,.app-title) { font-family: Poppins, Arial, sans-serif; font-weight: 500; color: #ffffff; }
+
+[data-theme="qm"] .tree-entry-label:hover { background: color-mix(in srgb, var(--pico-primary) 24%, transparent); }
+[data-theme="qm"] .tree-entry-label:has(.tree-entry-active) { background: color-mix(in srgb, var(--pico-primary) 36%, transparent); }
+[data-theme="qm"] .clickable-row:hover > td, [data-theme="qm"] .clickable-row:hover > th {
+    background: color-mix(in srgb, var(--pico-primary) 14%, var(--pico-background-color)) !important;
+}
+[data-theme="qm"] .state-review .review-row:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+[data-theme="qm"] #gen-env-list .gen-env-row:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+[data-theme="qm"] #gen-env-list .gen-env-row.selected { background: color-mix(in srgb, var(--pico-primary) 12%, transparent); }
+[data-theme="qm"] #gen-message.gen-message-warn { border-left-color: color-mix(in srgb, var(--color-warning-text) 65%, transparent); }
+[data-theme="qm"] #gen-message.gen-message-error { border-left-color: color-mix(in srgb, var(--color-error-text) 65%, transparent); }
+[data-theme="qm"] .gen-config-ops .ops-table tbody tr:hover td { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+[data-theme="qm"] .bulk-ba { border-color: var(--pico-contrast); box-shadow: 0 2px 10px rgba(0,0,0,0.6); }
+[data-theme="qm"] .sched-root .sched-item:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+[data-theme="qm"] .cmp-src-row:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+[data-theme="qm"] .cmp-option:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+[data-theme="qm"] .cmp-group-summary:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+[data-theme="qm"] .cmp-row:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+[data-theme="qm"] input:is([type=submit],[type=button],[type=reset],[type=checkbox],[type=radio],[type=file]) { --pico-form-element-focus-color: var(--pico-primary-focus); }
+[data-theme="qm"] details summary[role=button].contrast:not(.outline)::after { filter: brightness(0); }
+[data-theme="qm"] [aria-busy=true]:not(input,select,textarea).contrast:is(button,[type=submit],[type=button],[type=reset],[role=button]):not(.outline)::before { filter: brightness(0); }
+/* Sync states also use the QM semantic palette. */
+[data-theme="qm"] .sync-st-live, [data-theme="qm"] .sync-st-both {
+    --sc-accent: var(--pico-primary); border-color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 12%, transparent);
+}
+[data-theme="qm"] .sync-st-mine, [data-theme="qm"] .sync-st-staged, [data-theme="qm"] .sync-st-unreadable {
+    --sc-accent: var(--color-warning-text); border-color: var(--color-warning-text);
+    background: color-mix(in srgb, var(--color-warning-text) 12%, transparent);
+}
+[data-theme="qm"] .sync-st-collide, [data-theme="qm"] .sync-st-refused {
+    --sc-accent: var(--color-error-border); border-color: var(--color-error-border);
+    background: color-mix(in srgb, var(--color-error-border) 12%, transparent);
+}
+[data-theme="qm"] .sync-st-archive {
+    --sc-accent: var(--sched-graph-accent); border-color: var(--sched-graph-accent);
+    background: color-mix(in srgb, var(--sched-graph-accent) 12%, transparent);
+}
+[data-theme="qm"] .state-status-drifted {
+    border-color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 14%, transparent);
+}
+[data-theme="qm"] .state-status-drifted .state-status-dot,
+[data-theme="qm"] .sp-val-live, [data-theme="qm"] .sp-group-live .sp-group-head td,
+[data-theme="qm"] .sp-dir, [data-theme="qm"] td.cell-live-stale .cell-live-now,
+[data-theme="qm"] .sp-live-input, [data-theme="qm"] .sp-one-field { color: var(--pico-primary) !important; }
+[data-theme="qm"] td.cell-live-stale { box-shadow: inset 3px 0 0 var(--pico-primary); }
+[data-theme="qm"] .sp-one-field { border-color: color-mix(in srgb, var(--pico-primary) 50%, transparent) !important; }
+[data-theme="qm"] .sp-group-mine .sp-group-head td { color: var(--color-warning-text); }

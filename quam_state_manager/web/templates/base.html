@@ -1166,7 +1166,9 @@
         <div class="settings-group">
         <small class="settings-label">Theme</small>
         <div class="settings-options">
-        <button onclick="toggleTheme()" class="settings-opt" id="theme-toggle">Dark mode</button>
+        <button onclick="setTheme('light')" class="settings-opt" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button onclick="setTheme('dark')" class="settings-opt" data-theme-choice="dark" aria-pressed="false">Dark</button>
+        <button onclick="setTheme('qm')" class="settings-opt" data-theme-choice="qm" aria-pressed="false">QM</button>
         </div>
         </div>
         <div class="settings-group">

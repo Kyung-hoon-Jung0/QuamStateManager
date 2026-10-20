@@ -55,7 +55,7 @@
             return (v && v.trim()) || fallback;
         } catch (e) { return fallback; }
     }
-    function isDark() { return document.documentElement.getAttribute('data-theme') === 'dark'; }
+    function isDark() { return (document.documentElement.getAttribute('data-theme') === 'dark' || document.documentElement.getAttribute('data-theme') === 'qm'); }
     function pairColors() {
         var P = (isDark() ? PAIR_DARK : PAIR_LIGHT).slice();
         return P.concat(MAP_COLORS.filter(function (c) { return P.indexOf(c) < 0; }));
