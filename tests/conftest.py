@@ -171,6 +171,10 @@ def _isolate_runner_shared_settings(tmp_path_factory):
     depending on which tests shared a run. Each test starts without them."""
     from quam_state_manager.core import scheduler
 
+    # v1.5.1 (r6): deletion -> reset provenance too, preserving test isolation.
+    with scheduler._SETTINGS_SEEN_LOCK:
+        scheduler._SETTINGS_SEEN.clear()
+        scheduler._SETTINGS_RESET.clear()
     base = tmp_path_factory.getbasetemp()
     for name in ("_shared.json", scheduler._PRESETS_FILENAME):
         try:

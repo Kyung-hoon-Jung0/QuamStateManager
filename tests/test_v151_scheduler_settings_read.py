@@ -124,5 +124,6 @@ def test_a_missing_settings_file_is_asked_once_not_through_the_retry_ladder(tmp_
         calls.append(str(path))
         return real(path, *a, **k)
     monkeypatch.setattr(safe_io, "read_json", spy)
-    assert scheduler.load_settings(str(tmp_path)) == scheduler.load_settings(str(tmp_path), strict=True)
+    # v1.5.1 (r6): strict -> non-strict only, operational reads must retry absence.
+    assert scheduler.load_settings(str(tmp_path)) == scheduler.load_settings(str(tmp_path))
     assert calls == [], calls
