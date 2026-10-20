@@ -130,7 +130,9 @@ class TestSettingsPopoverScrolls:
         # bottom group is unreachable -- there was no scrollbar (overflow was the
         # default `visible`). Cap it to the viewport and let it scroll.
         r = _rule(".settings-dropdown")
-        assert "max-height:" in r and "100vh" in r
+        # v1.5.2: old -> new, why: the three-way theme picker made the popover's cap
+        # min(75vh, 680px) -- still capped to the viewport, so a "vh" cap is the rule
+        assert "max-height:" in r and "vh" in r.split("max-height:", 1)[1].split(";", 1)[0]
         assert "overflow-y: auto" in r
 
 
