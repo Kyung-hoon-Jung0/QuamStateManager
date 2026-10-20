@@ -165,8 +165,9 @@ const fire = (T, type, detail) => T.doc.body.dispatchEvent(
     const T = world();
     const base = { click: T.count('doc', 'click'), key: T.count('doc', 'keydown'),
                    bswap: T.count('body', 'htmx:beforeSwap'), diag: T.count('body', 'diagnostics-changed') };
-    ok(base.key - T.pre.key === 1 && base.click - T.pre.click === 2 && base.diag === 1 && T.live.size === 1,
-       'r2-04 setup: one mount = one keydown, two click handlers, one state listener, one live poller ('
+    // v1.5.2: two click handlers -> one, map details own a single page-wide closer in topo-graph.js
+    ok(base.key - T.pre.key === 1 && base.click - T.pre.click === 1 && base.diag === 1 && T.live.size === 1,
+       'r2-04 setup: one mount = one keydown, one click handler, one state listener, one live poller ('
        + JSON.stringify(base) + ' over app.js ' + JSON.stringify(T.pre) + ', intervals ' + T.live.size + ')');
     // Back / Forward x5: htmx restores the cached body -- the SERIALIZED DOM
     // it saved on leaving -- with no beforeSwap; the restored page's inline

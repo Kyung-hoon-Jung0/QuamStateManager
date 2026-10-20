@@ -1026,7 +1026,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
        there was no scrollbar (overflow was the default `visible`). docs/160's
        Undo group pushed it past the ~827px it already reached. Cap it to the
        viewport and let it scroll. */
-    max-height: calc(100vh - 12px); overflow-y: auto;
+    max-height: min(75vh, 680px); overflow-y: auto; overflow-x: hidden;
     background: var(--pico-background-color);
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 6px;
@@ -2993,18 +2993,21 @@ table.data-table th {
    floating summary. Body-level (never clipped), pointer-events:none (never
    traps hover), themed via the card tokens. */
 .cm-popup {
-    position: fixed; z-index: 4000; pointer-events: none;
-    min-width: 14rem; max-width: 24rem;
+    position: fixed; z-index: 4000; pointer-events: auto;
+    width: max-content; min-width: min(14rem, calc(100vw - 16px)); max-width: min(30rem, calc(100vw - 16px));
+    max-height: min(75vh, 680px); overflow: auto; overscroll-behavior: contain;
     background: var(--pico-card-background-color);
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
     padding: .5rem .65rem; font-size: .82em; font-family: var(--font-ui);
 }
 .cm-popup-title { font-weight: 700; margin-bottom: .3rem; }
-.cm-popup-row { display: flex; justify-content: space-between; gap: 1rem; padding: .08rem 0; }
-.cm-popup-k { opacity: .65; white-space: nowrap; }
-.cm-popup-v { font-family: var(--font-mono, monospace); text-align: right; overflow-wrap: anywhere; }
-.cm-popup-hint { margin-top: .35rem; opacity: .5; font-size: .9em; }
+.cm-popup-rows { display: grid; grid-template-columns: fit-content(14rem) minmax(0, max-content); gap: 0 .6rem; }
+.cm-popup-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; gap: .6rem; padding: .08rem 0; }
+.cm-popup-k { color: var(--pico-muted-color); overflow-wrap: anywhere; }
+.cm-popup-k::after { content: " :"; }
+.cm-popup-v { font-family: var(--font-mono, monospace); text-align: left; overflow-wrap: anywhere; }
+.cm-popup-hint { margin: .5rem 0 0; width: auto; padding: .25rem .5rem; font-size: .9em; }
 
 /* docs/109: inspector twin of .bulk-phys — the physical output annotation
    beside an amplitude row's unit-preview. */
@@ -4590,6 +4593,29 @@ html.topbar-hidden .topo-subnav {
 .topo-hero-node.hs-warn .topo-hero-id, .topo-hero-node.hs-warn .topo-hero-val { fill: var(--color-warning-text); }
 .topo-hero-node.hs-fail .topo-hero-id, .topo-hero-node.hs-fail .topo-hero-val { fill: var(--color-error-text); }
 .topo-hero-edge-hit { cursor: pointer; }
+/* Pairs as first-class map objects: midpoint badge, data-driven edge style,
+   linked highlight (pair <-> its qubits). Colours are custom properties. */
+:root { --topo-pair-badge-stroke: rgba(0,0,0,.28); --topo-pair-badge-text: var(--pico-color); --topo-pair-linked: var(--pico-primary); }
+[data-theme="dark"] { --topo-pair-badge-stroke: rgba(255,255,255,.35); }
+.topo-pair-badge { cursor: pointer; outline: none; }
+.topo-pair-badge .topo-pair-badge-pill rect { stroke: var(--topo-pair-badge-stroke); stroke-width: .8; }
+.topo-pair-badge .topo-pair-badge-dot { stroke: var(--topo-pair-badge-stroke); stroke-width: .8; display: none; }
+.topo-pair-badge-text { fill: var(--topo-pair-badge-text); font-family: var(--font-ui); font-weight: 600; pointer-events: none; }
+.topo-pair-badge-val { font-weight: 700; }
+.topo-pair-badge-dense .topo-pair-badge-dot { display: inline; }
+.topo-pair-badge-dense .topo-pair-badge-pill { display: none; }
+.topo-pair-badge-dense:hover .topo-pair-badge-pill, .topo-pair-badge-dense:focus .topo-pair-badge-pill,
+.topo-pair-badge-dense.topo-linked .topo-pair-badge-pill { display: inline; }
+.topo-pair-badge-dense:hover .topo-pair-badge-dot, .topo-pair-badge-dense.topo-linked .topo-pair-badge-dot { display: none; }
+.topo-pair-badge-stale, .topo-hero-edge-stale .topo-hero-edge-line { opacity: .45; }
+.topo-pair-badge.topo-linked .topo-pair-badge-pill rect { stroke: var(--topo-pair-linked); stroke-width: 1.6; }
+.topo-hero-edge.topo-linked .topo-hero-edge-line { stroke-width: 11; opacity: 1; }
+.topo-hero-node.topo-linked .topo-hero-stone { stroke: var(--topo-pair-linked); stroke-width: 3; }
+.cm-edge.topo-linked .cm-edge-line { stroke: var(--topo-pair-linked); stroke-width: 4; opacity: 1; }
+.cm-node.topo-linked .cm-stone { stroke: var(--topo-pair-linked); stroke-width: 2.5; }
+.cm-edge-pending .cm-edge-line { stroke-dasharray: 6 4; }
+.cm-edge-none .cm-edge-line { stroke-dasharray: 2 5; }
+.cm-edge-stale .cm-edge-line { opacity: .45; }
 .topo-hero-legend {
     display: flex; gap: .9rem; align-items: center; flex-wrap: wrap;
     font-size: .74em; color: var(--pico-muted-color); margin-top: .35rem;
@@ -4635,7 +4661,7 @@ html.topbar-hidden .topo-subnav {
    font-size ATTRIBUTE renderLayout writes (attrs lose to any stylesheet rule),
    and the attr is what scales the id with the cell (docs/93 F2). */
 .cm-id { font-weight: 600; fill: var(--pico-color); pointer-events: none; }
-.cm-edge-line { stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 2; stroke-linecap: round; }
+.cm-edge-line { stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 3; stroke-linecap: round; }
 .cm-arrow { fill: var(--pico-muted-border-color, rgba(128,128,128,.65)); }
 .cm-coupler { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.4; }
 .cm-res { fill: none; stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.6; }
@@ -4823,12 +4849,12 @@ html.topbar-hidden .topo-subnav {
    theme-aware hairline borders (the old rgba(0,0,0,…) borders vanished on
    dark). Both popups share the language. */
 .topo-card-popup, .topo-pair-popup {
-    position: absolute; z-index: 100;
-    background: color-mix(in srgb, var(--pico-card-background-color, #fff) 88%, transparent);
-    -webkit-backdrop-filter: blur(10px) saturate(1.15);
-    backdrop-filter: blur(10px) saturate(1.15);
+    position: fixed; z-index: 4000;
+    box-sizing: border-box; width: max-content; max-width: min(560px, calc(100vw - 16px));
+    /* opaque surface: the map must never show through the text */
+    background: var(--pico-card-background-color, var(--pico-background-color));
     border: 1px solid var(--pico-muted-border-color);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.18);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18), 0 12px 32px rgba(0,0,0,0.30);
     border-radius: 14px;
     animation: topo-popup-in 0.15s ease-out;
     /* QA F-12: positionPopup pins a popup taller than the viewport at top 6px
@@ -4837,15 +4863,33 @@ html.topbar-hidden .topo-subnav {
        under it. Cap it to the viewport (12px = positionPopup's 2 x pad) and
        let it scroll, as F-SETTINGS-TALL did for the settings popover; contain
        the wheel so its end does not scroll the pane underneath. */
-    max-height: calc(100vh - 12px); overflow-y: auto; overscroll-behavior: contain;
+    max-height: min(75vh, 680px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
 }
-.topo-card-popup { padding: 6px 2px; min-width: 200px; }
-.topo-card-popup .topo-prop-row { padding: 0 8px; }
+.topo-card-popup { padding: 8px; min-width: min(360px, calc(100vw - 16px)); }
+.topo-detail-values { display: grid; grid-template-columns: fit-content(230px) minmax(0, max-content); gap: 2px 8px; }
+.topo-card-popup .topo-prop-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; padding: 0 4px; min-height: 24px; font-size: .85rem; }
+.topo-card-popup .topo-prop-label::after, .topo-popup-row-label::after { content: "\00a0:"; }
+/* a pair row's label wraps inside its own cell; the tag and the colon never
+   break away onto a line of their own */
+.topo-pair-popup .topo-popup-row-label { min-width: 0; white-space: nowrap; }
+.topo-pair-popup { max-width: min(760px, calc(100vw - 16px)); }
+@media (max-width: 900px) { .topo-pair-popup .topo-popup-row-label { white-space: normal; overflow-wrap: anywhere; } }
+.topo-pair-popup .topo-popup-row-label .topo-popup-kind { white-space: nowrap; }
+.topo-card-popup .topo-prop-value { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.topo-detail-trends { width: 100%; min-width: 0; margin-top: 8px; }
+.topo-expand { position: fixed; z-index: 4001; width: auto; margin: 0; padding: 4px 9px; min-height: 28px;
+    border-radius: 6px; font: 600 12px/1.4 var(--font-ui); box-shadow: 0 2px 6px rgba(0,0,0,.2); }
+.cm-popup-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cm-popup .topo-popup-close { width: 28px; height: 28px; padding: 0; margin: 0; }
+[data-cm]:focus-visible, .topo-expand:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: 3px; }
 /* docs/301 F13: the two readout-fidelity rows both read "Read.…" -- in the
    popup a long label wraps onto a second line instead of being cut */
 .topo-card-popup .topo-prop-label { flex-basis: 128px; white-space: normal; overflow: visible;
     text-overflow: clip; line-height: 1.2; }
-.topo-pair-popup { padding: 8px 2px; min-width: 240px; max-width: 340px; }
+.topo-pair-popup { padding: 8px; min-width: min(300px, calc(100vw - 16px)); }
+.topo-popup-links { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 6px 12px 4px; border-top: 1px solid var(--pico-muted-border-color); margin-top: 4px; }
+.topo-popup-links .topo-popup-link { width: auto; margin: 0; padding: 2px 0; background: none; border: 0; color: var(--pico-primary); font-size: .85rem; text-decoration: none; cursor: pointer; }
+.topo-popup-links .topo-popup-link:hover { text-decoration: underline; }
 .topo-card-popup .topo-popup-header, .topo-pair-popup .topo-popup-header {
     display: flex; align-items: center; justify-content: space-between; gap: .5rem;
     padding: 2px 12px 6px; font-weight: 600;
@@ -4870,15 +4914,17 @@ html.topbar-hidden .topo-subnav {
 .topo-popup-kind.topo-popup-off { background: var(--pico-muted-color); }
 .topo-pair-popup .topo-popup-section {
     padding: 4px 12px; font-size: var(--topo-popup-section-size); line-height: 1.55;
+    display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content); column-gap: 12px;
 }
 .topo-pair-popup .topo-popup-section-title {
+    grid-column: 1 / -1;
     font-weight: 700; font-size: calc(var(--topo-popup-section-title-size) * 0.82);
     text-transform: uppercase; letter-spacing: .06em; color: var(--pico-muted-color);
     margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--pico-muted-border-color);
 }
 .topo-pair-popup .topo-popup-section:first-of-type .topo-popup-section-title { border-top: none; margin-top: 0; }
 .topo-pair-popup .topo-popup-row {
-    display: flex; justify-content: space-between; gap: 8px; font-family: monospace;
+    display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; gap: 8px; font-family: monospace; overflow-wrap: anywhere;
 }
 .topo-pair-popup .topo-popup-row-label { color: var(--pico-muted-color); }
 /* The "best of N" winning gate — the one whose number is the pair's CZ fidelity. */
@@ -4889,15 +4935,20 @@ html.topbar-hidden .topo-subnav {
 .topo-recency { font-size: 0.72em; margin-left: 0.45rem; font-weight: 400; color: var(--pico-muted-color); white-space: nowrap; }
 .topo-recency.warn { color: var(--color-warning-text); }
 .topo-recency.fail { color: var(--color-error-text); }
-.topo-popup-recency { text-align: right; border-top: none; margin-top: 2px; padding-top: 0; }
+.topo-popup-recency { grid-column: 1 / -1; text-align: right; border-top: none; margin-top: 2px; padding-top: 0; }
 /* Param-History trend sparklines inside the qubit "…more" popup. */
 /* S10 walk (round 4): the delta column fits the one percent rule's longest form
    (an arrow and "+1.23e-07%", 11 monospace characters) on ONE line; it wrapped
    after the "e-" */
-.topo-spark-section .topo-spark-row { display: grid; grid-template-columns: 4.2em 5.8em 1fr; gap: 0.4rem; align-items: center; padding: 1px 0; }
+.topo-spark-section .topo-spark-row { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 4px 8px; align-items: center; padding: 8px 0; }
+.topo-spark-chart { grid-column: 1 / -1; width: 100%; min-width: 0; height: 84px; max-height: 84px; display: grid; grid-template-columns: minmax(0, 1fr); }
+.topo-spark-axis { display: flex; justify-content: space-between; gap: 8px; color: var(--pico-muted-color); font: 11px/1.3 var(--font-mono, monospace); }
+.topo-spark-section { padding: 4px 8px; font-size: .85rem; }
+.topo-spark-section .topo-prop-label { padding: 0; font-size: .85rem; }
 .topo-spark-section .topo-prop-label { color: var(--pico-muted-color); }
-.topo-spark-section .history-cell-spark { height: 22px; width: 100%; }
-.topo-spark-delta { font-family: monospace; font-size: 0.82em; text-align: right; color: var(--pico-muted-color); white-space: nowrap; }
+.topo-spark-section .history-cell-spark { display: block; height: 48px; max-height: 48px; width: 100%; min-width: 0; }
+.topo-spark-chart .hs-line { vector-effect: non-scaling-stroke; stroke-width: 1.5px; }
+.topo-spark-delta { font-family: monospace; font-size: 0.82em; text-align: left; color: var(--pico-muted-color); white-space: nowrap; }
 .topo-spark-delta.good { color: var(--color-success-text, #2e7d32); }
 .topo-spark-delta.bad { color: var(--color-error-text); }
 @keyframes topo-popup-in {
@@ -14062,7 +14113,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 /* ── docs/166: the Pulses page's chip map is a row filter ─────────────────
    The drawing is the shared component-page one; only the Pulses mount sets
    data-cm-pick, so every other page's map is untouched. */
-.cm-edge-hit { stroke: transparent; stroke-width: 14px; fill: none; pointer-events: none; }
+.cm-edge-hit { stroke: transparent; stroke-width: 16px; fill: none; pointer-events: stroke; }
 .cmap[data-cm-pick="1"] .cm-edge-hit { pointer-events: stroke; }
 /* Centred and modest: this map sits above a 500-row table, so it is a control
    rather than the page's subject. */

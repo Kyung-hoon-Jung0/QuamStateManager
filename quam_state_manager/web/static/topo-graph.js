@@ -716,13 +716,15 @@ window.TopoGraph = (function () {
         x1 += -ddy / dl * doff; y1 += ddx / dl * doff;
         x2 += -ddy / dl * doff; y2 += ddx / dl * doff;
       }
-      var cls = "cm-edge" + (e.has_coupler ? " cm-edge-hascoupler" : "") +
+      // solid = measured 2Q gate, dashed = defined but not measured,
+      // dotted = no 2Q gate, faded = an old measurement (pairState)
+      var pst = pairState(e);
+      var cls = "cm-edge cm-edge-" + pst.state + (pst.stale ? " cm-edge-stale" : "") +
+                (e.has_coupler ? " cm-edge-hascoupler" : "") +
                 (e.active === false ? " cm-off" : "");
-      // docs/166: an invisible fat line under the visible one, so a pair edge
-      // has a real hit target when the map is used as a control. It is inert
-      // by default (`pointer-events: none` in the stylesheet) and only the
-      // pick-mode mount turns it on, so every other map behaves as before.
-      svg += '<g class="' + cls + '" data-cm="p:' + esc(e.pair_id) + '">' +
+      // A wide transparent stroke makes pair hover and touch reachable.
+      svg += '<g class="' + cls + '" data-cm="p:' + esc(e.pair_id) +
+             '" data-link-ends="' + esc(e.source + ' ' + e.target) + '">' +
              '<line class="cm-edge-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +
              '<line class="cm-edge-line" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>';
       if (e.directed) {
@@ -784,7 +786,7 @@ window.TopoGraph = (function () {
       var chainCls = !emphChain ? ""
         : (nChain === emphChain ? " cm-chain-emph" : " cm-chain-dim");
       svg += '<g class="cm-node' + chainCls + '" data-cm="q:' + esc(n.id) +
-             '" data-cm-chain="' + esc(nChain) + '">' +
+             '" data-link-id="' + esc(n.id) + '" data-cm-chain="' + esc(nChain) + '">' +
              '<circle class="cm-occluder" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"/>' +
              '<circle class="cm-stone" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"' +
              (pt.shared ? ' stroke-dasharray="3 2"' : "") + "/>" +
@@ -969,7 +971,294 @@ window.TopoGraph = (function () {
       '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">' + svg + '</svg>';
   }
 
+
+  // One small hover affordance and one explicit detail panel across all maps.
+  var detailButton = null, detailAnchor = null, detailPanel = null;
+  var detailTimer = null, releaseDetailTrap = null, closingDetail = false;
+  function positionDetail(surface, anchor) {
+    if (!anchor || !anchor.isConnected) { closeDetails(); return; }
+    var stone = anchor.querySelector('.cm-stone');
+    var a = (stone || anchor).getBoundingClientRect(), b = surface.getBoundingClientRect();
+    if (!a.width && !a.height) a = anchor.getBoundingClientRect();
+    var pair = anchor.matches('[data-hero-pair], [data-cm^="p:"]');
+    if (pair) {
+      var line = anchor.querySelector('.cm-edge-line, .topo-hero-edge-hit');
+      if (line) a = line.getBoundingClientRect();
+      var midX = (a.left + a.right) / 2, midY = (a.top + a.bottom) / 2;
+      a = {left: midX, right: midX, top: midY, bottom: midY, width: 0};
+    }
+    // A pair with a drawn badge: sit beside the badge, never over its name.
+    var pid = pair && anchor.getAttribute('data-hero-pair');
+    var svgRoot = pid && anchor.ownerSVGElement;
+    var badgeEl = svgRoot && Array.prototype.filter.call(svgRoot.querySelectorAll('.topo-pair-badge'),
+      function (el) { return el.getAttribute('data-hero-pair') === pid; })[0];
+    if (badgeEl) {
+      var br = badgeEl.getBoundingClientRect();
+      if (br.width || br.height) a = br;
+    }
+    var pad = 8, gap = 5, x, y;
+    if (surface === detailButton) {
+      // Above the stone fits the gap between rows without covering neighbours.
+      x = (a.left + a.right - b.width) / 2;
+      y = a.top - b.height - gap;
+      if (y < pad) y = a.bottom + gap;
+    } else {
+      x = a.right + gap; y = a.top;
+      if (x + b.width > window.innerWidth - pad) x = a.left - b.width - gap;
+    }
+    surface.style.left = Math.round(Math.max(pad, Math.min(x, window.innerWidth - b.width - pad))) + 'px';
+    surface.style.top = Math.round(Math.max(pad, Math.min(y, window.innerHeight - b.height - pad))) + 'px';
+  }
+
+  function hideDetailButton() {
+    clearTimeout(detailTimer);
+    if (detailButton) detailButton.remove();
+    detailButton = null;
+  }
+  function closeDetails() {
+    closingDetail = true;
+    var anchor = detailAnchor;
+    hideDetailButton();
+    if (detailPanel) {
+      var panel = detailPanel;
+      detailPanel = null;
+      if (panel._closeDetail) panel._closeDetail();
+      panel.remove();
+    }
+    if (releaseDetailTrap) { releaseDetailTrap(); releaseDetailTrap = null; }
+    if (anchor) anchor.setAttribute('aria-expanded', 'false');
+    detailAnchor = null;
+    closingDetail = false;
+  }
+  function scheduleDetailHide() {
+    clearTimeout(detailTimer);
+    detailTimer = setTimeout(function () {
+      if (detailButton && detailButton !== document.activeElement &&
+          detailAnchor !== document.activeElement) hideDetailButton();
+    }, 240);
+  }
+  // Standalone reports load the map without app.js and its shared trapFocus.
+  function trapStandaloneDetails(panel, anchor) {
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); closeDetails(); return; }
+      if (e.key !== 'Tab') return;
+      var items = Array.prototype.filter.call(panel.querySelectorAll(
+        'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+        function (el) { return !el.disabled && (el.offsetWidth || el.offsetHeight); });
+      var first = items[0] || panel, last = items[items.length - 1] || panel;
+      if (!panel.contains(document.activeElement) || (!e.shiftKey && document.activeElement === last)) {
+        e.preventDefault(); first.focus();
+      } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      }
+    }
+    document.addEventListener('keydown', onKey, true);
+    return function () {
+      document.removeEventListener('keydown', onKey, true);
+      if (anchor.isConnected) anchor.focus({preventScroll: true});
+    };
+  }
+  function offerDetail(anchor, label, open) {
+    if (closingDetail || detailPanel) return;
+    clearTimeout(detailTimer);
+    if (detailButton && detailAnchor === anchor) return;
+    hideDetailButton();
+    detailAnchor = anchor;
+    var button = document.createElement('button');
+    button.type = 'button'; button.className = 'topo-expand';
+    button.textContent = 'Expand';
+    button.setAttribute('aria-label', 'Expand ' + label);
+    button.setAttribute('aria-haspopup', 'dialog');
+    anchor.setAttribute('aria-haspopup', 'dialog');
+    anchor.setAttribute('aria-expanded', 'false');
+    button.addEventListener('mouseenter', function () { clearTimeout(detailTimer); });
+    button.addEventListener('mouseleave', scheduleDetailHide);
+    button.addEventListener('focus', function () { clearTimeout(detailTimer); });
+    button.addEventListener('blur', scheduleDetailHide);
+    button.addEventListener('click', function (e) {
+      e.stopPropagation();
+      hideDetailButton();
+      // The node survives closing, so trapFocus returns focus to that node.
+      closingDetail = true;
+      anchor.focus({preventScroll: true});
+      closingDetail = false;
+      var panel = open(anchor);
+      if (!panel) return;
+      detailPanel = panel; detailAnchor = anchor;
+      panel.setAttribute('role', 'dialog');
+      panel.setAttribute('aria-modal', 'true');
+      panel.setAttribute('aria-label', label + ' details');
+      panel.setAttribute('tabindex', '-1');
+      anchor.setAttribute('aria-expanded', 'true');
+      positionDetail(panel, anchor);
+      if (window.trapFocus) releaseDetailTrap = window.trapFocus(panel, closeDetails);
+      else releaseDetailTrap = trapStandaloneDetails(panel, anchor);
+      var first = panel.querySelector('button');
+      (first || panel).focus();
+    });
+    detailButton = button;
+    document.body.appendChild(button);
+    positionDetail(button, anchor);
+  }
+  function bindDetails(host, selector, label, open) {
+    host.querySelectorAll(selector).forEach(function (anchor) {
+      anchor.setAttribute('aria-label', label(anchor));
+      Array.prototype.forEach.call(anchor.children, function (child) {
+        // a one-line native title (e.g. how a stone's age was dated) stays;
+        // an empty one gets the node's name
+        if (child.tagName.toLowerCase() === 'title' && !child.textContent.trim()) child.textContent = label(anchor);
+      });
+      if (!anchor.hasAttribute('tabindex')) anchor.setAttribute('tabindex', '0');
+      var touch = false;
+      function offer() { offerDetail(anchor, label(anchor), function () { return open(anchor); }); }
+      anchor.addEventListener('mouseenter', offer);
+      anchor.addEventListener('mouseleave', scheduleDetailHide);
+      anchor.addEventListener('focusin', offer);
+      anchor.addEventListener('focusout', scheduleDetailHide);
+      anchor.addEventListener('pointerdown', function (e) { touch = e.pointerType === 'touch'; });
+      anchor.addEventListener('click', function (e) {
+        var noHover = window.matchMedia && window.matchMedia('(hover: none)').matches;
+        if (!touch && !noHover) return;
+        touch = false; e.preventDefault(); e.stopImmediatePropagation(); offer();
+      }, true);
+      anchor.addEventListener('keydown', function (e) {
+        if (e.key === 'Tab' && !e.shiftKey && detailButton && detailAnchor === anchor) {
+          e.preventDefault(); detailButton.focus();
+        }
+      });
+    });
+  }
+  // Page-wide closers; absent when the module is loaded without a DOM.
+  if (typeof document !== 'undefined') {
+  document.addEventListener('click', function (e) {
+    if (detailPanel && !detailPanel.contains(e.target)) closeDetails();
+    else if (detailButton && e.target !== detailButton &&
+             !(detailAnchor && detailAnchor.contains(e.target))) closeDetails();
+  });
+  document.addEventListener('keydown', function (e) {
+    // Page-level Escape handlers skip a press that belongs to the map details.
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (detailPanel) {
+      e._topoDetail = true;
+      if (!releaseDetailTrap) { e.preventDefault(); closeDetails(); }
+    } else if (detailButton) {
+      // A bare Expand offer is dismissed without consuming the key.
+      hideDetailButton();
+    }
+  }, true);
+  document.addEventListener('htmx:beforeSwap', function (e) {
+    var target = e.detail && e.detail.target;
+    if (detailAnchor && target && target.contains(detailAnchor)) closeDetails();
+  });
+  document.addEventListener('scroll', function (e) {
+    if (detailPanel && detailPanel.contains(e.target)) return;
+    var surface = detailPanel || detailButton;
+    if (!surface || !detailAnchor) return;
+    var a = detailAnchor.getBoundingClientRect();
+    if (a.bottom < 0 || a.top > window.innerHeight || a.right < 0 || a.left > window.innerWidth) closeDetails();
+    else positionDetail(surface, detailAnchor);
+  }, true);
+  window.addEventListener('resize', function () {
+    var surface = detailPanel || detailButton;
+    if (surface) positionDetail(surface, detailAnchor);
+  });
+  }
+
+  // -- Pairs as first-class map objects (shared by every map that draws edges) --
+  // What the chip holds for a pair's 2Q gate: 'measured' (a fidelity value),
+  // 'pending' (a gate is defined but never measured) or 'none' (no 2Q gate).
+  // `stale` follows the caller's age rule; the default is the Chip Status
+  // calibration-age rule (older than 30 days fails).
+  var PAIR_STALE_DAYS = 30;
+  function pairState(e, isStale) {
+    var v = e && typeof e.cz_fidelity === 'number' ? e.cz_fidelity : null;
+    var state = v != null ? 'measured' : ((e && (e.has_cz || (e.gate_kind && e.gate_kind !== 'none'))) ? 'pending' : 'none');
+    var at = e && typeof e.cz_fidelity_updated_at === 'number' ? e.cz_fidelity_updated_at : null;
+    var stale = false;
+    if (state === 'measured' && at != null) {
+      stale = isStale ? !!isStale(at) : (Date.now() - at) / 86400000 > PAIR_STALE_DAYS;
+    }
+    return { state: state, value: v, stale: stale };
+  }
+  // Midpoint badge: a pill with the pair name over at most one number, or a
+  // small dot when the pill does not fit (dense chips). The pill is always in
+  // the markup so a hover or a linked highlight can show it.
+  function pairBadgeSvg(o) {
+    var lines = [o.name];
+    if (o.valueText) lines.push(o.valueText);
+    var fs = o.fontSize || 9, lh = Math.round(fs * 1.15 * 10) / 10;
+    var longest = 0;
+    lines.forEach(function (t) { longest = Math.max(longest, String(t).length); });
+    var w = Math.round(longest * fs * 0.62 + fs * 1.1);
+    var h = Math.round(lines.length * lh + fs * 0.6);
+    var dense = !!o.dense || (o.room != null && (w > o.room || h > o.roomAcross));
+    var fill = o.fill ? ' style="fill:' + o.fill + '"' : '';
+    var fg = o.fg ? ' style="fill:' + o.fg + '"' : '';
+    var y0 = -((lines.length - 1) * lh) / 2;
+    var text = '';
+    lines.forEach(function (t, i) {
+      text += '<text class="topo-pair-badge-text' + (i ? ' topo-pair-badge-val' : '') + '" y="' +
+        Math.round((y0 + i * lh) * 10) / 10 + '" font-size="' + fs +
+        '" text-anchor="middle" dominant-baseline="central"' + fg + '>' + esc(t) + '</text>';
+    });
+    return {
+      dense: dense, width: w, height: h,
+      svg: '<g class="topo-pair-badge' + (dense ? ' topo-pair-badge-dense' : '') +
+        (o.state ? ' topo-pair-badge-' + o.state : '') + '"' +
+        (o.attrs || '') + ' transform="translate(' + Math.round(o.x * 10) / 10 + ',' + Math.round(o.y * 10) / 10 + ')">' +
+        '<circle class="topo-pair-badge-dot" r="' + Math.max(3, Math.round(fs * 0.45)) + '"' + fill + '></circle>' +
+        '<g class="topo-pair-badge-pill">' +
+        '<rect x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h +
+        '" rx="' + Math.min(h / 2, fs) + '"' + fill + '></rect>' + text + '</g>' +
+        (o.title ? '<title>' + esc(o.title) + '</title>' : '') + '</g>'
+    };
+  }
+  // Linked highlight: a pair lights its two qubits, a qubit lights its pairs.
+  // Markup contract: a pair element (edge or badge) carries
+  // data-link-ends="a b"; a qubit element carries data-link-id="a".
+  function bindLinked(host) {
+    if (!host || host._linkedBound) return;
+    host._linkedBound = true;
+    var lit = [];
+    function clear() {
+      lit.forEach(function (el) { el.classList.remove('topo-linked'); });
+      lit = [];
+    }
+    function light(el) { el.classList.add('topo-linked'); lit.push(el); }
+    function cssq(s) { return String(s).replace(/["\\]/g, '\\$&'); }
+    function apply(target) {
+      clear();
+      var pair = target.closest && target.closest('[data-link-ends]');
+      var qubit = !pair && target.closest && target.closest('[data-link-id]');
+      if (pair && host.contains(pair)) {
+        var ends = pair.getAttribute('data-link-ends');
+        host.querySelectorAll('[data-link-ends="' + cssq(ends) + '"]').forEach(light);
+        ends.split(' ').forEach(function (id) {
+          if (id) host.querySelectorAll('[data-link-id="' + cssq(id) + '"]').forEach(light);
+        });
+      } else if (qubit && host.contains(qubit)) {
+        var id = qubit.getAttribute('data-link-id');
+        light(qubit);
+        host.querySelectorAll('[data-link-ends]').forEach(function (el) {
+          if (el.getAttribute('data-link-ends').split(' ').indexOf(id) >= 0) light(el);
+        });
+      }
+    }
+    host.addEventListener('mouseover', function (e) { apply(e.target); });
+    host.addEventListener('focusin', function (e) { apply(e.target); });
+    host.addEventListener('mouseleave', clear);
+    host.addEventListener('focusout', function (e) {
+      if (!e.relatedTarget || !host.contains(e.relatedTarget)) clear();
+    });
+  }
+
   return {
+    bindDetails: bindDetails,
+    pairState: pairState,
+    pairBadgeSvg: pairBadgeSvg,
+    bindLinked: bindLinked,
+    closeDetails: closeDetails,
+    positionDetail: positionDetail,
     bareIndex: bareIndex,
     quamPairId: quamPairId,
     normalizeGrid: normalizeGrid,

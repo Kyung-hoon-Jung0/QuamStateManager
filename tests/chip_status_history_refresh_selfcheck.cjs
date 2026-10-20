@@ -102,6 +102,8 @@ function announce(win) {
     /* H3: the popup's sparkline fetch was gated on the render-time count (0) */
     const g = win.document.querySelector('[data-hero-qubit="qA1"]');
     g.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: true }));
+    // v1.5.2: hover -> details opened on hover; now hover offers Expand and the press opens them
+    { const xb = win.document.querySelector('.topo-expand'); if (xb) xb.click(); }
     await wait(350);
     ok(win.__fetches.some(function (u) { return /\/api\/topology\/sparklines\/qA1/.test(u); }),
       'H3: after a capture the popup fetches its trends — ' + JSON.stringify(win.__fetches.filter(function (u) { return /spark/.test(u); })));
@@ -141,6 +143,8 @@ function announce(win) {
     await wait(20);
     const g = win.document.querySelector('[data-hero-qubit="qA1"]');
     g.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: true }));
+    // v1.5.2: hover -> details opened on hover; now hover offers Expand and the press opens them
+    { const xb = win.document.querySelector('.topo-expand'); if (xb) xb.click(); }
     await wait(400);
     const sparks = function () { return win.__fetches.filter(function (u) { return /sparklines/.test(u); }).length; };
     const popup = win.document.querySelector('.topo-node-popup') || win.document.body;

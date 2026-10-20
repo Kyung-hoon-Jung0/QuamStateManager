@@ -318,54 +318,30 @@ const esc = (T) => T.doc.activeElement.dispatchEvent(
     ok(T.ajax.filter((u) => u.indexOf('/pair/') === 0).length === 1, 'r2-21 ...and still inspects the pair');
   }
 
-  // ── r2-22: hovering from one stone to the next THROUGH the popup ────────
+  // v1.5.2: automatic hover handoff -> explicit Expand, preserving the open panel.
   {
-    const T = world();
-    const d = T.doc, win = T.win;
+    const T = world(), d = T.doc, win = T.win;
     const stone = (id) => d.querySelector('[data-hero-qubit="' + id + '"]');
-    const heads = () => Array.from(d.querySelectorAll('.topo-card-popup .topo-popup-header span')).map((s) => s.textContent);
     stone('q1').dispatchEvent(new win.MouseEvent('mouseenter'));
     await sleep(320);
+    ok(!d.querySelector('.topo-card-popup'), 'r2-22 hover leaves the map visible');
+    const expand = d.querySelector('.topo-expand');
+    ok(!!expand, 'r2-22 hover offers Expand');
+    if (expand) expand.click();
     const p1 = d.querySelector('.topo-card-popup');
-    ok(p1 && heads().join() === 'q1 — details', 'r2-22 setup: hovering q1 opens its popup (' + heads() + ')');
-    // what lies under the pointer, top first: the popup, then the map
-    let under = [];
-    d.elementsFromPoint = function () { return [p1.firstChild, p1].concat(under); };
-    const svg = d.querySelector('#topo-hero svg');
+    ok(!!p1, 'r2-22 Expand opens details');
     stone('q1').dispatchEvent(new win.MouseEvent('mouseleave'));
-    under = [svg];
-    p1.dispatchEvent(new win.MouseEvent('mouseenter'));
-    p1.dispatchEvent(new win.MouseEvent('mousemove', { clientX: 10, clientY: 10 }));
-    await sleep(320);
-    ok(d.querySelector('.topo-card-popup') === p1 && heads().join() === 'q1 — details',
-       'r2-22 off the stones the popup is the popup: it stays');
-    under = [stone('q1').querySelector('circle') || stone('q1'), stone('q1'), svg];
-    p1.dispatchEvent(new win.MouseEvent('mousemove', { clientX: 11, clientY: 10 }));
-    await sleep(320);
-    ok(d.querySelector('.topo-card-popup') === p1, 'r2-22 over its OWN stone nothing changes');
-    // the pointer passes over q2 but moves on before the intent delay
-    under = [stone('q2').querySelector('circle') || stone('q2'), stone('q2'), svg];
-    p1.dispatchEvent(new win.MouseEvent('mousemove', { clientX: 20, clientY: 10 }));
-    await sleep(100);
-    under = [svg];
-    p1.dispatchEvent(new win.MouseEvent('mousemove', { clientX: 30, clientY: 10 }));
-    await sleep(320);
-    ok(d.querySelector('.topo-card-popup') === p1, 'r2-22 passing over q2 without resting does not switch');
-    // ...and resting on q2 through the popup does
-    under = [stone('q2').querySelector('circle') || stone('q2'), stone('q2'), svg];
-    p1.dispatchEvent(new win.MouseEvent('mousemove', { clientX: 40, clientY: 10 }));
-    await sleep(320);
-    const p2 = d.querySelector('.topo-card-popup');
-    ok(d.querySelectorAll('.topo-card-popup').length === 1 && heads().join() === 'q2 — details',
-       'r2-22 resting on q2 through q1\'s popup replaces it with q2\'s details (' + heads() + ')');
-    // the stone now under the pointer does not re-open what is already up
     stone('q2').dispatchEvent(new win.MouseEvent('mouseenter'));
     await sleep(320);
-    ok(d.querySelector('.topo-card-popup') === p2, 'r2-22 entering the stone whose popup is up keeps it (no re-open)');
-    // leaving still closes it
-    stone('q2').dispatchEvent(new win.MouseEvent('mouseleave'));
-    await sleep(320);
-    ok(!d.querySelector('.topo-card-popup'), 'r2-22 leaving closes it as before');
+    ok(d.querySelector('.topo-card-popup') === p1 && !d.querySelector('.topo-expand'),
+       'r2-22 hovering another stone preserves explicitly opened details');
+    if (p1) p1.querySelector('.topo-popup-close').click();
+    stone('q2').dispatchEvent(new win.MouseEvent('mouseenter'));
+    const next = d.querySelector('.topo-expand');
+    if (next) next.click();
+    ok(d.querySelectorAll('.topo-card-popup').length === 1 &&
+       /q2/.test(d.querySelector('.topo-card-popup').textContent),
+       'r2-22 another explicit Expand opens only that stone');
   }
 
   // ── queue #5 (2026-09-26): no bare, unexplained arrow beside a title ────

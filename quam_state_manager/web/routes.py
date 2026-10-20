@@ -22374,6 +22374,9 @@ def cz_plan_page():
     rows, _convs, unavailable = _cz_plan_ops(store)
     table = _cz_plan_table(rows)
     want = request.args.get("op", "").strip()
+    if not want and request.args.get("pair"):
+        # a pair's own entry (the map's pair panel links here by pair id)
+        want = _pair_cz_plan_ops(store).get(request.args.get("pair", "").strip(), "")
     paths = [r["path"] for r in table]
     selected = want if want in paths else (paths[0] if paths else "")
     return render_template(template, **_ctx(page="czplan", rows=table, selected=selected, unavailable=unavailable))
@@ -33629,6 +33632,7 @@ def topology_sparklines(qubit: str):
         rows.append({
             "property": prop, "label": meta["label"], "abbr": meta["abbr"],
             "svg_inner": svg, "n": len(nums), "delta_pct": delta_pct,
+            "low": min(nums), "high": max(nums),
             "trend": None if delta in (None, 0) else ("up" if delta > 0 else "down"),
             "good": good,
         })

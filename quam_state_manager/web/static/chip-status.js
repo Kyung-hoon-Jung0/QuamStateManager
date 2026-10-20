@@ -2192,31 +2192,9 @@ window.ChipStatus.mount = function (opts) {
         return { color: color, width: width };
     }
 
-    // Shared qubit-popup bridge: buildTopology owns the ONE popup
-    // implementation (property rows, sparklines, pinning, document-level
-    // teardown); the hero map opens the same popup through this handle —
-    // never a second implementation.
+    // The hero uses these factories; TopoGraph owns Expand and focus handling.
     var _sharedQubitPopup = null;
 
-    /* ── The qubit detail popup (docs/120 item 11) ────────────────────────
-     *
-     * This used to be the tail of buildTopology, the pre-hero CARD diagram
-     * that rendered a second chip map underneath the hero one. The customer
-     * reported the duplication ("the qubit layout appears twice ... why does
-     * the first one exist?") and preferred the hero, so the cards are gone.
-     *
-     * The popup could NOT go with them. `_sharedQubitPopup` is what the hero
-     * opens on hover, and it was only ever ASSIGNED inside that IIFE — so
-     * deleting the block wholesale would have left it null forever and the
-     * hero's hover popup would have stopped opening with NO error and NO
-     * failing test (bindHover simply guards on it). It lives here now, owning
-     * nothing but itself: the single activePopup, its positioning, its
-     * document-click and htmx:beforeSwap teardown, and openQubitMore.
-     *
-     * `positionPopup` still prefers a `.topo-node-card` ancestor when one
-     * exists and falls back to the element it was handed, which is what makes
-     * it work unchanged for the hero's circular nodes.
-     */
     (function buildQubitPopup() {
         if (!topo || !topo.nodes || !topo.nodes.length) return;
 
@@ -2226,50 +2204,15 @@ window.ChipStatus.mount = function (opts) {
             if (activePopup) { activePopup.remove(); activePopup = null; }
         }
         function positionPopup(popup, anchorEl) {
-            // Append to <body> as position:fixed so the panel is NEVER clipped by
-            // the diagram's overflow:hidden or hidden behind the section below
-            // (bottom-row cards used to open downward into the next section).
-            document.body.appendChild(popup);
-            popup.style.position = 'fixed';
-            popup.style.transformOrigin = 'top left';
-            // Anchor on the whole card for the qubit popup so it opens BESIDE the
-            // tile, not off the tiny "... more" button.
-            var anchor = (anchorEl.closest && anchorEl.closest('.topo-node-card')) || anchorEl;
-            var ar = anchor.getBoundingClientRect();
-            var pr = popup.getBoundingClientRect();
-            var gap = 8, pad = 6, vw = window.innerWidth, vh = window.innerHeight;
-            // Horizontal: prefer to the RIGHT of the tile; flip LEFT if it would
-            // overflow the right wall; clamp if neither side fits cleanly.
-            var left;
-            if (ar.right + gap + pr.width <= vw - pad) left = ar.right + gap;
-            else if (ar.left - gap - pr.width >= pad) left = ar.left - gap - pr.width;
-            else left = Math.max(pad, vw - pr.width - pad);
-            // Vertical: align to the tile top, clamp so the panel stays on screen.
-            var top = ar.top;
-            if (top + pr.height > vh - pad) top = Math.max(pad, vh - pr.height - pad);
-            popup.style.left = Math.round(left) + 'px';
-            popup.style.top = Math.round(top) + 'px';
+            if (!popup.isConnected) document.body.appendChild(popup);
+            window.TopoGraph.positionDetail(popup, anchorEl);
         }
-        // Close on click outside. This is a *document-level* listener and this whole
-        // script re-runs on every HTMX load of the Chip Status page, so it MUST be
-        // removed on navigation away — otherwise each visit leaves another permanent
-        // document click handler behind and they pile up, slowing every click across
-        // the app (the "gets slow / stuck after clicking menu to menu" symptom).
-        function _topoDocClick(ev) {
-            if (activePopup && !activePopup.contains(ev.target)) {
-                var moreBtn = ev.target.closest('[data-qubit-more]');
-                var edgeLabel = ev.target.closest('.topo-edge-label');
-                if (!moreBtn && !edgeLabel) closePopup();
-            }
-        }
-        document.addEventListener('click', _topoDocClick);
         // QA chipstatus-r2-04: registered with the leave registry (a #table-pane
         // swap AND a Back/Forward history restore), not a beforeSwap listener.
         var _topoDash = document.querySelector('.topo-dashboard');
         window.ChipStatus._onLeave(_topoDash, function _topoCleanup() {
-            document.removeEventListener('click', _topoDocClick);
+            window.TopoGraph.closeDetails();
             closePopup();   // the popup now lives in <body>, not in the swapped pane
-            clearTimeout(_moreHoverTimer); clearTimeout(_moreLeaveTimer);
             // An innerHTML swap drops the plot nodes but not Plotly's global (window
             // resize) registrations for them — purge so they don't accumulate per visit.
             // Scoped to THIS mount's dashboard: on a history restore the page on
@@ -2281,27 +2224,23 @@ window.ChipStatus.mount = function (opts) {
             }
         });
 
-        // ── Qubit "... more" details popup ───────────
-        // Opens on HOVER (after a ~260ms intent delay) as a transient preview,
-        // or PINNED by clicking the "... more" button. Reuses the single
-        // activePopup singleton + its document-click / htmx:beforeSwap teardown.
-        var _moreHoverTimer = null, _moreLeaveTimer = null;
-        function _scheduleMoreClose() {
-            clearTimeout(_moreLeaveTimer);
-            _moreLeaveTimer = setTimeout(function() {
-                if (activePopup && !activePopup._pinned) closePopup();
-            }, 260);
-        }
-        function openQubitMore(n, anchorEl, pinned) {
+        // Full details are built only after an explicit Expand press.
+        function openQubitMore(n, anchorEl) {
             closePopup();
             var popup = document.createElement('div');
             popup.className = 'topo-card-popup';
-            var html = '<div class="topo-popup-header"><span>' + n.id + ' \u2014 details</span>'
-                + '<button class="topo-popup-close">\u2715</button></div>';
+            var html = '<div class="topo-popup-header"><span>' + _esc(n.id) + ' \u2014 details</span>'
+                + '<button type="button" class="topo-popup-close" aria-label="Close details">\u2715</button></div>';
+            html += '<div class="topo-detail-values">';
             SECONDARY_PROPS.forEach(function(p) {
                 // '—', not Python's None spelled out — see the heatmap note.
-                html += _propRowHtml(n, p, '—');
+                var row = _propRowHtml(n, p, '—');
+                if (/fidelity/.test(p.key) && typeof _mv(n, p.key) === 'number') {
+                    row = row.replace('</span></div>', ' %</span></div>');
+                }
+                html += row;
             });
+            html += '</div>';
             // Per-metric recency: the 1Q gate fidelity carries its own measurement
             // time — show it honestly (only metric on the qubit that has one).
             var gfRec = n.metrics && n.metrics.gate_fidelity_avg;
@@ -2310,10 +2249,8 @@ window.ChipStatus.mount = function (opts) {
                     + _ageClass(gfRec.updated_at) + '">gate fidelity measured ' + _ageLabel(gfRec.updated_at) + '</span></div>';
             }
             popup.innerHTML = html;
-            popup.querySelector('.topo-popup-close').addEventListener('click', function(ev) { ev.stopPropagation(); closePopup(); });
-            popup._pinned = !!pinned;
-            popup.addEventListener('mouseenter', function() { clearTimeout(_moreLeaveTimer); });
-            popup.addEventListener('mouseleave', _scheduleMoreClose);
+            popup.querySelector('.topo-popup-close').addEventListener('click', function(ev) { ev.stopPropagation(); window.TopoGraph.closeDetails(); });
+            popup._closeDetail = closePopup;
             activePopup = popup;
             positionPopup(popup, anchorEl);
 
@@ -2338,6 +2275,7 @@ window.ChipStatus.mount = function (opts) {
                             // "Try again" (read once per press, never an automatic re-ask);
                             // the answer is wrapped so the press can replace all of it
                             var box = document.createElement('div');
+                            box.className = 'topo-detail-trends';
                             nodes.forEach(function (nd) { box.appendChild(nd); });
                             sparkSlot.replaceWith(box);
                             var again = box.querySelector('[data-vh-try-again]');
@@ -2360,7 +2298,7 @@ window.ChipStatus.mount = function (opts) {
         // Same singleton + positioning + teardown as the qubit popup; the
         // pair flavor renders the edge payload the topology already carries
         // (2Q fidelities per gate, detuning, coupler offsets, roles).
-        function openPairPopup(e, anchorEl, pinned) {
+        function openPairPopup(e, anchorEl) {
             closePopup();
             var popup = document.createElement('div');
             popup.className = 'topo-pair-popup';
@@ -2374,7 +2312,7 @@ window.ChipStatus.mount = function (opts) {
             var html = '<div class="topo-popup-header"><span>' + _esc(e.pair_id)
                 + (kind ? ' <span class="topo-popup-kind">' + kind + '</span>' : '')
                 + (e.active === false ? ' <span class="topo-popup-kind topo-popup-off">off</span>' : '')
-                + '</span><button class="topo-popup-close">✕</button></div>';
+                + '</span><button type="button" class="topo-popup-close" aria-label="Close details">✕</button></div>';
 
             // docs/138 — these rows do NOT all measure the same thing, and
             // stacking them under one "Gate fidelity" heading said they did.
@@ -2420,6 +2358,11 @@ window.ChipStatus.mount = function (opts) {
                          + _ageClass(e.cz_fidelity_updated_at) + '">measured '
                          + _ageLabel(e.cz_fidelity_updated_at) + '</span></div>';
                 }
+                // Which run set the number: only when the run recorded its own
+                // id beside that very metric (never a neighbouring metric's run).
+                if (e.cz_fidelity_run != null) {
+                    html += row('set by run', '#' + _esc(e.cz_fidelity_run));
+                }
                 html += '</div>';
             }
             // A separate section, because these are fit parameters rather than
@@ -2454,17 +2397,48 @@ window.ChipStatus.mount = function (opts) {
                 html += '<div class="topo-popup-section">'
                      + '<div class="topo-popup-section-title">Parameters</div>' + parRows + '</div>';
             }
-            if (!fidRows && !parRows) {
+            // The 2Q gate's operating point(s): one row group per gate macro
+            // that records a flux pulse (amplitude in V, lengths in ns).
+            var opRows = '';
+            (e.gate_details || []).forEach(function(g) {
+                var bits = [];
+                if (typeof g.amplitude === 'number') bits.push('amp ' + g.amplitude.toFixed(4) + ' V');
+                if (typeof g.coupler_amp === 'number') bits.push('coupler ' + g.coupler_amp.toFixed(4) + ' V');
+                if (typeof g.length === 'number') bits.push(Math.round(g.length) + ' ns');
+                if (!bits.length) return;
+                opRows += row(_esc(g.name), bits.join(' \u00b7 '), e.best_gate && g.name === e.best_gate);
+            });
+            if (opRows) {
+                html += '<div class="topo-popup-section">'
+                     + '<div class="topo-popup-section-title">Operating point</div>' + opRows + '</div>';
+            }
+            if (!fidRows && !parRows && !opRows) {
                 html += '<div class="topo-popup-section muted">no recorded pair data</div>';
             }
+            if (typeof e.last_calibrated === 'number') {
+                html += '<div class="topo-popup-section">'
+                     + row('last calibrated', '<span class="topo-recency ' + _ageClass(e.last_calibrated) + '">'
+                           + _ageLabel(e.last_calibrated) + '</span>') + '</div>';
+            }
+            var pidQ = encodeURIComponent(e.pair_id);
+            html += '<div class="topo-popup-links">'
+                 + (e.has_cz ? '<a href="/cz-plan?pair=' + pidQ + '" hx-get="/cz-plan?pair=' + pidQ
+                    + '" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"'
+                    + ' class="topo-popup-link">CZ gate plan \u2192</a>' : '')
+                 + '<button type="button" class="topo-popup-link topo-popup-inspect">Pair inspector \u2192</button>'
+                 + '</div>';
 
             popup.innerHTML = html;
-            popup.querySelector('.topo-popup-close').addEventListener('click', function(ev) {
-                ev.stopPropagation(); closePopup();
+            if (window.htmx && htmx.process) htmx.process(popup);
+            popup.querySelector('.topo-popup-inspect').addEventListener('click', function(ev) {
+                ev.stopPropagation();
+                window.TopoGraph.closeDetails();
+                if (window._inspectPair) window._inspectPair(e.pair_id);
             });
-            popup._pinned = !!pinned;
-            popup.addEventListener('mouseenter', function() { clearTimeout(_moreLeaveTimer); });
-            popup.addEventListener('mouseleave', _scheduleMoreClose);
+            popup.querySelector('.topo-popup-close').addEventListener('click', function(ev) {
+                ev.stopPropagation(); window.TopoGraph.closeDetails();
+            });
+            popup._closeDetail = closePopup;
             activePopup = popup;
             positionPopup(popup, anchorEl);
         }
@@ -2474,8 +2448,6 @@ window.ChipStatus.mount = function (opts) {
         _sharedQubitPopup = {
             open: openQubitMore,
             openPair: openPairPopup,
-            scheduleClose: _scheduleMoreClose,
-            cancelClose: function() { clearTimeout(_moreHoverTimer); clearTimeout(_moreLeaveTimer); },
             current: function() { return activePopup; },   // QA chipstatus-r2-22
         };
     })();
@@ -2903,11 +2875,63 @@ window.ChipStatus.mount = function (opts) {
                 return { x: mx + (sd.sx > 0 ? gapH : -gapH), y: my + 0.36 * fs,
                          cls: sd.sx > 0 ? ' topo-hero-lbl-start' : ' topo-hero-lbl-end' };
             }
+            // Pairs as first-class objects: a midpoint badge (name + the 2Q
+            // gate fidelity when the chip holds one), coloured on the same
+            // chip-relative scale the 2Q metric paints edges with; no value
+            // means the neutral no-data colour, never an invented one.
+            var badgeSvg = '';
+            var _badgeDone = {}, _badgeHalfBy = {};
+            var _czAgg = computeAggregates(topo.edges.map(function(e) { return _mv(e, 'cz_fidelity'); }));
+            var _denseChip = topo.nodes.length >= 16;
+            var _badgeFs = compactMode ? 10 : 8.5;
+            function _pairStale(ms) { return _ageClass(ms) === 'fail'; }
+            function _pairKey(e) {
+                return String(e.source) < String(e.target)
+                    ? e.source + '|' + e.target : e.target + '|' + e.source;
+            }
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
+                var pst = TG.pairState({ cz_fidelity: _mv(e, 'cz_fidelity'), has_cz: e.has_cz,
+                                         gate_kind: e.gate_kind,
+                                         cz_fidelity_updated_at: e.cz_fidelity_updated_at }, _pairStale);
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
                 var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
+                var bKey = _pairKey(e);
+                var badgeHalf = _badgeHalfBy[bKey] || 0;
+                if (!_badgeDone[bKey]) {
+                    _badgeDone[bKey] = true;
+                    var bL = Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+                    var bHoriz = Math.abs(x2 - x1) >= Math.abs(y2 - y1);
+                    var bRoom = Math.max(0, bL - 2 * R - 2 * _roleR - 4);
+                    var bFill = dCfg.nullCellColor, bFg = null;
+                    // In an edge-metric view the edge already prints the
+                    // selected value, so the badge carries the name only.
+                    var bVal = (!edgeMode && pst.value != null) ? fmtPct(pst.value, 1) + '%' : null;
+                    if (pst.value != null) {
+                        var bt = _czAgg.count < 2 ? 0.5
+                               : (pst.value - _czAgg.min) / ((_czAgg.max - _czAgg.min) || 1);
+                        bFill = interpolateColor(bt, dCfg.colorScale);
+                        bFg = textColorForBg(bFill);
+                    }
+                    var bTitle = e.pair_id
+                        + (pst.value != null ? ' \u2014 2Q gate fidelity ' + fmtPct(pst.value, 2) + '%'
+                           : (pst.state === 'pending' ? ' \u2014 2Q gate defined, not measured' : ''))
+                        + (pst.stale ? ' (measured ' + _ageLabel(e.cz_fidelity_updated_at) + ')' : '');
+                    var badge = TG.pairBadgeSvg({
+                        x: (x1 + x2) / 2, y: (y1 + y2) / 2,
+                        name: TG.quamPairId([e.source, e.target]),
+                        valueText: bVal, fontSize: _badgeFs, fill: bFill, fg: bFg,
+                        state: pst.state + (pst.stale ? ' topo-pair-badge-stale' : ''),
+                        dense: _denseChip,
+                        room: bHoriz ? bRoom : 1e9, roomAcross: bHoriz ? 1e9 : bRoom,
+                        attrs: ' data-hero-pair="' + _esc(e.pair_id) + '" tabindex="-1"'
+                             + ' data-link-ends="' + _esc(e.source + ' ' + e.target) + '"',
+                        title: bTitle,
+                    });
+                    badgeSvg += badge.svg;
+                    if (!badge.dense) badgeHalf = _badgeHalfBy[bKey] = (bHoriz ? badge.height : badge.width) / 2 + 2;
+                }
                 if (!edgeMode && mCur.edgeDelta) {
                     var dKey = String(e.source) < String(e.target)
                         ? e.source + '|' + e.target : e.target + '|' + e.source;
@@ -2930,7 +2954,7 @@ window.ChipStatus.mount = function (opts) {
                             // QA F-26: beside the bar (a CR pair's two lines
                             // sit ±6 off the centre line), never on it
                             var dSd = _heroLabelSide(e, x1, y1, x2, y2);
-                            var dBar = (_edgePaint(e).width + 3) / 2 + (e.directed ? 6 : 0);
+                            var dBar = Math.max((_edgePaint(e).width + 4) / 2 + (e.directed ? 6 : 0), badgeHalf);
                             if (Math.abs(x2 - x1) >= Math.abs(y2 - y1)) {
                                 // A HORIZONTAL edge has only the stone gap
                                 // to write in, so the label stacks: the metric over
@@ -2985,16 +3009,22 @@ window.ChipStatus.mount = function (opts) {
                     }
                 } else {
                     var ep = _edgePaint(e);
-                    stroke = ep.color; width = ep.width + 3;
+                    stroke = ep.color; width = ep.width + 4;
                 }
+                // solid = measured, dashed = a 2Q gate with no measurement,
+                // dotted = no 2Q gate; a value older than the chip's age rule fades
+                var dash = pst.state === 'pending' ? ' stroke-dasharray="7 5"'
+                         : (pst.state === 'none' ? ' stroke-dasharray="2 6"' : '');
                 var tt = e.pair_id + (e.cz_fidelity != null ? ' — ' + (e.cz_fidelity * 100).toFixed(1) + '%' : '')
                        + (e.active === false ? ' · off' : '');
                 var coords = ' x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"';
                 var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-                svg += '<g class="topo-hero-edge" data-hero-pair="' + _esc(e.pair_id) + '"'
+                svg += '<g class="topo-hero-edge topo-hero-edge-' + pst.state + (pst.stale ? ' topo-hero-edge-stale' : '')
+                     + '" data-hero-pair="' + _esc(e.pair_id) + '"'
+                     + ' data-link-ends="' + _esc(e.source + ' ' + e.target) + '"'
                      + (e.active === false ? ' opacity="0.35"' : '') + '>'
-                     + '<line' + coords + ' stroke="' + stroke + '" stroke-width="' + width
-                     + '" stroke-linecap="round"/>'
+                     + '<line class="topo-hero-edge-line"' + coords + ' stroke="' + stroke + '" stroke-width="' + width
+                     + '" stroke-linecap="round"' + dash + '/>'
                      + '<line class="topo-hero-edge-hit"' + coords + ' stroke="transparent" stroke-width="22">'
                      + '</line><title>' + _esc(tt) + '</title></g>';
                 // docs/126: the value draws in a TOP layer, after the stones
@@ -3007,7 +3037,7 @@ window.ChipStatus.mount = function (opts) {
                 } else if (evTxt != null) {
                     // QA F-26: beside the 9px bar, clear of C/T (and M)
                     var eAt = _heroLabelAt(_heroLabelSide(e, x1, y1, x2, y2), mx, my,
-                                           width / 2, _lblFs.eval, String(evTxt).length, 0);
+                                           Math.max(width / 2, badgeHalf), _lblFs.eval, String(evTxt).length, 0);
                     evalSvg += '<text class="topo-hero-eval' + eAt.cls + '" x="' + eAt.x
                         + '" y="' + eAt.y + '">'
                         + _esc(evTxt) + '</text>';
@@ -3038,6 +3068,7 @@ window.ChipStatus.mount = function (opts) {
                     // The edges carry the numbers — stones go neutral so the
                     // painted edges read as the subject, not the background.
                     svg += '<g class="topo-hero-node topo-hero-node-neutral" data-hero-qubit="' + _esc(n.id)
+                         + '" data-link-id="' + _esc(n.id)
                          + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
                          + '<circle class="topo-hero-stone" r="' + R + '"'
                          + (o.shared ? ' stroke-dasharray="3 2"' : '') + '></circle>'
@@ -3051,6 +3082,7 @@ window.ChipStatus.mount = function (opts) {
                 // across the map even where one qubit's sub is missing).
                 var subMode = !!mCur.subKey;
                 svg += '<g class="topo-hero-node' + (pt.cls ? ' ' + pt.cls : '') + '" data-hero-qubit="' + _esc(n.id)
+                     + '" data-link-id="' + _esc(n.id)
                      + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
                      + '<circle class="topo-hero-stone" r="' + R + '"'
                      + (pt.fill ? ' style="fill:' + pt.fill + '"' : '')
@@ -3078,9 +3110,20 @@ window.ChipStatus.mount = function (opts) {
                 + (compactMode ? ' hero-compact' : '') + '" width="' + W + '" height="' + H
                 + '" viewBox="0 0 ' + W + ' ' + H + '"'
                 + ' style="width:' + Math.round(zoom * 100) + '%">'
-                + svg + glyphSvg + evalSvg + '</svg></div></div>'
+                + svg + glyphSvg + evalSvg + '<g class="topo-pair-badges">' + badgeSvg + '</g></svg></div></div>'
                 + legendHtml(current);
+            if (TG.closeDetails) TG.closeDetails();
             bindHover();
+            if (TG.bindLinked) TG.bindLinked(host);
+            // At a zoom where the pill text would be too small to read, every
+            // badge falls back to its dot (the pill still opens on hover).
+            var _svgEl = host.querySelector('.topo-hero-svg');
+            var _scale = _svgEl && _svgEl.getBoundingClientRect().width / W;
+            if (_scale && _badgeFs * _scale < 7) {
+                host.querySelectorAll('.topo-pair-badge').forEach(function(bg) {
+                    bg.classList.add('topo-pair-badge-dense');
+                });
+            }
         }
 
         // Delegated clicks (bound ONCE on the host — innerHTML re-renders keep
@@ -3154,93 +3197,19 @@ window.ChipStatus.mount = function (opts) {
             });
         }
 
-        // Hover -> the SHARED qubit popup (property rows + sparklines) through
-        // the bridge; intent delay + grace like the cards. Skipped on touch.
-        var _coarseHero = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-        var _heroHoverTimer = null;
+        // Hover and focus offer only Expand; details require an explicit press.
         function bindHover() {
-            if (_coarseHero) return;
-            var nodesById = {};
-            topo.nodes.forEach(function(n) { nodesById[n.id] = n; });
-            var edgesById = {};
-            topo.edges.forEach(function(e) { edgesById[e.pair_id] = e; });
-            /* QA chipstatus-r2-22: the popup opens BESIDE its stone and, at Fit
-               zoom, over the next one -- so moving from q1 to q2 landed on q1's
-               popup and q2's never opened. The popup stays a real surface (it
-               scrolls when taller than the pane, QA F-12, and its rows carry
-               tooltips), so it is not made click-through; instead the pointer
-               resting over another stone THROUGH it is hovering that stone:
-               the same 260 ms intent, then that stone's details replace these.
-               Off the stones the popup is the popup, as before. */
-            var _handTo = null;
-            function _openHero(g) {
-                _handTo = null;
+            if (!_sharedQubitPopup) return;
+            var nodes = {}, edges = {};
+            topo.nodes.forEach(function(n) { nodes[n.id] = n; });
+            topo.edges.forEach(function(e) { edges[e.pair_id] = e; });
+            TG.bindDetails(host, '[data-hero-qubit], [data-hero-pair]', function(g) {
+                return g.getAttribute('data-hero-qubit') || g.getAttribute('data-hero-pair');
+            }, function(g) {
                 var qid = g.getAttribute('data-hero-qubit');
-                if (qid) {
-                    var n = nodesById[qid];
-                    if (n) _sharedQubitPopup.open(n, g, false);
-                } else {
-                    var e = edgesById[g.getAttribute('data-hero-pair')];
-                    if (e && _sharedQubitPopup.openPair) _sharedQubitPopup.openPair(e, g, false);
-                }
-                var pop = _sharedQubitPopup.current && _sharedQubitPopup.current();
-                if (!pop || pop._heroAnchor) return;
-                pop._heroAnchor = g;
-                pop.addEventListener('mousemove', _handOff);
-                pop.addEventListener('mouseleave', function() {
-                    if (_handTo) { _handTo = null; clearTimeout(_heroHoverTimer); }
-                });
-            }
-            function _handOff(ev) {
-                var pop = ev.currentTarget, hit = null;
-                var els = document.elementsFromPoint ? document.elementsFromPoint(ev.clientX, ev.clientY) : [];
-                for (var i = 0; i < els.length; i++) {
-                    if (els[i] === pop || pop.contains(els[i])) continue;
-                    // the first thing UNDER the popup, and only a stone of this map
-                    var h = els[i].closest && els[i].closest('[data-hero-qubit]');
-                    if (h && host.contains(h) && h !== pop._heroAnchor) hit = h;
-                    break;
-                }
-                if (hit === _handTo) return;
-                _handTo = hit;
-                clearTimeout(_heroHoverTimer);
-                if (!hit) return;
-                _heroHoverTimer = setTimeout(function() {
-                    if (_handTo === hit && hit.isConnected) _openHero(hit);
-                }, 260);
-            }
-            // a stone whose popup is already up (just handed off to, or
-            // re-entered from its own popup) keeps it rather than re-opening it
-            function _showing(g) {
-                var cur = _sharedQubitPopup.current && _sharedQubitPopup.current();
-                return !!(cur && cur.isConnected && cur._heroAnchor === g);
-            }
-            host.querySelectorAll('[data-hero-qubit]').forEach(function(g) {
-                g.addEventListener('mouseenter', function() {
-                    if (!_sharedQubitPopup) return;
-                    _sharedQubitPopup.cancelClose();
-                    clearTimeout(_heroHoverTimer);
-                    if (_showing(g)) return;
-                    _heroHoverTimer = setTimeout(function() { _openHero(g); }, 260);
-                });
-                g.addEventListener('mouseleave', function() {
-                    clearTimeout(_heroHoverTimer);
-                    if (_sharedQubitPopup) _sharedQubitPopup.scheduleClose();
-                });
-            });
-            // docs/126 ②: pairs hover too — same singleton popup, pair flavor.
-            host.querySelectorAll('[data-hero-pair]').forEach(function(g) {
-                g.addEventListener('mouseenter', function() {
-                    if (!_sharedQubitPopup || !_sharedQubitPopup.openPair) return;
-                    _sharedQubitPopup.cancelClose();
-                    clearTimeout(_heroHoverTimer);
-                    if (_showing(g)) return;
-                    _heroHoverTimer = setTimeout(function() { _openHero(g); }, 260);
-                });
-                g.addEventListener('mouseleave', function() {
-                    clearTimeout(_heroHoverTimer);
-                    if (_sharedQubitPopup) _sharedQubitPopup.scheduleClose();
-                });
+                if (qid) _sharedQubitPopup.open(nodes[qid], g);
+                else _sharedQubitPopup.openPair(edges[g.getAttribute('data-hero-pair')], g);
+                return _sharedQubitPopup.current();
             });
         }
 
@@ -6340,7 +6309,7 @@ window.ChipStatus.mount = function (opts) {
         function onKey(e) {
             var t = e.target;
             // Esc closes popup / JSON panel anywhere on the page (but let inputs keep their own Esc).
-            if (e.key === 'Escape' && !(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable))) {
+            if (e.key === 'Escape' && !e._topoDetail && !(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable))) {
                 // Close the hover/pinned popup via the DOM — `activePopup`/`closePopup`
                 // live inside the buildTopology IIFE and are NOT in this handler's
                 // scope, so referencing them here threw `ReferenceError: activePopup
