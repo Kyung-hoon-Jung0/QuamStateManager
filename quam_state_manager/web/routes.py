@@ -11059,7 +11059,6 @@ def state_recovery_restore():
         # v1.5.1 (r6): a row the field already holds is either the same edit
         # already in the tray or a value already on the chip -- the answer
         # says which (both used to read "the chip already holds these values")
-        in_tray = {e.dot_path for e in modifier.store.change_log}
         collide = [i for i in plan if i["status"] == pending_tray.PLAN_COLLIDE]
         missing = [i for i in plan if i["status"] == pending_tray.PLAN_MISSING]
         if (collide or missing) and not force:
@@ -11094,8 +11093,9 @@ def state_recovery_restore():
     same = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_SAME]
     skipped = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_MISSING]
     n = len(staged)
-    n_tray = sum(1 for p in same if p in in_tray)
-    n_chip = len(same) - n_tray
+    n_tray = sum(i.get("held") == pending_tray.HELD_TRAY for i in plan)
+    n_chip = sum(i.get("held") == pending_tray.HELD_CHIP for i in plan)
+    n_restore = sum(i.get("held") == pending_tray.HELD_RESTORE for i in plan)
     saved = bool(ctx.get("working_dirty"))
     where = "in SM's saved working copy" if saved else "on the live chip"
     # v1.5.1 (MINOR 6): with Auto-Sync push armed, staged rows are written at once
@@ -11107,6 +11107,8 @@ def state_recovery_restore():
             msg += f" {n_tray} already in the tray."
         if n_chip:
             msg += f" {n_chip} already {where}."
+        if n_restore:
+            msg += f" {n_restore} matched an earlier restored edit."
     elif same and not n_chip:
         msg = ("Nothing to restore: "
                + ("these edits are" if n_tray != 1 else "this edit is")

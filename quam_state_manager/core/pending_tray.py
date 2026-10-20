@@ -1339,7 +1339,7 @@ def _describe(path: Path, wc) -> dict:
     for e in raw:
         if isinstance(e, dict) and isinstance(e.get("dot_path"), str) and e["dot_path"]:
             out["rows"].append({
-                "path": e["dot_path"], "old": e.get("old_value"),
+                "path": e["dot_path"], "source_file": e.get("source_file"), "old": e.get("old_value"),
                 "new": e.get("new_value"),
                 "created": e.get("created") is True, "deleted": e.get("deleted") is True})
     reason = header_problem(doc, wc)
@@ -1394,41 +1394,23 @@ def unrecovered(wc) -> list[dict]:
 
 
 #: v1.5.1 (r6): where SM already holds a refused checkpoint's row
-HELD_TRAY, HELD_CHIP = "tray", "chip"
+HELD_TRAY, HELD_CHIP, HELD_RESTORE = "tray", "chip", "restore"
 
 
 def held_rows(store, rows) -> list[str | None]:
-    """Per row of a refused checkpoint (the row dicts :func:`unrecovered`
-    lists, or ChangeEntry rows): ``"tray"`` when the field already has the
-    row's value and the tray holds an unapplied edit of that path (the same
-    edit is already staged), ``"chip"`` when the field already has it with no
-    tray row on the path (the chip as SM last synced it), None when restoring
-    the row would change something. "Already has it" is the judgement
-    :func:`restore_plan` calls ``same``."""
-    def field(r, name, attr):
-        return r.get(name) if isinstance(r, dict) else getattr(r, attr, None)
-    out: list[str | None] = []
+    """Per-row provenance from the same ordered plan Restore stages."""
+    decoded = [ChangeEntry(dot_path=r["path"], old_value=r.get("old"),
+                           new_value=r.get("new"), source_file=r.get("source_file", "state"),
+                           created=r.get("created") is True, deleted=r.get("deleted") is True)
+               if isinstance(r, dict) else r for r in rows]
     with store._lock:
-        tray = {e.dot_path for e in store.change_log}
-        root = store.merged
-        for r in rows:
-            path = field(r, "path", "dot_path")
-            if not isinstance(path, str) or not path:
-                out.append(None)
-                continue
-            current, present = _current(root, path)
-            if field(r, "deleted", "deleted") is True:
-                same = not present
-            else:
-                same = present and _canon(current) == _canon(field(r, "new", "new_value"))
-            out.append((HELD_TRAY if path in tray else HELD_CHIP) if same else None)
-    return out
+        return [item.get("held") for item in restore_plan(store, decoded)]
 
 
 def with_held(store, listed: list[dict]) -> list[dict]:
     """:func:`unrecovered` with each row's ``held`` (:func:`held_rows`) and,
     per checkpoint, ``pending`` (rows a Restore would still stage),
-    ``held_tray`` / ``held_chip`` and ``settled`` (restorable, and every row
+    ``held_tray`` / ``held_chip`` / ``held_restore`` and ``settled`` (restorable, and every row
     already held: nothing to restore). New dicts; the listing's cache is
     never mutated. A checkpoint that is not restorable is never settled."""
     out = []
@@ -1436,9 +1418,10 @@ def with_held(store, listed: list[dict]) -> list[dict]:
         rows = d.get("rows") or []
         held = held_rows(store, rows) if (d.get("restorable") and rows) else [None] * len(rows)
         n_tray, n_chip = held.count(HELD_TRAY), held.count(HELD_CHIP)
-        pending = len(rows) - n_tray - n_chip
+        n_restore = held.count(HELD_RESTORE)
+        pending = len(rows) - n_tray - n_chip - n_restore
         out.append(dict(d, rows=[dict(r, held=h) for r, h in zip(rows, held)],
-                        pending=pending, held_tray=n_tray, held_chip=n_chip,
+                        pending=pending, held_tray=n_tray, held_chip=n_chip, held_restore=n_restore,
                         settled=bool(d.get("restorable") and rows and not pending)))
     return out
 
@@ -1546,6 +1529,9 @@ def restore_plan(store, rows: list[ChangeEntry]) -> list[dict]:
     scratch = QuamStore.from_dicts(*_copy_docs(store))
     mod = Modifier(scratch)
     plan = []
+    staged_paths = []
+    clean_root = None
+    clean_checked = False
     for r in rows:
         current, present = _current(scratch.merged, r.dot_path)
         item = {"path": r.dot_path, "old": r.old_value, "new": r.new_value,
@@ -1572,6 +1558,23 @@ def restore_plan(store, rows: list[ChangeEntry]) -> list[dict]:
                                    f"not {r.source_file}.json")
             except Exception as exc:  # noqa: BLE001 -- named, never raised
                 status, item["why"] = PLAN_MISSING, str(exc)
+        if status == PLAN_SAME:
+            if any(r.dot_path == path or r.dot_path.startswith(path + ".")
+                   or path.startswith(r.dot_path + ".") for path in staged_paths):
+                item["held"] = HELD_RESTORE
+            else:
+                if not clean_checked:
+                    clean = QuamStore.from_dicts(*_copy_docs(store))
+                    clean.change_log = _rows_of([copy.deepcopy(_row_doc(e)) for e in store.change_log])
+                    failures = Modifier(clean)._rollback(list(clean.change_log))
+                    clean_root = None if failures else clean.merged
+                    clean_checked = True
+                value, exists = _current(clean_root, r.dot_path)
+                on_chip = (not exists if r.deleted else
+                           exists and _canon(value) == _canon(r.new_value))
+                item["held"] = HELD_CHIP if clean_root is not None and on_chip else HELD_TRAY
+        elif status in (PLAN_OK, PLAN_COLLIDE):
+            staged_paths.append(r.dot_path)
         item["status"] = status
         plan.append(item)
     return plan

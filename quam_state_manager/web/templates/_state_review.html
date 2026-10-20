@@ -95,12 +95,12 @@
     <div class="sp-unrec-why">Nothing to restore: every row already has its value {% if not u.held_chip %}in the tray (not on the live chip yet){% elif not u.held_tray %}{{ _held_where('chip') }}{% else %}in the tray or {{ _held_where('chip') }}{% endif %}. Not restored automatically: {{ u.reason }}.</div>
     {% else %}
     <div class="sp-unrec-head"><b>{{ u.pending if u.pending is defined else _un }} staged edit{{ 's' if (u.pending if u.pending is defined else _un) != 1 }} not recovered</b>{% if u.pending is defined and u.pending != _un %}
-      <span class="muted">of {{ _un }}; {{ _un - u.pending }} already held</span>{% endif %}
+      <span class="muted">of {{ _un }}; {{ u.held_tray + u.held_chip }} already held{% if u.held_restore %}; {{ u.held_restore }} match earlier recovered edits{% endif %}</span>{% endif %}
       <span class="muted">{{ u.saved_at }}</span></div>
     <div class="sp-unrec-why">Not restored automatically: {{ u.reason }}.</div>
     {% endif %}
     {% if u.rows %}<table class="sp-diff sp-unrec-rows"><tbody>
-      {% for r in u.rows[:8] %}<tr><td><code>{{ r.path }}</code>{% if r.held %} <small class="sp-unrec-held muted">already {{ _held_where(r.held) }}</small>{% endif %}</td>
+      {% for r in u.rows[:8] %}<tr><td><code>{{ r.path }}</code>{% if r.held %} <small class="sp-unrec-held muted">{% if r.held == 'restore' %}matches an earlier recovered edit{% else %}already {{ _held_where(r.held) }}{% endif %}</small>{% endif %}</td>
         <td class="sp-val">{% if r.deleted %}delete{% else %}{{ r.new | tojson | truncate(40, true, '…') }}{% endif %}</td>
         <td class="sp-val muted">{% if not r.created %}was {{ r.old | tojson | truncate(30, true, '…') }}{% else %}new{% endif %}</td></tr>{% endfor %}
       {% if (u.rows | length) > 8 %}<tr><td colspan="3" class="muted">and {{ (u.rows | length) - 8 }} more</td></tr>{% endif %}
