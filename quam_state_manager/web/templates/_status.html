@@ -2,7 +2,7 @@
    result banners with no way to close them ("there should at least be an X"). #}
 {#- v1.5.1 (r6 P2-6): a failed live write's notice carries when a live write last
     landed, as of the failure; app.js takes it down once a later one landed -#}
-<div class="toast toast-{{ level }}" style="transition: opacity 0.5s;"{% if live_fail_at is defined and live_fail_at is not none %} data-live-write-failed="{{ live_fail_at }}"{% endif %}>
+<div class="toast toast-{{ level }}" style="transition: opacity 0.5s;"{% if live_fail_at is defined and live_fail_at is not none %} data-live-write-failed="{{ live_fail_at }}" data-live-write-failed-chip="{{ live_fail_chip | default('') }}"{% endif %}>
     <p>{{ message }}</p>
     {#- v1.5.1 (U P1-6): the OS error (Errno, a .tmp path) on its own line -#}
     {% if detail is defined and detail %}<p class="toast-detail">Details: {{ detail }}</p>{% endif %}

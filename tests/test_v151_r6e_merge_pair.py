@@ -46,7 +46,8 @@ def test_unreadable_verdict_refuses_without_pulling(chip, monkeypatch, automatic
         assert ctx.get("auto_apply") and "resolving this" not in b["tray_html"]
 
 
-@pytest.mark.parametrize("mode,stash", [("apply", False), ("apply", True), ("reapply", False)])
+# v1.5.1 (r6): three replay doors -> include Auto-Sync's reapply stash door.
+@pytest.mark.parametrize("mode,stash", [("apply", False), ("apply", True), ("reapply", False), ("reapply", True)])
 def test_collision_is_checked_on_the_pair_actually_pulled(chip, monkeypatch, mode, stash):
     c, live = chip
     ctx = _ctx(c)
@@ -119,3 +120,20 @@ def test_midwrite_never_replaces_live_value_unasked(chip, attempt):
     assert b["status"] in ("error", "collision"), b
     assert _live(live)["T1"] == value
     assert [e.dot_path for e in _ctx(c)["store"].change_log] == ["qubits.q1.T1"]
+
+
+@pytest.mark.parametrize("mode,stash", [("apply", False), ("apply", True), ("reapply", False), ("reapply", True)])
+def test_flagless_different_field_write_merges_silently(chip, mode, stash):
+    c, live = chip
+    if stash:
+        with c.application.app_context():
+            routes._stash_reapply({"qubits.q1.T1": 3e-5}, _ctx(c))
+    _lab_writes(live, f01=5.05e9)
+    answer = c.post("/state/sync", data={"mode": mode}).get_json()
+    assert answer["status"] == "ok", answer
+    if mode == "reapply":
+        assert _live(live)["T1"] == 1e-5, "reapply leaves the edits pending"
+        answer = c.post("/state/sync", data={"mode": "apply"}).get_json()
+        assert answer["status"] == "ok", answer
+    assert _live(live)["T1"] == 3e-5
+    assert _live(live)["f_01"] == 5.05e9

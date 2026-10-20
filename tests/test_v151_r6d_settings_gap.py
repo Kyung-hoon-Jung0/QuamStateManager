@@ -32,18 +32,19 @@ def test_worker_bridges_a_real_rename_gap(tmp_path, monkeypatch):
     assert ran == [False], "worker substituted operational defaults during the rename gap"
 
 
-def test_configured_absence_refuses_reads_and_saves(tmp_path, monkeypatch):
+def test_configured_absence_refuses_reads_until_saved(tmp_path, monkeypatch):
     scope = tmp_path / "scope"
     scheduler.save_settings(scope, {"global_simulate": False})
     target = scheduler.settings_path(scope)
     target.unlink()
     monkeypatch.setattr(safe_io, "_READ_BACKOFF_S", 0)
-    for operation in (lambda: scheduler.load_settings(scope, strict=True),
-                      lambda: scheduler.save_settings(scope, {"failure_policy": "continue"})):
-        with pytest.raises(scheduler.SettingsUnreadable) as caught:
-            operation()
-        assert str(target) in str(caught.value)
+    # v1.5.1 (r6): missing-file save refuses -> recovers, because saving is explicit recovery.
+    with pytest.raises(scheduler.SettingsUnreadable) as caught:
+        scheduler.load_settings(scope, strict=True)
+    assert str(target) in str(caught.value)
     assert not target.exists()
+    scheduler.save_settings(scope, {"failure_policy": "continue"})
+    assert target.exists()
 
 
 def test_shared_record_detects_missing_scope_after_process_restart(tmp_path, monkeypatch):
@@ -85,3 +86,6 @@ def test_worker_pauses_when_configured_settings_stay_missing(tmp_path, monkeypat
     run = scheduler.load_queue(tmp_path)["run"]
     assert ran == []
     assert run["status"] == "paused" and "scheduler.json" in run["message"]
+    # v1.5.1 (r6): missing-file retry -> explicit recovery, because retry cannot recreate it.
+    assert "Reset" in run["message"] and "Save settings" in run["message"]
+    assert "retry" not in run["message"]

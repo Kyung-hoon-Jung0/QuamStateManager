@@ -5201,11 +5201,14 @@ def _adopt_extras_data_folders_locked(ctx: dict) -> None:
             ctx.update(extras_data_declared=[], extras_data_roots=[], extras_data_dangling=[])
             return
         resolved: list[str] = []
+        raw_by_root: dict[str, list[str]] = {}
         dangling: list[str] = []
         for raw in declared:
             native = _extras_native(raw)
             if native and Path(native).is_dir():
-                resolved.append(str(Path(native)))
+                root = str(Path(native))
+                resolved.append(root)
+                raw_by_root.setdefault(root, []).append(raw)
             else:
                 dangling.append(raw)
         if not resolved:
@@ -5215,6 +5218,7 @@ def _adopt_extras_data_folders_locked(ctx: dict) -> None:
         ws = _ws()
         existing = {str(p) for p in ws.root_folders}
         added = 0
+        failed = set()
         for root in resolved:
             if root in existing:
                 continue
@@ -5222,7 +5226,10 @@ def _adopt_extras_data_folders_locked(ctx: dict) -> None:
                 ws.add_root(root, defer_parse=True)   # docs/142 listing-first
                 added += 1
             except (OSError, ValueError):
-                raise
+                logger.warning("extras data-folder root registration failed: %s", root, exc_info=True)
+                failed.add(root)
+                dangling.extend(raw_by_root[root])
+        resolved = [root for root in resolved if root not in failed]
         if added:
             _save_workspace_roots()
             current_app.config.pop("dataset_store", None)
@@ -6395,6 +6402,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "live_readonly": bool((_active_ctx() or {}).get("live_readonly_hint")),
         # v1.5.1 (r6 P2-6): and when a live write last landed, same rule
         "live_landed": _live_landed_stamp(),
+        "live_landed_chip": _ctx_chip_key(_active_ctx()) or "",
         "qualibrate_tray": _qualibrate_tray_badge(),
         # docs/63 project lens: the qualibrate project this context operates
         # under (explicitly opened, or reverse-matched from its live folder).
@@ -11274,6 +11282,7 @@ def _render_tray(*, oob: bool) -> str:
         # v1.5.1 (r6 P2-6): when a live write last landed -- a page clears the
         # notice of an earlier failed write once a later one landed
         live_landed=_live_landed_stamp(),
+        live_landed_chip=_ctx_chip_key(_active_ctx()) or "",
         # docs/117: the pill and the behaviour read the SAME attribute on the
         # SAME element, so they cannot disagree; an F5 keeps the truth because
         # the server owns it.
@@ -18233,10 +18242,11 @@ def _restore_failure(message: str, code: str):
     read-only pill raised by the failure shows)."""
     _landed = _live_landed_stamp()     # v1.5.1 (r6 P2-6): see _live_write_landed
     body = render_template("_status.html", message=message, level="error",
-                           live_fail_at=_landed)
+                           live_fail_at=_landed, live_fail_chip=_ctx_chip_key(_active_ctx()) or "")
     resp = make_response(body + "\n" + _tray_oob(), 409)
     resp.headers["X-SM-Error-Code"] = code
     resp.headers["X-SM-Live-Landed"] = str(_landed)
+    resp.headers["X-SM-Live-Landed-Chip"] = _ctx_chip_key(_active_ctx()) or ""
     return resp
 
 
@@ -29665,6 +29675,9 @@ def auto_sync_set():
     return resp
 
 
+_VERDICT_FAILED = object()
+
+
 def _auto_pull_verdict(ctx: dict, dom_paths, live_pair=None) -> "object | None":
     """Which of the user's edits the live chip actually collides with.
 
@@ -29675,36 +29688,39 @@ def _auto_pull_verdict(ctx: dict, dom_paths, live_pair=None) -> "object | None":
     prompts confusing, and the sync control changes under you.
 
     Returns a ``sync_conflict.Verdict``, or None when it could not be computed
-    (a live read failure) -- which the caller must treat as "ask", never as
+    (a live read failure), or _VERDICT_FAILED for a comparison failure.
+    Both failures must be treated as "ask", never as
     "no conflict". The live read is the one this route was about to do anyway.
     """
     from quam_state_manager.core import sync_conflict
     wc, store = ctx.get("working_copy"), ctx.get("store")
     if wc is None or store is None:
-        return None
+        logger.warning("auto-pull verdict failed: missing working copy or store")
+        return _VERDICT_FAILED
     try:
         if live_pair is None:
-            _lp = working_copy.read_live_shared(wc)
+            try:
+                _lp = working_copy.read_live_shared(wc)
+            except (OSError, ValueError, safe_io.LiveFileError):
+                logger.info("auto-pull verdict: live unreadable -- asking instead", exc_info=True)
+                return None
             entries = _working_vs_live_entries(ctx, None, None, _lp)
         else:
             entries = _working_vs_live_entries(ctx, live_pair[0], live_pair[1])
-    except (FileNotFoundError, OSError, ValueError, safe_io.LiveFileError):
-        logger.info("auto-pull verdict: live unreadable -- asking instead")
-        return None
+        live_by_path = sync_conflict.live_view(entries)
+        with store._lock:
+            log = list(getattr(store, "change_log", None) or [])
+        return sync_conflict.classify(
+            live_by_path=live_by_path,
+            change_log=log,
+            dom_paths=dom_paths,
+            reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
+            working_dirty=bool(ctx.get("working_dirty")),
+            reapply_originals=ctx.get("pending_reapply_orig"),
+        )
     except Exception:            # noqa: BLE001 -- a verdict is never worth a 500
         logger.warning("auto-pull verdict failed", exc_info=True)
-        return None
-    live_by_path = sync_conflict.live_view(entries)
-    with store._lock:
-        log = list(getattr(store, "change_log", None) or [])
-    return sync_conflict.classify(
-        live_by_path=live_by_path,
-        change_log=log,
-        dom_paths=dom_paths,
-        reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
-        working_dirty=bool(ctx.get("working_dirty")),
-        reapply_originals=ctx.get("pending_reapply_orig"),
-    )
+        return _VERDICT_FAILED
 
 
 def _live_conflict_204(paths):
@@ -29764,7 +29780,7 @@ def auto_sync_pull():
     _dirty = _quam_ctx_dirty(ctx) or dom_dirty
     if _dirty:
         verdict = _auto_pull_verdict(ctx, dom_paths)
-        if verdict is None or verdict.must_ask:
+        if verdict is None or verdict is _VERDICT_FAILED or verdict.must_ask:
             # THE line docs/87 draws, kept: SM does not choose between the
             # user's work and the live chip. The banner is already showing,
             # and now it can name the fields that actually collide.
@@ -31337,6 +31353,11 @@ def state_take_live_restore():
 
 def _sync_replay_refusal(ctx, verdict, picks, mode):
     """R6e: unknown is a refusal; a collision requires its own answer."""
+    if verdict is _VERDICT_FAILED:
+        return jsonify({
+            "status": "error", "mode": mode, "error_code": "verdict_failed",
+            "message": "SM could not compare your edits with the live chip; nothing was written.",
+        }), 409
     if verdict is None:
         return jsonify({
             "status": "error", "mode": mode, "error_code": "live_busy",
@@ -32090,7 +32111,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                         "detail": _head, "detail_exc": str(exc), "write_outcome": _outcome,
                         "tray_html": _tray_html(),
                         # v1.5.1 (r6 P2-6): a later landing takes the notice down
-                        "live_landed": _live_landed_stamp(ctx)}), 409
+                        "live_landed": _live_landed_stamp(ctx),
+                        "live_landed_chip": _ctx_chip_key(ctx) or ""}), 409
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live (sync) unexpected failure")
         _commit_journal()
@@ -32362,15 +32384,17 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
     if request.headers.get("Accept", "").startswith("application/json"):
         resp = make_response(jsonify(ok=False, error=code, message=message,
                                      tray_html=_tray_html(), live_landed=_landed,
+                                     live_landed_chip=_ctx_chip_key(ctx) or "",
                                      **({"detail": detail} if detail else {})), 409)
     else:
         err = render_template("_status.html", level="error", message=message,
-                              detail=detail, live_fail_at=_landed)
+                              detail=detail, live_fail_at=_landed, live_fail_chip=_ctx_chip_key(ctx) or "")
         body = (_tray_html() + "\n" if tray else "") + \
             f'<div id="status-bar" hx-swap-oob="innerHTML">{err}</div>'
         resp = make_response(body, 409)
     resp.headers["X-SM-Error-Code"] = code
     resp.headers["X-SM-Live-Landed"] = str(_landed)
+    resp.headers["X-SM-Live-Landed-Chip"] = _ctx_chip_key(ctx) or ""
     if auto is not None:
         resp.headers["HX-Trigger"] = json.dumps({"autoApplyDisarm": {"reason": "error"}})
     return resp
@@ -44134,11 +44158,12 @@ def dataset_load_state(uid):
         _landed = _live_landed_stamp()     # v1.5.1 (r6 P2-6): see _live_write_landed
         resp = make_response(render_template(
             "_status.html", message=_fail,
-            level="error", live_fail_at=_landed) + "\n" + _tray_oob()
+            level="error", live_fail_at=_landed, live_fail_chip=_ctx_chip_key(_active_ctx()) or "") + "\n" + _tray_oob()
             + (_diverged_oob() if _outcome == "unknown" else ""), 409)
         resp.headers["X-SM-Error-Code"] = ((body or {}).get("error_code")
                                            or (body or {}).get("conflict") or LIVE_WRITE_FAILED)
         resp.headers["X-SM-Live-Landed"] = str(_landed)
+        resp.headers["X-SM-Live-Landed-Chip"] = _ctx_chip_key(_active_ctx()) or ""
         return resp
 
     msg = render_template(
@@ -47782,6 +47807,10 @@ def _settings_unreadable_body(head: str, exc) -> dict:
     """R3 MINOR 9: a refusal on unreadable Runner settings. A file that is
     only held for a moment says retry; a DAMAGED one (retrying never helps)
     names the file and offers the reset that sets it aside."""
+    if getattr(exc, "missing", False):
+        return {"ok": False, "reason": "settings_unreadable", "error_kind": "missing",
+                "file": getattr(exc, "path", ""), "reset_url": "/scheduler/settings/reset",
+                "error": f"{head}: {exc}. Reset to use defaults, or Save settings to recover."}
     if getattr(exc, "damaged", False):
         return {"ok": False, "reason": "settings_unreadable", "damaged": True,
                 "file": getattr(exc, "path", ""), "reset_url": "/scheduler/settings/reset",
@@ -47800,12 +47829,14 @@ def scheduler_settings_reset():
     if scheduler.is_active(inst):
         return jsonify({"ok": False, "error": "A queue is running: pause or cancel it first."}), 409
     try:
+        missing = not scheduler.settings_path(inst).exists()
         moved = scheduler.reset_damaged_settings(inst)
     except OSError as exc:
         return jsonify({"ok": False, "error": f"The settings file could not be set aside: {exc}"}), 409
     if not moved:
         return jsonify({"ok": True, "set_aside": [],
-                        "message": "No damaged settings file: nothing was changed."})
+                        "message": ("Missing settings reset. Save settings to configure the Runner." if missing
+                                    else "No damaged settings file: nothing was changed.")})
     return jsonify({"ok": True, "set_aside": moved,
                     "message": ("Set aside: " + "; ".join(moved)
                                 + ". The Runner uses the default settings until you save.")})

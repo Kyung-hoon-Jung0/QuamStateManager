@@ -687,9 +687,10 @@
      refusal names it, and one confirm sets it aside (renamed, kept). True when
      the answer was that refusal. */
   function settingsDamaged(r, again) {
-    if (!(r && r.ok === false && r.damaged && r.reset_url)) return false;
+    if (!(r && r.ok === false && (r.damaged || r.error_kind === "missing") && r.reset_url)) return false;
     if (window.confirm((r.error || "The Runner settings file is damaged.")
-        + "\n\nOK = set it aside now and use the default settings.")) {
+        + (r.error_kind === "missing" ? "\n\nOK = Reset to use the default settings."
+           : "\n\nOK = set it aside now and use the default settings."))) {
       postJSON(r.reset_url, {}).then(function (x) {
         var text = (x && (x.message || x.error)) || "The settings file could not be set aside.";
         if (window.showToast) window.showToast(text, x && x.ok ? "info" : "error", x && x.ok ? 0 : -1);

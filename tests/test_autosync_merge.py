@@ -702,14 +702,20 @@ class TestTheMergeIsPinnedToItsChip:
         body = r.get_json() or {}
         assert body.get("chip_mismatch") is True, body
 
-    def test_the_right_token_is_accepted(self, env):
+    @pytest.mark.parametrize("collision", [False, True])
+    def test_the_right_token_is_accepted(self, env, collision):
         # v1.5.1 (r6e): accepted overwrite -> accepted token with a separate collision refusal.
         sig = self._signal(env)
+        # v1.5.1 (r6): collision-only -> also a landed merge, to pin token acceptance.
+        if not collision:
+            _write_chip(env["live"], _state(t1=4e-5))
         r = env["client"].post("/state/sync", data={
             "mode": "apply", "expect_chip": sig["chip"]})
         assert r.status_code == 200, (r.status_code, r.data[:200])
-        assert (r.get_json() or {}).get("status") == "collision", r.get_json()
-        assert _live_f01(env) == 7.7e9
+        assert (r.get_json() or {}).get("status") == ("collision" if collision else "ok"), r.get_json()
+        assert _live_f01(env) == (7.7e9 if collision else 5.1e9)
+        if not collision:
+            assert json.loads((env["live"] / "state.json").read_text())["qubits"]["qA1"]["T1"] == 4e-5
 
     def test_a_caller_naming_nothing_is_judged_as_before(self, env):
         """Back-compatible: every existing presser sends no token."""

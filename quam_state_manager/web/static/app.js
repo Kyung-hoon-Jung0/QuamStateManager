@@ -521,7 +521,8 @@ document.addEventListener('htmx:responseError', function(evt) {
         // v1.5.1 (r6 P2-6): ...until a later live write lands
         var _codeToast = window.showToast ? window.showToast(msg, "error", -1) : null;
         if (window.LiveWriteNotice) {
-            window.LiveWriteNotice.mark(_codeToast, xhr.getResponseHeader("X-SM-Live-Landed"));
+            window.LiveWriteNotice.mark(_codeToast, xhr.getResponseHeader("X-SM-Live-Landed"),
+                                        xhr.getResponseHeader("X-SM-Live-Landed-Chip"));
         }
         if (window.htmx) {
             try { window.htmx.ajax("GET", "/state/tray", {target: "#pending-tray", swap: "outerHTML"}); } catch (e) {}
@@ -3636,8 +3637,8 @@ window.showToast = function(message, level, ms, detail) {
    (data-live-landed, server time in us); the notice carries that stamp as of
    its failure (server-rendered: data-live-write-failed; client-made: mark()).
    Every tray swap compares them: newer = a write landed since, the notice
-   goes; the same = nothing landed, it stays. A chip switch is a full page
-   load, so a page's notices and its tray are always the same chip's. */
+   goes; the same = nothing landed, it stays. Every stamp carries its chip's
+   folder token: another window can switch the server's active context. */
 window.LiveWriteNotice = (function () {
     function landed() {
         var t = document.getElementById("pending-tray");
@@ -3646,10 +3647,15 @@ window.LiveWriteNotice = (function () {
         var n = Number(v);
         return isFinite(n) ? n : null;
     }
-    function mark(toast, at) {
+    function chip() {
+        var t = document.getElementById("pending-tray");
+        return t ? (t.getAttribute("data-live-landed-chip") || "") : "";
+    }
+    function mark(toast, at, token) {
         if (!toast || !toast.setAttribute) return toast;
         var n = (at === undefined || at === null || at === "") ? landed() : Number(at);
         toast.setAttribute("data-live-write-failed", String((n !== null && isFinite(n)) ? n : 0));
+        toast.setAttribute("data-live-write-failed-chip", token || chip());
         return toast;
     }
     function sweep() {
@@ -3657,7 +3663,7 @@ window.LiveWriteNotice = (function () {
         if (now === null) return;
         Array.prototype.forEach.call(document.querySelectorAll(".toast[data-live-write-failed]"), function (t) {
             var at = Number(t.getAttribute("data-live-write-failed"));
-            if (isFinite(at) && now > at) t.remove();
+            if (chip() && t.getAttribute("data-live-write-failed-chip") === chip() && isFinite(at) && now > at) t.remove();
         });
     }
     document.addEventListener("sm:tray-swapped", sweep);
@@ -4717,7 +4723,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                                  + (data.message || "unknown error"), "error", -1,
                                  data.detail_exc || "");
                 // v1.5.1 (r6 P2-6): a later live write that lands takes it down
-                if (window.LiveWriteNotice) window.LiveWriteNotice.mark(_failToast, data.live_landed);
+                if (window.LiveWriteNotice) window.LiveWriteNotice.mark(_failToast, data.live_landed, data.live_landed_chip);
                 return;
             }
             if (data.status === "error") {
