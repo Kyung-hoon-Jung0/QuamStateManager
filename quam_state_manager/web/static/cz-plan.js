@@ -687,8 +687,8 @@
                     }
                     // fix3 P1-2: a run that only carried the value first is not named as its writer
                 var saved = o.last_set.provenance === 'run_saved' || o.last_set.provenance === 'run_uncertain_chip';
-                td.innerHTML = (saved ? '<span title="' + esc(setWords(o.last_set, false)) + '">saved in ' + esc(when(o.last_set)) + '</span>'
-                                      : esc(when(o.last_set))) + (o.warnings.length ? ' <span class="czp-warn-text" title="' +
+                td.innerHTML = (saved ? '<span title="' + esc(setWords(o.last_set, false)) + '">saved in ' + stampCell(when(o.last_set)) + '</span>'
+                                      : stampCell(when(o.last_set))) + (o.warnings.length ? ' <span class="czp-warn-text czp-nowrap" title="' +
                         esc(o.warnings.map(function (w) { return w.text; }).join('\n')) + '">⚠ ' + o.warnings.length + ' newer</span>' : '');
                 });
                 root.setAttribute('data-history', h.mode || '');
@@ -703,6 +703,28 @@
         if (r.top < 0 || r.top > h * 0.5) {
             try { t.scrollIntoView({ block: 'start' }); } catch (e) { t.scrollIntoView(true); }
         }
+    }
+
+    /* v1.5.1 (r6, D4a P2-5): a table wider than its wrap scrolls inside it with pair and
+       operation held in view; the operation sticks just right of the pair column, whose drawn
+       width follows the pair names and the UI scale. */
+    function stickOperation(table) {
+        var pair = table && table.querySelector('th.czp-stick');
+        if (!pair) return;
+        function sync() { table.style.setProperty('--czp-stick-op', pair.getBoundingClientRect().width + 'px'); }
+        sync();
+        if (window.ResizeObserver) new window.ResizeObserver(sync).observe(pair, { box: 'border-box' });
+        // the held columns get an edge only while other columns pass under them
+        var wrap = table.parentElement;
+        if (wrap) wrap.addEventListener('scroll', function () {
+            wrap.classList.toggle('czp-scrolled-x', wrap.scrollLeft > 0);
+        }, { passive: true });
+    }
+
+    /* A date and its time stay on one line in the Last set column (a narrow cell broke the
+       date at its hyphen); the text itself is unchanged. */
+    function stampCell(text) {
+        return esc(text).replace(/\d{4}-\d\d-\d\d \d\d:\d\d(?::\d\d)?/, '<span class="czp-nowrap">$&</span>');
     }
 
     function pairOfRow(tr) {
@@ -731,6 +753,7 @@
         });
         // a table row and its pair on the map are one surface: hovering the row lights the pair
         var table = root.querySelector('#czp-table');
+        stickOperation(table);
         if (table && window.CzMap) {
             table.addEventListener('mouseover', function (ev) {
                 var tr = ev.target.closest && ev.target.closest('.czp-row');

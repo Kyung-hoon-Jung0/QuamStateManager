@@ -1156,6 +1156,12 @@ def mpljson_to_plotly(fig_json: dict) -> dict:
                         xanchor="center" if horizontal else "left", yanchor="bottom" if horizontal else "middle",
                         xpad=0, ypad=0, len=cx1 - cx0 if horizontal else cy1 - cy0,
                         thicknessmode="fraction", thickness=cy1 - cy0 if horizontal else cx1 - cx0)
+                    size_in = fig_json.get("size_inches")
+                    if not horizontal and isinstance(size_in, list) and len(size_in) == 2 \
+                            and isinstance(size_in[1], (int, float)) and size_in[1] > 0:
+                        # v1.5.1 (r6, D4a P2-1): a title longer than its bar ran off the canvas
+                        # edge and into the heading above; it now fits the bar it labels
+                        _fit_colorbar_title(owner["colorbar"], (cy1 - cy0) * size_in[1] * 72)
     has_top_axis = has_secondary_top
 
     heading = fig_json.get("suptitle") or ""
@@ -1403,6 +1409,57 @@ def _fit_heading(text, size_pt, size_inches):
     lines = [textwrap.wrap(line, width=columns, break_long_words=False, break_on_hyphens=False) or [""]
              for line in text.split("\n")]
     return "\n".join(part for line in lines for part in line), size
+
+
+#: Advance width of the browser plot font (the system UI face) per character class, in em: the
+#: widest member of each class, measured in headless Chrome at 100 px (v1.5.1 r6). It reads a
+#: lowercase label about 5 % long; the uniform _HEADING_EM read one a fifth long, which would
+#: shrink a colour-bar title well below the size it needs.
+_GLYPH_EM = ((" !',.:;`|ijlI", 0.28), ("()[]{}fJrt", 0.35), ('"*-/\\_?sz', 0.45),
+             ("cvxykaeLEF", 0.52), ("ADGHNOQUVw+<=>^~", 0.71), ("mMW%&@", 0.9))
+_GLYPH_EM_OTHER = 0.6
+_COLORBAR_TITLE_PT = 12.0   # Plotly draws a colour-bar title 1.2 x the 10 pt figure font
+_LAB_LABEL_PT = 10.0        # matplotlib's label size, the base of the 60 % font floor
+
+
+def _text_em(text):
+    """Estimated width of one line of plot text, in em (mathtext ``$`` and braces draw nothing)."""
+    return sum(next((em for chars, em in _GLYPH_EM if ch in chars), _GLYPH_EM_OTHER)
+               for ch in str(text) if ch not in "${}")
+
+
+def _fit_colorbar_title(colorbar, length_pt):
+    """Fit a vertical colour-bar title to the bar it labels (``length_pt``, figure points).
+
+    Plotly centres the title on the bar, so a title longer than the bar ran past both ends: off
+    the canvas edge (clipped, "eld-out ...") and into the panel heading above it (v1.5.1 r6, D4a
+    P2-1). A title that fits keeps Plotly's own size. A longer one shrinks to the bar, down to
+    the figure-UX font floor (60 % of the lab label size, as _fit_heading); below that it wraps
+    at word boundaries -- never inside a word or a ``$...$`` span -- at the floor size."""
+    title = colorbar.get("title") or {}
+    text = title.get("text")
+    if not isinstance(text, str) or not text.strip() or not length_pt > 0:
+        return
+    room = length_pt * 0.98
+    longest = max(_text_em(line) for line in text.split("\n"))
+    if longest * _COLORBAR_TITLE_PT <= room:
+        return
+    floor = _LAB_LABEL_PT * _HEADING_MIN_SCALE
+    size = max(floor, room / longest)
+    if room / longest < floor:
+        lines = []
+        for line in text.split("\n"):
+            current = ""
+            for word in re.findall(r"(?:\$[^$]*\$|\S)+", line) or [""]:
+                joined = (current + " " + word) if current else word
+                if current and _text_em(joined) * size > room:
+                    lines.append(current)
+                    current = word
+                else:
+                    current = joined
+            lines.append(current)
+        title["text"] = "\n".join(lines)
+    title["font"] = {**(title.get("font") or {}), "size": round(size, 3)}
 
 
 def _heading_clear_of_captions(text, fitted, size_pt, axes, size_inches):
