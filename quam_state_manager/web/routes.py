@@ -43451,7 +43451,9 @@ def dataset_apply_selected_preview(uid):
     if which not in ("state", "wiring") or not isinstance(paths, list) or not paths:
         return jsonify(ok=False, error="file must be state|wiring and paths a non-empty list"), 400
     qs = ds.get_quam_state_path(run_id)
-    if not qs or not (qs / f"{which}.json").exists():
+    if not qs:
+        return jsonify(ok=False, error=_no_run_state_message(ds, run_id)), 404
+    if not (qs / f"{which}.json").exists():
         return jsonify(ok=False, error=f"No {which}.json in this run"), 404
     ctx = _active_ctx()
     store = ctx.get("store") if ctx and ctx.get("type") == "quam" else None
