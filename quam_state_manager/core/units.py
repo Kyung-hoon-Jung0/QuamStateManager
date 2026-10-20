@@ -161,7 +161,8 @@ def name_unit(field: str) -> str:
     """The unit a key's own name declares (``*_mhz`` -> ``"MHz"``), or ``""``
     (also for a ``*_per_<unit>`` compound, :func:`unit_compound`)."""
     f = str(field or "").lower()
-    if unit_compound(f):
+    # R6e: "to_db" names a database action, not a decibel quantity.
+    if unit_compound(f) or re.search(r"(?:^|[._])to_db$", f):
         return ""
     for suffix, label in _NAME_UNIT_SUFFIXES:
         if f.endswith(suffix) and len(f) > len(suffix):
