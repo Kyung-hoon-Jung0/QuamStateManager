@@ -21184,6 +21184,15 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     }
 });
 
+/* v1.5.1 (r6 P2-9): header Search results open at the top. They swap into
+   the inspector pane, the scroller the previous inspector used, and kept its
+   offset -- 661 px down, the first results and "Pages and actions" out of view. */
+document.addEventListener('htmx:afterSwap', function (evt) {
+    var t = evt.detail && evt.detail.target;
+    if (!t || t.id !== 'inspector-pane' || !t.querySelector(':scope > .search-panel')) return;
+    t.scrollTop = 0;
+});
+
 // Restore qubit/pair inspector state after HTMX swap
 document.addEventListener('htmx:afterSwap', function(evt) {
     if (!evt.detail || !evt.detail.target) return;
