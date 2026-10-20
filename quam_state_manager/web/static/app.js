@@ -513,7 +513,11 @@ document.addEventListener('htmx:responseError', function(evt) {
     if (_code) {
         // v1.5.1 (SA-F2): a failed live write stays on screen, and the tray
         // re-reads (the failure may have raised the read-only pill)
-        if (window.showToast) window.showToast(msg, "error", -1);
+        // v1.5.1 (r6 P2-6): ...until a later live write lands
+        var _codeToast = window.showToast ? window.showToast(msg, "error", -1) : null;
+        if (window.LiveWriteNotice) {
+            window.LiveWriteNotice.mark(_codeToast, xhr.getResponseHeader("X-SM-Live-Landed"));
+        }
         if (window.htmx) {
             try { window.htmx.ajax("GET", "/state/tray", {target: "#pending-tray", swap: "outerHTML"}); } catch (e) {}
         }
@@ -3617,7 +3621,45 @@ window.showToast = function(message, level, ms, detail) {
     var duration = ms > 0 ? ms : ((level === "error" || level === "warning") ? 6000 : 3500);
     setTimeout(function() { div.style.opacity = "0"; }, duration);
     setTimeout(function() { div.remove(); }, duration + 500);
+    return div;
 };
+
+/* v1.5.1 (r6 P2-6): a failed live write's notice ("Apply failed: ...") stays
+   until it is closed -- or until a LATER live write of this chip lands. It
+   stayed after the folder was writable again and an Apply had landed, and
+   followed every page after. The tray carries when a live write last landed
+   (data-live-landed, server time in us); the notice carries that stamp as of
+   its failure (server-rendered: data-live-write-failed; client-made: mark()).
+   Every tray swap compares them: newer = a write landed since, the notice
+   goes; the same = nothing landed, it stays. A chip switch is a full page
+   load, so a page's notices and its tray are always the same chip's. */
+window.LiveWriteNotice = (function () {
+    function landed() {
+        var t = document.getElementById("pending-tray");
+        var v = t ? t.getAttribute("data-live-landed") : null;
+        if (v === null || v === "") return null;
+        var n = Number(v);
+        return isFinite(n) ? n : null;
+    }
+    function mark(toast, at) {
+        if (!toast || !toast.setAttribute) return toast;
+        var n = (at === undefined || at === null || at === "") ? landed() : Number(at);
+        toast.setAttribute("data-live-write-failed", String((n !== null && isFinite(n)) ? n : 0));
+        return toast;
+    }
+    function sweep() {
+        var now = landed();
+        if (now === null) return;
+        Array.prototype.forEach.call(document.querySelectorAll(".toast[data-live-write-failed]"), function (t) {
+            var at = Number(t.getAttribute("data-live-write-failed"));
+            if (isFinite(at) && now > at) t.remove();
+        });
+    }
+    document.addEventListener("sm:tray-swapped", sweep);
+    document.addEventListener("htmx:afterSwap", sweep);
+    document.addEventListener("htmx:oobAfterSwap", sweep);
+    return { mark: mark, sweep: sweep };
+})();
 
 /* v1.3.0: a tray notice meant as information (an Apply cut off by a restart
    whose edits are on disk, _pending_tray.html data-toast) is read as a toast,
@@ -4644,9 +4686,11 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 }
                 // v1.5.1 (U P1-6): a failed WRITE says "Apply failed" (its own
                 // head, from the server) -- "Sync failed" only for a pull
-                window.showToast((data.error_code === "sync_failed" ? "Sync failed: " : "")
+                var _failToast = window.showToast((data.error_code === "sync_failed" ? "Sync failed: " : "")
                                  + (data.message || "unknown error"), "error", -1,
                                  data.detail_exc || "");
+                // v1.5.1 (r6 P2-6): a later live write that lands takes it down
+                if (window.LiveWriteNotice) window.LiveWriteNotice.mark(_failToast, data.live_landed);
                 return;
             }
             if (data.status === "error") {
