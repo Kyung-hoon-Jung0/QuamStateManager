@@ -88,3 +88,11 @@ def test_qm_fonts_are_bundled_offline():
         assert (STATIC / "fonts" / font).stat().st_size > 100000
     assert "SIL OPEN FONT LICENSE Version 1.1" in (STATIC / "fonts/OFL.txt").read_text(encoding="utf-8")
     assert not re.search(r"@import|url\([\"']?https?://", css)
+
+
+def test_qm_leaves_layout_tokens_alone():
+    # The QM block outranks html[data-font-size=...] and html.sm-in-frame, so a
+    # sizing token copied into it would silently break the font-size presets.
+    qm = tokens("qm")
+    for name in ("--font-size-base", "--sidebar-width", "--topbar-height", "--bulk-fs"):
+        assert name not in qm, name
