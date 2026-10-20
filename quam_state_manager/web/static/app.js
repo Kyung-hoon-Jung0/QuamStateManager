@@ -16812,7 +16812,8 @@ window._replotFigureLayout = _replotFigureLayout;
 /**
  * Marker sizes and marker edge widths are points, like the text: scale them with the canvas
  * by the same factor _replotFigureLayout gives the text (v1.5.1, D3 class K -- an IQ cloud's
- * 4 pt dots drew as 8 px discs at any width and blended into one mass). Returns new trace
+ * 4 pt dots drew as 8 px discs at any width and blended into one mass). A colour-bar title
+ * the server fitted to its bar carries its size in points too (v1.5.1 r6). Returns new trace
  * objects for the traces it changes; the data arrays are shared, never copied.
  */
 function _replotFigureData(data, size, width, height) {
@@ -16824,34 +16825,53 @@ function _replotFigureData(data, size, width, height) {
         if (typeof v === 'number') return v * k;
         return Array.isArray(v) ? v.map(function (s) { return typeof s === 'number' ? s * k : s; }) : v;
     }
+    function titled(bar) {
+        var font = bar && bar.title && bar.title.font;
+        if (!font || typeof font.size !== 'number') return bar;
+        return Object.assign({}, bar, { title: Object.assign({}, bar.title,
+            { font: Object.assign({}, font, { size: font.size * k }) }) });
+    }
     return data.map(function (trace) {
-        if (!trace || !trace.marker || typeof trace.marker !== 'object') return trace;
+        if (!trace || typeof trace !== 'object') return trace;
+        var out = trace, bar = titled(trace.colorbar);
+        if (bar !== trace.colorbar) out = Object.assign({}, trace, { colorbar: bar });
+        if (!trace.marker || typeof trace.marker !== 'object') return out;
         var marker = Object.assign({}, trace.marker);
         if ('size' in marker) marker.size = times(marker.size);
         if (marker.line && typeof marker.line === 'object' && 'width' in marker.line) {
             marker.line = Object.assign({}, marker.line, { width: times(marker.line.width) });
         }
-        return Object.assign({}, trace, { marker: marker });
+        if (marker.colorbar) marker.colorbar = titled(marker.colorbar);
+        return Object.assign({}, out, { marker: marker });
     });
 }
 window._replotFigureData = _replotFigureData;
 
 /**
  * The marker restyle that moves a drawn tile's markers to `width` x `height` (a resize):
- * sizes and edge widths of the source traces, by trace index.
+ * sizes and edge widths of the source traces, and fitted colour-bar title sizes, by trace index.
  */
 function _replotMarkerRestyle(source, size, width, height) {
     var scaled = _replotFigureData(source, size, width, height);
     if (scaled === source || !Array.isArray(scaled)) return [];
     var sizes = { update: { 'marker.size': [] }, indices: [] };
     var lines = { update: { 'marker.line.width': [] }, indices: [] };
+    var titles = { update: { 'colorbar.title.font.size': [] }, indices: [] };
+    var markerTitles = { update: { 'marker.colorbar.title.font.size': [] }, indices: [] };
+    function title(group, bar, before, i) {
+        if (!bar || bar === before || !bar.title || !bar.title.font) return;
+        group.update[Object.keys(group.update)[0]].push(bar.title.font.size); group.indices.push(i);
+    }
     scaled.forEach(function (trace, i) {
-        var m = trace && trace.marker;
-        if (!m || !source[i] || m === source[i].marker) return;
+        if (!trace || !source[i]) return;
+        title(titles, trace.colorbar, source[i].colorbar, i);
+        var m = trace.marker;
+        if (!m || m === source[i].marker) return;
         if ('size' in m) { sizes.update['marker.size'].push(m.size); sizes.indices.push(i); }
         if (m.line && 'width' in m.line) { lines.update['marker.line.width'].push(m.line.width); lines.indices.push(i); }
+        title(markerTitles, m.colorbar, (source[i].marker || {}).colorbar, i);
     });
-    return [sizes, lines].filter(function (r) { return r.indices.length; });
+    return [sizes, lines, titles, markerTitles].filter(function (r) { return r.indices.length; });
 }
 window._replotMarkerRestyle = _replotMarkerRestyle;
 
