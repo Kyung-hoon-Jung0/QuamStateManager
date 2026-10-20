@@ -4851,11 +4851,10 @@ html.topbar-hidden .topo-subnav {
 .topo-card-popup, .topo-pair-popup {
     position: fixed; z-index: 4000;
     box-sizing: border-box; width: max-content; max-width: min(560px, calc(100vw - 16px));
-    background: color-mix(in srgb, var(--pico-card-background-color, #fff) 88%, transparent);
-    -webkit-backdrop-filter: blur(10px) saturate(1.15);
-    backdrop-filter: blur(10px) saturate(1.15);
+    /* opaque surface: the map must never show through the text */
+    background: var(--pico-card-background-color, var(--pico-background-color));
     border: 1px solid var(--pico-muted-border-color);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.18);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18), 0 12px 32px rgba(0,0,0,0.30);
     border-radius: 14px;
     animation: topo-popup-in 0.15s ease-out;
     /* QA F-12: positionPopup pins a popup taller than the viewport at top 6px
@@ -4869,7 +4868,13 @@ html.topbar-hidden .topo-subnav {
 .topo-card-popup { padding: 8px; min-width: min(360px, calc(100vw - 16px)); }
 .topo-detail-values { display: grid; grid-template-columns: fit-content(230px) minmax(0, max-content); gap: 2px 8px; }
 .topo-card-popup .topo-prop-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; padding: 0 4px; min-height: 24px; font-size: .85rem; }
-.topo-card-popup .topo-prop-label::after, .topo-popup-row-label::after { content: " :"; }
+.topo-card-popup .topo-prop-label::after, .topo-popup-row-label::after { content: "\00a0:"; }
+/* a pair row's label wraps inside its own cell; the tag and the colon never
+   break away onto a line of their own */
+.topo-pair-popup .topo-popup-row-label { min-width: 0; white-space: nowrap; }
+.topo-pair-popup { max-width: min(760px, calc(100vw - 16px)); }
+@media (max-width: 900px) { .topo-pair-popup .topo-popup-row-label { white-space: normal; overflow-wrap: anywhere; } }
+.topo-pair-popup .topo-popup-row-label .topo-popup-kind { white-space: nowrap; }
 .topo-card-popup .topo-prop-value { text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .topo-detail-trends { width: 100%; min-width: 0; margin-top: 8px; }
 .topo-expand { position: fixed; z-index: 4001; width: auto; margin: 0; padding: 4px 9px; min-height: 28px;
@@ -4909,7 +4914,7 @@ html.topbar-hidden .topo-subnav {
 .topo-popup-kind.topo-popup-off { background: var(--pico-muted-color); }
 .topo-pair-popup .topo-popup-section {
     padding: 4px 12px; font-size: var(--topo-popup-section-size); line-height: 1.55;
-    display: grid; grid-template-columns: fit-content(340px) minmax(0, max-content); column-gap: 8px;
+    display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content); column-gap: 12px;
 }
 .topo-pair-popup .topo-popup-section-title {
     grid-column: 1 / -1;
