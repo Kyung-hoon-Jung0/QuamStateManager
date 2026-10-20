@@ -1118,14 +1118,45 @@ The version stays 1.5.0. Customer feedback on the CZ gate plan and the Datasets 
 - **Keyboard**: with a run of the left data list clicked, Up/Down step the runs only; the open page's table (e.g. the
   CZ gate plan's operation table) no longer moves and scrolls along with them.
 
-## v1.5.1 (unreleased)
+## v1.5.1 (2026-10-20)
 
-Fixes from the v1.5.1 review rounds; the version is shown in Settings, Help and the app title.
+Recovery, safer live writes, and clearer everyday controls.
 
-- **Live State Edit**: Enter (or Down) in the grid search puts the caret at the end of the first matching cell with
-  nothing selected, so typing on no longer replaces the value; on a large (virtualized) grid it waits for that cell
-  to load instead of jumping to a later row.
-- **Plot apply under Auto-Sync**: a row says "staged -- Auto-Sync is writing it", then what the live write did
-  (written, refused with the reason, or not written yet while Auto-Sync merges a moved chip).
-- **Datasets**: the "wrote state" mark and filter say what the run did, without promising its fits can be applied;
-  the one-time re-index after an upgrade says "Re-indexing after upgrade: N of M runs".
+### Fixed (data safety)
+
+- **Recovery**: refused recovery files are kept and listed with Restore / Discard; each SM process keeps its own staged-edit checkpoint.
+- **Live writes**: forced writes require a matching backup; pulls and writes wait or refuse when the live files appear mid-save.
+- **Failed Apply**: edits return to the tray when nothing was written; writes that cannot be confirmed are clearly marked and displaced edits stay recoverable.
+- **Concurrent edits**: Auto-Sync preserves edits and undo made during a pull; Apply asks before including unseen edits or replacing a newer live value.
+- **Chip identity**: stale tabs cannot write into another open chip; loading or restoring a version from another folder asks first.
+- **Archives and drafts**: Runner and Auto Calibrate refuse run archives; agent Take live refuses unapplied drafts and recovery edits.
+- **Moved folders**: unapplied work is retained and offered for recovery only with evidence of a move; chip copies keep separate histories.
+- **Shared run metadata**: tags and notes merge across this user's SM processes on one computer instead of overwriting each other.
+- **Keep mine and merges**: they refuse only when a live value they would replace changed, and name it; an unrelated lab write no longer blocks them. Holding Enter never confirms a two-press button.
+- **Unreachable folders**: a chip or data folder on a share or drive that does not answer is called unreachable, not "not found"; its runs stay listed and its history is not handed over. A chip folder moved with its parent keeps its history.
+
+### Fixed (everyday use)
+
+- **Undo / Redo**: messages name the chip, edit age and whether live files were written; older edits ask before writing live.
+- **Fresh values**: entity tables follow pulls without losing the selected chain, page, filter or sort; Auto Calibrate records the value actually replaced.
+- **Honest feedback**: plot clicks say staged until written; write failures stay visible, and missing files or busy locks get specific messages.
+- **Units and time**: explicit unit suffixes display correctly; value history and supported Trends show units; CZ timestamps use the display time zone.
+- **Layout**: inspectors close when leaving relevant pages; tables, popups and chart controls fit better; the time-zone picker works in light mode and finds UTC.
+- **CZ gate plan**: the map key and notes fold into one compact row below the measured loss, so nothing long sits between the figures.
+- **Live State Edit and Search**: Enter in the grid search puts the caret in the first match without selecting its text; a pointer through another pointer is no longer called dangling.
+- **Units and export**: Trends shows no unit a file did not declare for that value; CSV keeps numbers numeric while neutralising formula cells.
+
+### Improved
+
+- **Find and export**: Search finds parameter paths, pages and actions; CSV export is available from tables, Live State Edit and Ctrl+K.
+- **History and Datasets**: jump to a date, filter runs that wrote state, link omitted data folders, and re-point missing folders.
+- **Navigation**: pairs link to their CZ plan and loss scans; pulse links, readout LO / IF, keyboard shortcuts and visible save states reduce extra steps.
+- **Clarity and speed**: Settings and Help show the SM version; Auto-Sync shows on/off; first-page, diagnostics and history checks are faster, with less idle polling.
+
+### Known limits
+
+- **Upgrade rescan**: the Datasets index rescans once on first open and shows its progress; allow it to finish.
+- **Shared instances**: install the same version in every environment that shares one instance folder. An older SM can still overwrite a recovery file it does not know about. Restart running SM processes after upgrading; reload browser tabs after a downgrade.
+- **History upgrade**: history folders of chip copies may be split on first open; older entries already mixed together are not automatically separated.
+- **Shared data folders**: tag locking covers one user's processes on one computer. Simultaneous writes from different users or computers can still lose a change.
+- **Recovery and live saves**: Restore stages recovered edits for review; Apply writes them, or armed Auto-Sync push can write them immediately. Mid-save detection is a timing guard, so retry a refused write once the other save finishes.
