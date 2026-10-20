@@ -4145,13 +4145,13 @@ window.SyncPanel = (function () {
                     btn.setAttribute("data-force", "1");
                     btn.textContent = (d.collisions && d.collisions.length) ? "Restore over them" : "Restore the rest";
                 }
-                if (d && d.error_kind === "recovery_gone") refresh();
+                if (d && (d.error_kind === "recovery_gone" || d.error_kind === "recovery_changed")) refresh();
             }).catch(function () {
                 btn.disabled = false;
                 say("Network error: nothing changed.", true);
             });
         };
-        if (action === "discard") { arm(btn, null, function () { send(false); }); return; }
+        if (action === "discard" || action === "set-aside") { arm(btn, null, function () { send(false); }); return; }
         send(btn.getAttribute("data-force") === "1");
     }
     return { refresh: refresh, arm: arm, disarm: disarm, armSeconds: ARM_S, picks: picks, picked: picked,

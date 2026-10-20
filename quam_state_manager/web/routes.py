@@ -5159,6 +5159,18 @@ def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool, bool
 # ── extras.data_folder chip↔data pairing (docs/20 v2 Step 5) ───────────────
 
 def _adopt_extras_data_folders(ctx: dict | None) -> None:
+    if not ctx or ctx.get("type") != "quam":
+        return
+    ctx.setdefault("extras_data_roots", [])
+    ctx.setdefault("extras_data_dangling", [])
+    if has_request_context() and request.method in ("GET", "HEAD"):
+        _recheck_extras_dangling(ctx, adopt=True)
+        return
+    with ctx.setdefault("_extras_adoption_lock", threading.Lock()):
+        _adopt_extras_data_folders_locked(ctx)
+
+
+def _adopt_extras_data_folders_locked(ctx: dict) -> None:
     """Register the chip's declared data folder(s) as workspace roots.
 
     ``extras.data_folder`` travels with the state (like ``chip_name``), so a
@@ -5172,10 +5184,10 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
     """
     if not ctx or ctx.get("type") != "quam":
         return
-    ctx["extras_data_roots"] = []
-    ctx["extras_data_dangling"] = []
+    # Publish only a completed answer; concurrent readers keep the old list.
     try:
         if (ctx.get("origin") or "live") != "live":
+            ctx.update(extras_data_roots=[], extras_data_dangling=[], extras_data_declared=[])
             return
         store = ctx.get("store")
         if store is None:
@@ -5185,19 +5197,21 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
             declared = extras_data_folder(store.state)
         # v1.5.1 (SB-P2-3): what these roots were derived from, so a reader
         # can tell they are stale after the declared folder was re-pointed
-        ctx["extras_data_declared"] = list(declared or [])
         if not declared:
+            ctx.update(extras_data_declared=[], extras_data_roots=[], extras_data_dangling=[])
             return
         resolved: list[str] = []
+        dangling: list[str] = []
         for raw in declared:
             native = _extras_native(raw)
             if native and Path(native).is_dir():
                 resolved.append(str(Path(native)))
             else:
-                ctx["extras_data_dangling"].append(raw)
+                dangling.append(raw)
         if not resolved:
+            ctx.update(extras_data_declared=list(declared), extras_data_roots=[],
+                       extras_data_dangling=dangling)
             return
-        ctx["extras_data_roots"] = resolved
         ws = _ws()
         existing = {str(p) for p in ws.root_folders}
         added = 0
@@ -5208,7 +5222,7 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
                 ws.add_root(root, defer_parse=True)   # docs/142 listing-first
                 added += 1
             except (OSError, ValueError):
-                continue
+                raise
         if added:
             _save_workspace_roots()
             current_app.config.pop("dataset_store", None)
@@ -5221,6 +5235,11 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
                 _record_project_roots(scope, resolved, from_extras=True)
             except Exception:  # noqa: BLE001
                 pass
+        with store._lock:
+            if extras_data_folder(store.state) != declared:
+                return
+            ctx.update(extras_data_declared=list(declared), extras_data_roots=resolved,
+                       extras_data_dangling=dangling)
     except Exception:  # noqa: BLE001 — pairing must never break activation
         logger.debug("extras data-folder adoption failed", exc_info=True)
 
@@ -5244,7 +5263,7 @@ _DANGLING_RECHECK_S = 5.0
 _DANGLING_WAIT_S = 0.25
 
 
-def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False) -> list[str]:
+def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False, adopt: bool = False) -> list[str]:
     """The declared data folders still not found (v1.5.1 r6, P2-3).
 
     The "Data folder not reachable" notice was the list taken when the chip
@@ -5254,24 +5273,50 @@ def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False) -> list[s
     memoised ``_DANGLING_RECHECK_S``); *fresh* drops the memo first (a
     re-point). A folder found again is paired exactly as opening the chip
     pairs it (:func:`_adopt_extras_data_folders`), so the notice and the
-    dataset roots agree."""
+    dataset roots agree. Adoption runs in one background worker per context;
+    concurrent renders keep the last complete list within one wait budget."""
     dangling = list((ctx or {}).get("extras_data_dangling") or [])
-    if not dangling:
+    if not dangling and not adopt:
         return []
-    try:
-        from quam_state_manager.core import folder_probe
-        natives = {raw: _extras_native(raw) for raw in dangling}
-        if fresh:
-            folder_probe.forget(*natives.values())
-        here = folder_probe.folders_present(natives.values(), wait_s=_DANGLING_WAIT_S,
-                                            ttl_s=_DANGLING_RECHECK_S)
-        if not any(here.get(n) is True for n in natives.values()):
-            return dangling
-        _adopt_extras_data_folders(ctx)
-        return list(ctx.get("extras_data_dangling") or [])
-    except Exception:  # noqa: BLE001 -- a notice never breaks a page
-        logger.debug("re-checking the declared data folders failed", exc_info=True)
+    gate = ctx.setdefault("_extras_recheck_lock", threading.Lock())
+    if not gate.acquire(blocking=False):
         return dangling
+    app = current_app._get_current_object()
+
+    def recheck():
+        try:
+            with app.app_context():
+                if (ctx.get("origin") or "live") != "live":
+                    _adopt_extras_data_folders(ctx)
+                    return
+                from quam_state_manager.core import folder_probe
+                from quam_state_manager.core.history import extras_data_folder
+                # No path translation, stat, or workspace scan on the render thread.
+                with ctx["store"]._lock:
+                    declared = list(extras_data_folder(ctx["store"].state) or [])
+                natives = {raw: _extras_native(raw) for raw in declared}
+                if fresh:
+                    folder_probe.forget(*natives.values())
+                here = folder_probe.folders_present(natives.values(), wait_s=_DANGLING_WAIT_S,
+                                                    ttl_s=_DANGLING_RECHECK_S)
+                if any(here.get(n) is None for n in natives.values()):
+                    return
+                if adopt or any(here.get(natives.get(raw)) is True for raw in dangling):
+                    _adopt_extras_data_folders(ctx)
+        except Exception:  # noqa: BLE001 -- keep the last definite notice
+            logger.debug("re-checking the declared data folders failed", exc_info=True)
+        finally:
+            gate.release()
+
+    worker = threading.Thread(target=recheck, daemon=True, name="data-folder-recheck")
+    ctx["_extras_recheck_thread"] = worker
+    try:
+        worker.start()
+    except Exception:  # noqa: BLE001 -- a notice never breaks a page
+        gate.release()
+        return dangling
+    worker.join(_DANGLING_WAIT_S)
+    return list(ctx.get("extras_data_dangling") or [])
 
 
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -8941,15 +8986,7 @@ def qubits():
 
     # docs/286: the XY drive (x180 / x90 pulse, its dBm, the drive IF) for
     # the rows on THIS page only, read the way the Live-Edit grid reads them.
-    from quam_state_manager.core import xy_drive
-    drive: dict[str, dict] = {}
-    if store is not None:
-        with store._lock:
-            for q in page_qubits:
-                try:
-                    drive[q["id"]] = xy_drive.summary(store, q["id"])
-                except Exception as exc:  # noqa: BLE001 -- a row degrades
-                    logger.warning("qubits page drive(%r) failed: %s", q.get("id"), exc)
+    drive = _qubits_drive_summaries(store, page_qubits)
 
     template = "_qubits.html" if _is_htmx() else "qubits.html"
     return render_template(
@@ -11031,7 +11068,6 @@ def state_recovery_restore():
         # v1.5.1 (r6): a row the field already holds is either the same edit
         # already in the tray or a value already on the chip -- the answer
         # says which (both used to read "the chip already holds these values")
-        in_tray = {e.dot_path for e in modifier.store.change_log}
         collide = [i for i in plan if i["status"] == pending_tray.PLAN_COLLIDE]
         missing = [i for i in plan if i["status"] == pending_tray.PLAN_MISSING]
         if (collide or missing) and not force:
@@ -11066,8 +11102,9 @@ def state_recovery_restore():
     same = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_SAME]
     skipped = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_MISSING]
     n = len(staged)
-    n_tray = sum(1 for p in same if p in in_tray)
-    n_chip = len(same) - n_tray
+    n_tray = sum(i.get("held") == pending_tray.HELD_TRAY for i in plan)
+    n_chip = sum(i.get("held") == pending_tray.HELD_CHIP for i in plan)
+    n_restore = sum(i.get("held") == pending_tray.HELD_RESTORE for i in plan)
     saved = bool(ctx.get("working_dirty"))
     where = "in SM's saved working copy" if saved else "on the live chip"
     # v1.5.1 (MINOR 6): with Auto-Sync push armed, staged rows are written at once
@@ -11079,6 +11116,8 @@ def state_recovery_restore():
             msg += f" {n_tray} already in the tray."
         if n_chip:
             msg += f" {n_chip} already {where}."
+        if n_restore:
+            msg += f" {n_restore} matched an earlier restored edit."
     elif same and not n_chip:
         msg = ("Nothing to restore: "
                + ("these edits are" if n_tray != 1 else "this edit is")
@@ -11105,6 +11144,7 @@ def state_recovery_restore():
                    kept=str(kept) if kept else None, tray_html=_tray_html())
 
 
+@bp.route("/state/recovery/set-aside", methods=["POST"])
 @bp.route("/state/recovery/discard", methods=["POST"])
 def state_recovery_discard():
     """Set a refused recovery checkpoint aside without staging it (v1.5.1).
@@ -11114,13 +11154,21 @@ def state_recovery_discard():
     if err is not None:
         return err
     from quam_state_manager.core import pending_tray
+    settled_intent = request.path.endswith("/set-aside")
     try:
-        kept = pending_tray.archive_unrecovered(ctx["working_copy"], file_id, "discarded")
-    except OSError as exc:
+        with ctx["store"]._lock:
+            if settled_intent:
+                rows = pending_tray.read_unrecovered_rows(ctx["working_copy"], file_id)
+                if not rows or not all(pending_tray.held_rows(ctx["store"], rows)):
+                    return jsonify(ok=False, error_kind="recovery_changed",
+                                   error="These edits are no longer all held. Review Restore or Discard.",
+                                   tray_html=_tray_html()), 409
+            kept = pending_tray.archive_unrecovered(ctx["working_copy"], file_id, "discarded")
+    except (OSError, ValueError) as exc:
         return jsonify(ok=False, error_kind="recovery_failed",
                        error=f"Could not set the recovery file aside: {exc}."), 409
     return jsonify(ok=True, kept=str(kept),
-                   message=f"Discarded. The file is kept at {kept}.",
+                   message=f"{'Set aside' if settled_intent else 'Discarded'}. The file is kept at {kept}.",
                    tray_html=_tray_html())
 
 
@@ -33168,7 +33216,7 @@ def export_csv():
     for p in props:
         u = units[p] = unit_of(p) or ""
         heads[p] = f"{p} [{u}]" if u else p
-    if entity != "pairs":
+    if entity != "pairs" and request.args.get("view") == "qubits":
         rows = _export_table_values(_store(), rows, props)
     from quam_state_manager.core.pointer_resolver import is_pointer
     rows = [{"id": r.get("id"),
@@ -33195,6 +33243,20 @@ _EXPORT_DRIVE_PROPS = {
 }
 
 
+def _qubits_drive_summaries(store, rows: list[dict]) -> dict:
+    """One drive-value builder for the Qubits page and its CSV export."""
+    from quam_state_manager.core import xy_drive
+    drive = {}
+    if store is not None:
+        with store._lock:
+            for row in rows:
+                try:
+                    drive[row["id"]] = xy_drive.summary(store, row["id"])
+                except Exception as exc:  # noqa: BLE001 -- a row degrades
+                    logger.warning("qubits drive(%r) failed: %s", row.get("id"), exc)
+    return drive
+
+
 def _export_table_values(store, rows: list[dict], props: list) -> list[dict]:
     """v1.5.1 (r6, P2-15): the Qubits export writes what the Qubits table
     shows for the drive columns -- the IF it computes (the export wrote
@@ -33203,15 +33265,11 @@ def _export_table_values(store, rows: list[dict], props: list) -> list[dict]:
     want = [p for p in props if p == "xy_intermediate_frequency" or p in _EXPORT_DRIVE_PROPS]
     if not want or store is None:
         return rows
-    from quam_state_manager.core import xy_drive
+    drive = _qubits_drive_summaries(store, rows)
     out = []
     with store._lock:
         for r in rows:
-            try:
-                d = xy_drive.summary(store, r.get("id"))
-            except Exception:  # noqa: BLE001 -- the row keeps what it had
-                out.append(r)
-                continue
+            d = drive.get(r.get("id")) or {}
             r = dict(r)
             for p in want:
                 if p == "xy_intermediate_frequency":

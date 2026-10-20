@@ -429,23 +429,43 @@ def _is_damaged(exc: BaseException) -> bool:
     return isinstance(exc, ValueError) or isinstance(getattr(exc, "__cause__", None), ValueError)
 
 
-def _read_settings_file(path: Path, *, strict: bool = False) -> dict:
+# Paths observed in this process, plus explicit damaged-file resets.
+_SETTINGS_SEEN: set[str] = set()
+_SETTINGS_RESET: set[str] = set()
+_SETTINGS_SEEN_LOCK = threading.Lock()
+_CONFIGURED_SCOPES = "_configured_scopes"
+
+
+def _settings_key(path) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _read_settings_file(path: Path, *, strict: bool = False, configured: bool = False) -> dict:
     """One settings file. v1.5.1 (SB-P2-7): read share-delete with the
     transient-retry ladder -- a second SM process's write (a sharing
     violation) used to fail the read at once, and the defaults (a dry run)
     replaced the stored settings for the run that read them.
 
-    A file that is not there is asked once, never through the ladder: the
-    ladder retries a missing file for ~0.9 s (right for a live state.json
-    mid-replace), and SM writes these files atomically, so absent is absent --
-    a chip with no settings file paid 1.8 s per read (every scheduler poll)."""
-    if not path.exists():
+    Polls answer absence immediately. Strict operational reads use the
+    protected read even during a missing-file interval. Only a scope that
+    has never been configured may fall back to defaults after that read."""
+    key = _settings_key(path)
+    exists = path.exists()
+    with _SETTINGS_SEEN_LOCK:
+        if exists:
+            _SETTINGS_SEEN.add(key)
+            _SETTINGS_RESET.discard(key)
+        known = key in _SETTINGS_SEEN or (configured and key not in _SETTINGS_RESET)
+    if not strict and not exists:
         return {}
     try:
-        return safe_io.read_json(path)
-    except FileNotFoundError:
-        return {}
+        result = safe_io.read_json(path)
+        with _SETTINGS_SEEN_LOCK:
+            _SETTINGS_SEEN.add(key)
+        return result
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
+        if isinstance(exc, FileNotFoundError) and not known:
+            return {}
         if strict:
             damaged = _is_damaged(exc)
             raise SettingsUnreadable(
@@ -464,7 +484,9 @@ def load_settings(scope, *, strict: bool = False) -> dict:
     merged = dict(_DEFAULTS)
     shared = _read_settings_file(shared_settings_path(scope), strict=strict)
     merged.update({k: v for k, v in shared.items() if k in _SHARED_KEYS})
-    own = _read_settings_file(settings_path(scope), strict=strict)
+    scopes = shared.get(_CONFIGURED_SCOPES)
+    configured = isinstance(scopes, list) and Path(scope).name in scopes
+    own = _read_settings_file(settings_path(scope), strict=strict, configured=configured)
     merged.update({k: v for k, v in own.items()
                    if k in _DEFAULTS and k not in _SHARED_KEYS})
     return merged
@@ -492,6 +514,9 @@ def reset_damaged_settings(scope) -> list[str]:
             stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             aside = path.with_name(f"{path.stem}.damaged-{stamp}{path.suffix}")
             os.replace(path, aside)
+            with _SETTINGS_SEEN_LOCK:
+                _SETTINGS_SEEN.discard(_settings_key(path))
+                _SETTINGS_RESET.add(_settings_key(path))
             out.append(str(aside))
     return out
 
@@ -518,10 +543,18 @@ def save_settings(scope, settings: dict) -> dict:
         shared_path = shared_settings_path(scope)
         shared = _read_settings_file(shared_path, strict=True)
         shared.update({k: current[k] for k in _SHARED_KEYS})
+        scopes = shared.get(_CONFIGURED_SCOPES)
+        shared[_CONFIGURED_SCOPES] = sorted(set(
+            s for s in (scopes if isinstance(scopes, list) else []) if isinstance(s, str)
+        ) | {Path(scope).name})
         safe_io.atomic_write_json(shared_path, shared)
         safe_io.atomic_write_json(
             settings_path(scope),
             {k: v for k, v in current.items() if k not in _SHARED_KEYS})
+        with _SETTINGS_SEEN_LOCK:
+            for path in (shared_path, settings_path(scope)):
+                _SETTINGS_SEEN.add(_settings_key(path))
+                _SETTINGS_RESET.discard(_settings_key(path))
         return current
 
 
