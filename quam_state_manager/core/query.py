@@ -942,6 +942,12 @@ class QueryEngine:
                 "coupler_decouple_offset": coupler.get("decouple_offset"),
                 "mutual_flux_bias": p.get("mutual_flux_bias"),
                 "cz_load_id": cz_load_id,
+                # The run that set the displayed fidelity, only when that run
+                # recorded its id beside the very metric shown (interleaved RB
+                # stores InterleavedRB_load_id); otherwise unknown, never guessed.
+                "cz_fidelity_run": (best_fid_obj.get("InterleavedRB_load_id")
+                                    if fidelity_source == "interleaved_rb"
+                                    and isinstance(best_fid_obj, dict) else None),
                 "cz_fidelity_updated_at": chip_health.epoch_ms(cz_updated_at),
                 "last_calibrated": chip_health.newest_epoch_ms(p),
             }

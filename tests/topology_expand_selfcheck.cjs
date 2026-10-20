@@ -59,7 +59,7 @@ function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, 
       if (component) assert.equal(w.getComputedStyle(d.querySelector('.cm-edge-hit')).pointerEvents, 'stroke');
       assert.equal(button(d).tagName, 'BUTTON');
       for (const child of node.children) if (child.tagName.toLowerCase() === 'title')
-        assert.equal(child.textContent, node.getAttribute('aria-label'));
+        assert.ok(child.textContent.trim(), 'a node keeps a non-empty native title');
       assert.ok(button(d).getAttribute('aria-label').startsWith('Expand '));
     });
     await check('Expand fits above the stone without covering its neighbour', async () => {

@@ -2358,6 +2358,11 @@ window.ChipStatus.mount = function (opts) {
                          + _ageClass(e.cz_fidelity_updated_at) + '">measured '
                          + _ageLabel(e.cz_fidelity_updated_at) + '</span></div>';
                 }
+                // Which run set the number: only when the run recorded its own
+                // id beside that very metric (never a neighbouring metric's run).
+                if (e.cz_fidelity_run != null) {
+                    html += row('set by run', '#' + _esc(e.cz_fidelity_run));
+                }
                 html += '</div>';
             }
             // A separate section, because these are fit parameters rather than
@@ -2392,11 +2397,44 @@ window.ChipStatus.mount = function (opts) {
                 html += '<div class="topo-popup-section">'
                      + '<div class="topo-popup-section-title">Parameters</div>' + parRows + '</div>';
             }
-            if (!fidRows && !parRows) {
+            // The 2Q gate's operating point(s): one row group per gate macro
+            // that records a flux pulse (amplitude in V, lengths in ns).
+            var opRows = '';
+            (e.gate_details || []).forEach(function(g) {
+                var bits = [];
+                if (typeof g.amplitude === 'number') bits.push('amp ' + g.amplitude.toFixed(4) + ' V');
+                if (typeof g.coupler_amp === 'number') bits.push('coupler ' + g.coupler_amp.toFixed(4) + ' V');
+                if (typeof g.length === 'number') bits.push(Math.round(g.length) + ' ns');
+                if (!bits.length) return;
+                opRows += row(_esc(g.name), bits.join(' \u00b7 '), e.best_gate && g.name === e.best_gate);
+            });
+            if (opRows) {
+                html += '<div class="topo-popup-section">'
+                     + '<div class="topo-popup-section-title">Operating point</div>' + opRows + '</div>';
+            }
+            if (!fidRows && !parRows && !opRows) {
                 html += '<div class="topo-popup-section muted">no recorded pair data</div>';
             }
+            if (typeof e.last_calibrated === 'number') {
+                html += '<div class="topo-popup-section">'
+                     + row('last calibrated', '<span class="topo-recency ' + _ageClass(e.last_calibrated) + '">'
+                           + _ageLabel(e.last_calibrated) + '</span>') + '</div>';
+            }
+            var pidQ = encodeURIComponent(e.pair_id);
+            html += '<div class="topo-popup-links">'
+                 + (e.has_cz ? '<a href="/cz-plan?pair=' + pidQ + '" hx-get="/cz-plan?pair=' + pidQ
+                    + '" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"'
+                    + ' class="topo-popup-link">CZ gate plan \u2192</a>' : '')
+                 + '<button type="button" class="topo-popup-link topo-popup-inspect">Pair inspector \u2192</button>'
+                 + '</div>';
 
             popup.innerHTML = html;
+            if (window.htmx && htmx.process) htmx.process(popup);
+            popup.querySelector('.topo-popup-inspect').addEventListener('click', function(ev) {
+                ev.stopPropagation();
+                window.TopoGraph.closeDetails();
+                if (window._inspectPair) window._inspectPair(e.pair_id);
+            });
             popup.querySelector('.topo-popup-close').addEventListener('click', function(ev) {
                 ev.stopPropagation(); window.TopoGraph.closeDetails();
             });
@@ -2837,11 +2875,63 @@ window.ChipStatus.mount = function (opts) {
                 return { x: mx + (sd.sx > 0 ? gapH : -gapH), y: my + 0.36 * fs,
                          cls: sd.sx > 0 ? ' topo-hero-lbl-start' : ' topo-hero-lbl-end' };
             }
+            // Pairs as first-class objects: a midpoint badge (name + the 2Q
+            // gate fidelity when the chip holds one), coloured on the same
+            // chip-relative scale the 2Q metric paints edges with; no value
+            // means the neutral no-data colour, never an invented one.
+            var badgeSvg = '';
+            var _badgeDone = {}, _badgeHalfBy = {};
+            var _czAgg = computeAggregates(topo.edges.map(function(e) { return _mv(e, 'cz_fidelity'); }));
+            var _denseChip = topo.nodes.length >= 16;
+            var _badgeFs = compactMode ? 10 : 8.5;
+            function _pairStale(ms) { return _ageClass(ms) === 'fail'; }
+            function _pairKey(e) {
+                return String(e.source) < String(e.target)
+                    ? e.source + '|' + e.target : e.target + '|' + e.source;
+            }
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
+                var pst = TG.pairState({ cz_fidelity: _mv(e, 'cz_fidelity'), has_cz: e.has_cz,
+                                         gate_kind: e.gate_kind,
+                                         cz_fidelity_updated_at: e.cz_fidelity_updated_at }, _pairStale);
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
                 var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
+                var bKey = _pairKey(e);
+                var badgeHalf = _badgeHalfBy[bKey] || 0;
+                if (!_badgeDone[bKey]) {
+                    _badgeDone[bKey] = true;
+                    var bL = Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+                    var bHoriz = Math.abs(x2 - x1) >= Math.abs(y2 - y1);
+                    var bRoom = Math.max(0, bL - 2 * R - 2 * _roleR - 4);
+                    var bFill = dCfg.nullCellColor, bFg = null;
+                    // In an edge-metric view the edge already prints the
+                    // selected value, so the badge carries the name only.
+                    var bVal = (!edgeMode && pst.value != null) ? fmtPct(pst.value, 1) + '%' : null;
+                    if (pst.value != null) {
+                        var bt = _czAgg.count < 2 ? 0.5
+                               : (pst.value - _czAgg.min) / ((_czAgg.max - _czAgg.min) || 1);
+                        bFill = interpolateColor(bt, dCfg.colorScale);
+                        bFg = textColorForBg(bFill);
+                    }
+                    var bTitle = e.pair_id
+                        + (pst.value != null ? ' \u2014 2Q gate fidelity ' + fmtPct(pst.value, 2) + '%'
+                           : (pst.state === 'pending' ? ' \u2014 2Q gate defined, not measured' : ''))
+                        + (pst.stale ? ' (measured ' + _ageLabel(e.cz_fidelity_updated_at) + ')' : '');
+                    var badge = TG.pairBadgeSvg({
+                        x: (x1 + x2) / 2, y: (y1 + y2) / 2,
+                        name: TG.quamPairId([e.source, e.target]),
+                        valueText: bVal, fontSize: _badgeFs, fill: bFill, fg: bFg,
+                        state: pst.state + (pst.stale ? ' topo-pair-badge-stale' : ''),
+                        dense: _denseChip,
+                        room: bHoriz ? bRoom : 1e9, roomAcross: bHoriz ? 1e9 : bRoom,
+                        attrs: ' data-hero-pair="' + _esc(e.pair_id) + '" tabindex="-1"'
+                             + ' data-link-ends="' + _esc(e.source + ' ' + e.target) + '"',
+                        title: bTitle,
+                    });
+                    badgeSvg += badge.svg;
+                    if (!badge.dense) badgeHalf = _badgeHalfBy[bKey] = (bHoriz ? badge.height : badge.width) / 2 + 2;
+                }
                 if (!edgeMode && mCur.edgeDelta) {
                     var dKey = String(e.source) < String(e.target)
                         ? e.source + '|' + e.target : e.target + '|' + e.source;
@@ -2864,7 +2954,7 @@ window.ChipStatus.mount = function (opts) {
                             // QA F-26: beside the bar (a CR pair's two lines
                             // sit ±6 off the centre line), never on it
                             var dSd = _heroLabelSide(e, x1, y1, x2, y2);
-                            var dBar = (_edgePaint(e).width + 3) / 2 + (e.directed ? 6 : 0);
+                            var dBar = Math.max((_edgePaint(e).width + 4) / 2 + (e.directed ? 6 : 0), badgeHalf);
                             if (Math.abs(x2 - x1) >= Math.abs(y2 - y1)) {
                                 // A HORIZONTAL edge has only the stone gap
                                 // to write in, so the label stacks: the metric over
@@ -2919,16 +3009,22 @@ window.ChipStatus.mount = function (opts) {
                     }
                 } else {
                     var ep = _edgePaint(e);
-                    stroke = ep.color; width = ep.width + 3;
+                    stroke = ep.color; width = ep.width + 4;
                 }
+                // solid = measured, dashed = a 2Q gate with no measurement,
+                // dotted = no 2Q gate; a value older than the chip's age rule fades
+                var dash = pst.state === 'pending' ? ' stroke-dasharray="7 5"'
+                         : (pst.state === 'none' ? ' stroke-dasharray="2 6"' : '');
                 var tt = e.pair_id + (e.cz_fidelity != null ? ' — ' + (e.cz_fidelity * 100).toFixed(1) + '%' : '')
                        + (e.active === false ? ' · off' : '');
                 var coords = ' x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"';
                 var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-                svg += '<g class="topo-hero-edge" data-hero-pair="' + _esc(e.pair_id) + '"'
+                svg += '<g class="topo-hero-edge topo-hero-edge-' + pst.state + (pst.stale ? ' topo-hero-edge-stale' : '')
+                     + '" data-hero-pair="' + _esc(e.pair_id) + '"'
+                     + ' data-link-ends="' + _esc(e.source + ' ' + e.target) + '"'
                      + (e.active === false ? ' opacity="0.35"' : '') + '>'
-                     + '<line' + coords + ' stroke="' + stroke + '" stroke-width="' + width
-                     + '" stroke-linecap="round"/>'
+                     + '<line class="topo-hero-edge-line"' + coords + ' stroke="' + stroke + '" stroke-width="' + width
+                     + '" stroke-linecap="round"' + dash + '/>'
                      + '<line class="topo-hero-edge-hit"' + coords + ' stroke="transparent" stroke-width="22">'
                      + '</line><title>' + _esc(tt) + '</title></g>';
                 // docs/126: the value draws in a TOP layer, after the stones
@@ -2941,7 +3037,7 @@ window.ChipStatus.mount = function (opts) {
                 } else if (evTxt != null) {
                     // QA F-26: beside the 9px bar, clear of C/T (and M)
                     var eAt = _heroLabelAt(_heroLabelSide(e, x1, y1, x2, y2), mx, my,
-                                           width / 2, _lblFs.eval, String(evTxt).length, 0);
+                                           Math.max(width / 2, badgeHalf), _lblFs.eval, String(evTxt).length, 0);
                     evalSvg += '<text class="topo-hero-eval' + eAt.cls + '" x="' + eAt.x
                         + '" y="' + eAt.y + '">'
                         + _esc(evTxt) + '</text>';
@@ -2972,6 +3068,7 @@ window.ChipStatus.mount = function (opts) {
                     // The edges carry the numbers — stones go neutral so the
                     // painted edges read as the subject, not the background.
                     svg += '<g class="topo-hero-node topo-hero-node-neutral" data-hero-qubit="' + _esc(n.id)
+                         + '" data-link-id="' + _esc(n.id)
                          + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
                          + '<circle class="topo-hero-stone" r="' + R + '"'
                          + (o.shared ? ' stroke-dasharray="3 2"' : '') + '></circle>'
@@ -2985,6 +3082,7 @@ window.ChipStatus.mount = function (opts) {
                 // across the map even where one qubit's sub is missing).
                 var subMode = !!mCur.subKey;
                 svg += '<g class="topo-hero-node' + (pt.cls ? ' ' + pt.cls : '') + '" data-hero-qubit="' + _esc(n.id)
+                     + '" data-link-id="' + _esc(n.id)
                      + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
                      + '<circle class="topo-hero-stone" r="' + R + '"'
                      + (pt.fill ? ' style="fill:' + pt.fill + '"' : '')
@@ -3012,10 +3110,20 @@ window.ChipStatus.mount = function (opts) {
                 + (compactMode ? ' hero-compact' : '') + '" width="' + W + '" height="' + H
                 + '" viewBox="0 0 ' + W + ' ' + H + '"'
                 + ' style="width:' + Math.round(zoom * 100) + '%">'
-                + svg + glyphSvg + evalSvg + '</svg></div></div>'
+                + svg + glyphSvg + evalSvg + '<g class="topo-pair-badges">' + badgeSvg + '</g></svg></div></div>'
                 + legendHtml(current);
             if (TG.closeDetails) TG.closeDetails();
             bindHover();
+            if (TG.bindLinked) TG.bindLinked(host);
+            // At a zoom where the pill text would be too small to read, every
+            // badge falls back to its dot (the pill still opens on hover).
+            var _svgEl = host.querySelector('.topo-hero-svg');
+            var _scale = _svgEl && _svgEl.getBoundingClientRect().width / W;
+            if (_scale && _badgeFs * _scale < 7) {
+                host.querySelectorAll('.topo-pair-badge').forEach(function(bg) {
+                    bg.classList.add('topo-pair-badge-dense');
+                });
+            }
         }
 
         // Delegated clicks (bound ONCE on the host — innerHTML re-renders keep

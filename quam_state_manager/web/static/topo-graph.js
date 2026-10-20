@@ -716,10 +716,15 @@ window.TopoGraph = (function () {
         x1 += -ddy / dl * doff; y1 += ddx / dl * doff;
         x2 += -ddy / dl * doff; y2 += ddx / dl * doff;
       }
-      var cls = "cm-edge" + (e.has_coupler ? " cm-edge-hascoupler" : "") +
+      // solid = measured 2Q gate, dashed = defined but not measured,
+      // dotted = no 2Q gate, faded = an old measurement (pairState)
+      var pst = pairState(e);
+      var cls = "cm-edge cm-edge-" + pst.state + (pst.stale ? " cm-edge-stale" : "") +
+                (e.has_coupler ? " cm-edge-hascoupler" : "") +
                 (e.active === false ? " cm-off" : "");
       // A wide transparent stroke makes pair hover and touch reachable.
-      svg += '<g class="' + cls + '" data-cm="p:' + esc(e.pair_id) + '">' +
+      svg += '<g class="' + cls + '" data-cm="p:' + esc(e.pair_id) +
+             '" data-link-ends="' + esc(e.source + ' ' + e.target) + '">' +
              '<line class="cm-edge-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +
              '<line class="cm-edge-line" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>';
       if (e.directed) {
@@ -781,7 +786,7 @@ window.TopoGraph = (function () {
       var chainCls = !emphChain ? ""
         : (nChain === emphChain ? " cm-chain-emph" : " cm-chain-dim");
       svg += '<g class="cm-node' + chainCls + '" data-cm="q:' + esc(n.id) +
-             '" data-cm-chain="' + esc(nChain) + '">' +
+             '" data-link-id="' + esc(n.id) + '" data-cm-chain="' + esc(nChain) + '">' +
              '<circle class="cm-occluder" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"/>' +
              '<circle class="cm-stone" cx="' + pt.x + '" cy="' + pt.y + '" r="' + R + '"' +
              (pt.shared ? ' stroke-dasharray="3 2"' : "") + "/>" +
@@ -982,6 +987,15 @@ window.TopoGraph = (function () {
       var midX = (a.left + a.right) / 2, midY = (a.top + a.bottom) / 2;
       a = {left: midX, right: midX, top: midY, bottom: midY, width: 0};
     }
+    // A pair with a drawn badge: sit beside the badge, never over its name.
+    var pid = pair && anchor.getAttribute('data-hero-pair');
+    var svgRoot = pid && anchor.ownerSVGElement;
+    var badgeEl = svgRoot && Array.prototype.filter.call(svgRoot.querySelectorAll('.topo-pair-badge'),
+      function (el) { return el.getAttribute('data-hero-pair') === pid; })[0];
+    if (badgeEl) {
+      var br = badgeEl.getBoundingClientRect();
+      if (br.width || br.height) a = br;
+    }
     var pad = 8, gap = 5, x, y;
     if (surface === detailButton) {
       // Above the stone fits the gap between rows without covering neighbours.
@@ -1090,7 +1104,9 @@ window.TopoGraph = (function () {
     host.querySelectorAll(selector).forEach(function (anchor) {
       anchor.setAttribute('aria-label', label(anchor));
       Array.prototype.forEach.call(anchor.children, function (child) {
-        if (child.tagName.toLowerCase() === 'title') child.textContent = label(anchor);
+        // a one-line native title (e.g. how a stone's age was dated) stays;
+        // an empty one gets the node's name
+        if (child.tagName.toLowerCase() === 'title' && !child.textContent.trim()) child.textContent = label(anchor);
       });
       if (!anchor.hasAttribute('tabindex')) anchor.setAttribute('tabindex', '0');
       var touch = false;
@@ -1112,6 +1128,8 @@ window.TopoGraph = (function () {
       });
     });
   }
+  // Page-wide closers; absent when the module is loaded without a DOM.
+  if (typeof document !== 'undefined') {
   document.addEventListener('click', function (e) {
     if (detailPanel && !detailPanel.contains(e.target)) closeDetails();
     else if (detailButton && e.target !== detailButton &&
@@ -1144,9 +1162,101 @@ window.TopoGraph = (function () {
     var surface = detailPanel || detailButton;
     if (surface) positionDetail(surface, detailAnchor);
   });
+  }
+
+  // -- Pairs as first-class map objects (shared by every map that draws edges) --
+  // What the chip holds for a pair's 2Q gate: 'measured' (a fidelity value),
+  // 'pending' (a gate is defined but never measured) or 'none' (no 2Q gate).
+  // `stale` follows the caller's age rule; the default is the Chip Status
+  // calibration-age rule (older than 30 days fails).
+  var PAIR_STALE_DAYS = 30;
+  function pairState(e, isStale) {
+    var v = e && typeof e.cz_fidelity === 'number' ? e.cz_fidelity : null;
+    var state = v != null ? 'measured' : ((e && (e.has_cz || (e.gate_kind && e.gate_kind !== 'none'))) ? 'pending' : 'none');
+    var at = e && typeof e.cz_fidelity_updated_at === 'number' ? e.cz_fidelity_updated_at : null;
+    var stale = false;
+    if (state === 'measured' && at != null) {
+      stale = isStale ? !!isStale(at) : (Date.now() - at) / 86400000 > PAIR_STALE_DAYS;
+    }
+    return { state: state, value: v, stale: stale };
+  }
+  // Midpoint badge: a pill with the pair name over at most one number, or a
+  // small dot when the pill does not fit (dense chips). The pill is always in
+  // the markup so a hover or a linked highlight can show it.
+  function pairBadgeSvg(o) {
+    var lines = [o.name];
+    if (o.valueText) lines.push(o.valueText);
+    var fs = o.fontSize || 9, lh = Math.round(fs * 1.15 * 10) / 10;
+    var longest = 0;
+    lines.forEach(function (t) { longest = Math.max(longest, String(t).length); });
+    var w = Math.round(longest * fs * 0.62 + fs * 1.1);
+    var h = Math.round(lines.length * lh + fs * 0.6);
+    var dense = !!o.dense || (o.room != null && (w > o.room || h > o.roomAcross));
+    var fill = o.fill ? ' style="fill:' + o.fill + '"' : '';
+    var fg = o.fg ? ' style="fill:' + o.fg + '"' : '';
+    var y0 = -((lines.length - 1) * lh) / 2;
+    var text = '';
+    lines.forEach(function (t, i) {
+      text += '<text class="topo-pair-badge-text' + (i ? ' topo-pair-badge-val' : '') + '" y="' +
+        Math.round((y0 + i * lh) * 10) / 10 + '" font-size="' + fs +
+        '" text-anchor="middle" dominant-baseline="central"' + fg + '>' + esc(t) + '</text>';
+    });
+    return {
+      dense: dense, width: w, height: h,
+      svg: '<g class="topo-pair-badge' + (dense ? ' topo-pair-badge-dense' : '') +
+        (o.state ? ' topo-pair-badge-' + o.state : '') + '"' +
+        (o.attrs || '') + ' transform="translate(' + Math.round(o.x * 10) / 10 + ',' + Math.round(o.y * 10) / 10 + ')">' +
+        '<circle class="topo-pair-badge-dot" r="' + Math.max(3, Math.round(fs * 0.45)) + '"' + fill + '></circle>' +
+        '<g class="topo-pair-badge-pill">' +
+        '<rect x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h +
+        '" rx="' + Math.min(h / 2, fs) + '"' + fill + '></rect>' + text + '</g>' +
+        (o.title ? '<title>' + esc(o.title) + '</title>' : '') + '</g>'
+    };
+  }
+  // Linked highlight: a pair lights its two qubits, a qubit lights its pairs.
+  // Markup contract: a pair element (edge or badge) carries
+  // data-link-ends="a b"; a qubit element carries data-link-id="a".
+  function bindLinked(host) {
+    if (!host || host._linkedBound) return;
+    host._linkedBound = true;
+    var lit = [];
+    function clear() {
+      lit.forEach(function (el) { el.classList.remove('topo-linked'); });
+      lit = [];
+    }
+    function light(el) { el.classList.add('topo-linked'); lit.push(el); }
+    function cssq(s) { return String(s).replace(/["\\]/g, '\\$&'); }
+    function apply(target) {
+      clear();
+      var pair = target.closest && target.closest('[data-link-ends]');
+      var qubit = !pair && target.closest && target.closest('[data-link-id]');
+      if (pair && host.contains(pair)) {
+        var ends = pair.getAttribute('data-link-ends');
+        host.querySelectorAll('[data-link-ends="' + cssq(ends) + '"]').forEach(light);
+        ends.split(' ').forEach(function (id) {
+          if (id) host.querySelectorAll('[data-link-id="' + cssq(id) + '"]').forEach(light);
+        });
+      } else if (qubit && host.contains(qubit)) {
+        var id = qubit.getAttribute('data-link-id');
+        light(qubit);
+        host.querySelectorAll('[data-link-ends]').forEach(function (el) {
+          if (el.getAttribute('data-link-ends').split(' ').indexOf(id) >= 0) light(el);
+        });
+      }
+    }
+    host.addEventListener('mouseover', function (e) { apply(e.target); });
+    host.addEventListener('focusin', function (e) { apply(e.target); });
+    host.addEventListener('mouseleave', clear);
+    host.addEventListener('focusout', function (e) {
+      if (!e.relatedTarget || !host.contains(e.relatedTarget)) clear();
+    });
+  }
 
   return {
     bindDetails: bindDetails,
+    pairState: pairState,
+    pairBadgeSvg: pairBadgeSvg,
+    bindLinked: bindLinked,
     closeDetails: closeDetails,
     positionDetail: positionDetail,
     bareIndex: bareIndex,

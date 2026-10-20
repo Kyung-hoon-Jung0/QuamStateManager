@@ -319,6 +319,8 @@ function part5() {
 
   const eg = hero.querySelector('[data-hero-pair="q1-2"]');
   eg.dispatchEvent(new win.Event('mouseenter'));
+  // v1.5.2: hover -> details opened on hover; now hover offers Expand and the press opens them
+  { const xb = doc.querySelector('.topo-expand'); if (xb) xb.click(); }
   setTimeout(function () {
     const pop = doc.querySelector('.topo-pair-popup');
     ok(!!pop, 'pair hover opens the pair popup');

@@ -193,6 +193,7 @@ window.ComponentMap = (function () {
     body.addEventListener("mouseleave", function () {
       _clearHotRow();
     });
+    if (window.TopoGraph.bindLinked) window.TopoGraph.bindLinked(body);
     window.TopoGraph.bindDetails(body, "[data-cm]", function (el) {
       return _parseCm(el).id;
     }, function (el) {

@@ -4593,6 +4593,29 @@ html.topbar-hidden .topo-subnav {
 .topo-hero-node.hs-warn .topo-hero-id, .topo-hero-node.hs-warn .topo-hero-val { fill: var(--color-warning-text); }
 .topo-hero-node.hs-fail .topo-hero-id, .topo-hero-node.hs-fail .topo-hero-val { fill: var(--color-error-text); }
 .topo-hero-edge-hit { cursor: pointer; }
+/* Pairs as first-class map objects: midpoint badge, data-driven edge style,
+   linked highlight (pair <-> its qubits). Colours are custom properties. */
+:root { --topo-pair-badge-stroke: rgba(0,0,0,.28); --topo-pair-badge-text: var(--pico-color); --topo-pair-linked: var(--pico-primary); }
+[data-theme="dark"] { --topo-pair-badge-stroke: rgba(255,255,255,.35); }
+.topo-pair-badge { cursor: pointer; outline: none; }
+.topo-pair-badge .topo-pair-badge-pill rect { stroke: var(--topo-pair-badge-stroke); stroke-width: .8; }
+.topo-pair-badge .topo-pair-badge-dot { stroke: var(--topo-pair-badge-stroke); stroke-width: .8; display: none; }
+.topo-pair-badge-text { fill: var(--topo-pair-badge-text); font-family: var(--font-ui); font-weight: 600; pointer-events: none; }
+.topo-pair-badge-val { font-weight: 700; }
+.topo-pair-badge-dense .topo-pair-badge-dot { display: inline; }
+.topo-pair-badge-dense .topo-pair-badge-pill { display: none; }
+.topo-pair-badge-dense:hover .topo-pair-badge-pill, .topo-pair-badge-dense:focus .topo-pair-badge-pill,
+.topo-pair-badge-dense.topo-linked .topo-pair-badge-pill { display: inline; }
+.topo-pair-badge-dense:hover .topo-pair-badge-dot, .topo-pair-badge-dense.topo-linked .topo-pair-badge-dot { display: none; }
+.topo-pair-badge-stale, .topo-hero-edge-stale .topo-hero-edge-line { opacity: .45; }
+.topo-pair-badge.topo-linked .topo-pair-badge-pill rect { stroke: var(--topo-pair-linked); stroke-width: 1.6; }
+.topo-hero-edge.topo-linked .topo-hero-edge-line { stroke-width: 11; opacity: 1; }
+.topo-hero-node.topo-linked .topo-hero-stone { stroke: var(--topo-pair-linked); stroke-width: 3; }
+.cm-edge.topo-linked .cm-edge-line { stroke: var(--topo-pair-linked); stroke-width: 4; opacity: 1; }
+.cm-node.topo-linked .cm-stone { stroke: var(--topo-pair-linked); stroke-width: 2.5; }
+.cm-edge-pending .cm-edge-line { stroke-dasharray: 6 4; }
+.cm-edge-none .cm-edge-line { stroke-dasharray: 2 5; }
+.cm-edge-stale .cm-edge-line { opacity: .45; }
 .topo-hero-legend {
     display: flex; gap: .9rem; align-items: center; flex-wrap: wrap;
     font-size: .74em; color: var(--pico-muted-color); margin-top: .35rem;
@@ -4638,7 +4661,7 @@ html.topbar-hidden .topo-subnav {
    font-size ATTRIBUTE renderLayout writes (attrs lose to any stylesheet rule),
    and the attr is what scales the id with the cell (docs/93 F2). */
 .cm-id { font-weight: 600; fill: var(--pico-color); pointer-events: none; }
-.cm-edge-line { stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 2; stroke-linecap: round; }
+.cm-edge-line { stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 3; stroke-linecap: round; }
 .cm-arrow { fill: var(--pico-muted-border-color, rgba(128,128,128,.65)); }
 .cm-coupler { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.4; }
 .cm-res { fill: none; stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.6; }
@@ -4859,6 +4882,9 @@ html.topbar-hidden .topo-subnav {
 .topo-card-popup .topo-prop-label { flex-basis: 128px; white-space: normal; overflow: visible;
     text-overflow: clip; line-height: 1.2; }
 .topo-pair-popup { padding: 8px; min-width: min(300px, calc(100vw - 16px)); }
+.topo-popup-links { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 6px 12px 4px; border-top: 1px solid var(--pico-muted-border-color); margin-top: 4px; }
+.topo-popup-links .topo-popup-link { width: auto; margin: 0; padding: 2px 0; background: none; border: 0; color: var(--pico-primary); font-size: .85rem; text-decoration: none; cursor: pointer; }
+.topo-popup-links .topo-popup-link:hover { text-decoration: underline; }
 .topo-card-popup .topo-popup-header, .topo-pair-popup .topo-popup-header {
     display: flex; align-items: center; justify-content: space-between; gap: .5rem;
     padding: 2px 12px 6px; font-weight: 600;
@@ -4883,7 +4909,7 @@ html.topbar-hidden .topo-subnav {
 .topo-popup-kind.topo-popup-off { background: var(--pico-muted-color); }
 .topo-pair-popup .topo-popup-section {
     padding: 4px 12px; font-size: var(--topo-popup-section-size); line-height: 1.55;
-    display: grid; grid-template-columns: fit-content(230px) minmax(0, max-content); column-gap: 8px;
+    display: grid; grid-template-columns: fit-content(340px) minmax(0, max-content); column-gap: 8px;
 }
 .topo-pair-popup .topo-popup-section-title {
     grid-column: 1 / -1;
@@ -14082,7 +14108,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 /* ── docs/166: the Pulses page's chip map is a row filter ─────────────────
    The drawing is the shared component-page one; only the Pulses mount sets
    data-cm-pick, so every other page's map is untouched. */
-.cm-edge-hit { stroke: transparent; stroke-width: 14px; fill: none; pointer-events: stroke; }
+.cm-edge-hit { stroke: transparent; stroke-width: 16px; fill: none; pointer-events: stroke; }
 .cmap[data-cm-pick="1"] .cm-edge-hit { pointer-events: stroke; }
 /* Centred and modest: this map sits above a 500-row table, so it is a control
    rather than the page's subject. */
