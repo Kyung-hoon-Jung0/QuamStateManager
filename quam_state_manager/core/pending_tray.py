@@ -1343,6 +1343,12 @@ def _describe(path: Path, wc) -> dict:
                 "new": e.get("new_value"),
                 "created": e.get("created") is True, "deleted": e.get("deleted") is True})
     reason = header_problem(doc, wc)
+    restorable = False
+    try:
+        _decode_recovery_rows(raw)
+        restorable = True
+    except ValueError as exc:
+        reason = str(exc)
     if not reason:
         try:
             _rows_of(raw)
@@ -1363,7 +1369,7 @@ def _describe(path: Path, wc) -> dict:
                       "could not restore it)" if same else
                       "the working files changed after these edits were staged")
     out["reason"] = reason
-    out["restorable"] = bool(out["rows"]) and len(out["rows"]) == len(raw)
+    out["restorable"] = restorable
     return out
 
 
@@ -1464,7 +1470,11 @@ def read_unrecovered_rows(wc, file_id: str) -> list[ChangeEntry]:
     if path is None:
         raise FileNotFoundError(file_id)
     doc = safe_io.read_json(path, attempts=1)
-    raw = doc.get("entries") if isinstance(doc, dict) else None
+    return _decode_recovery_rows(doc.get("entries") if isinstance(doc, dict) else None)
+
+
+def _decode_recovery_rows(raw) -> list[ChangeEntry]:
+    """The one row decoder for the recovery listing and explicit Restore."""
     if not isinstance(raw, list) or not raw:
         raise ValueError("the recovery file holds no rows")
     known = set(_ROW_FIELDS)
