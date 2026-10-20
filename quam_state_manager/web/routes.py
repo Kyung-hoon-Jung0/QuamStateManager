@@ -44538,15 +44538,14 @@ def trends_param_diff():
 
 #: v1.5.1 (T1-F7): a fit file's declared units, by (path, mtime_ns, size)
 _TRENDS_FIT_UNITS: dict[tuple, tuple] = {}
-_TRENDS_UNITS_RUNS = 3          # the newest runs with a ds_fit file that are read
 
 
 @bp.route("/trends/units")
 def trends_units():
     """``{"units": {metric: unit}}`` for the Trends y axes (v1.5.1, T1-F7):
     the unit each fit-result metric's OWN ``ds_fit`` file declares
-    (``core.units.fit_metric_units``), read from the newest few runs of the
-    selection that have one. A metric no file declares gets none -- the axis
+    (``core.units.fit_metric_units``), checked against data.json values for
+    every run in the selection. A metric no file declares gets none -- the axis
     then says just its name, as before. Asked after the charts, never on
     their path."""
     from quam_state_manager.core import ndview, units as _units
@@ -44559,31 +44558,40 @@ def trends_units():
             _gen, _touched, rs = f["store"].experiment_snapshot(experiment)
         except Exception:  # noqa: BLE001 -- no units is an honest answer
             continue
-        runs.extend(r for r in rs if getattr(r, "has_ds_fit", False))
+        runs.extend(rs)
     runs.sort(key=lambda r: (getattr(r, "instant_us", None) or 0, r.run_id), reverse=True)
     out: dict[str, str] = {}
-    for r in runs[:_TRENDS_UNITS_RUNS]:
+    rejected: set[str] = set()
+    for r in runs:
+        fits = [qv for qv in (r.fit_results or {}).values() if isinstance(qv, dict)]
+        metrics = {m for qv in fits for m in qv}
+        if not metrics:
+            continue
         p = Path(r.folder_path) / "ds_fit.h5"
         try:
             st = p.stat()
         except OSError:
+            rejected.update(metrics)
             continue
         key = (str(p), st.st_mtime_ns, st.st_size)
         got = _TRENDS_FIT_UNITS.get(key)
         if got is None:
             probe = ndview.probe_file(p)
-            got = (probe.get("vars") or [], probe.get("axes") or [])
+            got = (ndview.fit_value_rows(p, probe.get("vars") or []), probe.get("axes") or [])
             if len(_TRENDS_FIT_UNITS) > 256:
                 _TRENDS_FIT_UNITS.clear()
             _TRENDS_FIT_UNITS[key] = got
         variables, axes = got
-        fits = [qv for qv in (r.fit_results or {}).values() if isinstance(qv, dict)]
-        metrics = {m for qv in fits for m in qv}
         # R3B M2: a true/false metric (``success``) never has a unit
         booleans = {m for qv in fits for m, v in qv.items() if isinstance(v, bool)}
-        for m, u in _units.fit_metric_units(variables, sorted(metrics), axes, booleans).items():
+        proven = _units.fit_metric_units(variables, sorted(metrics), axes, booleans,
+                                         fit_results=r.fit_results or {})
+        for m in metrics:
+            if m not in proven or (m in out and out[m] != proven[m]):
+                rejected.add(m)
+        for m, u in proven.items():
             out.setdefault(m, u)
-    return jsonify({"units": out})
+    return jsonify({"units": {m: u for m, u in out.items() if m not in rejected}})
 
 
 @bp.route("/debug/ram")

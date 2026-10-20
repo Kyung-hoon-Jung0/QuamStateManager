@@ -43,10 +43,15 @@ def _run(root: Path, rid: int, *, with_fit: bool = True) -> None:
     (run / "data.json").write_text(json.dumps({"fit_results": fit}), encoding="utf-8")
     if with_fit:
         with h5py.File(run / "ds_fit.h5", "w") as f:
-            tau = f.create_dataset("tau", data=np.array([12000.0, 13000.0]))
+            # v1.5.1 (r6e): metadata-only fixture -> matching values + entity labels prove ns.
+            entity = f.create_dataset("qubit", data=np.array(["q1", "q2"], dtype=h5py.string_dtype()))
+            entity.make_scale("qubit")
+            tau = f.create_dataset("tau", data=np.array([fit[q]["t1"] for q in ("q1", "q2")]))
+            tau.dims[0].attach_scale(entity)
             tau.attrs["long_name"] = "T1"
             tau.attrs["units"] = "ns"
             err = f.create_dataset("tau_error", data=np.array([400.0, 401.0]))
+            err.dims[0].attach_scale(entity)
             err.attrs["long_name"] = "T1 error"
             err.attrs["units"] = "ns"
             f.create_dataset("amp", data=np.array([0.1, 0.2]))      # no unit declared
@@ -65,7 +70,8 @@ def client(tmp_path):
     data = tmp_path / "data"
     for rid in (1, 2, 3):
         _run(data, rid)
-    _run(data, 4, with_fit=False)
+    # v1.5.1 (r6e): missing-fit run -> proven-fit runs here; absent evidence pinned separately.
+    _run(data, 4)
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
     assert c.post("/workspace/add", data={"folder": str(data)}).status_code in (200, 302)
@@ -82,9 +88,20 @@ def test_fit_metric_units_reads_the_name_or_the_long_name_and_never_guesses():
     assert got == {"t1": "ns", "t1_error": "ns", "tau": "ns"}, got
 
 
-def test_the_units_route_answers_from_the_runs_own_fit_files(client):
+@pytest.mark.parametrize("evidence", ["proven", "mismatch", "missing"])
+def test_the_units_route_answers_from_the_runs_own_fit_files(client, tmp_path, evidence):
+    # v1.5.1 (r6e): metadata alone -> matching numbers required in every plotted run.
+    fit = next((tmp_path / "data").glob("*/#4_*/ds_fit.h5"))
+    expected = {"t1": "ns", "t1_error": "ns"}
+    if evidence == "missing":
+        fit.unlink()
+        expected = {}
+    elif evidence == "mismatch":
+        with h5py.File(fit, "r+") as f:
+            f["tau"][...] = [1e-5, 2e-5]
+        expected = {"t1_error": "ns"}
     j = client.get(f"/trends/units?experiment={EXP}").get_json()
-    assert j == {"units": {"t1": "ns", "t1_error": "ns"}}, j
+    assert j == {"units": expected}, j
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -131,6 +148,10 @@ def _ramsey_run(root: Path, rid: int) -> None:
         sig = f.create_dataset("signal", data=np.zeros((2, 4)))
         sig.dims[1].attach_scale(axis)
         t2 = f.create_dataset("t2_star", data=np.array([9000.0, 9001.0]))
+        # v1.5.1 (r6e): unlabelled values -> entity-labelled values prove the plotted unit.
+        entity = f.create_dataset("qubit", data=np.array(["q1", "q2"], dtype=h5py.string_dtype()))
+        entity.make_scale("qubit")
+        t2.dims[0].attach_scale(entity)
         t2.attrs["long_name"] = "T2*"
         t2.attrs["units"] = "ns"
         # the sweep axis's attributes copied onto a true/false and a factor

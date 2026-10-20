@@ -467,7 +467,8 @@ def is_dimensionless_name(name: Any) -> bool:
     return any(w in DIMENSIONLESS_WORDS for w in re.split(r"[^a-z0-9]+", str(name or "").lower()))
 
 
-def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any = ()) -> dict[str, str]:
+def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any = (),
+                     *, fit_results: Any = None) -> dict[str, str]:
     """v1.5.1 (T1-F7): ``{metric: unit}`` for the fit-result *metrics* of a
     run, read from the ``units`` attribute its own ``ds_fit`` file gives a
     variable -- matched by the variable's name OR its ``long_name``
@@ -496,6 +497,8 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
     whose fit values are true/false), nor for a dimensionless name
     (:func:`is_dimensionless_name`) unless the unit is a ratio
     (:data:`RATIO_UNITS`)."""
+    # With fit_results (Trends), every claimant must also prove its number
+    # agrees with the plotted value for the same entity in the same run.
     def sig(v: dict) -> tuple:
         u, ln = v.get("units"), v.get("long_name")
         return (u.strip() if isinstance(u, str) else u, ln.strip() if isinstance(ln, str) else ln)
@@ -517,6 +520,7 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
         return any(len(other) > len(mine) and mine <= other for other in carried.get(sig(v), ()))
 
     claims: dict[str, set] = {}
+    evidence: dict[str, list] = {}
     for v in rows:
         unit = v.get("units")
         if not isinstance(unit, str) or not unit.strip():
@@ -530,6 +534,7 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
         for k in {_fit_key(v.get("name")), _fit_key(v.get("long_name"))}:
             if k:
                 claims.setdefault(k, set()).add(unit.strip())
+                evidence.setdefault(k, []).append(v.get("fit_values") or {})
     skip = {str(b) for b in booleans or ()}
     out: dict[str, str] = {}
     for m in metrics or ():
@@ -540,5 +545,18 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
             unit = next(iter(got))
             if is_dimensionless_name(m) and unit not in RATIO_UNITS:
                 continue          # a pure number: the attribute came from elsewhere
+            if fit_results is not None:
+                expected = {str(q): f[m] for q, f in fit_results.items()
+                            if isinstance(f, dict) and m in f}
+                def agrees(values):
+                    if set(values) == {None} and len(expected) == 1:
+                        values = {next(iter(expected)): values[None]}
+                    return bool(expected) and all(
+                        q in values and _is_number(value) and _is_number(values[q])
+                        and math.isfinite(value) and math.isfinite(values[q])
+                        and math.isclose(values[q], value, rel_tol=1e-7, abs_tol=0.0)
+                        for q, value in expected.items())
+                if not all(agrees(v) for v in evidence.get(_fit_key(m), [])):
+                    continue
             out[str(m)] = unit
     return out
