@@ -5201,11 +5201,14 @@ def _adopt_extras_data_folders_locked(ctx: dict) -> None:
             ctx.update(extras_data_declared=[], extras_data_roots=[], extras_data_dangling=[])
             return
         resolved: list[str] = []
+        raw_by_root: dict[str, list[str]] = {}
         dangling: list[str] = []
         for raw in declared:
             native = _extras_native(raw)
             if native and Path(native).is_dir():
-                resolved.append(str(Path(native)))
+                root = str(Path(native))
+                resolved.append(root)
+                raw_by_root.setdefault(root, []).append(raw)
             else:
                 dangling.append(raw)
         if not resolved:
@@ -5215,6 +5218,7 @@ def _adopt_extras_data_folders_locked(ctx: dict) -> None:
         ws = _ws()
         existing = {str(p) for p in ws.root_folders}
         added = 0
+        failed = set()
         for root in resolved:
             if root in existing:
                 continue
@@ -5222,7 +5226,10 @@ def _adopt_extras_data_folders_locked(ctx: dict) -> None:
                 ws.add_root(root, defer_parse=True)   # docs/142 listing-first
                 added += 1
             except (OSError, ValueError):
-                raise
+                logger.warning("extras data-folder root registration failed: %s", root, exc_info=True)
+                failed.add(root)
+                dangling.extend(raw_by_root[root])
+        resolved = [root for root in resolved if root not in failed]
         if added:
             _save_workspace_roots()
             current_app.config.pop("dataset_store", None)
