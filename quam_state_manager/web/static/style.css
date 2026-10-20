@@ -4596,7 +4596,7 @@ html.topbar-hidden .topo-subnav {
 /* Pairs as first-class map objects: midpoint badge, data-driven edge style,
    linked highlight (pair <-> its qubits). Colours are custom properties. */
 :root { --topo-pair-badge-stroke: rgba(0,0,0,.28); --topo-pair-badge-text: var(--pico-color); --topo-pair-linked: var(--pico-primary); }
-[data-theme="dark"] { --topo-pair-badge-stroke: rgba(255,255,255,.35); }
+[data-theme="dark"], [data-theme="qm"] { --topo-pair-badge-stroke: rgba(255,255,255,.35); }
 .topo-pair-badge { cursor: pointer; outline: none; }
 .topo-pair-badge .topo-pair-badge-pill rect { stroke: var(--topo-pair-badge-stroke); stroke-width: .8; }
 .topo-pair-badge .topo-pair-badge-dot { stroke: var(--topo-pair-badge-stroke); stroke-width: .8; display: none; }
