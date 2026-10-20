@@ -5159,6 +5159,13 @@ def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool, bool
 # ── extras.data_folder chip↔data pairing (docs/20 v2 Step 5) ───────────────
 
 def _adopt_extras_data_folders(ctx: dict | None) -> None:
+    if not ctx or ctx.get("type") != "quam":
+        return
+    with ctx.setdefault("_extras_adoption_lock", threading.Lock()):
+        _adopt_extras_data_folders_locked(ctx)
+
+
+def _adopt_extras_data_folders_locked(ctx: dict) -> None:
     """Register the chip's declared data folder(s) as workspace roots.
 
     ``extras.data_folder`` travels with the state (like ``chip_name``), so a
@@ -5172,8 +5179,7 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
     """
     if not ctx or ctx.get("type") != "quam":
         return
-    ctx["extras_data_roots"] = []
-    ctx["extras_data_dangling"] = []
+    # Publish only a completed answer; concurrent readers keep the old list.
     try:
         if (ctx.get("origin") or "live") != "live":
             return
@@ -5185,19 +5191,21 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
             declared = extras_data_folder(store.state)
         # v1.5.1 (SB-P2-3): what these roots were derived from, so a reader
         # can tell they are stale after the declared folder was re-pointed
-        ctx["extras_data_declared"] = list(declared or [])
         if not declared:
+            ctx.update(extras_data_declared=[], extras_data_roots=[], extras_data_dangling=[])
             return
         resolved: list[str] = []
+        dangling: list[str] = []
         for raw in declared:
             native = _extras_native(raw)
             if native and Path(native).is_dir():
                 resolved.append(str(Path(native)))
             else:
-                ctx["extras_data_dangling"].append(raw)
+                dangling.append(raw)
         if not resolved:
+            ctx.update(extras_data_declared=list(declared), extras_data_roots=[],
+                       extras_data_dangling=dangling)
             return
-        ctx["extras_data_roots"] = resolved
         ws = _ws()
         existing = {str(p) for p in ws.root_folders}
         added = 0
@@ -5208,7 +5216,7 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
                 ws.add_root(root, defer_parse=True)   # docs/142 listing-first
                 added += 1
             except (OSError, ValueError):
-                continue
+                raise
         if added:
             _save_workspace_roots()
             current_app.config.pop("dataset_store", None)
@@ -5221,6 +5229,11 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
                 _record_project_roots(scope, resolved, from_extras=True)
             except Exception:  # noqa: BLE001
                 pass
+        with store._lock:
+            if extras_data_folder(store.state) != declared:
+                return
+            ctx.update(extras_data_declared=list(declared), extras_data_roots=resolved,
+                       extras_data_dangling=dangling)
     except Exception:  # noqa: BLE001 — pairing must never break activation
         logger.debug("extras data-folder adoption failed", exc_info=True)
 
@@ -5254,24 +5267,47 @@ def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False) -> list[s
     memoised ``_DANGLING_RECHECK_S``); *fresh* drops the memo first (a
     re-point). A folder found again is paired exactly as opening the chip
     pairs it (:func:`_adopt_extras_data_folders`), so the notice and the
-    dataset roots agree."""
+    dataset roots agree. Adoption runs in one background worker per context;
+    concurrent renders keep the last complete list within one wait budget."""
     dangling = list((ctx or {}).get("extras_data_dangling") or [])
     if not dangling:
         return []
-    try:
-        from quam_state_manager.core import folder_probe
-        natives = {raw: _extras_native(raw) for raw in dangling}
-        if fresh:
-            folder_probe.forget(*natives.values())
-        here = folder_probe.folders_present(natives.values(), wait_s=_DANGLING_WAIT_S,
-                                            ttl_s=_DANGLING_RECHECK_S)
-        if not any(here.get(n) is True for n in natives.values()):
-            return dangling
-        _adopt_extras_data_folders(ctx)
-        return list(ctx.get("extras_data_dangling") or [])
-    except Exception:  # noqa: BLE001 -- a notice never breaks a page
-        logger.debug("re-checking the declared data folders failed", exc_info=True)
+    gate = ctx.setdefault("_extras_recheck_lock", threading.Lock())
+    if not gate.acquire(blocking=False):
         return dangling
+    app = current_app._get_current_object()
+
+    def recheck():
+        try:
+            with app.app_context():
+                from quam_state_manager.core import folder_probe
+                from quam_state_manager.core.history import extras_data_folder
+                # No path translation, stat, or workspace scan on the render thread.
+                with ctx["store"]._lock:
+                    declared = list(extras_data_folder(ctx["store"].state) or [])
+                natives = {raw: _extras_native(raw) for raw in declared}
+                if fresh:
+                    folder_probe.forget(*natives.values())
+                here = folder_probe.folders_present(natives.values(), wait_s=_DANGLING_WAIT_S,
+                                                    ttl_s=_DANGLING_RECHECK_S)
+                if any(here.get(n) is None for n in natives.values()):
+                    return
+                if any(here.get(natives.get(raw)) is True for raw in dangling):
+                    _adopt_extras_data_folders(ctx)
+        except Exception:  # noqa: BLE001 -- keep the last definite notice
+            logger.debug("re-checking the declared data folders failed", exc_info=True)
+        finally:
+            gate.release()
+
+    worker = threading.Thread(target=recheck, daemon=True, name="data-folder-recheck")
+    ctx["_extras_recheck_thread"] = worker
+    try:
+        worker.start()
+    except Exception:  # noqa: BLE001 -- a notice never breaks a page
+        gate.release()
+        return dangling
+    worker.join(_DANGLING_WAIT_S)
+    return list(ctx.get("extras_data_dangling") or [])
 
 
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
