@@ -4,6 +4,9 @@
    page. Context: landing_config_exists, last_project, resume_path,
    resume_name, recent_paths (from home()). #}
 <div class="landing-projects">
+    {#- v1.5.1 (r6 P2-8): the chip open last time is gone -- said first: under the
+        project block (time zone, environments, cards) it sat below the fold -#}
+    {% include '_gone_last_chip.html' %}
     {# docs/63 §B, made discoverable: the config-location picker used to live
        only inside /qualibrate's "Config location…" details — a real user
        called it "a hidden menu". Same picker (_qualibrate_locate.html),
@@ -81,7 +84,6 @@
         <p class="muted">loading projects&hellip;</p>
     </div>
 
-    {% include '_gone_last_chip.html' %}
     {% if resume_path %}
     <div class="landing-resume">
         <span class="muted">Last session:</span>
