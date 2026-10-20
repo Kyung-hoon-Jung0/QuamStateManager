@@ -146,7 +146,12 @@ var UI_CONFIG = {
     roleColors: {
         xy:        '#9b59b6',   /* XY drive port       — purple   */
         rr:        '#e67e22',   /* Readout resonator   — orange   */
-        rr_in:     '#f0a030',   /* Readout input       — gold     */
+        rr_in:     '#9e4f00',   /* Readout input       - burnt orange. v1.5.1 (r6 P2-16): it was
+                                   gold #f0a030, a near twin of rr's orange (luminance contrast
+                                   1.33 between them); this darker one keeps the family, differs
+                                   in lightness (2.06, which also survives colour-blindness),
+                                   stands out on both theme backgrounds and carries the white
+                                   port label at 5.9:1 */
         z:         '#3498db',   /* Flux / Z line       — blue     */
         coupler:   '#1abc9c',   /* Coupler             — teal     */
         cr:        '#27ae60',   /* Cross-resonance drive — green  */
@@ -158,7 +163,7 @@ var UI_CONFIG = {
                                    Its own colour on purpose (docs/136 r2):
                                    the dashed-ring mark was invisible at port
                                    size. Amber is the widest free hue gap in
-                                   this palette — gold rr_in is orange-family
+                                   this palette - burnt-orange rr_in is orange-family
                                    and lives on MW-FEM input columns, never
                                    beside an LF-FEM z output.
                                    docs/141 4ah (user): darkened from #f1c40f so
@@ -513,7 +518,11 @@ document.addEventListener('htmx:responseError', function(evt) {
     if (_code) {
         // v1.5.1 (SA-F2): a failed live write stays on screen, and the tray
         // re-reads (the failure may have raised the read-only pill)
-        if (window.showToast) window.showToast(msg, "error", -1);
+        // v1.5.1 (r6 P2-6): ...until a later live write lands
+        var _codeToast = window.showToast ? window.showToast(msg, "error", -1) : null;
+        if (window.LiveWriteNotice) {
+            window.LiveWriteNotice.mark(_codeToast, xhr.getResponseHeader("X-SM-Live-Landed"));
+        }
         if (window.htmx) {
             try { window.htmx.ajax("GET", "/state/tray", {target: "#pending-tray", swap: "outerHTML"}); } catch (e) {}
         }
@@ -3617,7 +3626,45 @@ window.showToast = function(message, level, ms, detail) {
     var duration = ms > 0 ? ms : ((level === "error" || level === "warning") ? 6000 : 3500);
     setTimeout(function() { div.style.opacity = "0"; }, duration);
     setTimeout(function() { div.remove(); }, duration + 500);
+    return div;
 };
+
+/* v1.5.1 (r6 P2-6): a failed live write's notice ("Apply failed: ...") stays
+   until it is closed -- or until a LATER live write of this chip lands. It
+   stayed after the folder was writable again and an Apply had landed, and
+   followed every page after. The tray carries when a live write last landed
+   (data-live-landed, server time in us); the notice carries that stamp as of
+   its failure (server-rendered: data-live-write-failed; client-made: mark()).
+   Every tray swap compares them: newer = a write landed since, the notice
+   goes; the same = nothing landed, it stays. A chip switch is a full page
+   load, so a page's notices and its tray are always the same chip's. */
+window.LiveWriteNotice = (function () {
+    function landed() {
+        var t = document.getElementById("pending-tray");
+        var v = t ? t.getAttribute("data-live-landed") : null;
+        if (v === null || v === "") return null;
+        var n = Number(v);
+        return isFinite(n) ? n : null;
+    }
+    function mark(toast, at) {
+        if (!toast || !toast.setAttribute) return toast;
+        var n = (at === undefined || at === null || at === "") ? landed() : Number(at);
+        toast.setAttribute("data-live-write-failed", String((n !== null && isFinite(n)) ? n : 0));
+        return toast;
+    }
+    function sweep() {
+        var now = landed();
+        if (now === null) return;
+        Array.prototype.forEach.call(document.querySelectorAll(".toast[data-live-write-failed]"), function (t) {
+            var at = Number(t.getAttribute("data-live-write-failed"));
+            if (isFinite(at) && now > at) t.remove();
+        });
+    }
+    document.addEventListener("sm:tray-swapped", sweep);
+    document.addEventListener("htmx:afterSwap", sweep);
+    document.addEventListener("htmx:oobAfterSwap", sweep);
+    return { mark: mark, sweep: sweep };
+})();
 
 /* v1.3.0: a tray notice meant as information (an Apply cut off by a restart
    whose edits are on disk, _pending_tray.html data-toast) is read as a toast,
@@ -3907,6 +3954,7 @@ window.SyncPanel = (function () {
         Array.prototype.forEach.call(document.querySelectorAll("[data-armed='1']"), disarm);
         var lab = btn.querySelector(".sp-choice-label") || btn;
         _clearExpired(btn);
+        _dropExpiredToast(btn);     // v1.5.1 (r6 P2-7): pressed again, "Not done" is answered
         btn._armOrig = lab.innerHTML;
         lab.textContent = btn.getAttribute("data-arm-label") || "Press again to confirm";
         btn.setAttribute("data-armed", "1");
@@ -4001,13 +4049,34 @@ window.SyncPanel = (function () {
         }
         r.textContent = text;
     }
+    /* v1.5.1 (r6 P2-7): one "Not done" toast per button -- they piled up,
+       several identical ones at once. A button is known by what it is (id,
+       or its classes, armed label and action), so the twin a panel
+       re-render puts in its place is the same button. */
+    var _expToasts = {};
+    function _armKey(btn) {
+        if (btn.id) return "#" + btn.id;
+        var cls = String(btn.className || "").split(/\s+/).filter(function (c) {
+            return c && c !== "sync-armed" && c !== "sync-arm-expired";
+        }).sort().join(".");
+        return [cls, btn.getAttribute("data-arm-label") || "", btn.getAttribute("hx-post") || "",
+                btn.getAttribute("onclick") || ""].join("|");
+    }
+    function _dropExpiredToast(btn) {
+        var k = _armKey(btn), t = _expToasts[k];
+        if (t && t.remove) t.remove();
+        delete _expToasts[k];
+    }
     function _expired(btn) {
         btn.classList.add("sync-arm-expired");
         _badge(btn, "expired");
         btn._expTimer = setTimeout(function () { _clearExpired(btn); }, 2500);
         var msg = "Not done: the confirm press did not come within " + ARM_S
                   + " s, so nothing was changed. Press twice to do it.";
-        if (window.showToast) window.showToast(msg, "info");
+        // (an expiry always follows a new press of the button, and that press
+        // already took the button's previous toast down -- see arm())
+        var t = window.showToast ? window.showToast(msg, "info") : null;
+        if (t) _expToasts[_armKey(btn)] = t;
         _srSay(msg);
     }
     function _clearExpired(btn) {
@@ -4644,9 +4713,11 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 }
                 // v1.5.1 (U P1-6): a failed WRITE says "Apply failed" (its own
                 // head, from the server) -- "Sync failed" only for a pull
-                window.showToast((data.error_code === "sync_failed" ? "Sync failed: " : "")
+                var _failToast = window.showToast((data.error_code === "sync_failed" ? "Sync failed: " : "")
                                  + (data.message || "unknown error"), "error", -1,
                                  data.detail_exc || "");
+                // v1.5.1 (r6 P2-6): a later live write that lands takes it down
+                if (window.LiveWriteNotice) window.LiveWriteNotice.mark(_failToast, data.live_landed);
                 return;
             }
             if (data.status === "error") {
@@ -18078,6 +18149,10 @@ function _markPlotRowApplied(row, trayHtml) {
     // write has not landed when the staging answer arrives -- the row says
     // so, then what the live write actually did when the flush answers.
     var live = _plotApplyWritesLive() && typeof window.AutoApply.whenFlushed === 'function';
+    // v1.5.1 (r6 P2-1): the outcome takes its own line across the row; in the
+    // auto-width button column a long reason took the width and squeezed the
+    // path and PREVIOUS columns to one character per line
+    if (btnSlot) btnSlot.classList.add('plot-apply-row-outcome');
     if (btnSlot) btnSlot.innerHTML = live
         ? '<span class="plot-apply-row-check plot-apply-row-staged" title="Staged in SM; Auto-Sync is writing it to the live chip now">'
           + 'staged — Auto-Sync is writing it to the chip…</span>'
@@ -21133,6 +21208,15 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     } catch(e) {
         _dsSticky.plot = null;
     }
+});
+
+/* v1.5.1 (r6 P2-9): header Search results open at the top. They swap into
+   the inspector pane, the scroller the previous inspector used, and kept its
+   offset -- 661 px down, the first results and "Pages and actions" out of view. */
+document.addEventListener('htmx:afterSwap', function (evt) {
+    var t = evt.detail && evt.detail.target;
+    if (!t || t.id !== 'inspector-pane' || !t.querySelector(':scope > .search-panel')) return;
+    t.scrollTop = 0;
 });
 
 // Restore qubit/pair inspector state after HTMX swap

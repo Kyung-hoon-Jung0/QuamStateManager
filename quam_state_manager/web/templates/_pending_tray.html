@@ -28,6 +28,9 @@
         CURRENT tray always carries the current seq; a parked pane whose seq no
         longer matches is refetched, never restored stale. #}
      data-seq="{{ mutation_seq | default('') }}"
+     {# v1.5.1 (r6 P2-6): when a live write of this chip last landed (server us);
+        a failed write's notice older than it is taken down #}
+     data-live-landed="{{ live_landed | default(0) }}"
      {# docs/117: the client owns no armed flag — it reads this attribute, which
         the server stamps from the session. The pill below and the flusher
         therefore cannot disagree, and F5 keeps the truth. #}

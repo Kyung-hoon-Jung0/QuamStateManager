@@ -6393,6 +6393,8 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # stamped by the FULL-page render too — _render_tray alone meant the
         # lock only ever appeared after an OOB tray swap.
         "live_readonly": bool((_active_ctx() or {}).get("live_readonly_hint")),
+        # v1.5.1 (r6 P2-6): and when a live write last landed, same rule
+        "live_landed": _live_landed_stamp(),
         "qualibrate_tray": _qualibrate_tray_badge(),
         # docs/63 project lens: the qualibrate project this context operates
         # under (explicitly opened, or reverse-matched from its live folder).
@@ -11269,6 +11271,9 @@ def _render_tray(*, oob: bool) -> str:
         # minutes of edits, not at apply time (os.access W_OK — optimistic on
         # NTFS ACLs but reliable for the read-only-share case this is for).
         live_readonly=bool((_active_ctx() or {}).get("live_readonly_hint")),
+        # v1.5.1 (r6 P2-6): when a live write last landed -- a page clears the
+        # notice of an earlier failed write once a later one landed
+        live_landed=_live_landed_stamp(),
         # docs/117: the pill and the behaviour read the SAME attribute on the
         # SAME element, so they cannot disagree; an F5 keeps the truth because
         # the server owns it.
@@ -18226,9 +18231,12 @@ def _restore_failure(message: str, code: str):
     """restore-live's known failures (v1.5.1, SA-F2): 409 with the code, the
     persistent error where the button rendered its answer, and the tray (a
     read-only pill raised by the failure shows)."""
-    body = render_template("_status.html", message=message, level="error")
+    _landed = _live_landed_stamp()     # v1.5.1 (r6 P2-6): see _live_write_landed
+    body = render_template("_status.html", message=message, level="error",
+                           live_fail_at=_landed)
     resp = make_response(body + "\n" + _tray_oob(), 409)
     resp.headers["X-SM-Error-Code"] = code
+    resp.headers["X-SM-Live-Landed"] = str(_landed)
     return resp
 
 
@@ -32055,7 +32063,9 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         return jsonify({"status": "error", "error_code": LIVE_WRITE_FAILED,
                         "message": _head + " Your edits are kept.",
                         "detail": _head, "detail_exc": str(exc), "write_outcome": _outcome,
-                        "tray_html": _tray_html()}), 409
+                        "tray_html": _tray_html(),
+                        # v1.5.1 (r6 P2-6): a later landing takes the notice down
+                        "live_landed": _live_landed_stamp(ctx)}), 409
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live (sync) unexpected failure")
         _commit_journal()
@@ -32285,9 +32295,29 @@ def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str
 
 def _live_write_landed(ctx) -> None:
     """A live write landed: the folder is writable, whatever an earlier
-    failure (or the open-time probe) said."""
-    if ctx is not None and ctx.get("live_readonly_hint"):
+    failure (or the open-time probe) said.
+
+    v1.5.1 (r6 P2-6): it also stamps WHEN (server time in microseconds,
+    strictly increasing per chip). The tray carries the stamp and a failed
+    write's notice carries the stamp as of its failure, so a page takes the
+    notice down once a later write landed -- and keeps it while none has."""
+    if ctx is None:
+        return
+    if ctx.get("live_readonly_hint"):
         ctx["live_readonly_hint"] = False
+    ctx["live_landed_us"] = max(int(time.time() * 1_000_000),
+                                int(ctx.get("live_landed_us") or 0) + 1)
+
+
+def _live_landed_stamp(ctx=None) -> int:
+    """When a live write of *ctx* (default: the active chip) last landed,
+    from :func:`_live_write_landed`; 0 when none has in this session."""
+    if ctx is None:
+        ctx = _active_ctx()
+    try:
+        return int((ctx or {}).get("live_landed_us") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
@@ -32301,17 +32331,21 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
     pushing at a chip that refused it)."""
     if auto is not None and ctx is not None:
         ctx.pop("auto_apply", None)
+    # v1.5.1 (r6 P2-6): the notice carries when a live write last landed, as
+    # of this failure -- a later landing takes it down
+    _landed = _live_landed_stamp(ctx)
     if request.headers.get("Accept", "").startswith("application/json"):
         resp = make_response(jsonify(ok=False, error=code, message=message,
-                                     tray_html=_tray_html(),
+                                     tray_html=_tray_html(), live_landed=_landed,
                                      **({"detail": detail} if detail else {})), 409)
     else:
         err = render_template("_status.html", level="error", message=message,
-                              detail=detail)
+                              detail=detail, live_fail_at=_landed)
         body = (_tray_html() + "\n" if tray else "") + \
             f'<div id="status-bar" hx-swap-oob="innerHTML">{err}</div>'
         resp = make_response(body, 409)
     resp.headers["X-SM-Error-Code"] = code
+    resp.headers["X-SM-Live-Landed"] = str(_landed)
     if auto is not None:
         resp.headers["HX-Trigger"] = json.dumps({"autoApplyDisarm": {"reason": "error"}})
     return resp
@@ -44070,12 +44104,14 @@ def dataset_load_state(uid):
         else:
             _fail += (" — the run's state IS staged in the working copy; retry from "
                       "the top bar.")
+        _landed = _live_landed_stamp()     # v1.5.1 (r6 P2-6): see _live_write_landed
         resp = make_response(render_template(
             "_status.html", message=_fail,
-            level="error") + "\n" + _tray_oob()
+            level="error", live_fail_at=_landed) + "\n" + _tray_oob()
             + (_diverged_oob() if _outcome == "unknown" else ""), 409)
         resp.headers["X-SM-Error-Code"] = ((body or {}).get("error_code")
                                            or (body or {}).get("conflict") or LIVE_WRITE_FAILED)
+        resp.headers["X-SM-Live-Landed"] = str(_landed)
         return resp
 
     msg = render_template(

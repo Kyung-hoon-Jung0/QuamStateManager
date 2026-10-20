@@ -624,6 +624,11 @@
          render: function (r) {
              return '<strong>#' + r.id + '</strong>' + (r.ws ? '<span class="ds-wrote" title="This run wrote '
                  + r.ws + ' value' + (r.ws === 1 ? '' : 's') + ' into the chip state">&#9998;</span>' : '');
+         },
+         // v1.5.1 (r6 P2-2): the whole id and the mark on hover, whatever the width
+         title: function (r) {
+             return 'Run #' + r.id + (r.ws ? ' · wrote ' + r.ws + ' value' + (r.ws === 1 ? '' : 's')
+                 + ' into the chip state' : '');
          }},
         // Multi-folder only: which data folder a run belongs to. Auto-hidden by
         // visibleColumns() when a single folder is active (no disambiguation needed).
@@ -687,7 +692,46 @@
             return c.structural || !colState.hidden.has(c.key);
         });
     }
-    function colWidth(c) { return colState.widths[c.key] != null ? colState.widths[c.key] : c.w; }
+    function colWidth(c) {
+        if (colState.widths[c.key] != null) return colState.widths[c.key];
+        return c.key === 'id' ? Math.max(c.w, idColNeed()) : c.w;
+    }
+    /* v1.5.1 (r6 P2-2): the ID column fits its content. A fixed 58 px clipped
+       every 4-digit id to "#175..." at 1280 and hid the wrote-state mark
+       beside it. The width follows the longest id in the table and whether
+       any run carries the mark: the cell's monospace digits (0.6 em each,
+       "#" included), the mark (about 1 em at .9 em plus its .3rem margin) and
+       the cell's .4rem side padding. A width the user dragged still wins. */
+    var _idShapeAt = '';
+    function idColShape() {
+        var digits = 1, wrote = false, rows = state.rows || [];
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            if (!r) continue;
+            var n = String(r.id == null ? '' : r.id).length;
+            if (n > digits) digits = n;
+            if (r.ws) wrote = true;
+        }
+        return { digits: digits, wrote: wrote, key: digits + (wrote ? 'w' : '') };
+    }
+    function idColNeed() {
+        var sh = idColShape();
+        _idShapeAt = sh.key;
+        var root = 16, fs = 14;
+        try {
+            root = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+            var t = document.getElementById('datasets-table');
+            fs = (t && parseFloat(window.getComputedStyle(t).fontSize)) || root * 0.88;
+        } catch (e) { /* the estimate below still holds */ }
+        return Math.ceil(root * 0.8 + fs * 0.6 * (sh.digits + 1)
+                         + (sh.wrote ? fs * 0.9 + root * 0.3 : 0) + 6);
+    }
+    // a delta poll can bring a longer id or the first wrote-state mark; the
+    // style read and the rebuild happen only when one of those changed
+    function refitIdCol() {
+        if (colState.widths.id != null) return;
+        if (idColShape().key !== _idShapeAt) buildColgroup();
+    }
 
     function renderRowHtml(row, cols) {
         cols = cols || visibleColumns();
@@ -701,7 +745,8 @@
         var html = '<tr class="' + cls + '" data-id="' + row.uid + '" data-folder-key="' + (row.f || '') + '" data-exp="' + escapeHtml(row.exp || '') + '">';
         for (var i = 0; i < cols.length; i++) {
             var c = cols[i];
-            html += '<td class="' + (c.cls || '') + '" data-col-key="' + c.key + '">' + c.render(row) + '</td>';
+            html += '<td class="' + (c.cls || '') + '" data-col-key="' + c.key + '"'
+                + (c.title ? ' title="' + escapeHtml(c.title(row)) + '"' : '') + '>' + c.render(row) + '</td>';
         }
         return html + '</tr>';
     }
@@ -2062,6 +2107,7 @@
             state.digestLive = true;   // QA F2: the server digest band is stale now
             _rebuildFitKeys();     // a delta may introduce a brand-new fit key / qubit
             _rebuildParamFacets(); // …or a brand-new param key/value facet
+            refitIdCol();          // v1.5.1 (r6 P2-2): ...or a longer id / a first wrote mark
             applyFilters();        // re-sorts (sm is on the merged rows → in-slot placement)
             _buildSortBanner();    // surface any new fit-metric / param badge
             _buildQubitPicker();   // surface any new qubit

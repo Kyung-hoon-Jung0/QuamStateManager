@@ -230,7 +230,7 @@
        the SVG wiring diagram circles.                                  */
     --role-xy-color:        #9b59b6;   /* XY drive port       — purple   */
     --role-rr-color:        #e67e22;   /* Readout resonator   — orange   */
-    --role-rr-in-color:     #f0a030;   /* Readout input       — gold     */
+    --role-rr-in-color:     #9e4f00;   /* Readout input - burnt orange (v1.5.1 r6 P2-16: was a gold twin of rr) */
     --role-z-color:         #3498db;   /* Flux / Z line       — blue     */
     --role-coupler-color:   #1abc9c;   /* Coupler             — teal     */
     --role-twpa-pump-color: #e74c3c;   /* TWPA pump           — red      */
@@ -3904,7 +3904,7 @@ input.edit-input {
    use dark text — keep the FILL untouched so the SVG circles don't drift. */
 .role-badge.xy      { background: var(--role-xy-color); color: #fff; }      /* purple, dark enough for white */
 .role-badge.rr      { background: var(--role-rr-color); color: #1a1a1a; }
-.role-badge.rr_in   { background: var(--role-rr-in-color); color: #1a1a1a; }
+.role-badge.rr_in   { background: var(--role-rr-in-color); color: #fff; }      /* r6 P2-16: dark fill, white text */
 .role-badge.z       { background: var(--role-z-color); color: #1a1a1a; }
 .role-badge.coupler { background: var(--role-coupler-color); color: #1a1a1a; }
 .role-badge.twpa_pump { background: var(--role-twpa-pump-color); color: #fff; }
@@ -7488,6 +7488,11 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     white-space: nowrap;
 }
 .plot-apply-row-check.plot-apply-row-staged { white-space: normal; font-size: 0.85em; }
+/* v1.5.1 (r6 P2-1): a row's outcome (staged / written / refused + reason) is
+   its own line across the row -- in the auto-width button column a long
+   reason took the width and squeezed path and PREVIOUS to one character per line */
+.plot-apply-row-action.plot-apply-row-outcome { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
+.plot-apply-row-outcome .plot-apply-row-check { white-space: normal; }
 .plot-apply-footer {
     display: flex; justify-content: flex-end; gap: 0.5rem;
     padding-top: 0.6rem;
@@ -14692,8 +14697,11 @@ tr.diag-row-collapsed { display: none; }
     background: var(--pico-card-background-color); color: var(--pico-color);
     border: 1px solid var(--pico-muted-border-color); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
 .multi-instance-slot .sync-peers-list p { margin: 0 0 .3rem; }
-.multi-instance-slot .sync-peers-list ul { margin: 0 0 .3rem 1rem; padding: 0; }
-.multi-instance-slot .sync-peers-list li { margin: 0; list-style: disc; }
+/* v1.5.1 (r6 P2-5): a plain vertical list -- inside the top bar's nav, Pico
+   lays every ul out as a flex row and every li as a padded inline-block, so
+   "this window" and the peer line sat side by side */
+.multi-instance-slot .sync-peers-list ul { display: block; margin: 0 0 .3rem 1rem; padding: 0; }
+.multi-instance-slot .sync-peers-list li { display: list-item; margin: 0; padding: 0; list-style: disc; }
 /* the collapsed top bar floats the control (html.topbar-hidden rules above) */
 html.topbar-hidden #pending-tray > .sync-control { display: inline-flex; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap):not(.sync-control) { display: none; }
