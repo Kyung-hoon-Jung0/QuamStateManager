@@ -33164,12 +33164,65 @@ def export_csv():
     # R3B MINOR 2: the values are the STORED ones, so each header names the
     # unit a field is stored in where it is known (f_01 [Hz], T1 [s],
     # x180_length [ns]) -- as the Live State Edit grid export does
-    heads = {}
+    heads, units = {}, {}
     for p in props:
-        u = unit_of(p)
+        u = units[p] = unit_of(p) or ""
         heads[p] = f"{p} [{u}]" if u else p
-    rows = [{"id": r.get("id"), **{heads[p]: r.get(p) for p in props}} for r in rows]
+    if entity != "pairs":
+        rows = _export_table_values(_store(), rows, props)
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    rows = [{"id": r.get("id"),
+             **{heads[p]: (_export_pointer_value(_store(), _EXPORT_PROP_PATHS.get(p, "").format(
+                 qid=r.get("id")) or None, r.get(p), units[p]) if is_pointer(r.get(p)) else r.get(p))
+                for p in props}} for r in rows]
     return _csv_download(["id"] + [heads[p] for p in props], rows, name)
+
+
+#: v1.5.1 (r6, P2-15): where a Qubits / Resonators table property is stored
+#: (for a pointer it holds); a property not listed has no path to follow
+_EXPORT_PROP_PATHS = {
+    "xy_intermediate_frequency": "qubits.{qid}.xy.intermediate_frequency",
+    "xy_RF_frequency": "qubits.{qid}.xy.RF_frequency",
+    "readout_RF_frequency": "qubits.{qid}.resonator.RF_frequency",
+}
+
+#: v1.5.1 (r6, P2-15): the Qubits table's drive columns -> where the table
+#: reads them (xy_drive.summary: the operation alias followed to the pulse in
+#: force, the IF as quam computes it)
+_EXPORT_DRIVE_PROPS = {
+    "x180_amplitude": ("x180", "amplitude"), "x180_length": ("x180", "length"),
+    "x180_alpha": ("x180", "alpha"), "x90_amplitude": ("x90", "amplitude"),
+}
+
+
+def _export_table_values(store, rows: list[dict], props: list) -> list[dict]:
+    """v1.5.1 (r6, P2-15): the Qubits export writes what the Qubits table
+    shows for the drive columns -- the IF it computes (the export wrote
+    "#./inferred_intermediate_frequency" under "[Hz]" beside 200.28 MHz) and
+    the pulse the x180 / x90 alias plays; a blank cell there is blank here."""
+    want = [p for p in props if p == "xy_intermediate_frequency" or p in _EXPORT_DRIVE_PROPS]
+    if not want or store is None:
+        return rows
+    from quam_state_manager.core import xy_drive
+    out = []
+    with store._lock:
+        for r in rows:
+            try:
+                d = xy_drive.summary(store, r.get("id"))
+            except Exception:  # noqa: BLE001 -- the row keeps what it had
+                out.append(r)
+                continue
+            r = dict(r)
+            for p in want:
+                if p == "xy_intermediate_frequency":
+                    r[p] = "" if d.get("if_hz") is None else d["if_hz"]
+                    continue
+                op, field = _EXPORT_DRIVE_PROPS[p]
+                rec = d.get(op) or {}
+                leaf = rec.get(field) if rec.get("present") else None
+                r[p] = leaf["value"] if leaf and leaf.get("state") in ("num", "text") else ""
+            out.append(r)
+    return out
 
 
 def _csv_cell(value):
@@ -33246,25 +33299,93 @@ def _export_grid_csv(body: dict):
         cells = row.get("cells") or []
         rec = {"id": row.get("id")}
         for i, h in zip(idx, header[1:]):
-            rec[h] = _export_cell_value(store, cells[i] if i < len(cells) else None)
+            rec[h] = _export_cell_value(store, cells[i] if i < len(cells) else None,
+                                        columns[i].get("unit") or "")
         out.append(rec)
     return _csv_download(header, out, f"quam_live_edit_{'pairs' if grid == 'pairs' else 'qubits'}.csv")
 
 
-def _export_cell_value(store, cell: dict | None):
+def _export_cell_value(store, cell: dict | None, unit: str = ""):
     if not cell or cell.get("missing"):
         return ""
-    if cell.get("ptr_kind"):
-        return cell.get("display", "")
+    value = cell.get("display", "")
     path = cell.get("resolved_path")
-    if path:
+    if path and not cell.get("ptr_kind"):
         try:
             v = store.get_value(path)
             if not isinstance(v, (dict, list)):
-                return v
+                value = v
         except (KeyError, TypeError, IndexError, ValueError):
             pass
-    return cell.get("display", "")
+    # v1.5.1 (r6, P2-15): a pointer is never written as a value
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    if is_pointer(value):
+        return _export_pointer_value(store, path or cell.get("dot_path"), value, unit)
+    return value
+
+
+#: v1.5.1 (r6, P2-15): the MW channel leaves whose ``#./`` aliases SM computes
+#: exactly as quam does (cr_semantics.channel_effective_rf_if / channel_lo_hz)
+_RUNTIME_CHANNEL_LEAVES = ("intermediate_frequency", "RF_frequency", "LO_frequency")
+
+
+def _runtime_channel_value(store, path: str | None, raw):
+    """The number a MW channel's ``#./`` frequency alias stands for (IF = RF -
+    LO, RF = LO + IF, the port's upconverter LO), or None when SM cannot
+    compute it -- never a guess."""
+    from quam_state_manager.core.pointer_resolver import is_self_ref
+    if not (path and is_self_ref(raw)):
+        return None
+    parts = str(path).split(".")
+    if len(parts) < 2 or parts[-1] not in _RUNTIME_CHANNEL_LEAVES:
+        return None
+    from quam_state_manager.core import cr_semantics
+    from quam_state_manager.core.pointer_path import _walk
+    found, chan = _walk(store.merged, parts[:-1])
+    if not found or not isinstance(chan, dict):
+        return None
+    base = tuple(parts[:-1])
+    try:
+        if parts[-1] == "LO_frequency":
+            return cr_semantics.channel_lo_hz(store, chan, base)
+        rf, if_ = cr_semantics.channel_effective_rf_if(store, chan, base)
+    except Exception:  # noqa: BLE001 -- a cell degrades to blank
+        return None
+    return if_ if parts[-1] == "intermediate_frequency" else rf
+
+
+def _export_pointer_value(store, path: str | None, raw: str, unit: str):
+    """v1.5.1 (r6, P2-15): what a CSV cell holds where the field is a pointer.
+
+    The export wrote the pointer string ("#./inferred_intermediate_frequency")
+    under a unit header ("[Hz]") where the table showed the number. Now:
+
+    * a pointer that ends at a value -- one SM follows, or a MW channel's
+      ``#./`` frequency alias it computes as quam does -- exports that value;
+    * a pointer that resolves to nothing (dangling) exports empty;
+    * a reference to a dict / list, or a ``#./`` value SM does not compute,
+      is the value the grid shows (the reference): written as itself only in
+      a column that claims no unit, empty under a unit header."""
+    from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
+    v = _runtime_channel_value(store, path, raw)
+    if v is not None:
+        return v
+    if path and not is_self_ref(raw):
+        from quam_state_manager.core.pointer_path import resolve_field_target
+        try:
+            ft = resolve_field_target(store.merged, path)
+        except Exception:  # noqa: BLE001
+            ft = {}
+        if not ft.get("resolvable"):
+            return ""
+        rv = ft.get("resolved_value")
+        if is_pointer(rv):
+            v = _runtime_channel_value(store, ft.get("resolved_path"), rv)
+            if v is not None:
+                return v
+        elif rv is not None and not isinstance(rv, (dict, list)):
+            return rv
+    return "" if unit else raw
 
 
 _SPARK_POINTS = 40   # the popup sparkline's LTTB budget
