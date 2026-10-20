@@ -2536,15 +2536,15 @@ function _applyThemeToPlotly(theme) {
             var style = getComputedStyle(document.documentElement);
             var token = function (name) { return style.getPropertyValue(name).trim(); };
             t.hoverBg = token('--pico-card-background-color');
-            t.hoverBorder = '#555555';
+            t.hoverBorder = token('--pico-form-element-border-color');
             t.subLabelFont.color = token('--pico-muted-color');
             t.edgeLabelFont.color = token('--pico-color');
             iw.gridBg = token('--pico-background-color');
-            iw.gridBorder = '#555555';
+            iw.gridBorder = token('--pico-form-element-border-color');
             iw.rowLabelColor = iw.subLabelColor = iw.femLabelColor = token('--pico-muted-color');
-            iw.separatorColor = iw.subSeparatorColor = '#555555';
+            iw.separatorColor = iw.subSeparatorColor = token('--pico-form-element-border-color');
             iw.emptyPortFill = iw.unassignedFill = token('--pico-card-background-color');
-            iw.emptyPortStroke = iw.unassignedStroke = '#555555';
+            iw.emptyPortStroke = iw.unassignedStroke = token('--pico-form-element-border-color');
             t.dashboard.nullCellColor = token('--pico-card-background-color');
         }
     } else {
