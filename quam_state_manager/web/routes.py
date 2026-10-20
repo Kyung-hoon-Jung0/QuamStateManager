@@ -2963,7 +2963,8 @@ def _archive_info() -> dict | None:
         "run_label": f"#{m.group(1)}" if m else None,
         "uid": ctx.get("archive_uid"),
         "return_path": str(ret) if ret else None,
-        "return_name": _chip_display_name(ret) if ret else None,
+        # v1.5.1 (r6, P2-13): as the top bar named it (the folder is the title)
+        "return_name": _return_chip_label(ret) if ret else None,
     }
 
 
@@ -5189,14 +5190,7 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
             return
         resolved: list[str] = []
         for raw in declared:
-            # PUBLIC native_path (r10): unlike the bare 2-arg _to_native it
-            # anchors non-/mnt POSIX values onto the config's distro share
-            # (wsl_root) — a /home/... value was previously never bridged.
-            native = raw
-            try:
-                native = str(qualibrate_config.native_path(raw) or raw)
-            except Exception:  # noqa: BLE001
-                pass
+            native = _extras_native(raw)
             if native and Path(native).is_dir():
                 resolved.append(str(Path(native)))
             else:
@@ -5229,6 +5223,55 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
                 pass
     except Exception:  # noqa: BLE001 — pairing must never break activation
         logger.debug("extras data-folder adoption failed", exc_info=True)
+
+
+def _extras_native(raw: str) -> str:
+    """A declared ``extras.data_folder`` value as a path on this machine."""
+    # PUBLIC native_path (r10): unlike the bare 2-arg _to_native it
+    # anchors non-/mnt POSIX values onto the config's distro share
+    # (wsl_root) -- a /home/... value was previously never bridged.
+    try:
+        return str(qualibrate_config.native_path(raw) or raw)
+    except Exception:  # noqa: BLE001
+        return raw
+
+
+#: v1.5.1 (r6, P2-3): a "still not found" answer for a declared data folder is
+#: reused this long by later renders (memoised), and one render waits at most
+#: this long for a fresh answer (a slow share never stalls a page: no answer
+#: keeps the notice, as before)
+_DANGLING_RECHECK_S = 5.0
+_DANGLING_WAIT_S = 0.25
+
+
+def _recheck_extras_dangling(ctx: dict | None, *, fresh: bool = False) -> list[str]:
+    """The declared data folders still not found (v1.5.1 r6, P2-3).
+
+    The "Data folder not reachable" notice was the list taken when the chip
+    was opened, so it stayed on every page after the folder was back and
+    re-pointed, until the project was reopened. Each render now asks again
+    through the bounded folder rule (:func:`folder_probe.folders_present`,
+    memoised ``_DANGLING_RECHECK_S``); *fresh* drops the memo first (a
+    re-point). A folder found again is paired exactly as opening the chip
+    pairs it (:func:`_adopt_extras_data_folders`), so the notice and the
+    dataset roots agree."""
+    dangling = list((ctx or {}).get("extras_data_dangling") or [])
+    if not dangling:
+        return []
+    try:
+        from quam_state_manager.core import folder_probe
+        natives = {raw: _extras_native(raw) for raw in dangling}
+        if fresh:
+            folder_probe.forget(*natives.values())
+        here = folder_probe.folders_present(natives.values(), wait_s=_DANGLING_WAIT_S,
+                                            ttl_s=_DANGLING_RECHECK_S)
+        if not any(here.get(n) is True for n in natives.values()):
+            return dangling
+        _adopt_extras_data_folders(ctx)
+        return list(ctx.get("extras_data_dangling") or [])
+    except Exception:  # noqa: BLE001 -- a notice never breaks a page
+        logger.debug("re-checking the declared data folders failed", exc_info=True)
+        return dangling
 
 
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -6353,7 +6396,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # extras.data_folder values (muted note, never an error).
         "chip_name_prompt": (_active_ctx() or {}).get("chip_name_prompt"),
         "identity_confirm": (_active_ctx() or {}).get("identity_confirm"),
-        "extras_data_dangling": (_active_ctx() or {}).get("extras_data_dangling") or [],
+        # v1.5.1 (r6, P2-3): asked again on render (memoised), never the
+        # list taken when the chip was opened
+        "extras_data_dangling": _recheck_extras_dangling(_active_ctx()),
         "data_folder_suggest": (_active_ctx() or {}).get("data_folder_suggest"),
         "data_folder_candidates": (_active_ctx() or {}).get("data_folder_candidates") or [],
         "dataset_roots_ask": _dataset_roots_ask(_active_ctx()),
@@ -10923,7 +10968,11 @@ def _tray_unrecovered() -> list[dict]:
         return []
     from quam_state_manager.core import pending_tray
     try:
-        return pending_tray.unrecovered(ctx["working_copy"])
+        listed = pending_tray.unrecovered(ctx["working_copy"])
+        # v1.5.1 (r6): rows SM already holds (the same edit in the tray, or the
+        # value on the chip) are named as such and never counted as not recovered
+        store = ctx.get("store")
+        return pending_tray.with_held(store, listed) if (listed and store is not None) else listed
     except Exception:  # noqa: BLE001 -- a listing never breaks the tray
         logger.warning("listing refused recovery checkpoints failed", exc_info=True)
         return []
@@ -10979,6 +11028,10 @@ def state_recovery_restore():
                              "Discard sets it aside; its bytes stay on disk."), 409
     with modifier.store._lock:
         plan = pending_tray.restore_plan(modifier.store, rows)
+        # v1.5.1 (r6): a row the field already holds is either the same edit
+        # already in the tray or a value already on the chip -- the answer
+        # says which (both used to read "the chip already holds these values")
+        in_tray = {e.dot_path for e in modifier.store.change_log}
         collide = [i for i in plan if i["status"] == pending_tray.PLAN_COLLIDE]
         missing = [i for i in plan if i["status"] == pending_tray.PLAN_MISSING]
         if (collide or missing) and not force:
@@ -11013,13 +11066,32 @@ def state_recovery_restore():
     same = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_SAME]
     skipped = [i["path"] for i in plan if i["status"] == pending_tray.PLAN_MISSING]
     n = len(staged)
+    n_tray = sum(1 for p in same if p in in_tray)
+    n_chip = len(same) - n_tray
+    saved = bool(ctx.get("working_dirty"))
+    where = "in SM's saved working copy" if saved else "on the live chip"
     # v1.5.1 (MINOR 6): with Auto-Sync push armed, staged rows are written at once
-    msg = ((f"Restored {n} edit{'s' if n != 1 else ''} to the tray"
-            + (". Auto-Sync (push) is ARMED: they are being written to the live chip."
-               if _auto_apply_state(ctx) else " (not on the live chip yet)."))
-           if n else "Nothing to restore: the chip already holds these values.")
-    if same and n:
-        msg += f" {len(same)} already held."
+    if n:
+        msg = (f"Restored {n} edit{'s' if n != 1 else ''} to the tray"
+               + (". Auto-Sync (push) is ARMED: they are being written to the live chip."
+                  if _auto_apply_state(ctx) else " (not on the live chip yet)."))
+        if n_tray:
+            msg += f" {n_tray} already in the tray."
+        if n_chip:
+            msg += f" {n_chip} already {where}."
+    elif same and not n_chip:
+        msg = ("Nothing to restore: "
+               + ("these edits are" if n_tray != 1 else "this edit is")
+               + " already in the tray (not on the live chip yet).")
+    elif same and not n_tray:
+        msg = ("Nothing to restore: "
+               + ("SM's saved working copy" if saved else "the live chip")
+               + f" already holds {'these values' if n_chip != 1 else 'this value'}"
+               + (" (not on the live chip yet)." if saved else "."))
+    elif same:
+        msg = f"Nothing to restore: {n_tray} already in the tray, {n_chip} already {where}."
+    else:
+        msg = "Nothing restored."
     if skipped:
         msg += f" Skipped {len(skipped)} not on this chip: {', '.join(skipped[:6])}."
     changes = []
@@ -12019,6 +12091,34 @@ def _chip_name_of(ctx) -> str:
         return str((ctx or {}).get("path") or "?")
 
 
+def _chip_label_of(ctx) -> str:
+    """v1.5.1 (r6, P2-13): the name a MESSAGE gives *ctx*'s chip -- the top
+    bar's ladder (:func:`_chip_label`: the declared ``extras.chip_name``, else
+    the folder rule). Messages named the folder ('chip_x') while the top bar
+    said the declared name. Machine fields and gates keep the folder name."""
+    try:
+        return _chip_label(ctx["path"], ctx.get("store"))
+    except Exception:  # noqa: BLE001 -- a name never breaks a message
+        return _chip_name_of(ctx)
+
+
+def _return_chip_label(path) -> str:
+    """The chip at *path* as the top bar names it when SM holds it (open or
+    cached: its declared name is in memory); else the folder rule."""
+    try:
+        want = scheduler.norm_path(str(path))
+        cands = list((current_app.config.get("contexts") or {}).values())
+        with _quam_cache_lock:
+            cands += list(_quam_cache.values())
+        for c in cands:
+            if (c.get("type") == "quam" and c.get("path")
+                    and scheduler.norm_path(str(c["path"])) == want):
+                return _chip_label_of(c)
+    except Exception:  # noqa: BLE001 -- a name never breaks a page
+        pass
+    return _chip_display_name(path)
+
+
 def _chip_ctx_for_key(key: str):
     """A context SM holds for the chip with *key* (open or cached), or None."""
     cands = list((current_app.config.get("contexts") or {}).values())
@@ -12049,12 +12149,16 @@ def _tab_chip_refusal(ctx=None, *, json_body: bool | None = None):
     tab_name = (_chip_name_of(tab_ctx) if tab_ctx is not None
                 else (re.sub(r"-[0-9a-f]{8}$", "", want) or want))
     now_name = _chip_name_of(ctx) if have else None
+    # v1.5.1 (r6, P2-13): the sentence names each chip as the top bar does;
+    # the JSON fields below keep the folder names
+    tab_label = _chip_label_of(tab_ctx) if tab_ctx is not None else tab_name
+    now_label = _chip_label_of(ctx) if have else None
     if now_name is None:
-        msg = (f"Not done: this tab shows chip '{tab_name}', and the server has no chip "
+        msg = (f"Not done: this tab shows chip '{tab_label}', and the server has no chip "
                "open now. Reload this page. Nothing was written.")
     else:
-        tab_said, now_said = f"'{tab_name}'", f"'{now_name}'"
-        if tab_name == now_name:
+        tab_said, now_said = f"'{tab_label}'", f"'{now_label}'"
+        if tab_label == now_label:
             tab_said += f" ({tab_ctx['path'] if tab_ctx is not None else want})"
             now_said += f" ({ctx['path']})"
         msg = (f"Not done: this tab shows chip {tab_said}; the server has chip {now_said} "
@@ -12184,12 +12288,14 @@ def _chip_mismatch_response(expect_chip: str, force_chip: bool, *,
         return None
     if not _chip_token_ok(expect_chip):
         now = (_active_chip_identity() or {}).get("name") or "another chip"
+        # v1.5.1 (r6, P2-13): the sentence names the chip as the top bar does
+        said = _active_chip_label() or now
         if action:
-            msg = (f"Not applied: this app now has '{now}' loaded, not the "
+            msg = (f"Not applied: this app now has '{said}' loaded, not the "
                    "chip this page was showing (another window or tab may "
                    f"have opened a different chip). The {action} was refused "
                    "so it cannot land on the wrong chip — reload this page "
-                   f"to continue on '{now}', or load your chip again first.")
+                   f"to continue on '{said}', or load your chip again first.")
         else:
             msg = ("This value came from a different chip than the one "
                    "loaded — applying it would write onto the wrong chip.")
@@ -12239,8 +12345,10 @@ def chip_active_token():
         if store is not None:
             with store._lock:
                 declared = history.extras_chip_name(store.state)
+            # v1.5.1 (r6, P2-13): the declared name first, as the top bar
+            # shows it; the folder after it when it says something else
             if declared and declared != name:
-                name = f"{name} (chip_name {declared})" if name else declared
+                name = f"{declared} (folder {name})" if name else declared
     # ``loaded`` distinguishes "no chip loaded" from "loaded but token
     # uncomputable" (corrupt wiring) — clients that treat the ACTIVE context as
     # authoritative need the truth, not an empty-token proxy for it.
@@ -17594,9 +17702,17 @@ def state_history(snapshot_note: str | None = None):
     per_page = _int_arg("per_page", _STATE_HISTORY_PER_PAGE, minimum=1)
     # P1-9 (UX round): "Go to date" -- the page holding that day's newest row
     goto_day = (request.args.get("date") or "").strip()[:10]
+    goto_land = goto_note = ""
     if goto_day and "page" not in request.args:
         try:
-            page = _state_history_page_for(_active_ctx(), snapshots, goto_day, per_page)
+            went = _state_history_goto(_active_ctx(), snapshots, goto_day, per_page)
+            page, goto_land = went["page"], went["land"] or ""
+            # v1.5.1 (r6, P2-10): a day with no versions is said, never landed
+            # beside without a word
+            if went["empty"] and goto_land:
+                goto_note = f"No versions on {goto_day}; showing the nearest: {goto_land}."
+            elif went["empty"]:
+                goto_note = f"No versions on {goto_day}."
         except Exception:  # noqa: BLE001 -- an unreadable date lands on page 1
             logger.debug("state history go-to-date %r failed", goto_day, exc_info=True)
             goto_day = ""
@@ -17623,7 +17739,8 @@ def state_history(snapshot_note: str | None = None):
                total=total, current_page=min(page, total_pages),
                total_pages=total_pages, per_page=per_page,
                chip_origin=_active_origin(), hist_chip_key=versions["chip_key"],
-               disk_stats=disk_stats, snapshot_note=snapshot_note, goto_day=goto_day)
+               disk_stats=disk_stats, snapshot_note=snapshot_note, goto_day=goto_day,
+               goto_land=goto_land, goto_note=goto_note)
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body
     # without disturbing the detail/result pane beside it.
@@ -17645,10 +17762,16 @@ def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
     """P1-9 (UX round): the State History page that holds *day*'s newest row
     (the rows run newest first): every row at or after the END of that day,
     in the page's display zone, comes before it. ``ValueError`` for a date
-    that does not parse."""
+    that does not parse. A day with no rows: the page holding the nearest
+    row (:func:`_state_history_goto`)."""
+    return _state_history_goto(ctx, snapshots, day, per_page)["page"]
+
+
+def _state_history_day_us(day: str) -> tuple[int, int]:
+    """(start, end) of *day* in the page's display zone, as UTC epoch
+    microseconds. ``ValueError`` for a date that does not parse."""
     from datetime import timedelta
     from zoneinfo import ZoneInfo
-    from quam_state_manager.core import hub_versions
     d = datetime.strptime(day, "%Y-%m-%d")
     zone = (_display_zone() or {}).get("zone")
     try:
@@ -17661,21 +17784,68 @@ def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
         # R3B MINOR 5: the machine's zone at THAT date's own offset -- the
         # offset of today was an hour off for a date across a DST change
         end = _machine_day_end(d)
-    cutoff_us = int((end.astimezone(timezone.utc)
-                     - datetime(1970, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1_000_000)
-    probe = _versions_read_rows(ctx, snapshots, limit=1, offset=0, lane_notes=False)
-    if probe.get("mode") == "ledger" and probe.get("chip_dir") is not None:
-        chip_dir = probe["chip_dir"]
-        binding = _vh_binding(ctx, chip_dir)
-        n_events = hub_versions.count_newer(chip_dir, [], cutoff_us, binding=binding)
-        # the older snapshot rows as the page around that offset lists them
-        near = _versions_read_rows(ctx, snapshots, limit=1, offset=n_events, lane_notes=False)
-        n = hub_versions.count_newer(chip_dir, snapshots, cutoff_us, binding=binding,
-                                     older=near.get("older") or frozenset())
+    # v1.5.1 (r6): the day's start is the previous day's end, by the same rule
+    # (DST-correct: never "end minus 24 h")
+    if tz is not None:
+        start = datetime(d.year, d.month, d.day, tzinfo=tz)
     else:
-        n = sum(1 for s in snapshots
-                if hub_versions._snapshot_instant(s.timestamp) >= cutoff_us)
-    return n // max(1, per_page) + 1
+        start = _machine_day_end(d - timedelta(days=1))
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return tuple(int((x.astimezone(timezone.utc) - epoch).total_seconds() * 1_000_000)
+                 for x in (start, end))
+
+
+def _state_history_goto(ctx, snapshots, day: str, per_page: int) -> dict:
+    """Where "Go to date" lands (P1-9; v1.5.1 r6, P2-10): ``{"page", "land",
+    "empty"}``. A day with rows: the page holding its newest row, ``land`` =
+    *day*. A day with none (``empty``): the page holding the nearest row in
+    time -- the newest one before the day or the oldest one after it --
+    and ``land`` its day in the page's zone ("" when the list is empty).
+    ``ValueError`` for a date that does not parse."""
+    from quam_state_manager.core import hub_versions
+    start_us, end_us = _state_history_day_us(day)
+    probe = _versions_read_rows(ctx, snapshots, limit=1, offset=0, lane_notes=False)
+    ledger = probe.get("mode") == "ledger" and probe.get("chip_dir") is not None
+
+    def newer_than(cutoff_us):
+        """Rows at or after *cutoff_us* (they come first, newest first)."""
+        if ledger:
+            chip_dir = probe["chip_dir"]
+            binding = _vh_binding(ctx, chip_dir)
+            n_events = hub_versions.count_newer(chip_dir, [], cutoff_us, binding=binding)
+            # the older snapshot rows as the page around that offset lists them
+            near = _versions_read_rows(ctx, snapshots, limit=1, offset=n_events, lane_notes=False)
+            return hub_versions.count_newer(chip_dir, snapshots, cutoff_us, binding=binding,
+                                            older=near.get("older") or frozenset())
+        return sum(1 for s in snapshots
+                   if hub_versions._snapshot_instant(s.timestamp) >= cutoff_us)
+
+    n = newer_than(end_us)
+    if newer_than(start_us) > n:
+        return {"page": n // max(1, per_page) + 1, "land": day, "empty": False}
+    # no row on that day: rows n-1 (the oldest after it) and n (the newest before it)
+    if ledger:
+        got = _versions_read_rows(ctx, snapshots, limit=2, offset=max(0, n - 1),
+                                  lane_notes=False).get("rows") or []
+        from quam_state_manager.core.timefmt import to_utc
+        stamps = []
+        for r in got:
+            t = to_utc(r.get("when"))
+            stamps.append(None if t is None else int(t.timestamp() * 1_000_000))
+    else:
+        stamps = sorted((hub_versions._snapshot_instant(s.timestamp) for s in snapshots),
+                        reverse=True)[max(0, n - 1):n + 1]
+    after = stamps[0] if n > 0 and stamps else None       # the oldest row after the day
+    i = 1 if n > 0 else 0
+    before = stamps[i] if len(stamps) > i else None        # the newest row before it
+    if after is None and before is None:
+        return {"page": n // max(1, per_page) + 1, "land": "", "empty": True}
+    if before is None or (after is not None and after - end_us < start_us - before):
+        offset, instant = n - 1, after
+    else:
+        offset, instant = n, before
+    land = zone_ts_text(datetime.fromtimestamp(instant / 1_000_000, tz=timezone.utc))[:10]
+    return {"page": offset // max(1, per_page) + 1, "land": land, "empty": True}
 
 
 def _keep_identity_extras(ctx: dict | None, state: dict,
@@ -17717,6 +17887,21 @@ def _snapshot_state_wiring(hm, path, timestamp) -> tuple[dict, dict]:
     return _side_today((copy.deepcopy(snap.state), copy.deepcopy(snap.wiring)))
 
 
+def _two_chips_said(asked_key: str, open_key: str, ctx) -> tuple[str, str]:
+    """v1.5.1 (r6, P2-13): a version's chip (a history chip key) and the open
+    chip, as a message names them -- the declared name the history keeps for
+    the key, and the top bar's name for the open chip; each with its key when
+    the two names agree (two folders of one declared chip)."""
+    try:
+        asked = _history().display_name_for_dir(asked_key) or asked_key
+    except Exception:  # noqa: BLE001 -- a name never breaks a refusal
+        asked = asked_key
+    now = _chip_label_of(ctx) if ctx else (open_key or "another chip")
+    if asked == now:
+        asked, now = f"{asked} ({asked_key})", f"{now} ({open_key or 'open'})"
+    return asked, now
+
+
 def _history_chip_mismatch(ctx):
     """docs/284: a ledger version id is per chip (``event-7`` of another chip
     is another state). A press that names its chip (``chip_key``) is refused
@@ -17727,10 +17912,12 @@ def _history_chip_mismatch(ctx):
     chip_dir = _hub_chip_dir(ctx["path"])
     if chip_dir is not None and asked == Path(chip_dir).name:
         return None
+    asked_said, now_said = _two_chips_said(
+        asked, Path(chip_dir).name if chip_dir is not None else "", ctx)
     return render_template(
         "_status.html", level="warning",
-        message=f"This version belongs to chip '{asked}', which is not the open chip "
-                "— open that chip first."), 409
+        message=f"This version belongs to chip '{asked_said}', not the open chip "
+                f"'{now_said}' — open that chip first."), 409
 
 
 def _version_pair_or_refusal(hm, path, ref):
@@ -20880,10 +21067,11 @@ def state_version_diff(timestamp: str):
     # answered from the wrong chip's history. Same gate as /diff/versions.
     asked_chip = (request.args.get("chip_key") or "").strip()
     if asked_chip and chip_key and asked_chip != chip_key:
+        asked_said, now_said = _two_chips_said(asked_chip, chip_key, ctx)
         return render_template(
             "_status.html", level="warning",
-            message=f"This version belongs to chip '{asked_chip}' but "
-                    f"'{chip_key}' is open — open that chip first.")
+            message=f"This version belongs to chip '{asked_said}' but "
+                    f"'{now_said}' is open — open that chip first.")
     try:
         # ignore_keys=set(): this overlay says "No differences — the current
         # working state matches this version" when empty, so it must not skip
@@ -27836,7 +28024,8 @@ def _undo_head(verb: str, live: bool, ctx=None) -> str:
     armed, which writes it within a second: the head says so instead of a
     promise the session would break."""
     if live:
-        return f"{verb} — written to the chip file of '{_chip_name_of(ctx or _active_ctx())}'"
+        # v1.5.1 (r6, P2-13): the chip as the top bar names it
+        return f"{verb} — written to the chip file of '{_chip_label_of(ctx or _active_ctx())}'"
     if _auto_apply_state(ctx):
         return f"{verb} — staged; Auto-Sync writes it to the chip file"
     return f"{verb} — in SM only, the chip file is unchanged"
@@ -30743,10 +30932,11 @@ def _apply_chip_refusal(ctx):
             have_key = None
         if have_key != want_key:
             now = (_active_chip_identity() or {}).get("name") or "another chip"
+            said = _active_chip_label() or now     # v1.5.1 (r6, P2-13)
             return jsonify(
                 ok=False, conflict="chip_mismatch", chip_mismatch=True,
                 loaded_chip=now, loaded_chip_key=have_key, expected_chip_key=want_key,
-                message=(f"Not applied: '{now}' ({have_key}) is open now, not the chip "
+                message=(f"Not applied: '{said}' ({have_key}) is open now, not the chip "
                          f"these edits were seen on ({want_key}). Nothing was written.")), 409
     return _chip_mismatch_response(request.values.get("expect_chip", ""), False,
                                    action="apply")
@@ -32974,12 +33164,65 @@ def export_csv():
     # R3B MINOR 2: the values are the STORED ones, so each header names the
     # unit a field is stored in where it is known (f_01 [Hz], T1 [s],
     # x180_length [ns]) -- as the Live State Edit grid export does
-    heads = {}
+    heads, units = {}, {}
     for p in props:
-        u = unit_of(p)
+        u = units[p] = unit_of(p) or ""
         heads[p] = f"{p} [{u}]" if u else p
-    rows = [{"id": r.get("id"), **{heads[p]: r.get(p) for p in props}} for r in rows]
+    if entity != "pairs":
+        rows = _export_table_values(_store(), rows, props)
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    rows = [{"id": r.get("id"),
+             **{heads[p]: (_export_pointer_value(_store(), _EXPORT_PROP_PATHS.get(p, "").format(
+                 qid=r.get("id")) or None, r.get(p), units[p]) if is_pointer(r.get(p)) else r.get(p))
+                for p in props}} for r in rows]
     return _csv_download(["id"] + [heads[p] for p in props], rows, name)
+
+
+#: v1.5.1 (r6, P2-15): where a Qubits / Resonators table property is stored
+#: (for a pointer it holds); a property not listed has no path to follow
+_EXPORT_PROP_PATHS = {
+    "xy_intermediate_frequency": "qubits.{qid}.xy.intermediate_frequency",
+    "xy_RF_frequency": "qubits.{qid}.xy.RF_frequency",
+    "readout_RF_frequency": "qubits.{qid}.resonator.RF_frequency",
+}
+
+#: v1.5.1 (r6, P2-15): the Qubits table's drive columns -> where the table
+#: reads them (xy_drive.summary: the operation alias followed to the pulse in
+#: force, the IF as quam computes it)
+_EXPORT_DRIVE_PROPS = {
+    "x180_amplitude": ("x180", "amplitude"), "x180_length": ("x180", "length"),
+    "x180_alpha": ("x180", "alpha"), "x90_amplitude": ("x90", "amplitude"),
+}
+
+
+def _export_table_values(store, rows: list[dict], props: list) -> list[dict]:
+    """v1.5.1 (r6, P2-15): the Qubits export writes what the Qubits table
+    shows for the drive columns -- the IF it computes (the export wrote
+    "#./inferred_intermediate_frequency" under "[Hz]" beside 200.28 MHz) and
+    the pulse the x180 / x90 alias plays; a blank cell there is blank here."""
+    want = [p for p in props if p == "xy_intermediate_frequency" or p in _EXPORT_DRIVE_PROPS]
+    if not want or store is None:
+        return rows
+    from quam_state_manager.core import xy_drive
+    out = []
+    with store._lock:
+        for r in rows:
+            try:
+                d = xy_drive.summary(store, r.get("id"))
+            except Exception:  # noqa: BLE001 -- the row keeps what it had
+                out.append(r)
+                continue
+            r = dict(r)
+            for p in want:
+                if p == "xy_intermediate_frequency":
+                    r[p] = "" if d.get("if_hz") is None else d["if_hz"]
+                    continue
+                op, field = _EXPORT_DRIVE_PROPS[p]
+                rec = d.get(op) or {}
+                leaf = rec.get(field) if rec.get("present") else None
+                r[p] = leaf["value"] if leaf and leaf.get("state") in ("num", "text") else ""
+            out.append(r)
+    return out
 
 
 def _csv_cell(value):
@@ -33056,25 +33299,93 @@ def _export_grid_csv(body: dict):
         cells = row.get("cells") or []
         rec = {"id": row.get("id")}
         for i, h in zip(idx, header[1:]):
-            rec[h] = _export_cell_value(store, cells[i] if i < len(cells) else None)
+            rec[h] = _export_cell_value(store, cells[i] if i < len(cells) else None,
+                                        columns[i].get("unit") or "")
         out.append(rec)
     return _csv_download(header, out, f"quam_live_edit_{'pairs' if grid == 'pairs' else 'qubits'}.csv")
 
 
-def _export_cell_value(store, cell: dict | None):
+def _export_cell_value(store, cell: dict | None, unit: str = ""):
     if not cell or cell.get("missing"):
         return ""
-    if cell.get("ptr_kind"):
-        return cell.get("display", "")
+    value = cell.get("display", "")
     path = cell.get("resolved_path")
-    if path:
+    if path and not cell.get("ptr_kind"):
         try:
             v = store.get_value(path)
             if not isinstance(v, (dict, list)):
-                return v
+                value = v
         except (KeyError, TypeError, IndexError, ValueError):
             pass
-    return cell.get("display", "")
+    # v1.5.1 (r6, P2-15): a pointer is never written as a value
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    if is_pointer(value):
+        return _export_pointer_value(store, path or cell.get("dot_path"), value, unit)
+    return value
+
+
+#: v1.5.1 (r6, P2-15): the MW channel leaves whose ``#./`` aliases SM computes
+#: exactly as quam does (cr_semantics.channel_effective_rf_if / channel_lo_hz)
+_RUNTIME_CHANNEL_LEAVES = ("intermediate_frequency", "RF_frequency", "LO_frequency")
+
+
+def _runtime_channel_value(store, path: str | None, raw):
+    """The number a MW channel's ``#./`` frequency alias stands for (IF = RF -
+    LO, RF = LO + IF, the port's upconverter LO), or None when SM cannot
+    compute it -- never a guess."""
+    from quam_state_manager.core.pointer_resolver import is_self_ref
+    if not (path and is_self_ref(raw)):
+        return None
+    parts = str(path).split(".")
+    if len(parts) < 2 or parts[-1] not in _RUNTIME_CHANNEL_LEAVES:
+        return None
+    from quam_state_manager.core import cr_semantics
+    from quam_state_manager.core.pointer_path import _walk
+    found, chan = _walk(store.merged, parts[:-1])
+    if not found or not isinstance(chan, dict):
+        return None
+    base = tuple(parts[:-1])
+    try:
+        if parts[-1] == "LO_frequency":
+            return cr_semantics.channel_lo_hz(store, chan, base)
+        rf, if_ = cr_semantics.channel_effective_rf_if(store, chan, base)
+    except Exception:  # noqa: BLE001 -- a cell degrades to blank
+        return None
+    return if_ if parts[-1] == "intermediate_frequency" else rf
+
+
+def _export_pointer_value(store, path: str | None, raw: str, unit: str):
+    """v1.5.1 (r6, P2-15): what a CSV cell holds where the field is a pointer.
+
+    The export wrote the pointer string ("#./inferred_intermediate_frequency")
+    under a unit header ("[Hz]") where the table showed the number. Now:
+
+    * a pointer that ends at a value -- one SM follows, or a MW channel's
+      ``#./`` frequency alias it computes as quam does -- exports that value;
+    * a pointer that resolves to nothing (dangling) exports empty;
+    * a reference to a dict / list, or a ``#./`` value SM does not compute,
+      is the value the grid shows (the reference): written as itself only in
+      a column that claims no unit, empty under a unit header."""
+    from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
+    v = _runtime_channel_value(store, path, raw)
+    if v is not None:
+        return v
+    if path and not is_self_ref(raw):
+        from quam_state_manager.core.pointer_path import resolve_field_target
+        try:
+            ft = resolve_field_target(store.merged, path)
+        except Exception:  # noqa: BLE001
+            ft = {}
+        if not ft.get("resolvable"):
+            return ""
+        rv = ft.get("resolved_value")
+        if is_pointer(rv):
+            v = _runtime_channel_value(store, ft.get("resolved_path"), rv)
+            if v is not None:
+                return v
+        elif rv is not None and not isinstance(rv, (dict, list)):
+            return rv
+    return "" if unit else raw
 
 
 _SPARK_POINTS = 40   # the popup sparkline's LTTB budget
@@ -34008,8 +34319,9 @@ def diff_versions():
 
     asked_chip = (request.args.get("chip_key") or "").strip()
     if asked_chip and chip_key and asked_chip != chip_key:
-        return _fail(f"This comparison names chip '{asked_chip}' but "
-                     f"'{chip_key}' is open — open that chip first.")
+        asked_said, now_said = _two_chips_said(asked_chip, chip_key, ctx)
+        return _fail(f"This comparison names chip '{asked_said}' but "
+                     f"'{now_said}' is open — open that chip first.")
     from quam_state_manager.core import hub_versions
     ts_list = sorted({t.strip() for t in request.args.getlist("ts")
                       if t.strip() and (_HIST_TS_RE.match(t.strip())
@@ -34771,9 +35083,19 @@ def workspace_add():
     _retired_dataset_keys().difference_update(
         {_folder_key(c) for c in _dataset_candidate_folders(fast=True)})
 
+    # v1.5.1 (r6, P2-3): a re-point is when a declared data folder that was not
+    # found is most likely back -- asked afresh now, and the "not reachable"
+    # notice on this page goes at once (not on the next page or reopen)
+    _banner_oob = ""
+    _actx = _active_ctx()
+    if ((_actx or {}).get("extras_data_dangling")
+            and not _recheck_extras_dangling(_actx, fresh=True)
+            # the strip showed this notice only when no question outranked it
+            and not _actx.get("identity_confirm") and not _actx.get("chip_name_prompt")):
+        _banner_oob = '<div id="chip-name-banner" hx-swap-oob="delete"></div>'
     resp = make_response(render_template(
         "_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws),
-        message=f"Added {len(entries)} experiment(s)"))
+        message=f"Added {len(entries)} experiment(s)") + _banner_oob)
     # QA datasets-r2-26: an open Datasets page re-reads its table (rows,
     # folder chips, count) -- it only rebuilds from a full payload.
     resp.headers["HX-Trigger"] = json.dumps({"workspaceRootsChanged": {"removed": _removed}})
@@ -43164,7 +43486,7 @@ def dataset_apply_selected_preview(uid):
                             + ": each field is written under today's name.")
     return jsonify(ok=True, rows=rows, counts=counts, missing=missing,
                    capped=len(leaves) >= _CAP,
-                   chip=_chip_display_name(Path(ctx["path"])),
+                   chip=_chip_label_of(ctx),      # v1.5.1 (r6, P2-13)
                    same_chip=(alignment == _hist.ALIGN_ALIGNED),
                    chip_unknown=(alignment == _hist.ALIGN_UNKNOWN), **extra)
 
@@ -43444,7 +43766,7 @@ def dataset_load_state(uid):
     _pin_request_ctx(ctx)               # R3 C1: the chip this press was made on
     _pre_leaves = _leaf_snapshot(ctx)   # docs/144: name what the load changes
     base_url = f"/dataset/{uid}/load-state"
-    chip_label = _chip_display_name(Path(ctx["path"]))
+    chip_label = _chip_label_of(ctx)     # v1.5.1 (r6, P2-13): as the top bar names it
     apply_req = request.values.get("apply") == "1"   # docs/108 one-click
     apply_qs = "&apply=1" if apply_req else ""
     apply_note = " It will then be APPLIED to the live chip." if apply_req else ""
@@ -45133,8 +45455,10 @@ def regenerate_reconstruct():
         # only on the default path (whose folder is the working-copy key); an
         # explicit "Load different…" folder used to wear it too, so the bar
         # named the loaded chip over another chip's counts.
+        # v1.5.1 (r6, P2-13): the loaded chip as the top bar names it
         "source_name": (_chip_display_name(folder) if explicit
-                        else (ident["name"] if ident else Path(folder).name)),
+                        else ((_active_chip_label() or ident["name"]) if ident
+                              else Path(folder).name)),
     })
 
 
@@ -46315,6 +46639,8 @@ def _env_change_summary(store) -> tuple[dict | None, int]:
             diff = transition.get("diff") or {}
             summary = {
                 "first": transition.get("first"),
+                # v1.5.1 (r6, P2-12): when the only baseline was recorded
+                "since": transition.get("since") or "",
                 "changed": transition.get("changed"),
                 "count": diff.get("total") or 0,
                 "from_label": transition.get("from_label") or "",

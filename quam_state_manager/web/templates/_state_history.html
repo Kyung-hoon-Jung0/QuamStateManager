@@ -14,6 +14,8 @@
             title="Capture the current state now">Take snapshot</button>
 </div>
 {% if snapshot_note %}<p class="muted sh-snapshot-note" role="status">{{ snapshot_note }}</p>{% endif %}
+{#- v1.5.1 (r6, P2-10): Go to date on a day with no versions says so -#}
+{% if goto_note %}<p class="muted sh-snapshot-note sh-goto-note" role="status">{{ goto_note }}</p>{% endif %}
 
 {# Honest footprint (cached per capture/prune — no walk on steady-state
    renders). Retention is mentioned ONLY when a real budget is configured:

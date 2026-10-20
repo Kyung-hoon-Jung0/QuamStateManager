@@ -572,7 +572,12 @@ def env_transition(instance_path: Any, manifest: dict | None) -> dict | None:
 
     ``None`` when there is no manifest at all. With no PRIOR baseline the
     answer is honest rather than invented: ``changed: False`` and
-    ``first: True`` — this run establishes the first baseline.
+    ``first: True`` -- this is the only environment SM has recorded.
+
+    v1.5.1 (r6, P2-12): "first" is never "recorded just now". ``since`` is
+    when this environment's baseline was first recorded ("" when it is not
+    on record): an instance that has held it since an earlier day said
+    "first baseline recorded ... from now on" on every render.
     """
     if not manifest:
         return None
@@ -580,8 +585,11 @@ def env_transition(instance_path: Any, manifest: dict | None) -> dict | None:
     key = stable_env_key(versions)        # QA F-L: one key whichever path attached it
     prev = previous_baseline(instance_path, key)
     if prev is None:
+        mine = next((e for e in list_baselines(instance_path)
+                     if e.get("key") == key or stable_env_key(e.get("versions")) == key), None)
         return {"changed": False, "first": True, "to_key": key,
-                "to_label": env_label(versions), "diff": None, "sig": ""}
+                "to_label": env_label(versions), "diff": None, "sig": "",
+                "since": str((mine or {}).get("first_seen") or "")}
     diff = diff_manifests(prev, manifest)
     dismissed = ((_load_index(instance_path).get("seen_transitions") or {})
                  .get(f"{prev.get('key')}>{key}") or {})

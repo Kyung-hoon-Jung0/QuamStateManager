@@ -105,10 +105,11 @@
 
 {{ history_pager('/state-history', current_page, total_pages, '#table-pane', per_page, 'innerHTML scroll:top') }}
 {% if goto_day %}
-{#- P1-9: land on the day asked for (or the newest day before it) -#}
+{#- P1-9: land on the day asked for; v1.5.1 (r6): a day with no versions lands
+    on the nearest day the server chose (goto_land), and the page says so -#}
 <script>(function () {
     var heads = document.querySelectorAll('#state-history-body .sh-day');
-    var want = {{ goto_day | tojson }}, hit = null;
+    var want = {{ (goto_land or goto_day) | tojson }}, hit = null;
     for (var i = 0; i < heads.length; i++) {
         if (heads[i].id.slice(7) <= want) { hit = heads[i]; break; }
     }

@@ -1393,6 +1393,56 @@ def unrecovered(wc) -> list[dict]:
     return out
 
 
+#: v1.5.1 (r6): where SM already holds a refused checkpoint's row
+HELD_TRAY, HELD_CHIP = "tray", "chip"
+
+
+def held_rows(store, rows) -> list[str | None]:
+    """Per row of a refused checkpoint (the row dicts :func:`unrecovered`
+    lists, or ChangeEntry rows): ``"tray"`` when the field already has the
+    row's value and the tray holds an unapplied edit of that path (the same
+    edit is already staged), ``"chip"`` when the field already has it with no
+    tray row on the path (the chip as SM last synced it), None when restoring
+    the row would change something. "Already has it" is the judgement
+    :func:`restore_plan` calls ``same``."""
+    def field(r, name, attr):
+        return r.get(name) if isinstance(r, dict) else getattr(r, attr, None)
+    out: list[str | None] = []
+    with store._lock:
+        tray = {e.dot_path for e in store.change_log}
+        root = store.merged
+        for r in rows:
+            path = field(r, "path", "dot_path")
+            if not isinstance(path, str) or not path:
+                out.append(None)
+                continue
+            current, present = _current(root, path)
+            if field(r, "deleted", "deleted") is True:
+                same = not present
+            else:
+                same = present and _canon(current) == _canon(field(r, "new", "new_value"))
+            out.append((HELD_TRAY if path in tray else HELD_CHIP) if same else None)
+    return out
+
+
+def with_held(store, listed: list[dict]) -> list[dict]:
+    """:func:`unrecovered` with each row's ``held`` (:func:`held_rows`) and,
+    per checkpoint, ``pending`` (rows a Restore would still stage),
+    ``held_tray`` / ``held_chip`` and ``settled`` (restorable, and every row
+    already held: nothing to restore). New dicts; the listing's cache is
+    never mutated. A checkpoint that is not restorable is never settled."""
+    out = []
+    for d in listed:
+        rows = d.get("rows") or []
+        held = held_rows(store, rows) if (d.get("restorable") and rows) else [None] * len(rows)
+        n_tray, n_chip = held.count(HELD_TRAY), held.count(HELD_CHIP)
+        pending = len(rows) - n_tray - n_chip
+        out.append(dict(d, rows=[dict(r, held=h) for r, h in zip(rows, held)],
+                        pending=pending, held_tray=n_tray, held_chip=n_chip,
+                        settled=bool(d.get("restorable") and rows and not pending)))
+    return out
+
+
 def unrecovered_file(wc, file_id) -> Path | None:
     """The refused checkpoint *file_id* of this chip, or None."""
     if (not isinstance(file_id, str) or not file_id
