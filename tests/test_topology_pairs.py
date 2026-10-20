@@ -44,7 +44,8 @@ def test_fidelity_run_is_named_only_beside_its_own_metric(tmp_path):
     client = _chip(tmp_path, {"InterleavedRB": 0.991, "InterleavedRB_load_id": 412})
     edge = _edge(client)
     assert edge["cz_fidelity"] == pytest.approx(0.991)
-    assert edge["cz_fidelity_run"] == 412
+    # v1.5.2 (v152b): load id -> unknown; a hint does not prove a write.
+    assert edge["cz_fidelity_run"] is None
 
 
 def test_no_run_when_the_shown_number_came_from_elsewhere(tmp_path):
@@ -56,9 +57,22 @@ def test_no_run_when_the_shown_number_came_from_elsewhere(tmp_path):
 
 
 def test_cz_plan_accepts_a_pair_id(tmp_path):
-    client = _chip(tmp_path, {"Bell_State": {"Fidelity": 0.95}})
-    page = client.get("/cz-plan?pair=q1-q2", headers={"HX-Request": "true"})
+    from tests.test_cz_plan_page import _client
+
+    # v1.5.2 (v152b): HTTP 200 -> second usable pair identity; reject silent fallback.
+    client = _client(tmp_path)
+    page = client.get("/cz-plan?pair=q3-2", headers={"HX-Request": "true"})
     assert page.status_code == 200
+    html = page.get_data(as_text=True)
+    assert 'data-selected="qubit_pairs.q3-2.macros.cz"' in html
+    assert 'data-op="qubit_pairs.q1-2.macros.cz_unipolar"' in html
+    for pair in ("unknown", '<img src=x onerror="alert(1)">'):
+        html = client.get("/cz-plan", query_string={"pair": pair},
+                          headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'data-selected=""' in html and "Unknown pair:" in html
+        assert '<img src=x' not in html
+        if pair.startswith("<"):
+            assert "&lt;img" in html
 
 
 def test_topology_pairs_selfcheck():

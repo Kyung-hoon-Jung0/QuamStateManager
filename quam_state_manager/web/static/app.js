@@ -2536,15 +2536,15 @@ function _applyThemeToPlotly(theme) {
             var style = getComputedStyle(document.documentElement);
             var token = function (name) { return style.getPropertyValue(name).trim(); };
             t.hoverBg = token('--pico-card-background-color');
-            t.hoverBorder = '#555555';
+            t.hoverBorder = token('--pico-form-element-border-color');
             t.subLabelFont.color = token('--pico-muted-color');
             t.edgeLabelFont.color = token('--pico-color');
             iw.gridBg = token('--pico-background-color');
-            iw.gridBorder = '#555555';
+            iw.gridBorder = token('--pico-form-element-border-color');
             iw.rowLabelColor = iw.subLabelColor = iw.femLabelColor = token('--pico-muted-color');
-            iw.separatorColor = iw.subSeparatorColor = '#555555';
+            iw.separatorColor = iw.subSeparatorColor = token('--pico-form-element-border-color');
             iw.emptyPortFill = iw.unassignedFill = token('--pico-card-background-color');
-            iw.emptyPortStroke = iw.unassignedStroke = '#555555';
+            iw.emptyPortStroke = iw.unassignedStroke = token('--pico-form-element-border-color');
             t.dashboard.nullCellColor = token('--pico-card-background-color');
         }
     } else {
@@ -2584,6 +2584,7 @@ window.setTheme = function(newTheme) {
     _applyThemeToPlotly(newTheme);
     if (window.PlotTheme) window.PlotTheme.retheme();
     if (window.FloatWiring) window.FloatWiring.refresh();
+    document.dispatchEvent(new CustomEvent('sm:themechange', {detail: {theme: newTheme}}));
 };
 // Keep the existing two-way shortcut for integrations.
 window.toggleTheme = function() {
@@ -2594,15 +2595,9 @@ window.toggleTheme = function() {
 // in base.html already applied data-theme on <html> to prevent FOUC.
 // This block keeps Plotly and the toggle-button state in sync.
 (function() {
-    var theme = 'dark';
-    try {
-        var saved = localStorage.getItem('quam_theme');
-        if (saved === 'light' || saved === 'dark' || saved === 'qm') theme = saved;
-        // honor a ?theme= override (mirrors the FOUC init in base.html) so a
-        // forced theme stays applied to the toggle/Plotly state too.
-        var qp = new URLSearchParams(location.search).get('theme');
-        if (qp === 'light' || qp === 'dark' || qp === 'qm') theme = qp;
-    } catch(e) {}
+    // Boot owns resolution; storage failure must not suppress a URL override.
+    var theme = window.resolveSMTheme ? window.resolveSMTheme()
+        : document.documentElement.getAttribute('data-theme') || 'dark';
     _applyThemeToPlotly(theme);
     // r16 ⑤-1: retheme() used to run only on the theme TOGGLE — plots
     // rendered before Plotly/theme settled on a dark-mode LOAD kept the
@@ -3545,6 +3540,7 @@ function _trapContainerGone(c) {
  *      detaches itself and swallows nothing (no focus restore — the opener
  *      context is long stale by then).
  */
+var _focusTrapStack = [];
 window.trapFocus = function(container, onEscape) {
     if (!container) return function() {};
     if (container.__trapRelease) { try { container.__trapRelease(); } catch (e) {} }
@@ -3553,14 +3549,19 @@ window.trapFocus = function(container, onEscape) {
     function detach() {
         if (released) return;
         released = true;
+        _focusTrapStack = _focusTrapStack.filter(function (entry) { return entry.container !== container; });
         document.removeEventListener("keydown", onKey, true);
         if (container.__trapRelease === release) container.__trapRelease = null;
     }
     function onKey(e) {
         if (_trapContainerGone(container)) { detach(); return; }
+        while (_focusTrapStack.length && _trapContainerGone(_focusTrapStack[_focusTrapStack.length - 1].container)) {
+            _focusTrapStack[_focusTrapStack.length - 1].detach();
+        }
+        if (!_focusTrapStack.length || _focusTrapStack[_focusTrapStack.length - 1].container !== container) return;
         var folderModal = document.getElementById('hub-folder-modal');
         if (folderModal && !folderModal.contains(container)) return;
-        if (e.key === "Escape" && onEscape) { e.preventDefault(); onEscape(); return; }
+        if (e.key === "Escape" && onEscape) { e.preventDefault(); e.stopImmediatePropagation(); onEscape(); return; }
         if (e.key !== "Tab") return;
         var f = _focusableIn(container);
         if (!f.length) { e.preventDefault(); return; }
@@ -3575,15 +3576,17 @@ window.trapFocus = function(container, onEscape) {
     }
     function release() {
         if (released) return;
+        var wasTop = _focusTrapStack.length && _focusTrapStack[_focusTrapStack.length - 1].container === container;
         detach();
-        if (opener && typeof opener.focus === "function" && document.body.contains(opener)) {
+        if (wasTop && opener && typeof opener.focus === "function" && document.body.contains(opener)) {
             try { opener.focus(); } catch (e) {}
         }
     }
+    _focusTrapStack.push({container: container, detach: detach});
     document.addEventListener("keydown", onKey, true);
     container.__trapRelease = release;
     requestAnimationFrame(function() {
-        if (released) return;
+        if (released || !_focusTrapStack.length || _focusTrapStack[_focusTrapStack.length - 1].container !== container) return;
         // Don't override focus the caller already placed inside the modal.
         if (container.contains(document.activeElement)) return;
         var f = _focusableIn(container);
@@ -23437,7 +23440,7 @@ document.addEventListener('click', function(evt) {
         _render('');
         // Tab-cycle within the palette + restore focus to the opener on close.
         // (Escape/Arrows/Enter are handled by the dedicated keydown handler below.)
-        pal._releaseTrap = window.trapFocus(pal);
+        pal._releaseTrap = window.trapFocus(pal, window.closeCmdPalette);
         // Focus on the next frame so the dialog is visible.
         requestAnimationFrame(function() { input.focus(); });
     };

@@ -10121,7 +10121,7 @@ tr.gen-pop-row-linked > td {
 
 /* Diagnostics findings list. */
 .diag-summary { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin: 0.4rem 0 0.7rem; }
-.diag-ok { color: var(--outcome-ok-color, #27ae60); font-weight: 600; }
+.diag-ok { color: var(--color-success-text); font-weight: 600; }
 .diag-badge {
     display: inline-block; padding: 0.12rem 0.5rem; border-radius: 4px;
     font-size: 0.8rem; font-weight: 700; line-height: 1.5;
@@ -10130,7 +10130,7 @@ tr.gen-pop-row-linked > td {
 .diag-error   { color: #fff; background: var(--outcome-fail-color, #c0392b); }
 .diag-warning { color: #fff; background: var(--outcome-warn-color, #e67e22); }
 .diag-info    { color: #fff; background: #46688f; }   /* darkened from #5b7fb0 (4.1→5.3:1 on white text) */
-.diag-ok-badge { color: var(--outcome-ok-color, #27ae60); border-color: var(--outcome-ok-color, #27ae60); background: transparent; }
+.diag-ok-badge { color: var(--color-success-text); border-color: var(--outcome-ok-color, #27ae60); background: transparent; }
 button.diag-badge { cursor: pointer; }
 
 .diag-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
@@ -10248,8 +10248,8 @@ button.diag-badge { cursor: pointer; }
     padding: 0.12rem 0.6rem; border-radius: 12px; border: 1px solid;
     background: transparent; line-height: 1.5;
 }
-.diag-pill.diag-error    { color: var(--outcome-fail-color, #c0392b); border-color: var(--outcome-fail-color, #c0392b); }
-.diag-pill.diag-warning  { color: var(--outcome-warn-color, #b35900); border-color: var(--outcome-warn-color, #b35900); }
+.diag-pill.diag-error    { color: var(--color-error-text); border-color: var(--outcome-fail-color, #c0392b); }
+.diag-pill.diag-warning  { color: var(--color-warning-text); border-color: var(--outcome-warn-color, #b35900); }
 .diag-pill.diag-advisory { color: var(--pico-contrast); border-color: var(--pico-muted-border-color); }
 .diag-pill.diag-info     { color: var(--diag-info-text); border-color: var(--diag-info-text); }
 .diag-pill.diag-pill-off { opacity: 0.45; text-decoration: line-through; }
@@ -10264,8 +10264,8 @@ button.diag-badge { cursor: pointer; }
     font-size: 0.72rem; font-weight: 700; padding: 0 0.35rem;
     border-radius: 8px; border: 1px solid; background: transparent;
 }
-.diag-mini.diag-error    { color: var(--outcome-fail-color, #c0392b); border-color: var(--outcome-fail-color, #c0392b); }
-.diag-mini.diag-warning  { color: var(--outcome-warn-color, #b35900); border-color: var(--outcome-warn-color, #b35900); }
+.diag-mini.diag-error    { color: var(--color-error-text); border-color: var(--outcome-fail-color, #c0392b); }
+.diag-mini.diag-warning  { color: var(--color-warning-text); border-color: var(--outcome-warn-color, #b35900); }
 .diag-mini.diag-advisory { color: var(--pico-contrast); border-color: var(--pico-muted-border-color); }
 .diag-mini.diag-info     { color: var(--diag-info-text); border-color: var(--diag-info-text); }
 
@@ -10274,10 +10274,10 @@ button.diag-badge { cursor: pointer; }
     display: inline-block; padding: 0.12rem 0.55rem; border-radius: 12px;
     font-size: 0.8rem; font-weight: 700; text-decoration: none; border: 1px solid;
 }
-.diag-header-badge.diag-error   { color: var(--outcome-fail-color, #c0392b); border-color: var(--outcome-fail-color, #c0392b); background: transparent; }
-.diag-header-badge.diag-warning { color: var(--outcome-warn-color, #e67e22); border-color: var(--outcome-warn-color, #e67e22); background: transparent; }
+.diag-header-badge.diag-error   { color: var(--color-error-text); border-color: var(--outcome-fail-color, #c0392b); background: transparent; }
+.diag-header-badge.diag-warning { color: var(--color-warning-text); border-color: var(--outcome-warn-color, #e67e22); background: transparent; }
 .diag-header-badge.diag-info    { color: var(--diag-info-text); border-color: var(--diag-info-text); background: transparent; }
-.diag-header-badge.diag-ok-badge { color: var(--outcome-ok-color, #27ae60); border-color: var(--outcome-ok-color, #27ae60); }
+.diag-header-badge.diag-ok-badge { color: var(--color-success-text); border-color: var(--outcome-ok-color, #27ae60); }
 
 /* On-diagram port rings: red = broken (diagnostics), amber = differs (compare). */
 .iw-port.iw-port-problem > circle,
@@ -15804,7 +15804,7 @@ details.jargon > .jargon-explain {
     --pico-range-thumb-hover-color: #6fa7ff;
 }
 [data-theme="qm"] body { font-weight: 300; }
-[data-theme="qm"] :is(h1,h2,h3,h4,h5,h6,.app-title) { font-family: Poppins, Arial, sans-serif; font-weight: 500; color: #ffffff; }
+[data-theme="qm"] :is(h1,h2,h3,h4,h5,h6,.app-title) { font-family: Poppins, Arial, sans-serif; font-weight: 500; color: var(--pico-h1-color); }
 
 [data-theme="qm"] .tree-entry-label:hover { background: color-mix(in srgb, var(--pico-primary) 24%, transparent); }
 [data-theme="qm"] .tree-entry-label:has(.tree-entry-active) { background: color-mix(in srgb, var(--pico-primary) 36%, transparent); }

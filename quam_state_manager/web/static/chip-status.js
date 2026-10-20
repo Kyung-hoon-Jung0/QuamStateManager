@@ -2357,6 +2357,8 @@ window.ChipStatus.mount = function (opts) {
                     html += '<div class="topo-popup-recency"><span class="topo-recency '
                          + _ageClass(e.cz_fidelity_updated_at) + '">measured '
                          + _ageLabel(e.cz_fidelity_updated_at) + '</span></div>';
+                } else {
+                    html += '<div class="topo-popup-recency">age unknown</div>';
                 }
                 // Which run set the number: only when the run recorded its own
                 // id beside that very metric (never a neighbouring metric's run).
@@ -2886,6 +2888,7 @@ window.ChipStatus.mount = function (opts) {
             var _badgeFs = compactMode ? 10 : 8.5;
             function _pairStale(ms) { return _ageClass(ms) === 'fail'; }
             function _pairKey(e) {
+                if (e.directed) return 'directed:' + e.pair_id;
                 return String(e.source) < String(e.target)
                     ? e.source + '|' + e.target : e.target + '|' + e.source;
             }
@@ -2914,18 +2917,22 @@ window.ChipStatus.mount = function (opts) {
                         bFill = interpolateColor(bt, dCfg.colorScale);
                         bFg = textColorForBg(bFill);
                     }
-                    var bTitle = e.pair_id
+                    var bTitle = e.pair_id + (e.active === false ? ' (off)' : '')
                         + (pst.value != null ? ' \u2014 2Q gate fidelity ' + fmtPct(pst.value, 2) + '%'
                            : (pst.state === 'pending' ? ' \u2014 2Q gate defined, not measured' : ''))
-                        + (pst.stale ? ' (measured ' + _ageLabel(e.cz_fidelity_updated_at) + ')' : '');
+                        + (pst.age === 'unknown' && pst.value != null ? ' (age unknown)'
+                           : (pst.stale ? ' (measured ' + _ageLabel(e.cz_fidelity_updated_at) + ')' : ''));
                     var badge = TG.pairBadgeSvg({
-                        x: (x1 + x2) / 2, y: (y1 + y2) / 2,
-                        name: TG.quamPairId([e.source, e.target]),
+                        x: (x1 + x2) / 2 + (e.directed ? -(y2 - y1) / (bL || 1) * 18 : 0),
+                        y: (y1 + y2) / 2 + (e.directed ? (x2 - x1) / (bL || 1) * 18 : 0),
+                        name: (e.directed ? e.pair_id : TG.quamPairId([e.source, e.target]))
+                            + (e.active === false ? ' (off)' : ''),
                         valueText: bVal, fontSize: _badgeFs, fill: bFill, fg: bFg,
                         state: pst.state + (pst.stale ? ' topo-pair-badge-stale' : ''),
                         dense: _denseChip,
                         room: bHoriz ? bRoom : 1e9, roomAcross: bHoriz ? 1e9 : bRoom,
-                        attrs: ' data-hero-pair="' + _esc(e.pair_id) + '" tabindex="-1"'
+                        attrs: (e.active === false ? ' opacity="0.35"' : '')
+                             + ' data-hero-pair="' + _esc(e.pair_id) + '" tabindex="-1"'
                              + ' data-link-ends="' + _esc(e.source + ' ' + e.target) + '"',
                         title: bTitle,
                     });
@@ -3031,7 +3038,7 @@ window.ChipStatus.mount = function (opts) {
                 // and the role markers — on the real chip the C/T circles sat
                 // exactly on the midpoint and covered every printed number.
                 if (evTxt != null && e.directed) {
-                    evalSvg += '<text class="topo-hero-eval" x="' + (mx + pdx * 15)
+                    evalSvg += '<text class="topo-hero-eval"' + (e.active === false ? ' opacity="0.35"' : '') + ' x="' + (mx + pdx * 15)
                         + '" y="' + (my + pdy * 15 + 4) + '">'
                         + _esc(evTxt) + '</text>';
                 } else if (evTxt != null) {
@@ -3213,6 +3220,7 @@ window.ChipStatus.mount = function (opts) {
             });
         }
 
+        if (TG.onTheme) TG.onTheme(host, render);
         _rebuildHeroMap = render;
         render();
     })();

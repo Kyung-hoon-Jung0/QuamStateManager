@@ -22374,12 +22374,17 @@ def cz_plan_page():
     rows, _convs, unavailable = _cz_plan_ops(store)
     table = _cz_plan_table(rows)
     want = request.args.get("op", "").strip()
-    if not want and request.args.get("pair"):
-        # a pair's own entry (the map's pair panel links here by pair id)
-        want = _pair_cz_plan_ops(store).get(request.args.get("pair", "").strip(), "")
+    unknown_pair = None
+    if not want and "pair" in request.args:
+        pair = request.args.get("pair", "").strip()
+        want = _pair_cz_plan_ops(store).get(pair, "")
+        if not want:
+            unknown_pair = pair
     paths = [r["path"] for r in table]
-    selected = want if want in paths else (paths[0] if paths else "")
-    return render_template(template, **_ctx(page="czplan", rows=table, selected=selected, unavailable=unavailable))
+    selected = want if want in paths else (paths[0] if paths and unknown_pair is None else "")
+    return render_template(template, **_ctx(page="czplan", rows=table, selected=selected,
+                                           unavailable=unavailable, unknown_pair=unknown_pair))
+
 
 
 def _cz_plan_history(rows: list[dict]) -> dict:
@@ -39704,7 +39709,39 @@ def _copy_topology_rb_rows(topo: dict) -> dict:
 def _topology_for_chip_status(engine):
     """The topology Chip Status, its JSON and its report read: the per-gate
     RB derivation, then each entity's calibration age from the ledger."""
-    return _with_ledger_calibration(_topology_with_derived_rb(engine))
+    return _with_fidelity_writers(_with_ledger_calibration(_topology_with_derived_rb(engine)))
+
+
+def _with_fidelity_writers(topo):
+    """Only the latest in-force write to the selected path can name its writer."""
+    from quam_state_manager.core.hub_rules import same
+
+    paths = {e["cz_fidelity_path"]: e["cz_fidelity_path"]
+             for e in topo.get("edges", []) if e.get("cz_fidelity_path")}
+    if not paths:
+        return topo
+    ctx = _active_ctx() or {}
+    ans = _value_history(ctx, paths, limit=1)
+    out = dict(topo, edges=[dict(e, cz_fidelity_run=None) for e in topo.get("edges", [])])
+    # Saved or staged manual writes are newer than the live ledger, even if
+    # they put back the same number. Equality alone cannot reassign the writer.
+    if ctx.get("working_dirty") or ctx.get("pending_reapply"):
+        return out
+    staged = tuple(getattr(ctx.get("store"), "change_log", ()))
+    if ans.get("mode") != "ledger":
+        return out
+    for edge in out["edges"]:
+        path = edge.get("cz_fidelity_path")
+        if path and any(path == entry.dot_path or path.startswith(entry.dot_path + ".")
+                        or entry.dot_path.startswith(path + ".") for entry in staged):
+            continue
+        points = ans.get("rows", {}).get(edge.get("cz_fidelity_path"), {}).get("points", [])
+        point = points[-1] if points else {}
+        if (point.get("provenance") == "run_proven" and point.get("proven")
+                and not point.get("removed") and not point.get("undone")
+                and same(point.get("value"), edge.get("cz_fidelity"))):
+            edge["cz_fidelity_run"] = point.get("run_id")
+    return out
 
 
 #: SA-F9 (g): the last run-change times each chip's ledger answered, keyed by

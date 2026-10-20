@@ -617,10 +617,27 @@ window.TopoGraph = (function () {
     return svg;
   }
 
+  // Mounted maps share one theme notification listener. Detached hosts are pruned.
+  var themeMaps = new Map();
+  function onTheme(host, repaint) {
+    themeMaps.forEach(function (_repaint, mounted) { if (!mounted.isConnected) themeMaps.delete(mounted); });
+    themeMaps.set(host, repaint);
+  }
+  if (typeof document !== 'undefined') document.addEventListener('sm:themechange', function () {
+    themeMaps.forEach(function (repaint, host) {
+      if (!host.isConnected) themeMaps.delete(host);
+      else repaint();
+    });
+  });
   function renderLayout(mount, opts) {
     var noop = { mode: "none", highlightEntity: function () {} };
     if (!mount) return noop;
     opts = opts || {};
+    onTheme(mount, function () {
+      var legend = mount.querySelector('.cm-feed-legend');
+      renderLayout(mount, opts);
+      if (legend) mount.appendChild(legend);
+    });
     var nodes = opts.nodes || [], edges = opts.edges || [];
     var lay = layoutFor(nodes, edges);
     if (lay.mode === "none") {
@@ -829,6 +846,12 @@ window.TopoGraph = (function () {
       '<div class="cm-scroll"><svg class="cm-svg' + hl + '" width="' + W + '" height="' + H +
       '" viewBox="0 0 ' + W + " " + H + '">' + svg + "</svg></div>";
 
+    // Theme repaint replaces SVG children; keep delegated bindings and indices current.
+    if (mount._detailBinding) {
+      var binding = mount._detailBinding;
+      bindDetails(mount, binding.selector, binding.label, binding.open);
+    }
+    if (mount._linkedBound) bindLinked(mount);
     function cssEsc(s) {
       return (typeof window !== "undefined" && window.CSS && window.CSS.escape)
         ? window.CSS.escape(String(s)) : String(s);
@@ -1101,31 +1124,38 @@ window.TopoGraph = (function () {
     positionDetail(button, anchor);
   }
   function bindDetails(host, selector, label, open) {
+    host._detailBinding = {selector: selector, label: label, open: open};
     host.querySelectorAll(selector).forEach(function (anchor) {
       anchor.setAttribute('aria-label', label(anchor));
       Array.prototype.forEach.call(anchor.children, function (child) {
-        // a one-line native title (e.g. how a stone's age was dated) stays;
-        // an empty one gets the node's name
         if (child.tagName.toLowerCase() === 'title' && !child.textContent.trim()) child.textContent = label(anchor);
       });
       if (!anchor.hasAttribute('tabindex')) anchor.setAttribute('tabindex', '0');
-      var touch = false;
-      function offer() { offerDetail(anchor, label(anchor), function () { return open(anchor); }); }
-      anchor.addEventListener('mouseenter', offer);
-      anchor.addEventListener('mouseleave', scheduleDetailHide);
-      anchor.addEventListener('focusin', offer);
-      anchor.addEventListener('focusout', scheduleDetailHide);
-      anchor.addEventListener('pointerdown', function (e) { touch = e.pointerType === 'touch'; });
-      anchor.addEventListener('click', function (e) {
+    });
+    if (host._detailDelegated) return;
+    host._detailDelegated = true;
+    var touchAnchor = null;
+    function handle(e) {
+      var binding = host._detailBinding;
+      var anchor = e.target.closest && e.target.closest(binding.selector);
+      if (!anchor || !host.contains(anchor)) return;
+      function offer() { offerDetail(anchor, binding.label(anchor), function () { return binding.open(anchor); }); }
+      if (e.type === 'mouseenter' || e.type === 'focusin') {
+        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) offer();
+      } else if (e.type === 'mouseleave' || e.type === 'focusout') {
+        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) scheduleDetailHide();
+      } else if (e.type === 'pointerdown') {
+        touchAnchor = e.pointerType === 'touch' ? anchor : null;
+      } else if (e.type === 'click') {
         var noHover = window.matchMedia && window.matchMedia('(hover: none)').matches;
-        if (!touch && !noHover) return;
-        touch = false; e.preventDefault(); e.stopImmediatePropagation(); offer();
-      }, true);
-      anchor.addEventListener('keydown', function (e) {
-        if (e.key === 'Tab' && !e.shiftKey && detailButton && detailAnchor === anchor) {
-          e.preventDefault(); detailButton.focus();
-        }
-      });
+        if (touchAnchor !== anchor && !noHover) return;
+        touchAnchor = null; e.preventDefault(); e.stopImmediatePropagation(); offer();
+      } else if (e.type === 'keydown' && e.key === 'Tab' && !e.shiftKey && detailButton && detailAnchor === anchor) {
+        e.preventDefault(); detailButton.focus();
+      }
+    }
+    ['mouseenter', 'mouseleave', 'focusin', 'focusout', 'pointerdown', 'click', 'keydown'].forEach(function (type) {
+      host.addEventListener(type, handle, true);
     });
   }
   // Page-wide closers; absent when the module is loaded without a DOM.
@@ -1178,7 +1208,7 @@ window.TopoGraph = (function () {
     if (state === 'measured' && at != null) {
       stale = isStale ? !!isStale(at) : (Date.now() - at) / 86400000 > PAIR_STALE_DAYS;
     }
-    return { state: state, value: v, stale: stale };
+    return { state: state, value: v, stale: stale, age: at == null ? "unknown" : (stale ? "stale" : "fresh") };
   }
   // Midpoint badge: a pill with the pair name over at most one number, or a
   // small dot when the pill does not fit (dense chips). The pill is always in
@@ -1217,7 +1247,21 @@ window.TopoGraph = (function () {
   // Markup contract: a pair element (edge or badge) carries
   // data-link-ends="a b"; a qubit element carries data-link-id="a".
   function bindLinked(host) {
-    if (!host || host._linkedBound) return;
+    if (!host) return;
+    // Rebuild once per render; hover only visits the selected adjacency list.
+    var pairs = new Map(), qubits = new Map(), adjacent = new Map();
+    function add(index, key, el) {
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push(el);
+    }
+    host.querySelectorAll('[data-link-ends]').forEach(function (el) {
+      var ends = el.getAttribute('data-link-ends');
+      add(pairs, ends, el);
+      ends.split(' ').forEach(function (id) { if (id) add(adjacent, id, el); });
+    });
+    host.querySelectorAll('[data-link-id]').forEach(function (el) { add(qubits, el.getAttribute('data-link-id'), el); });
+    host._linkedIndex = {pairs: pairs, qubits: qubits, adjacent: adjacent};
+    if (host._linkedBound) return;
     host._linkedBound = true;
     var lit = [];
     function clear() {
@@ -1225,23 +1269,19 @@ window.TopoGraph = (function () {
       lit = [];
     }
     function light(el) { el.classList.add('topo-linked'); lit.push(el); }
-    function cssq(s) { return String(s).replace(/["\\]/g, '\\$&'); }
     function apply(target) {
       clear();
+      var index = host._linkedIndex;
       var pair = target.closest && target.closest('[data-link-ends]');
       var qubit = !pair && target.closest && target.closest('[data-link-id]');
       if (pair && host.contains(pair)) {
         var ends = pair.getAttribute('data-link-ends');
-        host.querySelectorAll('[data-link-ends="' + cssq(ends) + '"]').forEach(light);
-        ends.split(' ').forEach(function (id) {
-          if (id) host.querySelectorAll('[data-link-id="' + cssq(id) + '"]').forEach(light);
-        });
+        (index.pairs.get(ends) || []).forEach(light);
+        ends.split(' ').forEach(function (id) { (index.qubits.get(id) || []).forEach(light); });
       } else if (qubit && host.contains(qubit)) {
         var id = qubit.getAttribute('data-link-id');
-        light(qubit);
-        host.querySelectorAll('[data-link-ends]').forEach(function (el) {
-          if (el.getAttribute('data-link-ends').split(' ').indexOf(id) >= 0) light(el);
-        });
+        (index.qubits.get(id) || []).forEach(light);
+        (index.adjacent.get(id) || []).forEach(light);
       }
     }
     host.addEventListener('mouseover', function (e) { apply(e.target); });
@@ -1253,6 +1293,7 @@ window.TopoGraph = (function () {
   }
 
   return {
+    onTheme: onTheme,
     bindDetails: bindDetails,
     pairState: pairState,
     pairBadgeSvg: pairBadgeSvg,
