@@ -146,7 +146,12 @@ var UI_CONFIG = {
     roleColors: {
         xy:        '#9b59b6',   /* XY drive port       — purple   */
         rr:        '#e67e22',   /* Readout resonator   — orange   */
-        rr_in:     '#f0a030',   /* Readout input       — gold     */
+        rr_in:     '#9e4f00',   /* Readout input       - burnt orange. v1.5.1 (r6 P2-16): it was
+                                   gold #f0a030, a near twin of rr's orange (luminance contrast
+                                   1.33 between them); this darker one keeps the family, differs
+                                   in lightness (2.06, which also survives colour-blindness),
+                                   stands out on both theme backgrounds and carries the white
+                                   port label at 5.9:1 */
         z:         '#3498db',   /* Flux / Z line       — blue     */
         coupler:   '#1abc9c',   /* Coupler             — teal     */
         cr:        '#27ae60',   /* Cross-resonance drive — green  */
@@ -158,7 +163,7 @@ var UI_CONFIG = {
                                    Its own colour on purpose (docs/136 r2):
                                    the dashed-ring mark was invisible at port
                                    size. Amber is the widest free hue gap in
-                                   this palette — gold rr_in is orange-family
+                                   this palette - burnt-orange rr_in is orange-family
                                    and lives on MW-FEM input columns, never
                                    beside an LF-FEM z output.
                                    docs/141 4ah (user): darkened from #f1c40f so

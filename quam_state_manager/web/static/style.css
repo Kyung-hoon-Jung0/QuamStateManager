@@ -230,7 +230,7 @@
        the SVG wiring diagram circles.                                  */
     --role-xy-color:        #9b59b6;   /* XY drive port       — purple   */
     --role-rr-color:        #e67e22;   /* Readout resonator   — orange   */
-    --role-rr-in-color:     #f0a030;   /* Readout input       — gold     */
+    --role-rr-in-color:     #9e4f00;   /* Readout input - burnt orange (v1.5.1 r6 P2-16: was a gold twin of rr) */
     --role-z-color:         #3498db;   /* Flux / Z line       — blue     */
     --role-coupler-color:   #1abc9c;   /* Coupler             — teal     */
     --role-twpa-pump-color: #e74c3c;   /* TWPA pump           — red      */
@@ -3904,7 +3904,7 @@ input.edit-input {
    use dark text — keep the FILL untouched so the SVG circles don't drift. */
 .role-badge.xy      { background: var(--role-xy-color); color: #fff; }      /* purple, dark enough for white */
 .role-badge.rr      { background: var(--role-rr-color); color: #1a1a1a; }
-.role-badge.rr_in   { background: var(--role-rr-in-color); color: #1a1a1a; }
+.role-badge.rr_in   { background: var(--role-rr-in-color); color: #fff; }      /* r6 P2-16: dark fill, white text */
 .role-badge.z       { background: var(--role-z-color); color: #1a1a1a; }
 .role-badge.coupler { background: var(--role-coupler-color); color: #1a1a1a; }
 .role-badge.twpa_pump { background: var(--role-twpa-pump-color); color: #fff; }
