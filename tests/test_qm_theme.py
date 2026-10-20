@@ -94,5 +94,6 @@ def test_qm_leaves_layout_tokens_alone():
     # The QM block outranks html[data-font-size=...] and html.sm-in-frame, so a
     # sizing token copied into it would silently break the font-size presets.
     qm = tokens("qm")
+    assert qm, "QM palette missing"
     for name in ("--font-size-base", "--sidebar-width", "--topbar-height", "--bulk-fs"):
         assert name not in qm, name
