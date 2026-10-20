@@ -2963,7 +2963,8 @@ def _archive_info() -> dict | None:
         "run_label": f"#{m.group(1)}" if m else None,
         "uid": ctx.get("archive_uid"),
         "return_path": str(ret) if ret else None,
-        "return_name": _chip_display_name(ret) if ret else None,
+        # v1.5.1 (r6, P2-13): as the top bar named it (the folder is the title)
+        "return_name": _return_chip_label(ret) if ret else None,
     }
 
 
@@ -12090,6 +12091,34 @@ def _chip_name_of(ctx) -> str:
         return str((ctx or {}).get("path") or "?")
 
 
+def _chip_label_of(ctx) -> str:
+    """v1.5.1 (r6, P2-13): the name a MESSAGE gives *ctx*'s chip -- the top
+    bar's ladder (:func:`_chip_label`: the declared ``extras.chip_name``, else
+    the folder rule). Messages named the folder ('chip_x') while the top bar
+    said the declared name. Machine fields and gates keep the folder name."""
+    try:
+        return _chip_label(ctx["path"], ctx.get("store"))
+    except Exception:  # noqa: BLE001 -- a name never breaks a message
+        return _chip_name_of(ctx)
+
+
+def _return_chip_label(path) -> str:
+    """The chip at *path* as the top bar names it when SM holds it (open or
+    cached: its declared name is in memory); else the folder rule."""
+    try:
+        want = scheduler.norm_path(str(path))
+        cands = list((current_app.config.get("contexts") or {}).values())
+        with _quam_cache_lock:
+            cands += list(_quam_cache.values())
+        for c in cands:
+            if (c.get("type") == "quam" and c.get("path")
+                    and scheduler.norm_path(str(c["path"])) == want):
+                return _chip_label_of(c)
+    except Exception:  # noqa: BLE001 -- a name never breaks a page
+        pass
+    return _chip_display_name(path)
+
+
 def _chip_ctx_for_key(key: str):
     """A context SM holds for the chip with *key* (open or cached), or None."""
     cands = list((current_app.config.get("contexts") or {}).values())
@@ -12120,12 +12149,16 @@ def _tab_chip_refusal(ctx=None, *, json_body: bool | None = None):
     tab_name = (_chip_name_of(tab_ctx) if tab_ctx is not None
                 else (re.sub(r"-[0-9a-f]{8}$", "", want) or want))
     now_name = _chip_name_of(ctx) if have else None
+    # v1.5.1 (r6, P2-13): the sentence names each chip as the top bar does;
+    # the JSON fields below keep the folder names
+    tab_label = _chip_label_of(tab_ctx) if tab_ctx is not None else tab_name
+    now_label = _chip_label_of(ctx) if have else None
     if now_name is None:
-        msg = (f"Not done: this tab shows chip '{tab_name}', and the server has no chip "
+        msg = (f"Not done: this tab shows chip '{tab_label}', and the server has no chip "
                "open now. Reload this page. Nothing was written.")
     else:
-        tab_said, now_said = f"'{tab_name}'", f"'{now_name}'"
-        if tab_name == now_name:
+        tab_said, now_said = f"'{tab_label}'", f"'{now_label}'"
+        if tab_label == now_label:
             tab_said += f" ({tab_ctx['path'] if tab_ctx is not None else want})"
             now_said += f" ({ctx['path']})"
         msg = (f"Not done: this tab shows chip {tab_said}; the server has chip {now_said} "
@@ -12255,12 +12288,14 @@ def _chip_mismatch_response(expect_chip: str, force_chip: bool, *,
         return None
     if not _chip_token_ok(expect_chip):
         now = (_active_chip_identity() or {}).get("name") or "another chip"
+        # v1.5.1 (r6, P2-13): the sentence names the chip as the top bar does
+        said = _active_chip_label() or now
         if action:
-            msg = (f"Not applied: this app now has '{now}' loaded, not the "
+            msg = (f"Not applied: this app now has '{said}' loaded, not the "
                    "chip this page was showing (another window or tab may "
                    f"have opened a different chip). The {action} was refused "
                    "so it cannot land on the wrong chip — reload this page "
-                   f"to continue on '{now}', or load your chip again first.")
+                   f"to continue on '{said}', or load your chip again first.")
         else:
             msg = ("This value came from a different chip than the one "
                    "loaded — applying it would write onto the wrong chip.")
@@ -12310,8 +12345,10 @@ def chip_active_token():
         if store is not None:
             with store._lock:
                 declared = history.extras_chip_name(store.state)
+            # v1.5.1 (r6, P2-13): the declared name first, as the top bar
+            # shows it; the folder after it when it says something else
             if declared and declared != name:
-                name = f"{name} (chip_name {declared})" if name else declared
+                name = f"{declared} (folder {name})" if name else declared
     # ``loaded`` distinguishes "no chip loaded" from "loaded but token
     # uncomputable" (corrupt wiring) — clients that treat the ACTIVE context as
     # authoritative need the truth, not an empty-token proxy for it.
@@ -17850,6 +17887,21 @@ def _snapshot_state_wiring(hm, path, timestamp) -> tuple[dict, dict]:
     return _side_today((copy.deepcopy(snap.state), copy.deepcopy(snap.wiring)))
 
 
+def _two_chips_said(asked_key: str, open_key: str, ctx) -> tuple[str, str]:
+    """v1.5.1 (r6, P2-13): a version's chip (a history chip key) and the open
+    chip, as a message names them -- the declared name the history keeps for
+    the key, and the top bar's name for the open chip; each with its key when
+    the two names agree (two folders of one declared chip)."""
+    try:
+        asked = _history().display_name_for_dir(asked_key) or asked_key
+    except Exception:  # noqa: BLE001 -- a name never breaks a refusal
+        asked = asked_key
+    now = _chip_label_of(ctx) if ctx else (open_key or "another chip")
+    if asked == now:
+        asked, now = f"{asked} ({asked_key})", f"{now} ({open_key or 'open'})"
+    return asked, now
+
+
 def _history_chip_mismatch(ctx):
     """docs/284: a ledger version id is per chip (``event-7`` of another chip
     is another state). A press that names its chip (``chip_key``) is refused
@@ -17860,10 +17912,12 @@ def _history_chip_mismatch(ctx):
     chip_dir = _hub_chip_dir(ctx["path"])
     if chip_dir is not None and asked == Path(chip_dir).name:
         return None
+    asked_said, now_said = _two_chips_said(
+        asked, Path(chip_dir).name if chip_dir is not None else "", ctx)
     return render_template(
         "_status.html", level="warning",
-        message=f"This version belongs to chip '{asked}', which is not the open chip "
-                "— open that chip first."), 409
+        message=f"This version belongs to chip '{asked_said}', not the open chip "
+                f"'{now_said}' — open that chip first."), 409
 
 
 def _version_pair_or_refusal(hm, path, ref):
@@ -21013,10 +21067,11 @@ def state_version_diff(timestamp: str):
     # answered from the wrong chip's history. Same gate as /diff/versions.
     asked_chip = (request.args.get("chip_key") or "").strip()
     if asked_chip and chip_key and asked_chip != chip_key:
+        asked_said, now_said = _two_chips_said(asked_chip, chip_key, ctx)
         return render_template(
             "_status.html", level="warning",
-            message=f"This version belongs to chip '{asked_chip}' but "
-                    f"'{chip_key}' is open — open that chip first.")
+            message=f"This version belongs to chip '{asked_said}' but "
+                    f"'{now_said}' is open — open that chip first.")
     try:
         # ignore_keys=set(): this overlay says "No differences — the current
         # working state matches this version" when empty, so it must not skip
@@ -27969,7 +28024,8 @@ def _undo_head(verb: str, live: bool, ctx=None) -> str:
     armed, which writes it within a second: the head says so instead of a
     promise the session would break."""
     if live:
-        return f"{verb} — written to the chip file of '{_chip_name_of(ctx or _active_ctx())}'"
+        # v1.5.1 (r6, P2-13): the chip as the top bar names it
+        return f"{verb} — written to the chip file of '{_chip_label_of(ctx or _active_ctx())}'"
     if _auto_apply_state(ctx):
         return f"{verb} — staged; Auto-Sync writes it to the chip file"
     return f"{verb} — in SM only, the chip file is unchanged"
@@ -30876,10 +30932,11 @@ def _apply_chip_refusal(ctx):
             have_key = None
         if have_key != want_key:
             now = (_active_chip_identity() or {}).get("name") or "another chip"
+            said = _active_chip_label() or now     # v1.5.1 (r6, P2-13)
             return jsonify(
                 ok=False, conflict="chip_mismatch", chip_mismatch=True,
                 loaded_chip=now, loaded_chip_key=have_key, expected_chip_key=want_key,
-                message=(f"Not applied: '{now}' ({have_key}) is open now, not the chip "
+                message=(f"Not applied: '{said}' ({have_key}) is open now, not the chip "
                          f"these edits were seen on ({want_key}). Nothing was written.")), 409
     return _chip_mismatch_response(request.values.get("expect_chip", ""), False,
                                    action="apply")
@@ -34141,8 +34198,9 @@ def diff_versions():
 
     asked_chip = (request.args.get("chip_key") or "").strip()
     if asked_chip and chip_key and asked_chip != chip_key:
-        return _fail(f"This comparison names chip '{asked_chip}' but "
-                     f"'{chip_key}' is open — open that chip first.")
+        asked_said, now_said = _two_chips_said(asked_chip, chip_key, ctx)
+        return _fail(f"This comparison names chip '{asked_said}' but "
+                     f"'{now_said}' is open — open that chip first.")
     from quam_state_manager.core import hub_versions
     ts_list = sorted({t.strip() for t in request.args.getlist("ts")
                       if t.strip() and (_HIST_TS_RE.match(t.strip())
@@ -43307,7 +43365,7 @@ def dataset_apply_selected_preview(uid):
                             + ": each field is written under today's name.")
     return jsonify(ok=True, rows=rows, counts=counts, missing=missing,
                    capped=len(leaves) >= _CAP,
-                   chip=_chip_display_name(Path(ctx["path"])),
+                   chip=_chip_label_of(ctx),      # v1.5.1 (r6, P2-13)
                    same_chip=(alignment == _hist.ALIGN_ALIGNED),
                    chip_unknown=(alignment == _hist.ALIGN_UNKNOWN), **extra)
 
@@ -43587,7 +43645,7 @@ def dataset_load_state(uid):
     _pin_request_ctx(ctx)               # R3 C1: the chip this press was made on
     _pre_leaves = _leaf_snapshot(ctx)   # docs/144: name what the load changes
     base_url = f"/dataset/{uid}/load-state"
-    chip_label = _chip_display_name(Path(ctx["path"]))
+    chip_label = _chip_label_of(ctx)     # v1.5.1 (r6, P2-13): as the top bar names it
     apply_req = request.values.get("apply") == "1"   # docs/108 one-click
     apply_qs = "&apply=1" if apply_req else ""
     apply_note = " It will then be APPLIED to the live chip." if apply_req else ""
@@ -45276,8 +45334,10 @@ def regenerate_reconstruct():
         # only on the default path (whose folder is the working-copy key); an
         # explicit "Load different…" folder used to wear it too, so the bar
         # named the loaded chip over another chip's counts.
+        # v1.5.1 (r6, P2-13): the loaded chip as the top bar names it
         "source_name": (_chip_display_name(folder) if explicit
-                        else (ident["name"] if ident else Path(folder).name)),
+                        else ((_active_chip_label() or ident["name"]) if ident
+                              else Path(folder).name)),
     })
 
 

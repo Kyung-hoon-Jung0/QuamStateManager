@@ -8,8 +8,9 @@
 {# ---- readiness strip (docs/56 §7b — never fail after ▶) ---- #}
 <div id="autofit-readiness" class="autofit-readiness"
      data-readiness='{{ readiness | tojson }}'>
-    <span class="autofit-ready-chip {{ 'ok' if readiness.chip.ok else 'bad' }}">
-        Chip: {{ readiness.chip.name or 'none loaded' }}</span>
+    {#- v1.5.1 (r6, P2-13): the chip as the top bar names it; the folder on hover -#}
+    <span class="autofit-ready-chip {{ 'ok' if readiness.chip.ok else 'bad' }}"{% if readiness.chip.name %} title="folder {{ readiness.chip.name }}"{% endif %}>
+        Chip: {{ ((active_chip_label() if readiness.chip.name else none) or readiness.chip.name) or 'none loaded' }}</span>
     <span class="autofit-ready-chip {{ 'ok' if readiness.env.ok else 'bad' }}"
           title="{{ readiness.env.value }}">
         Env {{ '✓' if readiness.env.ok else '— pick on Experiment Runner' }}</span>
