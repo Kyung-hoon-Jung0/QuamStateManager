@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { JSDOM } = require("jsdom");
 const dir = path.join(__dirname, "..", "quam_state_manager", "web", "static");
-const message = "The live chip is being written right now -- nothing was pulled or applied; try again in a moment.";
+const message = "The live chip is being written right now; nothing was pulled or applied; try again in a moment.";
 (async () => {
   for (const door of ["panel", "top", "automatic"]) {
     const dom = new JSDOM('<body><div id="status-bar"></div><div id="pending-tray"></div>'

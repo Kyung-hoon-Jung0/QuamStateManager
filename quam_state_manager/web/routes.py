@@ -31361,7 +31361,7 @@ def _sync_replay_refusal(ctx, verdict, picks, mode):
     if verdict is None:
         return jsonify({
             "status": "error", "mode": mode, "error_code": "live_busy",
-            "message": ("The live chip is being written right now -- nothing was pulled or applied; "
+            "message": ("The live chip is being written right now; nothing was pulled or applied; "
                         "try again in a moment."),
             "tray_html": _conflict_tray(ctx, ctx["store"], staged_conflict=False),
         }), 409
