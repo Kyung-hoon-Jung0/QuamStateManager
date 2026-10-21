@@ -15868,3 +15868,10 @@ details.jargon > .jargon-explain {
 [data-theme="qm"] td.cell-live-stale { box-shadow: inset 3px 0 0 var(--pico-primary); }
 [data-theme="qm"] .sp-one-field { border-color: color-mix(in srgb, var(--pico-primary) 50%, transparent) !important; }
 [data-theme="qm"] .sp-group-mine .sp-group-head td { color: var(--color-warning-text); }
+
+/* CZ plan: sortable headers that read as header text */
+.czp-table th button.czp-sort { all: unset; cursor: pointer; font: inherit; color: inherit; }
+.czp-table th button.czp-sort:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: 2px; }
+.czp-table th[aria-sort="ascending"] button.czp-sort::after { content: " \25B2"; font-size: .7em; }
+.czp-table th[aria-sort="descending"] button.czp-sort::after { content: " \25BC"; font-size: .7em; }
+.czp-filter-note { margin: .25rem 0 0; font-size: .85em; }

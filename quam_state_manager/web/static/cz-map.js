@@ -1018,6 +1018,8 @@
         if (!el) return Promise.resolve();
         var my = ++fseq;
         var opSel = root.querySelector('#czp-map-op'), op = opSel ? opSel.value : '';
+        // the table below lists only the operation the map draws (all when "cz per pair")
+        root.dispatchEvent(new CustomEvent('czp:mapop', { detail: op }));
         return fetch('/cz-plan/map' + (op ? '?op=' + encodeURIComponent(op) : ''), { headers: { 'Accept': 'application/json' } })
             .then(function (r) { return r.json(); })
             .then(function (m) {

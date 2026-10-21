@@ -62,21 +62,24 @@
 <table id="czp-table" class="data-table czp-table" role="grid">
     <thead>
         <tr>
-            <th class="czp-stick">Pair</th>
-            <th class="czp-stick czp-stick-op">Operation</th>
+            <th class="czp-stick" data-sort-key="pair" aria-sort="none"><button type="button" class="czp-sort">Pair</button></th>
+            <th class="czp-stick czp-stick-op" data-sort-key="op" aria-sort="none"><button type="button" class="czp-sort">Operation</button></th>
             <th title="Which qubits the operation flux-pulses">Moves</th>
-            <th title="Frequency each qubit reaches at the operation's amplitude (control / target)">At the operation (GHz)</th>
-            <th title="f_control - f_target at the operating point">&Delta; (MHz)</th>
-            <th title="The nearest |11> resonance and how far &Delta; is from it">Nearest resonance</th>
+            <th title="Frequency each qubit reaches at the operation's amplitude (control / target). Sorts by the moving qubit's frequency." data-sort-key="freq" data-sort-num="1" aria-sort="none"><button type="button" class="czp-sort">At the operation (GHz)</button></th>
+            <th title="f_control - f_target at the operating point" data-sort-key="delta" data-sort-num="1" aria-sort="none"><button type="button" class="czp-sort">&Delta; (MHz)</button></th>
+            <th title="The nearest |11> resonance and how far &Delta; is from it. Sorts by that distance's size." data-sort-key="near" data-sort-num="1" aria-sort="none"><button type="button" class="czp-sort">Nearest resonance</button></th>
             <th title="How the frequency was obtained">Estimate</th>
             <th title="Quad-term estimate against the measured quadratic range">Validity</th>
-            <th>IRB</th>
+            <th data-sort-key="irb" data-sort-num="1" aria-sort="none"><button type="button" class="czp-sort">IRB</button></th>
             <th title="When the operation's amplitudes were last set (from this chip's history)">Last set</th>
         </tr>
     </thead>
     <tbody>
     {% for r in rows %}
-        <tr class="clickable-row czp-row{% if r.path == selected %} czp-row-selected{% endif %}" data-op="{{ r.path }}" tabindex="0"
+        <tr class="clickable-row czp-row{% if r.path == selected %} czp-row-selected{% endif %}" data-op="{{ r.path }}" data-opname="{{ r.operation }}" data-pair="{{ r.pair }}" tabindex="0"
+            {%- set mf = namespace(v=none) %}{% for f in r.freqs %}{% if mf.v is none and f is not none and r.moves[loop.index0] %}{% set mf.v = f %}{% endif %}{% endfor %}
+            data-s-freq="{{ mf.v if mf.v is not none else '' }}" data-s-delta="{{ r.detuning_hz if r.detuning_hz is not none else '' }}"
+            data-s-near="{{ (r.nearest.distance_hz | abs) if r.nearest else '' }}" data-s-irb="{{ r.irb if r.irb is not none else '' }}"
             aria-selected="{{ 'true' if r.path == selected else 'false' }}">
             <td class="czp-stick"><strong>{{ r.pair }}</strong></td>
             <td class="czp-stick czp-stick-op">{{ r.operation }}{% for warning in r.warnings %}<br><small class="czp-warn-text">{{ warning }}</small>{% endfor %}{% if r.alias_of %} <small class="muted" title="{{ r.alias_of }}">alias</small>{% endif %}</td>
@@ -93,6 +96,7 @@
     </tbody>
 </table>
 </div>
+<p class="muted czp-filter-note" id="czp-filter-note" role="status" hidden></p>
 <p class="muted czp-history-note" id="czp-history-note" role="status"></p>
 
 <section class="czp-detail" aria-live="polite">

@@ -739,6 +739,55 @@
         return esc(text).replace(/\d{4}-\d\d-\d\d \d\d:\d\d(?::\d\d)?/, '<span class="czp-nowrap">$&</span>');
     }
 
+    /* The table follows the map's Operation picker: a named operation lists only its rows,
+       "cz per pair" lists every row. The selected row stays visible. */
+    function filterRows(root, op) {
+        var rows = root.querySelectorAll('.czp-row'), shown = 0, sel = root.getAttribute('data-selected');
+        Array.prototype.forEach.call(rows, function (tr) {
+            var on = !op || tr.getAttribute('data-opname') === op;
+            tr.hidden = !on;
+            if (on) shown++;
+        });
+        var note = root.querySelector('#czp-filter-note');
+        if (note) {
+            note.hidden = !op;
+            note.textContent = op ? 'Showing ' + shown + ' of ' + rows.length + ' operations: ' + op +
+                ' only, as on the map. Pick "cz per pair" to list all.' : '';
+        }
+        if (op && sel) {
+            var cur = root.querySelector('.czp-row[data-op="' + (window.CSS && CSS.escape ? CSS.escape(sel) : sel) + '"]');
+            if (cur && cur.hidden) {
+                var first = Array.prototype.find.call(rows, function (tr) { return !tr.hidden; });
+                if (first) load(root, first.getAttribute('data-op'));
+            }
+        }
+    }
+
+    /* Click a header to sort by it; again to reverse. Rows without a value stay last. */
+    function sortBy(root, th) {
+        var table = root.querySelector('#czp-table'), tbody = table && table.tBodies[0];
+        if (!tbody) return;
+        var key = th.getAttribute('data-sort-key'), num = th.hasAttribute('data-sort-num');
+        var dir = th.getAttribute('aria-sort') === 'ascending' ? -1 : 1;
+        Array.prototype.forEach.call(table.querySelectorAll('th[data-sort-key]'), function (h) { h.setAttribute('aria-sort', 'none'); });
+        th.setAttribute('aria-sort', dir > 0 ? 'ascending' : 'descending');
+        function val(tr) {
+            if (key === 'pair') return tr.getAttribute('data-pair') || '';
+            if (key === 'op') return tr.getAttribute('data-opname') || '';
+            var s = tr.getAttribute('data-s-' + key);
+            return s === null || s === '' ? null : parseFloat(s);
+        }
+        var nat = function (a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); };
+        var rows = Array.prototype.slice.call(tbody.rows).map(function (tr, i) { return { tr: tr, v: val(tr), i: i }; });
+        rows.sort(function (a, b) {
+            var na = a.v === null || (num && isNaN(a.v)), nb = b.v === null || (num && isNaN(b.v));
+            if (na || nb) return na === nb ? a.i - b.i : (na ? 1 : -1);
+            var c = num ? a.v - b.v : nat(a.v, b.v);
+            return c ? c * dir : a.i - b.i;
+        });
+        rows.forEach(function (r) { tbody.appendChild(r.tr); });
+    }
+
     function pairOfRow(tr) {
         var m = /^qubit_pairs\.(.+)\.macros\./.exec(tr ? tr.getAttribute('data-op') || '' : '');
         return m ? m[1] : null;
@@ -752,7 +801,10 @@
         if (host && window.PlotHost) window.PlotHost.observe(host);
         var mapBox = root.querySelector('.czp-map-box');
         if (mapBox && window.PlotHost) window.PlotHost.observe(mapBox);
+        root.addEventListener('czp:mapop', function (ev) { filterRows(root, ev.detail || ''); });
         root.addEventListener('click', function (ev) {
+            var sortTh = ev.target.closest && ev.target.closest('th[data-sort-key]');
+            if (sortTh && root.contains(sortTh)) { sortBy(root, sortTh); return; }
             var link = ev.target.closest && ev.target.closest('.czp-notes-link, #czp-stale-chip');
             if (link && root.contains(link)) { ev.preventDefault(); openNotes(root); return; }
             var tr = ev.target.closest && ev.target.closest('.czp-row');
