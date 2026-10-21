@@ -287,12 +287,12 @@
             var col = C.q[k], c = q.curve, s = q.summary;
             if (c.model_hz) {
                 traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.model_hz.map(ghz), name: q.name + ' · ' + s.model_kind,
-                    line: { color: col, width: 2.2 }, hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>' + hoverEsc(s.model_kind) + '</extra>' });
+                    line: { color: col, width: 2.2, dash: /derived/.test(s.model_kind || '') ? 'dash' : 'solid' }, hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>' + hoverEsc(s.model_kind) + '</extra>' });
             }
             if (c.quad_hz.some(function (v) { return v != null; })) {
                 // beside a fitted model the quad term is the secondary curve: it never sets the frequency span
                 traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.quad_hz.map(ghz), name: q.name + ' · quad-term estimate',
-                    line: { color: col, width: 1.4, dash: c.model_hz ? 'dash' : 'solid' }, _czpSecondary: !!c.model_hz,
+                    line: { color: col, width: 1.4, dash: 'dash' }, _czpSecondary: !!c.model_hz,
                     hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>quad-term estimate</extra>' });
             }
             traces.push({ type: 'scatter', mode: 'markers', x: [0], y: [ghz(s.f01_hz)], name: q.name + ' idle', showlegend: false,
@@ -501,7 +501,8 @@
                 '<dt>Idle f_01</dt><dd>' + fmtGHz(s.f01_hz) + '</dd>' +
                 '<dt>At the operation</dt><dd>' + fmtGHz(p.frequency_hz) + (p.kind ? ' <span class="czp-tier' + (/quad/.test(p.kind) ? ' czp-tier-quad' : '') + '">' + esc(p.kind) + '</span>' : '') +
                 (p.reason ? '<br><span class="czp-warn-text">' + esc(p.reason) + '</span>' : '') + '</dd>' +
-                (p.quad_hz != null && p.model_hz != null ? '<dt>Quad-term estimate</dt><dd>' + fmtGHz(p.quad_hz) + ' <small class="muted">(' + fmtMHz(p.error_hz) + ' from the model)</small></dd>' : '') +
+                (p.quad_hz != null && p.model_hz != null && !s.model_rejection ? '<dt>Quad-term estimate</dt><dd>' + fmtGHz(p.quad_hz) + ' <small class="muted">(' + fmtMHz(p.error_hz) + ' from the model)</small></dd>' : '') +
+                (s.model_rejection && p.model_hz != null ? '<dt>Re-anchored estimate [derived]</dt><dd>' + fmtGHz(p.model_hz) + '</dd>' : '') +
                 (p.validity ? '<dt>Validity</dt><dd>' + esc(p.validity) + (s.range && s.range.limit_hz ? ' <small class="muted">(limit ' + fmtMHz(s.range.limit_hz) + ', ' + esc(s.range.source || '') + ')</small>' : '') + '</dd>' : '') +
                 '<dt>Direction</dt><dd>' + esc((s.frame || {}).reason || '—') + '</dd>' +
                 (r.plan && r.plan.roles[ln.role] && r.plan.roles[ln.role].plan_v != null ? '<dt>Planned amplitude</dt><dd>' + fmtV(r.plan.roles[ln.role].plan_v) +

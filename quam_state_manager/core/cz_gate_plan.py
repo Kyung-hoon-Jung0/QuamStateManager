@@ -396,7 +396,10 @@ class Conversion:
         ms = float(self.model_shift(a)) if self.anchor is not None else float("nan")
         if math.isfinite(ms):
             res["model_hz"] = self.f01 + ms
-        if res["model_hz"] is not None:
+        if self.rejection is not None and res["quad_hz"] is not None:
+            # Match the lab resolver; a rejected re-anchored curve remains a secondary estimate.
+            res.update(frequency_hz=res["quad_hz"], kind=QUAD_LABEL)
+        elif res["model_hz"] is not None:
             res.update(frequency_hz=res["model_hz"], kind=self.model_kind)
         elif self.anchor is not None and self.rejection is None:
             res.update(reason="FluxConversionRangeError: amplitude outside the measured model range",
@@ -454,9 +457,7 @@ class Conversion:
         quad = f0 + np.where(a == 0, 0.0, self.quad_shift(a))
         model = (f0 + np.where(a == 0, 0.0, self.model_shift(a) if self.sign is not None else np.nan)
                  if self.anchor is not None else None)
-        main = model if model is not None else quad
-        if model is not None and self.rejection is not None:
-            main = np.where(np.isfinite(model), model, quad)
+        main = model if model is not None and self.rejection is None else quad
         return {"frequency_hz": clean(main), "quad_hz": clean(quad),
                 "model_hz": clean(model) if model is not None else None}
 

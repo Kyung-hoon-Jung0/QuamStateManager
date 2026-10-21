@@ -292,9 +292,12 @@ def test_reanchored_model_has_numeric_points_curves_and_trajectory():
                               - 5.2e9 * .25**.25)
     assert math.isfinite(expected) and expected > q["f_01"]
     assert conv.point(.1)["model_hz"] == pytest.approx(expected)
-    assert conv.point(.1)["frequency_hz"] == pytest.approx(expected)
+    # v1.4.1: rejected fit primary -> lab quad primary, derived model stays secondary.
+    primary = q["f_01"] + float(conv.quad_shift(.1))
+    assert conv.point(.1)["frequency_hz"] == pytest.approx(primary)
     assert conv.curve(.1, 3)["model_hz"] == pytest.approx([expected, q["f_01"], expected])
-    assert conv.trajectory([0, .1])["frequency_hz"] == pytest.approx([q["f_01"], expected])
+    # v1.4.1: derived trajectory -> lab-selected quad trajectory, same rule as the point.
+    assert conv.trajectory([0, .1])["frequency_hz"] == pytest.approx([q["f_01"], primary])
 
 
 def test_checked_window_boundaries_and_each_lobe_are_finite():

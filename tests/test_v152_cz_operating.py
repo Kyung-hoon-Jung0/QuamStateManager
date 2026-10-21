@@ -54,3 +54,23 @@ def test_f2_missing_registered_operation_is_not_playable(reference):
     assert line["amplitude_path"] is None
     assert row["nearest"] is None and row["detuning_hz"] is None
     assert not any(x["qubit"] == "q0" for x in C.chip_map([row], convs)["segments"])
+
+
+def test_f3_rejected_fit_uses_lab_quad_with_derived_curve_secondary():
+    conv = C.Conversion(model_qubit(f01_shift=7e6))
+    p = conv.point(.1)
+    assert conv.rejection and "[derived]" in conv.model_kind
+    assert p["frequency_hz"] == pytest.approx(conv.f01 + float(conv.quad_shift(.1)))
+    assert p["kind"] == C.QUAD_LABEL
+    assert p["model_hz"] is not None
+    assert conv.trajectory([0, .1])["frequency_hz"] == pytest.approx([conv.f01, p["frequency_hz"]])
+
+
+def test_f3_derived_map_style():
+    import os
+    import subprocess
+    from pathlib import Path
+    env = dict(os.environ, CZ_DERIVED_PIN="1")
+    r = subprocess.run(["node", "tests/cz_map_selfcheck.cjs"], env=env,
+                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr

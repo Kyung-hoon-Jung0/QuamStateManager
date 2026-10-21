@@ -41,7 +41,7 @@
     var PAIR_DARK = ['#57b65f', '#aa9bf4', '#f285b4', '#e2b34d', '#48c5ad', '#f58b8b', '#f49c67', '#79b4fa'];
     var MAP_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf',
                       '#bcbd22', '#7f7f7f'];
-    var KEY = 'solid fitted model, dashed quad-term estimate, thin stays at idle, diamond planned; ' +
+    var KEY = 'solid accepted fitted model, dashed quad-term or derived estimate, thin stays at idle, diamond planned; ' +
               'colour = pair (unique around each qubit, not a time step); bar label = operating frequency (GHz), framed in the bar colour';
 
     function esc(s) {
@@ -594,7 +594,7 @@
         m.segments.forEach(function (s, k) {
             var x = place[k];
             if (!x) return;
-            var c = colour[s.pair] || 0, style = !s.moves ? 'idle' : (/quad/.test(s.kind || '') ? 'dash' : 'solid');
+            var c = colour[s.pair] || 0, style = !s.moves ? 'idle' : (/quad|derived|estimate/.test(s.kind || '') ? 'dash' : 'solid');
             var key = c + ':' + style, f = s.frequency_hz / 1e9;
             var t = esc(s.pair) + ' · ' + esc(s.operation) + '<br>' + esc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
                 ': ' + f.toFixed(4) + ' GHz<br>' + esc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + esc(s.validity) : '') +

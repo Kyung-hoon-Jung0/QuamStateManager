@@ -213,6 +213,19 @@ async function footerPins(only) {
 }
 
 (async () => {
+    if (process.env.CZ_DERIVED_PIN) {
+        const derived = JSON.parse(JSON.stringify(MAP));
+        derived.segments[0].kind = 'lab flux model, re-anchored to f_01 [derived]';
+        const P = await page({map: derived, loss: NO_LOSS, order: 'name'});
+        try {
+            check(segments(P.last()).find(s => s.pair === 'q10-2' && s.width > 2).dash === 'dash',
+                  'a derived re-anchored value uses the estimate style');
+            check(P.d.getElementById('czp-map-key').textContent.includes('derived'),
+                  'the key identifies derived estimates');
+        } finally { P.close(); }
+        console.log(checks + ' derived assertions passed');
+        return;
+    }
     await footerPins(process.env.CZ_FOOTER_PIN);
     if (process.env.CZ_FOOTER_PIN) { console.log(checks + ' footer assertions passed'); return; }
     // ===== Part 1: the columns on a synthetic map (columns by qubit name) =====
