@@ -76,6 +76,31 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
 (async () => {
     const r = d.getElementById('czp-root');
     w.CzPlan.mount(); await wait(10);
+    if (process.env.CZ_VALIDITY_PIN) {
+        const body = payload('qubit_pairs.p.macros.a', false);
+        body.row.lines[0].point.kind = 'lab flux model';
+        body.row.lines[0].point.validity = "within the fitted model's measured range";
+        answer(0, body); await wait(30);
+        const text = d.getElementById('czp-card').textContent;
+        check(text.includes("within the fitted model's measured range") && !text.includes('(limit '),
+              'model validity never borrows a quadratic shift limit');
+        dom.window.close(); console.log(checks + ' validity assertions passed'); return;
+    }
+    if (process.env.CZ_LOBES_PIN) {
+        const body = payload('qubit_pairs.p.macros.a', false);
+        body.row.lines[0].lobes = [{name: 'first lobe', amplitude_v: .1, point: body.row.lines[0].point},
+            {name: 'mirror lobe', amplitude_v: -.12, point: point(4.88e9, 'quad-term extrapolated estimate')}];
+        body.row.nearest.lobe = 'mirror lobe';
+        answer(0, body); await wait(30);
+        const text = d.getElementById('czp-card').textContent;
+        check(text.includes('mirror lobe') && text.includes('4.8800 GHz') && text.includes('extrapolated estimate'),
+              'the detail labels the other lobe and its estimate');
+        check(text.includes('closest across played lobes'), 'the nearest resonance names its lobe and selection rule');
+        check(renders.filter(x => x.id === 'czp-flux').at(-1).traces.some(t =>
+              /mirror lobe/.test(t.name || '') && t.x[0] === -.12 && t.y[0] === 4.88),
+              'the figure includes the mirror operating point');
+        dom.window.close(); console.log(checks + ' lobe assertions passed'); return;
+    }
     check(pending.length === 1 && pending[0].op === 'qubit_pairs.p.macros.a', 'the selected operation loads on mount');
     // a click on b before a answers: a's late answer must not paint under b
     r.querySelector('tr[data-op="qubit_pairs.p.macros.b"]').dispatchEvent(new w.MouseEvent('click', {bubbles: true}));

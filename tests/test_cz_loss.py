@@ -644,6 +644,7 @@ def test_the_routes_answer_in_the_frozen_contract_shape(tmp_path):
     storage = tmp_path / "storage"
     _q1_scan(storage)
     _app, c, _ctx = _client(tmp_path, roots=[(storage, "declared")])
+    # v1.4.1: single-level contract -> played-lobe contract, nearest now identifies its lobe.
     frozen = {name: json.loads((_CONTRACT / f"{name}.json").read_text(encoding="utf-8"))
               for name in ("map_rig5q", "loss_rig5q", "data_rig5q")}
     live = {"map_rig5q": c.get("/cz-plan/map").get_json(), "loss_rig5q": c.get("/cz-plan/loss").get_json(),

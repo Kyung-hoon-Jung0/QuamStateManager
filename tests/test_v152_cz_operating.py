@@ -107,4 +107,83 @@ def test_f5_validity_describes_the_displayed_model_value():
     p = conv.point(.3)
     assert p["kind"] == C.MODEL_LABEL
     assert p["validity"] == "within the fitted model's measured range"
+    assert p["quad_validity"] == "outside the quadratic range"
+    assert "extrapolated estimate" in p["quad_kind"]
     assert C.Conversion(state()["qubits"]["q0"]).point(.3)["validity"] == "outside the quadratic range"
+
+
+@pytest.mark.parametrize("cls", ["_CosineBipolarPulse", "SNZTwoFluxPulse", "GaussianNZTwoFluxPulse"])
+def test_f6_both_lobes_and_worst_resonance(cls):
+    s = registered()
+    q = model_qubit()
+    q["extras"]["lffem_flux_model"]["phi_park"] = .01
+    q["z"]["operations"] = {"flux": "#/shared/pulse"}
+    s["qubits"]["q0"] = q
+    s["shared"]["pulse"].update(__class__="p." + cls)
+    conv = C.Conversion(q)
+    mirror = conv.point(-.1)["frequency_hz"]
+    s["qubits"]["q1"]["f_01"] = mirror - 200e6
+    row = C.operations(s)[0][0]
+    lobes = row["lines"][0].get("lobes", [])
+    assert [l["amplitude_v"] for l in lobes] == [.1, -.1]
+    assert lobes[1]["point"]["frequency_hz"] == pytest.approx(mirror)
+    assert abs(row["nearest"]["distance_hz"]) < .01
+    assert row["nearest"]["lobe"] == "mirror lobe"
+
+
+def test_f6_snz_third_level_and_bipolar_partner_idle():
+    s = registered()
+    s["shared"]["pulse"].update(__class__="p.SNZTwoFluxPulse", unipolar=True,
+                                  flat_length=20, t_phi=2, lobe3_max_v=.06)
+    macro = s["qubit_pairs"]["p0"]["macros"]["cz"]
+    macro["__class__"] = "g.CZGateTwoFlux"
+    macro["flux_pulse_target"] = "#/qubits/q1/z/operations/mirror"
+    s["qubits"]["q1"]["z"]["operations"] = {"mirror": {
+        "__class__": "p.SNZTwoFluxPulse", "amplitude": .07, "neg_offset_v": .01}}
+    # 0.1 * 24 / 0.06 rounds to 40 ns; the third level is -0.06 V.
+    s["qubits"]["q1"]["f_01"] = 5e9 - 8e9 * .06**2 - 200e6
+    row = C.operations(s)[0][0]
+    lobes = row["lines"][0].get("lobes", [])
+    assert [l["amplitude_v"] for l in lobes] == pytest.approx([.1, -.06])
+    assert row["nearest"]["lobe"] == "third lobe"
+    assert abs(row["nearest"]["distance_hz"]) < .01
+
+
+def test_f6_mirror_offset_range_refusal_prevents_resonance_claim():
+    s = registered()
+    q = model_qubit()
+    q["extras"]["lffem_flux_model"].update(amp_min_v=-.11, amp_max_v=.2)
+    q["z"]["operations"] = {"flux": "#/shared/pulse"}
+    s["qubits"]["q0"] = q
+    s["shared"]["pulse"].update(__class__="p.SNZTwoFluxPulse", neg_offset_v=.04)
+    row = C.operations(s)[0][0]
+    assert row["lines"][0]["point"]["frequency_hz"] is None
+    assert "mirror lobe" in row["lines"][0]["point"]["reason"]
+    assert row["nearest"] is None
+
+
+def test_f6_lobe_detail_and_figure():
+    import os
+    import subprocess
+    from pathlib import Path
+    r = subprocess.run(["node", "tests/cz_plan_selfcheck.cjs"], env=dict(os.environ, CZ_LOBES_PIN="1"),
+                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_f5_model_detail_does_not_borrow_quadratic_limit():
+    import os
+    import subprocess
+    from pathlib import Path
+    r = subprocess.run(["node", "tests/cz_plan_selfcheck.cjs"], env=dict(os.environ, CZ_VALIDITY_PIN="1"),
+                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_f6_unresolved_unipolar_reference_keeps_lab_bipolar_semantics():
+    s = registered()
+    s["shared"]["pulse"].update(__class__="p.SNZTwoFluxPulse", flat_length=38,
+        t_phi=1, neg_offset_v=.003, unipolar="#/missing/flag", lobe3_max_v="#/missing/cap")
+    line = C.operations(s)[0][0]["lines"][0]
+    assert [l["amplitude_v"] for l in line.get("lobes", [])] == pytest.approx([.1, -.103])
+    assert line["point"]["frequency_hz"] == pytest.approx(4.92e9)

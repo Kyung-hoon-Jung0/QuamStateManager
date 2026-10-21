@@ -291,9 +291,9 @@
             }
             if (c.quad_hz.some(function (v) { return v != null; })) {
                 // beside a fitted model the quad term is the secondary curve: it never sets the frequency span
-                traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.quad_hz.map(ghz), name: q.name + ' · quad-term estimate',
+                traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.quad_hz.map(ghz), name: q.name + ' · quad-term estimate (extrapolated outside validity range)',
                     line: { color: col, width: 1.4, dash: 'dash' }, _czpSecondary: !!c.model_hz,
-                    hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>quad-term estimate</extra>' });
+                    hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>quad-term estimate (extrapolated outside validity range)</extra>' });
             }
             traces.push({ type: 'scatter', mode: 'markers', x: [0], y: [ghz(s.f01_hz)], name: q.name + ' idle', showlegend: false,
                 marker: { color: col, size: 11, symbol: 'circle-open', line: { width: 2 } },
@@ -320,6 +320,13 @@
             traces.push({ type: 'scatter', mode: 'markers', x: [ln.amplitude_v], y: [ghz(p.frequency_hz)], name: q.name + ' at ' + d.row.operation + ' ' + (p.kind || ''),
                 showlegend: false, marker: { color: C.q[k], size: 12, symbol: 'diamond' },
                 hovertemplate: hoverEsc(q.name) + ' at ' + hoverEsc(d.row.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra>' + hoverEsc(p.kind) + '</extra>' });
+            (ln.lobes || []).slice(1).forEach(function (l) {
+                if (l.point.frequency_hz == null) return;
+                traces.push({type: 'scatter', mode: 'markers', x: [l.amplitude_v], y: [ghz(l.point.frequency_hz)],
+                    name: q.name + ' ' + l.name + ' ' + (l.point.kind || ''), showlegend: false,
+                    marker: {color: C.q[k], size: 9, symbol: 'diamond-open'},
+                    hovertemplate: hoverEsc(q.name + ' ' + l.name) + '<br>%{y:.4f} GHz<extra>' + hoverEsc(l.point.kind) + '</extra>'});
+            });
             annotations.push({ x: ln.amplitude_v, y: ghz(p.frequency_hz), ax: 0, ay: ghz(q.summary.f01_hz), axref: 'x', ayref: 'y',
                 xref: 'x', yref: 'y', showarrow: true, arrowhead: 3, arrowsize: 1.2, arrowwidth: 1.6, arrowcolor: C.q[k], text: '' });
         });
@@ -407,11 +414,11 @@
         var traces = [];
         d.qubits.forEach(function (q, k) {
             traces.push({ type: 'scatter', mode: 'lines', x: tt, y: series[k].map(ghz), name: q.name, line: { color: C.q[k], width: 2, shape: 'hv' },
-                hovertemplate: 't = %{x} ns<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra></extra>' });
+                hovertemplate: 't = %{x} ns<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>' + hoverEsc(d.row.lines[k].point.kind || 'unknown') + '</extra>' });
             var t = traj[k];
             if (t && t.model_hz && t.quad_hz) {
-                traces.push({ type: 'scatter', mode: 'lines', x: tt.slice(0, t.quad_hz.length), y: t.quad_hz.map(ghz), name: q.name + ' · quad-term estimate',
-                    line: { color: C.q[k], width: 1, dash: 'dash', shape: 'hv' }, hovertemplate: 't = %{x} ns<br>%{y:.4f} GHz<extra>quad-term estimate</extra>' });
+                traces.push({ type: 'scatter', mode: 'lines', x: tt.slice(0, t.quad_hz.length), y: t.quad_hz.map(ghz), name: q.name + ' · quad-term estimate (extrapolated outside validity range)',
+                    line: { color: C.q[k], width: 1, dash: 'dash', shape: 'hv' }, hovertemplate: 't = %{x} ns<br>%{y:.4f} GHz<extra>quad-term estimate (extrapolated outside validity range)</extra>' });
             }
         });
         var delta = series[0].map(function (fc, i) { var ft = series[1][i]; return fc == null || ft == null ? null : (fc - ft) / 1e6; });
@@ -501,9 +508,13 @@
                 '<dt>Idle f_01</dt><dd>' + fmtGHz(s.f01_hz) + '</dd>' +
                 '<dt>At the operation</dt><dd>' + fmtGHz(p.frequency_hz) + (p.kind ? ' <span class="czp-tier' + (/quad/.test(p.kind) ? ' czp-tier-quad' : '') + '">' + esc(p.kind) + '</span>' : '') +
                 (p.reason ? '<br><span class="czp-warn-text">' + esc(p.reason) + '</span>' : '') + '</dd>' +
-                (p.quad_hz != null && p.model_hz != null && !s.model_rejection ? '<dt>Quad-term estimate</dt><dd>' + fmtGHz(p.quad_hz) + ' <small class="muted">(' + fmtMHz(p.error_hz) + ' from the model)</small></dd>' : '') +
+                (p.quad_hz != null && p.model_hz != null && !s.model_rejection ? '<dt>' + esc(p.quad_kind || 'Quad-term estimate') + '</dt><dd>' + fmtGHz(p.quad_hz) + ' <small class="muted">(' + fmtMHz(p.error_hz) + ' from the model)</small></dd>' : '') +
                 (s.model_rejection && p.model_hz != null ? '<dt>Re-anchored estimate [derived]</dt><dd>' + fmtGHz(p.model_hz) + '</dd>' : '') +
-                (p.validity ? '<dt>Validity</dt><dd><span class="' + (/outside|beyond/.test(p.validity) ? 'czp-warn-text' : '') + '">' + esc(p.validity) + '</span>' + (s.range && s.range.limit_hz ? ' <small class="muted">(limit ' + fmtMHz(s.range.limit_hz) + ', ' + esc(s.range.source || '') + ')</small>' : '') + '</dd>' : '') +
+                (p.validity ? '<dt>Validity</dt><dd><span class="' + (/outside|beyond/.test(p.validity) ? 'czp-warn-text' : '') + '">' + esc(p.validity) + '</span>' + (/quadratic/.test(p.validity) && s.range && s.range.limit_hz ? ' <small class="muted">(limit ' + fmtMHz(s.range.limit_hz) + ', ' + esc(s.range.source || '') + ')</small>' : '') + '</dd>' : '') +
+                (ln.lobes || []).slice(1).map(function (l) {
+                    return '<dt>' + esc(l.name) + '</dt><dd>' + fmtGHz(l.point.frequency_hz) +
+                        ' <small>' + esc(l.point.kind || l.point.reason || 'unknown') + '</small></dd>';
+                }).join('') +
                 '<dt>Direction</dt><dd>' + esc((s.frame || {}).reason || '—') + '</dd>' +
                 (r.plan && r.plan.roles[ln.role] && r.plan.roles[ln.role].plan_v != null ? '<dt>Planned amplitude</dt><dd>' + fmtV(r.plan.roles[ln.role].plan_v) +
                     (r.plan.roles[ln.role].difference_v != null ? ' <small class="muted">(operation ' + (r.plan.roles[ln.role].difference_v >= 0 ? '+' : '') + (r.plan.roles[ln.role].difference_v * 1e3).toFixed(1) + ' mV)</small>' : '') + '</dd>' : '') +
@@ -518,7 +529,7 @@
         var count = cal.warning_count != null ? cal.warning_count : (cal.warnings || []).length;
         h.push('<div class="czp-card-q"><strong>Operation</strong><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
-            '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' : '—') + '</dd>' +
+            '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '—') + '</dd>' +
             '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' + (r.duration_note ? ' <small class="muted">(' + esc(r.duration_note) + ')</small>' : '')
                 : (r.duration_note ? esc(r.duration_note) : 'unknown')) + '</dd>' +
             (r.coupler_amplitude_v != null ? '<dt>Coupler pulse</dt><dd>' + fmtV(r.coupler_amplitude_v) + '</dd>' : '') +

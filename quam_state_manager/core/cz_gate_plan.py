@@ -434,6 +434,9 @@ class Conversion:
             else:
                 res["validity"] = ("outside the quadratic range" if shift > limit
                                    else "within the quadratic range")
+        res["quad_validity"] = res["validity"]
+        res["quad_kind"] = ("quad-term extrapolated estimate" if res["validity"] in
+                            ("outside the quadratic range", "beyond the fitted arc's measured range") else QUAD_LABEL)
         if res["frequency_hz"] is not None and res["kind"] == self.model_kind:
             res["validity"] = "within the fitted model's measured range"
         if res["kind"] == QUAD_LABEL and res["validity"] in (
@@ -441,13 +444,15 @@ class Conversion:
             res["kind"] = "quad-term extrapolated estimate"
         if res["frequency_hz"] is not None and res["frequency_hz"] <= 0:
             res.update(frequency_hz=None, reason="nonphysical frequency from the quad-term extrapolated estimate")
+        if res["quad_hz"] is not None and res["quad_hz"] <= 0:
+            res["quad_hz"] = None
         return res
 
     def curve(self, amax, n=241):
         """f vs amplitude over [-amax, amax] for both tiers (None where a tier has no value)."""
         amps = np.linspace(-amax, amax, n)
         def clean(arr):
-            return [None if not np.isfinite(v) else float(v) for v in arr]
+            return [None if not np.isfinite(v) or v <= 0 else float(v) for v in arr]
         f0 = self.f01 if self.f01 is not None else float("nan")
         return {"amplitude_v": [float(a) for a in amps],
                 "quad_hz": clean(f0 + np.where(amps == 0, 0.0, self.quad_shift(amps))),
@@ -460,7 +465,7 @@ class Conversion:
         a = np.asarray([number(s) if number(s) is not None else np.nan for s in samples], dtype=float)
         f0 = self.f01 if self.f01 is not None else float("nan")
         def clean(arr):
-            return [None if not np.isfinite(v) else float(v) for v in arr]
+            return [None if not np.isfinite(v) or v <= 0 else float(v) for v in arr]
         quad = f0 + np.where(a == 0, 0.0, self.quad_shift(a))
         model = (f0 + np.where(a == 0, 0.0, self.model_shift(a) if self.sign is not None else np.nan)
                  if self.anchor is not None else None)
@@ -644,6 +649,34 @@ class OperationRows(list):
         self.pair_members = {}
 
 
+def pulse_lobes(pulse, amplitude):
+    """Played plateau levels, including the asymmetric mirror and unipolar SNZ tail.
+
+    SNZ third-level duration/amplitude follow the pulse's zero-area rule on a 4 ns grid.
+    Resonance comparisons use synchronous lobes, never arbitrary cross-products.
+    """
+    levels = [("first lobe", amplitude)]
+    cls = str(pulse.get("__class__", "")).split(".")[-1]
+    if amplitude is None or not any(k in cls for k in ("Bipolar", "SNZ", "GaussianNZ")):
+        return levels
+    # The pulse class treats unresolved reference strings as false, even though they are truthy.
+    unipolar = pulse.get("unipolar", False)
+    if "SNZ" in cls and not isinstance(unipolar, str) and bool(unipolar):
+        flat, gap, cap = (number(pulse.get(k, default)) for k, default in
+                          (("flat_length", None), ("t_phi", 0), ("lobe3_max_v", .060)))
+        if flat is None or gap is None or cap is None or flat <= 0 or gap < 0 or cap <= 0:
+            raise ValueError("not playable: third-lobe shape cannot be resolved (flat_length, t_phi, lobe3_max_v)")
+        core = flat + 2 + gap
+        duration = max(4, 4 * math.ceil(abs(amplitude) * core / cap / 4 - 1e-9))
+        levels.append(("third lobe", -amplitude * core / duration))
+    else:
+        offset = number(pulse.get("neg_offset_v", 0))
+        if offset is None or abs(amplitude) + offset < 0:
+            raise ValueError("not playable: mirror-lobe offset cannot be resolved")
+        levels.append(("mirror lobe", -math.copysign(abs(amplitude) + offset, amplitude)))
+    return levels
+
+
 def operations(doc, conversions=None, unavailable=None):
     """Every CZ macro of every pair (aliases included), with what each qubit plays.
 
@@ -775,10 +808,43 @@ def operations(doc, conversions=None, unavailable=None):
                               "pulse_class": (str(current(doc, pulse_path + ".__class__", "")).split(".")[-1]
                                               if pulse_path and isinstance(pulse, dict) else None),
                               "amplitude_v": amp, "point": pt})
+            for ln in lines:
+                ln["lobes"] = []
+                if not ln["moves"] or ln["refusal"]:
+                    continue
+                conv = conversions.get(ln["qubit_path"])
+                if conv is None:
+                    continue
+                try:
+                    levels = pulse_lobes(resolved_tree(doc, ln["pulse_path"]) or {}, ln["amplitude_v"])
+                    ln["lobes"] = [{"name": stage, "amplitude_v": a, "point": conv.point(a)} for stage, a in levels]
+                    bad = next((l for l in ln["lobes"] if l["point"]["frequency_hz"] is None), None)
+                    if bad:
+                        ln["point"] = {**ln["point"], "frequency_hz": None,
+                                       "reason": bad["name"] + ": " + bad["point"]["reason"],
+                                       "validity": bad["point"]["validity"]}
+                except ValueError as exc:
+                    notes.append(f"{ln['name']}: not drawn: {exc}")
+                    ln["refusal"] = str(exc)
+                    ln["point"] = {"frequency_hz": None, "reason": str(exc)}
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
-            known = [r for r in res if r["distance_hz"] is not None]
+            lobe_resonances = []
+            stages = ["first lobe"] + [stage for stage in ("mirror lobe", "third lobe")
+                                        if any(l["name"] == stage for ln in lines for l in ln["lobes"])]
+            if None not in fq:
+                for stage in stages:
+                    frequencies = []
+                    for ln in lines:
+                        lobe = next((l for l in ln["lobes"] if l["name"] == stage), None)
+                        # A unipolar line holds A through both halves; its partner idles during lobe 3.
+                        p = (lobe["point"] if lobe else conversions[ln["qubit_path"]].point(0)
+                             if stage == "third lobe" else ln["point"])
+                        frequencies.append(p.get("frequency_hz"))
+                    lobe_resonances.extend({**r, "lobe": stage} for r in
+                                           resonances(*frequencies, *alphas))
+            known = [r for r in lobe_resonances if r["distance_hz"] is not None]
             nearest = min(known, key=lambda r: abs(r["distance_hz"])) if known else None
             coupler = current(doc, path + ".coupler_flux_pulse")
             if coupler:
@@ -786,7 +852,7 @@ def operations(doc, conversions=None, unavailable=None):
             rows.append({
                 "pair": pair_name, "operation": name, "path": path, "class": cls, "kind": kind,
                 "alias_of": alias[-1]["to_path"] if alias else None,
-                "lines": lines, "resonances": res, "nearest": nearest,
+                "lines": lines, "resonances": res, "nearest": nearest, "lobe_resonances": lobe_resonances,
                 "detuning_hz": (fq[0] - fq[1]) if None not in fq else None,
                 "idle_detuning_hz": None if pair_refusal else (lambda a, b: a - b if a is not None and b is not None else None)(
                     number(roles["control"]["qubit"].get("f_01")), number(roles["target"]["qubit"].get("f_01"))),

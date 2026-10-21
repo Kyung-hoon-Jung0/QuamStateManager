@@ -42,7 +42,7 @@
     var MAP_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf',
                       '#bcbd22', '#7f7f7f'];
     var KEY = 'solid accepted fitted model, dashed quad-term or derived estimate, thin stays at idle, diamond planned, ~ extrapolated estimate; ' +
-              'colour = pair (unique around each qubit, not a time step); bar label = operating frequency (GHz), framed in the bar colour';
+              'colour = pair (unique around each qubit, not a time step); bar label = first-lobe operating frequency (GHz); nearest resonance = closest across played lobes, framed in the bar colour';
 
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -598,7 +598,7 @@
             var key = c + ':' + style, f = s.frequency_hz / 1e9;
             var t = esc(s.pair) + ' · ' + esc(s.operation) + '<br>' + esc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
                 ': ' + f.toFixed(4) + ' GHz<br>' + esc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + esc(s.validity) : '') +
-                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
+                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + (s.nearest.lobe ? ' (' + esc(s.nearest.lobe) + ')' : '') + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
                 (mismatch && s.pair === mismatch.pair ? mmHover : '');
             var cl = segClass[key] || (segClass[key] = { c: c, style: style, x: [], y: [], t: [], cd: [] });
             cl.x.push(x.x0, x.x1, null); cl.y.push(f, f, null); cl.t.push(t, t, null);
@@ -703,7 +703,7 @@
                     t = esc(pair) + ' · ' + esc(op.operation) + segs.map(function (s) {
                         return '<br>' + esc(s.qubit) + ' ' + f3(s.frequency_hz) + ' GHz ' + esc(s.kind || '') + (s.moves ? '' : ' (stays at idle)');
                     }).join('') + refused.map(function (r) { return '<br>' + esc(r.qubit) + ' not drawn: ' + esc(r.reason); }).join('') +
-                        '<br>Δ ' + fmtMHz(op.detuning_hz, true) + (op.nearest ? ' · ' + esc(op.nearest.name) + ' ' + fmtMHz(op.nearest.distance_hz, true) : '');
+                        '<br>Δ ' + fmtMHz(op.detuning_hz, true) + (op.nearest ? ' · ' + esc(op.nearest.name) + (op.nearest.lobe ? ' (' + esc(op.nearest.lobe) + ')' : '') + ' ' + fmtMHz(op.nearest.distance_hz, true) : '');
                 } else if (refused.length) {
                     t = esc(pair) + ' · ' + esc(refused[0].operation) + refused.map(function (r) { return '<br>' + esc(r.qubit) + ' not drawn: ' + esc(r.reason); }).join('');
                 } else {
