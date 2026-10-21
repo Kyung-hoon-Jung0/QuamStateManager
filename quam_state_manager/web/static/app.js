@@ -2591,13 +2591,13 @@ window.toggleTheme = function() {
     window.setTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
 };
 
-// Restore theme on page load. Dark is the default; the inline script
+// Restore theme on page load. QM is the default; the inline script
 // in base.html already applied data-theme on <html> to prevent FOUC.
 // This block keeps Plotly and the toggle-button state in sync.
 (function() {
     // Boot owns resolution; storage failure must not suppress a URL override.
     var theme = window.resolveSMTheme ? window.resolveSMTheme()
-        : document.documentElement.getAttribute('data-theme') || 'dark';
+        : document.documentElement.getAttribute('data-theme') || 'qm';
     _applyThemeToPlotly(theme);
     // r16 ⑤-1: retheme() used to run only on the theme TOGGLE — plots
     // rendered before Plotly/theme settled on a dark-mode LOAD kept the

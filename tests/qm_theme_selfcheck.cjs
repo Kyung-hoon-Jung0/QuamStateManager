@@ -17,7 +17,7 @@ assert(w.SM_THEMES && w.SM_THEMES.includes('qm'), 'QM is registered');
 assert.equal(html.dataset.theme, 'qm', 'saved QM boots before paint');
 w.localStorage.setItem('quam_theme', 'invalid');
 w.eval(boot);
-assert.equal(html.dataset.theme, 'dark', 'invalid saved theme is rejected');
+assert.equal(html.dataset.theme, 'qm', 'invalid saved theme falls back to the QM default');
 w.history.replaceState({}, '', '?theme=qm');
 w.eval(boot);
 assert.equal(html.dataset.theme, 'qm', 'QM URL override');

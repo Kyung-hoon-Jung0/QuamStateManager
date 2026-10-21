@@ -550,7 +550,7 @@
         }
         window.addEventListener('storage', function (ev) {
             if (!ev || ev.key !== 'quam_theme') return;
-            var th = ev.newValue === 'qm' ? 'qm' : (ev.newValue === 'light' ? 'light' : 'dark');
+            var th = ev.newValue === 'qm' ? 'qm' : (ev.newValue === 'light' ? 'light' : (ev.newValue === 'dark' ? 'dark' : 'qm'));
             document.documentElement.setAttribute('data-theme', th);
         });
     }

@@ -1,7 +1,7 @@
 {# Theme + readability boot, applied BEFORE first paint (no FOUC). ONE source
    for every full document SM serves (docs/156): base.html and the standalone
    /calc-window, so a window opened from a page looks like that page.
-   Dark is the default; users who explicitly chose 'light' have it persisted in
+   QM is the default; users who explicitly chose 'light' or 'dark' have it persisted in
    localStorage. #}
     <script>
       (function() {
@@ -11,7 +11,7 @@
           try { saved = localStorage.getItem('quam_theme'); } catch(e) {}
           try { qp = new URLSearchParams(location.search).get('theme'); } catch(e) {}
           return window.SM_THEMES.indexOf(qp) >= 0 ? qp
-            : (window.SM_THEMES.indexOf(saved) >= 0 ? saved : 'dark');
+            : (window.SM_THEMES.indexOf(saved) >= 0 ? saved : 'qm');
         };
         var theme = window.resolveSMTheme();
         document.documentElement.setAttribute('data-theme', theme);

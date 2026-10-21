@@ -1,4 +1,5 @@
 """QM has a complete dark palette, persistent controls and readable plots."""
+import json
 import re
 import os
 import subprocess
@@ -97,3 +98,30 @@ def test_qm_leaves_layout_tokens_alone():
     assert qm, "QM palette missing"
     for name in ("--font-size-base", "--sidebar-width", "--topbar-height", "--bulk-fs"):
         assert name not in qm, name
+
+
+def test_qm_is_the_default_theme_when_nothing_is_saved():
+    """A first visit (no saved choice, no ?theme=) opens in QM; a saved choice still wins."""
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    web = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+    boot = (web / "templates" / "_theme_boot.html").read_text(encoding="utf-8")
+    script = boot.split("<script>", 1)[1].split("</script>", 1)[0]
+    js = """
+const store = {}; let attr = null; const res = {};
+global.localStorage = {getItem: k => (k in store ? store[k] : null)};
+global.location = {search: ''};
+global.document = {documentElement: {setAttribute: (k, v) => { if (k === 'data-theme') attr = v; }, style: {}}};
+global.window = global;
+eval(SCRIPT); res.fresh = attr;
+store.quam_theme = 'dark'; eval(SCRIPT); res.saved = attr;
+store.quam_theme = 'bogus'; eval(SCRIPT); res.bogus = attr;
+console.log(JSON.stringify(res));
+""".replace("SCRIPT", json.dumps(script))
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == {"fresh": "qm", "saved": "dark", "bogus": "qm"}
+    app = (web / "static" / "app.js").read_text(encoding="utf-8")
+    assert "getAttribute('data-theme') || 'qm'" in app
