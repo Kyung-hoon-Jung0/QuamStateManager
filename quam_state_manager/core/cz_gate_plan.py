@@ -734,16 +734,22 @@ def operations(doc, conversions=None, unavailable=None):
                 field = fields.get(role)
                 pulse_path = path + "." + field if field else None
                 pulse = current(doc, pulse_path) if pulse_path else None
+                missing_pulse = None
                 local_amp = number(current(doc, pulse_path + ".amplitude")) if isinstance(pulse, dict) else None
                 label = (current(doc, pulse_path + ".id") if isinstance(pulse, dict) else
                          pulse if isinstance(pulse, str) and not pulse.startswith("#") else None)
                 # CZGate passes the pulse label to the playing channel, which looks it up again.
                 if isinstance(label, str):
                     pulse_path = info["path"] + ".z.operations." + label
+                    if not isinstance(current(doc, pulse_path), dict):
+                        missing_pulse = f"not playable: {label} missing on {info['name']}"
                 if pulse_path and isinstance(current(doc, pulse_path), dict):
                     pulse_path = read(doc, pulse_path)["holder_path"]
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
-                refusal = pair_refusal or routing_reason
+                refusal = pair_refusal or routing_reason or missing_pulse
+                if missing_pulse:
+                    amp_path = None
+                    notes.append(missing_pulse)
                 amp = None if refusal else number(current(doc, amp_path)) if amp_path else 0.0
                 if amp_path and amp is None and not refusal:
                     notes.append(f"{info['name']}: the pulse amplitude cannot be read")
@@ -763,7 +769,7 @@ def operations(doc, conversions=None, unavailable=None):
                               "amplitude_v": amp, "point": pt})
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
-            res = [] if pair_refusal else resonances(fq[0], fq[1], alphas[0], alphas[1])
+            res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
             known = [r for r in res if r["distance_hz"] is not None]
             nearest = min(known, key=lambda r: abs(r["distance_hz"])) if known else None
             coupler = current(doc, path + ".coupler_flux_pulse")

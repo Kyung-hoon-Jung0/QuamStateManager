@@ -35,3 +35,22 @@ def test_f1_registered_amplitude_outside_accepted_model_is_refused():
     assert row["lines"][0]["point"]["frequency_hz"] is None
     assert "FluxConversionRangeError" in row["lines"][0]["point"]["reason"]
     assert row["nearest"] is None
+
+
+@pytest.mark.parametrize("reference", ["inline", "name", "pointer"])
+def test_f2_missing_registered_operation_is_not_playable(reference):
+    s = registered()
+    if reference == "name":
+        s["qubit_pairs"]["p0"]["macros"]["cz"]["flux_pulse_qubit"] = "flux"
+    elif reference == "pointer":
+        s["shared"]["local"] = s["qubit_pairs"]["p0"]["macros"]["cz"]["flux_pulse_qubit"]
+        s["qubit_pairs"]["p0"]["macros"]["cz"]["flux_pulse_qubit"] = "#/shared/local"
+    del s["qubits"]["q0"]["z"]["operations"]["flux"]
+    row, convs = C.operations(s)
+    row = row[0]
+    line = row["lines"][0]
+    assert line["point"]["reason"] == "not playable: flux missing on q0"
+    assert line["point"]["frequency_hz"] is None
+    assert line["amplitude_path"] is None
+    assert row["nearest"] is None and row["detuning_hz"] is None
+    assert not any(x["qubit"] == "q0" for x in C.chip_map([row], convs)["segments"])
