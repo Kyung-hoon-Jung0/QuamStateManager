@@ -2766,7 +2766,7 @@ window.ChipStatus.mount = function (opts) {
                     }
                 } catch (e) {}
             }
-            var bar = '<div class="topo-hero-bar" role="tablist" aria-label="Chip map metric">';
+            var bar = '<div class="topo-hero-controls"><div class="topo-hero-bar" role="tablist" aria-label="Chip map metric">';
             METRICS.forEach(function(m) {
                 bar += '<button type="button" role="tab" aria-selected="' + (m.key === current) + '"'
                      + ' class="topo-hero-mbtn' + (m.key === current ? ' active' : '')
@@ -3111,7 +3111,7 @@ window.ChipStatus.mount = function (opts) {
             // Zoom: percentage of the scroll pane's width (1 = the old fit).
             // The container scrolls both axes, so a big map never buries the
             // sections below (docs/126 ② — "~2× bigger" is the default).
-            host.innerHTML = bar
+            host.innerHTML = bar + '</div>'
                 + '<div class="topo-hero-map">' + note
                 + '<div class="topo-hero-scroll"><svg class="topo-hero-svg'
                 + (compactMode ? ' hero-compact' : '') + '" width="' + W + '" height="' + H

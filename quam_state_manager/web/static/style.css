@@ -4467,7 +4467,21 @@ html.topbar-hidden .topo-subnav {
    agree with the health tiles in both themes. ───────────────────────────── */
 .topo-hero { margin: .25rem 0 .75rem; }
 .topo-hero-none { margin: 0; }
+/* #table-pane scrolls below the shell's measured --topbar-height.
+   Cancel its padding, without adding the topbar offset a second time.
+   The hero bounds the band; normal flow reserves its full wrapped height. */
+.topo-hero-controls {
+    position: sticky; top: calc(-1 * var(--table-pane-pad-v)); z-index: 21;
+    padding: .35rem 0;
+    background: var(--pico-background-color);
+    box-shadow: 0 3px 5px -3px var(--pico-muted-color);
+}
+html.topbar-hidden .topo-hero-controls {
+    padding-top: calc(.35rem + var(--floating-chrome-h));
+}
 .topo-hero-bar { display: flex; gap: .3rem; flex-wrap: wrap; margin-bottom: .45rem; }
+.topo-hero-controls .topo-hero-bar { align-items: center; margin-bottom: 0; }
+.topo-hero-controls .topo-hero-mbtn { width: auto; margin: 0; }
 .topo-hero-mbtn {
     font-size: .78em; padding: .18rem .6rem; border-radius: 999px;
     border: 1px solid var(--pico-muted-border-color); background: transparent;
