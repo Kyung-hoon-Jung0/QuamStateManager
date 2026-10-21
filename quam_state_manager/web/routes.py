@@ -22354,6 +22354,7 @@ def _cz_plan_table(rows) -> list[dict]:
             "names": [ln["name"] for ln in r["lines"]],
             "freqs": [p.get("frequency_hz") for p in pts],
             "moves": [ln["moves"] for ln in r["lines"]],
+            "warnings": r["notes"],
             "reasons": [p.get("reason") for p in pts if p.get("reason")],
             "detuning_hz": r["detuning_hz"], "nearest": r["nearest"], "kinds": kinds,
             "validity": ("outside the quadratic range" if "outside the quadratic range" in validity

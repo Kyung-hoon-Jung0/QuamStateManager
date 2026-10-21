@@ -88,10 +88,11 @@ def test_the_lab_model_is_the_main_curve_and_the_quad_estimate_stays_beside_it()
     assert p["quad_hz"] is not None and p["error_hz"] == pytest.approx(abs(p["quad_hz"] - p["model_hz"]))
 
 
-def test_outside_the_measured_flux_the_quad_estimate_answers_with_the_reason():
+def test_outside_the_measured_flux_the_lab_refusal_is_preserved():
     conv = C.Conversion(model_qubit(1))                            # measured on [-0.6, 0.9] V
     p = conv.point(-0.8)
-    assert p["kind"] == C.QUAD_LABEL and "outside the flux range" in p["reason"]
+    # v1.4.1: quad fallback -> refusal, the accepted model forbids this amplitude.
+    assert p["frequency_hz"] is None and "FluxConversionRangeError" in p["reason"]
 
 
 def test_without_any_model_there_is_no_frequency_and_a_reason():

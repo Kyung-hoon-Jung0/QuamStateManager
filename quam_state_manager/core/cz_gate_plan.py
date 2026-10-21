@@ -398,6 +398,10 @@ class Conversion:
             res["model_hz"] = self.f01 + ms
         if res["model_hz"] is not None:
             res.update(frequency_hz=res["model_hz"], kind=self.model_kind)
+        elif self.anchor is not None and self.rejection is None:
+            res.update(reason="FluxConversionRangeError: amplitude outside the measured model range",
+                       validity="beyond the fitted arc's measured range")
+            return res
         elif res["quad_hz"] is not None:
             res.update(frequency_hz=res["quad_hz"], kind=QUAD_LABEL)
             if self.anchor is not None:
@@ -451,7 +455,7 @@ class Conversion:
         model = (f0 + np.where(a == 0, 0.0, self.model_shift(a) if self.sign is not None else np.nan)
                  if self.anchor is not None else None)
         main = model if model is not None else quad
-        if model is not None:
+        if model is not None and self.rejection is not None:
             main = np.where(np.isfinite(model), model, quad)
         return {"frequency_hz": clean(main), "quad_hz": clean(quad),
                 "model_hz": clean(model) if model is not None else None}
@@ -730,8 +734,12 @@ def operations(doc, conversions=None, unavailable=None):
                 field = fields.get(role)
                 pulse_path = path + "." + field if field else None
                 pulse = current(doc, pulse_path) if pulse_path else None
-                if isinstance(pulse, str) and not pulse.startswith("#"):
-                    pulse_path = info["path"] + ".z.operations." + pulse
+                local_amp = number(current(doc, pulse_path + ".amplitude")) if isinstance(pulse, dict) else None
+                label = (current(doc, pulse_path + ".id") if isinstance(pulse, dict) else
+                         pulse if isinstance(pulse, str) and not pulse.startswith("#") else None)
+                # CZGate passes the pulse label to the playing channel, which looks it up again.
+                if isinstance(label, str):
+                    pulse_path = info["path"] + ".z.operations." + label
                 if pulse_path and isinstance(current(doc, pulse_path), dict):
                     pulse_path = read(doc, pulse_path)["holder_path"]
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
@@ -740,6 +748,8 @@ def operations(doc, conversions=None, unavailable=None):
                 if amp_path and amp is None and not refusal:
                     notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 pulse = current(doc, pulse_path, {}) if pulse_path else {}
+                if local_amp is not None and amp is not None and local_amp != amp:
+                    notes.append(f"{info['name']}: the macro's copy says {local_amp:g} V; the qubit plays {amp:g} V")
                 pt = ({"frequency_hz": None, "reason": refusal} if refusal else
                       conv.point(amp) if conv else {"frequency_hz": None, "reason": "qubit not found"})
                 lines.append({"role": role, "name": info["name"], "qubit_path": info["path"],

@@ -78,7 +78,7 @@
         <tr class="clickable-row czp-row{% if r.path == selected %} czp-row-selected{% endif %}" data-op="{{ r.path }}" tabindex="0"
             aria-selected="{{ 'true' if r.path == selected else 'false' }}">
             <td class="czp-stick"><strong>{{ r.pair }}</strong></td>
-            <td class="czp-stick czp-stick-op">{{ r.operation }}{% if r.alias_of %} <small class="muted" title="{{ r.alias_of }}">alias</small>{% endif %}</td>
+            <td class="czp-stick czp-stick-op">{{ r.operation }}{% for warning in r.warnings %}<small class="czp-warn-text">{{ warning }}</small>{% endfor %}{% if r.alias_of %} <small class="muted" title="{{ r.alias_of }}">alias</small>{% endif %}</td>
             <td>{% for n in r.names %}{% if r.moves[loop.index0] %}<span class="czp-mover">{{ n }}</span>{% endif %}{% endfor %} <small class="muted czp-nowrap">{{ r.kind }}</small></td>
             <td class="czp-num">{% for f in r.freqs %}{{ '%.4f' | format(f / 1e9) if f is not none else '—' }}{% if not loop.last %} / {% endif %}{% endfor %}</td>
             <td class="czp-num">{{ '%.1f' | format(r.detuning_hz / 1e6) if r.detuning_hz is not none else '—' }}</td>
