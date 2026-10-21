@@ -84,7 +84,7 @@
             <td class="czp-num">{{ '%.1f' | format(r.detuning_hz / 1e6) if r.detuning_hz is not none else '—' }}</td>
             <td>{% if r.nearest %}<span class="czp-nowrap">{{ r.nearest.name }}</span> <small class="muted czp-nowrap">{{ '%+.1f' | format(r.nearest.distance_hz / 1e6) }} MHz</small>{% else %}<span class="muted" title="{{ r.reasons | join('; ') }}">{{ r.reasons[0] if r.reasons else '—' }}</span>{% endif %}</td>
             <td>{% for k in r.kinds %}<span class="czp-tier{% if 'quad' in k %} czp-tier-quad{% endif %}">{{ k }}</span>{% endfor %}</td>
-            <td class="czp-prose czp-validity">{% if r.validity %}<span class="{{ 'czp-warn-text' if r.validity == 'outside the quadratic range' else 'muted' }}">{{ r.validity }}</span>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+            <td class="czp-prose czp-validity">{% if r.validity %}<span class="{{ 'czp-warn-text' if r.validity_warning else 'muted' }}">{{ r.validity }}</span>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
             <td class="czp-num">{{ '%.4f' | format(r.irb) if r.irb is not none else '—' }}</td>
             <td class="czp-last czp-prose" data-last="{{ r.path }}"><span class="muted">&hellip;</span></td>
         </tr>

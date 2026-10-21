@@ -74,3 +74,29 @@ def test_f3_derived_map_style():
     r = subprocess.run(["node", "tests/cz_map_selfcheck.cjs"], env=env,
                        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_f4_extrapolated_estimates_are_labelled_and_warnings_coloured(tmp_path):
+    import json
+    from tests.test_cz_plan_page import _client
+    from quam_state_manager.web.routes import _cz_plan_table
+    s = registered()
+    s["shared"]["played"] = .3
+    row = C.operations(s)[0][0]
+    assert "extrapolated estimate" in row["lines"][0]["point"]["kind"]
+    folder = tmp_path / "chip"
+    folder.mkdir()
+    (folder / "state.json").write_text(json.dumps(s))
+    (folder / "wiring.json").write_text("{}")
+    client = _client(tmp_path, folder)
+    html = client.get("/cz-plan").get_data(as_text=True)
+    assert 'czp-warn-text">outside the quadratic range' in html
+    assert "extrapolated estimate" in html
+    s["qubits"]["q0"].update(model_qubit())
+    s["qubits"]["q0"]["z"]["operations"] = {"flux": "#/shared/pulse"}
+    s["shared"]["played"] = .8
+    rows = C.operations(s)[0]
+    table = _cz_plan_table(rows)[0]
+    assert table["validity_warning"]
+    assert "beyond" in table["validity"]
+    assert rows[0]["lines"][0]["point"]["frequency_hz"] is None

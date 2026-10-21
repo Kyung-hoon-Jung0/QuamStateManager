@@ -41,7 +41,7 @@
     var PAIR_DARK = ['#57b65f', '#aa9bf4', '#f285b4', '#e2b34d', '#48c5ad', '#f58b8b', '#f49c67', '#79b4fa'];
     var MAP_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf',
                       '#bcbd22', '#7f7f7f'];
-    var KEY = 'solid accepted fitted model, dashed quad-term or derived estimate, thin stays at idle, diamond planned; ' +
+    var KEY = 'solid accepted fitted model, dashed quad-term or derived estimate, thin stays at idle, diamond planned, ~ extrapolated estimate; ' +
               'colour = pair (unique around each qubit, not a time step); bar label = operating frequency (GHz), framed in the bar colour';
 
     function esc(s) {
@@ -696,11 +696,12 @@
                     } else if (movers.length === 1) label = f3(movers[0].frequency_hz);
                     else if (refused.length) label = '?';
                 }
+                if (label && movers.some(function (s) { return /extrapolated/.test(s.kind || ''); })) label = '~' + label;
                 if (label) items.push({ pair: pair, text: label, a: px(a), b: px(b), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, color: color });
                 var op = segs.length ? segs[0] : null, t;
                 if (computed) {
                     t = esc(pair) + ' · ' + esc(op.operation) + segs.map(function (s) {
-                        return '<br>' + esc(s.qubit) + ' ' + f3(s.frequency_hz) + ' GHz' + (s.moves ? '' : ' (stays at idle)');
+                        return '<br>' + esc(s.qubit) + ' ' + f3(s.frequency_hz) + ' GHz ' + esc(s.kind || '') + (s.moves ? '' : ' (stays at idle)');
                     }).join('') + refused.map(function (r) { return '<br>' + esc(r.qubit) + ' not drawn: ' + esc(r.reason); }).join('') +
                         '<br>Δ ' + fmtMHz(op.detuning_hz, true) + (op.nearest ? ' · ' + esc(op.nearest.name) + ' ' + fmtMHz(op.nearest.distance_hz, true) : '');
                 } else if (refused.length) {

@@ -434,6 +434,11 @@ class Conversion:
             else:
                 res["validity"] = ("outside the quadratic range" if shift > limit
                                    else "within the quadratic range")
+        if res["kind"] == QUAD_LABEL and res["validity"] in (
+                "outside the quadratic range", "beyond the fitted arc's measured range"):
+            res["kind"] = "quad-term extrapolated estimate"
+        if res["frequency_hz"] is not None and res["frequency_hz"] <= 0:
+            res.update(frequency_hz=None, reason="nonphysical frequency from the quad-term extrapolated estimate")
         return res
 
     def curve(self, amax, n=241):

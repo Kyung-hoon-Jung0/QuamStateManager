@@ -310,14 +310,14 @@
                 if (p.frequency_hz == null || !p.amplitude_v) return;
                 traces.push({ type: 'scatter', mode: 'markers', x: [p.amplitude_v], y: [ghz(p.frequency_hz)], showlegend: false,
                     marker: { color: C.q[k], size: 7, symbol: 'circle-open', line: { color: C.q[k], width: 1 } },
-                    hovertemplate: hoverEsc(op.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra></extra>' });
+                    hovertemplate: hoverEsc(op.operation) + ' ' + hoverEsc(p.kind || '') + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra></extra>' });
             });
         });
         var annotations = [];
         lines.forEach(function (ln, k) {
             var p = ln.point, q = d.qubits[k];
             if (!ln.moves || p.frequency_hz == null || !q.summary) return;
-            traces.push({ type: 'scatter', mode: 'markers', x: [ln.amplitude_v], y: [ghz(p.frequency_hz)], name: q.name + ' at ' + d.row.operation,
+            traces.push({ type: 'scatter', mode: 'markers', x: [ln.amplitude_v], y: [ghz(p.frequency_hz)], name: q.name + ' at ' + d.row.operation + ' ' + (p.kind || ''),
                 showlegend: false, marker: { color: C.q[k], size: 12, symbol: 'diamond' },
                 hovertemplate: hoverEsc(q.name) + ' at ' + hoverEsc(d.row.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra>' + hoverEsc(p.kind) + '</extra>' });
             annotations.push({ x: ln.amplitude_v, y: ghz(p.frequency_hz), ax: 0, ay: ghz(q.summary.f01_hz), axref: 'x', ayref: 'y',
@@ -503,7 +503,7 @@
                 (p.reason ? '<br><span class="czp-warn-text">' + esc(p.reason) + '</span>' : '') + '</dd>' +
                 (p.quad_hz != null && p.model_hz != null && !s.model_rejection ? '<dt>Quad-term estimate</dt><dd>' + fmtGHz(p.quad_hz) + ' <small class="muted">(' + fmtMHz(p.error_hz) + ' from the model)</small></dd>' : '') +
                 (s.model_rejection && p.model_hz != null ? '<dt>Re-anchored estimate [derived]</dt><dd>' + fmtGHz(p.model_hz) + '</dd>' : '') +
-                (p.validity ? '<dt>Validity</dt><dd>' + esc(p.validity) + (s.range && s.range.limit_hz ? ' <small class="muted">(limit ' + fmtMHz(s.range.limit_hz) + ', ' + esc(s.range.source || '') + ')</small>' : '') + '</dd>' : '') +
+                (p.validity ? '<dt>Validity</dt><dd><span class="' + (/outside|beyond/.test(p.validity) ? 'czp-warn-text' : '') + '">' + esc(p.validity) + '</span>' + (s.range && s.range.limit_hz ? ' <small class="muted">(limit ' + fmtMHz(s.range.limit_hz) + ', ' + esc(s.range.source || '') + ')</small>' : '') + '</dd>' : '') +
                 '<dt>Direction</dt><dd>' + esc((s.frame || {}).reason || '—') + '</dd>' +
                 (r.plan && r.plan.roles[ln.role] && r.plan.roles[ln.role].plan_v != null ? '<dt>Planned amplitude</dt><dd>' + fmtV(r.plan.roles[ln.role].plan_v) +
                     (r.plan.roles[ln.role].difference_v != null ? ' <small class="muted">(operation ' + (r.plan.roles[ln.role].difference_v >= 0 ? '+' : '') + (r.plan.roles[ln.role].difference_v * 1e3).toFixed(1) + ' mV)</small>' : '') + '</dd>' : '') +

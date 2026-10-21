@@ -22357,7 +22357,10 @@ def _cz_plan_table(rows) -> list[dict]:
             "warnings": r["notes"],
             "reasons": [p.get("reason") for p in pts if p.get("reason")],
             "detuning_hz": r["detuning_hz"], "nearest": r["nearest"], "kinds": kinds,
-            "validity": ("outside the quadratic range" if "outside the quadratic range" in validity
+            "validity_warning": any(v in ("outside the quadratic range", "beyond the fitted arc's measured range")
+                                    for v in validity),
+            "validity": ("beyond the fitted arc's measured range" if "beyond the fitted arc's measured range" in validity
+                         else "outside the quadratic range" if "outside the quadratic range" in validity
                          else validity[0] if validity else None),
             "irb": (r["fidelity"].get("InterleavedRB") or {}).get("value"),
         })
