@@ -118,10 +118,12 @@ def test_the_quad_range_is_measured_against_the_fitted_arc_on_both_lobes():
     band = good.range
     assert len(band["branches"]) == 2 and 100e6 < band["limit_hz"] < 1e9
     # v1.4.1: generic wording -> measured wording, this arc supplies the checked span.
-    assert good.point(.05)["validity"] == "within the measured quadratic range"
-    # v1.4.1: outside -> beyond, no validity classification extends beyond the checked arc.
-    assert good.point(.7)["validity"] == "beyond the fitted arc's measured range"
-    assert good.point(.4)["validity"] == "outside the quadratic range"
+    # v1.4.1: quadratic validity -> fitted validity, the model supplies the displayed value.
+    assert good.point(.05)["validity"] == "within the fitted model's measured range"
+    # v1.4.1: symmetric quad window -> actual model window, the displayed fit is measured here.
+    assert good.point(.7)["validity"] == "within the fitted model's measured range"
+    # v1.4.1: quadratic warning -> fitted validity, the accepted model is still measured here.
+    assert good.point(.4)["validity"] == "within the fitted model's measured range"
     assert conv.range["limit_hz"] < band["limit_hz"]               # a wrong coefficient fails sooner
 
 
@@ -306,8 +308,11 @@ def test_checked_window_boundaries_and_each_lobe_are_finite():
     q["freq_vs_flux_01_quad_term"] = abs(C.Conversion(q).curvature["here_hz_per_v2"])
     conv = C.Conversion(q)
     for a in (.009, -.009):
-        assert conv.point(a)["validity"] == "within the measured quadratic range"
-    for a in (.019, .021, -.011, .4):
+        # v1.4.1: quadratic validity -> fitted validity for the displayed model value.
+        assert conv.point(a)["validity"] == "within the fitted model's measured range"
+    # v1.4.1: symmetric quad window -> actual model window for the displayed number.
+    assert conv.point(.019)["validity"] == "within the fitted model's measured range"
+    for a in (.021, -.011, .4):
         assert conv.point(a)["validity"] == "beyond the fitted arc's measured range"
     # The fitted model's 1% guard itself is inclusive on both measured boundaries.
     lo, hi = conv._model_window()

@@ -434,6 +434,8 @@ class Conversion:
             else:
                 res["validity"] = ("outside the quadratic range" if shift > limit
                                    else "within the quadratic range")
+        if res["frequency_hz"] is not None and res["kind"] == self.model_kind:
+            res["validity"] = "within the fitted model's measured range"
         if res["kind"] == QUAD_LABEL and res["validity"] in (
                 "outside the quadratic range", "beyond the fitted arc's measured range"):
             res["kind"] = "quad-term extrapolated estimate"

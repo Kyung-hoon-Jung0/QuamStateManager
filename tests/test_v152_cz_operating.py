@@ -61,7 +61,7 @@ def test_f3_rejected_fit_uses_lab_quad_with_derived_curve_secondary():
     p = conv.point(.1)
     assert conv.rejection and "[derived]" in conv.model_kind
     assert p["frequency_hz"] == pytest.approx(conv.f01 + float(conv.quad_shift(.1)))
-    assert p["kind"] == C.QUAD_LABEL
+    assert "quad-term" in p["kind"] and "estimate" in p["kind"]
     assert p["model_hz"] is not None
     assert conv.trajectory([0, .1])["frequency_hz"] == pytest.approx([conv.f01, p["frequency_hz"]])
 
@@ -100,3 +100,11 @@ def test_f4_extrapolated_estimates_are_labelled_and_warnings_coloured(tmp_path):
     assert table["validity_warning"]
     assert "beyond" in table["validity"]
     assert rows[0]["lines"][0]["point"]["frequency_hz"] is None
+
+
+def test_f5_validity_describes_the_displayed_model_value():
+    conv = C.Conversion(model_qubit())
+    p = conv.point(.3)
+    assert p["kind"] == C.MODEL_LABEL
+    assert p["validity"] == "within the fitted model's measured range"
+    assert C.Conversion(state()["qubits"]["q0"]).point(.3)["validity"] == "outside the quadratic range"
