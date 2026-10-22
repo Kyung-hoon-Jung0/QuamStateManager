@@ -2630,6 +2630,9 @@ window.toggleSidebar = function() {
     var layout = document.querySelector(".app-layout");
     if (!layout) return;
     var collapsed = layout.classList.toggle("sidebar-collapsed");
+    if (!collapsed && window.SidebarReveal && window.requestAnimationFrame) {
+        window.requestAnimationFrame(function () { window.SidebarReveal.reveal(); });
+    }
     // QA F17: mirrored on <html> -- the top bar is not inside .app-layout, and
     // its Settings/Calculator fallback must show only while this is collapsed.
     document.documentElement.classList.toggle("sidebar-is-collapsed", collapsed);
@@ -14331,16 +14334,35 @@ window.TreeMulti = (function () {
  * chip-status's _setActiveTab (its own group only). Every navigation now
  * clears everything and re-derives the active set from the URL. */
 window.SidebarReveal = {
+    SELECTOR: '#sidebar',
     decide: function(sbRect, linkRect) {
         return linkRect.top >= sbRect.top - 0.5 && linkRect.bottom <= sbRect.bottom + 0.5 ? null : 'center';
     },
+    /* Pure: the new scrollTop that centres the link, clamped to the range. */
+    target: function(scrollTop, maxScroll, sbRect, linkRect) {
+        var delta = (linkRect.top + linkRect.bottom) / 2 - (sbRect.top + sbRect.bottom) / 2;
+        return Math.max(0, Math.min(maxScroll, scrollTop + delta));
+    },
+    /* Scrolls ONLY the sidebar (scrollIntoView would scroll every ancestor,
+       window and main pane included). Skips a collapsed/hidden sidebar, a
+       sidebar that is not a scroller, and a link inside a closed <details>. */
     reveal: function() {
-        var sb = document.querySelector('.sidebar');
-        var link = document.querySelector('.sidebar-nav a.active');
+        var R = window.SidebarReveal;
+        var sb = document.querySelector(R.SELECTOR);
+        var link = sb && sb.querySelector('.sidebar-nav a.active');
         if (!sb || !link) return;
-        if (window.SidebarReveal.decide(sb.getBoundingClientRect(), link.getBoundingClientRect()) === 'center') {
-            try { link.scrollIntoView({ block: 'center' }); } catch (e) {}
-        }
+        if (sb.closest('.sidebar-collapsed')) return;
+        var sbRect = sb.getBoundingClientRect();
+        if (!(sbRect.width > 0)) return;
+        var linkRect = link.getBoundingClientRect();
+        if (!(linkRect.bottom - linkRect.top > 0)) return;
+        var oy = '';
+        try { oy = window.getComputedStyle(sb).overflowY; } catch (e) {}
+        if (oy !== 'auto' && oy !== 'scroll') return;
+        var maxScroll = sb.scrollHeight - sb.clientHeight;
+        if (!(maxScroll > 0)) return;
+        if (R.decide(sbRect, linkRect) !== 'center') return;
+        sb.scrollTop = R.target(sb.scrollTop, maxScroll, sbRect, linkRect);
     }
 };
 window.syncSidebarNavActive = function() {

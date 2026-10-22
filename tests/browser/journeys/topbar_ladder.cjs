@@ -35,7 +35,12 @@ async function snapshot(page, label) {
   verdict.measurements.push({ label, ...result });
 }
 async function click(page, selector) {
-  const point = await page.ev(`(function(){var el=document.querySelector(${JSON.stringify(selector)});if(!el)return null;var r=el.getBoundingClientRect();return r.width&&r.height?[r.left+r.width/2,r.top+r.height/2]:null;})()`);
+  // Poll: a popover can still be opening while the server answers another request.
+  let point = null;
+  for (let i = 0; i < 20 && !point; i++) {
+    point = await page.ev(`(function(){var el=document.querySelector(${JSON.stringify(selector)});if(!el)return null;var r=el.getBoundingClientRect();return r.width&&r.height?[r.left+r.width/2,r.top+r.height/2]:null;})()`);
+    if (!point) await page.sleep(250);
+  }
   if (!point) throw new Error('Missing visible control: ' + selector);
   await page.click(point[0], point[1]);
   await page.sleep(400);
@@ -66,6 +71,11 @@ async function stage(page) {
     await snapshot(page, '1600 rest');
     await stage(page);
     if (verdict.staging.performed) await snapshot(page, '1600 staged');
+    // A sync panel the server opened on its own (pending edit vs live) keeps
+    // focus and swallows the first outside click; close it the way a user
+    // would, and record that it was open.
+    verdict.syncPanelOpenBeforeReload = await page.ev(`typeof _syncPanelOpen==='function'&&_syncPanelOpen()`);
+    if (verdict.syncPanelOpenBeforeReload) { await page.key('Escape', 'Escape', 27); await page.sleep(300); }
     await click(page, '#topbar-reload');
     await click(page, '.sm-reload-opt[data-mode="state"]');
     await page.sleep(3000);
@@ -86,5 +96,6 @@ async function stage(page) {
     verdict.ok = verdict.reload && verdict.errors.length === 0 && verdict.measurements.every(result => result.ok);
   } finally { await page.close(); }
   console.log(JSON.stringify(verdict, null, 2));
-  process.exitCode = verdict.ok ? 0 : 1;
-})().catch(error => { verdict.ok=false; verdict.errors.push(String(error)); console.log(JSON.stringify(verdict,null,2)); process.exitCode=1; });
+  // Exit explicitly: the CDP socket otherwise keeps Node alive after close().
+  process.exit(verdict.ok ? 0 : 1);
+})().catch(error => { verdict.ok=false; verdict.errors.push(String(error)); console.log(JSON.stringify(verdict,null,2)); process.exit(1); });

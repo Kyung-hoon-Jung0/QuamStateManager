@@ -48,6 +48,20 @@ def test_banner_css(selector, expected, forbidden):
     assert not forbidden or not re.search(forbidden, rule), rule
 
 
+@pytest.mark.parametrize("selector, expected", [
+    # one line for the unreachable-folder text: the path shrinks, never wraps the label
+    (".cnb-dangling .cnb-text", r"white-space:\s*nowrap"),
+    (".cnb-dangling .cnb-text", r"display:\s*flex"),
+    (".cnb-dangling .cnb-text code", r"flex:\s*0 1 auto"),
+    # room for the absolute session-hide x (the base banner rule resets it)
+    (".chip-name-banner.cnb-dangling", r"padding-right:\s*2\.1rem"),
+])
+def test_dangling_banner_one_line_css(selector, expected):
+    css = CSS.read_text(encoding="utf-8")
+    rules = re.findall(r"^" + re.escape(selector) + r"\s*\{([^}]+)\}", css, re.M)
+    assert any(re.search(expected, rule) for rule in rules), rules
+
+
 def test_no_short_reload_css():
     assert ".rl-short" not in CSS.read_text(encoding="utf-8")
 

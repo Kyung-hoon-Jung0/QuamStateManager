@@ -12865,6 +12865,15 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .cnb-form .cnb-clear { border-color: var(--pico-muted-border-color);
     color: var(--pico-contrast); }
 .cnb-df-form input[type=text] { width: 10rem; }
+/* One line for the unreachable-folder text: the path shrinks (ellipsis, full
+   value in its title) instead of wrapping the label onto a second row. */
+.cnb-dangling .cnb-text { display: flex; align-items: baseline; gap: .3em;
+    white-space: nowrap; min-width: 0; }
+.cnb-dangling .cnb-text code { flex: 0 1 auto; min-width: 6ch; }
+.cnb-dangling .cnb-note { flex: 0 0 auto; }
+/* Room for the absolute session-hide x: the base banner rule above resets the
+   padding-right that the .cnb-x block asks for, so Clear sat under the x. */
+.chip-name-banner.cnb-dangling { padding-right: 2.1rem; }
 .chip-name-banner.cnb-suggest { border-color: var(--pico-primary); }
 /* docs/301 F26: the "stop asking" x is a small text button -- unstyled, Pico's
    button rule drew it as a full-width primary block beside its two answers */
