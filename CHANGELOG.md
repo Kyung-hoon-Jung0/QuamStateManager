@@ -1175,3 +1175,17 @@ A brand colour theme and a calmer, richer chip map.
 
 - **Provenance**: a pair panel names the run that set a fidelity only when the current value is proven written by that run; otherwise nothing is claimed. An unknown age says so.
 - **Dialogs**: only the top dialog handles Escape; a theme change repaints the maps; an unknown pair in a CZ plan link says so.
+
+## v1.5.3 (2026-10-22)
+
+A quieter top bar, the most-used pages first, and a CZ plan header that stays.
+
+### Improved
+
+- **Top bar**: only the chip name, the Sync status and Review stay on the bar; search, Reload, Versions, the health badge, Sync-Qualibrate and the status pills live in one overflow menu (keyboard: Enter/Space, arrows, Esc).
+- **Sidebar**: Chip Status, Live State Edit and Datasets come first; the rest follow in their usual order.
+- **CZ gate plan**: the table header stays visible while scrolling at every window width and text size, aligned with the columns during horizontal scroll; narrow windows wrap the less important columns.
+
+### Fixed
+
+- **Sync panel**: a click outside the open panel (e.g. on Reload) closes it and still does what was clicked.

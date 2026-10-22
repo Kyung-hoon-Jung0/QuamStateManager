@@ -841,7 +841,9 @@
         rebuild();
         if (window.ResizeObserver) {
             resizeObserver = new window.ResizeObserver(sync);
-            [pair, wrap, head, table].forEach(function (el) { resizeObserver.observe(el); });
+            // the pair column by its border box: its padding follows the UI scale
+            new window.ResizeObserver(sync).observe(pair, { box: 'border-box' });
+            [wrap, head, table].forEach(function (el) { resizeObserver.observe(el); });
         }
         headObserver = new MutationObserver(rebuild);
         headObserver.observe(head, { attributes: true, subtree: true, childList: true });
