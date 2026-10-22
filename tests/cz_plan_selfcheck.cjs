@@ -86,6 +86,17 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
               'model validity never borrows a quadratic shift limit');
         dom.window.close(); console.log(checks + ' validity assertions passed'); return;
     }
+    if (process.env.CZ_NOQUAD_PIN) {
+        // a qubit with no quad term and no model: the curve holds the idle point only, so the figure
+        // never names a quad-term estimate that does not exist
+        const body = payload('qubit_pairs.p.macros.a', false);
+        body.qubits[0].curve.quad_hz = [null, 5e9, null];
+        answer(0, body); await wait(30);
+        const names = renders.filter(x => x.id === 'czp-flux').at(-1).traces.map(t => t.name || '');
+        check(!names.some(n => n.startsWith('qa') && n.includes('quad-term estimate (extrapolated')), 'no quad-term legend entry from the idle point alone: ' + names.join(' | '));
+        check(names.some(n => n.startsWith('qb') && /quad-term estimate/.test(n)), 'a real quad curve keeps its entry');
+        dom.window.close(); console.log(checks + ' no-quad assertions passed'); return;
+    }
     if (process.env.CZ_LOBES_PIN) {
         const body = payload('qubit_pairs.p.macros.a', false);
         body.row.lines[0].lobes = [{name: 'first lobe', amplitude_v: .1, point: body.row.lines[0].point},

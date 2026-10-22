@@ -105,3 +105,10 @@ def test_the_client_holds_the_operation_beside_the_pair():
         pytest.skip("jsdom not installed")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "all passed" in result.stdout
+
+
+def test_a_note_under_an_operation_wraps_in_a_bounded_box():
+    # real Chrome at 1600 px: a one-line "macro's copy says ..." note widened the held operation column
+    # to 363 px and pushed the table past its fit width (no sticky header at the reference width)
+    body = _rule(".czp-table td.czp-stick-op small.czp-warn-text")
+    assert "white-space: normal" in body and re.search(r"max-width: [\d.]+em", body), body

@@ -51,5 +51,13 @@ const other = d.getElementById('other');
 other.focus();
 press(other, 'ArrowDown');
 ok(sel() === 'r2', 'focus inside the main pane keeps the table navigation');
+// a row a filter hid (the CZ plan's Listed operation sets tr.hidden) is never selected: real Chrome
+// stepped onto hidden rows, so the selection vanished and nothing scrolled
+d.getElementById('r1').hidden = true;
+d.body.focus(); other.blur();
+press(d.body, 'ArrowUp');
+ok(sel() === 'r0', 'ArrowUp skips the hidden row');
+press(d.body, 'ArrowDown');
+ok(sel() === 'r2', 'ArrowDown skips the hidden row');
 console.log(`table_arrow_focus_selfcheck: ${n} checks passed`);
 w.close();

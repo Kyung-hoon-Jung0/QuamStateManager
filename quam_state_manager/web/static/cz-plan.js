@@ -292,7 +292,8 @@
                 traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.model_hz.map(ghz), name: q.name + ' · ' + s.model_kind,
                     line: { color: col, width: 2.2, dash: /derived/.test(s.model_kind || '') ? 'dash' : 'solid' }, hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>' + hoverEsc(s.model_kind) + '</extra>' });
             }
-            if (c.quad_hz.some(function (v) { return v != null; })) {
+            // with no quad term the curve holds only the idle point: one point draws no line, so no legend entry
+            if (c.quad_hz.filter(function (v) { return v != null; }).length > 1) {
                 // beside a fitted model the quad term is the secondary curve: it never sets the frequency span
                 traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.quad_hz.map(ghz), name: q.name + ' · quad-term estimate (extrapolated outside validity range)',
                     line: { color: col, width: 1.4, dash: 'dash' }, _czpSecondary: !!c.model_hz,

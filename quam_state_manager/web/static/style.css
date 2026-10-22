@@ -15069,6 +15069,9 @@ table.data-table.czp-table th { white-space: normal; vertical-align: bottom; }
 table.data-table.czp-table th, table.data-table.czp-table td { padding-left: .25rem; padding-right: .25rem; }
 .czp-table .czp-stick { position: sticky; left: 0; z-index: 1; white-space: nowrap; background: var(--pico-background-color); }
 .czp-table .czp-stick-op { left: var(--czp-stick-op, 2.6rem); }
+/* A long note under an operation (e.g. the macro copy differs from what plays) wraps in a bounded
+   box: kept on one line it widened the held column past the 1600 px fit budget. */
+.czp-table td.czp-stick-op small.czp-warn-text { display: inline-block; max-width: 16em; white-space: normal; }
 .czp-scrolled-x .czp-table .czp-stick-op { box-shadow: inset -1px 0 0 var(--pico-muted-border-color); }
 .czp-table .czp-row-selected td.czp-stick { background: color-mix(in srgb, var(--pico-primary) 8%, var(--pico-background-color)); }
 .czp-table .czp-nowrap { white-space: nowrap; }

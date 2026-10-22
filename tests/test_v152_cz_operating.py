@@ -187,3 +187,12 @@ def test_f6_unresolved_unipolar_reference_keeps_lab_bipolar_semantics():
     line = C.operations(s)[0][0]["lines"][0]
     assert [l["amplitude_v"] for l in line.get("lobes", [])] == pytest.approx([.1, -.103])
     assert line["point"]["frequency_hz"] == pytest.approx(4.92e9)
+
+
+def test_no_quad_term_draws_no_quad_legend():
+    import os
+    import subprocess
+    from pathlib import Path
+    r = subprocess.run(["node", "tests/cz_plan_selfcheck.cjs"], env=dict(os.environ, CZ_NOQUAD_PIN="1"),
+                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr

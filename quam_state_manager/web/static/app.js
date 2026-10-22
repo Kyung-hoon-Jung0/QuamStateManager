@@ -1625,7 +1625,7 @@ window.showWaveformPlot = function(btn) {
         var rows = Array.from(tablePane.querySelectorAll('tr.clickable-row'));
         if (!rows.length) return;
         // Filter to visible rows only
-        rows = rows.filter(function(r) { return r.style.display !== 'none'; });
+        rows = rows.filter(function(r) { return r.style.display !== 'none' && !r.hidden; });
         if (!rows.length) return;
 
         var current = tablePane.querySelector('tr.clickable-row.row-selected');

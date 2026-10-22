@@ -7,4 +7,4 @@ def test_table_arrow_focus_selfcheck():
     proc = subprocess.run(["node", str(Path(__file__).with_name("table_arrow_focus_selfcheck.cjs"))],
                           capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "8 checks passed" in proc.stdout
+    assert "10 checks passed" in proc.stdout
