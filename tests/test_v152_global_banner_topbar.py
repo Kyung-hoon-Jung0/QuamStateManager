@@ -87,6 +87,10 @@ def test_confirm_form_remains_open(tmp_path):
     page = Elements(response.get_data(as_text=True))
     form = page.one("form", **{"class": "cnb-form"})
     assert any("cnb-dangling" in parent[1].get("class", "") for parent in form[2])
+    # the sentence must wrap: the one-line path layout of the dangling banner must not reach it
+    assert any("cnb-confirm" in parent[1].get("class", "") for parent in form[2])
+    css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+    assert re.search(r"\.chip-name-banner\.cnb-confirm \.cnb-text\s*\{[^}]*white-space:\s*normal", css)
     assert all(parent[0] != "details" for parent in form[2])
     assert form in page.one(name="force_cross")[2]
     assert client.post("/chip-data-folder/set", data={"value": missing, "force_cross": "1"}).status_code == 200
