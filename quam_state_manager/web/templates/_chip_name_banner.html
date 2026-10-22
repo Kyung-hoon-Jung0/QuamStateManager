@@ -38,13 +38,12 @@
   </form>
 </div>
 {% elif chip_name_prompt %}
-<div id="chip-name-banner" class="chip-name-banner" role="region"
+<div id="chip-name-banner" class="chip-name-banner cnb-name" role="region"
      aria-label="Chip name prompt">
-  <span class="cnb-text">
-    <strong>No chip name is set for this state.</strong>
-    Naming it (stored in <code>extras.chip_name</code>) keeps history, trends
-    and run attribution stable even when state folders move or share a parent
-    directory.
+  {# one compact row: the why lives in the title, the text truncates before it wraps #}
+  <span class="cnb-text" title="Naming it (stored in extras.chip_name) keeps history, trends and run attribution stable even when state folders move or share a parent directory.">
+    <strong>No chip name set.</strong>
+    <span class="cnb-note">Stored in extras.chip_name; keeps history and run attribution stable.</span>
   </span>
   <form class="cnb-form" hx-post="/chip-name/set"
         hx-target="#chip-name-banner" hx-swap="outerHTML">

@@ -64,6 +64,9 @@
     </label>
     <p class="muted czp-filter-note" id="czp-filter-note" role="status" hidden></p>
     <div class="muted czp-history-note" id="czp-history-note" role="status"></div>
+    {%- set cn = rows | selectattr('coupler') | list %}{% if cn %}
+    <p class="muted czp-coupler-note" id="czp-coupler-note">A coupler pulse also plays in {{ cn | length }} operation{{ '' if cn|length == 1 else 's' }} (its amplitude is under Z amp): these bare-qubit frequencies omit the coupler's shift.</p>
+    {%- endif %}
 </div>
 <div class="czp-table-wrap">
 <table id="czp-table" class="data-table czp-table" role="grid">

@@ -444,3 +444,21 @@ def test_only_actual_dependency_changes_can_make_a_setting_stale():
     assert C.calibration(row, hist)["warnings"] == []
     hist["rows"]["f"]["effective"].insert(0, dict(pt(20_000_000), old=5e9, value=4.9e9))
     assert C.calibration(row, hist)["warnings"][0]["t"] == "T20000000"
+
+
+def test_a_spectator_pulse_on_the_other_member_names_its_kind():
+    """CZGate plays the spectator's own pulse beside the moving qubit's, and
+    duration_qubit still overrides only the moving qubit's play."""
+    s = state(spec={"__class__": "x.CZGate", "flux_pulse_qubit": {"amplitude": .1}, "duration_qubit": 10,
+                    "spectator_qubits": {"q1": "#/qubits/q1"},
+                    "spectator_qubits_control": {"q1": {"amplitude": .07}}},
+              outside={"__class__": "x.CZGate", "flux_pulse_qubit": {"amplitude": .1},
+                       "spectator_qubits": {"q9": "#/qubits/q9"},
+                       "spectator_qubits_control": {"q9": {"amplitude": .07}}},
+              plain={"__class__": "x.CZGate", "flux_pulse_qubit": {"amplitude": .1}})
+    s["qubits"]["q9"] = qubit()
+    rows = {r["operation"]: r for r in C.operations(s)[0]}
+    assert rows["spec"]["kind"] == "single mover + spectator"
+    assert rows["spec"]["duration_ns"] == 40
+    assert [ln["play_duration_ns"] for ln in rows["spec"]["lines"]] == [40, None]
+    assert rows["outside"]["kind"] == rows["plain"]["kind"] == "single mover"

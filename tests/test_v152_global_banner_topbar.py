@@ -101,3 +101,34 @@ def test_topbar_reload_accessible_whole_label(tmp_path):
     assert button in page.one("span", **{"class": "rl-long"})[2]
     assert not any(node[1].get("class") == "rl-short" for node in page.nodes)
     assert '> Re<' not in html
+
+
+@pytest.mark.parametrize("selector, expected", [
+    # the chip-name prompt: one row at >= 1280 px, the explanation truncates instead of wrapping
+    (".chip-name-banner.cnb-name", r"padding:\s*\.25em \.6em"),
+    (".cnb-name .cnb-text", r"white-space:\s*nowrap"),
+    (".cnb-name .cnb-text", r"min-width:\s*0"),
+    (".cnb-name .cnb-note", r"text-overflow:\s*ellipsis"),
+    (".cnb-name .cnb-form", r"flex-wrap:\s*nowrap"),
+    (".cnb-name .cnb-form #cnb-name-df", r"width:\s*12em"),
+])
+def test_chip_name_banner_compact_css(selector, expected):
+    css = CSS.read_text(encoding="utf-8")
+    rules = re.findall(r"^" + re.escape(selector) + r"\s*\{([^}]+)\}", css, re.M)
+    assert any(re.search(expected, rule) for rule in rules), rules
+
+
+def test_chip_name_banner_one_row_at_1280_css():
+    css = CSS.read_text(encoding="utf-8")
+    block = re.search(r"@media \(min-width: 1280px\) \{\s*\.chip-name-banner\.cnb-name \{([^}]+)\}", css)
+    assert block and re.search(r"flex-wrap:\s*nowrap", block.group(1))
+
+
+def test_chip_name_banner_compact_markup(tmp_path):
+    _, client, _, _ = _df_env(tmp_path, _state())
+    page = Elements(client.get("/qubits").get_data(as_text=True))
+    banner = page.one(id="chip-name-banner")
+    assert "cnb-name" in banner[1]["class"].split()
+    text = next(node for node in page.nodes if node[0] == "span" and node[1].get("class") == "cnb-text"
+                and banner in node[2])
+    assert "extras.chip_name" in text[1]["title"]

@@ -810,7 +810,7 @@ def operations(doc, conversions=None, unavailable=None):
     ``flux_pulse_qubit`` on the control and ``flux_pulse_target`` on the target;
     a both-movers gate plays ``flux_pulse_high`` on the higher-f_01 qubit (ties go
     to the control) and ``flux_pulse_low`` on the other; a spectator entry whose
-    qubit is a pair member also moves that member."""
+    qubit is a pair member also moves that member (kind "single mover + spectator")."""
     conversions = {} if conversions is None else conversions
     unavailable = [] if unavailable is None else unavailable
 
@@ -893,6 +893,10 @@ def operations(doc, conversions=None, unavailable=None):
                 for role, info in roles.items():
                     if info["path"] == who and role not in fields:
                         fields[role] = "spectator_qubits_control." + key
+                        # CZGate plays the spectator's own pulse beside the moving qubit's;
+                        # duration_qubit (read above) still overrides only the moving qubit.
+                        if kind == "single mover":
+                            kind = "single mover + spectator"
             lines = []
             for role in ("control", "target"):
                 info = roles[role]
@@ -980,7 +984,10 @@ def operations(doc, conversions=None, unavailable=None):
             coupler = _coupler_line(doc, pp, path, notes)
             if coupler:
                 shown = coupler["amp_text"] if coupler["amplitude_v"] is not None and not coupler["refusal"] else "amplitude unknown: " + coupler.get("amp_reason", "")
-                notes.append("a coupler pulse also plays (" + shown + "): these bare-qubit frequencies omit the coupler's shift")
+                coupler_note = "a coupler pulse also plays (" + shown + "): these bare-qubit frequencies omit the coupler's shift"
+                notes.append(coupler_note)
+            else:
+                coupler_note = None
             rows.append({
                 "pair": pair_name, "operation": name, "path": path, "class": cls, "kind": kind,
                 "alias_of": alias[-1]["to_path"] if alias else None,
@@ -993,7 +1000,7 @@ def operations(doc, conversions=None, unavailable=None):
                 "fidelity": _fidelity(resolved_tree(doc, path + ".fidelity")),
                 "plan": None if pair_refusal else _plan(plan, lines),
                 "interaction_frequency_hz": None if pair_refusal else number(current(doc, path + ".interaction_frequency")),
-                "coupler": coupler,
+                "coupler": coupler, "coupler_note": coupler_note,
                 "coupler_amplitude_v": coupler["amplitude_v"] if coupler else None,
                 "amplitudes": [ln["amplitude_path"] for ln in lines if ln["amplitude_path"]],
                 "dependencies": [p for r in ("control", "target") if roles[r]["path"]

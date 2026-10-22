@@ -12875,6 +12875,21 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    padding-right that the .cnb-x block asks for, so Clear sat under the x. */
 .chip-name-banner.cnb-dangling { padding-right: 2.1rem; }
 .chip-name-banner.cnb-suggest { border-color: var(--pico-primary); }
+/* The chip-name prompt: one row at >= 1280 px, at most two (text / form) below.
+   The explanation truncates (full text in the title) instead of wrapping. */
+.chip-name-banner.cnb-name { gap: .5em .8em; padding: .25em .6em; font-size: .8rem; }
+.cnb-name .cnb-text { flex: 1 1 9em; min-width: 0; display: flex; align-items: baseline;
+    gap: .4em; white-space: nowrap; }
+.cnb-name .cnb-text strong { flex: none; }
+.cnb-name .cnb-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    color: var(--color-text-muted); }
+.cnb-name .cnb-form { flex: 1 1 auto; flex-wrap: nowrap; gap: .3em; min-width: 0; }
+.cnb-name .cnb-form input[type=text] { flex: 0 1 8em; width: 8em; min-width: 5em; }
+.cnb-name .cnb-form #cnb-name-df { flex: 1 1 12em; width: 12em; min-width: 6em; }
+@media (min-width: 1280px) {
+    .chip-name-banner.cnb-name { flex-wrap: nowrap; }
+    .cnb-name .cnb-form { flex: 0 1 auto; }
+}
 /* docs/301 F26: the "stop asking" x is a small text button -- unstyled, Pico's
    button rule drew it as a full-width primary block beside its two answers */
 .cnb-form .cnb-dismiss {

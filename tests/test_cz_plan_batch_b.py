@@ -190,3 +190,26 @@ def test_browser_contracts(mode):
     result = subprocess.run(["node", "tests/cz_batch_b_selfcheck.cjs", *mode.split(":")], cwd=ROOT,
                             capture_output=True, text=True, env=os.environ.copy())
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_coupler_note_once_above_the_table(tmp_path):
+    state, wiring = state_with_coupler()
+    folder = tmp_path / "state"
+    folder.mkdir()
+    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+    client = _client(tmp_path, folder)
+    html = client.get("/cz-plan").get_data(as_text=True)
+    table = re.search(r'<table id="czp-table".*?</table>', html, re.S)[0]
+    assert "a coupler pulse also plays" not in table
+    assert '>coupler +100 mV</small>' in table
+    note = re.findall(r'<p class="muted czp-coupler-note"[^>]*>(.*?)</p>', html, re.S)
+    assert note == ["A coupler pulse also plays in 2 operations (its amplitude is under Z amp): "
+                    "these bare-qubit frequencies omit the coupler's shift."]
+    data = client.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_unipolar").get_data(as_text=True)
+    assert "a coupler pulse also plays (+100 mV): these bare-qubit frequencies omit the coupler's shift" in data
+
+
+def test_no_coupler_no_note(tmp_path):
+    html = _client(tmp_path).get("/cz-plan").get_data(as_text=True)
+    assert "czp-coupler-note" not in html

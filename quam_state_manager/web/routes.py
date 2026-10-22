@@ -22377,7 +22377,8 @@ def _cz_plan_table(rows) -> list[dict]:
             "names": [ln["name"] for ln in r["lines"]],
             "freqs": [p.get("frequency_hz") for p in pts],
             "moves": [ln["moves"] for ln in r["lines"]],
-            "warnings": r["notes"],
+            # the coupler note is shown once above the table; the amplitude stays in Z amp
+            "warnings": [n for n in r["notes"] if n != r.get("coupler_note")],
             "reasons": [p.get("reason") for p in pts if p.get("reason")],
             "detuning_hz": r["detuning_hz"], "nearest": r["nearest"], "kinds": kinds,
             "validity_warning": validity_class != "ok",
