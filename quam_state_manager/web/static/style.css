@@ -15934,7 +15934,7 @@ details.jargon > .jargon-explain {
    (the bar's width ladder hid them to fit one row). */
 .topbar .topbar-more { position: relative; }
 .topbar .topbar-more-btn { width: auto; margin: 0; padding: .05rem .55rem; font-size: 1.15rem; line-height: 1.3;
-    background: transparent; color: var(--pico-color); border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
+    background: transparent; color: var(--pico-contrast); border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
 .topbar .topbar-more-btn[aria-expanded="true"], .topbar .topbar-more-btn:hover { border-color: var(--pico-primary); }
 .topbar .topbar-more-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 250;
     min-width: 17rem; max-width: calc(100vw - 16px); max-height: calc(100vh - var(--topbar-height, 54px) - 16px); overflow-y: auto;
