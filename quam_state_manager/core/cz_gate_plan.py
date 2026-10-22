@@ -574,6 +574,7 @@ def chip_map(rows, conversions, op_name=None):
             p = ln["point"]
             seg = {"pair": pair, "operation": row["operation"], "path": row["path"], "role": ln["role"],
                    "qubit": ln["name"], "qubit_path": ln["qubit_path"], "moves": ln["moves"],
+                   "amp_text": ln["amp_text"],
                    "frequency_hz": p.get("frequency_hz"), "kind": p.get("kind"), "validity": p.get("validity"),
                    "partner_hz": fq[1 - k], "detuning_hz": row["detuning_hz"], "nearest": row["nearest"]}
             if p.get("frequency_hz") is None:
@@ -597,9 +598,14 @@ def chip_map(rows, conversions, op_name=None):
     members = getattr(rows, "pair_members", {})
     pairs = {}
     for pair in by_pair:
+        selected = next((r for r in by_pair[pair] if r["operation"] == (op_name or "cz")),
+                        by_pair[pair][0] if by_pair[pair] and not op_name else {})
+        coupler = selected.get("coupler")
         cp, tp = members.get(pair, ("", ""))
         pairs[pair] = {"control_path": cp or None, "target_path": tp or None,
                        "control": cp.split(".")[-1] if cp else None, "target": tp.split(".")[-1] if tp else None}
+        if coupler:
+            pairs[pair]["coupler_amp_text"] = coupler["amp_text"]
     return {"qubits": [qubits[q] for q in order], "segments": segments, "planned": planned,
             "refused": refused, "missing": sorted(missing, key=_natural), "op": op_name or None,
             "operations": sorted({r["operation"] for r in rows}, key=_natural), "pairs": pairs}
@@ -731,6 +737,45 @@ def _amplitude_view(doc, line):
         level["name"] + " " + fmt(value) for level, value in zip(levels, values))
     if not physical:
         line["amp_title"] += "; stored amplitude: LF port or waveform peak cannot be resolved"
+
+
+def _coupler_line(doc, pair_path, macro_path, notes):
+    """Resolve the label on the playing element, without a frequency model."""
+    source = macro_path + ".coupler_flux_pulse"
+    pulse = current(doc, source)
+    if pulse is None:
+        return None
+    cp = read(doc, pair_path + ".coupler").get("holder_path") or ""
+    element = current(doc, cp) if cp else None
+    name = current(doc, cp + ".id") if isinstance(element, dict) else None
+    name = name or (cp.split(".")[-1] if cp else "unknown")
+    label = current(doc, source + ".id") if isinstance(pulse, dict) else pulse
+    local = number(current(doc, source + ".amplitude")) if isinstance(pulse, dict) else None
+    played = cp + ".operations." + label if isinstance(label, str) and cp else None
+    refusal = None
+    if not isinstance(element, dict):
+        refusal = "not playable: pair coupler is missing"
+    elif not played or not isinstance(current(doc, played), dict):
+        refusal = f"not playable: {label} missing on {name}"
+    holder = read(doc, played).get("holder_path") if played and not refusal else played
+    amp = number(current(doc, holder + ".amplitude")) if holder and not refusal else None
+    line = {"role": "coupler", "name": name, "coupler_path": cp, "pulse_path": holder or source,
+            "played_pulse_path": played, "amplitude_v": amp, "lobes": [], "moves": True,
+            "refusal": refusal}
+    if not refusal:
+        try:
+            line["lobes"] = [{"name": stage, "amplitude_v": value} for stage, value in
+                             pulse_lobes(resolved_tree(doc, holder) or {}, amp)]
+        except ValueError as exc:
+            line["refusal"] = str(exc)
+    if local is not None and amp is not None and local != amp:
+        notes.append(f"{name}: the macro's copy says {signed_volts(local)}; the coupler plays {signed_volts(amp)}")
+    if line["refusal"]:
+        notes.append(line["refusal"])
+    _amplitude_view(doc, line)
+    line.pop("moves")
+    line.pop("amp_sort")
+    return line
 
 
 def operations(doc, conversions=None, unavailable=None):
@@ -907,9 +952,10 @@ def operations(doc, conversions=None, unavailable=None):
                                            resonances(*frequencies, *alphas))
             known = [r for r in lobe_resonances if r["distance_hz"] is not None]
             nearest = min(known, key=lambda r: abs(r["distance_hz"])) if known else None
-            coupler = current(doc, path + ".coupler_flux_pulse")
+            coupler = _coupler_line(doc, pp, path, notes)
             if coupler:
-                notes.append("a coupler pulse also plays: these bare-qubit frequencies omit the coupler's shift")
+                shown = coupler["amp_text"] if coupler["amplitude_v"] is not None and not coupler["refusal"] else "amplitude unknown"
+                notes.append("a coupler pulse also plays (" + shown + "): these bare-qubit frequencies omit the coupler's shift")
             rows.append({
                 "pair": pair_name, "operation": name, "path": path, "class": cls, "kind": kind,
                 "alias_of": alias[-1]["to_path"] if alias else None,
@@ -922,7 +968,8 @@ def operations(doc, conversions=None, unavailable=None):
                 "fidelity": _fidelity(resolved_tree(doc, path + ".fidelity")),
                 "plan": None if pair_refusal else _plan(plan, lines),
                 "interaction_frequency_hz": None if pair_refusal else number(current(doc, path + ".interaction_frequency")),
-                "coupler_amplitude_v": number(current(doc, path + ".coupler_flux_pulse.amplitude")) if coupler else None,
+                "coupler": coupler,
+                "coupler_amplitude_v": coupler["amplitude_v"] if coupler else None,
                 "amplitudes": [ln["amplitude_path"] for ln in lines if ln["amplitude_path"]],
                 "dependencies": [p for r in ("control", "target") if roles[r]["path"]
                                  for p in dependency_paths(roles[r]["path"], roles[r]["qubit"])],

@@ -603,7 +603,8 @@ async function footerPins(only) {
     const colPx21 = (1000 - 80) / 21, pbox = k => {
         const lines = p21.text[k].split('<br>'), h = 11 * lines.length;
         const w = Math.max(...lines.map(l => S21.w.CzMap.partnerWidth(l))), x = p21.x[k] * colPx21, y = (p21.y[k] - r21.layout.yaxis.range[0]) * cl21.pxPerGHz;
-        return p21.textposition[k] === 'top left' ? {x0: x - w, x1: x, y0: y, y1: y + h} : {x0: x, x1: x + w, y0: y, y1: y + h};
+        const left = p21.textposition[k].endsWith('left'), bottom = p21.textposition[k].startsWith('bottom');
+        return {x0: x - (left ? w : 0), x1: x + (left ? 0 : w), y0: bottom ? y - 3 - h : y + 3, y1: bottom ? y - 3 : y + 3 + h};
     };
     const overprint = [];
     p21.x.forEach((x, k) => p21.x.forEach((x2, k2) => {
@@ -633,11 +634,16 @@ async function footerPins(only) {
         const col = (width - 80) / 21, scale = clusters(r).pxPerGHz;
         const boxes = p.text.map((text, i) => {
             const lines = text.split('<br>'), w = Math.max(...lines.map(s => S21.w.CzMap.partnerWidth(s)));
-            const x = p.x[i] * col, y = p.y[i] * scale;
-            return {x0: x - (p.textposition[i] === 'top left' ? w : 0), x1: x + (p.textposition[i] === 'top left' ? 0 : w), y0: y, y1: y + lines.length * 11, w};
+            const x = p.x[i] * col, y = (p.y[i] - r.layout.yaxis.range[0]) * scale;
+            const left = p.textposition[i].endsWith('left'), bottom = p.textposition[i].startsWith('bottom'), h = lines.length * 11;
+            return {x0: x - (left ? w : 0), x1: x + (left ? 0 : w), y0: bottom ? y - 3 - h : y + 3, y1: bottom ? y - 3 : y + 3 + h, w};
         });
-        check(boxes.every((a, i) => a.w <= 0.76 * col && boxes.every((b, j) => j <= i || !(a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1))),
-              'computed partner boxes fit without overlap at viewport ' + (width === 919 ? 1280 : 1600));
+        const height = (r.layout.height - r.layout.margin.t - r.layout.margin.b) * (1 - r.layout.yaxis.domain[0]);
+        check(boxes.every((a, i) => a.y0 >= 0 && a.y1 <= height && a.w <= 0.76 * col && r.layout.xaxis.ticktext.every((name, j) => {
+            const half = Math.max(10, S21.w.CzMap.partnerWidth(name) * 10 / 9 / 2) + 3;
+            return !(a.x0 < (j + 0.5) * col + half + 1 && (j + 0.5) * col - half < a.x1 + 1 && a.y1 + 1 > height - 3);
+        }) && boxes.every((b, j) => j <= i || !(a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1))),
+              'computed partner boxes stay within the plot, clear of headers and each other at viewport ' + (width === 919 ? 1280 : 1600));
     }
     S21.width = 1000; await S21.w.CzMap.paint(S21.root);
 

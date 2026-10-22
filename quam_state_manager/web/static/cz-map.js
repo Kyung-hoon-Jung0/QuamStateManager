@@ -461,6 +461,11 @@
         root._czMismatch = mismatch ? selPair + '|' + shown + '|' + selName : '';
         var mmHover = mismatch ? '<br>selected below: ' + esc(selName) + ' (this map shows ' + esc(shown) + ')' : '';
 
+        function amplitudeHover(pair) {
+            return m.segments.concat(m.refused || []).filter(function (s) { return s.pair === pair && s.moves; })
+                .map(function (s) { return '<br>' + esc(s.qubit) + ' Z amp ' + esc(s.amp_text || 'unknown'); }).join('') +
+                ((pairs[pair] || {}).coupler_amp_text ? '<br>coupler ' + esc(pairs[pair].coupler_amp_text) : '');
+        }
         var P = pairColors(), colour = edgeColours(pairs);
         var muted = cssVar('--pico-muted-color', '#8a8a8a');
         var ink = cssVar('--pico-color', '#222');
@@ -571,15 +576,39 @@
             });
         });
         // partner names never print over each other (a long list runs into the next column): the
-        // right end of the segment first, else its left end, else hover only
-        var taken = [];
+        // Try above either end, then below; a bottom box must also clear segments and idle dots.
+        var columnHeight = plotH * (1 - colLo);
+        // Tick labels sit above the columns; reserve their padded boxes before partners.
+        var taken = drawing ? qs.map(function (q, i) {
+            var half = Math.max(10, partnerWidth(q.name) * 10 / 9 / 2) + 3;
+            return { x0: (i + 0.5) * colPx - half, x1: (i + 0.5) * colPx + half,
+                     y0: columnHeight - 3, y1: columnHeight + 15 };
+        }) : [];
+        var occupied = [];
+        m.segments.forEach(function (s) {
+            if (col[s.qubit_path] == null) return;
+            var i = col[s.qubit_path], y = (s.frequency_hz / 1e9 - yr[0]) * pxPerGHz;
+            occupied.push({ x0: (i + 0.12) * colPx, x1: (i + 0.88) * colPx, y0: y - 2, y1: y + 2 });
+        });
+        qs.forEach(function (q, i) {
+            if (q.f01_hz == null) return;
+            var y = (q.f01_hz / 1e9 - yr[0]) * pxPerGHz;
+            occupied.push({ x0: (i + 0.5) * colPx - 5, x1: (i + 0.5) * colPx + 5, y0: y - 5, y1: y + 5 });
+        });
         wanted.forEach(function (pw) {
             var right = (pw.i + 0.88) * colPx, left = (pw.i + 0.12) * colPx;
             var spots = [{ x0: right - pw.w, x1: right, x: pw.i + 0.88, pos: 'top left' },
-                         { x0: left, x1: left + pw.w, x: pw.i + 0.12, pos: 'top right' }];
+                         { x0: left, x1: left + pw.w, x: pw.i + 0.12, pos: 'top right' },
+                         { x0: right - pw.w, x1: right, x: pw.i + 0.88, pos: 'bottom left', bottom: true },
+                         { x0: left, x1: left + pw.w, x: pw.i + 0.12, pos: 'bottom right', bottom: true }];
             for (var k = 0; k < spots.length; k++) {
-                var b = { x0: spots[k].x0, x1: spots[k].x1, y0: pw.ypx, y1: pw.ypx + pw.h };
-                if (b.x0 < 0 || b.x1 > n * colPx || taken.some(function (t) { return boxesOverlap(b, t, 1); })) continue;
+                var bottom = spots[k].bottom;
+                var b = { x0: spots[k].x0, x1: spots[k].x1,
+                          y0: bottom ? pw.ypx - 3 - pw.h : pw.ypx + 3,
+                          y1: bottom ? pw.ypx - 3 : pw.ypx + 3 + pw.h };
+                if (b.x0 < 0 || b.x1 > n * colPx || b.y0 < 0 || b.y1 > columnHeight ||
+                    taken.some(function (t) { return boxesOverlap(b, t, 1); }) ||
+                    (bottom && occupied.some(function (t) { return boxesOverlap(b, t, 1); }))) continue;
                 taken.push(b);
                 partners.push({ x: spots[k].x, y: pw.y, t: pw.t, pos: spots[k].pos });
                 return;
@@ -599,7 +628,7 @@
             var t = esc(s.pair) + ' · ' + esc(s.operation) + '<br>' + esc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
                 ': ' + f.toFixed(4) + ' GHz<br>' + esc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + esc(s.validity) : '') +
                 '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + (s.nearest.lobe ? ' (' + esc(s.nearest.lobe) + ')' : '') + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
-                (mismatch && s.pair === mismatch.pair ? mmHover : '');
+                amplitudeHover(s.pair) + (mismatch && s.pair === mismatch.pair ? mmHover : '');
             var cl = segClass[key] || (segClass[key] = { c: c, style: style, x: [], y: [], t: [], cd: [] });
             cl.x.push(x.x0, x.x1, null); cl.y.push(f, f, null); cl.t.push(t, t, null);
             cl.cd.push([s.path, s.pair], [s.path, s.pair], null);
@@ -702,14 +731,15 @@
                 if (computed) {
                     t = esc(pair) + ' · ' + esc(op.operation) + segs.map(function (s) {
                         return '<br>' + esc(s.qubit) + ' ' + f3(s.frequency_hz) + ' GHz ' + esc(s.kind || '') + (s.moves ? '' : ' (stays at idle)');
-                    }).join('') + refused.map(function (r) { return '<br>' + esc(r.qubit) + ' not drawn: ' + esc(r.reason); }).join('') +
+                    }).join('') + refused.map(function (r) { return '<br>' + esc(r.qubit) + ' frequency unknown; not drawn: ' + esc(r.reason); }).join('') +
                         '<br>Δ ' + fmtMHz(op.detuning_hz, true) + (op.nearest ? ' · ' + esc(op.nearest.name) + (op.nearest.lobe ? ' (' + esc(op.nearest.lobe) + ')' : '') + ' ' + fmtMHz(op.nearest.distance_hz, true) : '');
                 } else if (refused.length) {
-                    t = esc(pair) + ' · ' + esc(refused[0].operation) + refused.map(function (r) { return '<br>' + esc(r.qubit) + ' not drawn: ' + esc(r.reason); }).join('');
+                    t = esc(pair) + ' \u00b7 ' + esc(refused[0].operation) + refused.map(function (r) { return '<br>' + esc(r.qubit) + ' frequency unknown; not drawn: ' + esc(r.reason); }).join('');
                 } else {
                     t = esc(pair) + ': no ' + esc(m.op || 'cz') + ' operation';
                 }
                 if (mismatch && pair === mismatch.pair) t += mmHover;
+                t += amplitudeHover(pair);
                 barPts.x.push((a.x + b.x) / 2); barPts.y.push((a.y + b.y) / 2); barPts.t.push(t);
                 barPts.cd.push([op ? op.path : (refused[0] && refused[0].path) || '', pair]);
             });
@@ -754,7 +784,7 @@
         //      ledger's axis changes merged across qubits (same fields, same change) ----
         var notes = [], detail = [], axisNotes = 0, pendingNotes = 0, sourceNotes = 0;
         if (m.refused.length) notes.push('Not drawn: ' + m.refused.map(function (r) {
-            return r.qubit + ' in ' + r.pair + ' ' + r.operation + ' (' + r.reason + ')'; }).join('; ') + '.');
+            return r.qubit + ' in ' + r.pair + ' ' + r.operation + ' (' + r.reason + '); frequency unknown; Z amp ' + (r.amp_text || 'unknown') + ((pairs[r.pair] || {}).coupler_amp_text ? '; coupler ' + pairs[r.pair].coupler_amp_text : ''); }).join('; ') + '.');
         if (m.missing.length) notes.push('No ' + (m.op || 'such') + ' operation on ' + m.missing.join(', ') + '.');
         if (!drawing) notes.push('No chip drawing: ' + (lay.why || 'no qubits') + '.');
         if (loss && loss.reason) notes.push('Measured loss: ' + loss.reason + '.');

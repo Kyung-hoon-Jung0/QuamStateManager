@@ -535,7 +535,7 @@
             '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '—') + '</dd>' +
             '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' + (r.duration_note ? ' <small class="muted">(' + esc(r.duration_note) + ')</small>' : '')
                 : (r.duration_note ? esc(r.duration_note) : 'unknown')) + '</dd>' +
-            (r.coupler_amplitude_v != null ? '<dt>Coupler pulse</dt><dd>' + fmtV(r.coupler_amplitude_v) + '</dd>' : '') +
+            (r.coupler ? '<dt>Coupler pulse</dt><dd class="czp-card-coupler" title="' + esc(r.coupler.amp_title) + '">' + esc(r.coupler.amp_text) + '</dd>' : '') +
             (r.plan ? '<dt>Planned ω_int</dt><dd>' + fmtGHz(r.plan.omega_int_hz) + (r.plan.path_ok === false ? ' <span class="czp-warn-text">path not ok</span>' : '') +
                 (r.plan.reasons.length ? '<br><small class="muted">' + esc(r.plan.reasons.join(', ')) + '</small>' : '') + '</dd>' : '') +
             (r.interaction_frequency_hz ? '<dt>Stored interaction frequency</dt><dd>' + fmtGHz(r.interaction_frequency_hz) + '</dd>' : '') +
@@ -690,13 +690,19 @@
                     }
                     return;
                 }
-                if (note) note.textContent = h.mode === 'ledger' ? '' : (h.note || 'This chip has no change history, so when each operation was set is unknown.');
+                if (note) {
+                    note.textContent = h.note || (h.mode === 'ledger' ? '' : 'This chip has no change history, so when each operation was set is unknown.');
+                    if (h.note && h.link && h.link.url === '/hub/link-folder') {
+                        note.insertAdjacentHTML('beforeend', ' <button type="button" class="outline btn-sm" hx-get="/hub/link-folder" hx-target="#hub-folder-body" hx-swap="innerHTML" onclick="HubFolders.open(this)">Link the data folder</button>');
+                        if (window.htmx) window.htmx.process(note);
+                    }
+                }
                 Array.prototype.forEach.call(root.querySelectorAll('td[data-last]'), function (td) {
                     var o = (h.ops || {})[td.getAttribute('data-last')];
                     if (!o || !o.last_set) {
                         // compact in the table; what is known (first record, a value that differs) on hover
                         var first = !!(o && o.note && /first recorded/.test(o.note));
-                        td.innerHTML = '<span class="muted"' + (o && o.note ? ' title="' + esc(zoneText(o.note)) + '"' : '') + '>unknown' +
+                        td.innerHTML = '<span class="muted"' + ((o && o.note) || h.note ? ' title="' + esc(zoneText((o && o.note) || h.note)) + '"' : '') + '>unknown' +
                             (first ? ' · first recorded only' : '') + '</span>';
                         return;
                     }
@@ -726,11 +732,23 @@
     function stickOperation(table) {
         var pair = table && table.querySelector('th.czp-stick');
         if (!pair) return;
-        function sync() { table.style.setProperty('--czp-stick-op', pair.getBoundingClientRect().width + 'px'); }
+        var wrap = table.parentElement;
+        function sync() {
+            table.style.setProperty('--czp-stick-op', pair.getBoundingClientRect().width + 'px');
+            if (wrap) {
+                var style = window.getComputedStyle(wrap);
+                var content = wrap.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+                wrap.classList.toggle('czp-wrap-fits', table.getBoundingClientRect().width <= content);
+            }
+        }
         sync();
         if (window.ResizeObserver) new window.ResizeObserver(sync).observe(pair, { box: 'border-box' });
         // the held columns get an edge only while other columns pass under them
-        var wrap = table.parentElement;
+        if (window.ResizeObserver && wrap) {
+            var fitObserver = new window.ResizeObserver(sync);
+            fitObserver.observe(wrap);
+            fitObserver.observe(table);
+        }
         if (wrap) wrap.addEventListener('scroll', function () {
             wrap.classList.toggle('czp-scrolled-x', wrap.scrollLeft > 0);
         }, { passive: true });

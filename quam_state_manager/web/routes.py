@@ -22384,6 +22384,7 @@ def _cz_plan_table(rows) -> list[dict]:
             "validity_class": validity_class, "validity_title": title, "validity": text,
             "amps": [ln.get("amp_text", "\u2014") for ln in r["lines"]],
             "amp_titles": [ln.get("amp_title", "") for ln in r["lines"]],
+            "coupler": r.get("coupler"),
             "amp_sort": first.get("amp_sort"),
             "irb": (r["fidelity"].get("InterleavedRB") or {}).get("value"),
         })
@@ -22728,7 +22729,15 @@ def cz_plan_history():
         ops[r["path"]] = {"last_set": _cz_plan_point_view(c["last_set"]) if c["last_set"] else None,
                           "proven": bool(c["last_calibrated"]), "unknown": c["unknown"],
                           "warnings": c["warnings"], "note": c["reason"]}
-    return jsonify(ok=True, mode=hist.get("mode"), note=hist.get("unavailable_note") or None,
+    note, link = hist.get("unavailable_note") or None, None
+    if hist.get("mode") == "ledger":
+        ledger_note = next((n for notes in (hist.get("notes") or {}).values() for n in notes
+                            if n.get("code") in ("no_folder_linked", "no_folder", "idle")), None)
+        if ledger_note:
+            note, link = ledger_note["text"], ledger_note.get("link")
+        elif ops and all(o["unknown"] for o in ops.values()):
+            note = "No setting of these amplitudes is recorded in this chip's history."
+    return jsonify(ok=True, mode=hist.get("mode"), note=note, link=link,
                    ops=ops, unavailable=unavailable)
 
 
