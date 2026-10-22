@@ -173,7 +173,10 @@
         });
         (d.qubits || []).forEach(function (q) {
             if (!q.summary) return;
-            (q.summary.notes || []).forEach(function (t) { cave.flux.push(q.name + ': ' + t); });
+            var curv = (q.summary.curvature || {}).note;
+            (q.summary.notes || []).forEach(function (t) {
+                cave.flux.push(t === curv ? t + ' (' + q.name + ')' : q.name + ': ' + t);
+            });
         });
         setStatus(root, status);
         ['flux', 'time'].forEach(function (f) {
@@ -504,7 +507,7 @@
             h.push('<div class="czp-card-q"><strong>' + esc(ln.role) + ' ' + esc(ln.name) + '</strong>' +
                 (ln.moves ? ' <small class="muted">plays ' + esc((ln.pulse_path || '').split('.').pop()) + (ln.pulse_class ? ' (' + esc(ln.pulse_class) + ')' : '') + '</small>' : ' <small class="muted">does not move</small>') +
                 '<dl>' +
-                '<dt>Z amp (V)</dt><dd title="' + esc(ln.amp_title || '') + '">' + esc(ln.amp_text || '\u2014') + '</dd>' +
+                '<dt>Z amp</dt><dd title="' + esc(ln.amp_title || '') + '">' + esc(ln.amp_text || '\u2014') + '</dd>' +
                 '<dt>Idle f_01</dt><dd>' + fmtGHz(s.f01_hz) + '</dd>' +
                 '<dt>At the operation</dt><dd>' + fmtGHz(p.frequency_hz) + (p.kind ? ' <span class="czp-tier' + (/quad/.test(p.kind) ? ' czp-tier-quad' : '') + '">' + esc(p.kind) + '</span>' : '') +
                 (p.reason ? '<br><span class="czp-warn-text">' + esc(p.reason) + '</span>' : '') + '</dd>' +

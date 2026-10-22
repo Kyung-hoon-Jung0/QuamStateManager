@@ -22,7 +22,7 @@ const wait = () => new Promise(resolve => setTimeout(resolve, 30));
     await wait();
     if (mode === 'card') {
         const card = d.getElementById('czp-card');
-        assert(card.textContent.includes('Z amp (V)'), 'the card displays the server amplitude');
+        assert(card.textContent.includes('Z amp'), 'the card displays the server amplitude');
         payload.row.lines.forEach(line => {
             assert(card.textContent.includes(line.amp_text), 'the card prints the server text');
             assert(Array.from(card.querySelectorAll('dd')).some(dd => dd.title === line.amp_title));

@@ -22348,13 +22348,23 @@ def _cz_plan_table(rows) -> list[dict]:
         pts = [ln["point"] for ln in r["lines"]]
         kinds = sorted({p.get("kind") for p in pts if p.get("kind") and p.get("kind") != "idle f_01"})
         movers = [ln for ln in r["lines"] if ln["moves"] and ln["point"].get("validity") != "idle"]
-        validity = [ln["point"].get("validity") or "validity unknown" for ln in movers]
         sources = {"within the fitted model's measured range": "model",
                    "within the measured quadratic range": "quad",
                    "within the quadratic range": "quad"}
+
+        def judged(ln):
+            # the first lobe is the line's point; a later lobe (mirror / third) out of range
+            # makes the whole mover out of range
+            stages = [("", ln["point"].get("validity"))] + [
+                (lobe["name"], lobe["point"].get("validity")) for lobe in (ln.get("lobes") or [])[1:]]
+            stages = [(s, v or "validity unknown") for s, v in stages if v != "idle"]
+            return next(((s, v) for s, v in stages if v not in sources), stages[0])
+
+        verdicts = [judged(ln) for ln in movers]
+        validity = [v for _, v in verdicts]
         compact = bool(validity) and all(v in sources for v in validity)
-        title = "; ".join(ln["name"] + ": " + v for ln, v in zip(movers, validity))
-        warning = [v for v in validity if v not in sources]
+        title = "; ".join(ln["name"] + (" " + s if s else "") + ": " + v for ln, (s, v) in zip(movers, verdicts))
+        warning = [v + (" (" + s + ")" if s else "") for s, v in verdicts if v not in sources]
         validity_class = ("ok" if compact or not movers else
                           "unknown" if all("unknown" in v for v in warning) else "warn")
         text = ("in range (" + " / ".join(sorted({sources[v] for v in validity}))

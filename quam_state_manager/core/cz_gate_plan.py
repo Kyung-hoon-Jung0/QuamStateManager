@@ -338,8 +338,10 @@ class Conversion:
                 else:
                     out["note"] = (f"freq_vs_flux_01_quad_term is {out['ratio']:.2f}x the fitted model's local curvature")
                 if self.rejection is None:
-                    out["note"] += ("; frequencies come from the lab flux model wherever its measured flux range"
-                                    " covers the amplitude; the quad term is used only beyond it (see Estimate)")
+                    # With an anchor and no lab rejection, point() uses the model inside its
+                    # measured window and refuses beyond it; the quad term never sets a frequency.
+                    out["note"] += ("; this page uses the lab flux model, not the quad term: beyond the model's"
+                                    " measured flux range the operation is refused (see Validity)")
                 self.notes.append(out["note"])
         return out
 
@@ -680,16 +682,28 @@ def pulse_lobes(pulse, amplitude):
     return levels
 
 
+def signed_volts(value):
+    """Signed engineering volts; zero prints unsigned (never "+-0 V")."""
+    from .physical_units import format_volts
+    if value == 0:
+        return "0 V"
+    return ("+" if value > 0 else "-") + format_volts(abs(value))
+
+
+def _signed_stored(value):
+    """A stored amplitude whose output is not known: a plain signed number, no unit."""
+    return "0 stored" if value == 0 else f"{value:+.3g} stored"
+
+
 def _amplitude_view(doc, line):
     """Physical output once for both the table and card; unresolved shapes stay stored.
 
-    pulse_lobes returns levels in the stored amplitude's units, including offsets and
-    the zero-area tail. The annotation's signed unit peak converts those levels.
+    Single-lobe pulse: amplitude x the synthesized signed unit peak (amp_annotation).
+    Multi-lobe pulse: pulse_lobes already returns the plateau SAMPLE levels (mirror offset
+    and zero-area tail included), so on an LF port each level is volts as it stands; a
+    unit-amplitude peak would mix the absolute offset into a ratio [derived].
     """
-    from .physical_units import amp_annotation, format_volts
-
-    def signed(value):
-        return ("+" if value >= 0 else "") + format_volts(value)
+    from .physical_units import amp_annotation, channel_of, _port_kind
 
     path = line.get("pulse_path") or ""
     line.update(amp_text="\u2014", amp_title="stays at idle", amp_sort=None)
@@ -700,16 +714,21 @@ def _amplitude_view(doc, line):
         line["amp_title"] = path + ": " + (line["refusal"] or "pulse amplitude unknown")
         return
     played = line.get("played_pulse_path") or path
-    annotation = amp_annotation(doc, played + ".amplitude", amplitude)
-    physical = annotation is not None and annotation["kind"] == "lf"
-    peak = annotation["peak"] if physical else 1.0
-    suffix = "" if physical else " stored"
     levels = line["lobes"] or [{"name": "first lobe", "amplitude_v": amplitude}]
-    values = [level["amplitude_v"] * peak for level in levels]
-    line["amp_text"] = signed(values[0]) + suffix
+    if len(levels) > 1:
+        channel = channel_of(doc, played + ".amplitude")
+        rotated = number((resolved_tree(doc, path) or {}).get("axis_angle"))
+        physical = channel is not None and _port_kind(doc, channel)[0] == "lf" and not rotated
+        values = [level["amplitude_v"] for level in levels]
+    else:
+        annotation = amp_annotation(doc, played + ".amplitude", amplitude)
+        physical = annotation is not None and annotation["kind"] == "lf"
+        values = [amplitude * (annotation["peak"] if physical else 1.0)]
+    fmt = signed_volts if physical else _signed_stored
+    line["amp_text"] = fmt(values[0])
     line["amp_sort"] = abs(values[0])
     line["amp_title"] = path + "; " + "; ".join(
-        level["name"] + " " + signed(value) + suffix for level, value in zip(levels, values))
+        level["name"] + " " + fmt(value) for level, value in zip(levels, values))
     if not physical:
         line["amp_title"] += "; stored amplitude: LF port or waveform peak cannot be resolved"
 
@@ -821,11 +840,10 @@ def operations(doc, conversions=None, unavailable=None):
                     pulse_path = info["path"] + ".z.operations." + label
                     if not isinstance(current(doc, pulse_path), dict):
                         missing_pulse = f"not playable: {label} missing on {info['name']}"
-                played_pulse_path = pulse_path
                 if pulse_path and isinstance(current(doc, pulse_path), dict):
                     pulse_path = read(doc, pulse_path)["holder_path"]
-                if not isinstance(label, str):
-                    played_pulse_path = pulse_path
+                # the path the channel plays (the label on the qubit), else the resolved holder
+                played_pulse_path = info["path"] + ".z.operations." + label if isinstance(label, str) else pulse_path
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
                 refusal = pair_refusal or routing_reason or missing_pulse
                 if missing_pulse:
