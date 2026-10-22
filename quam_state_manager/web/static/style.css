@@ -14950,7 +14950,7 @@ td.cell-live-stale .cell-live-now {
 .topbar .search-box { min-width: 7rem; }
 .topbar #agent-pill, .topbar .state-version-wrap, .topbar .diag-tray-slot { flex-shrink: 0; }
 /* v1.5.1 (U P2-3): the chip's name is what says WHICH chip -- it narrows, never goes */
-@media (max-width: 1100px) { .sync-control .state-status-name { max-width: 6ch; } }
+@media (max-width: 640px) { .sync-control .state-status-name { max-width: 6ch; } }   /* v1.5.3: the bar has room for the chip name now */
 @media (max-width: 1000px) {
     .topbar .app-title { font-size: 0; }
     .topbar .app-title::after { content: "QSM"; font-size: .95rem; }
@@ -15927,3 +15927,40 @@ details.jargon > .jargon-explain {
 .czp-table th[aria-sort="ascending"] button.czp-sort::after { content: " \25B2"; font-size: .7em; }
 .czp-table th[aria-sort="descending"] button.czp-sort::after { content: " \25BC"; font-size: .7em; }
 .czp-filter-note { margin: .25rem 0 0; font-size: .85em; }
+
+/* ── v1.5.3 (design A): the topbar overflow menu ─────────────────────────
+   The bar keeps the chip name, Sync and Review; everything else is a moved
+   node inside #topbar-more-menu. Inside the menu every label shows again
+   (the bar's width ladder hid them to fit one row). */
+.topbar .topbar-more { position: relative; }
+.topbar .topbar-more-btn { width: auto; margin: 0; padding: .05rem .55rem; font-size: 1.15rem; line-height: 1.3;
+    background: transparent; color: var(--pico-color); border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
+.topbar .topbar-more-btn[aria-expanded="true"], .topbar .topbar-more-btn:hover { border-color: var(--pico-primary); }
+.topbar .topbar-more-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 250;
+    min-width: 17rem; max-width: calc(100vw - 16px); max-height: calc(100vh - var(--topbar-height, 54px) - 16px); overflow-y: auto;
+    padding: .4rem; background: var(--pico-card-background-color, var(--pico-background-color));
+    border: 1px solid var(--pico-muted-border-color); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+.topbar .topbar-more-menu[hidden] { display: none; }
+.topbar .topbar-more-menu > ul.topbar-more-list { display: flex; flex-direction: column; align-items: stretch; gap: .3rem;
+    margin: 0; padding: 0; list-style: none; }
+.topbar .topbar-more-menu > ul.topbar-more-list > li { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem;
+    margin: 0; padding: .1rem .2rem; min-width: 0; }
+.topbar .topbar-more-menu > ul.topbar-more-list > li[hidden],
+.topbar .topbar-more-menu > ul.topbar-more-list > li:empty { display: none; }
+.topbar .topbar-more-menu .search-box { flex: 1 1 auto; min-width: 0; }
+.topbar .topbar-more-menu .search-box input { width: 100%; }
+.topbar .topbar-more-menu .topbar-reload { margin: 0; }
+.topbar .topbar-more-menu .wb-link-text, .topbar .topbar-more-menu .rl-long,
+.topbar .topbar-more-menu .diag-badge-word { display: inline !important; }
+.topbar .topbar-more-menu .state-version-wrap { display: flex !important; }
+.topbar .topbar-more-menu #agent-pill:not([hidden]) { display: flex !important; }
+.topbar .topbar-more-menu > ul.topbar-more-list > li.topbar-tools-fallback { display: none; }
+html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.topbar-more-list > li.topbar-tools-fallback { display: flex; }
+.topbar .topbar-more-menu > ul.topbar-more-list > li.search-box { flex-wrap: nowrap; position: relative; }
+.topbar .topbar-more-menu .search-box input { margin: 0; }
+.topbar .topbar-more-menu .search-box .spinner { position: absolute; right: .6rem; }
+.topbar .topbar-more-menu .state-version-chip .state-version-id,
+.topbar .topbar-more-menu .state-version-chip .state-version-none,
+.topbar .topbar-more-menu .agent-pill-res:not([hidden]),
+.topbar .topbar-more-menu .agent-pill-text { display: inline !important; }
+.topbar .topbar-more-menu .agent-pill-mode:not([hidden]) { display: inline !important; }

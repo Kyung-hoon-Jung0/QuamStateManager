@@ -7375,7 +7375,10 @@ window.PhysAmp = (function () {
                 return el;
             }
         }
-        return document.getElementById('global-search');
+        var gs = document.getElementById('global-search');
+        // v1.5.3: the topbar search lives in the overflow menu; open it so the box can take focus
+        if (gs && gs.closest && gs.closest('#topbar-more-menu') && window.TopbarMore) window.TopbarMore.open(false);
+        return gs;
     }
     function _insertAtCaret(el, ch) {
         var s = el.selectionStart, e = el.selectionEnd, v = el.value || '';
@@ -27992,6 +27995,106 @@ window.TopbarFit = (function () {
     api.fit = fit;
     api.fitSoon = fitSoon;
     return api;
+})();
+
+/* ── the topbar overflow menu (v1.5.3, design A) ──────────────────────────
+ *
+ * The bar keeps the chip name, the Sync status control and Review; every other
+ * control is the SAME node moved into #topbar-more-menu (ids and handlers kept).
+ * A disclosure: Enter/Space on the button opens it (native button), ArrowDown/
+ * ArrowUp/Home/End and Tab move between its items, Esc closes it and returns
+ * focus to the button. An outside click closes it and still reaches its target;
+ * following a link inside it closes it too.
+ */
+window.TopbarMore = (function () {
+    'use strict';
+    function btn() { return document.getElementById('topbar-more-btn'); }
+    function menu() { return document.getElementById('topbar-more-menu'); }
+    function isOpen() { var m = menu(); return !!(m && !m.hidden); }
+    function items() {
+        var m = menu();
+        if (!m) return [];
+        var all = m.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [tabindex]:not([tabindex="-1"])');
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            var el = all[i];
+            if (el.closest('[hidden]') && el.closest('[hidden]') !== m) continue;
+            // jsdom has no layout; only trust offsetParent where layout exists
+            if (document.body.offsetParent !== undefined && m.offsetParent !== null
+                && el.offsetParent === null && el.getClientRects().length === 0) continue;
+            out.push(el);
+        }
+        return out;
+    }
+    function open(focusFirst) {
+        var m = menu(), b = btn();
+        if (!m || !b) return;
+        m.hidden = false;
+        b.setAttribute('aria-expanded', 'true');
+        if (focusFirst !== false) {
+            var it = items();
+            if (it.length) it[0].focus();
+        }
+    }
+    function close(returnFocus) {
+        var m = menu(), b = btn();
+        if (!m || m.hidden) return;
+        m.hidden = true;
+        if (b) {
+            b.setAttribute('aria-expanded', 'false');
+            if (returnFocus) b.focus();
+        }
+    }
+    function move(delta, to) {
+        var it = items();
+        if (!it.length) return;
+        var i = it.indexOf(document.activeElement);
+        var n = to === 'first' ? 0 : to === 'last' ? it.length - 1
+              : (i < 0 ? (delta > 0 ? 0 : it.length - 1) : (i + delta + it.length) % it.length);
+        it[n].focus();
+    }
+    document.addEventListener('click', function (e) {
+        var t = e.target;
+        if (!t || !t.closest) return;
+        var b = btn();
+        if (b && t.closest('#topbar-more-btn')) {
+            if (isOpen()) close(false); else open(e.detail === 0);
+            return;
+        }
+        if (!isOpen()) return;
+        var inMenu = t.closest('#topbar-more-menu');
+        if (!inMenu) { if (document.contains(t)) close(false); return; }
+        // a navigation from inside the menu closes it (the pane changes under it)
+        if (t.closest('a[href]')) close(false);
+    }, true);
+    document.addEventListener('keydown', function (e) {
+        if (!isOpen()) return;
+        var m = menu();
+        var inside = m.contains(document.activeElement) || document.activeElement === btn();
+        if (e.key === 'Escape') {
+            // a popover opened from an item handles its own Esc first
+            if (document.activeElement && document.activeElement.closest
+                && document.activeElement.closest('#topbar-more-menu .state-version-panel:not([hidden])')) return;
+            close(true);
+            e.preventDefault();
+            return;
+        }
+        if (!inside) return;
+        var typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+        if (e.key === 'ArrowDown') { move(1); e.preventDefault(); }
+        else if (e.key === 'ArrowUp') { move(-1); e.preventDefault(); }
+        else if (!typing && e.key === 'Home') { move(0, 'first'); e.preventDefault(); }
+        else if (!typing && e.key === 'End') { move(0, 'last'); e.preventDefault(); }
+    });
+    // Tab out of the last item (or Shift+Tab out of the first) leaves the menu: close it
+    document.addEventListener('focusin', function (e) {
+        if (!isOpen()) return;
+        var t = e.target;
+        if (t === btn() || (menu() && menu().contains(t))) return;
+        if (t && t.closest && t.closest('#sm-reload-pop, .calc-popover, .settings-popover, dialog')) return;
+        close(false);
+    });
+    return { open: open, close: close, isOpen: isOpen, items: items };
 })();
 
 /* ── hx-on without eval (docs/120 item 27) ────────────────────────────────

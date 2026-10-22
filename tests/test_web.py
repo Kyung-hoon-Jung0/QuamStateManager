@@ -7465,13 +7465,21 @@ class TestSidebarIAr15:
                 / "app.js").read_text(encoding="utf-8")
 
     def test_structure_then_health_order(self):
+        # v1.5.3 IA (design A, user-approved): CHANGED ON PURPOSE -- the most-used
+        # pages lead (Chip Status, Live State Edit, Datasets); the rest keep the
+        # r15 structure->health order beneath them. The head rows (Projects,
+        # State Load, Generate Config) stay first.
         base = self._base()
-        assert (base.index(">Instrument Wiring</a>")
+        assert (base.index(">Projects</a>")
+                < base.index(">State Load</button>")
+                < base.index(">Generate Config</a>")
+                < base.index(">Chip Status</a>")
+                < base.index(">Live State Edit</a>")
+                < base.index(">Datasets</a>")
+                < base.index(">Instrument Wiring</a>")
                 < base.index(">Chip Components</a>")
                 < base.index(">Diagnostics</a>")
-                < base.index(">Chip Status</a>")
                 < base.index(">Compare</a>")
-                < base.index(">Live State Edit</a>")
                 < base.index(">Experiment Runner</a>")
                 < base.index(">Fit Replay</a>")
                 < base.index(">Auto Calibrate")
@@ -7481,6 +7489,10 @@ class TestSidebarIAr15:
                 < base.index(">Calibration log</a>")
                 < base.index(">State History</a>")
                 < base.index(">Param History</a>"))
+        # the CZ gate plan and Pulses stay inside their groups, which now lead
+        assert (base.index(">Chip Status</a>") < base.index(">CZ gate plan</a>")
+                < base.index(">Live State Edit</a>") < base.index(">Pulses</a>")
+                < base.index(">Datasets</a>"))
 
     def test_group_memberships(self):
         base = self._base()
