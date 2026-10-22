@@ -14330,6 +14330,19 @@ window.TreeMulti = (function () {
  * no htmx history event, so nothing ever CLEARED the previous menu), and
  * chip-status's _setActiveTab (its own group only). Every navigation now
  * clears everything and re-derives the active set from the URL. */
+window.SidebarReveal = {
+    decide: function(sbRect, linkRect) {
+        return linkRect.top >= sbRect.top - 0.5 && linkRect.bottom <= sbRect.bottom + 0.5 ? null : 'center';
+    },
+    reveal: function() {
+        var sb = document.querySelector('.sidebar');
+        var link = document.querySelector('.sidebar-nav a.active');
+        if (!sb || !link) return;
+        if (window.SidebarReveal.decide(sb.getBoundingClientRect(), link.getBoundingClientRect()) === 'center') {
+            try { link.scrollIntoView({ block: 'center' }); } catch (e) {}
+        }
+    }
+};
 window.syncSidebarNavActive = function() {
     var path = window.location.pathname;
     // The diff family is ONE destination in the sidebar: /diff/versions and
@@ -14364,14 +14377,7 @@ window.syncSidebarNavActive = function() {
         var twin = matches.some(function(o) { return o !== m && o.href === m.href && o.sub; });
         if (!(m.sub === false && twin)) m.a.classList.add("active");
     });
-    // Bring the active item into the sidebar's own scrollport (the sidebar
-    // is overflow-y:auto; a Compare press from the topbar can land on an item
-    // scrolled out of sight). block:'nearest' keeps this a sidebar-only
-    // scroll — it never moves the page.
-    var act = document.querySelector('.sidebar-nav a.active');
-    if (act && act.scrollIntoView) {
-        try { act.scrollIntoView({ block: 'nearest' }); } catch (e) {}
-    }
+    window.SidebarReveal.reveal();
 };
 /* Workspace Refresh feedback (docs/126 r3, second round): the CSS-only
  * .htmx-request spin is invisible on a SMALL workspace — the rescan settles
@@ -27742,6 +27748,18 @@ window.TopbarHeight = (function () {
         start();
     }
     return { publish: publish, publishSoon: publishSoon, measure: measure };
+})();
+
+// Run after the first topbar height publish has sized the sidebar scrollport.
+(function () {
+    function revealOnLoad() {
+        window.requestAnimationFrame(function () { window.SidebarReveal.reveal(); });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', revealOnLoad, { once: true });
+    } else {
+        revealOnLoad();
+    }
 })();
 
 /* ── the top bar does not bounce on an edit (docs/203) ────────────────────

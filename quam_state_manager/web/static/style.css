@@ -12834,14 +12834,15 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     font-size: .84rem;
 }
 .cnb-text { flex: 1 1 320px; min-width: 240px; }
-.cnb-text code { font-size: .8em; }
+.cnb-text code { font-size: .8em; display: inline-block; padding: 0 .3em; max-width: 40ch;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .cnb-form { display: flex; align-items: center; gap: .35rem; margin: 0; flex-wrap: wrap; }
 .cnb-form input[type=text] {
-    width: 12rem; margin: 0; padding: .15rem .45rem; height: 1.9rem;
+    width: 12rem; margin: 0; padding: .15rem .45rem; height: 1.7em;
     font-size: .82rem;
 }
 .cnb-form .cnb-set, .cnb-form .cnb-no {
-    width: auto; margin: 0; padding: .18rem .7rem; font-size: .78rem;
+    width: auto; margin: 0; padding: .18em .7rem; font-size: .78rem;
     border-radius: .5rem; line-height: 1.3;
 }
 .cnb-form .cnb-no {
@@ -12853,17 +12854,17 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     font-size: .78rem; color: var(--color-text-muted);
 }
 /* r10: dangling-fix + record-suggestion forms */
-.cnb-note { display: block; font-size: .72rem; }
+.cnb-note { font-size: .72rem; }
 .cnb-form .cnb-use, .cnb-form .cnb-clear {
-    width: auto; margin: 0; padding: .18rem .55rem; font-size: .74rem;
+    width: auto; margin: 0; padding: .18em .55rem; font-size: .74rem;
     border-radius: .5rem; line-height: 1.3;
     background: transparent; border: 1px solid var(--pico-primary);
-    color: var(--pico-primary); max-width: 24rem; overflow: hidden;
+    color: var(--pico-primary); max-width: 14rem; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
 }
 .cnb-form .cnb-clear { border-color: var(--pico-muted-border-color);
     color: var(--pico-contrast); }
-.cnb-df-form input[type=text] { width: 16rem; }
+.cnb-df-form input[type=text] { width: 10rem; }
 .chip-name-banner.cnb-suggest { border-color: var(--pico-primary); }
 /* docs/301 F26: the "stop asking" x is a small text button -- unstyled, Pico's
    button rule drew it as a full-width primary block beside its two answers */
@@ -15201,18 +15202,15 @@ table.data-table.czp-table td.czp-prose, .czp-table td small { font-family: var(
 .tree-multi-msg { flex: 1 1 100%; font-size: .78rem; }
 
 /* docs/237: the top bar's Reload -- a quiet text button beside the ⌗ link;
-   "Reload" reads "Re" wherever the title reads "QSM" (same ladder step) */
+   Reload becomes an icon at the compact ladder step */
 .topbar .topbar-reload { width: auto; margin: 0 0 0 .35rem; padding: .1rem .5rem; font-size: .85rem; line-height: 1.4;
     background: transparent; color: var(--pico-muted-color); border: 1px solid var(--pico-muted-border-color);
     border-radius: 999px; white-space: nowrap; cursor: pointer; }
 .topbar .topbar-reload:hover, .topbar .topbar-reload:focus-visible,
 .topbar .topbar-reload[aria-expanded="true"] { color: var(--pico-color); border-color: var(--pico-muted-color); }
-.topbar .topbar-reload .rl-short { display: none; }
 .topbar.tb-fit-5 .topbar-reload .rl-long { display: none; }
-.topbar.tb-fit-5 .topbar-reload .rl-short { display: inline; }
 @media (max-width: 1000px) {
     .topbar .topbar-reload .rl-long { display: none; }
-    .topbar .topbar-reload .rl-short { display: inline; }
 }
 .sm-reload-pop { position: fixed; z-index: 300; width: 19rem; padding: .6rem .7rem; display: flex; flex-direction: column; gap: .45rem;
     background: var(--pico-card-background-color); color: var(--pico-color);

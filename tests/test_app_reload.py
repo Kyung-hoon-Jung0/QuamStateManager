@@ -8,6 +8,7 @@ dropped: with edits pending the files are not re-read.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -126,7 +127,10 @@ def test_the_button_is_in_the_top_bar(app_chip):
     _, c, _ = app_chip
     html = c.get("/qubits").get_data(as_text=True)
     assert 'id="topbar-reload"' in html
-    assert '<span class="rl-long"> Reload</span><span class="rl-short"> Re</span>' in html
+    assert '<span class="rl-long"> Reload</span>' in html
+    assert 'rl-short' not in html and '> Re<' not in html
+    button = re.search(r'<button[^>]*id="topbar-reload"[^>]*>', html).group(0)
+    assert 'aria-label="Reload"' in button
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")

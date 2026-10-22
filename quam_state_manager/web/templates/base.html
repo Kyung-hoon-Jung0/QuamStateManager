@@ -297,11 +297,11 @@
                        class="wb-link" title="Sync-Qualibrate — open Qualibrate side-by-side with the State Manager" aria-label="Sync-Qualibrate">⌗<span class="wb-link-text"> Sync-Qualibrate</span></a></li>
                 {# docs/237 (customers 2026-10-01): a Reload for when a view needs a
                    fresh render. It asks what to reload -- the chip only, or the chip
-                   and the Python env (app.js: SmReload). "Reload" reads "Re" where the
-                   title reads "QSM". #}
-                <li class="topbar-reload-li"><button type="button" class="topbar-reload" id="topbar-reload"
+                   and the Python env (app.js: SmReload). The compact step shows
+                   only the reload icon. #}
+                <li class="topbar-reload-li"><button type="button" class="topbar-reload" id="topbar-reload" aria-label="Reload"
                         aria-haspopup="dialog" aria-expanded="false"
-                        title="Reload — re-read the chip (and optionally the Python env) and redraw the page">&#8635;<span class="rl-long"> Reload</span><span class="rl-short"> Re</span></button></li>
+                        title="Reload &#8212; re-read the chip (and optionally the Python env) and redraw the page">&#8635;<span class="rl-long"> Reload</span></button></li>
                 <li id="topbar-tray-slot">{% include '_pending_tray.html' %}
                     {# docs/120 item 8: OUTSIDE #pending-tray (which OOB-swaps on
                        every commit) but inside its slot, so the popup survives a

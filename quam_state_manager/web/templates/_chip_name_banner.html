@@ -80,7 +80,7 @@
      data-banner-sig="dangle:{{ extras_data_dangling | join(',') }}">
   <span class="cnb-text">
     Data folder not reachable:
-    {% for raw in extras_data_dangling %}<code>{{ raw }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+    {% for raw in extras_data_dangling %}<code title="{{ raw }}">{{ raw }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
     <span class="cnb-note">(<code>extras.data_folder</code>{% if extras_data_dangling | length > 1 %} — setting one folder replaces all {{ extras_data_dangling | length }}{% endif %})</span>
   </span>
   <form class="cnb-form cnb-df-form" hx-post="/chip-data-folder/set"
