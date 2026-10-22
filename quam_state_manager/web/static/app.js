@@ -3930,6 +3930,22 @@ window.closeReview = function() {
     _markControlExpanded(false);
 };
 
+/* v1.5.3: a click outside the sync panel closes it AND still reaches its target.
+ * The panel is a popover (no backdrop), so a press on another topbar control
+ * (Reload) used to run that control's own popup UNDER the still-open panel --
+ * one click looked like nothing. Capture phase, so the panel is gone before the
+ * target's own handler runs; never preventDefault / stopPropagation. The
+ * control's own button keeps its toggle (openReview), and presses inside the
+ * panel, an open <dialog> or a toast leave it open. */
+document.addEventListener("click", function (e) {
+    if (!_syncPanelOpen()) return;
+    var t = e.target;
+    if (!t || !t.closest || !document.contains(t)) return;
+    if (t.closest("#state-review-overlay, #pending-tray .sync-control, #auto-sync-pop-host,"
+                  + " dialog[open], .toast, #toast-container")) return;
+    window.closeReview();
+}, true);
+
 window.SyncPanel = (function () {
     var _gen = 0;
     function host() { return document.getElementById("state-review-host"); }
