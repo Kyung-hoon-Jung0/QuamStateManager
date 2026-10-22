@@ -733,29 +733,124 @@
     function stickOperation(table) {
         var pair = table && table.querySelector('th.czp-stick');
         if (!pair) return;
-        var wrap = table.parentElement;
+        var wrap = table.parentElement, head = table.tHead;
+        if (!wrap || !head) return;
+        var floating = document.createElement('div'), copy = document.createElement('table');
+        floating.className = 'czp-float-head';
+        floating.setAttribute('aria-hidden', 'true');
+        floating.hidden = true;
+        copy.className = table.className;
+        floating.appendChild(copy);
+        wrap.parentElement.appendChild(floating);
+        var pane = wrap.parentElement;
+        while (pane && !/(auto|scroll|overlay)/.test(window.getComputedStyle(pane).overflowY)) pane = pane.parentElement;
+        var frame = 0, stopped = false, resizeObserver, headObserver, removalObserver;
+        function teardown() {
+            if (stopped) return;
+            stopped = true;
+            if (frame) window.cancelAnimationFrame(frame);
+            if (resizeObserver) resizeObserver.disconnect();
+            if (headObserver) headObserver.disconnect();
+            if (removalObserver) removalObserver.disconnect();
+            document.removeEventListener('scroll', schedule, true);
+            window.removeEventListener('resize', sync);
+            wrap.removeEventListener('scroll', horizontal);
+            floating.removeEventListener('click', forward);
+            floating.remove();
+        }
+        function alive() {
+            if (!document.contains(table)) teardown();
+            return !stopped;
+        }
+        function horizontal() {
+            if (!alive()) return;
+            var x = wrap.scrollLeft;
+            wrap.classList.toggle('czp-scrolled-x', x > 0);
+            copy.style.transform = 'translateX(' + (-x) + 'px)';
+            Array.prototype.forEach.call(copy.querySelectorAll('.czp-stick, .czp-stick-op'), function (cell) {
+                cell.style.transform = 'translateX(' + x + 'px)';
+            });
+        }
+        function update() {
+            frame = 0;
+            if (!alive()) return;
+            // Let computed style resolve rem, calc() and other CSS lengths to pixels.
+            floating.style.top = window.getComputedStyle(document.documentElement).getPropertyValue('--topbar-height').trim() || '0px';
+            var bar = parseFloat(window.getComputedStyle(floating).top) || 0;
+            var top = Math.max(pane ? pane.getBoundingClientRect().top : 0, bar);
+            var box = wrap.getBoundingClientRect();
+            floating.style.top = top + 'px';
+            floating.style.left = box.left + 'px';
+            floating.style.width = wrap.clientWidth + 'px';
+            // Measure while displayed: a hidden clone has no layout height.
+            floating.hidden = false;
+            var height = copy.getBoundingClientRect().height;
+            floating.hidden = wrap.classList.contains('czp-wrap-fits') || !(head.getBoundingClientRect().bottom < top &&
+                table.getBoundingClientRect().bottom > top + height);
+            horizontal();
+        }
+        function schedule() {
+            if (alive() && !frame) frame = window.requestAnimationFrame(update);
+        }
         function sync() {
-            table.style.setProperty('--czp-stick-op', pair.getBoundingClientRect().width + 'px');
-            // rows scrolled into view stop below the sticky header, never under it
-            var head = table.tHead;
-            if (head) table.style.setProperty('--czp-head-h', head.getBoundingClientRect().height + 'px');
-            if (wrap) {
-                var style = window.getComputedStyle(wrap);
-                var content = wrap.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
-                wrap.classList.toggle('czp-wrap-fits', table.getBoundingClientRect().width <= content);
-            }
+            if (!alive()) return;
+            var pairWidth = pair.getBoundingClientRect().width + 'px';
+            table.style.setProperty('--czp-stick-op', pairWidth);
+            copy.style.setProperty('--czp-stick-op', pairWidth);
+            table.style.setProperty('--czp-head-h', head.getBoundingClientRect().height + 'px');
+            var style = window.getComputedStyle(wrap);
+            var content = wrap.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+            var width = table.getBoundingClientRect().width;
+            wrap.classList.toggle('czp-wrap-fits', width <= content);
+            copy.style.width = width + 'px';
+            var originals = head.querySelectorAll('th');
+            Array.prototype.forEach.call(copy.querySelectorAll('th'), function (cell, i) {
+                var size = originals[i].getBoundingClientRect().width + 'px';
+                cell.style.width = size;
+                cell.style.minWidth = size;
+                cell.style.maxWidth = size;
+            });
+            horizontal();
+            schedule();
         }
-        sync();
-        if (window.ResizeObserver) new window.ResizeObserver(sync).observe(pair, { box: 'border-box' });
-        // the held columns get an edge only while other columns pass under them
-        if (window.ResizeObserver && wrap) {
-            var fitObserver = new window.ResizeObserver(sync);
-            fitObserver.observe(wrap);
-            fitObserver.observe(table);
+        function rebuild() {
+            if (!alive()) return;
+            var clone = head.cloneNode(true);
+            clone.removeAttribute('id');
+            Array.prototype.forEach.call(clone.querySelectorAll('[id]'), function (el) { el.removeAttribute('id'); });
+            Array.prototype.forEach.call(clone.querySelectorAll('[data-sort-key]'), function (el) {
+                el.setAttribute('data-czp-float-key', el.getAttribute('data-sort-key'));
+                el.removeAttribute('data-sort-key');
+            });
+            Array.prototype.forEach.call(clone.querySelectorAll('button'), function (button) { button.tabIndex = -1; });
+            copy.replaceChildren(clone);
+            sync();
         }
-        if (wrap) wrap.addEventListener('scroll', function () {
-            wrap.classList.toggle('czp-scrolled-x', wrap.scrollLeft > 0);
-        }, { passive: true });
+        function forward(ev) {
+            if (!alive()) return;
+            var button = ev.target.closest && ev.target.closest('button.czp-sort');
+            var cell = button && button.closest('th[data-czp-float-key]');
+            if (!cell) return;
+            var key = cell.getAttribute('data-czp-float-key');
+            var original = Array.prototype.find.call(head.querySelectorAll('th[data-sort-key]'), function (th) {
+                return th.getAttribute('data-sort-key') === key;
+            });
+            if (original && original.querySelector('button')) original.querySelector('button').click();
+            rebuild();
+        }
+        rebuild();
+        if (window.ResizeObserver) {
+            resizeObserver = new window.ResizeObserver(sync);
+            [pair, wrap, head, table].forEach(function (el) { resizeObserver.observe(el); });
+        }
+        headObserver = new MutationObserver(rebuild);
+        headObserver.observe(head, { attributes: true, subtree: true, childList: true });
+        removalObserver = new MutationObserver(alive);
+        removalObserver.observe(document.documentElement, { childList: true, subtree: true });
+        document.addEventListener('scroll', schedule, { passive: true, capture: true });
+        window.addEventListener('resize', sync);
+        wrap.addEventListener('scroll', horizontal, { passive: true });
+        floating.addEventListener('click', forward);
     }
 
     /* A date and its time stay on one line in the Last set column (a narrow cell broke the

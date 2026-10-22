@@ -15068,6 +15068,12 @@ html.sm-in-frame { --sidebar-width: 220px; }
 .czp-wrap-fits .czp-table thead th { position: sticky; top: calc(-1 * var(--table-pane-pad-v, 0px)); z-index: 2; background: var(--pico-background-color); }
 .czp-wrap-fits .czp-table thead th.czp-stick { z-index: 3; }
 .czp-wrap-fits .czp-table tbody tr { scroll-margin-top: calc(var(--czp-head-h, 2.5rem) + var(--table-pane-pad-v, 0px)); }
+.czp-float-head { position: fixed; overflow: hidden; z-index: 30; background: var(--pico-background-color);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, .14); }
+.czp-float-head[hidden] { display: none; }
+.czp-float-head table { table-layout: fixed; margin: 0; }
+/* Horizontal pinning is handled by matching transforms, independent of sticky layout. */
+.czp-float-head .czp-table th.czp-stick { position: relative; left: auto; }
 .czp-table .czp-row { cursor: pointer; }
 .czp-table .czp-row-selected td { background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
 .czp-table .czp-row-selected td:first-child { box-shadow: inset 3px 0 0 var(--pico-primary, #4f9cf9); }
@@ -15095,6 +15101,13 @@ table.data-table.czp-table th, table.data-table.czp-table td { padding-left: .25
 table.data-table.czp-table td.czp-prose, .czp-table td small { font-family: var(--font-ui); }
 .czp-table td.czp-validity { min-width: 8em; }
 .czp-table td.czp-last { min-width: 9.5em; }
+@container (max-width: 62em) {
+    .czp-table td.czp-validity, .czp-table td.czp-last, .czp-table td:nth-child(8) {
+        min-width: 5em; white-space: normal;
+    }
+    .czp-table td:nth-child(8) .czp-tier { white-space: normal; }
+    table.data-table.czp-table th:not(.czp-stick) { white-space: normal; }
+}
 .czp-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .czp-mover { display: inline-block; margin-right: 0.3rem; font-weight: 600; }
 .czp-tier { display: inline-block; font-size: 0.75em; padding: 0 0.35rem; margin: 0 0.2rem 0.1rem 0; border-radius: 0.6rem;
