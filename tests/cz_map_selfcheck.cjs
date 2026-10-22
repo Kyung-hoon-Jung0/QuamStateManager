@@ -601,10 +601,9 @@ async function footerPins(only) {
     const multi = p21.text.filter(t => names(t).length >= 3);
     // every partner label as the box it prints in (9 px font; anchored at its segment's top right or top left)
     const colPx21 = (1000 - 80) / 21, pbox = k => {
-        const lines = p21.text[k].split('<br>'), h = 11 * lines.length;
+        const lines = p21.text[k].split('<br>');
         const w = Math.max(...lines.map(l => S21.w.CzMap.partnerWidth(l))), x = p21.x[k] * colPx21, y = (p21.y[k] - r21.layout.yaxis.range[0]) * cl21.pxPerGHz;
-        const left = p21.textposition[k].endsWith('left'), bottom = p21.textposition[k].startsWith('bottom');
-        return {x0: x - (left ? w : 0), x1: x + (left ? 0 : w), y0: bottom ? y - 3 - h : y + 3, y1: bottom ? y - 3 : y + 3 + h};
+        return S21.w.CzMap.partnerBox(x, y, p21.textposition[k], w, lines.length);
     };
     const overprint = [];
     p21.x.forEach((x, k) => p21.x.forEach((x2, k2) => {
@@ -635,8 +634,7 @@ async function footerPins(only) {
         const boxes = p.text.map((text, i) => {
             const lines = text.split('<br>'), w = Math.max(...lines.map(s => S21.w.CzMap.partnerWidth(s)));
             const x = p.x[i] * col, y = (p.y[i] - r.layout.yaxis.range[0]) * scale;
-            const left = p.textposition[i].endsWith('left'), bottom = p.textposition[i].startsWith('bottom'), h = lines.length * 11;
-            return {x0: x - (left ? w : 0), x1: x + (left ? 0 : w), y0: bottom ? y - 3 - h : y + 3, y1: bottom ? y - 3 : y + 3 + h, w};
+            return Object.assign(S21.w.CzMap.partnerBox(x, y, p.textposition[i], w, lines.length), {w});
         });
         const height = (r.layout.height - r.layout.margin.t - r.layout.margin.b) * (1 - r.layout.yaxis.domain[0]);
         check(boxes.every((a, i) => a.y0 >= 0 && a.y1 <= height && a.w <= 0.76 * col && r.layout.xaxis.ticktext.every((name, j) => {

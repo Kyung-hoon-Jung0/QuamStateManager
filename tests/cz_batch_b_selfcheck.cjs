@@ -35,11 +35,15 @@ function harness(file, names) {
             assert.strictEqual(d.querySelectorAll('td[data-last]')[1].firstChild.title, h.historyAnswer.note);
         } else {
             const data = h.payload('qubit_pairs.p.macros.a', false);
-            data.row.coupler = {name: 'c12', amp_text: '+100 mV', amp_title: 'couplers.c12.operations.flux'};
-            data.row.coupler_amplitude_v = .3;
+            const unknown = process.argv[3] === 'unknown';
+            data.row.coupler = unknown
+                ? {name: 'c12', amp_text: 'unknown', amp_title: 'x: not playable: flux missing on c12', amp_reason: 'not playable: flux missing on c12'}
+                : {name: 'c12', amp_text: '+100 mV', amp_title: 'couplers.c12.operations.flux'};
+            data.row.coupler_amplitude_v = unknown ? null : .3;
             h.answer(0, data); await h.wait(30);
             const line = d.querySelector('.czp-card-coupler');
-            assert(line && line.textContent === '+100 mV', 'card prints the played coupler amplitude');
+            if (unknown) assert(line && line.textContent === 'unknown (not playable: flux missing on c12)', 'an unresolved coupler says unknown and why');
+            else assert(line && line.textContent === '+100 mV', 'card prints the played coupler amplitude');
             assert.strictEqual(line.title, data.row.coupler.amp_title);
         }
         w.close();
@@ -48,6 +52,7 @@ function harness(file, names) {
         const {w,d} = h, table = d.getElementById('czp-table'), wrap = table.parentElement;
         let tableWidth = 600, wrapWidth = 700;
         table.getBoundingClientRect = () => ({width: tableWidth});
+        table.tHead.getBoundingClientRect = () => ({width: tableWidth, height: 31});
         Object.defineProperty(wrap, 'clientWidth', {get: () => wrapWidth});
         // Overflow changes scrollWidth; the measurement must never depend on that value.
         Object.defineProperty(wrap, 'scrollWidth', {get: () => wrap.classList.contains('czp-wrap-fits') ? 900 : 600});
@@ -59,6 +64,7 @@ function harness(file, names) {
         tableWidth = 680; wrap.style.padding = '0 15px'; sync(); assert(!wrap.classList.contains('czp-wrap-fits'), 'padding is excluded from available width');
         wrapWidth = 720; sync(); sync(); assert(wrap.classList.contains('czp-wrap-fits'));
         assert(h.observers.some(o => o.el === table), 'the table is observed');
+        assert.strictEqual(table.style.getPropertyValue('--czp-head-h'), '31px', 'the sticky header height is measured for the rows scroll margin');
         const pane = d.createElement('div'); pane.id = 'table-pane';
         d.body.appendChild(pane); pane.appendChild(d.getElementById('czp-root'));
         const scrolled = [];
@@ -71,7 +77,7 @@ function harness(file, names) {
         for (const key of ['ArrowDown', 'ArrowDown', 'ArrowUp']) d.dispatchEvent(new w.KeyboardEvent('keydown', {key, bubbles: true}));
         assert.deepStrictEqual(scrolled, [[0,'nearest'], [1,'nearest'], [0,'nearest']], 'row navigation scrolls within the page pane');
         w.close();
-    } else if (['map', 'map_segment', 'map_refused'].includes(mode)) {
+    } else if (['map', 'map_segment', 'map_refused', 'map_unknown'].includes(mode)) {
         const h = harness('cz_map_selfcheck.cjs', 'page,NO_LOSS');
         const qubits = [1,2,3].map((i) => ({name: 'q'+i+'x', path: 'qubits.q'+i, f01_hz: 5e9,
             grid_location: i+',0', direction: 'unknown', defects: [], safe: []}));
@@ -81,6 +87,13 @@ function harness(file, names) {
         const map = {ok: true, qubits, segments: [seg(1,5e9), seg(2,5e9)], refused: [], planned: [],
             missing: [], operations: ['cz'], pairs: {'q1-2': {control: 'q1x', target: 'q2x',
                 control_path: 'qubits.q1', target_path: 'qubits.q2', coupler_amp_text: '+100 mV'}}};
+        if (mode === 'map_unknown') {
+            Object.assign(map.pairs['q1-2'], {coupler_amp_text: 'unknown', coupler_amp_reason: 'not playable: flux missing on c12'});
+            const U = await h.page({map, loss: h.NO_LOSS, width: 320});
+            const seg = U.last().traces.filter(t => t.meta === 'seg').flatMap(t => t.text).filter(Boolean);
+            assert(seg.length && seg.every(t => t.includes('coupler unknown (not playable: flux missing on c12)') && !t.includes('coupler \u2014')), 'hover names an unresolved coupler and why');
+            U.close(); console.log('batch b map_unknown: passed'); return;
+        }
         const S = await h.page({map, loss: h.NO_LOSS, width: 320});
         function boxes() {
             const r = S.last(), p = r.traces.find(t => t.meta === 'partners');
@@ -89,11 +102,8 @@ function harness(file, names) {
             const col = (S.width - r.layout.margin.l - r.layout.margin.r) / 3;
             return {r,p,H, scale, col, values: p ? p.text.map((text,i) => {
                 const width = Math.max(...text.split('<br>').map(t => S.w.CzMap.partnerWidth(t)));
-                const height = 11 * text.split('<br>').length;
                 const x = p.x[i]*col, y = (p.y[i] - r.layout.yaxis.range[0])*scale;
-                const left = p.textposition[i].endsWith('left'), bottom = p.textposition[i].startsWith('bottom');
-                return {x0: x - (left ? width : 0), x1: x + (left ? 0 : width),
-                    y0: bottom ? y-3-height : y+3, y1: bottom ? y-3 : y+3+height};
+                return Object.assign(S.w.CzMap.partnerBox(x, y, p.textposition[i], width, text.split('<br>').length), {y});
             }) : []};
         }
         // Tune a high row to put its top box across the header's padded lower edge.
@@ -103,6 +113,14 @@ function harness(file, names) {
         let b = boxes();
         if (mode === 'map') assert(b.p && b.p.textposition.every(p => p.startsWith('bottom')), 'blocked top labels use a bottom spot');
         if (mode === 'map') assert(b.values.every(a => a.y0 >= 0 && a.y1 <= b.H), 'every partner box is within the plot');
+        if (mode === 'map') {
+            // the box follows Plotly's own text offset: r = marker radius / 0.8 + 1 (Drawing.textPointPosition)
+            assert(b.p.mode.includes('markers') && b.p.marker.opacity === 0, 'the partner trace sets its own text offset');
+            const r = b.p.marker.size / 2 / 0.8 + 1;
+            assert.strictEqual(S.w.CzMap.partnerGap(), r, 'the placement gap is the offset Plotly applies');
+            // a label under its own segment (3.2 px line) keeps a real margin, not a 1 px tie
+            assert(b.values.every(a => a.y > a.y1 && a.y - 1.6 - a.y1 >= S.w.CzMap.PARTNER_CLEAR), 'a bottom label clears its own segment line');
+        }
         const overlaps = (a,c) => a.x0 < c.x1+1 && c.x0 < a.x1+1 && a.y0 < c.y1+1 && c.y0 < a.y1+1;
         if (mode === 'map') assert(b.values.every(a => qubits.every((q,i) => !overlaps(a, {x0: (i+.5)*b.col-14, x1:(i+.5)*b.col+14, y0:b.H-3, y1:b.H+15}))), 'every partner box clears every header');
         if (mode !== 'map_refused') assert(b.r.traces.filter(t => t.meta === 'seg').some(t => t.text.some(t => t && t.includes('q1 Z amp +120 mV') && t.includes('coupler +100 mV'))), 'segment hover prints both amplitudes');

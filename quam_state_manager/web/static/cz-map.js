@@ -34,6 +34,9 @@
     var LABEL_FONT = 10;
     var CLUSTER_PX = 6;        // segments of one column this close share the row side by side
     var PARTNER_H = 11;        // a partner name's height (9 px font)
+    var PARTNER_FONT = 9;
+    var PARTNER_MARKER = 6;    // the partner trace's invisible marker size: it sets Plotly's text offset
+    var PARTNER_CLEAR = 2;     // free pixels kept between a partner box and anything it must clear
     var RETRY_N = 20, RETRY_MS = 3000;   // re-asks while the change history is being built
     /* Each hue clears text contrast on its theme's surfaces; partner names and the framed
        frequency labels also identify pairs without relying on colour alone. */
@@ -264,6 +267,20 @@
         return { lines: lines, h: PARTNER_H * lines.length,
                  w: Math.max.apply(null, lines.map(function (l) { return partnerWidth(l.join(' ')); })) };
     }
+    /* Plotly places a scatter text point (Drawing.textPointPosition) r = mrc / 0.8 + 1 px off
+       its point, mrc = marker size / 2, with lines 1.3 em apart [derived from the plotly.js source].
+       The partner trace sets that marker itself, so the box below is where the text prints. */
+    function partnerGap() { return PARTNER_MARKER / 2 / 0.8 + 1; }
+    function partnerBox(xpx, ypx, pos, w, lines) {
+        var g = partnerGap(), h = Math.max(PARTNER_H * lines, PARTNER_FONT * ((lines - 1) * 1.3 + 1));
+        var left = /left$/.test(pos), bottom = /^bottom/.test(pos);
+        return { x0: left ? xpx - g - w : xpx + g, x1: left ? xpx - g : xpx + g + w,
+                 y0: bottom ? ypx - g - h : ypx + g, y1: bottom ? ypx - g : ypx + g + h };
+    }
+    // true only when at least m pixels separate the boxes (touching boxes do not clear)
+    function boxesClear(a, b, m) {
+        return a.x1 + m <= b.x0 || b.x1 + m <= a.x0 || a.y1 + m <= b.y0 || b.y1 + m <= a.y0;
+    }
     function pointSegDist(p, a, b) {
         var dx = b.X - a.X, dy = b.Y - a.Y, l2 = dx * dx + dy * dy;
         var t = l2 ? Math.max(0, Math.min(1, ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / l2)) : 0;
@@ -464,7 +481,8 @@
         function amplitudeHover(pair) {
             return m.segments.concat(m.refused || []).filter(function (s) { return s.pair === pair && s.moves; })
                 .map(function (s) { return '<br>' + esc(s.qubit) + ' Z amp ' + esc(s.amp_text || 'unknown'); }).join('') +
-                ((pairs[pair] || {}).coupler_amp_text ? '<br>coupler ' + esc(pairs[pair].coupler_amp_text) : '');
+                ((pairs[pair] || {}).coupler_amp_text ? '<br>coupler ' + esc(pairs[pair].coupler_amp_text) +
+                    (pairs[pair].coupler_amp_reason ? ' (' + esc(pairs[pair].coupler_amp_reason) + ')' : '') : '');
         }
         var P = pairColors(), colour = edgeColours(pairs);
         var muted = cssVar('--pico-muted-color', '#8a8a8a');
@@ -571,7 +589,7 @@
                 // a list wider than the column wraps onto lines inside it (never into the next column)
                 var pl = partnerLines(names.map(function (name) { return colPx < 40 ? name.replace(/^q(?=[A-Z0-9])/i, '') : name; }), 0.76 * colPx);
                 if (pl.w > 0.76 * colPx) return;
-                wanted.push({ i: i, y: top, ypx: (top - (yr ? yr[0] : 0)) * pxPerGHz, w: pl.w, h: pl.h,
+                wanted.push({ i: i, y: top, ypx: (top - (yr ? yr[0] : 0)) * pxPerGHz, w: pl.w, h: pl.h, n: pl.lines.length,
                               t: pl.lines.map(function (l) { return l.map(esc).join(' '); }).join('<br>') });
             });
         });
@@ -597,18 +615,16 @@
         });
         wanted.forEach(function (pw) {
             var right = (pw.i + 0.88) * colPx, left = (pw.i + 0.12) * colPx;
-            var spots = [{ x0: right - pw.w, x1: right, x: pw.i + 0.88, pos: 'top left' },
-                         { x0: left, x1: left + pw.w, x: pw.i + 0.12, pos: 'top right' },
-                         { x0: right - pw.w, x1: right, x: pw.i + 0.88, pos: 'bottom left', bottom: true },
-                         { x0: left, x1: left + pw.w, x: pw.i + 0.12, pos: 'bottom right', bottom: true }];
+            var spots = [{ xpx: right, x: pw.i + 0.88, pos: 'top left' },
+                         { xpx: left, x: pw.i + 0.12, pos: 'top right' },
+                         { xpx: right, x: pw.i + 0.88, pos: 'bottom left', bottom: true },
+                         { xpx: left, x: pw.i + 0.12, pos: 'bottom right', bottom: true }];
             for (var k = 0; k < spots.length; k++) {
                 var bottom = spots[k].bottom;
-                var b = { x0: spots[k].x0, x1: spots[k].x1,
-                          y0: bottom ? pw.ypx - 3 - pw.h : pw.ypx + 3,
-                          y1: bottom ? pw.ypx - 3 : pw.ypx + 3 + pw.h };
+                var b = partnerBox(spots[k].xpx, pw.ypx, spots[k].pos, pw.w, pw.n);
                 if (b.x0 < 0 || b.x1 > n * colPx || b.y0 < 0 || b.y1 > columnHeight ||
-                    taken.some(function (t) { return boxesOverlap(b, t, 1); }) ||
-                    (bottom && occupied.some(function (t) { return boxesOverlap(b, t, 1); }))) continue;
+                    !taken.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); }) ||
+                    (bottom && !occupied.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); }))) continue;
                 taken.push(b);
                 partners.push({ x: spots[k].x, y: pw.y, t: pw.t, pos: spots[k].pos });
                 return;
@@ -688,9 +704,10 @@
                           hovertemplate: '%{text}<extra></extra>', meta: 'defects-clips' });
         }
         if (partners.length) {
-            traces.push({ type: 'scatter', mode: 'text', x: partners.map(function (p) { return p.x; }), y: partners.map(function (p) { return p.y; }),
+            traces.push({ type: 'scatter', mode: 'markers+text', x: partners.map(function (p) { return p.x; }), y: partners.map(function (p) { return p.y; }),
                           text: partners.map(function (p) { return p.t; }), textposition: partners.map(function (p) { return p.pos; }),
-                          textfont: { size: 9, color: ink }, hoverinfo: 'skip', showlegend: false, cliponaxis: false, meta: 'partners' });
+                          marker: { size: PARTNER_MARKER, opacity: 0 },
+                          textfont: { size: PARTNER_FONT, color: ink }, hoverinfo: 'skip', showlegend: false, cliponaxis: false, meta: 'partners' });
         }
 
         // ---- the chip drawing: leaders, bars, nodes ----
@@ -1142,7 +1159,7 @@
         mount: mount, draw: draw, paint: paint, loadLoss: loadLoss, highlight: highlight, select: select,
         scale: scaleOf, loss: function (root) { return (root && root._czLoss) || null; },
         edgeColours: edgeColours, chipLayout: chipLayout, natCmp: natCmp, pairOf: pairOf, pairColors: pairColors,
-        placeLabels: placeLabels, labelSize: labelSize, partnerWidth: partnerWidth, partnerLines: partnerLines, followName: followName, drawnOp: drawnOp,
+        placeLabels: placeLabels, labelSize: labelSize, partnerWidth: partnerWidth, partnerLines: partnerLines, partnerBox: partnerBox, partnerGap: partnerGap, PARTNER_CLEAR: PARTNER_CLEAR, followName: followName, drawnOp: drawnOp,
         DRAW_PX: DRAW_PX, ROW_PX: ROW_PX, DRAW_MAX_FRAC: DRAW_MAX_FRAC, LOSS_W: LOSS_W,
         SHORT_BAR_PX: SHORT_BAR_PX, ROW_LABEL_MIN_PX: ROW_LABEL_MIN_PX, NODE_R: NODE_R, BAR_HALF: BAR_HALF,
         CLUSTER_PX: CLUSTER_PX, RETRY_N: RETRY_N, _esc: esc

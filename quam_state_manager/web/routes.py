@@ -22736,7 +22736,12 @@ def cz_plan_history():
         if ledger_note:
             note, link = ledger_note["text"], ledger_note.get("link")
         elif ops and all(o["unknown"] for o in ops.values()):
-            note = "No setting of these amplitudes is recorded in this chip's history."
+            # said only where it is known: some history rows were read, or the ledger
+            # holds no events at all; it claims nothing about who set the values
+            rows_read = any((r or {}).get("points") for r in (hist.get("rows") or {}).values())
+            ledger_empty = (hist.get("ledger") or {}).get("events") == 0
+            if rows_read or ledger_empty:
+                note = "No recorded setting was found for these amplitudes."
     return jsonify(ok=True, mode=hist.get("mode"), note=note, link=link,
                    ops=ops, unavailable=unavailable)
 

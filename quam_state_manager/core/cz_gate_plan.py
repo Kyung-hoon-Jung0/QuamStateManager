@@ -606,6 +606,8 @@ def chip_map(rows, conversions, op_name=None):
                        "control": cp.split(".")[-1] if cp else None, "target": tp.split(".")[-1] if tp else None}
         if coupler:
             pairs[pair]["coupler_amp_text"] = coupler["amp_text"]
+            if coupler.get("amp_reason"):
+                pairs[pair]["coupler_amp_reason"] = coupler["amp_reason"]
     return {"qubits": [qubits[q] for q in order], "segments": segments, "planned": planned,
             "refused": refused, "missing": sorted(missing, key=_natural), "op": op_name or None,
             "operations": sorted({r["operation"] for r in rows}, key=_natural), "pairs": pairs}
@@ -739,6 +741,22 @@ def _amplitude_view(doc, line):
         line["amp_title"] += "; stored amplitude: LF port or waveform peak cannot be resolved"
 
 
+def _pulse_label(doc, path, pulse):
+    """The label the playing channel looks up: the pulse's id, else its holder key, else None.
+
+    A pulse dict without an id is named by the key it is stored under (the last segment of
+    its resolved holder path); a plain string is the label itself; a pointer string that did
+    not resolve names nothing [derived].
+    """
+    if isinstance(pulse, dict):
+        label = current(doc, path + ".id")
+        if isinstance(label, str) and label:
+            return label
+        holder = read(doc, path).get("holder_path") or ""
+        return holder.split(".")[-1] or None
+    return pulse if isinstance(pulse, str) and pulse and not pulse.startswith("#") else None
+
+
 def _coupler_line(doc, pair_path, macro_path, notes):
     """Resolve the label on the playing element, without a frequency model."""
     source = macro_path + ".coupler_flux_pulse"
@@ -749,12 +767,14 @@ def _coupler_line(doc, pair_path, macro_path, notes):
     element = current(doc, cp) if cp else None
     name = current(doc, cp + ".id") if isinstance(element, dict) else None
     name = name or (cp.split(".")[-1] if cp else "unknown")
-    label = current(doc, source + ".id") if isinstance(pulse, dict) else pulse
+    label = _pulse_label(doc, source, pulse)
     local = number(current(doc, source + ".amplitude")) if isinstance(pulse, dict) else None
     played = cp + ".operations." + label if isinstance(label, str) and cp else None
     refusal = None
     if not isinstance(element, dict):
         refusal = "not playable: pair coupler is missing"
+    elif not isinstance(label, str):
+        refusal = "not playable: pulse has no id"
     elif not played or not isinstance(current(doc, played), dict):
         refusal = f"not playable: {label} missing on {name}"
     holder = read(doc, played).get("holder_path") if played and not refusal else played
@@ -773,6 +793,10 @@ def _coupler_line(doc, pair_path, macro_path, notes):
     if line["refusal"]:
         notes.append(line["refusal"])
     _amplitude_view(doc, line)
+    if line["refusal"] or amp is None:
+        # an unresolved coupler amplitude reads "unknown", never a dash; the title says why
+        line["amp_text"] = "unknown"
+        line["amp_reason"] = line["refusal"] or "pulse amplitude unknown"
     line.pop("moves")
     line.pop("amp_sort")
     return line
@@ -878,6 +902,7 @@ def operations(doc, conversions=None, unavailable=None):
                 pulse = current(doc, pulse_path) if pulse_path else None
                 missing_pulse = None
                 local_amp = number(current(doc, pulse_path + ".amplitude")) if isinstance(pulse, dict) else None
+                # a pulse dict without an id plays from its resolved holder (below), never "None"
                 label = (current(doc, pulse_path + ".id") if isinstance(pulse, dict) else
                          pulse if isinstance(pulse, str) and not pulse.startswith("#") else None)
                 # CZGate passes the pulse label to the playing channel, which looks it up again.
@@ -954,7 +979,7 @@ def operations(doc, conversions=None, unavailable=None):
             nearest = min(known, key=lambda r: abs(r["distance_hz"])) if known else None
             coupler = _coupler_line(doc, pp, path, notes)
             if coupler:
-                shown = coupler["amp_text"] if coupler["amplitude_v"] is not None and not coupler["refusal"] else "amplitude unknown"
+                shown = coupler["amp_text"] if coupler["amplitude_v"] is not None and not coupler["refusal"] else "amplitude unknown: " + coupler.get("amp_reason", "")
                 notes.append("a coupler pulse also plays (" + shown + "): these bare-qubit frequencies omit the coupler's shift")
             rows.append({
                 "pair": pair_name, "operation": name, "path": path, "class": cls, "kind": kind,
