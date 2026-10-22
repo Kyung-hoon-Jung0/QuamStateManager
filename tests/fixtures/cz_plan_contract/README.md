@@ -135,3 +135,15 @@ File-derived; never waits for the ledger. Fetch once per page.
   * `defects_touched` -- `[{frequency_hz, fwhm_hz, peak_loss, strong, inside, distance_hz}]`: the
     STORED defects whose centre lies within FWHM/2 of `[f_min_hz, f_max_hz]` [derived]; `inside` =
     the centre itself is in the interval.
+
+## v1.5.2 additions (additive; existing keys unchanged)
+
+* `/cz-plan/map` `segments[].amp_text` -- string|null: the played Z amplitude as the hover prints it
+  (signed engineering volts, or the stored value marked `stored` when the LF output cannot be resolved).
+* `/cz-plan/data` `row.lines[].amp_text` / `amp_title` / `amp_sort` -- the played amplitude cell, its title
+  (every lobe) and its numeric sort key (|volts|); `played_pulse_path` -- the pulse the playing element
+  looks up by label.
+* `/cz-plan/data` `row.coupler` -- object|null: the tunable coupler's played pulse (`role: "coupler"`,
+  `name`, `amplitude_v`, `amp_text`, `amp_reason`, `lobes`, `refusal`); never a frequency. `null` on a chip
+  with no coupler pulse. `row.coupler_note` -- string|null: the one coupler note of the row.
+The frozen files carry these keys as `null` (the rigs were captured before they existed).

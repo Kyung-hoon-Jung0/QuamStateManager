@@ -790,8 +790,7 @@ def _coupler_line(doc, pair_path, macro_path, notes):
             line["refusal"] = str(exc)
     if local is not None and amp is not None and local != amp:
         notes.append(f"{name}: the macro's copy says {signed_volts(local)}; the coupler plays {signed_volts(amp)}")
-    if line["refusal"]:
-        notes.append(line["refusal"])
+    # the refusal reaches the notes once, inside the coupler note the caller builds
     _amplitude_view(doc, line)
     if line["refusal"] or amp is None:
         # an unresolved coupler amplitude reads "unknown", never a dash; the title says why
