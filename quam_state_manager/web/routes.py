@@ -22347,7 +22347,20 @@ def _cz_plan_table(rows) -> list[dict]:
     for r in rows:
         pts = [ln["point"] for ln in r["lines"]]
         kinds = sorted({p.get("kind") for p in pts if p.get("kind") and p.get("kind") != "idle f_01"})
-        validity = [p.get("validity") for p in pts if p.get("validity") not in (None, "idle")]
+        movers = [ln for ln in r["lines"] if ln["moves"] and ln["point"].get("validity") != "idle"]
+        validity = [ln["point"].get("validity") or "validity unknown" for ln in movers]
+        sources = {"within the fitted model's measured range": "model",
+                   "within the measured quadratic range": "quad",
+                   "within the quadratic range": "quad"}
+        compact = bool(validity) and all(v in sources for v in validity)
+        title = "; ".join(ln["name"] + ": " + v for ln, v in zip(movers, validity))
+        warning = [v for v in validity if v not in sources]
+        validity_class = ("ok" if compact or not movers else
+                          "unknown" if all("unknown" in v for v in warning) else "warn")
+        text = ("in range (" + " / ".join(sorted({sources[v] for v in validity}))
+                + (", generic limit" if "within the quadratic range" in validity else "") + ")" if compact
+                else "; ".join(dict.fromkeys(warning)) if warning else None)
+        first = next((ln for ln in r["lines"] if ln["moves"]), {})
         out.append({
             "path": r["path"], "pair": r["pair"], "operation": r["operation"], "kind": r["kind"],
             "alias_of": r["alias_of"],
@@ -22357,11 +22370,11 @@ def _cz_plan_table(rows) -> list[dict]:
             "warnings": r["notes"],
             "reasons": [p.get("reason") for p in pts if p.get("reason")],
             "detuning_hz": r["detuning_hz"], "nearest": r["nearest"], "kinds": kinds,
-            "validity_warning": any(v in ("outside the quadratic range", "beyond the fitted arc's measured range")
-                                    for v in validity),
-            "validity": ("beyond the fitted arc's measured range" if "beyond the fitted arc's measured range" in validity
-                         else "outside the quadratic range" if "outside the quadratic range" in validity
-                         else validity[0] if validity else None),
+            "validity_warning": validity_class != "ok",
+            "validity_class": validity_class, "validity_title": title, "validity": text,
+            "amps": [ln.get("amp_text", "\u2014") for ln in r["lines"]],
+            "amp_titles": [ln.get("amp_title", "") for ln in r["lines"]],
+            "amp_sort": first.get("amp_sort"),
             "irb": (r["fidelity"].get("InterleavedRB") or {}).get("value"),
         })
     return out

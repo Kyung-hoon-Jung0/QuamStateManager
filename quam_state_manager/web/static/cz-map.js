@@ -1030,6 +1030,7 @@
                         var o = document.createElement('option'); o.value = name; o.textContent = name; opSel.appendChild(o);
                     });
                 }
+                root.dispatchEvent(new CustomEvent('czp:mapop', { detail: opSel ? opSel.value : '' }));
                 root._czMap = m;
                 if (root._czFollow) {
                     root._czFollow = false;

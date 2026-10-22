@@ -336,7 +336,10 @@ class Conversion:
                     out["note"] = ("freq_vs_flux_01_quad_term matches the fitted arc's curvature at the OTHER"
                                    " sweet spot (likely measured before the qubit moved spots)")
                 else:
-                    out["note"] = (f"freq_vs_flux_01_quad_term is {out['ratio']:.2f}x the fitted arc's local curvature")
+                    out["note"] = (f"freq_vs_flux_01_quad_term is {out['ratio']:.2f}x the fitted model's local curvature")
+                if self.rejection is None:
+                    out["note"] += ("; frequencies come from the lab flux model wherever its measured flux range"
+                                    " covers the amplitude; the quad term is used only beyond it (see Estimate)")
                 self.notes.append(out["note"])
         return out
 
@@ -677,6 +680,40 @@ def pulse_lobes(pulse, amplitude):
     return levels
 
 
+def _amplitude_view(doc, line):
+    """Physical output once for both the table and card; unresolved shapes stay stored.
+
+    pulse_lobes returns levels in the stored amplitude's units, including offsets and
+    the zero-area tail. The annotation's signed unit peak converts those levels.
+    """
+    from .physical_units import amp_annotation, format_volts
+
+    def signed(value):
+        return ("+" if value >= 0 else "") + format_volts(value)
+
+    path = line.get("pulse_path") or ""
+    line.update(amp_text="\u2014", amp_title="stays at idle", amp_sort=None)
+    if not line["moves"]:
+        return
+    amplitude = line["amplitude_v"]
+    if line["refusal"] or amplitude is None:
+        line["amp_title"] = path + ": " + (line["refusal"] or "pulse amplitude unknown")
+        return
+    played = line.get("played_pulse_path") or path
+    annotation = amp_annotation(doc, played + ".amplitude", amplitude)
+    physical = annotation is not None and annotation["kind"] == "lf"
+    peak = annotation["peak"] if physical else 1.0
+    suffix = "" if physical else " stored"
+    levels = line["lobes"] or [{"name": "first lobe", "amplitude_v": amplitude}]
+    values = [level["amplitude_v"] * peak for level in levels]
+    line["amp_text"] = signed(values[0]) + suffix
+    line["amp_sort"] = abs(values[0])
+    line["amp_title"] = path + "; " + "; ".join(
+        level["name"] + " " + signed(value) + suffix for level, value in zip(levels, values))
+    if not physical:
+        line["amp_title"] += "; stored amplitude: LF port or waveform peak cannot be resolved"
+
+
 def operations(doc, conversions=None, unavailable=None):
     """Every CZ macro of every pair (aliases included), with what each qubit plays.
 
@@ -784,8 +821,11 @@ def operations(doc, conversions=None, unavailable=None):
                     pulse_path = info["path"] + ".z.operations." + label
                     if not isinstance(current(doc, pulse_path), dict):
                         missing_pulse = f"not playable: {label} missing on {info['name']}"
+                played_pulse_path = pulse_path
                 if pulse_path and isinstance(current(doc, pulse_path), dict):
                     pulse_path = read(doc, pulse_path)["holder_path"]
+                if not isinstance(label, str):
+                    played_pulse_path = pulse_path
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
                 refusal = pair_refusal or routing_reason or missing_pulse
                 if missing_pulse:
@@ -802,6 +842,7 @@ def operations(doc, conversions=None, unavailable=None):
                 lines.append({"role": role, "name": info["name"], "qubit_path": info["path"],
                               "moves": True if routing_reason else bool(field), "refusal": refusal,
                               "pulse_field": field, "pulse_path": pulse_path, "amplitude_path": amp_path,
+                              "played_pulse_path": played_pulse_path,
                               "play_duration_ns": duration_ns if field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low") else None,
                               "duration_unknown": (raw_duration is not None and duration_ns is None
                                                    and field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low")),
@@ -827,6 +868,8 @@ def operations(doc, conversions=None, unavailable=None):
                     notes.append(f"{ln['name']}: not drawn: {exc}")
                     ln["refusal"] = str(exc)
                     ln["point"] = {"frequency_hz": None, "reason": str(exc)}
+            for ln in lines:
+                _amplitude_view(doc, ln)
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])

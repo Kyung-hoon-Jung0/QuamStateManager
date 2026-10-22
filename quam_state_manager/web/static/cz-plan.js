@@ -504,7 +504,7 @@
             h.push('<div class="czp-card-q"><strong>' + esc(ln.role) + ' ' + esc(ln.name) + '</strong>' +
                 (ln.moves ? ' <small class="muted">plays ' + esc((ln.pulse_path || '').split('.').pop()) + (ln.pulse_class ? ' (' + esc(ln.pulse_class) + ')' : '') + '</small>' : ' <small class="muted">does not move</small>') +
                 '<dl>' +
-                '<dt>Amplitude</dt><dd>' + fmtV(ln.amplitude_v) + '</dd>' +
+                '<dt>Z amp (V)</dt><dd title="' + esc(ln.amp_title || '') + '">' + esc(ln.amp_text || '\u2014') + '</dd>' +
                 '<dt>Idle f_01</dt><dd>' + fmtGHz(s.f01_hz) + '</dd>' +
                 '<dt>At the operation</dt><dd>' + fmtGHz(p.frequency_hz) + (p.kind ? ' <span class="czp-tier' + (/quad/.test(p.kind) ? ' czp-tier-quad' : '') + '">' + esc(p.kind) + '</span>' : '') +
                 (p.reason ? '<br><span class="czp-warn-text">' + esc(p.reason) + '</span>' : '') + '</dd>' +
@@ -801,7 +801,20 @@
         if (host && window.PlotHost) window.PlotHost.observe(host);
         var mapBox = root.querySelector('.czp-map-box');
         if (mapBox && window.PlotHost) window.PlotHost.observe(mapBox);
-        root.addEventListener('czp:mapop', function (ev) { filterRows(root, ev.detail || ''); });
+        var listed = root.querySelector('#czp-table-op'), mapOp = root.querySelector('#czp-map-op');
+        function syncListed() {
+            if (listed && mapOp) {
+                listed.replaceChildren.apply(listed, Array.prototype.map.call(mapOp.options, function (o) { return o.cloneNode(true); }));
+                listed.value = mapOp.value;
+            }
+            filterRows(root, mapOp ? mapOp.value : '');
+        }
+        root.addEventListener('czp:mapop', syncListed);
+        if (listed && mapOp) listed.addEventListener('change', function () {
+            mapOp.value = listed.value;
+            mapOp.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        syncListed();
         root.addEventListener('click', function (ev) {
             var sortTh = ev.target.closest && ev.target.closest('th[data-sort-key]');
             if (sortTh && root.contains(sortTh)) { sortBy(root, sortTh); return; }

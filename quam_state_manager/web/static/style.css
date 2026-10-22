@@ -15020,7 +15020,12 @@ html.sm-in-frame { --sidebar-width: 220px; }
 .zline-stats { font-size: 0.8rem; margin: 0.25rem 0 0; }
 .zline-empty { padding: 3rem 1rem; text-align: center; }
 /* Chip Status > CZ gate plan */
-.czp-lede { margin: 0 0 0.5rem; font-size: 0.9rem; position: relative; }
+.czp-lede { margin: 0 0 0.5rem; position: relative; }
+.czp-lede-caveat { display: block; color: var(--pico-muted-color); }
+.czp-controls.czp-table-controls { align-items: center; gap: .3rem .75rem; margin-bottom: .35rem; }
+.czp-controls.czp-table-controls label { flex-direction: row; align-items: center; gap: .3rem; margin: 0; font-size: .85em; }
+.czp-controls.czp-table-controls select { min-width: 0; width: auto; max-width: 14em; margin: 0; font-size: inherit; }
+.czp-table-controls .czp-history-note { flex-basis: 100%; }
 .czp-help { display: inline-block; margin: 0 0 0 0.25rem; vertical-align: baseline; }
 .czp-help[open] > summary { margin-bottom: 0; }
 .czp-help > summary { display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem;
@@ -15043,10 +15048,10 @@ html.sm-in-frame { --sidebar-width: 220px; }
    in view (cz-plan.js sets the operation's offset from the pair column's drawn width). */
 table.data-table.czp-table { overflow-wrap: normal; }
 table.data-table.czp-table th { white-space: normal; vertical-align: bottom; }
-/* a wrap with room for one-line headers keeps them (the 1600 px view); em is the wrap's own
-   font, so the threshold follows the UI scale the table's widths follow */
+/* A wrap with room for eleven one-line headers keeps them; em is the wrap's own
+   font, so the threshold follows the UI scale the table's widths follow. */
 .czp-table-wrap { container-type: inline-size; }
-@container (min-width: 62em) { table.data-table.czp-table th { white-space: nowrap; } }
+@container (min-width: 75em) { table.data-table.czp-table th { white-space: nowrap; } }
 table.data-table.czp-table th, table.data-table.czp-table td { padding-left: .25rem; padding-right: .25rem; }
 .czp-table .czp-stick { position: sticky; left: 0; z-index: 1; white-space: nowrap; background: var(--pico-background-color); }
 .czp-table .czp-stick-op { left: var(--czp-stick-op, 2.6rem); }
@@ -15872,6 +15877,9 @@ details.jargon > .jargon-explain {
 /* CZ plan: sortable headers that read as header text */
 .czp-table th button.czp-sort { all: unset; cursor: pointer; font: inherit; color: inherit; }
 .czp-table th button.czp-sort:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: 2px; }
+.czp-table th button.czp-sort::after { content: " \2195"; display: inline-block; width: 1.2em; font-size: .7em; opacity: 0; }
+.czp-table th:hover button.czp-sort::after, .czp-table th button.czp-sort:focus-visible::after { opacity: .45; }
+.czp-table th[aria-sort="ascending"] button.czp-sort::after, .czp-table th[aria-sort="descending"] button.czp-sort::after { opacity: 1; }
 .czp-table th[aria-sort="ascending"] button.czp-sort::after { content: " \25B2"; font-size: .7em; }
 .czp-table th[aria-sort="descending"] button.czp-sort::after { content: " \25BC"; font-size: .7em; }
 .czp-filter-note { margin: .25rem 0 0; font-size: .85em; }

@@ -64,6 +64,8 @@ def test_the_page_reads_title_status_figures_card_then_the_collapsed_notes(tmp_p
     lede = lede[:lede.index("</details>")]
     assert '<details class="czp-help">' in lede and "|11&rang;&ndash;|20&rang;" in lede.split("<details", 1)[1]
     assert "|11&rang;" not in lede.split("<details", 1)[0], "the physics sits behind the ? only"
+    assert lede.index("Where each CZ") < lede.index("Operating values")
+    assert '<small class="muted czp-lede-caveat">' in lede
     head = html[html.index("czp-map-head"):html.index('id="czp-map"')]
     assert all(f'id="{i}"' in head for i in ("czp-map-op", "czp-map-order", "czp-map-scale"))
     assert '<option value="chip" selected>By chip position</option>' in head
