@@ -78,6 +78,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const pop = d.getElementById('sm-reload-pop');
     ok(pop && !pop.hidden, 'Reload, moved into the menu, still opens its own popup');
 
+    // v1.5.4: the attention mark on the closed menu's button
+    const tick = () => sleep(5);
+    ok(!btn.hasAttribute('data-attention') && btn.querySelector('.topbar-more-dot').hidden, 'nothing needs attention: no mark');
+    d.getElementById('diag-tray-slot').innerHTML = '<a class="diag-header-badge diag-error" href="/diagnostics"><span class="tbm-label">Diagnostics</span><span class="tbm-badge">3 issues</span></a>';
+    await tick();
+    ok(btn.getAttribute('data-attention') === 'error' && !btn.querySelector('.topbar-more-dot').hidden, 'a health error marks the button in the error colour');
+    ok(/3 health issues/.test(btn.getAttribute('aria-label')), 'the aria-label names it: ' + btn.getAttribute('aria-label'));
+    d.getElementById('diag-tray-slot').innerHTML = '<a class="diag-header-badge diag-ok-badge" href="/diagnostics">healthy</a>';
+    const ag = d.getElementById('agent-pill'); ag.hidden = false; ag.setAttribute('data-state', 'waiting');
+    await tick();
+    ok(btn.getAttribute('data-attention') === 'warning' && /asking to write/.test(btn.getAttribute('aria-label')), 'the agent asking to write marks it as a warning');
+    ag.setAttribute('data-state', 'idle');
+    const imp = d.getElementById('topbar-import-pill'); imp.hidden = false;
+    await tick();
+    ok(btn.getAttribute('data-attention') === 'info' && /import/.test(btn.getAttribute('aria-label')), 'a running import marks it as info');
+    imp.hidden = true;
+    await tick();
+    ok(!btn.hasAttribute('data-attention') && btn.querySelector('.topbar-more-dot').hidden && btn.getAttribute('aria-label') === 'More controls', 'all clear: the mark goes');
+
     console.log((fails ? 'FAILED ' : 'PASSED ') + (asserts - fails) + '/' + asserts);
     process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

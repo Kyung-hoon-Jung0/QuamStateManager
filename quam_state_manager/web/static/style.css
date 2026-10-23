@@ -14951,11 +14951,13 @@ td.cell-live-stale .cell-live-now {
 .topbar #agent-pill, .topbar .state-version-wrap, .topbar .diag-tray-slot { flex-shrink: 0; }
 /* v1.5.1 (U P2-3): the chip's name is what says WHICH chip -- it narrows, never goes */
 @media (max-width: 640px) { .sync-control .state-status-name { max-width: 6ch; } }   /* v1.5.3: the bar has room for the chip name now */
-@media (max-width: 1000px) {
+/* v1.5.4: the bar holds three controls now, so the full title fits down to a
+   phone width; TopbarFit (tb-fit-5) still shortens it when it truly overflows */
+@media (max-width: 640px) {
     .topbar .app-title { font-size: 0; }
     .topbar .app-title::after { content: "QSM"; font-size: .95rem; }
-    .agent-pill-text { display: none; }
 }
+@media (max-width: 1000px) { .agent-pill-text { display: none; } }
 /* docs/231 (customer 2026-09-30): the ladder above is keyed on the WINDOW
    width, but what has to fit is the CONTENT -- a long "Live chip changed · 42
    values" pill, the L text size, a narrow Sync-Qualibrate frame. The row is
@@ -15065,9 +15067,15 @@ html.sm-in-frame { --sidebar-width: 220px; }
     border: 1px solid var(--pico-muted-border-color, #888); border-radius: 0.4rem; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
 .czp-table-wrap { overflow-x: auto; }
 .czp-table-wrap.czp-wrap-fits { overflow: visible; }
-.czp-wrap-fits .czp-table thead th { position: sticky; top: calc(-1 * var(--table-pane-pad-v, 0px)); z-index: 2; background: var(--pico-background-color); }
+.czp-wrap-fits .czp-table thead th { position: sticky; top: calc(-1 * var(--table-pane-pad-v, 0px)); z-index: 2; background: var(--pico-background-color);
+    /* v1.5.4: the row scrolling under the header no longer reads as header text: */
+    }
+/* an opaque band under the stuck header covers the partly scrolled row; its last pixel is the rule
+   (a cell's outer box-shadow is painted under the body rows in a collapsed table, so a pseudo-element) */
+.czp-wrap-fits .czp-table thead th::after { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 10px;
+    background: var(--pico-background-color); border-bottom: 1px solid var(--pico-muted-border-color); pointer-events: none; }
 .czp-wrap-fits .czp-table thead th.czp-stick { z-index: 3; }
-.czp-wrap-fits .czp-table tbody tr { scroll-margin-top: calc(var(--czp-head-h, 2.5rem) + var(--table-pane-pad-v, 0px)); }
+.czp-wrap-fits .czp-table tbody tr { scroll-margin-top: calc(var(--czp-head-h, 2.5rem) + var(--table-pane-pad-v, 0px) + 11px); }
 .czp-float-head { position: fixed; overflow: hidden; z-index: 30; background: var(--pico-background-color);
     box-shadow: 0 2px 5px rgba(0, 0, 0, .14); }
 .czp-float-head[hidden] { display: none; }
@@ -15964,3 +15972,67 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
 .topbar .topbar-more-menu .agent-pill-res:not([hidden]),
 .topbar .topbar-more-menu .agent-pill-text { display: inline !important; }
 .topbar .topbar-more-menu .agent-pill-mode:not([hidden]) { display: inline !important; }
+
+/* ── v1.5.4: every overflow-menu item is one uniform row ────────────────
+   Same height, font and padding; icon then a left-aligned label; a status
+   (issue count, agent state, version count) is a small badge on the right. */
+.tbm-label, .diag-header-badge .tbm-ico { display: none; }
+.topbar .topbar-more-menu .diag-header-badge .tbm-ico { display: inline-block; }
+.topbar .topbar-more-menu > ul.topbar-more-list { gap: .1rem; }
+.topbar .topbar-more-menu > ul.topbar-more-list > li { padding: 0; flex-wrap: nowrap; min-height: 0; }
+.topbar .topbar-more-menu > ul.topbar-more-list > li::before,
+.topbar .topbar-more-menu > ul.topbar-more-list > li::after { content: none !important; display: none !important; }
+.topbar .topbar-more-menu > ul.topbar-more-list > li:not(.search-box):not(.topbar-tools-fallback) > :not([hidden]):not(.state-version-panel):not(.state-version-slot),
+.topbar .topbar-more-menu .state-version-chip,
+.topbar .topbar-more-menu .diag-header-badge,
+.topbar .topbar-more-menu .agent-pill-link,
+.topbar .topbar-more-menu .import-pill-link,
+.topbar .topbar-more-menu .scheduler-badge-link,
+.topbar .topbar-more-menu .topbar-reload,
+.topbar .topbar-more-menu .wb-link {
+    display: flex !important; align-items: center; justify-content: flex-start; gap: .55rem;
+    flex: 1 1 auto; width: 100%; max-width: none !important; box-sizing: border-box;
+    min-height: 1.9rem; margin: 0 !important; padding: .25rem .55rem !important;
+    font-size: .78rem !important; font-weight: 500 !important; line-height: 1.3 !important; text-align: left;
+    border: 0 !important; border-radius: 6px; background: transparent !important; box-shadow: none !important;
+    color: var(--pico-contrast) !important; opacity: 1 !important; text-decoration: none; white-space: nowrap;
+    font-family: var(--font-ui, inherit) !important; letter-spacing: normal !important; text-transform: none !important; }
+.topbar .topbar-more-menu .state-version-slot { display: block; width: 100%; padding: 0; margin: 0; }
+/* a fixed icon column, so every label starts at the same x */
+.topbar .topbar-more-menu .tbm-ico, .topbar .topbar-more-menu .state-version-ico {
+    flex: 0 0 1.1rem; width: 1.1rem; display: inline-block; text-align: center; margin: 0; }
+.topbar .topbar-more-menu .agent-pill-dot { margin: 0 calc((1.1rem - .5rem) / 2); }
+.topbar .topbar-more-menu .state-version-slot:empty { display: none !important; }
+.topbar .topbar-more-menu .state-version-chip:hover, .topbar .topbar-more-menu .diag-header-badge:hover,
+.topbar .topbar-more-menu .agent-pill-link:hover, .topbar .topbar-more-menu .topbar-reload:hover,
+.topbar .topbar-more-menu .wb-link:hover, .topbar .topbar-more-menu .import-pill-link:hover,
+.topbar .topbar-more-menu .scheduler-badge-link:hover,
+.topbar .topbar-more-menu .topbar-more-list a:focus-visible, .topbar .topbar-more-menu .topbar-more-list button:focus-visible {
+    background: var(--pico-muted-border-color) !important; }
+/* the label fills the row; whatever follows it sits on the right as a badge */
+.topbar .topbar-more-menu .tbm-label, .topbar .topbar-more-menu .wb-link-text,
+.topbar .topbar-more-menu .rl-long, .topbar .topbar-more-menu .state-version-id,
+.topbar .topbar-more-menu .agent-pill-text, .topbar .topbar-more-menu .import-pill-label,
+.topbar .topbar-more-menu .scheduler-badge-label { display: inline !important; flex: 1 1 auto; text-align: left; }
+.topbar .topbar-more-menu .wb-link-text, .topbar .topbar-more-menu .rl-long { margin-left: 0; }
+.topbar .topbar-more-menu .topbar-more-list a *, .topbar .topbar-more-menu .topbar-more-list button * { font-family: inherit !important; }
+.topbar .topbar-more-menu .tbm-badge, .topbar .topbar-more-menu .state-version-count,
+.topbar .topbar-more-menu .state-version-none, .topbar .topbar-more-menu .agent-pill-mode:not([hidden]),
+.topbar .topbar-more-menu .agent-pill-res:not([hidden]), .topbar .topbar-more-menu .import-pill-count:not(:empty),
+.topbar .topbar-more-menu .scheduler-badge-count:not(:empty) {
+    flex: 0 0 auto; margin-left: auto; padding: .05rem .45rem; border-radius: 999px; font-size: .75rem; font-weight: 600;
+    border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); opacity: 1; }
+.topbar .topbar-more-menu .diag-error .tbm-badge   { color: var(--color-error-text); border-color: var(--outcome-fail-color, #c0392b); }
+.topbar .topbar-more-menu .diag-warning .tbm-badge { color: var(--color-warning-text); border-color: var(--outcome-warn-color, #e67e22); }
+.topbar .topbar-more-menu .diag-info .tbm-badge    { color: var(--diag-info-text); border-color: var(--diag-info-text); }
+.topbar .topbar-more-menu .diag-ok-badge .tbm-badge { color: var(--color-success-text); border-color: var(--outcome-ok-color, #27ae60); }
+.topbar .topbar-more-menu .agent-waiting .agent-pill-mode { color: #b89a00; border-color: #e6c200; }
+.topbar .topbar-more-menu .agent-pill-dot { flex: 0 0 auto; }
+/* the attention mark on the overflow button (TopbarMore.attention) */
+.topbar .topbar-more-btn { position: relative; }
+.topbar-more-dot { position: absolute; top: -4px; right: -4px; min-width: 10px; height: 10px; border-radius: 999px;
+    border: 2px solid var(--pico-background-color); box-sizing: content-box; }
+.topbar-more-dot[hidden] { display: none; }
+.topbar-more-btn[data-attention="error"] .topbar-more-dot   { background: var(--outcome-fail-color, #c0392b); }
+.topbar-more-btn[data-attention="warning"] .topbar-more-dot { background: var(--outcome-warn-color, #e67e22); }
+.topbar-more-btn[data-attention="info"] .topbar-more-dot    { background: var(--pico-primary, #1e88e5); }

@@ -312,7 +312,7 @@
                 <li class="topbar-more">
                     <button type="button" id="topbar-more-btn" class="topbar-more-btn"
                             aria-haspopup="true" aria-expanded="false" aria-controls="topbar-more-menu"
-                            title="More: search, Reload, versions, health, Sync-Qualibrate, tools" aria-label="More controls">&#8943;</button>
+                            title="More: search, Reload, versions, health, Sync-Qualibrate, tools" aria-label="More controls">&#8943;<span class="topbar-more-dot" hidden aria-hidden="true"></span></button>
                     <div id="topbar-more-menu" class="topbar-more-menu" role="group" aria-label="More controls" hidden>
                     <ul class="topbar-more-list">
                 <li class="search-box">
@@ -328,14 +328,14 @@
                    (iframe) beside this app. Full-page route, so a plain link
                    (not hx-get); opens in a new tab. #}
                 <li><a href="/workbench" target="_blank" rel="noopener"
-                       class="wb-link" title="Sync-Qualibrate — open Qualibrate side-by-side with the State Manager" aria-label="Sync-Qualibrate">⌗<span class="wb-link-text"> Sync-Qualibrate</span></a></li>
+                       class="wb-link" title="Sync-Qualibrate — open Qualibrate side-by-side with the State Manager" aria-label="Sync-Qualibrate"><span class="tbm-ico" aria-hidden="true">⌗</span><span class="wb-link-text"> Sync-Qualibrate</span></a></li>
                 {# docs/237 (customers 2026-10-01): a Reload for when a view needs a
                    fresh render. It asks what to reload -- the chip only, or the chip
                    and the Python env (app.js: SmReload). The compact step shows
                    only the reload icon. #}
                 <li class="topbar-reload-li"><button type="button" class="topbar-reload" id="topbar-reload" aria-label="Reload"
                         aria-haspopup="dialog" aria-expanded="false"
-                        title="Reload &#8212; re-read the chip (and optionally the Python env) and redraw the page">&#8635;<span class="rl-long"> Reload</span></button></li>
+                        title="Reload &#8212; re-read the chip (and optionally the Python env) and redraw the page"><span class="tbm-ico" aria-hidden="true">&#8635;</span><span class="rl-long"> Reload</span></button></li>
                 {# docs/120 item 10 — the working-state VERSION, in the slot the
                    bookmark used to hold (it moved to the sidebar tools, below
                    Calculator, per the user). It sits immediately right of the

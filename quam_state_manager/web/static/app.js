@@ -28094,7 +28094,48 @@ window.TopbarMore = (function () {
         if (t && t.closest && t.closest('#sm-reload-pop, .calc-popover, .settings-popover, dialog')) return;
         close(false);
     });
-    return { open: open, close: close, isOpen: isOpen, items: items };
+    /* v1.5.4: what inside the closed menu needs attention -- a health issue, the
+       agent asking to write, an import, a running scheduler -- marks the button
+       with a dot in the most severe item's colour and names it in aria-label. */
+    var SEV = { error: 3, warning: 2, info: 1 };
+    function attention() {
+        var b = btn(), m = menu();
+        if (!b || !m) return null;
+        var found = [], sev = '';
+        function add(level, words) { found.push(words); if (!sev || SEV[level] > SEV[sev]) sev = level; }
+        var diag = m.querySelector('.diag-header-badge:not(.diag-ok-badge)');
+        if (diag) {
+            var n = (diag.textContent.match(/\d+/) || ['1'])[0];
+            add(diag.classList.contains('diag-error') ? 'error' : diag.classList.contains('diag-warning') ? 'warning' : 'info',
+                n + ' health issue' + (n === '1' ? '' : 's'));
+        }
+        var ag = m.querySelector('#agent-pill:not([hidden])');
+        if (ag && ag.getAttribute('data-state') === 'waiting') add('warning', 'the agent is asking to write');
+        if (m.querySelector('#topbar-import-pill:not([hidden])')) add('info', 'an import is running');
+        if (m.querySelector('#scheduler-badge:not([hidden])')) add('info', 'the Experiment Runner is running');
+        var dot = b.querySelector('.topbar-more-dot');
+        if (sev) {
+            b.setAttribute('data-attention', sev);
+            b.setAttribute('aria-label', 'More controls: ' + found.join(', '));
+            if (dot) dot.hidden = false;
+        } else {
+            b.removeAttribute('data-attention');
+            b.setAttribute('aria-label', 'More controls');
+            if (dot) dot.hidden = true;
+        }
+        return sev || null;
+    }
+    function watch() {
+        var m = menu();
+        if (!m) return;
+        attention();
+        if (window.MutationObserver) {
+            new MutationObserver(attention).observe(m, { subtree: true, childList: true, characterData: true,
+                attributes: true, attributeFilter: ['hidden', 'class', 'data-state'] });
+        }
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch); else watch();
+    return { open: open, close: close, isOpen: isOpen, items: items, attention: attention };
 })();
 
 /* ── hx-on without eval (docs/120 item 27) ────────────────────────────────

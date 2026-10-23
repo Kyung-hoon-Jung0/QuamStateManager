@@ -8,11 +8,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_package_declares_the_release_version():
-    assert __version__ == "1.5.3"
+    assert __version__ == "1.5.4"
 
 
 def test_project_declares_the_release_version():
     source = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     project = source.split("[project]", 1)[1].split("\n[", 1)[0]
     version = re.search(r'^version\s*=\s*"([^"]+)"', project, re.M)
-    assert version and version.group(1) == "1.5.3"
+    assert version and version.group(1) == "1.5.4"

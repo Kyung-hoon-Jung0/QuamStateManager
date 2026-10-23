@@ -1189,3 +1189,17 @@ A quieter top bar, the most-used pages first, and a CZ plan header that stays.
 ### Fixed
 
 - **Sync panel**: a click outside the open panel (e.g. on Reload) closes it and still does what was clicked.
+
+## v1.5.4 (2026-10-23)
+
+Polish for the new top bar.
+
+### Improved
+
+- **More menu**: every item is one uniform row (icon, label, and a small status badge on the right for Diagnostics and Agent).
+- **Attention mark**: the menu button shows a coloured dot when something inside needs attention (health issues, the agent asking to write, an import, a running Experiment Runner); its label says what.
+- **Title**: the full "QUAM State Manager" title shows at narrow windows when it fits.
+
+### Fixed
+
+- **CZ gate plan**: the row scrolling under the stuck table header no longer shows through below it.
