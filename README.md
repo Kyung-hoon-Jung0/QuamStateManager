@@ -103,6 +103,37 @@ qsm --help             # every CLI command
 qsm show qA1 -f "path/to/quam_state/"
 ```
 
+### Install into an existing lab environment (recommended)
+
+Install a released version straight from GitHub into the environment that runs
+your experiments. Before installing, **close every running SM** (`qsm`, the
+desktop window, any `python -m quam_state_manager`): installing over a running
+SM leaves the environment half-replaced (symptom: `No module named
+quam_state_manager.web`).
+
+```bash
+conda activate <your-lab-env>          # NOT (base) -- check the prompt
+pip install --force-reinstall --no-deps "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git@v1.5.4"
+# with uv:
+uv pip install --native-tls --force-reinstall --no-deps "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git@v1.5.4"
+```
+
+- Replace `@v1.5.4` with any released tag to install that version (older ones too).
+- `--no-deps` replaces only SM and leaves the lab's packages alone. Without it,
+  `--force-reinstall` also upgrades shared packages (click, numpy, ...) and can
+  break QUAlibrate (`requires click<8.2`). Use it on an environment where SM
+  was installed before; for a first install, drop `--no-deps`.
+
+**Troubleshooting**
+
+| Error | Cause | Fix |
+|---|---|---|
+| `invalid peer certificate: UnknownIssuer` / `SSL: CERTIFICATE_VERIFY_FAILED` | a corporate proxy re-signs HTTPS | uv: add `--native-tls` (or `setx UV_NATIVE_TLS true`); pip: add `--trusted-host pypi.org --trusted-host files.pythonhosted.org` |
+| `couldn't find remote ref refs/tags/vX.Y.Z` | that tag does not exist | use a listed tag from the Releases/Tags page |
+| `No module named quam_state_manager.web` | installed while SM was running, or into another env | close SM, delete any `~uam_state_manager*` folder in the env's `site-packages`, reinstall |
+| `qsm` not found after install | installed into a different env | `conda activate` the right env, then reinstall |
+| `pip install .` fails with "does not appear to be a Python project" | not run inside the cloned folder | `cd QuamStateManager` first |
+
 Then point the app at a `quam_state/` folder (containing `state.json` +
 `wiring.json`) via **State Load**, or open a QUAlibrate project from the landing
 page.
