@@ -1,0 +1,75 @@
+# Tag + GitHub Release for every version bump that lands on main.
+# Idempotent: if tag v<version> already exists, nothing happens (tags are never moved).
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: ["pyproject.toml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Read version
+        id: ver
+        run: |
+          v=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          git fetch --tags --force origin
+          if git rev-parse -q --verify "refs/tags/v$v" >/dev/null; then
+            echo "Tag v$v already exists; nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build wheel and sdist
+        if: steps.ver.outputs.exists == 'false'
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Check the wheel in a clean venv
+        if: steps.ver.outputs.exists == 'false'
+        run: |
+          whl=$(ls dist/*.whl)
+          python .github/scripts/check_wheel.py "$whl"
+          python -m venv /tmp/wheelcheck
+          /tmp/wheelcheck/bin/pip install "$whl"
+          cd /tmp
+          /tmp/wheelcheck/bin/python -c "import quam_state_manager.web; from quam_state_manager.web.app import create_app; r = create_app(testing=True).test_client().get('/'); assert r.status_code == 200, r.status_code; print('import + page ok')"
+
+      - name: Extract release notes
+        if: steps.ver.outputs.exists == 'false'
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          awk -v h="## v$V" 'index($0,h)==1 && (length($0)==length(h) || substr($0,length(h)+1,1)==" ") {on=1; next} on && /^## / {exit} on {print}' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "Release v$V" > notes.md; fi
+          cat notes.md
+
+      - name: Create tag and release
+        if: steps.ver.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          gh release create "v$V" dist/* --target "$GITHUB_SHA" --title "v$V" --notes-file notes.md --latest

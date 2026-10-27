@@ -38,6 +38,9 @@ qsm browser --port 5070
   installed, or a previous install broke.
 - `--no-deps`: replace only QSM and leave the lab's packages alone (e.g. when an
   upgrade of `click` would break QUAlibrate).
+- Offline or blocked network: download the `.whl` from the
+  [Releases](https://github.com/Kyung-hoon-Jung0/QuamStateManager/releases) page and run
+  `pip install <file>.whl --no-deps`.
 
 ```bash
 pip install --force-reinstall --no-deps "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git@v1.5.4"
