@@ -36,8 +36,9 @@ qsm browser --port 5070
 
 - `--force-reinstall` (pip) / `--reinstall` (uv): the same version is already
   installed, or a previous install broke.
-- `--no-deps`: replace only QSM and leave the lab's packages alone (e.g. when an
-  upgrade of `click` would break QUAlibrate).
+- `--no-deps`: replace only QSM and leave the lab's packages alone. QSM's ranges
+  follow QUAlibrate 1.5 (click<8.2, Flask<3.2, numpy<1.26 below Python 3.12); use
+  `--no-deps` when the lab runs another QUAlibrate or a Python <3.12 env on numpy 2.
 - Offline or blocked network: download the `.whl` from the
   [Releases](https://github.com/Kyung-hoon-Jung0/QuamStateManager/releases) page and run
   `pip install <file>.whl --no-deps`.
@@ -51,7 +52,7 @@ uv pip install --reinstall --no-deps "git+https://github.com/Kyung-hoon-Jung0/Qu
 |---|---|
 | `invalid peer certificate: UnknownIssuer` / `CERTIFICATE_VERIFY_FAILED` (a proxy re-signs HTTPS) | uv: add `--native-tls`; pip: add `--trusted-host pypi.org --trusted-host files.pythonhosted.org` |
 | `couldn't find remote ref refs/tags/vX.Y.Z` | that tag does not exist; pick one from the Tags page |
-| `No module named quam_state_manager.web` | close QSM, delete any `~uam_state_manager*` folder in the env's `site-packages`, reinstall with `--force-reinstall` |
+| `No module named quam_state_manager.web` | close QSM, delete any `~uam_state_manager*` folder in the env's `site-packages`, reinstall with `--force-reinstall --no-deps` |
 | `qsm` not found | wrong env: activate the lab env (or use `uv run qsm`) and reinstall |
 
 ---

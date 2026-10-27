@@ -1229,3 +1229,10 @@ User-reported fixes after a hand test of 1.5.4.
   unit, a Copy per value and Copy both / Copy all. Nothing is written; Esc or an
   outside click closes it. A figure with a click contract keeps its apply popup, which
   now carries the same row.
+
+## Unreleased
+
+- Install: dependency ranges now match the QUAlibrate stack, so a plain or
+  `--force-reinstall` pip install no longer upgrades click past 8.2 (qualibrate
+  requires click<8.2) or Flask/Werkzeug past 3.2 (dash requires <3.2) and, on Python below 3.12, no longer pulls numpy 2 past
+  qualibrate's numpy<1.26. `--no-deps` is no longer needed for that case.
