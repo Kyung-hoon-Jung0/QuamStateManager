@@ -56,6 +56,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(1500);
     ok(!t.isConnected && !t2.isConnected, 'once the selection and the pointer are gone they fade and go');
 
+    // v1.5.6: a plain click on the notice text reaches the control under it
+    const cell = d.createElement('input'); cell.className = 'bulk-cell'; d.getElementById('table-pane').appendChild(cell);
+    let cellClicks = 0; cell.addEventListener('click', () => { cellClicks++; });
+    const t3 = w.showToast('a notice over a cell', 'error', 5000);
+    await sleep(5);
+    const tp = t3.querySelector('p');
+    d.elementsFromPoint = () => [tp, t3, d.getElementById('status-bar'), cell, d.getElementById('table-pane'), d.body];
+    tp.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 50, clientY: 50 }));
+    tp.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, button: 0, clientX: 50, clientY: 50 }));
+    tp.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, button: 0, detail: 1, clientX: 50, clientY: 50 }));
+    ok(cellClicks === 1 && d.activeElement === cell, 'a click on the notice text reaches the cell under it and focuses it');
+    // a drag (the pointer moved) selects instead: nothing is handed on
+    cell.blur();
+    tp.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 50, clientY: 50 }));
+    tp.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, button: 0, detail: 1, clientX: 140, clientY: 50 }));
+    ok(cellClicks === 1 && d.activeElement !== cell, 'a drag across the text is not handed on');
+    // the Copy button is never handed on
+    const cb = t3.querySelector('.toast-copy');
+    d.elementsFromPoint = () => [cb, t3, cell];
+    cb.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 60, clientY: 60 }));
+    cb.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, button: 0, detail: 1, clientX: 60, clientY: 60 }));
+    ok(cellClicks === 1, 'a press on Copy stays on Copy');
+    t3.remove();
+
     ok(/#status-bar \.toast p \{[^}]*pointer-events: auto;[^}]*user-select: text/.test(CSS),
        'the notice text takes the pointer and is selectable');
     console.log(fails ? fails + ' FAILED' : 'all checks passed (' + asserts + ' assertions)');

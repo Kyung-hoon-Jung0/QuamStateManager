@@ -3651,8 +3651,8 @@ window.showToast = function(message, level, ms, detail) {
 };
 
 /* v1.5.5: a notice can be read, selected and copied. Its text takes the
- * pointer (user-select: text) -- a deliberate trade against docs/190 F24:
- * only the notice's padding still lets a click through to what is under it --, every notice carries a small Copy button that copies
+ * pointer (user-select: text) so a drag selects it; a plain click on it is
+ * handed on to what is under it (forwardClicks, v1.5.6); every notice carries a small Copy button that copies
  * its whole text (the details line too), and a notice never fades while it is
  * hovered, holds the focus, or holds the current text selection. Every
  * auto-dismiss in the app goes through schedule(); the Copy button is added by
@@ -3740,10 +3740,46 @@ window.ToastHold = (function () {
         });
         div.appendChild(b);
     }
+    /* v1.5.6: the notice text takes the pointer so it can be selected, but a
+       notice sits over the bottom-right of every page (Live-Edit cells, per-row
+       Apply buttons). A plain single click on the text -- no drag, no
+       selection made -- is handed on to whatever is under it, as before
+       v1.5.5 (docs/190 F24). A drag still selects, Copy still copies. */
+    function underneath(bar, x, y) {
+        var st = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [];
+        for (var i = 0; i < st.length; i++) { if (!bar.contains(st[i])) return st[i]; }
+        return null;
+    }
+    function forwardClicks(bar) {
+        var down = null;
+        bar.addEventListener("mousedown", function (e) {
+            var t = e.target;
+            down = (e.button === 0 && t && t.closest && t.closest(".toast p")) ? { x: e.clientX, y: e.clientY } : null;
+        }, true);
+        bar.addEventListener("click", function (e) {
+            var d = down; down = null;
+            var t = e.target;
+            if (!d || e.detail > 1 || !t || !t.closest || !t.closest(".toast p")) return;
+            if (Math.abs(e.clientX - d.x) > 3 || Math.abs(e.clientY - d.y) > 3) return;
+            var sel = window.getSelection ? window.getSelection() : null;
+            if (sel && !sel.isCollapsed && sel.rangeCount && bar.contains(sel.anchorNode)) return;
+            var el = underneath(bar, e.clientX, e.clientY);
+            if (!el) return;
+            e.preventDefault(); e.stopPropagation();
+            if (sel && sel.removeAllRanges) sel.removeAllRanges();
+            var o = { bubbles: true, cancelable: true, view: window, clientX: e.clientX, clientY: e.clientY, button: 0 };
+            el.dispatchEvent(new MouseEvent("mousedown", o));
+            var f = el.closest ? el.closest("input, textarea, select, button, a[href], [tabindex]") : null;
+            if (f && typeof f.focus === "function") f.focus();
+            el.dispatchEvent(new MouseEvent("mouseup", o));
+            el.dispatchEvent(new MouseEvent("click", o));
+        }, true);
+    }
     function watch() {
         var bar = document.getElementById("status-bar");
         if (!bar || bar._toastWatch) return;
         bar._toastWatch = true;
+        forwardClicks(bar);
         Array.prototype.forEach.call(bar.children, decorate);
         if (window.MutationObserver) {
             new MutationObserver(function (ms) {
