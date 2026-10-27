@@ -1230,8 +1230,18 @@ User-reported fixes after a hand test of 1.5.4.
   outside click closes it. A figure with a click contract keeps its apply popup, which
   now carries the same row.
 
-## Unreleased
+## v1.5.6 (2026-10-28)
 
+Follow-ups to 1.5.5.
+
+- A notice (bottom-right) no longer swallows a click on what is under it. Since
+  1.5.5 its text took the pointer so it could be selected, which blocked Live-Edit
+  cells and per-row Apply buttons under it. A plain click on the text now reaches
+  the control underneath (focused, as before 1.5.5); a drag still selects the text
+  and Copy still copies it.
+- The More (⋯) button's attention dot also lights when the agent has failed
+  (error colour) or shows no sign of life (warning colour), not only while it is
+  waiting for approval.
 - Install: dependency ranges now match the QUAlibrate stack, so a plain or
   `--force-reinstall` pip install no longer upgrades click past 8.2 (qualibrate
   requires click<8.2) or Flask/Werkzeug past 3.2 (dash requires <3.2) and, on Python below 3.12, no longer pulls numpy 2 past
