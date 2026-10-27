@@ -23,6 +23,7 @@
 # content (docs/130), re-rendered from raw with normalised, unlabelled axes
 # so they carry no absolute frequency or power.
 !quam_state_manager/knowledge/**/exemplars/**/*.png
+!site/img/*.png
 *.py[cod]
 .DS_Store
 .claude/

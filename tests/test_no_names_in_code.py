@@ -31,7 +31,7 @@ def _tracked(prefix: str) -> list[Path]:
 
 
 @pytest.mark.parametrize("prefix", ["quam_state_manager", "tests", "tools", "build", "pyproject.toml",
-                                    "MANIFEST.in", "README.md"])
+                                    "MANIFEST.in", "README.md", "site"])
 def test_no_name_in_tracked_code(prefix):
     offenders = []
     for f in _tracked(prefix):
