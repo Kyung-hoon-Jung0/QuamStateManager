@@ -1,7 +1,6 @@
 # QUAM State Manager (QSM)
 
-A desktop + web app to view, edit, compare and track the QUAM `state.json` /
-`wiring.json` of a superconducting-qubit chip, with its experiment runs beside it.
+An app to view, edit and track QUAM `state.json` / `wiring.json` and experiment runs.
 
 ### **[See what QSM can do &rarr;](https://kyung-hoon-jung0.github.io/QuamStateManager/)**
 
