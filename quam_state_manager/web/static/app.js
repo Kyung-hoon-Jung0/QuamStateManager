@@ -27642,7 +27642,7 @@ window.StateVersions = (function () {
         // report: "the panel is cut off on the right"). Nudge it back in.
         p.style.left = '';
         // v1.5.5: inside the overflow menu the panel is viewport-anchored by CSS
-        if (window.getComputedStyle && getComputedStyle(p).position === 'fixed') return;
+        if (window.getComputedStyle && window.getComputedStyle(p).position === 'fixed') return;
         var r = p.getBoundingClientRect();
         var over = r.right - (window.innerWidth - 8);
         if (over > 0) p.style.left = (p.offsetLeft - over) + 'px';
