@@ -1203,3 +1203,29 @@ Polish for the new top bar.
 ### Fixed
 
 - **CZ gate plan**: the row scrolling under the stuck table header no longer shows through below it.
+
+## v1.5.5 (2026-10-27)
+
+User-reported fixes after a hand test of 1.5.4.
+
+- The overflow menu's Versions panel opens wide again (min(60rem, 92vw)), anchored
+  to the window under the top bar instead of the narrow menu item that clipped it.
+- The overflow menu's Agent item opens the Agent page (it opened the Calibration log).
+- A press on the Sync status control opens the sync panel even when the tray
+  re-renders under the press (a drift poll or a flush changing its words); it used to
+  be dropped with a "the tray changed" notice. A panel left open with no box on screen
+  no longer turns the next press into a close.
+- Notices (bottom right) can be selected and copied: the text takes the pointer (only a
+  notice's padding still lets a click through to what is under it), each
+  notice has a Copy button that copies its whole text including the details line, and
+  a notice does not fade while it is hovered, focused or holds the text selection.
+- Datasets: with no remembered split choice, the first run opens at the up arrow's
+  default height. A collapsed current split (SM's own collapse, or one left by an older
+  page) is no longer migrated into the user's choice nor applied to a run open at load;
+  once per browser, a collapsed "choice" an earlier version migrated is dropped (a
+  deliberate very low drag has to be made once more).
+- Interactive tab: a click on a figure shows the clicked point -- x and y on a 1-D
+  plot, x, y and the cell value z on a 2-D map -- at full precision with the axis
+  unit, a Copy per value and Copy both / Copy all. Nothing is written; Esc or an
+  outside click closes it. A figure with a click contract keeps its apply popup, which
+  now carries the same row.

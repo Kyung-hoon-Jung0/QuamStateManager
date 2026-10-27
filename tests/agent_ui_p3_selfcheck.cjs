@@ -220,8 +220,9 @@ const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   A.w.AgentPill.render({ state: 'waiting', waiting: 3 });
   pin('c12-an-unchanged-link-is-not-reprocessed', A.processed.filter(e => e === link).length === 1);
   A.w.AgentPill.render({ state: 'idle' });
-  pin('c12-no-waiting-is-the-calibration-log-again', link.getAttribute('href') === '/journal' && link.getAttribute('hx-get') === '/journal'
-    && link.getAttribute('hx-push-url') === 'true' && A.processed.filter(e => e === link).length === 2 && /Calibration log/.test(A.doc.getElementById('agent-pill').title));
+  // v1.5.5: with nothing waiting the item opens the Agent page (it opened the Calibration log)
+  pin('c12-no-waiting-is-the-agent-page-again', link.getAttribute('href') === '/agent' && link.getAttribute('hx-get') === '/agent'
+    && link.getAttribute('hx-push-url') === 'true' && A.processed.filter(e => e === link).length === 2 && /Agent page/.test(A.doc.getElementById('agent-pill').title));
   A.w.AgentPill.render({ state: 'waiting', waiting: 1 });
   A.doc.querySelector('.ag-input').focus();
   const ev1 = new A.w.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });

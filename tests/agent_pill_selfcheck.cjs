@@ -66,8 +66,12 @@ const now = Date.now() / 1000;
   ok(el.querySelector('.agent-pill-mode').hidden === false && el.querySelector('.agent-pill-mode').textContent === 'asks to write'
      && /^Agent mode: ask-writes \(a run that would write/.test(el.querySelector('.agent-pill-mode').title),   // v1.5.1 U P2-13: words, the setting in the title
      'the mode rides its own chip (CSS drops it on a narrow window)');
-  ok(/Agent: limited · resets 14:00 · ask-writes/.test(el.title) && /Calibration log/.test(el.title),
+  ok(/Agent: limited · resets 14:00 · ask-writes/.test(el.title) && /Agent page/.test(el.title),
      'nothing is lost: the whole sentence is the tooltip: ' + el.title);
+  // v1.5.5 (bug 2): the menu's Agent item opens the Agent page, not the Calibration log
+  ok(el.querySelector('.agent-pill-link').getAttribute('href') === '/agent'
+     && el.querySelector('.agent-pill-link').getAttribute('hx-get') === '/agent',
+     'the Agent item leads to the Agent page: ' + el.querySelector('.agent-pill-link').getAttribute('href'));
   window.AgentPill.render({ state: 'idle' });
   ok(el.querySelector('.agent-pill-mode').hidden === true, 'no mode, no chip');
 

@@ -16036,3 +16036,45 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
 .topbar-more-btn[data-attention="error"] .topbar-more-dot   { background: var(--outcome-fail-color, #c0392b); }
 .topbar-more-btn[data-attention="warning"] .topbar-more-dot { background: var(--outcome-warn-color, #e67e22); }
 .topbar-more-btn[data-attention="info"] .topbar-more-dot    { background: var(--pico-primary, #1e88e5); }
+
+/* v1.5.5 (bug: "Versions opens far too narrow"): since v1.5.3 the Versions chip
+   lives inside the overflow menu, and the panel anchored left:0 to that narrow
+   menu item, so the menu's own box clipped it to a sliver. Inside the menu it is
+   anchored to the VIEWPORT instead (fixed, under the top bar, right-aligned),
+   wide, and above the menu. The menu has no transform/filter, so a fixed child
+   is not clipped by its overflow. */
+.topbar .topbar-more-menu .state-version-panel {
+    position: fixed; top: calc(var(--topbar-height, 54px) + 6px); right: 8px; left: auto;
+    width: min(60rem, 92vw); max-width: calc(100vw - 16px);
+    max-height: calc(100vh - var(--topbar-height, 54px) - 24px); z-index: 260; }
+
+/* v1.5.5: a notice's text can be selected and copied (drag or the Copy button).
+   The text takes the pointer; the box's padding still lets a click through
+   (docs/190 F24). */
+#status-bar .toast p { pointer-events: auto; user-select: text; -webkit-user-select: text; cursor: text; }
+.toast .toast-copy { display: inline-block; width: auto; margin: .3rem 0 0; padding: .05rem .45rem;
+    font-size: .75em; line-height: 1.4; border-radius: 4px; background: transparent; color: inherit;
+    border: 1px solid currentColor; opacity: .7; cursor: pointer; }
+.toast .toast-copy:hover, .toast .toast-copy:focus-visible { opacity: 1; }
+
+/* v1.5.5: the clicked point's values (PointCopy, app.js) */
+.pt-copy-pop { position: fixed; z-index: 9700; min-width: 15rem; max-width: min(32rem, 92vw);
+    padding: .45rem .6rem .55rem; border-radius: 8px; font-size: .85rem;
+    background: var(--pico-card-background-color, var(--pico-background-color));
+    border: 1px solid var(--pico-muted-border-color); box-shadow: 0 8px 24px rgba(0,0,0,.28); }
+.pt-copy-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+    font-weight: 600; margin-bottom: .3rem; }
+.pt-copy-x { width: auto; margin: 0; padding: 0 .35rem; background: none; border: none;
+    color: inherit; font-size: 1.15em; line-height: 1; cursor: pointer; }
+.pt-copy-rows { display: flex; flex-direction: column; gap: .2rem; }
+.pt-copy-row { display: flex; align-items: center; gap: .45rem; }
+.pt-copy-k { min-width: 1rem; font-weight: 600; color: var(--pico-muted-color); }
+.pt-copy-v { padding: .05rem .3rem; font-size: .95em; user-select: all; overflow-wrap: anywhere; }
+.pt-copy-u { color: var(--pico-muted-color); }
+.pt-copy-btn, .pt-copy-all { width: auto; margin: 0 0 0 auto; padding: .05rem .45rem; font-size: .78em;
+    line-height: 1.4; border-radius: 4px; background: transparent; color: var(--pico-primary);
+    border: 1px solid var(--pico-primary); cursor: pointer; }
+.pt-copy-all { margin: .25rem 0 0 auto; align-self: flex-end; }
+.plot-apply-point:not([hidden]) { margin: .3rem 0 .4rem; padding: .35rem .5rem; border-radius: 6px;
+    border: 1px dashed var(--pico-muted-border-color); font-size: .85rem; }
+.toast .toast-copy::before { content: attr(data-label); }

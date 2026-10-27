@@ -390,10 +390,10 @@
                    (set by the global poll below). Editing is locked server-side
                    while running; this is the visible signal. #}
                 {# docs/173 §3.1: the Agent pill -- what the calibration agent is doing
-                   right now, one state in a fixed precedence; click = Calibration log. #}
+                   right now, one state in a fixed precedence; click = the Agent page (v1.5.5). #}
                 <li id="agent-pill" class="agent-pill agent-idle" hidden aria-live="polite" data-state="idle">
-                    <a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                       class="agent-pill-link" title="the calibration agent — click for the Calibration log">
+                    <a href="/agent" hx-get="/agent" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                       class="agent-pill-link" title="the calibration agent — click for the Agent page">
                         <span class="agent-pill-dot" aria-hidden="true"></span>
                         <span class="agent-pill-text">Agent</span>
                         {# the mode and the owner are secondary: CSS drops them on a narrow
@@ -1497,6 +1497,8 @@
                         onclick="closePlotApplyPopup()" aria-label="Close">&times;</button>
             </header>
             <div class="plot-apply-context" id="plot-apply-context"></div>
+            {# v1.5.5: the clicked point's own coordinates, each copyable (PointCopy, app.js) #}
+            <div id="plot-apply-point" class="plot-apply-point" hidden></div>
             <div id="plot-apply-extra" class="plot-apply-extra" hidden></div>
             {# async fit-audit verdict badge (does the current gate still accept this fit?) — advisory,
                never blocks Apply; sits just above the rows (the write point). aria-live announces the
@@ -1627,10 +1629,23 @@
         // taken as the last action -- unless they are one of SM's own fixed
         // positions (a programmatic move is never a choice).
         var MIGRATED_KEY = "quam_split_migrated";
+        var HEALED_KEY = "quam_split_healed_v155";
         var _oldSplitChecked = false;
         function migrateOldSplit() {
             if (_oldSplitChecked) return;
             _oldSplitChecked = true;
+            // v1.5.5: ONCE per browser, a remembered choice at or below the down
+            // arrow's share that the 1.5.1 migration may have taken from a
+            // collapsed split is dropped, so the next run opens at the default
+            // height. A real low drag is re-made once by its owner.
+            try {
+                if (!localStorage.getItem(HEALED_KEY)) {
+                    localStorage.setItem(HEALED_KEY, "1");
+                    var cs = window.UI_CONFIG && UI_CONFIG.split && UI_CONFIG.split.collapsedSizes;
+                    var u = JSON.parse(localStorage.getItem(USER_KEY) || "null");
+                    if (cs && validSizes(u) && Number(u[1]) <= Number(cs[1]) + 0.01) localStorage.removeItem(USER_KEY);
+                }
+            } catch (e) {}
             try {
                 if (localStorage.getItem(MIGRATED_KEY)) return;
                 localStorage.setItem(MIGRATED_KEY, "1");
@@ -1640,6 +1655,11 @@
                 var S = (window.UI_CONFIG && UI_CONFIG.split) || {};
                 var fixed = [S.defaultSizes, S.expandedSizes, S.collapsedSizes, S.datasetExpandedSizes];
                 for (var i = 0; i < fixed.length; i++) if (sameSizes(old, fixed[i])) return;
+                // v1.5.5: a panel at or below the down arrow's own share is a
+                // collapsed panel (SM's own collapse, a stale page), not a
+                // height anyone chose to read at; the first run then opened
+                // at the bottom. No choice means the default height.
+                if (S.collapsedSizes && Number(old[1]) <= Number(S.collapsedSizes[1]) + 0.01) return;
                 localStorage.setItem(USER_KEY, JSON.stringify([Number(old[0]), Number(old[1])]));
             } catch (e) {}
         }
@@ -1879,8 +1899,11 @@
                 // own x), and a long result line stays long enough to be read
                 if (el && !(el.classList && el.classList.contains("sh-confirm"))) {
                     var ms = Math.max(3000, Math.min(10000, (el.textContent || "").length * 45));
-                    scope.timeout(function() { el.style.opacity = "0"; }, ms);
-                    scope.timeout(function() { el.remove(); }, ms + 500);
+                    if (window.ToastHold) window.ToastHold.schedule(el, ms);   // v1.5.5: held while hovered/selected
+                    else {
+                        scope.timeout(function() { el.style.opacity = "0"; }, ms);
+                        scope.timeout(function() { el.remove(); }, ms + 500);
+                    }
                 }
                 return;
             }
@@ -2090,6 +2113,10 @@
             }
             var user = userSizes();
             if (user) saveSizes(user);
+            // v1.5.5: no choice yet -- a panel open at page load (a restored
+            // run) opens at the up arrow's default height, never at whatever
+            // SM's own last move left in the current split.
+            else if (inspectorHasContent()) saveSizes(expandedSizes());
             initSplit();
         }
 

@@ -3646,10 +3646,115 @@ window.showToast = function(message, level, ms, detail) {
         return div;
     }
     var duration = ms > 0 ? ms : ((level === "error" || level === "warning") ? 6000 : 3500);
-    setTimeout(function() { div.style.opacity = "0"; }, duration);
-    setTimeout(function() { div.remove(); }, duration + 500);
+    window.ToastHold.schedule(div, duration);
     return div;
 };
+
+/* v1.5.5: a notice can be read, selected and copied. Its text takes the
+ * pointer (user-select: text) -- a deliberate trade against docs/190 F24:
+ * only the notice's padding still lets a click through to what is under it --, every notice carries a small Copy button that copies
+ * its whole text (the details line too), and a notice never fades while it is
+ * hovered, holds the focus, or holds the current text selection. Every
+ * auto-dismiss in the app goes through schedule(); the Copy button is added by
+ * one observer on #status-bar, so server-rendered (out-of-band) notices get it
+ * too. */
+window.ToastHold = (function () {
+    function held(div) {
+        if (!div || !div.isConnected) return false;
+        if (div._toastHover) return true;
+        if (div.contains(document.activeElement)) return true;
+        var sel = window.getSelection ? window.getSelection() : null;
+        if (sel && !sel.isCollapsed && sel.rangeCount) {
+            if ((sel.anchorNode && div.contains(sel.anchorNode)) || (sel.focusNode && div.contains(sel.focusNode))) return true;
+        }
+        return false;
+    }
+    function schedule(div, ms) {
+        if (!div) return;
+        var token = {};
+        div._holdToken = token;
+        if (!div._hoverWatch) {
+            div._hoverWatch = true;
+            div.addEventListener("mouseover", function () { div._toastHover = true; });
+            div.addEventListener("mouseout", function (e) {
+                if (!e.relatedTarget || !div.contains(e.relatedTarget)) div._toastHover = false;
+            });
+        }
+        function fadeTick() {
+            if (div._holdToken !== token || !div.isConnected) return;
+            if (held(div)) { div.style.opacity = ""; setTimeout(fadeTick, 400); return; }
+            div.style.opacity = "0";
+            setTimeout(function () {
+                if (div._holdToken !== token || !div.isConnected) return;
+                if (held(div)) { div.style.opacity = ""; setTimeout(fadeTick, 400); return; }
+                div.remove();
+            }, 500);
+        }
+        setTimeout(fadeTick, ms > 0 ? ms : 3500);
+    }
+    function textOf(div) {
+        var parts = [];
+        Array.prototype.forEach.call(div.childNodes, function (n) {
+            if (n.nodeType === 1 && (n.tagName === "BUTTON" || n.classList.contains("toast-copy"))) return;
+            var t = (n.textContent || "").replace(/\s+/g, " ").trim();
+            if (t) parts.push(t);
+        });
+        return parts.join("\n");
+    }
+    function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text).catch(function () { return fallback(text); });
+        }
+        return Promise.resolve(fallback(text));
+    }
+    function fallback(text) {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed"; ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand("copy"); } catch (e) {}
+        ta.remove();
+        return ok;
+    }
+    function decorate(div) {
+        if (!div || div.nodeType !== 1 || !/\btoast\b/.test(div.className || "")) return;
+        if (div.querySelector(":scope > .toast-copy")) return;
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "toast-copy";
+        // the label is drawn by CSS (attr(data-label)): every reader of a
+        // notice's textContent keeps reading only its message
+        b.setAttribute("data-label", "Copy");
+        b.title = "Copy this message";
+        b.setAttribute("aria-label", "Copy this message");
+        b.addEventListener("click", function (e) {
+            e.preventDefault(); e.stopPropagation();
+            var p = copyText(textOf(div));
+            Promise.resolve(p).then(function () {
+                b.setAttribute("data-label", "Copied");
+                setTimeout(function () { b.setAttribute("data-label", "Copy"); }, 1500);
+            });
+        });
+        div.appendChild(b);
+    }
+    function watch() {
+        var bar = document.getElementById("status-bar");
+        if (!bar || bar._toastWatch) return;
+        bar._toastWatch = true;
+        Array.prototype.forEach.call(bar.children, decorate);
+        if (window.MutationObserver) {
+            new MutationObserver(function (ms) {
+                ms.forEach(function (m) { Array.prototype.forEach.call(m.addedNodes, decorate); });
+            }).observe(bar, { childList: true });
+        }
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", watch); else watch();
+    document.addEventListener("htmx:load", watch);
+    return { schedule: schedule, held: held, decorate: decorate, textOf: textOf, copyText: copyText };
+})();
 
 /* v1.5.1 (r6 P2-6): a failed live write's notice ("Apply failed: ...") stays
    until it is closed -- or until a LATER live write of this chip lands. It
@@ -3725,8 +3830,7 @@ window.TrayNoticeToast = (function () {
         Array.prototype.forEach.call(bar.querySelectorAll(".toast-success, .toast-info"), function (t) {
             if (t.hasAttribute("data-fading")) return;    // oobAfterSwap fires once per settled elt
             t.setAttribute("data-fading", "1");
-            setTimeout(function () { t.style.opacity = "0"; }, 3500);
-            setTimeout(function () { t.remove(); }, 4000);
+            window.ToastHold.schedule(t, 3500);
         });
     }
     document.addEventListener("htmx:oobAfterSwap", function (evt) {
@@ -3906,8 +4010,16 @@ window.openReview = function(opts) {
     var host = document.getElementById("state-review-host");
     if (!overlay || !host) return;
     _clearReviewDismiss();
-    // a second click on the control closes it (the popover's own toggle)
-    if (_syncPanelOpen() && !(opts && opts.force)) { window.closeReview(); return; }
+    // a second click on the control closes it (the popover's own toggle) --
+    // but only a panel the user can SEE: one left open with no box on screen
+    // (an empty host, a stale display:block) would make the press look dead.
+    if (_syncPanelOpen() && !(opts && opts.force)) {
+        var hr = host.getBoundingClientRect ? host.getBoundingClientRect() : null;
+        var layout = document.body && document.body.getBoundingClientRect().width > 0;   // jsdom: none
+        var seen = !layout || !hr || hr.width > 0 || hr.height > 0;
+        if (seen && host.innerHTML.trim()) { window.closeReview(); return; }
+        window.closeReview();
+    }
     var wasOpen = _syncPanelOpen();
     overlay.classList.add("sync-panel-overlay");
     if (!wasOpen) {
@@ -4436,6 +4548,11 @@ window._trackGridCommit = function (p) {
         if (!tray || !e.target || !tray.contains(e.target)) return;
         var bs = tray.querySelectorAll("button"), t = null;
         for (var i = 0; i < bs.length; i++) if (bs[i].outerHTML === p.html) { t = bs[i]; break; }
+        // v1.5.5: the status control's main button only ever opens the sync
+        // panel, whatever its words say. A tray swap mid-press (a drift poll, a
+        // flush) changes its text ("In sync" -> "Live chip changed"), and the
+        // press used to be dropped with a toast: "the pill does nothing".
+        if (!t && /sync-control-main/.test(p.html)) t = tray.querySelector(".sync-control-main");
         if (!t) {
             // not the same action any more: never pressed on the user's
             // behalf, and never swallowed without a word either
@@ -7558,7 +7675,7 @@ window.smModalOpen = function () {
     if (document.querySelector('dialog[open]')) return true;
     var sel = '.ch-overlay, #state-review-overlay, #live-drift-overlay,'
             + ' #version-diff-overlay,'
-            + ' #plot-apply-popup, #new-run-popup, #cmd-palette, #kb-cheatsheet,'
+            + ' #plot-apply-popup, #new-run-popup, #cmd-palette, #kb-cheatsheet, #pt-copy-pop,'
             + ' .modal';
     var els = document.querySelectorAll(sel);
     for (var i = 0; i < els.length; i++) {
@@ -16835,6 +16952,11 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
                     inner.style.cursor = 'pointer';
                     div.setAttribute('title', 'Click a point to edit the corresponding parameter');
                     _markClickableFig(div, container);
+                } else if (window.PointCopy) {
+                    // v1.5.5: no contract -- a click shows the point to copy, nothing is written
+                    window.PointCopy.attach(inner);
+                    inner.style.cursor = 'crosshair';
+                    if (!div.getAttribute('title')) div.setAttribute('title', 'Click a point to read and copy its values');
                 }
             });
             // Track in the keep-alive pool (most-recent last) + prune offscreen.
@@ -17417,7 +17539,7 @@ function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpec
                 '", but the loaded chip is "' + (act.name || '?') + '".\n\n' +
                 'Applying will write ' + (expect.name || 'that chip') +
                 '’s value onto the loaded chip. Continue anyway?');
-            if (!ok) return;               // abort — nothing rendered
+            if (!ok) { if (window.PointCopy) window.PointCopy.drop(); return; }   // abort — nothing rendered
             expect.forced = true;          // user accepted → send force_chip
         }
         render();
@@ -17435,6 +17557,7 @@ function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpec
             var statePath = loadInput ? loadInput.value.trim() : '';
             if (!statePath) {
                 _showPlotClickToast('No state loaded — cannot apply', null, null);
+                if (window.PointCopy) window.PointCopy.drop();
                 return;
             }
             return fetch('/load', {
@@ -17552,6 +17675,152 @@ window.applyAllFitValues = applyAllFitValues;
    spec → the same editable parameter-update popup. The spec carries the target
    dot-path(s), the per-target unit transform (value = axisVal*scale + offset),
    and the figure's qubit. */
+/* v1.5.5: the clicked point's coordinates, to read and copy. A click on an
+ * Interactive figure without a click contract opens a small popup at the click
+ * with x and y (and z, the cell value, on a 2-D map), each at full precision
+ * with its unit when the axis title names one, a Copy button per value and a
+ * Copy-all. Nothing is written. Esc or a click outside closes it. A figure
+ * with a click contract keeps its apply popup; the same row sits inside it. */
+window.PointCopy = (function () {
+    var pending = null;
+    function unitOf(title) {
+        var t = title && (typeof title === 'string' ? title : title.text);
+        if (!t) return '';
+        t = String(t).replace(/<[^>]*>/g, '');
+        var m = /\[([^\[\]]+)\]\s*$/.exec(t) || /\(([^()]+)\)\s*$/.exec(t);
+        return m ? m[1].trim() : '';
+    }
+    function num(v) {
+        if (v === undefined || v === null) return null;
+        if (typeof v === 'number') return isFinite(v) ? String(v) : String(v);
+        return String(v);
+    }
+    function is2d(pt) {
+        var ty = (pt.fullData && pt.fullData.type) || (pt.data && pt.data.type) || '';
+        return /^(heatmap|heatmapgl|contour|histogram2d|histogram2dcontour|surface)$/.test(ty)
+            || (pt.z !== undefined && pt.z !== null);
+    }
+    function info(ev) {
+        if (!ev || !ev.points || !ev.points.length) return null;
+        var pt = ev.points[0];
+        var xa = pt.xaxis || {}, ya = pt.yaxis || {};
+        var out = [
+            { label: 'x', value: num(pt.x), unit: unitOf(xa.title) },
+            { label: 'y', value: num(pt.y), unit: unitOf(ya.title) }
+        ];
+        if (is2d(pt)) {
+            var fd = pt.fullData || pt.data || {};
+            var cb = fd.colorbar || (fd.marker && fd.marker.colorbar) || {};
+            out.push({ label: 'z', value: num(pt.z), unit: unitOf(cb.title) });
+        }
+        return out.filter(function (r) { return r.value !== null; });
+    }
+    function line(r) { return r.label + ' = ' + r.value + (r.unit ? ' ' + r.unit : ''); }
+    function copy(text, btn) {
+        var p = (window.ToastHold && window.ToastHold.copyText) ? window.ToastHold.copyText(text)
+            : (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.resolve());
+        Promise.resolve(p).then(function () {
+            if (!btn) return;
+            var was = btn.textContent;
+            btn.textContent = 'Copied';
+            setTimeout(function () { btn.textContent = was; }, 1200);
+        });
+    }
+    function row(rows) {
+        var box = document.createElement('div');
+        box.className = 'pt-copy-rows';
+        rows.forEach(function (r) {
+            var d = document.createElement('div');
+            d.className = 'pt-copy-row';
+            d.setAttribute('data-axis', r.label);
+            var k = document.createElement('span'); k.className = 'pt-copy-k'; k.textContent = r.label;
+            var v = document.createElement('code'); v.className = 'pt-copy-v'; v.textContent = r.value;
+            d.appendChild(k); d.appendChild(v);
+            if (r.unit) { var u = document.createElement('span'); u.className = 'pt-copy-u'; u.textContent = r.unit; d.appendChild(u); }
+            var b = document.createElement('button');
+            b.type = 'button'; b.className = 'pt-copy-btn'; b.textContent = 'Copy';
+            b.setAttribute('aria-label', 'Copy ' + r.label);
+            b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); copy(r.value, b); });
+            d.appendChild(b);
+            box.appendChild(d);
+        });
+        var all = document.createElement('button');
+        all.type = 'button'; all.className = 'pt-copy-all';
+        all.textContent = rows.length > 2 ? 'Copy all' : 'Copy both';
+        all.addEventListener('click', function (e) {
+            e.preventDefault(); e.stopPropagation();
+            copy(rows.map(line).join('\n'), all);
+        });
+        box.appendChild(all);
+        return box;
+    }
+    function close() {
+        var p = document.getElementById('pt-copy-pop');
+        if (p) p.remove();
+        document.removeEventListener('keydown', onKey, true);
+        document.removeEventListener('mousedown', onAway, true);
+    }
+    function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+    function onAway(e) {
+        var p = document.getElementById('pt-copy-pop');
+        if (p && e.target && !p.contains(e.target)) close();
+    }
+    function open(ev) {
+        var rows = info(ev);
+        close();
+        if (!rows || !rows.length) return null;
+        var pop = document.createElement('div');
+        pop.id = 'pt-copy-pop';
+        pop.className = 'pt-copy-pop';
+        pop.setAttribute('role', 'dialog');
+        pop.setAttribute('aria-label', 'Clicked point');
+        var head = document.createElement('div');
+        head.className = 'pt-copy-head';
+        head.textContent = 'Clicked point';
+        var x = document.createElement('button');
+        x.type = 'button'; x.className = 'pt-copy-x'; x.textContent = '×';
+        x.setAttribute('aria-label', 'Close');
+        x.addEventListener('click', close);
+        head.appendChild(x);
+        pop.appendChild(head);
+        pop.appendChild(row(rows));
+        document.body.appendChild(pop);
+        var cx = 0, cy = 0;
+        try { cx = ev.event.clientX; cy = ev.event.clientY; } catch (e) {}
+        var w = pop.offsetWidth || 260, h = pop.offsetHeight || 120;
+        var left = Math.max(8, Math.min((cx || 0) + 12, window.innerWidth - w - 8));
+        var top = Math.max(8, Math.min((cy || 0) + 12, window.innerHeight - h - 8));
+        pop.style.left = left + 'px';
+        pop.style.top = top + 'px';
+        // the click that opened it must not close it
+        setTimeout(function () {
+            document.addEventListener('keydown', onKey, true);
+            document.addEventListener('mousedown', onAway, true);
+        }, 0);
+        return pop;
+    }
+    function attach(plotDiv) {
+        if (!plotDiv || typeof plotDiv.on !== 'function') return;
+        if (plotDiv._ptCopyBound) return;           // a re-render into the same node binds once
+        plotDiv._ptCopyBound = true;
+        plotDiv.on('plotly_click', function (ev) { open(ev); });
+    }
+    function stash(ev) { var r = info(ev); pending = r ? { rows: r, at: Date.now() } : null; }
+    function fill(slot) {
+        if (!slot) return;
+        // a stash older than a few seconds belongs to a click whose popup never
+        // opened (a cancelled cross-chip confirm), not to this popup
+        var rows = (pending && Date.now() - pending.at < 15000) ? pending.rows : null;
+        pending = null;
+        slot.innerHTML = '';
+        if (!rows || !rows.length) { slot.hidden = true; return; }
+        slot.appendChild(row(rows));
+        slot.hidden = false;
+    }
+    function drop() { pending = null; }
+    return { info: info, open: open, close: close, attach: attach, stash: stash, fill: fill, drop: drop, unitOf: unitOf, row: row };
+})();
+
 function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
     // docs/296: a run saved before a qubit rename whose qubit has no name on
     // the loaded chip carries no targets but a `refused` sentence -- the click
@@ -17568,7 +17837,7 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
         var root = _dsRootFor(plotDiv);   // QA r2-07: the column this tile is in
         var q = clickable.qubit || (pt.customdata != null ? String(pt.customdata).trim() : null);
         if (!q) { var qs = _getRunQubits(root); if (qs.length === 1) q = qs[0]; }
-        if (clickable.refused) { _showPlotClickToast(clickable.refused, null, null); return; }
+        if (clickable.refused) { _showPlotClickToast(clickable.refused, null, null); if (window.PointCopy) window.PointCopy.open(ev); return; }
         // docs/296: `names` maps the run's qubit names to the loaded chip's
         // (present only when the run predates a rename); a {q} path is filled
         // with today's name, and a name with none is refused, never guessed
@@ -17647,7 +17916,7 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
                           provenance: t.provenance ? Object.assign({}, t.provenance,
                               {evidence_tier: t.evidence_tier || clickable.evidence_tier}) : null});
         });
-        if (!updates.length) return;
+        if (!updates.length) { if (window.PointCopy) window.PointCopy.open(ev); return; }   // v1.5.5: still readable/copyable
 
         // Read-only context rows: shown in the popup but never written (e.g. the
         // clicked readout power in dBm alongside the editable amplitude).
@@ -17666,6 +17935,7 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
         var expName = root ? root.getAttribute('data-experiment') : '';
         var toastVal = (clickable.axis === 'y') ? pt.y : pt.x;
         _showPlotClickToast((clickable.axis === 'y' ? 'y=' : 'x=') + toastVal, q, updates[0].dot_path);
+        if (window.PointCopy) window.PointCopy.stash(ev);   // v1.5.5: the popup carries the point's x/y(/z) copy row
         // Carry the run's own chip identity so the server 409s a cross-chip
         // write (same gate as the Results-tab apply path) — without it a run's
         // CZ amp could silently land on a different chip reusing pair names.
@@ -17711,6 +17981,7 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
     var ctxBox = document.getElementById('plot-apply-context');
     var popup = document.getElementById('plot-apply-popup');
     if (!rowsBox || !popup) return;
+    if (window.PointCopy) window.PointCopy.fill(document.getElementById('plot-apply-point'));
     // QA r2-07: the run the verdict badge audits (a pinned column's own run)
     if (runUid) popup.dataset.runUid = runUid; else delete popup.dataset.runUid;
     // Stash the run's chip token so the Apply / Apply-All requests carry it
@@ -27326,6 +27597,8 @@ window.StateVersions = (function () {
         // enough right pushes the 36rem panel past the viewport edge (bug
         // report: "the panel is cut off on the right"). Nudge it back in.
         p.style.left = '';
+        // v1.5.5: inside the overflow menu the panel is viewport-anchored by CSS
+        if (window.getComputedStyle && getComputedStyle(p).position === 'fixed') return;
         var r = p.getBoundingClientRect();
         var over = r.right - (window.innerWidth - 8);
         if (over > 0) p.style.left = (p.offsetLeft - over) + 'px';
@@ -28063,6 +28336,9 @@ window.TopbarMore = (function () {
         }
         if (!isOpen()) return;
         var inMenu = t.closest('#topbar-more-menu');
+        // v1.5.5: the Versions panel's own Diff overlay sits outside the menu;
+        // working in it must not close the menu (and the panel inside it)
+        if (!inMenu && t.closest('#version-diff-overlay')) return;
         if (!inMenu) { if (document.contains(t)) close(false); return; }
         // a navigation from inside the menu closes it (the pane changes under it)
         if (t.closest('a[href]')) close(false);
@@ -28091,7 +28367,7 @@ window.TopbarMore = (function () {
         if (!isOpen()) return;
         var t = e.target;
         if (t === btn() || (menu() && menu().contains(t))) return;
-        if (t && t.closest && t.closest('#sm-reload-pop, .calc-popover, .settings-popover, dialog')) return;
+        if (t && t.closest && t.closest('#sm-reload-pop, .calc-popover, .settings-popover, dialog, #version-diff-overlay')) return;
         close(false);
     });
     /* v1.5.4: what inside the closed menu needs attention -- a health issue, the

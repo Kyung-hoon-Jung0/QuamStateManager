@@ -3,8 +3,8 @@
  *   waiting > limited > stalled > failed > running > between > human-ran > idle
  * -- plus the reservation line (who, until, mode). Refreshes when live-wake
  * wakes (the server bumps its tick on every agent event), on load, and on
- * a slow safety timer. Click -> the Calibration log; while approvals wait,
- * -> their cards on the Agent page (docs/272, C-12). */
+ * a slow safety timer. Click -> the Agent page (v1.5.5; it was the Calibration
+ * log); while approvals wait, -> their cards on it (docs/272, C-12). */
 "use strict";
 
 window.AgentPill = (function () {
@@ -80,7 +80,7 @@ window.AgentPill = (function () {
      bound the click to the path it read when it processed the link, so a
      changed path is re-processed, or the click would still fetch the old one. */
   var DEST = {
-    log: { href: "/journal", get: "/journal", push: "true", says: "click for the Calibration log" },
+    log: { href: "/agent", get: "/agent", push: "true", says: "click for the Agent page" },
     approvals: { href: "/agent#approvals", get: "/agent", push: "/agent#approvals", says: "click to decide them on their cards" }
   };
   function setDestination(link, to) {
