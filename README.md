@@ -7,8 +7,6 @@ A desktop + web app to view, edit, compare and track the QUAM `state.json` /
 
 ## Install
 
-Close any running QSM first, then install into the environment that runs your experiments.
-
 **conda**
 ```bash
 conda activate <your-lab-env>
@@ -29,9 +27,11 @@ qsm browser          # conda / activated env
 uv run qsm browser   # uv project
 ```
 
-It opens `http://127.0.0.1:5050`. Point **State Load** at a `quam_state/` folder
-(the one holding `state.json` + `wiring.json`). Nothing is written to your chip
-until you press **Apply to live**.
+To use a specific port, add `--port` (or `-p`); the default is 5050:
+
+```bash
+qsm browser --port 5070
+```
 
 ## Only if needed
 
