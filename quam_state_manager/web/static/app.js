@@ -28386,7 +28386,10 @@ window.TopbarMore = (function () {
                 n + ' health issue' + (n === '1' ? '' : 's'));
         }
         var ag = m.querySelector('#agent-pill:not([hidden])');
-        if (ag && ag.getAttribute('data-state') === 'waiting') add('warning', 'the agent is asking to write');
+        var agSt = ag && ag.getAttribute('data-state');
+        if (agSt === 'waiting') add('warning', 'the agent is asking to write');
+        else if (agSt === 'failed') add('error', 'an agent run failed');
+        else if (agSt === 'stalled') add('warning', 'the agent shows no sign of life');
         if (m.querySelector('#topbar-import-pill:not([hidden])')) add('info', 'an import is running');
         if (m.querySelector('#scheduler-badge:not([hidden])')) add('info', 'the Experiment Runner is running');
         var dot = b.querySelector('.topbar-more-dot');
