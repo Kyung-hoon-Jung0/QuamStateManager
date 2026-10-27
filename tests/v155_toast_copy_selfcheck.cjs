@@ -67,6 +67,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     tp.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, button: 0, clientX: 50, clientY: 50 }));
     tp.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, button: 0, detail: 1, clientX: 50, clientY: 50 }));
     ok(cellClicks === 1 && d.activeElement === cell, 'a click on the notice text reaches the cell under it and focuses it');
+    tp.dispatchEvent(new w.MouseEvent('mouseover', { bubbles: true }));
+    ok(t3.classList.contains('toast-passthrough') && !w.ToastHold.held(t3), 'a notice clicked through no longer holds itself up on hover');
+    t3.classList.remove('toast-passthrough');
     // a drag (the pointer moved) selects instead: nothing is handed on
     cell.blur();
     tp.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 50, clientY: 50 }));

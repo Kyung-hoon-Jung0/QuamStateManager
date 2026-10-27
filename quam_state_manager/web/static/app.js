@@ -3675,7 +3675,7 @@ window.ToastHold = (function () {
         div._holdToken = token;
         if (!div._hoverWatch) {
             div._hoverWatch = true;
-            div.addEventListener("mouseover", function () { div._toastHover = true; });
+            div.addEventListener("mouseover", function () { if (!div.classList.contains("toast-passthrough")) div._toastHover = true; });
             div.addEventListener("mouseout", function (e) {
                 if (!e.relatedTarget || !div.contains(e.relatedTarget)) div._toastHover = false;
             });
@@ -3760,17 +3760,25 @@ window.ToastHold = (function () {
             var d = down; down = null;
             var t = e.target;
             if (!d || e.detail > 1 || !t || !t.closest || !t.closest(".toast p")) return;
+            if (t.closest("a, button, input, label")) return;
             if (Math.abs(e.clientX - d.x) > 3 || Math.abs(e.clientY - d.y) > 3) return;
             var sel = window.getSelection ? window.getSelection() : null;
             if (sel && !sel.isCollapsed && sel.rangeCount && bar.contains(sel.anchorNode)) return;
             var el = underneath(bar, e.clientX, e.clientY);
-            if (!el) return;
+            if (!el || el === document.body || el === document.documentElement) return;
             e.preventDefault(); e.stopPropagation();
             if (sel && sel.removeAllRanges) sel.removeAllRanges();
-            var o = { bubbles: true, cancelable: true, view: window, clientX: e.clientX, clientY: e.clientY, button: 0 };
+            // the user wants what is under this notice: it stops holding itself
+            // up on hover and lets every later click through, then fades on time
+            var toast = t.closest(".toast");
+            if (toast) { toast._toastHover = false; toast.classList.add("toast-passthrough"); }
+            var o = { bubbles: true, cancelable: true, view: window, clientX: e.clientX, clientY: e.clientY, button: 0,
+                      shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey };
+            if (window.PointerEvent) el.dispatchEvent(new PointerEvent("pointerdown", Object.assign({ pointerId: 1, pointerType: "mouse", isPrimary: true }, o)));
             el.dispatchEvent(new MouseEvent("mousedown", o));
             var f = el.closest ? el.closest("input, textarea, select, button, a[href], [tabindex]") : null;
             if (f && typeof f.focus === "function") f.focus();
+            if (window.PointerEvent) el.dispatchEvent(new PointerEvent("pointerup", Object.assign({ pointerId: 1, pointerType: "mouse", isPrimary: true }, o)));
             el.dispatchEvent(new MouseEvent("mouseup", o));
             el.dispatchEvent(new MouseEvent("click", o));
         }, true);

@@ -16052,6 +16052,8 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
    The text takes the pointer so a drag selects it; a plain click on it is
    handed on to what is under it by ToastHold.forwardClicks (v1.5.6, docs/190 F24). */
 #status-bar .toast p { pointer-events: auto; user-select: text; -webkit-user-select: text; cursor: text; }
+/* once a click went through a notice, the whole notice lets clicks through */
+#status-bar .toast.toast-passthrough p { pointer-events: none; }
 .toast .toast-copy { display: inline-block; width: auto; margin: .3rem 0 0; padding: .05rem .45rem;
     font-size: .75em; line-height: 1.4; border-radius: 4px; background: transparent; color: inherit;
     border: 1px solid currentColor; opacity: .7; cursor: pointer; }
