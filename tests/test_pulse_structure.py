@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 import os
 import shutil
 import subprocess
@@ -423,16 +424,32 @@ class TestTheGenericDoorsRefuse:
     def test_a_value_deeper_than_any_recursion_is_still_judged(self, chip):
         """Refute review: a deep value used to make the recursive walk raise
         -- and a check that raised let the write through."""
-        deep: dict = {}
-        cur = deep
-        for _ in range(1200):
-            cur["d"] = {}
-            cur = cur["d"]
-        body = {"operations": {"evil": _PULSE}, "deep": deep}
-        r = chip.post("/field/edit-batch", json={"updates": [
-            {"dot_path": "qubits.q1.deepch", "value": body, "create": True}]})
+        # The body is spelled by hand: on Python 3.11 json.dumps/loads share the
+        # interpreter's recursion limit, so a body deeper than that limit never
+        # reaches the server. Stay just under it, as deep as a request can be.
+        depth = sys.getrecursionlimit() - 200
+        deep = '{"d":' * depth + '{}' + '}' * depth
+        body = ('{"operations": {"evil": ' + json.dumps(_PULSE) + '}, "deep": '
+                + deep + '}')
+        payload = ('{"updates": [{"dot_path": "qubits.q1.deepch", "value": '
+                   + body + ', "create": true}]}')
+        r = chip.post("/field/edit-batch", data=payload,
+                      content_type="application/json")
         _refused(r)
         assert "deepch" not in _get(chip, "qubits.q1")
+
+    def test_the_walk_itself_survives_a_value_deeper_than_the_recursion_limit(self, chip):
+        """The request test above cannot go past the limit, so the walk is
+        checked directly with a value built in Python, twice the limit deep."""
+        from quam_state_manager.core import pulse_structure as psm
+        depth = sys.getrecursionlimit() * 2
+        deep = {}
+        for _ in range(depth):
+            deep = {"d": deep}
+        value = {"operations": {"evil": copy.deepcopy(_PULSE)}, "deep": deep}
+        ch = psm.structural_change(_store(chip).merged, "create",
+                                   "qubits.q1.deepch", value)
+        assert ch is not None
 
     def test_a_check_that_fails_never_waves_a_container_through(self, chip, monkeypatch):
         from quam_state_manager.core import pulse_structure as psm

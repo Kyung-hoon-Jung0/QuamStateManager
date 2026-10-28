@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import codecs
 import json as _json
-import math
-import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -57,7 +55,7 @@ def _resolve_version() -> str:
     always present regardless of that finder quirk, so read it there; fall back
     to the package attribute (source-tree runs), then a literal."""
     try:
-        from importlib.metadata import PackageNotFoundError, version
+        from importlib.metadata import version
         return version("quam-state-manager")
     except Exception:  # noqa: BLE001 — PackageNotFoundError or any metadata issue
         try:

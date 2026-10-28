@@ -131,8 +131,12 @@ server.listen(0, '127.0.0.1', async function () {
     failures++;
     console.error('FAIL  selfcheck threw: ' + (e && e.stack || e));
   }
+  // Let the event loop drain instead of process.exit(): exiting while a handle is
+  // still closing trips a libuv assertion on Windows.
+  const code = failures ? 1 : 0;
+  if (failures) console.error(failures + ' check(s) failed');
+  else console.log('v130_history_cache_selfcheck: all checks passed (' + n + ' checks)');
+  process.exitCode = code;
   server.close();
-  if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
-  console.log('v130_history_cache_selfcheck: all checks passed (' + n + ' checks)');
-  process.exit(0);
+  if (server.closeAllConnections) server.closeAllConnections();
 });
