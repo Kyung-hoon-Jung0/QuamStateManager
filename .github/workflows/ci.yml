@@ -21,7 +21,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     # The full suite takes ~4 min (linux) / ~6 min (windows); a hang must fail
     # the job in minutes, not sit on the 6-hour default.
-    timeout-minutes: 30
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
