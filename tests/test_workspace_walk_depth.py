@@ -42,6 +42,7 @@ import contextlib
 import json
 import os
 import pathlib
+import threading
 from pathlib import Path
 
 from quam_state_manager.core.history import HistoryManager
@@ -119,18 +120,24 @@ def _fs_spy():
     storms wearing an ``is_dir()`` hat.
     """
     seen: dict[str, list[str]] = {"stat": [], "iterdir": []}
+    # Count only this thread: a daemon left running by an earlier test (a
+    # run watcher, a prewarm) stats its own folders through the same ``os``.
+    me = threading.get_ident()
     real_stat, real_scandir, real_listdir = os.stat, os.scandir, os.listdir
 
     def stat(path, *a, **k):
-        seen["stat"].append(_np(path))
+        if threading.get_ident() == me:
+            seen["stat"].append(_np(path))
         return real_stat(path, *a, **k)
 
     def scandir(path=".", *a, **k):
-        seen["iterdir"].append(_np(path))
+        if threading.get_ident() == me:
+            seen["iterdir"].append(_np(path))
         return real_scandir(path, *a, **k)
 
     def listdir(path=".", *a, **k):
-        seen["iterdir"].append(_np(path))
+        if threading.get_ident() == me:
+            seen["iterdir"].append(_np(path))
         return real_listdir(path, *a, **k)
 
     os.stat, os.scandir, os.listdir = stat, scandir, listdir
