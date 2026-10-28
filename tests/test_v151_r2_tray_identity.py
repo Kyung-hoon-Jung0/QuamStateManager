@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -71,6 +72,19 @@ def bystander():
     """An unrelated running process (it will 'reuse' a recorded pid)."""
     p = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.readline()"],
                          stdin=subprocess.PIPE)
+    # settle: a process's start time is only as fine as the OS clock (Linux
+    # /proc start ticks are 10 ms), so a process spawned in the same tick
+    # would share this one's (pid, start) identity. Wait until the boot tick
+    # counter has moved past the bystander's start tick.
+    born = instances.process_start(p.pid)
+    if born is not None and os.path.exists("/proc/uptime"):
+        hz = os.sysconf("SC_CLK_TCK")
+        until = time.monotonic() + 5
+        while time.monotonic() < until:
+            with open("/proc/uptime", encoding="ascii") as fh:
+                if float(fh.read().split()[0]) * hz > born + 2:
+                    break
+            time.sleep(0.005)
     yield p
     try:
         p.stdin.write(b"\n")
@@ -117,6 +131,8 @@ class TestAReusedPidIsNotTheHolder:
         owner_f = main.with_name(main.stem + ".owner.json")
         doc = json.loads(owner_f.read_text(encoding="utf-8"))
         assert doc["pid"] == a["pid"]
+        start_b = instances.process_start(bystander.pid)
+        assert start_b is None or start_b != doc.get("start"),             "precondition: the bystander must not share the holder's start tick"
         doc["pid"] = bystander.pid                  # an unrelated process now holds that pid
         owner_f.write_text(json.dumps(doc), encoding="utf-8")
         b = _run(chip["inst"], chip["live"], "open")

@@ -496,10 +496,18 @@ class TestWorkspaceTokenCostsOnePerDir:
         with _fs_spy() as with_own:
             HistoryManager._workspace_token(ws, own_root=own)
 
+        # Resolving the own root and the workspace root ONCE each is the
+        # allowed cost. On POSIX ``Path.resolve()`` lstats every path
+        # component (Windows asks the handle instead), so that one-off cost
+        # is measured here rather than assumed to be zero.
+        with _fs_spy() as once:
+            own.resolve()
+            root.resolve()
         extra = with_own.total - without.total
-        assert extra <= 4, (
+        assert extra <= 4 + once.total, (
             f"asking for the own-root exclusion cost {extra} extra syscalls "
-            f"over 30 entries — it is resolving per entry again"
+            f"over 30 entries (resolving the two roots once costs "
+            f"{once.total}) — it is resolving per entry again"
         )
 
     def test_the_exclusion_still_excludes(self, tmp_path):

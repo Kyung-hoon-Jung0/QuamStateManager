@@ -120,7 +120,9 @@ function t1(q) {
     ok(q2 && q2.classList.contains('row-selected'), 'B3: the selected row stays selected');
 
     /* C */
-    const cell = doc.querySelector('#qubits-table tr[data-qubit-id="q1"] td');
+    // the VISIBLE row: B2's filter hid q1, and a hidden element cannot take
+    // focus (a browser refuses it, and so does jsdom >= 30.1)
+    const cell = doc.querySelector('#qubits-table tr[data-qubit-id="q2"] td');
     const inp = doc.createElement('input');
     cell.appendChild(inp);
     inp.focus();

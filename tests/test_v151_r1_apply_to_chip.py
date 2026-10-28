@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,17 @@ def _write_chip(folder: Path, state: dict):
 def _readonly(folder: Path, on: bool):
     for name in ("state.json", "wiring.json"):
         os.chmod(folder / name, stat.S_IREAD if on else (stat.S_IREAD | stat.S_IWRITE))
+    _set_dir_readonly(folder, on)
+
+
+def _set_dir_readonly(folder: Path, on: bool) -> None:
+    """On POSIX a read-only FILE is still replaced by rename; the refusal is
+    real only when the containing directory denies new entries too. Windows
+    already refuses ReplaceFileW on a read-only file, and its directory
+    attribute is not enforced, so the directory is left alone there."""
+    if sys.platform != "win32" and folder.is_dir():
+        os.chmod(folder, 0o555 if on else 0o755)
+
 
 
 @pytest.fixture

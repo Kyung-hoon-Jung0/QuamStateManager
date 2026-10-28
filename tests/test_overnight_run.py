@@ -713,6 +713,22 @@ def test_a_summary_names_a_failure_the_same_without_the_runs_meta(c, inst, monke
     record the summary reads, the words are the failure's own."""
     _night(c, inst, monkeypatch)
     want = c.get("/api/agent/summary").get_json()["failures"]
+    # settle: the registry updates its in-memory record and wakes the waiter
+    # BEFORE it writes meta.json, so the run's answer can arrive before the
+    # file carries the failure (seen on a slow Windows runner)
+    _until = time.monotonic() + 30
+    def _written():
+        for m in (inst / "agent_runs").glob("*/meta.json"):
+            try:
+                if "host_unreachable" in m.read_text(encoding="utf-8"):
+                    return True
+            except OSError:
+                pass
+        return False
+    while not _written():
+        if time.monotonic() > _until:
+            break
+        time.sleep(0.05)
     gone = 0
     for meta in (inst / "agent_runs").glob("*/meta.json"):
         if "host_unreachable" in meta.read_text(encoding="utf-8"):

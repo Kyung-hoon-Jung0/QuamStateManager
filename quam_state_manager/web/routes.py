@@ -8366,13 +8366,18 @@ def _resolve_root_config(p: Path) -> Path:
     (``.qualibrate_config.toml``), else a lone ``*.toml`` if unambiguous — and
     otherwise falls back to ``config.toml`` so a 'not found' message names the
     conventional file. Pure; existence is the caller's question."""
-    if p.suffix == ".toml" or p.is_file():
+    def _isfile(q: Path) -> bool:
+        try:                            # POSIX raises on an over-long name
+            return q.is_file()
+        except (OSError, ValueError):
+            return False
+    if p.suffix == ".toml" or _isfile(p):
         return p
     conv = p / "config.toml"
-    if conv.is_file():
+    if _isfile(conv):
         return conv
     dotname = p / ".qualibrate_config.toml"
-    if dotname.is_file():
+    if _isfile(dotname):
         return dotname
     try:
         tomls = sorted(f for f in p.iterdir()
@@ -35294,11 +35299,26 @@ def workspace_add():
     return resp
 
 
+_NAME_MAX = 255
+
+def _refuse_unnameable(raw: str) -> None:
+    """Raise ValueError for a path no filesystem can name (a NUL byte, an over-long name).
+
+    Windows refuses an over-long path in ``resolve()`` itself; POSIX resolves
+    it as text and only fails later, so a component longer than any
+    filesystem allows (255) is refused here the same way on both."""
+    if "\x00" in raw:
+        raise ValueError("NUL byte in path")
+    if any(len(part) > _NAME_MAX for part in re.split(r"[\/]", raw)):
+        raise ValueError("path component too long")
+
+
 @bp.route("/workspace/remove", methods=["POST"])
 def workspace_remove():
     folder = request.form.get("folder", "").strip()
     if folder:
         try:
+            _refuse_unnameable(folder)
             Path(folder).resolve()
         except (OSError, ValueError):   # a NUL byte / an over-long path: no folder by that name
             return render_template("_status.html", message="Not a folder path.",
@@ -36246,6 +36266,7 @@ def open_folder():
         return jsonify({"ok": False, "error": "No folder specified"}), 400
 
     try:
+        _refuse_unnameable(raw)
         path = Path(raw).resolve()  # resolve() collapses '..' so traversal can't escape
     except (OSError, ValueError):   # ValueError: a NUL byte / an over-long path
         return jsonify({"ok": False, "error": "Invalid path"}), 400

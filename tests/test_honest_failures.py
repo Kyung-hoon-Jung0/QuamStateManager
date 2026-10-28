@@ -197,6 +197,11 @@ class TestWritePermissionPreflight:
     def test_readonly_live_folder_is_announced_in_the_tray(self, client, tmp_path):
         live = tmp_path / "ro_chip"
         _write_chip(live, _state())
+        # A read-only share denies both the files and the folder; the preflight
+        # probes by opening state.json for update, so the files must be
+        # read-only too for the fault to be visible to it on POSIX.
+        for name in ("state.json", "wiring.json"):
+            os.chmod(live / name, stat.S_IRUSR)
         os.chmod(live, stat.S_IRUSR | stat.S_IXUSR)
         try:
             assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
@@ -205,6 +210,8 @@ class TestWritePermissionPreflight:
             assert "read-only" in html.lower()
         finally:
             os.chmod(live, stat.S_IRWXU)
+            for name in ("state.json", "wiring.json"):
+                os.chmod(live / name, stat.S_IRUSR | stat.S_IWUSR)
 
     def test_a_writable_chip_shows_no_lock(self, client, tmp_path):
         live = tmp_path / "rw_chip"

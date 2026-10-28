@@ -31,6 +31,9 @@ import time
 import pytest
 
 from quam_state_manager.core import lab_waveform
+
+# The interpreter file name of this OS (a .exe is refused on POSIX).
+_PY = "python.exe" if sys.platform == "win32" else "python"
 from quam_state_manager.web.app import create_app
 from tests.test_lab_doors import GATE, LAB, _state
 from tests.test_pulses_routes import _make_wiring
@@ -394,7 +397,7 @@ class TestWhenItStarts:
         c = make(_state())
         c.post("/load", data={"folder": str(c._folder)})
         _settle()
-        other = tmp_path / "envB" / "python.exe"
+        other = tmp_path / "envB" / _PY
         other.parent.mkdir()
         other.write_bytes(b"")
         env["python"] = str(other)
@@ -419,7 +422,7 @@ class TestWhenItStarts:
         with lab_waveform._WORKERS_LOCK:
             lab_waveform._WORKERS["C:/old/env/python.exe"] = Slow()
         app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
-        new = tmp_path / "envB" / "python.exe"
+        new = tmp_path / "envB" / _PY
         new.parent.mkdir()
         new.write_bytes(b"")
         t0 = time.perf_counter()

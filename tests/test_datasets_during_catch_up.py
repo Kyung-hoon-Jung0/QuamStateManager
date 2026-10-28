@@ -168,6 +168,15 @@ def test_the_delta_poll_never_queues_the_first_index_as_exp_candidates(qs_app):
         with dataset.yielding_scan(lambda: True, chunk=8):
             st = routes_mod._get_or_create_store(data, rescan=False)
     assert st.scan_truncated and not st.index_complete
+    # settle: adding the folder can leave a background catch-up / prewarm
+    # running for a while on a slow machine, and while it runs the poll
+    # deliberately holds a filling store (partial). This test is about the poll
+    # that finishes the index, so wait until nothing else claims the interpreter.
+    import time as _time
+    _until = _time.monotonic() + 60
+    while routes_mod._catch_up_should_yield():
+        assert _time.monotonic() < _until, "background work never settled"
+        _time.sleep(0.05)
     got = c.get("/datasets/changes-since?ts=0").get_json()   # finishes the index
     assert not got["partial"] and st.index_complete and st.run_count == 40
     assert len(got["updated"]) == 40 and all(r["hs"] for r in got["updated"])

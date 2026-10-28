@@ -17,12 +17,17 @@ typing the interpreter FILE path into the wizard. Pins here:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from quam_state_manager.core import config_generator as cg
 from quam_state_manager.web.app import create_app
+
+# The layout this OS's own interpreter uses (a Windows .exe is refused on
+# POSIX by /generate/select-env, so route tests use the native layout).
+_NATIVE = "win" if os.name == "nt" else "posix"
 
 
 def _mk_interp(root: Path, layout: str = "win") -> Path:
@@ -200,7 +205,7 @@ class TestFolderAcceptingRoutes:
 
     def test_select_env_accepts_a_folder(self, client, tmp_path):
         venv = tmp_path / "myvenv"
-        interp = _mk_interp(venv, "win")
+        interp = _mk_interp(venv, _NATIVE)
         r = client.post("/generate/select-env", json={"python": str(venv)})
         body = r.get_json()
         assert r.status_code == 200 and body["ok"], body
@@ -235,7 +240,7 @@ class TestFolderAcceptingRoutes:
 
     def test_probe_resolves_folders_and_echoes(self, client, tmp_path):
         venv = tmp_path / "v"
-        interp = _mk_interp(venv, "win")
+        interp = _mk_interp(venv, _NATIVE)
         # v1.3.0: GET -> POST, a typed path is probed by the origin-checked POST
         r = client.post("/generate/probe", data={"python": str(venv)})
         body = r.get_json()
@@ -246,7 +251,7 @@ class TestFolderAcceptingRoutes:
     # the quoted form was probed/selected literally ("executable not found").
     def test_a_quoted_copy_as_path_is_unquoted(self, client, tmp_path):
         venv = tmp_path / "qv"
-        interp = _mk_interp(venv, "win")
+        interp = _mk_interp(venv, _NATIVE)
         # v1.3.0: GET -> POST, a typed path is probed by the origin-checked POST
         r = client.post("/generate/probe", data={"python": f'"{interp}"'})
         assert r.status_code == 200 and r.get_json().get("resolved") == str(interp)

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import sys
 import time
 from pathlib import Path
 
@@ -117,6 +118,10 @@ def test_a_slow_not_found_is_no_answer_and_never_remembered(tmp_path, monkeypatc
     assert fresh._key_for(live) == key and len(fresh.list_snapshots(live)) == 3
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="a UNC share path exists only on Windows; on POSIX the "
+                           "string is a relative file name whose anchor (the cwd) answers, "
+                           "so 'the share is down' cannot be modelled")
 def test_an_identical_copy_does_not_take_the_dir_of_a_holder_whose_share_is_down(tmp_path, monkeypatch):
     """Content evidence alone cannot tell a move from an identical copy: the
     holder's share must answer before anything is handed over."""
