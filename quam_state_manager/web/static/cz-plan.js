@@ -329,9 +329,10 @@
        to the status line; the staleness warnings and the notes on how a figure was drawn go
        into the collapsed box below the card, with a chip in the title row that opens it. */
     function renderNotes(root, d) {
-        var tags = d.notes_figure || [], status = [], unknown = [], cave = { flux: [], time: [] };
+        var tags = d.notes_figure || [], status = [], unknown = [], nodes = [], cave = { flux: [], time: [] };
         (d.notes || []).forEach(function (t, i) {
             if (t.startsWith('coupler shift unknown')) { unknown.push(t); return; }
+            if (t.startsWith('official nodes 30-34b')) { nodes.push(t); return; }
             var tag = tags[i] || 'both';
             if (tag === 'status') status.push(t);
             else if (tag === 'flux') cave.flux.push(t);
@@ -348,8 +349,12 @@
         setStatus(root, status);
         var note = root.querySelector('#czp-pair-coupler-note');
         if (note) {
-            note.innerHTML = unknown.length ? 'coupler shift unknown' + help(Array.from(new Set(unknown)).join('; ')) : '';
-            note.hidden = !unknown.length;
+            // one short line per kind, the full sentence behind (?) (UX-10)
+            var parts = [];
+            if (unknown.length) parts.push('coupler shift unknown' + help(Array.from(new Set(unknown)).join('; ')));
+            if (nodes.length) parts.push('official nodes 30-34b do not apply' + help(Array.from(new Set(nodes)).join('; ')));
+            note.innerHTML = parts.join(' · ');
+            note.hidden = !parts.length;
         }
         ['flux', 'time'].forEach(function (f) {
             var p = root.querySelector('#czp-' + f + '-caveat');
