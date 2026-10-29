@@ -348,9 +348,18 @@ def qpu_roots() -> list[dict]:
             if bias_tee:
                 break
 
+        # Whether the root is a fixed-frequency one: the coupler-only CZ build
+        # refuses any other root, so the review must know before it picks one.
+        fixed_root = None
+        try:
+            from quam_builder.architecture.superconducting.qpu import FixedFrequencyQuam as _FFQ
+            fixed_root = bool(isinstance(cls, type) and issubclass(cls, _FFQ))
+        except Exception:  # noqa: BLE001 -- unknown stays unknown
+            fixed_root = None
         out.append({
             "path": real, "importable": True, "holds_qdac": bool(holds_qdac),
             "bias_tee": bias_tee, "qubits_type": qubits_text[:400],
+            "fixed_root": fixed_root,
             "detail": "ok",
         })
     return out

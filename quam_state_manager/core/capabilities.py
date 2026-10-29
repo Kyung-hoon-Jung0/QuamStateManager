@@ -561,6 +561,7 @@ def qpu_root_check(spec: dict, manifest: Any) -> dict:
     negative, the same rule :func:`assess` follows.
     """
     needed = bool((spec.get("qdac") or {}).get("qubits"))
+    coupler_only = (spec.get("pair_gate") or "").lower() == "cz_coupler"
     roots = []
     if isinstance(manifest, dict):
         raw = manifest.get("qpu_roots")
@@ -578,6 +579,13 @@ def qpu_root_check(spec: dict, manifest: Any) -> dict:
     if declared:
         out["chosen"] = declared
         match = next((r for r in roots if r.get("path") == declared), None)
+        if (coupler_only and match is not None and match.get("importable")
+                and match.get("fixed_root") is False):
+            out["blocker"] = (
+                f"{declared} is a flux-tunable root, and a fixed-qubit + tunable-"
+                "coupler chip (coupler-only CZ) needs a fixed-frequency root "
+                "(a FixedFrequencyQuam subclass).")
+            return out
         if match is not None and match.get("importable") and not match.get("holds_qdac"):
             out["blocker"] = (
                 f"{declared} cannot hold QDAC-biased qubits: its `qubits` field "
@@ -587,7 +595,22 @@ def qpu_root_check(spec: dict, manifest: Any) -> dict:
             )
         return out
 
-    fit = next((r for r in roots if r.get("importable") and r.get("holds_qdac")), None)
+    holders = [r for r in roots if r.get("importable") and r.get("holds_qdac")]
+    if coupler_only:
+        # An unprobed flag (older cache) is unknown, not a negative.
+        fixed = [r for r in holders if r.get("fixed_root") is not False]
+        if holders and not fixed:
+            out["blocker"] = (
+                "This chip has fixed-frequency qubits with a tunable coupler "
+                "(coupler-only CZ), which needs a fixed-frequency QPU root, and "
+                "every root in this environment that can hold QDAC-biased qubits "
+                "is flux-tunable (" + ", ".join(r["path"] for r in holders) + "). "
+                "Add a FixedFrequencyQuam subclass to your own quam_config that "
+                "widens `qubits` to the QDAC-biased transmon class and declares a "
+                "`qdac` field, or build this chip without the QDAC.")
+            return out
+        holders = fixed
+    fit = holders[0] if holders else None
     if fit is not None:
         out["chosen"] = fit["path"]
         return out
