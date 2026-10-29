@@ -614,6 +614,12 @@
         var lo = Math.min.apply(null, keep), hi = Math.max.apply(null, keep);
         var pad = 0.15 * Math.max(hi - lo, 40);
         var range = [lo - pad, hi + pad];
+        // the plateau never touches an edge: about a fifth of the range beyond it
+        if (gateKnown && plateau.length) {
+            var h = 0.2 * (range[1] - range[0]);
+            range = [Math.min(range[0], Math.min.apply(null, plateau) - h),
+                     Math.max(range[1], Math.max.apply(null, plateau) + h)];
+        }
         // an off-scale marker only for idle stretches the trace actually draws
         var drawn = vals.some(function (v) { return Math.abs(v - idle) <= 0.5; });
         return { range: range, idle: idle, gateKnown: gateKnown,

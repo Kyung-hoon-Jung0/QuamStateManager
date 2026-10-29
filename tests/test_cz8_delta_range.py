@@ -37,6 +37,11 @@ const q = R([-336, -336, -336], levels, -110);
 assert.ok(q.range[0] < -336, JSON.stringify(q));
 assert.strictEqual(q.offscale, null);
 assert.strictEqual(q.idle, -110);
+// headroom: the outermost plateau keeps well over 10 % of the range to the edge
+for (const r of [v, k, q]) {
+  const pl = r === q ? -336 : 340, span = r.range[1] - r.range[0];
+  assert.ok(r.range[1] - pl >= 0.15 * span && pl - r.range[0] >= 0.15 * span, JSON.stringify(r));
+}
 // idle inside the band: nothing off scale
 assert.strictEqual(R([100, -210, -210, 100], levels).offscale, null);
 """
