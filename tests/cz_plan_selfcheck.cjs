@@ -14,7 +14,7 @@ const page = `<div id="czp-root" class="czp-root" data-selected="qubit_pairs.p.m
 <tr class="czp-row" data-op="qubit_pairs.p.macros.b"><td class="czp-last" data-last="qubit_pairs.p.macros.b">...</td></tr>
 </tbody></table><p id="czp-history-note"></p>
 <section><h3 id="czp-title"></h3><button id="czp-stale-chip" hidden></button><select id="czp-op"></select><p id="czp-status" hidden></p>
-<div class="czp-plots"><p id="czp-flux-caveat" hidden></p><div id="czp-flux"></div><p id="czp-time-caveat" hidden></p><div id="czp-time"></div></div>
+<div class="czp-plots"><p id="czp-flux-caveat" hidden></p><div id="czp-flux"></div><p id="czp-time-caveat" hidden></p><div id="czp-time"></div><details id="czp-frequency-box"><summary>Frequency</summary><div id="czp-frequency"></div></details></div>
 <div id="czp-card"></div><details id="czp-notes-box"><summary id="czp-notes-summary"></summary><ul id="czp-notes"></ul></details></section></div>`;
 const dom = new JSDOM('<!doctype html><body>' + page + '</body>', {url: 'http://localhost/cz-plan', runScripts: 'outside-only', pretendToBeVisual: true});
 const w = dom.window, d = w.document;
@@ -58,6 +58,23 @@ function payload(op, stale) {
     }
     return result;
 }
+// Server-contract fixture adapter; production computes this in cz_gate_plan.time_panel.
+function withPanel(body) {
+    if (!body.ok || body.time_panel) return body;
+    const n = Math.max(0, ...body.trajectory.filter(Boolean).map(t => t.frequency_hz.length));
+    const series = body.row.lines.map((ln,k) => Array.from({length:n}, (_,i) => {
+        const t=body.trajectory[k], idle=body.qubits[k].summary?.f01_hz;
+        return t ? (i<t.frequency_hz.length ? t.frequency_hz[i] : t.playback_known === false ? null : idle) : ln.moves ? null : idle;
+    }));
+    const delta=series[0].map((v,i)=>v==null||series[1][i]==null?null:(v-series[1][i])/1e6);
+    const levels=[['|11>-|20>',Math.abs(body.qubits[0].summary?.anharmonicity_hz)/1e6],['iSWAP',0],['|11>-|02>',-Math.abs(body.qubits[1].summary?.anharmonicity_hz)/1e6]];
+    const dwell=levels.map(([name,v])=>{const n=delta.filter(x=>x!=null&&Math.abs(x-v)<=5).length;return n?name+' '+n+' ns':null}).filter(Boolean).join('; ');
+    body.time_panel={time_ns:Array.from({length:n},(_,i)=>i),series_hz:series,detuning_mhz:delta,dwell,
+        levels:levels.filter(([,v])=>Number.isFinite(v)).map(([name,v])=>({name,detuning_mhz:v,lo_mhz:v-5,hi_mhz:v+5,
+            frequency_hz:body.row.lines[1].point.frequency_hz==null?null:body.row.lines[1].point.frequency_hz+v*1e6}))};
+    return body;
+}
+function hints(el) { return Array.from(el.querySelectorAll('[title]')).map(e=>e.title).join(' '); }
 const pending = [];
 let historyAnswer = {ok: true, mode: 'ledger', note: null, ops: {
     'qubit_pairs.p.macros.a': {last_set: {t: '2026-01-02T03:04:05Z', run_id: 41}, proven: true, unknown: false,
@@ -68,7 +85,7 @@ w.fetch = (url) => {
     const op = decodeURIComponent(url.split('op=')[1]);
     return new Promise(resolve => pending.push({op, resolve}));
 };
-const answer = (i, body) => pending[i].resolve({json: () => Promise.resolve(body)});
+const answer = (i, body) => pending[i].resolve({json: () => Promise.resolve(withPanel(body))});
 const wait = ms => new Promise(r => setTimeout(r, ms));
 let checks = 0;
 function check(v, m) { checks++; assert.ok(v, m); }
@@ -122,9 +139,9 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     const card = d.getElementById('czp-card').textContent;
     // v1.4.1: identical operation fixtures -> distinct frequencies, selection identity must be visible.
     check(card.includes('4.8100 GHz') && card.includes('quad-term estimate') && card.includes('does not move'), 'the card names the selected frequency and its tier');
-    check(card.includes('clock cycles x 4 ns') && card.includes('40 ns'), 'the card explains the duration unit conversion');
+    check(hints(d.getElementById('czp-card')).includes('clock cycles x 4 ns') && card.includes('40 ns'), 'the card explains the duration unit conversion');
     check(card.includes('InterleavedRB 0.9910') && card.includes('load id 7'), 'IRB with its load id');
-    check(card.includes('unknown') && card.includes('No change history'), 'no history: the time is unknown, with the reason');
+    check(card.includes('unknown') && hints(d.getElementById('czp-card')).includes('No change history'), 'no history: the time is unknown, with the reason');
     check(d.getElementById('czp-op').options.length === 2 && d.getElementById('czp-op').value === 'qubit_pairs.p.macros.b', 'the picker lists the pair operations');
     const flux = renders.filter(x => x.id === 'czp-flux').at(-1);
     // v1.4.1: assume panel exists -> assert panel identity before inspecting its curve.
@@ -156,7 +173,7 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     // v1.4.1: bare unknown -> unknown with the observation, never presented as a setting.
     // v1.5.0: the observation's long text made the table unreadable -> compact cell, details on hover.
     const hint = r.querySelectorAll('td[data-last]')[1].querySelector('span').getAttribute('title') || '';
-    check(cells[0].includes('run #41') && cells[0].includes('1 newer') && cells[1] === 'unknown · first recorded only' &&
+    check(cells[0] === '2026-01-02' && hints(r.querySelectorAll('td[data-last]')[0]).includes('run #41') && cells[1] === '-' &&
           hint.includes('first recorded in run #8'), 'Last set filled, observations retain unknown setting time');
 
     async function select(op, data) {
@@ -168,7 +185,7 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     const observation = payload(aPath, false);
     observation.calibration.note = 'first recorded in run #8; setting time unknown';
     await select('a', observation);
-    check(d.getElementById('czp-card').textContent.includes('first recorded in run #8') &&
+    check(hints(d.getElementById('czp-card')).includes('first recorded in run #8') &&
           !d.getElementById('czp-card').textContent.includes('written by that run'), 'the card describes observations without inventing a setting');
     const uncertain = payload(aPath, true);
     uncertain.calibration.last_set.provenance = 'run_uncertain_chip';
@@ -180,7 +197,7 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     unknown.row.duration_note = 'unknown: stored duration is a runtime property';
     await select('a', unknown);
     let currentTime = renders.filter(x => x.id === 'czp-time').at(-1);
-    check(currentTime.traces.find(t => t.name === 'qb').y.every(v => v === null), 'unsupported moving waveform stays unknown');
+    check(d.getElementById('czp-frequency-box').open === false && currentTime.traces.every(t => t.yaxis === 'y2'), 'unsupported moving waveform stays unknown');
     check(currentTime.traces.find(t => t.yaxis === 'y2').y.every(v => v === null), 'unknown motion makes detuning unknown');
     check(d.getElementById('czp-time').getAttribute('data-dwell') === '', 'unknown samples contribute no resonance dwell');
     check(d.getElementById('czp-card').textContent.includes('Durationunknown'), 'duration with no proven unit is unknown');
@@ -279,7 +296,7 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
 <div id="czp-map"></div><p id="czp-map-key"></p><p id="czp-map-notes"></p><details id="czp-map-detail"><summary id="czp-map-detail-summary"></summary><div id="czp-map-detail-body"></div></details></section>
 <table id="czp-table"><tbody>${opts.sel ? `<tr class="czp-row" data-op="${opts.sel}"><td class="czp-last" data-last="${opts.sel}">x</td></tr>` : ''}</tbody></table><p id="czp-history-note"></p>
 <section><h3 id="czp-title"></h3><button id="czp-stale-chip" hidden></button><select id="czp-op"></select><p id="czp-status" hidden></p>
-<div class="czp-plots"><p id="czp-flux-caveat" hidden></p><div id="czp-flux"></div><p id="czp-time-caveat" hidden></p><div id="czp-time"></div></div>
+<div class="czp-plots"><p id="czp-flux-caveat" hidden></p><div id="czp-flux"></div><p id="czp-time-caveat" hidden></p><div id="czp-time"></div><details id="czp-frequency-box"><summary>Frequency</summary><div id="czp-frequency"></div></details></div>
 <div id="czp-card"></div><details id="czp-notes-box"><summary id="czp-notes-summary"></summary><ul id="czp-notes"></ul></details></section></div>`;
         const dm = new JSDOM('<!doctype html><body>' + page2 + '</body>', {url: 'http://localhost/cz-plan', runScripts: 'outside-only', pretendToBeVisual: true});
         const W = dm.window, env = {dm, W, D: W.document, renders: [], data: [], loss: opts.loss, holdLoss: !!opts.holdLoss, held: null};
@@ -307,7 +324,7 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
         };
         ['topo-graph.js', 'cz-map.js', 'cz-plan.js'].forEach(f => W.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static', f), 'utf8')));
         env.root = W.document.getElementById('czp-root');
-        env.answer = async body => { env.data.at(-1).res({json: () => Promise.resolve(body)}); await wait(30); };
+        env.answer = async body => { env.data.at(-1).res({json: () => Promise.resolve(withPanel(body))}); await wait(30); };
         env.flux = () => env.renders.filter(x => x.id === 'czp-flux').at(-1);
         env.text = id => W.document.getElementById(id).textContent;
         W.CzPlan.mount(); await wait(30);
@@ -370,8 +387,8 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     check(box.open, 'D1: the status chip opens the notes box');
     check(card2.includes('Scan loss at the operating frequency: 1.2 % (run #7, 100 ns flux excursion from idle: dwell there plus every defect crossed on the way, with the scan\'s ramp)'),
           'D3: the scan loss at the operating frequency, with its run and duration and what it measures');
-    check(card2.includes('Defects touched during the gate: 4.9500 GHz (FWHM 4.0 MHz, peak 30.0 %) strong') && card2.includes('the axis note') &&
-          card2.includes('excursion 4.9200 GHz – 5.0000 GHz from the gate\'s own waveform'), 'D3: the defects the gate touches, strong flagged, with the axis caveat');
+    check(card2.includes('Defects touched during the gate: 4.9500 GHz (FWHM 4.0 MHz, peak 30.0 %) strong') && hints(E.D.getElementById('czp-card')).includes('the axis note') &&
+          hints(E.D.getElementById('czp-card')).includes('excursion 4.9200 GHz – 5.0000 GHz from the gate\'s own waveform'), 'D3: the defects the gate touches, strong flagged, with the axis caveat');
     check(card2.split('Scan loss at the operating frequency').length === 2, 'D3: a member that stays at idle gets no scan-loss line');
     const fx = E.flux();
     // v1.4.1 (A14 fix3 P2-2): every x2 trace -> the filled ones (the panel now also carries its clip ticks)
@@ -456,7 +473,8 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
           // v1.4.1 (A14 fix3 P1-2): "qA2 run #3450 (...)" twice -> one merged line in the route's words (#3450 is a saved state)
           R21.D.querySelector('#czp-notes li.zline-note-warn').textContent === "qA2, qA1 first seen in run #3450's saved state (2026-10-09 09:36 UTC): f_01" &&
           R21.D.querySelectorAll('#czp-notes li.zline-note-warn').length === 1, 'D1 on the real answer: the count chip and the grouped list');
-    check(R21.text('czp-card').includes("Last setrun #3450 · 2026-10-09 09:36:28 UTC (first seen in that run's saved state; writer not proven)") &&
+    check(R21.text('czp-card').includes("Last setrun #3450 · 2026-10-09 09:36:28 UTC") &&
+          hints(R21.D.getElementById('czp-card')).includes("first seen in that run's saved state; writer not proven") &&
           !R21.text('czp-card').includes('run_saved') && !/changed by run #3450|\(run #3450\)/.test(R21.text('czp-notes')),
           'fix3 P1-2 on the real answer: a run that only carried the values first is never named as their writer (box and card)');
     check(/Defects touched during the gate: 5\.5506 GHz \(FWHM 9\.6 MHz, peak 65\.6 %\) strong/.test(R21.text('czp-card')),
@@ -485,7 +503,7 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
                                     note: 'The change history is being built. It shows here when it is complete.'});
     const G2 = await detail({sel: SEL, map: curveMap, loss: lossAns, timers: true, history: {ok: true, mode: 'building', ops: {}}});
     await G2.answer(bld);
-    const building0 = G2.text('czp-card').includes('It shows here when it is complete') &&
+    const building0 = hints(G2.D.getElementById('czp-card')).includes('It shows here when it is complete') &&
         G2.text('czp-history-note').includes('fills in when it is ready');
     let answered = G2.data.length;
     for (let k = 0; k < 60 && G2.W._timers.length; k++) {
@@ -494,7 +512,7 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     }
     const GAVE = 'still being prepared after a minute; reload the page to see when each operation was set';
     check(building0 && G2.W._timers.length === 0 && G2.data.length === 21 && G2.histories === 21 &&
-          G2.text('czp-card').includes(GAVE) && !G2.text('czp-card').includes('It shows here when it is complete') &&
+          hints(G2.D.getElementById('czp-card')).includes(GAVE) && !hints(G2.D.getElementById('czp-card')).includes('It shows here when it is complete') &&
           G2.text('czp-history-note').includes(GAVE) && !G2.text('czp-history-note').includes('fills in'),
           'fix3 P2-5: after 20 re-asks the card and the table note end on a final line');
     G2.dm.window.close();
@@ -503,8 +521,8 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
         [SEL]: {last_set: {run_id: 9, t: '2026-01-02T03:04:05Z', provenance: 'run_saved'}, warnings: []}}}});
     await wait(20);
     const td = T.root.querySelector('td[data-last]');
-    check(td.textContent === 'saved in run #9 · 2026-01-02 03:04:05 UTC' &&
-          td.querySelector('span').getAttribute('title') === "first seen in that run's saved state; writer not proven",
+    check(td.textContent === '2026-01-02' &&
+          td.querySelector('span').getAttribute('title').includes("first seen in that run's saved state; writer not proven"),
           'fix3 P1-2: the Last set column says "saved in" for a run that only carried the amplitude first');
     T.dm.window.close();
     console.log(checks + ' assertions passed');

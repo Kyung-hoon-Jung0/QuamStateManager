@@ -39,6 +39,10 @@ function payload(op) {
                  {role: 'target', name: 'qb', tls: [], curve: {amplitude_v: [-0.4, 0, 0.4], quad_hz: [4.4e9, 4.4e9, 4.4e9], model_hz: null},
                   summary: {f01_hz: 4.4e9, anharmonicity_hz: -210e6, model_kind: null, notes: [], frame: {reason: 'lower'}, range: {}}}],
         trajectory: [null, null],
+        // UX-5: resonance positions now arrive from the shared server path.
+        time_panel: {levels: [{name:'|11>-|20>',frequency_hz:4.6e9},
+                             {name:'iSWAP',frequency_hz:4.4e9},
+                             {name:'|11>-|02>',frequency_hz:4.19e9}]},
         calibration: {last_set: null, proven: false, unknown: true, mode: 'unavailable', note: 'none', warnings: []},
         pair_ops: [{path: op, operation: 'a', points: []}]};
 }

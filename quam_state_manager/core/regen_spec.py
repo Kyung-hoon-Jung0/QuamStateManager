@@ -85,7 +85,9 @@ def _detect_pair_gate(state: dict) -> tuple[str, bool]:
         macro_names = " ".join((pair.get("macros") or {}).keys()).lower()
         has_coupler = isinstance(pair.get("coupler"), dict) and pair["coupler"]
         has_cr = (isinstance(pair.get("cross_resonance"), dict) and pair["cross_resonance"])
-        if "cr" in macro_names or has_cr:
+        if str(pair.get("__class__", "")).endswith(".FixedFrequencyTunableCouplerPair"):
+            families.append("cz_coupler")
+        elif "cr" in macro_names or has_cr:
             families.append("cr")
         elif "cz" in macro_names or has_coupler:
             families.append("cz_tunable" if has_coupler else "cz_fixed")
@@ -317,7 +319,16 @@ def _extract_populate(state: dict, root: dict) -> dict:
             variant = primary[3:] if primary.startswith("cz_") else primary
             if variant in ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf"):
                 pairv["cz_variant"] = variant
-            fpq = m.get("flux_pulse_qubit")
+            coupler_only = str(m.get("__class__", "")).endswith(".CouplerCZGate")
+            fpq = m.get("coupler_flux_pulse" if coupler_only else "flux_pulse_qubit")
+            if coupler_only:
+                for key in ("phase_shift_control", "phase_shift_target"):
+                    if _num(m.get(key)):
+                        pairv[key] = m[key]
+                coupler = pair.get("coupler") or {}
+                for key in ("decouple_offset", "interaction_offset"):
+                    if _num(coupler.get(key)):
+                        pairv["coupler_" + key] = coupler[key]
             # QA regenerate-r2-09: a modern chip keeps the pulse on the
             # moving qubit's z and the macro POINTS at it. Unread, a
             # re-oriented pair was seeded at the default amplitude.

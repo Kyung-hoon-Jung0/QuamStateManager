@@ -16080,3 +16080,21 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
 .plot-apply-point:not([hidden]) { margin: .3rem 0 .4rem; padding: .35rem .5rem; border-radius: 6px;
     border: 1px dashed var(--pico-muted-border-color); font-size: .85rem; }
 .toast .toast-copy::before { content: attr(data-label); }
+
+/* CZ7: the amplitude answer and detuning stay together at laptop widths. */
+.czp-detail { scroll-margin-top: 0.75rem; padding-bottom: 1rem; border-bottom: 1px solid var(--pico-muted-border-color); }
+.czp-match { font-size: 1rem; font-weight: 600; padding: .6rem .8rem; border-left: 3px solid var(--pico-primary); background: var(--pico-card-background-color); overflow-wrap: anywhere; }
+.czp-detail .czp-plots { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .75rem; }
+.czp-detail .czp-plot { height: 350px; }
+.czp-detail figcaption { font-size: .9rem; }
+.czp-detail figcaption .muted { display: none; }
+.czp-help-hover { color: var(--pico-muted-color); cursor: help; font-size: .8em; white-space: nowrap; }
+.czp-card-box, .czp-solve-box { margin: .5rem 0; }
+.czp-variant { color: var(--pico-muted-color); }
+.czp-row[data-pair-start="1"] td { border-top: 2px solid var(--pico-muted-border-color); }
+.czp-row[data-pair-start="0"] td:first-child strong { display: none; }
+.czp-row[data-pair-start="1"] .czp-variant { display: none; }
+.czp-no-quad { white-space: nowrap; }
+.czp-table .czp-no-quad { font-size: .85em; }
+.czp-wrap-fits .czp-table tbody tr:first-child td { padding-top: .8rem; }
+@media (max-width: 900px) { .czp-detail .czp-plots { grid-template-columns: minmax(0, 1fr); } }

@@ -46,7 +46,8 @@ def test_coupler_played_label_and_no_frequency():
     assert line["played_pulse_path"] == "couplers.c12.operations.flux"
     assert line["pulse_path"] in line["amp_title"]
     assert any("macro's copy says +300 mV; the coupler plays +100 mV" in n for n in row["notes"])
-    assert "a coupler pulse also plays (+100 mV): these bare-qubit frequencies omit the coupler's shift" in row["notes"]
+    # S3 replaces the old omission note with the exact missing-model message.
+    assert C.COUPLER_UNKNOWN in row["notes"]
     def keys(value):
         if isinstance(value, dict):
             for key, child in value.items():
@@ -85,7 +86,9 @@ def test_coupler_resolution_forms(form):
     if form in ("missing", "no_element"):
         assert line["amp_text"] == "unknown" and "not playable" in line["refusal"]
         assert line["amp_reason"] == line["refusal"] and line["refusal"] in line["amp_title"]
-        assert "(amplitude unknown: not playable" in " ".join(row["notes"])
+        # Amplitude detail remains on the coupler record; the S3 note names the missing model.
+        assert "(amplitude unknown: not playable" in row["coupler_note"]
+        assert C.COUPLER_UNKNOWN in row["notes"]
         assert "None" not in line["refusal"]
     else:
         assert line["amplitude_v"] == .1 and line["amp_text"] == "+100 mV"
@@ -110,7 +113,12 @@ def test_coupler_table_and_sort(tmp_path):
 def test_no_coupler_table_identity(tmp_path):
     html = _client(tmp_path).get("/cz-plan").get_data(as_text=True)
     table = re.search(r'<table id="czp-table".*?</table>', html, re.S)[0]
-    assert hashlib.sha256(table.encode()).hexdigest() == "44a97da42eea30c2b0a6f51ffc1d1cd7ae5b82bfa58139bf441f4bbcc272842f"
+    # S2 adds inspectable frequency spans and an accessibility label; the
+    # CZ7 UX-6 changes missing-model badges and pair grouping; pin the revised markup.
+    table = re.sub(r' aria-label="[^"]*"', '', table)
+    table = re.sub(r' data-value="amplitude" data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*" data-amplitude-v="[^"]*"', '', table)
+    table = re.sub(r'<span data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*">(.*?)</span>', r'\1', table)
+    assert hashlib.sha256(table.encode()).hexdigest() == "fc51539bfaedf8e6ad6289da9e2b674b9e91eb8295f6dc64264189e64991de0f"
 
 
 def test_empty_ledger_explains_data_folder(tmp_path):

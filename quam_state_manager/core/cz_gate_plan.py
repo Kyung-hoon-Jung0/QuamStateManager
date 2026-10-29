@@ -22,10 +22,8 @@ Flux -> frequency, per qubit (decided by the product owner, 2026-10-15):
 Resonances of the |11> manifold for a pair (control c, target t), with
 ``Delta = f_c - f_t`` and ``|alpha|`` the anharmonicity magnitudes:
 |11>-|20> at ``Delta = +|alpha_c|``, |11>-|02> at ``Delta = -|alpha_t|``,
-|10>-|01> (iSWAP) at ``Delta = 0``. [paper: arXiv:1903.02492v1, p.1] "of
-resonance between |01⟩and |10⟩for iSWAP" ... "|11⟩and |02⟩or |20⟩for
-conditional-phase (CZ)"; the signed condition is [paper: arXiv:1903.02492v1,
-p.8] "by deﬁnition ϵ(t) = ω|02⟩(t) −ω|11⟩(t) = ωqH(t) + ηqH −ωqM" (the qubit
+|10>-|01> (iSWAP) at ``Delta = 0``. [paper: arXiv:1903.02492v1, p.1] "The oldest approach [22, 23] uses baseband flux pulses to tune |11⟩into near resonance with |02⟩to realize CZ.";
+the signed condition is [paper: arXiv:1903.02492v1, p.8] "by deﬁnition ϵ(t) = ω|02⟩(t) −ω|11⟩(t) = ωqH(t) + ηqH −ωqM" (the qubit
 carrying |2> is qH: epsilon = 0 at f_H - f_M = -eta_H = |alpha_H|).
 """
 from __future__ import annotations
@@ -36,7 +34,7 @@ import re
 
 import numpy as np
 
-from quam_state_manager.core import value_history
+from quam_state_manager.core import value_history, cz_flux_math
 
 QUAD_LABEL = "quad-term estimate"
 MODEL_LABEL = "lab flux model"
@@ -102,22 +100,13 @@ _MODEL_KEYS = ("phi0_v", "phi_park", "d", "f_max_hz", "ec_hz", "amp_min_v", "amp
 
 
 def fitted_frequency(model, phi):
-    """The lab's ``LffemFluxModel.frequency_hz`` (flux in units of Phi0), transcribed."""
-    phi_array = np.asarray(phi, dtype=float)
-    inside = np.cos(np.pi * phi_array) ** 2 + model["d"]**2 * np.sin(np.pi * phi_array) ** 2
-    return (model["f_max_hz"] + model["ec_hz"]) * inside**0.25 - model["ec_hz"]
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.arc_frequency(model, phi)
 
 
 def fitted_shift(model, amplitude):
-    """The lab's ``FluxConversion.shift_hz`` for a model source, array form, transcribed:
-    outside the measured amplitude range (+1 % of its larger bound) is NaN."""
-    amp = np.asarray(amplitude, dtype=float)
-    tolerance = 0.01 * max(abs(model["amp_min_v"]), abs(model["amp_max_v"]))
-    invalid = (~np.isfinite(amp) | (amp < model["amp_min_v"] - tolerance)
-               | (amp > model["amp_max_v"] + tolerance))
-    result = (fitted_frequency(model, model["phi_park"] + amp / model["phi0_v"])
-              - fitted_frequency(model, model["phi_park"]))
-    return np.where(invalid, np.nan, result)
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.fitted_shift(model, amplitude)
 
 
 def model_of(qubit):
@@ -150,29 +139,18 @@ def lab_rejection(model, f01):
 
 
 def spot_kind(phi):
-    """``upper`` where cos(2 pi phi) >= 0 (the lab's arc rule), else ``lower``."""
-    return "upper" if math.cos(2 * math.pi * phi) >= 0 else "lower"
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.spot_kind(phi)
 
 
 def sweet_spot_phi(phi):
-    """The lab's ``sweet_spot_phi``, transcribed: the nearest multiple of half a flux quantum."""
-    return float(np.round(2.0 * float(phi)) / 2.0)
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.sweet_spot_phi(phi)
 
 
 def model_spots(model):
-    """Both sweet spots of the fitted arc, in the qubit's frequency frame.
-
-    The fit's own park is ``f_01_at_fit_hz`` at ``phi_park``; the other spot is the
-    arc's extremum half a flux quantum from the park's sweet spot, carried by the
-    fit's offset from ``f_01_at_fit_hz`` [derived]. ``stored_other_hz`` is the lab's
-    own ``f_opposite_hz`` beside it."""
-    offset = model["f_01_at_fit_hz"] - float(fitted_frequency(model, model["phi_park"]))
-    phi_other = sweet_spot_phi(model["phi_park"]) + 0.5
-    other = float(fitted_frequency(model, phi_other)) + offset
-    return {"fit": {"phi": model["phi_park"], "kind": spot_kind(model["phi_park"]),
-                    "f_hz": model["f_01_at_fit_hz"]},
-            "other": {"phi": phi_other, "kind": spot_kind(phi_other), "f_hz": other},
-            "stored_other_hz": model.get("f_opposite_hz")}
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.model_spots(model)
 
 
 def _at_spot(model, f01):
@@ -289,32 +267,17 @@ class Conversion:
 
     # the model about its anchor, in the qubit's frame (shift added to f_01)
     def _model_window(self):
-        m = self.model
-        tol = 0.01 * max(abs(m["amp_min_v"]), abs(m["amp_max_v"])) / m["phi0_v"]
-        return (m["phi_park"] + m["amp_min_v"] / m["phi0_v"] - tol,
-                m["phi_park"] + m["amp_max_v"] / m["phi0_v"] + tol)
+        return cz_flux_math.model_window(self.model)
 
     def model_shift(self, amplitude):
-        """Model shift at amplitude(s) about the anchor; NaN outside the measured flux."""
-        a = np.asarray(amplitude, dtype=float)
-        if self.anchor is None:
-            return np.full(a.shape, np.nan)
-        m = self.model
-        if self.anchor == m["phi_park"]:
-            return fitted_shift(m, a)       # the lab's own guard, unchanged
-        phi = self.anchor + a / m["phi0_v"]
-        lo, hi = self._model_window()
-        # the other spot is the measured window shifted by whole periods (the arc is periodic)
-        k = np.round((phi - (lo + hi) / 2))
-        inside = (phi - k >= lo) & (phi - k <= hi)
-        shift = fitted_frequency(m, phi) - fitted_frequency(m, self.anchor)
-        return np.where(np.isfinite(a) & inside, shift, np.nan)
+        """Model shift about the anchor within the measured flux window."""
+        return cz_flux_math.model_shift(self.model, self.anchor, amplitude)
 
     def quad_shift(self, amplitude):
         a = np.asarray(amplitude, dtype=float)
         if self.quad is None or self.sign is None:
             return np.full(a.shape, np.nan)
-        return self.sign * self.quad * a**2
+        return cz_flux_math.quad_shift(a, self.quad, self.sign)
 
     def _curvature(self):
         """The model's own local quad coefficient at the anchor (Hz/V^2), and how the
@@ -322,11 +285,8 @@ class Conversion:
         if self.anchor is None:
             return None
         m = self.model
-        h = 1e-3 * m["phi0_v"]
-        def k_at(phi):
-            f = fitted_frequency(m, [phi - h / m["phi0_v"], phi, phi + h / m["phi0_v"]])
-            return float((f[0] + f[2] - 2 * f[1]) / (2 * h * h))
-        here, other = k_at(self.anchor), k_at(self.anchor + 0.5)
+        here = cz_flux_math.local_quad_coefficient(m, self.anchor)
+        other = cz_flux_math.local_quad_coefficient(m, self.anchor + 0.5)
         out = {"here_hz_per_v2": here, "other_hz_per_v2": other, "ratio": None, "note": None}
         if self.quad:
             out["ratio"] = self.quad / abs(here) if here else None
@@ -490,14 +450,8 @@ class Conversion:
 
 
 def resonances(fc, ft, alpha_c, alpha_t):
-    """The three |11>-manifold conditions on Delta = f_c - f_t (see module docstring)."""
-    delta = fc - ft if fc is not None and ft is not None else None
-    conditions = (("|11>-|20>", abs(alpha_c) if alpha_c is not None else None),
-                  ("|11>-|02>", -abs(alpha_t) if alpha_t is not None else None),
-                  ("iSWAP", 0.0))
-    return [{"name": n, "delta_hz": d,
-             "distance_hz": delta - d if delta is not None and d is not None else None}
-            for n, d in conditions]
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.resonances(fc, ft, alpha_c, alpha_t)
 
 
 def tls_bands(qubit):
@@ -801,6 +755,96 @@ def _coupler_line(doc, pair_path, macro_path, notes):
     return line
 
 
+
+COUPLER_UNKNOWN = "coupler shift unknown: no coupler model stored (extras.sm_coupler_model)"
+
+
+def coupler_model(value):
+    """Validate stored S3 parameters [derived], check S3-MODEL; never default."""
+    if not isinstance(value, dict):
+        return None
+    numeric = ("fc_max_hz", "ec_c_hz", "d_c", "phi0_v", "phi_idle",
+               "g_c_hz", "g_t_hz", "g_ct_hz")
+    if any(isinstance(value.get(k), bool) or number(value.get(k)) is None for k in numeric):
+        return None
+    model = {k: number(value[k]) for k in numeric}
+    if (model["fc_max_hz"] <= 0 or model["ec_c_hz"] <= 0 or
+            not 0 <= model["d_c"] < 1 or model["phi0_v"] <= 0 or
+            any(model[k] < 0 for k in ("g_c_hz", "g_t_hz", "g_ct_hz")) or
+            any(not isinstance(value.get(k), str) or not value[k].strip() for k in ("source", "created_at"))):
+        return None
+    return {**model, **{k: value[k] for k in ("source", "created_at")}}
+
+
+def coupler_points(lines, model, amplitude, alphas):
+    """Compute at pulsed qubit/coupler frequencies [derived], S3-PULSED/S3-O."""
+    frequency = cz_flux_math.coupler_frequency(model, amplitude) if model and amplitude is not None else None
+    for ln, alpha, key in zip(lines, alphas, ("g_c_hz", "g_t_hz")):
+        bare = ln["point"].get("frequency_hz")
+        result = (cz_flux_math.coupler_shift(bare, frequency, alpha, model["ec_c_hz"], model[key])
+                  if frequency is not None and bare is not None and alpha is not None else
+                  {"coupler_shift_hz": None, "coupler_method": COUPLER_UNKNOWN if not model else "coupler shift unknown: pulsed frequency or anharmonicity unavailable"})
+        shift = result["coupler_shift_hz"]
+        ln.update(result, coupler_frequency_hz=frequency,
+                  shifted_frequency_hz=bare + shift if shift is not None else None)
+    if frequency is None or any(ln["shifted_frequency_hz"] is None for ln in lines):
+        return []
+    if any(ln["coupler_method"] == "diagonalised" for ln in lines):
+        return cz_flux_math.dressed_resonances(*[ln["point"]["frequency_hz"] for ln in lines],
+            frequency, *alphas, model["ec_c_hz"], model["g_c_hz"], model["g_t_hz"], model["g_ct_hz"])
+    return resonances(*[ln["shifted_frequency_hz"] for ln in lines], *alphas)
+
+COUPLER_ONLY_KIND = "coupler only"
+#: REVIEW r1 S4: what the official CZ calibration nodes do on a coupler-only gate.
+A4_NODES_NOTE = ("official nodes 30-34b read flux_pulse_qubit / moving_qubit: not applicable to a "
+                 "coupler-only CZ; 35 and 38 do not call the gate; 36, 37 and 39 call its apply()")
+A4_MODEL_MISSING = "ZZ unknown: no coupler model stored (extras.sm_coupler_model)"
+
+
+def is_coupler_only(cls, macro):
+    """A CZ macro that plays only a coupler pulse (no qubit flux slot)."""
+    name = str(cls).split(".")[-1]
+    return name == "CouplerCZGate" or (
+        "coupler_flux_pulse" in macro and not any(
+            k in macro for k in ("flux_pulse_qubit", "flux_pulse_target", "flux_pulse_high", "flux_pulse_low")))
+
+
+def coupler_only_plan(model, lines, alphas, coupler, pulse=None):
+    """A4 numbers for one coupler-only operation: coupler frequency, ZZ, starting flat
+    time, refusal or warnings, plus a ZZ-vs-amplitude curve and the stored-vs-start time
+    comparison. Every number comes from cz_flux_math [derived, checks D5a/D5b]."""
+    pulse = pulse if isinstance(pulse, dict) else {}
+    holder = coupler.get("pulse_path") if coupler else None
+    out = {"model": bool(model), "amplitude_v": coupler["amplitude_v"] if coupler else None,
+           "stored_phase_pi": None, "difference_ns": None, "idle_zz_hz": None,
+           "amplitude_path": holder + ".amplitude" if holder else None,
+           "flat_length_path": holder + ".flat_length" if holder and "flat_length" in pulse else None,
+           "stored_length_ns": number(pulse.get("length")),
+           "stored_flat_length_ns": number(pulse.get("flat_length")), "curve": []}
+    if not model:
+        out.update(refusal=A4_MODEL_MISSING, zz_hz=None, t_flat_ns=None, coupler_frequency_hz=None,
+                   warnings=[], method=None, min_overlap=None)
+        return out
+    fc, ft = (ln["point"].get("frequency_hz") for ln in lines)
+    if fc is None or ft is None or None in alphas:
+        out.update(refusal="ZZ unknown: an idle f_01 or anharmonicity is missing", zz_hz=None,
+                   t_flat_ns=None, coupler_frequency_hz=None, warnings=[], method=None, min_overlap=None)
+        return out
+    if coupler is None or coupler.get("refusal") or coupler.get("amplitude_v") is None:
+        out.update(refusal=(coupler or {}).get("refusal") or "coupler amplitude unknown", zz_hz=None,
+                   t_flat_ns=None, coupler_frequency_hz=None, warnings=[], method=None, min_overlap=None)
+        return out
+    amp = coupler["amplitude_v"]
+    out.update(cz_flux_math.coupler_cz_plan(model, fc, ft, alphas[0], alphas[1], amp))
+    stored = out["stored_flat_length_ns"] if out["stored_flat_length_ns"] is not None else out["stored_length_ns"]
+    out["stored_phase_pi"] = cz_flux_math.conditional_phase_pi(out["zz_hz"], stored)
+    out["difference_ns"] = (stored - out["t_flat_ns"]) if stored is not None and out["t_flat_ns"] is not None else None
+    span = max(abs(amp) * 1.5, 0.05)
+    out["curve"] = cz_flux_math.zz_curve(model, fc, ft, alphas[0], alphas[1],
+                                         np.linspace(-span if amp < 0 else 0.0, 0.0 if amp < 0 else span, 61))
+    return out
+
+
 def operations(doc, conversions=None, unavailable=None):
     """Every CZ macro of every pair (aliases included), with what each qubit plays.
 
@@ -867,6 +911,9 @@ def operations(doc, conversions=None, unavailable=None):
             elif "flux_pulse_target" in macro:
                 fields = {"control": "flux_pulse_qubit", "target": "flux_pulse_target"}
                 kind = "two-flux"
+            elif is_coupler_only(cls, macro):
+                # A4: the coupler pulse is the gate; both qubits stay at their idle f_01.
+                kind = COUPLER_ONLY_KIND
             elif moving in ("control", "target"):
                 fields = {moving: "flux_pulse_qubit"}
                 kind = "single mover"
@@ -876,7 +923,7 @@ def operations(doc, conversions=None, unavailable=None):
                 kind = "single mover"
             if pair_refusal:
                 notes.append(pair_refusal)
-            duration_field = "duration" if kind == "both movers" else "duration_qubit" if kind == "single mover" else None
+            duration_field = "duration" if kind in ("both movers", COUPLER_ONLY_KIND) else "duration_qubit" if kind == "single mover" else None
             raw_duration = current(doc, path + "." + duration_field) if duration_field else None
             cycles = number(raw_duration)
             duration_ns = (4 * cycles if cycles is not None and cycles > 0 and cycles.is_integer()
@@ -918,6 +965,8 @@ def operations(doc, conversions=None, unavailable=None):
                 # the path the channel plays (the label on the qubit), else the resolved holder
                 played_pulse_path = info["path"] + ".z.operations." + label if isinstance(label, str) else pulse_path
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
+                if amp_path:
+                    amp_path = read(doc, amp_path).get("holder_path") or amp_path
                 refusal = pair_refusal or routing_reason or missing_pulse
                 if missing_pulse:
                     amp_path = None
@@ -987,7 +1036,32 @@ def operations(doc, conversions=None, unavailable=None):
                 notes.append(coupler_note)
             else:
                 coupler_note = None
+            model = coupler_model(resolved_tree(doc, pp + ".extras.sm_coupler_model"))
+            has_coupler = bool(coupler or current(doc, pp + ".coupler") or model)
+            shifted_res = coupler_points(lines, model, coupler["amplitude_v"] if coupler else 0.0, alphas) if has_coupler else []
+            if model and coupler and coupler["refusal"]:
+                shifted_res = coupler_points(lines, model, None, alphas)
+            if model and None not in fq and not any(ln["refusal"] for ln in lines):
+                shifted_res = []
+                for stage in stages:
+                    stage_lines = [{**ln, "point": next((l["point"] for l in ln["lobes"] if l["name"] == stage),
+                                   conversions[ln["qubit_path"]].point(0) if stage == "third lobe" else ln["point"])} for ln in lines]
+                    shifted_res.extend({**r, "lobe": stage} for r in coupler_points(stage_lines, model,
+                        coupler["amplitude_v"] if coupler and not coupler["refusal"] else None if coupler else 0.0, alphas))
+            if not model and has_coupler:
+                if coupler_note in notes:
+                    notes.remove(coupler_note)
+                notes.append(COUPLER_UNKNOWN)
+            a4 = None
+            if kind == COUPLER_ONLY_KIND:
+                if coupler_note in notes:
+                    notes.remove(coupler_note)
+                notes.append(A4_NODES_NOTE)
+                a4 = coupler_only_plan(model, lines, alphas, coupler,
+                                       resolved_tree(doc, coupler["pulse_path"]) if coupler else None)
             rows.append({
+                **({"coupler_model": model, "shifted_resonances": shifted_res} if has_coupler else {}),
+
                 "pair": pair_name, "operation": name, "path": path, "class": cls, "kind": kind,
                 "alias_of": alias[-1]["to_path"] if alias else None,
                 "lines": lines, "resonances": res, "nearest": nearest, "lobe_resonances": lobe_resonances,
@@ -1000,6 +1074,7 @@ def operations(doc, conversions=None, unavailable=None):
                 "plan": None if pair_refusal else _plan(plan, lines),
                 "interaction_frequency_hz": None if pair_refusal else number(current(doc, path + ".interaction_frequency")),
                 "coupler": coupler, "coupler_note": coupler_note,
+                **({"a4": a4} if a4 is not None else {}),
                 "coupler_amplitude_v": coupler["amplitude_v"] if coupler else None,
                 "amplitudes": [ln["amplitude_path"] for ln in lines if ln["amplitude_path"]],
                 "dependencies": [p for r in ("control", "target") if roles[r]["path"]
@@ -1007,6 +1082,255 @@ def operations(doc, conversions=None, unavailable=None):
                 "notes": notes,
             })
     return rows, conversions
+
+
+def operating_points(row):
+    """Expose the row's computed values once [derived], check S2-EXPOSE.
+
+    x/y are amplitude V and frequency GHz on the operation graph. The map
+    adds its layout x/y to this same browser object when it draws a segment.
+    """
+    points = []
+    for ln in row["lines"]:
+        frequency = ln["point"].get("frequency_hz")
+        points.append({"pair": row["pair"], "op": row["path"], "line": ln["role"],
+                       "frequency_hz": frequency, "amplitude_v": ln["amplitude_v"],
+                       **{k: ln.get(k) for k in ("coupler_shift_hz", "shifted_frequency_hz", "coupler_method", "coupler_frequency_hz")},
+                       "bare_resonances": row.get("lobe_resonances", []),
+                       "shifted_resonances": row.get("shifted_resonances", []),
+                       "x": ln["amplitude_v"], "y": frequency / 1e9 if frequency is not None else None,
+                       "path": ln["amplitude_path"] or "",
+                       "source_paths": [p for p in [ln["amplitude_path"], *row["dependencies"]] if p],
+                       "method": ("model" if "model" in (ln["point"].get("kind") or "") else
+                                  "quad" if "quad" in (ln["point"].get("kind") or "") else "direct"),
+                       "amp_text": ln["amp_text"], "amp_title": ln["amp_title"], "solve": None})
+    a4 = row.get("a4")
+    if a4:
+        # A4: the operating point is the coupler's; x = coupler amplitude (V), y = coupler GHz.
+        wc = a4.get("coupler_frequency_hz")
+        coupler = row.get("coupler") or {}
+        points.append({"pair": row["pair"], "op": row["path"], "line": "coupler",
+                       "frequency_hz": wc, "amplitude_v": a4.get("amplitude_v"),
+                       "coupler_frequency_hz": wc, "zz_hz": a4.get("zz_hz"),
+                       "t_flat_ns": a4.get("t_flat_ns"), "refusal": a4.get("refusal"),
+                       "coupler_shift_hz": None, "shifted_frequency_hz": None,
+                       "coupler_method": a4.get("method"),
+                       "bare_resonances": [], "shifted_resonances": [],
+                       "x": a4.get("amplitude_v"), "y": wc / 1e9 if wc is not None else None,
+                       "path": a4.get("amplitude_path") or "",
+                       "source_paths": [q for q in [a4.get("amplitude_path"), "qubit_pairs." + row["pair"] + ".extras.sm_coupler_model", *row["dependencies"]] if q],
+                       "method": "diagonalised" if a4.get("zz_hz") is not None else "direct",
+                       "amp_text": coupler.get("amp_text") or "unknown", "amp_title": coupler.get("amp_title") or "",
+                       "solve": None})
+    return points
+
+
+def time_panel(row, trajectory, summaries):
+    """The displayed time samples and dwell share the server frequency path."""
+    n = max((len(t["frequency_hz"]) for t in trajectory if t), default=0)
+    series = []
+    for ln, t, summary in zip(row["lines"], trajectory, summaries):
+        idle = summary.get("f01_hz") if summary else None
+        series.append([(t["frequency_hz"][i] if i < len(t["frequency_hz"]) else
+                        None if t.get("playback_known") is False else idle) if t else
+                       None if ln["moves"] else idle for i in range(n)])
+    delta = [(fc - ft) / 1e6 if fc is not None and ft is not None else None
+             for fc, ft in zip(*series)] if series else []
+    levels = cz_flux_math.resonances(None, None,
+        (summaries[0] or {}).get("anharmonicity_hz"), (summaries[1] or {}).get("anharmonicity_hz"))
+    dwell = []
+    displayed_levels = []
+    for level in (levels[0], levels[2], levels[1]):
+        value = level["delta_hz"]
+        if value is None:
+            continue
+        partner = row["lines"][1]["point"].get("frequency_hz")
+        displayed_levels.append({"name": level["name"], "detuning_mhz": value / 1e6,
+                                 "lo_mhz": value / 1e6 - 5, "hi_mhz": value / 1e6 + 5,
+                                 "frequency_hz": partner + value if partner is not None else None})
+        count = sum(v is not None and abs(v - value / 1e6) <= 5 for v in delta)
+        if count:
+            dwell.append(f"{level['name']} {count} ns")
+    return {"time_ns": list(range(n)), "series_hz": series, "detuning_mhz": delta,
+            "dwell": "; ".join(dwell), "levels": displayed_levels}
+
+
+def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversions=None):
+    """Solve and format the one-glance comparison from the same numerical result."""
+    if rows is None or conversions is None:
+        rows, conversions = operations(doc)
+    result = _solve(doc, pair, op, line, tier, amp, rows, conversions)
+    row = next((r for r in rows if r["pair"] == pair and op in (r["operation"], r["path"])), None)
+    role = result.get("line") or line
+    if not role and row:
+        role = next((ln["role"] for ln in row["lines"] if ln["moves"]), None)
+    mover = next((ln for ln in row["lines"] if ln["role"] == role), None) if row else None
+    stored = mover["amplitude_v"] if mover else None
+    required = result.get("amplitude_v")
+    difference = required - stored if required is not None and stored is not None else None
+    result.update(stored_amplitude_v=stored, difference_v=difference)
+    target = result.get("target_detuning_hz")
+    aim = f"{target / 1e6:+.1f} MHz" if target is not None else "unknown"
+    def mv(value):
+        return f"{value * 1e3:+.1f} mV" if value is not None else "unknown"
+    result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude "
+                         + (mv(required) if result["ok"] else result["reason"])
+                         + f" | stored {mv(stored)} | difference {mv(difference)}"
+                         + f" ({result.get('tier', tier)})")
+    return result
+
+
+def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversions=None):
+    """Read-only inverse proposal [derived], checks S2-Q, S2-M, S2-N30, S2-PATH.
+
+    The played row owns the edit address; resolving its leaf never replaces a pointer.
+    """
+    from .diagnostics import _sample_bound
+    from .physical_units import pulse_peak
+    if rows is None or conversions is None:
+        rows, conversions = operations(doc)
+    row = next((r for r in rows if r["pair"] == pair and op in (r["operation"], r["path"])), None)
+    if row is None:
+        return {"ok": False, "reason": "not a CZ operation"}
+    if tier not in ("auto", "quad", "model", "direct"):
+        return {"ok": False, "reason": "unknown solve tier"}
+    lines = row["lines"]
+    stored_role = current(doc, "qubit_pairs." + pair + ".moving_qubit")
+    preferred = next((x for x in lines if x["role"] == stored_role and x["moves"]), None)
+    ln = next((x for x in lines if x["role"] == line), None) if line else (preferred or next((x for x in lines if x["moves"]), None))
+    if ln is None or not ln["moves"]:
+        return {"ok": False, "reason": "select a moving line"}
+    if ln["refusal"]:
+        return {"ok": False, "reason": ln["refusal"]}
+    notes = []
+    try:
+        qubits = [conversions[x["qubit_path"]].qubit for x in lines]
+        for x, q in zip(lines, qubits):
+            for key in ("f_01", "anharmonicity"):
+                if number(q.get(key)) is None:
+                    raise ValueError(f"{key} of {x['name']} is not set")
+        fc, ft = [number(q["f_01"]) for q in qubits]
+        ac, at = [number(q["anharmonicity"]) for q in qubits]
+        other = next(x for x in lines if x is not ln)
+        if other["moves"] and other["point"].get("frequency_hz") is None:
+            raise ValueError(other["refusal"] or other["point"].get("reason") or "partner frequency cannot be resolved")
+        target = cz_flux_math.node30_target(fc, ft, ac, at, ln["role"],
+                    other["point"].get("frequency_hz") if other["moves"] else None)
+        target_detuning = (target["target_hz"] - other["point"]["frequency_hz"] if ln["role"] == "control"
+                           else other["point"]["frequency_hz"] - target["target_hz"])
+        official = next(x for x in lines if x["role"] == target["mover"])
+        stored = current(doc, "qubit_pairs." + pair + ".moving_qubit")
+        if stored != target["mover"]:
+            notes.append(f"official node 30 would move {official['name']} and rewrite moving_qubit")
+        rf_values = [number(current(doc, x["qubit_path"] + ".xy.RF_frequency")) for x in lines]
+        official_rf = cz_flux_math.node30_target(fc, ft, ac, at, ln["role"],
+                                                 rf_control=rf_values[0], rf_target=rf_values[1])
+        aim_difference = (official_rf["delta_hz"] - target["delta_hz"]) / 1e6
+        for x, q, rf in zip(lines, qubits, rf_values):
+            if rf is not None and abs(rf - q["f_01"]) > F01_TOLERANCE_HZ:
+                diff = (rf - q["f_01"]) / 1e6
+                notes.append(f"xy.RF_frequency differs from f_01 by {diff:g} MHz; the official node would aim {aim_difference:g} MHz elsewhere")
+        conv = conversions[ln["qubit_path"]]
+        delta, wanted = target["delta_hz"], target["target_hz"]
+        polarity = ln["amplitude_v"] or 1
+        model_ok = conv.model is not None and conv.anchor is not None
+        selected = ("model" if model_ok and conv.rejection is None else "quad") if tier == "auto" else tier
+
+        def quadratic():
+            """Signed-coefficient preconditions [derived], checks S2-Q/S2-N30."""
+            if conv.quad_raw is None:
+                raise ValueError("no flux-frequency model: freq_vs_flux_01_quad_term is missing")
+            if conv.quad_raw == 0:
+                raise ValueError(f"freq_vs_flux_01_quad_term of {ln['name']} is 0: run the Ramsey-vs-flux calibration first")
+            fr = conv.frame
+            off_spot = conv.anchor is not None and not math.isclose(
+                conv.anchor, sweet_spot_phi(conv.anchor), rel_tol=0, abs_tol=1e-9)
+            if (conv.qubit.get("extras") or {}).get("at_sweet_spot") is False or off_spot:
+                raise ValueError(f"quad term expands about a sweet spot; the qubit is not at one (frame: {fr['reason']})")
+            if fr["sign"] is None and fr["reason"] != "no sweet-spot evidence":
+                raise ValueError("flux direction unknown: " + fr["reason"])
+            return cz_flux_math.quad_inverse(delta, conv.quad_raw, fr["sign"], polarity, ln["name"])
+
+        def model():
+            """Anchored inverse dispatch [derived], check S2-M."""
+            if not model_ok:
+                raise ValueError("no flux-frequency model: freq_vs_flux_01_quad_term is missing")
+            return cz_flux_math.model_inverse(conv.model, conv.anchor, conv.f01, wanted, polarity)
+
+        quad_v = model_v = None
+        try:
+            quad_v = quadratic()
+        except ValueError:
+            if selected == "quad":
+                raise
+        try:
+            model_v, opposite = model()
+            if opposite and selected == "model":
+                notes.append("opposite polarity: the stored side cannot reach the target")
+        except ValueError:
+            if selected == "model":
+                raise
+        if selected == "direct":
+            amplitude = number(amp)
+            if amplitude is None:
+                raise ValueError("enter a finite amplitude in V")
+            point = conv.point(amplitude)
+            if point["frequency_hz"] is None:
+                raise ValueError(point["reason"])
+            frequency, validity = point["frequency_hz"], point["validity"]
+        else:
+            amplitude = model_v if selected == "model" else quad_v
+            frequency = wanted
+            validity = "within the fitted model's measured range"
+            if selected == "quad":
+                from copy import copy
+                view = copy(conv)
+                view.rejection = "quad tier selected"
+                if view.sign is None:
+                    view.sign = 1 if conv.quad_raw > 0 else -1
+                    view.frame = {**view.frame, "spot": "upper" if view.sign < 0 else "lower"}
+                    view.range = view._range()
+                    notes.append("node-30 convention, no sweet-spot evidence")
+                point = view.point(amplitude)
+                if point["frequency_hz"] is None:
+                    raise ValueError(point["reason"])
+                validity = ("quad-term extrapolated estimate" if point.get("quad_kind") == "quad-term extrapolated estimate"
+                            else point["validity"])
+        path = read(doc, ln["amplitude_path"]).get("holder_path")
+        if not path or number(current(doc, path)) is None:
+            raise ValueError("pulse amplitude cannot be resolved")
+        port = read(doc, ln["qubit_path"] + ".z.opx_output").get("holder_path") or ""
+        bound, label = _sample_bound(doc, "#/" + port.replace(".", "/"))
+        peak = pulse_peak(doc, path, (ln.get("played_pulse_path") or ln["pulse_path"]) + ".amplitude")["ratio"]
+        if bound is not None and peak is not None and abs(amplitude * peak) > bound:
+            mode = "amplified" if "amplified" in label else "direct"
+            raise ValueError(f"{amplitude:g} V exceeds the {mode} LF output range (±{bound:g} V)")
+        frequencies = [frequency if x is ln else x["point"].get("frequency_hz") for x in lines]
+        preview_lines = [{**x, **({"amplitude_v": amplitude,
+                         "point": {"frequency_hz": frequency, "kind": selected}} if x is ln else {})} for x in lines]
+        shifted_preview = coupler_points(preview_lines, row.get("coupler_model"),
+                          row["coupler_amplitude_v"] if row.get("coupler") else 0.0, [ac, at])
+        preview_row = {**row, "lines": preview_lines, "shifted_resonances": shifted_preview,
+                       "lobe_resonances": resonances(*frequencies, ac, at)}
+        preview = next(p for p in operating_points(preview_row) if p["line"] == ln["role"])
+        preview["method"] = selected
+        preview["preview"] = True
+        preview.update(amp_text=f"{amplitude:g} V (stored amplitude)", amp_title=path)
+        return {"ok": True, "tier": selected, "amplitude_v": amplitude, "frequency_hz": frequency,
+                "operating_point": preview,
+                "line": ln["role"], "target_detuning_hz": target_detuning,
+                "target_hz": wanted, "delta_hz": delta, "mover": target["mover"], "rule": target["rule"],
+                "distances": resonances(*frequencies, ac, at), "validity": validity,
+                "quad_v": quad_v, "model_v": model_v,
+                "rel_diff": abs(quad_v - model_v) / abs(model_v) if quad_v is not None and model_v else None,
+                "notes": notes, "path": path}
+    except ValueError as exc:
+        result = {"ok": False, "reason": str(exc), "notes": notes,
+                  "tier": locals().get("selected", tier)}
+        if "target" in locals():
+            result.update(target_hz=target["target_hz"], rule=target["rule"],
+                          line=ln["role"], target_detuning_hz=target_detuning)
+        return result
 
 
 def _fidelity(raw):

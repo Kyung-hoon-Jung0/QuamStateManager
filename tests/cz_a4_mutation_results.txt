@@ -1,0 +1,14 @@
+GREEN baseline: 5 passed in 12.14s
+RED caught: require extension
+RED caught: refuse qubit z
+RED caught: require coupler per pair
+RED caught: gate operation id
+RED caught: reconstruct family
+RED caught: phase override
+RED caught: coupler synchronization
+RED caught: duration forwarding
+RED caught: wizard disabled
+RED caught: wizard coupler wiring
+RED caught: build route bypass
+RED caught: standalone bypass
+GREEN restored: 5 passed in 12.61s

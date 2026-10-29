@@ -15420,7 +15420,13 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 target_path = _resolve_edit_path(modifier.store, dot_path)
                 _ro = _editability_reason(modifier.store, target_path)
                 if _ro is not None:
-                    raise ValueError(_ro)   # read-only policy → existing atomic rollback (audit P0)
+                    # GATE-ID permits only filling a null/absent gate target ID
+                    # with its holder key through this ordinary batch door.
+                    from quam_state_manager.core.gate_pulse_ids import fill_edits
+                    allowed_ids = {e["path"]: e["value"]
+                                   for e in fill_edits(modifier.store.merged)}
+                    if target_path not in allowed_ids or raw_value != allowed_ids[target_path]:
+                        raise ValueError(_ro)   # other identity keys remain read-only
                 # docs/121: a pointer cell now SHOWS its pointer, so plain text
                 # typed into one must never silently replace the link.
                 _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
@@ -22366,6 +22372,7 @@ def _pair_cz_plan_ops(store) -> dict[str, str]:
 
 def _cz_plan_table(rows) -> list[dict]:
     """One row per operation for the all-pairs table (no history: that arrives by itself)."""
+    from quam_state_manager.core import cz_gate_plan as czp
     out = []
     for r in rows:
         pts = [ln["point"] for ln in r["lines"]]
@@ -22398,6 +22405,7 @@ def _cz_plan_table(rows) -> list[dict]:
             "path": r["path"], "pair": r["pair"], "operation": r["operation"], "kind": r["kind"],
             "alias_of": r["alias_of"],
             "names": [ln["name"] for ln in r["lines"]],
+            "operating_points": czp.operating_points(r),
             "freqs": [p.get("frequency_hz") for p in pts],
             "moves": [ln["moves"] for ln in r["lines"]],
             # the coupler note is shown once above the table; the amplitude stays in Z amp
@@ -22415,6 +22423,32 @@ def _cz_plan_table(rows) -> list[dict]:
     return out
 
 
+_CZ_SOLVE_MEMO = {}
+
+
+@bp.route("/cz-plan/solve")
+def cz_plan_solve():
+    """Read-only amplitude proposal [derived], check S2-ROUTE; operation cache token."""
+    from quam_state_manager.core import cz_gate_plan as czp, store_revs
+    store = _store()
+    if not store:
+        return jsonify(ok=False, reason="no chip loaded")
+    with store._lock:
+        rows, convs, _ = _cz_plan_ops(store)
+        args = tuple(request.args.get(k) for k in ("pair", "op", "line", "tier", "amp"))
+        key = (store_revs.seq_token(store), id(store.merged), args)
+        with _CZ_PLAN_OPS_LOCK:
+            result = _CZ_SOLVE_MEMO.get(key)
+        if result is None:
+            pair, op, line, tier, amp = args
+            result = czp.solve(store.merged, pair, op, line, tier or "auto", amp, rows, convs)
+            with _CZ_PLAN_OPS_LOCK:
+                if len(_CZ_SOLVE_MEMO) >= 256:
+                    _CZ_SOLVE_MEMO.clear()
+                _CZ_SOLVE_MEMO[key] = result
+        return jsonify(**result, chip=_active_chip_token() or "")
+
+
 @bp.route("/cz-plan")
 def cz_plan_page():
     """Every CZ operation of every pair: the frequency each qubit reaches, the detuning,
@@ -22424,6 +22458,11 @@ def cz_plan_page():
         return _no_chip("CZ gate plan", "czplan")
     template = "_cz_plan.html" if _is_htmx() else "cz_plan.html"
     rows, _convs, unavailable = _cz_plan_ops(store)
+    from quam_state_manager.core import cz_gate_plan as czp
+    pairs = czp.resolved_tree(store.merged, "qubit_pairs")
+    qubits = czp.resolved_tree(store.merged, "qubits")
+    pairs = pairs if isinstance(pairs, dict) else {}
+    qubits = qubits if isinstance(qubits, dict) else {}
     table = _cz_plan_table(rows)
     want = request.args.get("op", "").strip()
     unknown_pair = None
@@ -22435,6 +22474,9 @@ def cz_plan_page():
     paths = [r["path"] for r in table]
     selected = want if want in paths else (paths[0] if paths and unknown_pair is None else "")
     return render_template(template, **_ctx(page="czplan", rows=table, selected=selected,
+                                           operating_points=[p for r in table for p in r["operating_points"]],
+                                           fixed_no_flux=(not rows and not any(q.get("z") for q in qubits.values() if isinstance(q, dict)) and not any(p.get("coupler") for p in pairs.values() if isinstance(p, dict))),
+                                           coupler_forms=[dict(pair=k, model=czp.coupler_model((p.get("extras") or {}).get("sm_coupler_model")) or {}, create_extras="extras" not in p) for k, p in pairs.items() if isinstance(p, dict) and p.get("coupler") and isinstance(p.get("extras", {}), dict)],
                                            unavailable=unavailable, unknown_pair=unknown_pair))
 
 
@@ -22868,7 +22910,8 @@ def cz_plan_data():
     except Exception:  # noqa: BLE001 -- the loss block is advisory; the figures stand
         logger.warning("cz plan: the gate's loss block could not be built", exc_info=True)
         gate_loss = []
-    return jsonify(ok=True, row=row, qubits=qubits, trajectory=traj, notes=notes, info=info,
+    return jsonify(ok=True, row=row, qubits=qubits, trajectory=traj,
+                   time_panel=czp.time_panel(row, traj, [q["summary"] for q in qubits]), notes=notes, info=info,
                    notes_figure=notes_figure, info_figure=info_figure, unavailable=unavailable,
                    calibration=card, pair_ops=others, amax_v=amax, gate_loss=gate_loss)
 
@@ -27256,6 +27299,7 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
     that plays the op BY NAME is asked before anything moves)."""
     from quam_state_manager.core.pulse_index import (
         rewrite_referrer_pointer, rewrite_subtree_pointers)
+    from quam_state_manager.core.gate_pulse_ids import gate_pulse_targets
     retargeted = 0
     # the rename as the gate would see it: old key gone, new key there, every
     # re-pointed referrer following it -- asked under the lab write lock only
@@ -27277,6 +27321,9 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                 new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path)
                 if new_ptr and new_ptr != raw:
                     _writes.append((referrer, new_ptr))
+        if (retarget and isinstance(body, dict) and body.get("id") == old_name
+                and any(p == path for p, _k, _s, _b in gate_pulse_targets(store.merged))):
+            _writes.append((new_path + ".id", new_name))
     _lab = _lab_write_refusal(store, _writes, info=lab_info)
     if _lab:
         return _lab_edit_refused(_lab[0])
@@ -27308,6 +27355,9 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                 if new_ptr and new_ptr != raw:
                     modifier.set_value(referrer, new_ptr, group_id=gid)
                     retargeted += 1
+        if (isinstance(body, dict) and body.get("id") == old_name
+                and any(p == new_path for p, _k, _s, _b in gate_pulse_targets(store.merged))):
+            modifier.set_value(new_path + ".id", new_name, group_id=gid)
 
     _invalidate_engine_cache()
     logger.info("pulse rename %s -> %s (retargeted=%d)", path, new_path, retargeted)

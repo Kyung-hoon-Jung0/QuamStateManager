@@ -33,8 +33,8 @@
     var BAR_HALF = 3;          // half the width of a drawn bar
     var LABEL_FONT = 10;
     var CLUSTER_PX = 6;        // segments of one column this close share the row side by side
-    var PARTNER_H = 11;        // a partner name's height (9 px font)
-    var PARTNER_FONT = 9;
+    var PARTNER_H = 15;        // line pitch for the 11 px partner font
+    var PARTNER_FONT = 11;
     var PARTNER_MARKER = 6;    // the partner trace's invisible marker size: it sets Plotly's text offset
     var PARTNER_CLEAR = 2;     // free pixels kept between a partner box and anything it must clear
     var RETRY_N = 20, RETRY_MS = 3000;   // re-asks while the change history is being built
@@ -251,9 +251,9 @@
     function labelSize(text) {
         return { w: 5.4 * String(text).length + 4, h: 18 };
     }
-    /* A partner label's width (px) at its 9 px font. */
+    /* A partner label's width (px) at its 11 px font. */
     function partnerWidth(text) {
-        return 5.2 * String(text).length + 2;
+        return 6.4 * String(text).length + 2;
     }
     /* The partner names of one shared row as lines no wider than the column (one name a line
        at least): {lines: [[name, ...]], w, h} in px. */
@@ -548,7 +548,12 @@
         function addY(v) { if (v != null && isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; } }
         [G.fillY, O.lineY, thin.y, bars.y, G.clipY].forEach(function (a) { a.forEach(addY); });
         qs.forEach(function (q) { addY(ghz(q.f01_hz)); (q.safe || []).forEach(function (b) { addY(ghz(b.lo_hz)); addY(ghz(b.hi_hz)); }); });
-        m.segments.forEach(function (s) { if (col[s.qubit_path] != null) addY(ghz(s.frequency_hz)); });
+        m.segments.forEach(function (s) {
+            if (col[s.qubit_path] == null) return;
+            addY(ghz(s.frequency_hz));
+            var api = window.CzOperatingPoints, p = api && api.get(root, s.path, s.role, s.operating_point);
+            if (p) addY(ghz(p.shifted_frequency_hz));
+        });
         (m.planned || []).forEach(function (p) { if (col[p.qubit_path] != null) addY(ghz(p.frequency_hz)); });
         var yr = isFinite(lo) ? [lo - Math.max(0.01, 0.04 * (hi - lo)), hi + Math.max(0.01, 0.04 * (hi - lo))] : null;
         var pxPerGHz = yr ? plotH * (1 - colLo) / (yr[1] - yr[0]) : 1;
@@ -619,15 +624,17 @@
                          { xpx: left, x: pw.i + 0.12, pos: 'top right' },
                          { xpx: right, x: pw.i + 0.88, pos: 'bottom left', bottom: true },
                          { xpx: left, x: pw.i + 0.12, pos: 'bottom right', bottom: true }];
-            for (var k = 0; k < spots.length; k++) {
-                var bottom = spots[k].bottom;
-                var b = partnerBox(spots[k].xpx, pw.ypx, spots[k].pos, pw.w, pw.n);
-                if (b.x0 < 0 || b.x1 > n * colPx || b.y0 < 0 || b.y1 > columnHeight ||
-                    !taken.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); }) ||
-                    (bottom && !occupied.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); }))) continue;
-                taken.push(b);
-                partners.push({ x: spots[k].x, y: pw.y, t: pw.t, pos: spots[k].pos });
-                return;
+            for (var offset = 0; offset <= 48; offset += 8) {
+                for (var k = 0; k < spots.length; k++) {
+                    var bottom = spots[k].bottom, shift = bottom ? -offset : offset;
+                    var b = partnerBox(spots[k].xpx, pw.ypx + shift, spots[k].pos, pw.w, pw.n);
+                    if (b.x0 < 0 || b.x1 > n * colPx || b.y0 < 0 || b.y1 > columnHeight ||
+                        !taken.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); }) ||
+                        !occupied.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); })) continue;
+                    taken.push(b);
+                    partners.push({ x: spots[k].x, y: pw.y + shift / pxPerGHz, t: pw.t, pos: spots[k].pos });
+                    return;
+                }
             }
         });
         var segClass = {}, connectors = {}, geo = {};
@@ -639,11 +646,28 @@
         m.segments.forEach(function (s, k) {
             var x = place[k];
             if (!x) return;
+            var api = window.CzOperatingPoints;
+            var point = api && api.get(root, s.path, s.role, s.operating_point);
+            if (point) {
+                point.map_x = (x.x0 + x.x1) / 2;
+                point.map_y = point.y;
+                traces.push({type: 'scatter', mode: 'markers', x: [point.map_x], y: [point.map_y],
+                    marker: {size: 5, color: P[(colour[s.pair] || 0) % P.length]}, customdata: [[s.path, s.pair]],
+                    showlegend: false, hoverinfo: 'skip', _czOperating: point});
+                if (point.shifted_frequency_hz != null) {
+                    traces.push({type: 'scatter', mode: 'markers+text', x: [point.map_x], y: [point.shifted_frequency_hz / 1e9],
+                        text: ['shifted ' + (point.shifted_frequency_hz / 1e9).toFixed(4)], textposition: 'top right',
+                        marker: {size: 7, symbol: 'diamond-open'}, showlegend: false,
+                        hovertext: point.coupler_method, _czOperating: point});
+                }
+                api.save(root);
+            }
             var c = colour[s.pair] || 0, style = !s.moves ? 'idle' : (/quad|derived|estimate/.test(s.kind || '') ? 'dash' : 'solid');
-            var key = c + ':' + style, f = s.frequency_hz / 1e9;
+            var key = c + ':' + style, f = point ? point.y : s.frequency_hz / 1e9;
+            var shownNearest = point ? api.nearest(root, point) : s.nearest;
             var t = esc(s.pair) + ' · ' + esc(s.operation) + '<br>' + esc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
-                ': ' + f.toFixed(4) + ' GHz<br>' + esc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + esc(s.validity) : '') +
-                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + (s.nearest.lobe ? ' (' + esc(s.nearest.lobe) + ')' : '') + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
+                ': ' + f.toFixed(4) + ' GHz<br>' + esc(point && point.coupler_method || '') + '<br>' + esc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + esc(s.validity) : '') +
+                '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (shownNearest ? ' · ' + esc(shownNearest.name) + (shownNearest.lobe ? ' (' + esc(shownNearest.lobe) + ')' : '') + ' ' + fmtMHz(shownNearest.distance_hz, true) : '') +
                 amplitudeHover(s.pair) + (mismatch && s.pair === mismatch.pair ? mmHover : '');
             var cl = segClass[key] || (segClass[key] = { c: c, style: style, x: [], y: [], t: [], cd: [] });
             cl.x.push(x.x0, x.x1, null); cl.y.push(f, f, null); cl.t.push(t, t, null);
@@ -745,11 +769,14 @@
                 if (label && movers.some(function (s) { return /extrapolated/.test(s.kind || ''); })) label = '~' + label;
                 if (label) items.push({ pair: pair, text: label, a: px(a), b: px(b), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, color: color });
                 var op = segs.length ? segs[0] : null, t;
+                var pointApi = window.CzOperatingPoints;
+                var opPoint = op && pointApi && pointApi.get(root, op.path, op.role, op.operating_point);
+                var opNearest = opPoint ? pointApi.nearest(root, opPoint) : op && op.nearest;
                 if (computed) {
                     t = esc(pair) + ' · ' + esc(op.operation) + segs.map(function (s) {
                         return '<br>' + esc(s.qubit) + ' ' + f3(s.frequency_hz) + ' GHz ' + esc(s.kind || '') + (s.moves ? '' : ' (stays at idle)');
                     }).join('') + refused.map(function (r) { return '<br>' + esc(r.qubit) + ' frequency unknown; not drawn: ' + esc(r.reason); }).join('') +
-                        '<br>Δ ' + fmtMHz(op.detuning_hz, true) + (op.nearest ? ' · ' + esc(op.nearest.name) + (op.nearest.lobe ? ' (' + esc(op.nearest.lobe) + ')' : '') + ' ' + fmtMHz(op.nearest.distance_hz, true) : '');
+                        '<br>Δ ' + fmtMHz(op.detuning_hz, true) + (opNearest ? ' · ' + esc(opNearest.name) + (opNearest.lobe ? ' (' + esc(opNearest.lobe) + ')' : '') + ' ' + fmtMHz(opNearest.distance_hz, true) : '');
                 } else if (refused.length) {
                     t = esc(pair) + ' \u00b7 ' + esc(refused[0].operation) + refused.map(function (r) { return '<br>' + esc(r.qubit) + ' frequency unknown; not drawn: ' + esc(r.reason); }).join('');
                 } else {
@@ -903,6 +930,7 @@
             return window._plotlyRender(el, traces, L, config(), current);
         }).then(function () {
             if (!current() || !el.data) return;
+            if (window.CzOperatingPoints) window.CzOperatingPoints.stamp(el);
             overlay.epoch = el.__plotlyRenderEpoch || 0;
             el._czpOverlay = overlay;
             if (!el.on || el._czpMapClick === (el._ev || el.on)) return;

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qsm-quam-ext"
+version = "0.1.0"
+description = "Coupler-only CZ macros for fixed-frequency transmons"
+requires-python = ">=3.10"
+dependencies = ["quam", "quam-builder"]
+
+[tool.setuptools.packages.find]
+include = ["qsm_quam_ext*"]
