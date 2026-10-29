@@ -443,8 +443,8 @@ SYNTHETIC_REGISTRY: dict[str, dict] = {
                     "pulses — without it the flux line builds and the QDAC bias "
                     "is left off that qubit",
         "fix": "add a transmon subclass to your own quam_config that keeps `z` a "
-               "FluxLine and carries a QdacBiasLine beside it (docs/136 §13 has "
-               "the ~10 lines), then widen your QPU root's `qubits` union with it",
+               "FluxLine and carries a QdacBiasLine beside it, then widen your "
+               "QPU root's `qubits` union with it",
         "severity": DEGRADE},
 }
 
@@ -596,8 +596,8 @@ def qpu_root_check(spec: dict, manifest: Any) -> dict:
         "No QPU root class in this environment can hold QDAC-biased qubits. "
         "The stock roots type `qubits` for a single transmon class and declare "
         "no `qdac` field, so the built chip would not load. Add a subclass to "
-        "your own quam_config that widens `qubits` and declares `qdac` — see "
-        "docs/136 — and it will be offered here."
+        "your own quam_config that widens `qubits` to the QDAC-biased "
+        "transmon class and declares a `qdac` field, and it will be offered here."
     )
     return out
 
