@@ -872,6 +872,8 @@ def operations(doc, conversions=None, unavailable=None):
                 # the path the channel plays (the label on the qubit), else the resolved holder
                 played_pulse_path = info["path"] + ".z.operations." + label if isinstance(label, str) else pulse_path
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
+                if amp_path:
+                    amp_path = read(doc, amp_path).get("holder_path") or amp_path
                 refusal = pair_refusal or routing_reason or missing_pulse
                 if missing_pulse:
                     amp_path = None
@@ -961,6 +963,169 @@ def operations(doc, conversions=None, unavailable=None):
                 "notes": notes,
             })
     return rows, conversions
+
+
+def operating_points(row):
+    """Expose the row's computed values once [derived], check S2-EXPOSE.
+
+    x/y are amplitude V and frequency GHz on the operation graph. The map
+    adds its layout x/y to this same browser object when it draws a segment.
+    """
+    points = []
+    for ln in row["lines"]:
+        frequency = ln["point"].get("frequency_hz")
+        points.append({"pair": row["pair"], "op": row["path"], "line": ln["role"],
+                       "frequency_hz": frequency, "amplitude_v": ln["amplitude_v"],
+                       "x": ln["amplitude_v"], "y": frequency / 1e9 if frequency is not None else None,
+                       "path": ln["amplitude_path"] or "",
+                       "source_paths": [p for p in [ln["amplitude_path"], *row["dependencies"]] if p],
+                       "method": ("model" if "model" in (ln["point"].get("kind") or "") else
+                                  "quad" if "quad" in (ln["point"].get("kind") or "") else "direct"),
+                       "amp_text": ln["amp_text"], "amp_title": ln["amp_title"], "solve": None})
+    return points
+
+
+def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversions=None):
+    """Read-only inverse proposal [derived], checks S2-Q, S2-M, S2-N30, S2-PATH.
+
+    The played row owns the edit address; resolving its leaf never replaces a pointer.
+    """
+    from .diagnostics import _sample_bound
+    from .physical_units import pulse_peak
+    if rows is None or conversions is None:
+        rows, conversions = operations(doc)
+    row = next((r for r in rows if r["pair"] == pair and op in (r["operation"], r["path"])), None)
+    if row is None:
+        return {"ok": False, "reason": "not a CZ operation"}
+    if tier not in ("auto", "quad", "model", "direct"):
+        return {"ok": False, "reason": "unknown solve tier"}
+    lines = row["lines"]
+    stored_role = current(doc, "qubit_pairs." + pair + ".moving_qubit")
+    preferred = next((x for x in lines if x["role"] == stored_role and x["moves"]), None)
+    ln = next((x for x in lines if x["role"] == line), None) if line else (preferred or next((x for x in lines if x["moves"]), None))
+    if ln is None or not ln["moves"]:
+        return {"ok": False, "reason": "select a moving line"}
+    if ln["refusal"]:
+        return {"ok": False, "reason": ln["refusal"]}
+    notes = []
+    try:
+        qubits = [conversions[x["qubit_path"]].qubit for x in lines]
+        for x, q in zip(lines, qubits):
+            for key in ("f_01", "anharmonicity"):
+                if number(q.get(key)) is None:
+                    raise ValueError(f"{key} of {x['name']} is not set")
+        fc, ft = [number(q["f_01"]) for q in qubits]
+        ac, at = [number(q["anharmonicity"]) for q in qubits]
+        other = next(x for x in lines if x is not ln)
+        if other["moves"] and other["point"].get("frequency_hz") is None:
+            raise ValueError(other["refusal"] or other["point"].get("reason") or "partner frequency cannot be resolved")
+        target = cz_flux_math.node30_target(fc, ft, ac, at, ln["role"],
+                    other["point"].get("frequency_hz") if other["moves"] else None)
+        official = next(x for x in lines if x["role"] == target["mover"])
+        stored = current(doc, "qubit_pairs." + pair + ".moving_qubit")
+        if stored != target["mover"]:
+            notes.append(f"official node 30 would move {official['name']} and rewrite moving_qubit")
+        rf_values = [number(current(doc, x["qubit_path"] + ".xy.RF_frequency")) for x in lines]
+        official_rf = cz_flux_math.node30_target(fc, ft, ac, at, ln["role"],
+                                                 rf_control=rf_values[0], rf_target=rf_values[1])
+        aim_difference = (official_rf["delta_hz"] - target["delta_hz"]) / 1e6
+        for x, q, rf in zip(lines, qubits, rf_values):
+            if rf is not None and abs(rf - q["f_01"]) > F01_TOLERANCE_HZ:
+                diff = (rf - q["f_01"]) / 1e6
+                notes.append(f"xy.RF_frequency differs from f_01 by {diff:g} MHz; the official node would aim {aim_difference:g} MHz elsewhere")
+        conv = conversions[ln["qubit_path"]]
+        delta, wanted = target["delta_hz"], target["target_hz"]
+        polarity = ln["amplitude_v"] or 1
+        model_ok = conv.model is not None and conv.anchor is not None
+        selected = ("model" if model_ok and conv.rejection is None else "quad") if tier == "auto" else tier
+
+        def quadratic():
+            """Signed-coefficient preconditions [derived], checks S2-Q/S2-N30."""
+            if conv.quad_raw is None:
+                raise ValueError("no flux-frequency model: freq_vs_flux_01_quad_term is missing")
+            if conv.quad_raw == 0:
+                raise ValueError(f"freq_vs_flux_01_quad_term of {ln['name']} is 0: run the Ramsey-vs-flux calibration first")
+            fr = conv.frame
+            off_spot = conv.anchor is not None and not math.isclose(
+                conv.anchor, sweet_spot_phi(conv.anchor), rel_tol=0, abs_tol=1e-9)
+            if (conv.qubit.get("extras") or {}).get("at_sweet_spot") is False or off_spot:
+                raise ValueError(f"quad term expands about a sweet spot; the qubit is not at one (frame: {fr['reason']})")
+            if fr["sign"] is None and fr["reason"] != "no sweet-spot evidence":
+                raise ValueError("flux direction unknown: " + fr["reason"])
+            return cz_flux_math.quad_inverse(delta, conv.quad_raw, fr["sign"], polarity, ln["name"])
+
+        def model():
+            """Anchored inverse dispatch [derived], check S2-M."""
+            if not model_ok:
+                raise ValueError("no flux-frequency model: freq_vs_flux_01_quad_term is missing")
+            return cz_flux_math.model_inverse(conv.model, conv.anchor, conv.f01, wanted, polarity)
+
+        quad_v = model_v = None
+        try:
+            quad_v = quadratic()
+        except ValueError:
+            if selected == "quad":
+                raise
+        try:
+            model_v, opposite = model()
+            if opposite and selected == "model":
+                notes.append("opposite polarity: the stored side cannot reach the target")
+        except ValueError:
+            if selected == "model":
+                raise
+        if selected == "direct":
+            amplitude = number(amp)
+            if amplitude is None:
+                raise ValueError("enter a finite amplitude in V")
+            point = conv.point(amplitude)
+            if point["frequency_hz"] is None:
+                raise ValueError(point["reason"])
+            frequency, validity = point["frequency_hz"], point["validity"]
+        else:
+            amplitude = model_v if selected == "model" else quad_v
+            frequency = wanted
+            validity = "within the fitted model's measured range"
+            if selected == "quad":
+                from copy import copy
+                view = copy(conv)
+                view.rejection = "quad tier selected"
+                if view.sign is None:
+                    view.sign = 1 if conv.quad_raw > 0 else -1
+                    view.frame = {**view.frame, "spot": "upper" if view.sign < 0 else "lower"}
+                    view.range = view._range()
+                    notes.append("node-30 convention, no sweet-spot evidence")
+                point = view.point(amplitude)
+                if point["frequency_hz"] is None:
+                    raise ValueError(point["reason"])
+                validity = ("quad-term extrapolated estimate" if point.get("quad_kind") == "quad-term extrapolated estimate"
+                            else point["validity"])
+        path = read(doc, ln["amplitude_path"]).get("holder_path")
+        if not path or number(current(doc, path)) is None:
+            raise ValueError("pulse amplitude cannot be resolved")
+        port = read(doc, ln["qubit_path"] + ".z.opx_output").get("holder_path") or ""
+        bound, label = _sample_bound(doc, "#/" + port.replace(".", "/"))
+        peak = pulse_peak(doc, path, (ln.get("played_pulse_path") or ln["pulse_path"]) + ".amplitude")["ratio"]
+        if bound is not None and peak is not None and abs(amplitude * peak) > bound:
+            mode = "amplified" if "amplified" in label else "direct"
+            raise ValueError(f"{amplitude:g} V exceeds the {mode} LF output range (±{bound:g} V)")
+        frequencies = [frequency if x is ln else x["point"].get("frequency_hz") for x in lines]
+        preview = operating_points({**row, "lines": [{**ln, "amplitude_v": amplitude,
+                                      "point": {"frequency_hz": frequency, "kind": selected}}]})[0]
+        preview["method"] = selected
+        preview["preview"] = True
+        preview.update(amp_text=f"{amplitude:g} V (stored amplitude)", amp_title=path)
+        return {"ok": True, "tier": selected, "amplitude_v": amplitude, "frequency_hz": frequency,
+                "operating_point": preview,
+                "target_hz": wanted, "delta_hz": delta, "mover": target["mover"], "rule": target["rule"],
+                "distances": resonances(*frequencies, ac, at), "validity": validity,
+                "quad_v": quad_v, "model_v": model_v,
+                "rel_diff": abs(quad_v - model_v) / abs(model_v) if quad_v is not None and model_v else None,
+                "notes": notes, "path": path}
+    except ValueError as exc:
+        result = {"ok": False, "reason": str(exc), "notes": notes}
+        if "target" in locals():
+            result.update(target_hz=target["target_hz"], rule=target["rule"])
+        return result
 
 
 def _fidelity(raw):

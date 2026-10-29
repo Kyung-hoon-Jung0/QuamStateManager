@@ -1,0 +1,12 @@
+coefficient overrides evidence: RED (assertion failure), reverted, GREEN
+drop direction check: RED (assertion failure), reverted, GREEN
+drop measured window: RED (assertion failure), reverted, GREEN
+ignore off-spot model anchor: RED (assertion failure), reverted, GREEN
+swap anharmonicities: RED (assertion failure), reverted, GREEN
+ignore unit peak: RED (assertion failure), reverted, GREEN
+literal macro amplitude path: RED (assertion failure), reverted, GREEN
+change exact refusal text: RED (assertion failure), reverted, GREEN
+domain error HTTP 400: RED (assertion failure), reverted, GREEN
+mutate state during GET: RED (assertion failure), reverted, GREEN
+offset operating marker: RED (assertion failure), reverted, GREEN
+swap official mover rule: RED (assertion failure), reverted, GREEN

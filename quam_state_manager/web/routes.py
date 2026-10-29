@@ -22372,6 +22372,7 @@ def _pair_cz_plan_ops(store) -> dict[str, str]:
 
 def _cz_plan_table(rows) -> list[dict]:
     """One row per operation for the all-pairs table (no history: that arrives by itself)."""
+    from quam_state_manager.core import cz_gate_plan as czp
     out = []
     for r in rows:
         pts = [ln["point"] for ln in r["lines"]]
@@ -22404,6 +22405,7 @@ def _cz_plan_table(rows) -> list[dict]:
             "path": r["path"], "pair": r["pair"], "operation": r["operation"], "kind": r["kind"],
             "alias_of": r["alias_of"],
             "names": [ln["name"] for ln in r["lines"]],
+            "operating_points": czp.operating_points(r),
             "freqs": [p.get("frequency_hz") for p in pts],
             "moves": [ln["moves"] for ln in r["lines"]],
             # the coupler note is shown once above the table; the amplitude stays in Z amp
@@ -22419,6 +22421,32 @@ def _cz_plan_table(rows) -> list[dict]:
             "irb": (r["fidelity"].get("InterleavedRB") or {}).get("value"),
         })
     return out
+
+
+_CZ_SOLVE_MEMO = {}
+
+
+@bp.route("/cz-plan/solve")
+def cz_plan_solve():
+    """Read-only amplitude proposal [derived], check S2-ROUTE; operation cache token."""
+    from quam_state_manager.core import cz_gate_plan as czp, store_revs
+    store = _store()
+    if not store:
+        return jsonify(ok=False, reason="no chip loaded")
+    with store._lock:
+        rows, convs, _ = _cz_plan_ops(store)
+        args = tuple(request.args.get(k) for k in ("pair", "op", "line", "tier", "amp"))
+        key = (store_revs.seq_token(store), id(store.merged), args)
+        with _CZ_PLAN_OPS_LOCK:
+            result = _CZ_SOLVE_MEMO.get(key)
+        if result is None:
+            pair, op, line, tier, amp = args
+            result = czp.solve(store.merged, pair, op, line, tier or "auto", amp, rows, convs)
+            with _CZ_PLAN_OPS_LOCK:
+                if len(_CZ_SOLVE_MEMO) >= 256:
+                    _CZ_SOLVE_MEMO.clear()
+                _CZ_SOLVE_MEMO[key] = result
+        return jsonify(**result, chip=_active_chip_token() or "")
 
 
 @bp.route("/cz-plan")
@@ -22441,6 +22469,7 @@ def cz_plan_page():
     paths = [r["path"] for r in table]
     selected = want if want in paths else (paths[0] if paths and unknown_pair is None else "")
     return render_template(template, **_ctx(page="czplan", rows=table, selected=selected,
+                                           operating_points=[p for r in table for p in r["operating_points"]],
                                            unavailable=unavailable, unknown_pair=unknown_pair))
 
 

@@ -59,7 +59,18 @@ def invoke(record):
 
 def test_pre_extraction_fixture_outputs_are_identical():
     for record in json.loads(GOLDEN.read_text(encoding="utf-8")):
-        assert invoke(record) == record["output"], record["call"]
+        expected = copy.deepcopy(record["output"])
+        if record["call"] == "C.operations":
+            # S2.5 now exposes the final holder for pointer-valued amplitudes.
+            # Keep all captured numerical outputs and every other field pinned.
+            doc = restore(record["args"])[0]
+            for row in expected[0]:
+                def holder(path):
+                    return (C.read(doc, path).get("holder_path") or path) if path else path
+                row["amplitudes"] = [holder(p) for p in row["amplitudes"]]
+                for line in row["lines"]:
+                    line["amplitude_path"] = holder(line["amplitude_path"])
+        assert invoke(record) == expected, record["call"]
 
 
 def capture():

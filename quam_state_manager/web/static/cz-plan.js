@@ -11,6 +11,99 @@
 (function () {
     'use strict';
 
+    // [derived], check S2-EXPOSE: consume server numbers without recomputation.
+    function operatingPoint(root, op, line, fallback) {
+        var blob = root.querySelector('#cz-operating-points');
+        if (!blob) return fallback;
+        var points = blob._points || (blob._points = JSON.parse(blob.textContent));
+        return points.find(function (p) { return p.op === op && p.line === line; }) || fallback;
+    }
+    // [derived], check S2-EXPOSE: keep previews and map positions inspectable.
+    function savePoints(root) {
+        var blob = root.querySelector('#cz-operating-points');
+        if (blob && blob._points) blob.textContent = JSON.stringify(blob._points);
+    }
+    // [derived], check S2-EXPOSE: bind the drawn marker to its source object.
+    function stampPoints(el) {
+        var groups = el.querySelectorAll('.scatterlayer .trace');
+        groups.forEach(function (group, i) {
+            // Empty traces have no SVG group. Plotly's bound calcdata identifies
+            // the input trace even when its DOM index differs from its data index.
+            var calc = group.__data__, full = calc && calc[0] && calc[0].trace;
+            var trace = full ? (full._input || (el.data || [])[full.index]) : (el.data || [])[i];
+            if (!trace || !trace._czOperating) return;
+            var p = trace._czOperating;
+            group.querySelectorAll('.point').forEach(function (marker) {
+                ['pair', 'op', 'line', 'method', 'path'].forEach(function (k) { marker.setAttribute('data-' + k, p[k] || ''); });
+                marker.setAttribute('data-freq-hz', p.frequency_hz);
+                if (p.preview) marker.setAttribute('data-preview', '1');
+            });
+        });
+    }
+    window.CzOperatingPoints = { get: operatingPoint, save: savePoints, stamp: stampPoints };
+
+    // [derived], check S2-STAGE: proposals use the existing Review edit door.
+    function renderSolve(root, row) {
+        var el = root.querySelector('#czp-solve');
+        if (!el) return;
+        if (el._op === row.path) return;
+        el._op = row.path;
+        var multi = row.kind === 'two-flux' || row.kind === 'both movers';
+        var movers = row.lines.filter(function (ln) { return ln.moves && (multi || ln.pulse_field === 'flux_pulse_qubit'); });
+        el.innerHTML = '<div class="czp-controls"><strong>Solve amplitude</strong> <label>Tier <select class="czp-solve-tier">' +
+            ['auto', 'quad', 'model', 'direct'].map(function (t) { return '<option>' + t + '</option>'; }).join('') +
+            '</select></label><label' + (!multi ? ' hidden' : '') + '>Line <select class="czp-solve-line">' +
+            movers.map(function (ln) { return '<option value="' + esc(ln.role) + '">' + esc(ln.role) + '</option>'; }).join('') +
+            '</select></label><label>Direct amplitude (V) <input class="czp-solve-amp" type="number" step="any" disabled></label></div>' +
+            '<output class="czp-solve-target"></output><div class="czp-solve-result" role="status"></div>' +
+            '<p class="czp-solve-notes"></p><button type="button" class="czp-solve-stage" disabled>Stage</button>';
+        var generation = 0, result, button = el.querySelector('button');
+        // [derived], checks S2-ROUTE/S2-EXPOSE: discard late operation answers.
+        function preview() {
+            var mine = ++generation, tier = el.querySelector('.czp-solve-tier').value;
+            el.querySelector('input').disabled = tier !== 'direct';
+            button.disabled = true; result = null;
+            root._czSolvePreview = null;
+            var params = new URLSearchParams({pair: row.pair, op: row.path,
+                line: el.querySelector('.czp-solve-line').value, tier: tier, amp: el.querySelector('input').value});
+            fetch('/cz-plan/solve?' + params).then(function (r) { return r.json(); }).then(function (d) {
+                if (mine !== generation || el._op !== row.path || !document.body.contains(el)) return;
+                result = d;
+                el.querySelector('.czp-solve-target').textContent = d.target_hz != null ? 'Target: ' + fmtGHz(d.target_hz) + ' — ' + d.rule : '';
+                el.querySelector('.czp-solve-result').textContent = d.ok ? fmtV(d.amplitude_v) + ' → ' + fmtGHz(d.frequency_hz) + ' · ' + (d.validity || '') +
+                    (d.rel_diff == null ? '' : ' · quad ' + fmtV(d.quad_v) + ', model ' + fmtV(d.model_v) + ', relative difference ' + d.rel_diff) : d.reason;
+                el.querySelector('.czp-solve-notes').textContent = (d.notes || []).join('; ');
+                button.disabled = !d.ok;
+                var point = operatingPoint(root, row.path, params.get('line'));
+                if (point) { point.solve = d; savePoints(root); }
+                if (d.ok && d.operating_point) {
+                    var p = d.operating_point;
+                    el.querySelector('.czp-solve-result').insertAdjacentHTML('beforeend', '<table><tr><th>Preview amplitude (V)</th><th>Preview frequency (GHz)</th></tr><tr><td>' + esc(p.amplitude_v) + '</td><td data-preview="1" data-pair="' + esc(p.pair) + '" data-op="' + esc(p.op) + '" data-line="' + esc(p.line) + '" data-freq-hz="' + esc(p.frequency_hz) + '" data-method="' + esc(p.method) + '" data-path="' + esc(p.path) + '">' + esc(p.y) + '</td></tr></table>');
+                    root._czSolvePreview = p;
+                }
+                redrawFlux(root);
+            }).catch(function (e) { el.querySelector('.czp-solve-result').textContent = e.message; });
+        }
+        el.onchange = preview;
+        button.onclick = function () {
+            if (!result || !result.ok) return;
+            button.disabled = true;
+            var payload = {updates: [{dot_path: result.path, value: result.amplitude_v}],
+                expect_chip: result.chip, group: 'new'};
+            var seen = window._keepMineSeen && window._keepMineSeen(null);
+            if (seen) { payload.seen_changes = seen.n; payload.seen_sig = seen.sig; }
+            fetch('/field/edit-batch', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
+                .then(function (r) { return r.json(); }).then(function (d) {
+                    if (!d.ok) throw new Error(d.error || 'Stage failed');
+                    if (d.tray_html && window._swapPendingTray) window._swapPendingTray(d.tray_html);
+                    if (window._restoreTrayState) window._restoreTrayState();
+                    if (window._diagChanged) window._diagChanged();
+                    if (window.htmx) window.htmx.ajax('GET', '/cz-plan?op=' + encodeURIComponent(row.path), {target: '#table-pane', swap: 'innerHTML'});
+                }).catch(function (e) { button.disabled = false; el.querySelector('.czp-solve-result').textContent = e.message; });
+        };
+        preview();
+    }
+
     var seq = 0, hseq = 0;
     var NOTES_OPEN_KEY = 'czp-notes-open';
     var RETRY_N = 20, RETRY_MS = 3000;     // re-asks while the chip's change history is being built
@@ -299,7 +392,8 @@
                     line: { color: col, width: 1.4, dash: 'dash' }, _czpSecondary: !!c.model_hz,
                     hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>quad-term estimate (extrapolated outside validity range)</extra>' });
             }
-            traces.push({ type: 'scatter', mode: 'markers', x: [0], y: [ghz(s.f01_hz)], name: q.name + ' idle', showlegend: false,
+            var idle = !lines[k].moves && operatingPoint(root, d.row.path, lines[k].role, lines[k].operating_point);
+            traces.push({ type: 'scatter', mode: 'markers', x: [idle ? idle.x : 0], y: [idle ? idle.y : ghz(s.f01_hz)], _czOperating: idle, name: q.name + ' idle', showlegend: false,
                 marker: { color: col, size: 11, symbol: 'circle-open', line: { width: 2 } },
                 hovertemplate: hoverEsc(q.name) + ' idle f_01: %{y:.4f} GHz<extra></extra>' });
             (q.tls || []).forEach(function (b) {
@@ -312,16 +406,23 @@
             if (op.path === d.row.path) return;
             op.points.forEach(function (p, k) {
                 if (p.frequency_hz == null || !p.amplitude_v) return;
-                traces.push({ type: 'scatter', mode: 'markers', x: [p.amplitude_v], y: [ghz(p.frequency_hz)], showlegend: false,
+                var shared = operatingPoint(root, op.path, k === 0 ? 'control' : 'target');
+                traces.push({ type: 'scatter', mode: 'markers', x: [shared ? shared.x : p.amplitude_v], y: [shared ? shared.y : ghz(p.frequency_hz)], _czOperating: shared, showlegend: false,
                     marker: { color: C.q[k], size: 7, symbol: 'circle-open', line: { color: C.q[k], width: 1 } },
                     hovertemplate: hoverEsc(op.operation) + ' ' + hoverEsc(p.kind || '') + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra></extra>' });
             });
         });
         var annotations = [];
+        var preview = root._czSolvePreview;
+        if (preview && preview.op === d.row.path) {
+            traces.push({type: 'scatter', mode: 'markers', x: [preview.x], y: [preview.y],
+                name: 'Solve preview', _czOperating: preview, marker: {size: 14, symbol: 'diamond-open'}});
+        }
         lines.forEach(function (ln, k) {
             var p = ln.point, q = d.qubits[k];
             if (!ln.moves || p.frequency_hz == null || !q.summary) return;
-            traces.push({ type: 'scatter', mode: 'markers', x: [ln.amplitude_v], y: [ghz(p.frequency_hz)], name: q.name + ' at ' + d.row.operation + ' ' + (p.kind || ''),
+            var shared = operatingPoint(root, d.row.path, ln.role, ln.operating_point);
+            traces.push({ type: 'scatter', mode: 'markers', x: [shared ? shared.x : ln.amplitude_v], y: [shared ? shared.y : ghz(p.frequency_hz)], _czOperating: shared, name: q.name + ' at ' + d.row.operation + ' ' + (p.kind || ''),
                 showlegend: false, marker: { color: C.q[k], size: 12, symbol: 'diamond' },
                 hovertemplate: hoverEsc(q.name) + ' at ' + hoverEsc(d.row.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra>' + hoverEsc(p.kind) + '</extra>' });
             (ln.lobes || []).slice(1).forEach(function (l) {
@@ -393,7 +494,7 @@
         el.setAttribute('data-notes', notes.join('; '));
         return window.requirePlotly().then(function () {
             if (!active(root, token)) return;
-            return window._plotlyRender(el, traces, L, config(), function () { return active(root, token); });
+            return Promise.resolve(window._plotlyRender(el, traces, L, config(), function () { return active(root, token); })).then(function () { stampPoints(el); });
         });
     }
 
@@ -549,6 +650,7 @@
             '</dl></div>');
         h.push('</div>');
         el.innerHTML = h.join('');
+        renderSolve(root, r);
     }
 
     function fillOps(root, d) {

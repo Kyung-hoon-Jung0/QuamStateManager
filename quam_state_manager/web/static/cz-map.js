@@ -639,8 +639,18 @@
         m.segments.forEach(function (s, k) {
             var x = place[k];
             if (!x) return;
+            var api = window.CzOperatingPoints;
+            var point = api && api.get(root, s.path, s.role, s.operating_point);
+            if (point) {
+                point.map_x = (x.x0 + x.x1) / 2;
+                point.map_y = point.y;
+                traces.push({type: 'scatter', mode: 'markers', x: [point.map_x], y: [point.map_y],
+                    marker: {size: 5, color: P[(colour[s.pair] || 0) % P.length]}, customdata: [[s.path, s.pair]],
+                    showlegend: false, hoverinfo: 'skip', _czOperating: point});
+                api.save(root);
+            }
             var c = colour[s.pair] || 0, style = !s.moves ? 'idle' : (/quad|derived|estimate/.test(s.kind || '') ? 'dash' : 'solid');
-            var key = c + ':' + style, f = s.frequency_hz / 1e9;
+            var key = c + ':' + style, f = point ? point.y : s.frequency_hz / 1e9;
             var t = esc(s.pair) + ' · ' + esc(s.operation) + '<br>' + esc(s.qubit) + (s.moves ? '' : ' (stays at idle)') +
                 ': ' + f.toFixed(4) + ' GHz<br>' + esc(s.kind || '') + (s.validity && s.validity !== 'idle' ? ' · ' + esc(s.validity) : '') +
                 '<br>Δ ' + fmtMHz(s.detuning_hz, true) + (s.nearest ? ' · ' + esc(s.nearest.name) + (s.nearest.lobe ? ' (' + esc(s.nearest.lobe) + ')' : '') + ' ' + fmtMHz(s.nearest.distance_hz, true) : '') +
@@ -903,6 +913,7 @@
             return window._plotlyRender(el, traces, L, config(), current);
         }).then(function () {
             if (!current() || !el.data) return;
+            if (window.CzOperatingPoints) window.CzOperatingPoints.stamp(el);
             overlay.epoch = el.__plotlyRenderEpoch || 0;
             el._czpOverlay = overlay;
             if (!el.on || el._czpMapClick === (el._ev || el.on)) return;

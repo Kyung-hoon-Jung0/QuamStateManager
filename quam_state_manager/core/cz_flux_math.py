@@ -9,6 +9,67 @@ import math
 import numpy as np
 
 
+def node30_target(fc, ft, alpha_c, alpha_t, moving=None, partner_hz=None,
+                  rf_control=None, rf_target=None):
+    """Signed CZ mover and shift [derived], check S2-N30 official-code parity.
+
+    Roles use idle f_01; detuning uses the supplied frequency frame. The
+    high qubit always carries the leakage level, including when low moves.
+    """
+    high = "control" if fc >= ft else "target"
+    low = "target" if high == "control" else "control"
+    ah = abs(alpha_c if high == "control" else alpha_t)
+    gap = abs(fc - ft)
+    official = high if gap > ah else low
+    role = moving or official
+    frequencies = (fc if rf_control is None else rf_control, ft if rf_target is None else rf_target)
+    fm, fs = frequencies if role == "control" else frequencies[::-1]
+    fs = fs if partner_hz is None else partner_hz
+    target = fs + ah if role == high else fs - ah
+    return {"mover": official, "target_hz": target, "delta_hz": target - fm,
+            "rule": "high moves down if delta > |alpha_high|; otherwise low moves down"}
+
+
+def quad_inverse(delta, coefficient, evidence_sign=None, polarity=1, qubit="qubit"):
+    """Signed quadratic inverse [derived], check S2-Q and S2-N30.
+
+    Evidence takes precedence; contradictory signed coefficients are refused.
+    """
+    sign = evidence_sign if evidence_sign is not None else (1 if coefficient > 0 else -1)
+    if evidence_sign is not None and coefficient * evidence_sign < 0:
+        raise ValueError("official node 30 would refuse")
+    if delta * sign < 0:
+        need, actual = ("up" if delta > 0 else "down"), ("up" if sign > 0 else "down")
+        raise ValueError(f"the target needs {qubit} to move {need} but its sweet spot only moves it {actual}")
+    return math.copysign(math.sqrt(abs(delta) / abs(coefficient)), polarity or 1)
+
+
+def model_inverse(model, anchor, f01, target, polarity=1):
+    """Exact anchored arc inverse [derived], F9/D4b and check S2-M.
+
+    Enumerate k in {-1,0,1}; measured amplitude window has 1 percent tolerance.
+    Return the smallest magnitude on the stored side, then the opposite side.
+    """
+    fstar = target - f01 + float(arc_frequency(model, anchor))
+    r = (fstar + model["ec_hz"]) / (model["f_max_hz"] + model["ec_hz"])
+    if r < 0 or not model["d"]**2 - 1e-14 <= r**4 <= 1 + 1e-14:
+        offset = f01 - float(arc_frequency(model, anchor))
+        fmin = float(arc_frequency(model, 0.5)) + offset
+        fmax = float(arc_frequency(model, 0)) + offset
+        raise ValueError(f"target {target / 1e9:g} GHz is outside the fitted arc ({fmin / 1e9:g}..{fmax / 1e9:g} GHz)")
+    phi = math.asin(math.sqrt(np.clip((1 - r**4) / (1 - model["d"]**2), 0, 1))) / math.pi
+    candidates = [model["phi0_v"] * (k + side * phi - anchor)
+                  for k in (-1, 0, 1) for side in (-1, 1)]
+    lo, hi = model["amp_min_v"], model["amp_max_v"]
+    tol = 0.01 * max(abs(lo), abs(hi))
+    allowed = [a for a in candidates if lo - tol <= a <= hi + tol]
+    if not allowed:
+        best = min(candidates, key=abs)
+        raise ValueError(f"target needs {best:g} V, outside the measured flux range [{lo:g}, {hi:g}] V")
+    same = [a for a in allowed if a * (polarity or 1) >= 0]
+    return min(same or allowed, key=abs), not bool(same)
+
+
 def quad_shift(amplitude, magnitude, sign):
     """Forward shift in Hz: sign * |q| * amplitude squared (V squared).
 

@@ -3,6 +3,7 @@
    The physics, the estimate tiers and every refusal live in core/cz_gate_plan.py;
    cz-map.js draws the chip map, cz-plan.js the operation below it. #}
 <div id="czp-root" class="czp-root" data-selected="{{ selected }}">
+<script type="application/json" id="cz-operating-points">{{ operating_points | tojson }}</script>
 {% if unknown_pair is not none %}
 <p class="czp-unknown-pair" role="status">Unknown pair: <code>{{ unknown_pair }}</code>. No operation selected.</p>
 {% endif %}
@@ -96,8 +97,8 @@
             <td class="czp-stick"><strong>{{ r.pair }}</strong></td>
             <td class="czp-stick czp-stick-op">{{ r.operation }}{% for warning in r.warnings %}<br><small class="czp-warn-text">{{ warning }}</small>{% endfor %}{% if r.alias_of %} <small class="muted" title="{{ r.alias_of }}">alias</small>{% endif %}</td>
             <td>{% for n in r.names %}{% if r.moves[loop.index0] %}<span class="czp-mover">{{ n }}</span>{% endif %}{% endfor %} <small class="muted czp-nowrap">{{ r.kind }}</small></td>
-            <td class="czp-num">{% for f in r.freqs %}{{ '%.4f' | format(f / 1e9) if f is not none else '—' }}{% if not loop.last %} / {% endif %}{% endfor %}</td>
-            <td class="czp-num czp-amp">{% for amp in r.amps %}<span title="{{ r.amp_titles[loop.index0] }}">{{ amp }}</span>{% if not loop.last %} / {% endif %}{% endfor %}{% if r.coupler %}<br><small class="muted czp-amp-coupler" title="{{ r.coupler.amp_title }}">coupler {{ r.coupler.amp_text }}</small>{% endif %}</td>
+            <td class="czp-num" aria-label="{% for p in r.operating_points %}{{ '%.4f' | format(p.y) if p.y is not none else '—' }}{% if not loop.last %} / {% endif %}{% endfor %}">{% for p in r.operating_points %}<span data-pair="{{ p.pair }}" data-op="{{ p.op }}" data-line="{{ p.line }}" data-freq-hz="{{ p.frequency_hz }}" data-method="{{ p.method }}" data-path="{{ p.path }}">{{ '%.4f' | format(p.y) if p.y is not none else '—' }}</span>{% if not loop.last %} / {% endif %}{% endfor %}</td>
+            <td class="czp-num czp-amp">{% for p in r.operating_points %}<span title="{{ p.amp_title }}" data-value="amplitude" data-pair="{{ p.pair }}" data-op="{{ p.op }}" data-line="{{ p.line }}" data-freq-hz="{{ p.frequency_hz }}" data-method="{{ p.method }}" data-path="{{ p.path }}" data-amplitude-v="{{ p.amplitude_v }}">{{ p.amp_text }}</span>{% if not loop.last %} / {% endif %}{% endfor %}{% if r.coupler %}<br><small class="muted czp-amp-coupler" title="{{ r.coupler.amp_title }}">coupler {{ r.coupler.amp_text }}</small>{% endif %}</td>
             <td class="czp-num">{{ '%.1f' | format(r.detuning_hz / 1e6) if r.detuning_hz is not none else '—' }}</td>
             <td>{% if r.nearest %}<span class="czp-nowrap">{{ r.nearest.name }}</span>{% if r.nearest.lobe %} <small class="muted">{{ r.nearest.lobe }}</small>{% endif %} <small class="muted czp-nowrap">{{ '%+.1f' | format(r.nearest.distance_hz / 1e6) }} MHz</small>{% else %}<span class="muted" title="{{ r.reasons | join('; ') }}">{{ r.reasons[0] if r.reasons else '—' }}</span>{% endif %}</td>
             <td>{% for k in r.kinds %}<span class="czp-tier{% if 'quad' in k %} czp-tier-quad{% endif %}">{{ k }}</span>{% endfor %}</td>
@@ -132,6 +133,7 @@
         </figure>
     </div>
     <div id="czp-card" class="czp-card"></div>
+    <div id="czp-solve"></div>
     <details id="czp-notes-box" class="czp-notes-box">
         <summary id="czp-notes-summary">Notes</summary>
         <ul id="czp-notes" class="zline-notes czp-notes"></ul>

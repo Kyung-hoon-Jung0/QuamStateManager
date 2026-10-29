@@ -110,6 +110,11 @@ def test_coupler_table_and_sort(tmp_path):
 def test_no_coupler_table_identity(tmp_path):
     html = _client(tmp_path).get("/cz-plan").get_data(as_text=True)
     table = re.search(r'<table id="czp-table".*?</table>', html, re.S)[0]
+    # S2 adds inspectable frequency spans and an accessibility label; the
+    # original table's values and all its other markup remain byte-identical.
+    table = re.sub(r' aria-label="[^"]*"', '', table)
+    table = re.sub(r' data-value="amplitude" data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*" data-amplitude-v="[^"]*"', '', table)
+    table = re.sub(r'<span data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*">(.*?)</span>', r'\1', table)
     assert hashlib.sha256(table.encode()).hexdigest() == "44a97da42eea30c2b0a6f51ffc1d1cd7ae5b82bfa58139bf441f4bbcc272842f"
 
 
