@@ -14760,6 +14760,9 @@ var _INSTR_FIT_KEY = 'quam_instrument_fit';
 // 8+8-FEM rack in the wizard's ~975px pane lands at 0.52 (GX-8): it must
 // still open whole, so the floor sits below that.
 var _INSTR_FIT_FLOOR = 0.45;
+// P2: the wizard's racks wrap FEMs onto another row so that Fit keeps the
+// drawing at natural size (scale 1): a single-port label stays >= 9 px.
+var _IW_WRAP_SCALE = 1.0;
 // The viewer's choice for THIS page. localStorage carries it to the next one
 // but is never the only copy — see _applyInstrumentFit.
 var _instrFitChoice = null;
@@ -15123,9 +15126,25 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         var nDig = hasDigital ? Math.max(8, maxDig) : 0;
         var rows = Math.max(maxOutPort, nDig);
 
-        var totalFemW = femIds.length * femW + Math.max(0, femIds.length - 1) * femGap;
+        // P2: wrap one controller's FEMs onto more rows when the host is too
+        // narrow to show them at a legible scale. Fit scales the whole drawing,
+        // so the labels stay readable only while the scale stays near 1: pick
+        // the most FEMs per row whose width still fits at >= _IW_WRAP_SCALE.
+        // Opt-in (`wrapFems`, the wizard's racks); an unmeasured host (0 px:
+        // hidden) keeps one row as before.
+        var perRow = femIds.length;
+        var hostW = container.clientWidth || 0;
+        if (options && options.wrapFems && hostW > 0) {
+            while (perRow > 1 &&
+                   marginLeft + perRow * femW + (perRow - 1) * femGap + 20 > hostW / _IW_WRAP_SCALE) {
+                perRow--;
+            }
+        }
+        var nBlocks = Math.ceil(femIds.length / perRow);
+        var blockStride = rows * rowH + marginBottom + 36;
+        var totalFemW = perRow * femW + Math.max(0, perRow - 1) * femGap;
         var svgW = marginLeft + totalFemW + 20;
-        var svgH = marginTop + rows * rowH + marginBottom;
+        var svgH = marginTop + (nBlocks - 1) * blockStride + rows * rowH + marginBottom;
 
         var svg = _svgEl('svg');
         svg.setAttribute('width', svgW);
@@ -15155,20 +15174,24 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
 
         // Background rect for the grid area
         var iw = UI_CONFIG.instrumentWiring;
-        var bg = _svgEl('rect');
-        _svgAttrs(bg, {
-            x: marginLeft, y: marginTop - 16,
-            width: totalFemW, height: rows * rowH + 16,
-            fill: iw.gridBg, stroke: iw.gridBorder, rx: 4
-        });
-        svg.appendChild(bg);
+        for (var bk = 0; bk < nBlocks; bk++) {
+            var bkY = bk * blockStride;
+            var nInBlock = Math.min(perRow, femIds.length - bk * perRow);
+            var bg = _svgEl('rect');
+            _svgAttrs(bg, {
+                x: marginLeft, y: marginTop + bkY - 16,
+                width: nInBlock * femW + Math.max(0, nInBlock - 1) * femGap, height: rows * rowH + 16,
+                fill: iw.gridBg, stroke: iw.gridBorder, rx: 4
+            });
+            svg.appendChild(bg);
 
-        // Row number labels on the left margin
-        for (var rn = 1; rn <= rows; rn++) {
-            svg.appendChild(_svgText(
-                marginLeft - 6, marginTop + (rn - 1) * rowH + rowH / 2 + 4,
-                rn, 10, '400', iw.rowLabelColor, 'end'
-            ));
+            // Row number labels on the left margin
+            for (var rn = 1; rn <= rows; rn++) {
+                svg.appendChild(_svgText(
+                    marginLeft - 6, marginTop + bkY + (rn - 1) * rowH + rowH / 2 + 4,
+                    rn, 10, '400', iw.rowLabelColor, 'end'
+                ));
+            }
         }
 
         femIds.forEach(function(femId, colIdx) {
@@ -15176,17 +15199,19 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             // Support both new (output_ports/input_ports) and old (ports) data shape
             var outPorts = femData.output_ports || femData.ports || {};
             var inPorts  = femData.input_ports  || {};
-            var femX  = marginLeft + colIdx * (femW + femGap);
+            var col = colIdx % perRow;
+            var top = marginTop + Math.floor(colIdx / perRow) * blockStride;   // this block's top
+            var femX  = marginLeft + col * (femW + femGap);
             var outCx = femX + outSubW / 2;
             var inCx  = femX + outSubW + inSubW / 2;
             var digCx = femX + outSubW + inSubW + digSubW / 2;
 
             // Solid separator between FEMs
-            if (colIdx > 0) {
+            if (col > 0) {
                 var sep = _svgEl('line');
                 _svgAttrs(sep, {
-                    x1: femX - femGap / 2, y1: marginTop - 16,
-                    x2: femX - femGap / 2, y2: marginTop - 16 + rows * rowH + 16,
+                    x1: femX - femGap / 2, y1: top - 16,
+                    x2: femX - femGap / 2, y2: top - 16 + rows * rowH + 16,
                     stroke: iw.separatorColor, 'stroke-width': 2
                 });
                 svg.appendChild(sep);
@@ -15195,37 +15220,37 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             // Dashed separator between OUT and IN sub-columns within a FEM
             var subSep = _svgEl('line');
             _svgAttrs(subSep, {
-                x1: femX + outSubW, y1: marginTop - 16,
-                x2: femX + outSubW, y2: marginTop - 16 + rows * rowH + 16,
+                x1: femX + outSubW, y1: top - 16,
+                x2: femX + outSubW, y2: top - 16 + rows * rowH + 16,
                 stroke: iw.subSeparatorColor, 'stroke-width': 1, 'stroke-dasharray': '4,4'
             });
             svg.appendChild(subSep);
 
             // Sub-column header labels
-            svg.appendChild(_svgText(outCx, marginTop - 4, 'OUT', 8, '700', iw.subLabelColor, 'middle'));
-            svg.appendChild(_svgText(inCx,  marginTop - 4, 'IN',  8, '700', iw.subLabelColor, 'middle'));
+            svg.appendChild(_svgText(outCx, top - 4, 'OUT', 10, '700', iw.subLabelColor, 'middle'));
+            svg.appendChild(_svgText(inCx,  top - 4, 'IN',  10, '700', iw.subLabelColor, 'middle'));
 
             if (hasDigital) {
                 // Dashed separator between IN and DIG + the DIG header
                 var digSep = _svgEl('line');
                 _svgAttrs(digSep, {
-                    x1: femX + outSubW + inSubW, y1: marginTop - 16,
-                    x2: femX + outSubW + inSubW, y2: marginTop - 16 + rows * rowH + 16,
+                    x1: femX + outSubW + inSubW, y1: top - 16,
+                    x2: femX + outSubW + inSubW, y2: top - 16 + rows * rowH + 16,
                     stroke: iw.subSeparatorColor, 'stroke-width': 1, 'stroke-dasharray': '4,4'
                 });
                 svg.appendChild(digSep);
-                svg.appendChild(_svgText(digCx, marginTop - 4, 'DIG', 8, '700', iw.subLabelColor, 'middle'));
+                svg.appendChild(_svgText(digCx, top - 4, 'DIG', 10, '700', iw.subLabelColor, 'middle'));
             }
 
             // FEM label at bottom
             svg.appendChild(_svgText(
-                femX + femW / 2, svgH - 8,
+                femX + femW / 2, top + rows * rowH + marginBottom - 8,
                 'FEM\u00a0' + femId + '  (' + femData.type + ')', 10, '400', iw.femLabelColor, 'middle'
             ));
 
             // Output port rows
             for (var portNum = 1; portNum <= rows; portNum++) {
-                var py = marginTop + (portNum - 1) * rowH + rowH / 2;
+                var py = top + (portNum - 1) * rowH + rowH / 2;
                 _renderPortCell(svg, outCx, py, circleR, roleColors, outPorts[String(portNum)] || [], rawWiring,
                                 {con: ctrlName, slot: femId, port: portNum, io: 'output'}, editable, onPortHover);
             }
@@ -15234,7 +15259,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             if (hasDigital) {
                 var digPorts = femData.digital_ports || {};
                 for (var dn = 1; dn <= rows; dn++) {
-                    var dpy = marginTop + (dn - 1) * rowH + rowH / 2;
+                    var dpy = top + (dn - 1) * rowH + rowH / 2;
                     if (dn <= nDig) {
                         _renderPortCell(svg, digCx, dpy, 13, roleColors, digPorts[String(dn)] || [], rawWiring,
                                         {con: ctrlName, slot: femId, port: dn, io: 'digital'}, editable, onPortHover);
@@ -15259,7 +15284,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             }
             var inR = Math.round(circleR * 0.82);
             for (var pn = 1; pn <= rows; pn++) {
-                var ipy = marginTop + (pn - 1) * rowH + rowH / 2;
+                var ipy = top + (pn - 1) * rowH + rowH / 2;
                 var portNumAtRow = inputRowMap[pn];
                 if (portNumAtRow !== undefined) {
                     // Physical input port: show assignment or placeholder circle
@@ -15268,7 +15293,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                     // v1.5.1 (U P2-20): the input's OWN number -- drawn where the
                     // front panel has it (MW-FEM input 2 at the last row), it read
                     // as "IN 8" against the output row numbers on the left
-                    var inLbl = _svgText(inCx, ipy + inR + 9, 'in ' + portNumAtRow, 8, '700', iw.subLabelColor, 'middle');
+                    var inLbl = _svgText(inCx, ipy + inR + 9, 'in ' + portNumAtRow, 9, '700', iw.subLabelColor, 'middle');
                     inLbl.setAttribute('class', 'iw-in-port-label');
                     svg.appendChild(inLbl);
                 } else {
@@ -15451,15 +15476,18 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
         // names get big type and longer ones shrink instead of only truncating.
         var cap = r >= 18 ? 14 : 11;
         var chord = 2 * Math.sqrt(r * r - 36);
-        fontSize = Math.max(10, Math.min(cap,
+        fontSize = Math.max(9, Math.min(cap,
             Math.floor(chord / (0.62 * Math.max(1, display.length)))));
     } else {
         // Multi-member feedline sub-circles: chord-fit up to 10px so a short
         // name stays readable in Fit mode, never below the old fixed 7px
         // (7px x 0.62em x maxChars still fits every sub-circle radius here).
-        // GX-8: never below 10px at natural size -- 7-8px feedline badges
-        // were unreadable on a large rack.
-        fontSize = 10;
+        // Multi-member feedline sub-circles: chord-fit up to 10px so a short
+        // name stays readable in Fit mode, never below the old fixed 7px
+        // (7px x 0.62em x maxChars still fits every sub-circle radius here).
+        // A larger floor overflows the sub-circle (wiring_portlabel_selfcheck);
+        // the wizard keeps them legible by wrapping FEMs instead (P2).
+        fontSize = Math.max(7, Math.min(10, Math.floor((2 * r - 2) / (0.62 * Math.max(1, display.length)))));
     }
     // docs/141 4ah (user): ONE label colour for every port. The bias-tee fill is
     // dark enough for white now, so the black label that the bright amber

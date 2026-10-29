@@ -156,7 +156,28 @@ setHostWidth(Math.round(nat * 0.5));
 render();
 ok(isFit(), 'A2b a rack at half the pane width still defaults to Fit');
 ok(Array.prototype.every.call(document.querySelectorAll('.iw-port-circle text'),
-   t => +t.getAttribute('font-size') >= 10), 'A2b every port label is at least 10px');
+   t => +t.getAttribute('font-size') >= 9), 'A2b every single-port label is at least 9px');
+
+/* -- A2c (P2): the wizard's racks wrap FEMs so Fit keeps labels >= 9 px ---- */
+delete store.quam_instrument_fit;
+setHostWidth(975);                               // the wizard pane at 1366
+window.renderInstrumentWiring('instrument-diagram', rack(), {}, { wrapFems: true });
+{
+  const w = parseFloat(svg().dataset.natW);
+  const scale = Math.min(1, 975 / w);
+  ok(femLabels().length === 8, 'A2c all 8 FEMs still drawn when wrapped');
+  ok(isFit(), 'A2c the wrapped rack opens in Fit');
+  ok(scale >= 1, 'A2c wrapped rack fits at natural size (natW ' + w + ', scale ' + scale.toFixed(2) + ')');
+  const minLabel = Math.min.apply(null, Array.prototype.map.call(
+    host.querySelectorAll('.iw-port-circle text'), (t) => +t.getAttribute('font-size')));
+  ok(minLabel * scale >= 9, 'A2c port labels render >= 9 px at Fit (' + (minLabel * scale).toFixed(1) + ')');
+  const ys = Array.prototype.map.call(host.querySelectorAll('text'), (t) => t.textContent)
+    .filter((t) => /\(..-fem\)/.test(t));
+  ok(ys.length === 8, 'A2c FEM labels kept');
+}
+// without the option the rack stays one row (other surfaces unchanged)
+render();
+ok(parseFloat(svg().dataset.natW) === nat, 'A2c an un-opted surface keeps one FEM row');
 
 /* -- A3: below the legibility floor -> 1:1 and scrollable -------------- */
 delete store.quam_instrument_fit;

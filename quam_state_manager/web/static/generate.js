@@ -4321,7 +4321,7 @@
     renderInstrumentWiring("gen-wiring-diagram",
                            buildInstrumentData(state.allocation), {},
                            { editable: true, onPortHover: setMonitorHover,
-                             sizeControl: "generate" });
+                             sizeControl: "generate", wrapFems: true });
     attachWiringDrag();
     // Ring the ports involved in any validation error, then list the issues.
     var issues = validateWiring();
@@ -8948,7 +8948,8 @@
     details.hidden = false;
     renderInstrumentWiring("gen-pop-wiring-diagram",
                            buildInstrumentData(state.allocation), {},
-                           { onPortHover: setPopHover, sizeControl: "generate" });
+                           { onPortHover: setPopHover, sizeControl: "generate",
+                             wrapFems: true });
     // Ring the ports involved in any wiring error — same as step 5.
     validateWiring().forEach(function (it) {
       if (it.level !== "error") return;
