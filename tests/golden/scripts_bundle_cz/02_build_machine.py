@@ -32,7 +32,7 @@ POPULATE = {   'pairs': {'q1-q2': {'cz_amplitude': 0.1, 'cz_variant': 'unipolar'
 # control = higher-f qubit; the flux pulse plays on the moving qubit.
 QUBIT_PAIRS = [['q1', 'q2']]
 
-# 2Q-gate family: 'cz_tunable' | 'cz_fixed' | 'cr' | '' (no wizard gate).
+# 2Q-gate family: 'cz_tunable' | 'cz_fixed' | 'cz_coupler' | 'cr' | '' (no wizard gate).
 PAIR_GATE = 'cz_tunable'
 
 # CR drive port mode: '' | 'dedicated' | 'shared_xy' (the customer's
@@ -484,6 +484,8 @@ def _apply_pairs(machine, pairs_vals):
                 moving_q.z.operations[pulse_id] = SquarePulse(
                     length=duration, amplitude=amplitude
                 )
+                # core/gate_pulse_ids.py is the dict-side twin.
+                moving_q.z.operations[pulse_id].id = pulse_id
                 if gate_type == "cz_parametric":
                     # Lazy import so installations without the upgraded
                     # quam_builder still load the rest of the generator.
@@ -837,6 +839,8 @@ def _seed_cz_variant(pair, *, variant="unipolar", amplitude=0.1, duration=100,
 
     zop = f"cz_{variant}_flux_pulse_{base}"
     z.operations[zop] = qubit_pulse
+    # core/gate_pulse_ids.py applies the same holder-key rule to dicts.
+    qubit_pulse.id = zop
     zop_ref = z.get_reference() + f"/operations/{zop}"
     if "flux_pulse_qubit" in sig:
         kwargs["flux_pulse_qubit"] = zop_ref
@@ -850,6 +854,7 @@ def _seed_cz_variant(pair, *, variant="unipolar", amplitude=0.1, duration=100,
             # knobs; hard-linking the coupler op to the qubit op would collapse the
             # two and make the coupler un-tunable.
             coupler.operations[cop] = coupler_pulse
+            coupler_pulse.id = cop
             kwargs["coupler_flux_pulse"] = coupler.get_reference() + f"/operations/{cop}"
             # Coupler bias tuning from populate (decouple / interaction offset, …).
             for attr in ("decouple_offset", "interaction_offset",
@@ -1336,6 +1341,27 @@ def _seed_zz_gate(pair, *, vals=None, shared=False):
             macros["stark_cz"] = _make_stark_cz_gate(stark_cls, vals)
     return "; ".join(warns) if warns else None
 
+def _seed_coupler_cz(pair, vals):
+    """Seed the coupler operation and pointer macro (GATE-ID)."""
+    from qsm_quam_ext import CouplerCZGate
+    pulse_cls = _pulse_class("FlatTopGaussianPulse")
+    if pulse_cls is None:
+        raise RuntimeError("cz_coupler requires FlatTopGaussianPulse in this environment")
+    control, target = pair.qubit_control.name, pair.qubit_target.name
+    key = f"cz_coupler_pulse_{control}_{target}"
+    pair.coupler.decouple_offset = vals.get("coupler_decouple_offset", 0.0)
+    pair.coupler.interaction_offset = vals.get("coupler_interaction_offset", 0.0)
+    length = int(vals.get("cz_interaction_duration", 100))
+    pair.coupler.operations[key] = pulse_cls(
+        amplitude=vals.get("coupler_amplitude", vals.get("cz_amplitude", 0.1)),
+        length=length, flat_length=max(0, length - 20), id=key)
+    # gate_pulse_ids is the dict-side twin for coupler_flux_pulse.
+    pair.macros["cz_coupler"] = CouplerCZGate(
+        coupler_flux_pulse=pair.coupler.get_reference() + "/operations/" + key,
+        phase_shift_control=vals.get("phase_shift_control", 0.0),
+        phase_shift_target=vals.get("phase_shift_target", 0.0))
+    pair.macros["cz"] = "#./cz_coupler"
+
 def _cz_order_warning(quam_id, pair, vals):
     """Wizard-contract safety net: CZ pairs arrive oriented control = the
     higher-f_01 qubit (the wizard's czAutoOrient flips the stored spec pair as
@@ -1424,7 +1450,10 @@ def _finalize_pair_gates(machine, spec, pair_gate):
     shared = (spec.get("cr_port_mode") == "shared_xy")
     for quam_id, pair in list(qpairs.items()):
         vals = norm_pairs.get(quam_id) or {}
-        if pair_gate == "cr":
+        if pair_gate == "cz_coupler":
+            _seed_coupler_cz(pair, vals)
+            w = None
+        elif pair_gate == "cr":
             w = _seed_cr_gate(pair, vals=vals, shared=shared)
             zw = _seed_zz_gate(pair, vals=vals, shared=shared)
             if zw:
@@ -1585,7 +1614,7 @@ _spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS,
 apply_populate(machine, POPULATE, handle_pairs=(PAIR_GATE == ""))
 for _w in _apply_dual_upconverters(machine, _spec):
     print(f"WARNING: {_w}", file=sys.stderr)
-if PAIR_GATE in ("cz_fixed", "cz_tunable", "cr"):
+if PAIR_GATE in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):
     for _w in _finalize_pair_gates(machine, _spec, PAIR_GATE):
         print(f"WARNING: {_w}", file=sys.stderr)
 if (POPULATE.get("options") or {}).get("pin_cores"):

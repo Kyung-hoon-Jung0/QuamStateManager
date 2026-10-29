@@ -87,6 +87,7 @@ _RUNTIME_FUNCS = (
     "_cr_flavor", "_import_cr_gate", "_make_cr_gate", "_seed_cr_gate",
     "_import_stark_cz_gate", "_make_stark_cz_gate", "_make_xy_detuned",
     "_seed_zz_gate",
+    "_seed_coupler_cz",
     "_cz_order_warning", "_finalize_pair_gates",
     "_split_port_pointer", "_walk_state", "_link_input_downconverters_to_outputs",
 )
@@ -185,6 +186,16 @@ def _pair_pin(allocation, element, line_type) -> str | None:
     return None
 
 
+def _is_flux_tunable(spec: dict) -> bool:
+    """The flux-root rule run_build uses: a qubit z line, or a coupler line on a
+    chip whose CZ is NOT the coupler-only gate (fixed qubits + tunable coupler
+    keep the fixed-frequency root)."""
+    coupler_only = (spec.get("pair_gate") or "").lower() == "cz_coupler"
+    return any(ln.get("line") == "flux"
+               or (ln.get("line") == "coupler" and not coupler_only)
+               for ln in (spec.get("lines", []) or []))
+
+
 def _quam_cls_import(flux_tunable: bool, zz_lines: bool,
                      quam_class: str | None = None) -> list[str]:
     """The QuamCls import block: flux root, ZZ-drive root (guarded — older
@@ -243,7 +254,7 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
     net = spec.get("network", {}) or {}
     instruments = spec.get("instruments", {}) or {}
     lines = spec.get("lines", []) or []
-    flux_tunable = any(ln.get("line") in ("flux", "coupler") for ln in lines)
+    flux_tunable = _is_flux_tunable(spec)
     zz_lines = any(ln.get("line") == "zz_drive" for ln in lines)
     shared = spec.get("cr_port_mode") == "shared_xy"
 
@@ -428,6 +439,10 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
     w('    _kwargs["path"] = os.environ["QUAM_STATE_PATH"]')
     w("build_quam_wiring(connectivity, HOST, CLUSTER, machine, **_kwargs)")
     w("machine = QuamCls.load()")
+    if (spec.get("pair_gate") or "").lower() == "cz_coupler":
+        w("# fixed qubits + tunable coupler: the pair class carries the coupler")
+        w("from qsm_quam_ext import FixedFrequencyTunableCouplerPair")
+        w("machine.qubit_pair_type = FixedFrequencyTunableCouplerPair")
     w("build_quam(machine)")
     w('print(f"wiring built: {len(machine.qubits)} qubits, "')
     w('      f"{len(machine.qubit_pairs)} pairs -> {os.environ[\'QUAM_STATE_PATH\']}")')
@@ -462,7 +477,7 @@ def _qdac_pins(spec: dict, allocation: dict) -> dict:
 
 def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = None) -> str:
     lines = spec.get("lines", []) or []
-    flux_tunable = any(ln.get("line") in ("flux", "coupler") for ln in lines)
+    flux_tunable = _is_flux_tunable(spec)
     zz_lines = any(ln.get("line") == "zz_drive" for ln in lines)
     pair_gate = (spec.get("pair_gate") or "").lower()
     cr_port_mode = spec.get("cr_port_mode") or ""
@@ -508,7 +523,8 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     w("# control = higher-f qubit; the flux pulse plays on the moving qubit.")
     w("QUBIT_PAIRS = %s" % pformat(qubit_pairs, indent=4, width=88))
     w("")
-    w("# 2Q-gate family: 'cz_tunable' | 'cz_fixed' | 'cr' | '' (no wizard gate).")
+    w("# 2Q-gate family: 'cz_tunable' | 'cz_fixed' | 'cz_coupler' | 'cr' | ''"
+      " (no wizard gate).")
     w("PAIR_GATE = %r" % pair_gate)
     w("")
     w("# CR drive port mode: '' | 'dedicated' | 'shared_xy' (the customer's")
@@ -561,7 +577,7 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     w('apply_populate(machine, POPULATE, handle_pairs=(PAIR_GATE == ""))')
     w("for _w in _apply_dual_upconverters(machine, _spec):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
-    w('if PAIR_GATE in ("cz_fixed", "cz_tunable", "cr"):')
+    w('if PAIR_GATE in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):')
     w("    for _w in _finalize_pair_gates(machine, _spec, PAIR_GATE):")
     w('        print(f"WARNING: {_w}", file=sys.stderr)')
     w('if (POPULATE.get("options") or {}).get("pin_cores"):')
