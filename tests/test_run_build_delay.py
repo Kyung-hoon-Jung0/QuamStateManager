@@ -1,7 +1,7 @@
 """Unit tests for the LF-FEM-delay-from-MW-FEM-band rule in run_build.py.
 
 The full ``run_build.py`` requires the QM stack (quam, quam_builder,
-qualang_tools); these are not installed in ``qm_mng``. To keep the tests
+qualang_tools); these are not installed in ``lab_env_6``. To keep the tests
 in-process we import only the band/delay helpers via direct file load,
 which sidesteps the top-of-module QUAM imports.
 

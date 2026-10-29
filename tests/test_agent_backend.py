@@ -183,10 +183,10 @@ class TestCommandLines:
         assert txt == ["codex answer: line one\nline two"]
 
     def test_mcp_config_shapes(self, tmp_path):
-        cfg = ab.mcp_config("py", "R", "http://x", readonly=True, chip="PJ")
+        cfg = ab.mcp_config("py", "R", "http://x", readonly=True, chip="chip_1")
         sm = cfg["mcpServers"]["sm"]
         assert sm["command"] == "py" and sm["args"] == ["-m", "quam_state_manager.mcp"]
-        assert sm["env"]["SM_MCP_MODE"] == "readonly" and sm["env"]["SM_CHIP"] == "PJ" and sm["env"]["PYTHONPATH"] == "R"
+        assert sm["env"]["SM_MCP_MODE"] == "readonly" and sm["env"]["SM_CHIP"] == "chip_1" and sm["env"]["PYTHONPATH"] == "R"
         assert "SM_MCP_MODE" not in ab.mcp_config("py", None, "u")["mcpServers"]["sm"]["env"]
         p = ab.write_mcp_config(tmp_path / "a" / "m.json", cfg)
         assert json.loads(p.read_text())["mcpServers"]["sm"]["env"]["SM_URL"] == "http://x"
@@ -240,7 +240,7 @@ class TestNormalizers:
 class TestProcessOverTheFakeCli:
     def test_claude_multi_turn_keeps_one_process_and_captures_the_session(self, tmp_path):
         got = []
-        p = ab.AgentProcess(_FakeClaude("claude", tmp_path / "m.json"), on_event=got.append, chip="PJ")
+        p = ab.AgentProcess(_FakeClaude("claude", tmp_path / "m.json"), on_event=got.append, chip="chip_1")
         assert _wait(p, lambda: any(e["hook_event_name"] == "Init" for e in got))
         assert p.session_id == "sess-fresh"
         assert p.send("first question")
@@ -249,7 +249,7 @@ class TestProcessOverTheFakeCli:
         assert _wait(p, lambda: sum(1 for e in got if e["hook_event_name"] == "Stop") == 2)
         kinds = [e["hook_event_name"] for e in got]
         assert kinds.count("PreToolUse") == 2 and kinds.count("PostToolUse") == 2 and kinds.count("Text") == 2
-        assert all(e["backend"] == "claude" and e["chip"] == "PJ" and e["origin"] == "chat" for e in got)
+        assert all(e["backend"] == "claude" and e["chip"] == "chip_1" and e["origin"] == "chat" for e in got)
         texts = [e["text"] for e in got if e["hook_event_name"] == "Text"]
         assert texts == ["answer 1: first question", "answer 2: second"]
         assert p.alive(), "one process for the whole conversation"

@@ -258,16 +258,16 @@ class TestPure:
         assert "max_writes_per_plan" in agent_runs.limits_hold(lim, None, w * 2, 2)
 
     def test_approvals_file(self, tmp_path):
-        ap = approvals.add(tmp_path, "PJ", kind="writes", node="n", targets=["q1"], writes=[{"path": "p", "old": 1, "new": 2}],
+        ap = approvals.add(tmp_path, "chip_1", kind="writes", node="n", targets=["q1"], writes=[{"path": "p", "old": 1, "new": 2}],
                            reason="r", why_held="mode ask-writes", actor="by_claude", run_id=5)
-        assert approvals.pending(tmp_path, "PJ")[0]["id"] == ap["id"]
-        assert approvals.decide(tmp_path, "PJ", ap["id"], status="approved", who="human:k",
+        assert approvals.pending(tmp_path, "chip_1")[0]["id"] == ap["id"]
+        assert approvals.decide(tmp_path, "chip_1", ap["id"], status="approved", who="human:k",
                                 writes=[{"path": "p", "old": 1, "new": 3}])["writes"][0]["new"] == 3
-        assert approvals.get(tmp_path, "PJ", ap["id"])["writes_original"][0]["new"] == 2
-        assert approvals.pending(tmp_path, "PJ") == []
-        assert approvals.decide(tmp_path, "PJ", ap["id"], status="rejected", who="x") is None, "decided once"
+        assert approvals.get(tmp_path, "chip_1", ap["id"])["writes_original"][0]["new"] == 2
+        assert approvals.pending(tmp_path, "chip_1") == []
+        assert approvals.decide(tmp_path, "chip_1", ap["id"], status="rejected", who="x") is None, "decided once"
         with pytest.raises(ValueError):
-            approvals.add(tmp_path, "PJ", kind="weird", node=None, targets=None, writes=None, reason=None,
+            approvals.add(tmp_path, "chip_1", kind="weird", node=None, targets=None, writes=None, reason=None,
                           why_held="", actor="x")
 
     def test_chassis_state_path_per_item(self):

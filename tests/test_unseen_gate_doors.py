@@ -1,7 +1,7 @@
 """docs/179 — the unseen-edit gate was off on the button people actually press.
 
 Found by the write-path stress round, driving two real browser tabs against a
-writable copy of the PJ 20Q chip. The lane's own summary: *"two of the three UI
+writable copy of the chip_1 20Q chip. The lane's own summary: *"two of the three UI
 buttons that POST /state/apply-to-live do not declare seen_changes, so the
 docs/120 unseen-edit gate is off on the tray's own '↑ Apply to live chip' — a
 second window's staged edit went onto the live chip under a press whose screen

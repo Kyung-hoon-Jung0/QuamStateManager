@@ -43,7 +43,7 @@
     var _resize = null, _resizeJustEnded = false;
     var _pairSearchTimer = null;   // debounce for the shared #bulk-search box
     /* docs/141 4ad: cold-column virtualization, the same mechanism the qubit
-       grid has had since §4n, through the shared core. On the PJ 20Q chip this
+       grid has had since §4n, through the shared core. On the chip_1 20Q chip this
        table was 1.49 MB of a 2.81 MB document -- 53%, the largest single block
        left once the qubit grid was slimmed. `_pvirt` mirrors the core's state
        for the call sites that read it directly; the core announces every

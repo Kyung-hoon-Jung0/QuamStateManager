@@ -15,7 +15,7 @@ function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { pas
 const now = Date.now() / 1000;
 const dom = new JSDOM('<!doctype html><html><body>'
   + '<form id="jr-filters"><input type="hidden" name="day" id="jr-day" value="2026-09-06"><input type="date" id="jr-day-pick" value="2026-09-06"></form>'
-  + '<div id="jr-body"><div class="jr-counts" data-chip="PJ" data-day="2026-09-06"><span id="jr-since" hidden></span></div>'
+  + '<div id="jr-body"><div class="jr-counts" data-chip="chip_1" data-day="2026-09-06"><span id="jr-since" hidden></span></div>'
   + '<div class="jr-digest"><div class="jr-digest-row"><span class="jr-digest-target">q3</span><a class="jr-pill">res spec <small>#1</small> ✓</a><span class="jr-arrow">→</span><a class="jr-pill">rabi <small>#2</small> ✗</a></div>'
   // the segmented strip (2026-09-08): family once, runs as numbered chips coloured by outcome
   + '<div class="jr-digest-row"><span class="jr-digest-target">q4</span><span class="jr-digest-segs">'
@@ -40,7 +40,7 @@ global.fetch = window.fetch = function (url, opts) {
 };
 
 // a previous visit 50,000 s ago: the 10-s-old card is new, the old one is not
-window.localStorage.setItem('quam_journal_seen:PJ', String(now - 50000));
+window.localStorage.setItem('quam_journal_seen:chip_1', String(now - 50000));
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'journal.js'), 'utf8'), { filename: 'journal.js' });
 window.JournalPage.init();   // what htmx:afterSwap does on the real page (jsdom's readyState is still 'loading' here)
 
@@ -48,7 +48,7 @@ window.JournalPage.init();   // what htmx:afterSwap does on the real page (jsdom
   const cards = document.querySelectorAll('.jr-card');
   ok(cards[0].classList.contains('jr-new') && !cards[1].classList.contains('jr-new'), 'since marker: only the card newer than the last visit is new');
   ok(document.getElementById('jr-since').hidden === false && /1 new since/.test(document.getElementById('jr-since').textContent), 'since line says how many');
-  const stamp = parseFloat(window.localStorage.getItem('quam_journal_seen:PJ'));
+  const stamp = parseFloat(window.localStorage.getItem('quam_journal_seen:chip_1'));
   ok(stamp > now - 5, 'the stamp moved to now, per chip');
 
   document.querySelector('.jr-path').dispatchEvent(new window.Event('click', { bubbles: true }));

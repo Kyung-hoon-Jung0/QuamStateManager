@@ -2,7 +2,7 @@
  *
  * Reported at a customer site: searching "analog" showed ONE slot under
  * ports.analog_outputs and cut the rest (scrolling showed every slot fine).
- * Reproduced on the PJ 20Q chip: 868 matches -- once an ancestor KEY matches,
+ * Reproduced on the chip_1 20Q chip: 868 matches -- once an ancestor KEY matches,
  * every descendant matches by path -- and the 4b cap took the first 150 in
  * FLAT (depth-first) order, which never left the first slot. The notice was
  * present and honest; the budget was simply spent on 150 leaves of one branch

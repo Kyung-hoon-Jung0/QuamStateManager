@@ -120,13 +120,13 @@ class TestCodex:
 
 class TestContext:
     def test_facts_and_questions_from_a_state(self):
-        state = {"extras": {"chip_name": "PJ"}, "qubits": {
+        state = {"extras": {"chip_name": "chip_1"}, "qubits": {
             "q1": {"z": {"opx_output": "#/wiring/...", "joint_offset": 0.1, "min_offset": 0.0}},
             "q2": {"qdac_bias": {"channel": 3, "dc_offset": 0.0, "trigger_port": "ext1", "dwell": 1e-6}},
             "q3": {}},
             "qubit_pairs": {"q1-2": {"coupler": {"z": {}}}}}
         f = st.detect_facts(state, node_names=["05_power_rabi", "02_res"])
-        assert f["n_qubits"] == 3 and f["n_pairs"] == 1 and f["chip_name"] == "PJ" and f["nodes"] == ["02_res", "05_power_rabi"]
+        assert f["n_qubits"] == 3 and f["n_pairs"] == 1 and f["chip_name"] == "chip_1" and f["nodes"] == ["02_res", "05_power_rabi"]
         assert f["couplers_seen"] is True and f["purcell_mentioned"] is False and f["twpa_seen"] is False
         assert f["bias_modes"] == {"opx": 1, "qdac": 1, "none": 1} and f["flux_tunable_seen"] and f["qdac_seen"]
         qs = st.questions(f)
@@ -155,7 +155,7 @@ class TestContext:
         facts = st.detect_facts({"qubits": {"q1": {}}, "qubit_pairs": {}})
         block = st.context_block(facts, {"tunable": "fixed-frequency", "coupler": "none", "purcell": "no", "squid": "no SQUID",
                                          "data_read": "no", "notes": "Cooldown 2026-09; readout LO shared"},
-                                 chip="PJ", data_folder="D:/data")
+                                 chip="chip_1", data_folder="D:/data")
         assert block.startswith(st.CTX_START) and block.rstrip().endswith(st.CTX_END)
         assert "Purcell filter: no" in block and "NOT allowed" in block and "Cooldown 2026-09" in block
         assert "run nodes only with run_node" in block

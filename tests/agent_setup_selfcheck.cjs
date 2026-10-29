@@ -20,7 +20,7 @@ let status = {
   ok: true, clis: { claude: { found: true, version: '2.1.263' }, codex: { found: false } },
   claude: { mcp: false, hooks: false, allow: false, json: 'H/.claude.json', settings: 'H/.claude/settings.json' },
   codex: { mcp: false, config: 'H/.codex/config.toml' }, context: {}, record: {}, calibrations_folder: 'D:/lab/cal',
-  journal: { root: 'D:/inst/journal', configured: false, suggested: 'D:/data/PJ/journal', claude_says: false },
+  journal: { root: 'D:/inst/journal', configured: false, suggested: 'D:/data/chip_1/journal', claude_says: false },
   hook_command: '"py.exe" -m quam_state_manager.hook --backend claude', todo: ['connect_claude', 'allow', 'journal', 'context'],
   global_simulate: true
 };
@@ -121,7 +121,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(/\u25cb SM's tools/.test(tileC.textContent) && !!tileC.querySelector('button[onclick="AgentSetup.preview(\'claude\')"]'), 'says what is missing, with one Connect button');
   ok(/Not installed/.test((document.getElementById('as-connect-codex') || {}).textContent || '') && !document.querySelector('#as-connect-codex button'), 'a CLI not on PATH says Not installed and offers nothing to press');
   ok(document.getElementById('as-test') !== document.getElementById('as-test-sec') && document.getElementById('as-test-sec').contains(document.getElementById('as-test')), 'the test card and its result box are two elements (one id each)');
-  ok(document.getElementById('as-jroot').value === 'D:/data/PJ/journal', 'the journal input starts with the suggested folder beside the data');
+  ok(document.getElementById('as-jroot').value === 'D:/data/chip_1/journal', 'the journal input starts with the suggested folder beside the data');
   // preview -> diff, no write
   calls.length = 0;
   A.preview('claude');

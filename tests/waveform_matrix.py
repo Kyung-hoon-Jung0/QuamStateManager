@@ -5,7 +5,7 @@ Single source of truth consumed by BOTH sides of the parity check:
 - ``generator/run_waveform_golden.py`` (run in the user's ``lab-C`` QM-stack
   env) instantiates the real quam classes with these params and dumps
   ``calculate_waveform()`` output to ``tests/golden/waveform_golden.json``;
-- ``tests/test_waveform_golden.py`` (run in ``qm_mng``) synthesizes the
+- ``tests/test_waveform_golden.py`` (run in ``lab_env_6``) synthesizes the
   same cases with :mod:`quam_state_manager.core.waveform_synth` and
   compares against the committed golden file.
 

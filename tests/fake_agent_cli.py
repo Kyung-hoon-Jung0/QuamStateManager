@@ -74,7 +74,7 @@ def claude():
         failed = os.environ.get("FAKE_FAIL") == "1"
         out({"type": "user", "message": {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": tid, "is_error": failed,
-             "content": "Error: no chip" if failed else "{\"chip\": \"PJ\"}"}]}, "session_id": sid})
+             "content": "Error: no chip" if failed else "{\"chip\": \"chip_1\"}"}]}, "session_id": sid})
         answer = f"answer {n}: {text[:20]}"
         if partial:
             se({"type": "message_start", "message": {"role": "assistant"}})

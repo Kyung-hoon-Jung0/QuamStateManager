@@ -29,7 +29,7 @@ window.confirm = function () { return true; };
 window.prompt = function () { return 'nope'; };
 const now = Date.now() / 1000;
 let feed = {
-  ok: true, chip: 'PJ', last: 3, agent_seq: 1, qubits: 20,
+  ok: true, chip: 'chip_1', last: 3, agent_seq: 1, qubits: 20,
   cards: [
     { n: 1, ts: now - 60, kind: 'user', text: 'run rabi on q1', who: 'human:user-a' },
     { n: 2, ts: now - 50, kind: 'tool', tool: 'mcp__sm__sm_status', summary: '{}', failed: false },
@@ -60,7 +60,7 @@ global.fetch = window.fetch = function (url, opts) {
   calls.push({ url: String(url), method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null, headers: opts && opts.headers });
   let body = {};
   if (/\/chat\/cards/.test(url)) body = feed;
-  else if (/\/chat\/backends/.test(url)) body = { ok: true, chip: 'PJ', default: 'claude', backends: { claude: { found: true, version: '2.1.263' }, codex: { found: false } } };
+  else if (/\/chat\/backends/.test(url)) body = { ok: true, chip: 'chip_1', default: 'claude', backends: { claude: { found: true, version: '2.1.263' }, codex: { found: false } } };
   else if (/\/api\/agent\/setup$/.test(url)) body = setupBody;
   else body = { ok: true, plan: { id: 'pl-2' } };
   return Promise.resolve({ status: 200, json: function () { return Promise.resolve(body); } });

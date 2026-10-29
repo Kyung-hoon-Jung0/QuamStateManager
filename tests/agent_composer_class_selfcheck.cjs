@@ -25,12 +25,12 @@ global.localStorage = window.localStorage;
 global.MutationObserver = window.MutationObserver;
 global.requestAnimationFrame = window.requestAnimationFrame.bind(window);
 global.HTMLElement = window.HTMLElement;
-const feed = { ok: true, chip: 'PJ', last: 0, agent_seq: 0, qubits: 1, cards: [], live: { plans: [], runs: [], approvals: [] },
+const feed = { ok: true, chip: 'chip_1', last: 0, agent_seq: 0, qubits: 1, cards: [], live: { plans: [], runs: [], approvals: [] },
   session: null, file: { owner: null, armed: false, stopped: false }, now: { state: 'idle', events_today: 0, failures_today: 0, waiting: 0 } };
 global.fetch = window.fetch = function (url) {
   let body = { ok: true };
   if (/\/chat\/cards/.test(url)) body = feed;
-  else if (/\/chat\/backends/.test(url)) body = { ok: true, chip: 'PJ', default: 'claude', backends: { claude: { found: true } } };
+  else if (/\/chat\/backends/.test(url)) body = { ok: true, chip: 'chip_1', default: 'claude', backends: { claude: { found: true } } };
   return Promise.resolve({ status: 200, json: function () { return Promise.resolve(body); } });
 };
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'agent-pill.js'), 'utf8'), { filename: 'agent-pill.js' });

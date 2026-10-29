@@ -4907,7 +4907,7 @@ window.ChipStatus.mount = function (opts) {
     // docs/141 4o: Trends now sits ABOVE Fidelity / Coherence / … and is fetched
     // lazily, so a jump to a section below it (a sidebar sub-link, ?view=)
     // landed on Trends once its charts arrived and pushed everything down
-    // (real Chrome, PJ chip). Remember the last jump; when Trends lands, put
+    // (real Chrome, chip_1 chip). Remember the last jump; when Trends lands, put
     // that section back at the top of the pane.
     function _jumpSelOf(v) {
         var m = /^sel:([^:]+):(.+)$/.exec(String(v || ''));

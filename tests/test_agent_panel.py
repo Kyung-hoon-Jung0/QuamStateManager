@@ -241,17 +241,17 @@ class TestPlans:
         assert "usage" in agent_plans.parse_run_line("/run")["error"]
 
     def test_plan_model(self, tmp_path):
-        rec = agent_plans.add(tmp_path, "PJ", title="t", steps=[{"node": "a", "targets": ["q1"]}, {"node": "b", "targets": ["q1"]}],
+        rec = agent_plans.add(tmp_path, "chip_1", title="t", steps=[{"node": "a", "targets": ["q1"]}, {"node": "b", "targets": ["q1"]}],
                               mode="auto", created_by="by_claude")
         assert rec["status"] == "draft" and agent_plans.counts(rec)["pending"] == 2
-        agent_plans.update(tmp_path, "PJ", rec["id"], status="running")
-        assert agent_plans.step_for(agent_plans.get(tmp_path, "PJ", rec["id"]), step=None, node="b", targets=["q1"])["i"] == 1
-        agent_plans.step_update(tmp_path, "PJ", rec["id"], 0, status="done", n_writes=2, applied=True)
-        assert agent_plans.get(tmp_path, "PJ", rec["id"])["status"] == "running", "one step left"
-        agent_plans.step_update(tmp_path, "PJ", rec["id"], 1, status="failed")
-        p = agent_plans.get(tmp_path, "PJ", rec["id"])
+        agent_plans.update(tmp_path, "chip_1", rec["id"], status="running")
+        assert agent_plans.step_for(agent_plans.get(tmp_path, "chip_1", rec["id"]), step=None, node="b", targets=["q1"])["i"] == 1
+        agent_plans.step_update(tmp_path, "chip_1", rec["id"], 0, status="done", n_writes=2, applied=True)
+        assert agent_plans.get(tmp_path, "chip_1", rec["id"])["status"] == "running", "one step left"
+        agent_plans.step_update(tmp_path, "chip_1", rec["id"], 1, status="failed")
+        p = agent_plans.get(tmp_path, "chip_1", rec["id"])
         assert p["status"] == "failed" and p["summary"]["failed"] == 1 and p["ended"]
-        assert agent_plans.running(tmp_path, "PJ") is None
+        assert agent_plans.running(tmp_path, "chip_1") is None
         with pytest.raises(ValueError):
             agent_plans.normalize_steps([{"targets": ["q1"]}])
         # a WELL-FORMED step repeated past the cap, so this still proves the
