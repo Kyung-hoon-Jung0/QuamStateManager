@@ -95,7 +95,13 @@ def _isolate_qualibrate_config(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(missing))
     monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
-    monkeypatch.delenv("QUAM_STATE_PATH", raising=False)
+    # quam's QuamRoot.save() with no path resolves serialiser state_path ->
+    # QUAM_STATE_PATH -> the qualibrate config's active project. Pin the env
+    # var to a scratch folder so no save() a test (or a subprocess it spawns)
+    # makes can ever land in a real chip folder.
+    no_state = tmp_path_factory.getbasetemp() / "_no_quam_state"
+    no_state.mkdir(exist_ok=True)
+    monkeypatch.setenv("QUAM_STATE_PATH", str(no_state))
     # docs/247 follow-up: the in-app Codex command carries the user's model
     # provider from $CODEX_HOME/config.toml -- never the developer's real one
     monkeypatch.setenv("CODEX_HOME", str(tmp_path_factory.getbasetemp() / "_no_codex_home"))

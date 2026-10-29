@@ -65,9 +65,15 @@ class TestRoute:
         shared page context (which self-heals live drift, resolves the active
         chip, …) — a calculator window opened beside a chip must be inert."""
         from quam_state_manager.web import routes
-        src = inspect.getsource(routes.calc_window).replace(routes.calc_window.__doc__ or "", "")
+        # pin the CODE, not the docstring: on Python 3.13+ __doc__ is dedented,
+        # so str.replace(__doc__) no longer strips it from the source text
+        import ast, textwrap
+        fn = ast.parse(textwrap.dedent(inspect.getsource(routes.calc_window))).body[0]
+        if ast.get_docstring(fn) is not None:
+            fn.body = fn.body[1:]
+        src = ast.unparse(fn)
         assert "_ctx(" not in src and "_store(" not in src
-        assert 'render_template("calc_window.html")' in src
+        assert "render_template('calc_window.html')" in src
 
     def test_works_with_and_without_a_chip(self, tmp_path):
         c = _client(tmp_path)

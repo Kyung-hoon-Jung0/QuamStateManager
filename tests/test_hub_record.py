@@ -145,6 +145,15 @@ def _rand_value(rng, depth=0):
                        "#/qubits/qA1", "txt"])
 
 
+def _rows_key(rows):
+    """Change rows as comparable tuples, NaN mapped to a marker: Python 3.13
+    dataclass __eq__ compares fields with ==, so NaN != NaN (older versions
+    compared field tuples, where identity made NaN equal)."""
+    def k(v):
+        return ("nan",) if isinstance(v, float) and v != v else (type(v).__name__, v)
+    return [tuple(k(getattr(r, f)) for f in ("path", "op", "old_num", "old_txt", "num", "txt")) for r in rows]
+
+
 def _rand_doc(rng):
     return {"qubits": {f"q{i}": {"f": rng.random(), "T1": rng.random(), "arr": [rng.random() for _ in range(rng.choice([5, 20]))],
                                  "ops": [{"a": rng.random()}, {"a": rng.random()}],
@@ -249,9 +258,9 @@ class TestEntriesToRows:
                 continue
             expect = rules.diff(rules.flatten(doc), rules.flatten(post))
             got = hub_entries.rows_for(entries, post)
-            assert got == expect, (trial, entries)
+            assert _rows_key(got) == _rows_key(expect), (trial, entries)
             # the door hands the projector only the written roots
-            assert hub_entries.rows_for(entries, hub_entries.post_fragments(entries, post)) == expect
+            assert _rows_key(hub_entries.rows_for(entries, hub_entries.post_fragments(entries, post))) == _rows_key(expect)
 
     def test_revert_and_apply_are_inverse(self):
         rng = random.Random(7)

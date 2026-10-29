@@ -27,6 +27,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.11"]
+        # Customers run newer Pythons; 3.13 changed Path.resolve and dataclass
+        # equality in ways 3.11 cannot catch. Linux only, to keep the time down.
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
 
     steps:
       - uses: actions/checkout@v4
