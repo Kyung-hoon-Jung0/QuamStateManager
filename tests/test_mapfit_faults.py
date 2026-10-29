@@ -121,7 +121,10 @@ def test_f_transposed_axes_keep_type_and_values(model):
     assert second["fit"]["verdict_line"] == "VERDICT: ok"
     if model in ("erroramp", "ridge", "chevron"):
         # Fit values stay in model orientation; model_axes names the figure axis of each.
-        assert second["fit"]["values"] == pytest.approx(first["fit"]["values"], abs=1e-9)
+        a, b = first["fit"]["values"], second["fit"]["values"]
+        assert a.keys() == b.keys()
+        for k in a:   # pytest.approx refuses a list nested inside a dict
+            assert b[k] == pytest.approx(a[k], abs=1e-9), k
         assert first["model_axes"]["x"] != second["model_axes"]["x"]
     else:
         assert second["fit"]["values"]["x"] == pytest.approx(first["fit"]["values"]["y"], abs=.5)

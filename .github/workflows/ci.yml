@@ -19,9 +19,9 @@ jobs:
   test:
     name: pytest (${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # The full suite takes ~4 min (linux) / ~6 min (windows); a hang must fail
+    # The full suite takes ~45 min (linux) / 90+ min (windows); a hang must fail
     # the job in minutes, not sit on the 6-hour default.
-    timeout-minutes: 30
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +36,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+
+      - name: Set up Node (the .cjs selfchecks run under jsdom)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install jsdom
+        # package-lock.json is gitignored, so install from package.json.
+        run: npm install --no-audit --no-fund
 
       - name: Install dependencies
         run: |

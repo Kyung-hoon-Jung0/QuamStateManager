@@ -214,7 +214,9 @@ def _small_day_fragment(world):
     world["add"]({"v": 9, "w": 0}, kind="sm_apply", instant=f"{DAY}T10:03:30-04:00")
     html = _get(world, f"/journal/day?day={DAY}")
     root = world["store"].conn.execute("SELECT path FROM roots").fetchone()[0]
-    for key in {routes._folder_key(root), story._folder_key(root)}:
+    # longest first: on a lowercase path (POSIX) the 8-char routes key is a
+    # prefix of the 12-char story key, and a set's order would decide the result
+    for key in sorted({routes._folder_key(root), story._folder_key(root)}, key=len, reverse=True):
         html = html.replace(key, "KEY")
     for path in sorted({str(Path(root).parent), str(Path(root).parent).replace("\\", "/")}, key=len, reverse=True):
         html = html.replace(path, "TMP")

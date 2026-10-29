@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -122,6 +123,8 @@ class TestWslBridge:
         assert str(p) == r"D:\chips\one"
 
     def test_native_path_anchors_on_the_config_dir(self, monkeypatch):
+        if os.name == "nt" and not os.path.isdir("//wsl.localhost/Ubuntu"):
+            pytest.skip("no reachable WSL share on this machine")
         monkeypatch.setenv("QUALIBRATE_CONFIG_FILE",
                            r"\\wsl.localhost\Ubuntu\home\u\.qualibrate")
         got = str(qc.native_path("/home/u/chips"))
@@ -131,6 +134,8 @@ class TestWslBridge:
             assert got == "/home/u/chips"
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="the ReplaceFileW -> os.replace fallback is Windows-only (needs msvcrt)")
 class TestSafeIoP9Fallback:
     def test_not_supported_falls_back_to_os_replace(self, tmp_path, monkeypatch):
         dst = tmp_path / "f.json"

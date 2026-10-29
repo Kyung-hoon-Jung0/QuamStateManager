@@ -177,7 +177,10 @@ def test_qsm_set_save_refuses_a_run_archive_unless_asked(env):
             "--instance", str(env["tmp"] / "_inst")]
     r = runner.invoke(cli.app, args)
     assert r.exit_code == 1, r.output
-    assert "frozen" in r.output and "Nothing was written" in r.output
+    # Rich wraps the message at the terminal width, and a long POSIX tmp path
+    # pushes line breaks into the middle of phrases; compare whitespace-folded.
+    flat = " ".join(r.output.split())
+    assert "frozen" in flat and "Nothing was written" in flat, r.output
     assert (env["archive"] / "state.json").read_bytes() == before
     r = runner.invoke(cli.app, args + ["--write-archive"])
     assert r.exit_code == 0, r.output

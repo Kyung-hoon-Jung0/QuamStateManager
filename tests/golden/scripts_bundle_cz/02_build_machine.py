@@ -311,6 +311,10 @@ def _apply_pulses(machine, vals):
     from add_DragCosine_pulses (as in QM's own populate_quam_*.py). They are
     added unconditionally so every generated config is usable.
     """
+    qubits = getattr(machine, "qubits", None) or {}
+    if not qubits:
+        return
+
     # add_DragCosine_pulses lived in `.pulses` in older quam_builder versions
     # and moved into `.add_default_pulses` later. Try both so the generator
     # works across the versions teams have pinned.
@@ -321,7 +325,6 @@ def _apply_pulses(machine, vals):
             add_DragCosine_pulses,
         )
 
-    qubits = getattr(machine, "qubits", None) or {}
     for qid, qubit in qubits.items():
         if getattr(qubit, "xy", None) is None:
             continue

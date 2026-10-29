@@ -44,7 +44,7 @@ def _chip(folder: Path, name: str) -> Path:
 
 
 def _env(tmp_path: Path, name: str) -> str:
-    py = tmp_path / "envs" / name / "python.exe"
+    py = tmp_path / "envs" / name / ("python.exe" if os.name == "nt" else "python")
     py.parent.mkdir(parents=True, exist_ok=True)
     py.write_bytes(b"")
     return str(py)
@@ -103,8 +103,10 @@ def _card_env(html: str, project: str) -> str:
 # ------------------------------------------------------------ the memory
 class TestTheMemory:
     def test_labels_come_from_the_path_alone(self):
-        assert project_env.label(r"D:\miniconda3\envs\lab-F-env\python.exe") == "lab-F-env"
-        assert project_env.label(r"C:\labs\qpu\.venv\Scripts\python.exe") == "qpu (.venv)"
+        if os.name == "nt":   # a Windows path is only a path on Windows
+            assert project_env.label(r"D:\miniconda3\envs\lab-F-env\python.exe") == "lab-F-env"
+            assert project_env.label(r"C:\labs\qpu\.venv\Scripts\python.exe") == "qpu (.venv)"
+        assert project_env.label("/opt/miniconda3/envs/lab-F-env/bin/python") == "lab-F-env"
         assert project_env.label("/opt/labs/qpu/.venv/bin/python") == "qpu (.venv)"
         assert project_env.label(None) == ""
 

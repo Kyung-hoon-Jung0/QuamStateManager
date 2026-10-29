@@ -17,6 +17,7 @@ same surface a user reaches:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -671,7 +672,7 @@ class TestTheInventoryIsActuallyInstalled:
         route, because clearing it by hand here would pin nothing."""
         pulse_catalog.apply_chip_classes(_inventory())
         assert "SNZTwoFluxPulse" in pulse_catalog.chip_pulse_specs()
-        fake = tmp_path / "python.exe"
+        fake = tmp_path / ("python.exe" if sys.platform == "win32" else "python")
         fake.write_bytes(b"")
         r = client.post("/generate/select-env",
                         json={"python": str(fake)})

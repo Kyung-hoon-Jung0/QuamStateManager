@@ -599,6 +599,7 @@ class Registry:
         self.runs: dict[str, dict] = {}
         self.plan_writes: dict[str, int] = {}
         self._cv = threading.Condition()
+        self._set_lock = threading.Lock()
         self._scan_metas()
 
     def _scan_metas(self, keep: int = 50) -> None:
@@ -706,11 +707,19 @@ class Registry:
             logger.warning("run meta write failed", exc_info=True)
 
     def _set(self, meta: dict, **fields) -> None:
-        with self._cv:
-            meta.update(fields)
-            meta["updated"] = time.time()
-            self._cv.notify_all()
-        self._write_meta(meta)
+        # The file is written BEFORE the change becomes visible in memory and the
+        # waiters wake, so a reader woken by the change finds it on disk too.
+        # One write lock keeps two updates of one run in order on disk.
+        with self._set_lock:
+            with self._cv:
+                nxt = dict(meta)
+            nxt.update(fields)
+            nxt["updated"] = time.time()
+            self._write_meta(nxt)
+            with self._cv:
+                meta.update(fields)
+                meta["updated"] = nxt["updated"]
+                self._cv.notify_all()
 
     def get(self, key: str) -> dict | None:
         with self._cv:

@@ -160,6 +160,9 @@ class TestFailuresSpeak:
     def test_and_the_auditor_turns_that_into_an_abstain_not_a_crash(self, monkeypatch):
         run = _Run({"is_error": True, "result": "Not logged in"})
         monkeypatch.setattr("subprocess.run", run)
+        # the CLI must look installed, or the Auditor never calls it (a CI
+        # runner has no `claude` on PATH)
+        monkeypatch.setattr("shutil.which", lambda exe: "/usr/bin/claude")
         v = auditor.Auditor(_settings()).audit({"context": {}})
         assert v.verdict == "abstain"
         assert "Not logged in" in (v.reason or "")
@@ -170,6 +173,7 @@ class TestFailuresSpeak:
         def slow(cmd, input=None, **kw):
             raise sp.TimeoutExpired(cmd, kw.get("timeout"))
         monkeypatch.setattr("subprocess.run", slow)
+        monkeypatch.setattr("shutil.which", lambda exe: "/usr/bin/claude")
         with pytest.raises(OSError, match="did not answer"):
             auditor._call_claude_code(_settings(), {"context": {}})
         v = auditor.Auditor(_settings()).audit({"context": {}})

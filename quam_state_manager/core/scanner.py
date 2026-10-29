@@ -1566,6 +1566,12 @@ def _discover(root: Path, prune: frozenset[str] = frozenset()) -> list[Path]:
     root_s = str(root)
     stack: list[str] = [root_s]
     truncated = False
+    try:                                           # a link back to the root is a cycle
+        _rst = os.stat(root_s)
+        if _rst.st_ino:
+            visited.add((_rst.st_dev, _rst.st_ino))
+    except OSError:
+        pass
     while stack:
         if ndirs >= _SCAN_DIR_CAP:
             truncated = True
@@ -1621,6 +1627,14 @@ def _discover(root: Path, prune: frozenset[str] = frozenset()) -> list[Path]:
                     continue                       # cycle / duplicate route
                 if st.st_ino:
                     visited.add(key)
+            elif lst.st_ino:
+                # A plain dir's identity comes free with the lstat above on
+                # POSIX (Windows DirEntry reports 0): record it so a link
+                # to it, or a second route, is not walked twice.
+                key = (lst.st_dev, lst.st_ino)
+                if key in visited:
+                    continue
+                visited.add(key)
             stack.append(sub_path)
     if truncated:
         # The visited-set stops CYCLES, not scope -- a symlink escaping to a

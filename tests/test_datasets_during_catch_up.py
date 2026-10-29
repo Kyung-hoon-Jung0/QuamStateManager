@@ -162,12 +162,16 @@ def qs_app(tmp_path, monkeypatch):
     return app, c, data, queued
 
 
-def test_the_delta_poll_never_queues_the_first_index_as_exp_candidates(qs_app):
+def test_the_delta_poll_never_queues_the_first_index_as_exp_candidates(qs_app, monkeypatch):
     app, c, data, queued = qs_app
     with app.app_context():
         with dataset.yielding_scan(lambda: True, chunk=8):
             st = routes_mod._get_or_create_store(data, rescan=False)
     assert st.scan_truncated and not st.index_complete
+    # This test is about the poll that finishes the index, not about yielding:
+    # a background catch-up or prewarm left over on a slow CI runner would make
+    # the poll hold the store as partial, so nothing else claims the interpreter.
+    monkeypatch.setattr(routes_mod, "_catch_up_should_yield", lambda: False)
     got = c.get("/datasets/changes-since?ts=0").get_json()   # finishes the index
     assert not got["partial"] and st.index_complete and st.run_count == 40
     assert len(got["updated"]) == 40 and all(r["hs"] for r in got["updated"])

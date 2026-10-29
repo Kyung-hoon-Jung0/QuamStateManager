@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,17 @@ def _set_readonly(folder: Path, on: bool):
         f = folder / name
         if f.exists():
             os.chmod(f, stat.S_IREAD if on else (stat.S_IREAD | stat.S_IWRITE))
+    _set_dir_readonly(folder, on)
+
+
+def _set_dir_readonly(folder: Path, on: bool) -> None:
+    """On POSIX a read-only FILE is still replaced by rename; the refusal is
+    real only when the containing directory denies new entries too. Windows
+    already refuses ReplaceFileW on a read-only file, and its directory
+    attribute is not enforced, so the directory is left alone there."""
+    if sys.platform != "win32" and folder.is_dir():
+        os.chmod(folder, 0o555 if on else 0o755)
+
 
 
 @pytest.fixture
@@ -162,6 +174,10 @@ def test_pull_and_apply_after_live_drift_is_a_named_409(env):
     assert r.get_json()["error_code"] == "live_write_failed"
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="a file held open by another process (sharing violation, "
+                           "winerror 32) exists only on Windows; OSError's winerror "
+                           "argument is ignored on POSIX, so the fault cannot be simulated")
 def test_a_held_file_is_named_and_raises_no_read_only_pill(env, monkeypatch):
     _edit(env)
 

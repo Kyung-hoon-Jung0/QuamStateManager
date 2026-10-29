@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.core.scanner import (
-    DateGroup,
     ExperimentEntry,
     Workspace,
     _extract_date,
@@ -856,7 +855,10 @@ def test_scan_dir_cap_bounds_runaway_symlink_walks(tmp_path, monkeypatch, caplog
     (root / "quam_state").mkdir()
     (root / "quam_state" / "state.json").write_text("{}", encoding="utf-8")
     (root / "quam_state" / "wiring.json").write_text("{}", encoding="utf-8")
-    (root / "link_to_big").symlink_to(big)
+    try:
+        (root / "link_to_big").symlink_to(big)
+    except OSError as e:   # Windows without Developer Mode / admin
+        pytest.skip(f"cannot create a symlink here: {e}")
     monkeypatch.setattr(sc, "_SCAN_DIR_CAP", 10)
     import logging
     with caplog.at_level(logging.WARNING):

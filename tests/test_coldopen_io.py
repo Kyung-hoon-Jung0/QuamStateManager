@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -96,6 +97,8 @@ class TestResolvedPathsInTheListingCache:
         assert all(e.qs_resolved is not None for e in entries)
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="the ReplaceFileW retry ladder is Windows-only (needs msvcrt)")
 class TestReplaceRetryLadder:
     def test_first_retry_waits_ten_ms_and_the_budget_is_kept(self, tmp_path, monkeypatch):
         dst = tmp_path / "f.json"

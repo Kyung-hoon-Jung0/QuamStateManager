@@ -453,9 +453,9 @@ def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
     # the template already renders as a dead end rather than a crash.
     def _step(base, days):
         try:
-            return (base + timedelta(days=days)).strftime("%Y-%m-%d")
+            return (base + timedelta(days=days)).date().isoformat()
         except (OverflowError, OSError, ValueError):
-            return base.strftime("%Y-%m-%d")
+            return base.date().isoformat()
     data["prev_day"] = _step(d0, -1)
     data["next_day"] = _step(d0, 1)
     data["is_today"] = day == _today()
