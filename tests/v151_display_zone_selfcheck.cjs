@@ -53,11 +53,18 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const td = d.querySelector('td.czp-last[data-last="' + FX.op + '"]');
     ok(!!td, 'the real table has the operation\'s Last set cell');
     const text = td ? td.textContent : '';
-    ok(text.indexOf(FX.expect_long) >= 0, 'Last set in the display zone: ' + text);
+    // v1.6.0: the cell is compact -- the DISPLAY-ZONE date (the fixture's UTC date is the
+    // day before), the full zone stamp in the cell's own title, never the raw ISO stamp
+    ok(text.indexOf(FX.expect_date) >= 0 && text.indexOf(FX.utc_date) < 0,
+       'Last set shows the display-zone date, not the UTC date: ' + text);
     ok(!/UTC(?![+-])/.test(text), 'no bare UTC stamp left: ' + text);
+    const own = td ? td.querySelector('span') : null;
+    const ownTip = own ? own.getAttribute('title') || '' : '';
+    ok(ownTip.indexOf(FX.expect_long) >= 0 && ownTip.indexOf(FX.utc_iso_fragment) < 0,
+       'the cell\'s title carries the full stamp in the display zone: ' + ownTip);
     const other = d.querySelector('td.czp-last[data-last="' + FX.other_op + '"] span');
     const tip = other ? other.getAttribute('title') || '' : '';
-    ok(tip.indexOf(FX.expect_long) >= 0 && tip.indexOf('T00:47') < 0,
+    ok(tip.indexOf(FX.expect_note_long) >= 0 && tip.indexOf('T00:47') < 0,
        'an ISO time inside a server note reads the same: ' + tip);
     console.log(fails ? ('FAILED: ' + fails + ' of ' + n) : 'DONE (' + n + ' assertions)');
     process.exit(fails ? 1 : 0);

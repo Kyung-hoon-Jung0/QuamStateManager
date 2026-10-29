@@ -44,7 +44,10 @@ def test_cz_plan_last_set_reads_in_the_display_zone(tmp_path, seoul):
     assert hist["ok"] and OP in hist["ops"] and OTHER in hist["ops"]
     # the route's own shape, one operation's last change filled in (a ledger
     # point), the other unknown with the core's "first recorded <t>" note
-    hist["ops"][OP].update(last_set={"t": "2026-10-15T00:47:40Z", "run_id": 1687,
+    # v1.6.0: the table cell is compact -- the display-zone DATE, with the full
+    # zone stamp in its title (cz plan 49168860). A stamp whose UTC date differs
+    # from its display-zone date makes the cell's date load-bearing.
+    hist["ops"][OP].update(last_set={"t": "2026-10-14T20:47:40Z", "run_id": 1687,
                                      "provenance": "run_proven", "proven": True},
                            unknown=False, proven=True)
     hist["ops"][OTHER]["note"] = ("qubit_pairs.q3-2.macros.cz.flux_pulse_qubit.amplitude: "
@@ -52,7 +55,10 @@ def test_cz_plan_last_set_reads_in_the_display_zone(tmp_path, seoul):
     fx = tmp_path / "fx.json"
     fx.write_text(json.dumps({"zone": ZONE, "page": page, "history": hist, "op": OP,
                               "other_op": OTHER,
-                              "expect_long": "2026-10-15 09:47:40 (UTC+9)"}), encoding="utf-8")
+                              "expect_long": "2026-10-15 05:47:40 (UTC+9)",
+                              "expect_date": "2026-10-15", "utc_date": "2026-10-14",
+                              "utc_iso_fragment": "T20:47",
+                              "expect_note_long": "2026-10-15 09:47:40 (UTC+9)"}), encoding="utf-8")
     p = subprocess.run(["node", str(ROOT / "tests" / "v151_display_zone_selfcheck.cjs"), str(fx)],
                        capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT), timeout=120)
     if p.returncode == 2 and "jsdom not installed" in (p.stderr or ""):
