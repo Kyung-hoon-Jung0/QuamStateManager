@@ -8,14 +8,14 @@ field with the stock TWPA. Release review v1.6.0 measured three surfaces for it:
 - load + display: PASS (pinned below at route level);
 - re-generate when the build env CANNOT import the class: the object is dropped
   and the drop is reported, never reshaped into a stock TWPA (pinned below);
-- re-generate when the build env CAN import the class: the object is still
-  dropped, because the merge's value gate admits only classes the rebuild itself
-  serialised (regen_merge._gate_graft, the docs/136 value gate) and a rebuild
-  never writes a lab TWPA. That is the OPEN P1 of the review, recorded as a strict
-  xfail so the day the gate learns to keep it the pin turns red and is promoted.
-  No env on the machine this was reviewed on imports the class, so the fix could
-  not be proven live and was not shipped unproven (a wrong widening of that gate
-  poisons Quam.load()).
+- re-generate when the build env CAN import the class: the object USED to be
+  dropped, because the merge's value gate admitted only classes the rebuild itself
+  serialised (regen_merge._gate_graft, the docs/136 value gate) and a rebuild never
+  writes a lab TWPA. Fixed in the same review (regen_merge._lab_object_admissible):
+  an object of a class the env imports is kept when its parent is the LAB's own
+  class declaring that field -- here the lab root the spec carried -- and its
+  subtree is gated by the class's own env fields. A stock parent of the same name
+  is still not enough (another stack generation may type the field differently).
 """
 import json
 
@@ -54,27 +54,46 @@ def _new(slot):
 
 # what the rebuild serialised: the root class only -- it writes no lab TWPA
 SCHEMAS = {LAB_ROOT: ROOT_FIELDS}
-# the build env's answer when it imports the lab class / when it does not
-ENV_IMPORTS = {LAB_TWPA: {"bases": ["quam.core.quam_classes.QuamComponent"], "fields": TWPA_FIELDS}}
+# the build env's answer (every SOURCE class it imports, as the probe reports it)
+# when it imports the lab classes / when it cannot import the TWPA class
+STOCK_ROOT_BASE = "quam_builder.architecture.superconducting.qpu.flux_tunable_quam.FluxTunableQuam"
+ENV_IMPORTS = {LAB_ROOT: {"bases": [STOCK_ROOT_BASE], "fields": ROOT_FIELDS},
+               LAB_TWPA: {"bases": ["quam.core.quam_classes.QuamComponent"], "fields": TWPA_FIELDS}}
 ENV_FIELDS_IMPORTS = {LAB_ROOT: ROOT_FIELDS, LAB_TWPA: TWPA_FIELDS}
+ENV_CANNOT = {LAB_ROOT: {"bases": [STOCK_ROOT_BASE], "fields": ROOT_FIELDS}}
 ENV_FIELDS_CANNOT = {LAB_ROOT: ROOT_FIELDS, LAB_TWPA: None}
 
 
 @pytest.mark.parametrize("slot", ["absent", "null"])
-@pytest.mark.xfail(strict=True, reason="open P1 (v1.6.0 release review): the value gate admits only "
-                   "classes the rebuild serialised, so a lab component at a root field is dropped even "
-                   "when the build env imports its class")
 def test_a_lab_twpa_the_env_imports_survives_a_regenerate(slot):
+    """Was the open P1 of the v1.6.0 review (a strict xfail); fixed by
+    regen_merge._lab_object_admissible, which this pin now guards."""
     r = merge_states(_old(), _new(slot), class_schemas=SCHEMAS, keep_classes=ENV_IMPORTS,
                      env_fields=ENV_FIELDS_IMPORTS)
     assert r.merged.get("twpa_ext") == _twpa()
     assert "twpa_ext" not in r.stats.schema_dropped
     assert all(p != "twpa_ext" for p, _ in r.stats.rebuild_removed)
+    assert ("twpa_ext", LAB_TWPA) in r.stats.lab_objects_kept   # said, never silent
+
+
+def test_a_lab_twpa_under_a_stock_root_is_still_refused():
+    """The widening needs the LAB's own class as the parent: under a stock root of
+    the same name on both sides the object is dropped as before, because another
+    stack generation may declare that field with another type (docs/136)."""
+    old, new = _old(), _new("absent")
+    old["__class__"] = new["__class__"] = STOCK_ROOT_BASE
+    r = merge_states(old, new, class_schemas={STOCK_ROOT_BASE: ROOT_FIELDS},
+                     keep_classes={STOCK_ROOT_BASE: {"bases": [], "fields": ROOT_FIELDS},
+                                   LAB_TWPA: ENV_IMPORTS[LAB_TWPA]},
+                     env_fields={STOCK_ROOT_BASE: ROOT_FIELDS, LAB_TWPA: TWPA_FIELDS})
+    assert r.merged.get("twpa_ext") is None
+    assert "twpa_ext" in r.stats.schema_dropped
+    assert r.stats.lab_objects_kept == []
 
 
 @pytest.mark.parametrize("slot", ["absent", "null"])
 def test_a_lab_twpa_the_env_cannot_import_is_dropped_and_said_never_reshaped(slot):
-    r = merge_states(_old(), _new(slot), class_schemas=SCHEMAS, keep_classes={},
+    r = merge_states(_old(), _new(slot), class_schemas=SCHEMAS, keep_classes=ENV_CANNOT,
                      env_fields=ENV_FIELDS_CANNOT)
     assert r.merged.get("twpa_ext") is None
     named = set(r.stats.schema_dropped) | {p for p, _ in r.stats.rebuild_removed}

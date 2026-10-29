@@ -75,7 +75,14 @@ def _active_list(key: str, old_root: dict, new_root: dict, nv: Any) -> Any:
     coll = _ACTIVE_OF[key]
     old_all = old_root.get(coll) if isinstance(old_root.get(coll), dict) else {}
     new_all = new_root.get(coll) if isinstance(new_root.get(coll), dict) else {}
-    if not isinstance(ov, list) or not isinstance(nv, list) or not new_all:
+    if not isinstance(ov, list) or not isinstance(nv, list):
+        return copy.deepcopy(nv)
+    if not new_all:
+        # v1.6.0 review: an EMPTY rebuilt `twpas` is the builder gap (see the
+        # ENTITY_COLLECTIONS note) -- the old TWPAs are grafted back wholesale,
+        # so their active membership comes back with them, not the build's [].
+        if coll not in ENTITY_COLLECTIONS and old_all:
+            return [x for x in ov if isinstance(x, str) and x in old_all]
         return copy.deepcopy(nv)
     out = [x for x in ov if isinstance(x, str) and x in new_all]
     out += [x for x in nv if isinstance(x, str) and x not in old_all and x not in out]
@@ -172,6 +179,9 @@ class MergeStats:
     rename_record: str | None = None  # docs/296: id of the rename record written into extras (history follows the renamed qubits)
     active_kept: list[str] = field(default_factory=list)  # active-membership lists kept from the source (the build writes its defaults)
     rename_unmarked: bool = False  # docs/296: renamed, but the root class keeps no extras -- history cannot follow
+    lab_objects_kept: list[tuple[str, str]] = field(default_factory=list)  # (path, class) -- v1.6.0 review: a lab object the env imports, kept under the lab's own class although the rebuild wrote no such object
+    old_pointers_kept: list[str] = field(default_factory=list)  # v1.6.0 review: the source's pointer kept where the rebuild wrote the very literal it resolves to
+    pointers_inlined: list[str] = field(default_factory=list)  # v1.6.0 review: a grafted source pointer whose direct target is no literal in the rebuilt state, written as the value it resolved to in the source
 
 
 @dataclass
@@ -180,7 +190,7 @@ class MergeResult:
     stats: MergeStats
 
 
-def _kept_class(old: dict, new: dict, keep: dict | None) -> str | None:
+def _kept_class(old: dict, new: dict, keep: dict | None, path: str = "") -> str | None:
     """The OLD object's class, when the merge may keep it (docs/202 §15).
 
     A re-generate writes the builder's stock class where the source chip had
@@ -203,16 +213,138 @@ def _kept_class(old: dict, new: dict, keep: dict | None) -> str | None:
     if not (isinstance(o_cls, str) and isinstance(n_cls, str)) or o_cls == n_cls:
         return None
     rec = keep.get(o_cls)
-    if not rec or n_cls not in (rec.get("bases") or ()):
+    if not rec:
         return None
-    return o_cls
+    bases = rec.get("bases") or ()
+    if n_cls in bases:
+        return o_cls
+    # v1.6.0 review: under an UNTAGGED container whose element type is one universal
+    # base (a channel's `operations` is `Dict[str, Pulse]`), a lab class that subclasses
+    # that base is admissible whatever stock class the builder wrote there -- a lab's
+    # own SNZ pulse that subclasses `Pulse` directly used to come back as the stock
+    # SNZPulse with every lab-only knob dropped. Its fields are gated by its own env
+    # field list, and a NEW default the lab class cannot hold is dropped (see _merge).
+    container = path.split(".")[-2] if path.count(".") >= 1 else ""
+    base = _CONTAINER_BASES.get(container)
+    if base and base in bases:
+        return o_cls
+    return None
+
+
+# an untagged container -> the one base every element of it must subclass
+_CONTAINER_BASES = {"operations": "quam.components.pulses.Pulse"}
+
+
+def _lab_object_admissible(cls: str, old: dict, new: dict, kept_cls: str | None,
+                           keep: dict | None) -> bool:
+    """v1.6.0 review: may an OLD object of a class the rebuild never wrote be grafted
+    under this parent? Yes when BOTH hold: the build env imports the class (it is in
+    `keep`), and the parent is the LAB's own class -- the kept class, or the same lab
+    class on both sides (a lab root the spec carried) -- whose declared field this is
+    (the caller checked `k in legal`). The lab wrote both the parent's declaration and
+    the object, and the source chip is their own serialisation. A stock parent of the
+    same name is NOT enough: another stack generation may declare the field with
+    another type, which is the docs/136 poison this gate exists for."""
+    if not keep or not keep.get(cls):
+        return False
+    if kept_cls:
+        return True
+    parent = old.get("__class__")
+    return (isinstance(parent, str) and parent == new.get("__class__") and bool(keep.get(parent))
+            and not parent.startswith(("quam.", "quam_builder.")))
+
+
+_MISSING = object()
+
+
+def _one_hop(doc: dict, pointer: str, field_path: tuple[str, ...]) -> Any:
+    """The value ONE hop down a QUAM pointer, read syntactically from ``doc`` -- no
+    further pointer is followed. ``#/a/b`` is absolute; ``#./x`` names a sibling in the
+    object holding the field; ``#../x`` an attribute of that object's parent.
+    ``_MISSING`` when the path is not there. One hop on purpose: a chain that passes
+    back through the holder's own object is a cycle in the merged document, and the
+    merge decides pointer by pointer, so only a direct literal is ever trusted."""
+    if pointer.startswith("#/"):
+        parts = [p for p in pointer[2:].split("/") if p]
+    else:
+        base = list(field_path[:-1])
+        for seg in pointer[1:].split("/"):
+            if seg == "..":
+                base = base[:-1]
+            elif seg and seg != ".":
+                base.append(seg)
+        parts = base
+    node: Any = doc
+    for p in parts:
+        if isinstance(node, dict) and p in node:
+            node = node[p]
+        elif isinstance(node, list) and p.isdigit() and int(p) < len(node):
+            node = node[int(p)]
+        else:
+            return _MISSING
+    return node
+
+
+def _is_literal(v: Any) -> bool:
+    return v is not _MISSING and v is not None and not is_pointer(v) and not isinstance(v, (dict, list))
+
+
+def _pointer_decisions(old: dict, new_doc: dict) -> tuple[set[str], dict[str, Any]]:
+    """v1.6.0 review: two decisions about SOURCE pointers, taken up front on whole documents.
+
+    ``keep``: dot paths where the source holds a pointer, the rebuild wrote a literal, and
+    the pointer's direct target in the rebuilt document is a literal equal to it. A lab's
+    single-source link (both pump channels' ``RF_frequency = "#../pump_frequency"``) used
+    to be unlinked by every rebuild; keeping it changes no value. A pointer whose target
+    is another pointer, something else (the Populate step changed the literal) or nothing
+    is NOT kept -- the literal stands.
+
+    ``inline``: dot paths of source pointer leaves the rebuild has NO value for (they
+    will be grafted) whose direct target in the rebuilt document is not a literal, mapped
+    to the value the pointer resolved to in the SOURCE. Grafting the pointer itself would
+    dangle or -- when the rebuild inverted a link's direction, values on the z-line op
+    and the macro pointing at it where the lab had the reverse -- close a cycle, which
+    is how a kept lab pulse's ``inferred_length`` came back as nothing and
+    ``generate_config`` asserted. The lab's VALUE is what the physics needs; the link
+    is reported as inlined."""
+    from quam_state_manager.core.differ import compare_equal
+    from quam_state_manager.core.pointer_resolver import resolve_pointer
+    keep: set[str] = set()
+    inline: dict[str, Any] = {}
+
+    def walk(o: Any, n: Any, path: tuple[str, ...]) -> None:
+        if isinstance(o, dict):
+            for k, ov in o.items():
+                walk(ov, n.get(k, _MISSING) if isinstance(n, dict) else _MISSING, path + (k,))
+            return
+        if not is_pointer(o):
+            return
+        tgt = _one_hop(new_doc, o, path)
+        if n is _MISSING:
+            # an old-only leaf: grafted -- as the pointer when its direct target is a
+            # literal in the rebuilt document, else as the source's resolved value
+            if _is_literal(tgt):
+                return
+            try:
+                val = resolve_pointer(old, o, path)
+            except Exception:  # noqa: BLE001 -- unresolvable in the source too: graft as is
+                return
+            if _is_literal(val):
+                inline[".".join(path)] = val
+            return
+        if _is_literal(n) and _is_literal(tgt) and compare_equal(tgt, n):
+            keep.add(".".join(path))
+
+    walk(old, new_doc, ())
+    return keep, inline
 
 
 _DROPPED = object()   # _gate_graft: the whole object is dropped
 
 
 def _gate_graft(obj: Any, path: str, schemas: dict | None,
-                env_fields: dict, stats: MergeStats) -> Any:
+                env_fields: dict, stats: MergeStats,
+                inline: dict[str, Any] | None = None) -> Any:
     """A deep copy of the OLD subtree ``obj`` about to be grafted at ``path``,
     gated at EVERY depth by the build env (QA regenerate-r2-15).
 
@@ -234,6 +366,10 @@ def _gate_graft(obj: Any, path: str, schemas: dict | None,
     Only ever NARROWS what is copied; returns ``_DROPPED`` for a dropped root.
     """
     if not isinstance(obj, dict):
+        if inline and path in inline and is_pointer(obj):
+            # v1.6.0 review: see _pointer_decisions -- the source's resolved value
+            stats.pointers_inlined.append(path)
+            return copy.deepcopy(inline[path])
         return copy.deepcopy(obj)
     cls = obj.get("__class__")
     legal = None
@@ -253,7 +389,7 @@ def _gate_graft(obj: Any, path: str, schemas: dict | None,
         if legal is not None and k not in legal:
             stats.schema_dropped.append(sub)
             continue
-        g = _gate_graft(v, sub, schemas, env_fields, stats)
+        g = _gate_graft(v, sub, schemas, env_fields, stats, inline)
         if g is not _DROPPED:
             out[k] = g
     return out
@@ -264,7 +400,9 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
            protect: set[str] | None = None,
            keep: dict | None = None,
            carry_ports: set[str] | None = None,
-           env_fields: dict | None = None) -> Any:
+           env_fields: dict | None = None,
+           keep_ptr: set[str] | None = None,
+           inline: dict[str, Any] | None = None) -> Any:
     if isinstance(old, dict) and isinstance(new, dict):
         out: dict = {}
         # Keys whose OLD typed object met a NEW null: decided by the tier-2
@@ -274,8 +412,16 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
         # (docs/176 `spec.quam_class`, the Review step's "Chip root class"),
         # and the build wrote exactly the class the user named there. The
         # docs/202 §15 keep is for objects below it the spec cannot name.
-        kept_cls = _kept_class(old, new, keep) if path else None
+        kept_cls = _kept_class(old, new, keep, path) if path else None
+        # the kept class's own fields: a NEW default the lab class does not declare
+        # (a stock class the builder wrote where the lab's own is kept) must not ride
+        # into the object -- Quam.load() refuses an unexpected attribute
+        kept_fields = set(keep[kept_cls].get("fields") or ()) if kept_cls else None
         for k, nv in new.items():
+            if (kept_fields is not None and k not in kept_fields
+                    and k not in ("__class__", "__package_versions__")):
+                stats.schema_dropped.append(f"{path}.{k}" if path else k)
+                continue
             if k in ("__class__", "__package_versions__"):
                 # Always the NEW build's. Tier-1-carrying an OLD
                 # __package_versions__ stamp would lie about which stack wrote
@@ -332,7 +478,7 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                     continue
                 out[k] = _merge(ov, nv, f"{path}.{k}" if path else k,
                                 stats, schemas, protect, keep, carry_ports,
-                                env_fields)
+                                env_fields, keep_ptr, inline)
             else:
                 out[k] = copy.deepcopy(nv)
                 stats.kept_new_only += _count_leaves(nv)
@@ -412,9 +558,28 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
             # types to violate, and that is where a user's own added pulse
             # class legitimately lives; gating there would break the tier-2
             # graft this whole branch exists for.
-            if (legal is not None and schemas and isinstance(ov, dict)
-                    and isinstance(ov.get("__class__"), str)
-                    and ov["__class__"] not in schemas):
+            unwritten_class = (legal is not None and schemas and isinstance(ov, dict)
+                               and isinstance(ov.get("__class__"), str)
+                               and ov["__class__"] not in schemas)
+            if unwritten_class and _lab_object_admissible(ov["__class__"], old, new, kept_cls, keep):
+                # v1.6.0 review: the env imports the class and the parent is the
+                # lab's own class declaring this field -- a lab TWPA at a lab root,
+                # a lab target pulse on a kept lab gate. Grafted, gated below by the
+                # class's own env fields (never a legacy deep copy).
+                stats.lab_objects_kept.append((f"{path}.{k}" if path else k, ov["__class__"]))
+                view = env_fields if env_fields is not None else {
+                    c: (r or {}).get("fields") for c, r in keep.items()}
+                gv = _gate_graft(ov, f"{path}.{k}" if path else k, schemas, view, stats, inline)
+                if gv is _DROPPED:
+                    continue
+                out[k] = gv
+                n = _count_leaves(gv)
+                stats.grafted += n
+                stats.graft_subtrees.append((f"{path}.{k}" if path else k, n))
+                if k in deferred:
+                    stats.deferred_grafted.append(f"{path}.{k}" if path else k)
+                continue
+            if unwritten_class:
                 if k in deferred:
                     # QA review of r2-14: the FIELD is known; the rebuild left
                     # it empty and writes no such object anywhere -- not an
@@ -426,14 +591,19 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                     continue
                 stats.schema_dropped.append(f"{path}.{k}" if path else k)
                 continue
+            sub = f"{path}.{k}" if path else k
             if env_fields is not None:
                 # QA regenerate-r2-15: the checks above look at the graft ROOT
                 # only; the subtree under it is gated here, at every depth,
                 # by the build env's own answer for every class in it.
-                gv = _gate_graft(ov, f"{path}.{k}" if path else k,
-                                 schemas, env_fields, stats)
+                gv = _gate_graft(ov, sub, schemas, env_fields, stats, inline)
                 if gv is _DROPPED:
                     continue
+            elif inline and sub in inline:
+                # v1.6.0 review: a source pointer the rebuilt state gives no literal
+                # target -- grafted as the value it resolved to in the source
+                gv = copy.deepcopy(inline[sub])
+                stats.pointers_inlined.append(sub)
             else:
                 gv = copy.deepcopy(ov)
             out[k] = gv
@@ -445,6 +615,12 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
         return out
     # leaves ---------------------------------------------------------------
     if is_pointer(new) or is_pointer(old):              # structure/pointer -> NEW
+        if keep_ptr and path in keep_ptr:
+            # ...except a SOURCE pointer the rebuild replaced with the very literal
+            # it resolves to (decided up front by _old_pointers_to_keep): the lab's
+            # link is kept, no value changes (v1.6.0 review)
+            stats.old_pointers_kept.append(path)
+            return old
         stats.kept_new_pointer += 1
         return new
     if protect and path in protect:
@@ -1750,8 +1926,11 @@ def merge_states(old_state: dict, new_state: dict,
         stats.twpas_removed = sorted(removed_twpas - set(renamed), key=natural_key)
     stats.pairs_reversed = _reversed_pairs(old_state, new_state,
                                            old_wiring, new_wiring)
+    # v1.6.0 review: source pointers -- kept where the rebuild wrote the literal they
+    # point at, inlined where a grafted one would have no literal target
+    keep_ptr, inline = _pointer_decisions(old_view, _merged_doc(new_state, new_wiring))
     merged = _merge(old_view, new_state, "", stats, class_schemas, protect_paths,
-                    keep_classes, carry_ports, env_fields)
+                    keep_classes, carry_ports, env_fields, keep_ptr, inline)
     _ungraft_unlanded(merged, stats, new_wiring)
     # A removed qubit/pair is still NAMED inside a list another object carried
     # (a TWPA's `qubits`); the list survives as a leaf, so drop the reference

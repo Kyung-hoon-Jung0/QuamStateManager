@@ -614,6 +614,15 @@ def run_regenerate(
         "schema_dropped": len(s.schema_dropped),
         "schema_dropped_paths": s.schema_dropped[:200],
         "schema_dropped_paths_total": len(s.schema_dropped),
+        # v1.6.0 review: lab objects the env imports kept under the lab's own class
+        # although the rebuild wrote none, and source pointers kept where the rebuild
+        # wrote the literal they resolve to (a lab's single-source links).
+        "lab_objects_kept": [{"path": p, "cls": c} for p, c in s.lab_objects_kept[:80]],
+        "lab_objects_kept_total": len(s.lab_objects_kept),
+        "old_pointers_kept": s.old_pointers_kept[:80],
+        "old_pointers_kept_total": len(s.old_pointers_kept),
+        "pointers_inlined": s.pointers_inlined[:80],
+        "pointers_inlined_total": len(s.pointers_inlined),
         # The CAUSE behind most cross-generation drops: the rebuild typed an
         # object differently from the source chip. Reported separately because
         # the remedy differs -- a dropped field is gone, a substituted class is

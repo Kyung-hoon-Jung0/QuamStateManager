@@ -720,18 +720,52 @@ def test_a_lab_subclass_the_env_holds_is_kept_with_its_fields():
     assert r.stats.class_changed == [] and r.stats.schema_dropped == []
 
 
-def test_a_class_that_does_not_subclass_the_new_one_is_never_kept():
+def test_a_class_that_does_not_subclass_the_new_one_is_never_kept_in_a_typed_slot():
     """docs/136's poison: an old object of an unrelated class grafted into a
     slot typed for something else kills Quam.load(). Importable is not enough;
-    the class the rebuild wrote must be in the old class's MRO."""
+    in a TYPED slot the class the rebuild wrote must be in the old class's MRO."""
+    lab_z, stock_z = "quam_config.lines.LabBiasLine", "quam_builder.architecture.superconducting.components.flux_line.FluxLine"
+    unrelated = {lab_z: {"bases": ["quam.core.quam_classes.QuamComponent"], "fields": ["offset", "dc_v"]}}
+    old = {"qubits": {"q1": {"z": {"__class__": lab_z, "offset": 0.1, "dc_v": 0.3}}}}
+    new = {"qubits": {"q1": {"z": {"__class__": stock_z, "offset": 0.0}}}}
+    r = merge_states(old, new, class_schemas={stock_z: ["offset"]}, keep_classes=unrelated)
+    z = r.merged["qubits"]["q1"]["z"]
+    assert z["__class__"] == stock_z
+    assert "dc_v" not in z
+    assert r.stats.class_kept == []
+    assert [p for p, _, _ in r.stats.class_changed] == ["qubits.q1.z"]
+
+
+def test_an_unrelated_pulse_class_is_kept_under_operations_when_it_subclasses_pulse():
+    """v1.6.0 review: a channel's `operations` is `Dict[str, Pulse]`, so a lab pulse class
+    that subclasses `Pulse` -- not the stock class the builder wrote -- is admissible there.
+    One lab's SNZ pulse (its own `Pulse` subclass, four lab-only knobs) came back as the
+    stock SNZPulse with every knob dropped. Kept now, its fields gated by its own env field
+    list, and a stock-only default the lab class does not declare is dropped and said."""
     unrelated = {LAB_RO: {"bases": ["quam.components.pulses.Pulse"],
                           "fields": ["amplitude", "weights_real"]}}
     old = _ro_chip(LAB_RO, weights_real=[1.0])
     new = _ro_chip(STOCK_RO)
-    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]}, keep_classes=unrelated)
+    new["qubits"]["q1"]["resonator"]["operations"]["readout"]["length"] = 100   # stock-only default
+    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude", "length"]}, keep_classes=unrelated)
     ro = r.merged["qubits"]["q1"]["resonator"]["operations"]["readout"]
-    assert ro["__class__"] == STOCK_RO
-    assert "weights_real" not in ro
+    assert ro["__class__"] == LAB_RO and ro["weights_real"] == [1.0]
+    assert "length" not in ro
+    assert "qubits.q1.resonator.operations.readout.length" in r.stats.schema_dropped
+    assert r.stats.class_kept == [("qubits.q1.resonator.operations.readout", LAB_RO)]
+    assert r.stats.class_changed == []
+
+
+def test_a_non_pulse_class_under_operations_is_still_substituted():
+    """The container rule needs the container's own base in the MRO: a class that is not a
+    Pulse at all cannot live in `operations`, so the stock class stands (reported)."""
+    not_a_pulse = {LAB_RO: {"bases": ["quam.core.quam_classes.QuamComponent"],
+                            "fields": ["amplitude", "weights_real"]}}
+    old = _ro_chip(LAB_RO, weights_real=[1.0])
+    new = _ro_chip(STOCK_RO)
+    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]}, keep_classes=not_a_pulse)
+    ro = r.merged["qubits"]["q1"]["resonator"]["operations"]["readout"]
+    assert ro["__class__"] == STOCK_RO and "weights_real" not in ro
     assert r.stats.class_kept == []
     assert [p for p, _, _ in r.stats.class_changed] == ["qubits.q1.resonator.operations.readout"]
 
