@@ -9,14 +9,14 @@ An app to view, edit and track QUAM `state.json` / `wiring.json` and experiment 
 **conda**
 ```bash
 conda activate <your-lab-env>
-pip install "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git@v1.5.4"
+pip install "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git"
 ```
 
 **uv** (inside your project folder)
 ```bash
-uv pip install "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git@v1.5.4"
+uv pip install "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git"
 # or record it in pyproject.toml:
-uv add "quam-state-manager @ git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git@v1.5.4"
+uv add "quam-state-manager @ git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git"
 ```
 
 ## Run
@@ -44,8 +44,8 @@ qsm browser --port 5070
   `pip install <file>.whl --no-deps`.
 
 ```bash
-pip install --force-reinstall --no-deps "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git@v1.5.4"
-uv pip install --reinstall --no-deps "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git@v1.5.4"
+pip install --force-reinstall --no-deps "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git"
+uv pip install --reinstall --no-deps "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager.git"
 ```
 
 | Problem | Fix |
