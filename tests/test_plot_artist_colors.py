@@ -42,3 +42,26 @@ assert.deepStrictEqual(Array.from(colors), ['#e6e9ef', '#e6e9ef', '#1f77b4']);
                             cwd=root, env=dict(os.environ), capture_output=True,
                             text=True, encoding='utf-8', timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_string_axis_title_survives_the_dark_theme():
+    """Plotly takes a title as a plain string. The dark-theme recolour once spread that
+    string into {0: 't', 1: 'i', ...}, so every string axis title (the Pulses inspector's
+    'time (ns)' / 'amplitude (V)') vanished in the dark theme."""
+    root = Path(__file__).resolve().parents[1]
+    script = r"""
+const assert = require('assert'), fs = require('fs'), {JSDOM} = require('jsdom');
+for (const theme of ['dark', 'light']) {
+  const dom = new JSDOM('<html data-theme="' + theme + '"></html>', {runScripts:'outside-only'});
+  dom.window.eval(fs.readFileSync('quam_state_manager/web/static/plot-theme.js', 'utf8'));
+  const out = dom.window.PlotTheme.houseLayout({title: 'Heading', xaxis: {title: 'time (ns)'},
+                                               yaxis: {title: {text: 'amplitude (V)'}}});
+  const text = t => (typeof t === 'string' ? t : t && t.text);
+  assert.strictEqual(text(out.xaxis.title), 'time (ns)', theme);
+  assert.strictEqual(text(out.yaxis.title), 'amplitude (V)', theme);
+  assert.strictEqual(text(out.title), 'Heading', theme);
+}
+"""
+    result = subprocess.run(['node', '-e', script], cwd=root, env=dict(os.environ),
+                            capture_output=True, text=True, encoding='utf-8', timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr

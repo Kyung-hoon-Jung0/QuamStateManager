@@ -359,8 +359,13 @@
         ['flux', 'time'].forEach(function (f) {
             var p = root.querySelector('#czp-' + f + '-caveat');
             if (!p) return;
-            p.innerHTML = cave[f].map(esc).join('<br>');
-            p.hidden = !cave[f].length;
+            // one line, the sentences folded: several per-qubit paragraphs pushed the
+            // figure below the fold at 1366 px (CZ8). The text stays in the DOM.
+            var uniq = Array.from(new Set(cave[f]));
+            p.innerHTML = uniq.length === 1 ? esc(uniq[0]) : uniq.length ? '<details class="czp-caveat-box"><summary>' +
+                esc(plural(uniq.length, 'note', 'notes')) + ' on this figure</summary>' +
+                uniq.map(esc).join('<br>') + '</details>' : '';
+            p.hidden = !uniq.length;
         });
         var cal = d.calibration || {}, groups = warningGroups(cal);
         var count = cal.warning_count != null ? cal.warning_count : (cal.warnings || []).length;
@@ -459,7 +464,7 @@
     function drawFlux(root, d, token) {
         var el = root.querySelector('#czp-flux');
         if (!el) return Promise.resolve();
-        var C = colors(), traces = [], shapes = [], notes = [];
+        var C = colors(), traces = [], shapes = [], notes = [], bandLabels = [];
         var lines = d.row.lines, pts = lines.map(function (ln) { return ln.point; });
         var side = lossPanel(root, d, C), right = side ? 0.76 : 1;
         d.qubits.forEach(function (q, k) {
@@ -483,6 +488,10 @@
             (q.tls || []).forEach(function (b) {
                 shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
                     fillcolor: tint(col, 0.08), line: { color: col, width: 1 }, layer: 'below' });
+                // a narrow band draws as a bare line across the plot: name it where it sits
+                bandLabels.push({ _czpDefectLabel: true, xref: 'paper', x: 0.01, xanchor: 'left', yref: 'y', y: ghz(b.hi_hz),
+                    yanchor: 'bottom', showarrow: false, text: q.name + ' defect ' + ghz(b.lo_hz).toFixed(3) + '–' + ghz(b.hi_hz).toFixed(3) + ' GHz',
+                    font: { size: 9, color: col } });
             });
             if ((q.tls || []).length) notes.push(q.name + ': ' + q.tls.length + ' measured defect band' + (q.tls.length === 1 ? '' : 's') + ' shaded');
         });
@@ -496,7 +505,7 @@
                     hovertemplate: hoverEsc(op.operation) + ' ' + hoverEsc(p.kind || '') + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra></extra>' });
             });
         });
-        var annotations = [];
+        var annotations = bandLabels.slice();
         var preview = root._czSolvePreview;
         if (preview && preview.op === d.row.path) {
             traces.push({type: 'scatter', mode: 'markers', x: [preview.x], y: [preview.y],
@@ -580,6 +589,43 @@
         });
     }
 
+    /* The Delta(t) y-range: the gate plateau(s) and the resonance bands, never the idle
+       detuning (often +-1.5 GHz, which squeezed the resonances into a sliver). The idle
+       stretches are then clipped; offscale says which edge they leave through.
+       gateKnown is false when the gate samples are missing (a qubit's frequency refused). */
+    function deltaRange(delta, levels, idleMhz) {
+        var num = function (v) { return typeof v === 'number' && isFinite(v); };
+        var vals = (delta || []).filter(num);
+        if (!vals.length) return null;
+        // the idle detuning comes from the qubits' idle f_01; a pulse with no zero padding
+        // (a plain square) has no idle sample, so its first sample is the plateau
+        var idle = num(idleMhz) ? idleMhz : vals[0];
+        // the plateau(s): samples at least half the largest excursion from idle; a few
+        // transition samples (an SNZ zero-crossing step) do not set the range
+        var far = Math.max.apply(null, vals.map(function (v) { return Math.abs(v - idle); }));
+        var plateau = far > 0.5 ? vals.filter(function (v) { return Math.abs(v - idle) >= far / 2; }) : [];
+        // any missing gate sample means a qubit's frequency is refused there
+        var gateKnown = !(delta || []).some(function (v) { return !num(v); });
+        var keep = gateKnown ? plateau.slice() : [];
+        (levels || []).forEach(function (l) {
+            [l.lo_mhz, l.hi_mhz, l.detuning_mhz].forEach(function (v) { if (num(v)) keep.push(v); });
+        });
+        if (!keep.length) keep.push(idle);
+        var lo = Math.min.apply(null, keep), hi = Math.max.apply(null, keep);
+        var pad = 0.15 * Math.max(hi - lo, 40);
+        var range = [lo - pad, hi + pad];
+        // the plateau never touches an edge: about a fifth of the range beyond it
+        if (gateKnown && plateau.length) {
+            var h = 0.2 * (range[1] - range[0]);
+            range = [Math.min(range[0], Math.min.apply(null, plateau) - h),
+                     Math.max(range[1], Math.max.apply(null, plateau) + h)];
+        }
+        // an off-scale marker only for idle stretches the trace actually draws
+        var drawn = vals.some(function (v) { return Math.abs(v - idle) <= 0.5; });
+        return { range: range, idle: idle, gateKnown: gateKnown,
+                 offscale: !drawn ? null : idle > range[1] ? 'above' : idle < range[0] ? 'below' : null };
+    }
+
     /* (b) f(t) of both qubits from the operation's waveforms, and Delta(t) against the three
        resonance conditions, so it shows when and how long the pair sits on the intended one. */
     function drawTime(root, d, token) {
@@ -625,6 +671,21 @@
             yaxis2: { title: { text: 'Δ (MHz)' }, domain: [0, 1], anchor: 'x' },
             shapes: shapes, annotations: annotations, hovermode: 'x unified'
         });
+        var f0 = (d.qubits || []).map(function (q) { return q && q.summary ? q.summary.f01_hz : null; });
+        var view = deltaRange(delta, panel.levels,
+            f0.length === 2 && f0[0] != null && f0[1] != null ? (f0[0] - f0[1]) / 1e6 : null);
+        if (view) {
+            L.yaxis2 = Object.assign({}, L.yaxis2, { range: view.range, autorange: false });
+            el.setAttribute('data-delta-range', JSON.stringify(view.range));
+            var notes = L.annotations = (L.annotations || []).slice();
+            if (view.offscale) notes.push({ xref: 'paper', x: 0, xanchor: 'left', yref: 'paper',
+                y: view.offscale === 'above' ? 1 : 0, yanchor: view.offscale === 'above' ? 'bottom' : 'top',
+                showarrow: false, font: { size: 10, color: C.q[0] },
+                text: 'idle Δ ' + (view.idle > 0 ? '+' : '') + view.idle.toFixed(1) + ' MHz ' +
+                      (view.offscale === 'above' ? '↑' : '↓') + ' off scale' });
+            if (!view.gateKnown) notes.push({ xref: 'paper', x: 0.5, yref: 'paper', y: 0.5, showarrow: false,
+                font: { size: 12 }, text: 'Δ during the gate unknown: a qubit\'s frequency is refused (reason above)' });
+        }
         return window.requirePlotly().then(function () {
             if (!active(root, token)) return;
             var frequency = root.querySelector('#czp-frequency');
@@ -1321,7 +1382,7 @@
             });
     }
 
-    window.CzPlan = { mount: mount, refresh: refresh, _esc: esc,
+    window.CzPlan = { mount: mount, refresh: refresh, _esc: esc, _deltaRange: deltaRange,
                       drawMap: function (root) { return window.CzMap ? window.CzMap.draw(root) : Promise.resolve(); } };
     document.addEventListener('DOMContentLoaded', mount);
     document.addEventListener('htmx:afterSwap', mount);

@@ -1323,9 +1323,15 @@ def sparkline_svg(payload: dict, *, width: int = 90, height: int = 24,
     if not payload.get("ok") or not payload.get("i"):
         return None
 
-    traces = [("spark-i", payload["i"])]
+    raw = [("spark-i", list(payload["i"]))]
     if payload.get("q") is not None and any(payload["q"]):
-        traces.append(("spark-q", payload["q"]))
+        raw.append(("spark-q", list(payload["q"])))
+    # A pulse that starts or ends away from 0 (a plain square) would draw one flat line
+    # on the cell's edge, which reads as an empty cell: close every trace to the baseline
+    # by the same sample so I and Q stay aligned.
+    lead = any(v[0] != 0 for _, v in raw if v)
+    tail = any(v[-1] != 0 for _, v in raw if v)
+    traces = [(c, ([0.0] if lead else []) + v + ([0.0] if tail else [])) for c, v in raw]
 
     # shared y-scale across I and Q so relative magnitude reads correctly
     all_vals = [v for _, vals in traces for v in vals]
@@ -1337,7 +1343,7 @@ def sparkline_svg(payload: dict, *, width: int = 90, height: int = 24,
     polylines = []
     for css_class, vals in traces:
         xs, ys, _ = decimate_minmax(vals, max_points)
-        n = len(payload["i"])
+        n = len(vals)
         denominator = max(n - 1, 1)
         points = " ".join(
             f"{pad + (width - 2 * pad) * x / denominator:.1f},"

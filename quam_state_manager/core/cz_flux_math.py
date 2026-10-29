@@ -56,7 +56,9 @@ def model_inverse(model, anchor, f01, target, polarity=1):
         offset = f01 - float(arc_frequency(model, anchor))
         fmin = float(arc_frequency(model, 0.5)) + offset
         fmax = float(arc_frequency(model, 0)) + offset
-        raise ValueError(f"target {target / 1e9:g} GHz is outside the fitted arc ({fmin / 1e9:g}..{fmax / 1e9:g} GHz)")
+        low = (f"{fmin / 1e9:g}" if fmin > 0 else
+               "0 (no lower sweet spot" + (", d = 0)" if model["d"] == 0 else ")"))
+        raise ValueError(f"target {target / 1e9:g} GHz is outside the fitted arc ({low}..{fmax / 1e9:g} GHz)")
     phi = math.asin(math.sqrt(np.clip((1 - r**4) / (1 - model["d"]**2), 0, 1))) / math.pi
     candidates = [model["phi0_v"] * (k + side * phi - anchor)
                   for k in (-1, 0, 1) for side in (-1, 1)]
@@ -155,14 +157,39 @@ def model_spots(model):
     The fit's own park is ``f_01_at_fit_hz`` at ``phi_park``; the other spot is the
     arc's extremum half a flux quantum from the park's sweet spot, carried by the
     fit's offset from ``f_01_at_fit_hz`` [derived]. ``stored_other_hz`` is the lab's
-    own ``f_opposite_hz`` beside it."""
+    own ``f_opposite_hz`` beside it.
+
+    The other spot may not exist (``d = 0``: the arc formula reaches ``-Ec`` at half
+    a flux quantum; or a chip with only an upper sweet spot): then its ``f_hz`` is
+    None and ``missing`` says why. A frequency at or below 0 Hz is never reported,
+    compared or anchored to."""
     offset = model["f_01_at_fit_hz"] - float(arc_frequency(model, model["phi_park"]))
     phi_other = sweet_spot_phi(model["phi_park"]) + 0.5
+    kind = spot_kind(phi_other)
     other = float(arc_frequency(model, phi_other)) + offset
+    stored = model.get("f_opposite_hz")
+    missing = None
+    if kind == "lower" and model["d"] == 0:
+        missing = "no lower sweet spot (d = 0)"
+    elif model.get("f_opposite_stored") and stored is None:
+        missing = f"no {kind} sweet spot (the fit stores f_opposite_hz = null)"
+    elif stored is not None and stored <= 0:
+        missing = f"no {kind} sweet spot (the fit's f_opposite_hz is at or below 0 Hz)"
+    elif not math.isfinite(other) or other <= 0:
+        missing = f"no {kind} sweet spot (the fitted arc reaches 0 Hz before it)"
     return {"fit": {"phi": model["phi_park"], "kind": spot_kind(model["phi_park"]),
                     "f_hz": model["f_01_at_fit_hz"]},
-            "other": {"phi": phi_other, "kind": spot_kind(phi_other), "f_hz": other},
-            "stored_other_hz": model.get("f_opposite_hz")}
+            "other": {"phi": phi_other, "kind": kind, "f_hz": None if missing else other,
+                      "missing": missing},
+            "stored_other_hz": stored if stored is not None and stored > 0 else None}
+
+
+def spot_separation(spots):
+    """Frequency span between the arc's two sweet spots; with no other spot the arc
+    spans from the fit's spot down to 0 Hz [derived]."""
+    if spots["other"]["f_hz"] is None:
+        return abs(spots["fit"]["f_hz"])
+    return abs(spots["fit"]["f_hz"] - spots["other"]["f_hz"])
 
 
 def resonances(fc, ft, alpha_c, alpha_t):

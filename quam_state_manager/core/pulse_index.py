@@ -280,6 +280,17 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
                     v = t.get("resolved_value")
                     if isinstance(v, (int, float)) and not isinstance(v, bool):
                         row[fname] = v
+            if row["length"] is None:
+                # the target's length is often a runtime property (#./inferred_*):
+                # read it the way the target's own row does, never "-" beside a known length
+                tbody = merged
+                for seg in target["resolved_path"].split("."):
+                    tbody = tbody.get(seg) if isinstance(tbody, dict) else None
+                if isinstance(tbody, dict) and not is_pointer(tbody):
+                    trow = _row_for_pulse(merged, target["resolved_path"], tbody, owner_kind=owner_kind,
+                                          owner=owner, channel=channel, op_name=op_name, gate=gate,
+                                          reverse_index=reverse_index, op_referrers=op_referrers)
+                    row["length"] = trow.get("length")
         else:
             row["alias_target"] = body  # dangling — show the raw pointer
         row["summary"] = f"alias → {row['alias_target']}"

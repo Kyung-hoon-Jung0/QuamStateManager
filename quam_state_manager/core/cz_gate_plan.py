@@ -118,7 +118,9 @@ def model_of(qubit):
     for k in ("model_r2", "a_half_v", "f_opposite_hz", "quad_small_hz_per_v2"):
         m[k] = number(raw.get(k))
     m["created_at"] = raw.get("created_at") if isinstance(raw.get("created_at"), str) else None
-    if m["phi0_v"] <= 0 or not 0 < m["d"] < 1 or m["amp_min_v"] >= m["amp_max_v"]:
+    # the lab writes f_opposite_hz = null when the opposite spot is at or below 0 Hz
+    m["f_opposite_stored"] = "f_opposite_hz" in raw
+    if m["phi0_v"] <= 0 or not 0 <= m["d"] < 1 or m["amp_min_v"] >= m["amp_max_v"]:
         return None
     return m
 
@@ -158,8 +160,9 @@ def _at_spot(model, f01):
     if f01 is None:
         return None
     spots = model_spots(model)
-    sep = abs(spots["fit"]["f_hz"] - spots["other"]["f_hz"])
-    name = min(("fit", "other"), key=lambda k: abs(spots[k]["f_hz"] - f01))
+    sep = cz_flux_math.spot_separation(spots)
+    names = [k for k in ("fit", "other") if spots[k]["f_hz"] is not None]
+    name = min(names, key=lambda k: abs(spots[k]["f_hz"] - f01))
     dist = abs(spots[name]["f_hz"] - f01)
     if dist <= max(F01_TOLERANCE_HZ, SPOT_FRACTION * sep):
         return name, spots[name], dist
@@ -195,12 +198,15 @@ def frame(qubit):
         if f is not None and sweet is not None and abs(sweet - f) <= F01_TOLERANCE_HZ:
             evidence.append((f"extras.{label}_sweet_spot_frequency equals f_01", direction))
     opposite = number(extras.get("opposite_sweet_spot_qubit_frequency"))
+    if opposite is not None and opposite <= 0:
+        notes.append("extras.opposite_sweet_spot_qubit_frequency is at or below 0 Hz"
+                     " (no opposite sweet spot); not used")
+        opposite = None
     if f is not None and opposite is not None:
         here = at[1]["f_hz"] if at else None
         stale = abs(opposite - f) <= F01_TOLERANCE_HZ or (
             here is not None and m is not None
-            and abs(opposite - here) <= SPOT_FRACTION * abs(model_spots(m)["fit"]["f_hz"]
-                                                            - model_spots(m)["other"]["f_hz"]))
+            and abs(opposite - here) <= SPOT_FRACTION * cz_flux_math.spot_separation(model_spots(m)))
         if stale:
             notes.append("extras.opposite_sweet_spot_qubit_frequency names the spot the qubit sits at now"
                          " (recorded from the other spot); not used")
@@ -240,6 +246,9 @@ class Conversion:
         self.rejection = None
         m = self.model
         if m is not None:
+            missing = model_spots(m)["other"]["missing"]
+            if missing:
+                self.notes.append("lab flux model: " + missing)
             self.rejection = lab_rejection(m, self.f01)
             spot = self.frame["model_anchor"]
             quality_ok = lab_rejection(m, m["f_01_at_fit_hz"]) is None
@@ -286,7 +295,12 @@ class Conversion:
             return None
         m = self.model
         here = cz_flux_math.local_quad_coefficient(m, self.anchor)
-        other = cz_flux_math.local_quad_coefficient(m, self.anchor + 0.5)
+        # no curvature is read at a sweet spot the arc does not have
+        has_other = (self.anchor != m["phi_park"]
+                     or model_spots(m)["other"]["f_hz"] is not None)
+        other = cz_flux_math.local_quad_coefficient(m, self.anchor + 0.5) if has_other else None
+        if other is not None and not math.isfinite(other):
+            other = None
         out = {"here_hz_per_v2": here, "other_hz_per_v2": other, "ratio": None, "note": None}
         if self.quad:
             out["ratio"] = self.quad / abs(here) if here else None
@@ -1173,10 +1187,23 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
     aim = f"{target / 1e6:+.1f} MHz" if target is not None else "unknown"
     def mv(value):
         return f"{value * 1e3:+.1f} mV" if value is not None else "unknown"
-    result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude "
+    # With two moving qubits (two-flux, both movers) the answer is one line's amplitude,
+    # the partner held where it plays: say whose amplitude it is.
+    movers = [ln for ln in row["lines"] if ln["moves"]] if row else []
+    whose = f"of {mover['name']} " if mover and len(movers) > 1 else ""
+    result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude {whose}"
                          + (mv(required) if result["ok"] else result["reason"])
                          + f" | stored {mv(stored)} | difference {mv(difference)}"
                          + f" ({result.get('tier', tier)})")
+    # The stored point may sit on a different resonance than the one the target names
+    # (e.g. on iSWAP while aiming at |11>-|20>): an amplitude difference alone hides that.
+    aimed = [r for r in result.get("distances") or [] if r.get("distance_hz") is not None]
+    aimed = min(aimed, key=lambda r: abs(r["distance_hz"]))["name"] if aimed else None
+    near = (row or {}).get("nearest")
+    if result.get("ok") and aimed and near and near.get("name") != aimed:
+        result["stored_nearest"] = near["name"]
+        result["summary"] += (f" | stored point is nearest {near['name']} "
+                              f"({near['distance_hz'] / 1e6:+.1f} MHz), not {aimed}")
     return result
 
 
@@ -1255,6 +1282,10 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
             """Anchored inverse dispatch [derived], check S2-M."""
             if not model_ok:
                 raise ValueError("no flux-frequency model: freq_vs_flux_01_quad_term is missing")
+            if conv.sign is None:
+                # Conversion.point refuses this qubit (conflicting or absent sweet-spot
+                # evidence); the inverse must not answer what the forward map refuses.
+                raise ValueError("flux direction unknown: " + conv.frame["reason"])
             return cz_flux_math.model_inverse(conv.model, conv.anchor, conv.f01, wanted, polarity)
 
         quad_v = model_v = None
