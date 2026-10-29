@@ -260,14 +260,31 @@ def coupler_frequency(model, amplitude):
         model["phi_idle"] + amplitude / model["phi0_v"]))
 
 
-def lamb_shift(fq, fc, g):
-    """[derived], S3-L: pulsed Delta and Sigma, including counter-rotation.
+def lamb_shift(fq, fc, g, alpha_q=0.0, alpha_c=0.0):
+    """[derived], S3L-bound: exact one-excitation RWA plus dressed CR.
 
-    RWA [paper: arXiv:1803.09813v1, p.2, Eq. (2)]:
+    Leading RWA only [paper: arXiv:1803.09813v1, p.2, Eq. (2)]:
     `w~j = wj + gj^2/Delta_j` (LITERATURE.md section 3).
-    The additional -g^2/Sigma term is derived for charge coupling F1.
+    The signed 2x2 eigenvalue resums -g^4/Delta^3 and higher terms.
+    CR is second order between RWA eigenstates: eliminate the N=3
+    block at the dressed energy and the N=2 block at ground energy 0.
+    Check: checks/s3l_bound.py and test_cz_s3l_bound.py, <=0.16 percent
+    on the documented finite grid; not a bound outside that domain.
+    Anharmonicities are accepted signed or as positive magnitudes.
     """
-    return g**2 / (fq - fc) - g**2 / (fq + fc)
+    delta = fq - fc
+    rwa = (2 * g**2 / delta) / (math.sqrt(1 + 4 * (g / delta)**2) + 1)
+    aq, ac = -abs(alpha_q), -abs(alpha_c)
+    mix = rwa / g if g else 0.0
+    u = 1 / math.sqrt(1 + mix**2)
+    v = mix * u
+    # N=3 basis |21>, |12>; CR source sqrt(2)*g*(u,v).
+    x = fq + rwa - (2 * fq + fc + aq)
+    y = fq + rwa - (fq + 2 * fc + ac)
+    excited_cr = 2 * g**2 * (u*u*y + 4*g*u*v + v*v*x) / (x*y - 4*g*g)
+    # N=2 basis |20>, |11>, |02>; |00> couples to |11>.
+    ground_cr = -g**2 / (fq + fc - 2*g*g/(2*fq + aq) - 2*g*g/(2*fc + ac))
+    return rwa + excited_cr - ground_cr
 
 
 def dressed_energies(frequencies, anharmonicities, couplings, states):
@@ -303,7 +320,7 @@ def dressed_energies(frequencies, anharmonicities, couplings, states):
 def coupler_shift(fq, fc, alpha, ec, g):
     """[derived], S3-L/S3-O: regime and maximum-overlap refusal."""
     if fq != fc and abs(g / (fq - fc)) <= 0.1:
-        return {"coupler_shift_hz": lamb_shift(fq, fc, g),
+        return {"coupler_shift_hz": lamb_shift(fq, fc, g, alpha, ec),
                 "coupler_method": "dispersive estimate (f_01 shift only)"}
     states = dressed_energies([fq, fc], [alpha, ec], [(0, 1, g)], [(0, 0), (1, 0)])
     if min(s[1] for s in states) < 0.9 or len({s[2] for s in states}) != 2:

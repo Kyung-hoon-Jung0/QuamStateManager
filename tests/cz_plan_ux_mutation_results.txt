@@ -6,3 +6,6 @@ UX-5: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz
 UX-6: RED (mutation detected), reverted, GREEN; quam_state_manager/web/templates/_cz_plan.html: >no quad term</span> -> >{{ r.reasons | join("; ") }}</span>
 UX-7: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: (r.duration_note ? help(r.duration_note) : '') -> (r.duration_note ? esc(r.duration_note) : '')
 UX-8: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-map.js: var PARTNER_FONT = 11; -> var PARTNER_FONT = 9;
+UX-9: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: color: C.q[0], width: 4, shape: 'hv' -> color: C.muted, width: 1.8, shape: 'hv'
+UX-10: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: if (t.startsWith('coupler shift unknown')) -> if (false)
+UX-11: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: ', the higher qubit)' -> ', H)'

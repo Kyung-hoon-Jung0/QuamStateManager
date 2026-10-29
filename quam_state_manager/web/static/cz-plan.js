@@ -51,7 +51,13 @@
     function renderMatch(root, result) {
         var match = root.querySelector('#czp-match');
         if (!match) return;
-        match.textContent = result.summary || result.reason || '';
+        var qubits = ((root._czLast || {}).d || {}).qubits || [];
+        var higher = qubits.filter(function (q) { return q.summary && q.summary.f01_hz != null; })
+            .sort(function (a, b) { return b.summary.f01_hz - a.summary.f01_hz; })[0];
+        var summary = result.summary || result.reason || '';
+        match.innerHTML = esc(summary.replace(/\(= .*? of H per node 30\)/,
+            '(= \u2212anharmonicity of ' + (higher ? higher.name : 'the higher qubit') + (higher ? ', the higher qubit)' : ')'))) +
+            help('same rule as official node 30');
         ['target_detuning_hz', 'amplitude_v', 'stored_amplitude_v', 'difference_v', 'tier', 'line'].forEach(function (key) {
             match.setAttribute('data-' + key.replace(/_/g, '-'), result[key] == null ? '' : result[key]);
         });
@@ -315,8 +321,9 @@
        to the status line; the staleness warnings and the notes on how a figure was drawn go
        into the collapsed box below the card, with a chip in the title row that opens it. */
     function renderNotes(root, d) {
-        var tags = d.notes_figure || [], status = [], cave = { flux: [], time: [] };
+        var tags = d.notes_figure || [], status = [], unknown = [], cave = { flux: [], time: [] };
         (d.notes || []).forEach(function (t, i) {
+            if (t.startsWith('coupler shift unknown')) { unknown.push(t); return; }
             var tag = tags[i] || 'both';
             if (tag === 'status') status.push(t);
             else if (tag === 'flux') cave.flux.push(t);
@@ -331,6 +338,11 @@
             });
         });
         setStatus(root, status);
+        var note = root.querySelector('#czp-pair-coupler-note');
+        if (note) {
+            note.innerHTML = unknown.length ? 'coupler shift unknown' + help(Array.from(new Set(unknown)).join('; ')) : '';
+            note.hidden = !unknown.length;
+        }
         ['flux', 'time'].forEach(function (f) {
             var p = root.querySelector('#czp-' + f + '-caveat');
             if (!p) return;
@@ -500,7 +512,7 @@
                 var lv = [level.name, level.frequency_hz];
                 if (lv[1] == null) return;
                 shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(lv[1]), y1: ghz(lv[1]),
-                    line: { color: C.res, width: 1, dash: 'dot' } });
+                    line: { color: C.res, width: 1, dash: 'dash' }, layer: 'below' });
                 annotations.push({ xref: 'paper', x: 1, xanchor: 'left', xshift: 8, yref: 'y', y: ghz(lv[1]), yanchor: 'bottom', showarrow: false,
                     text: 'control on ' + lv[0], font: { size: 10, color: C.res } });
         });
@@ -578,14 +590,14 @@
             }
         });
         var delta = panel.detuning_mhz;
-        traces.push({ type: 'scatter', mode: 'lines', x: tt, y: delta, name: 'Δ = f_c − f_t', yaxis: 'y2', line: { color: C.muted, width: 1.8, shape: 'hv' },
+        traces.push({ type: 'scatter', mode: 'lines', x: tt, y: delta, name: 'Δ = f_c − f_t', yaxis: 'y2', line: { color: C.q[0], width: 4, shape: 'hv' },
             hovertemplate: 't = %{x} ns<br>Δ: %{y:.1f} MHz<extra></extra>' });
         var shapes = [], annotations = [];
         el.setAttribute('data-resonance-levels', JSON.stringify(panel.levels));
         panel.levels.forEach(function (level, index) {
             var lv = [level.name, level.detuning_mhz];
             shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: level.lo_mhz, y1: level.hi_mhz, fillcolor: tint(C.res, 0.08), line: { width: 0 }, layer: 'below' });
-            shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: lv[1], y1: lv[1], line: { color: C.res, width: 1, dash: 'dot' } });
+            shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: lv[1], y1: lv[1], line: { color: C.res, width: 1, dash: 'dash' }, layer: 'below' });
             // Spread the labels along their own levels: a large idle detuning packs them vertically.
             annotations.push({ xref: 'paper', x: 1 - index * 0.2, xanchor: 'right', yref: 'y2', y: lv[1], yanchor: 'bottom', showarrow: false, text: lv[0], font: { size: 10, color: C.res } });
         });

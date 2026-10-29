@@ -23,6 +23,9 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         url.startsWith('/cz-plan/solve') ? f.solve : url.startsWith('/cz-plan/history') ? f.history : f.data))});
     w.eval(source('cz-plan.js'));w.CzPlan.mount();await wait(40);
     const flux=()=>renders.filter(x=>x.id==='czp-flux').at(-1);
+    const higherName=[...f.data.qubits].sort((a,b)=>b.summary.f01_hz-a.summary.f01_hz)[0].name;
+    const visibleSummary=f.solve.summary.replace(/\(= .*? of H per node 30\)/,
+        '(= \u2212anharmonicity of '+higherName+', the higher qubit)')+' (?)';
     if(item===1){
         assert(detail.compareDocumentPosition(d.querySelector('.czp-map-box')) & w.Node.DOCUMENT_POSITION_FOLLOWING);
         assert(scrolls.includes(detail),'query pair reveals detail after loading');
@@ -38,13 +41,13 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         }
     }
     if(item===3){
-        const match=d.getElementById('czp-match');assert.strictEqual(match.textContent,f.solve.summary);
+        const match=d.getElementById('czp-match');assert.strictEqual(match.textContent,visibleSummary);
         for(const key of ['target_detuning_hz','amplitude_v','stored_amplitude_v','difference_v','tier','line'])
             assert.strictEqual(match.getAttribute('data-'+key.replaceAll('_','-')),String(f.solve[key]));
         const blob=JSON.parse(d.getElementById('cz-operating-points').textContent);
         assert.deepStrictEqual(blob.find(p=>p.op===f.data.row.path&&p.line==='control').solve, f.solve);
         d.querySelector('.czp-row-selected').click();await wait(20);
-        assert.strictEqual(match.textContent,f.solve.summary,'reselecting retains the answer');
+        assert.strictEqual(match.textContent,visibleSummary,'reselecting retains the answer');
     }
     if(item===4){
         const levels=flux().layout.annotations.filter(a=>(a.text||'').startsWith('control on'));
@@ -92,6 +95,30 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         assert(labels.textposition.every(p=>/^(top|bottom) (left|right)$/.test(p)));
         assert(source('cz-map.js').includes('!occupied.every'),'all label placements clear markers');
         env.dom.window.close();
+    }
+    if(item===9){
+        const time=renders.find(x=>x.id==='czp-time'), trace=time.traces.at(-1);
+        assert.deepStrictEqual(Array.from(trace.y),f.data.time_panel.detuning_mhz);
+        assert(trace.y.includes(-210),'the trace lies exactly on the leakage resonance');
+        assert(trace.line.width>=4 && /^#[0-9a-f]{6}$/i.test(trace.line.color));
+        assert(!['#8a8a8a','#888888','#808080'].includes(trace.line.color));
+        const guides=time.layout.shapes.filter(s=>s.type==='line');
+        assert(guides.length===3 && guides.every(s=>s.layer==='below' && s.line.width<=1 && s.line.dash==='dash'));
+    }
+    if(item===10){
+        const detail=d.querySelector('.czp-detail'), note=d.getElementById('czp-pair-coupler-note');
+        assert.strictEqual((detail.textContent.match(/coupler shift unknown/g)||[]).length,1);
+        assert.strictEqual(note.firstChild.textContent.trim(),'coupler shift unknown');
+        assert(note.querySelector('.czp-help-hover').title.includes('extras.sm_coupler_model'));
+        assert(!detail.textContent.includes('extras.sm_coupler_model'));
+    }
+    if(item===11){
+        const higher=[...f.data.qubits].sort((a,b)=>b.summary.f01_hz-a.summary.f01_hz)[0];
+        const match=d.getElementById('czp-match');
+        assert(match.textContent.includes('(= \u2212anharmonicity of '+higher.name+', the higher qubit)'));
+        assert(!match.textContent.includes('node 30'));
+        assert(match.querySelector('.czp-help-hover').title.includes('same rule as official node 30'));
+        assert.strictEqual(JSON.parse(d.getElementById('cz-operating-points').textContent).find(p=>p.op===f.data.row.path&&p.line==='control').solve.summary,f.solve.summary);
     }
     dom.window.close(); console.log('UX-'+item+' passed');
 })().catch(e=>{console.error(e);process.exit(1)});

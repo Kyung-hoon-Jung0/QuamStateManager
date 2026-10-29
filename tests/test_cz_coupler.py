@@ -42,13 +42,13 @@ def test_lamb_cr_switch():
     for ratio in (.02, .05, .1):
         fq, g = 5e9, 60e6
         fc = fq + g / ratio
-        states = M.dressed_energies([fq, fc], [-240e6, -100e6], [(0, 1, g)], [(0, 0), (1, 0)])
+        states = M.dressed_energies([fq, fc], [-200e6, -100e6], [(0, 1, g)], [(0, 0), (1, 0)])
         shift = states[1][0] - states[0][0] - fq
-        result = M.coupler_shift(fq, fc, -240e6, 100e6, g)
+        result = M.coupler_shift(fq, fc, -200e6, 100e6, g)
         assert result['coupler_method'] == 'dispersive estimate (f_01 shift only)'
-        assert result['coupler_shift_hz'] == pytest.approx(shift, rel=.007)
-        assert result['coupler_shift_hz'] == g*g/(fq-fc) - g*g/(fq+fc)
-    assert M.coupler_shift(5e9, 5.59e9, -240e6, 100e6, 60e6)['coupler_method'] == 'diagonalised'
+        assert result['coupler_shift_hz'] == pytest.approx(shift, rel=.0016)
+        assert result['coupler_shift_hz'] == M.lamb_shift(fq, fc, g, -200e6, -100e6)
+    assert M.coupler_shift(5e9, 5.59e9, -200e6, 100e6, 60e6)['coupler_method'] == 'diagonalised'
 
 
 def test_pulsed_frequencies():
@@ -61,10 +61,10 @@ def test_pulsed_frequencies():
     row = rows[0]
     wc = M.coupler_frequency(MODEL, .12)
     assert wc != M.coupler_frequency(MODEL, 0)
-    for ln, key in zip(row['lines'], ['g_c_hz', 'g_t_hz']):
+    for ln, key, alpha in zip(row['lines'], ['g_c_hz', 'g_t_hz'], [-200e6, -210e6]):
         fq = ln['point']['frequency_hz']
         assert ln['coupler_frequency_hz'] == wc
-        assert ln['coupler_shift_hz'] == M.lamb_shift(fq, wc, MODEL[key])
+        assert ln['coupler_shift_hz'] == M.lamb_shift(fq, wc, MODEL[key], alpha, MODEL["ec_c_hz"])
         assert ln['shifted_frequency_hz'] == fq + ln['coupler_shift_hz']
     assert row['lines'][0]['coupler_shift_hz'] != M.lamb_shift(5e9, wc, MODEL['g_c_hz'])
 
@@ -93,12 +93,7 @@ def test_hybridised_refusal():
 def test_independent_two_hundred():
     from tests.test_cz_flux_math_crosscheck import load_check
     spec = load_check('checks/spec_checks.py')
-    # Evaluate the independent script's actual Lamb+CR expression, by path.
-    import ast
-    tree = ast.parse(Path(spec.__file__).read_text(encoding='utf-8'))
-    expression = next(n.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
-                      and any(isinstance(t, ast.Name) and t.id == 'lamb_cr' for t in n.targets))
-    reference_lamb = compile(ast.Expression(expression), spec.__file__, 'eval')
+    bound_check = load_check('checks/s3l_bound.py')
     rng = np.random.default_rng(304)
     for _ in range(200):
         model = dict(MODEL, fc_max_hz=rng.uniform(6e9, 8e9), phi_idle=rng.uniform(-.1,.1))
@@ -111,7 +106,7 @@ def test_independent_two_hundred():
         states = M.dressed_energies([fq, wc], [200e6, 250e6], [(0,1,g)], [(0,0),(1,0)])
         assert states[1][0]-states[0][0] == pytest.approx(f, rel=1e-6)
         assert states[1][1] == pytest.approx(overlap, rel=1e-6)
-        assert M.lamb_shift(fq,wc,g) == pytest.approx(eval(reference_lamb, {}, dict(wq=fq, wc=wc, g=g)), rel=1e-6)
+        assert M.lamb_shift(fq,wc,g,-200e6,-250e6) == pytest.approx(bound_check.estimates(fq,wc,-200e6,-250e6,g)[-1], rel=1e-6)
 
 
 def browser_form(create_extras=False):

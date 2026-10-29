@@ -14,7 +14,7 @@ CAP = 'quam_state_manager/core/capabilities.py'
 TEST = 'tests/test_cz_coupler.py::'
 CASES = [
     ('invent default', PLAN, '"coupler_shift_hz": None, "coupler_method": COUPLER_UNKNOWN', '"coupler_shift_hz": 0.0, "coupler_method": COUPLER_UNKNOWN', TEST+'test_unknown_and_validation'),
-    ('drop CR', MATH, 'return g**2 / (fq - fc) - g**2 / (fq + fc)', 'return g**2 / (fq - fc)', TEST+'test_lamb_cr_switch'),
+    ('drop CR', MATH, 'return rwa + excited_cr - ground_cr', 'return rwa', TEST+'test_lamb_cr_switch'),
     ('idle Delta', PLAN, 'cz_flux_math.coupler_shift(bare, frequency, alpha', 'cz_flux_math.coupler_shift(5e9, frequency, alpha', TEST+'test_pulsed_frequencies'),
     ('twice f01', MATH, 'distances = [e20 - e11, e11 - e02, e10 - e01]', 'distances = [e20 - e11, fc - ft + abs(at) + 2 * coupler_shift(fc, wc, ac, ec, gc)["coupler_shift_hz"], e10 - e01]', TEST+'test_dressed_distance'),
     ('drop overlap', MATH, 'if min(s[1] for s in states) < 0.9 or len({s[2] for s in states}) != 2:', 'if False:', TEST+'test_hybridised_refusal'),

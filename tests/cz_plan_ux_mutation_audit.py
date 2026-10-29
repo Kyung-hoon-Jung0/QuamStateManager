@@ -10,12 +10,15 @@ TEMPLATE = 'quam_state_manager/web/templates/_cz_plan.html'
 MUTATIONS = [
     (1, JS, ".has('pair')) revealFigures(root)", ".has('disabled')) revealFigures(root)"),
     (2, JS, "(lines[k].point.validity || 'validity unknown')", "'extrapolated outside validity range'"),
-    (3, JS, "match.textContent = result.summary || result.reason || '';", "match.textContent = 'amplitude unavailable';"),
+    (3, JS, "var summary = result.summary || result.reason || '';", "var summary = 'amplitude unavailable';"),
     (4, JS, "x: 1, xanchor: 'left', xshift: 8, yref: 'y'", "x: 1, xanchor: 'right', xshift: 0, yref: 'y'"),
     (5, JS, "domain: [0, 1], anchor: 'x'", "domain: [0, 0.34], anchor: 'x'"),
     (6, TEMPLATE, '>no quad term</span>', '>{{ r.reasons | join("; ") }}</span>'),
     (7, JS, "(r.duration_note ? help(r.duration_note) : '')", "(r.duration_note ? esc(r.duration_note) : '')"),
     (8, 'quam_state_manager/web/static/cz-map.js', 'var PARTNER_FONT = 11;', 'var PARTNER_FONT = 9;'),
+    (9, JS, "color: C.q[0], width: 4, shape: 'hv'", "color: C.muted, width: 1.8, shape: 'hv'"),
+    (10, JS, "if (t.startsWith('coupler shift unknown'))", "if (false)"),
+    (11, JS, "', the higher qubit)'", "', H)'"),
 ]
 
 
@@ -23,6 +26,8 @@ def main():
     results = []
     env = dict(os.environ, PYTHONUTF8='1')
     for item, file, old, new in MUTATIONS:
+        if len(sys.argv) > 1 and item not in map(int, sys.argv[1:]):
+            continue
         path = ROOT / file
         original = path.read_bytes()
         source = original.decode('utf8')
@@ -40,7 +45,10 @@ def main():
         result = f'UX-{item}: RED (mutation detected), reverted, GREEN; {file}: {old} -> {new}'
         print(result, flush=True)
         results.append(result)
-    (ROOT / 'tests/cz_plan_ux_mutation_results.txt').write_text('\n'.join(results) + '\n', encoding='utf8')
+    output = ROOT / 'tests/cz_plan_ux_mutation_results.txt'
+    previous = output.read_text(encoding='utf8').splitlines() if output.exists() and len(sys.argv) > 1 else []
+    labels = {r.split(':')[0] for r in results}
+    output.write_text('\n'.join([r for r in previous if r.split(':')[0] not in labels] + results) + '\n', encoding='utf8')
 
 
 if __name__ == '__main__':

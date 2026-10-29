@@ -7,13 +7,27 @@ import subprocess
 
 import pytest
 
-from tests.test_cz_plan_page import _client
+from tests.test_cz_plan_page import _chip, _client
 from quam_state_manager.core import cz_gate_plan as C
 
 
-@pytest.mark.parametrize("item", range(1, 9), ids=lambda n: f"UX-{n}")
+@pytest.mark.parametrize("item", range(1, 12), ids=lambda n: f"UX-{n}")
 def test_cz_plan_ux(tmp_path, item):
-    client = _client(tmp_path)
+    if item >= 9:
+        doc, wiring = _chip()
+        doc['qubits']['q1'].update(f_01=5.62e9, freq_vs_flux_01_quad_term=-1e10)
+        doc['qubits']['q2']['f_01'] = 5.73e9
+        doc['qubits']['q1']['z']['operations']['cz_flux']['amplitude'] = .1
+        pair = doc['qubit_pairs']['q1-2']
+        pair['coupler'] = {'operations': {}}
+        pair['macros']['cz_unipolar']['coupler_flux_pulse'] = {'amplitude': .1}
+        folder = tmp_path / 'state'
+        folder.mkdir()
+        (folder / 'state.json').write_text(json.dumps(doc), encoding='utf8')
+        (folder / 'wiring.json').write_text(json.dumps(wiring), encoding='utf8')
+        client = _client(tmp_path, folder)
+    else:
+        client = _client(tmp_path)
     html = client.get('/cz-plan?pair=q1-2', headers={'HX-Request': 'true'}).get_data(as_text=True)
     selected = re.search(r'data-selected="([^"]+)"', html)[1]
     data = client.get('/cz-plan/data?op=' + selected).get_json()
