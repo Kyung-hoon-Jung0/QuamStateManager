@@ -22910,7 +22910,8 @@ def cz_plan_data():
     except Exception:  # noqa: BLE001 -- the loss block is advisory; the figures stand
         logger.warning("cz plan: the gate's loss block could not be built", exc_info=True)
         gate_loss = []
-    return jsonify(ok=True, row=row, qubits=qubits, trajectory=traj, notes=notes, info=info,
+    return jsonify(ok=True, row=row, qubits=qubits, trajectory=traj,
+                   time_panel=czp.time_panel(row, traj, [q["summary"] for q in qubits]), notes=notes, info=info,
                    notes_figure=notes_figure, info_figure=info_figure, unavailable=unavailable,
                    calibration=card, pair_ops=others, amax_v=amax, gate_loss=gate_loss)
 

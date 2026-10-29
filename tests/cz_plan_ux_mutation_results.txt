@@ -1,0 +1,8 @@
+UX-1: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: .has('pair')) revealFigures(root) -> .has('disabled')) revealFigures(root)
+UX-2: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: (lines[k].point.validity || 'validity unknown') -> 'extrapolated outside validity range'
+UX-3: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: match.textContent = result.summary || result.reason || ''; -> match.textContent = 'amplitude unavailable';
+UX-4: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: x: 1, xanchor: 'left', xshift: 8, yref: 'y' -> x: 1, xanchor: 'right', xshift: 0, yref: 'y'
+UX-5: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: domain: [0, 1], anchor: 'x' -> domain: [0, 0.34], anchor: 'x'
+UX-6: RED (mutation detected), reverted, GREEN; quam_state_manager/web/templates/_cz_plan.html: >no quad term</span> -> >{{ r.reasons | join("; ") }}</span>
+UX-7: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-plan.js: (r.duration_note ? help(r.duration_note) : '') -> (r.duration_note ? esc(r.duration_note) : '')
+UX-8: RED (mutation detected), reverted, GREEN; quam_state_manager/web/static/cz-map.js: var PARTNER_FONT = 11; -> var PARTNER_FONT = 9;

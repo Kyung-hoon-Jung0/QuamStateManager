@@ -1045,7 +1045,62 @@ def operating_points(row):
     return points
 
 
+def time_panel(row, trajectory, summaries):
+    """The displayed time samples and dwell share the server frequency path."""
+    n = max((len(t["frequency_hz"]) for t in trajectory if t), default=0)
+    series = []
+    for ln, t, summary in zip(row["lines"], trajectory, summaries):
+        idle = summary.get("f01_hz") if summary else None
+        series.append([(t["frequency_hz"][i] if i < len(t["frequency_hz"]) else
+                        None if t.get("playback_known") is False else idle) if t else
+                       None if ln["moves"] else idle for i in range(n)])
+    delta = [(fc - ft) / 1e6 if fc is not None and ft is not None else None
+             for fc, ft in zip(*series)] if series else []
+    levels = cz_flux_math.resonances(None, None,
+        (summaries[0] or {}).get("anharmonicity_hz"), (summaries[1] or {}).get("anharmonicity_hz"))
+    dwell = []
+    displayed_levels = []
+    for level in (levels[0], levels[2], levels[1]):
+        value = level["delta_hz"]
+        if value is None:
+            continue
+        partner = row["lines"][1]["point"].get("frequency_hz")
+        displayed_levels.append({"name": level["name"], "detuning_mhz": value / 1e6,
+                                 "lo_mhz": value / 1e6 - 5, "hi_mhz": value / 1e6 + 5,
+                                 "frequency_hz": partner + value if partner is not None else None})
+        count = sum(v is not None and abs(v - value / 1e6) <= 5 for v in delta)
+        if count:
+            dwell.append(f"{level['name']} {count} ns")
+    return {"time_ns": list(range(n)), "series_hz": series, "detuning_mhz": delta,
+            "dwell": "; ".join(dwell), "levels": displayed_levels}
+
+
 def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversions=None):
+    """Solve and format the one-glance comparison from the same numerical result."""
+    if rows is None or conversions is None:
+        rows, conversions = operations(doc)
+    result = _solve(doc, pair, op, line, tier, amp, rows, conversions)
+    row = next((r for r in rows if r["pair"] == pair and op in (r["operation"], r["path"])), None)
+    role = result.get("line") or line
+    if not role and row:
+        role = next((ln["role"] for ln in row["lines"] if ln["moves"]), None)
+    mover = next((ln for ln in row["lines"] if ln["role"] == role), None) if row else None
+    stored = mover["amplitude_v"] if mover else None
+    required = result.get("amplitude_v")
+    difference = required - stored if required is not None and stored is not None else None
+    result.update(stored_amplitude_v=stored, difference_v=difference)
+    target = result.get("target_detuning_hz")
+    aim = f"{target / 1e6:+.1f} MHz" if target is not None else "unknown"
+    def mv(value):
+        return f"{value * 1e3:+.1f} mV" if value is not None else "unknown"
+    result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude "
+                         + (mv(required) if result["ok"] else result["reason"])
+                         + f" | stored {mv(stored)} | difference {mv(difference)}"
+                         + f" ({result.get('tier', tier)})")
+    return result
+
+
+def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversions=None):
     """Read-only inverse proposal [derived], checks S2-Q, S2-M, S2-N30, S2-PATH.
 
     The played row owns the edit address; resolving its leaf never replaces a pointer.
@@ -1081,6 +1136,8 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
             raise ValueError(other["refusal"] or other["point"].get("reason") or "partner frequency cannot be resolved")
         target = cz_flux_math.node30_target(fc, ft, ac, at, ln["role"],
                     other["point"].get("frequency_hz") if other["moves"] else None)
+        target_detuning = (target["target_hz"] - other["point"]["frequency_hz"] if ln["role"] == "control"
+                           else other["point"]["frequency_hz"] - target["target_hz"])
         official = next(x for x in lines if x["role"] == target["mover"])
         stored = current(doc, "qubit_pairs." + pair + ".moving_qubit")
         if stored != target["mover"]:
@@ -1181,15 +1238,18 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
         preview.update(amp_text=f"{amplitude:g} V (stored amplitude)", amp_title=path)
         return {"ok": True, "tier": selected, "amplitude_v": amplitude, "frequency_hz": frequency,
                 "operating_point": preview,
+                "line": ln["role"], "target_detuning_hz": target_detuning,
                 "target_hz": wanted, "delta_hz": delta, "mover": target["mover"], "rule": target["rule"],
                 "distances": resonances(*frequencies, ac, at), "validity": validity,
                 "quad_v": quad_v, "model_v": model_v,
                 "rel_diff": abs(quad_v - model_v) / abs(model_v) if quad_v is not None and model_v else None,
                 "notes": notes, "path": path}
     except ValueError as exc:
-        result = {"ok": False, "reason": str(exc), "notes": notes}
+        result = {"ok": False, "reason": str(exc), "notes": notes,
+                  "tier": locals().get("selected", tier)}
         if "target" in locals():
-            result.update(target_hz=target["target_hz"], rule=target["rule"])
+            result.update(target_hz=target["target_hz"], rule=target["rule"],
+                          line=ln["role"], target_detuning_hz=target_detuning)
         return result
 
 

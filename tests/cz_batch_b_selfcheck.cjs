@@ -32,7 +32,7 @@ function harness(file, names) {
             assert.strictEqual(button.getAttribute('onclick'), 'HubFolders.open(this)');
             assert.strictEqual(button.getAttribute('hx-swap'), 'innerHTML');
             assert(processed > 0, 'inserted drawer button is processed by htmx');
-            assert.strictEqual(d.querySelectorAll('td[data-last]')[1].firstChild.title, h.historyAnswer.note);
+            assert(d.querySelectorAll('td[data-last]')[1].firstChild.title.includes(h.historyAnswer.note));
         } else {
             const data = h.payload('qubit_pairs.p.macros.a', false);
             const unknown = process.argv[3] === 'unknown';

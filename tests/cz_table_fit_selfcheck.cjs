@@ -49,12 +49,12 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     wrap.scrollLeft = 0; wrap.dispatchEvent(new w.Event('scroll'));
     check(!wrap.classList.contains('czp-scrolled-x'), 'back at the start: the edge goes');
     const saved = d.querySelector(`td[data-last="${OP}"]`), proven = d.querySelector(`td[data-last="${OTHER}"]`);
-    check(saved.textContent === 'saved in run #9 \u00b7 2026-01-02 03:04:05 UTC \u26a0 2 newer', 'the text is unchanged: ' + saved.textContent);
+    check(saved.textContent === '2026-01-02', 'UX-6: the visible date is compact: ' + saved.textContent);
     const stamps = Array.from(saved.querySelectorAll('.czp-nowrap')).map(s => s.textContent);
-    check(stamps.includes('2026-01-02 03:04:05'), 'a date stays on one line with its time: ' + JSON.stringify(stamps));
-    check(stamps.includes('\u26a0 2 newer'), 'the newer badge stays whole');
+    check(stamps.includes('2026-01-02') && saved.querySelector('span').title.includes('2026-01-02 03:04:05'), 'date stays whole; time remains on hover');
+    check(saved.querySelector('span').title.includes('2 newer'), 'the newer count remains on hover');
     check(saved.querySelector('span').getAttribute('title') !== null, 'the saved-in hint is still the first span');
-    check(proven.querySelector('.czp-nowrap') && proven.querySelector('.czp-nowrap').textContent === '2026-01-02 03:04:05' &&
-          proven.textContent === 'run #7 \u00b7 2026-01-02 03:04:05 UTC', 'a proven writer: same stamp, same text');
+    check(proven.querySelector('.czp-nowrap') && proven.querySelector('.czp-nowrap').textContent === '2026-01-02' &&
+          proven.querySelector('span').title.includes('run #7'), 'a proven writer: same stamp, same text');
     console.log('cz table fit: all passed (' + checks + ' checks)');
 })().catch(e => { console.error(e); process.exit(1); });

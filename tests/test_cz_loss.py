@@ -650,9 +650,13 @@ def test_the_routes_answer_in_the_frozen_contract_shape(tmp_path):
     live = {"map_rig5q": c.get("/cz-plan/map").get_json(), "loss_rig5q": c.get("/cz-plan/loss").get_json(),
             "data_rig5q": c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz").get_json()}
     for name in frozen:
-        assert set(live[name]) == set(frozen[name]), name
+        # UX-5 moves time-sample arithmetic to the shared server path.
+        extra = {"time_panel"} if name == "data_rig5q" else set()
+        assert set(live[name]) == set(frozen[name]) | extra, name
+        if extra:
+            assert set(live[name]["time_panel"]) == {"time_ns", "series_hz", "detuning_mhz", "dwell", "levels"}
         # the frozen curve entry's keys are exactly what a live curve carries
-        _subset(_shape(live[name]), _shape(frozen[name]), name)
+        _subset(_shape({k: v for k, v in live[name].items() if k not in extra}), _shape(frozen[name]), name)
     scan_keys = set(live["loss_rig5q"]["curves"]["q1"]["scan"])
     frozen_scan = next(e["scan"] for e in frozen["loss_rig5q"]["curves"].values() if e["scan"])
     assert scan_keys == set(frozen_scan)

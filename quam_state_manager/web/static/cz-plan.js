@@ -48,12 +48,30 @@
     }
     window.CzOperatingPoints = { get: operatingPoint, save: savePoints, stamp: stampPoints, nearest: nearestPoint };
 
+    function renderMatch(root, result) {
+        var match = root.querySelector('#czp-match');
+        if (!match) return;
+        match.textContent = result.summary || result.reason || '';
+        ['target_detuning_hz', 'amplitude_v', 'stored_amplitude_v', 'difference_v', 'tier', 'line'].forEach(function (key) {
+            match.setAttribute('data-' + key.replace(/_/g, '-'), result[key] == null ? '' : result[key]);
+        });
+    }
+
     // [derived], check S2-STAGE: proposals use the existing Review edit door.
     function renderSolve(root, row) {
         var el = root.querySelector('#czp-solve');
         if (!el) return;
-        if (el._op === row.path) return;
+        if (el._op === row.path) {
+            if (el._solveResult) renderMatch(root, el._solveResult);
+            return;
+        }
         el._op = row.path;
+        el._solveResult = null;
+        var solveBox = el.closest('details');
+        if (solveBox) solveBox.ontoggle = function () {
+            root._czSolvePreview = solveBox.open && el._solveResult && el._solveResult.operating_point || null;
+            redrawFlux(root);
+        };
         var multi = row.kind === 'two-flux' || row.kind === 'both movers';
         var movers = row.lines.filter(function (ln) { return ln.moves && (multi || ln.pulse_field === 'flux_pulse_qubit'); });
         el.innerHTML = '<div class="czp-controls"><strong>Solve amplitude</strong> <label>Tier <select class="czp-solve-tier">' +
@@ -73,8 +91,10 @@
             var params = new URLSearchParams({pair: row.pair, op: row.path,
                 line: el.querySelector('.czp-solve-line').value, tier: tier, amp: el.querySelector('input').value});
             fetch('/cz-plan/solve?' + params).then(function (r) { return r.json(); }).then(function (d) {
-                if (mine !== generation || el._op !== row.path || !document.body.contains(el)) return;
+                if (mine !== generation || el._op !== row.path || root.getAttribute('data-selected') !== row.path || !document.body.contains(el)) return;
                 result = d;
+                el._solveResult = d;
+                renderMatch(root, d);
                 el.querySelector('.czp-solve-target').textContent = d.target_hz != null ? 'Target: ' + fmtGHz(d.target_hz) + ' — ' + d.rule : '';
                 el.querySelector('.czp-solve-result').textContent = d.ok ? fmtV(d.amplitude_v) + ' → ' + fmtGHz(d.frequency_hz) + ' · ' + (d.validity || '') +
                     (d.rel_diff == null ? '' : ' · quad ' + fmtV(d.quad_v) + ', model ' + fmtV(d.model_v) + ', relative difference ' + d.rel_diff) : d.reason;
@@ -85,7 +105,7 @@
                 if (d.ok && d.operating_point) {
                     var p = d.operating_point;
                     el.querySelector('.czp-solve-result').insertAdjacentHTML('beforeend', '<table><tr><th>Preview amplitude (V)</th><th>Preview frequency (GHz)</th></tr><tr><td>' + esc(p.amplitude_v) + '</td><td data-preview="1" data-pair="' + esc(p.pair) + '" data-op="' + esc(p.op) + '" data-line="' + esc(p.line) + '" data-freq-hz="' + esc(p.frequency_hz) + '" data-method="' + esc(p.method) + '" data-path="' + esc(p.path) + '">' + esc(p.y) + '</td></tr></table>');
-                    root._czSolvePreview = p;
+                    root._czSolvePreview = el.closest('details') && el.closest('details').open ? p : null;
                 }
                 redrawFlux(root);
             }).catch(function (e) { el.querySelector('.czp-solve-result').textContent = e.message; });
@@ -421,15 +441,15 @@
             if (!q.summary || !q.curve) return;
             var col = C.q[k], c = q.curve, s = q.summary;
             if (c.model_hz) {
-                traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.model_hz.map(ghz), name: q.name + ' · ' + s.model_kind,
+                traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.model_hz.map(ghz), name: q.name + ' · ' + s.model_kind + ' · ' + (lines[k].point.validity || 'validity unknown'),
                     line: { color: col, width: 2.2, dash: /derived/.test(s.model_kind || '') ? 'dash' : 'solid' }, hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>' + hoverEsc(s.model_kind) + '</extra>' });
             }
             // with no quad term the curve holds only the idle point: one point draws no line, so no legend entry
             if (c.quad_hz.filter(function (v) { return v != null; }).length > 1) {
                 // beside a fitted model the quad term is the secondary curve: it never sets the frequency span
-                traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.quad_hz.map(ghz), name: q.name + ' · quad-term estimate (extrapolated outside validity range)',
+                traces.push({ type: 'scatter', mode: 'lines', x: c.amplitude_v, y: c.quad_hz.map(ghz), name: q.name + ' · quad-term estimate · ' + (lines[k].point.validity || 'validity unknown'),
                     line: { color: col, width: 1.4, dash: 'dash' }, _czpSecondary: !!c.model_hz,
-                    hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>quad-term estimate (extrapolated outside validity range)</extra>' });
+                    hovertemplate: 'amplitude: %{x:.4f} V<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>' + hoverEsc(lines[k].point.validity || 'validity unknown') + '</extra>' });
             }
             var idle = !lines[k].moves && operatingPoint(root, d.row.path, lines[k].role, lines[k].operating_point);
             traces.push({ type: 'scatter', mode: 'markers', x: [idle ? idle.x : 0], y: [idle ? idle.y : ghz(s.f01_hz)], _czOperating: idle, name: q.name + ' idle', showlegend: false,
@@ -475,17 +495,15 @@
                 xref: 'x', yref: 'y', showarrow: true, arrowhead: 3, arrowsize: 1.2, arrowwidth: 1.6, arrowcolor: C.q[k], text: '' });
         });
         // resonance levels for the moving control at the target's operating height
-        var ft = pts[1].frequency_hz;
-        var ac = d.qubits[0].summary && d.qubits[0].summary.anharmonicity_hz, at = d.qubits[1].summary && d.qubits[1].summary.anharmonicity_hz;
-        if (ft != null) {
-            [['|11>-|20>', ac == null ? null : ft + Math.abs(ac)], ['iSWAP', ft], ['|11>-|02>', at == null ? null : ft - Math.abs(at)]].forEach(function (lv) {
+        el.setAttribute('data-resonance-levels', JSON.stringify(d.time_panel.levels));
+        d.time_panel.levels.forEach(function (level) {
+                var lv = [level.name, level.frequency_hz];
                 if (lv[1] == null) return;
                 shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(lv[1]), y1: ghz(lv[1]),
                     line: { color: C.res, width: 1, dash: 'dot' } });
-                annotations.push({ xref: 'paper', x: right, xanchor: 'right', yref: 'y', y: ghz(lv[1]), yanchor: 'bottom', showarrow: false,
+                annotations.push({ xref: 'paper', x: 1, xanchor: 'left', xshift: 8, yref: 'y', y: ghz(lv[1]), yanchor: 'bottom', showarrow: false,
                     text: 'control on ' + lv[0], font: { size: 10, color: C.res } });
-            });
-        }
+        });
         var plan = d.row.plan;
         if (plan && plan.omega_int_hz) {
             shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(plan.omega_int_hz), y1: ghz(plan.omega_int_hz),
@@ -500,8 +518,8 @@
                 text: 'stored interaction frequency', font: { size: 10, color: C.plan } });
         }
         var over = {
-            margin: { l: 64, r: 16, t: 32, b: 90 }, showlegend: true,   // t: clear of the toolbar (U P2-4)
-            legend: { orientation: 'h', y: -0.22, x: 0, font: { size: 11 } },
+            margin: { l: 64, r: 142, t: 44, b: 120 }, showlegend: true,
+            legend: { orientation: 'h', y: -0.42, x: 0, font: { size: 11 } },
             xaxis: { title: { text: 'flux amplitude (V)' }, zeroline: true, domain: [0, right] },
             yaxis: { title: { text: 'frequency (GHz)' } },
             shapes: shapes, annotations: annotations, hovermode: 'closest'
@@ -548,52 +566,53 @@
             empty(el, 'Not drawn: SM cannot draw the waveform of a moving qubit (the reason is above the figure).', root, token);
             return Promise.resolve();
         }
-        var tt = []; for (var i = 0; i < n; i++) tt.push(i);
-        var series = d.qubits.map(function (q, k) {
-            var t = traj[k], f01 = q.summary ? q.summary.f01_hz : null, out = [];
-            for (var i = 0; i < n; i++) out.push(t ? (i < t.frequency_hz.length ? t.frequency_hz[i] :
-                (t.playback_known === false ? null : f01)) : (d.row.lines[k].moves ? null : f01));
-            return out;
-        });
+        var panel = d.time_panel, tt = panel.time_ns, series = panel.series_hz;
         var traces = [];
         d.qubits.forEach(function (q, k) {
             traces.push({ type: 'scatter', mode: 'lines', x: tt, y: series[k].map(ghz), name: q.name, line: { color: C.q[k], width: 2, shape: 'hv' },
                 hovertemplate: 't = %{x} ns<br>' + hoverEsc(q.name) + ': %{y:.4f} GHz<extra>' + hoverEsc(d.row.lines[k].point.kind || 'unknown') + '</extra>' });
             var t = traj[k];
             if (t && t.model_hz && t.quad_hz) {
-                traces.push({ type: 'scatter', mode: 'lines', x: tt.slice(0, t.quad_hz.length), y: t.quad_hz.map(ghz), name: q.name + ' · quad-term estimate (extrapolated outside validity range)',
-                    line: { color: C.q[k], width: 1, dash: 'dash', shape: 'hv' }, hovertemplate: 't = %{x} ns<br>%{y:.4f} GHz<extra>quad-term estimate (extrapolated outside validity range)</extra>' });
+                traces.push({ type: 'scatter', mode: 'lines', x: tt.slice(0, t.quad_hz.length), y: t.quad_hz.map(ghz), name: q.name + ' · quad-term estimate · ' + (d.row.lines[k].point.validity || 'validity unknown'),
+                    line: { color: C.q[k], width: 1, dash: 'dash', shape: 'hv' }, hovertemplate: 't = %{x} ns<br>%{y:.4f} GHz<extra>' + hoverEsc(d.row.lines[k].point.validity || 'validity unknown') + '</extra>' });
             }
         });
-        var delta = series[0].map(function (fc, i) { var ft = series[1][i]; return fc == null || ft == null ? null : (fc - ft) / 1e6; });
+        var delta = panel.detuning_mhz;
         traces.push({ type: 'scatter', mode: 'lines', x: tt, y: delta, name: 'Δ = f_c − f_t', yaxis: 'y2', line: { color: C.muted, width: 1.8, shape: 'hv' },
             hovertemplate: 't = %{x} ns<br>Δ: %{y:.1f} MHz<extra></extra>' });
-        var ac = d.qubits[0].summary && d.qubits[0].summary.anharmonicity_hz, at = d.qubits[1].summary && d.qubits[1].summary.anharmonicity_hz;
         var shapes = [], annotations = [];
-        [['|11>-|20>', ac == null ? null : Math.abs(ac) / 1e6], ['iSWAP', 0], ['|11>-|02>', at == null ? null : -Math.abs(at) / 1e6]].forEach(function (lv, index) {
-            if (lv[1] == null) return;
-            shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: lv[1] - 5, y1: lv[1] + 5, fillcolor: tint(C.res, 0.08), line: { width: 0 }, layer: 'below' });
+        el.setAttribute('data-resonance-levels', JSON.stringify(panel.levels));
+        panel.levels.forEach(function (level, index) {
+            var lv = [level.name, level.detuning_mhz];
+            shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: level.lo_mhz, y1: level.hi_mhz, fillcolor: tint(C.res, 0.08), line: { width: 0 }, layer: 'below' });
             shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: lv[1], y1: lv[1], line: { color: C.res, width: 1, dash: 'dot' } });
             // Spread the labels along their own levels: a large idle detuning packs them vertically.
             annotations.push({ xref: 'paper', x: 1 - index * 0.2, xanchor: 'right', yref: 'y2', y: lv[1], yanchor: 'bottom', showarrow: false, text: lv[0], font: { size: 10, color: C.res } });
         });
-        // the time Delta(t) spends within 5 MHz of each resonance
-        var dwell = [['|11>-|20>', ac == null ? null : Math.abs(ac) / 1e6], ['iSWAP', 0], ['|11>-|02>', at == null ? null : -Math.abs(at) / 1e6]].map(function (lv) {
-            if (lv[1] == null) return null;
-            var c = delta.filter(function (v) { return v != null && Math.abs(v - lv[1]) <= 5; }).length;
-            return c ? lv[0] + ' ' + c + ' ns' : null;
-        }).filter(Boolean);
-        el.setAttribute('data-dwell', dwell.join('; '));
+        el.setAttribute('data-dwell', panel.dwell);
+        var frequencyTraces = traces.filter(function (t) { return t.yaxis !== 'y2'; });
+        traces = traces.filter(function (t) { return t.yaxis === 'y2'; });
         var L = layout({
             margin: { l: 64, r: 16, t: 32, b: 90 }, showlegend: true,   // t: clear of the toolbar (U P2-4)
             legend: { orientation: 'h', y: -0.22, x: 0, font: { size: 11 } },
             xaxis: { title: { text: 'time (ns, 1 sample per ns)' }, anchor: 'y2' },
-            yaxis: { title: { text: 'frequency (GHz)' }, domain: [0.42, 1] },
-            yaxis2: { title: { text: 'Δ (MHz)' }, domain: [0, 0.34], anchor: 'x' },
+            yaxis: { visible: false, domain: [0, 1] },
+            yaxis2: { title: { text: 'Δ (MHz)' }, domain: [0, 1], anchor: 'x' },
             shapes: shapes, annotations: annotations, hovermode: 'x unified'
         });
         return window.requirePlotly().then(function () {
             if (!active(root, token)) return;
+            var frequency = root.querySelector('#czp-frequency');
+            var box = root.querySelector('#czp-frequency-box');
+            function drawFrequency() {
+                if (frequency && box && box.open) window._plotlyRender(frequency, frequencyTraces, layout({
+                    margin: {l: 64, r: 20, t: 32, b: 100}, showlegend: true,
+                    xaxis: {title: {text: 'time (ns)'}}, yaxis: {title: {text: 'frequency (GHz)'}},
+                    legend: {orientation: 'h', y: -0.35}
+                }), config(), function () { return active(root, token); });
+            }
+            if (box) box.ontoggle = drawFrequency;
+            drawFrequency();
             return window._plotlyRender(el, traces, L, config(), function () { return active(root, token); });
         });
     }
@@ -629,12 +648,15 @@
             return fmtGHz(t.frequency_hz) + ' <small class="muted">(FWHM ' + fmtMHz(t.fwhm_hz) + (t.peak_loss != null ? ', peak ' + pct(t.peak_loss) : '') +
                 (t.inside ? '' : ', ' + fmtMHz(t.distance_hz) + ' outside') + ')</small>' + (t.strong ? ' <span class="czp-warn-text">strong</span>' : '');
         }).join('; ') : 'none') +
-            (sw ? '<br><small class="muted">excursion ' + fmtGHz(sw.f_min_hz) + ' – ' + fmtGHz(sw.f_max_hz) + ' ' + esc(sw.label || '') +
-                  (gl.marker && gl.marker.label ? '; ' + esc(gl.marker.label) : '') + (sw.note ? '; ' + esc(sw.note) : '') + '</small>' : '') + '</p>');
+            (sw ? help('excursion ' + fmtGHz(sw.f_min_hz) + ' – ' + fmtGHz(sw.f_max_hz) + ' ' + (sw.label || '') + (gl.marker && gl.marker.label ? '; ' + gl.marker.label : '') + (sw.note ? '; ' + sw.note : '')) : '') + '</p>');
         return h.join('');
     }
 
     /* (c) the operation's card. */
+    function help(text) {
+        return ' <span class="czp-help-hover" tabindex="0" role="note" aria-label="' + esc(text) + '" title="' + esc(text) + '">(?)</span>';
+    }
+
     function renderCard(root, d) {
         var el = root.querySelector('#czp-card');
         if (!el) return;
@@ -654,7 +676,7 @@
                 (p.reason ? '<br><span class="czp-warn-text">' + esc(p.reason) + '</span>' : '') + '</dd>' +
                 (p.quad_hz != null && p.model_hz != null && !s.model_rejection ? '<dt>' + esc(p.quad_kind || 'Quad-term estimate') + '</dt><dd>' + fmtGHz(p.quad_hz) + ' <small class="muted">(' + fmtMHz(p.error_hz) + ' from the model)</small></dd>' : '') +
                 (s.model_rejection && p.model_hz != null ? '<dt>Re-anchored estimate [derived]</dt><dd>' + fmtGHz(p.model_hz) + '</dd>' : '') +
-                (p.validity ? '<dt>Validity</dt><dd><span class="' + (/outside|beyond/.test(p.validity) ? 'czp-warn-text' : '') + '">' + esc(p.validity) + '</span>' + (/quadratic/.test(p.validity) && s.range && s.range.limit_hz ? ' <small class="muted">(limit ' + fmtMHz(s.range.limit_hz) + ', ' + esc(s.range.source || '') + ')</small>' : '') + '</dd>' : '') +
+                (p.validity ? '<dt>Validity</dt><dd><span class="' + (/outside|beyond/.test(p.validity) ? 'czp-warn-text' : '') + '">' + esc(p.validity) + '</span>' + (/quadratic/.test(p.validity) && s.range && s.range.limit_hz ? help('limit ' + fmtMHz(s.range.limit_hz) + ', ' + (s.range.source || '')) : '') + '</dd>' : '') +
                 (ln.lobes || []).slice(1).map(function (l) {
                     return '<dt>' + esc(l.name) + '</dt><dd>' + fmtGHz(l.point.frequency_hz) +
                         ' <small>' + esc(l.point.kind || l.point.reason || 'unknown') + '</small></dd>';
@@ -674,16 +696,14 @@
         h.push('<div class="czp-card-q"><strong>Operation</strong><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
             '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '—') + '</dd>' +
-            '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' + (r.duration_note ? ' <small class="muted">(' + esc(r.duration_note) + ')</small>' : '')
-                : (r.duration_note ? esc(r.duration_note) : 'unknown')) + '</dd>' +
+             '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' : 'unknown') + (r.duration_note ? help(r.duration_note) : '') + '</dd>' +
             (r.coupler ? '<dt>Coupler pulse</dt><dd class="czp-card-coupler" title="' + esc(r.coupler.amp_title) + '">' + esc(r.coupler.amp_text) + (r.coupler.amp_reason ? ' <small class="muted">(' + esc(r.coupler.amp_reason) + ')</small>' : '') + '</dd>' : '') +
             (r.plan ? '<dt>Planned ω_int</dt><dd>' + fmtGHz(r.plan.omega_int_hz) + (r.plan.path_ok === false ? ' <span class="czp-warn-text">path not ok</span>' : '') +
                 (r.plan.reasons.length ? '<br><small class="muted">' + esc(r.plan.reasons.join(', ')) + '</small>' : '') + '</dd>' : '') +
             (r.interaction_frequency_hz ? '<dt>Stored interaction frequency</dt><dd>' + fmtGHz(r.interaction_frequency_hz) + '</dd>' : '') +
             '<dt>Fidelity</dt><dd>' + (fl.length ? fl.join('<br>') : '—') + '</dd>' +
-            '<dt>Last set</dt><dd>' + (cal.last_set ? esc(when(cal.last_set)) + ' <small class="muted">(' +
-                esc(setWords(cal.last_set, cal.proven)) + ')</small>' :
-                '<span class="muted">unknown' + (cal.note ? ' — ' + esc(zoneText(cal.note)) : '') + '</span>') + '</dd>' +
+             '<dt>Last set</dt><dd>' + (cal.last_set ? esc(when(cal.last_set)) + help(setWords(cal.last_set, cal.proven)) :
+                'unknown' + (cal.note ? help(zoneText(cal.note)) : '')) + '</dd>' +
             (count ? '<dt>Staleness</dt><dd><a href="#czp-notes-box" class="czp-notes-link czp-warn-text">' +
                 plural(count, 'input changed', 'inputs changed') + ' after this operation was set</a></dd>' : '') +
             '</dl></div>');
@@ -702,6 +722,7 @@
 
     function failed(root, op, text, token) {
         root.setAttribute('data-failed', op);
+        var match = root.querySelector('#czp-match'); if (match) match.textContent = text;
         setStatus(root, ['Not drawn: ' + text]);
         ['#czp-flux', '#czp-time'].forEach(function (s) { var e = root.querySelector(s); if (e) empty(e, 'Not drawn.', root, token); });
         ['#czp-flux-caveat', '#czp-time-caveat'].forEach(function (s) { var e = root.querySelector(s); if (e) { e.textContent = ''; e.hidden = true; } });
@@ -719,6 +740,8 @@
         var my = ++seq;
         root.setAttribute('data-selected', op);
         root.setAttribute('data-loading', '1');
+        var match = root.querySelector('#czp-match');
+        if (match) { match.textContent = 'Solving amplitude…'; ['target-detuning-hz', 'amplitude-v', 'stored-amplitude-v', 'difference-v', 'tier', 'line'].forEach(function (k) { match.removeAttribute('data-' + k); }); }
         root.removeAttribute('data-failed');
         Array.prototype.forEach.call(root.querySelectorAll('.czp-row'), function (tr) {
             var on = tr.getAttribute('data-op') === op;
@@ -841,18 +864,17 @@
                 }
                 Array.prototype.forEach.call(root.querySelectorAll('td[data-last]'), function (td) {
                     var o = (h.ops || {})[td.getAttribute('data-last')];
+                    var badge = td.parentElement.querySelector('.czp-no-quad');
+                    if (badge) { if (!badge._reason) badge._reason = badge.title; badge.title = badge._reason + '; ' + zoneText((o && o.note) || h.note || 'setting time unknown'); }
                     if (!o || !o.last_set) {
                         // compact in the table; what is known (first record, a value that differs) on hover
                         var first = !!(o && o.note && /first recorded/.test(o.note));
-                        td.innerHTML = '<span class="muted"' + ((o && o.note) || h.note ? ' title="' + esc(zoneText((o && o.note) || h.note)) + '"' : '') + '>unknown' +
-                            (first ? ' · first recorded only' : '') + '</span>';
+                        td.innerHTML = '<span class="muted" title="' + esc(td.getAttribute('data-last') + '; ' + zoneText((o && o.note) || h.note || 'setting time unknown')) + '">-</span>';
                         return;
                     }
                     // fix3 P1-2: a run that only carried the value first is not named as its writer
                 var saved = o.last_set.provenance === 'run_saved' || o.last_set.provenance === 'run_uncertain_chip';
-                td.innerHTML = (saved ? '<span title="' + esc(setWords(o.last_set, false)) + '">saved in ' + stampCell(when(o.last_set)) + '</span>'
-                                      : stampCell(when(o.last_set))) + (o.warnings.length ? ' <span class="czp-warn-text czp-nowrap" title="' +
-                        esc(o.warnings.map(function (w) { return w.text; }).join('\n')) + '">⚠ ' + o.warnings.length + ' newer</span>' : '');
+                td.innerHTML = '<span class="czp-nowrap" title="' + esc(td.getAttribute('data-last') + '; ' + setWords(o.last_set, false) + '; ' + when(o.last_set) + '; ' + (o.warnings || []).length + ' newer; ' + (o.warnings || []).map(function (w) { return w.text; }).join('; ')) + '">' + esc((when(o.last_set).match(/\d{4}-\d\d-\d\d/) || ['-'])[0]) + '</span>';
                 });
                 root.setAttribute('data-history', h.mode || '');
             })
@@ -860,10 +882,12 @@
     }
 
     function revealFigures(root) {
-        var t = root.querySelector('#czp-title');
-        if (!t || !t.getBoundingClientRect) return;
+        var detail = root.querySelector('.czp-detail');
+        if (detail) detail.hidden = false;
+        var t = detail || root.querySelector('#czp-title');
+        if (!t || !t.getBoundingClientRect || typeof t.scrollIntoView !== 'function') return;
         var r = t.getBoundingClientRect(), h = window.innerHeight || document.documentElement.clientHeight;
-        if (r.top < 0 || r.top > h * 0.5) {
+        if (detail || r.top < 0 || r.top > h * 0.5) {
             try { t.scrollIntoView({ block: 'start' }); } catch (e) { t.scrollIntoView(true); }
         }
     }
@@ -1004,6 +1028,17 @@
 
     /* The table follows the map's Operation picker: a named operation lists only its rows,
        "cz per pair" lists every row. The selected row stays visible. */
+    function groupRows(root) {
+        var previous = null;
+        root.querySelectorAll('.czp-row').forEach(function (tr) {
+            if (tr.hidden) return;
+            var pair = tr.getAttribute('data-pair');
+            if (pair == null) return;
+            tr.setAttribute('data-pair-start', pair === previous ? '0' : '1');
+            previous = pair;
+        });
+    }
+
     function filterRows(root, op) {
         var rows = root.querySelectorAll('.czp-row'), shown = 0, sel = root.getAttribute('data-selected');
         Array.prototype.forEach.call(rows, function (tr) {
@@ -1011,6 +1046,7 @@
             tr.hidden = !on;
             if (on) shown++;
         });
+        groupRows(root);
         var note = root.querySelector('#czp-filter-note');
         if (note) {
             note.hidden = !op;
@@ -1049,6 +1085,7 @@
             return c ? c * dir : a.i - b.i;
         });
         rows.forEach(function (r) { tbody.appendChild(r.tr); });
+        groupRows(root);
     }
 
     function pairOfRow(tr) {
@@ -1117,7 +1154,9 @@
         var couplerToggle = root.querySelector('#czp-include-coupler');
         if (couplerToggle) couplerToggle.onchange = function () { couplerView(root); };
         var first = root.getAttribute('data-selected');
-        if (first) load(root, first);
+        if (first) load(root, first).then(function () {
+            if (new URLSearchParams(window.location.search).has('pair')) revealFigures(root);
+        });
         if (window.CzMap) window.CzMap.mount(root);
         loadHistory(root, 0);
     }

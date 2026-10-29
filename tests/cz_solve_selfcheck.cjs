@@ -37,6 +37,11 @@ const wait = () => new Promise(r => setTimeout(r, 45));
 (async () => {
     w.CzPlan.mount();
     await wait();
+    // UX-5: the solve preview belongs to the optional proposal controls.
+    const solveBox = d.querySelector('.czp-solve-box');
+    solveBox.open = true;
+    solveBox.dispatchEvent(new w.Event('toggle'));
+    await wait();
     for (const op of Object.keys(fixture.data)) {
         d.querySelector(`[data-op="${op}"].czp-row`).dispatchEvent(new w.MouseEvent('click', {bubbles: true}));
         await wait();

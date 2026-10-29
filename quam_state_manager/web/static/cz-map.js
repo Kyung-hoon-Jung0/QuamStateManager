@@ -33,8 +33,8 @@
     var BAR_HALF = 3;          // half the width of a drawn bar
     var LABEL_FONT = 10;
     var CLUSTER_PX = 6;        // segments of one column this close share the row side by side
-    var PARTNER_H = 11;        // a partner name's height (9 px font)
-    var PARTNER_FONT = 9;
+    var PARTNER_H = 15;        // line pitch for the 11 px partner font
+    var PARTNER_FONT = 11;
     var PARTNER_MARKER = 6;    // the partner trace's invisible marker size: it sets Plotly's text offset
     var PARTNER_CLEAR = 2;     // free pixels kept between a partner box and anything it must clear
     var RETRY_N = 20, RETRY_MS = 3000;   // re-asks while the change history is being built
@@ -251,9 +251,9 @@
     function labelSize(text) {
         return { w: 5.4 * String(text).length + 4, h: 18 };
     }
-    /* A partner label's width (px) at its 9 px font. */
+    /* A partner label's width (px) at its 11 px font. */
     function partnerWidth(text) {
-        return 5.2 * String(text).length + 2;
+        return 6.4 * String(text).length + 2;
     }
     /* The partner names of one shared row as lines no wider than the column (one name a line
        at least): {lines: [[name, ...]], w, h} in px. */
@@ -624,15 +624,17 @@
                          { xpx: left, x: pw.i + 0.12, pos: 'top right' },
                          { xpx: right, x: pw.i + 0.88, pos: 'bottom left', bottom: true },
                          { xpx: left, x: pw.i + 0.12, pos: 'bottom right', bottom: true }];
-            for (var k = 0; k < spots.length; k++) {
-                var bottom = spots[k].bottom;
-                var b = partnerBox(spots[k].xpx, pw.ypx, spots[k].pos, pw.w, pw.n);
-                if (b.x0 < 0 || b.x1 > n * colPx || b.y0 < 0 || b.y1 > columnHeight ||
-                    !taken.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); }) ||
-                    (bottom && !occupied.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); }))) continue;
-                taken.push(b);
-                partners.push({ x: spots[k].x, y: pw.y, t: pw.t, pos: spots[k].pos });
-                return;
+            for (var offset = 0; offset <= 48; offset += 8) {
+                for (var k = 0; k < spots.length; k++) {
+                    var bottom = spots[k].bottom, shift = bottom ? -offset : offset;
+                    var b = partnerBox(spots[k].xpx, pw.ypx + shift, spots[k].pos, pw.w, pw.n);
+                    if (b.x0 < 0 || b.x1 > n * colPx || b.y0 < 0 || b.y1 > columnHeight ||
+                        !taken.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); }) ||
+                        !occupied.every(function (t) { return boxesClear(b, t, PARTNER_CLEAR); })) continue;
+                    taken.push(b);
+                    partners.push({ x: spots[k].x, y: pw.y + shift / pxPerGHz, t: pw.t, pos: spots[k].pos });
+                    return;
+                }
             }
         });
         var segClass = {}, connectors = {}, geo = {};
