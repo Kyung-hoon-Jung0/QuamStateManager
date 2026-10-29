@@ -298,6 +298,55 @@ async function main() {
   ok(r5.querySelectorAll('.gen-build-err-line').length === 2,
     'R5: validation errors (a list) still render one per line');
 
+  // ── GX-3 / GX-4: a Review blocker turns Generate off, with the reason ───────
+  reset();
+  G.state.step = 8;
+  const QDAC_ROOT = 'No QPU root class in this environment can hold QDAC-biased qubits.';
+  CAP_BODY = capBody({
+    root: { needed: true, chosen: null, blocker: QDAC_ROOT, candidates: [] },
+    report: {
+      manifest_ok: true, buildable: true, blockers: [], inventory: [],
+      warnings: [{ id: 'instr.qdac', label: 'QDAC-II bias support',
+                   detail: 'else the biased qubit builds with no z/flux component' },
+                 { id: 'pulse.other', label: 'Other skip', detail: 'x' }]
+    }
+  });
+  T.renderCapabilityReport(box);
+  await settle();
+  const nxt = doc.getElementById('gen-next');
+  const nxtTop = doc.getElementById('gen-next-top');
+  ok(nxt.disabled && nxtTop.disabled, 'GX-3: Generate is off while the Review lists a blocker');
+  const gnote = doc.getElementById('gen-review-block-note');
+  ok(gnote && !gnote.hidden && gnote.textContent.indexOf(QDAC_ROOT) >= 0,
+    'GX-3: the reason sits beside the button — ' + (gnote && gnote.textContent));
+  const degr = Array.prototype.map.call(box.querySelectorAll('.gen-cap-degrade'),
+    function (e) { return e.textContent; }).join(' | ');
+  ok(degr.indexOf('QDAC-II bias support') < 0,
+    'GX-4: a refused QDAC root drops the "builds without bias" line — ' + degr);
+  ok(degr.indexOf('Other skip') >= 0, 'GX-4: other skips are still listed');
+  // a clean report turns it back on
+  CAP_BODY = capBody();
+  T.renderCapabilityReport(box);
+  await settle();
+  ok(!nxt.disabled && gnote.hidden, 'GX-3: a clean Review turns Generate back on');
+  // a plain (non-root) blocker also turns it off
+  CAP_BODY = capBody({ report: { manifest_ok: true, buildable: false, inventory: [], warnings: [],
+    blockers: [{ id: 'b', label: 'TWPA lines', package: 'p', symbol: 's', fix: 'f' }] } });
+  T.renderCapabilityReport(box);
+  await settle();
+  ok(nxt.disabled && /TWPA lines/.test(gnote.textContent),
+    'GX-3: any blocker turns Generate off — ' + gnote.textContent);
+  // step 5 says the root refusal before Review
+  G.state.step = 5;
+  G.state.spec.qdac = { qubits: { q1: { channel: 1 } } };
+  CAP_BODY = capBody({ root: { needed: true, chosen: null, blocker: QDAC_ROOT, candidates: [] } });
+  T.checkEarlyBlockers();
+  await settle();
+  const early = doc.getElementById('gen-step5-blocker');
+  ok(early && !early.hidden && early.textContent.indexOf(QDAC_ROOT) >= 0,
+    'GX-3: the Wiring step names the refusal — ' + (early && early.textContent));
+  G.state.step = 1;
+
   console.log(fails ? 'FAILED (' + fails + ')'
     : 'generate_root_selfcheck ok (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);

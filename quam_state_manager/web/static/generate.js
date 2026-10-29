@@ -453,6 +453,7 @@
       var n = document.getElementById(id);
       if (n) n.textContent = nextLabel;
     });
+    applyReviewGate();
     var rs = document.getElementById("gen-reset-step");
     if (rs) {
       rs.disabled = !(STEP_OWNS && STEP_OWNS[state.step]);
@@ -473,6 +474,7 @@
     // edits made in step 4 (qubit count, pairs, 2Q-gate, flux) always propagate
     // forward, even via change paths that didn't re-derive. Respects wiringTouched.
     if (state.step >= 5) { restoreHeldChipArch(); deriveLines(); }
+    if (state.step === 5) checkEarlyBlockers();
     if (state.step === 4) {
       syncLineTypeToggles();
       renderFluxSource();   // QA F9: a revisit repaints the row from state
@@ -525,6 +527,8 @@
     }
     if (state.step < STEP_COUNT) {
       goToStep(state.step + 1);
+    } else if (_reviewBlock) {
+      showMessage("Generate is off: " + _reviewBlock, "warn", { reveal: true });
     } else {
       runBuild();
     }
@@ -668,6 +672,68 @@
   // during the select-env round-trip) used to POST two builds into ONE
   // folder. Set from the first press until its response lands.
   var _buildInFlight = false;
+  // GX-3: the reason Review found this env cannot build the chip, or null.
+  // While set, Generate is off on step 8 and the reason sits beside it.
+  var _reviewBlock = null;
+
+  // GX-3: a refusal the env already decides (no QPU root can hold this chip's
+  // QDAC qubits) is said on the Wiring step, not first at Generate.
+  var _earlySeq = 0;
+  function checkEarlyBlockers() {
+    var host = document.getElementById("gen-wiring-issues");
+    if (!host || !host.parentNode) return;
+    var box = document.getElementById("gen-step5-blocker");
+    if (!box) {
+      box = document.createElement("p");
+      box.id = "gen-step5-blocker";
+      box.className = "gen-cap-blocker";
+      box.setAttribute("role", "status");
+      host.parentNode.insertBefore(box, host);
+    }
+    box.hidden = true; box.textContent = "";
+    var qd = (state.spec && state.spec.qdac && state.spec.qdac.qubits) || {};
+    if (!state.env || !Object.keys(qd).length) return;
+    var seq = ++_earlySeq;
+    fetch("/generate/capabilities", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec: state.spec, source_folder: state.sourcePath || null })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (seq !== _earlySeq || state.step !== 5) return;
+      var msg = res && res.root && res.root.blocker;
+      if (msg) {
+        box.textContent = "✗ This chip cannot be built in the selected environment: " + msg;
+        box.hidden = false;
+      }
+    }).catch(function () { /* the Review step reports it again */ });
+  }
+
+  function applyReviewGate() {
+    var blocked = state.step === STEP_COUNT && !!_reviewBlock;
+    ["gen-next", "gen-next-top"].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (!b) return;
+      if (blocked) {
+        b.disabled = true;
+        b.title = "Generate is off: " + _reviewBlock;
+      } else if (!_buildInFlight) {
+        b.disabled = false;
+        b.title = "";
+      }
+    });
+    var anchor = document.getElementById("gen-next");
+    var note = document.getElementById("gen-review-block-note");
+    if (!note && anchor && anchor.parentNode) {
+      note = document.createElement("span");
+      note.id = "gen-review-block-note";
+      note.className = "gen-build-warn-line";
+      note.setAttribute("role", "status");
+      anchor.parentNode.insertBefore(note, anchor.nextSibling);
+    }
+    if (note) {
+      note.hidden = !blocked;
+      note.textContent = blocked ? "Generate is off: " + _reviewBlock : "";
+    }
+  }
   // QA regenerate-r2-37: the docs/134 allocate rule, for the build — every
   // build captures this token and its handlers stand down once a content
   // swap (hydrateFromSpec / resetWizard) bumped it, so an answer computed
@@ -9709,6 +9775,8 @@
   // the three-bucket verdict (available / blockers / degrades) + a full inventory.
   function renderCapabilityReport(box) {
     if (!box) return;
+    _reviewBlock = null;
+    applyReviewGate();
     if (!state.env) { box.innerHTML = ""; return; }
     deriveLines();
     box.innerHTML = '<p class="muted">Checking what this environment can build…</p>';
@@ -9743,8 +9811,22 @@
         // "Will be skipped / downgraded" — one of whose entries loses a
         // qubit's flux component entirely — is the app contradicting itself
         // in two adjacent lines.
-        var nSkip = (rep.warnings || []).length;
         var rootBlock = res.root && res.root.blocker;
+        // GX-4: when the root cannot hold QDAC qubits the build is refused,
+        // so a "builds without the bias" downgrade line would contradict it.
+        var skips = (rep.warnings || []).filter(function (w) {
+          return !(rootBlock && /^instr\.qdac/.test((w && w.id) || ""));
+        });
+        var nSkip = skips.length;
+        var flavorBlock = (res.flavor || []).filter(function (f) {
+          return f.level === "blocker"; })[0];
+        var firstBlocker = (rep.blockers || [])[0];
+        _reviewBlock = rootBlock ? res.root.blocker
+          : (flavorBlock ? flavorBlock.message
+          : (!rep.buildable ? ("this environment is missing " +
+              ((firstBlocker && (firstBlocker.label || firstBlocker.id)) ||
+               "something this chip needs") + " (see the list above)") : null));
+        applyReviewGate();
         h.textContent = (!rep.buildable || rootBlock)
           ? "✗ This environment is missing something this chip needs."
           : (nSkip
@@ -9770,7 +9852,7 @@
           box.appendChild(line);
         });
         _capRows(box, rep.blockers, "gen-cap-blocker", "Cannot build");
-        _capRows(box, rep.warnings, "gen-cap-degrade", "Will be skipped / downgraded");
+        _capRows(box, skips, "gen-cap-degrade", "Will be skipped / downgraded");
         _rootPicker(box, res);
         _capInventory(box, rep.inventory);
         _capRecheckButton(box);
@@ -11084,6 +11166,7 @@
         var b = document.getElementById(id);
         if (b) b.disabled = busy;
       });
+      if (!busy) applyReviewGate();
     }
     if (_buildInFlight) return;   // QA F8: a build of this wizard is running
     if (!state.env) {
@@ -12530,6 +12613,7 @@
       // docs/176 seams — the review's verdict + root picker, and the
       // build-result renderer that has to take TWO blocker shapes.
       renderCapabilityReport: renderCapabilityReport,
+      checkEarlyBlockers: checkEarlyBlockers,   // GX-3
       showBuildResult: showBuildResult,
       holdsLabel: _holdsLabel,          // QA generate-r2-28
       nextFreePair: nextFreePair,       // QA r2-34
