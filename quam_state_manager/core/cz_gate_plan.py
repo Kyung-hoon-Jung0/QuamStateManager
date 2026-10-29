@@ -1251,6 +1251,10 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
             """Anchored inverse dispatch [derived], check S2-M."""
             if not model_ok:
                 raise ValueError("no flux-frequency model: freq_vs_flux_01_quad_term is missing")
+            if conv.sign is None:
+                # Conversion.point refuses this qubit (conflicting or absent sweet-spot
+                # evidence); the inverse must not answer what the forward map refuses.
+                raise ValueError("flux direction unknown: " + conv.frame["reason"])
             return cz_flux_math.model_inverse(conv.model, conv.anchor, conv.f01, wanted, polarity)
 
         quad_v = model_v = None
