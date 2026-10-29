@@ -691,6 +691,14 @@
         h.push('<div class="czp-card-grid">');
         r.lines.forEach(function (ln, k) {
             var p = ln.point, q = d.qubits[k], s = q.summary || {};
+            if (r.a4) {
+                h.push('<div class="czp-card-q czp-card-fixed" data-role="' + esc(ln.role) + '"><strong>' + esc(ln.role) + ' ' + esc(ln.name) +
+                    '</strong> <small class="muted">fixed frequency</small><dl>' +
+                    '<dt>Idle f_01</dt><dd>' + fmtGHz(s.f01_hz) + '</dd>' +
+                    '<dt>Phase correction</dt><dd>' + (r.phases[ln.role] == null ? '\u2014' : Number(r.phases[ln.role]).toFixed(4) + ' \u00d7 2\u03c0') + '</dd>' +
+                    '</dl></div>');
+                return;
+            }
             var gl = gls.find(function (g) { return g.role === ln.role; }) || null;
             h.push('<div class="czp-card-q"><strong>' + esc(ln.role) + ' ' + esc(ln.name) + '</strong>' +
                 (ln.moves ? ' <small class="muted">plays ' + esc((ln.pulse_path || '').split('.').pop()) + (ln.pulse_class ? ' (' + esc(ln.pulse_class) + ')' : '') + '</small>' : ' <small class="muted">does not move</small>') +
@@ -721,7 +729,8 @@
         h.push('<div class="czp-card-q"><strong>Operation</strong><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
             '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '—') + '</dd>' +
-             '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' : 'unknown') + (r.duration_note ? help(r.duration_note) : '') + '</dd>' +
+             (r.a4 ? '<dt>Duration</dt><dd class="czp-a4-duration">' + a4Duration(r.a4) + '</dd>' :
+             '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' : 'unknown') + (r.duration_note ? help(r.duration_note) : '') + '</dd>') +
             (r.coupler ? '<dt>Coupler pulse</dt><dd class="czp-card-coupler" title="' + esc(r.coupler.amp_title) + '">' + esc(r.coupler.amp_text) + (r.coupler.amp_reason ? ' <small class="muted">(' + esc(r.coupler.amp_reason) + ')</small>' : '') + '</dd>' : '') +
             (r.plan ? '<dt>Planned ω_int</dt><dd>' + fmtGHz(r.plan.omega_int_hz) + (r.plan.path_ok === false ? ' <span class="czp-warn-text">path not ok</span>' : '') +
                 (r.plan.reasons.length ? '<br><small class="muted">' + esc(r.plan.reasons.join(', ')) + '</small>' : '') + '</dd>' : '') +
@@ -742,6 +751,13 @@
     function a4Point(root, row) {
         return operatingPoint(root, row.path, 'coupler', null) || {};
     }
+    // A4-UX-2: the card and the top line read the same stored lengths (row.a4)
+    function a4Duration(a) {
+        var flat = a.stored_flat_length_ns, len = a.stored_length_ns;
+        if (flat == null && len == null) return 'unknown';
+        return (flat != null ? 'flat ' + flat + ' ns' : '') + (flat != null && len != null ? ' \u00b7 ' : '') +
+               (len != null ? 'pulse ' + len + ' ns' : '') + help('stored on the coupler pulse; the macro has no play-time override');
+    }
     function fmtMHzZ(v) { return v == null ? '—' : (v / 1e6).toFixed(3) + ' MHz'; }
     function renderA4Match(root, row) {
         var match = root.querySelector('#czp-match');
@@ -752,13 +768,20 @@
         var text = 'coupler amplitude ' + amp + ' → coupler ' + fmtGHz(p.coupler_frequency_hz) + ' → ZZ ' + fmtMHzZ(p.zz_hz) +
             ' → gate time ' + (p.t_flat_ns != null ? p.t_flat_ns + ' ns' : '—') +
             ' | stored flat ' + (stored != null ? stored + ' ns' : '—') + ' (' + (a.method || 'no model') + ')';
-        match.innerHTML = esc(text) + (a.refusal ? ' <span class="czp-warn-text">' + esc(a.refusal) + '</span>' : '') +
-            ((a.warnings || []).length ? ' <span class="czp-warn-text">' + esc(a.warnings.join('; ')) + '</span>' : '') +
+        var mismatch = a.difference_ns != null && a.difference_ns !== 0;
+        var phase = a.stored_phase_pi == null ? '' : ' \u2192 conditional phase ' + Number(a.stored_phase_pi).toFixed(2) + ' \u03c0 (target 1 \u03c0)';
+        match.innerHTML = esc(text) +
+            (a.difference_ns != null ? ' <span class="czp-a4-diff' + (mismatch ? ' czp-warn-text' : '') + '">| difference ' +
+                (a.difference_ns > 0 ? '+' : '') + a.difference_ns + ' ns' + esc(phase) + '</span>' : '') +
+            (a.refusal ? ' <span class="czp-warn-text">' + esc(a.refusal) + '</span>' : '') +
+            ((a.warnings || []).length ? ' <span class="czp-warn-text czp-a4-warn">· ' + esc(a.warnings.join('; ')) + '</span>' : '') +
             help('t = 1/(2|ZZ|) for a pi conditional phase, rounded up to 4 ns: a starting value, the ramps add phase; calibrate. ' +
+                 'The stored flat length gives a conditional phase of 2|ZZ| t in units of pi (static ZZ, ramps excluded). ' +
                  'ZZ from diagonalising the qubit-coupler-qubit Hamiltonian (3 levels per mode).');
         var attrs = {'a4-amplitude-v': a.amplitude_v, 'a4-coupler-frequency-hz': p.coupler_frequency_hz, 'a4-zz-hz': p.zz_hz,
                      'a4-t-flat-ns': p.t_flat_ns, 'a4-stored-flat-ns': stored, 'a4-method': a.method, 'a4-path': a.amplitude_path,
-                     'a4-refusal': a.refusal};
+                     'a4-refusal': a.refusal, 'a4-difference-ns': a.difference_ns, 'a4-stored-phase-pi': a.stored_phase_pi,
+                     'a4-idle-zz-hz': a.idle_zz_hz};
         Object.keys(attrs).forEach(function (k) { match.setAttribute('data-' + k, attrs[k] == null ? '' : attrs[k]); });
     }
     function drawA4(root, d, token) {
@@ -801,8 +824,17 @@
         var LF = layout(Object.assign({}, common, { xaxis: { title: { text: 'coupler amplitude (V)' } },
                                                     yaxis: { title: { text: 'frequency (GHz)' } },
                                                     shapes: qubitLines, annotations: qubitLabels }));
+        var idleShapes = [], idleNotes = [];
+        if (a.idle_zz_hz != null) {
+            var iz = a.idle_zz_hz / 1e6;
+            idleShapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: iz, y1: iz,
+                              line: { color: C.res, width: 1, dash: 'dash' }, layer: 'below' });
+            idleNotes.push({ xref: 'paper', x: 1, xanchor: 'left', xshift: 8, yref: 'y', y: iz, showarrow: false,
+                             text: 'idle ZZ ' + iz.toFixed(3) + ' MHz', font: { size: 10, color: C.res } });
+        }
+        if (time) time.setAttribute('data-idle-zz-hz', a.idle_zz_hz == null ? '' : a.idle_zz_hz);
         var LT = layout(Object.assign({}, common, { xaxis: { title: { text: 'coupler amplitude (V)' } },
-                                                    yaxis: { title: { text: 'ZZ (MHz)' } } }));
+                                                    yaxis: { title: { text: 'ZZ (MHz)' } }, shapes: idleShapes, annotations: idleNotes }));
         [[flux, a.refusal], [time, a.refusal]].forEach(function (pair) {
             if (pair[0]) { pair[0].setAttribute('data-a4', '1'); pair[0].setAttribute('data-notes', pair[1] || ''); }
         });

@@ -400,6 +400,20 @@ def zz_flat_time_ns(zz_hz):
     return 4.0 * math.ceil(t / 4.0 - 1e-9), None
 
 
+def conditional_phase_pi(zz_hz, t_ns):
+    """Conditional phase of a flat top of length t_ns at static ZZ, in units of pi, in [0, 2).
+
+    [derived, check D5b-stored in tests/test_cz_a4_plan.py] from the c-Phase rule Q28
+    [paper: arXiv:0903.2030v2, p.2] "implements a c-Phase, because φ11 = φ01+ φ10−":
+    phi_c = phi_11 - phi_10 - phi_01 + phi_00 = -2*pi*ZZ*t for a static ZZ (Hz) over t,
+    so phi_c / pi = -2*ZZ*t (mod 2). Ramps and the idle ZZ outside the flat top are not
+    included: a starting comparison, not a calibration.
+    """
+    if zz_hz is None or t_ns is None or not math.isfinite(zz_hz) or not math.isfinite(t_ns):
+        return None
+    return (-2.0 * zz_hz * t_ns * 1e-9) % 2.0
+
+
 def coupler_cz_plan(model, fc, ft, ac, at, amplitude, n_scan=201):
     """A4 plan at coupler amplitude A_c (V relative to the idle offset) [derived].
 
@@ -422,6 +436,9 @@ def coupler_cz_plan(model, fc, ft, ac, at, amplitude, n_scan=201):
             out["refusal"] = f"{HYBRIDISED} (A_c = {float(a) * 1e3:+.1f} mV on the way)"
             out["coupler_frequency_hz"] = wc
             return out
+    idle = zz_three_mode(fc, ft, coupler_frequency(model, 0.0), ac, at, ec,
+                         model["g_c_hz"], model["g_t_hz"], model["g_ct_hz"])
+    out["idle_zz_hz"] = idle["zz_hz"]
     wc = coupler_frequency(model, amplitude)
     here = zz_three_mode(fc, ft, wc, ac, at, ec, model["g_c_hz"], model["g_t_hz"], model["g_ct_hz"])
     out.update(coupler_frequency_hz=wc, zz_hz=here["zz_hz"], min_overlap=here["min_overlap"])

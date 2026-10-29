@@ -192,3 +192,31 @@ def test_a_flux_cz_row_has_no_a4_key():
     m["__class__"] = "x.CZGate"
     m["flux_pulse_qubit"] = "#/qubit_pairs/q1-2/coupler/operations/cz_coupler_pulse_q1_q2"
     assert "a4" not in _row(doc)
+
+
+@pytest.mark.parametrize("pulse,t_ns", [(3.6, 100.0), (3.3, 60.0), (3.6, 250.0)])
+def test_stored_length_phase_formula_matches_time_evolution(pulse, t_ns):
+    """D5b-stored: conditional_phase_pi(ZZ, t) = -2*ZZ*t mod 2, against evolving idle-dressed
+    states under the pulsed Hamiltonian for an arbitrary stored flat length t."""
+    sm = _sm_zz(pulse)
+    U = expm(-2j * np.pi * _ham((W1, pulse, W2), ETA, G) * t_ns)
+    phases = {s: np.angle(v.conj() @ U @ v) for s, (_e, v) in _dressed(_ham((W1, 3.0, W2), ETA, G)).items()}
+    measured = ((phases[(1, 0, 1)] - phases[(1, 0, 0)] - phases[(0, 0, 1)] + phases[(0, 0, 0)]) % (2 * np.pi)) / np.pi
+    want = M.conditional_phase_pi(sm["zz_hz"], t_ns)
+    assert abs(((measured - want + 1) % 2) - 1) < 5e-3, (measured, want)
+
+
+def test_plan_reports_the_stored_length_phase_and_the_idle_zz():
+    doc = _a4_doc()
+    model = dict(MODEL, fc_max_hz=7.2e9, ec_c_hz=0.12e9, phi0_v=0.6, g_c_hz=120e6, g_t_hz=120e6, g_ct_hz=6e6)
+    doc["qubit_pairs"]["q1-2"]["extras"]["sm_coupler_model"] = model
+    a4 = _row(doc)["a4"]
+    assert a4["t_flat_ns"] is not None and a4["refusal"] is None
+    assert a4["difference_ns"] == 100 - a4["t_flat_ns"]
+    assert a4["stored_phase_pi"] == M.conditional_phase_pi(a4["zz_hz"], 100)
+    idle = M.zz_three_mode(5.0e9, 5.25e9, M.coupler_frequency(model, 0.0), -0.2e9, -0.21e9,
+                           model["ec_c_hz"], 120e6, 120e6, 6e6)
+    assert a4["idle_zz_hz"] == idle["zz_hz"] and a4["idle_zz_hz"] != a4["zz_hz"]
+    assert M.conditional_phase_pi(-1e6, 500) == pytest.approx(1.0)
+    assert M.conditional_phase_pi(-1e6, 100) == pytest.approx(0.2)
+    assert M.conditional_phase_pi(None, 100) is None

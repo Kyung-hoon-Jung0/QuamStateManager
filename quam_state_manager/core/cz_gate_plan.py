@@ -816,6 +816,7 @@ def coupler_only_plan(model, lines, alphas, coupler, pulse=None):
     pulse = pulse if isinstance(pulse, dict) else {}
     holder = coupler.get("pulse_path") if coupler else None
     out = {"model": bool(model), "amplitude_v": coupler["amplitude_v"] if coupler else None,
+           "stored_phase_pi": None, "difference_ns": None, "idle_zz_hz": None,
            "amplitude_path": holder + ".amplitude" if holder else None,
            "flat_length_path": holder + ".flat_length" if holder and "flat_length" in pulse else None,
            "stored_length_ns": number(pulse.get("length")),
@@ -835,6 +836,9 @@ def coupler_only_plan(model, lines, alphas, coupler, pulse=None):
         return out
     amp = coupler["amplitude_v"]
     out.update(cz_flux_math.coupler_cz_plan(model, fc, ft, alphas[0], alphas[1], amp))
+    stored = out["stored_flat_length_ns"] if out["stored_flat_length_ns"] is not None else out["stored_length_ns"]
+    out["stored_phase_pi"] = cz_flux_math.conditional_phase_pi(out["zz_hz"], stored)
+    out["difference_ns"] = (stored - out["t_flat_ns"]) if stored is not None and out["t_flat_ns"] is not None else None
     span = max(abs(amp) * 1.5, 0.05)
     out["curve"] = cz_flux_math.zz_curve(model, fc, ft, alphas[0], alphas[1],
                                          np.linspace(-span if amp < 0 else 0.0, 0.0 if amp < 0 else span, 61))
