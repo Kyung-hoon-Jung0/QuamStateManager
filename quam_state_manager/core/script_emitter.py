@@ -598,7 +598,7 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
         w('    _qdac_inst = {k: _qdac_inst.get(k) for k in')
         w('                  ("id", "communication_type", "ip_address", "port",')
         w('                   "usb_device", "lib")}')
-        w('    _qdac_inst.setdefault("id", "qdac")')
+        w('    _qdac_inst["id"] = _qdac_inst.get("id") or "qdac"')
         w('    _qdac_inst["__class__"] = f"{_QI.__module__}.{_QI.__name__}"')
         w("except Exception as _exc:")
         w('    print(f"WARNING: no QdacInstrument class ({_exc}) — top-level '

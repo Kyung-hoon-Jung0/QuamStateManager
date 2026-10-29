@@ -3035,10 +3035,27 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         # sits beside it so the difference is visible rather than inferred.
         "qdac_qubits": sorted(qdac_pins.keys()),
         "qdac_requested": sorted((spec.get("qdac") or {}).get("qubits") or {}),
-        "allocation": read_allocation(connectivity),
+        "allocation": _with_qdac_pins(read_allocation(connectivity), qdac_pins),
         "warnings": warnings,
         "class_schemas": _collect_class_schemas(state_path, wiring_path),
     }
+
+
+def _with_qdac_pins(allocation: dict, qdac_pins: dict) -> dict:
+    """Add each QDAC qubit's trigger output to the allocation as a ``qt`` entry.
+
+    The trigger wiring is allocated in its own pass and never reaches the main
+    Connectivity, so ``read_allocation`` cannot see it. The exported recipe
+    reads its pins from this allocation; without them it built every QDAC
+    qubit with no trigger output.
+    """
+    out = dict(allocation or {})
+    for qid, pin in (qdac_pins or {}).items():
+        con, slot, port = pin
+        ent = dict(out.get(qid) or {})
+        ent["qt"] = [{"con": con, "slot": slot, "port": port}]
+        out[qid] = ent
+    return out
 
 
 def _collect_class_schemas(state_path, wiring_path):
