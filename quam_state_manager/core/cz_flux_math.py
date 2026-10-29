@@ -246,3 +246,86 @@ def voltage_range(
         half = 0.05
     margin = half * 0.2
     return v_idle - half - margin, v_idle + half + margin
+
+
+
+def coupler_frequency(model, amplitude):
+    """[derived], S3-L: F8 at phi_idle + A_c/phi0_v.
+
+    Q16 [paper: arXiv:1803.09813v1, p.7, supplement Eq. (1)]
+    "is the junction asymmetry". The coupler uses the same fitted arc.
+    """
+    return float(arc_frequency(dict(f_max_hz=model["fc_max_hz"],
+        ec_hz=model["ec_c_hz"], d=model["d_c"]),
+        model["phi_idle"] + amplitude / model["phi0_v"]))
+
+
+def lamb_shift(fq, fc, g):
+    """[derived], S3-L: pulsed Delta and Sigma, including counter-rotation.
+
+    RWA [paper: arXiv:1803.09813v1, p.2, Eq. (2)]:
+    `w~j = wj + gj^2/Delta_j` (LITERATURE.md section 3).
+    The additional -g^2/Sigma term is derived for charge coupling F1.
+    """
+    return g**2 / (fq - fc) - g**2 / (fq + fc)
+
+
+def dressed_energies(frequencies, anharmonicities, couplings, states):
+    """[derived], S3-L/S3-O: F1 charge coupling, three levels per mode.
+
+    Return each maximum-overlap energy, probability and eigenindex. Couplings
+    are (mode index, mode index, Hz); all energies are in Hz.
+    """
+    n = len(frequencies)
+    a = np.diag(np.sqrt([1., 2.]), 1)
+    number = a.T @ a
+    def embed(operator, mode):
+        """[derived], S3-L: tensor placement in the truncated product basis."""
+        result = np.ones((1, 1))
+        for k in range(n):
+            result = np.kron(result, operator if k == mode else np.eye(3))
+        return result
+    h = sum(embed(f * number - abs(alpha) / 2 * number @ (number - np.eye(3)), k)
+            for k, (f, alpha) in enumerate(zip(frequencies, anharmonicities)))
+    x = [embed(a + a.T, k) for k in range(n)]
+    for i, j, g in couplings:
+        h += g * x[i] @ x[j]
+    energy, vectors = np.linalg.eigh(h)
+    result = []
+    for state in states:
+        index = int(np.ravel_multi_index(state, (3,) * n))
+        weights = abs(vectors[index])**2
+        chosen = int(np.argmax(weights))
+        result.append((float(energy[chosen]), float(weights[chosen]), chosen))
+    return result
+
+
+def coupler_shift(fq, fc, alpha, ec, g):
+    """[derived], S3-L/S3-O: regime and maximum-overlap refusal."""
+    if fq != fc and abs(g / (fq - fc)) <= 0.1:
+        return {"coupler_shift_hz": lamb_shift(fq, fc, g),
+                "coupler_method": "dispersive estimate (f_01 shift only)"}
+    states = dressed_energies([fq, fc], [alpha, ec], [(0, 1, g)], [(0, 0), (1, 0)])
+    if min(s[1] for s in states) < 0.9 or len({s[2] for s in states}) != 2:
+        return {"coupler_shift_hz": None,
+                "coupler_method": "qubit and coupler hybridised: no frequency assigned"}
+    return {"coupler_shift_hz": states[1][0] - states[0][0] - fq,
+            "coupler_method": "diagonalised"}
+
+
+def dressed_resonances(fc, ft, wc, ac, at, ec, gc, gt, gct):
+    """[derived], S3-O/C-RES: dressed distances, never twice an f_01 shift.
+
+    Preserve resonances()' signed distance convention; also expose E_leak-E_11.
+    """
+    states = dressed_energies([fc, wc, ft], [ac, ec, at],
+        [(0, 1, gc), (1, 2, gt), (0, 2, gct)],
+        [(1, 0, 1), (2, 0, 0), (0, 0, 2), (1, 0, 0), (0, 0, 1)])
+    valid = min(s[1] for s in states) >= 0.9 and len({s[2] for s in states}) == len(states)
+    e11, e20, e02, e10, e01 = [s[0] for s in states]
+    distances = [e20 - e11, e11 - e02, e10 - e01]
+    return [{"name": name, "distance_hz": distance if valid else None,
+             "dressed_energy_difference_hz": raw if valid else None,
+             "method": "diagonalised" if valid else "qubit and coupler hybridised: no frequency assigned"}
+            for name, distance, raw in zip(["|11>-|20>", "|11>-|02>", "iSWAP"],
+                distances, [e20-e11, e02-e11, e10-e01])]

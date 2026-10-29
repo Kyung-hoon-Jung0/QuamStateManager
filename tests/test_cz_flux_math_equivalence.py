@@ -67,6 +67,17 @@ def test_pre_extraction_fixture_outputs_are_identical():
             for row in expected[0]:
                 def holder(path):
                     return (C.read(doc, path).get("holder_path") or path) if path else path
+                # S3 adds unknown-only coupler metadata and replaces the old omission
+                # note. All pre-existing numerical outputs remain pinned exactly.
+                has_coupler = bool(row.get("coupler") or C.current(doc, "qubit_pairs." + row["pair"] + ".coupler"))
+                if has_coupler:
+                    row.update(coupler_model=None, shifted_resonances=[])
+                    if row.get("coupler_note") in row["notes"]:
+                        row["notes"].remove(row["coupler_note"])
+                    row["notes"].append(C.COUPLER_UNKNOWN)
+                    for line in row["lines"]:
+                        line.update(coupler_shift_hz=None, shifted_frequency_hz=None,
+                                    coupler_frequency_hz=None, coupler_method=C.COUPLER_UNKNOWN)
                 row["amplitudes"] = [holder(p) for p in row["amplitudes"]]
                 for line in row["lines"]:
                     line["amplitude_path"] = holder(line["amplitude_path"])

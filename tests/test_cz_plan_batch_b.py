@@ -46,7 +46,8 @@ def test_coupler_played_label_and_no_frequency():
     assert line["played_pulse_path"] == "couplers.c12.operations.flux"
     assert line["pulse_path"] in line["amp_title"]
     assert any("macro's copy says +300 mV; the coupler plays +100 mV" in n for n in row["notes"])
-    assert "a coupler pulse also plays (+100 mV): these bare-qubit frequencies omit the coupler's shift" in row["notes"]
+    # S3 replaces the old omission note with the exact missing-model message.
+    assert C.COUPLER_UNKNOWN in row["notes"]
     def keys(value):
         if isinstance(value, dict):
             for key, child in value.items():
@@ -85,7 +86,9 @@ def test_coupler_resolution_forms(form):
     if form in ("missing", "no_element"):
         assert line["amp_text"] == "unknown" and "not playable" in line["refusal"]
         assert line["amp_reason"] == line["refusal"] and line["refusal"] in line["amp_title"]
-        assert "(amplitude unknown: not playable" in " ".join(row["notes"])
+        # Amplitude detail remains on the coupler record; the S3 note names the missing model.
+        assert "(amplitude unknown: not playable" in row["coupler_note"]
+        assert C.COUPLER_UNKNOWN in row["notes"]
         assert "None" not in line["refusal"]
     else:
         assert line["amplitude_v"] == .1 and line["amp_text"] == "+100 mV"

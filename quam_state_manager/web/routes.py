@@ -22458,6 +22458,11 @@ def cz_plan_page():
         return _no_chip("CZ gate plan", "czplan")
     template = "_cz_plan.html" if _is_htmx() else "cz_plan.html"
     rows, _convs, unavailable = _cz_plan_ops(store)
+    from quam_state_manager.core import cz_gate_plan as czp
+    pairs = czp.resolved_tree(store.merged, "qubit_pairs")
+    qubits = czp.resolved_tree(store.merged, "qubits")
+    pairs = pairs if isinstance(pairs, dict) else {}
+    qubits = qubits if isinstance(qubits, dict) else {}
     table = _cz_plan_table(rows)
     want = request.args.get("op", "").strip()
     unknown_pair = None
@@ -22470,6 +22475,8 @@ def cz_plan_page():
     selected = want if want in paths else (paths[0] if paths and unknown_pair is None else "")
     return render_template(template, **_ctx(page="czplan", rows=table, selected=selected,
                                            operating_points=[p for r in table for p in r["operating_points"]],
+                                           fixed_no_flux=(not rows and not any(q.get("z") for q in qubits.values() if isinstance(q, dict)) and not any(p.get("coupler") for p in pairs.values() if isinstance(p, dict))),
+                                           coupler_forms=[dict(pair=k, model=czp.coupler_model((p.get("extras") or {}).get("sm_coupler_model")) or {}, create_extras="extras" not in p) for k, p in pairs.items() if isinstance(p, dict) and p.get("coupler") and isinstance(p.get("extras", {}), dict)],
                                            unavailable=unavailable, unknown_pair=unknown_pair))
 
 

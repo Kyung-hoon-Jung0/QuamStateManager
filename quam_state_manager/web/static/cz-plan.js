@@ -34,13 +34,19 @@
             if (!trace || !trace._czOperating) return;
             var p = trace._czOperating;
             group.querySelectorAll('.point').forEach(function (marker) {
-                ['pair', 'op', 'line', 'method', 'path'].forEach(function (k) { marker.setAttribute('data-' + k, p[k] || ''); });
+                ['pair', 'op', 'line', 'method', 'path', 'coupler_shift_hz', 'shifted_frequency_hz', 'coupler_method', 'coupler_frequency_hz'].forEach(function (k) { marker.setAttribute('data-' + k.replace(/_/g, '-'), p[k] == null ? '' : p[k]); });
                 marker.setAttribute('data-freq-hz', p.frequency_hz);
                 if (p.preview) marker.setAttribute('data-preview', '1');
             });
         });
     }
-    window.CzOperatingPoints = { get: operatingPoint, save: savePoints, stamp: stampPoints };
+    // [derived], S3-EXPOSE: select a precomputed distance from the shared blob.
+    function nearestPoint(root, point) {
+        var distances = root._czIncludeCoupler ? point.shifted_resonances : point.bare_resonances;
+        return (distances || []).filter(function (r) { return r.distance_hz != null; })
+            .sort(function (a, b) { return Math.abs(a.distance_hz) - Math.abs(b.distance_hz); })[0];
+    }
+    window.CzOperatingPoints = { get: operatingPoint, save: savePoints, stamp: stampPoints, nearest: nearestPoint };
 
     // [derived], check S2-STAGE: proposals use the existing Review edit door.
     function renderSolve(root, row) {
@@ -102,6 +108,39 @@
                 }).catch(function (e) { button.disabled = false; el.querySelector('.czp-solve-result').textContent = e.message; });
         };
         preview();
+    }
+
+    // [derived], S3-FORM: one atomic Review group, identity and drift guards.
+    function stageCoupler(form) {
+        var model = {}, numeric = ['fc_max_hz', 'ec_c_hz', 'd_c', 'phi0_v', 'phi_idle', 'g_c_hz', 'g_t_hz', 'g_ct_hz'];
+        numeric.forEach(function (key) { model[key] = Number(form.elements.namedItem(key).value); });
+        model.source = form.elements.namedItem('source').value;
+        model.created_at = new Date().toISOString();
+        var createExtras = form.dataset.createExtras === '1';
+        var payload = {updates: [{dot_path: 'qubit_pairs.' + form.dataset.pair + (createExtras ? '.extras' : '.extras.sm_coupler_model'), value: createExtras ? {sm_coupler_model: model} : model, create: true}],
+            expect_chip: window.__chipToken || '', group: 'new'};
+        var seen = window._keepMineSeen && window._keepMineSeen(null);
+        if (seen) { payload.seen_changes = seen.n; payload.seen_sig = seen.sig; }
+        return fetch('/field/edit-batch', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
+            .then(function (r) { return r.json(); }).then(function (d) {
+                if (!d.ok) throw new Error(d.error || 'Stage failed');
+                if (d.tray_html && window._swapPendingTray) window._swapPendingTray(d.tray_html);
+                refresh();
+            }).catch(function (e) { form.querySelector('output').textContent = e.message; });
+    }
+    window.CzStageCoupler = stageCoupler;
+
+    // [derived], S3-EXPOSE: select server-computed distances, no client physics.
+    function couplerView(root) {
+        var toggle = root.querySelector('#czp-include-coupler');
+        root._czIncludeCoupler = !!(toggle && toggle.checked);
+        root.querySelectorAll('.czp-row').forEach(function (tr) {
+            var p = operatingPoint(root, tr.dataset.op, 'control');
+            if (!p) return;
+            var near = nearestPoint(root, p);
+            if (tr.cells && tr.cells[6]) tr.cells[6].textContent = near ? near.name + ' ' + (near.distance_hz / 1e6).toFixed(1) + ' MHz' : 'coupler shift unknown';
+        });
+        if (window.CzMap) window.CzMap.draw(root);
     }
 
     var seq = 0, hseq = 0;
@@ -1072,6 +1111,11 @@
         root.addEventListener('czp:scale', function () { redrawFlux(root); });
         var sel = root.querySelector('#czp-op');
         if (sel) sel.addEventListener('change', function () { load(root, sel.value); });
+        root.querySelectorAll('.czp-coupler-form').forEach(function (form) {
+            form.onsubmit = function (event) { event.preventDefault(); stageCoupler(form); };
+        });
+        var couplerToggle = root.querySelector('#czp-include-coupler');
+        if (couplerToggle) couplerToggle.onchange = function () { couplerView(root); };
         var first = root.getAttribute('data-selected');
         if (first) load(root, first);
         if (window.CzMap) window.CzMap.mount(root);

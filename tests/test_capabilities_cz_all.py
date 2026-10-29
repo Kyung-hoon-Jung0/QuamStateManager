@@ -88,3 +88,15 @@ def test_no_cz_pairs_attempt_no_cz_shape():
     for spec in (_cz_chip(gate="cr"), dict(_cz_chip(), qubit_pairs=[])):
         rep = cap.assess(spec, _all_but(spec, _SHAPES))
         assert not ({w["id"] for w in rep["warnings"]} & _SHAPES), rep["warnings"]
+
+
+def test_cr_and_stark_unavailable_are_degrade_skips():
+    spec = _cz_chip(gate="cr")
+    spec["lines"].append({"element": "q1-q2", "line": "zz_drive"})
+    missing = {"pair.cr_gate", "pair.stark_cz_gate"}
+    report = cap.assess(spec, _all_but(spec, missing))
+    assert report["buildable"] and not report["blockers"]
+    for cid in missing:
+        assert cap.REGISTRY[cid]["severity"] == cap.DEGRADE
+        row = next(w for w in report["warnings"] if w["id"] == cid)
+        assert "will be skipped" in row["produces"]

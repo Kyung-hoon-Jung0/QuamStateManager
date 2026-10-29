@@ -180,13 +180,13 @@ REGISTRY: dict[str, dict] = {
     "pair.cr_gate": {
         "label": "CR gate macro", "category": "2Q gates",
         "package": "quam-builder", "symbol": "CRGate",
-        "produces": "the cr gate macro (else the CR channel exists but pair.apply('cr') is missing)",
+        "produces": "the cr gate macro will be skipped when unavailable",
         "fix": "upgrade quam-builder to a build with CRGate",
         "severity": DEGRADE},
     "pair.stark_cz_gate": {
         "label": "Stark-induced CZ macro", "category": "2Q gates",
         "package": "quam-builder", "symbol": "StarkInducedCZGate",
-        "produces": "the stark_cz gate macro on ZZ-driven pairs "
+        "produces": "the stark_cz gate macro will be skipped when unavailable "
                     "(else the ZZ channel exists but pair.apply('stark_cz') is missing)",
         "fix": "upgrade quam-builder to a build with StarkInducedCZGate",
         "severity": DEGRADE},

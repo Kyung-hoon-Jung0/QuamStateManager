@@ -40,7 +40,8 @@ def test_formulas_have_one_implementation():
                and re.search(r"\*\*\s*0\.25", source))
         quad = re.search(r"\bquad\s*\*\s*\(", source)
         inverse = re.search(r"sqrt\(\s*-\s*det", source)
-        if (arc and rel not in COSINE_WINDOWS) or quad or inverse:
+        lamb = re.search(r"\bg\s*\*\*\s*2\s*/", source)
+        if (arc and rel not in COSINE_WINDOWS) or quad or inverse or lamb:
             violations.append(rel)
     assert not violations, violations
 

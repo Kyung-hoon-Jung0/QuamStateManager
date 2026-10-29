@@ -755,6 +755,45 @@ def _coupler_line(doc, pair_path, macro_path, notes):
     return line
 
 
+
+COUPLER_UNKNOWN = "coupler shift unknown: no coupler model stored (extras.sm_coupler_model)"
+
+
+def coupler_model(value):
+    """Validate stored S3 parameters [derived], check S3-MODEL; never default."""
+    if not isinstance(value, dict):
+        return None
+    numeric = ("fc_max_hz", "ec_c_hz", "d_c", "phi0_v", "phi_idle",
+               "g_c_hz", "g_t_hz", "g_ct_hz")
+    if any(isinstance(value.get(k), bool) or number(value.get(k)) is None for k in numeric):
+        return None
+    model = {k: number(value[k]) for k in numeric}
+    if (model["fc_max_hz"] <= 0 or model["ec_c_hz"] <= 0 or
+            not 0 <= model["d_c"] < 1 or model["phi0_v"] <= 0 or
+            any(model[k] < 0 for k in ("g_c_hz", "g_t_hz", "g_ct_hz")) or
+            any(not isinstance(value.get(k), str) or not value[k].strip() for k in ("source", "created_at"))):
+        return None
+    return {**model, **{k: value[k] for k in ("source", "created_at")}}
+
+
+def coupler_points(lines, model, amplitude, alphas):
+    """Compute at pulsed qubit/coupler frequencies [derived], S3-PULSED/S3-O."""
+    frequency = cz_flux_math.coupler_frequency(model, amplitude) if model and amplitude is not None else None
+    for ln, alpha, key in zip(lines, alphas, ("g_c_hz", "g_t_hz")):
+        bare = ln["point"].get("frequency_hz")
+        result = (cz_flux_math.coupler_shift(bare, frequency, alpha, model["ec_c_hz"], model[key])
+                  if frequency is not None and bare is not None and alpha is not None else
+                  {"coupler_shift_hz": None, "coupler_method": COUPLER_UNKNOWN if not model else "coupler shift unknown: pulsed frequency or anharmonicity unavailable"})
+        shift = result["coupler_shift_hz"]
+        ln.update(result, coupler_frequency_hz=frequency,
+                  shifted_frequency_hz=bare + shift if shift is not None else None)
+    if frequency is None or any(ln["shifted_frequency_hz"] is None for ln in lines):
+        return []
+    if any(ln["coupler_method"] == "diagonalised" for ln in lines):
+        return cz_flux_math.dressed_resonances(*[ln["point"]["frequency_hz"] for ln in lines],
+            frequency, *alphas, model["ec_c_hz"], model["g_c_hz"], model["g_t_hz"], model["g_ct_hz"])
+    return resonances(*[ln["shifted_frequency_hz"] for ln in lines], *alphas)
+
 def operations(doc, conversions=None, unavailable=None):
     """Every CZ macro of every pair (aliases included), with what each qubit plays.
 
@@ -943,7 +982,25 @@ def operations(doc, conversions=None, unavailable=None):
                 notes.append(coupler_note)
             else:
                 coupler_note = None
+            model = coupler_model(resolved_tree(doc, pp + ".extras.sm_coupler_model"))
+            has_coupler = bool(coupler or current(doc, pp + ".coupler") or model)
+            shifted_res = coupler_points(lines, model, coupler["amplitude_v"] if coupler else 0.0, alphas) if has_coupler else []
+            if model and coupler and coupler["refusal"]:
+                shifted_res = coupler_points(lines, model, None, alphas)
+            if model and None not in fq and not any(ln["refusal"] for ln in lines):
+                shifted_res = []
+                for stage in stages:
+                    stage_lines = [{**ln, "point": next((l["point"] for l in ln["lobes"] if l["name"] == stage),
+                                   conversions[ln["qubit_path"]].point(0) if stage == "third lobe" else ln["point"])} for ln in lines]
+                    shifted_res.extend({**r, "lobe": stage} for r in coupler_points(stage_lines, model,
+                        coupler["amplitude_v"] if coupler and not coupler["refusal"] else None if coupler else 0.0, alphas))
+            if not model and has_coupler:
+                if coupler_note in notes:
+                    notes.remove(coupler_note)
+                notes.append(COUPLER_UNKNOWN)
             rows.append({
+                **({"coupler_model": model, "shifted_resonances": shifted_res} if has_coupler else {}),
+
                 "pair": pair_name, "operation": name, "path": path, "class": cls, "kind": kind,
                 "alias_of": alias[-1]["to_path"] if alias else None,
                 "lines": lines, "resonances": res, "nearest": nearest, "lobe_resonances": lobe_resonances,
@@ -976,6 +1033,9 @@ def operating_points(row):
         frequency = ln["point"].get("frequency_hz")
         points.append({"pair": row["pair"], "op": row["path"], "line": ln["role"],
                        "frequency_hz": frequency, "amplitude_v": ln["amplitude_v"],
+                       **{k: ln.get(k) for k in ("coupler_shift_hz", "shifted_frequency_hz", "coupler_method", "coupler_frequency_hz")},
+                       "bare_resonances": row.get("lobe_resonances", []),
+                       "shifted_resonances": row.get("shifted_resonances", []),
                        "x": ln["amplitude_v"], "y": frequency / 1e9 if frequency is not None else None,
                        "path": ln["amplitude_path"] or "",
                        "source_paths": [p for p in [ln["amplitude_path"], *row["dependencies"]] if p],
@@ -1109,8 +1169,13 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
             mode = "amplified" if "amplified" in label else "direct"
             raise ValueError(f"{amplitude:g} V exceeds the {mode} LF output range (±{bound:g} V)")
         frequencies = [frequency if x is ln else x["point"].get("frequency_hz") for x in lines]
-        preview = operating_points({**row, "lines": [{**ln, "amplitude_v": amplitude,
-                                      "point": {"frequency_hz": frequency, "kind": selected}}]})[0]
+        preview_lines = [{**x, **({"amplitude_v": amplitude,
+                         "point": {"frequency_hz": frequency, "kind": selected}} if x is ln else {})} for x in lines]
+        shifted_preview = coupler_points(preview_lines, row.get("coupler_model"),
+                          row["coupler_amplitude_v"] if row.get("coupler") else 0.0, [ac, at])
+        preview_row = {**row, "lines": preview_lines, "shifted_resonances": shifted_preview,
+                       "lobe_resonances": resonances(*frequencies, ac, at)}
+        preview = next(p for p in operating_points(preview_row) if p["line"] == ln["role"])
         preview["method"] = selected
         preview["preview"] = True
         preview.update(amp_text=f"{amplitude:g} V (stored amplitude)", amp_title=path)
