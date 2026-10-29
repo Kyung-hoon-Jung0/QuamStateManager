@@ -1246,3 +1246,39 @@ Follow-ups to 1.5.5.
   `--force-reinstall` pip install no longer upgrades click past 8.2 (qualibrate
   requires click<8.2) or Flask/Werkzeug past 3.2 (dash requires <3.2) and, on Python below 3.12, no longer pulls numpy 2 past
   qualibrate's numpy<1.26. `--no-deps` is no longer needed for that case.
+
+## v1.6.0 (2026-10-30)
+
+CZ planning for four chip types, and Generate Config checked from 3 to 56 qubits.
+
+### CZ plan
+- The pair detail opens first and states the answer on one line: target detuning,
+  required amplitude, stored amplitude, and the difference.
+- Three ways to place the operating point: the quadratic term, a flux model, or the
+  stored amplitude read back as frequency and detuning. Two-flux and both-movers
+  gates name whose amplitude is solved.
+- Flux models with no lower sweet spot (d = 0) are accepted. The plan says
+  "no lower sweet spot" and refuses targets the arc cannot reach.
+- New: CZ on fixed-frequency qubits through a tunable coupler. A ZZ plan gives the
+  gate time and the conditional phase the stored length produces (needs the
+  `qsm_quam_ext` package in the env).
+- Accurate dispersive coupler shift. The detuning panel is scaled to the gate,
+  with headroom and labelled defect bands. A stored point that sits on another
+  resonance is called out.
+- The "Last set" cell shows the date only; the full stamp is in its tooltip.
+
+### Generate Config
+- Checked for every chip type with TWPA on/off and QDAC on/off, on one or two
+  chassis (largest: 40-56 qubits). Each build is loaded with `Quam.load`, runs
+  `generate_config`, and the exported script builds the same chip.
+- QDAC triggers share ext1-4 round-robin past four qubits when none is cabled.
+  Pins carried from a re-generate are never changed.
+- Exported scripts wire QDAC trigger outputs and build coupler-only chips.
+- The rack wraps its FEMs; two-controller racks open whole.
+
+### Re-generate
+- A lab's own classes, objects and single-source links (for example a pulsed
+  TWPA, lab CZ flux pulses) are kept when the env imports them. Stock-only fields
+  that would not load are dropped and listed.
+- Known limit: the exported recipe reproduces structure and populate values only,
+  not lab extras or pump settings.
