@@ -593,11 +593,13 @@
        detuning (often +-1.5 GHz, which squeezed the resonances into a sliver). The idle
        stretches are then clipped; offscale says which edge they leave through.
        gateKnown is false when the gate samples are missing (a qubit's frequency refused). */
-    function deltaRange(delta, levels) {
+    function deltaRange(delta, levels, idleMhz) {
         var num = function (v) { return typeof v === 'number' && isFinite(v); };
         var vals = (delta || []).filter(num);
         if (!vals.length) return null;
-        var idle = vals[0];
+        // the idle detuning comes from the qubits' idle f_01; a pulse with no zero padding
+        // (a plain square) has no idle sample, so its first sample is the plateau
+        var idle = num(idleMhz) ? idleMhz : vals[0];
         // the plateau(s): samples at least half the largest excursion from idle; a few
         // transition samples (an SNZ zero-crossing step) do not set the range
         var far = Math.max.apply(null, vals.map(function (v) { return Math.abs(v - idle); }));
@@ -612,8 +614,10 @@
         var lo = Math.min.apply(null, keep), hi = Math.max.apply(null, keep);
         var pad = 0.15 * Math.max(hi - lo, 40);
         var range = [lo - pad, hi + pad];
+        // an off-scale marker only for idle stretches the trace actually draws
+        var drawn = vals.some(function (v) { return Math.abs(v - idle) <= 0.5; });
         return { range: range, idle: idle, gateKnown: gateKnown,
-                 offscale: idle > range[1] ? 'above' : idle < range[0] ? 'below' : null };
+                 offscale: !drawn ? null : idle > range[1] ? 'above' : idle < range[0] ? 'below' : null };
     }
 
     /* (b) f(t) of both qubits from the operation's waveforms, and Delta(t) against the three
@@ -661,7 +665,9 @@
             yaxis2: { title: { text: 'Δ (MHz)' }, domain: [0, 1], anchor: 'x' },
             shapes: shapes, annotations: annotations, hovermode: 'x unified'
         });
-        var view = deltaRange(delta, panel.levels);
+        var f0 = (d.qubits || []).map(function (q) { return q && q.summary ? q.summary.f01_hz : null; });
+        var view = deltaRange(delta, panel.levels,
+            f0.length === 2 && f0[0] != null && f0[1] != null ? (f0[0] - f0[1]) / 1e6 : null);
         if (view) {
             L.yaxis2 = Object.assign({}, L.yaxis2, { range: view.range, autorange: false });
             el.setAttribute('data-delta-range', JSON.stringify(view.range));

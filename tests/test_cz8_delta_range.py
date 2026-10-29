@@ -32,6 +32,11 @@ assert.ok(s.range[1] < 1438, JSON.stringify(s));
 // a known gate with a transition sample: the range follows the plateau, not the step
 const k = R([1495, 340, 340, 1438, 340, 340, 1495], levels);
 assert.ok(k.range[1] < 1438 && k.range[1] > 340, JSON.stringify(k));
+// a square pulse with no zero padding: no idle sample, the given idle detuning is used
+const q = R([-336, -336, -336], levels, -110);
+assert.ok(q.range[0] < -336, JSON.stringify(q));
+assert.strictEqual(q.offscale, null);
+assert.strictEqual(q.idle, -110);
 // idle inside the band: nothing off scale
 assert.strictEqual(R([100, -210, -210, 100], levels).offscale, null);
 """
@@ -45,7 +50,7 @@ def test_delta_panel_scales_to_the_gate_and_the_resonances():
 
 def test_the_panel_uses_the_range():
     src = (ROOT / 'quam_state_manager/web/static/cz-plan.js').read_text(encoding='utf-8')
-    assert 'var view = deltaRange(delta, panel.levels);' in src
+    assert 'var view = deltaRange(delta, panel.levels,' in src and '(f0[0] - f0[1]) / 1e6' in src
     assert 'range: view.range, autorange: false' in src
     assert "off scale'" in src and 'during the gate unknown' in src
 
