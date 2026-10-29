@@ -227,7 +227,9 @@ function buildTo4(win, opts) {
   const win = makeWorld();
   const G = buildTo4(win);
   const radios = win.document.querySelectorAll('#gen-arch-radios input[type="radio"]');
-  ok(radios.length === 3, 'L6: three architecture radios rendered');
+  ok(radios.length === 4, 'L6: four architecture radios rendered');
+  const a4 = win.document.querySelector('#gen-arch-radios input[value="fixed_tunable_coupler"]');
+  ok(a4 && a4.disabled, 'L6: A4 disabled until extension availability is established');
   ok(win.document.getElementById('gen-chip-arch').hidden === true,
     'L6: the select anchor is hidden');
   const checked = function () {
@@ -254,7 +256,7 @@ function buildTo4(win, opts) {
   const win2 = makeWorld();
   buildTo4(win2, { mwOnly: true });
   const off = win2.document.querySelectorAll('#gen-arch-radios input:disabled');
-  ok(off.length === 2, 'L6: flux-tunable radios disabled without an LF-FEM (got ' +
+  ok(off.length === 3, 'L6: all three flux architectures disabled without an LF-FEM (got ' +
     off.length + ')');
 })();
 

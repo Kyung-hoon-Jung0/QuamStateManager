@@ -161,6 +161,13 @@ REGISTRY: dict[str, dict] = {
         "produces": "the base square pulse used by readout / CZ / CR",
         "fix": "install/upgrade quam", "severity": BLOCKER},
     # -- two-qubit gates ---------------------------------------------------
+    "pair.coupler_cz": {
+        "label": "Coupler-only CZ gate", "category": "2Q gates",
+        "package": "qsm_quam_ext", "symbol": "qsm_quam_ext.CouplerCZGate",
+        "produces": "a coupler-only CZ on fixed-frequency qubits",
+        "fix": "needs the qsm_quam_ext package in this environment "
+               "(pip install <path to extensions/qsm_quam_ext>)",
+        "severity": BLOCKER},
     "pair.cz_gate": {
         "label": "CZ gate macro", "category": "2Q gates",
         "package": "quam-builder", "symbol": "CZGate",
@@ -320,7 +327,7 @@ def required_capabilities(spec: dict) -> set[str]:
             req.add(cap)
 
     # QPU root class: flux-tunable if the chip has qubit/coupler flux, else fixed.
-    req.add("qpu.flux_tunable" if ("flux" in lines or "coupler" in lines)
+    req.add("qpu.flux_tunable" if ("flux" in lines or ("coupler" in lines and spec.get("pair_gate") != "cz_coupler"))
             else "qpu.fixed_frequency")
 
     # instruments
@@ -340,7 +347,9 @@ def required_capabilities(spec: dict) -> set[str]:
     pair_gate = spec.get("pair_gate") or ""
     has_pairs = bool(spec.get("qubit_pairs"))
     if has_pairs:
-        if pair_gate.startswith("cz"):
+        if pair_gate == "cz_coupler":
+            req.update({"pair.coupler_cz", "pulse.cr_flattop"})
+        elif pair_gate.startswith("cz"):
             req.add("pair.cz_gate")
             if pair_gate == "cz_fixed":
                 req.add("pair.fixed_pair")   # pair never created without it → blocker
@@ -397,7 +406,7 @@ def _cz_default_variant_caps(spec: dict) -> set[str]:
     variant attempts only that one (which ``required_capabilities`` covers).
     """
     pairs = spec.get("qubit_pairs") or []
-    if not pairs or not (spec.get("pair_gate") or "").startswith("cz"):
+    if not pairs or spec.get("pair_gate") == "cz_coupler" or not (spec.get("pair_gate") or "").startswith("cz"):
         return set()
     explicit = sum(1 for pv in _pair_populate(spec)
                    if (pv.get("cz_variant") or "all") != "all")
@@ -497,6 +506,9 @@ def assess(spec: dict, manifest: Any) -> dict:
         if not requested:
             continue
         row = _row(cid, detail, True, available)
+        if spec.get("pair_gate") == "cz_coupler" and cid == "pulse.cr_flattop":
+            # Coupler-only CZ always uses this public pulse class, with no fallback.
+            row["severity"] = inventory[-1]["severity"] = BLOCKER
         if cid in attempted:
             row["produces"] = _cz_skip_text(cid)
         if available:

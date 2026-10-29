@@ -2652,6 +2652,39 @@ def _declared_pairs_not_built(spec: dict, machine) -> list[str]:
     return sorted(missing)
 
 
+def _require_coupler_extension(spec: dict) -> None:
+    """Refuse a coupler-only CZ spec before anything is written when the extension is absent."""
+    if spec.get("pair_gate") != "cz_coupler":
+        return
+    try:
+        import qsm_quam_ext  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError("needs the qsm_quam_ext package in this environment "
+                           "(pip install <path to extensions/qsm_quam_ext>)") from exc
+
+
+def _seed_coupler_cz(pair, vals):
+    """Seed the coupler operation and pointer macro (GATE-ID)."""
+    from qsm_quam_ext import CouplerCZGate
+    pulse_cls = _pulse_class("FlatTopGaussianPulse")
+    if pulse_cls is None:
+        raise RuntimeError("cz_coupler requires FlatTopGaussianPulse in this environment")
+    control, target = pair.qubit_control.name, pair.qubit_target.name
+    key = f"cz_coupler_pulse_{control}_{target}"
+    pair.coupler.decouple_offset = vals.get("coupler_decouple_offset", 0.0)
+    pair.coupler.interaction_offset = vals.get("coupler_interaction_offset", 0.0)
+    length = int(vals.get("cz_interaction_duration", 100))
+    pair.coupler.operations[key] = pulse_cls(
+        amplitude=vals.get("coupler_amplitude", vals.get("cz_amplitude", 0.1)),
+        length=length, flat_length=max(0, length - 20), id=key)
+    # gate_pulse_ids is the dict-side twin for coupler_flux_pulse.
+    pair.macros["cz_coupler"] = CouplerCZGate(
+        coupler_flux_pulse=pair.coupler.get_reference() + "/operations/" + key,
+        phase_shift_control=vals.get("phase_shift_control", 0.0),
+        phase_shift_target=vals.get("phase_shift_target", 0.0))
+    pair.macros["cz"] = "#./cz_coupler"
+
+
 def _finalize_pair_gates(machine, spec, pair_gate):
     """Add the wizard's chosen 2Q-gate macros (CR / CZ fixed / CZ tunable).
 
@@ -2701,7 +2734,10 @@ def _finalize_pair_gates(machine, spec, pair_gate):
     shared = (spec.get("cr_port_mode") == "shared_xy")
     for quam_id, pair in list(qpairs.items()):
         vals = norm_pairs.get(quam_id) or {}
-        if pair_gate == "cr":
+        if pair_gate == "cz_coupler":
+            _seed_coupler_cz(pair, vals)
+            w = None
+        elif pair_gate == "cr":
             w = _seed_cr_gate(pair, vals=vals, shared=shared)
             zw = _seed_zz_gate(pair, vals=vals, shared=shared)
             if zw:
@@ -2765,6 +2801,8 @@ def run_allocate(spec: dict) -> dict:
     only the preview was blind. Same function the build calls, sharing the
     same *instruments* pool, so what the wizard draws is what gets built.
     """
+    _require_coupler_extension(spec)
+
     instruments = build_instruments(spec)
     connectivity, warnings = allocate_full(spec, instruments)
     allocation = read_allocation(connectivity)
@@ -2817,6 +2855,8 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         FixedFrequencyQuam,
     )
 
+    _require_coupler_extension(spec)
+
     instruments = build_instruments(spec)
     connectivity, warnings = allocate_full(spec, instruments)
 
@@ -2826,7 +2866,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
     port = net.get("port")
 
     lines = spec.get("lines", [])
-    flux_tunable = any(ln.get("line") in ("flux", "coupler") for ln in lines)
+    flux_tunable = any(ln.get("line") == "flux" or (ln.get("line") == "coupler" and spec.get("pair_gate") != "cz_coupler") for ln in lines)
     quam_cls = FluxTunableQuam if flux_tunable else FixedFrequencyQuam
     if not flux_tunable and any(ln.get("line") == "zz_drive" for ln in lines):
         # ZZ (Stark-CZ) chips need the ZZ-drive QPU root: build_quam picks the
@@ -2868,6 +2908,9 @@ def run_build(spec: dict, out_dir: Path) -> dict:
                 "that class does not declare (e.g. QDAC-II bias), the result "
                 "will not load; install the package that provides it.")
 
+    if spec.get("pair_gate") == "cz_coupler" and not issubclass(quam_cls, FixedFrequencyQuam):
+        raise RuntimeError("cz_coupler requires a FixedFrequencyQuam root")
+
     out_dir.mkdir(parents=True, exist_ok=True)
     state_path = out_dir / "state.json"
     wiring_path = out_dir / "wiring.json"
@@ -2892,6 +2935,9 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         # 2. Reload (so wiring strings become QUAM references) and build the
         #    transmons / pulses; build_quam saves state.json itself.
         machine = quam_cls.load()
+        if spec.get("pair_gate") == "cz_coupler":
+            from qsm_quam_ext import FixedFrequencyTunableCouplerPair
+            machine.qubit_pair_type = FixedFrequencyTunableCouplerPair
         build_quam(machine)
 
         # 2b. QDAC-II bias (DEGRADE-only — see _apply_qdac). Must run BEFORE
@@ -2909,7 +2955,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         apply_populate(machine, spec.get("populate") or {},
                        handle_pairs=(pair_gate == ""))
         warnings.extend(_apply_dual_upconverters(machine, spec))
-        if pair_gate in ("cz_fixed", "cz_tunable", "cr"):
+        if pair_gate in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):
             warnings.extend(_finalize_pair_gates(machine, spec, pair_gate))
         if ((spec.get("populate") or {}).get("options") or {}).get("pin_cores"):
             _pin_cores(machine)
@@ -3053,7 +3099,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if args.mode == "allocate":
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     # _result.json is written next to the spec (a private work dir), never
     # into --out: QUAM's loader reads *every* .json in a folder, so a stray

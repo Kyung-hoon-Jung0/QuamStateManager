@@ -135,6 +135,7 @@
         <select id="gen-chip-arch" hidden>
           <option value="flux_tunable_coupler">Flux-tunable qubits + tunable coupler &mdash; CZ via coupler</option>
           <option value="flux_tunable_fixed_coupler">Flux-tunable qubits + fixed coupler &mdash; CZ via qubit z</option>
+          <option value="fixed_tunable_coupler">Fixed-frequency qubits + tunable coupler &mdash; coupler-only CZ</option>
           <option value="fixed_frequency">Fixed-frequency qubits &mdash; cross-resonance (MW-only)</option>
         </select>
         <div class="gen-define-row">
@@ -196,6 +197,7 @@
                  title="Derived from the architecture — the 2-qubit gate seeded on every pair">
             <span>Gate</span>
             <select id="gen-pair-gate" disabled>
+              <option value="cz_coupler">Coupler-only CZ</option>
               <option value="cz_tunable">CZ &mdash; tunable coupler</option>
               <option value="cz_fixed">CZ &mdash; fixed coupler</option>
               <option value="cr">Cross-resonance (CR)</option>

@@ -579,16 +579,12 @@ def validate_spec(spec) -> list[str]:
                 "MW-FEM bound is 8 per feedline; lower 'qubits per readout "
                 "feedline' or split the group")
 
-    # -- unrepresentable architecture --------------------------------------
-    # A tunable coupler (coupler lines) with fixed-frequency qubits (no qubit
-    # flux lines) cannot be built: quam_builder's CZGate plays on the qubit z
-    # line, so a coupler-only CZ has no representation. Fixed-frequency chips use
-    # cross-resonance. The Generate wizard's chip-architecture selector doesn't
-    # offer this combo; this guards hand-crafted specs / the API.
+    # Official CZGate still requires qubit flux; coupler-only CZ uses the extension.
     line_types_present = {
         ln.get("line") for ln in lines if isinstance(ln, dict)
     }
-    if "coupler" in line_types_present and "flux" not in line_types_present:
+    if ("coupler" in line_types_present and "flux" not in line_types_present
+            and spec.get("pair_gate") != "cz_coupler"):
         errors.append(
             "coupler lines need qubit flux lines (flux-tunable qubits): a tunable-"
             "coupler CZ plays on the qubit z line. For fixed-frequency qubits use "
@@ -599,11 +595,23 @@ def validate_spec(spec) -> list[str]:
     # run_build dispatches the 2Q-gate family on this; an unknown value silently
     # builds a chip with no 2Q macros, so validate it here.
     pair_gate = spec.get("pair_gate")
-    if pair_gate not in (None, "", "cr", "cz_fixed", "cz_tunable"):
+    if pair_gate not in (None, "", "cr", "cz_fixed", "cz_tunable", "cz_coupler"):
         errors.append(
             f"pair_gate: unknown value {pair_gate!r} "
-            f"(expected 'cr', 'cz_fixed', or 'cz_tunable')"
+            f"(expected 'cr', 'cz_fixed', 'cz_tunable', or 'cz_coupler')"
         )
+
+    if pair_gate == "cz_coupler":
+        if any(ln.get("line") == "flux" for ln in lines):
+            errors.append("cz_coupler requires no qubit z line")
+        for pair in spec.get("qubit_pairs") or []:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            control, target = pair
+            aliases = {f"{control}-{target}", f"{control}-{str(target).removeprefix('q')}"}
+            if not any(ln.get("line") == "coupler" and ln.get("element") in aliases
+                       for ln in lines):
+                errors.append(f"cz_coupler requires a coupler flux line for {control}-{target}")
 
     # -- cr_port_mode --------------------------------------------------------
     # "shared_xy" = the customer's dual-upconverter layout: CR/ZZ drives ride

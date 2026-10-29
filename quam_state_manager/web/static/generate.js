@@ -92,9 +92,8 @@
     zzEnabled: false,
     // Explicit chip architecture (step 4) — the single source of truth that drives
     // qubitFlux + pairGate. The qubit-flux/gate controls below are derived from it.
-    // The physically-unrepresentable "fixed-frequency qubits + tunable coupler" is
-    // deliberately NOT an option (quam_builder's CZGate hardcodes a qubit-z pulse —
-    // a coupler-only CZ can't be expressed; fixed-freq chips use cross-resonance).
+    // Coupler-only CZ uses qsm_quam_ext in the selected environment.
+    //   "fixed_tunable_coupler"       fixed qubits + tunable coupler -> cz_coupler
     //   "flux_tunable_coupler"        flux-tunable qubits + tunable coupler → cz_tunable
     //   "flux_tunable_fixed_coupler"  flux-tunable qubits + fixed coupler   → cz_fixed
     //   "fixed_frequency"             fixed-frequency qubits                → cr
@@ -129,6 +128,7 @@
 
   // chip architecture → (qubitFlux, pairGate). Single source of truth.
   var CHIP_ARCH = {
+    fixed_tunable_coupler:      { qubitFlux: false, couplerFlux: true, pairGate: "cz_coupler" },
     flux_tunable_coupler:       { qubitFlux: true,  pairGate: "cz_tunable" },
     flux_tunable_fixed_coupler: { qubitFlux: true,  pairGate: "cz_fixed" },
     fixed_frequency:            { qubitFlux: false, pairGate: "cr" }
@@ -239,10 +239,9 @@
         return "No control lines enabled — enable at least one line type, " +
                "or add a MW-FEM / LF-FEM in step 3.";
       }
-      // Hard block the physically-unrepresentable combo (defense in depth — the
-      // Chip-architecture selector doesn't offer it, but a stale draft might).
-      // Fixed-frequency qubits (no z) can't drive a tunable-coupler CZ: quam_builder's
-      // CZGate plays on the qubit z line, so a coupler-only CZ can't be expressed.
+      // Defense in depth for stale drafts: a coupler-only CZ needs the extension, and
+      // the official CZGate (cz_tunable) requires a qubit flux pulse.
+      if (state.pairGate === "cz_coupler" && !_couplerCzAvailable) return COUPLER_CZ_BLOCKER;
       if (!state.qubitFlux && state.pairGate === "cz_tunable") {
         return "Fixed-frequency qubits can't use a tunable-coupler CZ (the CZ gate " +
                "needs a qubit flux line). Pick a flux-tunable architecture, or use " +
@@ -278,7 +277,7 @@
         var gate = state.pairGate || "cz_tunable";
         var canEmit = (gate === "cr" && mw) ||
                       (gate === "cz_fixed" && lf) ||
-                      (gate === "cz_tunable" && lf);
+                      ((gate === "cz_tunable" || gate === "cz_coupler") && lf);
         if (!canEmit) {
           var n = state.spec.qubit_pairs.length;
           var plural = n === 1 ? "" : "s";
@@ -2528,6 +2527,7 @@
   // The effective (hardware-constrained) qubitFlux+pairGate map back to a chip
   // architecture so the explicit selector always reflects what will be built.
   function deriveChipArch() {
+    if (state.pairGate === "cz_coupler") return "fixed_tunable_coupler";
     if (!state.qubitFlux) return "fixed_frequency";
     return state.pairGate === "cz_fixed" ? "flux_tunable_fixed_coupler"
                                          : "flux_tunable_coupler";
@@ -2555,6 +2555,7 @@
   }
 
   var ARCH_LABEL = {
+    fixed_tunable_coupler: "Fixed-frequency qubits + tunable coupler",
     flux_tunable_coupler: "Flux-tunable qubits + tunable coupler",
     flux_tunable_fixed_coupler: "Flux-tunable qubits + fixed coupler",
     fixed_frequency: "Fixed-frequency qubits (cross-resonance)"
@@ -2575,7 +2576,26 @@
     return held;
   }
 
+  var _couplerCzEnv = null;
+  var _couplerCzAvailable = false;
+  var COUPLER_CZ_BLOCKER = "needs the qsm_quam_ext package in this environment (pip install <path to extensions/qsm_quam_ext>)";
+
   function syncLineTypeToggles() {
+    if (state.env && _couplerCzEnv !== state.env) {
+      _couplerCzEnv = state.env;
+      _couplerCzAvailable = false;
+      var selectedEnv = state.env;
+      fetch("/generate/capabilities", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec: state.spec })
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        if (state.env !== selectedEnv) return;
+        _couplerCzAvailable = !!((res.report || {}).inventory || []).some(function (r) {
+          return r.id === "pair.coupler_cz" && r.available;
+        });
+        syncLineTypeToggles();
+      }).catch(function () { /* Remains disabled until capabilities can be read. */ });
+    }
     var mw = hasMwFem() || hasOpxPlus();
     var lf = hasLfFem() || hasOpxPlus();
     var hasPairs = state.spec.qubit_pairs.length > 0;
@@ -2625,7 +2645,7 @@
         state.qubitFlux = true;
         if (chkQF) chkQF.checked = true;
       }
-      state.couplerFlux = (gate === "cz_tunable") && lf && hasPairs;
+      state.couplerFlux = (gate === "cz_tunable" || gate === "cz_coupler") && lf && hasPairs;
       if (pairNote) {
         // Confirmation echo: how many pairs the gate applies to (live count).
         var n = state.spec.qubit_pairs.length;
@@ -2637,7 +2657,7 @@
       }
       // The qubit-flux checkbox + gate select are now DERIVED from the explicit
       // Chip-architecture selector — show them read-only so there's one source of
-      // truth and the unrepresentable fixed-Q+tunable-coupler combo is unreachable.
+      // truth for the architecture and its required flux lines.
       pairSel.disabled = true;
     }
     if (chkQF) chkQF.disabled = true;
@@ -2653,6 +2673,10 @@
         // flux-tunable architectures need an LF-FEM (qubit flux);
         // fixed-frequency needs an MW-FEM (drive/readout + CR).
         opt.disabled = (opt.value === "fixed_frequency") ? !mw : !lf;
+        if (opt.value === "fixed_tunable_coupler") {
+          opt.disabled = !lf || !_couplerCzAvailable;
+          opt.title = !_couplerCzAvailable ? COUPLER_CZ_BLOCKER : "";
+        }
       });
       archSel.value = state.chipArch;
     }
@@ -2670,7 +2694,10 @@
         "Building as " + ARCH_LABEL[state.chipArch].toLowerCase() + " until you add one — " +
         "it comes back on its own, line pins too; picking an architecture here replaces it.";
     } else if (archNote) {
-      if (state.chipArch === "fixed_frequency") {
+      if (state.chipArch === "fixed_tunable_coupler") {
+        archNote.textContent = !_couplerCzAvailable ? COUPLER_CZ_BLOCKER
+          : "Fixed-frequency qubits; CZ flux on the coupler only.";
+      } else if (state.chipArch === "fixed_frequency") {
         archNote.textContent = !mw
           ? "Fixed-frequency needs an MW-FEM — add one in step 3."
           : "Fixed-frequency qubits (no z line); 2-qubit gate is cross-resonance.";
@@ -2708,9 +2735,9 @@
       r.checked = opt.value === sel.value;
       r.disabled = opt.disabled;
       if (opt.disabled) {
-        lab.title = opt.value === "fixed_frequency"
+        lab.title = opt.title || (opt.value === "fixed_frequency"
           ? "Needs an MW-FEM — add one in step 3."
-          : "Needs an LF-FEM (qubit flux) — add one in step 3.";
+          : "Needs an LF-FEM (qubit flux) — add one in step 3.");
       }
       r.addEventListener("change", function () {
         if (!r.checked) return;
@@ -2718,7 +2745,8 @@
         sel.dispatchEvent(new Event("change", { bubbles: true }));
       });
       lab.appendChild(r);
-      lab.appendChild(document.createTextNode(" " + opt.textContent));
+      lab.appendChild(document.createTextNode(" " + opt.textContent +
+        (opt.value === "fixed_tunable_coupler" && opt.title ? " - " + opt.title : "")));
       host.appendChild(lab);
     });
     renderCrOptions();
@@ -3262,7 +3290,7 @@
     var cz            = (pairGate === "cz_fixed" || pairGate === "cz_tunable");
     var wantFlux      = lf && (state.qubitFlux || cz);
     var wantCR        = mw && pairGate === "cr";
-    var wantCoupler   = lf && pairGate === "cz_tunable";
+    var wantCoupler   = lf && (pairGate === "cz_tunable" || pairGate === "cz_coupler");
     // Keep the derived mirror in sync for the populate/review code that reads it,
     // and stamp the gate onto the spec so run_build knows how to finalize pairs.
     state.couplerFlux = wantCoupler;
@@ -6133,6 +6161,7 @@
         ? POP_CR_PAIR_COLS.concat(POP_ZZ_PAIR_COLS)
         : POP_CR_PAIR_COLS;
     }
+    if (gate === "cz_coupler") return POP_CZ_PAIR_COLS.filter(function (c) { return c.field !== "moving_qubit" && c.field !== "cz_variant"; });
     if (gate === "cz_tunable") return POP_CZ_PAIR_COLS;
     return POP_CZ_PAIR_COLS.filter(function (c) {
       return c.field !== "coupler_interaction_offset";
@@ -11510,8 +11539,8 @@
     // pairGate) pair so pre-redesign drafts get a sensible explicit architecture.
     state.chipArch = (d.chipArch && CHIP_ARCH[d.chipArch])
       ? d.chipArch
-      : (!state.qubitFlux ? "fixed_frequency"
-         : (state.pairGate === "cz_fixed" ? "flux_tunable_fixed_coupler" : "flux_tunable_coupler"));
+      : (state.pairGate === "cz_coupler" ? "fixed_tunable_coupler" : !state.qubitFlux ? "fixed_frequency"
+         : (state.pairGate === "cz_coupler" ? "fixed_tunable_coupler" : state.pairGate === "cz_fixed" ? "flux_tunable_fixed_coupler" : "flux_tunable_coupler"));
     // A draft from before the per-row record whose one-shot flag was spent:
     // every row it has now counts as prefilled (cleared cells stay cleared),
     // and only rows added from here on prefill. No flag: nothing recorded yet.
@@ -12298,7 +12327,7 @@
       spec.qdac.qubits = {};
     }
     var pg = (spec && spec.pair_gate) || "cz_tunable";
-    var arch = pg === "cr" ? "fixed_frequency"
+    var arch = pg === "cz_coupler" ? "fixed_tunable_coupler" : pg === "cr" ? "fixed_frequency"
              : pg === "cz_fixed" ? "flux_tunable_fixed_coupler"
              : "flux_tunable_coupler";
     // docs/134: mode + the frozen source-chip line inventory must exist BEFORE

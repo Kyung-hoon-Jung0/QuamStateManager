@@ -118,6 +118,7 @@ CATALOG: dict[str, dict] = {
         "attr": "add_DragCosine_pulses"},
     "pulses.square": {"module": _PULSES, "attr": "SquarePulse"},
     # -- two-qubit gate macros --------------------------------------------
+    "pair.coupler_cz": {"module": "qsm_quam_ext", "attr": "CouplerCZGate"},
     "pair.cz_gate": {"module": _TWO_Q_FTC, "attr": "CZGate"},
     "pair.cz_parametric": {"module": _TWO_Q_FTC, "attr": "ParametricCZGate"},
     "pair.fixed_pair": {"module": "quam_builder.architecture.superconducting.qubit_pair.flux_tunable_transmon_pair",
