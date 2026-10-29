@@ -214,10 +214,10 @@
                 if (!/^[xy]axis\d*$/.test(key)) return;
                 var axis = out[key];
                 axis.tickfont = artistStyle(axis.tickfont, text);
-                if (axis.title) axis.title = Object.assign({}, axis.title,
+                if (axis.title) axis.title = Object.assign({}, titleObject(axis.title),
                     { font: artistStyle(axis.title.font, text) });
             });
-            if (out.title) out.title = Object.assign({}, out.title, { font: artistStyle(out.title.font, text) });
+            if (out.title) out.title = Object.assign({}, titleObject(out.title), { font: artistStyle(out.title.font, text) });
             if (out.annotations) out.annotations = out.annotations.map(function (note) {
                 if (onHeatmap(note, data, out)) return Object.assign({}, note);
                 // text on the box the lab drew behind it keeps the lab colour (black on a
@@ -244,6 +244,12 @@
             // need a layout override at download time, not a config flag.
             toImageButtonOptions: { format: 'png', scale: 2 },
         }, overrides || {});
+    }
+
+    /** Plotly accepts a title as a plain string; spreading that string into an object
+     *  gives {0: 't', 1: 'i', ...} and the title disappears. Always hand back {text}. */
+    function titleObject(title) {
+        return typeof title === 'string' ? { text: title } : title;
     }
 
     function deepMerge(base, over) {
