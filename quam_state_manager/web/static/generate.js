@@ -270,6 +270,17 @@
                "qubit is QDAC-only — put at least the pair qubits on LF-FEM or " +
                "bias tee, or pick another architecture.";
       }
+      // GX-13: the fixed-coupler CZ (qubit z only) is the same case -- every
+      // CZ macro would be skipped at build time, so refuse it here too.
+      if (state.pairGate === "cz_fixed" && state.qubitFlux &&
+          state.spec.qubit_pairs.length && state.spec.qubits.length &&
+          state.spec.qubits.every(function (q) {
+            return isQdacBiased(q) && !isBiasTee(q);
+          })) {
+        return "A fixed-coupler CZ plays its flux pulse on the qubit flux (z) line, " +
+               "but every qubit is QDAC-only — put at least the pair qubits on " +
+               "LF-FEM or bias tee, or pick another architecture.";
+      }
       // Pairs declared but the selected 2-qubit gate can't be built on this
       // hardware → the build would silently drop them (no error, no pairs in
       // the generated config). Block with an actionable message instead.
@@ -453,6 +464,7 @@
       var n = document.getElementById(id);
       if (n) n.textContent = nextLabel;
     });
+    applyReviewGate();
     var rs = document.getElementById("gen-reset-step");
     if (rs) {
       rs.disabled = !(STEP_OWNS && STEP_OWNS[state.step]);
@@ -473,6 +485,7 @@
     // edits made in step 4 (qubit count, pairs, 2Q-gate, flux) always propagate
     // forward, even via change paths that didn't re-derive. Respects wiringTouched.
     if (state.step >= 5) { restoreHeldChipArch(); deriveLines(); }
+    if (state.step === 5) checkEarlyBlockers();
     if (state.step === 4) {
       syncLineTypeToggles();
       renderFluxSource();   // QA F9: a revisit repaints the row from state
@@ -525,6 +538,8 @@
     }
     if (state.step < STEP_COUNT) {
       goToStep(state.step + 1);
+    } else if (_reviewBlock) {
+      showMessage("Generate is off: " + _reviewBlock, "warn", { reveal: true });
     } else {
       runBuild();
     }
@@ -668,6 +683,68 @@
   // during the select-env round-trip) used to POST two builds into ONE
   // folder. Set from the first press until its response lands.
   var _buildInFlight = false;
+  // GX-3: the reason Review found this env cannot build the chip, or null.
+  // While set, Generate is off on step 8 and the reason sits beside it.
+  var _reviewBlock = null;
+
+  // GX-3: a refusal the env already decides (no QPU root can hold this chip's
+  // QDAC qubits) is said on the Wiring step, not first at Generate.
+  var _earlySeq = 0;
+  function checkEarlyBlockers() {
+    var host = document.getElementById("gen-wiring-issues");
+    if (!host || !host.parentNode) return;
+    var box = document.getElementById("gen-step5-blocker");
+    if (!box) {
+      box = document.createElement("p");
+      box.id = "gen-step5-blocker";
+      box.className = "gen-cap-blocker";
+      box.setAttribute("role", "status");
+      host.parentNode.insertBefore(box, host);
+    }
+    box.hidden = true; box.textContent = "";
+    var qd = (state.spec && state.spec.qdac && state.spec.qdac.qubits) || {};
+    if (!state.env || !Object.keys(qd).length) return;
+    var seq = ++_earlySeq;
+    fetch("/generate/capabilities", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec: state.spec, source_folder: state.sourcePath || null })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (seq !== _earlySeq || state.step !== 5) return;
+      var msg = res && res.root && res.root.blocker;
+      if (msg) {
+        box.textContent = "✗ This chip cannot be built in the selected environment: " + msg;
+        box.hidden = false;
+      }
+    }).catch(function () { /* the Review step reports it again */ });
+  }
+
+  function applyReviewGate() {
+    var blocked = state.step === STEP_COUNT && !!_reviewBlock;
+    ["gen-next", "gen-next-top"].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (!b) return;
+      if (blocked) {
+        b.disabled = true;
+        b.title = "Generate is off: " + _reviewBlock;
+      } else if (!_buildInFlight) {
+        b.disabled = false;
+        b.title = "";
+      }
+    });
+    var anchor = document.getElementById("gen-next");
+    var note = document.getElementById("gen-review-block-note");
+    if (!note && anchor && anchor.parentNode) {
+      note = document.createElement("span");
+      note.id = "gen-review-block-note";
+      note.className = "gen-build-warn-line";
+      note.setAttribute("role", "status");
+      anchor.parentNode.insertBefore(note, anchor.nextSibling);
+    }
+    if (note) {
+      note.hidden = !blocked;
+      note.textContent = blocked ? "Generate is off: " + _reviewBlock : "";
+    }
+  }
   // QA regenerate-r2-37: the docs/134 allocate rule, for the build — every
   // build captures this token and its handlers stand down once a content
   // swap (hydrateFromSpec / resetWizard) bumped it, so an answer computed
@@ -3824,6 +3901,39 @@
   // LOWEST allocated port among the group's members — an arbitrary but stable
   // choice, and stable is what matters: re-entering the step must not shuffle
   // which physical output a group sits on.
+  // P3: the Review lists QDAC channels as numbers, in numeric order (it read
+  // "1, 10, 11, ... 2" on a 24-qubit chip); an unset channel reads "?" last.
+  function qdacChannelList(qubits, qids) {
+    var nums = [], unset = 0;
+    qids.forEach(function (q) {
+      var ch = (qubits[q] || {}).channel;
+      if (ch == null || ch === "" || isNaN(Number(ch))) unset++;
+      else nums.push(Number(ch));
+    });
+    nums.sort(function (x, y) { return x - y; });
+    var out = nums.map(String);
+    for (var i = 0; i < unset; i++) out.push("?");
+    return out.join(", ");
+  }
+
+  // P1: returns true when it assigned ext1..4 round-robin on this render.
+  function applyQdacExtDefault(qd, qids) {
+    if (!qd || !qd.qubits || state._qdacExtCleared) return false;
+    if (qids.length <= QDAC_EXTS.length) return false;
+    var touched = qids.some(function (qid) {
+      var q = qd.qubits[qid] || {};
+      return !!q.trigger_port || !!q.trigger_pin;
+    });
+    if (touched && !state._qdacAutoRR) return false;
+    if (!touched) {
+      qids.forEach(function (qid, i) {
+        qd.qubits[qid].trigger_port = QDAC_EXTS[i % QDAC_EXTS.length];
+      });
+      state._qdacAutoRR = true;
+    }
+    return !!state._qdacAutoRR;
+  }
+
   function applyQdacSharing() {
     var qd = state.spec.qdac;
     if (!qd || !qd.qubits) return;
@@ -3894,6 +4004,11 @@
     var qids = (state.spec.qubits || []).filter(isQdacBiased);
     if (!qd || !qids.length) { host.hidden = true; host.innerHTML = ""; return; }
     host.hidden = false;
+    // P1: a QDAC-II has four rear-panel trigger inputs, ext1..ext4 (driver:
+    // "ext1 ... ext4 -- rear-panel trigger inputs"), so more than four qubits
+    // cannot each get a cable of their own. With no ext chosen anywhere, share
+    // them round-robin -- the same as the Round-robin button -- and say so.
+    var autoRR = applyQdacExtDefault(qd, qids);
     applyQdacSharing();
 
     var byExt = {};
@@ -3957,6 +4072,11 @@
           ? " <strong>" + loose.length + "</strong> qubit" +
             (loose.length === 1 ? " has" : "s have") + " no ext input yet — " +
             "each gets its own dedicated output."
+          : "") +
+        (autoRR
+          ? ' <strong class="gen-qdac-autorr">A QDAC-II has 4 trigger inputs (ext1&ndash;4), so the ' +
+            qids.length + " QDAC qubits were assigned to them round-robin " +
+            "(4 shared cables). Change any qubit's input below, or Clear to undo.</strong>"
           : "") + "</p>" +
       '<table class="gen-qdac-cable-tbl"><thead><tr><th>QDAC input</th>' +
       "<th>OPX digital output</th><th>Qubits armed</th><th></th>" +
@@ -3996,6 +4116,7 @@
           delete qd.qubits[qid].trigger_pin;
           delete qd.qubits[qid].pin_source;
         });
+        state._qdacExtCleared = true;   // P1: Clear means "no default" for this session
         renderQdacCabling();
         renderWiringDiagram();
       });
@@ -4200,7 +4321,7 @@
     renderInstrumentWiring("gen-wiring-diagram",
                            buildInstrumentData(state.allocation), {},
                            { editable: true, onPortHover: setMonitorHover,
-                             sizeControl: "generate" });
+                             sizeControl: "generate", wrapFems: true });
     attachWiringDrag();
     // Ring the ports involved in any validation error, then list the issues.
     var issues = validateWiring();
@@ -8827,7 +8948,8 @@
     details.hidden = false;
     renderInstrumentWiring("gen-pop-wiring-diagram",
                            buildInstrumentData(state.allocation), {},
-                           { onPortHover: setPopHover, sizeControl: "generate" });
+                           { onPortHover: setPopHover, sizeControl: "generate",
+                             wrapFems: true });
     // Ring the ports involved in any wiring error — same as step 5.
     validateWiring().forEach(function (it) {
       if (it.level !== "error") return;
@@ -9597,13 +9719,12 @@
       var cables = {};
       qdacQubits.forEach(function (q) {
         var t = sp.qdac.qubits[q].trigger_pin;
-        cables[t ? ("con" + t.con + "/" + t.slot + "/" + t.port) : ("auto:" + q)] = 1;
+        var ext = sp.qdac.qubits[q].trigger_port;
+        cables[t ? ("con" + t.con + "/" + t.slot + "/" + t.port)
+               : (ext && sp.qdac.share_cables !== false ? ("ext:" + ext) : ("auto:" + q))] = 1;
       });
       rows.push(["QDAC-II", qdacQubits.length + " qubit(s) biased (" + qdAddr +
-        ") — channels " + qdacQubits.map(function (q) {
-          var ch = sp.qdac.qubits[q].channel;
-          return ch == null ? "?" : ch;
-        }).join(", ") +
+        ") — channels " + qdacChannelList(sp.qdac.qubits, qdacQubits) +
         " · " + Object.keys(cables).length + " trigger cable(s)" +
         (tees.length ? " · " + tees.length + " through a bias tee ("
           + tees.join(", ") + ")" : "")]);
@@ -9709,6 +9830,8 @@
   // the three-bucket verdict (available / blockers / degrades) + a full inventory.
   function renderCapabilityReport(box) {
     if (!box) return;
+    _reviewBlock = null;
+    applyReviewGate();
     if (!state.env) { box.innerHTML = ""; return; }
     deriveLines();
     box.innerHTML = '<p class="muted">Checking what this environment can build…</p>';
@@ -9743,8 +9866,22 @@
         // "Will be skipped / downgraded" — one of whose entries loses a
         // qubit's flux component entirely — is the app contradicting itself
         // in two adjacent lines.
-        var nSkip = (rep.warnings || []).length;
         var rootBlock = res.root && res.root.blocker;
+        // GX-4: when the root cannot hold QDAC qubits the build is refused,
+        // so a "builds without the bias" downgrade line would contradict it.
+        var skips = (rep.warnings || []).filter(function (w) {
+          return !(rootBlock && /^instr\.qdac/.test((w && w.id) || ""));
+        });
+        var nSkip = skips.length;
+        var flavorBlock = (res.flavor || []).filter(function (f) {
+          return f.level === "blocker"; })[0];
+        var firstBlocker = (rep.blockers || [])[0];
+        _reviewBlock = rootBlock ? res.root.blocker
+          : (flavorBlock ? flavorBlock.message
+          : (!rep.buildable ? ("this environment is missing " +
+              ((firstBlocker && (firstBlocker.label || firstBlocker.id)) ||
+               "something this chip needs") + " (see the list above)") : null));
+        applyReviewGate();
         h.textContent = (!rep.buildable || rootBlock)
           ? "✗ This environment is missing something this chip needs."
           : (nSkip
@@ -9770,7 +9907,7 @@
           box.appendChild(line);
         });
         _capRows(box, rep.blockers, "gen-cap-blocker", "Cannot build");
-        _capRows(box, rep.warnings, "gen-cap-degrade", "Will be skipped / downgraded");
+        _capRows(box, skips, "gen-cap-degrade", "Will be skipped / downgraded");
         _rootPicker(box, res);
         _capInventory(box, rep.inventory);
         _capRecheckButton(box);
@@ -11084,6 +11221,7 @@
         var b = document.getElementById(id);
         if (b) b.disabled = busy;
       });
+      if (!busy) applyReviewGate();
     }
     if (_buildInFlight) return;   // QA F8: a build of this wizard is running
     if (!state.env) {
@@ -12305,6 +12443,8 @@
   // auto-refilled. Idempotent — call after QuamGen.init() has mounted the wizard.
   function hydrateFromSpec(spec, opts) {
     var o = opts || {};
+    state._qdacExtCleared = false;   // P1: a fresh spec gets the ext default again
+    state._qdacAutoRR = false;
     // QA F7: Re-generate neither reads nor clears the Generate draft (it used
     // to delete it here, wiping the user's in-progress Generate session). A
     // leak the other way is closed by saveDraft's regen guards and init()'s
@@ -12530,6 +12670,8 @@
       // docs/176 seams — the review's verdict + root picker, and the
       // build-result renderer that has to take TWO blocker shapes.
       renderCapabilityReport: renderCapabilityReport,
+      checkEarlyBlockers: checkEarlyBlockers,   // GX-3
+      qdacChannelList: qdacChannelList,         // P3
       showBuildResult: showBuildResult,
       holdsLabel: _holdsLabel,          // QA generate-r2-28
       nextFreePair: nextFreePair,       // QA r2-34

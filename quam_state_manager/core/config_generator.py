@@ -361,6 +361,8 @@ def validate_spec(spec) -> list[str]:
             errors.append("qdac.qubits: must be an object")
             qdac_qubits = {}
         seen_channels: dict = {}
+        out_of_range: list = []
+        ch_lo, ch_hi = _qdac_rules.CHANNEL_RANGE
         for qid, fields in qdac_qubits.items():
             if qid not in qubit_set:
                 errors.append(f"qdac.qubits[{qid!r}]: is not a declared qubit")
@@ -372,18 +374,13 @@ def validate_spec(spec) -> list[str]:
             if fields.get("bias_tee"):
                 qdac_tee_ids.add(qid)
             ch = fields.get("channel")
-            ch_lo, ch_hi = _qdac_rules.CHANNEL_RANGE
             if not _is_int(ch) or ch <= 0:
                 errors.append(f"qdac.qubits[{qid!r}].channel: required positive integer")
             elif not ch_lo <= ch <= ch_hi:
                 # QA generate-r2-07: the same rule Diagnostics flags a built
                 # chip with — building it first only to be told it would crash
                 # a node run is the wrong order.
-                errors.append(
-                    f"qdac.qubits[{qid!r}].channel: {ch} is outside the "
-                    f"QDAC-II's range — it has channels {ch_lo} to {ch_hi} "
-                    "inclusive (the driver refuses anything else)"
-                )
+                out_of_range.append((qid, ch))
             elif ch in seen_channels:
                 errors.append(
                     f"qdac.qubits[{qid!r}].channel: {ch} is already used by "
@@ -409,6 +406,18 @@ def validate_spec(spec) -> list[str]:
                 v = fields.get(numfield)
                 if v is not None and not isinstance(v, (int, float)):
                     errors.append(f"qdac.qubits[{qid!r}].{numfield}: must be a number")
+
+        if out_of_range:
+            # One line, not one per qubit: a 54-qubit chip used to print ~30
+            # near-identical errors for what is a single fact about the bench.
+            lo_q, lo_ch = out_of_range[0]
+            names = ", ".join(q for q, _ in out_of_range[:6])
+            more = f" and {len(out_of_range) - 6} more" if len(out_of_range) > 6 else ""
+            errors.append(
+                f"qdac.qubits: {len(out_of_range)} qubit(s) ({names}{more}) use a "
+                f"channel outside {ch_lo}-{ch_hi}. One QDAC-II has {ch_hi} channels "
+                f"({ch_lo} to {ch_hi}), so at most {ch_hi} qubits can be QDAC-biased; "
+                "put the rest on LF-FEM flux lines.")
 
     # -- lines -------------------------------------------------------------
     lines = spec.get("lines", []) or []
@@ -1644,8 +1653,13 @@ def probe_capabilities(python_path: str, instance_path=None, *,
         # root-class gate for everyone with a warm cache — exactly the users
         # least likely to notice — so a missing key is a MISS and the cache
         # self-heals on the next probe.
+        # GX-12: the same for an entry probed before roots carried
+        # `fixed_root` -- the coupler-only CZ root choice reads it.
+        roots_ok = ("qpu_roots" in man and all(
+            "fixed_root" in r for r in (man.get("qpu_roots") or [])
+            if isinstance(r, dict) and r.get("importable")))
         if (isinstance(entry, dict) and entry.get("versions") == versions
-                and "qpu_roots" in man):
+                and roots_ok):
             return {"ok": True, "cached": True, "error": None,
                     "capabilities": man.get("capabilities") or {},
                     "versions": man.get("versions") or versions,

@@ -570,8 +570,18 @@ class TestValidateSpecQdac:
         assert qdac.CHANNEL_RANGE == (1, 24)
         for ch in (25, 30):
             errs = validate_spec(self._qdac_spec(channel=ch))
-            assert any("outside the QDAC-II's range" in e and "1 to 24" in e
+            assert any("outside 1-24" in e and "One QDAC-II has 24 channels" in e
                        for e in errs), (ch, errs)
+
+    def test_many_out_of_range_channels_are_one_summary_line(self):
+        """GX-5: 30 qubits past channel 24 used to print 30 near-identical errors."""
+        spec = self._qdac_spec()
+        spec["qubits"] = [f"q{i}" for i in range(1, 55)]
+        spec["qdac"]["qubits"] = {f"q{i}": {"channel": i} for i in range(1, 55)}
+        errs = validate_spec(spec)
+        rng = [e for e in errs if "channel" in e and ("outside" in e or "24" in e)]
+        assert len(rng) == 1, rng
+        assert "30 qubit(s)" in rng[0] and "at most 24 qubits" in rng[0], rng[0]
 
     def test_channel_range_boundaries_are_valid(self):
         for ch in (1, 24):
@@ -1612,6 +1622,30 @@ class TestProbeCommitProvenance:
         r3 = config_generator.probe_capabilities("py", tmp_path)
         assert r3["cached"] is False
         assert deep_probes["count"] == 2
+
+
+    def test_capability_cache_misses_when_roots_lack_fixed_root(self, tmp_path, monkeypatch):
+        """GX-12: a cache written before roots carried `fixed_root` must re-probe,
+        or the coupler-only root choice reads 'unknown' for every warm env."""
+        monkeypatch.setattr(config_generator, "_env_versions",
+                            lambda python_path: {"quam_builder": "0.4.0"})
+        roots = {"value": [{"path": "lab.Quam", "importable": True, "holds_qdac": True}]}
+        probes = {"count": 0}
+
+        def fake(cmd, work_dir, timeout, outcome, **kw):
+            probes["count"] += 1
+            outcome["ok"] = True
+            outcome["result"] = {"capabilities": {}, "versions": {"quam_builder": "0.4.0"},
+                                 "qpu_roots": roots["value"]}
+
+        monkeypatch.setattr(config_generator, "_run_script_outcome", fake)
+        config_generator.probe_capabilities("py", tmp_path)
+        r2 = config_generator.probe_capabilities("py", tmp_path)
+        assert r2["cached"] is False and probes["count"] == 2   # old-shape entry: miss
+        roots["value"] = [dict(roots["value"][0], fixed_root=False)]
+        config_generator.probe_capabilities("py", tmp_path)
+        r4 = config_generator.probe_capabilities("py", tmp_path)
+        assert r4["cached"] is True and probes["count"] == 3
 
 
 class TestValidateSpecNaturalOrder:

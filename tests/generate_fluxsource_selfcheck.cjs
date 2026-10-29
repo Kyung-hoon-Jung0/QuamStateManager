@@ -312,6 +312,54 @@ clr.dispatchEvent(new win.Event('click', { bubbles: true }));
 ok(!st.spec.qdac.qubits.q1.trigger_port && !st.spec.qdac.qubits.q3.trigger_pin,
   'F5: Clear is the explicit act that does drop them');
 
+// P1: a QDAC-II has four trigger inputs (ext1..ext4). Six QDAC qubits with no
+// ext chosen are shared over them round-robin by default -- 4 cables, said so.
+function sixWorld() {
+  const sp = JSON.parse(JSON.stringify(SPEC));
+  sp.qubits = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6'];
+  G.hydrateFromSpec(sp, { mode: 'generate' });
+  G.state.qubitFlux = true;
+  T.deriveLines();
+  T.applyFluxSource('qdac');
+  G.state.allocation = {};
+  sp.qubits.forEach(function (q, i) { G.state.allocation[q] = { qt: [{ con: 1, slot: 5, port: i + 1 }] }; });
+  return G.state;
+}
+let s6 = sixWorld();
+T.renderQdacCabling();
+ok(['ext1', 'ext2', 'ext3', 'ext4', 'ext1', 'ext2'].every(function (e, i) {
+  return s6.spec.qdac.qubits['q' + (i + 1)].trigger_port === e; }),
+  'P1: more than 4 QDAC qubits with no ext default to ext1..4 round-robin');
+ok(/4 cables to plug/.test(doc.getElementById('gen-qdac-cabling').textContent),
+  'P1: four shared cables, not six dedicated ones — ' +
+  doc.querySelector('.gen-qdac-cablecount').textContent);
+ok(/has 4 trigger inputs/.test(doc.getElementById('gen-qdac-cabling').textContent),
+  'P1: the panel says what it did and why');
+// Clear is respected for the session
+doc.getElementById('gen-qdac-clear').dispatchEvent(new win.Event('click', { bubbles: true }));
+ok(!s6.spec.qdac.qubits.q1.trigger_port, 'P1: Clear drops the default and it does not come back');
+// at most 4: unchanged behaviour
+reset();
+T.applyFluxSource('qdac');
+G.state.allocation = { q1: { qt: [{ con: 1, slot: 5, port: 1 }] }, q2: { qt: [{ con: 1, slot: 5, port: 2 }] },
+                       q3: { qt: [{ con: 1, slot: 5, port: 3 }] } };
+T.renderQdacCabling();
+ok(!st.spec.qdac.qubits.q1.trigger_port, 'P1: 4 or fewer QDAC qubits keep a cable each (no default)');
+// a user-chosen ext is never overwritten
+s6 = sixWorld();
+s6.spec.qdac.qubits.q5.trigger_port = 'ext3';
+T.renderQdacCabling();
+ok(s6.spec.qdac.qubits.q5.trigger_port === 'ext3' && !s6.spec.qdac.qubits.q1.trigger_port,
+  'P1: a chosen ext stops the default');
+
+// P3: the Review's channel list is numeric order
+{
+  const qs = {}; const ids = [];
+  [2, 10, 1, 11, null, 24, 3].forEach(function (c, i) { qs['q' + i] = { channel: c }; ids.push('q' + i); });
+  const txt = T.qdacChannelList(qs, ids);
+  ok(txt === '1, 2, 3, 10, 11, 24, ?', 'P3: channels in numeric order — ' + txt);
+}
+
 // A chip with no QDAC shows nothing at all.
 reset();
 T.renderQdacCabling();
@@ -541,6 +589,19 @@ r = nextFrom4();
 ok(r.step === 4 && /QDAC-only/.test(r.msg),
   'QF9: all-QDAC on a tunable-coupler CZ chip is refused at step 4 -- got ' +
   JSON.stringify(r));
+// GX-13: the fixed-coupler CZ (A3) with every qubit QDAC-only is refused the same way
+{
+  const ar = archWorld(SPEC_P);
+  ar.value = 'flux_tunable_fixed_coupler';
+  ar.dispatchEvent(new win.Event('change'));
+  T.applyFluxSource('qdac');
+  const r13 = nextFrom4();
+  ok(G.state.pairGate === 'cz_fixed' && r13.step === 4 && /fixed-coupler CZ/.test(r13.msg),
+    'GX-13: all-QDAC on a fixed-coupler CZ chip is refused at step 4 -- got ' +
+    JSON.stringify(r13) + ' gate ' + G.state.pairGate);
+}
+archWorld(SPEC_P);
+T.applyFluxSource('qdac');
 // ...but a PARTIAL-QDAC chip is a build-time warn-and-skip, never blocked
 T.setQubitFluxSource('q3', 'opx');
 T.deriveLines();
