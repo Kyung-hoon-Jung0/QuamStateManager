@@ -1624,6 +1624,30 @@ class TestProbeCommitProvenance:
         assert deep_probes["count"] == 2
 
 
+    def test_capability_cache_misses_when_roots_lack_fixed_root(self, tmp_path, monkeypatch):
+        """GX-12: a cache written before roots carried `fixed_root` must re-probe,
+        or the coupler-only root choice reads 'unknown' for every warm env."""
+        monkeypatch.setattr(config_generator, "_env_versions",
+                            lambda python_path: {"quam_builder": "0.4.0"})
+        roots = {"value": [{"path": "lab.Quam", "importable": True, "holds_qdac": True}]}
+        probes = {"count": 0}
+
+        def fake(cmd, work_dir, timeout, outcome, **kw):
+            probes["count"] += 1
+            outcome["ok"] = True
+            outcome["result"] = {"capabilities": {}, "versions": {"quam_builder": "0.4.0"},
+                                 "qpu_roots": roots["value"]}
+
+        monkeypatch.setattr(config_generator, "_run_script_outcome", fake)
+        config_generator.probe_capabilities("py", tmp_path)
+        r2 = config_generator.probe_capabilities("py", tmp_path)
+        assert r2["cached"] is False and probes["count"] == 2   # old-shape entry: miss
+        roots["value"] = [dict(roots["value"][0], fixed_root=False)]
+        config_generator.probe_capabilities("py", tmp_path)
+        r4 = config_generator.probe_capabilities("py", tmp_path)
+        assert r4["cached"] is True and probes["count"] == 3
+
+
 class TestValidateSpecNaturalOrder:
     """Customer rule 2026-09-09: the error list a person reads counts numbers
     as numbers — feedline2 before feedline10, not the lexicographic

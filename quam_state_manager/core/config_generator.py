@@ -1653,8 +1653,13 @@ def probe_capabilities(python_path: str, instance_path=None, *,
         # root-class gate for everyone with a warm cache — exactly the users
         # least likely to notice — so a missing key is a MISS and the cache
         # self-heals on the next probe.
+        # GX-12: the same for an entry probed before roots carried
+        # `fixed_root` -- the coupler-only CZ root choice reads it.
+        roots_ok = ("qpu_roots" in man and all(
+            "fixed_root" in r for r in (man.get("qpu_roots") or [])
+            if isinstance(r, dict) and r.get("importable")))
         if (isinstance(entry, dict) and entry.get("versions") == versions
-                and "qpu_roots" in man):
+                and roots_ok):
             return {"ok": True, "cached": True, "error": None,
                     "capabilities": man.get("capabilities") or {},
                     "versions": man.get("versions") or versions,
