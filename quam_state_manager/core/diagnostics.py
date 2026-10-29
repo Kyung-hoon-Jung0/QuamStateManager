@@ -140,6 +140,7 @@ DIAG_DOMAINS = [
     ("values", "Values"),
     ("physics", "Physics"),
     ("waveforms", "Waveforms"),
+    ("gates", "2Q gates"),
     ("references", "References"),
     ("config", "Config"),
     ("other", "Other"),
@@ -149,6 +150,8 @@ DIAG_DOMAINS = [
 def domain_of(category: str) -> str:
     """Map a Finding ``category`` to one of :data:`DIAG_DOMAINS` (first match)."""
     c = category or ""
+    if c.startswith("cz."):
+        return "gates"
     if c.startswith("env_"):
         return "env"
     if c.startswith(("connectivity", "port_", "downconverter")):
@@ -177,6 +180,9 @@ def domain_of(category: str) -> str:
 # typical tier the check emits (a couple emit a softer tier in benign cases); it
 # only drives the colour of the little badge in the popup.
 _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
+    ("gates", [
+        ("warning", "CZ gate pulse IDs", "Pointer-linked gate pulses have an ID matching their operation key when no explicit ID was set."),
+    ]),
     ("env", [
         ("error", "Classes importable in the selected env", "Every __class__ the state references imports in the selected python environment (third-party packages included) — an unimportable class makes Quam.load() fail."),
         ("error", "Fields exist on the env's classes", "Every key under a __class__-bearing node is a real field of that class in the selected env — an unknown field raises AttributeError('Unexpected attribute') at Quam.load(). Free-form dicts (extras, operations) are never flagged."),
@@ -404,7 +410,26 @@ def _lint_state_uncached(store, incremental: bool = True) -> list[Finding]:
     findings.extend(_waveform_findings_cached(store) if inc_store is not None
                     else _waveform_findings(store))
 
+    findings.extend(_gate_pulse_id_findings(root))
     return _ordered(findings)
+
+
+def _gate_pulse_id_findings(root):
+    from .gate_pulse_ids import fill_edits, missing_gate_ids
+    missing = missing_gate_ids(root)
+    if not missing:
+        return []
+    n = len(missing)
+    return [Finding(
+        severity="warning", category="cz.gate_pulse_id_missing",
+        location="qubit_pairs", message=f"{n} CZ gate pulses have no id",
+        detail=("Official calibration nodes 30 and 31 (repair_routing=True) log a WARNING "
+                "and add an in-memory z operation keyed None (dropped on save); nodes "
+                "32a, 32b, 33a, 33b, 33c and 33d raise because they cannot find the flux pulse."
+                + "\n" + "\n".join(p for p, _k, _s in missing)),
+        fix={"action": "fill_gate_ids", "label": f"Fill {n} ids",
+             "edits": fill_edits(root),
+             "confirm": f"Stage {n} pulse IDs using their operation keys?"})]
 
 
 def _spec_findings(root: dict, store=None) -> list[Finding]:

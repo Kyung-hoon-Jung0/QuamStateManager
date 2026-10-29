@@ -584,6 +584,7 @@ def run_regenerate(
         s.class_changed, s.schema_dropped + s.residual_lost, old_state)
     outcome["merge"] = {
         "carried": s.carried,
+        "id_filled": s.id_filled,
         "grafted": s.grafted,
         "kept_new_pointer": s.kept_new_pointer,
         "kept_new_only": s.kept_new_only,

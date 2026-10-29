@@ -132,6 +132,12 @@
                       {% if f.severity == 'warning' %}data-confirm="1" data-old="{{ f.detail }}"{% endif %}
                       title="Set this field to a JSON pointer: {{ f.fix.pointer }}"
                       onclick="applyDiagFix(this)">{{ f.fix.label or 'Convert to pointer' }}</button>
+              {% elif allow_fix and f.fix and f.fix.action == 'fill_gate_ids' %}
+              <button type="button" class="btn-sm diag-fix"
+                      data-action="fill_gate_ids"
+                      data-edits='{{ f.fix.edits | tojson }}'
+                      data-confirm="1" data-confirm-text="{{ f.fix.confirm }}"
+                      onclick="applyDiagFix(this)">{{ f.fix.label }}</button>
               {% elif allow_fix and f.fix and f.fix.action == 'set_value' %}
               {# r9: one-click value sync (Update f_01 → carrier). Always
                  confirmed — it changes a calibration number. #}

@@ -24326,10 +24326,23 @@ document.addEventListener('click', function(evt) {
         var orig = btn.textContent;
         btn.disabled = true; btn.textContent = "Applying…";
         _diagFocusAnchor = _diagFocusAnchorFor(btn);
-        fetch("/diagnostics/apply-fix", {
+        var fillIds = btn.getAttribute("data-action") === "fill_gate_ids";
+        var payload;
+        if (fillIds) {
+            payload = {
+                updates: JSON.parse(btn.getAttribute("data-edits") || "[]").map(function (e) {
+                    return { dot_path: e.path, value: e.value, create: true };
+                }),
+                expect_chip: window.__chipToken || "",
+                group: "new"
+            };
+            var seen = _keepMineSeen(null);
+            if (seen) { payload.seen_changes = seen.n; payload.seen_sig = seen.sig; }
+        }
+        fetch(fillIds ? "/field/edit-batch" : "/diagnostics/apply-fix", {
             method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: body.toString()
+            headers: { "Content-Type": fillIds ? "application/json" : "application/x-www-form-urlencoded" },
+            body: fillIds ? JSON.stringify(payload) : body.toString()
         })
         .then(function(r) { return r.json(); })
         .then(function(d) {

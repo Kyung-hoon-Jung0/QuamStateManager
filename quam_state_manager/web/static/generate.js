@@ -10306,6 +10306,8 @@
           '<span class="gen-merge-stat gen-merge-ok" title="Calibrated values ' +
             'from the source chip written over the rebuild\'s fresh defaults ' +
             '(the same place exists in both chips)">' + m.carried + ' carried</span>' +
+            (m.id_filled ? '<span class="gen-merge-stat gen-merge-ok">' + m.id_filled +
+                ' gate pulse ids filled</span>' : '') +
           '<span class="gen-merge-stat gen-merge-graft" title="Values only the ' +
             'source chip had (your added pulses, macros, extras …) copied into ' +
             'the rebuild whole">' + m.grafted + ' grafted</span>' +

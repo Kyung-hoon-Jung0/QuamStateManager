@@ -143,6 +143,7 @@ def _has_pointer_ancestor(root: dict, dot_path: str) -> bool:
 class MergeStats:
     """Transparency counters -- surfaced to the user so nothing is silent."""
 
+    id_filled: int = 0                     # null operation IDs filled by the build
     carried: int = 0                       # tier1: OLD scalar values kept
     grafted: int = 0                       # tier2: OLD-only leaves copied in
     kept_new_pointer: int = 0              # NEW pointers / structure kept
@@ -454,6 +455,11 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
         # whole point of re-gen is changing existing values").
         stats.populate_protected.append(path)
         return copy.deepcopy(new)
+    parts = path.split(".")
+    if (old is None and len(parts) >= 3 and parts[-3] == "operations"
+            and parts[-1] == "id" and new == parts[-2]):
+        stats.id_filled += 1
+        return new
     stats.carried += 1                                   # tier 1: carry calibration
     return copy.deepcopy(old)
 

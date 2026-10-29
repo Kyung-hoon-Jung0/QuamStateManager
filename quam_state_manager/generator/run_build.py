@@ -50,6 +50,12 @@ from _script_common import library_versions as _library_versions  # noqa: E402
 # if the catalog module goes missing the build fails loudly, not subtly.
 from probe_capabilities import CATALOG_IDS as _CAPABILITY_IDS  # noqa: E402,F401
 
+# Standalone vocabulary pin; core/gate_pulse_ids.py is the dict-side twin.
+BUILD_GATE_ID_SLOTS = (
+    "flux_pulse_qubit", "coupler_flux_pulse", "flux_pulse_target",
+    "flux_pulse_high", "flux_pulse_low",
+)
+
 RESULT_FILENAME = "_result.json"
 
 
@@ -858,6 +864,8 @@ def _apply_pairs(machine, pairs_vals):
                 moving_q.z.operations[pulse_id] = SquarePulse(
                     length=duration, amplitude=amplitude
                 )
+                # core/gate_pulse_ids.py is the dict-side twin.
+                moving_q.z.operations[pulse_id].id = pulse_id
                 if gate_type == "cz_parametric":
                     # Lazy import so installations without the upgraded
                     # quam_builder still load the rest of the generator.
@@ -1925,6 +1933,8 @@ def _seed_cz_variant(pair, *, variant="unipolar", amplitude=0.1, duration=100,
 
     zop = f"cz_{variant}_flux_pulse_{base}"
     z.operations[zop] = qubit_pulse
+    # core/gate_pulse_ids.py applies the same holder-key rule to dicts.
+    qubit_pulse.id = zop
     zop_ref = z.get_reference() + f"/operations/{zop}"
     if "flux_pulse_qubit" in sig:
         kwargs["flux_pulse_qubit"] = zop_ref
@@ -1938,6 +1948,7 @@ def _seed_cz_variant(pair, *, variant="unipolar", amplitude=0.1, duration=100,
             # knobs; hard-linking the coupler op to the qubit op would collapse the
             # two and make the coupler un-tunable.
             coupler.operations[cop] = coupler_pulse
+            coupler_pulse.id = cop
             kwargs["coupler_flux_pulse"] = coupler.get_reference() + f"/operations/{cop}"
             # Coupler bias tuning from populate (decouple / interaction offset, …).
             for attr in ("decouple_offset", "interaction_offset",

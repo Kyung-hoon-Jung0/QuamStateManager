@@ -15420,7 +15420,13 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 target_path = _resolve_edit_path(modifier.store, dot_path)
                 _ro = _editability_reason(modifier.store, target_path)
                 if _ro is not None:
-                    raise ValueError(_ro)   # read-only policy → existing atomic rollback (audit P0)
+                    # GATE-ID permits only filling a null/absent gate target ID
+                    # with its holder key through this ordinary batch door.
+                    from quam_state_manager.core.gate_pulse_ids import fill_edits
+                    allowed_ids = {e["path"]: e["value"]
+                                   for e in fill_edits(modifier.store.merged)}
+                    if target_path not in allowed_ids or raw_value != allowed_ids[target_path]:
+                        raise ValueError(_ro)   # other identity keys remain read-only
                 # docs/121: a pointer cell now SHOWS its pointer, so plain text
                 # typed into one must never silently replace the link.
                 _pr = _pointer_cell_refusal(modifier.store, dot_path, raw_value)
@@ -27256,6 +27262,7 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
     that plays the op BY NAME is asked before anything moves)."""
     from quam_state_manager.core.pulse_index import (
         rewrite_referrer_pointer, rewrite_subtree_pointers)
+    from quam_state_manager.core.gate_pulse_ids import gate_pulse_targets
     retargeted = 0
     # the rename as the gate would see it: old key gone, new key there, every
     # re-pointed referrer following it -- asked under the lab write lock only
@@ -27277,6 +27284,9 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                 new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path)
                 if new_ptr and new_ptr != raw:
                     _writes.append((referrer, new_ptr))
+        if (retarget and isinstance(body, dict) and body.get("id") == old_name
+                and any(p == path for p, _k, _s, _b in gate_pulse_targets(store.merged))):
+            _writes.append((new_path + ".id", new_name))
     _lab = _lab_write_refusal(store, _writes, info=lab_info)
     if _lab:
         return _lab_edit_refused(_lab[0])
@@ -27308,6 +27318,9 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                 if new_ptr and new_ptr != raw:
                     modifier.set_value(referrer, new_ptr, group_id=gid)
                     retargeted += 1
+        if (isinstance(body, dict) and body.get("id") == old_name
+                and any(p == new_path for p, _k, _s, _b in gate_pulse_targets(store.merged))):
+            modifier.set_value(new_path + ".id", new_name, group_id=gid)
 
     _invalidate_engine_cache()
     logger.info("pulse rename %s -> %s (retargeted=%d)", path, new_path, retargeted)
