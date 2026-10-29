@@ -33,7 +33,7 @@ is anchored at that idle bias, where the stored ``f_01`` was measured:
 
     f_01(V) = f_01_idle + quad_term * (V - V_idle)^2
 
-which is the inverse of ``cz_branch``'s ``amp = sqrt(-detuning / quad)``.
+The corresponding signed-coefficient inverse lives in ``cz_flux_math``.
 Without a known idle voltage the curve cannot be placed on a voltage axis at
 all, so the sweep degrades to an honest frequency axis instead of silently
 re-centring on 0 V.
@@ -48,6 +48,8 @@ import re
 from typing import Any
 
 import numpy as np
+
+from quam_state_manager.core import cz_flux_math
 
 
 def extract_qubit_params(
@@ -158,7 +160,7 @@ def compute_detuning_sweep(
         zeros = _zeros_on_voltage(targets, f_idle, quad, v_idle)
         v_lo, v_hi = _voltage_range(targets, zeros, f_idle, quad, v_idle)
         x = np.linspace(v_lo, v_hi, n_points)
-        swept = f_idle + quad * (x - v_idle) ** 2
+        swept = f_idle + cz_flux_math.quad_shift(x - v_idle, abs(quad), np.sign(quad))
         x_kind = "voltage"
         missing = [lbl for lbl, _ in targets
                    if not any(z["label"].startswith(lbl) for z in zeros)]
@@ -355,7 +357,7 @@ def build_plotly_figure(
         tick_vs = [v_lo + i * (v_hi - v_lo) / n_ticks for i in range(n_ticks + 1)]
         tick_labels = []
         for v in tick_vs:
-            det_mhz = quad_term * (v - v_idle) ** 2 * hz_to_mhz
+            det_mhz = cz_flux_math.quad_shift(v - v_idle, abs(quad_term), np.sign(quad_term)) * hz_to_mhz
             if abs(det_mhz) < 0.5:
                 tick_labels.append("0")
             elif abs(det_mhz) >= 1000:
@@ -571,26 +573,8 @@ def _to_float(v: Any) -> float | None:
 def _zero_frequencies(
     f_c: float, f_t: float, alpha_c: float, alpha_t: float, sweep_role: str,
 ) -> list[tuple[str, float]]:
-    """The swept qubit's frequency at which each detuning vanishes.
-
-        D(11-20) = f_t - f_c + A_c = 0
-        D(11-02) = f_c - f_t + A_t = 0
-        D(10-01) = f_c - f_t      = 0
-
-    solved for whichever of f_c / f_t is the one being swept.  These are
-    exactly ``cz_branch``'s two branch conditions plus the 1Q resonance.
-    """
-    if sweep_role == "control":
-        return [
-            ("Δ(11−20)=0", f_t + alpha_c),
-            ("Δ(11−02)=0", f_t - alpha_t),
-            ("Δ(10−01)=0", f_t),
-        ]
-    return [
-        ("Δ(11−20)=0", f_c - alpha_c),
-        ("Δ(11−02)=0", f_c + alpha_t),
-        ("Δ(10−01)=0", f_c),
-    ]
+    """Compatibility wrapper for the shared CZ math."""
+    return cz_flux_math.zero_frequencies(f_c, f_t, alpha_c, alpha_t, sweep_role)
 
 
 _STAGGER_CYCLE = ("top center", "bottom center", "top right", "bottom right")
@@ -626,25 +610,8 @@ def _zeros_on_voltage(
     targets: list[tuple[str, float]],
     f_idle: float, quad: float, v_idle: float,
 ) -> list[dict[str, Any]]:
-    """Invert ``f = f_idle + quad*(V - V_idle)^2`` for each zero frequency.
-
-    A target on the side the parabola does not bend towards is simply not
-    reachable by flux and is left out — never bent onto the axis anyway.
-    """
-    zeros: list[dict[str, Any]] = []
-    for label, f_target in targets:
-        ratio = (f_target - f_idle) / quad
-        if ratio < 0:
-            continue
-        root = math.sqrt(ratio)
-        if root == 0.0:
-            zeros.append({"label": label, "voltage": v_idle,
-                          "frequency": f_target})
-            continue
-        for sign in (1.0, -1.0):
-            zeros.append({"label": label, "voltage": v_idle + sign * root,
-                          "frequency": f_target})
-    return zeros
+    """Compatibility wrapper for the shared CZ math."""
+    return cz_flux_math.zeros_on_voltage(targets, f_idle, quad, v_idle)
 
 
 def _voltage_range(
@@ -652,21 +619,8 @@ def _voltage_range(
     zeros: list[dict[str, Any]],
     f_idle: float, quad: float, v_idle: float,
 ) -> tuple[float, float]:
-    """A voltage window centred on the idle bias that shows the physics.
-
-    Reachable crossings set the width.  When none is reachable the window
-    still spans the voltage that WOULD reach the furthest of them, so the
-    plot keeps a physical scale instead of collapsing to a hairline around
-    the operating point (which is what an empty crossing list used to do).
-    """
-    half = max((abs(z["voltage"] - v_idle) for z in zeros), default=0.0)
-    if half <= 0.0:
-        reach = max((abs(f - f_idle) for _, f in targets), default=0.0)
-        half = math.sqrt(reach / abs(quad)) if reach > 0 and quad else 0.0
-    if half <= 0.0:
-        half = 0.05
-    margin = half * 0.2
-    return v_idle - half - margin, v_idle + half + margin
+    """Compatibility wrapper for the shared CZ math."""
+    return cz_flux_math.voltage_range(targets, zeros, f_idle, quad, v_idle)
 
 
 def _ref_to_name(ref: Any) -> str | None:

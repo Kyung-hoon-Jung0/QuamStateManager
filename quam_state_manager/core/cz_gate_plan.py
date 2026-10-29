@@ -22,10 +22,8 @@ Flux -> frequency, per qubit (decided by the product owner, 2026-10-15):
 Resonances of the |11> manifold for a pair (control c, target t), with
 ``Delta = f_c - f_t`` and ``|alpha|`` the anharmonicity magnitudes:
 |11>-|20> at ``Delta = +|alpha_c|``, |11>-|02> at ``Delta = -|alpha_t|``,
-|10>-|01> (iSWAP) at ``Delta = 0``. [paper: arXiv:1903.02492v1, p.1] "of
-resonance between |01⟩and |10⟩for iSWAP" ... "|11⟩and |02⟩or |20⟩for
-conditional-phase (CZ)"; the signed condition is [paper: arXiv:1903.02492v1,
-p.8] "by deﬁnition ϵ(t) = ω|02⟩(t) −ω|11⟩(t) = ωqH(t) + ηqH −ωqM" (the qubit
+|10>-|01> (iSWAP) at ``Delta = 0``. [paper: arXiv:1903.02492v1, p.1] "The oldest approach [22, 23] uses baseband flux pulses to tune |11⟩into near resonance with |02⟩to realize CZ.";
+the signed condition is [paper: arXiv:1903.02492v1, p.8] "by deﬁnition ϵ(t) = ω|02⟩(t) −ω|11⟩(t) = ωqH(t) + ηqH −ωqM" (the qubit
 carrying |2> is qH: epsilon = 0 at f_H - f_M = -eta_H = |alpha_H|).
 """
 from __future__ import annotations
@@ -36,7 +34,7 @@ import re
 
 import numpy as np
 
-from quam_state_manager.core import value_history
+from quam_state_manager.core import value_history, cz_flux_math
 
 QUAD_LABEL = "quad-term estimate"
 MODEL_LABEL = "lab flux model"
@@ -102,22 +100,13 @@ _MODEL_KEYS = ("phi0_v", "phi_park", "d", "f_max_hz", "ec_hz", "amp_min_v", "amp
 
 
 def fitted_frequency(model, phi):
-    """The lab's ``LffemFluxModel.frequency_hz`` (flux in units of Phi0), transcribed."""
-    phi_array = np.asarray(phi, dtype=float)
-    inside = np.cos(np.pi * phi_array) ** 2 + model["d"]**2 * np.sin(np.pi * phi_array) ** 2
-    return (model["f_max_hz"] + model["ec_hz"]) * inside**0.25 - model["ec_hz"]
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.arc_frequency(model, phi)
 
 
 def fitted_shift(model, amplitude):
-    """The lab's ``FluxConversion.shift_hz`` for a model source, array form, transcribed:
-    outside the measured amplitude range (+1 % of its larger bound) is NaN."""
-    amp = np.asarray(amplitude, dtype=float)
-    tolerance = 0.01 * max(abs(model["amp_min_v"]), abs(model["amp_max_v"]))
-    invalid = (~np.isfinite(amp) | (amp < model["amp_min_v"] - tolerance)
-               | (amp > model["amp_max_v"] + tolerance))
-    result = (fitted_frequency(model, model["phi_park"] + amp / model["phi0_v"])
-              - fitted_frequency(model, model["phi_park"]))
-    return np.where(invalid, np.nan, result)
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.fitted_shift(model, amplitude)
 
 
 def model_of(qubit):
@@ -150,29 +139,18 @@ def lab_rejection(model, f01):
 
 
 def spot_kind(phi):
-    """``upper`` where cos(2 pi phi) >= 0 (the lab's arc rule), else ``lower``."""
-    return "upper" if math.cos(2 * math.pi * phi) >= 0 else "lower"
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.spot_kind(phi)
 
 
 def sweet_spot_phi(phi):
-    """The lab's ``sweet_spot_phi``, transcribed: the nearest multiple of half a flux quantum."""
-    return float(np.round(2.0 * float(phi)) / 2.0)
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.sweet_spot_phi(phi)
 
 
 def model_spots(model):
-    """Both sweet spots of the fitted arc, in the qubit's frequency frame.
-
-    The fit's own park is ``f_01_at_fit_hz`` at ``phi_park``; the other spot is the
-    arc's extremum half a flux quantum from the park's sweet spot, carried by the
-    fit's offset from ``f_01_at_fit_hz`` [derived]. ``stored_other_hz`` is the lab's
-    own ``f_opposite_hz`` beside it."""
-    offset = model["f_01_at_fit_hz"] - float(fitted_frequency(model, model["phi_park"]))
-    phi_other = sweet_spot_phi(model["phi_park"]) + 0.5
-    other = float(fitted_frequency(model, phi_other)) + offset
-    return {"fit": {"phi": model["phi_park"], "kind": spot_kind(model["phi_park"]),
-                    "f_hz": model["f_01_at_fit_hz"]},
-            "other": {"phi": phi_other, "kind": spot_kind(phi_other), "f_hz": other},
-            "stored_other_hz": model.get("f_opposite_hz")}
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.model_spots(model)
 
 
 def _at_spot(model, f01):
@@ -289,32 +267,17 @@ class Conversion:
 
     # the model about its anchor, in the qubit's frame (shift added to f_01)
     def _model_window(self):
-        m = self.model
-        tol = 0.01 * max(abs(m["amp_min_v"]), abs(m["amp_max_v"])) / m["phi0_v"]
-        return (m["phi_park"] + m["amp_min_v"] / m["phi0_v"] - tol,
-                m["phi_park"] + m["amp_max_v"] / m["phi0_v"] + tol)
+        return cz_flux_math.model_window(self.model)
 
     def model_shift(self, amplitude):
-        """Model shift at amplitude(s) about the anchor; NaN outside the measured flux."""
-        a = np.asarray(amplitude, dtype=float)
-        if self.anchor is None:
-            return np.full(a.shape, np.nan)
-        m = self.model
-        if self.anchor == m["phi_park"]:
-            return fitted_shift(m, a)       # the lab's own guard, unchanged
-        phi = self.anchor + a / m["phi0_v"]
-        lo, hi = self._model_window()
-        # the other spot is the measured window shifted by whole periods (the arc is periodic)
-        k = np.round((phi - (lo + hi) / 2))
-        inside = (phi - k >= lo) & (phi - k <= hi)
-        shift = fitted_frequency(m, phi) - fitted_frequency(m, self.anchor)
-        return np.where(np.isfinite(a) & inside, shift, np.nan)
+        """Model shift about the anchor within the measured flux window."""
+        return cz_flux_math.model_shift(self.model, self.anchor, amplitude)
 
     def quad_shift(self, amplitude):
         a = np.asarray(amplitude, dtype=float)
         if self.quad is None or self.sign is None:
             return np.full(a.shape, np.nan)
-        return self.sign * self.quad * a**2
+        return cz_flux_math.quad_shift(a, self.quad, self.sign)
 
     def _curvature(self):
         """The model's own local quad coefficient at the anchor (Hz/V^2), and how the
@@ -322,11 +285,8 @@ class Conversion:
         if self.anchor is None:
             return None
         m = self.model
-        h = 1e-3 * m["phi0_v"]
-        def k_at(phi):
-            f = fitted_frequency(m, [phi - h / m["phi0_v"], phi, phi + h / m["phi0_v"]])
-            return float((f[0] + f[2] - 2 * f[1]) / (2 * h * h))
-        here, other = k_at(self.anchor), k_at(self.anchor + 0.5)
+        here = cz_flux_math.local_quad_coefficient(m, self.anchor)
+        other = cz_flux_math.local_quad_coefficient(m, self.anchor + 0.5)
         out = {"here_hz_per_v2": here, "other_hz_per_v2": other, "ratio": None, "note": None}
         if self.quad:
             out["ratio"] = self.quad / abs(here) if here else None
@@ -490,14 +450,8 @@ class Conversion:
 
 
 def resonances(fc, ft, alpha_c, alpha_t):
-    """The three |11>-manifold conditions on Delta = f_c - f_t (see module docstring)."""
-    delta = fc - ft if fc is not None and ft is not None else None
-    conditions = (("|11>-|20>", abs(alpha_c) if alpha_c is not None else None),
-                  ("|11>-|02>", -abs(alpha_t) if alpha_t is not None else None),
-                  ("iSWAP", 0.0))
-    return [{"name": n, "delta_hz": d,
-             "distance_hz": delta - d if delta is not None and d is not None else None}
-            for n, d in conditions]
+    """Compatibility wrapper for :mod:`cz_flux_math`."""
+    return cz_flux_math.resonances(fc, ft, alpha_c, alpha_t)
 
 
 def tls_bands(qubit):
