@@ -102,7 +102,14 @@ _MODEL_KEYS = ("phi0_v", "phi_park", "d", "f_max_hz", "ec_hz", "amp_min_v", "amp
 
 
 def fitted_frequency(model, phi):
-    """The lab's ``LffemFluxModel.frequency_hz`` (flux in units of Phi0), transcribed."""
+    """The lab's ``LffemFluxModel.frequency_hz`` (flux in units of Phi0), transcribed.
+
+    ``f(phi) = (f_max + Ec) * (cos^2(pi phi) + d^2 sin^2(pi phi))**(1/4) - Ec``
+    [derived]: the asymmetric-SQUID transmon, ``f = sqrt(8 EJ(phi) Ec) - Ec`` with
+    ``EJ(phi) = EJsum * sqrt(cos^2 + d^2 sin^2)``; re-derived numerically in
+    ``tests/test_cz_flux_no_lower_spot.py``. With ``d = 0`` the bracket reaches 0
+    at half a flux quantum and the formula gives ``-Ec``: there is no lower sweet
+    spot, and that value is never a frequency (:func:`model_spots`)."""
     phi_array = np.asarray(phi, dtype=float)
     inside = np.cos(np.pi * phi_array) ** 2 + model["d"]**2 * np.sin(np.pi * phi_array) ** 2
     return (model["f_max_hz"] + model["ec_hz"]) * inside**0.25 - model["ec_hz"]
@@ -129,7 +136,9 @@ def model_of(qubit):
     for k in ("model_r2", "a_half_v", "f_opposite_hz", "quad_small_hz_per_v2"):
         m[k] = number(raw.get(k))
     m["created_at"] = raw.get("created_at") if isinstance(raw.get("created_at"), str) else None
-    if m["phi0_v"] <= 0 or not 0 < m["d"] < 1 or m["amp_min_v"] >= m["amp_max_v"]:
+    # the lab writes f_opposite_hz = null when the opposite spot is at or below 0 Hz
+    m["f_opposite_stored"] = "f_opposite_hz" in raw
+    if m["phi0_v"] <= 0 or not 0 <= m["d"] < 1 or m["amp_min_v"] >= m["amp_max_v"]:
         return None
     return m
 
@@ -165,14 +174,38 @@ def model_spots(model):
     The fit's own park is ``f_01_at_fit_hz`` at ``phi_park``; the other spot is the
     arc's extremum half a flux quantum from the park's sweet spot, carried by the
     fit's offset from ``f_01_at_fit_hz`` [derived]. ``stored_other_hz`` is the lab's
-    own ``f_opposite_hz`` beside it."""
+    own ``f_opposite_hz`` beside it.
+
+    The other spot may not exist (``d = 0``, or a chip with only an upper sweet
+    spot): then its ``f_hz`` is None and ``missing`` says why. A frequency at or
+    below 0 Hz is never reported, compared or anchored to."""
     offset = model["f_01_at_fit_hz"] - float(fitted_frequency(model, model["phi_park"]))
     phi_other = sweet_spot_phi(model["phi_park"]) + 0.5
+    kind = spot_kind(phi_other)
     other = float(fitted_frequency(model, phi_other)) + offset
+    stored = model.get("f_opposite_hz")
+    missing = None
+    if kind == "lower" and model["d"] == 0:
+        missing = "no lower sweet spot (d = 0)"
+    elif model.get("f_opposite_stored") and stored is None:
+        missing = f"no {kind} sweet spot (the fit stores f_opposite_hz = null)"
+    elif stored is not None and stored <= 0:
+        missing = f"no {kind} sweet spot (the fit's f_opposite_hz is at or below 0 Hz)"
+    elif not math.isfinite(other) or other <= 0:
+        missing = f"no {kind} sweet spot (the fitted arc reaches 0 Hz before it)"
     return {"fit": {"phi": model["phi_park"], "kind": spot_kind(model["phi_park"]),
                     "f_hz": model["f_01_at_fit_hz"]},
-            "other": {"phi": phi_other, "kind": spot_kind(phi_other), "f_hz": other},
-            "stored_other_hz": model.get("f_opposite_hz")}
+            "other": {"phi": phi_other, "kind": kind, "f_hz": None if missing else other,
+                      "missing": missing},
+            "stored_other_hz": stored if stored is not None and stored > 0 else None}
+
+
+def _spot_separation(spots):
+    """Frequency span between the arc's two sweet spots; with no other spot the arc
+    spans from the fit's spot down to 0 Hz [derived]."""
+    if spots["other"]["f_hz"] is None:
+        return abs(spots["fit"]["f_hz"])
+    return abs(spots["fit"]["f_hz"] - spots["other"]["f_hz"])
 
 
 def _at_spot(model, f01):
@@ -180,8 +213,9 @@ def _at_spot(model, f01):
     if f01 is None:
         return None
     spots = model_spots(model)
-    sep = abs(spots["fit"]["f_hz"] - spots["other"]["f_hz"])
-    name = min(("fit", "other"), key=lambda k: abs(spots[k]["f_hz"] - f01))
+    sep = _spot_separation(spots)
+    names = [k for k in ("fit", "other") if spots[k]["f_hz"] is not None]
+    name = min(names, key=lambda k: abs(spots[k]["f_hz"] - f01))
     dist = abs(spots[name]["f_hz"] - f01)
     if dist <= max(F01_TOLERANCE_HZ, SPOT_FRACTION * sep):
         return name, spots[name], dist
@@ -217,12 +251,15 @@ def frame(qubit):
         if f is not None and sweet is not None and abs(sweet - f) <= F01_TOLERANCE_HZ:
             evidence.append((f"extras.{label}_sweet_spot_frequency equals f_01", direction))
     opposite = number(extras.get("opposite_sweet_spot_qubit_frequency"))
+    if opposite is not None and opposite <= 0:
+        notes.append("extras.opposite_sweet_spot_qubit_frequency is at or below 0 Hz"
+                     " (no opposite sweet spot); not used")
+        opposite = None
     if f is not None and opposite is not None:
         here = at[1]["f_hz"] if at else None
         stale = abs(opposite - f) <= F01_TOLERANCE_HZ or (
             here is not None and m is not None
-            and abs(opposite - here) <= SPOT_FRACTION * abs(model_spots(m)["fit"]["f_hz"]
-                                                            - model_spots(m)["other"]["f_hz"]))
+            and abs(opposite - here) <= SPOT_FRACTION * _spot_separation(model_spots(m)))
         if stale:
             notes.append("extras.opposite_sweet_spot_qubit_frequency names the spot the qubit sits at now"
                          " (recorded from the other spot); not used")
@@ -262,6 +299,9 @@ class Conversion:
         self.rejection = None
         m = self.model
         if m is not None:
+            missing = model_spots(m)["other"]["missing"]
+            if missing:
+                self.notes.append("lab flux model: " + missing)
             self.rejection = lab_rejection(m, self.f01)
             spot = self.frame["model_anchor"]
             quality_ok = lab_rejection(m, m["f_01_at_fit_hz"]) is None
@@ -326,7 +366,14 @@ class Conversion:
         def k_at(phi):
             f = fitted_frequency(m, [phi - h / m["phi0_v"], phi, phi + h / m["phi0_v"]])
             return float((f[0] + f[2] - 2 * f[1]) / (2 * h * h))
-        here, other = k_at(self.anchor), k_at(self.anchor + 0.5)
+        here = k_at(self.anchor)
+        # no curvature is read at a sweet spot the arc does not have
+        other_phi = self.anchor + 0.5
+        has_other = (self.anchor != m["phi_park"]
+                     or model_spots(m)["other"]["f_hz"] is not None)
+        other = k_at(other_phi) if has_other else None
+        if other is not None and not math.isfinite(other):
+            other = None
         out = {"here_hz_per_v2": here, "other_hz_per_v2": other, "ratio": None, "note": None}
         if self.quad:
             out["ratio"] = self.quad / abs(here) if here else None
