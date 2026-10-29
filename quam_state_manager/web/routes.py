@@ -1738,6 +1738,18 @@ def _folder_accepts_new_file(folder) -> bool | None:
     return True
 
 
+def _posix_folder_readonly(folder) -> bool:
+    """POSIX only: True when the folder itself refuses new entries, so the
+    rename that replaces state.json would fail even with writable files.
+    Never used on Windows, where ``os.access`` is attribute-only for dirs."""
+    if os.name == "nt":
+        return False
+    try:
+        return Path(folder).is_dir() and not os.access(folder, os.W_OK | os.X_OK)
+    except Exception:  # noqa: BLE001 - a hint must never break activation
+        return False
+
+
 def _probe_readonly(folder, *, origin: str = "live") -> bool:
     """True when the live chip's files are NOT writable (docs/114 #16).
 
@@ -1770,6 +1782,12 @@ def _probe_readonly(folder, *, origin: str = "live") -> bool:
     """
     if (origin or "live") != "live" or working_copy.is_run_archive(folder):
         return False
+    # POSIX: the apply replaces state.json by rename, which needs write on
+    # the FOLDER; a writable file in a read-only folder still fails there.
+    # ``os.access`` is accurate for directories on POSIX (only Windows is
+    # attribute-only, see above).
+    if _posix_folder_readonly(folder):
+        return True
     target = Path(folder) / "state.json"
     try:
         with open(target, "r+", encoding="utf-8"):
