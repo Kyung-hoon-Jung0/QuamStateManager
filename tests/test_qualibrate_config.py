@@ -51,6 +51,7 @@ def test_falls_back_to_global_state_path(tmp_path, monkeypatch):
 
 def test_returns_none_when_unresolvable(tmp_path, monkeypatch):
     monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
+    monkeypatch.delenv("QUAM_STATE_PATH", raising=False)
     monkeypatch.setenv("QUALIBRATE_CONFIG_DIR", str(tmp_path / "does-not-exist"))
     assert qc.resolve_live_state_path() is None
 
