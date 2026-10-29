@@ -122,6 +122,13 @@ def model_of(qubit):
     m["f_opposite_stored"] = "f_opposite_hz" in raw
     if m["phi0_v"] <= 0 or not 0 <= m["d"] < 1 or m["amp_min_v"] >= m["amp_max_v"]:
         return None
+    # a fit frequency at or below 0 Hz is not a frequency; Ec is never negative
+    if m["f_01_at_fit_hz"] <= 0 or m["f_max_hz"] <= 0 or m["ec_hz"] < 0:
+        return None
+    # d = 0: the arc has no lower sweet spot, so a fit that PARKS at one sits on
+    # the cusp at -Ec -- not a fit the plan can anchor to (release review, v1.6.0)
+    if m["d"] == 0 and cz_flux_math.spot_kind(m["phi_park"]) == "lower":
+        return None
     return m
 
 

@@ -351,6 +351,19 @@ s6.spec.qdac.qubits.q5.trigger_port = 'ext3';
 T.renderQdacCabling();
 ok(s6.spec.qdac.qubits.q5.trigger_port === 'ext3' && !s6.spec.qdac.qubits.q1.trigger_port,
   'P1: a chosen ext stops the default');
+// a re-generated lab chip carries its bench cabling as trigger PINS (pin_source
+// "regen"), often with no ext recorded: that is the lab's own cabling, and the
+// default must never be laid over it (release review v1.6.0)
+s6 = sixWorld();
+Object.keys(s6.spec.qdac.qubits).forEach(function (qid, i) {
+  s6.spec.qdac.qubits[qid].trigger_pin = { con: 1, slot: 5, port: i + 1 };
+  s6.spec.qdac.qubits[qid].pin_source = 'regen';
+});
+T.renderQdacCabling();
+ok(Object.keys(s6.spec.qdac.qubits).every(function (qid, i) {
+  const q = s6.spec.qdac.qubits[qid];
+  return !q.trigger_port && q.trigger_pin && q.trigger_pin.port === i + 1 && q.pin_source === 'regen'; }),
+  'P1: six qubits carrying only regen-carried trigger pins get no ext default and keep every pin');
 
 // P3: the Review's channel list is numeric order
 {

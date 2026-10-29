@@ -52,12 +52,23 @@ def model_inverse(model, anchor, f01, target, polarity=1):
     """
     fstar = target - f01 + float(arc_frequency(model, anchor))
     r = (fstar + model["ec_hz"]) / (model["f_max_hz"] + model["ec_hz"])
-    if r < 0 or not model["d"]**2 - 1e-14 <= r**4 <= 1 + 1e-14:
+    # A frequency at or below 0 Hz is never a target: with d = 0 the arc formula
+    # runs on down to -Ec, so the range test alone would still solve an amplitude
+    # for it (release review, v1.6.0).
+    if (target <= 0 or fstar <= 0 or r < 0
+            or not model["d"]**2 - 1e-14 <= r**4 <= 1 + 1e-14):
         offset = f01 - float(arc_frequency(model, anchor))
-        fmin = float(arc_frequency(model, 0.5)) + offset
+        arc_min = float(arc_frequency(model, 0.5))
+        fmin = arc_min + offset
         fmax = float(arc_frequency(model, 0)) + offset
-        low = (f"{fmin / 1e9:g}" if fmin > 0 else
-               "0 (no lower sweet spot" + (", d = 0)" if model["d"] == 0 else ")"))
+        if arc_min <= 0 or fmin <= 0:
+            # the arc reaches 0 Hz before its lower spot (d = 0 gives -Ec there): the
+            # reachable range ends where the arc VALUE is 0, in the qubit's frame --
+            # never at the negative number the formula continues on to
+            zero = max(offset, 0.0) if arc_min <= 0 else 0.0
+            low = f"{zero / 1e9:g} (no lower sweet spot" + (", d = 0)" if model["d"] == 0 else ")")
+        else:
+            low = f"{fmin / 1e9:g}"
         raise ValueError(f"target {target / 1e9:g} GHz is outside the fitted arc ({low}..{fmax / 1e9:g} GHz)")
     phi = math.asin(math.sqrt(np.clip((1 - r**4) / (1 - model["d"]**2), 0, 1))) / math.pi
     candidates = [model["phi0_v"] * (k + side * phi - anchor)

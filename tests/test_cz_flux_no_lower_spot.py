@@ -100,3 +100,51 @@ def test_an_unreachable_target_never_names_a_negative_lower_bound():
         cz_flux_math.model_inverse(m, 0.0, 5.0e9, 6.0e9)
     text = str(err.value)
     assert "no lower sweet spot, d = 0" in text and "-0." not in text
+
+
+# --- release review v1.6.0: three ways a non-frequency could still reach the plan ---
+
+@pytest.mark.parametrize("target", [-0.1e9, 0.0])
+def test_a_target_at_or_below_zero_is_refused_even_though_the_d0_arc_runs_on(target):
+    """With d = 0 the arc formula continues down to -Ec, so the range test alone
+    solved an amplitude for a target at or below 0 Hz [found by review]."""
+    from quam_state_manager.core import cz_flux_math
+    m = C.model_of(_qubit(_model(0.0, f_max_hz=6.0e9, f_01_at_fit_hz=5.9e9), f01=5.9e9))
+    with pytest.raises(ValueError) as err:
+        cz_flux_math.model_inverse(m, 0.0, 5.9e9, target)
+    assert "no lower sweet spot, d = 0" in str(err.value)
+    # the same target with a real lower spot is refused too, by the arc range
+    m = C.model_of(_qubit(_model(0.4, f_max_hz=6.0e9, f_01_at_fit_hz=5.9e9), f01=5.9e9))
+    with pytest.raises(ValueError):
+        cz_flux_math.model_inverse(m, 0.0, 5.9e9, target)
+
+
+def test_a_positive_target_whose_arc_value_is_not_positive_is_refused():
+    """The target is in the qubit frame; the arc value it needs may still be at or
+    below 0 Hz when the fit offset is large. That is no frequency either."""
+    from quam_state_manager.core import cz_flux_math
+    # the fit frame sits 5.5 GHz above the arc (f_max 0.6 GHz, Ec 0.2 GHz): a 5.4 GHz
+    # target needs the arc at -0.1 GHz, inside (-Ec, 0] where the d = 0 range test
+    # still passes (r = 0.125) -- only the arc-value guard refuses it
+    # (the flux window is wide, so the amplitude it would need, ~0.5 V, is inside it:
+    # a first version of this pin was vacuous because the window refused it instead)
+    m = C.model_of(_qubit(_model(0.0, f_max_hz=0.6e9, ec_hz=200e6, f_01_at_fit_hz=6.1e9,
+                                 amp_min_v=-1.0, amp_max_v=1.0), f01=6.1e9))
+    with pytest.raises(ValueError) as err:
+        cz_flux_math.model_inverse(m, 0.0, 6.1e9, 5.4e9)
+    assert "no lower sweet spot, d = 0" in str(err.value)
+
+
+@pytest.mark.parametrize("over", [{"f_01_at_fit_hz": -1e9}, {"f_01_at_fit_hz": 0.0},
+                                  {"f_max_hz": 0.0}, {"ec_hz": -1e6}])
+def test_a_fit_with_a_non_positive_frequency_is_no_model(over):
+    assert C.model_of(_qubit(_model(0.4, **over))) is None
+
+
+def test_a_d0_fit_parked_at_the_lower_spot_is_no_model():
+    """A d = 0 arc has no lower sweet spot; a fit that parks at one sits on the cusp
+    at -Ec. Such a fit is refused as a model; with d > 0 the same park is fine."""
+    assert C.model_of(_qubit(_model(0.0, phi_park=0.5))) is None
+    assert C.model_of(_qubit(_model(0.0, phi_park=-0.5))) is None
+    assert C.model_of(_qubit(_model(0.5, phi_park=0.5))) is not None
+    assert C.model_of(_qubit(_model(0.0, phi_park=0.0))) is not None
