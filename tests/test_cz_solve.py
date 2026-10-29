@@ -187,6 +187,15 @@ def test_two_flux_keeps_partner_operating_frequency():
     assert r['target_hz'] == row['lines'][1]['point']['frequency_hz'] + 200e6
 
 
+def test_two_moving_lines_name_whose_amplitude_is_solved():
+    """Two qubits move: the one-glance line must say which qubit's amplitude it gives;
+    a single mover keeps the short wording."""
+    doc = state()
+    r = C.solve(doc, 'q1-2', 'cz_two', line='control')
+    assert 'required amplitude of q1 ' in r['summary'], r['summary']
+    assert 'required amplitude of' not in solve(doc)['summary']
+
+
 def test_off_spot_model_anchor_refuses_only_quad():
     doc = state()
     q = doc['qubits']['q1']

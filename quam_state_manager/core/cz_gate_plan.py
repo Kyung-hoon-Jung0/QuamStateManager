@@ -1169,7 +1169,11 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
     aim = f"{target / 1e6:+.1f} MHz" if target is not None else "unknown"
     def mv(value):
         return f"{value * 1e3:+.1f} mV" if value is not None else "unknown"
-    result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude "
+    # With two moving qubits (two-flux, both movers) the answer is one line's amplitude,
+    # the partner held where it plays: say whose amplitude it is.
+    movers = [ln for ln in row["lines"] if ln["moves"]] if row else []
+    whose = f"of {mover['name']} " if mover and len(movers) > 1 else ""
+    result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude {whose}"
                          + (mv(required) if result["ok"] else result["reason"])
                          + f" | stored {mv(stored)} | difference {mv(difference)}"
                          + f" ({result.get('tier', tier)})")
