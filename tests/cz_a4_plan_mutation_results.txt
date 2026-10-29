@@ -1,0 +1,10 @@
+GREEN baseline: 15 passed in 1.62s
+RED caught: drop overlap refusal
+RED caught: wrong ZZ combination
+RED caught: flat time without the factor 2
+RED caught: drop the ZZ floor
+RED caught: collision made a refusal
+RED caught: no path scan
+RED caught: coupler-only branch off
+RED caught: invent a model
+GREEN restored: 15 passed in 1.61s

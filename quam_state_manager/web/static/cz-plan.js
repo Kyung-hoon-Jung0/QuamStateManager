@@ -34,7 +34,7 @@
             if (!trace || !trace._czOperating) return;
             var p = trace._czOperating;
             group.querySelectorAll('.point').forEach(function (marker) {
-                ['pair', 'op', 'line', 'method', 'path', 'coupler_shift_hz', 'shifted_frequency_hz', 'coupler_method', 'coupler_frequency_hz'].forEach(function (k) { marker.setAttribute('data-' + k.replace(/_/g, '-'), p[k] == null ? '' : p[k]); });
+                ['pair', 'op', 'line', 'method', 'path', 'coupler_shift_hz', 'shifted_frequency_hz', 'coupler_method', 'coupler_frequency_hz', 'zz_hz', 't_flat_ns'].forEach(function (k) { marker.setAttribute('data-' + k.replace(/_/g, '-'), p[k] == null ? '' : p[k]); });
                 marker.setAttribute('data-freq-hz', p.frequency_hz);
                 if (p.preview) marker.setAttribute('data-preview', '1');
             });
@@ -67,6 +67,14 @@
     function renderSolve(root, row) {
         var el = root.querySelector('#czp-solve');
         if (!el) return;
+        var solveBox = el.closest('details');
+        if (row.a4) {
+            el._op = row.path; el._solveResult = null; el.innerHTML = '';
+            if (solveBox) solveBox.hidden = true;
+            renderA4Match(root, row);
+            return;
+        }
+        if (solveBox) solveBox.hidden = false;
         if (el._op === row.path) {
             if (el._solveResult) renderMatch(root, el._solveResult);
             return;
@@ -724,6 +732,85 @@
         renderSolve(root, r);
     }
 
+    /* A4 (coupler-only CZ): one top line, coupler amplitude -> coupler frequency -> ZZ ->
+       starting flat time. Every number is the server's (row.a4 / the operating-point blob). */
+    function a4Point(root, row) {
+        return operatingPoint(root, row.path, 'coupler', null) || {};
+    }
+    function fmtMHzZ(v) { return v == null ? '—' : (v / 1e6).toFixed(3) + ' MHz'; }
+    function renderA4Match(root, row) {
+        var match = root.querySelector('#czp-match');
+        if (!match) return;
+        var a = row.a4, p = a4Point(root, row);
+        var stored = a.stored_flat_length_ns != null ? a.stored_flat_length_ns : a.stored_length_ns;
+        var amp = a.amplitude_v == null ? 'unknown' : (a.amplitude_v >= 0 ? '+' : '') + (a.amplitude_v * 1e3).toFixed(1) + ' mV';
+        var text = 'coupler amplitude ' + amp + ' → coupler ' + fmtGHz(p.coupler_frequency_hz) + ' → ZZ ' + fmtMHzZ(p.zz_hz) +
+            ' → gate time ' + (p.t_flat_ns != null ? p.t_flat_ns + ' ns' : '—') +
+            ' | stored flat ' + (stored != null ? stored + ' ns' : '—') + ' (' + (a.method || 'no model') + ')';
+        match.innerHTML = esc(text) + (a.refusal ? ' <span class="czp-warn-text">' + esc(a.refusal) + '</span>' : '') +
+            ((a.warnings || []).length ? ' <span class="czp-warn-text">' + esc(a.warnings.join('; ')) + '</span>' : '') +
+            help('t = 1/(2|ZZ|) for a pi conditional phase, rounded up to 4 ns: a starting value, the ramps add phase; calibrate. ' +
+                 'ZZ from diagonalising the qubit-coupler-qubit Hamiltonian (3 levels per mode).');
+        var attrs = {'a4-amplitude-v': a.amplitude_v, 'a4-coupler-frequency-hz': p.coupler_frequency_hz, 'a4-zz-hz': p.zz_hz,
+                     'a4-t-flat-ns': p.t_flat_ns, 'a4-stored-flat-ns': stored, 'a4-method': a.method, 'a4-path': a.amplitude_path,
+                     'a4-refusal': a.refusal};
+        Object.keys(attrs).forEach(function (k) { match.setAttribute('data-' + k, attrs[k] == null ? '' : attrs[k]); });
+    }
+    function drawA4(root, d, token) {
+        var row = d.row, a = row.a4, p = a4Point(root, row), C = colors();
+        var flux = root.querySelector('#czp-flux'), time = root.querySelector('#czp-time');
+        var capF = flux && flux.closest('figure') && flux.closest('figure').querySelector('figcaption');
+        var capT = time && time.closest('figure') && time.closest('figure').querySelector('figcaption');
+        [[capF, 'Coupler frequency vs coupler amplitude'], [capT, 'ZZ vs coupler amplitude']].forEach(function (c) {
+            if (!c[0]) return;
+            if (c[0]._czOrig == null) c[0]._czOrig = c[0].innerHTML;
+            c[0].textContent = c[1];
+        });
+        var curve = a.curve || [];
+        if (!curve.length) {
+            if (flux) empty(flux, a.refusal || 'Not drawn.', root, token);
+            if (time) empty(time, a.refusal || 'Not drawn.', root, token);
+            return Promise.resolve();
+        }
+        var xs = curve.map(function (c) { return c.amplitude_v; });
+        var marker = { x: [p.x], name: 'operating point', mode: 'markers', type: 'scatter', _czOperating: p,
+                       marker: { color: C.q[0], size: 13, symbol: 'diamond', line: { width: 1, color: C.q[0] } } };
+        var qubitLines = [], qubitLabels = [];
+        (d.qubits || []).forEach(function (q, k) {
+            var f = q.summary && q.summary.f01_hz;
+            if (f == null) return;
+            qubitLines.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: f / 1e9, y1: f / 1e9,
+                              line: { color: C.q[k] || C.res, width: 1, dash: 'dash' }, layer: 'below' });
+            qubitLabels.push({ xref: 'paper', x: 1, xanchor: 'left', xshift: 8, yref: 'y', y: f / 1e9, showarrow: false,
+                               text: q.name + ' idle', font: { size: 10, color: C.q[k] || C.res } });
+        });
+        var fluxTraces = [{ type: 'scatter', mode: 'lines', x: xs, y: curve.map(function (c) { return c.coupler_frequency_hz / 1e9; }),
+                            name: 'coupler (stored model)', line: { color: C.muted, width: 2 } },
+                          Object.assign({}, marker, { y: [p.y] })];
+        var zz = curve.map(function (c) { return c.zz_hz == null ? null : c.zz_hz / 1e6; });
+        var timeTraces = [{ type: 'scatter', mode: 'lines', x: xs, y: zz, name: 'ZZ (diagonalised)', connectgaps: false,
+                            line: { color: C.q[0], width: 3 } },
+                          Object.assign({}, marker, { y: [p.zz_hz == null ? null : p.zz_hz / 1e6] })];
+        var common = { margin: { l: 64, r: 120, t: 24, b: 90 }, showlegend: true, hovermode: 'closest',
+                       legend: { orientation: 'h', y: -0.32, x: 0, font: { size: 11 } } };
+        var LF = layout(Object.assign({}, common, { xaxis: { title: { text: 'coupler amplitude (V)' } },
+                                                    yaxis: { title: { text: 'frequency (GHz)' } },
+                                                    shapes: qubitLines, annotations: qubitLabels }));
+        var LT = layout(Object.assign({}, common, { xaxis: { title: { text: 'coupler amplitude (V)' } },
+                                                    yaxis: { title: { text: 'ZZ (MHz)' } } }));
+        [[flux, a.refusal], [time, a.refusal]].forEach(function (pair) {
+            if (pair[0]) { pair[0].setAttribute('data-a4', '1'); pair[0].setAttribute('data-notes', pair[1] || ''); }
+        });
+        return window.requirePlotly().then(function () {
+            if (!active(root, token)) return;
+            var still = function () { return active(root, token); };
+            return Promise.all([
+                flux ? Promise.resolve(window._plotlyRender(flux, fluxTraces, LF, config(), still)).then(function () { stampPoints(flux); }) : null,
+                time ? Promise.resolve(window._plotlyRender(time, timeTraces, LT, config(), still)).then(function () { stampPoints(time); }) : null
+            ]);
+        });
+    }
+
     function fillOps(root, d) {
         var sel = root.querySelector('#czp-op');
         if (!sel) return;
@@ -780,7 +867,12 @@
                 renderCard(root, d);
                 var mode = d.calibration && d.calibration.mode;
                 if (mode === 'building' || mode === 'preparing') recheck(root, op, my, 0);
-                return Promise.all([drawFlux(root, d, my), drawTime(root, d, my)]).then(function () {
+                Array.prototype.forEach.call(root.querySelectorAll('.czp-fig figcaption'), function (cap) {
+                    if (cap._czOrig != null && !d.row.a4) { cap.innerHTML = cap._czOrig; cap._czOrig = null; }
+                });
+                ['#czp-flux', '#czp-time'].forEach(function (sel) { var e = root.querySelector(sel); if (e && !d.row.a4) e.removeAttribute('data-a4'); });
+                var draws = d.row.a4 ? drawA4(root, d, my) : Promise.all([drawFlux(root, d, my), drawTime(root, d, my)]);
+                return draws.then(function () {
                     if (my === seq) root.setAttribute('data-rendered', op);
                 });
             })

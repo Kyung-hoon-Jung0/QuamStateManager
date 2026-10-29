@@ -794,6 +794,53 @@ def coupler_points(lines, model, amplitude, alphas):
             frequency, *alphas, model["ec_c_hz"], model["g_c_hz"], model["g_t_hz"], model["g_ct_hz"])
     return resonances(*[ln["shifted_frequency_hz"] for ln in lines], *alphas)
 
+COUPLER_ONLY_KIND = "coupler only"
+#: REVIEW r1 S4: what the official CZ calibration nodes do on a coupler-only gate.
+A4_NODES_NOTE = ("official nodes 30-34b read flux_pulse_qubit / moving_qubit: not applicable to a "
+                 "coupler-only CZ; 35 and 38 do not call the gate; 36, 37 and 39 call its apply()")
+A4_MODEL_MISSING = "ZZ unknown: no coupler model stored (extras.sm_coupler_model)"
+
+
+def is_coupler_only(cls, macro):
+    """A CZ macro that plays only a coupler pulse (no qubit flux slot)."""
+    name = str(cls).split(".")[-1]
+    return name == "CouplerCZGate" or (
+        "coupler_flux_pulse" in macro and not any(
+            k in macro for k in ("flux_pulse_qubit", "flux_pulse_target", "flux_pulse_high", "flux_pulse_low")))
+
+
+def coupler_only_plan(model, lines, alphas, coupler, pulse=None):
+    """A4 numbers for one coupler-only operation: coupler frequency, ZZ, starting flat
+    time, refusal or warnings, plus a ZZ-vs-amplitude curve and the stored-vs-start time
+    comparison. Every number comes from cz_flux_math [derived, checks D5a/D5b]."""
+    pulse = pulse if isinstance(pulse, dict) else {}
+    holder = coupler.get("pulse_path") if coupler else None
+    out = {"model": bool(model), "amplitude_v": coupler["amplitude_v"] if coupler else None,
+           "amplitude_path": holder + ".amplitude" if holder else None,
+           "flat_length_path": holder + ".flat_length" if holder and "flat_length" in pulse else None,
+           "stored_length_ns": number(pulse.get("length")),
+           "stored_flat_length_ns": number(pulse.get("flat_length")), "curve": []}
+    if not model:
+        out.update(refusal=A4_MODEL_MISSING, zz_hz=None, t_flat_ns=None, coupler_frequency_hz=None,
+                   warnings=[], method=None, min_overlap=None)
+        return out
+    fc, ft = (ln["point"].get("frequency_hz") for ln in lines)
+    if fc is None or ft is None or None in alphas:
+        out.update(refusal="ZZ unknown: an idle f_01 or anharmonicity is missing", zz_hz=None,
+                   t_flat_ns=None, coupler_frequency_hz=None, warnings=[], method=None, min_overlap=None)
+        return out
+    if coupler is None or coupler.get("refusal") or coupler.get("amplitude_v") is None:
+        out.update(refusal=(coupler or {}).get("refusal") or "coupler amplitude unknown", zz_hz=None,
+                   t_flat_ns=None, coupler_frequency_hz=None, warnings=[], method=None, min_overlap=None)
+        return out
+    amp = coupler["amplitude_v"]
+    out.update(cz_flux_math.coupler_cz_plan(model, fc, ft, alphas[0], alphas[1], amp))
+    span = max(abs(amp) * 1.5, 0.05)
+    out["curve"] = cz_flux_math.zz_curve(model, fc, ft, alphas[0], alphas[1],
+                                         np.linspace(-span if amp < 0 else 0.0, 0.0 if amp < 0 else span, 61))
+    return out
+
+
 def operations(doc, conversions=None, unavailable=None):
     """Every CZ macro of every pair (aliases included), with what each qubit plays.
 
@@ -860,6 +907,9 @@ def operations(doc, conversions=None, unavailable=None):
             elif "flux_pulse_target" in macro:
                 fields = {"control": "flux_pulse_qubit", "target": "flux_pulse_target"}
                 kind = "two-flux"
+            elif is_coupler_only(cls, macro):
+                # A4: the coupler pulse is the gate; both qubits stay at their idle f_01.
+                kind = COUPLER_ONLY_KIND
             elif moving in ("control", "target"):
                 fields = {moving: "flux_pulse_qubit"}
                 kind = "single mover"
@@ -869,7 +919,7 @@ def operations(doc, conversions=None, unavailable=None):
                 kind = "single mover"
             if pair_refusal:
                 notes.append(pair_refusal)
-            duration_field = "duration" if kind == "both movers" else "duration_qubit" if kind == "single mover" else None
+            duration_field = "duration" if kind in ("both movers", COUPLER_ONLY_KIND) else "duration_qubit" if kind == "single mover" else None
             raw_duration = current(doc, path + "." + duration_field) if duration_field else None
             cycles = number(raw_duration)
             duration_ns = (4 * cycles if cycles is not None and cycles > 0 and cycles.is_integer()
@@ -998,6 +1048,13 @@ def operations(doc, conversions=None, unavailable=None):
                 if coupler_note in notes:
                     notes.remove(coupler_note)
                 notes.append(COUPLER_UNKNOWN)
+            a4 = None
+            if kind == COUPLER_ONLY_KIND:
+                if coupler_note in notes:
+                    notes.remove(coupler_note)
+                notes.append(A4_NODES_NOTE)
+                a4 = coupler_only_plan(model, lines, alphas, coupler,
+                                       resolved_tree(doc, coupler["pulse_path"]) if coupler else None)
             rows.append({
                 **({"coupler_model": model, "shifted_resonances": shifted_res} if has_coupler else {}),
 
@@ -1013,6 +1070,7 @@ def operations(doc, conversions=None, unavailable=None):
                 "plan": None if pair_refusal else _plan(plan, lines),
                 "interaction_frequency_hz": None if pair_refusal else number(current(doc, path + ".interaction_frequency")),
                 "coupler": coupler, "coupler_note": coupler_note,
+                **({"a4": a4} if a4 is not None else {}),
                 "coupler_amplitude_v": coupler["amplitude_v"] if coupler else None,
                 "amplitudes": [ln["amplitude_path"] for ln in lines if ln["amplitude_path"]],
                 "dependencies": [p for r in ("control", "target") if roles[r]["path"]
@@ -1042,6 +1100,24 @@ def operating_points(row):
                        "method": ("model" if "model" in (ln["point"].get("kind") or "") else
                                   "quad" if "quad" in (ln["point"].get("kind") or "") else "direct"),
                        "amp_text": ln["amp_text"], "amp_title": ln["amp_title"], "solve": None})
+    a4 = row.get("a4")
+    if a4:
+        # A4: the operating point is the coupler's; x = coupler amplitude (V), y = coupler GHz.
+        wc = a4.get("coupler_frequency_hz")
+        coupler = row.get("coupler") or {}
+        points.append({"pair": row["pair"], "op": row["path"], "line": "coupler",
+                       "frequency_hz": wc, "amplitude_v": a4.get("amplitude_v"),
+                       "coupler_frequency_hz": wc, "zz_hz": a4.get("zz_hz"),
+                       "t_flat_ns": a4.get("t_flat_ns"), "refusal": a4.get("refusal"),
+                       "coupler_shift_hz": None, "shifted_frequency_hz": None,
+                       "coupler_method": a4.get("method"),
+                       "bare_resonances": [], "shifted_resonances": [],
+                       "x": a4.get("amplitude_v"), "y": wc / 1e9 if wc is not None else None,
+                       "path": a4.get("amplitude_path") or "",
+                       "source_paths": [q for q in [a4.get("amplitude_path"), "qubit_pairs." + row["pair"] + ".extras.sm_coupler_model", *row["dependencies"]] if q],
+                       "method": "diagonalised" if a4.get("zz_hz") is not None else "direct",
+                       "amp_text": coupler.get("amp_text") or "unknown", "amp_title": coupler.get("amp_title") or "",
+                       "solve": None})
     return points
 
 

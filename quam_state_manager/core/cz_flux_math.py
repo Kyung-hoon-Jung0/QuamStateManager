@@ -346,3 +346,104 @@ def dressed_resonances(fc, ft, wc, ac, at, ec, gc, gt, gct):
              "method": "diagonalised" if valid else "qubit and coupler hybridised: no frequency assigned"}
             for name, distance, raw in zip(["|11>-|20>", "|11>-|02>", "iSWAP"],
                 distances, [e20-e11, e02-e11, e10-e01])]
+
+
+
+#: A dressed computational state below this overlap with its bare state is not assigned
+#: [derived, check S3-O: overlap 0.93 still at g/Delta 0.3].
+ZZ_OVERLAP_MIN = 0.9
+#: A pi phase that needs a longer flat top than this is "no usable ZZ" [derived, REVIEW r1:
+#: t_flat > ~2 us].
+ZZ_T_MAX_NS = 2000.0
+#: Coupler closer than this many max(g) to a qubit: a warning, not a refusal [derived,
+#: dispersive bound, S3-L/S3-O; REVIEW r1 makes the overlap check the refusal].
+COLLISION_G_FACTOR = 5.0
+HYBRIDISED = "coupler hybridised with a qubit at this bias"
+
+
+def zz_three_mode(fc, ft, wc, ac, at, ec, gc, gt, gct):
+    """Static ZZ of the qubit-coupler-qubit chain, Hz [derived, check D5a/D5b].
+
+    Hamiltonian F1 [paper: arXiv:2101.07746v1, p.1, Eqs. (1)-(3)]: three Duffing modes,
+    charge coupling (a+a^dagger)(x)(a+a^dagger), three levels per mode (27 states).
+    ZZ [paper: arXiv:2101.07746v1, p.2, Eq. (4)] "With these parameters we diagonalize
+    the system and extract ZZ as" ZZ = (E11 - E01 - E10 + E00)/h.
+    Each dressed state is the eigenvector of maximum overlap with |q1, 0_c, q2>; the
+    four must be distinct eigenvectors and each overlap >= ZZ_OVERLAP_MIN.
+    """
+    states = dressed_energies([fc, wc, ft], [ac, ec, at],
+                              [(0, 1, gc), (1, 2, gt), (0, 2, gct)],
+                              [(0, 0, 0), (1, 0, 0), (0, 0, 1), (1, 0, 1)])
+    overlap = min(s[1] for s in states)
+    distinct = len({s[2] for s in states}) == 4
+    if overlap < ZZ_OVERLAP_MIN or not distinct:
+        return {"zz_hz": None, "ok": False, "min_overlap": overlap, "reason": HYBRIDISED}
+    e00, e10, e01, e11 = (s[0] for s in states)
+    return {"zz_hz": e11 - e10 - e01 + e00, "ok": True, "min_overlap": overlap, "reason": None}
+
+
+def zz_flat_time_ns(zz_hz):
+    """Starting flat-top length for a pi conditional phase, ns, rounded up to 4 ns.
+
+    [derived, check D5b] from the c-Phase rule Q28 [paper: arXiv:0903.2030v2, p.2]
+    "implements a c-Phase, because φ11 = φ01+ φ10−" (integral of zeta dt = pi) and the
+    linear-in-length phase of a square pulse, Q4 [paper: arXiv:2005.08863v1, p.2]
+    "The linear scaling is a direct consequence of the chosen square pulse shape and allows us to easily chose any targeted conditional phase by adjusting the pulse length accordingly."
+    t_flat = 1/(2|ZZ|). A starting value only: ramps add phase.
+    Returns (t_ns or None, reason or None).
+    """
+    if zz_hz is None or not math.isfinite(zz_hz) or zz_hz == 0:
+        return None, "no usable ZZ at this bias"
+    t = 1e9 / (2 * abs(zz_hz))
+    if t > ZZ_T_MAX_NS:
+        return None, f"no usable ZZ: a pi phase needs {t:.0f} ns (> {ZZ_T_MAX_NS / 1e3:g} us)"
+    return 4.0 * math.ceil(t / 4.0 - 1e-9), None
+
+
+def coupler_cz_plan(model, fc, ft, ac, at, amplitude, n_scan=201):
+    """A4 plan at coupler amplitude A_c (V relative to the idle offset) [derived].
+
+    Coupler frequency from the coupler arc; ZZ by diagonalisation at that bias; the path
+    0 -> A_c is scanned (n_scan points) and refused where any dressed assignment fails;
+    a coupler within COLLISION_G_FACTOR*max(g) of a qubit, or |11> within 2*max(g) of
+    |20>/|02>, is a warning. Frequencies Hz, anharmonicities read as magnitudes.
+    """
+    gmax = max(model["g_c_hz"], model["g_t_hz"], model["g_ct_hz"])
+    ec = model["ec_c_hz"]
+    out = {"coupler_frequency_hz": None, "zz_hz": None, "t_flat_ns": None,
+           "min_overlap": None, "warnings": [], "refusal": None, "method": "diagonalised"}
+    if amplitude is None:
+        out["refusal"] = "coupler amplitude unknown"
+        return out
+    for a in np.linspace(0.0, amplitude, n_scan):
+        wc = coupler_frequency(model, float(a))
+        step = zz_three_mode(fc, ft, wc, ac, at, ec, model["g_c_hz"], model["g_t_hz"], model["g_ct_hz"])
+        if not step["ok"]:
+            out["refusal"] = f"{HYBRIDISED} (A_c = {float(a) * 1e3:+.1f} mV on the way)"
+            out["coupler_frequency_hz"] = wc
+            return out
+    wc = coupler_frequency(model, amplitude)
+    here = zz_three_mode(fc, ft, wc, ac, at, ec, model["g_c_hz"], model["g_t_hz"], model["g_ct_hz"])
+    out.update(coupler_frequency_hz=wc, zz_hz=here["zz_hz"], min_overlap=here["min_overlap"])
+    t, reason = zz_flat_time_ns(here["zz_hz"])
+    out["t_flat_ns"], out["refusal"] = t, reason
+    near = min(abs(wc - fc), abs(wc - ft))
+    if near < COLLISION_G_FACTOR * gmax:
+        out["warnings"].append(f"coupler within {near / 1e6:.0f} MHz of a qubit "
+                               f"(< {COLLISION_G_FACTOR:g} x max g = {COLLISION_G_FACTOR * gmax / 1e6:.0f} MHz): leakage risk")
+    delta = fc - ft
+    for name, gap in (("|11>-|20>", delta - abs(ac)), ("|11>-|02>", delta + abs(at))):
+        if abs(gap) < 2 * gmax:
+            out["warnings"].append(f"{name} within {abs(gap) / 1e6:.0f} MHz (< 2 x max g)")
+    return out
+
+
+def zz_curve(model, fc, ft, ac, at, amplitudes):
+    """ZZ (Hz, None where unassigned) and coupler frequency along amplitudes [derived]."""
+    rows = []
+    for a in amplitudes:
+        wc = coupler_frequency(model, float(a))
+        z = zz_three_mode(fc, ft, wc, ac, at, model["ec_c_hz"],
+                          model["g_c_hz"], model["g_t_hz"], model["g_ct_hz"])
+        rows.append({"amplitude_v": float(a), "coupler_frequency_hz": wc, "zz_hz": z["zz_hz"]})
+    return rows
