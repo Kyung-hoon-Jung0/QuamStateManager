@@ -270,6 +270,17 @@
                "qubit is QDAC-only — put at least the pair qubits on LF-FEM or " +
                "bias tee, or pick another architecture.";
       }
+      // GX-13: the fixed-coupler CZ (qubit z only) is the same case -- every
+      // CZ macro would be skipped at build time, so refuse it here too.
+      if (state.pairGate === "cz_fixed" && state.qubitFlux &&
+          state.spec.qubit_pairs.length && state.spec.qubits.length &&
+          state.spec.qubits.every(function (q) {
+            return isQdacBiased(q) && !isBiasTee(q);
+          })) {
+        return "A fixed-coupler CZ plays its flux pulse on the qubit flux (z) line, " +
+               "but every qubit is QDAC-only — put at least the pair qubits on " +
+               "LF-FEM or bias tee, or pick another architecture.";
+      }
       // Pairs declared but the selected 2-qubit gate can't be built on this
       // hardware → the build would silently drop them (no error, no pairs in
       // the generated config). Block with an actionable message instead.
@@ -3890,6 +3901,39 @@
   // LOWEST allocated port among the group's members — an arbitrary but stable
   // choice, and stable is what matters: re-entering the step must not shuffle
   // which physical output a group sits on.
+  // P3: the Review lists QDAC channels as numbers, in numeric order (it read
+  // "1, 10, 11, ... 2" on a 24-qubit chip); an unset channel reads "?" last.
+  function qdacChannelList(qubits, qids) {
+    var nums = [], unset = 0;
+    qids.forEach(function (q) {
+      var ch = (qubits[q] || {}).channel;
+      if (ch == null || ch === "" || isNaN(Number(ch))) unset++;
+      else nums.push(Number(ch));
+    });
+    nums.sort(function (x, y) { return x - y; });
+    var out = nums.map(String);
+    for (var i = 0; i < unset; i++) out.push("?");
+    return out.join(", ");
+  }
+
+  // P1: returns true when it assigned ext1..4 round-robin on this render.
+  function applyQdacExtDefault(qd, qids) {
+    if (!qd || !qd.qubits || state._qdacExtCleared) return false;
+    if (qids.length <= QDAC_EXTS.length) return false;
+    var touched = qids.some(function (qid) {
+      var q = qd.qubits[qid] || {};
+      return !!q.trigger_port || !!q.trigger_pin;
+    });
+    if (touched && !state._qdacAutoRR) return false;
+    if (!touched) {
+      qids.forEach(function (qid, i) {
+        qd.qubits[qid].trigger_port = QDAC_EXTS[i % QDAC_EXTS.length];
+      });
+      state._qdacAutoRR = true;
+    }
+    return !!state._qdacAutoRR;
+  }
+
   function applyQdacSharing() {
     var qd = state.spec.qdac;
     if (!qd || !qd.qubits) return;
@@ -3960,6 +4004,11 @@
     var qids = (state.spec.qubits || []).filter(isQdacBiased);
     if (!qd || !qids.length) { host.hidden = true; host.innerHTML = ""; return; }
     host.hidden = false;
+    // P1: a QDAC-II has four rear-panel trigger inputs, ext1..ext4 (driver:
+    // "ext1 ... ext4 -- rear-panel trigger inputs"), so more than four qubits
+    // cannot each get a cable of their own. With no ext chosen anywhere, share
+    // them round-robin -- the same as the Round-robin button -- and say so.
+    var autoRR = applyQdacExtDefault(qd, qids);
     applyQdacSharing();
 
     var byExt = {};
@@ -4023,6 +4072,11 @@
           ? " <strong>" + loose.length + "</strong> qubit" +
             (loose.length === 1 ? " has" : "s have") + " no ext input yet — " +
             "each gets its own dedicated output."
+          : "") +
+        (autoRR
+          ? ' <strong class="gen-qdac-autorr">A QDAC-II has 4 trigger inputs (ext1&ndash;4), so the ' +
+            qids.length + " QDAC qubits were assigned to them round-robin " +
+            "(4 shared cables). Change any qubit's input below, or Clear to undo.</strong>"
           : "") + "</p>" +
       '<table class="gen-qdac-cable-tbl"><thead><tr><th>QDAC input</th>' +
       "<th>OPX digital output</th><th>Qubits armed</th><th></th>" +
@@ -4062,6 +4116,7 @@
           delete qd.qubits[qid].trigger_pin;
           delete qd.qubits[qid].pin_source;
         });
+        state._qdacExtCleared = true;   // P1: Clear means "no default" for this session
         renderQdacCabling();
         renderWiringDiagram();
       });
@@ -9663,13 +9718,12 @@
       var cables = {};
       qdacQubits.forEach(function (q) {
         var t = sp.qdac.qubits[q].trigger_pin;
-        cables[t ? ("con" + t.con + "/" + t.slot + "/" + t.port) : ("auto:" + q)] = 1;
+        var ext = sp.qdac.qubits[q].trigger_port;
+        cables[t ? ("con" + t.con + "/" + t.slot + "/" + t.port)
+               : (ext && sp.qdac.share_cables !== false ? ("ext:" + ext) : ("auto:" + q))] = 1;
       });
       rows.push(["QDAC-II", qdacQubits.length + " qubit(s) biased (" + qdAddr +
-        ") — channels " + qdacQubits.map(function (q) {
-          var ch = sp.qdac.qubits[q].channel;
-          return ch == null ? "?" : ch;
-        }).join(", ") +
+        ") — channels " + qdacChannelList(sp.qdac.qubits, qdacQubits) +
         " · " + Object.keys(cables).length + " trigger cable(s)" +
         (tees.length ? " · " + tees.length + " through a bias tee ("
           + tees.join(", ") + ")" : "")]);
@@ -12388,6 +12442,8 @@
   // auto-refilled. Idempotent — call after QuamGen.init() has mounted the wizard.
   function hydrateFromSpec(spec, opts) {
     var o = opts || {};
+    state._qdacExtCleared = false;   // P1: a fresh spec gets the ext default again
+    state._qdacAutoRR = false;
     // QA F7: Re-generate neither reads nor clears the Generate draft (it used
     // to delete it here, wiping the user's in-progress Generate session). A
     // leak the other way is closed by saveDraft's regen guards and init()'s
@@ -12614,6 +12670,7 @@
       // build-result renderer that has to take TWO blocker shapes.
       renderCapabilityReport: renderCapabilityReport,
       checkEarlyBlockers: checkEarlyBlockers,   // GX-3
+      qdacChannelList: qdacChannelList,         // P3
       showBuildResult: showBuildResult,
       holdsLabel: _holdsLabel,          // QA generate-r2-28
       nextFreePair: nextFreePair,       // QA r2-34
