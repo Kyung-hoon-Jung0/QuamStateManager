@@ -598,9 +598,13 @@
         var vals = (delta || []).filter(num);
         if (!vals.length) return null;
         var idle = vals[0];
-        var plateau = vals.filter(function (v) { return Math.abs(v - idle) > 0.5; });
-        var gateKnown = plateau.length > 0 || !(delta || []).some(function (v) { return !num(v); });
-        var keep = plateau.slice();
+        // the plateau(s): samples at least half the largest excursion from idle; a few
+        // transition samples (an SNZ zero-crossing step) do not set the range
+        var far = Math.max.apply(null, vals.map(function (v) { return Math.abs(v - idle); }));
+        var plateau = far > 0.5 ? vals.filter(function (v) { return Math.abs(v - idle) >= far / 2; }) : [];
+        // any missing gate sample means a qubit's frequency is refused there
+        var gateKnown = !(delta || []).some(function (v) { return !num(v); });
+        var keep = gateKnown ? plateau.slice() : [];
         (levels || []).forEach(function (l) {
             [l.lo_mhz, l.hi_mhz, l.detuning_mhz].forEach(function (v) { if (num(v)) keep.push(v); });
         });

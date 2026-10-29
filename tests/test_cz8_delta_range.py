@@ -24,6 +24,14 @@ const u = R([1495, null, null, 1495], levels);
 assert.strictEqual(u.gateKnown, false);
 assert.strictEqual(u.offscale, 'above');
 assert.ok(u.range[1] < 1495);
+// a refused partner with one transition sample known (SNZ zero crossing): still unknown, and
+// the stray sample does not set the range
+const s = R([1495, null, 1438, null, 1495], levels);
+assert.strictEqual(s.gateKnown, false);
+assert.ok(s.range[1] < 1438, JSON.stringify(s));
+// a known gate with a transition sample: the range follows the plateau, not the step
+const k = R([1495, 340, 340, 1438, 340, 340, 1495], levels);
+assert.ok(k.range[1] < 1438 && k.range[1] > 340, JSON.stringify(k));
 // idle inside the band: nothing off scale
 assert.strictEqual(R([100, -210, -210, 100], levels).offscale, null);
 """
