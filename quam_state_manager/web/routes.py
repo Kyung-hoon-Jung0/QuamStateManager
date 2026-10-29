@@ -35943,6 +35943,14 @@ def _is_system_path(p: Path, for_mkdir: bool = False) -> bool:
     except (OSError, ValueError):
         # ValueError: a NUL byte or an over-long path -- unresolvable, so protected
         return True
+    try:
+        # Python 3.13+ resolve() no longer raises on these (non-strict realpath
+        # swallows the error), so probe the OS: ValueError = unresolvable path
+        os.stat(resolved)
+    except ValueError:
+        return True
+    except OSError:
+        pass   # a missing or inaccessible path is judged by its parts below
     if platform.system() == "Windows":
         parts = tuple(part.casefold() for part in resolved.parts)
         # v1.3.0: a drive's admin share (\\host\c$\Windows) is that drive
