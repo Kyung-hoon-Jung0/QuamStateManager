@@ -2653,6 +2653,7 @@
         if (!hasPairs) pairNote.textContent = "(add qubit pairs below)";
         else if (gate === "cr") pairNote.textContent = mw ? "(CR drive on the control qubit" + echo + ")" : "(needs an MW-FEM)";
         else if (gate === "cz_fixed") pairNote.textContent = lf ? "(CZ flux on the qubit z line" + echo + ")" : "(needs an LF-FEM)";
+        else if (gate === "cz_coupler") pairNote.textContent = lf ? "(CZ flux on the coupler only" + echo + ")" : "(needs an LF-FEM)";
         else pairNote.textContent = lf ? "(CZ flux on qubit z + coupler" + echo + ")" : "(needs an LF-FEM)";
       }
       // The qubit-flux checkbox + gate select are now DERIVED from the explicit
