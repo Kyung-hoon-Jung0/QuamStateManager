@@ -222,7 +222,7 @@ anyway.** Three defects, all measured:
    silences nothing: `enforced` is set only for `override`, and both
    `overlay_manifest` and `verdict_signature` filter on it.
 3. The customer's own case is refused by design. On their chip, with a real
-   `cqt` probe: four error findings over 24 places — three `unimportable_class`
+   `lab_env_4` probe: four error findings over 24 places — three `unimportable_class`
    (no field at all) and one `unknown_field` (409 by design) — a red banner on
    every page load, and **every action offered on every one of them was "Go to
    field"**.

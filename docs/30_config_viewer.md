@@ -48,7 +48,7 @@ descriptor in v1; literal samples for shaped pulses).
 
 ## Architecture — subprocess + cache
 
-The state-manager runs in `qm_mng` conda env, which does **not** have
+The state-manager runs in `lab_env_6` conda env, which does **not** have
 `quam_builder` / `quam` installed. So `generate_config()` cannot run
 in-process. Instead we spawn a one-shot subprocess in the
 **Generate-Config env** the user already picked in the wizard's
@@ -58,7 +58,7 @@ the existing `generator/run_build.py` uses.
 ```
 +----------------+   POST /config/regenerate    +-----------------------+
 |   Flask app    |  ------------------------>   |  run_generate_config  |
-|   (qm_mng)     |                              |  .py (LabA env)       |
+|   (lab_env_6)     |                              |  .py (LabA env)       |
 |                |  <-- _result.json (config)   |  QuamRoot.load()      |
 |  store.cache   |                              |  .generate_config()   |
 +----------------+                              +-----------------------+
@@ -177,7 +177,7 @@ v1.5 follow-up; v1 is explicit-click only:
   unknown-qubit / unknown-op error paths, and `/config/regenerate`
   with the subprocess orchestrator monkeypatched (12 tests, all
   passing).
-- Manual smoke (kill stale Flask, fresh port in qm_mng env): load a
+- Manual smoke (kill stale Flask, fresh port in lab_env_6 env): load a
   chip, navigate to `/config`, click Regenerate, confirm all 9
   top-level keys render. Open `/qubit/qA1`, expand "Generated Config",
   click `view waveform` next to `x180_DragCosine`, confirm the

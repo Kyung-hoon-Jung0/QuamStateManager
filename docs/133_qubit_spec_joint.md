@@ -32,7 +32,7 @@ Above the onset three things happen at once, and all three are in this corpus:
 A 1-D fit that lands on that partner looks perfect — narrow, high SNR, high r².
 Nothing inside that single run distinguishes it from the real line.
 
-One map says it better than any description. On CQT `#579` q10 the response
+One map says it better than any description. On customer B `#579` q10 the response
 walks down a **three-rung ladder** in equal steps of about half the reported
 anharmonicity: the fundamental at the bottom of the power sweep, the two-photon
 line above it, the three-photon line above that. The node reported the **middle**
@@ -250,8 +250,8 @@ still a usable scoring target — and three of these five are exactly that.
 | keys whose VALUES the auditor confirmed | 20 | 10 |
 | keys whose VALUES the auditor challenged | 28 | 24 |
 
-Per session: CQT 08-16 **17/20**, SNU 08-02 7/8, CQT 08-15 7/14, AS 08-09 3/4,
-IQCC 07-22 0/2 (2/2 under the agreement rule).
+Per session: customer B 08-16 **17/20**, customer D 08-02 7/8, customer B 08-15 7/14, AS 08-09 3/4,
+cloud_provider_1 07-22 0/2 (2/2 under the agreement rule).
 
 Three things this does NOT show, all of them worse than the headline:
 

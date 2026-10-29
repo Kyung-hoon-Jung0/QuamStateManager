@@ -2,7 +2,7 @@
 
 2026-09-11. Found by the write-path stress round, lane 2 (`/state/apply-to-live`
 — the one door), driving **two real browser tabs** against a writable copy of
-the PJ 20Q chip. 93 checks, zero console errors, nothing wrote without a press —
+the chip_1 20Q chip. 93 checks, zero console errors, nothing wrote without a press —
 and this.
 
 ## The gate, and why it was off

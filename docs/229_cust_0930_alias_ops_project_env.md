@@ -137,9 +137,9 @@ real `~/.qualibrate` with 34 projects). The journey:
 
 1. The landing shows the picker above the cards on the first screen, with 13
    envs listed.
-2. Opening KRISS_CZ with no env stays on the landing and shows the red note.
-3. "Use this" on the KRISS_CZ env opens the project on `/qubits`.
-4. Back on the landing, the card shows `env KRISS_CZ ✓` and the picker marks
+2. Opening lab_env_1 with no env stays on the landing and shows the red note.
+3. "Use this" on the lab_env_1 env opens the project on `/qubits`.
+4. Back on the landing, the card shows `env lab_env_1 ✓` and the picker marks
    it "In use".
 5. After a reload the page is intact, with no JS errors.
 

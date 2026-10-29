@@ -191,7 +191,7 @@ spec (q1 bias-tee, q2 ordinary) → SM allocates → emit_files
   → Quam.load() in a FRESH process
 ```
 
-against a **copy** of the `PJ_10082026` `quam_config` with the ten lines added
+against a **copy** of the `chip_1` `quam_config` with the ten lines added
 (their tree untouched):
 
 ```

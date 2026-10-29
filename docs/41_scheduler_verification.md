@@ -14,7 +14,7 @@ Work top-to-bottom. Each step has an **action**, the **expected** result, and a 
 
 | | |
 |---|---|
-| **App env** | `qm_mng` runs the Flask app (no QM stack needed for the UI itself). |
+| **App env** | `lab_env_6` runs the Flask app (no QM stack needed for the UI itself). |
 | **Run env** | `LabB` (Windows conda) — the interpreter that actually runs the experiments. It has `qualang_tools`/`quam_builder`/`quam`/`qm` and its qualibrate config points at the right project. |
 | **Calibrations folder** | `<qualibration-graphs>/superconducting\calibrations\1Q_2Q_calibrations` (WSL: `<qualibration-graphs>/superconducting/calibrations/1Q_2Q_calibrations`). |
 | **A chip open** | Load a `quam_state` folder in the sidebar first (the one the experiments target). |
@@ -22,7 +22,7 @@ Work top-to-bottom. Each step has an **action**, the **expected** result, and a 
 **Start the dev server** (non-default port so stale servers don't collide):
 
 ```bash
-conda run -n qm_mng python -c "from quam_state_manager.web.app import create_app; create_app().run(debug=True, port=5070)"
+conda run -n lab_env_6 python -c "from quam_state_manager.web.app import create_app; create_app().run(debug=True, port=5070)"
 ```
 
 Open **http://127.0.0.1:5070/** → load your chip → click **Scheduler** in the left nav.

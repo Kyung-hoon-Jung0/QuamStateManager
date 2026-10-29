@@ -8,7 +8,7 @@ SM화면 전체가 마구 흔들린다 (twerk)". The user sees it rarely too.
 Real headless Chrome over CDP, the Layout Instability API (`layout-shift`
 entries, i.e. what was actually PAINTED), a per-frame sampler of the top bar,
 the window scrollbar and `--topbar-height`, and a REAL cell commit on a copy of
-the customer's `260907_KRS_5Q` chip (Enter on `x180 amp`, then `POST /undo`).
+the customer's `chip_2` chip (Enter on `x180 amp`, then `POST /undo`).
 Baseline = untouched `origin/main` (7fff85a), same instance copy, same chip.
 
 Per commit on the baseline, 768 px tall window:

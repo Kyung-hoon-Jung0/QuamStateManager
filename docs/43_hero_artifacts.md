@@ -491,7 +491,7 @@ BEFORE  (boxed card grid — the rejected "heavy/clunky" look)
  │ (•) LabB        <qm-env>/python   ✓ qualang… · quam …  │   + sectioning
  └───────────────────────────────────────────────────────────────────┘   fill + radius
  ┌═══════════════════════════════════════════════════════════════════┐  ← .selected =
- ║(●) qm_mng    /home/khoon/…/qm_mng/bin/python   ✗ missing: quam     ║   inset box-shadow
+ ║(●) lab_env_6    /home/<user>/…/lab_env_6/bin/python   ✗ missing: quam     ║   inset box-shadow
  └═══════════════════════════════════════════════════════════════════┘   GLOW (banned)
  ┌───────────────────────────────────────────────────────────────────┐
  │ (•) base      /opt/conda/bin/python            checking…           │
@@ -506,7 +506,7 @@ AFTER  (VSCode-clean hairline rows)
  ───────────────────────────────────────────────────────────────  ← top hairline (60%)
    LabB     <qm-env>/python              ✓ quam 0.5.0a3
  ───────────────────────────────────────────────────────────────  ← row hairline (60%)
- ┃• qm_mng  /home/khoon/…/qm_mng/bin/python         (✗ missing: quam)
+ ┃• lab_env_6  /home/<user>/…/lab_env_6/bin/python         (✗ missing: quam)
  ┃                                                   └ outline error chip
  └ 2px PRIMARY left accent + faint primary wash = selected (no glow)
  ───────────────────────────────────────────────────────────────

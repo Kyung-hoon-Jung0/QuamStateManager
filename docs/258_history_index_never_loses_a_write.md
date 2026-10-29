@@ -166,7 +166,7 @@ Stability: 10 sequential runs and 6 parallel runs, all 9/9.
 Selection: every `tests/test_*.py` whose text mentions `history`,
 `param_history`, `leaf_index`, `index.sqlite`, `trends`, `field_history`,
 `chip_trends_ram` or `param_history_ram` -- **111 files** (all top-level). Env
-`cqt`, `PYTHONUTF8=1 ... -m pytest <files> -q --timeout=900
+`lab_env_4`, `PYTHONUTF8=1 ... -m pytest <files> -q --timeout=900
 --timeout-method=thread -p no:cacheprovider`, run as 8 parallel shards on a
 machine shared with other workloads:
 

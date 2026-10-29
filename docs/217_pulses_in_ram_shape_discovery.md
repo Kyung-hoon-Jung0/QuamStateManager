@@ -25,7 +25,7 @@ big30x (19.4 MB state, 8,767 pulses):
 | field commit, full-page settle | 14814 → 16480 | 22892 → 10183 |
 | duplicate / rename / delete | 17219 / 19193 / 18108 → 19371 / 20167 / 19500 | 19497 / 20522 / 19111 → 12088 / 12483 / 11803 |
 
-krs5 (real 5-qubit chip): `/pulse/edit` server 71/109 → 10/13 (implementer,
+rig5 (real 5-qubit chip): `/pulse/edit` server 71/109 → 10/13 (implementer,
 two runs), 166 → 15 (verifier); repaint after commit 202/266 → 178/198 and
 294 → 216.
 
@@ -33,9 +33,9 @@ The runs disagree on settle and structural ops (implementer: small
 regressions; verifier: 40–55% better). The verifier: settle is dominated by
 app-wide requests after any edit (`/type-alarm/banner`, `/diagnostics/*`,
 `/state/drift`) and polls — quote `/pulse/edit` and the Pulses repaint, not
-settle. The krs5 open-ttfb rise (bench 16 → 40) is not a regression: the
+settle. The rig5 open-ttfb rise (bench 16 → 40) is not a regression: the
 verifier's same-rig A/B, 40 curls per build per round, gave warm `GET /pulses`
-23.0/23.2/26.0 ms (base) vs 24.1/29.1/25.9 ms (branch). The krs5
+23.0/23.2/26.0 ms (base) vs 24.1/29.1/25.9 ms (branch). The rig5
 open-after-edit settle rise (1141 → 2026) is poll timing; both reports found
 every follow-up request as fast or faster on the branch.
 
@@ -85,7 +85,7 @@ big30x, warm (incremental) vs cold (server restart), 7 pages: 5 value edits
 (incl. `q1.anharmonicity`, reaching every DragCosine row through an absolute
 pointer) + `/undo` + apply-to-live; and an outside live write + `/state/sync
 mode=discard` + 2 edits — both byte-identical to cold. Chip switch A→B→A→B:
-each chip's row showed its own values. krs5 journey: Enter on x180 amplitude
+each chip's row showed its own values. rig5 journey: Enter on x180 amplitude
 repainted x180, y180 (via a pointer) and the x180 alias; Ctrl+Z reverted all
 three; reload matched. InlineCommit focus after Enter on big30x: 5/5 on the
 branch (both reports); on base the first sample lost focus to BODY.
@@ -97,7 +97,7 @@ branch (both reports); on base the first sample lost focus to BODY.
 taken) and `tests/test_pulses_ram_routes.py`. Implementer 12/12 mutations red
 (M1–M8, M10, M11, R1, R2); verifier's own 6/6 red (V1–V6). Targeted:
 implementer 574 passed / 16 skipped (17 files), verifier 650 / 16 (19 files).
-Verifier full cqt suite: 1 failed, 9895 passed, 252 skipped; the failure
+Verifier full lab_env_4 suite: 1 failed, 9895 passed, 252 skipped; the failure
 (`test_agent_api.py::TestTheLiveStrip::test_an_old_unmatched_pre_is_stalled_not_running`)
 fails identically on `integ/w7`.
 
@@ -105,7 +105,7 @@ fails identically on `integ/w7`.
 
 - Duplicate/rename/delete still rebuild cold; incremental create/delete not
   attempted (a new path can resolve pointers that were dangling).
-- Warm-path latency still grows with state size (verifier, big30x vs krs5):
+- Warm-path latency still grows with state size (verifier, big30x vs rig5):
   row select 545 vs 189 ms (client-side inspector render); commit settle ~10 s
   vs 2.3 s (app-wide `/type-alert`, `/diagnostics`, `/state/drift`);
   `_ctx` → `_type_alarm_payload` → `analyze_state` ~5.4 s after a structural
@@ -130,9 +130,9 @@ fails identically on `integ/w7`.
   False)` ~450–650 ms. Verifier: `list_pulses` median of 7 950–961 ms without
   vs 1007–1077 ms with discovery (~6–11%), walk alone 34 ms. Rows 8767 → 8779.
   Chrome: implementer claims only "no regression visible" (reload varied
-  0.5–29 s on both builds); verifier on KRS_5Q: every branch median inside the
+  0.5–29 s on both builds); verifier on chip_2: every branch median inside the
   `integ/w7` range, A/A noise larger than any difference.
-- **DAC range.** 0 new findings over the 49 states; KRS_5Q 2/2 and
+- **DAC range.** 0 new findings over the 49 states; chip_2 2/2 and
   novera9q_repro 72/72 discovered rows now resolve an output port and are
   range-checked.
 
@@ -172,8 +172,8 @@ DAC check on a discovered TWPA op).
   any unrelated edit, then vanished (detail 404, edit 400). Now the inventory
   decides only for an importable class with non-empty bases, and
   `PulseIndex._stamp()` = `(mutation_seq, pulse_catalog.class_info_generation())`
-  (bumped when a different roster/inventory object is installed). Rig (KRS_5Q
-  copy, env KRISS_CZ): both hand-added rows listed after sync, after the probe
+  (bumped when a different roster/inventory object is installed). Rig (chip_2
+  copy, env lab_env_1): both hand-added rows listed after sync, after the probe
   landed and after an unrelated edit; detail and edit 200.
 - **P3 (pre-existing) → `f984798`.** `_pulsesSyncUrl` read
   `select[name='per_page']`, which has no name, so every swap dropped
@@ -200,7 +200,7 @@ extras-skip removed → 4 red, (B) regex-only path gate → 13 red. Fix round:
 re-pinned (it had pinned the broken selector). Journeys:
 `tests/browser/journeys/pulses_locations.cjs` (26 checks; implementer 3/3
 consecutive OK, verifier 6 of 9 — the 3 misses were the two P3s),
-`pulses_big_timing.cjs`. Implementer full cqt: 9939 passed, 2 failed (pass in
+`pulses_big_timing.cjs`. Implementer full lab_env_4: 9939 passed, 2 failed (pass in
 isolation on branch and base), 252 skipped. Fix round: 564 passed, 1 failed
 (the stale selector pin; 5 passed after the update; 20-file set not re-run).
 

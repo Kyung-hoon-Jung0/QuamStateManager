@@ -1,11 +1,11 @@
 # docs/174 — the diff baseline is serializer-normalized
 
-**Symptom (real KRISS arbel run).** A bring-up chain driven through SM's chatbot
+**Symptom (real customer A cluster_1 run).** A bring-up chain driven through SM's chatbot
 showed "writes" the human never expected, and refusal/limit friction — the
 "야유 섞인" (jeering) state messages. Root-caused to ONE mechanism.
 
 **Root cause.** `machine.save()` writes back EVERY field the quam class declares.
-The KRISS `quam_config.my_quam.Quam` declares top-level `flux_crosstalk_max_v`
+The customer A `quam_config.my_quam.Quam` declares top-level `flux_crosstalk_max_v`
 (0.45), `require_flux_crosstalk_dc` (False), `twpa_ext` (None) — fields the raw
 customer `state.json` does not contain. SM's agent run diffs `before/` (a raw
 copy of the working state, made by `agent_runs.make_scratch`) against the scratch
@@ -37,14 +37,14 @@ shows `old -> new`, because the baseline carries the OLD (materialized) value.
 **Verified in-session against the real `quam_config.my_quam.Quam`:** untouched
 node 3 writes → 0; a genuine `time_of_flight 372 -> 388` write still 1; a real
 change to `flux_crosstalk_max_v` still 1 (not cancelled). Pinned by
-`tests/test_baseline_normalize.py` (fake machine, runs in `cqt`; the raw-path
+`tests/test_baseline_normalize.py` (fake machine, runs in `lab_env_4`; the raw-path
 test proves the fixture reaches the 3-phantom state, so the cancel test is not
 vacuous).
 
 **NOT the stale_live.** A clean two-run reproduction on a fresh instance showed
 no divergence at all. `working_copy.live_diverged_now` hashes only
 `state.json` + `wiring.json`; the run #12 `stale_live` seen earlier was a
-test-rig artifact — the `kriss_live` folder was replaced mid-chain (a fresh
+test-rig artifact — the `customer_a_live` folder was replaced mid-chain (a fresh
 pristine copy) while a pending approval still referenced the old one.
 `flux_crosstalk.json` is created by `machine.save()` only in the per-run scratch,
 is never read by `diff_states` (`_merged` reads state+wiring only) and never
@@ -56,7 +56,7 @@ reaches live, so multi-file working-copy tracking is not needed to close this.
 
 The baseline-normalization above cancelled the phantom roots in SM's **diff**
 (0 writes), which is correct as far as it goes. But it was verified live on the
-real KRISS arbel chain to be **incomplete**: SM's post-run adopt copies the
+real customer A cluster_1 chain to be **incomplete**: SM's post-run adopt copies the
 scratch's FULL state into the working copy (confirmed byte-identical, same
 content hash), and Auto-Sync then carries it to live. `machine.save()` had still
 materialized the 3 class-default root keys INTO the scratch, so they rode the
@@ -87,7 +87,7 @@ pristine customer state (the 3 fields absent): `machine.save()` added
 `flux_crosstalk_max_v` / `require_flux_crosstalk_dc` / `twpa_ext`; the strip
 removed exactly those three; the scratch returned to the chip's own schema; SM's
 diff was 0 writes for an untouched node. Pinned by the rewritten
-`tests/test_baseline_normalize.py` (file-level, runs in `cqt`; the raw-save test
+`tests/test_baseline_normalize.py` (file-level, runs in `lab_env_4`; the raw-save test
 proves the fixture reaches the 3-phantom state, so the strip test is not vacuous).
 
 **Corrected conclusion on stale_live:** it is a REAL SM issue (not a test-rig
@@ -99,7 +99,7 @@ and this amendment closes it at the source.
 ## Amendment II (same day) — the node was writing LIVE directly; repoint the config
 
 Even with the scratch strip, a fresh pristine run STILL diverged live. Traced on
-the real KRISS arbel chain: the qualibrate config's `[quam] state_path` pointed
+the real customer A cluster_1 chain: the qualibrate config's `[quam] state_path` pointed
 at the LIVE chip, and that wins over the `QUAM_STATE_PATH` env for the framework's
 own `machine.save()` — so `node.save()` wrote the LIVE state.json **directly,
 mid-run** (live mtime landed 1 s into the run), re-materializing the 3 class
@@ -115,7 +115,7 @@ docs/173 S9 invariant, restored). `state_path` is the only such key in a
 qualibrate config (storage uses `location`), so a line-wise rewrite is safe;
 best-effort, the original config stands on any failure.
 
-**Verified live on the real arbel hardware:** a fresh pristine run through the
+**Verified live on the real cluster_1 hardware:** a fresh pristine run through the
 cockpit left `LIVE phantoms: []` and `working-copy phantoms: []`, with the scratch
 config's `state_path` pointing at `agent_runs/<run>/quam_state`. The three fixes
 together — diff-cancel (superseded), scratch strip, and config repoint — close the

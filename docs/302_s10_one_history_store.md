@@ -124,7 +124,7 @@ chip page starves the build on a cold open (catch-up ~22 s with the page open) -
 
 ## Verification
 
-Full suite in six sequential chunks (`cqt`), failures diffed against main; every step's pins
+Full suite in six sequential chunks (`lab_env_4`), failures diffed against main; every step's pins
 mutation-checked by `tools/mutate_hub_*.py` (drawer 60, chip status 56, versions 87, mode switch 67,
 folder view 13, query 39, builder 36, no roots 15, archived build 38, witness 14 -- all red by
 assertion); real-browser journeys on rig copies, screenshots read. Records of each round are in the QA

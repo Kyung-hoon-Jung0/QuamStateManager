@@ -42,7 +42,7 @@ toolbar's `[role=group]` ring shows only on `:focus-visible`.
 
 **Measured (implementer, real headless Chrome, interleaved with base).**
 F5-lands-exact (target top within 8 px under the pane top, tab lit, URL
-`?view=`): big30x 8/18 → 64/64; krs5 9/16 → 32/32 (mouse / Enter / Space /
+`?view=`): big30x 8/18 → 64/64; rig5 9/16 → 32/32 (mouse / Enter / Space /
 tab × F5 after 0, 0.3, 2, 12 s, rotating targets). The resume selfcheck:
 4/12 FAIL on `be7884c` under 12× parallel load → 50/50 green in virtual
 time. Click-handler cost unchanged (the w8 record 0.6-1.6 ms inside a
@@ -56,7 +56,7 @@ J4b, R1-R4, T1, F5 matrix), `tests/chip_status_resume_selfcheck.cjs`
 journey `tests/browser/journeys/chip_place.cjs`. Every listed mutation red.
 
 **Open.** The pagehide/visibilitychange flush forces one layout when dirty
-(14-24 ms on big30x, 6-11 ms on krs5). The first tile jump on big30x is a
+(14-24 ms on big30x, 6-11 ms on rig5). The first tile jump on big30x is a
 320-740 ms click task, almost all `build2QRBPanels` (pre-existing). Other
 Pico `[role=group]` containers very likely show the same whole-group ring
 after a mouse click; only the rows toolbar was changed. Most other
@@ -84,7 +84,7 @@ p99 223-243 → 79-89 ms, tasks >100 ms 159-175 → 0. Fast wheel (800 px /
 110 ms) p99/max 661/766 → 110/129 ms, 19 → 0 cold cells in view. Full range
 0→848k→0: never more than 38 pair columns laid out, 0 cold cells, 0 errors
 (the w7 code grew to 2,216 long tasks, max 476 ms, 655 s for the right phase
-alone). krs5: DOM/sheet hashes identical to base, Enter commit 48-74 ms both.
+alone). rig5: DOM/sheet hashes identical to base, Enter commit 48-74 ms both.
 
 **Pins.** `tests/liveedit_big_grid_selfcheck.cjs` (101 assertions; sections
 3/8/9 rewritten for the class mechanism, new 10/11/11b/12), driven by
@@ -113,15 +113,15 @@ field goes, the gate field holding a deleted op's name, and the whole gate
 when the env's own dataclass schema says a going field is required). A
 Ctrl+Z pressed during the check waits for the answer to be HANDLED.
 
-**Measured (implementer, real headless Chrome, interleaved ABBA).** krs5
+**Measured (implementer, real headless Chrome, interleaved ABBA).** rig5
 (n=10 medians) refusal click 57 (toast) → 44 ms (in step), refusal server
 31 → 26 ms, batch 37 → 31 ms, undo 10 → 8 ms. big30x (n=6) refusal click
 577 → 469 ms, batch 770 → 587 ms; server-side refusal and undo are bimodal on
 both codes (the lab worker's cache: fast when cached, 0.3-0.6 s when asked).
 `_lab_delete_also` 0.3 ms per call in process on big30x; the watch map 52 ms
-cold, cached by stamp. Journeys: krs5 78 checks ALL OK; big30x 80 checks OK
+cold, cached by stamp. Journeys: rig5 78 checks ALL OK; big30x 80 checks OK
 (refusal 0.29-0.81 s warm / 10.0 s cold; Apply 4.4 s). After Apply,
-`pulse_lab_check.py` in the lab's env: krs5 gates 21/0, big30x 3467/0.
+`pulse_lab_check.py` in the lab's env: rig5 gates 21/0, big30x 3467/0.
 
 **Pins.** `tests/test_pulse_delete_together.py` (15), extended
 `tests/test_lab_doors.py`, `tests/pulses_delete_together_selfcheck.cjs` (30
@@ -133,7 +133,7 @@ plumbing mutations.
 **Open.** Without an env schema for the gate class, deleting an op held by a
 REQUIRED gate field offers only that field and the batch is refused as a
 whole by the gate's own `apply()`, read in place. The refusal still costs the
-lab check that precedes it (warm ~0.3 s krs5, 0.3-0.8 s big30x; cold 3-10 s)
+lab check that precedes it (warm ~0.3 s rig5, 0.3-0.8 s big30x; cold 3-10 s)
 with only a disabled button while it waits. docs/218 has no section for this
 change yet.
 
@@ -176,7 +176,7 @@ Edit, then Pulses in a second tab 300 ms after `/load`): the cold `/bulk`
 ttfb is 1.1-2.1 s slower (median 12.9-13.3 → 14.0-15.4 s over 4 runs). The
 lock-wait target is met; the page now waits for the short requests' own
 critical sections served during its build (drift polls hold 0.16-0.5 s each
-at open, `_working_vs_live_entries`) plus the hand-over overhead. krs5
+at open, `_working_vs_live_entries`) plus the hand-over overhead. rig5
 single-tab first `/bulk` +166 ms in Chrome (318 → 484 ms, n=8) while `/load`
 is ~100 ms faster, not reproducible in process. Also open: a cold grid /
 PulseIndex build restarts from scratch when an edit lands at a hand-over
@@ -235,7 +235,7 @@ another page while the collapsed inspector still holds a run counts as a
 switch (design choice to confirm); docs/221 §7 still awaits confirmation.
 
 **pulsehint, measured (implementer, real Chrome, interleaved vs 4e0a9b5).**
-krs5 add-a-module-to-a-class-in-the-picker: 32.2 / 31.6 s plus an extra
+rig5 add-a-module-to-a-class-in-the-picker: 32.2 / 31.6 s plus an extra
 "refresh (clears this form)" click → 14.9 / 16.9 s with no click; env probes
 per Add module 2 → 1, per Remove 2 → 1; a touched form (op name typed) gets
 the class in place at 12.8 s with the name kept; big30x New-pulse click to

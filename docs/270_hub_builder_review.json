@@ -1,6 +1,6 @@
 {
  "method": "scratchpad review_b.py (independent of tools/check_hub_builder.py); ledgers rebuilt at 9bdaad77 under D:/work/sm_qa_rigs/hub3/review",
- "real_kriss_cz": {
+ "real_lab_env_1": {
   "total": 987,
   "counts": {
    "earlier_run_first_window:direct_row": 840,
@@ -188,7 +188,7 @@
    "truth_bad": 0,
    "flat_bad": 0
   },
-  "arbel_20260929 dense, every run": {
+  "cluster_1_20260929 dense, every run": {
    "snapshots": 1610,
    "total": 33138,
    "counts": {

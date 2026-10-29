@@ -185,7 +185,7 @@ Within run-to-run noise; the only added work is one `getattr` per entry.
 
 ## 6. Validation
 
-Env `cqt` (Python 3.12.13, pytest 9.1.1, pytest-timeout 2.4.0), `PYTHONUTF8=1`,
+Env `lab_env_4` (Python 3.12.13, pytest 9.1.1, pytest-timeout 2.4.0), `PYTHONUTF8=1`,
 `--timeout=900 --timeout-method=thread -p no:cacheprovider`. No existing test
 was edited.
 

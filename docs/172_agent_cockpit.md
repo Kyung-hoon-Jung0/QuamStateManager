@@ -117,9 +117,9 @@ is part 2.
 
 ## 2. Verified
 
-- **Real `claude` on the subscription login → the MCP → real SM with the real PJ 20Q
+- **Real `claude` on the subscription login → the MCP → real SM with the real chip_1 20Q
   chip**: `claude -p "Use sm_status, then state_get on qubits.q1.f_01" --mcp-config
-  … --allowedTools mcp__sm__sm_status,mcp__sm__state_get` → `PJ_10082026, 20 qubits,
+  … --allowedTools mcp__sm__sm_status,mcp__sm__state_get` → `chip_1, 20 qubits,
   4312.4052 GHz` in 18 s, `is_error: false`. (The unit is the model's arithmetic
   slip — the tool returned `4312405235.7 Hz`.)
 - **Stdio round trip** of all 18 tools against the real window: reads, search,

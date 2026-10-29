@@ -236,7 +236,7 @@ A first draft of M09's pin used `axis_angle` 0.4. `|e^{0.4i}|` happens to be
 exactly 1.0 in floats, so that pin would have passed with the snap removed.
 It now uses 2.3, where the result is 0.9999999999999999.
 
-Suites run in `cqt` (with `--timeout=900`). The 29 related files gave
+Suites run in `lab_env_4` (with `--timeout=900`). The 29 related files gave
 **1032 passed, 1 skipped**:
 - physical_units, phys_live, ram_liveedit, chip_report, pulses_round3, bulk_edit,
   bulk_markup, fsp_compensation, mw_fem;

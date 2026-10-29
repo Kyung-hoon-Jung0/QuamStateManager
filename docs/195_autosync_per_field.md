@@ -103,7 +103,7 @@ and any real movement re-arms it.
 **The banner names the collision.** Since a non-colliding change never reaches
 it any more, an appearance means a genuine two-sided edit:
 
-> ⚠️ **1 field** was changed both here and on **260907_KRS_5Q**:
+> ⚠️ **1 field** was changed both here and on **chip_2**:
 > `qubits.q1.anharmonicity` — choose which to keep.
 
 The verdict is computed in `_drift_conflicts`, called from where
@@ -119,7 +119,7 @@ outright, and it still does.
 ## 4. Verified on the real chip, in real Chrome
 
 Auto-Sync armed (pull on, replace off, push off); an outside writer doing what
-`machine.save()` does to `260907_KRS_5Q`.
+`machine.save()` does to `chip_2`.
 
 **Case A — different fields.** SM holds an edit on `q1.anharmonicity`; the
 writer changes `q2.anharmonicity`:
@@ -136,7 +136,7 @@ q2 on disk: 216000000.5           <- their write survived
 
 ```
 merge signal : none
-banner : "⚠️ 1 field was changed both here and on 260907_KRS_5Q:
+banner : "⚠️ 1 field was changed both here and on chip_2:
           qubits.q1.anharmonicity — choose which to keep."
 buttons: Review & sync · ↓ Take live — discard my edits · ↑ Keep mine — overwrite live
 on screen 201,000,000.0   on disk 199000000.5   (both kept; the user chooses)

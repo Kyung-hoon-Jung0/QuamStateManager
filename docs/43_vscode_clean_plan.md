@@ -96,7 +96,7 @@ These are the loudest, most-seen, lowest-risk wins; four already have scored moc
 - Scope every override under the surface root; grep for other consumers before deleting any global rule (the `.config-trace` and `.waveform-plot-*` hazards are confirmed-real — both have a second consumer).
 - **Test in light AND dark** — a `*-bg` token used as text vanishes in light (the recurring washout bug). This is the single most common regression.
 - Verify each named JS/HTMX hook is untouched (IDs, `data-*`, `hx-*`, class hooks the JS queries). The mockups preserve these; keep it that way.
-- Run the suite (`conda run -n qm_mng python -m pytest tests/ -q`) — these are CSS/template changes so tests should stay green (1871 pass / 96 skip); a failure means a template hook moved.
+- Run the suite (`conda run -n lab_env_6 python -m pytest tests/ -q`) — these are CSS/template changes so tests should stay green (1871 pass / 96 skip); a failure means a template hook moved.
 - Browser-verify the interactive bits the language touches: forms still editable, table still scannable + sortable, plots still render, virtual scroll still paints.
 
 **Don't:** restyle shared globals (`.dot-path`, `.diff-type-badge`, `.section-header`, `.diag-badge`, `.add-gate-submit`) outside the scoped root — `/diff`, `/compare`, `/chip-compare`, `/diagnostics`, and live-drift consume them and must stay on the legacy look.

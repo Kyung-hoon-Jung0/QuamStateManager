@@ -168,7 +168,7 @@ moves above the fold and is one scroll up.
   - dismissed float left behind;
   - unknown pointer docks;
   - pointer moves do not trigger a trial.
-- Related suites, env cqt, 65 passed:
+- Related suites, env lab_env_4, 65 passed:
   - `test_diag_banner_dock`, `test_pulses_url_banner`, `test_topbar_twerk`;
   - `test_diagnostics_banner_routes`, `test_diag_deep_validate`,
     `test_trends_render_queue`;

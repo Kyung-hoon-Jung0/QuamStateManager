@@ -57,7 +57,7 @@ Date: 2026-10-03. Source: the agent validation campaign (`D:\work\sm_qa_rigs\age
 
 ## Pins
 
-All pins run in the `cqt` env.
+All pins run in the `lab_env_4` env.
 
 - `tests/test_agent_backend.py::TestEnforcedPermissions` (Claude/Codex flags, resume carries them, preflight) and `test_a_failed_turn_names_its_reason_not_the_stderr_banner`.
 - `tests/test_chat_api.py`: `TestEnforced`, `TestQuestionInTheFeed`, `TestCodexConversationStaysOpen` (incl. Allow-run → resumed thread), `TestRunLineNeedsATarget`.

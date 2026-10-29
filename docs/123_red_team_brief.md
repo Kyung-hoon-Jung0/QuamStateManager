@@ -34,7 +34,7 @@ record and it contains the numbers.
 
 ```
 repo        D:\work\statemanager-cfb          (git worktree, branch integrate/customer-feedback)
-python      D:\miniconda3\envs\cqt\python.exe  — always PYTHONUTF8=1, call it DIRECTLY
+python      D:\miniconda3\envs\lab_env_4\python.exe  — always PYTHONUTF8=1, call it DIRECTLY
                                                  and redirect to a file. `conda run … | grep`
                                                  loses output on this machine.
 suite       PYTHONUTF8=1 <py> -m pytest tests/ -q --timeout=900 --timeout-method=thread
@@ -47,8 +47,8 @@ browser     tests/browser/harness.cjs  (puppeteer-core + installed Chrome)
 Real customer data, **read-only, never write into these**:
 
 ```
-chip     D:\work\Customer_Codes\CQT\CS_installations\qualibration_graphs\superconducting\quam_state
-archive  D:\work\Customer_Codes\CQT\data\{2026-08-13, 2026-08-14, 2026-08-16}   839 runs
+chip     D:\work\Customer_Codes\customer B\CS_installations\qualibration_graphs\superconducting\quam_state
+archive  D:\work\Customer_Codes\customer B\data\{2026-08-13, 2026-08-14, 2026-08-16}   839 runs
 ```
 
 Verification probes are gitignored under `tests/browser/_*.cjs`. The ones for
@@ -319,7 +319,7 @@ Do not treat "verified" as uniform. This is the actual evidence grade per claim.
 ## 8. Test state, and how to read it
 
 ```
-suite        37 failed, 5,853 passed, 247 skipped        (~25 min, env `cqt`)
+suite        37 failed, 5,853 passed, 247 skipped        (~25 min, env `lab_env_4`)
 selfchecks   62 passed, 0 failed
 ```
 
@@ -370,7 +370,7 @@ Worth knowing, because it tells you what kind of pin this repo tends to get wron
 - **SM never swaps what you are looking at** (docs/87) — a chip that moved
   out-of-band raises a banner and asks; it does not adopt silently on the
   user-facing path.
-- **Never modify** `D:\work\Customer_Codes\CQT\...` or
+- **Never modify** `D:\work\Customer_Codes\customer B\...` or
   `D:\work\documentation-website`. Every verification uses a private per-run
   copy of the chip.
 - **Never touch `master` on `qua-platform/CS_installations`.**

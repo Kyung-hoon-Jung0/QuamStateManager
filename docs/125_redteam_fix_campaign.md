@@ -286,7 +286,7 @@ matched by NAME, both cube generations), the docstring's false claim is
 corrected in place, the test pins the lab's orientation, and a
 **cross-surface assert** ties the recipe to `_AXIS_RANK["idle_times"] <
 _AXIS_RANK["coupler_flux"]` — the two tabs can never silently disagree on
-this family again. The real-archive golden's candidate list gained the CQT
+this family again. The real-archive golden's candidate list gained the customer B
 date-dir layout (`<root>/<date>/#N_…`) and the golden re-ran green against
 the real run the red team's inversion was executed on (#490, 2026-08-14).
 The `_freq` curve tile (frequency vs flux) is untouched — a 1-D curve over
@@ -459,5 +459,5 @@ Five items, browser-verified on the real chip + the real 2026-08-14 archive
   was itself measured in the post-settle-strip regime; the settle disarm is
   the real fix).
 - **Environment hygiene**: the stale non-editable `quam-state-manager 0.9.7`
-  snapshot that SHADOWED the worktree in `cqt`'s site-packages (the trap the
+  snapshot that SHADOWED the worktree in `lab_env_4`'s site-packages (the trap the
   red team walked into) is uninstalled; repo-root imports re-verified.

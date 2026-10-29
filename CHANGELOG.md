@@ -737,7 +737,7 @@ it calibrate — often overnight. SM stops competing with that and becomes its
 
 ### Verified
 
-- On real **IQCC cloud hardware**, the chatbot brought up qA1 from
+- On real **cloud_provider_1 cloud hardware**, the chatbot brought up qA1 from
   time-of-flight through Ramsey, checking every fit before the next step
   (docs/173 S9).
 

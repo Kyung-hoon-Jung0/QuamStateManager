@@ -16,7 +16,7 @@ root (98 date dirs, per-run `node.json` + `quam_state/{state,wiring}.json`,
 measurement on it (warm NTFS cache — a cold or networked disk multiplies the
 "before" numbers, which is why the customer's experience was worse than
 these); the finished scanner was then smoked against the customer's real
-2,652-run CQT archive read-only (defer==sync entry equivalence, all folder
+2,652-run customer B archive read-only (defer==sync entry equivalence, all folder
 names stub-parsed, statuses correct after hydration).
 
 ## Where the time actually went (measured, cProfile + wall clock)
@@ -43,7 +43,7 @@ alone and parses node.json on a daemon thread:
 
 * **Stubs from folder names.** `#<id>_<name>_<HHMMSS>` + the date dir give
   run id, experiment name, time, date (`_stub_entry`, `needs_parse=True`);
-  status/qubits/outcomes stay empty until hydration. On the real CQT archive
+  status/qubits/outcomes stay empty until hydration. On the real customer B archive
   2,652/2,652 folder names stub-parsed.
 * **`_hydrate_root`** parses on the scan thread pool, then — under the lock,
   ONE atomic tree rebind — replaces each entry that is still the very stub

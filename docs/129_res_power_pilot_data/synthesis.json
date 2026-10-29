@@ -10,10 +10,10 @@
     "AS_10TQ9TC/#314/q6",
     "AS_10TQ9TC/#12/q3",
     "AS_10TQ9TC/#348/q6",
-    "CQT/#135/q2",
-    "CQT/#192/q14",
-    "CQT/#352/q10",
-    "CQT/#996/q20"
+    "customer B/#135/q2",
+    "customer B/#192/q14",
+    "customer B/#352/q10",
+    "customer B/#996/q20"
    ]
   },
   {
@@ -23,11 +23,11 @@
    "prescription_draft": "Raise the power ceiling by a bounded step (roughly half the current window height) keeping the floor; do NOT repeat unchanged \u2014 three identical repeats on one chip reproduced the same verdict byte-alike. If the node wrote a ceiling-power fallback, treat that value as poisoned (F2).",
    "seen_count": 12,
    "exemplar_candidates": [
-    "CQT/#41/q1",
-    "CQT/#995/q20",
-    "CQT/#255/q4",
+    "customer B/#41/q1",
+    "customer B/#995/q20",
+    "customer B/#255/q4",
     "AS_10TQ9TC/#9/q9",
-    "CQT/#1350/q15"
+    "customer B/#1350/q15"
    ]
   },
   {
@@ -39,8 +39,8 @@
    "exemplar_candidates": [
     "AS_10TQ9TC/#321/q6",
     "AS_10TQ9TC/#341/q7",
-    "CQT/#727/q12",
-    "CQT/#1351/q20",
+    "customer B/#727/q12",
+    "customer B/#1351/q20",
     "AS_10TQ9TC/#7/q8"
    ]
   },
@@ -51,10 +51,10 @@
    "prescription_draft": "Accept the dressed frequency; place the operating power below the bottom of the drift band with margin (not at its foot). Optionally densify power steps around the crossover to localize the band. No re-run required for the frequency.",
    "seen_count": 10,
    "exemplar_candidates": [
-    "CQT/#76/q6",
-    "CQT/#391/q1",
-    "CQT/#1117/q6",
-    "CQT/#481/q8",
+    "customer B/#76/q6",
+    "customer B/#391/q1",
+    "customer B/#1117/q6",
+    "customer B/#481/q8",
     "AS_10TQ9TC/#307/q6"
    ]
   },
@@ -67,9 +67,9 @@
    "exemplar_candidates": [
     "AS_10TQ9TC/#335/q6",
     "AS_10TQ9TC/#345/q6",
-    "CQT/#176/q18",
+    "customer B/#176/q18",
     "AS_10TQ9TC/#8/q9",
-    "CQT/#349/q10"
+    "customer B/#349/q10"
    ]
   },
   {
@@ -79,10 +79,10 @@
    "prescription_draft": "Narrow the frequency window around the power-DEPENDENT line and re-run; if the tracker still excursions at high power, narrow further or cut the ceiling just above the target's transition. Record the neighbor's position for the feedline map.",
    "seen_count": 10,
    "exemplar_candidates": [
-    "CQT/#382/q18",
-    "CQT/#394/q5",
-    "CQT/#1352/q9",
-    "CQT/#347/q9"
+    "customer B/#382/q18",
+    "customer B/#394/q5",
+    "customer B/#1352/q9",
+    "customer B/#347/q9"
    ]
   },
   {
@@ -92,9 +92,9 @@
    "prescription_draft": "Check the edges for an off-window shoulder first; if truly featureless, widen the frequency span severalfold, then raise the ceiling by a bounded step. If still empty, escalate to a wide feedline spectroscopy scan rather than iterating this node.",
    "seen_count": 4,
    "exemplar_candidates": [
-    "CQT/#1089/q19",
-    "CQT/#1116/q6",
-    "CQT/#175/q18"
+    "customer B/#1089/q19",
+    "customer B/#1116/q6",
+    "customer B/#175/q18"
    ]
   },
   {
@@ -104,10 +104,10 @@
    "prescription_draft": "Raise the power floor out of the speckle by a bounded step, and/or add shots/averaging, and/or raise full-scale output while lowering amplitude for the same power. NEVER widen the frequency span to fix this \u2014 no window change converted an SNR failure into a success in any session; if the map above the speckle already shows both branches, a manual read is legitimate.",
    "seen_count": 13,
    "exemplar_candidates": [
-    "CQT/#624/q9",
-    "CQT/#179/q16",
-    "CQT/#335/q9",
-    "CQT/#357/q16",
+    "customer B/#624/q9",
+    "customer B/#179/q16",
+    "customer B/#335/q9",
+    "customer B/#357/q16",
     "AS_10TQ9TC/#9/q8"
    ]
   },
@@ -141,8 +141,8 @@
    "prescription_draft": "Re-center the frequency window on the visible feature and re-run once \u2014 identical retries cannot succeed (four were burned on one qubit before the re-center fixed it in one shot). Keep the power window unchanged.",
    "seen_count": 3,
    "exemplar_candidates": [
-    "CQT/#350/q10",
-    "CQT/#351/q10",
+    "customer B/#350/q10",
+    "customer B/#351/q10",
     "AS_10TQ9TC/#306/q7"
    ]
   },
@@ -153,7 +153,7 @@
    "prescription_draft": "Widen the frequency span severalfold (biased toward the brightening edge) or re-seed the center from the last known good value; power knobs unchanged. A pre-run sanity check of the seed against the last known resonance skips this run class entirely.",
    "seen_count": 1,
    "exemplar_candidates": [
-    "CQT/#40/q1"
+    "customer B/#40/q1"
    ]
   },
   {
@@ -175,11 +175,11 @@
    "prescription_draft": "Increase averaging first; try a modest frequency-window narrowing around the sag. If the lineshape stays asymmetric/low-contrast across runs, flag for expert review (possibly weak coupling or impedance structure) \u2014 do not trust the automatic dip pick or any claimed shift, and treat floor-pinned optima on these qubits as invalid.",
    "seen_count": 8,
    "exemplar_candidates": [
-    "CQT/#377/q19",
-    "CQT/#378/q19",
-    "CQT/#1033/q12",
-    "CQT/#1079/q12",
-    "CQT/#1352/q17"
+    "customer B/#377/q19",
+    "customer B/#378/q19",
+    "customer B/#1033/q12",
+    "customer B/#1079/q12",
+    "customer B/#1352/q17"
    ]
   },
   {
@@ -191,8 +191,8 @@
    "exemplar_candidates": [
     "AS_10TQ9TC/#342/q6",
     "AS_10TQ9TC/#342/q7",
-    "CQT/#135/q1",
-    "CQT/#76/q6"
+    "customer B/#135/q1",
+    "customer B/#76/q6"
    ]
   },
   {
@@ -205,9 +205,9 @@
     "AS_10TQ9TC/#318/q6",
     "AS_10TQ9TC/#10/q8",
     "AS_10TQ9TC/#232/q5",
-    "CQT/#347/q9",
-    "CQT/#1352/q17",
-    "CQT/#378/q19"
+    "customer B/#347/q9",
+    "customer B/#1352/q17",
+    "customer B/#378/q19"
    ]
   },
   {
@@ -221,7 +221,7 @@
     "AS_10TQ9TC/#321/q6",
     "AS_10TQ9TC/#327/q6",
     "AS_10TQ9TC/#347/q6",
-    "CQT/#41/q1"
+    "customer B/#41/q1"
    ]
   },
   {
@@ -234,8 +234,8 @@
     "AS_10TQ9TC/#326/q6",
     "AS_10TQ9TC/#319/q6",
     "AS_10TQ9TC/#346/q6",
-    "CQT/#1351/q14",
-    "CQT/#1213/q15"
+    "customer B/#1351/q14",
+    "customer B/#1213/q15"
    ]
   },
   {
@@ -245,9 +245,9 @@
    "prescription_draft": "Re-read the figure before adopting; if the dip is visible, take the frequency manually or re-run once. Consecutive-run agreement (within a fraction of a linewidth) is the acceptance test.",
    "seen_count": 4,
    "exemplar_candidates": [
-    "CQT/#342/q9",
-    "CQT/#1212/q15",
-    "CQT/#1352/q19",
+    "customer B/#342/q9",
+    "customer B/#1212/q15",
+    "customer B/#1352/q19",
     "AS_10TQ9TC/#323/q6"
    ]
   },
@@ -258,10 +258,10 @@
    "prescription_draft": "On a marginal refusal with a good-looking map: add averaging rather than re-running unchanged (identical retries are a coin flip); a manual read of a clear map is legitimate. On S/F flicker across identical runs, stop repeating \u2014 change the SNR (shots, full-scale/amplitude split), not the window.",
    "seen_count": 8,
    "exemplar_candidates": [
-    "CQT/#346/q9",
-    "CQT/#348/q10",
-    "CQT/#624/q9",
-    "CQT/#995/q20",
+    "customer B/#346/q9",
+    "customer B/#348/q10",
+    "customer B/#624/q9",
+    "customer B/#995/q20",
     "AS_10TQ9TC/#326/q6"
    ]
   },
@@ -274,8 +274,8 @@
    "exemplar_candidates": [
     "AS_10TQ9TC/#315/q6",
     "AS_10TQ9TC/#321/q6",
-    "CQT/#1352/q16",
-    "CQT/#1351/q17"
+    "customer B/#1352/q16",
+    "customer B/#1351/q17"
    ]
   }
  ],
@@ -321,8 +321,8 @@
    "confidence": "high"
   },
   {
-   "chip": "CQT",
-   "session": "CQT_2026-08-13",
+   "chip": "customer B",
+   "session": "customer_b_2026-08-13",
    "qubits": "q1, q2, q6, q12, q14, q16, q18",
    "narrative": "One lesson learned twice: q1 failed on a stale seed (#40), was re-found (#41), then two identical repeats (#43/#44) ignored the node's explicit 'widen sweep' advice; the high-ceiling/high-FSP combined run (#135) finally produced textbook punch-outs. Evening: q12/q18/q16 all failed the dressed-dip SNR gate \u2014 noise-floor failures answered with window changes, which fixed nothing; no window change all day converted an SNR failure into a success. q14 was a clean first-try success.",
    "ideal_sequence": "Per qubit: one wide-power high-FSP sweep first (the #135/#192 template), escalating SNR-gate failures with more averaging / higher low-power drive, never window moves. The 14 runs could have been ~7-8.",
@@ -331,8 +331,8 @@
    "confidence": "high"
   },
   {
-   "chip": "CQT",
-   "session": "CQT_2026-08-14_part1",
+   "chip": "customer B",
+   "session": "customer_b_2026-08-14_part1",
    "qubits": "q3, q4, q7, q8, q9, q10, q11",
    "narrative": "Morning singles were clean, then an 8-qubit batch at a lowered ceiling (#335) failed 7 of 8 on dressed-dip SNR and the whole afternoon became one-at-a-time recovery: q11 in one run, q9 in three (a success with the marker off the dip, then a '5.4 < 5' refusal), q10 in five (four marginal-gate refusals on figures that showed a textbook punch-out from the first attempt).",
    "ideal_sequence": "#254 + #256 (q4) -> #322 (q8) -> #327 (q3) -> #330 (q7) -> #337 (q11) -> one good q9 run -> one q10 run with more averaging or a raised floor \u2014 roughly half the executed runs",
@@ -341,8 +341,8 @@
    "confidence": "med"
   },
   {
-   "chip": "CQT",
-   "session": "CQT_2026-08-14_part2",
+   "chip": "customer B",
+   "session": "customer_b_2026-08-14_part2",
    "qubits": "q1, q5, q8, q10, q15, q16, q18, q19, q20",
    "narrative": "Feedline-by-feedline recovery from the failed batch. q10 burned four identical retries on a mis-centered frequency window whose first map already showed the resonator clipped at the edge \u2014 re-centering (#352) fixed it in one shot. q16 got the wrong knob (ceiling raised for a floor/SNR failure) and ended the day uncalibrated; q19's working fix (raise the floor) was found and kept for the rest of the sweep, after which q15/q18/q20/q1/q5 all passed in single attempts.",
    "ideal_sequence": "Standard per-qubit window centered on the state's readout frequency, one run per qubit; escalate by re-centering frequency if the dip hugs a window edge, and by raising the FLOOR (not the ceiling) on a dressed-dip SNR failure. q10: #348 -> #352 directly.",
@@ -351,8 +351,8 @@
    "confidence": "high"
   },
   {
-   "chip": "CQT",
-   "session": "CQT_2026-08-15",
+   "chip": "customer B",
+   "session": "customer_b_2026-08-15",
    "qubits": "q9, q12",
    "narrative": "Three runs, three SNR-gate failures, zero adopted fits \u2014 yet q9's single acquisition (#624) contained a perfectly readable punch-out that the gate rejected because it hunts the dressed dip in the noise-floor rows. The wasted effort was trusting the fit outputs rather than any acquisition: the session needed a RE-READ, not a re-run, for q9. q12's window shift-up (#728) was the right instinct but resolved nothing, and its two fits contradict each other in shift sign.",
    "ideal_sequence": "#624 -> manual read of its figure (no q9 re-run needed); q12: #727 -> #728 -> more averaging/shots at low power (not a third window change)",
@@ -361,8 +361,8 @@
    "confidence": "med"
   },
   {
-   "chip": "CQT",
-   "session": "CQT_2026-08-16",
+   "chip": "customer B",
+   "session": "customer_b_2026-08-16",
    "qubits": "q6, q7, q12, q15, q19, q20",
    "narrative": "The raise-the-window correction worked 3/3 (q15 #910->#914, q20 #995->#996, q6 #1116->#1117 \u2014 all fixed within minutes), and every successful map put its transition between roughly +4 and -10 dBm; all failures came from windows biased 15-25 dB too low. The one true failure was q19, whose second attempt moved the window DOWN instead of up. q12 shows only a weak asymmetric feature in both runs, with the node nonetheless succeeding and placing its optimum in noise rows.",
    "ideal_sequence": "A first-guess window of about [-30, +14] dBm per qubit would likely have made #910, #995, #1116 and #1089 unnecessary: #914, #996, #1033, #1117 as first attempts, plus a HIGHER-ceiling q19 attempt that was never tried",
@@ -371,8 +371,8 @@
    "confidence": "high"
   },
   {
-   "chip": "CQT",
-   "session": "CQT_2026-08-17",
+   "chip": "customer B",
+   "session": "customer_b_2026-08-17",
    "qubits": "q9-q12, q14-q20",
    "narrative": "Hand-tuning produced the day's one textbook fit (q15: wide survey #1212 with an off-dip fit and noise-floor optimum, corrected 90 s later by re-windowing in #1213). Production mode then ran a fixed shared window over 11 qubits twice back-to-back: the well-coupled set reproduced beautifully, but the marginal-SNR set (q16/q17/q19/q20) flip-flopped S/F on identical settings \u2014 the repeat reshuffled the failures rather than resolving them. Repetition without changing averaging or per-qubit windows was never going to converge.",
    "ideal_sequence": "#1213 (q15 keeper) + ONE full-group pass, with more averaging or per-qubit windows / higher full-scale-lower-amplitude for q16/q17/q19/q20",
@@ -381,18 +381,18 @@
    "confidence": "med"
   }
  ],
- "cross_chip_notes": "INVARIANT (the chip-independence evidence): (1) The punch-out geometry itself \u2014 a power-independent bare branch at high power, a dressed branch below a knee, and a transition between them \u2014 reads identically on both chips, and the direction of the dressed-bare offset varies PER QUBIT on both (dressed above bare AND below bare occur on each chip), so no rule may assume a shift direction. (2) Every geometry case except spur-lock (AS-only so far) was observed on both chips: snr-floor speckle bottoms, edge-clipped windows (AS #306 / CQT #350), unresolved sub-linewidth shifts (AS q7/q9 / CQT q16,q12), gradual vs bistable crossovers, multi-feature windows, saturation streaks at top rows. (3) The node behaves identically on both: the dressed-dip SNR<5 gate, the 'no punch-out: widen sweep' banner with success=true + ceiling-power/amp-cap fallback writes, floor-pinned optima from deep floors, failure-path bookkeeping optima below the swept floor, and frequency_shift meaning delta-vs-stored-value (NOT dressed-bare) \u2014 verified independently on AS (q4 #12) and CQT (multiple zero-shift punchout=true records). (4) The knob logic transfers: raise-the-floor fixes SNR-gate failures, re-center-frequency fixes edge clipping, raise-the-ceiling fixes C2, and identical unchanged retries are near-worthless on both chips. DIFFERENT (conventions, not physics): AS runs carry 8 figures per run (feedline pairs, separate dip-trace panels, legend boxes that occlude top rows) vs CQT's single figure with up to 11 subplots plus trace views \u2014 occlusion and subplot-scale artifacts differ. Operating ranges differ by ~20 dB: AS transitions cluster near -30 dBm with working windows around -50..-15, CQT transitions cluster at +4..-10 dBm needing ceilings above 0 dBm and high full-scale \u2014 so any absolute-window prescription is chip-poisonous, which is exactly why the taxonomy prescriptions are bounded relative moves. AS's dominant confounders are an adjacent bright interference peak (q6, plausibly the root of its branch-label-swap fitter defect), narrow non-resonator spurs, and genuine run-to-run intermittency of the dressed feature; CQT's are Fano-like weak-contrast lineshapes (q12/q17/q19), multiplexed batch runs whose shared power budget fails many qubits at once (a failure mode AS never exhibited), and S/F verdict flicker at the gate margin. Full-scale-power vs amplitude is an extra free knob on CQT records (FSP from -7 to +16 dBm) and appears in AS records too (FSP -3/-11) \u2014 the same physical power splits very differently, and one AS run picked FSP +7 with amp ~0.001 V, an extreme split worth flagging on either chip.",
+ "cross_chip_notes": "INVARIANT (the chip-independence evidence): (1) The punch-out geometry itself \u2014 a power-independent bare branch at high power, a dressed branch below a knee, and a transition between them \u2014 reads identically on both chips, and the direction of the dressed-bare offset varies PER QUBIT on both (dressed above bare AND below bare occur on each chip), so no rule may assume a shift direction. (2) Every geometry case except spur-lock (AS-only so far) was observed on both chips: snr-floor speckle bottoms, edge-clipped windows (AS #306 / customer B #350), unresolved sub-linewidth shifts (AS q7/q9 / customer B q16,q12), gradual vs bistable crossovers, multi-feature windows, saturation streaks at top rows. (3) The node behaves identically on both: the dressed-dip SNR<5 gate, the 'no punch-out: widen sweep' banner with success=true + ceiling-power/amp-cap fallback writes, floor-pinned optima from deep floors, failure-path bookkeeping optima below the swept floor, and frequency_shift meaning delta-vs-stored-value (NOT dressed-bare) \u2014 verified independently on AS (q4 #12) and customer B (multiple zero-shift punchout=true records). (4) The knob logic transfers: raise-the-floor fixes SNR-gate failures, re-center-frequency fixes edge clipping, raise-the-ceiling fixes C2, and identical unchanged retries are near-worthless on both chips. DIFFERENT (conventions, not physics): AS runs carry 8 figures per run (feedline pairs, separate dip-trace panels, legend boxes that occlude top rows) vs customer B's single figure with up to 11 subplots plus trace views \u2014 occlusion and subplot-scale artifacts differ. Operating ranges differ by ~20 dB: AS transitions cluster near -30 dBm with working windows around -50..-15, customer B transitions cluster at +4..-10 dBm needing ceilings above 0 dBm and high full-scale \u2014 so any absolute-window prescription is chip-poisonous, which is exactly why the taxonomy prescriptions are bounded relative moves. AS's dominant confounders are an adjacent bright interference peak (q6, plausibly the root of its branch-label-swap fitter defect), narrow non-resonator spurs, and genuine run-to-run intermittency of the dressed feature; customer B's are Fano-like weak-contrast lineshapes (q12/q17/q19), multiplexed batch runs whose shared power budget fails many qubits at once (a failure mode AS never exhibited), and S/F verdict flicker at the gate margin. Full-scale-power vs amplitude is an extra free knob on customer B records (FSP from -7 to +16 dBm) and appears in AS records too (FSP -3/-11) \u2014 the same physical power splits very differently, and one AS run picked FSP +7 with amp ~0.001 V, an extreme split worth flagging on either chip.",
  "open_questions": [
   "Confirm the fit-record semantics node-version-wide: frequency_shift is the delta versus the previously stored resonator frequency (update delta), not the dressed-bare separation \u2014 verified behaviorally on both chips, but a code-level confirmation is needed before teaching it as fact; also whether bare_resonator_frequency is fit-derived or partially bookkeeping (it is sometimes absent, sometimes contradicts the figure).",
   "Should the optimal-power picker be changed or post-gated? A margin rule (a few steps below the knee AND above the noise onset) would eliminate the floor-pinned-optimum class (~15 sightings); decide whether a floor-pinned or out-of-window optimum should hard-fail the run rather than write state.",
   "Fallback writes on punchout=false success (ceiling power + amplitude cap) plausibly degraded subsequent runs on the same feedline (AS #321 -> #322's weakened dressed dip); causality is plausible but unproven \u2014 an expert should decide whether the node must stop writing fallback values, and whether the pilot should auto-revert them.",
   "AS q6's systematic branch-label swap: is the adjacent bright interference peak the root cause, and is this a fitter defect to file upstream? The session evidence says window changes cannot fix it; the manual-pilot needs an authoritative 'geometry overrides fit labels' rule signed off by a domain expert.",
   "Physical origin of AS q6's run-to-run intermittent dressing (present/absent on identical consecutive runs): TLS, flux instability, thermal? This decides whether 'repeat-and-vote' is a valid prescription or masks a device problem that should halt calibration.",
-  "The gate message 'dressed dip SNR 5.4 < 5' (CQT #346): display rounding or a real comparison bug? If real, marginal refusals near the threshold are arbitrary and the gate value/hysteresis should be revisited.",
+  "The gate message 'dressed dip SNR 5.4 < 5' (customer B #346): display rounding or a real comparison bug? If real, marginal refusals near the threshold are arbitrary and the gate value/hysteresis should be revisited.",
   "The C4a/C4b split (gradual-pull vs bistable-coexistence) was assigned retroactively from evidence text; ~7 of the 29 original C4 annotations are ambiguous between them \u2014 an expert pass over those figures is needed before the counts are quoted.",
   "For unresolved-shift (sub-linewidth chi) qubits, what is the accepted evidence standard for punch-out \u2014 is the dressed frequency adoptable with the bare marked unverified, or must a dispersive-shift/qubit-spectroscopy escalation always run?",
-  "Are CQT q19/q16/q17 weakly-coupled by design (their Fano-like low-contrast shape would then be permanent) or does the never-tried higher ceiling / higher averaging resolve them? q19's ceiling was never raised the way q20's was.",
-  "Whether the multiplexed batch mode's shared power budget can ever satisfy per-qubit SNR on this node, or whether the pilot should forbid batch punch-out runs outright (CQT #335: 7/8 failed; #1350-#1352: marginal set never converged).",
+  "Are customer B q19/q16/q17 weakly-coupled by design (their Fano-like low-contrast shape would then be permanent) or does the never-tried higher ceiling / higher averaging resolve them? q19's ceiling was never raised the way q20's was.",
+  "Whether the multiplexed batch mode's shared power budget can ever satisfy per-qubit SNR on this node, or whether the pilot should forbid batch punch-out runs outright (customer B #335: 7/8 failed; #1350-#1352: marginal set never converged).",
   "AS #8's spur-lock is the only false-accept-on-artifact seen (n=1): does the proposed line-cut test (upward spike + power-independent = spur) generalize, and should the node grow a lineshape check?",
   "Evening-state q9 on AS_2026-08-09 was never re-verified after the chip's bias moved \u2014 decide whether cross-session value adoption without re-verification after a known bias drift is ever acceptable."
  ],
@@ -415,17 +415,17 @@
   "AS_10TQ9TC/#345/q7 \u2014 transition partially visible near the window floor; the no-punch-out claim and ceiling-power pick contradict it.",
   "AS_10TQ9TC/#346/q6 \u2014 'bare' marker on the mid-power dressed blob and chosen frequency on the high-power branch \u2014 inverted relative to punch-out physics; readout configured at ceiling power on the bare branch.",
   "AS_10TQ9TC/#347/q6 \u2014 success=true with frequency_shift=-2.8 MHz alongside its own 'no punch-out: widen sweep' banner \u2014 internally inconsistent; top-of-window power above the real punch-out.",
-  "CQT/#40/q1 \u2014 failed fit's frequency/bare numbers echo the stale pre-run seed as if measured; the map is off-window with no feature at all.",
-  "CQT/#90/q12 \u2014 claimed dressed frequency lies inside the noise-dominated region with no supporting feature; widening frequency could not buy SNR.",
-  "CQT/#175/q18 \u2014 no credible feature, and the failed fit reports its 'optimal' power essentially at the swept floor \u2014 a failure-path bookkeeping value.",
-  "CQT/#179/q16 \u2014 claimed dressed frequency points into pure noise, offset from the only visible (high-power) dip.",
-  "CQT/#342/q9 \u2014 SUCCESS whose dressed marker sits a few linewidths off the visible dip on the correct line; chosen power deep in the noisy floor.",
-  "CQT/#350/q10 \u2014 fitted dressed frequency in the noise-tracking region left of the marked bare; 'bare' latched onto a spurious high-power-only notch while the real line is clipped at the window edge.",
-  "CQT/#351/q10 \u2014 identical mis-fit repeated on a near pixel-identical map; nothing was changed between attempts.",
-  "CQT/#624/q9 \u2014 figure shows a usable punch-out, but the reported dressed frequency sits off the visible dip, the recorded shift does not equal dressed-minus-bare in the same record, and the optimal lands in pure noise.",
-  "CQT/#727/q12 \u2014 claimed dressed frequency sits on the bright high-transmission side of the visible line where the figure shows no dip; optimal deep in the noise-only region.",
-  "CQT/#728/q12 \u2014 claimed shift is opposite in sign to #727's on the same qubit with no resolvable dip supporting either; optimal at the extreme bottom edge of the window.",
-  "CQT/#1212/q15 \u2014 success, but the fitted frequency is ~3 MHz above where every later run converges and the optimal power sits below the SNR floor where the dip is untraceable.",
-  "CQT/#1352/q19 \u2014 chosen-frequency marker at the EDGE of the dark band while the smoothed traces put their minimum clearly to its low-frequency side; optimal in the noise floor; 2 MHz wander across three identical runs."
+  "customer B/#40/q1 \u2014 failed fit's frequency/bare numbers echo the stale pre-run seed as if measured; the map is off-window with no feature at all.",
+  "customer B/#90/q12 \u2014 claimed dressed frequency lies inside the noise-dominated region with no supporting feature; widening frequency could not buy SNR.",
+  "customer B/#175/q18 \u2014 no credible feature, and the failed fit reports its 'optimal' power essentially at the swept floor \u2014 a failure-path bookkeeping value.",
+  "customer B/#179/q16 \u2014 claimed dressed frequency points into pure noise, offset from the only visible (high-power) dip.",
+  "customer B/#342/q9 \u2014 SUCCESS whose dressed marker sits a few linewidths off the visible dip on the correct line; chosen power deep in the noisy floor.",
+  "customer B/#350/q10 \u2014 fitted dressed frequency in the noise-tracking region left of the marked bare; 'bare' latched onto a spurious high-power-only notch while the real line is clipped at the window edge.",
+  "customer B/#351/q10 \u2014 identical mis-fit repeated on a near pixel-identical map; nothing was changed between attempts.",
+  "customer B/#624/q9 \u2014 figure shows a usable punch-out, but the reported dressed frequency sits off the visible dip, the recorded shift does not equal dressed-minus-bare in the same record, and the optimal lands in pure noise.",
+  "customer B/#727/q12 \u2014 claimed dressed frequency sits on the bright high-transmission side of the visible line where the figure shows no dip; optimal deep in the noise-only region.",
+  "customer B/#728/q12 \u2014 claimed shift is opposite in sign to #727's on the same qubit with no resolvable dip supporting either; optimal at the extreme bottom edge of the window.",
+  "customer B/#1212/q15 \u2014 success, but the fitted frequency is ~3 MHz above where every later run converges and the optimal power sits below the SNR floor where the dip is untraceable.",
+  "customer B/#1352/q19 \u2014 chosen-frequency marker at the EDGE of the dark band while the smoothed traces put their minimum clearly to its low-frequency side; optimal in the noise floor; 2 MHz wander across three identical runs."
  ]
 }

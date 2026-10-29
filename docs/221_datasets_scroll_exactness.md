@@ -25,7 +25,7 @@ judged at its deepest holdable landmark (|delta| <= 0.5 px).
 Final matrix (implementer, 19 cases, verifier's probe): every case back ==
 backExact 6/6, miss 0, jumps 0, errors 0. State (inner JSON tree) innerPass
 30/30; Results 1366 26 pass + 4 unholdable; Raw Data 30 unholdable, back 6/6.
-Switch latency median (verifier bench, rig krs5 + KH hardlink, round-1 code):
+Switch latency median (verifier bench, rig rig5 + KH hardlink, round-1 code):
 input->new run 250-470 ms before, 280-390 ms after; settled 390-630 ms before,
 420-530 ms after. The verifier's `interactive_1600_click` lost everything once
 (st=0) under rendering starvation with 6 stale headless tabs open; it did not
@@ -75,7 +75,7 @@ Before: every run switch went back to Full View, a rule from the first commit
 (State, Figures, Raw Data, Interactive, ...). A fresh open still lands on Full
 View, and so does a run that lacks the tab. The implementer flagged this as
 reversing an older explicit user choice; both the verifier and the fix round
-list it as needing Kyunghoon's confirmation (§7).
+list it as needing the maintainer's confirmation (§7).
 
 ## 5. Found by the independent verification and fixed (`6507cdd`)
 
@@ -124,14 +124,14 @@ Merged into `integ/w7` with no conflicts listed for this branch.
 - `tests/browser/journeys/ds_scroll_keep.cjs` — real Chrome; the
   intent-every-switch mutation gave 13 Figures MISSes (delta -17 to -136 px),
   0 after restoring.
-- pytest (cqt), final: 701 passed, 41 skipped, 1 failed over 14 files — the
+- pytest (lab_env_4), final: 701 passed, 41 skipped, 1 failed over 14 files — the
   failure, `test_web::TestWorkspace::test_sidebar_filter_multi_token_with_date`,
   passes alone on the branch and on base `e74b8ce` (order-dependent). Verifier
   round 1: 773 passed, 41 skipped, 0 failed over its 14 files.
 
 ## 7. Open / not done
 
-- The kept-tab behaviour change (§4) needs Kyunghoon's confirmation.
+- The kept-tab behaviour change (§4) needs the maintainer's confirmation.
 - Raw Data (ndview): a variable plotted on one run is not plotted on the next,
   so most runs' Raw Data tab is too short to hold the place (16/32
   SKIP-range). Replaying the ndview variable selection is a separate feature.

@@ -86,17 +86,17 @@ All seven are pushed to `origin`. Nothing is stashed; the worktree is clean.
 
 ## 2. How to verify anything here
 
-Windows conda env **`LabD_17Q`** is the canonical pytest env. `PYTHONUTF8=1` is
+Windows conda env **`lab_env_5`** is the canonical pytest env. `PYTHONUTF8=1` is
 required (node-selfcheck drivers emit UTF-8; cp949 nulls their stdout).
 
-> `LabD_17Q` is the **scrubbed placeholder** for the env's real name, per the
+> `lab_env_5` is the **scrubbed placeholder** for the env's real name, per the
 > repo-wide convention (CLAUDE.md uses it too). Copy-pasting it verbatim gives
 > `EnvironmentLocationNotFound`. The real name is in the gitignored
 > `CLAUDE.local.md` decoder, or just run `conda env list`.
 
 ```bash
 cd D:\work\state-manager\.claude\worktrees\regen-schema-gate
-PYTHONUTF8=1 conda run -n LabD_17Q python -m pytest tests/ -q \
+PYTHONUTF8=1 conda run -n lab_env_5 python -m pytest tests/ -q \
     --timeout=900 --timeout-method=thread \
     --deselect tests/test_main.py::TestWaitForServer
 ```
@@ -105,12 +105,12 @@ Dev server (**must** run from this worktree, and from Windows — WSL loopback i
 broken on this machine):
 
 ```bash
-conda run -n LabD_17Q python -c "from quam_state_manager.web.app import create_app; create_app().run(debug=True, port=5050)"
+conda run -n lab_env_5 python -c "from quam_state_manager.web.app import create_app; create_app().run(debug=True, port=5050)"
 ```
 
 `conda run` buffers all output until exit, so a run looks silent for ~10 min.
 For ad-hoc scripts prefer the interpreter directly:
-`C:/ProgramData/miniconda3/envs/LabD_17Q/python.exe -u script.py`.
+`C:/ProgramData/miniconda3/envs/lab_env_5/python.exe -u script.py`.
 
 ### The expected result
 
@@ -290,10 +290,10 @@ Worth knowing because they show where the guardrails are real:
    by a test; `headline_on` exists for this and `test_pair_columns.py` now pins
    that it stays a *proper* subset.
 3. **Customer-name scrub.** While preparing this handoff, real customer/chip
-   names (`KRISS`, `SNU`, `arbel`, `QRS`, `Novera*`) were found in
+   names (`customer A`, `customer D`, `cluster_1`, `QRS`, `Novera*`) were found in
    `docs/83,84,85,88` and `CLAUDE.md` — the repo is deliberately scrubbed so it
    can go public (see `CLAUDE.local.md`, which is the gitignored decoder). They
-   were replaced with the placeholder names (`LabA`, `LabD`, `deviceB`, `LabB`,
+   were replaced with the placeholder names (`LabA`, `lab_env_5`, `deviceB`, `LabB`,
    `ExampleChip*`). **An auditor should re-grep before any public push.**
 
 ### Explicitly NOT verified

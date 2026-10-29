@@ -1,7 +1,7 @@
 # docs/228 — The lab-code worker starts before the first lab check; each project remembers its Python env
 
 2026-09-28, branch `w9/labwarm` (base `91c8aae` = origin/main after w8), worktree
-`D:\work\sm-w9-labwarm`. Numbered docs/228 at integration (integ/w9, docs/227 is the combined w9 record). Chips: krs5 (rig copy of 260907_KRS_5Q) and big30x; lab env KRISS_CZ.
+`D:\work\sm-w9-labwarm`. Numbered docs/228 at integration (integ/w9, docs/227 is the combined w9 record). Chips: rig5 (rig copy of chip_2) and big30x; lab env lab_env_1.
 Everything measured by the implementer on a machine at 60-85 % CPU from other agents'
 work (Windows `% Processor Time`, sampled before each run): absolute seconds are
 inflated; the A/B pairs were interleaved sample by sample on the same rig, same port,
@@ -73,7 +73,7 @@ suggestion it moved and the badge out of band; a `/generate/select-env` elsewher
 re-fetches the badge (`GET /sidebar/folder-badges`). The badge is judged against a
 project: with a chip open, SM's own scope (none: `global`, the chip is in no project);
 with NO chip open, the project qualibrate names active — the one whose landing card
-sits beside it (final-QA P3: it read neutral "env KRISS_CZ" while that card said
+sits beside it (final-QA P3: it read neutral "env lab_env_1" while that card said
 amber "suggested — confirm"; `_qualibrate_tray_badge`, pinned by
 `test_with_no_chip_open_the_badge_says_what_the_active_projects_card_says`).
 
@@ -91,26 +91,26 @@ interleaved; every check refused by the lab's gate, nothing written):
 
 | chip | check @ | A (base) | B (labwarm) |
 |---|---|---|---|
-| krs5 | edit +5 s | 25983, 25566, 14835 | 15289, 10247, 12964 |
-| krs5 | delete +5 s | 17896, 16055, 19344 | 27882, 10532, 19896 |
-| krs5 | edit +15 s | 26710, 16255, 20801 | 12487, 2313, 8650 |
-| krs5 | delete +15 s | 22803, 15123, 19729 | 9666, 1889, 11243 |
-| krs5 | edit +60 s | 12103 | **483** |
-| krs5 | delete +60 s | 16478 | **1302** |
+| rig5 | edit +5 s | 25983, 25566, 14835 | 15289, 10247, 12964 |
+| rig5 | delete +5 s | 17896, 16055, 19344 | 27882, 10532, 19896 |
+| rig5 | edit +15 s | 26710, 16255, 20801 | 12487, 2313, 8650 |
+| rig5 | delete +15 s | 22803, 15123, 19729 | 9666, 1889, 11243 |
+| rig5 | edit +60 s | 12103 | **483** |
+| rig5 | delete +60 s | 16478 | **1302** |
 | big30x | edit (sent when `/bulk` finished, 32-45 s) | 12176, 10284, 11384, 11309, 18021 | **1939, 1132, 1921, 1582, 1467** |
 | big30x | delete (same) | 12323 | **4010** |
 | big30x | edit / delete +15 s (sent at ~44 s) | 25304 / 14273 | **1909 / 2172** |
 | big30x | edit / delete +60 s | 11497 / 13320 | **2002 / 1421** |
 | big30x, Pulses page first | delete / edit +15 s | 23541 / 26020 | **6911 / 2821** |
 
-- Open → worker ready (B, polled): krs5 median 18.4 s (15.0-32.6 s), big30x median
+- Open → worker ready (B, polled): rig5 median 18.4 s (15.0-32.6 s), big30x median
   17.6 s (13.6-24.5 s) — the import alone, on a machine at 60-85 % CPU (docs/218
   measured the same spawn at 8.8 s unloaded). At +5 s the worker is still importing,
   so B's first check there is the rest of the import plus the check (still faster in
-  5 of 6 krs5 samples); once ready the remaining cost is the check itself (krs5 edit
+  5 of 6 rig5 samples); once ready the remaining cost is the check itself (rig5 edit
   0.48 s, delete 1.3 s — the delete asks `generate_config()` twice; big30x 1.1-2.0 s
   edit, 1.4-4.0 s delete, the pruned gate `apply()` / config question on a 30-qubit chip).
-- Page loads, medians A → B: krs5 `/load` 461 → 463 ms, `/qubits` 503 → 475, `/bulk`
+- Page loads, medians A → B: rig5 `/load` 461 → 463 ms, `/qubits` 503 → 475, `/bulk`
   2234 → 2100 (14 + 14 samples); big30x `/load` 1029 → 1187, `/qubits` 1511 → 1527,
   `/bulk` 38.7 → 39.3 s (10 + 10). The big30x `/load` gap was re-measured in process
   (Flask test client, fresh process per sample, 6 + 6 interleaved): A median 2195 ms,

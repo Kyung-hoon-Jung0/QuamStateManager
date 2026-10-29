@@ -363,7 +363,7 @@ Updated for the new model:
   plan and its driver named; no "0 events"; "not armed" carries why.
 
 The 30 test files that touch the agent API, plans, sessions, chat, limits,
-the bridge, the journal or the strip (cqt env), on the final commit: 804
+the bridge, the journal or the strip (lab_env_4 env), on the final commit: 804
 passed, 6 skipped, 0 failed.
 
 Trial merges (`git merge-tree`) against `fix/agent-guardrails`,

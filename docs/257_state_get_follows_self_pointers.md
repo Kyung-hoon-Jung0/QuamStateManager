@@ -136,7 +136,7 @@ pins, loader, agent API, and existing pointer-path tests.
 The final selection comes from
 `rg -l 'resolve_value|is_self_ref|pointer_resolver|state_get|/api/agent/state' tests`:
 17 Python test files, plus `test_pointer_path.py`. Tests run with the required
-`D:/miniconda3/envs/cqt/python.exe`, `PYTHONUTF8=1`, no pytest cache, and a
+`D:/miniconda3/envs/lab_env_4/python.exe`, `PYTHONUTF8=1`, no pytest cache, and a
 600-second timeout. All temporary files and bytecode are confined to this
 worktree's ignored `.tmp_a17-validation` directory.
 

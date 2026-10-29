@@ -366,7 +366,7 @@ None of these block the v0.0.1 ship by themselves, but together they're the diff
 * `tests/test_scanner.py::TestScannerParallel` — wall-time speedup with slow per-folder parse (16 × 40ms serial → < 300ms parallel).
 * `tests/test_web.py::TestPhase3DatasetParallelScan` — same speedup signal for the DatasetStore path.
 
-**Test run on conda env `qm_mng`:** 910 pass, 96 skip, **0 fail.** (Up from 899 on the prior branch; +11 are the new Phase 3 regressions.)
+**Test run on conda env `lab_env_6`:** 910 pass, 96 skip, **0 fail.** (Up from 899 on the prior branch; +11 are the new Phase 3 regressions.)
 
 **Observed impact at the maintainer's scale** (matches the audit's estimates, modulo §3.1 deferral):
 

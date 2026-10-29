@@ -80,7 +80,7 @@ truth both ways).
   different comparison rules; only the LEAF index gate was in scope.
 * Snapshot-rows-first append and the (ts, rank) sort — pinned, untouched.
 
-## Verification (2026-08-10, Windows `SNU_17Q`)
+## Verification (2026-08-10, Windows `customer D_17Q`)
 
 `tests/test_leaf_index.py` + `tests/test_param_history_changes.py`: 61
 passed, 1 skipped. `tests/test_history.py` + `tests/test_state_history.py` +

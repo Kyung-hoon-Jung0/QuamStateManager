@@ -1,10 +1,10 @@
-# 127 — Auto-calibration verified against the CQT corpus (0.9.9 groundwork)
+# 127 — Auto-calibration verified against the customer B corpus (0.9.9 groundwork)
 
-**Date:** 2026-08-21 · **Branch:** `feat/autofit-cqt-corpus`
-**Corpus:** `D:\work\Customer_Codes\CQT\data` — 2,655 real runs (2026-08-13 →
+**Date:** 2026-08-21 · **Branch:** `feat/autofit-lab_env_4-corpus`
+**Corpus:** `D:\work\Customer_Codes\customer B\data` — 2,655 real runs (2026-08-13 →
 08-19), 20-qubit QDAC-biased tunable-coupler chip, quam 0.6.0 / quam_builder
 0.4.0, 54 node families, 1,113 runs carrying `patches[]`. Read-only throughout.
-**Env:** conda `cqt` (the customer stack) + the customer's own
+**Env:** conda `lab_env_4` (the customer stack) + the customer's own
 `calibration_utils` tree as the replay source root.
 
 The question the user asked: *can the current SM auto-calibration be verified
@@ -81,7 +81,7 @@ already at 0 false rejects on this corpus.** Ramsey:
   slow drift, so the spectrum separates nothing on this family).
 
 After: ramsey 443 pass / 8 fail (all true catches) / 114 suspects.
-Pinned by `TestRamseyCqtRecalibration`.
+Pinned by `TestRamseyCorpusRecalibration`.
 
 ### 1.5 The three-zone feature check (the deep one)
 
@@ -149,7 +149,7 @@ proven against real data, which is what P8 promised.
 the "environmental" 23-failure baseline (16 gates + 4 synth + 3 runner_p2, all
 05/08b + flux-cube) was actually a real incompatibility killing the sim
 harness of two in-scope families in the customer env. `np.ptp(arr)` works on
-both generations. **The cqt-env autofit baseline is now 0 failures.**
+both generations. **The lab_env_4-env autofit baseline is now 0 failures.**
 
 ## 2. The final state of the sweep
 
@@ -173,8 +173,8 @@ natural next pass; they were not touched blind.
 
 New/changed pins: `TestTraceVarAndPairCoordEquivalents` ·
 `TestThreeZoneFeatureCheck` · `TestSandboxRevertWalksLists` (all
-`test_runner_audit_fixes.py`) · `TestRamseyCqtRecalibration`
+`test_runner_audit_fixes.py`) · `TestRamseyCorpusRecalibration`
 (`test_autofit_gates.py`) · `test_the_replay_runner_uses_it_too`
-(`test_runner_p0.py`). Full battery in cqt: **445 passed, 9 skipped, 0
+(`test_runner_p0.py`). Full battery in lab_env_4: **445 passed, 9 skipped, 0
 failed** across gates/engine/e2e/scenarios/v2loop/synth/runner_p0/p2/
 fit_audit/auditor/plan_writer + the audit-fixes file.

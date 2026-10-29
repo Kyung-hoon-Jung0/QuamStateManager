@@ -327,7 +327,7 @@ empty state is what explains where versions come from.
 
 ---
 
-## The measured baseline (env `cqt`, wave 2)
+## The measured baseline (env `lab_env_4`, wave 2)
 
 `39 failed, 5,648 passed, 247 skipped`, accounted for completely:
 
@@ -582,7 +582,7 @@ the file's own header comment, which was the source of the confusion.
 
 Run in parallel over the whole campaign at the user's instruction, weighted to
 **speed and stability**, with the customer-role pass driving the real 20-qubit
-CQT chip as four different people. Everything below was reproduced before a
+customer B chip as four different people. Everything below was reproduced before a
 line was changed.
 
 ### Data loss — three, all confirmed

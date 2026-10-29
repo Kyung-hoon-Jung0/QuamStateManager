@@ -221,12 +221,12 @@ That grouping is the fact the rest of the app had nowhere to put, and it is
 what makes a shared port read as correct instead of as a collision.
 
 It was derived from the chip's own `state.json` + `wiring.json`, and it later
-turned out that PJ's `quam_config/qdac_cabling/trigger_cabling.py` **declares**
+turned out that chip_1's `quam_config/qdac_cabling/trigger_cabling.py` **declares**
 exactly this — `QDAC_TRIGGER_CABLING` (ext → con/slot/port) and
 `QDAC_QUBIT_TRIGGER_PORTS` (qubit → ext), with the shared marker port marked
 `shareable`. Independent agreement with the lab's own source of truth, not a
-guess that happened to fit. (The CQT tree instead *derives* the ext as
-`(channel - 1) % 4 + 1` and declares no sharing — one more reason PJ is the
+guess that happened to fit. (The customer B tree instead *derives* the ext as
+`(channel - 1) % 4 + 1` and declares no sharing — one more reason chip_1 is the
 baseline.)
 
 A cable
@@ -278,7 +278,7 @@ SM marked only the channel. The port object defaults to `shareable=False`, so
 real chip, seven of the eleven. Now marked on both, with `delay=0`/`buffer=0`
 stated rather than left as nulls a later reader has to guess about.
 
-Proven by a real build in `cqt`, not by reading the code: the assertion runs
+Proven by a real build in `lab_env_4`, not by reading the code: the assertion runs
 against the written `state.json`, and reverting the fix fails it.
 
 ## §12 The root class, on the fresh path too
@@ -710,17 +710,17 @@ false positives).
 
 §13 said the first lab to write the ~10-line subclass would be the real test.
 It was run instead of waited for: the customer's `quam_config` — the
-**`PJ_10082026`** tree, which is the baseline (user-directed) — was **copied**
+**`chip_1`** tree, which is the baseline (user-directed) — was **copied**
 into a scratch directory (their tree is not written to), the ten lines added
 to the copy's own `qdac_components.py`, and the copy put first on `PYTHONPATH`.
 
-*(An env-name trap worth stating once: the conda env `CQT_20Q` resolves
-`import quam_config` to **PJ_10082026**, not to the CQT tree; `cqt`, the pytest
-env, resolves to CQT. `_find_env_python` looks for `CQT_20Q`, so every real
-build and load in this campaign already ran against PJ. The three class files
+*(An env-name trap worth stating once: the conda env `lab_env_3` resolves
+`import quam_config` to **chip_1**, not to the customer B tree; `lab_env_4`, the pytest
+env, resolves to customer B. `_find_env_python` looks for `lab_env_3`, so every real
+build and load in this campaign already ran against chip_1. The three class files
 that carry the argument — `qdac_components.py`, `my_quam.py`, `__init__.py` —
 are byte-identical between the two trees, which is why the conclusion does not
-depend on the mix-up; the generator files are NOT identical, and PJ's are the
+depend on the mix-up; the generator files are NOT identical, and chip_1's are the
 real-bench versions.)*
 
 Three hand-written chips, three real `Quam.load()` calls, before any build:
@@ -814,7 +814,7 @@ answer, and no surface implies otherwise.
 
 ## The measured baseline (CLAUDE.md's is stale)
 
-Full suite in `cqt` at the end of the docs/136 work: **19 failed, 6261 passed,
+Full suite in `lab_env_4` at the end of the docs/136 work: **19 failed, 6261 passed,
 247 skipped** in 22:27 (`--deselect tests/test_main.py::TestWaitForServer`) — the
 same nineteen, name for name, that failed before any of this work started. After
 docs/137: **18 failed, 6303 passed**, a strict SUBSET of the same nineteen — the

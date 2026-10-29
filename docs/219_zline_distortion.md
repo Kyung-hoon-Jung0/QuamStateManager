@@ -22,7 +22,7 @@ A new page, **Live State Edit > Z-line distortion** (`/zline`), in the sidebar n
 
 ## 2. What was measured
 
-KRS 5Q rig copy, line q1 (5 exponentials + 48 taps, FIR sum 0.9997), sum model. Implementer-measured
+chip_2 5Q rig copy, line q1 (5 exponentials + 48 taps, FIR sum 0.9997), sum model. Implementer-measured
 on rig w7-zline, then re-measured exactly by the independent verifier on rig w7v-zline:
 
 | quantity | value |
@@ -47,7 +47,7 @@ on rig w7-zline, then re-measured exactly by the independent verifier on rig w7v
 | | open | row click | 15-row burst | Enter | model -> cascade / sum | op switch | reload | back |
 |---|---|---|---|---|---|---|---|---|
 | big30x | 353 | 265.5 | 444 | 67 | 219 / 218 | 76 | 348 | 486 |
-| krs5 | 447 | 392 | 90 | 115 | 313 / 313 | 81 | 426 | 527 |
+| rig5 | 447 | 392 | 90 | 115 | 313 / 313 | 81 | 426 | 527 |
 
   There is no before number: `/zline` is 404 on the base. Neighbours before vs after on big30x:
   Pulses ttfb 22 vs 19 ms, settle 608 vs 594 ms; Live Edit `/bulk` ttfb 6508 vs 5775 ms, settle
@@ -123,7 +123,7 @@ fixed in `6d93e23`, re-verified PASS at `6d93e23`:
 - **P1_memo_key_high_pass** — `PortFilter.key()` omitted high_pass, so `high_pass_filter=h` and
   `exponential_dc_gain=0` + `[[1,h]]` shared a key and `/zline/data` served a stale cascade after an
   edit between the two: final 999.998 / dc_limit 500000 / horizon 1e6 instead of the cold 0.99983 /
-  1.0 / 16000 (KRS q3). Fix: `key()` is `dataclasses.astuple(self)`. Re-verified: high-pass form ->
+  1.0 / 16000 (chip_2 q3). Fix: `key()` is `dataclasses.astuple(self)`. Re-verified: high-pass form ->
   explicit form -> high-pass -> explicit served 999.998 / 0.99983 / 999.998 / 0.99983, each step
   byte-equal to a cold `zf.step_response`.
 - **P1_stability_per_model** — the stability gate always used the sum model, so `[[-0.6,10],[-0.6,1000]]`
@@ -134,7 +134,7 @@ fixed in `6d93e23`, re-verified PASS at `6d93e23`:
   block note naming the stage ("stage 1 of 2 (A = -1.2, tau = 10 ns) ... UNSTABLE"), a step + pulse
   error is one note. Re-verified, growth time 2 ns checked by hand.
 - **P3_four_curves** — "exponential only" and "FIR only" were `legendonly`. Fix: all four visible by
-  default. Re-verified in real Chrome on big30x and krs5: 4 traces, all `visible = true`.
+  default. Re-verified in real Chrome on big30x and rig5: 4 traces, all `visible = true`.
 
 Re-verification P3s (at `6d93e23`):
 - The step memo slot held one model, so every Model flip recomputed 2e6 samples: median 338 ms
@@ -155,7 +155,7 @@ Re-verification P3s (at `6d93e23`):
   `TestTableParseMemo`, `TestRound3PerModel`.
 - Real-Chrome journey `tests/browser/journeys/zline.cjs` (Z1-Z5); no `.cjs` selfcheck for `zline.js`.
 - Counts: 94 passed after `772c66b`, 107 passed after `6d93e23` (zline + bundles + sidebar_tools files;
-  implementer, and the verifiers matched both). Full cqt suite: 9948 passed / 251 skipped / 1 failed
+  implementer, and the verifiers matched both). Full lab_env_4 suite: 9948 passed / 251 skipped / 1 failed
   (a flake, `test_apply_ux_selfcheck_passes`, passes in isolation) at the first verification; 9962
   passed / 251 skipped / 0 failed at `6d93e23` (re-verifier, 1:23:33). Journey 18/18 -> 27/27.
 - Mutations: round 2 9/9 red (implementer); round 3 8/8 red after rewriting the two route tests to one

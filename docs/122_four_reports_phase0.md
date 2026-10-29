@@ -8,13 +8,13 @@ Reported 2026-08-17, four items:
 4. the **Topology / Chip Status Trends** figure sometimes breaks
 
 Phase 0 changed no code; Phase 1 (below) is the four fixes it licensed. Its output is numbers: every claim below was either executed
-against the real 20-qubit CQT chip in real Chrome, or executed against the real
+against the real 20-qubit customer B chip in real Chrome, or executed against the real
 839-run customer archive. Where a hypothesis did not survive its measurement it is
 recorded as overturned, including four of my own.
 
 Environment: a private copy of the customer chip served on its own port
 (`tests/browser/serve.cjs`, 5,470 grid cells), Chrome via `tests/browser/harness.cjs`,
-archive `D:\work\Customer_Codes\CQT\data\{2026-08-13,-14,-16}` (839 runs, 1,687
+archive `D:\work\Customer_Codes\customer B\data\{2026-08-13,-14,-16}` (839 runs, 1,687
 `ds_*.h5`, 15,470 plottable cubes). Probes are the gitignored `tests/browser/_p0_*.cjs`.
 
 ---

@@ -61,7 +61,7 @@ Verified end-to-end in real Chrome against the real home: Browse → navigate
 to the user profile → `.qualibrate` visible AND `is-config`-marked →
 type-ahead `qual` → Enter → `config.toml` file row + badge → keyboard pick →
 input filled, dialog closed, auto-Check rendered "✓ … 32 projects, active:
-CQT_20Q … Use this folder". Pinned by `TestConfigKind` in
+lab_env_3 … Use this folder". Pinned by `TestConfigKind` in
 `test_browse_route.py`, G12/G13/G14 in `folder_browser_selfcheck.cjs`.
 Mutations red ×4 (listener registration killed, file rows dropped, dot-dirs
 re-hidden, lazy-bind call removed).

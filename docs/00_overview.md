@@ -114,8 +114,8 @@ This pointer system is central to the entire tool's design. Every module that re
 
 ```bash
 cd <project-root>
-# WSL: activate the qm_mng conda env first
-conda run -n qm_mng python -m pytest tests/ -q
+# WSL: activate the lab_env_6 conda env first
+conda run -n lab_env_6 python -m pytest tests/ -q
 ```
 
 Tests run against both **synthetic fixtures** (temporary JSON files in `tmp_path`) and **real data** from the ExampleChip repository:

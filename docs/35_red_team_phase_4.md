@@ -233,7 +233,7 @@ These don't bite at v0.0.1 but are worth folding into the next pass:
 * `TestPhase4SecurityHeaders` (×3) — CSP / nosniff / Referrer-Policy presence + key directives.
 * `TestPhase4H5WhichWhitelist` (×2) — `which="../etc"` and `which="random_other"` both → `None`.
 
-**Test run on conda env `qm_mng`:** 933 pass, 96 skip, **0 fail.** (Up from 921 on `main`; +12 are the new Phase 4 regressions.)
+**Test run on conda env `lab_env_6`:** 933 pass, 96 skip, **0 fail.** (Up from 921 on `main`; +12 are the new Phase 4 regressions.)
 
 **Observed effect.** Once shipped:
 

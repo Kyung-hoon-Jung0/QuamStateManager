@@ -122,7 +122,7 @@ Reproduction with generic root names:
 ```powershell
 $env:PYTHONUTF8 = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
-& D:/miniconda3/envs/cqt/python.exe tools/check_run_instant.py <archive-1> <archive-2> <archive-3>
+& D:/miniconda3/envs/lab_env_4/python.exe tools/check_run_instant.py <archive-1> <archive-2> <archive-3>
 ```
 
 ## Pins and mutation check
@@ -149,7 +149,7 @@ process, and restored byte-for-byte before the next mutation:
 
 Final focused validation: the new file plus every existing test file found
 by `rg -l timefmt tests` (`tests/test_time_display.py`, 26 tests), **94 passed**.
-Python: `D:/miniconda3/envs/cqt/python.exe`, `PYTHONUTF8=1`, cache provider
+Python: `D:/miniconda3/envs/lab_env_4/python.exe`, `PYTHONUTF8=1`, cache provider
 disabled, timeout 600 seconds. Temporary files stay inside this worktree.
 One existing `tests/conftest.py` invalid-escape SyntaxWarning is reported.
 No SM server or full test suite was started.

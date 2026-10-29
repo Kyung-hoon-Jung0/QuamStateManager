@@ -15,7 +15,7 @@ found that SM took an agent's word for who it was:
   human", so plain `curl` with `X-SM-Actor: Kim` armed the agent, approved and
   started a plan. `POST /api/agent/event` was open to anyone and turned a forged
   record into a `by_claude` / `by_codex` journal line. With the agent header,
-  `/journal/claim` recorded "run by human:Kim".
+  `/journal/claim` recorded "run by human:user_2".
 - **B-04.** `note_set` signed every note `claude-code`, Codex's included.
 - **B-01.** A note an agent pinned (`do not touch, fridge warming` on `qA4`) was
   readable by no tool; the next agent said there were no notes.
@@ -31,7 +31,7 @@ found that SM took an agent's word for who it was:
 | A-09 | `web/agent_api.py:1671` `session_arm`, `:1724` `approvals_decide`, `:2207` `plan_start`, `:2175` `plan_mode` | each refuses only `actor.startswith("by_")`, i.e. only a caller that announces itself as an agent. |
 | A-09 | `web/agent_api.py:2309` `plan_cancel`, `web/journal_routes.py:140` `journal_claim`, `:188` `journal_adopt` | no caller check at all; the claim takes its author from the payload's `who`. |
 | A-09 | `web/agent_api.py:779` `event_post`, `:706` `_author_kind` | any POST is absorbed; the record's own `backend` field names the author (`by_claude`), and its `origin`/`chip` fields are trusted as SM's in-process chat marks. `core/story.py:254` also infers a run's author from these events. |
-| A-09 | `web/agent_api.py:523` `journal_append` | with the agent header only `human` is downgraded, so an agent could write `sm` lines ("armed by human:Kim"); without it any kind, `by_claude` included. |
+| A-09 | `web/agent_api.py:523` `journal_append` | with the agent header only `human` is downgraded, so an agent could write `sm` lines ("armed by human:user_2"); without it any kind, `by_claude` included. |
 | A-10 / D-07 | `web/agent_api.py:1075` `limits_route` | no caller check; `core/limits.py:147` journals only a mode change. |
 | D-08 / C-15 | `core/journal.py:71` `set_root` ("nothing is moved"), `web/agent_api.py:558` `journal_root`, `web/setup_api.py:264` `journal_setup` | the root is a pointer swap; the agent door journals nothing, Setup journals only into the NEW folder. |
 | B-04 | `mcp.py:407` (`"author": "claude-code"`), `web/agent_api.py:496` (default `claude-code`) | the author was a constant in the bridge and a default on the server. |
@@ -117,8 +117,8 @@ have quirks where the stricter-looking number is looser (`max_writes_per_plan` 0
 means *no* cap; `human_recent_min` 0 becomes 30 at the gate), `stoploss_*` is
 not enforced (D-14), and no agent tool needs it -- an agent that wants more care
 can take more care. Every change is journaled with who, old and new (the mode
-keeps its own line, `mode ask-writes -> auto (set by human:Kim)`, the rest one
-`limits max_writes_per_plan 200 -> 50; ... (set by human:Kim)` line). A webhook
+keeps its own line, `mode ask-writes -> auto (set by human:user_2)`, the rest one
+`limits max_writes_per_plan 200 -> 50; ... (set by human:user_2)` line). A webhook
 URL often embeds its own secret, so the journal shows only its scheme and host
 (`https://hooks.slack.com/...`). A refused attempt on a guardrail is journaled
 too: `by_claude tried changing the limits (mode -> auto, human_recent_min -> 0,
@@ -137,7 +137,7 @@ never move -- the old folder is a person's folder too). A day the new folder
 already has gets only the entries it lacks, appended, never rewritten (a vault
 file may hold the person's own words), so moving back and forth duplicates
 nothing. The move is journaled in both folders, for every chip carried and the
-open one: `journal folder moved to <new> by human:Kim -- 2 day file(s) of this
+open one: `journal folder moved to <new> by human:user_2 -- 2 day file(s) of this
 chip carried over` in the old, `journal folder moved here from <old> ...` in the
 new. Choosing the same folder again is not a move.
 
@@ -240,7 +240,7 @@ piece restored.
 | note author from payload / bare or pair name kept / notes never read / not filtered / old bare notes unmatched / leaf `state_get` without notes | `TestNotesAreReadBack` |
 | `sm_status` without notes / bridge claiming an author / instructions / docstring | `TestTheBridge` |
 
-**Related files** (cqt env):
+**Related files** (lab_env_4 env):
 - The 33 test files touching the agent API, the bridge, the hook, the journal
   and its page, limits, setup, notes, story, the actor plumbing, route
   hardening, `test_web` and the multi-instance pins: 1341 passed, 21 skipped,
@@ -291,14 +291,14 @@ piece restored.
 - A held write on `qubits.qA1.T1` -> **Write to chip** -> approved; live went
   1.25e-5 -> 2.5e-5 (`06_`, `07_`).
 - Setup **7. Limits**: max writes 200 -> 50 -> **Save limits** -> "Saved". The
-  journal says "limits max_writes_per_plan 200 -> 50 (set by human:Kim)"
+  journal says "limits max_writes_per_plan 200 -> 50 (set by human:user_2)"
   (`09_`).
 - Setup **4. Journal folder** -> `rP1a\vault\journal` -> **Use this folder**:
   three day files were carried, and both folders got their "moved here from" /
   "moved to" line. The Calibration log for 2026-10-01 and for today reads the
   moved history (`11_*`).
 - Calibration log, 2026-09-30: run #1 -> "I ran this" -> Kim -> **Save** ->
-  `human:Kim` (`13_claimed`).
+  `human:user_2` (`13_claimed`).
 - Open the Agent home -> Calibration log -> Back -> reload: intact. The repo's
   `agent_setup_back.cjs` journey on Setup: intact. Console errors: 0 on every
   page.

@@ -9,9 +9,9 @@ Pull & apply. Rig and baseline: docs/211.
 Implementer-measured, real headless Chrome over CDP (`w7_bench.cjs --only
 write,sync,lwi`; `lwi` = sync review panel open in the clean / mine / both
 states, Versions open, per-row version Diff, reload intact). Before =
-`integ/w7` on the same rig. Medians in ms; krs5 n=5, big30x n=3.
+`integ/w7` on the same rig. Medians in ms; rig5 n=5, big30x n=3.
 
-| metric | krs5 before | krs5 after | big30x before | big30x after |
+| metric | rig5 before | rig5 after | big30x before | big30x after |
 |---|---|---|---|---|
 | apply_now.file (click->written) | 2526 | 398 | 22195 | 1684 |
 | apply_now.status | 4601 | 977 | 37246 | 19666 |
@@ -29,11 +29,11 @@ states, Versions open, per-row version Diff, reload intact). Before =
 Every sample `live_ok=true`, `state_after=synced`; reload intact 1 everywhere.
 
 Independent verifier, own rig, old and new interleaved by swapping the
-server code (krs5 new A / old B / new C / old D, n=5; big30x new A / old B /
+server code (rig5 new A / old B / new C / old D, n=5; big30x new A / old B /
 new C), old -> new: big30x apply_now.file 47559 -> 2137/1771, keep_mine.file
 24671 -> 1242/626, pull_apply.file 36860 -> 4084/2491, take_live.status
 19294 -> 3730/2662, live_diff warm 4733 -> 149/30, versions warm 5431 ->
-860/451; krs5 apply_now.file 2375/3017 -> 412/362, live_diff warm 1306/1334
+860/451; rig5 apply_now.file 2375/3017 -> 412/362, live_diff warm 1306/1334
 -> 22/13. Verdict FAIL on one regression (D1, §4); speed claims "broadly
 confirmed (5-80x)"; 0 `live_ok=false` samples, 0 settle timeouts on the new
 passes (7 on the old big30x pass).
@@ -90,7 +90,7 @@ every door x2 reps: identical sha256 of live and working files, ALL_EQUAL
 12/12. Verifier: own 23-step deterministic A/B (`vlw_ab.py`: every door,
 same-field collision + ack, a same-size mtime-restored rewrite, auto-apply,
 Ctrl+Z, a wiring-only outside write, the two-window unseen-edit gate): 22/23
-identical on krs5 (2 runs each) and big30x, the one difference being D1.
+identical on rig5 (2 runs each) and big30x, the one difference being D1.
 Verifier `json_pieces` fuzz, 3000 random docs (NaN/inf/-0.0/2^70, bool vs
 int vs float, U+2028, int keys, indent 4/2/0/tab, type flips): BAD 0.
 Verifier staleness: after dropping every `KeyedMemo`, warm == cold at every
@@ -128,10 +128,10 @@ or template touched.
   `test_livewrite_fastpaths.py::test_a_content_identical_resave_of_live_then_edit_then_apply_writes[touch|reformat]`
   (all four files byte-identical to a twin pressed through the forced pull
   path); gate reverted to content-only -> 2 failed, 3 passed. On the
-  verifier's harness: 23/23 steps identical to integ/w7 (krs5 files and
+  verifier's harness: 23/23 steps identical to integ/w7 (rig5 files and
   responses, big30x file hashes; big30x responses differ only in the
   intended over-cap `leaf_patch` fields, as in the verifier's run). Real
-  Chrome (krs5): re-save -> written after 4154 ms, touch -> 4609 ms
+  Chrome (rig5): re-save -> written after 4154 ms, touch -> 4609 ms
   (inflated, tests ran concurrently).
 - **D2 (P3)** — the snapshot-pair / prev-state-diff memo, keyed on
   `(mtime_ns, size)`, served a stale diff after a same-size mtime-restored
@@ -160,8 +160,8 @@ capture-site flat recall dropped; `bg_gate` kept as-is.
   mine 600 ms (browser 1.2-1.7 s), Pull & apply 1 s (browser 1.8-5.8 s),
   Take live 400 ms (780-881 ms in-process: `sync_from_live` writing 19 MB,
   the snapshot capture diff, `_sync_patch`). Implementer: drift after a live
-  change 120 ms is met on krs5 (62 ms), 7.6 s on big30x in the browser.
-- Unchanged live-diff (target 35 ms): krs5 14 ms; big30x 47-104 ms idle by
+  change 120 ms is met on rig5 (62 ms), 7.6 s on big30x in the browser.
+- Unchanged live-diff (target 35 ms): rig5 14 ms; big30x 47-104 ms idle by
   curl, 182 ms in the browser. The floor is reading + sha256 of the 19.4 MB
   live file (60 ms profiled), by design: the racy-live pin needs the hash.
 - big30x drift warm 6 -> 216 ms in the implementer's table is not explained

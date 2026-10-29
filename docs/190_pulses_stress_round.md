@@ -102,7 +102,7 @@ in §7 below.
   shifted by `pad // 2` samples: SM centred the zero padding, **quam 0.6.0 puts all of
   it after** (`np.concatenate((waveform, zero_padding))`, read in three customer envs).
   The golden was captured on quam 0.5.0a3, which centred. Regenerating it in the lab's
-  KRISS_CZ env changed exactly the four padded cases and nothing else — the
+  lab_env_1 env changed exactly the four padded cases and nothing else — the
   measurement that settled it. Mirrors fixed, golden replaced (70 cases, quam 0.6.0).
 
 ## 5. The rest of the majors, each one line

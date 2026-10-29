@@ -4,7 +4,7 @@
 
 ## The report
 
-Customer (via Kyunghoon, testing the CQT `#1810_20_qubit_flux_short_distortion_122315`
+Customer (via the maintainer, testing the customer B `#1810_20_qubit_flux_short_distortion_122315`
 20Q chip on the docs/132 demo server): opening the chip and going to Instrument
 Wiring shows "not the diagram — just an Auto-allocate button and a list below",
 and "the Auto-allocate button itself is dead". Directive: the diagram must appear
@@ -151,7 +151,7 @@ honest single-tone fallback, unchanged.
 ## Verified
 
 - **Live, real Chrome, real chip**: `/instrument` → "Modify wiring…" →
-  **diagram in 8 s with zero clicks** (env auto-selected `cqt`, allocation
+  **diagram in 8 s with zero clicks** (env auto-selected `lab_env_4`, allocation
   succeeded with the source chip's 79 lines, q2 flux at its pinned `1/4/1`).
 - `tests/generate_autoalloc_selfcheck.cjs` — **80 executed jsdom assertions**
   (A1 auto-run + quiet re-entry · A2 cold chain, first-USABLE picked

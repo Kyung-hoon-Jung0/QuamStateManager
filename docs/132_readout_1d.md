@@ -6,7 +6,7 @@
 Sixth family: **03_resonator_spectroscopy_single** (older spelling
 **02_resonator_spectroscopy**, and one lab's `_wide_pyloop` variant) — the 1-D
 sweep of the readout drive across the readout resonator. 213 runs exist across
-**six labs** (a new one, IQCC_gilboa, joins here) and **two node generations**;
+**six labs** (a new one, cloud_provider_1_gilboa, joins here) and **two node generations**;
 75 runs / 256 targets were annotated with every amplitude figure viewed.
 
 ## 1. What makes this family different

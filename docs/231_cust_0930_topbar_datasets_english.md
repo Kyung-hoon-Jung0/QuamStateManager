@@ -1,12 +1,12 @@
 # docs/231: data folder, top bar, collapsed Apply, English-only UI (customer 2026-09-30)
 
-Four reports on the 21-qubit arbel chip, all verified in real headless Chrome
+Four reports on the 21-qubit cluster_1 chip, all verified in real headless Chrome
 on a copy of that chip.
 
 ## 1. The Dataset Load box showed another project's folder
 
-**Symptom.** After opening the arbel project, the sidebar's Dataset Load box
-still read `D:\work\dataset\SNU_1Q`.
+**Symptom.** After opening the cluster_1 project, the sidebar's Dataset Load box
+still read `D:\work\dataset\customer D_1Q`.
 
 **Cause.** The box is restored from browser `localStorage`, which holds the
 last path typed in that browser. It was never synced to the open project. The
@@ -122,10 +122,10 @@ were updated to the new contract: `test_agent_runs`, `test_autosync_merge`
 ## Found, not fixed: the instance folder inside a conda env
 
 `default_instance_path()` treats *any* `pyproject.toml` next to the package as
-"a repo checkout". In the customer's `kriss_arbel` env, the
+"a repo checkout". In the customer's `customer_a_cluster_1` env, the
 `dash-bootstrap-components` wheel ships a `pyproject.toml` into
 `site-packages`. SM therefore keeps its state in
-`envs\kriss_arbel\var\quam_state_manager.web.app-instance` instead of the
+`envs\customer_a_cluster_1\var\quam_state_manager.web.app-instance` instead of the
 per-user folder: a separate project-env memory, separate workspace roots and
 separate history per env.
 

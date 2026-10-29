@@ -19,7 +19,7 @@ not have to re-derive them.
 
 ### Anharmonicity is stored as a POSITIVE magnitude
 
-Every chip in the corpus stores it positive — the CQT 20Q chip carries
+Every chip in the corpus stores it positive — the customer B 20Q chip carries
 135–229 MHz on all twenty qubits — and the lab's own CZ helper says so:
 
 > `calibration_utils/chevron_cz/cz_branch.py`
@@ -53,7 +53,7 @@ at; the voltage lives in `z.joint_offset` / `z.independent_offset`.
 The original code did `float(flux_point)`, got `None`, and fell into a branch
 that set the parabola's vertex **and** the operating point to `0 V` while
 `joint_offset` — the real bias, read one line earlier — was discarded. Measured
-on the real CQT chip, pair `q1-2`, moving qubit `q2`:
+on the real customer B chip, pair `q1-2`, moving qubit `q2`:
 
 | | before | truth |
 |---|---|---|
@@ -81,7 +81,7 @@ Three states the original silently blurred, each now stated in the figure's
 * **A curvature with no offset to anchor it** — same frequency axis, different
   sentence. Click-to-stage is off in both (there is no voltage to write).
 * **A crossing on the side flux cannot reach** — the parabola only bends one
-  way from the idle point. On the real CQT chip `q2` has *positive* curvature
+  way from the idle point. On the real customer B chip `q2` has *positive* curvature
   (the "lower sweet spot" case node 09 warns about) and all three crossings lie
   below, so none is reachable. That is the honest answer; what was wrong was
   answering it with an empty marker list and a ±10 mV window around the wrong
@@ -90,7 +90,7 @@ Three states the original silently blurred, each now stated in the figure's
 
 ## 3. The two crashes
 
-Both reproduced against the real CQT chip through the real routes:
+Both reproduced against the real customer B chip through the real routes:
 
 1. **`_chip_token` does not exist** — the helper is `_active_chip_token`. The
    call sat outside the `try`, so `POST …/switch-moving` raised `NameError` →

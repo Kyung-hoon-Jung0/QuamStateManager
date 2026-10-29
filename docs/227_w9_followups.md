@@ -68,7 +68,7 @@ fresh — Full View at the top.
 long task 309-739 → < 50-92 ms (2Q targets), 349-728 → < 50-75 ms (metric
 targets); input-to-paint 320-768 → 48-112 ms; landed 319-816 → 47-132 ms;
 exact landing 21/21 both. Six wheel ticks after a jump: long tasks 17-26
-(50-508 ms) → 0-3 (52-67 ms). krs5 unchanged within noise (every panel built
+(50-508 ms) → 0-3 (52-67 ms). rig5 unchanged within noise (every panel built
 in one go). F5 exact place `chip_place.cjs`: 12/12 both. Focus rings: mouse
 ring on the groups 7/9 → 0/9, Tab ring 8/8 kept. Outside-fresh journey 15/15
 vs base 10/15.
@@ -136,7 +136,7 @@ Open to first rows 47,885 → 1,088 ms (final 668); row click → pulse open
 `?per_page=0&pulse=` 63,401 → 1,242 (774); duplicate → row in table 53,030 →
 736; delete → row gone 57,632 → 2,325 (1,328); DOM 8,779 rows / 147,974
 elements → 22 rows / 3,783. The 50-row view is unchanged; a 173-row library
-(krs5) stays below the floor, byte-identical.
+(rig5) stays below the floor, byte-identical.
 
 **Pins.** `tests/test_pulses_virtual.py` (16) and
 `tests/pulses_vt_selfcheck.cjs` (sections A-O, 60+ assertions); 36 mutations
@@ -155,7 +155,7 @@ printing see only the rendered rows. Initial All payload 13.7 MB.
 **What.** `core/pulse_structure.py`: a write is a structural pulse edit when
 it changes WHICH pulse objects exist — "a pulse" is exactly what the Pulses
 page lists (`places_of == pulse_index.list_pulses`, exact on 6 real chips:
-big30x 8,779, KRS_5Q 158, big20 1,040, KRS_CZ 665, CR_state 288, AS_10TQ9TC
+big30x 8,779, chip_2 158, big20 1,040, chip_3 665, CR_state 288, AS_10TQ9TC
 479 rows) plus every key of an `operations` dict. Not structural: anything
 inside a pulse, a pair gate slot holding a POINTER (a re-link), deleting or
 emptying a non-pulse object. Structural: create/delete of a pulse or
@@ -206,7 +206,7 @@ never in tests unless a pin asks), idles out after 60 min, is retired on an
 env switch; "Preparing…" while it imports, "Checking…" while it checks; each
 QUAlibrate project remembers its env (`core/project_env.py`, landing picker,
 sidebar badge). Measured (implementer, loaded machine, interleaved): first
-lab check on big30x sent when `/bulk` finished 10.3-18.0 s → 1.1-1.9 s; krs5
+lab check on big30x sent when `/bulk` finished 10.3-18.0 s → 1.1-1.9 s; rig5
 edit at +60 s 12.1 s → 0.48 s; open-to-worker-ready median 17.6-18.4 s under
 load. Pins: `test_lab_prewarm.py`, `test_project_env.py`,
 `lab_check_selfcheck` 42, `landing_env_selfcheck` 17; 44 mutations red. Open:

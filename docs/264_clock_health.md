@@ -213,9 +213,9 @@ space from `echo`.
 
 | Env | Python | `epoch_delta_s` | `utc_offset` | `matches_os` | detail |
 |---|---|---|---|---|---|
-| `D:/miniconda3/envs/cqt/python.exe` | 3.12.13 | -0.023 s | `+09:00` | `true` | `Interpreter tzname='Korea Standard Time'` |
-| `D:/miniconda3/envs/kriss_arbel/python.exe` | 3.12.14 | -0.016 s | `+09:00` | `true` | `Interpreter tzname='Korea Standard Time'` |
-| `cqt` launched from an SM process that has `TZ=UTC0` | 3.12.13 | -0.054 s | `+00:00` | `false` | `Interpreter tzname='UTC'` |
+| `D:/miniconda3/envs/lab_env_4/python.exe` | 3.12.13 | -0.023 s | `+09:00` | `true` | `Interpreter tzname='Korea Standard Time'` |
+| `D:/miniconda3/envs/customer_a_cluster_1/python.exe` | 3.12.14 | -0.016 s | `+09:00` | `true` | `Interpreter tzname='Korea Standard Time'` |
+| `lab_env_4` launched from an SM process that has `TZ=UTC0` | 3.12.13 | -0.054 s | `+00:00` | `false` | `Interpreter tzname='UTC'` |
 
 Each check took 0.2-0.5 s. The negative deltas are the child's exit
 latency: the child samples `time.time()` just before printing, and SM samples
@@ -227,7 +227,7 @@ one. The cached call took 0.1 ms.
 ## 6. Pins
 
 `tests/test_clock_health.py` has 47 test functions and 173 cases, and takes
-5 s on a quiet machine and about 20 s on a loaded one, on `cqt`. Most of
+5 s on a quiet machine and about 20 s on a loaded one, on `lab_env_4`. Most of
 that is real subprocesses. The English-only rule is
 enforced by the existing `tests/test_cust_0930_ui.py`.
 

@@ -139,7 +139,7 @@ Evidence: `rD\ev\p0_evidence\docs245\`.
 ## Pins
 
 `tests/test_run_node_isolation.py`, 23 tests, using the real qualibrate and
-qualibrate_config resolvers of the cqt env. Every one of these 15 mutations was
+qualibrate_config resolvers of the lab_env_4 env. Every one of these 15 mutations was
 caught:
 - `--isolate` never passed;
 - no strict pin;

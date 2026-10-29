@@ -9,7 +9,7 @@
 > 고정되어있어서 사용자가 "어? ctrl z가 안되네?"라고 생각하게 만듬.
 > 그리고 exponential filter의 경우는 마우스 hover했을 때, 시계모양이 나오지 않음
 
-## 1. Reproduced (curl against a copy of the CQT 20Q chip, then real Chrome)
+## 1. Reproduced (curl against a copy of the customer B 20Q chip, then real Chrome)
 
 `qubits.q2.z.opx_output.exponential_filter` is a port field behind the qubit's
 io pointer. Edit it through `/field/edit-batch` (what the ✎ JSON editor posts)

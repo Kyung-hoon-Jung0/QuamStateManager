@@ -292,7 +292,7 @@ No Criticals this pass — the previous phases got those. The Highs are all "thi
 * `TestPhase5LocalStorageHelpers` — static check that the helpers are defined in `app.js`.
 * `TestPhase5DatasetPollLifecycle` — static check that `app.js` uses `document.visibilityState`, the `_schedule`/`_fetchWithTimeout`/`_showPollFailureBanner` patterns; and that the old `setInterval(pollForNewRuns, …)` is GONE.
 
-**Test run on conda env `qm_mng`:** **940 pass, 96 skip, 0 fail.** (Up from 933 on `main`; +7 are the new Phase 5 regressions.)
+**Test run on conda env `lab_env_6`:** **940 pass, 96 skip, 0 fail.** (Up from 933 on `main`; +7 are the new Phase 5 regressions.)
 
 **Manual smoke verification (deferred to PR review):** the JS-runtime changes can't be fully exercised by pytest. A quick manual:
 

@@ -64,7 +64,7 @@ absolute-mode power re-allocation and populate-protect marking.
   - No JS errors.
 - **Tests.** `pytest tests/test_generate*.py tests/test_regen_populate.py
   tests/test_gen_ux_selfchecks.py tests/test_build_missing_frequency.py
-  tests/test_orphan_selfchecks.py` gives 164 passed (`cqt`).
+  tests/test_orphan_selfchecks.py` gives 164 passed (`lab_env_4`).
 
 ## Pins
 

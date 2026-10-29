@@ -5,7 +5,7 @@ the experiment run correctly, but from there you cannot get back to Trends —
 the x does nothing, and the only way out is clicking Trends in the sidebar
 again (a full reload of the section).
 
-## Reproduced (real headless Chrome, copy of `260907_KRS_5Q`)
+## Reproduced (real headless Chrome, copy of `chip_2`)
 
 Chip Status › Trends, a real mouse click on a q1 `f_01` point (run #147):
 the run's detail replaced the whole Chip Status page in `#table-pane`, the URL

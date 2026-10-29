@@ -193,7 +193,7 @@ Grouped; each is one confirmed finding with its own repro probe.
 - `pump()` dumps the entire queue if `#pending-tray` is missing at pump time (currently unreachable).
 - docs/122's Phase-1 table still cites the discredited "scroll 119→119" as after-fix evidence.
 - docs/123 §8's Node-24 stub warning is half-right: only `navigator` fails to install; the `localStorage` stubs ARE effective in the eval'd scope.
-- **Environment traps for future probes**: port **5357 is Windows WSDAPI** (PID 4 — never assign it); the `cqt` env's site-packages holds a **stale non-editable quam_state_manager 0.9.7** that shadows the worktree for `python -c` imports (run from repo root or set PYTHONPATH); headless Chrome uses overlay scrollbars (no hit target — scrollbar probes need headful).
+- **Environment traps for future probes**: port **5357 is Windows WSDAPI** (PID 4 — never assign it); the `lab_env_4` env's site-packages holds a **stale non-editable quam_state_manager 0.9.7** that shadows the worktree for `python -c` imports (run from repo root or set PYTHONPATH); headless Chrome uses overlay scrollbars (no hit target — scrollbar probes need headful).
 
 ## 6. What survived attack — verified negatives
 

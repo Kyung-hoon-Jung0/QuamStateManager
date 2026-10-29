@@ -2,7 +2,7 @@
 
 **2026-09-01, user-reported.** A customer's SM took ~30 s to render
 `/datasets` on the `Wallraff_9Q_20dB` workspace (5,574 runs on the
-`\nasdaq.snu.ac.kr\QDL` NAS share, mapped as `Z:`). Both causes turned out to
+`\nasdaq.customer D.ac.kr\QDL` NAS share, mapped as `Z:`). Both causes turned out to
 be directory walks that did work nobody wanted, and neither was in the code
 anyone would have suspected — the store, the parse and the 4.6 MB render
 together accounted for 2% of the time.

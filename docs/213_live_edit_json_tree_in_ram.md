@@ -39,14 +39,14 @@ big30x, client:
 | horizontal jump to the far right | 372 | 3250 / 2928 | 408 / 2812 (§4) |
 | Json Tree open, DCL | 1534 | 896 / 1193 | 1104 / 411 |
 
-krs5 (real 5-qubit chip copy), implementer n=5 through `fbdce27`, verifier
+rig5 (real 5-qubit chip copy), implementer n=5 through `fbdce27`, verifier
 base / branch in brackets: `/bulk` warm 281 -> 36 (166 / 19), after an edit
 989 -> 55 (518 / 44), `/topology` after an edit 634 -> 51 (380 / 35),
 `/diagnostics/summary` after an edit 649 -> 30 (377 / 21), subnav 117 -> 10
 (62 / 10), all-values 304 551 -> 4 (207 / 3). Client: implementer Enter (le)
 qubit 115 -> 75, pair 147 -> 138; verifier flat between codes (qubit 93 /
 83, pair 93 / 96, column search first key 288 / 318). Single-run undo and
-live-diff slowdowns on krs5 did not survive interleaved A/B in either report.
+live-diff slowdowns on rig5 did not survive interleaved A/B in either report.
 
 ## 2. Cause (implementer's profiling on big30x, the "30Q rig")
 
@@ -116,7 +116,7 @@ live-diff slowdowns on krs5 did not survive interleaved A/B in either report.
   scrollWidth` (648,843 px): branch long tasks [3153], [3552], [3250] ms —
   ONE 3.2-3.6 s block, then 0.1-1.4 s tasks; base [339], [300], [206] ms
   plus a 0.6-0.8 s follow-up.
-- Reach: only above the 20,000-shown-cell gate (synthetic big30x); krs5 and
+- Reach: only above the 20,000-shown-cell gate (synthetic big30x); rig5 and
   every real chip measured are gated off. The verifier judged it acceptable
   as a recorded known gap, not a blocker.
 - Side effect (verifier): a collapsed column is `display:none`, so
@@ -134,7 +134,7 @@ live-diff slowdowns on krs5 did not survive interleaved A/B in either report.
   identical; `/topology` differed only in `historyCount` (200 vs 205, the
   instance's snapshot count).
 - Real-Chrome journey, patched DOM vs a cold reload (2,640 cells per
-  checkpoint on krs5, 20,324-20,774 on big30x): the same differences on
+  checkpoint on rig5, 20,324-20,774 on big30x): the same differences on
   branch and base (the transient "old -> new" hint). 0 page errors.
 - Every claimed server number reproduced within or better than its range;
   undo repaint 1.26-1.37 s (claim 2.6-4.5 s). Write paths A/B: no consistent
@@ -161,7 +161,7 @@ on `store_revs.seq_token`. See docs/224.
 - Verifier's own mutations, all red: FSP read dropped from `amp_annotation`;
   pointer strings treated as plain in `store_revs`; the re-collapse's
   dirty-column stop removed; `tailRecollapse` disabled.
-- Implementer full cqt suite: 9904 passed, 1 failed, 251 skipped — the
+- Implementer full lab_env_4 suite: 9904 passed, 1 failed, 251 skipped — the
   failure (`test_config_manual::test_per_key_help_affordances_exist`, grid
   heads moved into macros by `7c78831`) fixed in `021fff5`, 2/2 red.
   Verifier, 71 neighbouring files: 1384 passed, 2 failed (pre-existing
@@ -175,11 +175,11 @@ on `store_revs.seq_token`. See docs/224.
   borderline).
 - `/bulk` after an edit on big30x 0.7-1.3 s (implementer): edited rows
   re-render whole (a 2,389-column pair row is about 130 ms of Jinja).
-- Not met: subnav <= 5 ms (10 krs5, 10-25 big30x); pair grid DCL <= 900 ms
+- Not met: subnav <= 5 ms (10 rig5, 10-25 big30x); pair grid DCL <= 900 ms
   stretch (big30x 17-20 s, was 36 s). Column search first key on big30x
   0.9-2 s; all-values 200 16-34 s (only the 304 was a target).
 - First POST after `/load` contends with the post-load `_decide` thread and
-  config preview: wall 81 ms krs5, 289-562 ms big30x (implementer).
+  config preview: wall 81 ms rig5, 289-562 ms big30x (implementer).
 - Json Tree live-diff toggle on big30x (w7/livewrite's scope): implementer
   "about 13 s, unchanged"; the verifier's bench read 10921 (base) / 4992
   (branch).

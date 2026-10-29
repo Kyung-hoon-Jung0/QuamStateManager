@@ -283,7 +283,7 @@ and undo-deletes-the-creation.
 
 ## Verification
 
-Run the dev server in the `qm_mng` conda env on a free port (kill stale
+Run the dev server in the `lab_env_6` conda env on a free port (kill stale
 Flask processes first per the standing project conventions), open a pair
 detail page, click **+ Add gate**, pick a name and type, watch the JSON
 preview, submit, confirm the new section appears with the values you

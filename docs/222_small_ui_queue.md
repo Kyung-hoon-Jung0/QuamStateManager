@@ -6,15 +6,15 @@ Queue items #2, #5, #7, #8.
 
 ## 1. What was measured
 
-Independent verifiers, real headless Chrome, branch vs base (krs5 unless
+Independent verifiers, real headless Chrome, branch vs base (rig5 unless
 noted; loader sizes are verifier 2's bench group `smallui`, median of 5):
 
 | | base | branch |
 |---|---|---|
-| #7 loader gap below the top bar (krs5 and big30x) | 347 px | 4 px |
-| #7 loader height (krs5 and big30x) | 147 px | 33 px |
-| #7 loader width (krs5) | 503 px | 441 px |
-| #5 panel titles / Overview tiles carrying an arrow (krs5) | 7 / 4 | 0 / 0 |
+| #7 loader gap below the top bar (rig5 and big30x) | 347 px | 4 px |
+| #7 loader height (rig5 and big30x) | 147 px | 33 px |
+| #7 loader width (rig5) | 503 px | 441 px |
+| #5 panel titles / Overview tiles carrying an arrow (rig5) | 7 / 4 | 0 / 0 |
 | #5 `.metric-dir` arrows without hover text | 15 | 0 |
 | private window, SecurityErrors from `_applyPersistedHeight` walking /datasets, /bulk, /explorer, /topology (verifier 2) | 28 | 0 |
 | private window, exceptions on /datasets + two htmx swaps (verifier 1; the one left also happens on base) | 12 | 1 |
@@ -28,11 +28,11 @@ noted; loader sizes are verifier 2's bench group `smallui`, median of 5):
   toggles (`/topology/trends` is excluded in `isSlow` by design).
 - #5 on big30x: 115 panels + 15 tiles, 0 arrows (verifier 2).
 - #8: absent, junk, empty or `'1'` key -> compact, 39 rows all 26 px; `'0'`
-  -> full rows, max 52 px (implementer and verifier 2, krs5 and big30x, 1366
+  -> full rows, max 52 px (implementer and verifier 2, rig5 and big30x, 1366
   and 1600). Verifier 1 measured the compact rows at 31 px with every date
   group opened.
 - Latency: the bench's small ms differences flip direction between chips
-  (e.g. `nav.jsontree_click_ms` 345 vs 329 on krs5, 2419 vs 2848 on big30x,
+  (e.g. `nav.jsontree_click_ms` 345 vs 329 on rig5, 2419 vs 2848 on big30x,
   branch vs base); the verifier attributes no regression to the branch, which
   touches no hot path.
 - The branch journey `smallui.cjs` gives 25/25 on the branch and 12/25 against
@@ -72,7 +72,7 @@ noted; loader sizes are verifier 2's bench group `smallui`, median of 5):
 - Round 1: PASS, no defects. Staleness: an outside write of q1.T1 showed the
   same T1 panel after an htmx navigation as after a cold reload, plus the drift
   banner.
-- Round 2 (krs5 and big30x, 1366 and 1600): PASS, two P3s and two nits.
+- Round 2 (rig5 and big30x, 1366 and 1600): PASS, two P3s and two nits.
   - **P3a — the json-panel side fix had no pin.** Removing the try/catch kept
     every pin green. Fixed on `integ/w7` by `13458ea`:
     `tests/json_panel_height_selfcheck.cjs` drives the REAL `app.js` under
@@ -82,7 +82,7 @@ noted; loader sizes are verifier 2's bench group `smallui`, median of 5):
     `tests/test_json_panel_height.py`. Try/catch removed -> red.
   - **P3b — reverse flash for Full-names users.** With the key `'0'`, the
     server-rendered compact class was removed only at DOMContentLoaded: on
-    krs5 at 1366x900, first paint 76 ms, DCL 107 ms, so compact rows were
+    rig5 at 1366x900, first paint 76 ms, DCL 107 ms, so compact rows were
     painted about 30 ms before reflowing to full (on big30x first paint 84 ms,
     DCL 80 ms, no flash measured). Fixed on `integ/w7` by `8656f2b`: a one-line
     inline script, first in the body, drops the class when localStorage holds
@@ -122,7 +122,7 @@ noted; loader sizes are verifier 2's bench group `smallui`, median of 5):
 - `tests/json_panel_height_selfcheck.cjs` + `tests/test_json_panel_height.py`
   (`13458ea`, above).
 - `tests/browser/journeys/smallui.cjs` — 25 real-Chrome checks.
-- cqt: `test_exp_list_compact`, `test_pulses_routes`, `test_web`,
+- lab_env_4: `test_exp_list_compact`, `test_pulses_routes`, `test_web`,
   `test_sidebar_tools`: 719 passed, 19 skipped (implementer and verifier 2).
   `npm run selfcheck`: 207 passed (implementer, verifier 1); 206/207 for
   verifier 2, the failure being the pre-existing `chip_status_resume`

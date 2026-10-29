@@ -37,7 +37,7 @@
 
 ```
 ┌──────────────────────────────────────────────┬─────────────────────────────┐
-│ PJ_10082026 · 20 qubits         [Agent pill]  │ 지금                         │
+│ chip_1 · 20 qubits         [Agent pill]  │ 지금                         │
 │ 예약: 김OO · 14:02 → ~16:40 (auto)            │ ▶ 05_power_rabi · q4 · 3m    │
 │ ┌ 대화 ──────────────────────────────────┐    │   보통 4m · by_claude        │
 │ │ (카드: 답변 · plan · run · write · 승인) │    │ 오늘 31 runs · ✗ 2 · 쓰기 12  │
@@ -78,7 +78,7 @@
    - 대상 × family 표. q3 res spec “건너뜀(사용자가 #1304로 완료)”.
    - family마다 한 줄 설명 **과 “바뀔 수 있는 값”**: `q4 · Qubit frequency (f_01) · 지금 4.8098 GHz · 마지막 변경 선배 김OO 8/29`. 이 줄이 이 카드의 핵심이다.
    - **파라미터 표**(노드별, 지난 run의 node.json으로 채움, 편집 가능).
-   - `env: cqt · simulate: OFF · timeout 30m/노드 · 예상 종료 ~16:40`.
+   - `env: lab_env_4 · simulate: OFF · timeout 30m/노드 · 예상 종료 ~16:40`.
    - **모드 선택**: 이 칩의 기본은 `ask-writes`(새 칩의 기본; 누군가 `auto`로 바꾸기 전까지). 이 plan만 바꿀 수 있다.
    - 버튼 **[시작 — 값 6개가 바뀔 수 있음]** **[취소]**.
    **[기대]** 무엇이 바뀔지, 누가 만든 값인지 알고 누르는 것.
@@ -96,7 +96,7 @@
 
 ### 2.2 중급자 — Codex 사용자. 낮에는 QUAlibrate GUI, 밤에는 에이전트
 
-1. **[한다]** 처음 한 번, 도구 줄 Agent → 설정. 이 PC에 이미 된 것(선배가 등록한 MCP·hook·로그인)은 ✓로 접혀 있고, 남은 것만 보인다: “실행 환경: cqt ✓ (QUAlibrate 프로젝트 PJ에서 가져옴)”, “Journal: `D:/data/PJ/journal/` (프로젝트 데이터 폴더 옆, 이 PC 계정을 쓰는 모두가 공유)”, “내 vault로 미러(선택)”.
+1. **[한다]** 처음 한 번, 도구 줄 Agent → 설정. 이 PC에 이미 된 것(선배가 등록한 MCP·hook·로그인)은 ✓로 접혀 있고, 남은 것만 보인다: “실행 환경: lab_env_4 ✓ (QUAlibrate 프로젝트 chip_1에서 가져옴)”, “Journal: `D:/data/chip_1/journal/` (프로젝트 데이터 폴더 옆, 이 PC 계정을 쓰는 모두가 공유)”, “내 vault로 미러(선택)”.
    **[왜]** 설정은 “아직 안 된 것만”. 기본 journal 위치는 instance가 아니라 **프로젝트 데이터 폴더 옆**(재설치에 살아남고 프로젝트를 따라간다). vault는 칩별 미러.
 2. **[한다]** 낮: QUAlibrate GUI로 q1–q10 rabi. 중간에 “지금까지 rabi 결과 요약, suspect만”.
    **[본다]** 표 카드(SM이 `runs_summary`로 먼저 만들고 모델 문장은 뒤에): qubit · #run · outcome · gate(anchor: 그 run 폴더의 state) · 쓴 값(old → new) · 이 값이 지금 칩 값인지. “q7은 김OO이 12:31에 Live State Edit로 0.31로 바꿈(human)”.
@@ -118,7 +118,7 @@ Codex 특이점(정직하게): `codex exec`는 **턴 하나**다. plan이 도는
 
 ### 2.3 전문가 — 터미널 Claude Code, 밤새, Obsidian, 냉장고 둘
 
-1. **[한다]** 설정: 남은 것만. “두 칩(PJ, CQT)을 한 PC에서” → SM이 **칩별 mcp-config**(`SM_URL` + `SM_CHIP`)를 만들어 준다. 터미널용 전역 `claude mcp add`는 체크박스(“SM이 꺼져 있으면 에러가 납니다”). 캘리브레이션 저장소의 `.claude/settings.local.json`에 **allow 규칙**(`mcp__quam-state-manager__*`, `Bash(python *:*)`)을 미리보기·백업 후 쓴다.
+1. **[한다]** 설정: 남은 것만. “두 칩(chip_1, customer B)을 한 PC에서” → SM이 **칩별 mcp-config**(`SM_URL` + `SM_CHIP`)를 만들어 준다. 터미널용 전역 `claude mcp add`는 체크박스(“SM이 꺼져 있으면 에러가 납니다”). 캘리브레이션 저장소의 `.claude/settings.local.json`에 **allow 규칙**(`mcp__quam-state-manager__*`, `Bash(python *:*)`)을 미리보기·백업 후 쓴다.
    **[왜]** 이 사람의 실제 막힘은 도구가 아니라 **허가 프롬프트**였다. 그리고 두 냉장고에서 브리지는 `SM_CHIP`이 다르면 **거부**한다.
 2. **[한다]** 랩 컨텍스트 단계. SM이 state/wiring을 읽고 묻는다: flux-tunable? tunable coupler? Purcell? SQUID 대칭/비대칭? (모름은 모름).
    **[본다]** 문서 초안 = **소자 사실 + 규칙**만(“최근 상태 숫자”는 넣지 않는다 — 공유 저장소에 시간 지난 숫자를 박는 것은 관리자 둘과 중급자가 반대). 규칙: 시작 시 `chip_summary()` 먼저, 노드 전 `journal_append(reason)`, run 후 `check_fit`, 노드가 state를 썼으면 `take_live`, state.json 직접 편집 금지. 쓰기는 **diff 미리보기**, 칩 키가 붙은 fenced 구간(`<!-- sm:lab-context chip=… -->`)에 append, git 추적 파일 경고, 기본은 미추적 `CLAUDE.local.md`/`AGENTS.local.md`.
@@ -308,7 +308,7 @@ pill 텍스트에 현재 모드. 예약(소유자·종료 예정)은 pill 옆 �
 
 **들어간 것.** `core/agent_backend.py`(Claude `-p --input-format stream-json --output-format stream-json`, Codex `exec --json`; 한 가지 정규화 이벤트 모양 Init/PreToolUse/PostToolUse(Failure)/Text/Result/Stop/Error; usage·limited 감지; `AgentProcess` = 프로세스 하나 + 리더 스레드) · `core/agent_chat.py`(칩당 모는 세션 하나: Claude는 프로세스 하나가 대화 전체, Codex는 턴마다 프로세스 + `resume <thread>`, 턴 중 메시지는 큐; 읽기 전용 질문은 별도 단발 프로세스; Flask를 모름) · `web/chat_api.py`(`/api/agent/chat/backends|status|start|send|end|events|ask|ask/<id>`; 모든 이벤트는 hook이 쓰는 같은 `agent_events/<날>.jsonl`에 **디스크 먼저**, 그다음 링·journal 줄·wake 한 번) · `mcp.py` READ_ONLY 모드(`SM_MCP_MODE=readonly`: 쓰기 도구 7개가 목록에서 사라짐) · `agent_api` 변경(세션 Stop 문이 `now`면 프로세스 트리 kill, chat 이벤트는 자기 칩을 앎, `limited_until` 문자열 관용) · `tests/fake_agent_cli.py`(두 방언을 말하는 가짜 CLI: FAKE_FAIL/LIMIT/CRASH/TOOL/ECHO_STDIN/LINGER) · `test_agent_backend`(16) · `test_chat_api`(26).
 
-**실 CLI가 찾아낸 것(전부 PJ 사본 위, 실제 칩은 읽기만).**
+**실 CLI가 찾아낸 것(전부 chip_1 사본 위, 실제 칩은 읽기만).**
 
 1. Windows에서 npm `.cmd` 셔임(codex) 경유, 또는 `shell=True`면 argv 원소 안의 **개행에서 명령줄 전체가 잘린다**. 측정: `["a", "line1\nline2", 'q"uote', "x"]` → 자식은 `["a", "line1"]`. Claude의 `--append-system-prompt`도 같은 길이었다. → Codex 프롬프트는 stdin(`codex exec`는 인자가 없으면 stdin을 읽는다 — 도움말 그대로), exe는 `shutil.which`로 해석해 shell 없이 실행(`.cmd`도 CreateProcess가 돈다 — 측정), 셔임이면 남은 argv의 개행을 공백으로(`resolve_command`).
 2. `-c mcp_servers.sm.env={PYTHONPATH="D:\work\…"}`: TOML basic string에서 `\w`는 **잘못된 이스케이프** → Codex는 값 전체를 raw string으로 읽고 `Error loading config.toml: invalid type: string`으로 자기 설정을 거부했다(spike는 슬래시 경로였다). → `toml_str`: 리터럴 문자열 `'…'`, 따옴표가 든 값만 basic string 이스케이프. `tomllib` 왕복 핀.
@@ -318,7 +318,7 @@ pill 텍스트에 현재 모드. 예약(소유자·종료 예정)은 pill 옆 �
 6. haiku는 MCP 도구가 바로 있어도 먼저 ToolSearch/Bash로 우회를 시도한다(3회 중 3회; `python -m quam_state_manager.mcp sm_status`, `claude -p --tool …`). 규칙 한 줄 추가("mcp__sm__*는 이미 있다 — Bash·python -m·다른 claude/codex로 부르지 마라"). 완전히 사라지진 않을 것이다 — S6 카드가 Bash 우회를 눈에 띄게 보여준다.
 7. `_limited`가 돌려주는 시각 문자열("2:50pm")이 pill의 `float()`에 들어가면 500이었다 → `reset_timestamp`(오늘, 지났으면 내일) + `_limit_until`(못 읽으면 문자열 그대로 보임).
 
-**시간(실 CLI, PJ 사본, Claude haiku / Codex 기본).** Claude 1턴 16.2 s(ToolSearch → sm_status → journal_append → 한 줄 답), 2턴 2.1 s(컨텍스트 유지), 읽기 전용 질문 12–20 s(state_edit 없음을 스스로 말함). Codex 1턴 22.2 s, 2턴 `resume`으로 컨텍스트 유지, 질문 21–24 s(`--approve-for-me` + `SM_MCP_MODE=readonly`; "read tools에 제한돼 바꿀 수 없다"). end 뒤 프로세스 소멸, Stop now 뒤 Stop 이벤트 `stopped=True`. **4차(모든 수정 뒤, 실패 0):** Claude 1턴 7.9 s(Bash 우회 없이 ToolSearch → sm_status → journal_append), 2턴 1.8 s; Codex 1턴 22.2 s, 2턴 6.1 s(같은 thread로 resume, 큐 `0`); 질문 Claude 11.2 s / Codex 19.3 s. 앞의 세 실행(1–3차)이 위 결함 1–6을 하나씩 드러냈다 — 실 CLI 없이는 어느 것도 픽스처에서 나오지 않았다.
+**시간(실 CLI, chip_1 사본, Claude haiku / Codex 기본).** Claude 1턴 16.2 s(ToolSearch → sm_status → journal_append → 한 줄 답), 2턴 2.1 s(컨텍스트 유지), 읽기 전용 질문 12–20 s(state_edit 없음을 스스로 말함). Codex 1턴 22.2 s, 2턴 `resume`으로 컨텍스트 유지, 질문 21–24 s(`--approve-for-me` + `SM_MCP_MODE=readonly`; "read tools에 제한돼 바꿀 수 없다"). end 뒤 프로세스 소멸, Stop now 뒤 Stop 이벤트 `stopped=True`. **4차(모든 수정 뒤, 실패 0):** Claude 1턴 7.9 s(Bash 우회 없이 ToolSearch → sm_status → journal_append), 2턴 1.8 s; Codex 1턴 22.2 s, 2턴 6.1 s(같은 thread로 resume, 큐 `0`); 질문 Claude 11.2 s / Codex 19.3 s. 앞의 세 실행(1–3차)이 위 결함 1–6을 하나씩 드러냈다 — 실 CLI 없이는 어느 것도 픽스처에서 나오지 않았다.
 
 **Mutation.** 1라운드 26개 중 23 RED. GREEN 셋은 모두 **픽스처가 그 상태에 못 닿은 것**(문 없이 쓰인 stop 플래그의 배출 거부, 가짜 CLI가 시스템 프롬프트를 볼 수 없었음, `claude_says` 기본 OFF라 "사람의 Stop을 에이전트 말로 적지 않는다" 핀이 공허) → 픽스처를 넣고 7/7, 종료 콜백·home 4/4, 커서 1/1. **38/38.**
 
@@ -338,7 +338,7 @@ pill 텍스트에 현재 모드. 예약(소유자·종료 예정)은 pill 옆 �
 
 **핀.** `tests/test_agent_panel.py` 11(피드·plan·Start의 네 효과·run_node → 카드·Stop → plan·홈/랜딩·브리지 도구) + `tests/agent_panel_selfcheck.cjs` 26(jsdom, 진짜 agent.js: 카드 렌더, Start POST, 편집된 승인 값, `/run` 분기, 세션 유무 분기, observer, 떠다니는 mount) — **mutation 18/18**. 기존 랜딩 핀 둘은 설계 변경(칩이 열려 있으면 `/`는 Agent home)에 맞춰 "칩을 닫으면 랜딩"으로 고침.
 
-**실브라우저(CDP, headless Chrome, PJ 사본, 실 claude).** `/` → Agent home mount → `/run 05_power_rabi q1 num_shots=200` → 초안 카드 7 ms("Start — 2 value(s) may change"; "pi amplitude `qubits.q1.xy.operations.x180.amplitude` now: not set (operation x180 assumed)") → observer 토글이 Start/Arm을 숨기고 되돌림 → **Start 클릭** → 카드 RUNNING 616 ms · armed · `[Start] plan` 카드 → 실 Claude의 **새** 답변 6.2 s("Running plan … step 0 now: checking SM status, journaling the reason, then launching 05_power_rabi on q1") → Stop now → "stopped" + Stop 카드 → `/bulk`에서 Agent 버튼 → 떠다니는 패널 327 ms(compact, 같은 65개 카드). 프로브의 실수 둘(첫 실행에서 옛 답변 카드를 새 것으로 읽음, 하루의 이전 plan 카드를 초안으로 집음)은 프로브를 고쳤고, `now: not set`은 PJ 사본의 `x180`이 포인터 alias라 `store.get_value`가 못 푸는 것 — S9에서 resolved 읽기로.
+**실브라우저(CDP, headless Chrome, chip_1 사본, 실 claude).** `/` → Agent home mount → `/run 05_power_rabi q1 num_shots=200` → 초안 카드 7 ms("Start — 2 value(s) may change"; "pi amplitude `qubits.q1.xy.operations.x180.amplitude` now: not set (operation x180 assumed)") → observer 토글이 Start/Arm을 숨기고 되돌림 → **Start 클릭** → 카드 RUNNING 616 ms · armed · `[Start] plan` 카드 → 실 Claude의 **새** 답변 6.2 s("Running plan … step 0 now: checking SM status, journaling the reason, then launching 05_power_rabi on q1") → Stop now → "stopped" + Stop 카드 → `/bulk`에서 Agent 버튼 → 떠다니는 패널 327 ms(compact, 같은 65개 카드). 프로브의 실수 둘(첫 실행에서 옛 답변 카드를 새 것으로 읽음, 하루의 이전 plan 카드를 초안으로 집음)은 프로브를 고쳤고, `now: not set`은 chip_1 사본의 `x180`이 포인터 alias라 `store.get_value`가 못 푸는 것 — S9에서 resolved 읽기로.
 
 **S6에서 넘긴 것.** `--include-partial-messages` 글자 스트리밍(카드는 턴 단위) · 답변 카드의 "표 먼저·숫자마다 #run·썸네일"은 모델의 markdown에 맡김(S8/S9에서 runs_summary 도구가 표를 만들면 연결) · "남의 세션 Stop 확인" 문구(관찰자 토글로 대신, 이름 선택기는 S8) · 용어 규칙의 라벨(Live State Edit 열 라벨)은 dot path 꼬리 + 툴팁으로 근사 · `/qualibrate/open`은 여전히 `/qubits`로 감(S9에서 Agent home으로).
 
@@ -384,15 +384,15 @@ Agent → 설정. 랩이 Claude/Codex를 SM에 잇는 한 곳. **이 PC에서 �
 
 **키보드 앞 이름 선택기.** `web/static/agent.js`가 폼 줄에 `⌨ <input class="ag-actor" list=…>`를 둔다 — 한 키 `quam_actor_name`(SM이 Arm/Stop/모드/"이건 내가"에 기록하는 사람), datalist에 최근 이름, `setActor`가 `quam_actor_recents`도 관리. 비면 라우트는 plain `human`으로. `journal.js`의 claim도 같은 키로 통일(옛 `quam_actor`는 fallback으로만).
 
-**핀.** `test_journal`(저자 kind 유지+렌더, agent_says 기본 ON) · `test_agent_api`(run 줄이 backend를 저자로, agent_says 기본 ON+라벨+끄기) · `test_chat_api`(에이전트 말이 `by_claude` 라벨로) · `test_agent_panel`(모드 변경 줄) · `agent_panel_selfcheck.cjs`(이름 선택기가 한 키를 쓰고 X-SM-Actor로 감) · `journal_page_selfcheck.cjs`(claim 이름 키 통일). **실 Chrome(CDP, PJ 사본):** 이름 선택기가 `quam_actor_name=박OO`+recents를 쓰고, journal이 `by_codex ran 05_power_rabi` / `by_claude Rabi looks clean`(agent_says 기본 ON)을 렌더.
+**핀.** `test_journal`(저자 kind 유지+렌더, agent_says 기본 ON) · `test_agent_api`(run 줄이 backend를 저자로, agent_says 기본 ON+라벨+끄기) · `test_chat_api`(에이전트 말이 `by_claude` 라벨로) · `test_agent_panel`(모드 변경 줄) · `agent_panel_selfcheck.cjs`(이름 선택기가 한 키를 쓰고 X-SM-Actor로 감) · `journal_page_selfcheck.cjs`(claim 이름 키 통일). **실 Chrome(CDP, chip_1 사본):** 이름 선택기가 `quam_actor_name=박OO`+recents를 쓰고, journal이 `by_codex ran 05_power_rabi` / `by_claude Rabi looks clean`(agent_says 기본 ON)을 렌더.
 
 **S8에서 넘긴 것.** 답변 카드의 표/썸네일은 여전히 모델 markdown(S9 runs_summary) · `human:<이름>` journal 줄의 kind는 텍스트에 이름을 담고 kind는 sm/human으로(kind 화이트리스트에 `human:<이름>`을 넣지 않음) · Codex hook 페이로드의 터미널 "지금"은 S9.
 
 ### S9 (일부) — 실노드 서브프로세스 루프를 실제 하드웨어에서 (2026-09-07)
 
-사용자가 놀이터를 줬다: KRISS_CZ env(`D:\miniconda3\envs\KRISS_CZ`), qualibrate config, state `260906_KRS_CZ`(칩 qA1–qD5), 코드 `D:\work\Customer_Codes\KRISS_CZ`, 데이터 `KRISS_CZ_260906`. 네트워크는 **iqcc 클라우드**(host 10.1.1.6, 백엔드 `arbel`, `CloudQuantumMachinesManager`) — 실제(클라우드) 하드웨어. **qA1으로 time of flight를 돌려** 확인했다. 상태는 항상 스크래치 사본에만 썼고, 놀이터 원본과 PJ 칩은 읽기만 했다.
+사용자가 놀이터를 줬다: lab_env_1 env(`D:\miniconda3\envs\lab_env_1`), qualibrate config, state `chip_3`(칩 qA1–qD5), 코드 `D:\work\Customer_Codes\lab_env_1`, 데이터 `chip_3_data`. 네트워크는 **cloud_provider_1 클라우드**(host 10.1.1.6, 백엔드 `cluster_1`, `CloudQuantumMachinesManager`) — 실제(클라우드) 하드웨어. **qA1으로 time of flight를 돌려** 확인했다. 상태는 항상 스크래치 사본에만 썼고, 놀이터 원본과 chip_1 칩은 읽기만 했다.
 
-**qualibrate는 완전히 돈다.** 직접 실행(`node.run(qubits=["qA1"], simulate=False)`): QUA 제출 → arbel 실행 → 100 shot → fit → 플롯 2장 → 데이터셋 저장(run **#4**), `RUN OK`, outcome `{qA1: successful}`. ToF는 **372 그대로** — 사용자가 지적한 대로 노드가 execute 때 `time_of_flight_in_ns = 28`(기본값)로 놓고 측정하고, fit이 `tof_to_add = 344`를 더해 `28 + 344 = 372`가 되는 것. 값이 안 바뀐 게 아니라 **일관된 재측정**이다.
+**qualibrate는 완전히 돈다.** 직접 실행(`node.run(qubits=["qA1"], simulate=False)`): QUA 제출 → cluster_1 실행 → 100 shot → fit → 플롯 2장 → 데이터셋 저장(run **#4**), `RUN OK`, outcome `{qA1: successful}`. ToF는 **372 그대로** — 사용자가 지적한 대로 노드가 execute 때 `time_of_flight_in_ns = 28`(기본값)로 놓고 측정하고, fit이 `tof_to_add = 344`를 더해 `28 + 344 = 372`가 되는 것. 값이 안 바뀐 게 아니라 **일관된 재측정**이다.
 
 **실노드 루프가 잡아낸 SM의 진짜 갭 두 개(S5의 가짜 서브프로세스로는 절대 못 봄):**
 
@@ -400,23 +400,23 @@ Agent → 설정. 랩이 Claude/Codex를 SM에 잇는 한 곳. **이 PC에서 �
 
 2. **헤드리스 서브프로세스가 `plt.show()`에서 영원히 멈춘다.** 노드의 plot 액션은 `plt.show()`를 부르고, 고객 env의 matplotlib 기본 백엔드는 **대화형 `tkagg`**(tkinter 있음) — Scheduler가 띄운 헤드리스 서브프로세스는 열리지 않는 GUI 창을 기다리며 멈춘다(관측: `analyse_data` 뒤 plot_data에서 정지, `_run_item`의 timeout까지). **고침** — `run_experiment.run_target`이 runpy 전에 `MPLBACKEND=Agg`를 setdefault로 강제(운영자 override 우선).
 
-**끝까지 확인.** SM의 **실제** `scheduler._run_item`(cqt) → run_experiment를 **KRISS env**로 spawn → 실노드 실행. 클라우드 실행은 로그로 확인(`execute_qua_program` → arbel → `analyse_data: qA1 SUCCESS, tof_to_add=344`). 두 고침 적용 뒤 replay(`load_data_id=4`, 하드웨어 없이 plot/update/save/_persist 경로) 로 전체 서브프로세스 경로가 **`status: done`(10s, plt.show 정지 없음)** 로 끝나고 스크래치가 `_persist_node_state`로 **재저장됨**(mtime 상승), 원본 372 유지. 즉 S5가 가짜로 둔 "실 서브프로세스 + 실 노드" 절반이 이제 실증됐고, diff/gate/door 절반은 이미 `test_agent_runs`(FakeRun) 핀이 덮는다.
+**끝까지 확인.** SM의 **실제** `scheduler._run_item`(lab_env_4) → run_experiment를 **customer A env**로 spawn → 실노드 실행. 클라우드 실행은 로그로 확인(`execute_qua_program` → cluster_1 → `analyse_data: qA1 SUCCESS, tof_to_add=344`). 두 고침 적용 뒤 replay(`load_data_id=4`, 하드웨어 없이 plot/update/save/_persist 경로) 로 전체 서브프로세스 경로가 **`status: done`(10s, plt.show 정지 없음)** 로 끝나고 스크래치가 `_persist_node_state`로 **재저장됨**(mtime 상승), 원본 372 유지. 즉 S5가 가짜로 둔 "실 서브프로세스 + 실 노드" 절반이 이제 실증됐고, diff/gate/door 절반은 이미 `test_agent_runs`(FakeRun) 핀이 덮는다.
 
-**핀.** `tests/test_node_persist.py`(5) — `_persist_node_state`의 두 스타일(머신-보유 / 되돌림+기록), 노드 없음/save 예외의 무해, `_set_by_ref`의 attr·dict leaf; mutation 3/3. run_experiment는 KRISS env 없이 cqt에서 importlib로 로드해 fake 노드/머신으로 검증(하드웨어 불필요).
+**핀.** `tests/test_node_persist.py`(5) — `_persist_node_state`의 두 스타일(머신-보유 / 되돌림+기록), 노드 없음/save 예외의 무해, `_set_by_ref`의 attr·dict leaf; mutation 3/3. run_experiment는 customer A env 없이 lab_env_4에서 importlib로 로드해 fake 노드/머신으로 검증(하드웨어 불필요).
 
 **S9에서 아직 남은 것.** 페르소나 시나리오 CDP 재생 · 실 CLI ×2(코덱스가 사용량 한도면 코덱스 없이 그 역할을 직접 대신 — 사용자 지시) · 두 인스턴스/고아/heartbeat/hold 핀 재확인 · **1.0.0 승격**(사용자 판단). 실노드 루프의 **핵심(실 하드웨어 한 바퀴)** 은 이제 통과했다.
 
 ### S9 acceptance — the chatbot ran ToF→Ramsey on real hardware and CHECKED every fit (2026-09-07)
 
-The user's binding acceptance: in a REAL BROWSER, the chat bot must itself run the QUAlibrate chain from time-of-flight through Ramsey, and — the whole point of the AI agent — **verify each run's measured data, never blindly trust the fitted value**. Done, on the [[kriss-playground]] arbel cloud, driven end to end through SM.
+The user's binding acceptance: in a REAL BROWSER, the chat bot must itself run the QUAlibrate chain from time-of-flight through Ramsey, and — the whole point of the AI agent — **verify each run's measured data, never blindly trust the fitted value**. Done, on the [[customer A-playground]] cluster_1 cloud, driven end to end through SM.
 
-**Setup.** SM (cqt) served a COPY of the KRISS chip (`kriss_live`), scheduler → the KRISS env python + the KRISS qualibrate config + `global_simulate=False`, and a `DatasetStore` on the KRISS data folder so runs attribute and their figures reach the agent. A real `claude` (2.1.263) session started inside SM (cwd = the calibrations folder), the MCP bridge a thin client of the window.
+**Setup.** SM (lab_env_4) served a COPY of the customer A chip (`customer_a_live`), scheduler → the customer A env python + the customer A qualibrate config + `global_simulate=False`, and a `DatasetStore` on the customer A data folder so runs attribute and their figures reach the agent. A real `claude` (2.1.263) session started inside SM (cwd = the calibrations folder), the MCP bridge a thin client of the window.
 
-**What the agent did (all observed live).** It loaded the tools, checked `sm_status`, noticed the live had diverged and pulled it with `take_live`, then `plan_propose`d ONE 5-step plan and STOPPED — rule 0 held, nothing on hardware until a person pressed Start. On Start it ran, in order on the arbel cloud: `01_time_of_flight_mw_fem` (run 8) → `03_resonator_spectroscopy_single` (9) → `08_qubit_spectroscopy` (10) → `11_power_rabi` (11) → `12_ramsey` (12), **5/5 done, 0 failed**. And on EVERY run it called `check_fit` AND `Read` the run's figure PNG — the headless `claude -p` CLI CAN see the plots. Its per-step verdicts were data-driven, not fit-worship:
+**What the agent did (all observed live).** It loaded the tools, checked `sm_status`, noticed the live had diverged and pulled it with `take_live`, then `plan_propose`d ONE 5-step plan and STOPPED — rule 0 held, nothing on hardware until a person pressed Start. On Start it ran, in order on the cluster_1 cloud: `01_time_of_flight_mw_fem` (run 8) → `03_resonator_spectroscopy_single` (9) → `08_qubit_spectroscopy` (10) → `11_power_rabi` (11) → `12_ramsey` (12), **5/5 done, 0 failed**. And on EVERY run it called `check_fit` AND `Read` the run's figure PNG — the headless `claude -p` CLI CAN see the plots. Its per-step verdicts were data-driven, not fit-worship:
 - res spec: check_fit reported a circle-fit **FAIL**; the agent looked at the figure and OVERRULED it — "a reporting-only residual just over its gate; single deep dip with a coincident phase step." (not blindly trusting a gate)
 - qubit spec: "**R² 0.858 is shot noise, not a wrong center**" — judged from the trace, one symmetric peak in 100 MHz.
 - Ramsey: "high-contrast fringes to 30 µs, arm average matches the applied detuning to 0.03%, envelope consistent with T2*."
 
 It really calibrated qA1 (to SM's copy): resonator.f_01 7.12574→7.12597 GHz, f_01 5.0752→5.0787 GHz, x180 amp 0.3196→0.3225, x90 0.1598→0.1613, T2ramsey 29.1→34.2 µs. **The customer's original state folder was only READ** (mtime unchanged). Rule 0, the one door, take_live, and the honest stops all held.
 
-**A real finding, recorded not rushed (and re-diagnosed after the user pushed on it).** The trigger is `machine.save()`, NOT `connect()`: qualibrate/quam serialise EVERY declared field of the chip's class, and this KRISS state.json was missing four the class declares -- `dc_bias`, `flux_crosstalk_max_v`, `require_flux_crosstalk_dc`, `twpa_ext` -- plus a `flux_crosstalk` component, so a plain `Quam.load(); m.save()` (no connect, no node) ADDS those four top-level keys to state.json and writes a `flux_crosstalk.json` (`{"flux_crosstalk_dc": null}`) beside it (verified; real qubit leaves unchanged). So it is not "any node any chip" -- it happens whenever the class declares fields the loaded state.json does not already contain, on every save (the node's own `node.save()` or SM's `_persist`). SM's working copy tracks only `state.json` + `wiring.json`; the four new top-level fields land in state.json and show in SM's diff, and each apply trips `stale_live` so the run's writes are parked as an approval (the `flux_crosstalk.json` file itself SM ignores -- the earlier note blaming that file was imprecise). The agent handled it each time (`take_live`, then a person clears the duplicate hold), so the chain completed — but it is friction. **The fix is to make the working copy track the WHOLE multi-file quam state folder (extra top-level `*.json`, and named-snapshot subfolders like `KH_202608/`), not just the two files.** That is a change to the core `working_copy`/`make_scratch` and is deferred to its own careful pass with tests; noted here as the one rough edge 1.0.0 ships with. (Also incidental: the whole-machine capture stages `connect()`-set top-level fields — dc_bias, flux_crosstalk_max_v, twpa_ext — as writes; harmless, reviewed and cleared.)
+**A real finding, recorded not rushed (and re-diagnosed after the user pushed on it).** The trigger is `machine.save()`, NOT `connect()`: qualibrate/quam serialise EVERY declared field of the chip's class, and this customer A state.json was missing four the class declares -- `dc_bias`, `flux_crosstalk_max_v`, `require_flux_crosstalk_dc`, `twpa_ext` -- plus a `flux_crosstalk` component, so a plain `Quam.load(); m.save()` (no connect, no node) ADDS those four top-level keys to state.json and writes a `flux_crosstalk.json` (`{"flux_crosstalk_dc": null}`) beside it (verified; real qubit leaves unchanged). So it is not "any node any chip" -- it happens whenever the class declares fields the loaded state.json does not already contain, on every save (the node's own `node.save()` or SM's `_persist`). SM's working copy tracks only `state.json` + `wiring.json`; the four new top-level fields land in state.json and show in SM's diff, and each apply trips `stale_live` so the run's writes are parked as an approval (the `flux_crosstalk.json` file itself SM ignores -- the earlier note blaming that file was imprecise). The agent handled it each time (`take_live`, then a person clears the duplicate hold), so the chain completed — but it is friction. **The fix is to make the working copy track the WHOLE multi-file quam state folder (extra top-level `*.json`, and named-snapshot subfolders like `KH_202608/`), not just the two files.** That is a change to the core `working_copy`/`make_scratch` and is deferred to its own careful pass with tests; noted here as the one rough edge 1.0.0 ships with. (Also incidental: the whole-machine capture stages `connect()`-set top-level fields — dc_bias, flux_crosstalk_max_v, twpa_ext — as writes; harmless, reviewed and cleared.)

@@ -305,9 +305,9 @@ misspelt name typed the name, pressed Save, and lost the sentence they had
 written — with nothing on screen to warn them. Measured on the rig:
 
 ```
-1) claim WITH a note      -> {"author": "human:Kyunghoon", "note": "fridge was still warming"}
-2) correct the NAME only  -> {"author": "human:Jihoon",    "note": null}
-3) `note` omitted entirely-> {"author": "human:Minji",     "note": null}
+1) claim WITH a note      -> {"author": "human:user_1", "note": "fridge was still warming"}
+2) correct the NAME only  -> {"author": "human:user_3",    "note": null}
+3) `note` omitted entirely-> {"author": "human:user_4",     "note": null}
 ```
 
 Case 3 is the plainer defect: the caller said nothing about the note and it was
@@ -333,8 +333,8 @@ order was the only clue which was said last. A later claim now names what it
 overrode:
 
 ```
-- **01:58:26** `human` run #12 was run by human:Kyunghoon: the fridge was still warming …
-- **01:58:26** `human` run #12 was run by human:Jihoon: … (corrects an earlier claim of human:Kyunghoon)
+- **01:58:26** `human` run #12 was run by human:user_1: the fridge was still warming …
+- **01:58:26** `human` run #12 was run by human:user_3: … (corrects an earlier claim of human:user_1)
 ```
 
 A re-claim by the *same* name is someone adding a note, not correcting anyone,
@@ -830,11 +830,11 @@ and reported at the time.
 ### What this round did to a folder it should not have
 
 The rig's `workspace_roots.json` pointed at the customer's real archive
-(`D:\work\Customer_Codes\dataset\KRISS_CZ_260906`). Tags, notes and bookmarks
+(`D:\work\Customer_Codes\dataset\chip_3_data`). Tags, notes and bookmarks
 live in `quashboard_tags.json` **beside the data**, and `journal.set_root` does
 `mkdir(parents=True)` wherever it is pointed — both outside the instance dir
 entirely. So §12–13's tag/note probes wrote five test tags and a test note onto
-run 41 of the customer's archive, and created a `journal/live_kriss/` folder in
+run 41 of the customer's archive, and created a `journal/live_customer A/` folder in
 it.
 
 Restored by hand; the file held only this round's own entries, so nothing of the

@@ -114,7 +114,7 @@ before every walk and re-reads units + cursor when another process wrote it.
 | regression (undo, auto-apply, ctrlz, undo-trail, versions, roundtrip, live-replace, sync, overwrite, dataset apply, unseen edits, multi-instance, revert payload, sidebar tools, float panel, all of test_web) | 850 passed |
 | node selfchecks (ctrlz, undo_trail, undo_pages, sidebar_tools, float_panel, auto_apply) | green |
 
-Real Chrome (headless CDP, real key events, a copy of the CQT 20Q chip):
+Real Chrome (headless CDP, real key events, a copy of the customer B 20Q chip):
 edit `q2.f_01` in the grid → tray 2 (f_01 + the f01↔RF-synced `RF_frequency`)
 → **Apply to live** → live file `[…001, …001]` → **Ctrl+Z** → `[…001, …000]`
 (trail "→ live") → **Ctrl+Z** → `[…000, …000]`, the cell repainted →

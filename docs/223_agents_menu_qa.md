@@ -164,7 +164,7 @@ Back).
   with a Hangul name), `agent_approval`, `agent_back`, `agent_enum`,
   `agent_press`, `agent_plan`, `agent_setup_back`, `agent_setup_ctx`,
   `agent_setup_walk`, `agent_journal_layout`.
-- cqt: 21 touched files, 456 passed, 0 failed (implementer 184.8 s; verifier 2
+- lab_env_4: 21 touched files, 456 passed, 0 failed (implementer 184.8 s; verifier 2
   215.7 s); after `ab9cc70`, 8 files 667 passed, 19 skipped. The full suite was
   not run on the branch; the integ round-2 full suite (at `8656f2b`) found the
   lab-name pin above. The first 11 commits' pins were mutation-checked per

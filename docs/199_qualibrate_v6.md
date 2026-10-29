@@ -19,7 +19,7 @@ field:
 
 | field | raw config.toml | SM | |
 |---|---|---|---|
-| `quam.state_path` | `D:\…\quam_states\260907_KRS_5Q` | same | ✓ resolves |
+| `quam.state_path` | `D:\…\quam_states\chip_2` | same | ✓ resolves |
 | `qualibrate.storage.location` | `D:\…\dataset\KH_202608_CZ` | same | ✓ resolves |
 | `qualibrate.calibration_library.folder` | `D:\…\1Q_calibrations` | same | ✓ resolves |
 

@@ -136,7 +136,7 @@ Each finding follows this shape:
 >
 > **What's wrong:** `discover_envs` returns the env list in O(1) (one `conda env list --json`), but `probe_env` is called per-env by the wizard route to determine which are QM-capable. Each call spawns a subprocess with a 60-second timeout. A user with 10 conda envs and a slow disk can wait minutes on the wizard's first step. There's no parallelism, no caching, no incremental render.
 >
-> **Why it matters:** Doesn't bite on the maintainer's `qm_mng`-only machine but will absolutely bite on a fresh student install with ten ML envs from coursework.
+> **Why it matters:** Doesn't bite on the maintainer's `lab_env_6`-only machine but will absolutely bite on a fresh student install with ten ML envs from coursework.
 >
 > **Fix sketch:** Cap the probe at the `instance/config_generator.json` "selected_env_python" path first (fast path: only probe the previously-selected env, accept it if usable). Otherwise probe in a `concurrent.futures.ThreadPoolExecutor(max_workers=4)`. Persist probe results under `instance/config_generator_probe_cache.json` keyed on `(python_path, mtime_of_python)` so repeated wizard visits don't re-probe. Edge case: a Python upgrade in-place changes the mtime; the cache key handles that.
 

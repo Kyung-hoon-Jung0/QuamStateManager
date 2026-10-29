@@ -2,7 +2,7 @@
 
 **Date**: 2026-08-23 · **Branch**: `fix/wiring-diagram-crop` · **Surfaces**: Instrument Wiring, Generate/Re-generate wizard step 5
 
-Follow-up to docs/134, from the same customer session on the CQT
+Follow-up to docs/134, from the same customer session on the customer B
 `#1810_20_qubit_flux_short_distortion_122315` 20Q chip. Three reports.
 
 ## ① "Why does it take so long?" — and the answer had to be visible
@@ -135,9 +135,9 @@ The wizard showed:
 > q18, q20, q3, q5, q7, q9) — the rebuild needs an env with
 > `quam_config.qdac_components`.
 
-**Nothing was missing.** Probed in the `cqt` env: `quam_config.qdac_components`
+**Nothing was missing.** Probed in the `lab_env_4` env: `quam_config.qdac_components`
 imports (from the customer's own
-`CQT\CS_installations\...\quam_config\qdac_components.py`) and `qdac_2_driver`
+`customer B\CS_installations\...\quam_config\qdac_components.py`) and `qdac_2_driver`
 imports (from `D:\work\Customer_Codes\qdac2-driver`). `POST /generate/capabilities`
 reports `instr.qdac` and `wire.qdac_trigger_line` **available: true**. The
 capability registry has covered both since docs/119, and
@@ -145,7 +145,7 @@ capability registry has covered both since docs/119, and
 non-empty.
 
 What actually happened: the demo server had inherited a stale
-`PYTHONPATH=D:/work/temp/iqcc_2/.../superconducting` from the shell that
+`PYTHONPATH=D:/work/temp/cloud_provider_1_2/.../superconducting` from the shell that
 launched it, and *that* tree's `quam_config` has no `qdac_components`. Import
 resolution took the shadowing copy. The server was relaunched with a clean
 environment and the capability probe answers `true`.
@@ -324,7 +324,7 @@ the preserving path does not depend on the allocator being available.
   bbox and client rect; the fixture now makes them differ (84×63 vs 42×42). Its pre-existing G4–G9 cases use nodes
   with no `getBBox` at all, so they double as the pin that a realm without
   layout still gets the old dot instead of an exception.
-- All 73 selfcheck suites green; full `cqt` pytest sweep at the docs/87
+- All 73 selfcheck suites green; full `lab_env_4` pytest sweep at the docs/87
   environmental baseline.
 
 ## Review round (same-day, 39 agents: 4 lenses → per-finding refutation)

@@ -214,7 +214,7 @@ These are non-negotiable. Every change is checked against this list before merge
 8. **C2 (if taken):** Re-run the entire Tier-B checklist; explicitly confirm `ROW_HEIGHT` constant === computed CSS row height; test with 1, 50, and 2000+ rows.
 9. **Delta poll:** Leave the page idle 60s (or trigger a Rescan) → new/updated rows merge without yanking scroll; interact within 5s then wait → deferred merge flushes only when idle (IDLE_DEFER).
 
-**Regression sweep (all tiers):** `conda run -n qm_mng python -m pytest tests/ -q` — must stay **1871 pass / 96 skip / 0 fail** (no test asserts CSS, but `_compact_row` schema + routes are covered; a key rename would surface).
+**Regression sweep (all tiers):** `conda run -n lab_env_6 python -m pytest tests/ -q` — must stay **1871 pass / 96 skip / 0 fail** (no test asserts CSS, but `_compact_row` schema + routes are covered; a key rename would surface).
 
 ---
 

@@ -1,13 +1,13 @@
 # 194 — Writing to the real chip: Json Tree CRUD, State History, and one late refusal
 
 Date: 2026-09-17. The round after docs/193, under a changed rule: the customer
-chip `260907_KRS_5Q` (`state.json` + `wiring.json`) became **writable** on the
+chip `chip_2` (`state.json` + `wiring.json`) became **writable** on the
 user's instruction — *"마음껏 수정하고/지우고/갱신하고 다 해봐. 반드시 해봐.
 너는 user야. 그것도 '가능한 모든 기능들을' 전부 써보고 싶은 user라고."*
 
 So every surface below was pressed against the real chip with real mouse and
 keyboard over CDP, and every write was read back off disk. A pristine copy sits
-in the scratchpad (`PRISTINE_KRS_5Q/`) and the chip was diffed against it after
+in the scratchpad (`PRISTINE_chip_2/`) and the chip was diffed against it after
 each phase; it ends this round at **0 differences**.
 
 ---
@@ -17,7 +17,7 @@ each phase; it ends this round at **0 differences**.
 | step | what happened | read back from `state.json` |
 |---|---|---|
 | ＋ Add a key under `q1` | typed `stress_note`, tabbed to the type select, tabbed to the value box, typed a value, pressed **Add** | absent until Apply, then **present** with the typed value |
-| ⚙ Expected type | panel reported `expected: str · inferred — str (from value)`, picked `str`, **Assign** | `inst_kriss/type_assignments/quam_states-622b9527.json` gained `qubits.q1.stress_note → str` |
+| ⚙ Expected type | panel reported `expected: str · inferred — str (from value)`, picked `str`, **Assign** | `inst_customer A/type_assignments/quam_states-622b9527.json` gained `qubits.q1.stress_note → str` |
 | ✕ Delete | confirm read `delete stress_note (1 leaves, 0 pointer refs)?` | key gone, `q1` back to 22 keys |
 
 Zero console complaints across the whole lifecycle.
@@ -147,7 +147,7 @@ All the same root cause — **probing before reading the markup**:
 - `tree-crud-key` read as an **id**; they are **classes**, built by `_openAddKey`
   into a `.tree-crud-panel` inserted after the row. There is no `.tree-add-form`.
 - the type assignment was looked for in the repo's `instance/`; the rig's
-  instance is `inst_kriss/`. Reported "(no folder)" for a file that existed.
+  instance is `inst_customer A/`. Reported "(no folder)" for a file that existed.
 - the dialog/toast recorders were installed once and then survived two
   navigations in name only — `window.__toast` read back `null`, which was read
   as "no toast fired" rather than "the hook is gone".

@@ -2,7 +2,7 @@
 
 Date: 2026-09-18. Found by executing the one action the stress round had never
 pressed on the customer chip: a **real Re-generate build** of
-`260907_KRS_5Q`, in the environment that lab actually runs (`KRISS_CZ`), writing
+`chip_2`, in the environment that lab actually runs (`lab_env_1`), writing
 to a scratch folder. The chip's own hash was `0c9a78e48405` before and after
 every build in this round.
 
@@ -135,8 +135,8 @@ The report names the substitution; it does not prevent it. The real fix is the
 docs/176 pattern one level down — the spec carrying a per-pulse class the way
 it already carries the root class — and it is a change to the build spec's
 vocabulary and to `run_build`'s construction path, needing a real build per
-class and env-importability handling (`cqt` cannot import
-`quam_config.two_flux_gate`; `KRISS_CZ` can). Not attempted here.
+class and env-importability handling (`lab_env_4` cannot import
+`quam_config.two_flux_gate`; `lab_env_1` can). Not attempted here.
 
 Note what the fix would NOT be: keeping the OLD class on the merged object.
 docs/136 established that poison — grafting an old `QdacBiasLine` onto a
@@ -253,7 +253,7 @@ control by hand:
 | Exact / Wide / Lab default | the URL carries each; the result re-renders |
 | ★ on row 2 | `ref=1`, the star moves |
 | × on row 1 | 3 → 2 rows, and **the ★ followed its source** (`ref` 1 → 0) — `removeAt`'s promise, verified |
-| History… → KRISS_CZ | the "which state?" popover lists 14 snapshots; two clicks add two `hist:` sources |
+| History… → lab_env_1 | the "which state?" popover lists 14 snapshots; two clicks add two `hist:` sources |
 | bucket ① over two snapshots | `8 changed · 0 within tolerance · 31,064 equal`, e.g. `q1.anharmonicity` 207 → 206 MHz |
 | hostile `bucket=7/-1/abc` | falls back to the context prompt |
 | `preset=zzz`, `ref=99`, `ref=-5` | defaulted / clamped |
@@ -312,7 +312,7 @@ results; `could not be read` on `::,,`; `matches neither device` on `zz:yy`.
 failures the pre-session base shares, and "pre-existing" is where triage
 usually stops. This one is a **confidentiality** pin (docs/138: shipped code
 carries no lab name, because SM ships to other labs), so it was read: six
-comments naming one customer's chip, `KRISS_CZ`, in `pulse_catalog.py` ×2,
+comments naming one customer's chip, `lab_env_1`, in `pulse_catalog.py` ×2,
 `waveform_synth.py`, `routes.py` ×2 and `pulses.js` — written during the
 docs/189–190 Pulses round on that chip.
 
@@ -497,11 +497,11 @@ this disk". Measured, per golden file:
 ```
 AS   2026-08-09  day folder MISSING  (6 keys)
 AS   2026-08-10  day folder MISSING  (2 keys)
-CQT  2026-08-13 … 2026-08-17   every run loads (64/64), 42 keys
+customer B  2026-08-13 … 2026-08-17   every run loads (64/64), 42 keys
 ```
 
 Nothing was lost and nothing in the code regressed. All four lab archives the
-benchmarks name (AS_10TQ9TC, SNU_1Q, IQCC_QOP37, KRISS_CR) had moved from
+benchmarks name (AS_10TQ9TC, customer D_1Q, cloud_provider_1_QOP37, lab_env_2) had moved from
 `D:\work\dataset\` to `D:\work\Customer_Codes\dataset\`, and the old folder no
 longer exists. The same stale path had been quietly **skipping**
 `TestOnTheRealArchives::test_a_textbook_flux_arch_is_read_as_one` ("AS archive
@@ -514,7 +514,7 @@ use it (via the house `sys.path` idiom `cr_fixtures` already uses). Result:
 **83 passed, 0 skipped**; the textbook-arch pin runs and passes. The pre-fix
 state is the mutation — it is what the base suite measured.
 
-That leaves the `cqt` baseline at **5 deterministic failures**, every one
+That leaves the `lab_env_4` baseline at **5 deterministic failures**, every one
 environmental and named: the WSL-kernel probe, the scanner's hard-link dedup
 (`WinError 183`), and the three QDAC live builds (the env's own root class,
 docs/176).
@@ -549,17 +549,17 @@ case-folding (`.lower()`) reds the true case.
 
 **The three QDAC live builds** fail for a reason that is neither code nor OS:
 the build's own warning says `quam_config.qdac_components is not importable in
-this env`. The env they select, `CQT_20Q`, reaches the customer's `quam_config`
+this env`. The env they select, `lab_env_3`, reaches the customer's `quam_config`
 through an editable-install `.pth` pointing at
-`D:\work\Customer_Codes\PJ_10082026\qualibration_graphs\superconducting` — and
+`D:\work\Customer_Codes\chip_1\qualibration_graphs\superconducting` — and
 **that tree no longer exists anywhere on this machine** (searched `D:\` and the
 user profile to depth 5; only SM's own working-state copies still carry the
-name). PJ_10082026 was the user-designated verification baseline (2026-08-24).
+name). chip_1 was the user-designated verification baseline (2026-08-24).
 Nothing was changed about it here: re-pointing the env at another customer's
 tree would silently swap the baseline the user chose. The three failures are
 that fact, and they will pass again the day the tree is back.
 
-**cqt baseline after this entry: 3 deterministic failures, all one missing
+**lab_env_4 baseline after this entry: 3 deterministic failures, all one missing
 folder.** Session start: 19.
 
 ---
@@ -577,7 +577,7 @@ could already measure both **in the build's own env**:
 2. **the class the rebuild wrote is in its MRO** — a subclass goes anywhere its
    base goes, so no parent field's declared type can be violated.
 
-Checked for this customer before writing a line: in `KRISS_CZ`,
+Checked for this customer before writing a line: in `lab_env_1`,
 `ComplexWeightsReadoutPulse` → `quam.components.pulses.SquareReadoutPulse` →
 …, and `GefWeightsReadoutPulse` → `ComplexWeightsReadoutPulse` →
 `SquareReadoutPulse` → … — both subclass the exact class the builder writes.
@@ -598,7 +598,7 @@ build 10.5 s ok · carried 737 · grafted 1257 · schema_dropped 0 (was 50)
 class_kept 10 · class_changed 0
 q1..q5 readout      ComplexWeightsReadoutPulse  weights 300/500/400/1200/1250 → identical
 q1..q5 readout_GEF  GefWeightsReadoutPulse      weights 372/480/324/1808/1912 → identical
-Quam.load() in KRISS_CZ:  LOAD OK ComplexWeightsReadoutPulse 300
+Quam.load() in lab_env_1:  LOAD OK ComplexWeightsReadoutPulse 300
 generate_config():        OK, 17 elements
 customer chip hash:       0c9a78e48405 before and after
 ```
@@ -626,14 +626,14 @@ deliberately complete-but-unimportable entry that says so.
 
 ## 16. The user's decisions on §11 and §14 (2026-09-19)
 
-**§14 — the PJ_10082026 tree was deleted on purpose** ("내가 지웠어, 필요없어").
+**§14 — the chip_1 tree was deleted on purpose** ("내가 지웠어, 필요없어").
 It is no longer a verification baseline. The three QDAC live builds were gated
-on `_find_env_python()`, which only asks whether `CQT_20Q` exists and is
+on `_find_env_python()`, which only asks whether `lab_env_3` exists and is
 QM-usable — still true — so they ran and failed on a package that is gone.
 They are gated now on what they actually exercise,
 `_env_with_customer_qdac()`: the env must import
 `quam_config.qdac_components`, and the skip says why. Checked both ways: closed
-for `CQT_20Q`, open for the `cqt` env, whose `quam_config` carries the module.
+for `lab_env_3`, open for the `lab_env_4` env, whose `quam_config` carries the module.
 
 **§11 — the two notification events nothing sends are removed from the list**
 (`agent_apply_refused`, `agent_stalled`), from `notify.EVENTS` and from
@@ -648,7 +648,7 @@ a notification.
 §3/§4 (the unused port 3/8 and the unexplained poll flake) stand as recorded,
 by the user's decision.
 
-**cqt baseline: 0 deterministic failures** (3 honest skips). Session start: 19.
+**lab_env_4 baseline: 0 deterministic failures** (3 honest skips). Session start: 19.
 
 ---
 
@@ -656,7 +656,7 @@ by the user's decision.
 
 The user asked for the change that had been described to them. The merge never
 grafts under `ports`, so a removed qubit's port cannot come back. That rule also
-dropped a port the source DECLARED and nothing used, and on KRS_5Q the ten
+dropped a port the source DECLARED and nothing used, and on chip_2 the ten
 values §15 left "not carried" were exactly one such port,
 `ports.mw_outputs.con1.3.8`. Nothing in the source pointed at it, so it cannot
 be a removed qubit's port.
@@ -687,7 +687,7 @@ typed in) → Review → Generate, all through the wizard's own buttons:
 737 carried · 1267 grafted · 1 unused port carried · 0 not carried · 10 kept as your class
 carried ports.mw_outputs.con1.3.8 — declared, used by nothing in the source
 port 3/8 in the rebuild: byte-identical to the source
-Quam.load() in KRISS_CZ: MWFEMAnalogOutputPort 7600000000 -11
+Quam.load() in lab_env_1: MWFEMAnalogOutputPort 7600000000 -11
 generate_config(): OK, 17 elements; FEM3 analog outputs [1..8]
 customer chip hash: 0c9a78e48405 before and after
 ```

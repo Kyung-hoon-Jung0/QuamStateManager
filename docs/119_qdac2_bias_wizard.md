@@ -1,12 +1,12 @@
 # 119 — QDAC-II bias in the Generate Config wizard
 
-*2026-08-14. Session slug `add-qdac2-config-wizard`, conda env `CQT_20Q`.
+*2026-08-14. Session slug `add-qdac2-config-wizard`, conda env `lab_env_3`.
 Some labs flux-bias specific qubits from an external QDAC-II DC voltage
 source instead of an OPX LF-FEM port. There is no upstream
 qualang_tools/quam_builder support for this — it exists only as the
 customer's own `quam_config.qdac_components` module
 (`QdacInstrument` / `QdacBiasLine` / `QdacBiasedFixedFrequencyTransmon`).
-Verified end-to-end on a real 20-qubit chip via `CQT_20Q` (state backed up
+Verified end-to-end on a real 20-qubit chip via `lab_env_3` (state backed up
 first).*
 
 ## The shape of the problem
@@ -137,7 +137,7 @@ merge only fills entirely-absent keys, not partially-shaped ones.
 
 `tests/test_generate_qdac_live_build.py` builds a two-qubit spec (q1
 QDAC-biased, q2 a normal flux-tunable qubit — the mixed-architecture case
-every real chip actually has) through `CQT_20Q` — quam 0.6.0 / quam_builder
+every real chip actually has) through `lab_env_3` — quam 0.6.0 / quam_builder
 0.4.0 / qualang_tools 0.23.0 with the customer's `quam_config` editable-
 installed — and asserts every QDAC-related key lands with the right shape:
 the top-level `state["qdac"]` instrument dict, q1's `z` as a `QdacBiasLine`
@@ -150,7 +150,7 @@ should need none). Per the user's explicit scoping, exact calibration
 *key* generates with the correct shape/type. Output always goes to a
 pytest `tmp_path`, never into a real project's `quam_state` folder (this
 repo's own doctrine: a generator subprocess must never write over
-calibrated live data). Skips (not fails) on any machine without `CQT_20Q`.
+calibrated live data). Skips (not fails) on any machine without `lab_env_3`.
 
 `tests/test_generate_qdac.py` drives the wizard-side plumbing
 (`generate_qdac_selfcheck.cjs`, node+jsdom) — spec.qdac normalization on

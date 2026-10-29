@@ -7,9 +7,9 @@ took their before/after numbers on these rigs.
 
 ## 1. The chips
 
-Source: a read-only copy of `260907_KRS_5Q` (the richest modern quam 0.6.0 /
+Source: a read-only copy of `chip_2` (the richest modern quam 0.6.0 /
 quam_builder 0.4.0 chip on the machine: 5Q, 4 pairs, 1 TWPA, 2 FEMs, 13 ports,
-1,654,639 B state, 2,443 fields, 30,198 scalars). The rig names it `krs5`.
+1,654,639 B state, 2,443 fields, 30,198 scalars). The rig names it `rig5`.
 
 `_tools/make_big_chip.py` (`--n --cols --leaf-boost --seed`, default seed
 20260926) clones qubits onto a 5-column grid, renaming every qubit token in
@@ -28,8 +28,8 @@ Verification (`_shared/bigstate/verify_result.json`): QuamStore loads in
 hard and 0 soft dangling on all three; `lint_state` no error class (one NEW
 warning category, `physics_addressability`, x2 on big20 and x4 on big30x);
 0 control ports shared by more than one qubit. In the chip's own env (conda
-`KRISS_CZ`) `Quam.load` + `generate_config` succeed on all three (big30x:
-`Quam.load` 16.7 s; `generate_config` 102 elements, 5,047 pulses, 73.9 s). The `cqt` env cannot run
+`lab_env_1`) `Quam.load` + `generate_config` succeed on all three (big30x:
+`Quam.load` 16.7 s; `generate_config` 102 elements, 5,047 pulses, 73.9 s). The `lab_env_4` env cannot run
 `Quam.load` for this chip (its `quam_config` is another lab's; it fails on
 the source too).
 
@@ -42,8 +42,8 @@ not the ~800 asked: SM snapshots are full copies (~19.6 MB each).
 ## 2. Bring-up and bench
 
 - `bash /d/work/sm_qa_rigs/rig_up3.sh NAME SM_PORT CDP_PORT [kh|-] CODE_WORKTREE CHIP`
-  (CHIP = big20 | big30x | krs5; about 17 s, 37 s for big30x). A rig holds a
-  copy of the chip, a copy of `KRISS_CZ_260906` as its data folder, a fresh
+  (CHIP = big20 | big30x | rig5; about 17 s, 37 s for big30x). A rig holds a
+  copy of the chip, a copy of `chip_3_data` as its data folder, a fresh
   instance dir, and for big30x the shared history (400 hardlinks + 205
   copies of everything SM rewrites in place). `_tools/shared_fp.py` gave the
   same fingerprint over 616 files before and after all three rigs: the shared
@@ -58,13 +58,13 @@ not the ~800 asked: SM snapshots are full copies (~19.6 MB each).
   flight, counted only after the file was written; `settled_ms` = the page's own fetch/XHR quiet for 400 ms; page opens
   = Navigation Timing (ttfb, dcl) plus settle. Each action gets one extra
   cProfile'd iteration (`_tools/serve_prof.py`) never mixed into the samples.
-- Wall time: krs5 about 6 min for all groups, big30x about 1 h 40 min.
+- Wall time: rig5 about 6 min for all groups, big30x about 1 h 40 min.
 
 ## 3. The baseline (real headless Chrome over CDP, n=5, median ms)
 
 Write doors (file / status / settled):
 
-| door | krs5 | big30x | ratio |
+| door | rig5 | big30x | ratio |
 |---|---|---|---|
 | auto_apply | 313 / 1051 / 2831 | 2641 / 15127 / 26045 | 8.4x / 14.4x / 9.2x |
 | apply_now | 1335 / 2547 / 3666 | 23986 / 42777 / 45045 | 18.0x / 16.8x / 12.3x |
@@ -74,7 +74,7 @@ Write doors (file / status / settled):
 
 Pages and interactions:
 
-| group | metric | krs5 | big30x | ratio |
+| group | metric | rig5 | big30x | ratio |
 |---|---|---|---|---|
 | bulk | warm ttfb / dcl / settle | 116 / 665 / 1087 | 5372 / 34072 / 39688 | 46.3x / 51.2x / 36.5x |
 | bulk | after_edit ttfb / dcl / settle | 327 / 812 / 1231 | 22654 / 69820 / 75214 | 69.3x / 86.0x / 61.1x |
@@ -102,7 +102,7 @@ Pages and interactions:
 | cold | /pulses ttfb / settle | 88 / 663 | 1169 / 1791 | 13.3x / 2.7x |
 
 Full table with every min-max: `_findings/w7_baseline.md` / `.json`;
-screenshots `_findings/w7_png/{krs5,big30x}_*.png`, all viewed. Every write
+screenshots `_findings/w7_png/{rig5,big30x}_*.png`, all viewed. Every write
 sample ended `live_ok=true`, `state_after=synced`, 0 timeouts. big30x `/bulk`
 renders 1,605 grid cells in the DOM (the rig_load count is 4,116).
 
@@ -143,10 +143,10 @@ index stays warm across value edits, docs/217).
 
 - One run per chip, sequential, one machine. The big30x write group is noisy
   on status/settled (auto_apply status 7336-18024).
-- The first krs5 full run exited 1 after the load group with no error and did
-  not reproduce in three later cold runs; the krs5 pulses and cold rows come
+- The first rig5 full run exited 1 after the load group with no error and did
+  not reproduce in three later cold runs; the rig5 pulses and cold rows come
   from a rerun on the same rig and code.
-- krs5 has no shared synthetic history (only the instance copy plus the
+- rig5 has no shared synthetic history (only the instance copy plus the
   bench's own 52-61 snapshots), so the history-related ratios compare
   history sizes as well as state sizes.
 - big30x's 312,946 scalars exceed `leaf_index.WALK_CAP` = 200,000: the build

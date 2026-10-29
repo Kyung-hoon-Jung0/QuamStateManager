@@ -1,6 +1,6 @@
 # docs/232: SM's state never lives inside a conda env (and what one kept moves out)
 
-2026-09-30, found while tracing docs/231 on the customer's `kriss_arbel` env.
+2026-09-30, found while tracing docs/231 on the customer's `customer_a_cluster_1` env.
 
 ## The defect
 
@@ -11,7 +11,7 @@ supposed to be impossible. However, `dash-bootstrap-components` ships its own
 `pyproject.toml` straight into `site-packages`. So in that env Flask derived:
 
 ```
-D:\miniconda3\envs\kriss_arbel\var\quam_state_manager.web.app-instance
+D:\miniconda3\envs\customer_a_cluster_1\var\quam_state_manager.web.app-instance
 ```
 
 That env kept its own copy of everything SM remembers: project env choices,
@@ -46,8 +46,8 @@ When there is nothing to move it costs a single `stat`.
 - **History chip folders:** copied. A folder name already taken by another
   chip is copied under a free name, preferring the chip's declared display
   name, and the alias that routes the chip's `extras.chip_name` follows it.
-  This is the customer's exact case: `history/quam_states` was arbel in the
-  env's folder and KRISS_CZ (647 snapshots) in the user's.
+  This is the customer's exact case: `history/quam_states` was cluster_1 in the
+  env's folder and lab_env_1 (647 snapshots) in the user's.
 - **History indexes:** copied through SQLite's backup API, so a
   write-ahead-log `index.sqlite` arrives whole.
 - **Not moved:** caches (schema, probe, scan, story), live-process
@@ -78,18 +78,18 @@ When there is nothing to move it costs a single `stat`.
   caches moved, the lock ignored.
 - **Real data, on copies:** the customer's env folder (57 MB) moved into a
   copy of their user folder (533 MB).
-  - 4 settings merged, arbel's history went to `history/arbel`, and the
+  - 4 settings merged, cluster_1's history went to `history/cluster_1`, and the
     working copy moved with its undo journal. No errors, and the env folder
     gained only the marker.
-  - Before: arbel resolved to 30 snapshots in the env folder and 0 in the
-    user folder. After: 30 under `history/arbel`. KRS 5Q: 647 before and
+  - Before: cluster_1 resolved to 30 snapshots in the env folder and 0 in the
+    user folder. After: 30 under `history/cluster_1`. chip_2 5Q: 647 before and
     after.
 - **Real Chrome, same setup:** an SM laid out like the customer's install
   (dash's real `pyproject.toml` beside the package, `sys.prefix` = a copy of
   the env, the env's own `QUALIBRATE_CONFIG_FILE`) showed:
-  - the arbel card still reads `env kriss_arbel ✓`;
-  - arbel opens with no env prompt;
-  - the Dataset box shows `arbel_20260929`;
+  - the cluster_1 card still reads `env customer_a_cluster_1 ✓`;
+  - cluster_1 opens with no env prompt;
+  - the Dataset box shows `cluster_1_20260929`;
   - State History lists all 30 snapshots;
   - no JS errors.
 

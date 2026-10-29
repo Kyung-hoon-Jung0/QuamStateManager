@@ -8,7 +8,7 @@ first time are corrected in place.
 
 ## 1. Apply-to-live: what it cost, honestly
 
-Profiled on a COPY of the PJ 20Q chip. The first report (0.82 s) was taken in
+Profiled on a COPY of the chip_1 20Q chip. The first report (0.82 s) was taken in
 `testing=True` mode, where the route's `defer_index` is off — production already
 indexes on a thread, so the real steady-state was ~0.55 s. Two changes:
 
@@ -60,7 +60,7 @@ pattern) with the house search box; F1 on any state value, a `?` on every LIVE
 state tree row (crud renders only), on Live-Edit column headers and inspector rows
 opens the "this place" view. Buttons carry data attributes (no inline onclick
 strings — a key with a quote would end the script); descriptions are escaped
-(third-party docstrings are text). Measured on the real PJ chip with the cqt env:
+(third-party docstrings are text). Measured on the real chip_1 chip with the lab_env_4 env:
 262 keys — 181 with the class's own words, 19 from the QM docs, 62 stated as
 undescribed.
 
@@ -148,7 +148,7 @@ and pinned in `undo_pages_selfcheck.cjs` (mutation-checked 8/8):
   else moves; the trail's **go to field** is the one navigator — which is what
   §4 claimed and was not true until this fix.
 
-Measured after the fix (PJ 20Q chip): tree edit 66 ms, undo 51, redo 71, model
+Measured after the fix (chip_1 20Q chip): tree edit 66 ms, undo 51, redo 71, model
 in step; Pulses commit 139 ms, undo 47, redo 79.
 
 ## 4d. The grid keystroke, profiled to the phase and fixed without DOM surgery (2026-08-28)
@@ -184,7 +184,7 @@ learn a detached store):
    built all 7,761 inputs with virtualization silently off (8/8 loads measured)
    and paid the full price on every keystroke after the search was cleared.
 
-Measured, typing `amplitude` one letter every 250 ms (every letter runs), PJ 20Q:
+Measured, typing `amplitude` one letter every 250 ms (every letter runs), chip_1 20Q:
 
 | load | before: blocked total / worst key | after |
 |---|---|---|
@@ -208,7 +208,7 @@ hydrates the viewport).
 
 The user's question: what happens on Pulses when someone hammers Ctrl+Z /
 Ctrl+Shift+Z, and could the last 10–20 edits live in RAM "like a clipboard"
-so a press applies at once? Findings first (real Chrome, PJ 20Q, trusted key
+so a press applies at once? Findings first (real Chrome, chip_1 20Q, trusted key
 events through the page's own UI), then what shipped.
 
 **What was actually broken.**
@@ -302,12 +302,12 @@ of a fresh `/diagnostics` render (`hx-select`) on `diagnostics-changed` /
 bucket filter is re-applied after the inner swap. Pinned by
 `tests/test_diagnostics_refresh.py` (mutation 2/3).
 
-Also found while looking: the CQT_20Q chip's four "ext fed from 3 outputs"
+Also found while looking: the lab_env_3 chip's four "ext fed from 3 outputs"
 errors were TRUE — that state was built by the docs/119 wizard, which gave
 every biased qubit a dedicated trigger port (eleven cables for four ext
 inputs); the docs/136 check is what finally said so. The shared cabling
-(ext N ↔ con1/fem4/pN, the PJ bench's layout) was staged into the working
-copy for the user to apply or discard; the PJ original was consistent.
+(ext N ↔ con1/fem4/pN, the chip_1 bench's layout) was staged into the working
+copy for the user to apply or discard; the chip_1 original was consistent.
 
 ## 4g. Feedback round of 2026-08-28 (afternoon)
 
@@ -337,7 +337,7 @@ open chip already used, when the point of a manual is to show what is
   and quam_builder's superconducting architecture are imported by name, the
   chip's classes as requested, and the rest comes from the subclass closure —
   descending through private ancestors (`_OutComplexChannel` is the parent of
-  every IQ/MW channel; the first cut lost eight classes there). On the cqt env:
+  every IQ/MW channel; the first cut lost eight classes there). On the lab_env_4 env:
   **103 classes, ~750 keys, ~490 with the class's own words, 2.4 s, 375 KB**,
   cached per env (`state_schema_catalog.json`, same version + signature
   freshness as the manifest).
@@ -357,7 +357,7 @@ open chip already used, when the point of a manual is to show what is
   the normal foreground (muted is for annotations only: type, default, source,
   places); an SM-blue edge, rounded, resizable with the size remembered.
 
-Pinned by `test_key_manual.py::TestCatalog`, the cqt probe pin in
+Pinned by `test_key_manual.py::TestCatalog`, the lab_env_4 probe pin in
 `test_key_manual_probe.py`, `test_config_manual.py` (route state, window CSS)
 and `config_manual_selfcheck.cjs` (categories, open/collapsed rules, loading
 re-ask, XSS, size restore).
@@ -615,7 +615,7 @@ path the view names).
 
 **Config Manual catalogue (§4h).** The 400-row budget emitted class HEADERS
 with no keys for every class past the first ~400 keys — which on the real
-cqt catalogue (Roots 32 → Ports cumulative 433) is exactly where a chip's own
+lab_env_4 catalogue (Roots 32 → Ports cumulative 433) is exactly where a chip's own
 classes sit. Past the budget, a collapsed class now defers its keys to its
 first toggle and only OPEN classes are charged (a small result renders
 eagerly, as before). A failed probe was forgotten instantly — every
@@ -704,7 +704,7 @@ poller's own cadence.
 
 **What was measured first.** The user asked what could be done about the
 ~2 s before the grid mounts, which §4l had pinned on the DOCUMENT, not on JS.
-Rendering `/bulk` in-process on the PJ 20Q chip: 8,977,141 bytes, 7,810
+Rendering `/bulk` in-process on the chip_1 20Q chip: 8,977,141 bytes, 7,810
 cells (qubit grid 4,480 + pair grid 3,330 in the live render — the "1,530"
 this line carried until docs/141 §4ac did not reconcile with the 7,810 beside
 it: the pair grid is 111 columns x 30 pairs), **1,140 bytes per cell of which ~250 were information**;
@@ -745,7 +745,7 @@ compares before vs after: **7,810 cells, 0 differing.** Result: 8,977,141 →
 cell's own markup contributes, 1,140 → 404. §4ac: the two denominators were
 mixed here, and neither number followed from the totals this section states.
 
-**What it bought in real Chrome (headless, PJ chip, the HEAD tree served on
+**What it bought in real Chrome (headless, chip_1 chip, the HEAD tree served on
 5198 beside the change on 5199, 10 alternating loads each, medians).**
 Document 8,767 → 3,812 KB. Main-thread long-task time before `load`
 1,022 → 750 ms; the parse+mount long task 738 → 391 ms; `load` 2,013 →
@@ -811,7 +811,7 @@ server's 8.0, putting the server 2–6 columns ahead. Neither is visible at
 own rAF pass hydrates whatever is on screen; what is lost is look-ahead
 buffer, one extra `GET /bulk/cells` on the first sideways scroll. The
 constants were deliberately NOT lowered: doing so gives back a measured part
-of this section for every user (198 → 164 cold columns on the PJ chip), and
+of this section for every user (198 → 164 cold columns on the chip_1 chip), and
 "server ⊆ client" cannot be pinned as a property anyway — a drag-resized
 column (docs/111 `quam_bulk_col_widths`) overrides the client's own estimate
 and the server cannot know it. What IS pinned now is that every width metric
@@ -851,11 +851,11 @@ and lands on the next keypress.
 7,810 cells, 0 differences. Then the cold render (`vw=1600`, 4,040 cold
 cells, 202 columns) hydrated through `/bulk/cells` the way the client does
 and tokenised: 7,810 cells, 0 differences against the hot render. In-process
-on the PJ chip: `/bulk` 3,903,227 → 2,903,518 bytes (the cold map is 244 KB
+on the chip_1 chip: `/bulk` 3,903,227 → 2,903,518 bytes (the cold map is 244 KB
 of that), warm server time 411 → 276 ms (the first render after a mutation
 builds the grid: ~420 ms), a 5-column hydration 6 ms / 43 KB.
 
-**Real Chrome (headless, PJ chip, b1b9050 served on 5198 beside this
+**Real Chrome (headless, chip_1 chip, b1b9050 served on 5198 beside this
 change on 5199, 10 alternating full loads each, medians).** Document
 3,812 → 2,848 KB; first byte 445 → 281 ms; DCL 1,510 → 953 ms; `load`
 1,814 → 1,253 ms; the mount's cold-column plan+detach is 6 ms for 340
@@ -931,7 +931,7 @@ thresholds (warn 0.90 / fail 0.80: three-state discrimination runs lower than
 two-state on the same readout), a Trends label, and a tracked history
 property with a v3→v4 content upgrade (`_DERIVED_FIDELITY_PROPS` is now the
 one table the live extractor and both upgrades read). A chip without the
-matrix (PJ stores `null`) shows no GEF tile and no GEF panel — never a
+matrix (chip_1 stores `null`) shows no GEF tile and no GEF panel — never a
 permanent "no data" box.
 
 **What the first cut got wrong, and the pin that could not see it.** The
@@ -951,7 +951,7 @@ within 8 s to a section below Trends is scrolled back to (`scroll-margin-top`
 keeps the title out from under the sticky sub-nav). Measured after the fix:
 Fidelity's top 64 px below the pane top, Trends' bottom above it.
 
-**Real Chrome (PJ 20Q):** order Overview · Health · Topology · Trends ·
+**Real Chrome (chip_1 20Q):** order Overview · Health · Topology · Trends ·
 Fidelity · (Coherence · Frequencies · Calibration); no size control in the
 Health row; Fidelity heads: 2Q Gate Fidelity — RB (Standard RB, six gates) →
 1Q Gate & Readout Fidelity → 1Q Gate Fidelity, Readout Fidelity (GE), |g⟩,
@@ -1121,7 +1121,7 @@ pill. It is folded into the existing follow rule (docs/126: a pair hides
 when a member qubit is hidden) — the menu says "qubit hidden" for those —
 and a pair with an unsaved edit can never be hidden (disabled checkbox,
 "unsaved edit"; None and Invert skip it). The Qubits picker rebuilds the
-Pairs menu when it changes, so the badges follow. Real Chrome (PJ, 30
+Pairs menu when it changes, so the badges follow. Real Chrome (chip_1, 30
 pairs): 30 listed, unchecking q1-2 hides its row, the pill reads 29 of 30,
 Show all restores. Pinned by `tests/test_bulk_pairs_picker.py` +
 `bulk_pairs_picker_selfcheck.cjs` (15 asserts — the dirty-follow guard
@@ -1167,7 +1167,7 @@ Manual's SM-blue 1.5 px edge, 10 px rounding and shadow, in ONE rule placed
 AFTER the three panels' own rules (same specificity — placed earlier, the
 Calculator kept its old 1 px / 6 px frame, which real Chrome showed).
 
-**Real Chrome (PJ chip):** Calculator then Settings — both visible; a
+**Real Chrome (chip_1 chip):** Calculator then Settings — both visible; a
 120 × 80 px drag of the Settings header floats it (`position: fixed`,
 `settings-floating`); an outside click leaves the dragged Settings open
 (the never-dragged Calculator closes, as before); the three panels' computed
@@ -1211,7 +1211,7 @@ and appended after it. Fix: `_buildRowActions` re-appends the row's
 direct hover — the same reveal the other tools use (two-class rule, so it
 beats the generic `.key-help-btn` 0.55 regardless of source order). F1 still
 opens the manual for the focused key, so the hover-only `?` loses nothing.
-Real Chrome on the PJ chip (`cdp_treehelp.js`): opacity 0 → 0.7 on hover,
+Real Chrome on the chip_1 chip (`cdp_treehelp.js`): opacity 0 → 0.7 on hover,
 the `?` the row's last child at x=532 against the group's right edge 526,
 back to 0 when the mouse leaves, no console errors. Pinned by
 `tests/tree_help_hover_selfcheck.cjs` (15 assertions, driven by
@@ -1234,7 +1234,7 @@ re-render that restores saved widths (saved widths never actually held
 before, for the same reason). A double-click still clears its column and
 releases the table width so that column auto-fits the pane; the next drag
 re-freezes and re-pins. With nothing saved the table is untouched (still
-fills the pane, reflows with it). Real Chrome on the PJ chip
+fills the pane, reflows with it). Real Chrome on the chip_1 chip
 (`cdp_colresize.js`, WAVEFORM handle dragged −150 px): Waveform 155 → 36 px
 (the floor) and every other column byte-identical, table 1179 → 1060 px.
 Pinned by `tests/col_resize_selfcheck.cjs` (16 assertions, offsetWidth
@@ -1264,7 +1264,7 @@ clamped from its far end), Compare Selected is disabled below two, and the
 server refuses <2 or >5 by name (`HX-Reswap: none` + an `sm:toast` trigger —
 a new document-level bridge to `showToast`) rather than truncating. The
 Datasets toolbar keeps ONE button (Diff, 2–5) — its N-run comparison page is
-retired with the hub. Real Chrome on the PJ chip + the 2025-06-24 archive
+retired with the hub. Real Chrome on the chip_1 chip + the 2025-06-24 archive
 (`cdp_sidebar_diff.js`): tick 3 → Compare: same document, `/diff?a=run…`
 pushed, figures active, tab order as specified, 3 figure columns, ticks and
 count kept; 6th tick refused with the toast at 5; a filter round trip keeps
@@ -1329,7 +1329,7 @@ attempt still overlapped in real Chrome: `#sidebar details > summary
 day's fourth cascade lesson, a different axis from §4u/§4v's source order) —
 the reserve is `#sidebar details.tree-root > summary.tree-root-label` now.
 Measured after (`cdp_rootrow.js`, a 220 px-wide sidebar, four roots incl.
-`D:\work\Customer_Codes\CQT\CS_installations`): label right edge 140–157 px
+`D:\work\Customer_Codes\customer B\CS_installations`): label right edge 140–157 px
 vs × at 186 px on every row, names whole, parent dirs clipped. Pinned by
 `tests/test_sidebar_root_row.py`.
 
@@ -1778,7 +1778,7 @@ new harness caught four geometry reads; the pass is deferred now.
 
 ### 4. Measured
 
-Same harness, same chip (PJ_10082026, 20Q, 452 qubit columns × 111 pair columns).
+Same harness, same chip (chip_1, 20Q, 452 qubit columns × 111 pair columns).
 **Every document figure is given twice — raw, and gzipped, which is what
 actually crosses the wire.** `/bulk` is compressed whenever the client
 advertises it (`routes.py`, `compresslevel=5`) and every browser does, so a
@@ -2364,7 +2364,7 @@ fixes were about. This section rebuilds it and measures what that buys.
 
 ### 1. What the fixture could not express
 
-Measured against the real PJ_10082026 render:
+Measured against the real chip_1 render:
 
 | | real page | fixture |
 |---|---|---|
@@ -2585,7 +2585,7 @@ walk found the leaf, read its parent as itself, and spun to the 64-guard —
 collapsing that container hid its children but not its own value row. The map now
 prefers the `dp-dir` row, which is the only row that can be collapsed.
 
-**Real Chrome, the PJ_10082026 chip against 3 runs of the 2025-06-24 archive**
+**Real Chrome, the chip_1 chip against 3 runs of the 2025-06-24 archive**
 (171 rows / 91 differing keys): `/` focuses the box; typing through Chrome's own
 input pipeline gives `q11` → `6 of 91 keys`, `RF_frequency` → 21,
 `q11 resonator` → none (AND), `RF_frequency | T1` → 21 (OR), a pasted value
@@ -2695,7 +2695,7 @@ binding; in a Node realm the call throws instead of degrading — the docs/125
 `CSS`-global trap. All eleven now name `window.` on both sides, and the pin
 fails on any `window.SearchQuery ? SearchQuery.…` that comes back.
 
-Verified in real Chrome on the PJ_10082026 chip: settings corner A/B at 6×, the
+Verified in real Chrome on the chip_1 chip: settings corner A/B at 6×, the
 Calculator resizable with its body scrolling and its size surviving a close,
 section titles at `#d0d5de` on a tinted card header, one magnifier, the house
 placeholder rendering on every page, zero console errors. Pinned by
@@ -2713,7 +2713,7 @@ comment was rephrased, not the pin.
 
 ## 4ak. A declared pair that built nothing, and said nothing (2026-08-31, user-directed)
 
-Found while reproducing the customer's SNU_17Q chip for KH_20260824. That chip's
+Found while reproducing the customer's customer D_17Q chip for KH_20260824. That chip's
 16 `FluxTunableTransmonPair`s all carry `coupler: None` — their CZ moves one
 qubit's own flux — so the spec was written with the 16 pairs declared and no
 coupler line. The build reported **`ok: True`, no warnings**, and produced a chip
@@ -2756,7 +2756,7 @@ source proves nothing if nothing reaches it.
 > **하나만** 나오고 나머지는 짤린다. 반면에 그냥 스크롤 내려서 확인해보면, 다른
 > slot도 다 정상으로 보인다."
 
-Reproduced on the PJ 20Q chip: "analog" is **868 matches**, because once an
+Reproduced on the chip_1 20Q chip: "analog" is **868 matches**, because once an
 ancestor KEY matches, every descendant matches by path — and §4b's cap took
 the first 150 in FLAT (depth-first) order. 150 depth-first matches from
 `ports.analog_outputs` never leave the first slot: the whole budget went to

@@ -28,8 +28,8 @@ The indent was the visible 26%, but it is not the only one:
 | | |
 |---|---|
 | **indent** | 2 vs 4 spaces, or tabs |
-| **line endings** | the KRISS chip on this machine is **CRLF**, and `open(.., "w")` translates by *platform* — so the same SM rewrites the same file differently on Windows and on Linux |
-| **trailing newline** | the KRISS chip has **none**; SM always appended one |
+| **line endings** | the customer A chip on this machine is **CRLF**, and `open(.., "w")` translates by *platform* — so the same SM rewrites the same file differently on Windows and on Linux |
+| **trailing newline** | the customer A chip has **none**; SM always appended one |
 
 `safe_io.json_format_of(path)` reads all three off the file (8 KB of head, 4
 bytes of tail), and `_write_tmp_json` writes them back. Best effort by
@@ -68,7 +68,7 @@ reformats the chip on the *next* apply, which a load-then-edit test cannot see.
 ### On the real customer chip, through the browser (2026-09-12)
 
 Re-measured after the all-day stress pass, against a **pinned copy** of the
-KRISS 5Q chip -- 1,430,011 bytes, indent 4, CRLF, no trailing newline:
+customer A 5Q chip -- 1,430,011 bytes, indent 4, CRLF, no trailing newline:
 
 ```
 edit qubits.q2.T1 -> apply to live
@@ -89,7 +89,7 @@ would not sit still (1430006, then 1430005, then 1430012 within minutes). That
 folder is QUAlibrate's own `state_path`, and its log shows the reason:
 
 ```
-19:53:54  Saving machine to active path D:\work\Customer_Codes\quam_states\260907_KRS_5Q
+19:53:54  Saving machine to active path D:\work\Customer_Codes\quam_states\chip_2
 ```
 
 a calibration node saving every 30-60 s while the pass ran. Nothing of SM's was

@@ -30,19 +30,19 @@ big30x:
 | typeahead, server | — | `q` 1,199 -> 8; `q1` 425 -> 8 | `q1` 1,457 -> 9; `qu` 4,173 -> 11 |
 | Param History open, settle | — | 4,945 -> 3,529 | 10,002 -> 3,042 |
 
-krs5 (implementer / verifier): first tree after a run 979 -> 8 / 2835 -> 13; first `/datasets` after a run
+rig5 (implementer / verifier): first tree after a run 979 -> 8 / 2835 -> 13; first `/datasets` after a run
 119 -> 38 / 302 -> 82; steady 188 -> 59 / 281 -> 30; capture 498 -> 477 / 2,540 -> 1,122; `/param-history`
 after a capture 39 -> 34 / 263 -> 77; Changes repeat 84 -> 120 (implementer: "noisy") / 502 -> 275; drawer
 warm 114 -> 22 / 645 -> 39; alias drawer 101 -> 23 / 749 -> 30; typeahead `qu` (verifier) 1,126 -> 25.
 
 The Changes filter dropped typed keys before (big30x `value_kept` 0). After, `value_kept`, `focus_kept` and
-`feed_matches` are all 1 (big30x last key 524, burst 722 implementer / 676 verifier; krs5, verifier: keys
+`feed_matches` are all 1 (big30x last key 524, burst 722 implementer / 676 verifier; rig5, verifier: keys
 were dropped before, last key / burst 635 / 809 now).
 
 What moved rather than shrank:
 
-- The first `/datasets` in the new-run race is slower: implementer 124 -> 591 (big30x), 144 -> 562 (krs5);
-  verifier 295 -> 894 (big30x, tree 3104 -> 1310, sum 3.4 s -> 2.2 s) and 328 -> 714 (krs5, tree
+- The first `/datasets` in the new-run race is slower: implementer 124 -> 591 (big30x), 144 -> 562 (rig5);
+  verifier 295 -> 894 (big30x, tree 3104 -> 1310, sum 3.4 s -> 2.2 s) and 328 -> 714 (rig5, tree
   2,971 -> 1,452). The rescan cost moved from `/workspace/tree` to `/datasets`; the sum is lower.
 - The new-run tick itself (verifier only; the implementer reported request-side figures only): big30x
   `tick_done` 403 -> 4087 (3396-7932) ms of background CPU per run — sidebar 1.5 s, alignment 2.6 s,
@@ -101,7 +101,7 @@ join + GROUP BY + Python natural sort (861 ms for `q`, 180k paths).
 - `6f286e1` — `leaf_index.PathRank`: the ranked path list once per chip history (23.9 MB on big30x),
   validated by `hist_token`; a keystroke is a substring scan that stops at the 30th hit. `c9628e1` — a rebuild
   after a capture reuses the previous natural order unless a path is new (180k `natural_key` calls, 2.3 s of
-  3.9 s on big30x, before); krs5 capture had regressed to 821 ms in after3 and is 477 in after4.
+  3.9 s on big30x, before); rig5 capture had regressed to 821 ms in after3 and is 477 in after4.
 
 At integration the capture-site flat-map recall (`_LAST_FLAT`/`_remember_flat`/`_recall_flat`) was dropped
 for livewrite's folder-diff memo, `run_ingest.Foreground` and coldopen's `core/activity` became one foreground
@@ -111,18 +111,18 @@ rule, and `settle_wal` also consults trends' reader pool — see docs/224.
 
 Verdict `PASS_WITH_MINOR_DEFECT`. Staleness: 11 surfaces dumped warm after a tag, note, bookmark, 4 UI star
 clicks, an outside live write (`qubits.q1.T1`), a capture, a new run folder and a chip switch and back, then
-compared to a cold restart — every surface EQUAL on big30x and krs5; the only diffs were the new tree
+compared to a cold restart — every surface EQUAL on big30x and rig5; the only diffs were the new tree
 version stamp and D1's figure. Intact-after-reload checks 1 on both chips; no page errors except
 ERR_CONNECTION during the deliberate restart.
 
 - **D1 (P2) — the token reader pinned the WAL.** The persistent connection meant a writer's close was never
   the last one, so `index.sqlite-wal` stayed at its high-water size (6,204,752 B after one 6,000-row write)
-  and "MB on disk" counted it (krs5: 23.9 MB before a restart, 17.8 MB after; du 17.81 MB). Fixed in
+  and "MB on disk" counted it (rig5: 23.9 MB before a restart, 17.8 MB after; du 17.81 MB). Fixed in
   `72014ec`: the connection opens `mode=rw` (never creates; ro fallback — the implementer measured that a ro
   checkpoint fails with "disk I/O error" when frames are not backfilled), `timeout=0`, and runs
   `wal_checkpoint(TRUNCATE)` whenever `data_version` moved; a checkpoint is not a commit, so the token is
   unchanged. `settle_wal` runs only on an already-open connection; `history_disk_stats` calls it before
-  walking. Implementer, real Chrome on krs5: WAL 6,600,272 B -> 0 B, header 33.4 MB on disk = du 33.38 MB.
+  walking. Implementer, real Chrome on rig5: WAL 6,600,272 B -> 0 B, header 33.4 MB on disk = du 33.38 MB.
 - **Note — the agent's held node wait counted as foreground** (`/api/agent/run/<key>?wait_s`, up to
   3,600 s: every tick step waited the full 3 s). Fixed in `72014ec`: `/api/agent/run/` and
   `/api/agent/run-node` are exempt.
@@ -146,7 +146,7 @@ Verifier figures that differ from the implementer's: big30x capture 13.6 s -> 7.
   `test_the_held_routes_are_one_list` added — see docs/224.
 - `tests/test_alignment_job.py::TestWorkerRefresh::test_a_request_during_the_tick_refresh_joins_it` (M7 red).
 - `tests/ph_typeahead_swap_fragcheck.cjs` (fragment-fed, pytest-driven; preserve and ordering mutation-checked).
-- Suites: implementer 1302 passed, 36 skipped, 0 failed (cqt); the verifier reproduced 1302 / 36 / 0 over 66
+- Suites: implementer 1302 passed, 36 skipped, 0 failed (lab_env_4); the verifier reproduced 1302 / 36 / 0 over 66
   files (507 s) and 27 `.cjs` selfchecks exit 0. Fix round: 515 passed, 1 skipped, 0 failed over 16 files.
 
 ## 6. Open / not done
@@ -159,5 +159,5 @@ Verifier figures that differ from the implementer's: big30x capture 13.6 s -> 7.
   page request lands on it — outside P7/P8, flagged for the live-write owner.
 - Not measured by either report: P7's "no `/topology` request > 80 ms after a new run" and alignment
   "<= 50 ms after a new run".
-- Rig caveat: 2 of the verifier's 7 rig builds came up with only the 39-run KRISS root (a `ds_rig.sh`
+- Rig caveat: 2 of the verifier's 7 rig builds came up with only the 39-run customer A root (a `ds_rig.sh`
   startup race hitting both codes); those runs were discarded.

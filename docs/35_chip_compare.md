@@ -171,7 +171,7 @@ null and lets the picker's own `change` handler call `addChipFromInput`.
 - Diff tab: state-property highlights, Param section appears when `node.json`
   is present, Param section hidden when it's absent
 
-Run: `conda run -n qm_mng python -m pytest tests/test_chip_compare_routes.py -v`.
+Run: `conda run -n lab_env_6 python -m pytest tests/test_chip_compare_routes.py -v`.
 
 ---
 

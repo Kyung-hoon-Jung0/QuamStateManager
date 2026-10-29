@@ -68,7 +68,7 @@ the cost).
 2. **Cells addressed by formatting that template.** `routes.bulk_edit` did
    `path = spec["tmpl"].format(name=qid)`, so every mis-folded column resolved
    on zero rows: **252 of this chip's 256 "Z+" columns**, and **1,671 of 5,624
-   derived columns across 40 real chips** (KRISS 21Q: 52 of 185).
+   derived columns across 40 real chips** (customer A 21Q: 52 of 185).
 3. **The cap then cut silently.** Those 252 ghosts sort ahead of the z Port+
    group, pushing the real `exponential_filter` column to index 419 — past the
    400 cap — and the cap's own truncation note is `kind="note"`, which `/bulk`

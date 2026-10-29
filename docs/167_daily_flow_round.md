@@ -392,7 +392,7 @@ stone dot for notes** (a docs/92 decision about which of the two maps owns it).
 
 ## 8b. Verified in real Chrome, on the customer's chip
 
-Thirty-two checks, driven over CDP against `PJ_10082026` with the CQT run
+Thirty-two checks, driven over CDP against `chip_1` with the customer B run
 archive attached (the browser extension cannot reach this machine's localhost —
 docs/141 §5's tooling). All pass.
 

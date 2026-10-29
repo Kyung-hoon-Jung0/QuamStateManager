@@ -35,23 +35,23 @@ click. Calibration Age and 2Q Gate Length stay inert. The jump map `OV_JUMP` is 
 
 ## 2. What was measured
 
-Real headless Chrome at 1600x950. krs5 = KRS_5Q copy (15, later 16 snapshots); big30x with 200 snapshots.
+Real headless Chrome at 1600x950. rig5 = chip_2 copy (15, later 16 snapshots); big30x with 200 snapshots.
 
 | check | before the fix | after the fix |
 |---|---|---|
-| Enter jump, t2ramsey tile, fresh page (krs5) | 95 px, 5/5 (verifier, at `c98c44c`) | 67 px, 5/5 per mode click / Enter / Space (re-verifier, at `4acadf4`) |
-| panels whose Show Meta Info is visible | krs5 9/19, big30x 9/109 (re-verifier, at `4acadf4`) | 19/19 and 109/109 (implementer, at `afabe15`) |
+| Enter jump, t2ramsey tile, fresh page (rig5) | 95 px, 5/5 (verifier, at `c98c44c`) | 67 px, 5/5 per mode click / Enter / Space (re-verifier, at `4acadf4`) |
+| panels whose Show Meta Info is visible | rig5 9/19, big30x 9/109 (re-verifier, at `4acadf4`) | 19/19 and 109/109 (implementer, at `afabe15`) |
 | raw-snapshot oracle mismatches, big30x | 125/330 (re-verifier, at `4acadf4`) | 0/330: 255 dated, 75 not dated (implementer, at `afabe15`) |
-| raw-snapshot oracle mismatches, krs5 | 0/55 (re-verifier, at `4acadf4`) | 0/55, and 0/55 after journey M4 (implementer, at `afabe15`) |
+| raw-snapshot oracle mismatches, rig5 | 0/55 (re-verifier, at `4acadf4`) | 0/55, and 0/55 after journey M4 (implementer, at `afabe15`) |
 
 Independent verifier, at `4acadf4`, medians (ms):
 
 | | first hover card | warm hover card | toggle on / off | S/M/L | jump click / Enter / Space |
 |---|---|---|---|---|---|
-| krs5 | 144 [107-166] n5 | 32 n95 | 39 / 29 | 36 (meta off), 30 (meta on) | 41 / 34-42 / 36-46 |
+| rig5 | 144 [107-166] n5 | 32 n95 | 39 / 29 | 36 (meta off), 30 (meta on) | 41 / 34-42 / 36-46 |
 | big30x | null (>8 s) 5/5 | 69 n545 (max 1288) | 80 / 26 | 94 full run, 60 meta on, 90 density-only | see D3 / 48 / 177 |
 
-Matched before (integ/w7) vs after, S/M/L density-only n21: krs5 27 vs 28 ms, big30x 91 vs 90 ms;
+Matched before (integ/w7) vs after, S/M/L density-only n21: rig5 27 vs 28 ms, big30x 91 vs 90 ms;
 big30x page-open `/state/live-diff` 9054 vs 8836 ms (meta on). The verifier reports no regression.
 `metric-meta` cost on big30x at `afabe15` (implementer): warm 0.4-0.9 s (median ~0.6), cold first
 call after a server start 3.1 s, of which the 2 snapshot parses are ~0.5 s.
@@ -83,7 +83,7 @@ call after a server start 3.1 s, of which the 2 snapshot parses are ~0.5 s.
 - **P3 keyboard jump** — Enter landed 95 px vs a click's 67. The verifier's hint (focus scrolling) was
   not the cause: the Enter keydown bubbled to the pane and the JumpGuard read it as the user taking over.
 
-Re-verification of `4acadf4` found P1-a fixed on krs5 (55/55 against a raw-snapshot oracle, through
+Re-verification of `4acadf4` found P1-a fixed on rig5 (55/55 against a raw-snapshot oracle, through
 SM edits + undo, outside write + Take live, and a chip switch and back), P1-b fixed in the data but
 invisible in the UI (D1), P3 fixed. **Round 2 (verdict FAIL), fixed in `afabe15`:**
 - **D1 (P1)** — Show Meta Info invisible on every panel nested in another `.topo-section` (all 2Q RB,
@@ -121,8 +121,8 @@ No independent verifier run on `afabe15` is in the sources; its numbers are impl
 - `tests/chip_meta_info_selfcheck.cjs` (28 -> 35 -> 41 assertions): T5c-T5f, T5i, O3d-O3e, D5c, and D9
   (loads the shipped `style.css` into jsdom and checks the computed display of a nested RB panel).
 - Journey `tests/browser/journeys/chip_status_meta.cjs` M1-M7: 26/26 (`b3b4b9e`), 32/32 (`4acadf4`),
-  krs5 38/38 at `afabe15`; big30x 37/38 (M1b's regex rejected the new "Not dated" card, the card was
-  correct; regex widened afterwards, not re-run). M6a checks laid-out height, 19/19 krs5, 109/109 big30x.
+  rig5 38/38 at `afabe15`; big30x 37/38 (M1b's regex rejected the new "Not dated" card, the card was
+  correct; regex widened afterwards, not re-run). M6a checks laid-out height, 19/19 rig5, 109/109 big30x.
 - Test runs: `test_chip_metric_meta.py` 8 -> 12 passed; the 17 files referencing `chip-status.js` 517
   passed (implementer, verifier twice); 641 passed / 1 skipped at `4acadf4`; 137 passed / 1 skipped
   (6-file set) and 217 passed (7 files touching metric-meta or `leaf_field_series_many`) at `afabe15`.

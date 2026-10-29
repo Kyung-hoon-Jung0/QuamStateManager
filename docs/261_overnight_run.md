@@ -321,7 +321,7 @@ Each piece was broken on its own, its pins run, then restored. Scratch script:
 
 ## Tests
 
-cqt env, on the final commit:
+lab_env_4 env, on the final commit:
 
 - **The agent files: 29 files, 708 passed, 0 failed.**
   - The new `test_overnight_run`.

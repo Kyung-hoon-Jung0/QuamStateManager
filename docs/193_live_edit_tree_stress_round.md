@@ -66,14 +66,14 @@ docs/192 §2 already recorded, repeated here twice more.
 ## 3. The rig wrote to the customer's real chip
 
 Pressing "⚡ Apply to live" wrote a typed value into
-`D:\work\Customer_Codes\quam_states\260907_KRS_5Q\state.json` —
+`D:\work\Customer_Codes\quam_states\chip_2\state.json` —
 `qubits.q1.f_01` and its `xy.RF_frequency` twin, `4895431254.262516` →
 `4895431254.5`.
 
-The rig's server loads `live_kriss` (a copy) at startup, and that is what every
+The rig's server loads `live_customer A` (a copy) at startup, and that is what every
 earlier probe in this round measured. But the instance's **`last_session.json`
 still named the customer's chip**, so each server restart re-activated it. The
-tray said so the whole time — `260907_KRS_5Q`, not `live_kriss` — and it took a
+tray said so the whole time — `chip_2`, not `live_customer A` — and it took a
 disk read that disagreed with the screen to notice.
 
 Restored from SM's own pre-apply history: five snapshots (`20260915_082133` …

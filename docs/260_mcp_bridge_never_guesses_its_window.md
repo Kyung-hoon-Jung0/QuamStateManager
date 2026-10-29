@@ -113,7 +113,7 @@ notification run produced all five expected assertion failures.
 The first required targeted run completed with **459 passed, 12 failed** in
 17 test files, including the 101 new pins. Both required Node self-checks
 passed (`agent_setup_selfcheck.cjs`: 49 checks). Python was
-`D:/miniconda3/envs/cqt/python.exe`, with `PYTHONUTF8=1`,
+`D:/miniconda3/envs/lab_env_4/python.exe`, with `PYTHONUTF8=1`,
 `-p no:cacheprovider --timeout=900`. Temporary files and substitute CLI homes
 were kept inside this worktree. The full suite was not run.
 

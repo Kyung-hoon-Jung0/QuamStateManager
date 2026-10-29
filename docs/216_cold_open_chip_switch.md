@@ -7,7 +7,7 @@ Design: `D:\work\sm_qa_rigs\_findings\ram_design.md` §4, package P10 (cold open
 ## 1. What was measured
 
 Implementer: `w7_bench.cjs`, new group `switch` (`gswitch_ext.js`) plus the `cold` and `load` groups, rig
-`w7-coldopen`, n=3-5, medians. Independent verifier: rig `w7v-coldopen` (big30x + big20 + krs5), interleaved
+`w7-coldopen`, n=3-5, medians. Independent verifier: rig `w7v-coldopen` (big30x + big20 + rig5), interleaved
 A/B on one rig by pointing `srv.bat` at `integ/w7` (`e74b8ce`) or the branch (`2337c70`), n=6 per arm (2 reps
 x n=3) unless stated; "the machine was shared with other rigs, so absolute numbers are noisy and only the
 ratios mean much". Real headless Chrome, ms.
@@ -21,10 +21,10 @@ ratios mean much". Real headless Chrome, ms.
 | big30x first open of a chip | 5352 -> 1761-1952 | — |
 | big20 switch / evicted re-open | 321 -> 42-64 / 5084 -> 144-300 | 429 -> 96 / 8319 -> 252 |
 | big20 first open | — | 5770 -> 774 (n=2) |
-| krs5 warm `POST /load` | 90 -> 26-51 | 199 -> 86 |
-| krs5 cold `POST /load` | 978 -> 352 | 1506 -> 1044 |
-| krs5 switch / evicted re-open | 210 -> 42-65 / 2015 -> 77-146 | 227 -> 128 / 2641 -> 268 |
-| krs5 first open | — | 1456 -> 388 (n=2) |
+| rig5 warm `POST /load` | 90 -> 26-51 | 199 -> 86 |
+| rig5 cold `POST /load` | 978 -> 352 | 1506 -> 1044 |
+| rig5 switch / evicted re-open | 210 -> 42-65 / 2015 -> 77-146 | 227 -> 128 / 2641 -> 268 |
+| rig5 first open | — | 1456 -> 388 (n=2) |
 
 Search. Implementer: topbar first key after an open 216 -> 218-219 (the lazy index alone had made it 2884).
 Verifier: first key after a switch / evicted re-open unchanged (about 215-230; one 4480 outlier on head);
@@ -91,7 +91,7 @@ RED; M4 `park()` without its own pristine gate — GREEN (22 passed).
 
 - **P2-1 — the cold first `/topology` after `/bulk` was slower than admitted.** Verifier (bench `cold`, n=6
   interleaved, big30x): TTFB median 564 -> 3300 ms (worst 16.6 s), settle 9.8 -> 16.5 s; curl with no wait
-  base 6.9/7.3/7.5 s vs head 14.5/7.9/7.3 s; 45 s after the load neutral; krs5 +0.6 s settle. The fix round
+  base 6.9/7.3/7.5 s vs head 14.5/7.9/7.3 s; 45 s after the load neutral; rig5 +0.6 s settle. The fix round
   found the attribution only partly right: in-process on big30x the first `GET /topology` after a cold load
   cost ~5 s on BOTH arms (base 5.49 s, head 5.0 s), with 0 pointer-cache entries and no lint cached in either
   — base's `POST /load` never resolved pointers; `lint_state` alone is 6-9 s cold (incl. ~15.6k pointer
@@ -123,7 +123,7 @@ RED; M4 `park()` without its own pristine gate — GREEN (22 passed).
   seq stop removed, already-warm token removed, either under-lock re-check removed); adapted on `integ/w7` in
   `6541800` for `store_revs.seq_token` — docs/224.
 - Suites: implementer targeted 294 passed, 32 skipped (verifier 292 / 32, the 2-test gap not investigated);
-  fix round targeted 533 passed, 24 skipped; fix-round full suite (cqt) 1 failed, 9967 passed, 251 skipped —
+  fix round targeted 533 passed, 24 skipped; fix-round full suite (lab_env_4) 1 failed, 9967 passed, 251 skipped —
   `test_share_io_cost::...test_chip_activation_after_a_run_lands_stops_scaling_with_the_archive` ("-2 more
   syscalls"), passing in isolation on head and on `integ/w7`. No JS changed; no `.cjs` run.
 

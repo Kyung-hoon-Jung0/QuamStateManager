@@ -7,7 +7,7 @@ the measurement of what is left, on the other surfaces.
 
 ## 1. Method: count syscalls, not milliseconds
 
-The customer's workspace is an SMB share (`\\nasdaq.snu.ac.kr\QDL`, mapped `Z:`).
+The customer's workspace is an SMB share (`\\nasdaq.customer D.ac.kr\QDL`, mapped `Z:`).
 Every `stat`/`scandir`/`open` there is a network round-trip, so a route doing 800
 stats costs ~8 ms on this development NVMe and **~1.4 s** on their box. Wall clock
 measured locally cannot see the problem at all; the operation count is the same
@@ -21,7 +21,7 @@ innermost `quam_state_manager` frame that made each share call — exact, not
 sampled, which is the half py-spy cannot give.
 
 Fixture: the real 13-qubit / 16-pair chip
-(`SNU-QDL-Qualibrate/quam_state_9Q_Temp`, 371 KB state.json) against a synthetic
+(`customer D-QDL-Qualibrate/quam_state_9Q_Temp`, 371 KB state.json) against a synthetic
 archive built to the customer's shape — 5,874 runs, **390 date dirs**, shallow
 layout. 390 date dirs is roughly 13 months of daily measurement, which is the
 "over months" axis the reports describe.

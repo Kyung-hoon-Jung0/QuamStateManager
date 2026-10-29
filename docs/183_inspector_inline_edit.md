@@ -1,7 +1,7 @@
 # docs/183 — The inspector's inline edit sent nothing at all
 
 2026-09-12. Found by the write-path stress round's Ctrl+Z lane (docs/179's
-sibling), then reproduced independently on a copy of the customer's KRISS 5Q
+sibling), then reproduced independently on a copy of the customer's customer A 5Q
 chip in real headless Chrome before anything was touched.
 
 ## What a person saw

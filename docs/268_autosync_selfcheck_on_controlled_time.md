@@ -64,7 +64,7 @@ executing self-checks: `auto_apply_selfcheck.cjs` and `live_sync_selfcheck.cjs`.
 Their wrappers were included in the targeted validation:
 
 ```text
-D:/miniconda3/envs/cqt/python.exe -m pytest -p no:cacheprovider --timeout=900
+D:/miniconda3/envs/lab_env_4/python.exe -m pytest -p no:cacheprovider --timeout=900
   --basetemp=D:/work/sm-cx-timers/.tmp_autosync_clock/pytest
   tests/test_autosync_merge.py tests/test_auto_apply_client.py
   tests/test_live_sync_client.py -q

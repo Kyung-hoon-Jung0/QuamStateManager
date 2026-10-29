@@ -25,7 +25,7 @@ real chips before the change:
 | chip | qubit grid | pair grid | HTML |
 |---|---|---|---|
 | LabA (21q / 31 pairs) | 231 cols, **31 hidden**; 4,851 cells, 651 in hidden cols | 141 cols, **99 hidden (70 %)**; 4,371 cells, 3,069 hidden | 10.7 MB |
-| LabD (13q / 16 pairs) | 291 cols, 31 hidden | 24 cols, 14 hidden | 5.8 MB |
+| lab_env_5 (13q / 16 pairs) | 291 cols, 31 hidden | 24 cols, 14 hidden | 5.8 MB |
 
 So the whole payload was already being paid. Showing everything costs **zero**
 server work, zero bytes, zero DOM nodes — it changes only what the browser lays
@@ -61,7 +61,7 @@ same shape.
   ROWS a comparison summarises off `default_on` — a different question from
   "which columns does the editing grid show". The old formula lives on as
   `headline_on` and Compare is byte-identical (42 / 10 / 34 headline columns on
-  LabA / LabD / deviceB, exactly the pre-change visible counts).
+  LabA / lab_env_5 / deviceB, exactly the pre-change visible counts).
 * **The search always scans every column the chip has**, hidden or not, and
   reports through the one chip. Three disjoint populations: rendered-but-hidden
   (revealed by CSS, no round-trip), dyn-hidden (needs the `?dynhide=` reload),
@@ -79,7 +79,7 @@ same shape.
 ## The cost, measured
 
 Server: none. Real-chip `/bulk` after the change renders in 346 / 145 / 228 ms
-(LabA / LabD / deviceB) and is *fractionally smaller* than before — the
+(LabA / lab_env_5 / deviceB) and is *fractionally smaller* than before — the
 `bulk-col-hidden` class strings are gone.
 
 Client, on a LabA-sized pair grid (31 × 141) driving the real `pair-edit.js`

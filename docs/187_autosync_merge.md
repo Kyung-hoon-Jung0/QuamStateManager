@@ -24,7 +24,7 @@ bench does continuously: **another program writing the chip.**
 The evidence that this is their shape, read rather than guessed:
 
 ```
-instance/instances/4928.json   chip_path = D:\work\...\quam_states\260907_KRS_5Q   (SM on :5050)
+instance/instances/4928.json   chip_path = D:\work\...\quam_states\chip_2   (SM on :5050)
 ~/.qualibrate/config.toml      state_path = the same folder
 ~/.qualibrate/logs/…           "Saving machine to active path <that folder>"
                                19:50:26 · 19:51:32 · 19:53:00 · 19:53:54 · 19:54:35

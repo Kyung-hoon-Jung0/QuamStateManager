@@ -1,7 +1,7 @@
 # 198 — Pressing the write paths: type-fix, Apply to chip, Revert last apply
 
 Date: 2026-09-17/18. Continuing the stress round on the real customer chip
-`260907_KRS_5Q` under the standing directive to press every feature, writing
+`chip_2` under the standing directive to press every feature, writing
 freely. The chip starts and ends this round at **0 differences from pristine**.
 
 ---
@@ -55,7 +55,7 @@ and an outside write to `q2.anharmonicity` on the live chip.
 It asked nothing (`window.confirm` recorded no calls), and the result line named
 both:
 
-> Run #41's state is now LIVE on 260907_KRS_5Q. The live chip HAD changed since
+> Run #41's state is now LIVE on chip_2. The live chip HAD changed since
 > it was loaded — those changes were overwritten (the run's state wins).
 > **(Replaced 1 unsaved edit.)** Reversible — …
 
@@ -199,7 +199,7 @@ Output · Review). Two claims were tested rather than assumed:
 
 - **the env probe is honest.** Ten interpreters are listed with a real verdict
   each — `miniconda3 … ✗ missing: qualang_tools, quam_builder, quam` beside
-  `KRISS_CZ … ✓ qualang_tools 0.22.0 · quam_builder 0.4.0 · quam 0.6.0`. (An
+  `lab_env_1 … ✓ qualang_tools 0.22.0 · quam_builder 0.4.0 · quam 0.6.0`. (An
   early reading that the customer's own env showed "✗ missing" was mine: the
   selector had matched the *first row's* status span, not the chosen env's.)
 - **a refusal is visible from the button that caused it.** Pressing Next with an
@@ -220,7 +220,7 @@ that a modern quam_builder chip's pair reference is a **two-hop** pointer, and
 reading it as one hop silently dropped every pair — losing 59% of pair
 calibration on a real 10Q chip while the build still reported SUCCESS.
 
-The KRISS chip is a good adversary for that bug, because its pair section looks
+The customer A chip is a good adversary for that bug, because its pair section looks
 empty from three directions at once:
 
 ```

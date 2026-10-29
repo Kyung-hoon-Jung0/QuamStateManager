@@ -76,7 +76,7 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:TEMP = (Resolve-Path tmp_cr_audit/agent_api_p3).Path
 $env:TMP = $env:TEMP
 $p3TestFiles = @(rg -l 'agent_api|mcp_bridge|journal|agent_runs|runs' tests -g 'test_*.py')
-& D:/miniconda3/envs/cqt/python.exe -m pytest -p no:cacheprovider --timeout=900 `
+& D:/miniconda3/envs/lab_env_4/python.exe -m pytest -p no:cacheprovider --timeout=900 `
   --basetemp=tmp_cr_audit/agent_api_p3/regression -x -q --tb=short @p3TestFiles
 ```
 

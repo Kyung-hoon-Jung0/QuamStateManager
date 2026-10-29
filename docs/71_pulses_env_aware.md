@@ -54,7 +54,7 @@ ordering, and the folder-accepting routes (select-env 200 echoes the resolved
 `resolved`).
 
 Also in this branch: CLAUDE.md's test command switched to the Windows conda
-`LabD_17Q` env (the WSL `qm_mng` env is obsolete per the 2026-08-02 directive)
+`lab_env_5` env (the WSL `lab_env_6` env is obsolete per the 2026-08-02 directive)
 with the known OS-environmental failures cataloged.
 
 ## §2 — env-aware add-pulse (`feat/pulses-env-aware`)

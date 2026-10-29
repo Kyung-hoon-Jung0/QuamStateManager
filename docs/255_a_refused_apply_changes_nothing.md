@@ -159,7 +159,7 @@ a side effect. Now it is exactly as durable as it was before the press.
 
 ## Verified
 
-**Tests (cqt env).** The 77 test files that touch `apply_to_live` /
+**Tests (lab_env_4 env).** The 77 test files that touch `apply_to_live` /
 `stale_live` / `live_diverged` / the undo journal / auto-apply / sync /
 `working_copy`, plus the new file:
 

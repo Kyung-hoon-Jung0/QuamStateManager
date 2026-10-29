@@ -13,7 +13,7 @@ in ms. Implementer: before = integ/w7 `e74b8ce` on the same rig
 (`_findings/w7trends/bench_trends.json`). Independent verifier: A/B
 interleaved on ONE rig by swapping the served code path
 (`_findings/w7v_trends/bench.json`). Chips: big30x = 19.4 MB state, 200
-snapshots; krs5h = the real KRS_5Q chip plus a 1,600-snapshot history (the
+snapshots; rig5h = the real chip_2 chip plus a 1,600-snapshot history (the
 `ram_design` accept condition). Both at `acc0b4c` (before the §4 fixes).
 
 big30x:
@@ -35,7 +35,7 @@ big30x:
 big30x `after_snapshot_first` has 10-11 s outliers (implementer samples
 [952, 11529, 226, 9891, 221]); the verifier saw 9.3 s outliers in both codes.
 
-krs5h (verifier order b1 / a1, a2):
+rig5h (verifier order b1 / a1, a2):
 
 | bench label | implementer before -> after | verifier before / after |
 |---|---|---|
@@ -48,7 +48,7 @@ krs5h (verifier order b1 / a1, a2):
 | `after_snapshot_3s_first` | 2602 -> 59 | 3443 / 1348, 212 |
 | settled since scroll | 1989 -> 1745 | 3940 / 3158, 1698 |
 
-krs5 (15 snapshots, implementer only): toggle on 216 -> 70, badge 212 -> 65,
+rig5 (15 snapshots, implementer only): toggle on 216 -> 70, badge 212 -> 65,
 server default 19 -> 10, `after_snapshot_first` 181 -> 69, section settled
 1309 -> 1423. The "Please wait" loader was seen 0 times during toggles, on
 every chip, in both reports.
@@ -91,7 +91,7 @@ every chip, in both reports.
 Verifier verdict on `acc0b4c`: FAIL (narrow) — correctness, staleness, IRB
 default and held points hold; two P1 defects.
 
-- **D1 — `StaleCacheError` under `SM_RAM_VERIFY=1`** (krs5h,
+- **D1 — `StaleCacheError` under `SM_RAM_VERIFY=1`** (rig5h,
   `stale.cjs`, about 1 in 10 captures): `part ('delta', _Marks) differs from
   a cold recompute` on `leaf_matching_paths -> _delta`, a 500 on
   `/topology/trends?metrics=...&paths=...InterleavedRB`. With verify off no
@@ -104,7 +104,7 @@ default and held points hold; two P1 defects.
   every shadow comparison goes through `ChipTrendsTable._shadow()`, which
   "compares at the token" — only while `data_version` equals `token[5]`
   before and after the cold read; otherwise it skips and counts
-  `COUNTS['verify_moved']`. Re-run on krs5h with `SM_RAM_VERIFY=1`: 3 runs,
+  `COUNTS['verify_moved']`. Re-run on rig5h with `SM_RAM_VERIFY=1`: 3 runs,
   24 captures, 36 page-vs-reload comparisons, all EQUAL, 0
   `StaleCacheError`, 0 HTTP 500 (implementer-side).
 - **D2 — big30x Chip Status page-settle / cold-first-open regression.** The
@@ -141,9 +141,9 @@ in-process: integ 998-2064, `acc0b4c`/`556dd17` 2515-5012, `820f5ca`
 420-1283 ms. No second independent verification of `556dd17`/`820f5ca` is
 in the sources.
 
-Verifier claims not met on `acc0b4c` besides D2: krs5h
+Verifier claims not met on `acc0b4c` besides D2: rig5h
 `after_snapshot_first` 944-1019 vs the claimed 411, `after_snapshot_3s_first`
-212-1348 vs 59; warm `/topology/trends` over plain HTTP on krs5h about 45 ms
+212-1348 vs 59; warm `/topology/trends` over plain HTTP on rig5h about 45 ms
 vs 6-8 claimed (the 40 ms target borderline there; big30x in-page 18-49 ms).
 
 Held on verification: page == reload after every `stale.cjs` step in 4 runs
@@ -197,7 +197,7 @@ At the merge, `param_history_ram.settle_wal` also asks
   expansion, `SCHEMA_VERSION = 2`) not done.
 - big30x network settle is bounded by `/state/live-diff` and
   `/qualibrate/subnav` (8-21 s on both codes) — P4 scope.
-- krs5h section settled <= 1,500 ms: borderline (implementer 1745;
+- rig5h section settled <= 1,500 ms: borderline (implementer 1745;
   verifier 1698 / 3158).
 - 8 tests of `test_chip_trends_ram.py` fail under a GLOBAL `SM_RAM_VERIFY=1`
   (hm=None stubs, stat counts); the same 8 fail at `acc0b4c`.

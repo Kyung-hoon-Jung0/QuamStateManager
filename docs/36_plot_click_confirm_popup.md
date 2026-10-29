@@ -120,7 +120,7 @@ contained to ~30 lines.
   `tray_html` for the popup to swap, empty-updates 400, no-active-
   context 400.
 
-Run: `conda run -n qm_mng python -m pytest tests/test_field_batch.py -v`.
+Run: `conda run -n lab_env_6 python -m pytest tests/test_field_batch.py -v`.
 
 The JS popup itself is verified manually (the repo has no headless
 browser test infrastructure).

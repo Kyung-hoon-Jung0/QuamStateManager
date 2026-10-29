@@ -2,13 +2,13 @@
 
 **2026-09-16, customer, on-site, CRITICAL.**
 
-> 지금 KRISS_CZ라고 state manager 열려있는것 확인해봐. pulses 메뉴에서 snz 는
+> 지금 lab_env_1라고 state manager 열려있는것 확인해봐. pulses 메뉴에서 snz 는
 > plotting이 안돼. 왜 그래?
 
 ## 1. What was open, and what it was
 
-`instances/31324.json` and `34604.json` — project **KRISS_CZ**, chip
-`D:\work\Customer_Codes\quam_states\260907_KRS_5Q`, ports 5050 and 5052. Their
+`instances/31324.json` and `34604.json` — project **lab_env_1**, chip
+`D:\work\Customer_Codes\quam_states\chip_2`, ports 5050 and 5052. Their
 SM was not touched; everything below ran against a copy.
 
 That chip's CZ flux pulse is:
@@ -339,7 +339,7 @@ and whose title reads *"Waveform from the generated config — this pulse class 
 the lab's own, so its own code drew it (‹when›)"*. An SM-drawn sparkline is
 untouched and solid.
 
-Measured in real Chrome on a copy of the customer's `260907_KRS_5Q`:
+Measured in real Chrome on a copy of the customer's `chip_2`:
 `cz_SNZ_flux_pulse_q1_q2` renders its 88-sample SNZ shape dashed, `readout`
 (1,200) and `readout_GEF` (1,488) likewise, while `ErfSquarePulse` and
 `GaussianFilteredSquarePulse` two rows above stay solid and unmarked.

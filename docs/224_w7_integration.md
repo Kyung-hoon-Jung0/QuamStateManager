@@ -127,7 +127,7 @@ and to that pin, never to a new list.**
 
 ## 4. Full suite
 
-Command: `PYTHONUTF8=1 cqt python -m pytest tests/ -q --timeout=900
+Command: `PYTHONUTF8=1 lab_env_4 python -m pytest tests/ -q --timeout=900
 --timeout-method=thread -p no:cacheprovider --deselect
 tests/test_main.py::TestWaitForServer` (run by the integrator).
 

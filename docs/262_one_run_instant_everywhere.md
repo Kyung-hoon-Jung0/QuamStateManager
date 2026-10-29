@@ -200,8 +200,8 @@ All runs used copies under the scratchpad. `D:\work\statemanager\instance` and
 `D:\work\Customer_Codes` were only read.
 
 1. **Real instance history (+09:00 data on this +09:00 machine).**
-   - Copy of `instance/history`: 4 chip dirs (`CQT_20Q`, `KRISS_CZ`, `demo_verify_128`,
-     `superconducting`), 22 snapshots, 15 of them `exp` (KRISS_CZ, from two archives).
+   - Copy of `instance/history`: 4 chip dirs (`lab_env_3`, `lab_env_1`, `demo_verify_128`,
+     `superconducting`), 22 snapshots, 15 of them `exp` (lab_env_1, from two archives).
    - Migration: `migrated`, **0 moves**, 0 unresolved, 0 kept.
    - After the migration, **every one of the 82 files is sha256-identical to the original**,
      `index.sqlite` included, and the 27-dir set is identical.
@@ -368,7 +368,7 @@ realbackend naive-as-UTC, and value_writer accepting naive / dropping the offset
 Every `tests/test_*.py` mentioning history, snapshot, run_ts, `_entry_timestamp`,
 trend_index, run_instant, timefmt or dataset, plus trends_view, sync_badge, run_watch,
 pane_state, time_display, story/journal/agent_runs/value_writer and misc_ui: 225 files,
-env `cqt`, 8 parallel shards.
+env `lab_env_4`, 8 parallel shards.
 
 - Result: **5,880 passed, 159 skipped, 2 failed**. Neither failure is from this step:
   - `test_autosync_merge.py::…::test_the_shipped_client_behaves` is a jsdom selfcheck.

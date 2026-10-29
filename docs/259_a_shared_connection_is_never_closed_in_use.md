@@ -152,7 +152,7 @@ passed**, with no native crash or timeout. That covers 6,400 reader calls,
 restored new-pin run was **10 passed**.
 
 Every pytest invocation used
-`D:/miniconda3/envs/cqt/python.exe`, `PYTHONUTF8=1`,
+`D:/miniconda3/envs/lab_env_4/python.exe`, `PYTHONUTF8=1`,
 `-p no:cacheprovider --timeout=900`, and a `--basetemp` inside this worktree.
 `TEMP`/`TMP` also pointed inside this worktree, and bytecode writes were
 disabled. The optional external archive and global RAM verification settings

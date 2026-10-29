@@ -52,7 +52,7 @@ gate (any inspector content, since the result always lands on top). The
 sizes are saved first, so the table-pane swap's `initSplit()` keeps them. The
 detail content stays; ▲ brings it back.
 
-## 3. Measured in real Chrome (headless CDP, the CQT 2,655-run archive)
+## 3. Measured in real Chrome (headless CDP, the customer B 2,655-run archive)
 
 | step | observed |
 |---|---|

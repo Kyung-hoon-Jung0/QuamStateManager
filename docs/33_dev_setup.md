@@ -10,8 +10,8 @@ git clone <repo-url> state-manager
 cd state-manager
 
 # 2. (WSL only) Activate the project conda env. Python 3.11.
-conda activate qm_mng
-# Or create one: conda create -n qm_mng python=3.11
+conda activate lab_env_6
+# Or create one: conda create -n lab_env_6 python=3.11
 
 # 3. Editable install with dev tools
 pip install -e ".[dev]"
@@ -28,17 +28,17 @@ python -c "from quam_state_manager.web.app import create_app; create_app().run(d
 
 Open <http://127.0.0.1:5050/> in a browser.
 
-## Conda env: `qm_mng`
+## Conda env: `lab_env_6`
 
-This project uses a conda env named `qm_mng` (Python 3.11). The name is referenced in `CLAUDE.md` and the maintainer's memory because the `generate-config` wizard subprocess assumes that env exists with `qualang_tools` and `quam_builder` installed.
+This project uses a conda env named `lab_env_6` (Python 3.11). The name is referenced in `CLAUDE.md` and the maintainer's memory because the `generate-config` wizard subprocess assumes that env exists with `qualang_tools` and `quam_builder` installed.
 
 If you only need the State Manager (no config-generation wizard), the conda env is optional — any Python ≥3.10 venv works.
 
 If you do want the wizard, create the env with the QUA tooling:
 
 ```bash
-conda create -n qm_mng python=3.11
-conda activate qm_mng
+conda create -n lab_env_6 python=3.11
+conda activate lab_env_6
 pip install -e ".[dev]"
 pip install qualang_tools quam_builder  # or the project's pinned versions
 ```
@@ -46,7 +46,7 @@ pip install qualang_tools quam_builder  # or the project's pinned versions
 ## Tests
 
 ```bash
-python -m pytest tests/ -v               # full suite (~910 tests, ~50s on qm_mng)
+python -m pytest tests/ -v               # full suite (~910 tests, ~50s on lab_env_6)
 python -m pytest tests/test_loader.py -v # single file
 python -m pytest tests/test_loader.py::test_load_basic -v
 ```

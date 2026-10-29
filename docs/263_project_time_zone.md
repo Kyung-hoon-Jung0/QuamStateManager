@@ -174,14 +174,14 @@ the quiet zone note when the runs record another offset than the one shown.
   |---|---:|---:|---:|---:|---|
   | KH_202608_CZ | 60 | 5.3 h | 22,959 s | -4.4 s | copied |
   | Novera9Q | 60 | 3.3 h | 10,146 s | -52.7 d | copied |
-  | arbel_20260929 | 60 | 6.4 h | 4.0 s | -2.1 s | in place |
-  | KRISS | 60 | 5.4 d | 1,238 s | -40 s | copied |
-  | IQCC_QOP37 | 60 | 1.7 d | 1,107 s | -147 s | copied |
-  | KRISS_CR | 60 | 3.7 d | 703 s | -47 s | copied |
-  | KRISS_CZ_260906 | 39 | 17.1 h | 1.7 s | -1.5 s | in place |
+  | cluster_1_20260929 | 60 | 6.4 h | 4.0 s | -2.1 s | in place |
+  | customer A | 60 | 5.4 d | 1,238 s | -40 s | copied |
+  | cloud_provider_1_QOP37 | 60 | 1.7 d | 1,107 s | -147 s | copied |
+  | lab_env_2 | 60 | 3.7 d | 703 s | -47 s | copied |
+  | chip_3_data | 39 | 17.1 h | 1.7 s | -1.5 s | in place |
 
   No archive raised a question; the two in-place ones read a ~2 s skew (the
-  save), which is "small". KH and KRISS have small medians but wide spreads
+  save), which is "small". KH and customer A have small medians but wide spreads
   (folders touched after the save) and are kept out -- conservative: a lost
   witness, never a false one.
 - **Only offset-aware run clocks** are witnesses (`node_quality == "offset"`):
@@ -219,7 +219,7 @@ the quiet zone note when the runs record another offset than the one shown.
 **pytest** (`tests/test_project_time.py`, 54) and **jsdom**
 (`tests/project_time_selfcheck.cjs`, 73 assertions, driven by the pytest file).
 
-Related files, env `cqt` (`PYTHONUTF8=1`, `-p no:cacheprovider`): project_time,
+Related files, env `lab_env_4` (`PYTHONUTF8=1`, `-p no:cacheprovider`): project_time,
 project_env, project_scope, qualibrate_config / _location / _routes,
 run_instant, time_display, display_timezone, diagnostics (8 files), run_watch,
 run_ingest, misc_ui, natural_order_routes, cust_0930_ui, onboarding,

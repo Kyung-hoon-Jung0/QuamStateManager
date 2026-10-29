@@ -108,8 +108,8 @@ Command (all output paths and test temporaries stay in this worktree):
 ```powershell
 $env:PYTHONUTF8 = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
-& D:/miniconda3/envs/cqt/python.exe tools/check_hub_rules.py `
-  --archive D:/work/Customer_Codes/dataset/arbel_20260929 `
+& D:/miniconda3/envs/lab_env_4/python.exe tools/check_hub_rules.py `
+  --archive D:/work/Customer_Codes/dataset/cluster_1_20260929 `
   --archive D:/work/Customer_Codes/dataset/Novera9Q `
   --archive D:/work/Customer_Codes/dataset/KH_202608_CZ `
   --pairs 200 --seed 269 --focus-archive 1
@@ -117,7 +117,7 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 
 | Archive | Pairs | Differ rows | Hub rows | Int/float | Array row differences | Exact floats | Unexplained |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| arbel_20260929 | 200 | 2,293 | 1,519 | 0 | 792 | 0 | 0 |
+| cluster_1_20260929 | 200 | 2,293 | 1,519 | 0 | 792 | 0 | 0 |
 | Novera9Q | 200 | 1,615 | 1,616 | 0 | 0 | 1 | 0 |
 | KH_202608_CZ | 200 | 57,798 | 1,097 | 1 | 56,780 | 0 | 0 |
 
@@ -128,7 +128,7 @@ comparison are zero. Scan skips and eligible-run counts appear in the exact outp
 Exact output from the final check (2026-10-04):
 
 ```text
-{"archive": "arbel_20260929", "differences_by_reason": {"bool_string": 0, "exact_float": 0, "int_float": 0, "long_arrays": 792, "nan_constant": 0}, "eligible_runs": 1592, "hub_rows": 1519, "matched": 1510, "new_only_by_reason": {"bool_string": 0, "exact_float": 0, "int_float": 0, "long_arrays": 9, "nan_constant": 0}, "old_only_by_reason": {"bool_string": 0, "exact_float": 0, "int_float": 0, "long_arrays": 783, "nan_constant": 0}, "old_rows": 2293, "pairs": 200, "read_skipped": 0, "scan_skipped": 1, "seed": 269, "unexplained": 0}
+{"archive": "cluster_1_20260929", "differences_by_reason": {"bool_string": 0, "exact_float": 0, "int_float": 0, "long_arrays": 792, "nan_constant": 0}, "eligible_runs": 1592, "hub_rows": 1519, "matched": 1510, "new_only_by_reason": {"bool_string": 0, "exact_float": 0, "int_float": 0, "long_arrays": 9, "nan_constant": 0}, "old_only_by_reason": {"bool_string": 0, "exact_float": 0, "int_float": 0, "long_arrays": 783, "nan_constant": 0}, "old_rows": 2293, "pairs": 200, "read_skipped": 0, "scan_skipped": 1, "seed": 269, "unexplained": 0}
 {"focus": [898, 899], "archive_adjacent": true, "old_rows": 2, "hub_rows": 2, "waveform_spectator_old_rows": 0, "waveform_spectator_hub_rows": 0, "unexplained": 0}
 {"focus": [899, 900], "archive_adjacent": true, "old_rows": 108, "hub_rows": 13, "waveform_spectator_old_rows": 98, "waveform_spectator_hub_rows": 3, "unexplained": 0}
 {"focus": [900, 901], "archive_adjacent": true, "old_rows": 108, "hub_rows": 13, "waveform_spectator_old_rows": 98, "waveform_spectator_hub_rows": 3, "unexplained": 0}

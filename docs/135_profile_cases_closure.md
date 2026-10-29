@@ -86,7 +86,7 @@ package at `tests/golden/calib_paths/lab_keys.json`;
 `render_knowledge_exemplars.py` lost its hard-coded archive names and now
 resolves keys through that external map, so a future re-render cannot
 reintroduce a name. Pinned by `TestNoCustomerNamesShipped` (substring,
-case-insensitive; `HorizonQuantum` rather than bare `Horizon`, which would
+case-insensitive; `customer G` rather than bare `Horizon`, which would
 flag the word "horizontal"). Two pins were deliberately updated: the exemplar
 index now speaks lab keys, and `replay()`'s signature gained `profile`.
 

@@ -40,7 +40,7 @@
       "offset_hint": "+09:00",
       "raw_zero_change": 239,
       "seconds": 65.382,
-      "archive": "arbel_20260929",
+      "archive": "cluster_1_20260929",
       "ledger_mb": 5.137,
       "peak_rss_mb": 61.11,
       "process_seconds": 65.652
@@ -87,7 +87,7 @@
       "idempotent_seconds": 0.517
     },
     {
-      "archive": "arbel_20260929",
+      "archive": "cluster_1_20260929",
       "random_runs": 500,
       "checkpoints": 6,
       "unique_checked": 503,
@@ -112,7 +112,7 @@
     }
   ],
   "live_growth_observed": {
-    "archive": "arbel_20260929",
+    "archive": "cluster_1_20260929",
     "added_during_first_replay": 2,
     "events_after_catchup": 1602,
     "change_rows_after_catchup": 26611

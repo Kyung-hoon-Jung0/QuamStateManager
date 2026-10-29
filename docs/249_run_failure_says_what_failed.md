@@ -24,8 +24,8 @@
 ## The failure texts, measured
 
 **(a) Host unreachable.** Measured by running
-`QuantumMachinesManager(host="127.0.0.1", port=1)` in the `kriss_arbel` env
-(qm-qua 1.4.1, 2.1 s) and the `cqt` env (qm-qua 1.4.0, 2.5 s). The exception
+`QuantumMachinesManager(host="127.0.0.1", port=1)` in the `customer_a_cluster_1` env
+(qm-qua 1.4.1, 2.1 s) and the `lab_env_4` env (qm-qua 1.4.0, 2.5 s). The exception
 was:
 
     QmServerDetectionError: Failed to detect to QuantumMachines server, failed to connect to a cluster. Tried connecting to 127.0.0.1:1.
@@ -184,7 +184,7 @@ logged `QOP is busy` and never `Opening QM`, a run ended by run_node's
 **Real path, isolated rig.** Rig `D:\work\sm_qa_rigs\agent\rRC` (made by
 `make_rig.py rRC 5113`), served on port 5113 from this worktree, with its own
 instance. Before every `run_node`, the network was asserted to be
-`127.0.0.1:1`. The `kriss_arbel` env ran the real chassis, the real
+`127.0.0.1:1`. The `customer_a_cluster_1` env ran the real chassis, the real
 `run_experiment.py` and a real qualibrate node. Evidence is in
 `rRC\ev\trace.jsonl`, with the scripts beside it.
 - `01_time_of_flight_mw_fem` on qA1 took 27 s. It came back
@@ -239,7 +239,7 @@ instance. Before every `run_node`, the network was asserted to be
   `interrupted` filed as `node_error`; the worker PID not kept; the journal
   name not kept; a guessed journal name; no webhook; an invented cause; an
   address claimed when the text names none; the card not showing what failed.
-- Related suites (`cqt`): agent_backend, agent_may_change, agent_panel,
+- Related suites (`lab_env_4`): agent_backend, agent_may_change, agent_panel,
   agent_runs, agent_setup, autofit_realbackend, baseline_normalize, chat_api,
   limits, multi_instance, natural_order_rest, newrun_path,
   predelivery_audit_fixes, run_failure_class, run_node_isolation, runner_p4,

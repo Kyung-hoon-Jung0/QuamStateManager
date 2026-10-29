@@ -1,11 +1,11 @@
 # docs/176 — The chip's root class, and three things the review would not say
 
 2026-09-11. Found while answering a direct question about a real chip: can a
-user generate **KRISS 5Q** (`260907_KRS_5Q`) from SM's Generate wizard, in the
+user generate **customer A 5Q** (`chip_2`) from SM's Generate wizard, in the
 environment that lab actually runs?
 
-The chip was copied out of `D:\work\Customer_Codes\quam_states\260907_KRS_5Q`
-and never touched. The environment is the existing conda env `KRISS_CZ`, which
+The chip was copied out of `D:\work\Customer_Codes\quam_states\chip_2`
+and never touched. The environment is the existing conda env `lab_env_1`, which
 imports the lab's own `quam_config`. Everything below was measured in real
 headless Chrome against a rig serving that env.
 
@@ -61,7 +61,7 @@ does pass `qpu_roots`, rejected outright with a 400.
 Both doors read the same manifest now, and the review carries `root` (the
 check's own verdict) and `roots` (every importable root this env offers).
 
-Measured on the KRISS env with a QDAC-biased spec, after the fix:
+Measured on the customer A env with a QDAC-biased spec, after the fix:
 
 ```
 status   400
@@ -71,7 +71,7 @@ files written: none
 ```
 
 — and the review now refuses it for the same reason, before anything is
-written. The refusal is honest, not a gap: the KRISS lab's own
+written. The refusal is honest, not a gap: the customer A lab's own
 `quam_config.my_quam.Quam` genuinely declares no `qdac` field. That lab does not
 run a QDAC; a lab that does adds the subclass docs/136 describes and it is
 offered here.
@@ -96,7 +96,7 @@ reaches the spec only when a person picks one, and picking Automatic again
 
 ## 5. Verification
 
-- `tests/stress_generate_root.cjs` — real headless Chrome against the KRISS_CZ
+- `tests/stress_generate_root.cjs` — real headless Chrome against the lab_env_1
   rig: 12/12, zero console errors.
 - `tests/generate_root_selfcheck.cjs` — 21 assertions, executing the shipped
   renderers under jsdom rather than grepping them.

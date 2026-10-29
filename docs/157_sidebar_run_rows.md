@@ -44,7 +44,7 @@ mono weight 600, name **14.9 px**, row 23 px, sidebar 260 px.
   compact hides the wbr (`display: none` makes no box and no opportunity).
   Measured after: every compact row one line.
 
-## 2. Measured in real Chrome (headless, CDP, the CQT 2,655-run archive)
+## 2. Measured in real Chrome (headless, CDP, the customer B 2,655-run archive)
 
 | | before | after |
 |---|---|---|

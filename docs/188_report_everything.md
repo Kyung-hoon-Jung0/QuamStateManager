@@ -160,7 +160,7 @@ caption says so.
 
 ## 5. Measured on the real chip
 
-Rendered against a COPY of the customer's `260907_KRS_5Q` (their folder read
+Rendered against a COPY of the customer's `chip_2` (their folder read
 only, never written):
 
 - 13 sections, 5 qubits, 4 pairs

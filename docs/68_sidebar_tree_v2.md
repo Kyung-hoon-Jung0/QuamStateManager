@@ -125,7 +125,7 @@ escape hatch).
   clock-skew staleness tests pass unchanged (behavioral).
 - Live on the real archive: days render descending (today first); the 84-run
   day shows exactly the newest 50 (#396→#347) + "Show all 84"; the tpath
-  fragment returns all 84. Suite: 591 passed on the qm_mng env for the
+  fragment returns all 84. Suite: 591 passed on the lab_env_6 env for the
   affected batteries; app.js selfchecks green.
 
 ## Amendment (2026-08-03, r16 ⑦ — the "recent folders keep disappearing" fix)

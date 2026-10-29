@@ -1,11 +1,11 @@
-# docs/126 — Customer feedback round 2 (PJ_10082026 + topology/UX batch)
+# docs/126 — Customer feedback round 2 (chip_1 + topology/UX batch)
 
 The second customer-feedback batch, received 2026-08-19. Scope confirmed with
 the user before any code: ① the SUPER CRITICAL pair-grid search gap, ② the
 Topology rework (metric patches drive the map), ③ Live-Edit patch bundle,
 ④ Json Tree bundle, ⑤ the apply-to-chip gate revision (user-directed covenant
 amendment), ⑥ small UX items, ⑦ CosineBipolarPulse support + the Gaussian CZ
-macro workflow. Reference chip: `D:\work\Customer_Codes\PJ_10082026\quam_state`
+macro workflow. Reference chip: `D:\work\Customer_Codes\chip_1\quam_state`
 (READ-ONLY — a 20Q QDAC-biased tunable-coupler chip, 30 pairs).
 
 ## ① Pair grid: coupler/CR channel port-chain expansion (SUPER CRITICAL)
@@ -58,7 +58,7 @@ skipped; per-pair kind in path_map; dangling pointer degrades).
 
 ## ⑦a CosineBipolarPulse — catalog first-class + bit-exact preview
 
-**Report (screenshot).** The PJ_10082026 chip's `cz_bipolar.flux_pulse_qubit`
+**Report (screenshot).** The chip_1 chip's `cz_bipolar.flux_pulse_qubit`
 rendered "Unrecognized pulse class `quam_builder…CosineBipolarPulse` — fields
 are shown raw; the synthesized preview is unavailable."
 
@@ -85,7 +85,7 @@ quam 0.5.0a3 (LabC), which predates the class — regenerating it wholesale in a
 modern env would break the deprecated-class cases in the other direction. So
 generation-scoped goldens: `run_waveform_golden.py` gained
 `--only-keys/--skip-keys/--out-name`, the new cases live in
-`tests/golden/waveform_golden_qb04.json` (generated from the cqt env — quam
+`tests/golden/waveform_golden_qb04.json` (generated from the lab_env_4 env — quam
 0.6.0 / quam_builder 0.4.0), the test fixture merges both files, and the
 LabC live-regeneration test passes `--skip-keys CosineBipolarPulse`. Parity is
 bit-exact (rtol 1e-9) over 7 cases including the customer chip's exact shape
@@ -374,13 +374,13 @@ the customer env succeeds and the macro's amplitude resolves to cz_flattop's.
 Real Chrome: form lists 30 eligible pairs, creation stages a 6-change Review
 bundle, console clean. **Pinned by** `tests/test_gaussian_cz.py` (12).
 
-## Follow-up: the CQT XEB run #2560 compatibility check + bare `Pulse`
+## Follow-up: the customer B XEB run #2560 compatibility check + bare `Pulse`
 
 **Ask.** "This run's pulses look different from what I expected — verify it
-is REALLY compatible with SM": `CQT/data/2026-08-19/#2560_38_two_qubit_xeb_192702/quam_state`.
+is REALLY compatible with SM": `customer B/data/2026-08-19/#2560_38_two_qubit_xeb_192702/quam_state`.
 
 **Verdict: fully compatible, and structurally IDENTICAL to the chip you have
-been working with.** Diffed against the PJ_10082026 copy: 7,757 leaves vs
+been working with.** Diffed against the chip_1 copy: 7,757 leaves vs
 7,757, **zero** structural differences (629 pulse/gate nodes — none added,
 removed, or class-changed), and only **23 numeric leaves** moved — 15 inside
 `q19-20`'s macros and 8 port filter values, i.e. ordinary recalibration
@@ -730,7 +730,7 @@ Probe measures the angle ADVANCING between real frames (5°→106° over
 
 "어차피 새로 갱신하는 건 기존에서 추가하는 느낌" — exactly right, and the
 button re-walked and re-parsed all 2,655 runs anyway. Three findings, each
-measured on `D:\work\Customer_Codes\CQT\data`:
+measured on `D:\work\Customer_Codes\customer B\data`:
 
 1. **`Path.resolve()` was the single biggest cost** — the swap section
    re-resolved every old AND new entry (2×2,652 = 3.3 s of the 3.5 s total;

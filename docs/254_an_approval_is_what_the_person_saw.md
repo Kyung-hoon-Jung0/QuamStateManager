@@ -162,8 +162,8 @@ The node reports it itself.
   status read and the stop run under `_lock_for("plan")`, so two cancels at
   once write one line.
 - **Journal lines (C-30):**
-  - `human:Kim allowed the run of `node` on qA1 (load_data_id=1)`
-  - `human:Kim approved 2 write(s) from `node` #3 -- applied; edited before writing: `qubits.qA1.f_01` proposed 6251000000.0 -> written 6300000000.0`
+  - `human:user_2 allowed the run of `node` on qA1 (load_data_id=1)`
+  - `human:user_2 approved 2 write(s) from `node` #3 -- applied; edited before writing: `qubits.qA1.f_01` proposed 6251000000.0 -> written 6300000000.0`
   - `asked to run `node` on qA1 (load_data_id=1) -- waiting for approval (mode ask-all)`
 - **Node list (A-20).** `node_not_found` lists every name, plus `closest`.
   The `/run` line answers the same way.
@@ -305,7 +305,7 @@ pins run, then restored:
   - a run request posting writes.
 
 **Related files.** The 25 test files that touch the agent API, the bridge,
-plans, approvals, the apply/undo doors and the panel ran in the `cqt` env:
+plans, approvals, the apply/undo doors and the panel ran in the `lab_env_4` env:
 **582 passed, 0 failed**. All 11 `tests/agent_*selfcheck.cjs` files are
 green.
 

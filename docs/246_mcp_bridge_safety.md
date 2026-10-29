@@ -136,8 +136,8 @@ Start hashes (SHA-256): `rA\chip\state.json` `b3b7f8f6...`, `wiring.json`
   `/redo` were refused (`journal`, `journal`, `redo`); live stayed
   `09368f7d...`. Kim's own Ctrl+Z still walked the journal: live back to
   `1eea75d3...`.
-- **A-06:** `sm_status` on rA: `name: chip`, `declared_name: arbel`,
-  `pin: rA-28e9ddf7`. Pins `rA-28e9ddf7`, `arbel` and `chip` worked;
+- **A-06:** `sm_status` on rA: `name: chip`, `declared_name: cluster_1`,
+  `pin: rA-28e9ddf7`. Pins `rA-28e9ddf7`, `cluster_1` and `chip` worked;
   `otherfridge` was refused. A bridge pinned `chip` latched `rA-28e9ddf7`;
   after the window opened `alt\chip` (also a folder named `chip`) its
   `state_get` and `state_edit` were refused, naming `alt-5b5972f5` as
@@ -152,7 +152,7 @@ Start hashes (SHA-256): `rA\chip\state.json` `b3b7f8f6...`, `wiring.json`
 At the end both chips were restored to the start hashes, SM took live, and
 the server was stopped.
 
-Tests (cqt env): the 139 test files that touch the bridge, the agent API,
+Tests (lab_env_4 env): the 139 test files that touch the bridge, the agent API,
 undo/redo, FSP compensation, the edit and apply doors or chip identity ran
 with 4820 passed, 112 skipped, 0 failed.
 

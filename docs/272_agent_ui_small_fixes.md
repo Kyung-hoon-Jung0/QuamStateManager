@@ -159,7 +159,7 @@ script -- from the shared `quam_actor_name`, which stays the default a NEW tab
 starts from and which `setActor` keeps current (backward compatible: a name
 stored by an older SM is still read). If sessionStorage is blocked, the shared
 name is used (the old behaviour) rather than "human". The composer shows
-`records human:Kim · this tab` (the server records `human:<X-SM-Actor>`,
+`records human:user_2 · this tab` (the server records `human:<X-SM-Actor>`,
 `routes._request_actor`). `agent-setup.js` and `journal.js` read the name
 through `AgentPanel.actorName`, so Connect / Disconnect / a claim with an empty
 "Who" box record the same person as Stop and Start in that tab; the journal's
@@ -296,7 +296,7 @@ before the final one:
 
 ### Test files
 
-All in the `cqt` env, on the final code, no existing test edited:
+All in the `lab_env_4` env, on the final code, no existing test edited:
 
 - every `tests/agent_*selfcheck.cjs` (13 files) and `journal_page_selfcheck.cjs`
   (journal.js was touched): 14/14 exit 0, 466 `ok` lines, 0 FAIL. This
@@ -319,7 +319,7 @@ re-run on the final code, 7/7 RED).
 
 Headless Chrome 154 over CDP on 9455 (`tests/browser/journeys/cdp.cjs`, real
 mouse clicks and real text input). SM served from this worktree on 5135 by
-waitress (cqt env), with a sandboxed `USERPROFILE`/`HOME` and a fresh instance.
+waitress (lab_env_4 env), with a sandboxed `USERPROFILE`/`HOME` and a fresh instance.
 The chip was a COPY of `sm_qa_rigs/agent/rC/chip` in
 `sm_qa_rigs/codex/agui_rig/` (wiring network kept at `127.0.0.1:1`; the copy's
 `extras.data_folder` pointed at a copied `data/`). Cards were seeded through
@@ -349,9 +349,9 @@ All 23 journey checks passed:
   the Calibration log intact, its pill still leading to the approvals; reload
   -> intact; a full load of `/agent#approvals` -> the card revealed.
 - C-23: tab 1 typed `Kim`; a new tab started as `Kim` and typed `Lee`; tab 1,
-  reloaded, still `records human:Kim · this tab`. A real server record from
+  reloaded, still `records human:user_2 · this tab`. A real server record from
   each tab (the draft plan's mode change), from the instance journal:
-  `mode set to ask-all by human:Kim` (tab 1), `mode set to auto by human:Lee`
+  `mode set to ask-all by human:user_2` (tab 1), `mode set to auto by human:user_5`
   (tab 2).
 - Console errors: 0 in both tabs over the whole journey (after cdp.cjs's
   documented CSP-eval filter).

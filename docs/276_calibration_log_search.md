@@ -122,7 +122,7 @@ the remaining rig artifacts and both Chrome profiles are still under
 
 ## Regression validation
 
-Python: `D:/miniconda3/envs/cqt/python.exe`, `PYTHONUTF8=1`,
+Python: `D:/miniconda3/envs/lab_env_4/python.exe`, `PYTHONUTF8=1`,
 `pytest -p no:cacheprovider --timeout=900`. No faulthandler watchdog.
 
 The literal case-insensitive grep selection was run, covering every
@@ -134,7 +134,7 @@ again after the mutation checks.
 ```powershell
 $env:PYTHONUTF8 = '1'
 $journalTests = @(rg -l -i 'journal|story|calibration log' tests -g 'test_*.py')
-& D:/miniconda3/envs/cqt/python.exe -m pytest -p no:cacheprovider --timeout=900 `
+& D:/miniconda3/envs/lab_env_4/python.exe -m pytest -p no:cacheprovider --timeout=900 `
   -q --tb=short @journalTests
 ```
 

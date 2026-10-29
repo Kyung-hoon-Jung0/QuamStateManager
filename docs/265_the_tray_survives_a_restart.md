@@ -361,7 +361,7 @@ Those mutations happen outside a request, where the write is still immediate.
 
 ### Regression
 
-The environment and flags were the same as the first cut's: `cqt`,
+The environment and flags were the same as the first cut's: `lab_env_4`,
 `PYTHONUTF8=1`, `-p no:cacheprovider --timeout=900 --timeout-method=thread`,
 one math thread each.
 
@@ -529,7 +529,7 @@ The final case-insensitive grep selects **228 Python test files**, using
 `working_copy|change_log|pending[ _-]tray|undo_journal|state_roundtrip|sync|auto_apply|refused_apply|loader`
 under `tests/` with `-g 'test*.py'`. This includes all the earlier selected
 files and widens coverage to loader mentions and alternate tray spellings.
-The run uses `D:/miniconda3/envs/cqt/python.exe`, `PYTHONUTF8=1`,
+The run uses `D:/miniconda3/envs/lab_env_4/python.exe`, `PYTHONUTF8=1`,
 `pytest -p no:cacheprovider --timeout=900`, temporary directories inside this
 worktree, and the exact `--deselect` above. Native math thread pools are limited to one thread with
 `OMP_NUM_THREADS=MKL_NUM_THREADS=OPENBLAS_NUM_THREADS=NUMEXPR_NUM_THREADS=1`

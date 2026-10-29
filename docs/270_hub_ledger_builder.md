@@ -11,7 +11,7 @@ or SM-event `record()` was added. Existing tests were not edited.
 ```powershell
 $env:PYTHONUTF8 = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
-& D:/miniconda3/envs/cqt/python.exe -m quam_state_manager.core.hub_build `
+& D:/miniconda3/envs/lab_env_4/python.exe -m quam_state_manager.core.hub_build `
   <archive-root> --out D:/work/sm_qa_rigs/hub3/<ledger-directory> [--limit N]
 ```
 
@@ -160,7 +160,7 @@ its SQL, checkpoint/shape decompression, replay, array loads, and reconstruction
 |---|---:|---:|---:|---:|---:|---:|
 | KH_202608_CZ | 500 | 16 | 516 | **0** | 32.922 | 50.427 |
 | Novera9Q | 500 | 8 | 507 | **0** | 8.014 | 17.218 |
-| arbel_20260929 | 500 | 6 | 503 | **0** | 45.188 | 76.550 |
+| cluster_1_20260929 | 500 | 6 | 503 | **0** | 45.188 | 76.550 |
 | Synthetic 10,000 | 500 | 40 | 539 | **0** | 35.036 | 107.222 |
 
 Second builds over each frozen input set add **0 events and 0 change rows**.
@@ -171,7 +171,7 @@ The live replay table includes those two caught-up runs in its eligible populati
 
 ### (b) Coverage of today's copied history
 
-Filesystem-copied `instance/history/KRISS_CZ/index.sqlite` and any WAL were opened
+Filesystem-copied `instance/history/lab_env_1/index.sqlite` and any WAL were opened
 **only in scratch**, never through a live SQLite connection. That copy contains
 four `leaf_snaps`, **987** `leaf_cp` points, all referring to runs in the first
 archive. The corresponding snapshot state/wiring/meta files were copied read-only
@@ -223,7 +223,7 @@ benchmark; other jobs were running.
 |---|---:|---:|---:|---:|---:|---:|
 | KH_202608_CZ | 4,121 | 9 | 14,277 | 6.262 | 80.542 | 67.19 |
 | Novera9Q | 2,082 | 13 | 13,395 | 3.332 | 20.675 | 60.27 |
-| arbel_20260929, frozen at discovery | 1,600 | 1 | 26,607 | 5.137 | 65.382 | 61.11 |
+| cluster_1_20260929, frozen at discovery | 1,600 | 1 | 26,607 | 5.137 | 65.382 | 61.11 |
 | Synthetic concatenation | 10,000 | 27 | 38,205 | 12.551 | 209.166 | 85.99 |
 
 All discovered runs became events, including incomplete pairs (none of the
@@ -287,7 +287,7 @@ Final focused command:
 ```powershell
 $env:PYTHONUTF8 = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
-& D:/miniconda3/envs/cqt/python.exe -m pytest -p no:cacheprovider --timeout=900 `
+& D:/miniconda3/envs/lab_env_4/python.exe -m pytest -p no:cacheprovider --timeout=900 `
   --basetemp D:/work/sm_qa_rigs/hub3/pytest-final `
   tests/test_hub_store.py tests/test_hub_build.py tests/test_hub_rules.py `
 tests/test_one_run_instant.py tests/test_run_instant.py tests/test_run_instant_callers.py -q
@@ -331,7 +331,7 @@ The review used its own scripts and did not reuse `tools/check_hub_builder.py`. 
 scripts and their outputs are kept in `D:\work\sm_qa_rigs\hub3\review\scripts` and
 `D:\work\sm_qa_rigs\hub3\review`. The
 ledgers were rebuilt from `9bdaad77` into `D:\work\sm_qa_rigs\hub3\review`. The
-production `KRISS_CZ` history was copied before it was opened; its `index.sqlite` is
+production `lab_env_1` history was copied before it was opened; its `index.sqlite` is
 byte-identical (sha256 `b28c97cf…`) to the copy Codex used.
 
 ### (b) recomputed: what the hub holds, run by run
@@ -422,7 +422,7 @@ sparse case this replica was identical to real `ingest_snapshot`.
 | KH, every 40th run (183 snapshots) | 122,800 | 5,540 | 117,260 | 0 / 0 / 0 / 0 |
 | KH, every run (4,112) | 1,030,999 | 1,030,999 | 0 | 0 / 0 / 0 / 0 |
 | Novera, every run (2,069), -04:00 | 14,058 | 14,058 | 0 | 0 / 0 / 0 / 0 |
-| arbel, every run (1,610) | 33,138 | 33,138 | 0 | 0 / 0 / 0 / 0 |
+| cluster_1, every run (1,610) | 33,138 | 33,138 | 0 | 0 / 0 / 0 / 0 |
 
 The dense KH change points split by the hub row that produced them: 746,236 long-array
 marker rows, 270,659 `gone` rows, 11,445 rows on the path itself, and 2,659 pointer
@@ -455,7 +455,7 @@ That comparison misses three things:
 - **Resume.** Building Novera in 8 resumed chunks of 333 gave a ledger identical to
   the one-shot build in events, rows, checkpoints and blobs.
 - **`REVERTS_TO_EARLIER` and `base_hash`**, recomputed independently, match on every
-  event (KH 335, Novera 23, arbel 120 flagged; none on a zero-change event).
+  event (KH 335, Novera 23, cluster_1 120 flagged; none on a zero-change event).
 - **`proven`**, recomputed from `node.json` patches, matches on all 2,408/6,974/661 rows
   of patched runs.
 - **`OFF_LIVE`** is absent from the code and flags.
@@ -482,7 +482,7 @@ after the run instant, and some were rewritten after later runs had already star
 |---|---:|---:|
 | KH | 70 | 32 |
 | Novera | 127 | 2 |
-| arbel | 10 | 0 |
+| cluster_1 | 10 | 0 |
 
 The KH cases include:
 
@@ -526,7 +526,7 @@ writes into `D:\work\Customer_Codes`.
   | Resume | diff the first resumed run against `{}`; forget the head hash |
   | Rows-only | drop rows at checkpoint events |
 
-**Tests (cqt).** The hub suite (`test_hub_store`, `test_hub_build`, `test_hub_rules`)
+**Tests (lab_env_4).** The hub suite (`test_hub_store`, `test_hub_build`, `test_hub_rules`)
 was run with `test_one_run_instant`, `test_run_instant`, `test_run_instant_callers`,
 `test_clock_health`, `test_leaf_index`, `test_history`, `test_param_history_changes` and
 `test_field_history`. Result: **583 passed, 1 skipped**.
@@ -537,6 +537,6 @@ re-run, so it is recorded as a flake.
 
 **Sizes and timings:**
 
-- Rebuild times: KH 87 s, Novera 23 s, arbel 80 s (1,611 runs, live).
-- Peak RSS for arbel: 61.7 MiB.
-- Per-event write transaction on arbel: p50 23 ms, p95 30 ms, max 403 ms.
+- Rebuild times: KH 87 s, Novera 23 s, cluster_1 80 s (1,611 runs, live).
+- Peak RSS for cluster_1: 61.7 MiB.
+- Per-event write transaction on cluster_1: p50 23 ms, p95 30 ms, max 403 ms.

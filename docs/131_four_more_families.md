@@ -8,7 +8,7 @@ artifacts — manual, exemplar images, future-blind benchmark — to
 **08 qubit spectroscopy**, **09 qubit spectroscopy vs flux** (and its QDAC twin
 03c), **06 resonator spectroscopy vs flux** (and 02e), and
 **07 resonator spectroscopy vs coupler flux**, using **five labs' archives**:
-CQT, AS_10TQ9TC, IQCC_QOP37, SNU_1Q and KRISS_CR.
+customer B, AS_10TQ9TC, cloud_provider_1_QOP37, customer D_1Q and lab_env_2.
 
 ## 1. Corpus
 

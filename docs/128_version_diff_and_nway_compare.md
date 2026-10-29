@@ -142,7 +142,7 @@ one that mattered was raised by the critic, below.
 **① The "compact" change was a regression, measured.** (critic, major)
 Narrowing `.state-version-panel` 46rem→36rem — item ③ of the original
 change — crushed the docs/126 quick-diff table that shares that width: on the
-real CQT 20Q chip a 48-char path fell from 24 chars/2 lines to **4.8
+real customer B 20Q chip a 48-char path fell from 24 chars/2 lines to **4.8
 chars/10 lines**, and the table grew 2,040px → 7,512px, pushing the version
 list itself ~12 screens down. The CSS comment claimed the opposite. **The gap
 the customer complained about was never the width** — it was `margin-left:
@@ -207,7 +207,7 @@ and the 2-vs-3+ Compare routing split. Mutation-checked: removing the
 ### The five fixes, measured (not asserted)
 
 All five were then measured in real headless Chrome against a COPY of the
-real CQT 20-qubit customer chip (2,060 numeric leaves, real 64–68-char
+real customer B 20-qubit customer chip (2,060 numeric leaves, real 64–68-char
 dot-paths, 58 minted versions), at 1280/1600/1920 in BOTH themes, with each
 "before" produced by neutralising only the fixed declaration. Every number
 below is light-theme-identical to dark.
