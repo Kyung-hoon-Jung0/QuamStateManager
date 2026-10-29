@@ -149,8 +149,8 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     check(flux.layout.shapes.some(s => s.type === 'rect') && flux.layout.annotations.some(a => /control on \|11>-\|20>/.test(a.text)), 'defect band and resonance levels drawn');
     const time = renders.filter(x => x.id === 'czp-time').at(-1);
     const delta = time.traces.find(t => t.yaxis === 'y2');
-    check(time.layout.xaxis.anchor === 'y2' && time.layout.annotations.map(a => a.x).join() === '1,0.8,0.6' &&
-          time.layout.annotations.map(a => a.y).join() === '200,0,-210' &&
+    check(time.layout.xaxis.anchor === 'y2' && time.layout.annotations.filter(a => a.yref === 'y2').map(a => a.x).join() === '1,0.8,0.6' &&
+          time.layout.annotations.filter(a => a.yref === 'y2').map(a => a.y).join() === '200,0,-210' &&
           time.layout.shapes.filter(s => s.type === 'rect').every(s => s.fillcolor === 'rgba(173,50,107,0.08)' && (s.opacity || 1) === 1),
           'time label sits below both panels; resonance names stay at their levels with separate horizontal positions');
     // v1.4.1: identical operation detuning -> distinct detuning, a wrong-operation plot must fail.
@@ -370,8 +370,9 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     check(items[0] === "qa changed by run #60 (2026-01-05 08:09 UTC): f_01, anharmonicity; first seen in run #50's saved state (2026-01-03 00:00 UTC): z.joint_offset" &&
           (items[1] || '').includes('waveform from the transcription') && E.D.querySelectorAll('#czp-notes li.czp-note-muted').length === 1,
           'D1: staleness grouped per qubit and run, newest run first, then the drawing notes, muted');
-    check(E.text('czp-flux-caveat') === 'route noteqa: a qubit note' && !E.D.getElementById('czp-flux-caveat').hidden &&
-          E.text('czp-time-caveat') === 'route notewave note' && E.text('czp-status') === 'entry unreadable' && !E.D.getElementById('czp-status').hidden &&
+    check(E.text('czp-flux-caveat') === '2 notes on this figureroute noteqa: a qubit note' && !E.D.getElementById('czp-flux-caveat').hidden &&
+          E.D.querySelector('#czp-flux-caveat details > summary') &&
+          E.text('czp-time-caveat') === '2 notes on this figureroute notewave note' && E.text('czp-status') === 'entry unreadable' && !E.D.getElementById('czp-status').hidden &&
           !E.text('czp-notes').includes('route note') && !E.text('czp-time-caveat').includes('transcription'),
           'D1: every caveat is visible under the figure it explains; the chip-wide status on the status line');
     const card2 = E.text('czp-card');
