@@ -187,6 +187,18 @@ def test_two_flux_keeps_partner_operating_frequency():
     assert r['target_hz'] == row['lines'][1]['point']['frequency_hz'] + 200e6
 
 
+def test_the_top_line_says_when_the_stored_point_sits_on_another_resonance():
+    """Aim |11>-|20> (+200 MHz) but store an amplitude that parks Delta near 0 (iSWAP):
+    the amplitude difference alone does not show that the gate sits on the wrong line."""
+    doc = state()
+    doc['qubits']['q1']['z']['operations']['cz_flux']['amplitude'] = 0.35
+    r = solve(doc)
+    assert r['ok'], r
+    assert r['stored_nearest'] == 'iSWAP'
+    assert 'stored point is nearest iSWAP' in r['summary'] and 'not |11>-|20>' in r['summary']
+    assert 'stored point is nearest' not in solve()['summary']
+
+
 def test_two_moving_lines_name_whose_amplitude_is_solved():
     """Two qubits move: the one-glance line must say which qubit's amplitude it gives;
     a single mover keeps the short wording."""

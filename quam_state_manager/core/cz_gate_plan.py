@@ -1177,6 +1177,15 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
                          + (mv(required) if result["ok"] else result["reason"])
                          + f" | stored {mv(stored)} | difference {mv(difference)}"
                          + f" ({result.get('tier', tier)})")
+    # The stored point may sit on a different resonance than the one the target names
+    # (e.g. on iSWAP while aiming at |11>-|20>): an amplitude difference alone hides that.
+    aimed = [r for r in result.get("distances") or [] if r.get("distance_hz") is not None]
+    aimed = min(aimed, key=lambda r: abs(r["distance_hz"]))["name"] if aimed else None
+    near = (row or {}).get("nearest")
+    if result.get("ok") and aimed and near and near.get("name") != aimed:
+        result["stored_nearest"] = near["name"]
+        result["summary"] += (f" | stored point is nearest {near['name']} "
+                              f"({near['distance_hz'] / 1e6:+.1f} MHz), not {aimed}")
     return result
 
 
