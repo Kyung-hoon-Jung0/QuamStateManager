@@ -14756,8 +14756,10 @@ var _INSTR_FIT_KEY = 'quam_instrument_fit';
 // Below this the labels inside the port circles stop being readable, so
 // scaling the rack down would trade one unusable view for another —
 // scrolling a full-size rack is the honest fallback. Measured on the real
-// 20Q chip: an 8-FEM rack in a 1194px pane lands at 0.63.
-var _INSTR_FIT_FLOOR = 0.55;
+// 20Q chip: an 8-FEM rack in a 1194px pane lands at 0.63. A two-controller
+// 8+8-FEM rack in the wizard's ~975px pane lands at 0.52 (GX-8): it must
+// still open whole, so the floor sits below that.
+var _INSTR_FIT_FLOOR = 0.45;
 // The viewer's choice for THIS page. localStorage carries it to the next one
 // but is never the only copy — see _applyInstrumentFit.
 var _instrFitChoice = null;
@@ -15449,13 +15451,15 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
         // names get big type and longer ones shrink instead of only truncating.
         var cap = r >= 18 ? 14 : 11;
         var chord = 2 * Math.sqrt(r * r - 36);
-        fontSize = Math.max(9, Math.min(cap,
+        fontSize = Math.max(10, Math.min(cap,
             Math.floor(chord / (0.62 * Math.max(1, display.length)))));
     } else {
         // Multi-member feedline sub-circles: chord-fit up to 10px so a short
         // name stays readable in Fit mode, never below the old fixed 7px
         // (7px x 0.62em x maxChars still fits every sub-circle radius here).
-        fontSize = Math.max(7, Math.min(10, Math.floor((2 * r - 2) / (0.62 * Math.max(1, display.length)))));
+        // GX-8: never below 10px at natural size -- 7-8px feedline badges
+        // were unreadable on a large rack.
+        fontSize = 10;
     }
     // docs/141 4ah (user): ONE label colour for every port. The bias-tee fill is
     // dark enough for white now, so the black label that the bright amber

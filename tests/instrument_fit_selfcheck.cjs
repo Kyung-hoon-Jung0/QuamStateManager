@@ -150,6 +150,14 @@ ok(isFit(), 'A2 fit mode scales the rack to the host');
 ok(svg().style.height === 'auto', 'A2 fit mode keeps the aspect ratio');
 ok(femLabels().length === 8, 'A2 all 8 FEMs still present in fit mode');
 
+/* -- A2b (GX-8): a two-controller rack in the wizard pane (~0.52) opens whole */
+delete store.quam_instrument_fit;
+setHostWidth(Math.round(nat * 0.5));
+render();
+ok(isFit(), 'A2b a rack at half the pane width still defaults to Fit');
+ok(Array.prototype.every.call(document.querySelectorAll('.iw-port-circle text'),
+   t => +t.getAttribute('font-size') >= 10), 'A2b every port label is at least 10px');
+
 /* -- A3: below the legibility floor -> 1:1 and scrollable -------------- */
 delete store.quam_instrument_fit;
 setHostWidth(Math.round(nat * 0.3));          // 0.30 — below the floor
