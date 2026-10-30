@@ -102,7 +102,8 @@
     if (displaySig === sig) return true;
     if (!displayLoading) {
       displayLoading = true;
-      fetch("/generate/roles?spec=" + encodeURIComponent(sig)).then(function (r) { return r.json(); })
+      fetch("/generate/roles", { method: "POST", headers: { "Content-Type": "application/json" },
+                                 body: JSON.stringify({ display_spec: inputs }) }).then(function (r) { return r.json(); })
         .then(function (res) { displayLoading = false; displayFacts = res.display; displaySig = sig; done(); })
         .catch(function () { displayLoading = false; });
     }

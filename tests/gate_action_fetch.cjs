@@ -13,8 +13,9 @@ exports.install = function (w) {
   w.fetch = function (url, opts) {
     const u = new URL(String(url), 'http://localhost');
     let result;
-    if (u.pathname === '/generate/roles' && u.searchParams.has('spec'))
-      result = compute('display', { spec: JSON.parse(u.searchParams.get('spec')) });
+    if (u.pathname === '/generate/roles' && opts && opts.method === 'POST' && opts.body &&
+        JSON.parse(opts.body).display_spec)
+      result = compute('display', { spec: JSON.parse(opts.body).display_spec });
     else if (u.pathname === '/generate/additions/gate-action')
       result = compute('resolve', JSON.parse(opts.body));
     else if (u.pathname === '/generate/additions/lint' && JSON.parse(opts.body).addition)

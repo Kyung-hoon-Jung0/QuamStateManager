@@ -45674,10 +45674,22 @@ def generate_roles():
     GET is a cache read (never spawns); POST runs the role probe (an explicit
     press). ``modules`` (comma list / JSON list) names lab modules to look in --
     lab packages are never walked."""
-    if request.args.get("spec"):
+    # The Gates cells' display facts: read-only, never spawns. The spec rides
+    # a POST body (``{"display_spec": ...}``) -- a 60-qubit spec in a GET URL
+    # exceeds the dev server's 64 KiB line limit (414). ``?spec=`` stays for
+    # old pages.
+    disp = None
+    if request.method == "POST" and request.is_json:
+        disp = (request.get_json(silent=True) or {}).get("display_spec")
+    if disp is None and request.args.get("spec"):
+        try:
+            disp = json.loads(request.args["spec"])
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+    if disp is not None:
         from quam_state_manager.core.gate_action import display_context
         try:
-            return jsonify({"display": display_context(json.loads(request.args["spec"]))})
+            return jsonify({"display": display_context(disp)})
         except (ValueError, TypeError, AttributeError) as exc:
             return jsonify({"error": str(exc)}), 400
     from quam_state_manager.core import role_manifest

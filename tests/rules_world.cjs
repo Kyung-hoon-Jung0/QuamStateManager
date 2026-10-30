@@ -148,7 +148,7 @@ function makeAddWorld(o) {
   const origFetch = w.fetch;
   w.fetch = function (url, opts) {
     const u = String(url);
-    if (u.indexOf('/generate/roles') >= 0 && u.indexOf('spec=') >= 0) {
+    if (u.indexOf('/generate/roles') >= 0 && opts && opts.body && JSON.parse(opts.body).display_spec) {
       const pairs = {};
       (spec.qubit_pairs || []).forEach(p => {
         const pidx = p[0] + '-' + p[1].replace(/^q/, '');
