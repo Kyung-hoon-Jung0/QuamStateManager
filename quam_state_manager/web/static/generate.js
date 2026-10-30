@@ -2129,7 +2129,7 @@
           "back to keep the calibration.";
       }
       row.querySelector(".gen-pair-c").addEventListener("change", function (e) {
-        _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " change", pairUndo(false));
+        pushPairEditUndo(pair);
         pair[0] = e.target.value;
         onSpecChanged("pair_edit");
         state.pairsTouched = true;
@@ -2138,7 +2138,7 @@
         refreshBoard();  // QA F15: the edge moved
       });
       row.querySelector(".gen-pair-t").addEventListener("change", function (e) {
-        _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " change", pairUndo(false));
+        pushPairEditUndo(pair);
         pair[1] = e.target.value;
         onSpecChanged("pair_edit");
         state.pairsTouched = true;
@@ -3123,8 +3123,11 @@
       addPair.addEventListener("click", function () {
         _wizPushRestore("+ Add pair", pairUndo(true));   // QA regenerate-r2-30
         state.pairsTouched = true;
-        state.spec.qubit_pairs.push(nextFreePair(state.spec.qubits,
-                                                 state.spec.qubit_pairs));
+        var addedPair = nextFreePair(state.spec.qubits, state.spec.qubit_pairs);
+        state.spec.qubit_pairs.push(addedPair);
+        // Selecting the two members completes this Add pair action.
+        var addedEntry = _wizStack[_wizStack.length - 1];
+        if (addedEntry && addedEntry.label === "+ Add pair" && addedEntry.spec === state.spec) addedEntry.newPair = addedPair;
         onSpecChanged("pair_add");
         renderPairs();
         syncLineTypeToggles();   // gate selector depends on pair count
@@ -12442,6 +12445,12 @@
     if (t.type === 'radio' || t.type === 'file' || t.type === 'button') return null;
     var r = root();
     return (r && r.contains(t)) ? t : null;
+  }
+
+  function pushPairEditUndo(pair) {
+    var top = _wizStack[_wizStack.length - 1];
+    if (top && top.spec === state.spec && top.newPair === pair) return;
+    _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " change", pairUndo(false));
   }
   function _wizVal(el) {
     return el.type === 'checkbox' ? el.checked : el.value;

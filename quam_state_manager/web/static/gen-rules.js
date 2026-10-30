@@ -1210,9 +1210,9 @@
   }
 
   // Ask the server again for every rule whose last answer is not for the current content.
-  function refreshStatuses(ctx, force) {
+  function refreshStatuses(ctx, force, ids) {
     var spec = ctx.spec();
-    var todo = rulesOf(spec).filter(function (r) { return r.id && (force || !statusFresh(spec, r)); });
+    var todo = rulesOf(spec).filter(function (r) { return r.id && (!ids || ids.indexOf(r.id) >= 0) && (force || !statusFresh(spec, r)); });
     if (!todo.length) return Promise.resolve([]);
     var seq = _seq;
     var ctl = typeof AbortController === "function" ? new AbortController() : null;
@@ -1489,7 +1489,12 @@
   function settleOne(ctx, id, blocked) {
     var rule = ruleById(ctx.spec(), id);
     if (!rule) return Promise.resolve();
-    return refreshStatuses(ctx, false).then(function () {
+    return refreshStatuses(ctx, true, [id]).then(function (answers) {
+      if (!answers[0] || answers[0].pending) {
+        _settleErr = _statusErr || (answers[0] && answers[0].pending
+          ? "The environment manifest is still warming." : "The chip changed while checking rules.");
+        return null;
+      }
       if (_statusErr) { _settleErr = _statusErr; return null; }
       if (blocked || !rule.auto_new) return null;
       var rows = newReadyRows(rule), st = _status[id];

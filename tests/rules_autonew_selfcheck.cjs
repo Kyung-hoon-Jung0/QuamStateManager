@@ -59,6 +59,12 @@ function makeWizard(o) {
   };
   win.document.elementFromPoint = function () { return null; };
   SRC.forEach(src => new win.Function(src).call(win));
+  // Execute the shipped app-wide shortcut listener, not a test imitation.
+  const app = read('web/static/app.js').replace(/\r\n/g, '\n');
+  const start = app.indexOf('document.addEventListener("keydown", function(evt) {\n    if (!((evt.ctrlKey');
+  if (start < 0) throw new Error('wizard undo keyboard listener missing');
+  const end = app.indexOf('\n});', start) + '\n});'.length;
+  win.eval(app.slice(start, end));
   return { win, srv };
 }
 const setInput = (win, el, v) => { el.value = String(v); el.dispatchEvent(new win.Event('input', { bubbles: true })); el.dispatchEvent(new win.Event('change', { bubbles: true })); };
@@ -89,7 +95,12 @@ function orphans(G) {
   G.state.spec.qubit_pairs.forEach(p => { have[T.pidOf(p)] = 1; });
   return instTargets(G).filter(t => !have[t]);
 }
-const undo = win => win._wizUndo.tryUndo();
+const undo = (win, shiftKey = false) => {
+  win.document.body.tabIndex = -1; win.document.body.focus();
+  const key = new win.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey, bubbles: true, cancelable: true });
+  win.document.body.dispatchEvent(key);
+  return key.defaultPrevented;
+};
 
 (async () => {
   // A1..A4
@@ -105,17 +116,22 @@ const undo = win => win._wizUndo.tryUndo();
   ok(pairsOf(G) === 'q1-q2,q2-q3,q3-q4', 'A1 the final pair is q3-q4: ' + pairsOf(G));
   ok(srv.applies.length === base, 'A1 nothing was written while the pair was being edited');
   ok(instTargets(G).length === 2, 'A1 no instance yet');
-  const hist = win._wizUndo.tryUndo.length;   // (function arity is irrelevant; the stack is probed by undoing below)
+  let ruleUndos = 0;
+  const push = win._wizUndo.pushRestore;
+  win._wizUndo.pushRestore = function (...args) { ruleUndos++; return push.apply(this, args); };
   G.goToStep(5);
   await T.settle(); await T.settle();
   ok(srv.applies.length === base + 1 && J(srv.applies[srv.applies.length - 1].pairs) === '["q3-4"]', 'A2 one apply, for the FINAL pair only: ' + J(srv.applies.map(a => a.pairs)));
   ok(instTargets(G).indexOf('q3-4') >= 0 && orphans(G).length === 0, 'A2 the instance is on q3-4: ' + J(instTargets(G)));
+  ok(ruleUndos === 1, 'A2 settle adds exactly one RuleTxn to the wizard stack');
   ok(win.toasts.indexOf('Pairs q3-4 added earlier · cz_bm added to them too (rule). Ctrl+Z undoes it.') >= 0, 'A3 toast: ' + J(win.toasts));
   ok(undo(win) === true, 'A4 Ctrl+Z consumed');
   ok(win.toasts.some(t => /Undid: auto-added cz_bm to 1 new pair/.test(t)), 'A4 the undo step is named: ' + J(win.toasts));
   ok(instTargets(G).indexOf('q3-4') < 0 && pairsOf(G) === 'q1-q2,q2-q3,q3-q4', 'A4 x1 removes the gate, the pair stays: ' + pairsOf(G) + ' / ' + J(instTargets(G)));
-  for (let i = 0; i < 3 && pairsOf(G) !== 'q1-q2,q2-q3'; i++) { undo(win); ok(orphans(G).length === 0, 'A4 no orphan gate after undo ' + (i + 2)); }
-  ok(pairsOf(G) === 'q1-q2,q2-q3', 'A4 the earlier undos take the pair edits back: ' + pairsOf(G));
+  ok(undo(win) && pairsOf(G) === 'q1-q2,q2-q3' && orphans(G).length === 0,
+    'A4 exactly Ctrl+Z x2 removes the pair without orphans: ' + pairsOf(G));
+  const afterUndo = J(G.state.spec);
+  ok(undo(win, true) && J(G.state.spec) === afterUndo, 'A4 Ctrl+Shift+Z is swallowed; the wizard has no redo');
 
   // A5: draft writes nothing
   ({ win, srv, G } = build());
@@ -150,6 +166,12 @@ const undo = win => win._wizUndo.tryUndo();
   ok(G.state.step === 8, 'A6 Review reached: step ' + G.state.step);
   ok(srv.expands.length - before === 1, 'A6 exactly one expand on entering Review: ' + (srv.expands.length - before));
   ok(srv.applies.length === 0, 'A6 auto_new off: nothing written');
+  // Even a fresh background answer is followed by the mandatory pre-Review check.
+  G.goToStep(7);
+  const freshBefore = srv.expands.length;
+  G.tryNext(); await T.settle(); await T.settle();
+  ok(G.state.step === 8 && srv.expands.length - freshBefore === 1,
+    'A6 a fresh cache still gets exactly one pre-Review expand');
 
   ({ win, srv, G } = build({ autoNew: false }));
   await T.settle();
@@ -202,5 +224,20 @@ const undo = win => win._wizUndo.tryUndo();
   await T.settle();
   ok(win.GenRules._state().seq > seq, 'A9 resetAllocRuntime (Reset this step) moves the rule runtime on');
 
+  // A11: N rules settle with exactly N expands, even with fresh background answers.
+  const multi = T.makeWorld({ nq: 3 });
+  multi.spec.addition_rules = ['r1', 'r2'].map((id, i) => Object.assign(T.baseRule(), {
+    id, gate: { name: 'cz_' + i, macro_class: 'pkg.G' }, auto_new: false }));
+  await multi.w.GenRules.refreshStatuses(multi.w.ctx, true);
+  const checkedBefore = multi.srv.expands.length;
+  const settled = await multi.w.GenRules.settle(multi.w.ctx, 'pre_review');
+  ok(settled.ok && multi.srv.expands.length - checkedBefore === 2,
+    'A11 settle checks each rule exactly once, independently of the cache');
+  // Warming is a reported failure, never a successful mandatory check.
+  const pendingFetch = multi.w.fetch;
+  multi.w.fetch = (url, opts) => pendingFetch(url, opts).then(res => ({ status: res.status,
+    json: () => res.json().then(body => Object.assign(body, { pending: true })) }));
+  const warming = await multi.w.GenRules.settle(multi.w.ctx, 'pre_review');
+  ok(!warming.ok && /manifest.*warming/.test(warming.error), 'A11 warming is reported in Review');
   T.done('rules_autonew_selfcheck');
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
