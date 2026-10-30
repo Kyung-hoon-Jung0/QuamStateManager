@@ -41,12 +41,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from quam_state_manager.core.field_kinds import _norm
+from quam_state_manager.core.field_kinds import _arms, _norm
 from quam_state_manager.core.pointer_path import _walk, pointer_to_abs
 
 logger = logging.getLogger(__name__)
 
-KINDS = ("pulse", "macro")
+KINDS = ("pulse", "macro", "field")
+_LIST_HEADS = ("list", "List", "tuple", "Tuple", "Sequence")
 _NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 _TARGET_RE = re.compile(r"^[A-Za-z_][\w\-]*(\.[\w\-]+)+\.operations$")
 _MACRO_TARGET_RE = re.compile(r"^(qubits|qubit_pairs)\.[\w\-]+\.macros$")
@@ -57,6 +58,7 @@ _NAME_FIELD_RE = re.compile(r"(^|_)(pulse|pulse_name|operation|operation_name|op
 # pulse-reference fields of the CZ gate family, recognised without a manifest
 _KNOWN_PULSE_FIELDS = ("flux_pulse_qubit", "flux_pulse_target", "flux_pulse_high",
                        "flux_pulse_low", "coupler_flux_pulse")
+_FIELD_TARGET_RE = re.compile(r"^[A-Za-z_][\w\-]*(\.[\w\-]+)*$")
 _CLASS_RE = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)+$")
 _OFFICIAL = ("quam", "quam_builder", "qualang_tools", "qm")
 
@@ -107,8 +109,18 @@ def structural_errors(spec: dict) -> list[str]:
             continue
         kind = a.get("kind")
         if kind not in KINDS:
-            errors.append(f"{where}: unknown kind {kind!r} (expected 'pulse' or 'macro')")
+            errors.append(f"{where}: unknown kind {kind!r} (expected 'pulse', 'macro' or 'field')")
         t, n, c = a.get("target"), a.get("name"), a.get("class")
+        if kind == "field":
+            if not isinstance(t, str) or not _FIELD_TARGET_RE.match(t):
+                errors.append(f"{where}: a field target must be a dot path (got {t!r})")
+            if "value" not in a:
+                errors.append(f"{where}: a field addition needs a value")
+            if isinstance(t, str):
+                if ("field", t) in seen:
+                    errors.append(f"{where}: {t} is set twice")
+                seen.add(("field", t))
+            continue
         if kind == "macro":
             if not isinstance(t, str) or not _MACRO_TARGET_RE.match(t):
                 errors.append(f"{where}: a macro target must be qubits.<q>.macros or "
@@ -150,6 +162,10 @@ def spec_channel_reason(spec: dict, target: str) -> str | None:
         if q not in {str(x) for x in spec.get("qubits") or []}:
             return f"qubit {q} is not in this chip"
         need = _QUBIT_CHANNEL.get(ch)
+        qd = (((spec.get("qdac") or {}).get("qubits")) or {}).get(q)
+        if ch == "z" and isinstance(qd, dict) and not qd.get("bias_tee"):
+            return (f"qubit {q} is biased by the QDAC-II: its z is a QdacBiasLine (a DC "
+                    "level), which plays no pulses; put the pulse on xy or the resonator")
         if need and not any(ln.get("line") == need and str(ln.get("element")) == q
                             for ln in lines):
             return f"qubit {q} has no {need} line, so it has no {ch} channel"
@@ -206,6 +222,11 @@ def _type_ok(raw: str, kind: str, value: Any) -> bool:
     if kind in ("dict_of_pointers", "dict_of_objects"):
         return isinstance(value, dict)
     t = _norm(raw or "")
+    arms = [a for a in (_arms(t) or []) if a not in ("None", "NoneType")]
+    if len(arms) > 1:
+        if all(a.split("[")[0] in _LIST_HEADS for a in arms):
+            return isinstance(value, list)
+        return True
     if t == "int":
         return isinstance(value, int) and not isinstance(value, bool)
     if t == "float":
@@ -214,7 +235,7 @@ def _type_ok(raw: str, kind: str, value: Any) -> bool:
         return isinstance(value, bool)
     if t == "str":
         return isinstance(value, str)
-    if t.split("[")[0] in ("list", "List", "tuple", "Tuple", "Sequence"):
+    if t.split("[")[0] in _LIST_HEADS:
         return isinstance(value, list)
     return True
 
@@ -402,6 +423,15 @@ def _f01(state: dict, qubit: str | None) -> float | None:
     return None
 
 
+def _qdac_z_class(state: dict, segs: list[str]) -> str | None:
+    """The short class name of a qubit's z when it is a QDAC-II bias line."""
+    if not (len(segs) == 4 and segs[0] == "qubits" and segs[2] == "z"):
+        return None
+    ok, z = _walk(state, segs[:3])
+    cls = str(z.get("__class__") or "") if ok and isinstance(z, dict) else ""
+    return cls.rsplit(".", 1)[-1] if "QdacBias" in cls else None
+
+
 def _ops_under(state: dict, path: list[str]) -> dict[str, list[str]]:
     """``{op name: [holder paths]}`` over a qubit's channels, or a channel's own operations."""
     ok, node = _walk(state, path)
@@ -473,9 +503,14 @@ def _ref_problem(state: dict, path: list[str], add: dict, manifest: dict | None,
 # ---------------------------------------------------------------------------
 
 def _entry(i: int, add: dict, manifest: dict | None, reason: str | None = None) -> dict:
-    e = {"index": i, "kind": add.get("kind"), "target": add.get("target"),
-         "name": add.get("name"), "class": add.get("class"),
-         "origin": origin_of(str(add.get("class") or ""), manifest)}
+    if add.get("kind") == "field":
+        parent, _, last = str(add.get("target") or "").rpartition(".")
+        e = {"index": i, "kind": "field", "target": parent, "name": last, "class": None,
+             "origin": "field", "value": add.get("value")}
+    else:
+        e = {"index": i, "kind": add.get("kind"), "target": add.get("target"),
+             "name": add.get("name"), "class": add.get("class"),
+             "origin": origin_of(str(add.get("class") or ""), manifest)}
     if reason:
         e["reason"] = reason
     return e
@@ -484,7 +519,86 @@ def _entry(i: int, add: dict, manifest: dict | None, reason: str | None = None) 
 def placement_order(adds: list[dict]) -> list[int]:
     """Indices in the order they are placed: every pulse before any macro
     (a macro may reference a pulse the same spec adds), stable otherwise."""
-    return sorted(range(len(adds)), key=lambda i: (adds[i].get("kind") == "macro", i))
+    rank = {"pulse": 0, "macro": 1, "field": 2}
+    return sorted(range(len(adds)), key=lambda i: (rank.get(adds[i].get("kind"), 0), i))
+
+
+def _owner_of(state: dict, segs: list[str]) -> tuple[int, Any]:
+    """(index, node) of the deepest ancestor of the leaf *segs* that is a
+    serialised quam object (a dict naming ``__class__``); the root is index 0."""
+    best: tuple[int, Any] = (0, state)
+    for k in range(1, len(segs)):
+        ok, node = _walk(state, segs[:k])
+        if not ok:
+            break
+        if isinstance(node, dict) and "__class__" in node:
+            best = (k, node)
+    return best
+
+
+def field_reason(state: dict, add: dict, manifest: dict | None) -> str | None:
+    """Why a ``field`` addition cannot be set on *state*, or None.
+
+    The field must be DECLARED by the class of the object that holds it (quam
+    refuses an undeclared key at load), read from the env's manifest. Below a
+    declared ``extras`` everything is free-form (``edit_policy.is_free_form_path``).
+    A class the manifest does not know is left to the env load. [derived]"""
+    segs = str(add["target"]).split(".")
+    k, owner = _owner_of(state, segs)
+    rest = segs[k:]
+    cls = owner.get("__class__") if isinstance(owner, dict) else None
+    where = ".".join(segs[:k]) or "the root"
+    c = _class_entry(manifest, str(cls)) if cls else None
+    fields = (c or {}).get("fields") or {}
+    if rest[0] != "extras" and len(rest) > 1:
+        return (f"{'.'.join(segs[:k + 1])} is not an object with fields; a field addition "
+                "sets one declared field (use a pulse or macro addition for an entry)")
+    if c is not None and fields and rest[0] not in fields:
+        return (f"{rest[0]} is not a field of {str(cls).rsplit('.', 1)[-1]} ({where}) in this "
+                "environment, so Quam.load would refuse it")
+    if rest[0] == "extras":
+        if len(rest) < 2:
+            return "extras itself is a block; name a key under it (extras.<key>)"
+        ok, ex = _walk(state, segs[:k + 1])
+        if ok and not isinstance(ex, dict):
+            return f"{'.'.join(segs[:k + 1])} is not a block"
+        return None
+    ok, cur = _walk(state, segs)
+    if ok and isinstance(cur, dict) and "__class__" in cur:
+        return f"{add['target']} holds an object; a field addition sets a value, not an object"
+    f = fields.get(rest[0])
+    v = add.get("value")
+    if f is not None:
+        if v is None and not (f.get("optional") or f.get("has_default")):
+            return f"field {rest[0]} cannot be empty"
+        if v is not None and not _type_ok(f.get("raw") or "", f.get("kind") or "plain", v):
+            return (f"field {rest[0]}: {json.dumps(v)[:60]} does not fit its type "
+                    f"{_norm(f.get('raw') or '?')}")
+    return None
+
+
+def _set_field(state: dict, add: dict) -> dict:
+    """Set a field addition's value; returns how to undo it."""
+    segs = str(add["target"]).split(".")
+    node = state
+    for s_ in segs[:-1]:
+        if not isinstance(node.get(s_), dict):
+            node[s_] = {}
+        node = node[s_]
+    undo = {"had": segs[-1] in node, "old": copy.deepcopy(node.get(segs[-1]))}
+    node[segs[-1]] = copy.deepcopy(add.get("value"))
+    return undo
+
+
+def _unset_field(state: dict, path: str, undo: dict | None) -> None:
+    segs = path.split(".")
+    ok, parent = _walk(state, segs[:-1])
+    if not (ok and isinstance(parent, dict)):
+        return
+    if (undo or {}).get("had"):
+        parent[segs[-1]] = copy.deepcopy(undo.get("old"))
+    else:
+        parent.pop(segs[-1], None)
 
 
 def apply_additions(state: dict, spec: dict, manifest: dict | None) -> dict:
@@ -501,12 +615,17 @@ def apply_additions(state: dict, spec: dict, manifest: dict | None) -> dict:
     placed: list[tuple[int, dict, list[str]]] = []
     refused: dict[str, str] = {}
 
+    fields_set: list[tuple[int, dict]] = []
+
     def refuse(i, a, why):
         report["refused"].append(_entry(i, a, manifest, why))
-        refused[f"{a['target']}.{a['name']}"] = f"{a['target']}.{a['name']}"
+        if a.get("kind") != "field":
+            refused[f"{a['target']}.{a['name']}"] = f"{a['target']}.{a['name']}"
 
     for i in placement_order(adds):
         a = adds[i]
+        if a.get("kind") == "field":
+            continue      # set after the pulses and macros it may name
         reason = (spec_channel_reason(spec, a["target"]) or manifest_reason(a, manifest))
         segs = a["target"].split(".")
         container = None
@@ -519,7 +638,11 @@ def apply_additions(state: dict, spec: dict, manifest: dict | None) -> dict:
                     container = owner.setdefault(segs[-1], {})
                     ok = True
             word = "a macro" if a.get("kind") == "macro" else "an operation"
-            if not ok or not isinstance(container, dict):
+            zcls = _qdac_z_class(state, segs)
+            if not ok and zcls:
+                reason = (f"qubit {segs[1]}'s z is a {zcls} (its QDAC-II DC bias), which "
+                          "plays no pulses; put the pulse on xy or the resonator")
+            elif not ok or not isinstance(container, dict):
                 reason = f"{a['target']} does not exist in the built chip"
             elif a["name"] in container:
                 reason = f"{a['target']} already has {word} named {a['name']}"
@@ -543,8 +666,29 @@ def apply_additions(state: dict, spec: dict, manifest: dict | None) -> dict:
                 changed = True
     placed.sort(key=lambda t: t[0])
     report["added"] = [dict(_entry(i, a, manifest), path=".".join(p)) for i, a, p in placed]
+    for i in placement_order(adds):
+        a = adds[i]
+        if a.get("kind") != "field":
+            continue
+        why = field_reason(state, a, manifest)
+        if why:
+            refuse(i, a, why)
+            continue
+        e = dict(_entry(i, a, manifest), path=a["target"], undo=_set_field(state, a))
+        report["added"].append(e)
+    report["added"].sort(key=lambda e: e["index"])
     report["refused"].sort(key=lambda e: e["index"])
     return report
+
+
+def _field_precheck(spec: dict, add: dict, manifest: dict | None) -> str | None:
+    """A ROOT field (or ``extras.*``) judged before the build, when the spec
+    names its root class; anything deeper waits for the built chip."""
+    root = spec.get("quam_class")
+    segs = str(add["target"]).split(".")
+    if not (root and manifest) or not (len(segs) == 1 or segs[0] == "extras"):
+        return None
+    return field_reason({"__class__": root}, add, manifest)
 
 
 def precheck(spec: dict, manifest: dict | None) -> list[dict]:
@@ -557,7 +701,9 @@ def precheck(spec: dict, manifest: dict | None) -> list[dict]:
     for i in placement_order(adds):
         a = adds[i]
         why = None
-        if isinstance(a.get("target"), str) and isinstance(a.get("class"), str):
+        if a.get("kind") == "field" and isinstance(a.get("target"), str):
+            why = _field_precheck(spec, a, manifest)
+        elif isinstance(a.get("target"), str) and isinstance(a.get("class"), str):
             why = spec_channel_reason(spec, a["target"]) or manifest_reason(a, manifest)
         out.append(_entry(i, a, manifest, why))
     return out
@@ -650,8 +796,17 @@ def apply_and_verify(python_path: str | None, out_dir, spec: dict,
         wiring = out_dir / "wiring.json"
 
         def _checks(entries):
-            return [e["path"] for e in entries
-                    if _needs_own_code(e["class"], manifest, e.get("kind"))]
+            return [e["path"] for e in entries if e.get("kind") != "field"
+                    and _needs_own_code(e["class"], manifest, e.get("kind"))]
+
+        by_path = {e["path"]: e for e in report["added"]}
+
+        def _drop(path):
+            e = by_path.get(path)
+            if e is not None and e.get("kind") == "field":
+                _unset_field(state, path, e.get("undo"))
+            else:
+                remove(state, path)
 
         def _run(folders: dict[str, tuple[Path, list[str]]]) -> dict:
             res = verify(python_path, {k: {"folder": str(f), "own_code": c}
@@ -704,19 +859,19 @@ def apply_and_verify(python_path: str | None, out_dir, spec: dict,
             macros = [e for e in report["added"] if e.get("kind") == "macro"]
             _round(pulses, [])
             for path in gone:
-                remove(state, path)
+                _drop(path)
             # a macro whose pulse the env just refused is refused for that reason
             alive = []
             for e in macros:
                 why = _ref_problem(state, e["path"].split("."), adds[e["index"]], manifest, gone)
                 if why:
                     report["refused"].append({**e, "reason": why})
-                    remove(state, e["path"])
+                    _drop(e["path"])
                 else:
                     alive.append(e)
             _round(alive, list(keep))
             for path in gone:
-                remove(state, path)
+                _drop(path)
             keep.sort(key=lambda e: e["index"])
             report["added"] = keep
             if keep:
@@ -727,15 +882,15 @@ def apply_and_verify(python_path: str | None, out_dir, spec: dict,
                     for e in keep:
                         report["refused"].append(
                             {**e, "reason": f"refused together with the others: {why}"})
-                        remove(state, e["path"])
+                        _drop(e["path"])
                     report["added"] = []
             report["refused"].sort(key=lambda e: e["index"])
+        for e in report["added"] + report["refused"]:
+            e.pop("undo", None)
         if report["added"]:
             safe_io.atomic_write_json(out_dir / "state.json", state)
             report["verified"] = {"load": True, "generate_config": True,
-                                  "own_code": [e["path"] for e in report["added"]
-                                               if _needs_own_code(e["class"], manifest,
-                                                                  e.get("kind"))]}
+                                  "own_code": _checks(report["added"])}
         return report
     except Exception as exc:  # noqa: BLE001 -- degrade-only, never fail the build
         logger.exception("additions pass failed")

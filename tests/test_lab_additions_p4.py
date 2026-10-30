@@ -164,3 +164,198 @@ def test_real_build_lab_both_movers_group(tmp_path, monkeypatch):
     row = next(r for r in czp.operations(st)[0] if r["path"].endswith("macros.cz_both"))
     assert {ln["pulse_field"] for ln in row["lines"]} == {"flux_pulse_high", "flux_pulse_low"}
     assert pair  # the builder wrote the pair
+
+
+# ---------------------------------------------------------------------------
+# the field kind
+# ---------------------------------------------------------------------------
+
+ROOT = "lab.root.Quam"
+SQ = "quam.components.pulses.SquarePulse"
+FMAN = {"versions": {"quam_builder": "0.4.0"}, "classes": {
+    ROOT: {"role": "root", "origin": "lab", "fields": {
+        "extras": _f("dict", True), "active_twpa_names": _f("List[str]", True),
+        "twpas": _f("dict", True)}},
+    SQ: {"role": "pulse", "origin": "official", "fields": {
+        "length": _f("int"), "amplitude": _f("float")}},
+}}
+
+
+def _twpa_state(extras=True):
+    st = {"__class__": ROOT, "twpas": {"t1": {
+        "__class__": "x.TWPA",
+        "pump_": {"__class__": "x.Ch", "operations": {
+            "pump": {"__class__": SQ, "length": 2000, "amplitude": 0.5}}}}}}
+    if extras:
+        st["extras"] = {}
+    return st
+
+
+def _field(target, value):
+    return {"kind": "field", "target": target, "value": value}
+
+
+def _frun(adds, state, man=FMAN):
+    rep = additions.apply_additions(state, {"qubits": [], "additions": adds}, man)
+    return rep, {f"{e['target']}.{e['name']}".lstrip("."): e["reason"] for e in rep["refused"]}
+
+
+def test_structural_field_needs_a_value_and_a_dot_path():
+    errs = additions.structural_errors({"additions": [{"kind": "field", "target": "a b"}]})
+    assert any("dot path" in e for e in errs) and any("needs a value" in e for e in errs)
+    assert not additions.structural_errors({"additions": [_field("extras.x", 1)]})
+    errs = additions.structural_errors({"additions": [_field("extras.x", 1), _field("extras.x", 2)]})
+    assert any("set twice" in e for e in errs)
+
+
+def test_extras_is_free_form_and_created_when_absent():
+    st = _twpa_state(extras=False)
+    rep, by = _frun([_field("extras.twpa_pulse_mode", True), _field("extras.any.nested", [1])], st)
+    assert not by, by
+    assert st["extras"] == {"twpa_pulse_mode": True, "any": {"nested": [1]}}
+
+
+def test_a_declared_root_field_is_set_and_typed():
+    st = _twpa_state()
+    rep, by = _frun([_field("active_twpa_names", ["t1"])], st)
+    assert not by and st["active_twpa_names"] == ["t1"]
+    rep, by = _frun([_field("active_twpa_names", "t1")], _twpa_state())
+    assert "does not fit its type" in by["active_twpa_names"]
+
+
+def test_an_undeclared_root_field_is_refused():
+    man = copy.deepcopy(FMAN)
+    del man["classes"][ROOT]["fields"]["active_twpa_names"]
+    st = _twpa_state()
+    rep, by = _frun([_field("active_twpa_names", [])], st, man)
+    assert "is not a field of Quam" in by["active_twpa_names"]
+    assert "active_twpa_names" not in st
+
+
+def test_extras_needs_a_root_that_declares_extras():
+    man = copy.deepcopy(FMAN)
+    del man["classes"][ROOT]["fields"]["extras"]
+    rep, by = _frun([_field("extras.twpa_pulse_mode", True)], _twpa_state(False), man)
+    assert "extras is not a field" in by["extras.twpa_pulse_mode"]
+
+
+def test_a_field_of_a_pulse_object_is_set_by_its_own_class():
+    st = _twpa_state()
+    rep, by = _frun([_field("twpas.t1.pump_.operations.pump.length", 20000)], st)
+    assert not by and st["twpas"]["t1"]["pump_"]["operations"]["pump"]["length"] == 20000
+    rep, by = _frun([_field("twpas.t1.pump_.operations.pump.sticky", 1)], _twpa_state())
+    assert "not a field of SquarePulse" in by["twpas.t1.pump_.operations.pump.sticky"]
+
+
+def test_a_field_addition_never_replaces_an_object_or_writes_into_a_container():
+    rep, by = _frun([_field("twpas.t1.pump_.operations.pump", 1)], _twpa_state())
+    assert "not an object with fields" in next(iter(by.values()))
+    rep, by = _frun([_field("twpas.t1.pump_.operations.newop", 1)], _twpa_state())
+    assert "not an object with fields" in next(iter(by.values()))
+
+
+def test_an_unknown_class_is_left_to_the_env_load():
+    rep, by = _frun([_field("twpas.t1.settling_time", 20)], _twpa_state())
+    assert not by     # x.TWPA is not in the manifest: the env load decides
+
+
+def test_fields_are_placed_after_pulses_and_macros():
+    adds = [_field("extras.a", 1), {"kind": "pulse", "target": "x.y.operations", "name": "p"},
+            {"kind": "macro", "target": "qubits.q.macros", "name": "m"}]
+    assert additions.placement_order(adds) == [1, 2, 0]
+
+
+def test_precheck_judges_a_root_field_when_the_root_is_named():
+    man = copy.deepcopy(FMAN)
+    del man["classes"][ROOT]["fields"]["active_twpa_names"]
+    spec = {"quam_class": ROOT, "qubits": [],
+            "additions": [_field("active_twpa_names", []), _field("extras.f", True),
+                          _field("twpas.t1.settling_time", 3)]}
+    items = additions.precheck(spec, man)
+    assert "is not a field" in items[0]["reason"]
+    assert not items[1].get("reason") and not items[2].get("reason")
+    spec.pop("quam_class")
+    assert not any(e.get("reason") for e in additions.precheck(spec, man))
+
+
+def test_a_refused_field_in_the_env_round_restores_the_old_value(tmp_path):
+    st = _twpa_state()
+    (tmp_path / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    (tmp_path / "wiring.json").write_text("{}", encoding="utf-8")
+    spec = {"qubits": [], "additions": [_field("twpas.t1.pump_.operations.pump.length", 7),
+                                        _field("extras.ok", True)]}
+
+    def verify(py, folders, timeout=0):
+        out = {}
+        for k, f in folders.items():
+            s = json.loads((Path(f["folder"]) / "state.json").read_text(encoding="utf-8"))
+            bad = s["twpas"]["t1"]["pump_"]["operations"]["pump"]["length"] == 7
+            out[k] = {"ok": not bad, "error": "length 7 refused" if bad else None}
+        return {"ok": True, "folders": out}
+    rep = additions.apply_and_verify("py", tmp_path, spec, FMAN, verify=verify)
+    assert [e["name"] for e in rep["added"]] == ["ok"]
+    assert "length 7 refused" in rep["refused"][0]["reason"]
+    final = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert final["twpas"]["t1"]["pump_"]["operations"]["pump"]["length"] == 2000
+    assert final["extras"]["ok"] is True
+    assert all("undo" not in e for e in rep["added"] + rep["refused"])
+
+
+# ---------------------------------------------------------------------------
+# readout pulses with array fields; QDAC qubits
+# ---------------------------------------------------------------------------
+
+CW = "lab.readout.ComplexWeightsReadoutPulse"
+RMAN = {"versions": {}, "classes": {CW: {"role": "pulse", "origin": "lab", "fields": {
+    "length": _f("<class 'int'>"), "amplitude": _f("<class 'float'>"),
+    "integration_weights": _f("typing.Union[typing.List[float], typing.List[typing.Tuple[float, int]]]", True),
+    "weights_real": _f("List[float]", True), "u_centers": _f("List[List[float]]", True)}}}}
+
+
+def _ro(**fields):
+    return {"kind": "pulse", "target": "qubits.q1.resonator.operations", "name": "readout_cw",
+            "class": CW, "fields": dict({"length": 400, "amplitude": 0.1}, **fields)}
+
+
+def test_readout_array_fields_take_plain_lists():
+    st = {"qubits": {"q1": {"resonator": {"operations": {}}}}}
+    rep = additions.apply_additions(st, _spec([_ro(weights_real=[0.1, 0.2], u_centers=[[1.0, 2.0]],
+                                                   integration_weights=[[1.0, 400]])]), RMAN)
+    assert [e["name"] for e in rep["added"]] == ["readout_cw"], rep["refused"]
+    assert st["qubits"]["q1"]["resonator"]["operations"]["readout_cw"]["weights_real"] == [0.1, 0.2]
+
+
+def test_readout_array_field_refuses_a_scalar():
+    st = {"qubits": {"q1": {"resonator": {"operations": {}}}}}
+    rep = additions.apply_additions(st, _spec([_ro(weights_real=3)]), RMAN)
+    assert "does not fit its type" in rep["refused"][0]["reason"]
+    rep = additions.apply_additions(copy.deepcopy(st), _spec([_ro(integration_weights=3)]), RMAN)
+    assert "does not fit its type" in rep["refused"][0]["reason"]
+
+
+def _qdac_spec(tee=False):
+    s = _spec([])
+    s["lines"] = [ln for ln in s["lines"] if not (ln["element"] == "q1" and ln["line"] == "flux")]
+    s["qdac"] = {"qubits": {"q1": {"channel": 1, "bias_tee": tee}}}
+    if tee:
+        s["lines"].append({"element": "q1", "line": "flux"})
+    return s
+
+
+def test_qdac_qubit_z_pulse_is_refused_before_the_build():
+    r = additions.spec_channel_reason(_qdac_spec(), "qubits.q1.z.operations")
+    assert "QDAC-II" in r and "plays no pulses" in r
+    assert additions.spec_channel_reason(_qdac_spec(), "qubits.q1.xy.operations") is None
+    assert additions.spec_channel_reason(_qdac_spec(), "qubits.q1.resonator.operations") is None
+    assert additions.spec_channel_reason(_qdac_spec(), "qubits.q2.z.operations") is None
+    assert additions.spec_channel_reason(_qdac_spec(tee=True), "qubits.q1.z.operations") is None
+
+
+def test_qdac_qubit_z_pulse_is_refused_on_the_built_chip():
+    st = {"qubits": {"q1": {"z": {"__class__": "lab.qdac.QdacBiasLine", "channel": 1},
+                            "xy": {"operations": {}}}}}
+    spec = _spec([{"kind": "pulse", "target": "qubits.q1.z.operations", "name": "p", "class": FLAT,
+                   "fields": {"length": 40, "amplitude": 0.1, "flat_length": 24}}])
+    spec["qubits"] = ["q1"]
+    rep = additions.apply_additions(st, spec, MAN)
+    assert "QdacBiasLine" in rep["refused"][0]["reason"] and "plays no pulses" in rep["refused"][0]["reason"]

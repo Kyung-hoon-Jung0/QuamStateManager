@@ -45598,7 +45598,8 @@ def _additions_manifest(python_path: str, spec: dict, *, spawn: bool) -> dict | 
     (and the modules they live in). ``spawn=False`` is a cache read only."""
     from quam_state_manager.core import role_manifest
     classes = sorted({str(a.get("class")) for a in (spec.get("additions") or [])
-                      if isinstance(a, dict) and a.get("class")})
+                      if isinstance(a, dict) and a.get("class")}
+                     | ({spec["quam_class"]} if isinstance(spec.get("quam_class"), str) else set()))
     if not spawn:
         return role_manifest.roles_for_env(python_path, current_app.instance_path,
                                            state_classes=classes)
