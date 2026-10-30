@@ -1458,7 +1458,14 @@
     return out;
   }
 
-  window.GenAdditions = { channels: channels, owners: owners, pairId: pairId, mount: mount,
+  // The class label/origin the loaded role manifest knows (for the rule dialog's header).
+  function classInfo(cls) {
+    var all = [(roles && roles.macros_pair) || {}, (roles && roles.pulses) || {}];
+    for (var i = 0; i < all.length; i++) if (all[i][cls]) return { label: all[i][cls].label || null, origin: all[i][cls].origin || null };
+    return null;
+  }
+
+  window.GenAdditions = { classInfo: classInfo, refresh: function () { refreshAll(); }, channels: channels, owners: owners, pairId: pairId, mount: mount,
                           renameQubits: renameQubits, gatePulses: gatePulses,
                           renderResult: renderResult, outcome: outcome, renderReview: renderReview,
                           decoratePairTable: decoratePairTable, builderGates: builderGates,

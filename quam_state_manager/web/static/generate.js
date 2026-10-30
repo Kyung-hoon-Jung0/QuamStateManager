@@ -5790,6 +5790,7 @@
   // Strand any in-flight allocate and forget per-content latches — called when
   // the wizard's CONTENT is replaced (hydrate / reset / fresh mount).
   function resetAllocRuntime() {
+    if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: strand in-flight rule requests too
     _pinBad = {};   // per-content: a new chip starts with no flagged pin boxes
     _allocRunSeq++;
     _allocInFlight = false;
@@ -11638,6 +11639,7 @@
   // Copy a loaded draft into `state`, filling any spec keys it lacks against
   // freshSpec() (defensive across minor shape changes within a version).
   function applyDraft(d) {
+    if (window.GenRules) window.GenRules.resetRuleRuntime();
     var spec = d.spec || {}, fresh = freshSpec();
     Object.keys(fresh).forEach(function (k) {
       if (spec[k] == null) spec[k] = fresh[k];
@@ -12411,6 +12413,7 @@
     // repainted after it, since the step may change populate.pairs.
     pushRestore: function (label, restore) {
       _wizPushRestore(label, function () {
+        if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: an undo restore replaces content
         restore();
         if (state.step === 6) renderPopulateTables();
       });

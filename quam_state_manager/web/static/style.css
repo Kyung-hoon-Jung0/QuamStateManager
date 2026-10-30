@@ -16208,3 +16208,35 @@ td.gen-gates { min-width: 12rem; }
 #gcz-several .gcz-sev-reason { margin-left: 1rem; font-size: .9em; }
 #gcz-several .gcz-sev-foot { display: flex; gap: .5rem; justify-content: flex-end; align-items: center; margin-top: .6rem; }
 #gcz-several .gcz-sev-foot > span { margin-right: auto; }
+/* Generate Config -- addition rules: Apply dialog, menus, Rules card */
+dialog.gen-rule-dlg { width: min(60rem, 94vw); max-height: 90vh; overflow: auto; padding: 0.8rem 1rem; border: 1px solid var(--pico-muted-border-color, #8885); border-radius: 8px; }
+.gen-rule-head { display: flex; justify-content: space-between; align-items: center; }
+.gen-rule-head h3 { margin: 0; font-size: 1.05em; }
+.gen-rule-x { width: auto; margin: 0; padding: 0.1rem 0.5rem; }
+.gen-rule-sub, .gen-rule-nums, .gen-rule-ready-note { margin: 0.2rem 0; font-size: 0.85em; }
+.gen-rule-select { display: flex; gap: 0.3rem; align-items: center; margin: 0.5rem 0 0.3rem; }
+.gen-rule-chip { width: auto; margin: 0; padding: 0.1rem 0.6rem; font-size: 0.85em; }
+.gen-rule-chip[aria-pressed="true"] { background: var(--pico-primary, #1e88e5); color: #fff; }
+.gen-rule-status { margin: 0.2rem 0; font-size: 0.85em; }
+.gen-rule-status-stale { color: var(--sm-warn, #d29922); }
+.gen-rule-status-error { color: var(--sm-danger, #d33); }
+.gen-rule-dim { opacity: 0.45; pointer-events: none; }
+.gen-rule-skel-row { height: 1.1rem; margin: 0.35rem 0; background: var(--pico-muted-border-color, #8883); border-radius: 4px; }
+.gen-rule-grpwrap { position: relative; padding-left: 1.6rem; margin: 0.25rem 0; }
+.gen-rule-grpwrap > input.gen-rule-grp-cb, .gen-rule-grpwrap > .gen-rule-grp-mark { position: absolute; left: 0; top: 0.2rem; margin: 0; width: auto; }
+.gen-rule-sum { cursor: pointer; font-weight: 600; font-size: 0.9em; display: flex; justify-content: space-between; }
+.gen-rule-row { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; font-size: 0.85em; padding: 0.1rem 0 0.1rem 0.4rem; }
+.gen-rule-row input[type="checkbox"] { width: auto; margin: 0; }
+.gen-rule-pid { font-family: var(--pico-font-family-monospace, monospace); min-width: 4.5rem; }
+.gen-rule-choice { width: auto; margin: 0; padding: 0.05rem 1.4rem 0.05rem 0.3rem; height: auto; font-size: 1em; }
+.gen-rule-cant { font-size: 0.85em; padding-left: 0.4rem; display: flex; gap: 0.6rem; }
+.gen-rule-foot { display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; margin-top: 0.6rem; border-top: 1px solid var(--pico-muted-border-color, #8885); padding-top: 0.5rem; }
+.gen-rule-foot .gen-rule-later { margin-right: auto; font-size: 0.85em; }
+.gen-rule-foot button { width: auto; margin: 0; }
+.gen-rule-menuhost { position: relative; }
+.gen-rule-menu { position: absolute; z-index: 40; background: var(--pico-card-background-color, #1b1f27); border: 1px solid var(--pico-muted-border-color, #8885); border-radius: 6px; padding: 0.2rem; min-width: 16rem; display: flex; flex-direction: column; }
+.gen-rule-menuitem { text-align: left; background: transparent; border: 0; color: inherit; padding: 0.25rem 0.6rem; margin: 0; width: 100%; font-size: 0.85em; cursor: pointer; }
+.gen-rule-menuitem:focus, .gen-rule-menuitem:hover { background: rgba(1, 114, 173, 0.25); }
+.gen-rule-menu-sep { border-top: 1px solid var(--pico-muted-border-color, #8885); margin: 0.2rem 0; }
+.gen-rule-card { border: 1px solid var(--pico-muted-border-color, #8885); border-radius: 6px; padding: 0.4rem 0.6rem; margin: 0.3rem 0; font-size: 0.88em; }
+.gen-rule-card button { width: auto; margin: 0.15rem 0.25rem 0 0; padding: 0.1rem 0.5rem; font-size: 1em; }
