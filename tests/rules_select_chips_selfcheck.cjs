@@ -82,5 +82,44 @@ const FEED = { q1: 'feedline1', q2: 'feedline1', q3: 'feedline1', q4: 'feedline2
   ok(w.applyBtn().textContent === 'Nothing to add' && w.applyBtn().disabled, 'D4 Nothing to add disabled');
   ok(w.document.querySelector('.gen-rule-later').hidden, 'D4 "created later" hidden');
   ok(/Can't — 2 of 3 pairs/.test(w.dlg().textContent) && /2 — no coupler line on the pair/.test(w.dlg().textContent), 'D4 Cant by reason: ' + w.dlg().textContent);
+
+  // D6 (R5 P1 #4): a Needs-a-look row the server says apply() would skip has no tick, and the
+  // Add count is what will really be added; a choice row ticked without touching its select
+  // sends the choice on screen.
+  ({ w, srv, spec } = T.makeWorld({ nq: 4, server: {
+    statusOf: () => 'Needs a look',
+    extraRow: (pid) => pid === 'q3-4' ? { writable: true, needs_choice: true, reason: 'idle frequencies not typed — choose' }
+                                      : { writable: false, needs_choice: false, reason: 'class fields not checked' } } }));
+  w.GenRules.openApply({ ctx: w.ctx, rule: T.baseRule() });
+  await T.settle();
+  const cb6 = (pid) => w.dlg().querySelector('.gen-rule-row-cb[data-pair="' + pid + '"]');
+  ok(!cb6('q1-2') && !cb6('q2-3') && !!cb6('q3-4'), 'D6 warnings-only rows carry no tick, the choice row does');
+  ok(/not added from here/.test(w.dlg().querySelector('.gen-rule-row[data-pair="q2-3"]').textContent), 'D6 the row says it is not added from here');
+  const grp = w.dlg().querySelector('.gen-rule-grp-cb');
+  ok(!!grp, 'D6 the group still has a tick when only a later row is writable');
+  grp.checked = true; grp.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await T.settle();
+  ok(/Add to 1 pair$/.test(w.applyBtn().textContent), 'D6 the group tick counts only writable rows: ' + w.applyBtn().textContent);
+  ({ w, srv, spec } = T.makeWorld({ nq: 3, server: {
+    statusOf: () => 'Needs a look', extraRow: () => ({ writable: true, needs_choice: true, reason: 'choose' }) } }));
+  w.GenRules.openApply({ ctx: w.ctx, rule: T.baseRule() });
+  await T.settle();
+  const c1 = w.dlg().querySelector('.gen-rule-row-cb[data-pair="q1-2"]');
+  c1.checked = true; c1.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await T.settle(); await T.settle();
+  w.applyBtn().click(); await T.settle();
+  ok(srv.applies.length === 1 && srv.applies[0].choices && srv.applies[0].choices['q1-2'] === 'control',
+    'D6 a ticked choice row sends its on-screen choice: ' + JSON.stringify(srv.applies[0] && srv.applies[0].choices));
+  // D7 (R5 P1 #4 / P2 3.6): an apply that adds nothing is said as such, with no undo entry
+  ({ w, srv, spec } = T.makeWorld({ nq: 3, server: { statusOf: () => 'Ready',
+    applyResult: (body) => ({ status: 200, body: { ok: true, spec: body.spec, added: [], rule: body.rule,
+      skipped: body.pairs.map(p => ({ pair: p, reason: 'class fields not checked' })) } }) } }));
+  const before7 = JSON.stringify(w.spec);
+  w.GenRules.openApply({ ctx: w.ctx, rule: T.baseRule() });
+  await T.settle();
+  w.applyBtn().click(); await T.settle();
+  ok(w.undo.length === 0 && JSON.stringify(w.spec) === before7, 'D7 nothing added: spec unchanged, no undo entry');
+  ok(w.toasts.length === 1 && /^Nothing was added\./.test(w.toasts[0].m) && !/Added /.test(w.toasts[0].m) && /skipped/.test(w.toasts[0].m),
+    'D7 the toast says nothing was added: ' + JSON.stringify(w.toasts));
   T.done('rules_select_chips_selfcheck');
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

@@ -157,6 +157,19 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
                 for field, value in (old.get("copied_value") or {}).items():
                     if (pulse.get("fields") or {}).get(field) == (old.get("fields") or {}).get(field):
                         pulse["copied_value"][field] = value
+        # What apply() will actually write for this row, so a tick never promises more.
+        needs_choice = bool(resolved["errors"]) and all(e.endswith("needs a look: choose") for e in resolved["errors"])
+        if judged["status"] == add_verdict.READY:
+            writable = True
+        elif judged["status"] != add_verdict.NEEDS_LOOK:
+            writable = False
+        elif existing:
+            writable = not resolved["errors"] and bool(planned)
+        elif source_error:
+            writable = False
+        else:
+            writable = needs_choice or (choice in ("control", "target") and not resolved["errors"] and bool(planned))
+        judged.update(writable=writable, needs_choice=needs_choice and not existing)
         judged.update(additions=planned, instance_sig=instance_sig, diff_vs_current=delta if existing else [],
                       edited=edited, existing=existing, key=key, choices=resolved["choices"],
                       errors=list(resolved["errors"]),

@@ -193,7 +193,14 @@
     return m ? "by " + m[1] : "";
   }
 
-  function tickable(row) { return row.status === G_READY || row.status === G_LOOK; }
+  // The server says what apply() will write (row.writable); a row it would skip has no tick.
+  function tickable(row) {
+    if (row.status === G_READY) return row.writable !== false;
+    return row.status === G_LOOK && row.writable !== false;
+  }
+  function needsChoiceOf(row) {
+    return row.status === G_LOOK && (row.needs_choice != null ? !!row.needs_choice : /choose/.test(row.reason || ""));
+  }
 
   function adoptTicks(d, answer) {
     var next = {};
@@ -343,14 +350,20 @@
       var cb = el("input", { type: "checkbox", className: "gen-rule-row-cb", "aria-label": row.pair, "data-pair": row.pair });
       cb.checked = !!d.ticks[row.pair];
       cb.addEventListener("change", function () {
-        d.ticks[row.pair] = cb.checked; d.feedline = null; renderBody(d);
+        d.ticks[row.pair] = cb.checked; d.feedline = null;
+        if (cb.checked && needsChoiceOf(row) && !Object.prototype.hasOwnProperty.call(d.choices, row.pair)) {
+          // A ticked choice row is added with the choice on screen; it must reach the server.
+          d.choices[row.pair] = "control";
+          recheck(d, "choice", 0);
+        }
+        renderBody(d);
         var again = d.bodyEl.querySelector('.gen-rule-row-cb[data-pair="' + row.pair + '"]');
         if (again) again.focus();
       });
       li.appendChild(cb);
     }
     li.appendChild(el("span", { className: "gen-rule-pid" }, row.pair));
-    var needsChoice = row.status === G_LOOK && /choose/.test(row.reason || "");
+    var needsChoice = needsChoiceOf(row);
     var chosen = Object.prototype.hasOwnProperty.call(d.choices, row.pair);
     if (needsChoice || chosen) {
       var ct = chooseText(row);
@@ -374,6 +387,8 @@
       if (tail) li.appendChild(el("span", { className: "gen-rule-tail muted" }, tail));
     } else {
       li.appendChild(el("span", { className: "gen-rule-reason" }, row.reason || ""));
+      if (row.status === G_LOOK && !tickable(row))
+        li.appendChild(el("span", { className: "gen-rule-hint gen-rule-nowrite muted" }, "not added from here"));
     }
     return li;
   }
@@ -407,6 +422,8 @@
     GROUPS.forEach(function (g) { by[g] = rows.filter(function (r) { return r.status === g; }); });
     var allCant = total > 0 && by[G_READY].length === 0 && by[G_LOOK].length === 0;
     if (allCant) frag.appendChild(el("p", { className: "gen-rule-allcant" }, "No other pair can take this gate."));
+    else if (total > 0 && !rows.some(tickable))
+      frag.appendChild(el("p", { className: "gen-rule-allcant" }, "Nothing can be added from here yet — each pair says why."));
     GROUPS.forEach(function (g) {
       var list = by[g];
       if (!list.length) return;
@@ -417,7 +434,8 @@
       var sum = groupHead(g, list.length, (g === G_READY || (g === G_CANT && allCant)) ? total : null, open);
       det.appendChild(sum);
       bindSummary(det, sum);
-      if (tickable(list[0])) wrap.appendChild(groupCheckbox(d, list, g));
+      var tickRows = list.filter(tickable);
+      if (tickRows.length) wrap.appendChild(groupCheckbox(d, tickRows, g));
       else wrap.appendChild(el("span", { className: "gen-rule-grp-mark", "aria-hidden": "true" },
         g === G_CANT ? "✕" : "○"));
       if (g === G_CANT) {
@@ -628,6 +646,10 @@
         return { ok: false, stale: true, reason: (res.body && res.body.error) || "The chip changed while this was open" };
       }
       var out = res.body, before = clone(spec);
+      if (!(out.added || []).length) {
+        // Nothing was written: no spec swap, no undo entry, and the caller says so.
+        return { ok: true, out: out, rid: (out.rule && out.rule.id) || o.rule.id, nothing: true };
+      }
       replaceInPlace(spec, out.spec);
       var rid = (out.rule && out.rule.id) || o.rule.id;
       if (o.after) o.after(spec, rid, out);
@@ -675,12 +697,12 @@
       }
       var out = res.out;
       closeApply(d, "applied");
-      var msg = addedText(d.rule, out.added || []);
+      var msg = res.nothing ? "Nothing was added." : addedText(d.rule, out.added || []);
       if ((out.skipped || []).length) {
         msg += " " + plural(out.skipped.length, "pair") + " skipped: " + out.skipped.map(function (x) { return x.pair + " — " + x.reason; }).join("; ") + ".";
       }
-      toast(msg, "info");
-      focusCard(res.rid);
+      toast(msg, res.nothing ? "warning" : "info");
+      if (!res.nothing) focusCard(res.rid);
     }).catch(function (e) {
       d.applying = false;
       d.status = "error"; d.error = "Could not add the gate: " + String(e && e.message || e);
@@ -1173,7 +1195,11 @@
         .then(function (res) {
           r.busy = false;
           if (!res.ok) { r.answer = null; draw(); load("again"); return; }
-          toast((mode === "reset" ? "Reset " + opts.pid + " to rule " + rule.gate.name : "Applied " + plural(rows.length, "change")) + ". Ctrl+Z undoes it.");
+          var out = res.out || {}, skipped = out.skipped || [];
+          var why = skipped.length ? " " + plural(skipped.length, "pair") + " not changed: " +
+            skipped.map(function (x) { return x.pair + " — " + x.reason; }).join("; ") + "." : "";
+          if (res.nothing) toast("Nothing was applied." + why, "warning");
+          else toast((mode === "reset" ? "Reset " + opts.pid + " to rule " + rule.gate.name : "Applied " + plural((out.added || []).length, "change")) + ". Ctrl+Z undoes it." + why);
           load("again");
         });
     }
@@ -1531,7 +1557,8 @@
       return commitApply({ ctx: ctx, rule: clone(ruleById(ctx.spec(), id)), answer: { rule_sig: st.rule_sig }, pids: pids,
         label: "auto-added " + gname + " to " + plural(pids.length, "new pair") }).then(function (res) {
         if (!res.ok) { _settleErr = res.reason; return null; }
-        toast("Pairs " + pids.join(", ") + " added earlier · " + gname + " added to them too (rule). Ctrl+Z undoes it.");
+        if (res.nothing) return null;
+        toast("Pairs " + res.out.added.join(", ") + " added earlier · " + gname + " added to them too (rule). Ctrl+Z undoes it.");
         return null;
       });
     });

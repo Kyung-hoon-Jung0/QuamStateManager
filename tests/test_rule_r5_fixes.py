@@ -80,6 +80,29 @@ def test_a_new_instance_still_gets_a_generated_name():
         ["cz_bm_high_q3_q4", "cz_bm_low_q3_q4"]
 
 
+# --- P1 #4: a row says whether apply writes it ------------------------------------
+
+def test_warnings_only_needs_a_look_rows_are_not_writable():
+    s, r = _spec(), _rule()
+    plan = R.expand(s, r, None)          # classes not read
+    assert all(p["status"] == "Needs a look" for p in plan["pairs"])
+    assert [p["writable"] for p in plan["pairs"]] == [False, False]
+    out = R.apply(s, r, plan["rule_sig"], [p["pair"] for p in plan["pairs"] if p["writable"]], None)
+    assert out["added"] == []
+
+
+def test_writable_matches_what_apply_writes():
+    s, r = _spec(), _rule()
+    s["populate"]["qubit"]["q2"].pop("RF_freq")     # q1-2 and q2-3 need a choice
+    plan = R.expand(s, r, MAN)
+    rows = {p["pair"]: p for p in plan["pairs"]}
+    assert all(p["needs_choice"] and p["writable"] for p in rows.values()), rows
+    choices = {pid: "control" for pid in rows}
+    plan = R.expand(s, r, MAN, choices=choices)
+    out = R.apply(s, r, plan["rule_sig"], list(rows), MAN, choices=choices)
+    assert sorted(out["added"]) == sorted(p["pair"] for p in plan["pairs"] if p["writable"])
+
+
 # --- P1 #3 (Python twin of the rename): auto_new_since follows a qubit rename -------
 
 def test_rename_follows_the_auto_new_record():
