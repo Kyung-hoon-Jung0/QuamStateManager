@@ -12,7 +12,9 @@ Kinds:
 * ``pointer_pulse``     -- a Pulse-typed field; a pulse object or a reference string
 * ``pointer_channel``   -- a Channel-typed field WITH a ``str`` arm (a reference)
 * ``pointer_or_value``  -- another component type with a ``str`` arm
-* ``dict_of_pointers``  -- a dict / mapping whose VALUES are pulses / channels / components
+* ``dict_of_pointers``  -- a dict / mapping whose VALUES are pulses, or references
+* ``dict_of_objects``   -- a dict / mapping whose VALUES are components held inline
+                           (no ``str`` arm), e.g. a root's ``qubits`` or ``twpas``
 * ``scalar_or_pointer`` -- ScalarInt / ScalarFloat (alias or its expanded QUA-expression
                            union) / Union[int|float, str]
 * ``inline_object``     -- a component (channel or other) with no ``str`` arm
@@ -27,6 +29,7 @@ from __future__ import annotations
 import re
 
 KINDS = ("pointer_pulse", "pointer_channel", "pointer_or_value", "dict_of_pointers",
+         "dict_of_objects",
          "scalar_or_pointer", "inline_object", "unknown", "plain")
 
 # Names recognised without an env. An env probe passes the real names it found
@@ -177,9 +180,11 @@ def classify(annotation, default=None, *, has_default: bool = False,
         if args and len(args) == 2:
             inner = classify(args[1], pulse_names=pulse_names, channel_names=channel_names,
                              component_names=component_names)
-            if inner["kind"] in ("pointer_pulse", "pointer_channel", "pointer_or_value",
-                                 "inline_object"):
+            if inner["kind"] in ("pointer_pulse", "pointer_channel", "pointer_or_value"):
                 return {**res, "kind": "dict_of_pointers", "targets": inner["targets"]}
+            if inner["kind"] == "inline_object":
+                # Values are the objects themselves (qubits, twpas, octaves), not refs.
+                return {**res, "kind": "dict_of_objects", "targets": inner["targets"]}
             if inner["kind"] == "unknown":
                 return {**res, "kind": "unknown"}
         elif not args:

@@ -37,7 +37,7 @@ TABLE = [
     # dict values
     ("dict[str, Pulse]", None, False, "dict_of_pointers", False),
     ("Dict[str, Union[Pulse, str]]", None, False, "dict_of_pointers", False),
-    ("Dict[str, XYDriveMW]", None, False, "dict_of_pointers", False),
+    ("Dict[str, XYDriveMW]", None, False, "dict_of_objects", False),
     ("dict[str, Any]", None, False, "unknown", False),
     ("dict", None, False, "unknown", False),
     ("Dict[str, float]", None, False, "plain", False),
@@ -81,7 +81,7 @@ def test_env_names_override_the_suffix_rule():
     assert fk.classify("Union[TWPA, str]", component_names=["TWPA"])["kind"] == "pointer_or_value"
     assert fk.classify("Optional[TWPA]", component_names=["TWPA"])["kind"] == "inline_object"
     assert fk.classify("Optional[TWPA]")["kind"] == "unknown"
-    assert fk.classify("dict[str, TWPA]", component_names=["mod.TWPA"])["kind"] == "dict_of_pointers"
+    assert fk.classify("dict[str, TWPA]", component_names=["mod.TWPA"])["kind"] == "dict_of_objects"
 
 
 def test_targets_name_the_class():
