@@ -76,7 +76,7 @@ async function mounted(r, spec) {
     const opts = Array.from(host.querySelectorAll('.gen-add-ro-class option')).map(o => o.value).filter(Boolean);
     ok(opts.length === 2 && opts.indexOf('pkg.pulses.SquarePulse') < 0, 'R1 readout classes only: ' + opts);
     change(w, host.querySelector('.gen-add-ro-class'), 'lab_pkg.ro.WeightsReadoutPulse');
-    ok(host.querySelector('.gen-add-ro-name').value === 'readout_weightsreadoutpulse', 'R2 default name');
+    ok(host.querySelector('.gen-add-ro-name').value === 'readout_weights', 'R2 default name');
     host.querySelector('input[data-field="length"]').value = '400';
     host.querySelector('input[data-field="amplitude"]').value = '0.1';
     host.querySelector('input[data-field="weights_real"]').value = '[0.5, -0.25]';
@@ -85,7 +85,7 @@ async function mounted(r, spec) {
     const a = spec.additions || [];
     ok(a.length === 2 && a[0].kind === 'pulse' && a[0].target === 'qubits.q1.resonator.operations', 'R2 pulse first ' + JSON.stringify(a));
     ok(a[1] && a[1].kind === 'macro' && a[1].target === 'qubits.q1.macros' && a[1]['class'] === MM &&
-       a[1].fields.pulse === '#/qubits/q1/resonator/operations/readout_weightsreadoutpulse', 'R2 macro points at the pulse');
+       a[1].fields.pulse === '#/qubits/q1/resonator/operations/readout_weights', 'R2 macro points at the pulse');
     ok(Array.isArray(a[0].fields.weights_real) && a[0].fields.weights_real[1] === -0.25, 'R4 list stored as list');
     ok(!host.querySelector('.gen-add-twbtn'), 'T1 no TWPA, no pulsed preset');
   }

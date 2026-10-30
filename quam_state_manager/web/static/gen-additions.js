@@ -369,7 +369,7 @@
       body.innerHTML = ""; parts = []; macroFF = null;
       var cls = czClasses[sel.value];
       if (!cls) return;
-      var slug = shortName(sel.value).replace(/[^A-Za-z0-9]+/g, "_").toLowerCase();
+      var slug = shortName(sel.value).replace(/[^A-Za-z0-9]+/g, "_").toLowerCase().replace(/^cz_?(gate_?)?/, "") || "gate";
       if (!name.value || name.getAttribute("data-auto") === "1") {
         name.value = "cz_" + slug; name.setAttribute("data-auto", "1");
       }
@@ -554,7 +554,10 @@
       fbox.innerHTML = ""; ff = null;
       var c = ro[sel.value];
       if (!c) return;
-      if (name.getAttribute("data-auto") === "1") name.value = "readout_" + slug(sel.value);
+      if (name.getAttribute("data-auto") === "1") {
+        var stem = slug(sel.value).replace(/(readout)?pulse$/, "");
+        name.value = "readout" + (stem ? "_" + stem : "");
+      }
       fbox.appendChild(el("p", { className: "gen-add-origin muted", title: sel.value },
         (c.origin === "lab" ? "Lab class" : "Official class") + (c.doc ? " — " + c.doc.split("\n")[0] : "") +
         " · array fields (weights) take a JSON list, e.g. [0.1, 0.2]"));
@@ -615,15 +618,17 @@
       "Pulsed mode on " + t + " — not a class: a flag in extras, the pump pulse on the non-sticky pump_ " +
       "channel, and the active TWPA list where the chip's root has one. The lab code that reads the flag " +
       "is yours; this only writes the state it reads."));
-    var flag = el("label", { className: "gen-add-field" });
+    var frow = el("div", { className: "gen-add-row" });
+    var flag = el("label", { className: "gen-add-cz-usel" });
     var fcb = el("input", { type: "checkbox", className: "gen-add-tw-flag", "aria-label": "extras.twpa_pulse_mode" });
     fcb.checked = true;
     flag.appendChild(fcb);
     flag.appendChild(document.createTextNode(" extras.twpa_pulse_mode = true"));
-    form.appendChild(flag);
+    frow.appendChild(flag);
+    form.appendChild(frow);
+    form.appendChild(el("p", { className: "muted gen-add-cz-sub" },
+      "pump_ pulse \"pump\" (the builder writes it): leave a value blank to keep the builder's."));
     var pbox = el("div", { className: "gen-add-fields" });
-    pbox.appendChild(el("p", { className: "muted" },
-      "pump_ pulse \"pump\" (written by the builder): leave blank to keep the builder's value."));
     var len = el("input", { type: "text", className: "gen-add-tw-len", placeholder: "length (ns)", "aria-label": "Pump length" });
     var amp = el("input", { type: "text", className: "gen-add-tw-amp", placeholder: "amplitude", "aria-label": "Pump amplitude" });
     [["length", len], ["amplitude", amp]].forEach(function (x) {
@@ -697,6 +702,7 @@
   function fieldRow(spec, a, i, host, ctx) {
     var r = el("div", { className: "gen-add-item gen-add-field-item", "data-index": String(i) });
     r.appendChild(el("span", { className: "gen-add-ch-label" }, fieldLabel(a.target, a.value)));
+    r.appendChild(el("span", { className: "muted" }, " · field"));
     var rm = el("button", { type: "button", className: "btn-sm secondary gen-add-rm", title: "Remove this field" }, "✕");
     rm.addEventListener("click", function () {
       spec.additions.splice(i, 1);

@@ -71,11 +71,14 @@ def roles_for_env(python_path: str | None, instance_path=None, *,
         return None
     seen = entry.get("requested") or {}
     want = _request_key(state_classes, modules)
-    if not set(want["classes"]) <= set(seen.get("classes") or []):
+    man = entry.get("manifest")
+    # a class the cached probe already describes (found through a module it
+    # was asked to read) needs no new probe
+    known = set(seen.get("classes") or []) | set(((man or {}).get("classes") or {}) if isinstance(man, dict) else [])
+    if not set(want["classes"]) <= known:
         return None
     if not set(want["modules"]) <= set(seen.get("modules") or []):
         return None
-    man = entry.get("manifest")
     return man if isinstance(man, dict) and man.get("classes") else None
 
 

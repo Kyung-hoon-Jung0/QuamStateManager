@@ -172,6 +172,9 @@ def test_cache_round_trip(tmp_path, monkeypatch):
     assert rm.roles_for_env(py, tmp_path, state_classes=["a.B"], modules=["m"]) == man
     assert rm.roles_for_env(py, tmp_path, state_classes=["a.C"]) is None
     assert rm.roles_for_env(py, tmp_path, modules=["other"]) is None
+    # a class the cached manifest already describes (read through a module) is served
+    in_man = next(iter(man["classes"]))
+    assert rm.roles_for_env(py, tmp_path, state_classes=[in_man]) == man
     monkeypatch.setattr(rm, "_env_signature", lambda p: "sig2")
     assert rm.roles_for_env(py, tmp_path) is None
 
