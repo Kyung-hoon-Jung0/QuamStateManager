@@ -132,3 +132,33 @@ def test_unchanged_chip_still_uses_the_exact_sidecar(tmp_path):
     d, _, _ = _chip_with_addition(tmp_path)
     rec = regenerate.reconstruct_from_folder(d)
     assert rec.exact and len(rec.spec["additions"]) == 2
+
+
+def test_the_lint_route_judges_every_listed_addition_in_one_request(tmp_path):
+    a = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+    good = dict(PULSE, name="x_ok")
+    clash = dict(PULSE, name="x_ok")            # the same name twice on one channel
+    spec = dict(SPEC, additions=[good, clash])
+    r = a.test_client().post("/generate/additions/lint", json={"spec": spec, "indices": [0, 1, 7]})
+    body = r.get_json()
+    assert r.status_code == 200 and len(body["results"]) == 3
+    assert any("x_ok" in e for e in body["results"][1]["errors"]), body
+    assert body["results"][2]["errors"] == ["no such addition"]
+    # the single-addition form is kept
+    one = a.test_client().post("/generate/additions/lint", json={"spec": SPEC, "addition": PULSE})
+    assert "ok" in one.get_json()
+
+
+def test_populate_mounts_the_additions_section_when_it_nears_the_view():
+    """60Q: the additions section's DOM stays out of the Populate step's first
+    forced layout (real Chrome, see the study note); a source pin, since jsdom
+    has no IntersectionObserver (and then mounts at once, as before)."""
+    from pathlib import Path
+    js = (Path(__file__).parents[1] / "quam_state_manager" / "web" / "static" / "generate.js").read_text(encoding="utf-8")
+    i = js.index("function enterPopulateStep")
+    body = js[i:js.index("// -- step 7", i)]
+    assert "mountAdditionsWhenNear(document.getElementById(\"gen-pop-additions\")" in body
+    assert "window.GenAdditions.mount(\n      document.getElementById(\"gen-pop-additions\")" not in body
+    f = js[js.index("function mountAdditionsWhenNear"):]
+    f = f[:f.index("\n  }\n")]
+    assert "IntersectionObserver" in f and "host.childNodes.length" in f

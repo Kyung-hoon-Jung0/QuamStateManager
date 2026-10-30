@@ -9563,13 +9563,30 @@
     // no LO map and no conflict box — ask for one (the answer re-derives).
     if (!state.allocation) maybeAutoAllocate();
     // Lab additions (phase 2): "+ Add pulse" per channel; the list rides spec.additions.
-    if (window.GenAdditions) window.GenAdditions.mount(
-      document.getElementById("gen-pop-additions"),
+    // Mounted when the section first scrolls near the view: on a 60Q chip
+    // its ~500 nodes otherwise join the step's first forced layout.
+    mountAdditionsWhenNear(document.getElementById("gen-pop-additions"),
       { spec: function () { return state.spec; }, changed: saveDraft });
     renderPopTopo();     // read-only chip-board mirror (toggleable)
     renderPopWiring();   // build the diagram first…
     reconcileReadoutBanks();   // converge any pre-allocation divergent-FSP banks
     recomputeLOs();      // …so renderConflicts() can ring its ports
+  }
+
+  var _addObs = null;
+  function mountAdditionsWhenNear(host, ctx) {
+    if (!window.GenAdditions || !host) return;
+    if (_addObs) { _addObs.disconnect(); _addObs = null; }
+    if (host.childNodes.length || typeof window.IntersectionObserver !== "function") {
+      window.GenAdditions.mount(host, ctx);     // already drawn: redraw now
+      return;
+    }
+    _addObs = new window.IntersectionObserver(function (ents) {
+      if (!ents.some(function (e) { return e.isIntersecting; })) return;
+      _addObs.disconnect(); _addObs = null;
+      if (host.isConnected) window.GenAdditions.mount(host, ctx);
+    }, { rootMargin: "600px 0px" });
+    _addObs.observe(host);
   }
 
   // -- step 7: output folder -------------------------------------------

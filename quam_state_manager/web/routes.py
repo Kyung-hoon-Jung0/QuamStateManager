@@ -45763,6 +45763,21 @@ def generate_additions_lint():
     from quam_state_manager.core import additions
     data = json_object()
     spec = data.get("spec") if isinstance(data.get("spec"), dict) else {}
+    idx = data.get("indices")
+    if isinstance(idx, list):
+        # the wizard's live check: every listed addition of *spec*, each
+        # judged against the others, in one request (one manifest read)
+        adds = list(spec.get("additions") or [])
+        man = _proposal_manifest(spec, adds)
+        results = []
+        for i in idx:
+            if not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < len(adds):
+                results.append({"ok": False, "errors": ["no such addition"], "warnings": []})
+                continue
+            others = adds[:i] + adds[i + 1:]
+            results.append(additions.lint_proposal(dict(spec, additions=others), adds[i], man,
+                                                   author="person"))
+        return jsonify({"ok": True, "results": results})
     add = data.get("addition")
     man = _proposal_manifest(spec, list(spec.get("additions") or []) + [add])
     return jsonify(additions.lint_proposal(spec, add, man, author="person"))

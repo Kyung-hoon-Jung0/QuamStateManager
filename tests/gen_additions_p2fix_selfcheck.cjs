@@ -32,7 +32,10 @@ function world(lintAnswer) {
     if (String(url).indexOf('/generate/additions/lint') === 0) {
       const body = JSON.parse(opt.body);
       calls.push(body);
-      return Promise.resolve({ status: 200, json: () => Promise.resolve(lintAnswer(body, calls.length)) });
+      const n = calls.length;
+      const one = i => lintAnswer({ addition: body.spec.additions[i] }, n);
+      return Promise.all(body.indices.map(one)).then(results =>
+        ({ status: 200, json: () => Promise.resolve({ ok: true, results }) }));
     }
     if (String(url).indexOf('/generate/proposals') === 0)
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true, items: [] }) });
@@ -65,8 +68,8 @@ const SPEC = () => ({
   await sleep(5);
   ok(calls.length === 0, 'L2 nothing sent before the debounce delay');
   await sleep(w.GenAdditions.LINT_DELAY_MS + 50);
-  ok(calls.length === 1, 'L2 one round of requests, got ' + calls.length);
-  ok(calls[0] && !calls[0].spec.additions.some(a => a.name === 'x_lab'), 'L1 the addition is judged against the others');
+  ok(calls.length === 1, 'L2 ONE request for every listed addition, got ' + calls.length);
+  ok(calls[0] && JSON.stringify(calls[0].indices) === '[0]', 'L1 the listed additions are named by index ' + JSON.stringify(calls[0] && calls[0].indices));
   const err = host.querySelector('.gen-add-lint .gen-add-lint-err');
   ok(err && /field length is missing/.test(err.textContent), 'L1 the lint error shows on the row');
   ok(host.querySelector('.gen-add-lint .gen-add-lint-warn'), 'L1 the lint warning shows on the row');

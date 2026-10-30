@@ -777,15 +777,17 @@
   }
   function runLint(host, spec, gen) {
     var adds = list(spec);
-    Array.prototype.forEach.call(host.querySelectorAll(".gen-add-lint[data-lint-index]"), function (slot) {
-      var i = +slot.getAttribute("data-lint-index");
-      var a = adds[i];
-      if (!a) return;
-      var others = adds.filter(function (_, j) { return j !== i; });
-      var body = { spec: Object.assign({}, spec, { additions: others }), addition: a };
-      postJSON("/generate/additions/lint", body).then(function (res) {
-        if (gen !== lintGen || !slot.isConnected) return;   // a newer edit owns the screen
-        var j = res.body || {};
+    var slots = Array.prototype.slice.call(host.querySelectorAll(".gen-add-lint[data-lint-index]"))
+      .filter(function (slot) { return adds[+slot.getAttribute("data-lint-index")]; });
+    if (!slots.length) return;
+    // ONE request for every listed addition (a 60Q chip lists ~200)
+    var idx = slots.map(function (slot) { return +slot.getAttribute("data-lint-index"); });
+    postJSON("/generate/additions/lint", { spec: spec, indices: idx }).then(function (res) {
+      if (gen !== lintGen) return;          // a newer edit owns the screen
+      var out = (res.body && res.body.results) || [];
+      slots.forEach(function (slot, k) {
+        var j = out[k] || {};
+        if (!slot.isConnected) return;
         slot.innerHTML = "";
         (j.errors || []).forEach(function (e) {
           var x = el("span", { className: "gen-add-lint-err" }, "✗ " + e);
@@ -795,8 +797,8 @@
         (j.warnings || []).forEach(function (w) {
           slot.appendChild(el("span", { className: "muted gen-add-lint-warn" }, "⚠ " + w));
         });
-      }).catch(function () { /* offline: the build still checks it */ });
-    });
+      });
+    }).catch(function () { /* offline: the build still checks it */ });
   }
 
   /* ---- one convention for a pair's 2Q gates (P5) ---------------------------
