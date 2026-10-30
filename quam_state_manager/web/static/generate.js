@@ -9892,7 +9892,20 @@
              ? "✓ Nothing blocks the build — but " + nSkip +
                (nSkip === 1 ? " thing" : " things") + " will be skipped:"
              : "✓ This environment can build everything this chip needs.");
+        // P2-UX-2: the verdict names the additions; they are listed below
+        // and are checked alone during the build (a refusal never blocks it).
+        var addInfo = res.additions || null;
+        var addN = addInfo ? (addInfo.items || []).length
+          : ((state.spec && state.spec.additions) || []).length;
+        if (addN) {
+          var addBad = addInfo ? (addInfo.items || []).filter(function (e) { return e.reason; }).length : 0;
+          h.textContent += " Additions: " + addN + (addBad ? " (" + addBad + " will be refused)" : "") +
+            " — each is checked during the build and refused alone if it fails.";
+        }
         box.appendChild(h);
+        if (addN && window.GenAdditions) {
+          window.GenAdditions.renderReview(box, addInfo, state.spec);
+        }
         // The root refusal is a BLOCKER and belongs with the blockers, not
         // only in the build's 400 half a minute later.
         if (rootBlock) {
@@ -10392,8 +10405,18 @@
       }
 
       // Lab additions: what was added, and what was refused with its reason.
+      // P2-UX-1: a build with refused additions is not a plain success --
+      // amber when some went in, red when every addition was refused.
       if (res.additions && window.GenAdditions) {
         el.appendChild(window.GenAdditions.renderResult(res.additions));
+        var aoc = window.GenAdditions.outcome(res.additions);
+        if (aoc === "mixed") el.className = "gen-build-result gen-build-confirm gen-build-adds-mixed";
+        else if (aoc === "refused") el.className = "gen-build-result gen-build-error gen-build-adds-refused";
+        if (aoc === "mixed" || aoc === "refused") {
+          msg.textContent += aoc === "mixed"
+            ? " — some additions were refused (listed below)"
+            : " — every addition was refused (listed below)";
+        }
       }
 
       // Re-generate value-merge transparency — nothing is hidden: how many

@@ -37,6 +37,42 @@ def _node_at(root, path: str):
     return node
 
 
+def macro_check(obj) -> None:
+    """A macro's own code, without compiling a program [derived]: read every
+    ``*_label`` property (the gate family resolves the pulses it plays there,
+    a plain name through ``Qubit.get_pulse``), ``inferred_duration`` when the
+    class has it, and call each zero-argument ``assert_*`` / ``validate*``
+    method the class defines (a lab gate states its own contract there).
+    Anything raised is the refusal."""
+    import inspect
+    cls = type(obj)
+    for name in dir(cls):
+        attr = inspect.getattr_static(cls, name, None)
+        if not isinstance(attr, property):
+            continue
+        if name.endswith("_label"):
+            # a gate plays an optional pulse only when it is set (CZGate guards
+            # coupler_flux_pulse with ``is not None``), so an unset one is not read
+            if getattr(obj, name[:-len("_label")], 0) is None:
+                continue
+            getattr(obj, name)
+        elif name == "inferred_duration":
+            getattr(obj, name)
+    for name in dir(cls):
+        if not (name.startswith("assert_") or name.startswith("validate")):
+            continue
+        fn = getattr(obj, name, None)
+        if not callable(fn):
+            continue
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            continue
+        if all(p.default is not p.empty or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+               for p in sig.parameters.values()):
+            fn()
+
+
 def check(folder: str, own_code: list) -> dict:
     os.environ["QUAM_STATE_PATH"] = folder
     stage = "load"
@@ -51,9 +87,12 @@ def check(folder: str, own_code: list) -> dict:
             stage = f"own code of {path}"
             obj = _node_at(machine, path)
             fn = getattr(obj, "calculate_waveform", None)
-            if callable(fn) and fn() is None:
-                return {"ok": False, "stage": stage,
-                        "error": "its calculate_waveform() returned None"}
+            if callable(fn):
+                if fn() is None:
+                    return {"ok": False, "stage": stage,
+                            "error": "its calculate_waveform() returned None"}
+            else:
+                macro_check(obj)
         return {"ok": True, "stage": "done", "error": None}
     except BaseException as exc:  # noqa: BLE001 -- reported, never raised
         msg = str(exc).strip().splitlines()

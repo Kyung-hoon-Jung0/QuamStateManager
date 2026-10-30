@@ -16105,8 +16105,8 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
 .gen-add-bar .gen-add-modules { flex: 1 1 16rem; max-width: 26rem; margin: 0; padding: 0.2rem 0.45rem; font-size: 0.85em; height: auto; }
 .gen-add-bar button, .gen-add-ch-head button, .gen-add-actions button, .gen-add-item button { width: auto; margin: 0; padding: 0.15rem 0.6rem; font-size: 0.85em; }
 .gen-add-list { display: flex; flex-direction: column; gap: 0.25rem; }
-.gen-add-ch { border: 1px solid var(--pico-muted-border-color, #3333); border-radius: 6px; padding: 0.3rem 0.5rem; }
-.gen-add-ch-head { display: flex; align-items: center; gap: 0.6rem; }
+.gen-add-ch, .gen-add-owner { border: 1px solid var(--pico-muted-border-color, #3333); border-radius: 6px; padding: 0.3rem 0.5rem; }
+.gen-add-ch-head { flex-wrap: wrap; display: flex; align-items: center; gap: 0.6rem; }
 .gen-add-ch-label { min-width: 9rem; font-weight: 600; font-size: 0.9em; }
 .gen-add-item { display: flex; align-items: center; gap: 0.4rem; margin: 0.2rem 0 0 1rem; font-size: 0.85em; }
 .gen-add-item .gen-add-rm { padding: 0 0.4rem; }
@@ -16128,3 +16128,30 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
 .gen-add-result-head { font-weight: 600; margin: 0.2rem 0; }
 .gen-add-result-list { margin: 0; padding-left: 1.2rem; font-size: 0.9em; }
 .gen-add-result-list li.gen-add-refused { color: var(--sm-danger, #d33); }
+
+/* Generate Config -- lab additions, phase 3 (macros, CZ group, outcome colours) */
+.gen-add-sub { font-weight: 600; font-size: 0.88em; margin: 0.6rem 0 0.25rem; }
+.gen-add-item .gen-add-edit { padding: 0 0.45rem; font-family: var(--pico-font-family-monospace, monospace); }
+.gen-add-ch-head .gen-add-czbtn { margin-left: 0.2rem; }
+.gen-add-field.gen-add-inferred-field { grid-template-columns: 8.5rem 1fr auto; }
+.gen-add-inferred { font-style: italic; color: var(--pico-muted-color); }
+.gen-add-hint { font-size: 0.8em; cursor: help; border-bottom: 1px dotted currentColor; }
+.gen-add-cz-head { font-size: 0.85em; margin: 0 0 0.3rem; }
+.gen-add-cz-pulse { border-left: 3px solid var(--pico-muted-border-color, #3333); padding: 0.2rem 0 0.3rem 0.5rem; margin: 0.35rem 0; }
+.gen-add-cz-pulse .gen-add-row { align-items: center; flex-wrap: wrap; }
+.gen-add-cz-label { font-family: var(--pico-font-family-monospace, monospace); font-size: 0.85em; font-weight: 600; }
+.gen-add-cz-where { font-size: 0.85em; }
+.gen-add-cz-on { flex: 0 0 auto !important; width: auto; }
+.gen-add-cz-note { font-size: 0.8em; }
+.gen-add-cz-use { margin: 0; }
+.gen-add-cz-inner { margin-top: 0.25rem; }
+.gen-add-cz-sub { font-size: 0.82em; margin: 0.4rem 0 0.15rem; }
+.gen-add-result-mixed .gen-add-result-head { color: var(--color-warning-text, #b26a00); }
+.gen-add-result-refused .gen-add-result-head { color: var(--sm-danger, #d33); }
+.gen-add-review { margin-top: 0.3rem; }
+.gen-add-review-list { margin: 0.1rem 0 0.4rem; padding-left: 1.2rem; font-size: 0.88em; }
+.gen-add-review-list li { margin: 0.05rem 0; }
+.gen-add-fields > .gen-add-origin { grid-column: 1 / -1; }
+.gen-add-cz-pulse input[type="checkbox"].gen-add-cz-use { width: auto; flex: 0 0 auto; height: auto; margin: 0 0.2rem; }
+.gen-add-cz-usel { font-size: 0.82em; display: inline-flex; align-items: center; gap: 0.25rem; margin: 0; }
+.gen-add-review-list li.gen-add-review-bad { color: var(--sm-danger, #d33); }

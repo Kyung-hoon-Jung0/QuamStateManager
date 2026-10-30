@@ -72,7 +72,7 @@ def _drag(name="x180_w", target="qubits.q1.xy.operations", **over):
 @pytest.mark.parametrize("adds, needle", [
     ("x", "must be a list"),
     ([1], "must be an object"),
-    ([{"kind": "macro", "target": "qubits.q1.xy.operations", "name": "a", "class": "a.B"}], "unknown kind"),
+    ([{"kind": "gate", "target": "qubits.q1.xy.operations", "name": "a", "class": "a.B"}], "unknown kind"),
     ([{"kind": "pulse", "target": "qubits.q1.xy", "name": "a", "class": "a.B"}], "operations dict"),
     ([{"kind": "pulse", "target": "qubits.q1.xy.operations", "name": "a.b", "class": "a.B"}], "name must"),
     ([{"kind": "pulse", "target": "qubits.q1.xy.operations", "name": "a", "class": "B"}], "dotted"),
@@ -144,7 +144,7 @@ def test_dangling_pointer_and_pointer_to_another_addition():
     assert [e["name"] for e in rep["added"]] == ["a", "b"]
     by = {e["name"]: e["reason"] for e in rep["refused"]}
     assert "points at nothing" in by["c"]
-    assert "points at nothing" in by["d"]          # stranded by c's refusal (fixpoint)
+    assert "an addition that was refused" in by["d"]   # stranded by c's refusal (fixpoint)
     assert "c" not in st["qubits"]["q1"]["xy"]["operations"]
 
 

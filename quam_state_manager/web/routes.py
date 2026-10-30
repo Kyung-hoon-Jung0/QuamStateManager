@@ -45189,8 +45189,19 @@ def generate_capabilities():
     # a CR chip written by one quam-builder generation can't even be Quam.load'ed
     # by another — warn BEFORE any subprocess load fails (docs/54).
     flavor = _flavor_findings_for_folder(data.get("source_folder"), manifest)
+    # Lab additions: listed before Generate, judged on what is known now
+    # (the cached role manifest; a cache read only -- the build re-probes).
+    adds = None
+    if isinstance(spec, dict) and spec.get("additions"):
+        from quam_state_manager.core import additions as _additions
+        try:
+            man = _additions_manifest(python_path, spec, spawn=False)
+        except Exception:  # noqa: BLE001 -- an unknown manifest is never a blocker
+            man = None
+        adds = {"items": _additions.precheck(spec, man), "manifest": bool(man)}
     return jsonify({
         "ok": True, "probe_ok": probe.get("ok"), "probe_error": probe.get("error"),
+        "additions": adds,
         "cached": probe.get("cached"), "report": report, "flavor": flavor,
         # The root the chip will be written with, and every root this env could
         # hold it in — the wizard had no way to name one, so a lab with its own
@@ -45642,19 +45653,27 @@ def generate_roles():
         err = None if man else "not probed yet"
     if not man:
         return jsonify({"ok": False, "cold": request.method == "GET", "error": err})
+    from quam_state_manager.core import additions as _additions
     pulses, qubit_fields = {}, {}
+    macros: dict = {"macro_qubit": {}, "macro_pair": {}}
     for path, c in (man.get("classes") or {}).items():
         if not isinstance(c, dict):
             continue
-        if c.get("role") == "pulse" and not c.get("abstract") and not path.rsplit(".", 1)[-1].startswith("_"):
+        public = not c.get("abstract") and not path.rsplit(".", 1)[-1].startswith("_")
+        if c.get("role") == "pulse" and public:
             pulses[path] = {"origin": c.get("origin"), "doc": c.get("doc"),
                             "fields": c.get("fields") or {}}
+        elif c.get("role") in macros and public:
+            macros[c["role"]][path] = {"origin": c.get("origin"), "doc": c.get("doc"),
+                                       "fields": c.get("fields") or {},
+                                       "cz": _additions.cz_recipe(c)}
         elif c.get("role") == "qubit":
             for n, f in (c.get("fields") or {}).items():
                 if f.get("kind") in ("plain", "scalar_or_pointer"):
                     qubit_fields[n] = 1
     return jsonify({"ok": True, "error": err, "versions": man.get("versions") or {},
                     "modules": man.get("modules") or {}, "pulses": pulses,
+                    "macros_qubit": macros["macro_qubit"], "macros_pair": macros["macro_pair"],
                     "qubit_fields": sorted(qubit_fields)})
 
 
