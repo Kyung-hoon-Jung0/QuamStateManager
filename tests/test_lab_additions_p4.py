@@ -254,6 +254,24 @@ def test_a_field_addition_never_replaces_an_object_or_writes_into_a_container():
     assert "not an object with fields" in next(iter(by.values()))
 
 
+def test_extras_that_is_not_a_block_is_never_overwritten():
+    st = _twpa_state()
+    st["extras"] = "a label"
+    rep, by = _frun([_field("extras.twpa_pulse_mode", True)], st)
+    assert "is not a block" in by["extras.twpa_pulse_mode"] and st["extras"] == "a label"
+
+
+def test_a_twpa_given_as_an_id_object_is_in_the_chip():
+    spec = {"twpas": [{"id": "twpa1"}], "qubits": [], "lines": []}
+    assert additions.spec_channel_reason(spec, "twpas.twpa1.pump_.operations") is None
+    assert "not in this chip" in additions.spec_channel_reason(spec, "twpas.twpa2.pump_.operations")
+
+
+def test_a_field_addition_never_replaces_a_whole_object():
+    rep, by = _frun([_field("twpas.t1.pump_", 1)], _twpa_state())
+    assert "holds an object" in by["twpas.t1.pump_"]
+
+
 def test_an_unknown_class_is_left_to_the_env_load():
     rep, by = _frun([_field("twpas.t1.settling_time", 20)], _twpa_state())
     assert not by     # x.TWPA is not in the manifest: the env load decides

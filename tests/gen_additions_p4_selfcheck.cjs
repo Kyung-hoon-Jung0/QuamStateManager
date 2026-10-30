@@ -92,7 +92,10 @@ async function mounted(r, spec) {
   // R3
   {
     const spec = SPEC(false);
-    const { w, host } = await mounted(roles(false, true), spec);
+    const r3 = roles(false, true);
+    // a MeasureMacro class present but the version says pulse only: the version decides
+    r3.macros_qubit = roles(true, true).macros_qubit;
+    const { w, host } = await mounted(r3, spec);
     host.querySelector('.gen-add-robtn').click();
     ok(!host.querySelector('.gen-add-ro-use'), 'R3 no macro checkbox');
     const why = host.querySelector('.gen-add-ro-only');
