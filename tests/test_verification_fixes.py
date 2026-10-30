@@ -37,7 +37,8 @@ def test_unknown_pair_gate_rejected():
     errs = validate_spec(_spec(pair_gate="; rm -rf /"))
     assert any("pair_gate" in e for e in errs), errs
     # a tunable-coupler pair needs its coupler line (the builder makes the pair from it)
-    coupler = [{"line": "coupler", "element": "q1-q2"}]
+    coupler = [{"line": "coupler", "element": "q1-q2"},
+               {"line": "flux", "element": "q1"}, {"line": "flux", "element": "q2"}]
     assert validate_spec(_spec(pair_gate="cz_tunable", lines=coupler)) == []
     assert validate_spec(_spec(pair_gate="cr")) == []
 
