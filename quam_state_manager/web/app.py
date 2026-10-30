@@ -712,6 +712,8 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     from quam_state_manager.core.search_query import (
         search_hint as _search_hint, search_title as _search_title)
     app.jinja_env.globals["search_hint"] = _search_hint
+    from quam_state_manager.core import add_names as _add_names
+    app.jinja_env.globals["op_name_pattern"] = _add_names.OPERATION_NAME_PATTERN
     app.jinja_env.globals["search_title"] = _search_title
 
     def _refresh_url(default: str) -> str:

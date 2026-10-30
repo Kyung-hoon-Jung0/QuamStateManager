@@ -41,7 +41,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from quam_state_manager.core import addition_cards
+from quam_state_manager.core import add_catalog, add_names, addition_cards
 from quam_state_manager.core.field_kinds import _arms, _norm
 from quam_state_manager.core.pointer_path import _walk, pointer_to_abs
 
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 KINDS = ("pulse", "macro", "field", "default_gate")
 _LIST_HEADS = ("list", "List", "tuple", "Tuple", "Sequence")
-_NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+_NAME_RE = add_names.ADDITION_NAME_RE     # the wizard's name rule (core/add_names.py)
 _TARGET_RE = re.compile(r"^[A-Za-z_][\w\-]*(\.[\w\-]+)+\.operations$")
 _MACRO_TARGET_RE = re.compile(r"^(qubits|qubit_pairs)\.[\w\-]+\.macros$")
 _PAIR_MACROS_RE = re.compile(r"^qubit_pairs\.[\w\-]+\.macros$")
@@ -239,15 +239,11 @@ def structural_errors(spec: dict) -> list[str]:
 # "+ CZ..." additions describe ONE set of gates per pair
 # ---------------------------------------------------------------------------
 
-# The alias a "default gate" addition writes: ``macros.cz = "#./<gate>"`` --
-# the shape the builder itself writes on a tunable-coupler chip
-# (``run_build._seed_coupler_cz``), and the name SM's CZ plan reads first
-# (``cz_gate_plan``: ``operation == "cz"``, else the pair's first gate).
-DEFAULT_GATE_NAME = "cz"
-# What the official CZ nodes play when their ``operation`` parameter is left
-# alone (their ``parameters.py`` default). [measured: the CZ node parameters]
-NODE_DEFAULT_OPERATION = "cz_unipolar"
-_CZ_VARIANTS = ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf")
+# The default-gate alias, what the CZ nodes play by default and the builder's
+# CZ variants: the gate tables of core/add_catalog.py.
+DEFAULT_GATE_NAME = add_catalog.DEFAULT_GATE_NAME
+NODE_DEFAULT_OPERATION = add_catalog.NODE_DEFAULT_OPERATION
+_CZ_VARIANTS = add_catalog.CZ_VARIANTS
 
 
 def _long(pair) -> str:

@@ -105,7 +105,7 @@
     <form hx-post="/api/pulse/rename" hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">
         <input type="hidden" name="path" value="{{ path }}">
         <input type="text" name="new_name" required
-               pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" value="{{ op_name }}"
+               pattern="{{ op_name_pattern }}" value="{{ op_name }}"
                aria-label="New operation name">
         <label class="pulse-retarget-label" title="Rewrite inbound pointers to follow the new name">
             <input type="checkbox" name="retarget" value="1" checked> re-point
@@ -124,7 +124,7 @@
     <form hx-post="/api/pulse/duplicate" hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">
         <input type="hidden" name="path" value="{{ path }}">
         <input type="text" name="new_name" required
-               pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" value="{{ op_name }}_copy"
+               pattern="{{ op_name_pattern }}" value="{{ op_name }}_copy"
                aria-label="Duplicate name">
         <button class="btn-sm" type="submit">Duplicate</button>
         <button class="btn-sm outline" type="button"

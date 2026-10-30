@@ -60,6 +60,8 @@ from markupsafe import Markup, escape
 from werkzeug.utils import secure_filename
 
 from quam_state_manager.core import (
+    add_catalog,
+    add_names,
     capabilities,
     chip_health,
     compare_sources,
@@ -11850,7 +11852,8 @@ def _attach_section_pulses(sections: list[dict], store) -> None:
 # lobe's channel — its zz_* twin ops render in the inspector like any other.
 _PULSE_CHANNELS = ("xy", "z", "resonator", "xy_detuned")
 
-_PULSE_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
+# The name rule of a pulse / operation and of a pair gate: core/add_names.py.
+_PULSE_NAME_RE = add_names.OPERATION_NAME_RE
 
 # A dotted Python class path (the create form's editable __class__ field).
 _QCLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
@@ -15865,138 +15868,13 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
     )
 
 
-# ``arch`` gates each type to the pair's architecture (docs/54): flux types
-# need flux evidence (z lines / coupler / CZ-shaped macros) and must never be
-# written onto a FixedFrequencyTransmonPair; CR/Stark types need the matching
-# pair drive channel. Enforced in pair_gate_form (UI) AND pair_add_gate (409).
-_GATE_TYPES: dict[str, dict[str, Any]] = {
-    "cz_unipolar": {
-        "label": "CZ Unipolar (square pulse)",
-        "arch": "flux",
-        "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
-            ("length", "Flux length (ns)", 100, "int"),
-            ("coupler_amplitude", "Coupler amplitude", 0.0, "float"),
-            ("coupler_length", "Coupler length (ns)", 100, "int"),
-            ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
-            ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
-        ],
-    },
-    "cz_flattop": {
-        "label": "CZ Flat-top (Gaussian envelope)",
-        "arch": "flux",
-        "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
-            ("flat_length", "Flat length (ns)", 200, "int"),
-            ("smoothing_length", "Smoothing length (ns)", 20, "int"),
-            ("coupler_amplitude", "Coupler amplitude", 0.0, "float"),
-            ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
-            ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
-        ],
-    },
-    "cz_parametric": {
-        "label": "CZ Parametric (AC-flux modulated)",
-        "arch": "flux",
-        "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
-            ("length", "Flux length (ns)", 100, "int"),
-            ("modulation_frequency", "Modulation freq (Hz)", 250_000_000.0, "float"),
-            ("coupler_amplitude", "Coupler amplitude", 0.0, "float"),
-            ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
-            ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
-        ],
-    },
-    "cr_gate": {
-        "label": "CR gate (cross-resonance macro)",
-        "arch": "cr",
-        "fields": [
-            ("qc_correction_phase", "Correction phase (control)", 0.0, "float"),
-            ("qt_correction_phase", "Correction phase (target)", 0.0, "float"),
-        ],
-    },
-    "stark_cz": {
-        "label": "Stark-induced CZ (ZZ drive macro)",
-        "arch": "zz",
-        "fields": [
-            ("qc_correction_phase", "Correction phase (control)", 0.0, "float"),
-            ("qt_correction_phase", "Correction phase (target)", 0.0, "float"),
-        ],
-    },
-}
-
-
-# r15 (docs/71 §3): the three remaining generator CZ variants become add-gate
-# types — offered ONLY when the selected env's roster verifies the pulse
-# classes they need (mirror of capabilities._CZ_VARIANT_CAPS; no roster ⇒
-# exactly the legacy list, a regression fence). Shapes mirror
-# run_build._cz_variant_pulses: SNZ / flattop_erf carry the whole gate on the
-# qubit z line (coupler slot None); bipolar's coupler mirrors the qubit
-# shape's fields by self-reference (single source of truth, the builder's
-# link_attrs semantics).
-_ENV_GATE_TYPES: dict[str, dict[str, Any]] = {
-    "cz_bipolar": {
-        "label": "CZ Bipolar (cosine, net-zero)",
-        "arch": "flux",
-        "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
-            ("flat_length", "Flat length (ns)", 200, "int"),
-            ("smoothing_length", "Smoothing length (ns)", 20, "int"),
-            ("post_zero_padding_length", "Post-zero padding (ns)", 20, "int"),
-            ("coupler_amplitude", "Coupler amplitude", 0.0, "float"),
-            ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
-            ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
-        ],
-    },
-    "cz_snz": {
-        "label": "CZ SNZ (sudden net-zero, qubit line only)",
-        "arch": "flux",
-        "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
-            ("flat_length", "Flat length (ns)", 200, "int"),
-            ("t_phi_eff", "t_phi_eff (ns)", 0.0, "float"),
-            ("padding", "Padding (ns)", 20, "int"),
-            ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
-            ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
-        ],
-    },
-    "cz_flattop_erf": {
-        "label": "CZ Flat-top Erf (qubit line only)",
-        "arch": "flux",
-        "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
-            ("flat_length", "Flat length (ns)", 200, "int"),
-            ("risetime_samples", "Risetime (samples)", 16, "int"),
-            ("post_zero_padding_length", "Post-zero padding (ns)", 20, "int"),
-            ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
-            ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
-        ],
-    },
-}
-
-# Roster leaves each new variant needs — per slot, ANY listed alternative
-# satisfies it (modern quam_builder ships CosineBipolarPulse, legacy quam
-# ships _CosineBipolarPulse; both are valid bipolar carriers).
-_ENV_GATE_LEAVES: dict[str, tuple[tuple[str, ...], ...]] = {
-    "cz_bipolar": (("CosineBipolarPulse", "_CosineBipolarPulse"),
-                   ("SmoothedFlatTopGaussianPulse", "_FlatTopGaussianPulse")),
-    "cz_snz": (("SNZPulse",),),
-    "cz_flattop_erf": (("ErfSquarePulse",),),
-}
-
-# Flux-slot pulse-class candidates per gate type (evidence/roster resolved by
-# _slot_qclass; None entry ⇒ that gate has no coupler slot).
-_SLOT_LEAVES: dict[str, dict[str, tuple[str, ...] | None]] = {
-    "cz_unipolar": {"qubit": ("SquarePulse",), "coupler": ("SquarePulse",)},
-    "cz_flattop": {"qubit": ("SmoothedFlatTopGaussianPulse",
-                             "_FlatTopGaussianPulse"),
-                   "coupler": ("SmoothedFlatTopGaussianPulse",
-                               "_FlatTopGaussianPulse")},
-    "cz_bipolar": {"qubit": ("CosineBipolarPulse", "_CosineBipolarPulse"),
-                   "coupler": ("SmoothedFlatTopGaussianPulse",
-                               "_FlatTopGaussianPulse")},
-    "cz_snz": {"qubit": ("SNZPulse",), "coupler": None},
-    "cz_flattop_erf": {"qubit": ("ErfSquarePulse",), "coupler": None},
-}
+# The gate types, the env variants and their flux-slot pulse classes live in
+# core/add_catalog.py (one place for the three add paths); these names read
+# through to it.
+_GATE_TYPES = add_catalog.GATE_TYPES
+_ENV_GATE_TYPES = add_catalog.ENV_GATE_TYPES
+_ENV_GATE_LEAVES = add_catalog.ENV_GATE_LEAVES
+_SLOT_LEAVES = add_catalog.SLOT_LEAVES
 
 
 def _env_gate_types() -> dict[str, dict[str, Any]]:
@@ -16005,15 +15883,7 @@ def _env_gate_types() -> dict[str, dict[str, Any]]:
     No roster installed ⇒ {} — the legacy gate list stays byte-identical.
     """
     from quam_state_manager.core.pulse_catalog import env_overlay_active
-    roster = env_overlay_active()
-    if not roster:
-        return {}
-    out: dict[str, dict[str, Any]] = {}
-    for gid, gdef in _ENV_GATE_TYPES.items():
-        needs = _ENV_GATE_LEAVES[gid]
-        if all(any(leaf in roster for leaf in alts) for alts in needs):
-            out[gid] = gdef
-    return out
+    return add_catalog.env_gate_types(env_overlay_active())
 
 
 def _slot_qclass(store, leaf_candidates: tuple[str, ...] | None) -> str | None:
@@ -16041,7 +15911,7 @@ def _slot_qclass(store, leaf_candidates: tuple[str, ...] | None) -> str | None:
 
 def _slot_qclasses_for(store, gate_type: str) -> dict[str, str]:
     """Resolved slot classes for *gate_type* — only verified entries appear."""
-    leaves = _SLOT_LEAVES.get(gate_type) or {}
+    leaves = add_catalog.slot_leaves(gate_type)
     out: dict[str, str] = {}
     for slot_key in ("qubit", "coupler"):
         qc = _slot_qclass(store, leaves.get(slot_key))
@@ -16282,7 +16152,7 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
     raise ValueError(f"Unknown gate_type: {gate_type!r}")
 
 
-_GATE_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
+_GATE_NAME_RE = add_names.OPERATION_NAME_RE
 
 
 @bp.route("/pair/<name>/gate/new/cancel", methods=["GET"])
@@ -16312,7 +16182,7 @@ def pair_gate_form(name: str):
     arch = _pair_arch(store, pair_obj)
     # r15 (docs/71 §3): + the roster-verified generator variants (SNZ /
     # bipolar / flattop-erf) — no roster ⇒ exactly the legacy list.
-    gate_types = {k: v for k, v in {**_GATE_TYPES, **_env_gate_types()}.items()
+    gate_types = {k: v for k, v in {**add_catalog.GATE_TYPES, **_env_gate_types()}.items()
                   if arch.get(v.get("arch", "flux"))}
     if _parametric_cz_evidence(store) is None:
         gate_types = {k: v for k, v in gate_types.items() if k != "cz_parametric"}
@@ -16356,12 +16226,12 @@ def pair_add_gate(name: str):
     gate_name = (request.form.get("gate_name") or "").strip()
     gate_type = (request.form.get("gate_type") or "").strip()
 
-    all_gate_types = {**_GATE_TYPES, **_ENV_GATE_TYPES}
+    all_gate_types = add_catalog.all_gate_types()
     if gate_type not in all_gate_types:
         return render_template("_status.html", message=f"Unknown gate type: {gate_type!r}", level="error"), 400
     # Server twin of the roster gating (never trust the form): an env-variant
     # whose pulse classes the selected env can't verify must not be written.
-    if gate_type in _ENV_GATE_TYPES and gate_type not in _env_gate_types():
+    if gate_type in add_catalog.ENV_GATE_TYPES and gate_type not in _env_gate_types():
         return render_template(
             "_status.html",
             message=(f"{gate_type} needs pulse classes the selected "
@@ -24510,9 +24380,9 @@ def pulse_create_form():
 
     gate_defs_json = json.dumps({
         gid: {"label": gdef["label"],
-              "has_coupler_slot": (_SLOT_LEAVES.get(gid) or {}).get("coupler")
+              "has_coupler_slot": add_catalog.slot_leaves(gid).get("coupler")
               is not None}
-        for gid, gdef in {**_GATE_TYPES, **_ENV_GATE_TYPES}.items()
+        for gid, gdef in add_catalog.all_gate_types().items()
         if gdef.get("arch") == "flux" and gid != "cz_parametric"
     })
 

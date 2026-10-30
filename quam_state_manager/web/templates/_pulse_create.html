@@ -60,7 +60,7 @@
                     onchange="PulsesPage.createSlotSelected(this)"></select>
             <input type="text" name="new_gate_name" id="pulse-create-newgate-name"
                    aria-label="New gate name" placeholder="new gate name, e.g. cz_snz"
-                   pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" autocomplete="off" hidden
+                   pattern="{{ op_name_pattern }}" autocomplete="off" hidden
                    oninput="PulsesPage.createValidateGateName()">
         </span>
         <span data-target-kind="pair_channel" class="pulse-target-fields" hidden>
@@ -104,7 +104,7 @@
     <div class="pulse-create-row" data-target-kind="qubit pair_channel">
         <label for="pulse-create-name">Operation name</label>
         <input type="text" name="op_name" id="pulse-create-name" required
-               pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" autocomplete="off"
+               pattern="{{ op_name_pattern }}" autocomplete="off"
                placeholder="e.g. x180_v2"
                oninput="PulsesPage.createValidateName()">
     </div>
