@@ -98,10 +98,22 @@ def _probe_versions(inst, python_path):
     return {k: v for k, v in versions.items() if k in env_seen.VERSIONS and v}
 
 
-def present_references(inst, key):
-    rows = []
+def versions_text(versions):
+    """Recorded official package versions, e.g. "quam_builder 0.4.0, quam 0.6.0"."""
+    versions = versions or {}
+    return ", ".join(f"{name} {versions[name]}" for name in env_seen.VERSIONS if versions.get(name))
+
+
+def present_references(inst, key, checked_env=None, previous=None):
+    """Reference rows; the newest one recorded under the transition's previous
+    versions (in the checked env) is tagged ``is_before``."""
+    rows, tagged = [], False
     for reference in waveform_refs.list_references(inst, key):
+        before = bool(not tagged and checked_env and previous
+                      and waveform_refs.matches(reference, checked_env, previous))
+        tagged = tagged or before
         rows.append({**reference, "env_name": env_name(reference.get("python_path")),
+                     "versions_text": versions_text(reference.get("versions")), "is_before": before,
                      "local_time": local_minute(reference.get("recorded_at")),
                      "size_text": size_text(reference.get("size")),
                      "waveforms": reference.get("waveforms", len(reference.get("traces") or {}))})
@@ -365,8 +377,13 @@ def dispatch(action):
                     for e in config_generator.discover_envs() if e.get("python")]
         except Exception:  # noqa: BLE001 -- discovery failure only empties the list
             envs = []
-        return render_template("_env_upgrade_references.html", references=present_references(inst, key),
-                               envs=envs, selected=view["env"] if not view["no_env"] else "")
+        return render_template("_env_upgrade_references.html",
+                               references=present_references(
+                                   inst, key, view["env"] if not view["no_env"] else None,
+                                   (((view["report"] or {}).get("event") or {}).get("previous") or {})
+                                   if view["transition"] else None),
+                               envs=envs, selected=view["env"] if not view["no_env"] else "",
+                               selected_name=env_name(view["env"]) if not view["no_env"] else "")
     if action == "status":
         return jsonify(ok=True, checking=view["checking"])
     if request.method != "POST":

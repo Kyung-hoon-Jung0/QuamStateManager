@@ -311,3 +311,44 @@ def test_w3_state_hashes_become_plain_words_with_a_tooltip(loaded, monkeypatch):
     assert "Reference inputs regenerated in" in visible and "venv_up" in visible
     assert "quam_builder 0.6.0" in visible
     assert 'title="State 411b3f55c8' in html and "2ede0db29b" in html
+
+
+def _ref(key, recorded, versions, python=r"c:\envs\venv_up\python.exe"):
+    return {"key": key, "python_path": python, "recorded_at": recorded, "versions": versions,
+            "official_digest": "d", "source_fingerprint": "s", "size": 1024, "traces": {}, "files": {}}
+
+
+def test_reference_rows_show_versions_and_tag_the_before_reference(loaded, monkeypatch):
+    _, client, _ = loaded
+    old, new = {"quam_builder": "0.4.0"}, {"quam_builder": "0.6.0"}
+    refs = [_ref("b" * 64, "2026-10-31T01:21:00+00:00", new), _ref("a" * 64, "2026-10-31T01:19:00+00:00", old)]
+    monkeypatch.setattr(view.waveform_refs, "list_references", lambda inst, key: refs)
+    rows = view.present_references("i", "k", r"c:\envs\venv_up\python.exe", {**_ref("x", "", old)})
+    assert [r["is_before"] for r in rows] == [False, True]
+    assert rows[0]["versions_text"] == "quam_builder 0.6.0" and rows[1]["versions_text"] == "quam_builder 0.4.0"
+    assert not any(r["is_before"] for r in view.present_references("i", "k"))
+    monkeypatch.setattr(view.config_generator, "discover_envs", lambda: [])
+    html = client.get("/env-upgrade/references").get_data(as_text=True)
+    assert "quam_builder 0.6.0" in html and "quam_builder 0.4.0" in html
+    assert "before the upgrade" not in html  # no transition on this chip
+
+
+def test_before_tag_renders_only_for_the_marked_row(loaded):
+    html = loaded[0].jinja_env.get_template("_env_upgrade_references.html").render(
+        references=[{"key": "a", "env_name": "e", "python_path": "p", "local_time": "t", "waveforms": 1,
+                     "size_text": "1 KB", "files": [], "other_json": [], "versions_text": "quam 0.5.0",
+                     "is_before": flag} for flag in (True, False)], envs=[], selected="", selected_name="")
+    assert html.count("before the upgrade") == 1 and html.count("quam 0.5.0") == 2
+
+
+def test_custom_interpreter_option_shows_folder_name_with_full_path_in_title(loaded, monkeypatch):
+    _, client, _ = loaded
+    custom = r"c:\somewhere\venv_up\Scripts\python.exe"
+    monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda inst: custom)
+    monkeypatch.setattr(view.config_generator, "discover_envs", lambda: [])
+    monkeypatch.setattr(view.waveform_refs, "list_references",
+                        lambda inst, key: [_ref("a" * 64, "2026-10-31T01:19:00+00:00", {}, custom)])
+    html = client.get("/env-upgrade/references").get_data(as_text=True)
+    option = re.search(r"<option[^>]*selected[^>]*>[^<]*</option>", html).group(0)
+    assert ">venv_up</option>" in option and "title=\"" + custom in option
+    assert ">" + custom + "<" not in option

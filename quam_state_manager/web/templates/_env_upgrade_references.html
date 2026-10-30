@@ -2,6 +2,7 @@
 {% for reference in references %}
 <div class="env-reference">
   <span title="{{ reference.key }} &middot; {{ reference.python_path }}"><code>{{ reference.env_name }}</code>
+  {% if reference.versions_text %}&middot; {{ reference.versions_text }} {% endif %}{% if reference.is_before %}<strong class="env-reference-before">&middot; before the upgrade</strong> {% endif %}
   &middot; {{ reference.local_time }} &middot; {{ reference.waveforms }} waveforms &middot; {{ reference.size_text }}</span>
   <p>Generated from: {% for file in reference.files %}<code>{{ file }}</code> {% endfor %}</p>
   {% if reference.other_json %}<p>Not part of this comparison:
@@ -11,7 +12,7 @@
     <select class="env-reference-python">
       {% set ns = namespace(found=false) %}
       {% for env in envs %}<option value="{{ env.python }}" {% if env.python == selected %}selected{% set ns.found = true %}{% endif %}>{{ env.name }}</option>{% endfor %}
-      {% if selected and not ns.found %}<option value="{{ selected }}" selected>{{ selected }}</option>{% endif %}
+      {% if selected and not ns.found %}<option value="{{ selected }}" selected title="{{ selected }}">{{ selected_name }}</option>{% endif %}
     </select></label>
   <button class="btn-sm" data-key="{{ reference.key }}" onclick="EnvUpgrade.compare(this)">Compare</button>
   <button class="btn-sm" data-key="{{ reference.key }}" onclick="EnvUpgrade.removeReference(this)">Delete reference</button>
