@@ -129,6 +129,8 @@ def _client(tmp_path: Path, name: str, state: dict, wiring: dict):
 _SELECT = re.compile(r"<select\b([^>]*)>(.*?)</select>", re.S)
 _OPTION = re.compile(r"<option\b([^>]*)>(.*?)</option>", re.S)
 _ISLAND = re.compile(r'<script id="([^"]+)" type="application/json">(.*?)</script>', re.S)
+_INPUT = re.compile(r"<input\s[^>]*>", re.S)
+_INPUT_ATTR = re.compile(r'\b(name|id|pattern)="([^"]*)"')
 _ATTR = re.compile(r'\b(name|id|value)="([^"]*)"')
 
 
@@ -144,6 +146,13 @@ def _options(page: str) -> dict[str, list[str]]:
         while key in out:
             key += "+"
         out[key] = vals
+    for tag in _INPUT.findall(page):
+        a = dict(_INPUT_ATTR.findall(tag))
+        if "pattern" in a:
+            key = "pattern:" + (a.get("name") or a.get("id") or "?")
+            while key in out:
+                key += "+"
+            out[key] = a["pattern"]
     for iid, body in _ISLAND.findall(page):
         try:
             out["json:" + iid] = json.loads(_html.unescape(body))
@@ -208,6 +217,9 @@ def _record_b(c, rec, pair: str, shape: str) -> dict:
 def _record_c(c, rec, pair: str) -> dict:
     from quam_state_manager.web import routes
     form = _options(c.get(f"/pair/{pair}/gate/new").data.decode())
+    # the pulse inspector's rename / duplicate inputs carry the same name rule
+    form["detail"] = _options(c.get("/pulse/detail?path=qubits." + pair.split("-")[0]
+                                    + ".xy.operations.x180").data.decode())
     steps = []
     types = {**routes._GATE_TYPES, **routes._ENV_GATE_TYPES}
     for gt in sorted(types):

@@ -1344,6 +1344,8 @@
    "pair": [
     "q1-2"
    ],
+   "pattern:new_gate_name": "[a-zA-Z][a-zA-Z0-9_]{0,63}",
+   "pattern:op_name": "[a-zA-Z][a-zA-Z0-9_]{0,63}",
    "pc_channel": [],
    "pc_pair": [],
    "pulse_type": [
@@ -1377,6 +1379,7 @@
     "resonator"
    ],
    "json:pulse-pair-channels-data": {},
+   "pattern:op_name": "[a-zA-Z][a-zA-Z0-9_]{0,63}",
    "pc_channel": [],
    "pc_pair": [],
    "qubit": [

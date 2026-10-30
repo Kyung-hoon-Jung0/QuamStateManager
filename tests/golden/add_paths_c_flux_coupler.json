@@ -1,5 +1,44 @@
 {
- "form": {},
+ "form": {
+  "detail": {
+   "?": [
+    ""
+   ],
+   "json:pulse-detail-data": {
+    "actual_path": "qubits.q1.xy.operations.x180",
+    "mode": "single",
+    "path": "qubits.q1.xy.operations.x180",
+    "plot": {
+     "error": "pulse has no __class__ and no recognizable context",
+     "ok": false,
+     "param_errors": {}
+    },
+    "pulses": [
+     {
+      "actual_path": "qubits.q1.xy.operations.x180",
+      "color": "var(--pico-primary)",
+      "config_stale": false,
+      "index": 0,
+      "lab_class": true,
+      "label": "q1 · xy · x180",
+      "needs_lab": false,
+      "path": "qubits.q1.xy.operations.x180",
+      "plot": {
+       "error": "pulse has no __class__ and no recognizable context",
+       "ok": false,
+       "param_errors": {}
+      },
+      "plot_source": null,
+      "role": "qubit"
+     }
+    ],
+    "qclass": null,
+    "spec_key": null
+   },
+   "pattern:new_name": "[a-zA-Z][a-zA-Z0-9_]{0,63}",
+   "pattern:new_name+": "[a-zA-Z][a-zA-Z0-9_]{0,63}"
+  }
+ },
  "steps": [
   {
    "data": {
