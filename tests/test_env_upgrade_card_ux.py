@@ -254,3 +254,57 @@ def test_g6_static_scripts_carry_a_content_based_version(loaded):
     _, client, _ = loaded
     html = client.get("/env-upgrade/card").get_data(as_text=True)
     assert re.search(r"env-upgrade\.js\?v=\d+", html)
+
+
+def test_w2_card_polls_and_reads_comparing_while_the_compare_runs(loaded, monkeypatch):
+    monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda inst: sys.executable)
+    _, client, ctx = loaded
+    _transition_ctx(ctx)
+    monkeypatch.setattr(view.waveform_refs, "list_references", lambda inst, key: [{
+        "key": "k", "recorded_at": "2026-10-01T00:00:00+00:00", "versions": {"quam": "0.5.0"},
+        "python_path": sys.executable, "size": 2048, "traces": {}}])
+    ctx["env_compare_running"] = True
+    card = client.get("/diagnostics/env-card?poll=1")
+    html = card.get_data(as_text=True)
+    assert 'hx-trigger="every 2s"' in html and "Comparing waveforms" in html
+    assert "compare has not run yet" not in html and "HX-Trigger" not in card.headers
+    ctx["env_compare_running"] = False
+    card = client.get("/diagnostics/env-card?poll=1")
+    assert 'hx-trigger="every 2s"' not in card.get_data(as_text=True)
+    assert card.headers.get("HX-Trigger") == "diagnostics-changed"
+
+
+def test_w2_compare_runs_off_the_request_and_clears_its_flag(loaded, monkeypatch):
+    import threading
+    _, _, ctx = loaded
+    _report_ctx(ctx, changed=True)
+    done = threading.Event()
+    monkeypatch.setattr(view.env_upgrade_service, "compare_matched",
+                        lambda *a: (done.wait(5), {"status": "none_found", "attempted": True, "rows": [],
+                                                   "message": "ok"})[1])
+    ctx["env_compare_running"] = True
+    view._start_compare(ctx, "inst", "key", sys.executable, {}, {}, None, "ref")
+    assert ctx["env_compare_running"] is True
+    done.set()
+    import time
+    for _ in range(100):
+        if not ctx["env_compare_running"]:
+            break
+        time.sleep(0.05)
+    assert ctx["env_compare_running"] is False
+    assert ctx["env_upgrade_report"]["cases"]["6"]["attempted"] is True
+
+
+def test_w3_state_hashes_become_plain_words_with_a_tooltip(loaded, monkeypatch):
+    monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda inst: sys.executable)
+    _, client, ctx = loaded
+    _report_ctx(ctx, changed=True, case6={
+        "case": 6, "rows": [], "status": "none_found", "message": "x", "attempted": True,
+        "reference_state_hash": "411b3f55c8", "current_state_hash": "2ede0db29b", "current_env": "venv_up"})
+    ctx["env_upgrade_body"] = {"versions": {"quam_builder": "0.6.0"}}
+    html = client.get("/env-upgrade/card").get_data(as_text=True)
+    visible = re.sub(r"<[^>]+>", " ", html)
+    assert "411b3f55c8" not in visible and "2ede0db29b" not in visible
+    assert "Reference inputs regenerated in" in visible and "venv_up" in visible
+    assert "quam_builder 0.6.0" in visible
+    assert 'title="State 411b3f55c8' in html and "2ede0db29b" in html

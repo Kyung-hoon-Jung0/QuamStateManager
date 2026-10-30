@@ -127,6 +127,7 @@
         document.body.dispatchEvent(new CustomEvent('diagnostics-changed'));
         // the tray count after the staged edits land; a later drop means an undo
         awaitingTray = true;
+        refreshCard();  // the matched-state compare runs server-side; the card polls until it ends
       } catch (error) { notice(error.message); }
     },
     compare: async function (button) {

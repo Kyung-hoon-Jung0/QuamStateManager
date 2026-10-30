@@ -108,9 +108,11 @@ def present_references(inst, key):
     return rows
 
 
-def case6_message(report, transition_seen, has_pre_reference, previous_not_installed):
+def case6_message(report, transition_seen, has_pre_reference, previous_not_installed, compare_running=False):
     """The one sentence the card shows for the waveform case."""
     case = report["cases"]["6"]
+    if compare_running:
+        return "Comparing waveforms…"
     if case.get("rows") or case.get("attempted"):
         return case.get("message") or ""
     if not transition_seen:
@@ -216,9 +218,10 @@ def model(ctx, inst):
     with _routes._cfg_warm_lock:
         recording_running = (ctx.get("env_reference_status") == "recording reference..."
                              and str(ctx.get("path") or "").lower() in _routes._cfg_warm_inflight)
+    compare_running = bool(ctx.get("env_compare_running"))
     if report:
         report["cases"]["6"] = {**report["cases"]["6"], "message": case6_message(
-            report, transition_seen, has_pre_reference, not known_previous)}
+            report, transition_seen, has_pre_reference, not known_previous, compare_running)}
     return {"report": report, "env": env, "versions": versions,
             "env_name": env_name(selected), "remembered_name": env_name(remembered), "no_env": not selected,
             "checking": checking(ctx), "transition": transition_seen, "consequence": consequence,
@@ -233,11 +236,33 @@ def model(ctx, inst):
             "error": ctx.get("env_upgrade_error"), "recording": ctx.get("env_reference_status"),
             "previous_not_installed": not known_previous,
             "has_pre_reference": has_pre_reference, "recording_running": recording_running,
+            "compare_running": compare_running,
             "editable": env_seen.live_context(ctx), "signature_heading": env_upgrade.SIGNATURE_HEADING,
             "footer": "" if not selected else ((report or {}).get("footer") or
                 "Not checked: run-time behaviour of macros, hardware timing, classes not probed (0)"),
             "all_clear": bool(report and all(report["cases"][str(n)]["status"] == "none_found"
                                              for n in range(1, 6)))}
+
+
+def _start_compare(ctx, inst, key, env, event, body, reference, reference_key):
+    """Run the matched-state compare off the request; the card polls ctx['env_compare_running']."""
+    import threading
+
+    def _run():
+        try:
+            compared = env_upgrade_service.compare_matched(inst, key, env, event, body, reference, reference_key)
+            compared["current_env"] = env_name(env)
+        except Exception as exc:  # the card must leave the running state whatever happens
+            compared = {"status": "not_checked", "attempted": True, "rows": [], "error": str(exc),
+                        "message": "not compared: " + str(exc)}
+        current = ctx.get("env_upgrade_report")
+        if current is not None:
+            current["cases"]["6"] = {"case": 6, **compared}
+            current["non_waveform"] = compared.get("non_waveform") or []
+            ctx["env_upgrade_report_seq"] = None
+        ctx["env_compare_running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _plan(ctx, payload, inst):
@@ -404,15 +429,15 @@ def dispatch(action):
             reference = reference_for(ctx, inst)
             report = env_upgrade.report(planned["state"], ctx["env_upgrade_body"], reference, event=event)
             matching = env_upgrade_service.matching_references(inst, key, env, event.get("previous") or {})
-            if matching and not any(report["cases"][n]["rows"] for n in ("2", "3", "4")):
-                compared = env_upgrade_service.compare_matched(inst, key, env, event, ctx["env_upgrade_body"],
-                                                               reference, matching[0]["key"])
-                compared["current_env"] = env_name(env)
-                report["cases"]["6"] = {"case": 6, **compared}
-                report["non_waveform"] = compared.get("non_waveform") or []
+            run_compare = bool(matching) and not any(report["cases"][n]["rows"] for n in ("2", "3", "4"))
             ctx["env_upgrade_report"] = report
             ctx["env_upgrade_report_seq"] = None
             ctx.pop("env_rename_test", None)
+            if run_compare:
+                # the compare regenerates waveforms (minutes); the card polls this flag
+                ctx["env_compare_running"] = True
+                _start_compare(ctx, inst, key, env, event, ctx["env_upgrade_body"], reference,
+                               matching[0]["key"])
             return jsonify(ok=True, changes=len(entries), skipped=planned["skipped"],
                            message="Working copy updated; use the existing Apply to write live files")
     except (ValueError, KeyError, OSError, TypeError) as exc:

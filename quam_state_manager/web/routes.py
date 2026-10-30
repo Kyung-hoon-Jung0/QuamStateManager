@@ -47386,7 +47386,8 @@ def diagnostics_env_card():
     # until a reload. A plain GET never triggers (no loop, no new poller).
     if (request.args.get("poll") == "1" and not env_card.get("probing")
             and not (env_card.get("upgrade") or {}).get("checking")
-            and not (env_card.get("upgrade") or {}).get("recording_running")):
+            and not (env_card.get("upgrade") or {}).get("recording_running")
+            and not (env_card.get("upgrade") or {}).get("compare_running")):
         resp.headers["HX-Trigger"] = "diagnostics-changed"
     return resp
 

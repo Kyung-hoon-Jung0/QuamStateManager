@@ -27,8 +27,7 @@
       {% if heading == 'Changes output' %}<p>{{ report.waveform_scope }}</p>{% endif %}
       {% for number in numbers %}{% set case = report.cases[number] %}
       <p class="env-case-line">{{ upgrade.case_names[number] | capitalize }}: {{ case.message }}</p>
-      {% if number == '6' and case.reference_state_hash %}<p>State {{ case.reference_state_hash }} &rarr; {{ case.current_state_hash }}
-        {% if case.current_env %}in <code>{{ case.current_env }}</code>{% endif %}</p>{% endif %}
+      {% if number == '6' and case.reference_state_hash %}<p class="env-state-hashes" title="State {{ case.reference_state_hash }} &rarr; {{ case.current_state_hash }}">Reference inputs regenerated{% if case.current_env %} in <code>{{ case.current_env }}</code>{% endif %}{% if upgrade.versions and upgrade.versions.get('quam_builder') %} (quam_builder {{ upgrade.versions.get('quam_builder') }}){% endif %}</p>{% endif %}
       {% if number == '6' and case.rows %}{% set cmp = upgrade.compare %}
       <p class="env-wave-summary"><strong>{{ cmp.summary }}</strong></p>
       {% if case.applied_text %}<p class="env-wave-applied">{{ case.applied_text }}</p>{% endif %}

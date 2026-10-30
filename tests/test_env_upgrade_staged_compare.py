@@ -80,6 +80,15 @@ def _card_case6(client):
     return html, html.split("Changes output", 1)[1].split("FYI", 1)[0]
 
 
+def _wait_compare(ctx):
+    import time
+    for _ in range(200):
+        if not ctx.get("env_compare_running"):
+            return
+        time.sleep(0.05)
+    raise AssertionError("the background compare never finished")
+
+
 def test_staged_reviewed_removal_runs_the_compare_on_the_reference_inputs(flow):
     client, ctx, previews = flow
     rows = ctx["env_upgrade_report"]["cases"]["3"]["rows"]
@@ -91,6 +100,7 @@ def test_staged_reviewed_removal_runs_the_compare_on_the_reference_inputs(flow):
     applied = client.post("/env-upgrade/rename-apply", json=payload)
     assert applied.status_code == 200, applied.get_json()
     assert "gone" not in ctx["store"].state["pairs"]["p1"]
+    _wait_compare(ctx)
     html, case6 = _card_case6(client)
     assert "No reference from before this change" not in case6
     assert "compare runs once the load-stopping items" not in case6
@@ -106,6 +116,7 @@ def test_reference_that_still_cannot_load_says_why(flow, monkeypatch):
                         lambda *a, **k: {"ok": False, "error": "lab class missing"})
     # the stage itself only needs the load test token; the compare's load now fails
     assert client.post("/env-upgrade/rename-apply", json=payload).status_code == 200
+    _wait_compare(ctx)
     _, case6 = _card_case6(client)
     assert "lab class missing" in case6 and "load-stopping" in case6
     assert "No reference from before this change" not in case6
