@@ -16286,9 +16286,13 @@ def pair_add_gate(name: str):
     for field_name, _label, default, kind in all_gate_types[gate_type]["fields"]:
         raw = request.form.get(field_name, "")
         try:
-            fields[field_name] = float(raw) if kind == "float" else int(float(raw))
-        except (TypeError, ValueError):
-            fields[field_name] = default
+            number = float(raw)
+            if not math.isfinite(number) or (kind != "float" and not number.is_integer()):
+                raise ValueError("a finite number is required")
+            fields[field_name] = number if kind == "float" else int(number)
+        except (TypeError, ValueError, OverflowError):
+            return render_template("_status.html", level="error",
+                                   message=f"{field_name}: a valid {kind} value is required"), 400
 
     template = _build_gate_template(
         gate_type, fields,

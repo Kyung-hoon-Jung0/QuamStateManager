@@ -585,22 +585,9 @@
     "gate_type": "cr_gate",
     "qc_correction_phase": "abc"
    },
-   "ops": [
-    [
-     "create_subtree",
-     "qubit_pairs.q0-1.macros.g_typo",
-     {
-      "__class__": "quam_builder.architecture.superconducting.custom_gates.fixed_transmon_pair.two_qubit_gates.CRGate",
-      "duration": "#./inferred_duration",
-      "fidelity": null,
-      "id": "#./inferred_id",
-      "qc_correction_phase": 0.0,
-      "qt_correction_phase": 0.0
-     },
-     null
-    ]
-   ],
-   "status": 200,
+   "message": "qc_correction_phase: a valid float value is required ×",
+   "ops": [],
+   "status": 400,
    "url": "/pair/q0-1/gate"
   }
  ]
