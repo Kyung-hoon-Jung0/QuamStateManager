@@ -3285,3 +3285,69 @@ def plan_cancel(pid: str):
     _bump()
     _wake()
     return jsonify(ok=True, plan=_plan_view(rec))
+
+
+# ------------------------------------------------- Generate-Config proposals
+# An agent PROPOSES additions for the chip a person is building in the
+# Generate wizard. Nothing is built or written: an accepted proposal waits as
+# pending until a person presses Accept in the wizard.
+
+@agent_bp.route("/generate/roles")
+def generate_roles_for_agent():
+    """The wizard's draft (qubits, pairs, lines, additions so far), the
+    selected env's classes that can be added (cached manifest only) and the
+    knowledge cards each follows."""
+    from quam_state_manager.core import addition_cards, addition_proposals, role_manifest
+    from quam_state_manager.core import config_generator
+    inst = current_app.instance_path
+    ctx = addition_proposals.context(inst)
+    python_path = config_generator.get_selected_env(inst)
+    deck = addition_cards.cards(inst)
+    man = role_manifest.roles_for_env(python_path, inst) if python_path else None
+    classes = {}
+    for path, c in ((man or {}).get("classes") or {}).items():
+        if not isinstance(c, dict) or c.get("abstract") or path.rsplit(".", 1)[-1].startswith("_"):
+            continue
+        if c.get("role") not in ("pulse", "macro_qubit", "macro_pair"):
+            continue
+        card = addition_cards.card_for(dict(c, path=path), deck=deck)
+        classes[path] = {"role": c.get("role"), "origin": c.get("origin"),
+                         "card": card.get("id") if card else None,
+                         "default_name": addition_cards.default_name(card, path),
+                         "fields": {n: {k: f.get(k) for k in ("raw", "kind", "has_default", "optional")}
+                                    for n, f in (c.get("fields") or {}).items()}}
+    return jsonify(ok=True, draft=addition_proposals.spec_summary(ctx.get("spec") or {}),
+                   draft_recorded=bool(ctx.get("spec")), env=python_path,
+                   manifest=bool(man), classes=classes,
+                   cards={"version": deck["version"], "hash": deck["hash"],
+                          "cards": [addition_cards.public_card(c) for c in deck["cards"]]},
+                   rules=["an agent proposes; a person accepts each item in the wizard",
+                          "never set a calibration value (amplitude, length, frequency, phase, "
+                          "weights, ...): leave it out; a person types it on Accept",
+                          "pointer fields follow the card's pointers (field -> qubit/channel)",
+                          "name additions by the card's naming"])
+
+
+@agent_bp.route("/generate/propose", methods=["POST"])
+def generate_propose():
+    from quam_state_manager.core import addition_proposals
+    data = json_object()
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        return _err("items must be a non-empty list of {addition, reason}")
+    inst = current_app.instance_path
+    spec = addition_proposals.context(inst).get("spec")
+    if not spec:
+        return _err("no Generate draft is open: a person must open Generate Config first", 409)
+    man = _r()._proposal_manifest(spec, [it.get("addition") for it in items if isinstance(it, dict)])
+    res = addition_proposals.propose(inst, items, _r()._request_actor(), man, spec=spec)
+    return jsonify(ok=True, results=res, manifest=bool(man))
+
+
+@agent_bp.route("/generate/propose-card", methods=["POST"])
+def generate_propose_card():
+    from quam_state_manager.core import addition_proposals
+    data = json_object()
+    res = addition_proposals.propose_card(current_app.instance_path, data.get("card"),
+                                          data.get("reason"), _r()._request_actor())
+    return jsonify(ok=True, result=res)

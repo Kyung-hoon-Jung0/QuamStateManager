@@ -45655,21 +45655,25 @@ def generate_roles():
     if not man:
         return jsonify({"ok": False, "cold": request.method == "GET", "error": err})
     from quam_state_manager.core import additions as _additions
+    from quam_state_manager.core import addition_cards as _cards
     pulses, qubit_fields = {}, {}
     macros: dict = {"macro_qubit": {}, "macro_pair": {}}
+    deck = _cards.cards(current_app.instance_path)
     for path, c in (man.get("classes") or {}).items():
         if not isinstance(c, dict):
             continue
         public = not c.get("abstract") and not path.rsplit(".", 1)[-1].startswith("_")
+        card = _cards.card_for(dict(c, path=path), deck=deck) if public else None
+        cinfo = {"card": _cards.public_card(card), "default_name": _cards.default_name(card, path)}
         if c.get("role") == "pulse" and public:
             pulses[path] = {"origin": c.get("origin"), "doc": c.get("doc"),
                             "fields": c.get("fields") or {},
-                            "readout": any(str(m).rsplit(".", 1)[-1] in ("ReadoutPulse", "BaseReadoutPulse")
-                                           for m in (c.get("mro") or []))}
+                            # a readout pulse is what the readout card says it is
+                            "readout": bool(card and card.get("id") == "readout_pulse"), **cinfo}
         elif c.get("role") in macros and public:
             macros[c["role"]][path] = {"origin": c.get("origin"), "doc": c.get("doc"),
                                        "fields": c.get("fields") or {},
-                                       "cz": _additions.cz_recipe(c)}
+                                       "cz": _additions.cz_recipe(c), **cinfo}
         elif c.get("role") == "qubit":
             for n, f in (c.get("fields") or {}).items():
                 if f.get("kind") in ("plain", "scalar_or_pointer"):
@@ -45680,7 +45684,83 @@ def generate_roles():
                     "qubit_fields": sorted(qubit_fields),
                     "readout": role_manifest.readout_capability(man),
                     "measure_macro": role_manifest._MEASURE_MACRO,
-                    "roots": role_manifest.root_capabilities(man)})
+                    "roots": role_manifest.root_capabilities(man),
+                    "cards": {"version": deck.get("version"), "hash": deck.get("hash")},
+                    "agent_connected": _agent_connected()})
+
+
+def _proposal_manifest(spec: dict, adds: list) -> dict | None:
+    """The cached role manifest covering *adds*' classes (never spawns)."""
+    python_path = config_generator.get_selected_env(current_app.instance_path)
+    if not python_path:
+        return None
+    try:
+        return _additions_manifest(python_path, dict(spec, additions=[a for a in adds if isinstance(a, dict)]),
+                                   spawn=False)
+    except Exception:  # noqa: BLE001 -- an unknown manifest is never a blocker
+        return None
+
+
+@bp.route("/generate/proposals/context", methods=["POST"])
+def generate_proposals_context():
+    """The wizard records its draft spec so an agent's proposal is judged
+    against the chip the person is building."""
+    from quam_state_manager.core import addition_proposals
+    spec = json_object().get("spec")
+    if not isinstance(spec, dict):
+        return jsonify({"ok": False, "error": "spec must be an object"}), 400
+    addition_proposals.set_context(current_app.instance_path, spec,
+                                   config_generator.get_selected_env(current_app.instance_path))
+    return jsonify({"ok": True})
+
+
+@bp.route("/generate/proposals")
+def generate_proposals():
+    """Pending agent proposals (the wizard lists them for Accept / Dismiss)."""
+    from quam_state_manager.core import addition_proposals
+    return jsonify({"ok": True, "items": addition_proposals.pending(current_app.instance_path),
+                    "agent_connected": _agent_connected()})
+
+
+@bp.route("/generate/proposals/<pid>/accept", methods=["POST"])
+def generate_proposal_accept(pid):
+    """A person accepts a proposal: linted again as THEIR addition, with the
+    fields they typed; the browser then adds it to spec.additions."""
+    from quam_state_manager.core import addition_proposals
+    data = json_object()
+    spec = data.get("spec") if isinstance(data.get("spec"), dict) else {}
+    typed = data.get("fields") if isinstance(data.get("fields"), dict) else {}
+    it = addition_proposals.get(current_app.instance_path, pid) or {}
+    man = _proposal_manifest(spec, [it.get("addition")]) if it.get("kind") == "addition" else None
+    res = addition_proposals.accept(current_app.instance_path, pid, spec, typed, man,
+                                    who=_request_actor())
+    return jsonify(res), (200 if res.get("ok") else 409)
+
+
+@bp.route("/generate/proposals/<pid>/dismiss", methods=["POST"])
+def generate_proposal_dismiss(pid):
+    from quam_state_manager.core import addition_proposals
+    it = addition_proposals.decide(current_app.instance_path, pid, "dismissed", _request_actor())
+    return jsonify({"ok": it is not None})
+
+
+@bp.route("/generate/additions/lint", methods=["POST"])
+def generate_additions_lint():
+    """The one lint (``additions.lint_proposal``) for an addition a person
+    is about to add or an imported spec carries."""
+    from quam_state_manager.core import additions
+    data = json_object()
+    spec = data.get("spec") if isinstance(data.get("spec"), dict) else {}
+    add = data.get("addition")
+    man = _proposal_manifest(spec, list(spec.get("additions") or []) + [add])
+    return jsonify(additions.lint_proposal(spec, add, man, author="person"))
+
+
+def _agent_connected() -> bool:
+    """True when Claude or Codex has SM's bridge registered (Agent Setup);
+    the wizard shows "Ask agent to propose" only then."""
+    w = _agent_wiring() or {}
+    return bool(w.get("claude_mcp") or w.get("codex_mcp"))
 
 
 @bp.route("/generate/build", methods=["POST"])

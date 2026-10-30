@@ -41,6 +41,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from quam_state_manager.core import addition_cards
 from quam_state_manager.core.field_kinds import _arms, _norm
 from quam_state_manager.core.pointer_path import _walk, pointer_to_abs
 
@@ -56,9 +57,24 @@ _MACRO_ROLE ={"qubits": "macro_qubit", "qubit_pairs": "macro_pair"}
 _ROLE_WORDS = {"macro_qubit": "a qubit macro", "macro_pair": "a pair macro", "pulse": "a pulse"}
 # a plain-``str`` macro field whose NAME says it holds an operation name [derived]
 _NAME_FIELD_RE = re.compile(r"(^|_)(pulse|pulse_name|operation|operation_name|op_name)$")
-# pulse-reference fields of the CZ gate family, recognised without a manifest
-_KNOWN_PULSE_FIELDS = ("flux_pulse_qubit", "flux_pulse_target", "flux_pulse_high",
-                       "flux_pulse_low", "coupler_flux_pulse")
+
+
+def _deck() -> dict:
+    """The knowledge cards (shipped + this instance's additive overlay)."""
+    try:
+        from flask import current_app
+        return addition_cards.cards(current_app.instance_path)
+    except (RuntimeError, ImportError):
+        return addition_cards.cards()
+
+
+def card_of(manifest: dict | None, qclass: str, role: str | None = None) -> dict | None:
+    """The knowledge card a manifest class follows (its own, or its base's
+    through the MRO), or None."""
+    c = _class_entry(manifest, qclass)
+    if c is None:
+        return None
+    return addition_cards.card_for(dict(c, path=qclass), role=role, deck=_deck())
 _FIELD_TARGET_RE = re.compile(r"^[A-Za-z_][\w\-]*(\.[\w\-]+)*$")
 _CLASS_RE = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)+$")
 _OFFICIAL = ("quam", "quam_builder", "qualang_tools", "qm")
@@ -270,8 +286,11 @@ def spec_channel_reason(spec: dict, target: str) -> str | None:
         need = _QUBIT_CHANNEL.get(ch)
         qd = (((spec.get("qdac") or {}).get("qubits")) or {}).get(q)
         if ch == "z" and isinstance(qd, dict) and not qd.get("bias_tee"):
-            return (f"qubit {q} is biased by the QDAC-II: its z is a QdacBiasLine (a DC "
-                    "level), which plays no pulses; put the pulse on xy or the resonator")
+            rule = addition_cards.forbidden_reason(
+                addition_cards.card_by_id("qdac_z_refusal", _deck()), "pulse_on_qdac_z") or (
+                "its z is a QdacBiasLine (a DC level), which plays no pulses; put the pulse "
+                "on xy or the resonator")
+            return f"qubit {q} is biased by the QDAC-II: {rule}"
         if need and not any(ln.get("line") == need and str(ln.get("element")) == q
                             for ln in lines):
             return f"qubit {q} has no {need} line, so it has no {ch} channel"
@@ -439,7 +458,8 @@ def _refs(add: dict, manifest: dict | None) -> list[tuple[list[str], Any, str]]:
     for k, v in (add.get("fields") or {}).items():
         f = meta.get(k) or {}
         kind = f.get("kind")
-        pulse_field = kind == "pointer_pulse" or (not meta and k in _KNOWN_PULSE_FIELDS)
+        pulse_field = kind == "pointer_pulse" or (
+            not meta and k in addition_cards.all_pointer_fields(_deck()))
         if add.get("kind") == "macro" and kind == "dict_of_pointers" and isinstance(v, dict):
             for dk, dv in v.items():
                 if isinstance(dv, str):
@@ -488,21 +508,28 @@ def _owners(state: dict, add: dict, field: str, manifest: dict | None) -> list[t
              for r in ("control", "target")}
     q = {r: [(f"{n} (the pair's {r})", ["qubits", n])] if n else [] for r, n in roles.items()}
     coupler = [("the pair's coupler", pp + ["coupler"])] if isinstance(pair.get("coupler"), dict) else []
-    meta = ((_class_entry(manifest, str(add.get("class") or "")) or {}).get("fields") or {})
-    two_flux = "flux_pulse_target" in meta or "flux_pulse_target" in (add.get("fields") or {})
-    if field == "flux_pulse_target":
+    # which qubit / channel a field plays on is the class's knowledge card
+    # (its own, or its base's by MRO); without a manifest the card is chosen
+    # by the field names the addition carries
+    entry = _class_entry(manifest, str(add.get("class") or "")) or {}
+    names = set(entry.get("fields") or {}) | set(add.get("fields") or {})
+    card = addition_cards.card_for(
+        dict(entry, role="macro_pair", path=str(add.get("class") or ""),
+             fields={n: {} for n in names}), deck=_deck())
+    on = addition_cards.pointer_map(card, names).get(field)
+    if on == "target":
         return q["target"]
-    if field == "coupler_flux_pulse":
+    if on == "coupler":
         return coupler
-    if field == "flux_pulse_qubit":
-        if two_flux:
-            return q["control"]
+    if on == "control":
+        return q["control"]
+    if on == "moving":
         moving = pair.get("moving_qubit")
         if moving in ("control", "target"):
             return [(n.replace(f"the pair's {moving}", f"the pair's moving qubit, {moving}"), p)
                     for n, p in q[moving]]
         return q["control"] + q["target"]
-    if field in ("flux_pulse_high", "flux_pulse_low"):
+    if on in ("high", "low"):
         # a both-movers gate plays the high pulse on the qubit with the higher
         # f_01 (ties go to the control) [derived: the class's qubit_high /
         # qubit_low properties]; unknown frequencies leave either qubit open
@@ -510,8 +537,8 @@ def _owners(state: dict, add: dict, field: str, manifest: dict | None) -> list[t
         if f["control"] is None or f["target"] is None:
             return q["control"] + q["target"]
         high = "control" if f["control"] >= f["target"] else "target"
-        pick = high if field == "flux_pulse_high" else ("target" if high == "control" else "control")
-        word = "higher" if field == "flux_pulse_high" else "lower"
+        pick = high if on == "high" else ("target" if high == "control" else "control")
+        word = "higher" if on == "high" else "lower"
         return [(n.replace(f"(the pair's {pick})", f"(the pair's {pick}, the {word}-frequency qubit)"), p)
                 for n, p in q[pick]]
     return q["control"] + q["target"] + coupler
@@ -837,22 +864,139 @@ def _field_precheck(spec: dict, add: dict, manifest: dict | None) -> str | None:
     return field_reason({"__class__": root}, add, manifest)
 
 
+def _core_reason(spec: dict, a: dict, manifest: dict | None) -> str | None:
+    """What can be judged without the built chip (the spec's channels, the
+    env's class manifest)."""
+    if a.get("kind") == "field" and isinstance(a.get("target"), str):
+        return _field_precheck(spec, a, manifest)
+    if isinstance(a.get("target"), str) and isinstance(a.get("class"), str):
+        return spec_channel_reason(spec, a["target"]) or manifest_reason(a, manifest)
+    return None
+
+
 def precheck(spec: dict, manifest: dict | None) -> list[dict]:
     """Before a build: every addition in placement order with what can be
-    judged without the built chip (the spec's channels, the env's class
-    manifest). ``reason`` = refused for sure; no reason = still to be checked
-    against the built chip and in the environment."""
+    judged without the built chip. ``reason`` = refused for sure; no reason =
+    still to be checked against the built chip and in the environment. Each
+    entry also carries the knowledge ``card`` its class follows (None = no
+    card) and the card's ``warnings`` -- the same :func:`lint_proposal` an
+    agent's proposal passes."""
     adds = [a for a in (spec.get("additions") or []) if isinstance(a, dict)]
     out = []
     for i in placement_order(adds):
         a = adds[i]
-        why = None
-        if a.get("kind") == "field" and isinstance(a.get("target"), str):
-            why = _field_precheck(spec, a, manifest)
-        elif isinstance(a.get("target"), str) and isinstance(a.get("class"), str):
-            why = spec_channel_reason(spec, a["target"]) or manifest_reason(a, manifest)
-        out.append(_entry(i, a, manifest, why))
+        lint = lint_proposal(spec, a, manifest, structural=False, others=adds[:i] + adds[i + 1:])
+        e = _entry(i, a, manifest, lint["errors"][0] if lint["errors"] else None)
+        e["card"] = lint["card"]
+        if lint["warnings"]:
+            e["warnings"] = lint["warnings"]
+        out.append(e)
     return out
+
+
+# ---------------------------------------------------------------------------
+# ONE lint for every addition, whoever wrote it (the wizard, an agent, an
+# imported spec): structure + the knowledge card + what the env manifest and
+# the spec can judge. An agent author is held to one more rule: it may never
+# set a calibration value (docs/47 -- an agent proposes structure, numbers
+# come from a person or a calibration).
+# ---------------------------------------------------------------------------
+
+AUTHORS_PERSON = ("person", "wizard", "import")
+
+
+def _num_like(v: Any) -> bool:
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, (int, float)):
+        return True
+    if isinstance(v, list) and v:
+        return all(_num_like(x) or isinstance(x, list) and all(_num_like(y) for y in x) for x in v)
+    return False
+
+
+def _default_equals(f: dict, v: Any) -> bool:
+    """Does *v* only restate the class default (``default_repr``)?"""
+    if not f.get("has_default"):
+        return False
+    try:
+        return repr(v) == str(f.get("default_repr")) or json.loads(str(f.get("default_repr"))) == v
+    except ValueError:
+        return False
+
+
+def _placeholder(f: dict) -> Any:
+    t = _norm(f.get("raw") or "")
+    return [] if t.split("[")[0] in _LIST_HEADS else 0
+
+
+def lint_proposal(spec: dict, add: Any, manifest: dict | None, *, author: str = "person",
+                  typed=(), structural: bool = True, others: list | None = None) -> dict:
+    """Judge one addition. Returns ``{"ok", "errors", "warnings", "card",
+    "needs_person"}``: *errors* refuse it, *warnings* are the card's
+    conventions it departs from (a person decides), *needs_person* the
+    required calibration fields an agent left for a person to type.
+    *typed* = field names a person typed (never refused as an agent number)."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    needs: list[str] = []
+    if not isinstance(add, dict):
+        return {"ok": False, "errors": ["an addition must be an object"], "warnings": [],
+                "card": None, "needs_person": []}
+    others = [a for a in (spec.get("additions") or []) if isinstance(a, dict)] if others is None else others
+    if structural:
+        before = set(structural_errors(dict(spec, additions=others)))
+        after = structural_errors(dict(spec, additions=list(others) + [add]))
+        n = len(others)
+        errors += [e.replace(f"additions[{n}]", "this addition") for e in after if e not in before]
+        if errors:
+            return {"ok": False, "errors": errors, "warnings": [], "card": None, "needs_person": []}
+    kind = add.get("kind")
+    qclass = str(add.get("class") or "")
+    entry = _class_entry(manifest, qclass) if qclass else None
+    meta = (entry or {}).get("fields") or {}
+    card = None
+    if kind in ("pulse", "macro") and qclass:
+        want = ("pulse" if kind == "pulse"
+                else _MACRO_ROLE.get(str(add.get("target", "")).split(".")[0], "macro_pair"))
+        card = card_of(manifest, qclass, role=want)
+    agent = author not in AUTHORS_PERSON
+    typed = set(typed or ())
+    judged = add
+    if agent:
+        fields = add.get("fields") or {}
+        for k, v in fields.items():
+            if k in typed or is_pointer(v) or not addition_cards.calibration_field(k, card, _deck()):
+                continue
+            if _num_like(v) and not _default_equals(meta.get(k) or {}, v):
+                errors.append(f"field {k} is a calibration value ({json.dumps(v)[:40]}); an agent "
+                              "may not set it -- leave it out (the class default applies) or let a "
+                              "person type it")
+        if kind == "field":
+            leaf = str(add.get("target") or "").rsplit(".", 1)[-1]
+            if (leaf not in typed and _num_like(add.get("value"))
+                    and addition_cards.calibration_field(leaf, None, _deck())):
+                errors.append(f"{leaf} is a calibration value; an agent may not set it")
+        needs = sorted(n for n, f in meta.items()
+                       if not f.get("has_default") and n not in fields and n not in typed
+                       and addition_cards.calibration_field(n, card, _deck()))
+        if needs:
+            judged = dict(add, fields=dict(fields, **{n: _placeholder(meta[n]) for n in needs}))
+    why = _core_reason(spec, judged, manifest)
+    if why:
+        errors.append(why)
+    if card is not None:
+        tgt = str(add.get("target") or "")
+        if not addition_cards.placement_ok(card, tgt):
+            warnings.append(f"the {card['id']} card places this on "
+                            f"{card['placement']['target']}, not {tgt}")
+        nm, naming = str(add.get("name") or ""), card.get("naming") or {}
+        if naming.get("exact") and nm != naming["exact"]:
+            warnings.append(f"the {card['id']} card names it {naming['exact']}")
+        elif naming.get("prefix") and not nm.startswith(naming["prefix"]):
+            warnings.append(f"the {card['id']} card names it {naming['prefix']}<name>")
+    return {"ok": not errors, "errors": errors, "warnings": warnings,
+            "card": card.get("id") if card else None, "needs_person": needs}
 
 
 def cz_recipe(entry: dict | None) -> list[dict] | None:
@@ -865,23 +1009,15 @@ def cz_recipe(entry: dict | None) -> list[dict] | None:
     if not isinstance(entry, dict) or entry.get("role") != "macro_pair" or entry.get("abstract"):
         return None
     f = entry.get("fields") or {}
+    card = addition_cards.card_for(entry, deck=_deck())
+    if not (card and card.get("group_form")):
+        return None
 
     def req(n):
         return not (f.get(n) or {}).get("has_default")
-    if "flux_pulse_high" in f and "flux_pulse_low" in f:
-        out = [{"field": "flux_pulse_high", "on": "high", "required": req("flux_pulse_high")},
-               {"field": "flux_pulse_low", "on": "low", "required": req("flux_pulse_low")}]
-    elif "flux_pulse_qubit" in f and "flux_pulse_target" in f:
-        out = [{"field": "flux_pulse_qubit", "on": "control", "required": req("flux_pulse_qubit")},
-               {"field": "flux_pulse_target", "on": "target", "required": req("flux_pulse_target")}]
-    elif "flux_pulse_qubit" in f:
-        out = [{"field": "flux_pulse_qubit", "on": "moving", "required": req("flux_pulse_qubit")}]
-    else:
-        return None
-    if "coupler_flux_pulse" in f:
-        out.append({"field": "coupler_flux_pulse", "on": "coupler",
-                    "required": req("coupler_flux_pulse")})
-    return out
+    out = [{"field": n, "on": on, "required": req(n)}
+           for n, on in addition_cards.pointer_map(card, f).items()]
+    return out or None
 
 
 def remove(state: dict, path: str) -> None:

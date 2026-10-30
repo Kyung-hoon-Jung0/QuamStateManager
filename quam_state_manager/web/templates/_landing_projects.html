@@ -39,6 +39,9 @@
         <button type="button" class="btn-sm outline" data-env-use>Use</button>
         <span class="muted" data-env-custom-status role="status"></span>
     </div>
+    {# Lab additions P6: the agent is optional -- one quiet line, nothing else changes #}
+    <p class="muted landing-agent-line"><a href="/agent/setup">Connect an agent (optional)</a>
+        &mdash; it can propose additions in Generate Config for you to accept; everything works without one.</p>
 </section>
 <div class="landing-card-grid">
     {% for p in listing.projects %}

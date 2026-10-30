@@ -540,6 +540,19 @@ def t_note_set(a: dict) -> Any:
     return _ok(*_sm().post_json("/api/agent/note", {"subject": a["subject"], "text": a["text"]}))
 
 
+def t_generate_roles(a):
+    return _ok(*_sm().get("/api/agent/generate/roles"))
+
+
+def t_propose_additions(a):
+    return _ok(*_sm().post_json("/api/agent/generate/propose", {"items": a["items"]}))
+
+
+def t_propose_card(a):
+    return _ok(*_sm().post_json("/api/agent/generate/propose-card",
+                                {"card": a["card"], "reason": a["reason"]}))
+
+
 def _s(desc: str, **props) -> dict:
     req = [k for k, v in props.items() if v.pop("required", False)]
     return {"description": desc, "inputSchema": {"type": "object", "properties": props, "required": req}}
@@ -550,6 +563,8 @@ def _s(desc: str, **props) -> dict:
 READ_ONLY = os.environ.get("SM_MCP_MODE", "").strip().lower() == "readonly"
 WRITE_TOOLS = frozenset({"state_edit", "apply_to_live", "undo", "take_live", "note_set", "journal_append", "run_node",
                          "run_wait", "undo_mine", "plan_propose"})
+# propose_additions / propose_card are NOT write tools: they write nothing a
+# chip reads, only a holding area a person accepts from in the wizard.
 
 
 def _visible_tools() -> dict:
@@ -557,6 +572,29 @@ def _visible_tools() -> dict:
 
 
 TOOLS: dict[str, tuple[dict, Any]] = {
+    "generate_roles": (_s("For the Generate Config wizard a person has open: the draft chip (qubits, pair ids, "
+                          "lines, TWPAs, QDAC qubits, gates and additions so far), the classes the selected "
+                          "environment can add (role, card, default name, fields) and the knowledge cards: "
+                          "where each kind goes (placement), which pointer field plays on which qubit or "
+                          "channel (e.g. flux_pulse_high -> the qubit with the higher f_01), naming, and "
+                          "forbidden combinations. Read this before propose_additions."), t_generate_roles),
+    "propose_additions": (_s(
+        "PROPOSE additions to the chip being built in Generate Config. Nothing is built: each item is "
+        "linted by the same rules as a person's addition; a refused one comes back with its reasons, an "
+        "accepted one waits in the wizard as 'proposed by <you>' until a person presses Accept. Each item: "
+        "{addition: {kind: pulse|macro|field|default_gate, target, name, class, fields | value | to}, "
+        "reason}. You may NEVER set a calibration value (amplitude, length, duration, frequency, "
+        "detuning, phase, weights, alpha, sigma, threshold): leave such a field out -- the class "
+        "default applies, or the person types it on Accept. A proposal carrying one is refused. "
+        "Pointer fields ('#/qubits/q1/z/operations/<op>') follow the class's card.",
+        items={"type": "array", "required": True, "items": {"type": "object"}}), t_propose_additions),
+    "propose_card": (_s(
+        "Propose a NEW knowledge card (lab overlay) for a class no card covers: {id, title, role, "
+        "match: {fields_all | mro_any}, placement: {target}, pointers: {field: moving|control|target|"
+        "high|low|coupler}, naming, forbidden, notes}. Additive only (an existing id is refused); it is "
+        "written only when a person accepts it.",
+        card={"type": "object", "required": True}, reason={"type": "string", "required": True}),
+        t_propose_card),
     "sm_status": (_s("What chip is open in the State Manager, its qubits/pairs, how many edits are staged, "
                      "whether the live files drifted, what the agent hook says is running now, and the `notes` people "
                      "and agents pinned on the chip (read them before changing a value). `pin` is the value "

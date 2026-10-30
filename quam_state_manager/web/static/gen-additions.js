@@ -238,6 +238,22 @@
 
   /* One addition form (a pulse on a channel, or a macro on a qubit / pair).
    * cfg: {kind, target, classes, classLabel, owner|ch, existing:{index, add}} */
+  /* The knowledge card a class follows (its own or its base's), or "no card":
+   * then only the field form and the environment's check apply. */
+  function cardLine(cls) {
+    var c = cls && cls.card;
+    if (!c) {
+      return el("p", { className: "gen-add-card gen-add-nocard muted",
+                       title: "No knowledge card covers this class: no placement or naming convention is applied." },
+        "No card — field form and the environment's check only.");
+    }
+    var ptr = Object.keys(c.pointers || {}).map(function (f) { return f + " → " + c.pointers[f]; });
+    return el("p", { className: "gen-add-card muted", "data-card": c.id,
+                     title: (c.notes || "") + (c.origin === "overlay" ? "\n(lab overlay card)" : "") },
+      "Card: " + (c.title || c.id) + (c.placement && c.placement.target ? " · goes on " + c.placement.target : "") +
+      (ptr.length ? " · " + ptr.join(", ") : ""));
+  }
+
   function renderForm(box, cfg, ctx, rerender) {
     box.innerHTML = "";
     var classes = cfg.classes || {};
@@ -268,6 +284,8 @@
       if (!cls) return;
       fieldsBox.appendChild(el("p", { className: "gen-add-origin muted", title: sel.value },
         (cls.origin === "lab" ? "Lab class" : "Official class") + (cls.doc ? " — " + cls.doc : "")));
+      fieldsBox.appendChild(cardLine(cls));
+      if (!ex && !name.value && cls.default_name) name.value = cls.default_name;
       ff = fieldsForm(fieldsBox, cls, {
         values: values, idPrefix: cfg.target,
         candidates: function (fn, f) {
@@ -373,7 +391,7 @@
       if (!cls) return;
       var slug = shortName(sel.value).replace(/[^A-Za-z0-9]+/g, "_").toLowerCase().replace(/^cz_?(gate_?)?/, "") || "gate";
       if (!name.value || name.getAttribute("data-auto") === "1") {
-        name.value = "cz_" + slug; name.setAttribute("data-auto", "1");
+        name.value = cls.default_name || ("cz_" + slug); name.setAttribute("data-auto", "1");
       }
       body.appendChild(el("p", { className: "gen-add-origin muted", title: sel.value },
         (cls.origin === "lab" ? "Lab class" : "Official class") + (cls.doc ? " — " + cls.doc.split("\n")[0] : "")));
@@ -560,7 +578,7 @@
       if (!c) return;
       if (name.getAttribute("data-auto") === "1") {
         var stem = slug(sel.value).replace(/(readout)?pulse$/, "");
-        name.value = "readout" + (stem ? "_" + stem : "");
+        name.value = c.default_name || ("readout" + (stem ? "_" + stem : ""));
       }
       fbox.appendChild(el("p", { className: "gen-add-origin muted", title: sel.value },
         (c.origin === "lab" ? "Lab class" : "Official class") + (c.doc ? " — " + c.doc.split("\n")[0] : "") +
@@ -726,7 +744,8 @@
     var edit = el("button", { type: "button", className: "btn-sm secondary gen-add-edit", title: "Edit this addition" }, a.name);
     r.appendChild(edit);
     r.appendChild(el("span", { className: "muted", title: String(a["class"]) }, " " + shortName(a["class"]) +
-      (origin ? " · " + origin : "") + " · " + Object.keys(a.fields || {}).length + " fields set"));
+      (origin ? " · " + origin : "") + " · " + Object.keys(a.fields || {}).length + " fields set" +
+      (a.proposed_by ? " · proposed by " + String(a.proposed_by).replace(/^by_/, "") + ", accepted" : "")));
     var rm = el("button", { type: "button", className: "btn-sm secondary gen-add-rm", title: "Remove this addition" }, "✕");
     rm.addEventListener("click", function () {
       spec.additions.splice(i, 1);
@@ -943,6 +962,126 @@
     }
   }
 
+  /* ---- agent proposals (optional; nothing here without a connected agent) --
+   * An agent's proposal is linted on the server like any addition and waits
+   * here as PENDING; only a person's Accept puts it into spec.additions. */
+  var ctxTimer = null, pendTimer = null, pendUntil = 0;
+  var ASK_TEXT = "In the Generate Config wizard I have open, call generate_roles, then propose additions " +
+    "with propose_additions that follow the knowledge cards (placement, pointers, naming). Do not set any " +
+    "calibration value; give a reason for each item.";
+
+  function postJSON(url, body) {
+    return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(body || {}) })
+      .then(function (r) { return r.json().then(function (j) { return { status: r.status, body: j }; }); });
+  }
+
+  function recordContext(spec) {
+    clearTimeout(ctxTimer);
+    ctxTimer = setTimeout(function () {
+      try { postJSON("/generate/proposals/context", { spec: spec }).catch(function () {}); } catch (e) { /* offline */ }
+    }, 300);
+  }
+
+  function describe(a) {
+    if (!a || typeof a !== "object") return "?";
+    if (a.kind === "field") return "field " + fieldLabel(a.target, a.value);
+    if (a.kind === "default_gate") return a.target + "." + a.name + " → " + a.to + " (default gate)";
+    return a.kind + " " + a.target + "." + a.name + " (" + shortName(a["class"] || "?") + ")";
+  }
+
+  function pendingRow(it, host, ctx) {
+    var r = el("div", { className: "gen-add-prop", "data-proposal": it.id });
+    var who = String(it.author || "agent").replace(/^by_/, "");
+    var head = el("p", { className: "gen-add-prop-head" });
+    head.appendChild(el("span", { className: "gen-add-prop-by" }, "proposed by " + who));
+    head.appendChild(document.createTextNode(" " + (it.kind === "card"
+      ? "a knowledge card " + ((it.card || {}).id || "?") + " (lab overlay)" : describe(it.addition))));
+    r.appendChild(head);
+    if (it.reason) r.appendChild(el("p", { className: "muted gen-add-prop-why" }, "Why: " + it.reason));
+    var lint = it.lint || {};
+    if (it.kind !== "card") {
+      r.appendChild(el("p", { className: "muted gen-add-prop-card" },
+        lint.card ? "Card: " + lint.card : "No card — field form and the environment's check only."));
+    }
+    (lint.warnings || []).forEach(function (w) {
+      r.appendChild(el("p", { className: "gen-add-prop-warn" }, "⚠ " + w));
+    });
+    var inputs = {};
+    (lint.needs_person || []).forEach(function (f) {
+      var lab = el("label", { className: "gen-add-field gen-add-required" });
+      lab.appendChild(el("span", null, f + " (yours to type)"));
+      var inp = el("input", { type: "text", "data-needs": f, "aria-label": f });
+      lab.appendChild(inp); r.appendChild(lab); inputs[f] = inp;
+    });
+    var actions = el("div", { className: "gen-add-actions" });
+    var ok = el("button", { type: "button", className: "btn-sm gen-add-prop-accept" }, "Accept");
+    var no = el("button", { type: "button", className: "btn-sm secondary gen-add-prop-dismiss" }, "Dismiss");
+    var msg = el("p", { className: "gen-add-msg muted" });
+    actions.appendChild(ok); actions.appendChild(no);
+    r.appendChild(actions); r.appendChild(msg);
+    ok.addEventListener("click", function () {
+      var typed = {}, missing = [];
+      Object.keys(inputs).forEach(function (f) {
+        var v = (inputs[f].value || "").trim();
+        if (!v) missing.push(f); else typed[f] = parseValue(v, "");
+      });
+      if (missing.length) { msg.textContent = "Type: " + missing.join(", "); return; }
+      ok.disabled = true;
+      postJSON("/generate/proposals/" + encodeURIComponent(it.id) + "/accept", { spec: ctx.spec(), fields: typed })
+        .then(function (res) {
+          ok.disabled = false;
+          if (!res.body.ok) { msg.textContent = (res.body.errors || ["refused"]).join("; "); return; }
+          if (res.body.addition) {
+            var spec = ctx.spec();
+            if (!Array.isArray(spec.additions)) spec.additions = [];
+            spec.additions.push(res.body.addition);
+            ctx.changed();
+          }
+          mount(host, ctx);
+        }).catch(function (e) { ok.disabled = false; msg.textContent = String(e); });
+    });
+    no.addEventListener("click", function () {
+      postJSON("/generate/proposals/" + encodeURIComponent(it.id) + "/dismiss", {})
+        .then(function () { mount(host, ctx); });
+    });
+    return r;
+  }
+
+  function loadPending(box, ctx) {
+    var host = addHost;
+    fetch("/generate/proposals").then(function (r) { return r.json(); }).then(function (res) {
+      box.innerHTML = "";
+      var items = (res && res.items) || [];
+      if (items.length) {
+        box.appendChild(el("p", { className: "gen-add-sub" }, "Proposed — waiting for you (" + items.length + ")"));
+        box.appendChild(el("p", { className: "muted" },
+          "An agent proposed these. Nothing is added until you press Accept; each was checked by the same rules as your own additions."));
+        items.forEach(function (it) { box.appendChild(pendingRow(it, host, ctx)); });
+      }
+      clearTimeout(pendTimer);
+      if (Date.now() < pendUntil) pendTimer = setTimeout(function () { if (box.isConnected) loadPending(box, ctx); }, 3000);
+    }).catch(function () { /* the wizard works without it */ });
+  }
+
+  function askAgent(btn) {
+    btn.disabled = true;
+    var note = btn.parentNode.querySelector(".gen-add-ask-note") ||
+      btn.parentNode.appendChild(el("span", { className: "muted gen-add-ask-note", role: "status" }));
+    var f = new FormData();
+    f.append("text", ASK_TEXT); f.append("feed", "1");
+    fetch("/api/agent/chat/ask", { method: "POST", body: f })
+      .then(function (r) { return r.json().then(function (j) { return { status: r.status, body: j }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        if (res.body && res.body.ok) note.textContent = "Asked — proposals appear below as they arrive.";
+        else note.textContent = "Ask your agent: “" + ASK_TEXT + "” (" + ((res.body && res.body.error) || "the in-app agent needs an open chip") + ")";
+        pendUntil = Date.now() + 5 * 60 * 1000;
+        var box = addHost && addHost.querySelector(".gen-add-pending");
+        if (box) loadPending(box, addCtx);
+      }).catch(function (e) { btn.disabled = false; note.textContent = String(e); });
+  }
+
   function mount(host, ctx) {
     if (!host) return;
     addHost = host; addCtx = ctx;
@@ -976,7 +1115,18 @@
       loadRoles(true, m, function () { mount(host, ctx); });
     });
     bar.appendChild(mods); bar.appendChild(read);
+    if (roles.ok && roles.agent_connected) {
+      var ask = el("button", { type: "button", className: "btn-sm secondary gen-add-ask",
+                               title: "The connected agent reads this draft and the knowledge cards and proposes " +
+                                      "additions; each one waits here until you accept it" }, "Ask agent to propose");
+      ask.addEventListener("click", function () { askAgent(ask); });
+      bar.appendChild(ask);
+    }
     host.appendChild(bar);
+    var pend = el("div", { className: "gen-add-pending", "aria-live": "polite" });
+    host.appendChild(pend);
+    recordContext(spec);
+    loadPending(pend, ctx);
     // a re-generate from a chip built with additions: they came from its build record
     var carried = list(spec).filter(function (a) { return a && a.env && typeof a.env === "object"; });
     if (carried.length) {

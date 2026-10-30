@@ -1,0 +1,106 @@
+{
+  "version": "additions-v1",
+  "about": "Placement and naming conventions for Generate-Config additions, one card per role / base class. A class takes the first card whose match it meets (cards are tried in order); a lab class inherits its base's card through its MRO. Every rule here is [derived] from the classes' own fields and *_label properties and is checked by the environment's load; none is cited.",
+  "calibration_field_patterns": [
+    "(^|_)(amplitude|amp|amplitudes)$",
+    "(^|_)(length|duration|flat_length|rise_length|padding)$",
+    "(^|_)(frequency|freq|detuning|intermediate_frequency)$",
+    "^f_[0-9]+$",
+    "(^|_)(phase|phase_shift|phase_shift_control|phase_shift_target|axis_angle)$",
+    "(^|_)(weights|weights_real|weights_imag|integration_weights)",
+    "(^|_)(alpha|sigma|threshold|rus_threshold|anharmonicity)$"
+  ],
+  "cards": [
+    {
+      "id": "cz_both_movers",
+      "title": "CZ gate with both qubits moving",
+      "role": "macro_pair",
+      "match": {"fields_all": ["flux_pulse_high", "flux_pulse_low"]},
+      "placement": {"target": "qubit_pairs.<pair>.macros"},
+      "pointers": {"flux_pulse_high": "high", "flux_pulse_low": "low"},
+      "optional_pointers": {"coupler_flux_pulse": "coupler"},
+      "group_form": true,
+      "naming": {"prefix": "cz_", "strip": "^cz_?(gate_?)?", "fallback": "gate"},
+      "notes": "flux_pulse_high plays on the qubit with the higher f_01 (ties go to the control), flux_pulse_low on the other."
+    },
+    {
+      "id": "cz_two_flux",
+      "title": "CZ gate with a flux pulse on each qubit",
+      "role": "macro_pair",
+      "match": {"fields_all": ["flux_pulse_qubit", "flux_pulse_target"]},
+      "placement": {"target": "qubit_pairs.<pair>.macros"},
+      "pointers": {"flux_pulse_qubit": "control", "flux_pulse_target": "target"},
+      "optional_pointers": {"coupler_flux_pulse": "coupler"},
+      "group_form": true,
+      "naming": {"prefix": "cz_", "strip": "^cz_?(gate_?)?", "fallback": "gate"},
+      "notes": "flux_pulse_qubit plays on the pair's control, flux_pulse_target on its target."
+    },
+    {
+      "id": "cz_gate",
+      "title": "CZ gate (one moving qubit)",
+      "role": "macro_pair",
+      "match": {"fields_all": ["flux_pulse_qubit"]},
+      "placement": {"target": "qubit_pairs.<pair>.macros"},
+      "pointers": {"flux_pulse_qubit": "moving"},
+      "optional_pointers": {"coupler_flux_pulse": "coupler"},
+      "group_form": true,
+      "naming": {"prefix": "cz_", "strip": "^cz_?(gate_?)?", "fallback": "gate"},
+      "notes": "flux_pulse_qubit plays on the pair's moving qubit (qubit_pair.moving_qubit)."
+    },
+    {
+      "id": "cz_coupler",
+      "title": "CZ gate played on the tunable coupler",
+      "role": "macro_pair",
+      "match": {"fields_all": ["coupler_flux_pulse"]},
+      "placement": {"target": "qubit_pairs.<pair>.macros"},
+      "pointers": {"coupler_flux_pulse": "coupler"},
+      "group_form": false,
+      "naming": {"prefix": "cz_", "strip": "^cz_?(gate_?)?", "fallback": "coupler"},
+      "notes": "coupler_flux_pulse plays on the pair's coupler; a pair without a coupler line cannot hold it."
+    },
+    {
+      "id": "readout_pulse",
+      "title": "Readout pulse",
+      "role": "pulse",
+      "match": {"mro_any": ["ReadoutPulse", "BaseReadoutPulse"]},
+      "placement": {"target": "qubits.<qubit>.resonator.operations"},
+      "naming": {"prefix": "readout_", "strip": "(readout)?pulse$"},
+      "notes": "A readout pulse sits on the qubit's resonator."
+    },
+    {
+      "id": "measure_macro",
+      "title": "Measure macro",
+      "role": "macro_qubit",
+      "match": {"mro_any": ["MeasureMacro"]},
+      "placement": {"target": "qubits.<qubit>.macros"},
+      "naming": {"exact": "measure"},
+      "notes": "The qubit's measure macro is named measure; it plays a readout pulse of the qubit's resonator by name."
+    },
+    {
+      "id": "pulse",
+      "title": "Pulse",
+      "role": "pulse",
+      "match": {"mro_any": ["Pulse"]},
+      "placement": {"target": "<any>.operations"},
+      "naming": {"strip": "pulse$", "fallback": "pulse"},
+      "notes": "A pulse goes into one channel's operations dict."
+    },
+    {
+      "id": "pulsed_twpa",
+      "title": "Pulsed TWPA preset",
+      "role": "preset",
+      "match": {"preset": "pulsed_twpa"},
+      "placement": {"target": "twpas.<twpa>.pump_.operations"},
+      "fields": ["extras.twpa_pulse_mode", "active_twpa_names"],
+      "notes": "Not a class: a pump_ pulse plus the extras.twpa_pulse_mode flag, and active_twpa_names only when the chosen root declares it."
+    },
+    {
+      "id": "qdac_z_refusal",
+      "title": "No pulse on a QDAC-II bias line",
+      "role": "rule",
+      "match": {"rule": "qdac_z"},
+      "forbidden": [{"rule": "pulse_on_qdac_z",
+                     "reason": "its z is a QdacBiasLine (a DC level), which plays no pulses; put the pulse on xy or the resonator"}]
+    }
+  ]
+}

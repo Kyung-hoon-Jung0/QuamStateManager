@@ -308,16 +308,28 @@ def _extract_populate(state: dict, root: dict) -> dict:
         macros = pair.get("macros") or {}
         # primary CZ macro: the 'cz' alias points at it (#./cz_unipolar); else the
         # first cz_* macro. Its flux_pulse_qubit carries the dur/amp.
+        # The variants the build wrote are the cz_<variant> gate objects
+        # present: one -> that variant, several -> "all" (the spec has no
+        # subset form). An alias that names an ADDED gate (a default-gate
+        # addition) does not decide the variant -- reading it as the primary
+        # dropped cz_variant and the rebuild made all five variants.
+        _variants = ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf")
+        built = [v for v in _variants if isinstance(macros.get(f"cz_{v}"), dict)]
         primary = None
         alias = macros.get("cz")
         if isinstance(alias, str) and alias.startswith("#./"):
             primary = alias.split("/")[-1]
+            if built and primary[3:] not in built and primary.startswith("cz_")                     and not str((macros.get(primary) or {}).get("__class__", "")).endswith(".CouplerCZGate"):
+                primary = None
         if primary is None:
-            primary = next((n for n in macros if n.startswith("cz_")), None)
+            primary = (f"cz_{built[0]}" if built
+                       else next((n for n in macros if n.startswith("cz_")), None))
         m = macros.get(primary) if primary else None
         if isinstance(m, dict):
             variant = primary[3:] if primary.startswith("cz_") else primary
-            if variant in ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf"):
+            if len(built) > 1:
+                pairv["cz_variant"] = "all"
+            elif variant in _variants:
                 pairv["cz_variant"] = variant
             coupler_only = str(m.get("__class__", "")).endswith(".CouplerCZGate")
             fpq = m.get("coupler_flux_pulse" if coupler_only else "flux_pulse_qubit")
