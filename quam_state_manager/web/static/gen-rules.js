@@ -1358,13 +1358,15 @@
   /* The Review step's lines: computed from the MODEL (+ the last answers), never from the DOM,
    * because the Additions list may not be mounted (mountAdditionsWhenNear). Pure. */
   function ruleReviewCounts(spec, status, err) {
-    status = status || _status;
+    status = status || {};
     var out = [];
     rulesOf(spec).forEach(function (rule) {
       var gates = 0, numbers = 0, pairs = {};
       (spec.additions || []).forEach(function (a) {
         if (a.rule_id !== rule.id) return;
-        numbers += Object.keys(a.copied_value || {}).length;
+        numbers += Object.keys(a.copied_value || {}).filter(function (field) {
+          return (a.fields || {})[field] === a.copied_value[field];
+        }).length;
         if (a.kind === "macro") {
           gates++;
           pairs[a.target] = 1;

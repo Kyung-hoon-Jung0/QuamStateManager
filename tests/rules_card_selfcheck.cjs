@@ -14,6 +14,10 @@ function build(extra) {
   const m = T.makeAddWorld(Object.assign({ nq: 5, server: { statusOf: (pid) => ({ 'q1-2': 'Already has it', 'q2-3': 'Needs a look', 'q3-4': 'Needs a look', 'q4-5': 'Ready' }[pid]),
     extraRow: (pid) => (pid === 'q2-3' || pid === 'q3-4') ? { existing: true, edited: pid === 'q2-3',
       diff_vs_current: [{ kind: 'pulse', name: 'cz_bm_high_x', field: 'amplitude', old: 0.12, new: 0.2 }] } : {} } }, extra || {}));
+  const app = T.read('app.js').replace(/\r\n/g, '\n');
+  const start = app.indexOf('window.ValueDelta = (function () {');
+  if (start < 0) throw new Error('ValueDelta missing');
+  m.w.eval(app.slice(start, app.indexOf('\n})();', start) + '\n})();'.length));
   const rule = Object.assign(T.baseRule(), { id: 'r1', rev: 1, source: 'q1-2' });
   rule.items = [{ role: 'high', field: 'flux_pulse_high', enabled: true, pulse_class: 'pkg.P', fields_struct: {}, on_choice: 'auto' },
                 { role: 'low', field: 'flux_pulse_low', enabled: true, pulse_class: 'pkg.P', fields_struct: {}, on_choice: 'auto' }];
@@ -40,6 +44,7 @@ function build(extra) {
   const rv = () => w.document.querySelector('.gen-rule-review');
   ok(!!rv() && /cz_bm — 2 pairs would change/.test(rv().textContent), 'D2 title: ' + (rv() && rv().querySelector('h3').textContent));
   ok(/amplitude\s+0\.12 → 0\.2/.test(rv().textContent), 'D2 old → new per pair');
+  ok(rv().querySelector('.gen-rule-rv-delta').textContent.includes('+0.08'), 'D2 the numeric review uses the shipped ValueDelta');
   ok(w.document.activeElement.classList.contains('gen-rule-rv-keep') && w.document.activeElement.getAttribute('data-pair') === 'q2-3', 'D2 focus: first Keep as is');
   const keepBtn = rv().querySelector('.gen-rule-rv-keep[data-pair="q2-3"]');
   keepBtn.click();

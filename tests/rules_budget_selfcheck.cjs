@@ -1,7 +1,7 @@
 // C15: the Apply dialog renders a 100-pair answer inside its budget (jsdom; median of 5).
 // The clock starts when the answer is handed to the page and stops when the footer reads "Add to N pairs"
 // (the last thing the render writes), so it is the page's own work, not the mock server's.
-// Budget 50 ms (11_v2_1 C15). jsdom is slower than a browser, so a pass here is a safe margin for Chrome.
+// Budget 50 ms (11_v2_1 C15). This measures jsdom work, not Chrome layout/paint.
 'use strict';
 const T = require('./rules_world.cjs');
 const { ok } = T;
@@ -38,6 +38,7 @@ async function once() {
   runs.sort((a, b) => a - b);
   const med = runs[2];
   console.log('dialog render for 100 pairs (ms): ' + runs.map(x => x.toFixed(1)).join(', ') + ' | median ' + med.toFixed(1));
+  console.log('jsdom budget margin: ' + (BUDGET_MS - med).toFixed(1) + ' ms of ' + BUDGET_MS + ' ms; Chrome is measured separately');
   ok(med > 0, 'the clock ran');
   ok(med <= BUDGET_MS, 'render median ' + med.toFixed(1) + ' ms must be <= ' + BUDGET_MS + ' ms');
   T.done('rules_budget_selfcheck');

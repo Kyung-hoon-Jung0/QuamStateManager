@@ -18,16 +18,30 @@ def bundle(spec, rule, pair):
             (a.get("kind") == "pulse" and "#/" + a["target"].replace(".", "/") + "/" + a["name"] in refs)]
 
 
-def diff_and_signature(resolved, current):
+def diff_and_signature(resolved, current, numeric_changes=()):
     """Structural field overrides and their exact pair-local input identity."""
     def fields(rows):
         return {(a["kind"], a["name"], k): v for a in rows
                 for k, v in dict(a.get("fields") or {}, target=a["target"], class_=a.get("class")).items()
-                if not isinstance(v, (int, float)) or isinstance(v, bool)}
+                if a["kind"] == "macro" or not isinstance(v, (int, float)) or isinstance(v, bool)}
     old, new = fields(current), fields(resolved["additions"])
     delta = [{"kind": key[0], "name": key[1], "field": key[2], "old": old.get(key), "new": new.get(key)}
              for key in sorted(old.keys() | new.keys()) if old.get(key) != new.get(key)]
-    return delta, gate_action.input_signature(resolved["inputs"])
+    return delta + list(numeric_changes), gate_action.input_signature(resolved["inputs"])
+
+
+def _role_pulses(rows, rule):
+    """Recover role identity from stored gate references, including old names."""
+    macro = next((a for a in rows if a.get("kind") == "macro"), {})
+    by_pointer = {"#/" + a["target"].replace(".", "/") + "/" + a["name"]: a
+                  for a in rows if a.get("kind") == "pulse"}
+    out = {}
+    for item in rule.get("items") or []:
+        field = item.get("field") or gate_action.ROLE_FIELDS.get(item["role"], item["role"])
+        ptr = (macro.get("fields") or {}).get(field)
+        if isinstance(ptr, str) and ptr in by_pointer:
+            out[item["role"]] = by_pointer[ptr]
+    return out
 
 
 def role_swap_reason(delta, pair, basis):
@@ -70,21 +84,52 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
         pid = additions.quam_pair_id(pair)
         key = unordered_key(pair)
         current = bundle(spec, rule, pair)
+        existing = bool(current) and (bool(rule.get("id")) and any(a.get("rule_id") == rule["id"] for a in current) or
+                    bool(rule.get("source")) and key == unordered_key(gate_action.pair_members(spec, rule["source"])))
+        previous = _role_pulses(current, rule) if existing else {}
         local = action
+        if previous:
+            local = deepcopy(action)
+            # A role move carries this pair's calibration. Source recalibration
+            # supplies NEW instances only; it never retunes existing pairs.
+            for role, pulse in previous.items():
+                for field, value in (pulse.get("fields") or {}).items():
+                    baseline = (pulse.get("copied_value") or {}).get(field, value)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool) and (rule.get("source") or value != baseline):
+                        local.setdefault("numbers", {})[role + "." + field] = value
         choice = choices.get(pid) or next((a.get("choice_here") for a in current
                      if rule.get("id") and a.get("rule_id") == rule["id"] and a.get("choice_here")), None)
         if choice in ("control", "target"):
-            local = deepcopy(action)
+            local = deepcopy(local)
             for item in local.get("items") or []:
                 if item.get("on_choice", "auto") == "auto" and item["role"] != "coupler":
                     item["on_choice"] = choice if item["role"] != "low" else ("target" if choice == "control" else "control")
         # Source numbers have already been captured; judge must not read the removed source.
         judged = add_verdict.judge_pairs(clean, [pair], dict(local, source=None), manifest, index=index)[0]
         resolved = gate_action.resolve(clean, pair, local)
-        delta, instance_sig = diff_and_signature(resolved, current)
-        existing = bool(current) and (bool(rule.get("id")) and any(a.get("rule_id") == rule["id"] for a in current) or
-                    bool(rule.get("source")) and key == unordered_key(gate_action.pair_members(spec, rule["source"])))
-        edited = bool(existing and delta)
+        numeric_changes = []
+        for role, pulse in _role_pulses(resolved["additions"], rule).items():
+            old = previous.get(role)
+            if not old:
+                continue
+            for field, value in (pulse.get("fields") or {}).items():
+                before = (old.get("fields") or {}).get(field)
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and before != value:
+                    numeric_changes.append(dict(kind="pulse", name=pulse["name"], field=field, old=before, new=value))
+        delta, instance_sig = diff_and_signature(resolved, current, numeric_changes)
+        # A role move is a changed pair fact, not a local class/structure edit.
+        # Compare by role so an orientation-dependent name change is harmless.
+        next_pulses = _role_pulses(resolved["additions"], rule)
+        def structure(pulse):
+            return dict(class_=pulse.get("class"), fields={k: v for k, v in (pulse.get("fields") or {}).items()
+                        if not isinstance(v, (int, float)) or isinstance(v, bool)})
+        source_here = bool(rule.get("source")) and key == unordered_key(gate_action.pair_members(spec, rule["source"]))
+        role_fields = {item.get("field") or gate_action.ROLE_FIELDS.get(item["role"], item["role"])
+                       for item in rule.get("items") or []}
+        gate_edit = any(d["kind"] == "macro" and d["field"] not in role_fields and d["field"] != "target" for d in delta)
+        edited = bool(existing and not source_here and any(
+            structure(old) != structure(next_pulses.get(role, {})) for role, old in previous.items()))
+        edited = edited or bool(existing and not source_here and gate_edit)
         if existing:
             look = delta and (rule.get("reviewed") or {}).get(key) != instance_sig
             why = "this rule is already on this pair"
@@ -103,6 +148,12 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
                                  if isinstance(v, (int, float)) and not isinstance(v, bool)}
             if choice:
                 a["choice_here"] = choice
+        for role, pulse in _role_pulses(planned, rule).items():
+            old = previous.get(role)
+            if old:
+                for field, value in (old.get("copied_value") or {}).items():
+                    if (pulse.get("fields") or {}).get(field) == (old.get("fields") or {}).get(field):
+                        pulse["copied_value"][field] = value
         judged.update(additions=planned, instance_sig=instance_sig, diff_vs_current=delta if existing else [],
                       edited=edited, existing=existing, key=key, choices=resolved["choices"],
                       errors=list(resolved["errors"]),
@@ -154,7 +205,8 @@ def apply(spec, rule, rule_sig, pairs, manifest, choices=None):
         raise StaleRule(plan["rule_sig"])
     rule = deepcopy(rule)
     rule.setdefault("id", "r" + __import__("uuid").uuid4().hex[:8])
-    rule["numbers"] = add_verdict.current_numbers(spec, rule)
+    if not rule.get("source") or not any(r.get("id") == rule["id"] for r in spec.get("addition_rules") or []):
+        rule["numbers"] = add_verdict.current_numbers(spec, rule)
     by_pid = {additions.quam_pair_id(p): row for p, row in zip(spec.get("qubit_pairs") or [], plan["pairs"])}
     choices = choices or {}
     new, added, skipped = deepcopy(spec), [], []

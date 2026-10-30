@@ -325,6 +325,39 @@
           return out;
         },
       });
+      var rule = ex && window.GenRules && window.GenRules.ruleById(ctx.spec(), ex.rule_id);
+      if (rule && ex.kind === "pulse") {
+        var ptr = "#/" + ex.target.replace(/\./g, "/") + "/" + ex.name;
+        var gate = list(ctx.spec()).filter(function (a) {
+          return a.kind === "macro" && a.rule_id === rule.id && Object.keys(a.fields || {}).some(function (f) { return a.fields[f] === ptr; });
+        })[0];
+        var recipe = gate && (czItems(rule.gate.macro_class) || []).filter(function (it) { return gate.fields[it.field] === ptr; })[0];
+        var template = recipe && (rule.items || []).filter(function (it) { return it.role === recipe.on; })[0];
+        if (template && template.pulse_class !== sel.value && classes[template.pulse_class]) {
+          fieldsBox.appendChild(el("span", { className: "gen-add-class-edited muted" }, "class · edited here "));
+          var resetClass = el("button", { type: "button", className: "btn-sm secondary gen-add-reset-class" },
+            "Reset to rule: " + shortName(template.pulse_class));
+          resetClass.addEventListener("click", function () {
+            var values = ff.collect().fields;
+            sel.value = template.pulse_class; sel.title = sel.value;
+            draw(values);
+          });
+          fieldsBox.appendChild(resetClass);
+        }
+      }
+      if (rule) Array.prototype.forEach.call(fieldsBox.querySelectorAll("input[data-field]"), function (inp) {
+        var field = inp.getAttribute("data-field");
+        if (!Object.prototype.hasOwnProperty.call(ex.copied_value || {}, field)) return;
+        var hint = el("span", { className: "gen-add-copy-hint muted" });
+        inp.parentNode.appendChild(hint);
+        function updateHint() {
+          hint.textContent = parseValue(inp.value, inp.getAttribute("data-raw")) === ex.copied_value[field]
+            ? "copied initial value from " + (rule.source || "the form") + (field === "amplitude" ? " — recalibrate per pair" : "")
+            : "edited here";
+        }
+        inp.addEventListener("input", updateHint);
+        updateHint();
+      });
     }
     sel.addEventListener("change", function () { draw({}); });
     if (ex) {
@@ -857,6 +890,14 @@
     r.appendChild(el("span", { className: "muted", title: String(a["class"]) }, " " + shortName(a["class"]) +
       (origin ? " · " + origin : "") + " · " + Object.keys(a.fields || {}).length + " fields set" +
       (a.proposed_by ? " · proposed by " + String(a.proposed_by).replace(/^by_/, "") + ", accepted" : "")));
+    var rule = window.GenRules && window.GenRules.ruleById(spec, a.rule_id);
+    if (rule) {
+      var copied = Object.keys(a.copied_value || {}).filter(function (field) {
+        return (a.fields || {})[field] === a.copied_value[field];
+      }).length;
+      r.appendChild(el("span", { className: "gen-add-rule-copy muted" }, " · rule " + rule.gate.name +
+        (copied ? " · " + copied + " copied initial value" + (copied === 1 ? "" : "s") : "")));
+    }
     var rm = el("button", { type: "button", className: "btn-sm secondary gen-add-rm", title: "Remove this addition" }, "✕");
     rm.addEventListener("click", function () {
       additionsTxn(spec, "remove " + a.kind + " " + a.name);
