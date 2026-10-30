@@ -519,10 +519,15 @@
     // a page of re-scrolling and a real "did it lose my work?" moment. The
     // capture above is what the old ordering was protecting (it flushes the
     // outgoing step's fields); persisting must simply happen after the move.
+    var leaving = state.step;
     state.step = Math.max(1, Math.min(STEP_COUNT, n));
     saveDraft();
     showMessage(null);
     render();
+    // C1: leaving the pair-editing step is a settle point (auto_new acts here, never on "+ Add pair")
+    if (leaving === 4 && state.step !== 4 && window.GenRules && window.GenRules.hasRules(state.spec)) {
+      window.GenRules.settle(rulesCtx(), "leave_step");
+    }
   }
 
   function tryNext() {
@@ -537,11 +542,13 @@
       return;
     }
     if (state.step < STEP_COUNT) {
-      goToStep(state.step + 1);
+      var nextStep = state.step + 1;
+      if (nextStep === STEP_COUNT) settleThen("pre_review", function () { goToStep(nextStep); });
+      else goToStep(nextStep);
     } else if (_reviewBlock) {
       showMessage("Generate is off: " + _reviewBlock, "warn", { reveal: true });
     } else {
-      runBuild();
+      settleThen("pre_build", function () { runBuild(); });
     }
   }
 
@@ -556,6 +563,10 @@
     if (target > state.step) {
       var topoErr = topologyBlocker();
       if (topoErr) { goToStep(4); showMessage(topoErr, "warn", { reveal: true }); return; }
+    }
+    if (target === STEP_COUNT && state.step !== STEP_COUNT) {
+      settleThen("pre_review", function () { goToStep(target); });
+      return;
     }
     goToStep(target);
   }
@@ -2120,6 +2131,7 @@
       row.querySelector(".gen-pair-c").addEventListener("change", function (e) {
         _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " change", pairUndo(false));
         pair[0] = e.target.value;
+        onSpecChanged("pair_edit");
         state.pairsTouched = true;
         markPairManual(pair);
         renderPairs();   // repaint (the manual chip may have just appeared)
@@ -2128,6 +2140,7 @@
       row.querySelector(".gen-pair-t").addEventListener("change", function (e) {
         _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " change", pairUndo(false));
         pair[1] = e.target.value;
+        onSpecChanged("pair_edit");
         state.pairsTouched = true;
         markPairManual(pair);
         renderPairs();   // ...which follows a reversal (regenFollowPairOrientation)
@@ -2137,6 +2150,7 @@
         _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " delete", pairUndo(true));
         state.pairsTouched = true;
         state.spec.qubit_pairs.splice(idx, 1);
+        onSpecChanged("pair_edit");
         renderPairs();
         syncLineTypeToggles();   // gate selector depends on pair count
         deriveLines();           // keep spec.lines in sync after removal
@@ -2917,6 +2931,9 @@
   // chip definition in one file (docs/54). The CSV encodes the shared-port
   // layout, so the architecture flips to fixed_frequency + shared_xy.
   function applyPortCsv(payload) {
+    try { return _applyPortCsvRaw(payload); } finally { onSpecChanged("csv_import"); }
+  }
+  function _applyPortCsvRaw(payload) {
     if (!payload || !payload.ok) return false;
     state.spec.instruments = payload.instruments ||
       { controllers: [], opx_plus: [], octaves: [] };
@@ -3108,6 +3125,7 @@
         state.pairsTouched = true;
         state.spec.qubit_pairs.push(nextFreePair(state.spec.qubits,
                                                  state.spec.qubit_pairs));
+        onSpecChanged("pair_add");
         renderPairs();
         syncLineTypeToggles();   // gate selector depends on pair count
         deriveLines();           // keep spec.lines in sync with the new pair
@@ -9066,7 +9084,7 @@
       if (window.GenAdditions && window.GenAdditions.decoratePairTable) {
         window.GenAdditions.decoratePairTable(
           document.getElementById("gen-pop-tbl-pairs"),
-          { spec: function () { return state.spec; }, changed: saveDraft });
+          { spec: function () { return state.spec; }, changed: saveDraft, feedlines: feedlineMap });
       }
     }
     renderPairOrderNote();
@@ -9577,7 +9595,7 @@
     // Mounted when the section first scrolls near the view: on a 60Q chip
     // its ~500 nodes otherwise join the step's first forced layout.
     mountAdditionsWhenNear(document.getElementById("gen-pop-additions"),
-      { spec: function () { return state.spec; }, changed: saveDraft });
+      { spec: function () { return state.spec; }, changed: saveDraft, feedlines: feedlineMap });
     renderPopTopo();     // read-only chip-board mirror (toggleable)
     renderPopWiring();   // build the diagram first…
     reconcileReadoutBanks();   // converge any pre-allocation divergent-FSP banks
@@ -11588,7 +11606,41 @@
   // QA F7: the Re-generate page mounts this same wizard inside #regen-surface.
   function onRegenPage() { return !!document.getElementById("regen-surface"); }
 
+  // C1 / C5: the wizard's one funnel for "the spec moved" -- says WHY, so the rules know whether
+  // a person made the change (auto_new may then act at settle) or the content was swapped in.
+  function onSpecChanged(reason) {
+    if (window.GenRules) window.GenRules.specChanged(reason || "edit", state.spec);
+  }
+
+  // Qubit -> feedline name, as deriveLines will group them (the rule dialog's Feedline chip).
+  function feedlineMap() {
+    var qs = state.spec.qubits || [];
+    var mux = state.muxSize > 0 ? state.muxSize : 6;
+    var kept = keptFeedlineGroups(qs, mux), map = {};
+    if (kept) kept.forEach(function (g, i) { g.forEach(function (q) { map[q] = "feedline" + (i + 1); }); });
+    else qs.forEach(function (q, idx) { map[q] = "feedline" + (Math.floor(idx / mux) + 1); });
+    return map;
+  }
+  function rulesCtx() {
+    return { spec: function () { return state.spec; }, changed: saveDraft, feedlines: feedlineMap };
+  }
+  var _settling = false;
+  // Mandatory settle before Review / Build (C15): awaited, never blocking on failure.
+  function settleThen(reason, cont) {
+    var R = window.GenRules;
+    if (!R || !R.hasRules(state.spec)) { cont(); return; }
+    if (_settling) return;
+    _settling = true;
+    R.settle(rulesCtx(), reason).then(function (res) {
+      R.setSettleError(res && res.ok === false ? res.error : null);
+    }).catch(function () { /* settle never blocks */ }).then(function () {
+      _settling = false;
+      cont();
+    });
+  }
+
   function saveDraft() {
+    onSpecChanged("save");
     // Re-generate re-hydrates from the source chip on every visit, so it must
     // NOT write the shared Generate draft — otherwise its (named, non-contiguous)
     // spec leaks into a later plain Generate session and triggers the renumber gate.
@@ -11643,12 +11695,13 @@
   // Copy a loaded draft into `state`, filling any spec keys it lacks against
   // freshSpec() (defensive across minor shape changes within a version).
   function applyDraft(d) {
-    if (window.GenRules) window.GenRules.resetRuleRuntime();
+    if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: a draft restore replaces content
     var spec = d.spec || {}, fresh = freshSpec();
     Object.keys(fresh).forEach(function (k) {
       if (spec[k] == null) spec[k] = fresh[k];
     });
     state.spec = spec;
+    onSpecChanged("draft");
     state.step = Math.max(1, Math.min(STEP_COUNT, d.step || 1));
     state.env = d.env || null;
     state.allocation = d.allocation || null;
@@ -12419,6 +12472,7 @@
       _wizPushRestore(label, function () {
         if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: an undo restore replaces content
         restore();
+        onSpecChanged("restore");
         if (state.step === 6) renderPopulateTables();
       });
     },
@@ -12445,6 +12499,7 @@
         if (entry.boardUndo) {
           if (window.WiringGrid && WiringGrid.hasUndo && WiringGrid.hasUndo()) {
             var restored = WiringGrid.undoDelete();
+            onSpecChanged("board_undo");
             try { captureDomFields(); saveDraft(); } catch (e2) { /* best-effort */ }
             if (window.showToast && restored) {
               window.showToast('Restored deleted qubit ' + restored +
@@ -12519,6 +12574,9 @@
   // pairsTouched/wiringTouched are set so the reconstructed pairs/lines aren't
   // auto-refilled. Idempotent — call after QuamGen.init() has mounted the wizard.
   function hydrateFromSpec(spec, opts) {
+    try { return _hydrateFromSpecRaw(spec, opts); } finally { onSpecChanged("hydrate"); }
+  }
+  function _hydrateFromSpecRaw(spec, opts) {
     var o = opts || {};
     state._qdacExtCleared = false;   // P1: a fresh spec gets the ext default again
     state._qdacAutoRR = false;

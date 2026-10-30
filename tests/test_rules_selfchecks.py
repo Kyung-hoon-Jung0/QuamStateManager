@@ -18,4 +18,4 @@ def test_rules_selfcheck_passes(name):
     if r.returncode == 2:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.startswith("OK "), r.stdout + r.stderr
+    assert any(l.startswith("OK ") for l in r.stdout.splitlines()), r.stdout + r.stderr

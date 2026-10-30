@@ -1360,20 +1360,75 @@
     return out;
   }
 
+  // Reasons that must never make the rules write anything on their own (C1).
+  var BLOCKED = { restore: 1, hydrate: 1, draft: 1, csv_import: 1, board_undo: 1 };
+  var _lastReason = null;
+  var REFRESH_MS = 400;
+
+  function hasRules(spec) { return rulesOf(spec).length > 0; }
+
+  function scheduleRefresh() {
+    if (!_cardCtx || !hasRules(_cardCtx.spec())) return;
+    if (_bg.timer) clearTimeout(_bg.timer);
+    _bg.timer = setTimeout(function () { _bg.timer = null; refreshStatuses(_cardCtx); }, REFRESH_MS);
+  }
+
+  /* The wizard's ONE funnel: every spec write path says why. It only records and re-asks;
+   * writing happens at settle, never here. */
   function specChanged(reason, spec) {
+    if (reason !== "save") _lastReason = reason || "edit";   // an autosave is not a decision
     var d = _open;
-    if (!d || d.closed || d.applying) return;
-    var sig = currentSig(d);
-    if (sig === d.reqSig) return;
-    if (d.status === "ready" || d.status === "stale") {
-      d.changeText = describeChange(d.specSnap || {}, d.ctx.spec());
-      markStale(d, d.changeText);
-    } else if (d.status === "loading") {
-      recheck(d, "moved", RECHECK_MS);
+    if (d && !d.closed && !d.applying) {
+      var sig = currentSig(d);
+      if (sig !== d.reqSig) {
+        if (d.status === "ready" || d.status === "stale") {
+          d.changeText = describeChange(d.specSnap || {}, d.ctx.spec());
+          markStale(d, d.changeText);
+        } else if (d.status === "loading") {
+          recheck(d, "moved", RECHECK_MS);
+        }
+      }
     }
+    scheduleRefresh();
+  }
+
+  /* Settle (C1 / C15): ask once for every rule, show what could not be checked, and -- only for a
+   * rule with auto_new and only when the last change was a person's -- add the gate to the pairs
+   * created since, as its OWN undo entry. Never rejects; a failure is a sentence for Review. */
+  function settleOne(ctx, id, blocked) {
+    var rule = ruleById(ctx.spec(), id);
+    if (!rule) return Promise.resolve();
+    return refreshStatuses(ctx, false).then(function () {
+      if (_statusErr) { _settleErr = _statusErr; return null; }
+      if (blocked || !rule.auto_new) return null;
+      var rows = newReadyRows(rule), st = _status[id];
+      if (!rows.length || !st) return null;
+      var pids = rows.map(function (r) { return r.pair; });
+      var gname = rule.gate.name;
+      return commitApply({ ctx: ctx, rule: clone(ruleById(ctx.spec(), id)), answer: { rule_sig: st.rule_sig }, pids: pids,
+        label: "auto-added " + gname + " to " + plural(pids.length, "new pair") }).then(function (res) {
+        if (!res.ok) { _settleErr = res.reason; return null; }
+        toast("Pairs " + pids.join(", ") + " added earlier · " + gname + " added to them too (rule). Ctrl+Z undoes it.");
+        return null;
+      });
+    });
+  }
+  function settle(ctx, reason) {
+    if (_bg.timer) { clearTimeout(_bg.timer); _bg.timer = null; }
+    _settleErr = null; _statusErr = null;
+    var spec = ctx.spec();
+    if (!hasRules(spec)) return Promise.resolve({ ok: true });
+    var blocked = !!(BLOCKED[reason] || BLOCKED[_lastReason]);
+    var chain = Promise.resolve();
+    rulesOf(spec).map(function (r) { return r.id; }).forEach(function (id) {
+      chain = chain.then(function () { return settleOne(ctx, id, blocked); });
+    });
+    return chain.then(function () { return _settleErr ? { ok: false, error: _settleErr } : { ok: true }; },
+                      function (e) { _settleErr = String(e && e.message || e); return { ok: false, error: _settleErr }; });
   }
 
   window.GenRules = {
+    settle: settle, hasRules: hasRules, BLOCKED: BLOCKED,
     bindCards: bindCards, refreshStatuses: refreshStatuses, ruleReviewCounts: ruleReviewCounts,
     renderReviewLines: renderReviewLines, editRule: editRule, statusFresh: statusFresh,
     setSettleError: function (e) { _settleErr = e || null; },
