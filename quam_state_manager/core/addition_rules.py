@@ -136,6 +136,18 @@ def apply(spec, rule, rule_sig, pairs, manifest, choices=None):
         row = by_pid.get(pid)
         if row is None:
             skipped.append({"pair": pid, "reason": "no such pair"})
+        elif (row.get("existing") and not row.get("errors") and row.get("additions")
+              and row["status"] in (add_verdict.NEEDS_LOOK, add_verdict.ALREADY)):
+            # Reset to rule / Apply change: the rule's own instance on this
+            # pair is replaced by the re-planned one (the person pressed it).
+            pair = next(p for p in spec.get("qubit_pairs") or [] if additions.quam_pair_id(p) == pid)
+            gone = {id(a) for a in bundle(new, rule, pair)}
+            new["additions"] = [a for a in new.get("additions") or [] if id(a) not in gone]
+            rows = deepcopy(row["additions"])
+            for a in rows:
+                a["rule_id"] = rule["id"]
+            new["additions"].extend(rows)
+            added.append(pid)
         elif row["status"] == add_verdict.READY or (
                 row["status"] == add_verdict.NEEDS_LOOK and choices.get(pid) in ("control", "target")
                 and not row.get("errors") and row.get("additions")):

@@ -89,3 +89,17 @@ def test_a_new_rule_without_an_id_applies_with_the_signature_its_check_gave():
     assert out["added"] == ["q1-2"]
     rid = out["rule"]["id"]
     assert rid and all(a["rule_id"] == rid for a in out["spec"]["additions"])
+
+
+def test_listing_a_pair_the_rule_already_covers_replaces_its_instance():
+    """Reset to rule / Apply change send the pair again: the rule's instance
+    there is replaced by the re-planned one, never duplicated or skipped."""
+    s, r = spec(), rule()
+    first = rules.apply(s, r, rules.expand(s, r, manifest())["rule_sig"], ["q1-2"], manifest())
+    s2, r2 = first["spec"], first["rule"]
+    n = len(s2["additions"])
+    r2["numbers"] = dict(r2["numbers"], **{"moving.length": 48})
+    again = rules.apply(s2, r2, rules.expand(s2, r2, manifest())["rule_sig"], ["q1-2"], manifest())
+    assert again["added"] == ["q1-2"] and len(again["spec"]["additions"]) == n
+    pulse = next(a for a in again["spec"]["additions"] if a["kind"] == "pulse")
+    assert pulse["fields"]["length"] == 48
