@@ -126,6 +126,25 @@ def add_removals(planned, removals):
     return planned
 
 
+def replay(state, wiring, manifest, reviewed, reference=None):
+    """Apply exactly the person-reviewed renames and removals to another copy of
+    the same chip (the reference inputs), and nothing else."""
+    planned = plan(state, wiring, manifest, list(reviewed.get("renames") or []), reference)
+    return add_removals(planned, [{"paths": list(paths)} for paths in reviewed.get("removals") or []])
+
+
+def reviewed_note(reviewed):
+    """One phrase naming what was applied to the reference inputs."""
+    renames = len(reviewed.get("renames") or [])
+    removals = len(reviewed.get("removals") or [])
+    parts = []
+    if renames:
+        parts.append(f"{renames} reviewed rename{'s' if renames != 1 else ''}")
+    if removals:
+        parts.append(f"{removals} reviewed removal{'s' if removals != 1 else ''}")
+    return " and ".join(parts)
+
+
 def apply(modifier, planned):
     """One modifier group for pointer edits and every leaf move; rollback on error."""
     with modifier.store._lock:

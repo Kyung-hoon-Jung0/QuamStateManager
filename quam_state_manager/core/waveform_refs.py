@@ -215,7 +215,12 @@ def load(instance_path, key):
     return result
 
 
-def compare(instance_path, key, python_path, *, name_filter=""):
+def compare(instance_path, key, python_path, *, name_filter="", transform=None):
+    """Regenerate the reference's stored inputs in this env and compare.
+
+    ``transform(state, wiring) -> (state, wiring, note)`` rewrites the inputs
+    first (the reviewed plan of the transition); ``note`` names what it did."""
+    note = ""
     try:
         reference = load(instance_path, key)
         with tempfile.TemporaryDirectory(prefix="env_reference_compare_") as temporary:
@@ -230,15 +235,29 @@ def compare(instance_path, key, python_path, *, name_filter=""):
                     raise ValueError("reference input hash differs")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(raw)
+            if transform is not None:
+                state = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+                wiring_path = folder / "wiring.json"
+                wiring = json.loads(wiring_path.read_text(encoding="utf-8")) if wiring_path.exists() else {}
+                state, wiring, note = transform(state, wiring)
+                (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+                if wiring_path.exists():
+                    wiring_path.write_text(json.dumps(wiring), encoding="utf-8")
             outcome = preview(python_path, folder, strict=True)
+        applied = f" with your {note} applied" if note else ""
         if not outcome.get("ok"):
-            return {"status": "not_checked", "message": "blocked by the items above",
+            return {"status": "not_checked", "attempted": True, "applied": note,
+                    "message": f"not compared: the reference inputs{applied} do not load in this env "
+                               "(see the load-stopping items above): "
+                               + str(outcome.get("error") or "no reason given"),
                     "error": outcome.get("error"), "rows": []}
         compared = compare_traces(reference["traces"], traces(outcome["result"]["config"]), name_filter)
         return {**compared, "status": "found" if compared["counts"]["differ"] else "none_found",
+                "attempted": True, "applied": note,
+                "applied_text": f"Compared on the reference inputs{applied}." if note else "",
                 "reference_state_hash": reference["basis"][:10],
                 "current_state_hash": input_basis(outcome["reference_inputs"])[:10],
                 "non_waveform": non_waveform_diff(reference["config_non_waveform"], outcome["result"]["config"])}
     except (OSError, ValueError, KeyError, TypeError, struct.error) as exc:
-        return {"status": "not_checked", "message": "could not check: reference unreadable",
+        return {"status": "not_checked", "attempted": True, "message": "could not check: reference unreadable",
                 "error": str(exc), "rows": []}

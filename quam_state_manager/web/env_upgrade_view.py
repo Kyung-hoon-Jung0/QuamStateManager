@@ -11,6 +11,7 @@ from datetime import datetime
 from flask import current_app, jsonify, render_template, request
 
 from quam_state_manager.core import env_seen, env_upgrade, env_rename, waveform_refs
+from quam_state_manager.core import env_upgrade_service
 from quam_state_manager.core import config_generator, project_env, state_env_baseline as baseline, state_env_schema
 
 
@@ -107,6 +108,25 @@ def present_references(inst, key):
     return rows
 
 
+def case6_message(report, transition_seen, has_pre_reference, previous_not_installed):
+    """The one sentence the card shows for the waveform case."""
+    case = report["cases"]["6"]
+    if case.get("rows") or case.get("attempted"):
+        return case.get("message") or ""
+    if not transition_seen:
+        return "not compared: no environment change"
+    if has_pre_reference:
+        if any(report["cases"][n]["rows"] for n in ("2", "3", "4")):
+            return ("A reference from before the change is recorded; the waveform compare runs once "
+                    "the load-stopping items above are resolved.")
+        return ("A reference from before the change is recorded; the waveform compare has not run yet "
+                "— press Check to run it.")
+    if previous_not_installed:
+        return ("No reference from before this change; the previous version is not installed in any "
+                "environment SM knows — install it in a separate env to compare.")
+    return env_upgrade.NO_REFERENCE
+
+
 def compare_rows(case):
     """Waveform rows for the table: differing first, identical folded."""
     rows = case.get("rows") or []
@@ -135,7 +155,8 @@ def model(ctx, inst):
             checked_env = ctx.get("env_upgrade_env")
             refreshed = env_upgrade.report(state, ctx["env_upgrade_body"], reference_for(ctx, inst),
                 catalog=state_env_schema.catalog_for_env(checked_env, inst), event=previous_report.get("event"))
-            if previous_report["cases"]["6"].get("reference_state_hash"):
+            if previous_report["cases"]["6"].get("attempted") and not any(
+                    refreshed["cases"][n]["rows"] for n in ("2", "3", "4")):
                 refreshed["cases"]["6"] = previous_report["cases"]["6"]
                 refreshed["non_waveform"] = previous_report.get("non_waveform", [])
             ctx["env_upgrade_report"] = refreshed
@@ -195,9 +216,9 @@ def model(ctx, inst):
     with _routes._cfg_warm_lock:
         recording_running = (ctx.get("env_reference_status") == "recording reference..."
                              and str(ctx.get("path") or "").lower() in _routes._cfg_warm_inflight)
-    if report and not transition_seen and report["cases"]["6"].get("message") == env_upgrade.NO_REFERENCE:
-        report["cases"]["6"] = {**report["cases"]["6"],
-                                "message": "not compared: no environment change"}
+    if report:
+        report["cases"]["6"] = {**report["cases"]["6"], "message": case6_message(
+            report, transition_seen, has_pre_reference, not known_previous)}
     return {"report": report, "env": env, "versions": versions,
             "env_name": env_name(selected), "remembered_name": env_name(remembered), "no_env": not selected,
             "checking": checking(ctx), "transition": transition_seen, "consequence": consequence,
@@ -242,6 +263,13 @@ def _plan(ctx, payload, inst):
             ctx["env_upgrade_body"], renames, reference_for(ctx, inst))
         return env_rename.add_removals(planned, [
             {"paths": removable[(row["class"], row["field"])]} for row in removals])
+
+
+def _removable_paths(view, selection):
+    for row in ((view.get("report") or {}).get("cases", {}).get("3", {}).get("rows") or []):
+        if (row.get("class"), row.get("field")) == (selection.get("class"), selection.get("field")):
+            return list(row.get("paths") or [])
+    return []
 
 
 def removal_values(state, paths, limit=50):
@@ -366,10 +394,24 @@ def dispatch(action):
                 if planned["signature"] != tested.get("plan"):
                     raise ValueError("test load again after a state change")
                 entries = env_rename.apply(ctx["modifier"], planned)
-            env_seen.remember_renames(inst, key, env, [row for row in payload["selections"] if not row.get("remove")],
-                                      view["report"]["event"])
-            ctx["env_upgrade_report"] = env_upgrade.report(planned["state"], ctx["env_upgrade_body"],
-                reference_for(ctx, inst), event=view["report"]["event"])
+            event = view["report"]["event"]
+            renames = [row for row in payload["selections"] if not row.get("remove")]
+            env_seen.remember_renames(inst, key, env, renames, event)
+            removed = {row["path"] for row in planned.get("removals") or []}
+            removal_rows = [row for row in payload["selections"] if row.get("remove")]
+            env_seen.remember_review(inst, key, env, event, renames, [
+                [p for p in _removable_paths(view, row) if p in removed] for row in removal_rows])
+            reference = reference_for(ctx, inst)
+            report = env_upgrade.report(planned["state"], ctx["env_upgrade_body"], reference, event=event)
+            matching = env_upgrade_service.matching_references(inst, key, env, event.get("previous") or {})
+            if matching and not any(report["cases"][n]["rows"] for n in ("2", "3", "4")):
+                compared = env_upgrade_service.compare_matched(inst, key, env, event, ctx["env_upgrade_body"],
+                                                               reference, matching[0]["key"])
+                compared["current_env"] = env_name(env)
+                report["cases"]["6"] = {"case": 6, **compared}
+                report["non_waveform"] = compared.get("non_waveform") or []
+            ctx["env_upgrade_report"] = report
+            ctx["env_upgrade_report_seq"] = None
             ctx.pop("env_rename_test", None)
             return jsonify(ok=True, changes=len(entries), skipped=planned["skipped"],
                            message="Working copy updated; use the existing Apply to write live files")

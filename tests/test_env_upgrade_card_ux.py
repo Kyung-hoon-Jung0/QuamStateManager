@@ -231,7 +231,7 @@ def test_g3_existing_pre_upgrade_reference_is_named_not_denied(loaded, monkeypat
     html = client.get("/env-upgrade/card").get_data(as_text=True)
     assert "install it in a separate env" not in html
     assert "reference from before the change is recorded" in html
-    assert "once the load-stopping items" in html
+    assert "compare has not run yet" in html and "No reference from before" not in html
 
 
 def test_g4_g5_no_env_says_it_once_and_hides_the_probe_footer(loaded, monkeypatch):

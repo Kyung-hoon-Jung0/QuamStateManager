@@ -147,6 +147,27 @@ def import_legacy_ack(instance_path, key, python_path, previous, current, signat
         safe_io.atomic_write_json(path, record)
 
 
+def _review_key(python_path, event):
+    return _hash([normalize_env_path(python_path), (event.get("previous") or {}).get("official_digest"),
+                  (event.get("previous") or {}).get("versions")])
+
+
+def remember_review(instance_path, key, python_path, event, renames, removals):
+    """Keep the reviewed plan of one transition so the matched-state compare can
+    apply the same plan to the reference inputs."""
+    with _lock:
+        record = read(instance_path, key)
+        record.setdefault("reviewed_plans", {})[_review_key(python_path, event)] = {
+            "renames": list(renames), "removals": [list(paths) for paths in removals]}
+        path = record_path(instance_path, key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        safe_io.atomic_write_json(path, record)
+
+
+def reviewed_plan(instance_path, key, python_path, event):
+    return (read(instance_path, key).get("reviewed_plans") or {}).get(_review_key(python_path, event))
+
+
 def remember_renames(instance_path, key, python_path, selections, event):
     with _lock:
         record = read(instance_path, key)

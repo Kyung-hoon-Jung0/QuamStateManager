@@ -3,8 +3,35 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from quam_state_manager.core import config_generator, env_seen, env_upgrade, safe_io
+from quam_state_manager.core import config_generator, env_rename, env_seen, env_upgrade, safe_io
 from quam_state_manager.core import state_env_baseline as baseline, state_env_schema, waveform_refs
+
+
+def matching_references(instance_path, key, python_path, previous):
+    """References recorded in this env under exactly the versions the change came from."""
+    return [r for r in waveform_refs.list_references(instance_path, key)
+            if r["python_path"] == baseline.normalize_env_path(python_path)
+            and r.get("official_digest") == previous.get("official_digest")
+            and r.get("source_fingerprint") == previous.get("source_fingerprint")
+            and all(r["versions"].get(name) == (previous.get("versions") or {}).get(name)
+                    for name in env_seen.VERSIONS)]
+
+
+def compare_matched(instance_path, key, python_path, event, body, reference_baseline, reference_key):
+    """Matched-state compare: the reference inputs with exactly the reviewed plan
+    of this transition applied (when one was staged), regenerated here."""
+    reviewed = env_seen.reviewed_plan(instance_path, key, python_path, event)
+    transform = None
+    if reviewed and (reviewed.get("renames") or reviewed.get("removals")):
+        def transform(state, wiring):
+            planned = env_rename.replay(state, wiring, body, reviewed, reference_baseline)
+            return planned["state"], planned["wiring"], env_rename.reviewed_note(reviewed)
+    try:
+        return waveform_refs.compare(instance_path, reference_key, python_path, transform=transform)
+    except ValueError as exc:  # the reviewed plan no longer fits the reference inputs
+        return {"status": "not_checked", "attempted": True, "rows": [], "error": str(exc),
+                "message": "not compared: the reviewed changes could not be applied to the reference inputs: "
+                           + str(exc)}
 
 
 def check(folder, python_path, instance_path, *, context=None, compare_waveforms=True):
@@ -41,14 +68,9 @@ def check(folder, python_path, instance_path, *, context=None, compare_waveforms
         catalog=state_env_schema.catalog_for_env(python_path, instance_path), event=event)
     result.update(checked_in=python_path, versions=body["versions"], schema_body_key=body.get("key"),
                   reference_contents="generate_config() waveform arrays and the exact JSON files used to generate them")
-    references = waveform_refs.list_references(instance_path, key)
-    matching = [r for r in references if r["python_path"] == baseline.normalize_env_path(python_path)
-        and r.get("official_digest") == previous.get("official_digest")
-        and r.get("source_fingerprint") == previous.get("source_fingerprint")
-        and all(r["versions"].get(name) == (previous.get("versions") or {}).get(name)
-                for name in env_seen.VERSIONS)]
+    matching = matching_references(instance_path, key, python_path, previous)
     if compare_waveforms and matching and not any(result["cases"][str(n)]["rows"] for n in (2, 3, 4)):
-        compared = waveform_refs.compare(instance_path, matching[0]["key"], python_path)
+        compared = compare_matched(instance_path, key, python_path, event, body, reference, matching[0]["key"])
         result["cases"]["6"] = {"case": 6, **compared}
         result["non_waveform"] = compared.get("non_waveform") or []
     elif not matching and previous.get("versions"):
