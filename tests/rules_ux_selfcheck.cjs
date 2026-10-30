@@ -88,5 +88,12 @@ function pick(w, el, v) { el.value = v; el.dispatchEvent(new w.Event('change', {
   ok(!/\b(\w+) \(\1[,)]/.test(head), 'X6 the class name is not repeated: ' + head.slice(0, 120));
   const sheet = css.match(/\.gen-rule-row input\[type="checkbox"\][^{]*\{[^}]*\}/);
   ok(sheet && /width:\s*1\.\d+rem/.test(sheet[0]) && /height:\s*1\.\d+rem/.test(sheet[0]), 'X6 checkboxes have a real square size');
+  // X4 remnant: "table.gen-pop-table tbody td:first-child" (0,2,3, sticky z-index 2) out-ranked the old
+  // "tr.gen-gates-formrow > td" (0,1,2), so the sticky header still painted over the form.
+  ok(/table\.gen-pop-table\s+tbody\s+tr\.gen-gates-formrow\s*>\s*td[^{]*\{[^}]*z-index:\s*[4-9]/.test(css), 'X4 the form-row rule out-ranks the sticky first-column rule');
+  ok(/tr\.gen-gates-formrow input[^{]*\{[^}]*scroll-margin-top:\s*[1-9]/.test(css), 'X4 a focused form field stops below the sticky header');
+  // Y3: the review list is the one scroller; the dialog itself does not scroll its head/foot away.
+  ok(/dialog\.gen-rule-dlg\s*>\s*\.gen-rule-rv-list[^{]*\{[^}]*flex:\s*1 1 auto[^}]*overflow:\s*auto/.test(css), 'Y3 the review list flexes and scrolls');
+  ok(/dialog\.gen-rule-dlg\.gen-rule-review\s*\{[^}]*overflow:\s*hidden/.test(css), 'Y3 the review dialog keeps title and footer in view');
   T.done('rules_ux_selfcheck');
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

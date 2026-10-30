@@ -970,6 +970,63 @@
     return s;
   }
 
+  // "#/qubits/q2/z/operations/x" or "qubits.q2.z.operations" -> "q2 z" (also qubit_pairs). [derived]
+  function placeOf(v) {
+    if (typeof v !== "string") return null;
+    var m = /^#\/(qubits|qubit_pairs)\/([^\/]+)\/([^\/]+)/.exec(v) || /^(qubits|qubit_pairs)\.([^.]+)\.([^.]+)/.exec(v);
+    return m ? m[2] + " " + m[3] : null;
+  }
+  // The role token of an item name "<gate>_<role>_<control>_<target>", from the rule's own roles.
+  function roleOfName(rule, name) {
+    var g = ((rule.gate && rule.gate.name) || "") + "_";
+    var rest = typeof name === "string" && name.indexOf(g) === 0 ? name.slice(g.length) : null;
+    var roles = (rule.items || []).map(function (it) { return it.role; }).filter(Boolean)
+      .sort(function (a, b) { return b.length - a.length; });
+    for (var i = 0; rest && i < roles.length; i++) if (rest === roles[i] || rest.indexOf(roles[i] + "_") === 0) return roles[i];
+    return null;
+  }
+  // One plain sentence per change kind for a review row: pulses that move to another
+  // element, pulses renamed, and anything else as "name field: old -> new". The raw
+  // diff stays available under Details. [derived]
+  function reviewSummary(rule, diff, isSource) {
+    var moves = [], seenMove = {}, renames = [], other = [];
+    var removed = [], added = [], cls = {};
+    diff.forEach(function (d) {
+      if (d.field === "class_") { cls[d.name] = 1; if (d.old != null && d.new == null) removed.push(d.name); else if (d.old == null && d.new != null) added.push(d.name); }
+    });
+    var gone = {}; removed.concat(added).forEach(function (n) { gone[n] = 1; });
+    function addMove(who, a, b) {
+      if (!a || !b || a === b || seenMove[who]) return;
+      seenMove[who] = 1; moves.push(who + " moves " + a + " → " + b);
+    }
+    diff.forEach(function (d) {
+      if (d.field === "class_") return;
+      var a = placeOf(d.old), b = placeOf(d.new);
+      if (d.kind === "macro" && a && b) {
+        var nm = String(d.new).split("/").pop(), role = roleOfName(rule, nm);
+        addMove(role ? role + " pulse" : d.field, a, b);
+        return;
+      }
+      if (d.field === "target" && gone[d.name]) return;
+      if (d.field === "target" && a && b) { var r0 = roleOfName(rule, d.name); addMove(r0 ? r0 + " pulse" : d.name, a, b); return; }
+      if (gone[d.name]) return;
+      other.push(d.name + " " + d.field + ": " + (d.old == null ? "—" : d.old) + " → " + (d.new == null ? "—" : d.new));
+    });
+    var used = {};
+    removed.forEach(function (o) {
+      var ro = roleOfName(rule, o);
+      var n = added.filter(function (x) { return !used[x] && roleOfName(rule, x) === ro; })[0];
+      if (n) { used[n] = 1; renames.push(o + " → " + n); }
+      else other.push("pulse " + o + " removed");
+    });
+    added.forEach(function (n) { if (!used[n]) other.push("pulse " + n + " added"); });
+    var parts = moves.slice();
+    if (renames.length) parts.push("pulses renamed " + renames.join(", "));
+    parts = parts.concat(other);
+    var kept = isSource && !renames.length && moves.length;
+    return { parts: parts, kept: kept };
+  }
+
   // mode "review": every Needs-a-look pair of the rule; mode "reset": one pair back to the rule.
   function openReview(opts) {
     var ctx = opts.ctx, mode = opts.mode || "review";
@@ -1032,14 +1089,22 @@
         var box = el("div", { className: "gen-rule-rv-pair", "data-pair": row.pair });
         box.appendChild(el("p", { className: "gen-rule-rv-head" }, row.pair + " — " +
           (mode === "reset" ? "edited here" : (row.reason || "facts changed"))));
-        (row.diff_vs_current || []).forEach(function (d) {
+        var rnow = ruleNow(), diff = row.diff_vs_current || [];
+        var sm = reviewSummary(rnow, diff, !!(rnow.source && sameKey(rnow.source, row.pair)));
+        sm.parts.forEach(function (t) { box.appendChild(el("div", { className: "gen-rule-rv-plain" }, t)); });
+        if (sm.kept) box.appendChild(el("div", { className: "gen-rule-rv-kept muted" },
+          "Pulse names you chose for this pair are kept; only where the pulses play changes."));
+        var det = el("details", { className: "gen-rule-rv-details" });
+        det.appendChild(el("summary", {}, "Details"));
+        if (diff.length) box.appendChild(det);
+        diff.forEach(function (d) {
           var line = el("div", { className: "gen-rule-rv-line" }, fieldDiffHtml(d));
           if (typeof d.old === "number" && typeof d.new === "number" && window.ValueDelta && window.ValueDelta.chipHtml) {
             var chip = el("span", { className: "gen-rule-rv-delta" });
             chip.innerHTML = window.ValueDelta.chipHtml(d.old, d.new);
             line.appendChild(chip);
           }
-          box.appendChild(line);
+          det.appendChild(line);
         });
         var btns = el("div", { className: "gen-rule-rv-btns" });
         var keep = el("button", { type: "button", className: "secondary gen-rule-rv-keep", "data-pair": row.pair },

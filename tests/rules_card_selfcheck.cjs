@@ -90,5 +90,37 @@ function build(extra) {
   w.GenRules.renderCards();
   ok(/not applicable to cross-resonance — \d+ gates kept, nothing applies/.test(w.document.querySelector('.gen-rule-card-line1').textContent) &&
      !w.document.querySelector('.gen-rule-card-more'), 'D6 cross-resonance: ' + w.document.querySelector('.gen-rule-card-line1').textContent);
+
+  // D7 (Y1/Y2): a CZ flip reads as plain moves/renames, the raw diff sits in a closed Details,
+  // and the source pair says its own names are kept.
+  const P = (q, n) => '#/qubits/' + q + '/z/operations/' + n;
+  const flipRows = {
+    'q1-2': [
+      { kind: 'macro', name: 'cz_bm', field: 'flux_pulse_high', old: P('q2', 'cz_bm_high_q2_q1'), new: P('q1', 'cz_bm_high_q2_q1') },
+      { kind: 'macro', name: 'cz_bm', field: 'flux_pulse_low', old: P('q1', 'cz_bm_low_q2_q1'), new: P('q2', 'cz_bm_low_q2_q1') },
+      { kind: 'pulse', name: 'cz_bm_high_q2_q1', field: 'target', old: 'qubits.q2.z.operations', new: 'qubits.q1.z.operations' }],
+    'q2-3': [
+      { kind: 'macro', name: 'cz_bm', field: 'flux_pulse_high', old: P('q2', 'cz_bm_high_q2_q3'), new: P('q3', 'cz_bm_high_q3_q2') },
+      { kind: 'pulse', name: 'cz_bm_high_q2_q3', field: 'class_', old: 'pkg.P', new: null },
+      { kind: 'pulse', name: 'cz_bm_high_q2_q3', field: 'target', old: 'qubits.q2.z.operations', new: null },
+      { kind: 'pulse', name: 'cz_bm_high_q3_q2', field: 'class_', old: null, new: 'pkg.P' },
+      { kind: 'pulse', name: 'cz_bm_high_q3_q2', field: 'target', old: null, new: 'qubits.q3.z.operations' }] };
+  m = build({ server: { statusOf: (pid) => flipRows[pid] ? 'Needs a look' : 'Ready',
+    extraRow: (pid) => flipRows[pid] ? { existing: true, edited: false, diff_vs_current: flipRows[pid] } : {} } });
+  ({ w, spec } = m);
+  await w.decorate(); await T.settle();
+  w.document.querySelector('.gen-rule-card-review').click();
+  await T.settle();
+  const box = (pid) => rv().querySelector('.gen-rule-rv-pair[data-pair="' + pid + '"]');
+  const plain = (pid) => Array.from(box(pid).querySelectorAll('.gen-rule-rv-plain')).map(e => e.textContent);
+  ok(J(plain('q1-2')) === J(['high pulse moves q2 z → q1 z', 'low pulse moves q1 z → q2 z']), 'D7 source pair in plain words: ' + J(plain('q1-2')));
+  ok(J(plain('q2-3')) === J(['high pulse moves q2 z → q3 z', 'pulses renamed cz_bm_high_q2_q3 → cz_bm_high_q3_q2']), 'D7 other pair: moves + rename: ' + J(plain('q2-3')));
+  ok(!!box('q1-2').querySelector('.gen-rule-rv-kept') && /names you chose/.test(box('q1-2').querySelector('.gen-rule-rv-kept').textContent) &&
+     !box('q2-3').querySelector('.gen-rule-rv-kept'), 'D7 only the source pair says its names are kept');
+  const det = box('q2-3').querySelector('details.gen-rule-rv-details');
+  ok(!!det && !det.open && det.querySelectorAll('.gen-rule-rv-line').length === 5 &&
+     !Array.from(box('q2-3').children).some(c => c.classList && c.classList.contains('gen-rule-rv-line')), 'D7 raw lines only inside a closed Details');
+  ok(/#\/qubits\//.test(det.textContent) && !plain('q2-3').some(t => /#\/|class_/.test(t)), 'D7 no pointer or class_ in the plain lines');
+  ok(/Nothing is written until you choose/.test(rv().textContent), 'D7 still says nothing is written');
   T.done('rules_card_selfcheck');
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

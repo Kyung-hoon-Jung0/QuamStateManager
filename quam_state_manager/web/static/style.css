@@ -16184,7 +16184,11 @@ button.gen-gate { background: rgba(1, 114, 173, 0.13); color: inherit; cursor: p
 .gen-gates-actions button { width: auto; margin: 0; padding: 0.1rem 0.5rem; font-size: 1em; }
 .gen-gate-deflabel { margin: 0; display: inline-flex; align-items: center; gap: 0.25rem; }
 /* the form row sits above the sticky header/first column, never under them */
-tr.gen-gates-formrow > td { position: relative; z-index: 5; background: var(--pico-background-color); }
+/* specificity beats "table.gen-pop-table tbody td:first-child" (sticky, z-index 2), which
+   used to win and let the sticky "Gates" header (z-index 3) paint over the form's inputs */
+table.gen-pop-table tbody tr.gen-gates-formrow > td, tr.gen-gates-formrow > td { position: relative; z-index: 5; background: var(--pico-background-color); }
+/* a focused or scrolled-to field stops below the sticky header, never under it */
+tr.gen-gates-formrow input, tr.gen-gates-formrow select, tr.gen-gates-formrow button { scroll-margin-top: 2.6rem; }
 .gen-gates-formbox { position: sticky; left: 0; box-sizing: border-box; padding: 0.3rem 0.4rem; }
 td.gen-gates { min-width: 12rem; }
 /* lab additions P6: the knowledge card line and agent proposals */
@@ -16220,7 +16224,12 @@ dialog.gen-rule-dlg, dialog#gcz-several { display: none; position: fixed; inset:
 dialog.gen-rule-dlg[open], dialog#gcz-several[open] { display: flex; }
 /* Only the list scrolls; the head and the footer (Add to N pairs) stay in view. */
 dialog.gen-rule-dlg > * { flex: 0 0 auto; }
-dialog.gen-rule-dlg > .gen-rule-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+dialog.gen-rule-dlg > .gen-rule-body, dialog.gen-rule-dlg > .gen-rule-rv-list { flex: 1 1 auto; min-height: 0; overflow: auto; }
+dialog.gen-rule-dlg.gen-rule-review { overflow: hidden; }
+.gen-rule-rv-plain { font-size: 0.9em; padding: 0.05rem 0 0.05rem 0.4rem; }
+.gen-rule-rv-kept { font-size: 0.82em; padding-left: 0.4rem; font-style: italic; }
+.gen-rule-rv-details { margin: 0.2rem 0 0.3rem 0.4rem; font-size: 0.82em; }
+.gen-rule-rv-details > summary { cursor: pointer; color: var(--pico-muted-color); }
 dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0, 0, 0, .35); }
 dialog.gen-rule-dlg { width: min(60rem, 94vw); max-height: 90vh; overflow: auto; padding: 0.8rem 1rem; border: 1px solid var(--pico-muted-border-color, #8885); border-radius: 8px; }
 .gen-rule-head { display: flex; justify-content: space-between; align-items: center; }
