@@ -90,6 +90,9 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
         local = action
         if previous:
             local = deepcopy(action)
+            # Stored names never change, also after a role move or a pair-order
+            # flip: Regenerate carries values by path.
+            local["keep_names"] = {role: pulse["name"] for role, pulse in previous.items()}
             # A role move carries this pair's calibration. Source recalibration
             # supplies NEW instances only; it never retunes existing pairs.
             for role, pulse in previous.items():

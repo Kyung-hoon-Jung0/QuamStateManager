@@ -144,7 +144,10 @@ def resolve(doc: dict, pair, action: dict) -> dict:
             continue
         source = action.get("source")
         source_here = source and unordered_key(pair_members(doc, source)) == unordered_key(pair_members(doc, pair))
-        stored = (action.get("source_names") or {}).get(role) if source_here else None
+        # An existing instance keeps its stored names (plan v2.1 section 1.3
+        # rule 1); only a new instance gets a generated name.
+        stored = ((action.get("keep_names") or {}).get(role)
+                  or ((action.get("source_names") or {}).get(role) if source_here else None))
         try:
             nm = stored or pulse_name(name, "pulse" if role == "moving" else role,
                                       ow["control"], ow["target_q"])

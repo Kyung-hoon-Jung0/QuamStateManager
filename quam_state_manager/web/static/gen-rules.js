@@ -1028,7 +1028,8 @@
     var parts = moves.slice();
     if (renames.length) parts.push("pulses renamed " + renames.join(", "));
     parts = parts.concat(other);
-    var kept = isSource && !renames.length && moves.length;
+    // Every existing instance keeps its stored names (plan v2.1 section 1.3 rule 1).
+    var kept = !renames.length && moves.length;
     return { parts: parts, kept: kept };
   }
 
@@ -1098,7 +1099,7 @@
         var sm = reviewSummary(rnow, diff, !!(rnow.source && sameKey(rnow.source, row.pair)));
         sm.parts.forEach(function (t) { box.appendChild(el("div", { className: "gen-rule-rv-plain" }, t)); });
         if (sm.kept) box.appendChild(el("div", { className: "gen-rule-rv-kept muted" },
-          "Pulse names you chose for this pair are kept; only where the pulses play changes."));
+          "Pulse names on this pair are kept; only where the pulses play changes."));
         var det = el("details", { className: "gen-rule-rv-details" });
         det.appendChild(el("summary", {}, "Details"));
         if (diff.length) box.appendChild(det);
