@@ -172,6 +172,13 @@ def structural_errors(spec: dict) -> list[str]:
         return []
     if not isinstance(adds, list):
         return ["additions: must be a list"]
+    errors = _shape_errors(adds)
+    if not errors:
+        errors.extend(gate_name_errors(spec))
+    return errors
+
+
+def _shape_errors(adds: list) -> list[str]:
     errors = []
     seen = set()
     for i, a in enumerate(adds):
@@ -229,8 +236,6 @@ def structural_errors(spec: dict) -> list[str]:
             if key in seen:
                 errors.append(f"{where}: {t}.{n} is added twice")
             seen.add(key)
-    if not errors:
-        errors.extend(gate_name_errors(spec))
     return errors
 
 
@@ -295,6 +300,16 @@ def pair_gate_table(spec: dict) -> dict[str, dict]:
     return out
 
 
+def _macro_name_error(pid, name, builder, chosen):
+    if name in builder:
+        return (f"pair {pid}: the build already makes a gate named {name}; "
+                "name the added gate differently")
+    if chosen and name == chosen.get("name"):
+        return (f"pair {pid}: {name} is the default-gate alias; "
+                "name the added gate differently")
+    return None
+
+
 def gate_name_errors(spec: dict) -> list[str]:
     """Two gates of one pair never share a name: an added macro may not take a
     name the builder writes or the default alias, and a default must name a
@@ -304,12 +319,9 @@ def gate_name_errors(spec: dict) -> list[str]:
         d = row["default"]
         chosen = d if d and d.get("by") == "chosen" else None
         for n in row["added"]:
-            if n in row["builder"]:
-                errors.append(f"pair {pid}: the build already makes a gate named {n}; "
-                              "name the added gate differently")
-            elif chosen and n == chosen.get("name"):
-                errors.append(f"pair {pid}: {n} is the default-gate alias; "
-                              "name the added gate differently")
+            why = _macro_name_error(pid, n, row["builder"], chosen)
+            if why:
+                errors.append(why)
         if chosen:
             names = (set(row["builder"]) | set(row["added"])) - {chosen.get("name")}
             if chosen.get("to") not in names:
@@ -1036,9 +1048,79 @@ def _placeholder(f: dict) -> Any:
     return [] if t.split("[")[0] in _LIST_HEADS else 0
 
 
+class LintContext:
+    """Per-request lint facts, built once for a batch of existing additions."""
+
+    def __init__(self, spec: dict):
+        from collections import Counter, defaultdict
+        self.adds = list(spec.get("additions") or [])
+        self.index = SpecIndex(spec)
+        self.shapes = [_shape_errors([a]) if isinstance(a, dict) else [] for a in self.adds]
+        self.counts = Counter(self.key(a) for a in self.adds if self.key(a) is not None)
+        self.bad_shape = any(self.shapes) or any(n > 1 for n in self.counts.values())
+        self.macros, self.defaults = defaultdict(set), defaultdict(list)
+        for i, a in enumerate(self.adds):
+            if not isinstance(a, dict) or not isinstance(a.get("target"), str):
+                continue
+            if a.get("kind") == "macro" and isinstance(a.get("name"), str):
+                self.macros[a["target"]].add(a["name"])
+            if a.get("kind") == "default_gate":
+                self.defaults[a["target"]].append((i, a))
+        self.builders = {quam_pair_id(p): builder_gate_names(spec, p)
+                         for p in spec.get("qubit_pairs") or []}
+
+    @staticmethod
+    def key(a):
+        if not isinstance(a, dict) or not isinstance(a.get("target"), str):
+            return None
+        kind, target = a.get("kind"), a["target"]
+        if kind in ("field", "default_gate"):
+            return kind, target
+        if isinstance(a.get("name"), str):
+            return target, a["name"]
+        return None
+
+    def errors_for(self, i: int) -> list[str]:
+        a = self.adds[i]
+        errors = [e.replace("additions[0]", "this addition") for e in self.shapes[i]]
+        key = self.key(a)
+        if key is not None and self.counts[key] > 1:
+            t, n, kind = a["target"], a.get("name"), a.get("kind")
+            why = (f"{t} is set twice" if kind == "field" else f"{t} has two default gates"
+                   if kind == "default_gate" else f"{t}.{n} is added twice")
+            errors.append("this addition: " + why)
+        if self.bad_shape:
+            return errors
+        target = a.get("target", "")
+        if not _PAIR_MACROS_RE.fullmatch(target):
+            return errors
+        pid = target.split(".")[1]
+        if pid not in self.builders:
+            return errors
+        builder = self.builders[pid]
+        kind, name = a.get("kind"), a.get("name")
+        if kind == "macro":
+            chosen = next((d for j, d in self.defaults[target][:2] if j != i), None)
+            why = _macro_name_error(pid, name, builder, chosen)
+            if why:
+                errors.append(why)
+        elif kind == "default_gate":
+            # No other default can exist here: duplicate defaults were shape errors.
+            for macro in self.macros[target]:
+                before = _macro_name_error(pid, macro, builder, None)
+                after = _macro_name_error(pid, macro, builder, a)
+                if after and after != before:
+                    errors.append(after)
+            names = (set(builder) | self.macros[target]) - {name}
+            if a.get("to") not in names:
+                errors.append(f"pair {pid}: the default gate {a.get('to')} is not one of this pair's gates")
+        return errors
+
+
 def lint_proposal(spec: dict, add: Any, manifest: dict | None, *, author: str = "person",
                   typed=(), structural: bool = True, others: list | None = None,
-                  index: SpecIndex | None = None) -> dict:
+                  index: SpecIndex | None = None, context: LintContext | None = None,
+                  exclude_index: int | None = None) -> dict:
     """Judge one addition. Returns ``{"ok", "errors", "warnings", "card",
     "needs_person"}``: *errors* refuse it, *warnings* are the card's
     conventions it departs from (a person decides), *needs_person* the
@@ -1051,7 +1133,11 @@ def lint_proposal(spec: dict, add: Any, manifest: dict | None, *, author: str = 
         return {"ok": False, "errors": ["an addition must be an object"], "warnings": [],
                 "card": None, "needs_person": []}
     others = [a for a in (spec.get("additions") or []) if isinstance(a, dict)] if others is None else others
-    if structural:
+    if structural and context is not None:
+        errors += context.errors_for(exclude_index)
+        if errors:
+            return {"ok": False, "errors": errors, "warnings": [], "card": None, "needs_person": []}
+    elif structural:
         before = set(structural_errors(dict(spec, additions=others)))
         after = structural_errors(dict(spec, additions=list(others) + [add]))
         n = len(others)

@@ -45697,14 +45697,14 @@ def generate_additions_lint():
         # judged against the others, in one request (one manifest read)
         adds = list(spec.get("additions") or [])
         man = _proposal_manifest(spec, adds)
+        context = additions.LintContext(spec)
         results = []
         for i in idx:
             if not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < len(adds):
                 results.append({"ok": False, "errors": ["no such addition"], "warnings": []})
                 continue
-            others = adds[:i] + adds[i + 1:]
-            results.append(additions.lint_proposal(dict(spec, additions=others), adds[i], man,
-                                                   author="person"))
+            results.append(additions.lint_proposal(spec, adds[i], man, author="person", others=(),
+                                                   index=context.index, context=context, exclude_index=i))
         return jsonify({"ok": True, "results": results})
     add = data.get("addition")
     man = _proposal_manifest(spec, list(spec.get("additions") or []) + [add])
