@@ -35,6 +35,7 @@ async function world(adds, answer) {
   w.confirm = (t) => { w.asked.push(t); return answer !== false; };
   w.undo = [];
   w._wizUndo = { pushRestore: (label, fn) => w.undo.push(fn) };
+  require('./gate_action_fetch.cjs').install(w);
   w.eval(JS);
   const spec = { qubits: ['q1', 'q2'], qubit_pairs: [['q1', 'q2']], pair_gate: 'cz_tunable',
     lines: [{ element: 'q1', line: 'flux' }, { element: 'q2', line: 'flux' }, { element: 'q1-q2', line: 'coupler' }],

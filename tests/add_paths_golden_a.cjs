@@ -76,6 +76,7 @@ function world() {
   const w = dom.window;
   w.fetch = (url) => Promise.resolve({ json: () => Promise.resolve(/lint/.test(String(url)) ? { ok: true, results: [] } : ROLES) });
   w.confirm = () => true;
+  require('./gate_action_fetch.cjs').install(w);
   w.eval(JS);
   return w;
 }
@@ -113,6 +114,7 @@ async function run(shapeName) {
   setv(f.querySelector('.gen-add-name'), 'x_lab');
   setv(f.querySelector('input[data-field="amplitude"]'), '0.25');
   f.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   snap('pulse_xy', { msg: msgOf(f) });
 
   // 2. + Add macro on the qubit (a pointer field from the offered list)
@@ -126,6 +128,7 @@ async function run(shapeName) {
   setv(pin, dl && dl.options.length ? dl.options[0].value : '#/qubits/' + q0 + '/xy/operations/x_lab');
   setv(f.querySelector('input[data-field="rounds"]'), '3');
   f.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   snap('macro_qubit', { offered: dl ? Array.from(dl.options).map(o => o.value) : [] });
 
   // 3. + Readout… on the first qubit's resonator, with the measure macro
@@ -136,6 +139,7 @@ async function run(shapeName) {
   setv(f.querySelector('input[data-field="length"]'), '1000');
   setv(f.querySelector('input[data-field="amplitude"]'), '0.05');
   f.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   snap('readout', { msg: msgOf(f) });
 
   // 4. + CZ… (moving qubit chosen in the form) on every pair
@@ -152,6 +156,7 @@ async function run(shapeName) {
     setv(sec.querySelector('input[data-field="length"]'), '60');
     setv(sec.querySelector('input[data-field="amplitude"]'), '0.12');
     form.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
     snap('cz_moving_' + rid, { msg: msgOf(form) });
   }
 
@@ -174,6 +179,7 @@ async function run(shapeName) {
     }
     setv(form.querySelector('.gen-add-cz-macro input[data-field="wait"]'), '8');
     form.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
     snap('cz_highlow_' + rid, { msg: msgOf(form), where: where });
   }
 
@@ -192,6 +198,7 @@ async function run(shapeName) {
   setv(rsec.querySelector('input[data-field="length"]'), '60');
   setv(rsec.querySelector('input[data-field="amplitude"]'), '0.12');
   rf.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   snap('cz_refused', { msg: msgOf(rf) });
 
   // 8. + Pulsed mode… on a TWPA (only where the chip has one)
@@ -201,6 +208,7 @@ async function run(shapeName) {
     const tf = d.querySelector('.gen-add-twpa');
     setv(tf.querySelector('.gen-add-tw-len'), '200');
     tf.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
     snap('twpa_pulsed', { msg: msgOf(tf) });
   }
   void q1;

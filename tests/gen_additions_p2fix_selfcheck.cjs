@@ -41,6 +41,7 @@ function world(lintAnswer) {
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true, items: [] }) });
     return Promise.resolve({ status: 200, json: () => Promise.resolve(ROLES) });
   };
+  require('./gate_action_fetch.cjs').install(w);
   w.eval(JS);
   return { w, calls };
 }

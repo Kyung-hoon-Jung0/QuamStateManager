@@ -60,6 +60,7 @@ function makeWorld() {
     if (/\/generate\/additions\/lint/.test(url)) return reply({ ok: true, results: [] });
     return new win.Promise(function () {});
   };
+  require('./gate_action_fetch.cjs').install(win);
   new win.Function(TOPO_JS).call(win);
   new win.Function(GEN_JS).call(win);
   new win.Function(ADD_JS).call(win);
@@ -96,7 +97,7 @@ async function mounted(win, G, withUndo) {
 }
 const row = (win) => win.document.querySelector('#gen-pop-tbl-pairs tr[data-rid="q1-q2"]');
 
-function addCz(win, name, moving) {
+async function addCz(win, name, moving) {
   row(win).querySelector('.gen-add-czbtn').click();
   const f = win.document.querySelector('tr.gen-gates-formrow .gen-add-cz');
   change(win, f.querySelector('select.gen-add-cz-class'), 'pkg.gates.CZGate');
@@ -108,6 +109,7 @@ function addCz(win, name, moving) {
   sec.querySelector('input[data-field="length"]').value = '40';
   sec.querySelector('input[data-field="amplitude"]').value = '0.1';
   f.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
 }
 
 (async () => {
@@ -117,10 +119,11 @@ function addCz(win, name, moving) {
   const pairs0 = J(st.spec.populate.pairs);
 
   // U1: the CZ group writes additions + moving_qubit; one press undoes both
-  addCz(win, 'cz_a', 'q2');
+  await addCz(win, 'cz_a', 'q2');
   ok((st.spec.additions || []).length === 2, 'U1 CZ group added (' + J(st.spec.additions) + ')');
   ok(st.spec.populate.pairs['q1-q2'].moving_qubit === 'target', 'U1 moving qubit set');
   ok(win._wizUndo.tryUndo() === true, 'U1 Ctrl+Z consumed');
+  await settle();
   ok(st.spec.additions === undefined, 'U1 additions gone after ONE undo (' + J(st.spec.additions) + ')');
   ok(J(st.spec.populate.pairs) === pairs0, 'U1 populate.pairs back (' + J(st.spec.populate.pairs) + ')');
   ok(!row(win).querySelector('.gen-gate-added'), 'U1 the gate chip is repainted away');
@@ -135,21 +138,24 @@ function addCz(win, name, moving) {
   pf.querySelector('input[data-field="length"]').value = '20';
   pf.querySelector('input[data-field="amplitude"]').value = '0.2';
   pf.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   ok((st.spec.additions || []).length === 1, 'U2 pulse added');
   ok(win.document.querySelector('#addhost .gen-add-item'), 'U2 listed');
   win._wizUndo.tryUndo();
+  await settle();
   ok(st.spec.additions === undefined, 'U2 pulse undone');
   ok(!win.document.querySelector('#addhost .gen-add-item'), 'U2 list repainted without it');
 
   // U3: Default select
-  addCz(win, 'cz_a', null);
-  addCz(win, 'cz_b', null);
+  await addCz(win, 'cz_a', null);
+  await addCz(win, 'cz_b', null);
   const dsel = () => row(win).querySelector('select.gen-gate-default-sel');
   change(win, dsel(), 'cz_a');
   change(win, dsel(), 'cz_b');
   const dg = () => (st.spec.additions || []).filter(a => a.kind === 'default_gate').map(a => a.to).join();
   ok(dg() === 'cz_b', 'U3 default is cz_b');
   win._wizUndo.tryUndo();
+  await settle();
   ok(dg() === 'cz_a', 'U3 one undo returns the previous default (' + dg() + ')');
   ok(dsel().value === 'cz_a', 'U3 the select is repainted');
 
@@ -158,22 +164,25 @@ function addCz(win, name, moving) {
   row(win).querySelector('.gen-gate-rm[data-gate="cz_a"]').click();
   ok(!st.spec.additions.some(a => a.name === 'cz_a' && a.kind === 'macro') && dg() === '', 'U4 gate and its default removed');
   win._wizUndo.tryUndo();
+  await settle();
   ok(J(st.spec.additions) === before, 'U4 one undo brings both back');
 
   // U7: a spec with no populate.pairs at all: the CZ form creates the bucket, the undo removes it
   delete st.spec.populate.pairs;
   st.spec.additions = undefined;
   win.GenAdditions.mount(win.document.getElementById('addhost'), { spec: () => st.spec, changed: () => {} });
-  addCz(win, 'cz_c', 'q2');
+  await settle();
+  await addCz(win, 'cz_c', 'q2');
   ok(st.spec.populate.pairs && st.spec.populate.pairs['q1-q2'].moving_qubit === 'target', 'U7 bucket created');
   win._wizUndo.tryUndo();
+  await settle();
   ok(st.spec.populate.pairs === undefined, 'U7 the created bucket goes with the undo (' + J(st.spec.populate.pairs) + ')');
 
   // U6: no wizard stack -> the edit still lands, nothing throws
   win = makeWorld();
   G = hydrate(win);
   st = await mounted(win, G, false);
-  addCz(win, 'cz_a', null);
+  await addCz(win, 'cz_a', null);
   ok((st.spec.additions || []).length === 2, 'U6 an edit works without the wizard stack');
 
   console.log((fails ? 'FAILED' : 'OK') + ' gen_additions_undo_selfcheck: ' + asserts + ' assertions, ' + fails + ' failed');

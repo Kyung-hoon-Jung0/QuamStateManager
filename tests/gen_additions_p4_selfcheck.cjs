@@ -46,6 +46,7 @@ function world(r) {
   const dom = new JSDOM('<!doctype html><div id="host"></div><div id="rev"></div>', { runScripts: 'outside-only' });
   const w = dom.window;
   w.fetch = () => Promise.resolve({ json: () => Promise.resolve(r) });
+  require('./gate_action_fetch.cjs').install(w);
   w.eval(JS);
   return w;
 }
@@ -82,6 +83,7 @@ async function mounted(r, spec) {
     host.querySelector('input[data-field="weights_real"]').value = '[0.5, -0.25]';
     ok(!!host.querySelector('.gen-add-ro-use') && host.querySelector('.gen-add-ro-use').checked, 'R2 macro checkbox on');
     host.querySelector('.gen-add-ro .gen-add-ok').click();
+  await tick(); await tick();
     const a = spec.additions || [];
     ok(a.length === 2 && a[0].kind === 'pulse' && a[0].target === 'qubits.q1.resonator.operations', 'R2 pulse first ' + JSON.stringify(a));
     ok(a[1] && a[1].kind === 'macro' && a[1].target === 'qubits.q1.macros' && a[1]['class'] === MM &&
@@ -104,6 +106,7 @@ async function mounted(r, spec) {
     host.querySelector('input[data-field="length"]').value = '400';
     host.querySelector('input[data-field="amplitude"]').value = '0.1';
     host.querySelector('.gen-add-ro .gen-add-ok').click();
+  await tick(); await tick();
     ok((spec.additions || []).length === 1 && spec.additions[0].kind === 'pulse', 'R3 pulse only');
   }
   // T1 + T2 + T4
@@ -116,6 +119,7 @@ async function mounted(r, spec) {
     host.querySelector('.gen-add-tw-len').value = '20000';
     ok(host.querySelector('.gen-add-tw-use-active').checked, 'T2 active list on when the root declares it');
     host.querySelector('.gen-add-twpa .gen-add-ok').click();
+  await tick(); await tick();
     const f = spec.additions || [];
     const by = {}; f.forEach(x => { by[x.target] = x; });
     ok(f.every(x => x.kind === 'field'), 'T2 all fields');
@@ -128,11 +132,13 @@ async function mounted(r, spec) {
     host.querySelector('.gen-add-twbtn').click();
     host.querySelector('.gen-add-tw-len').value = '1000';
     host.querySelector('.gen-add-twpa .gen-add-ok').click();
+  await tick(); await tick();
     const lens = spec.additions.filter(x => x.target === 'twpas.twpa1.pump_.operations.pump.length');
     ok(lens.length === 1 && lens[0].value === 1000, 'T4 a second Add replaces');
     host.querySelector('.gen-add-twbtn').click();
     host.querySelector('.gen-add-tw-len').value = '12.5';
     host.querySelector('.gen-add-twpa .gen-add-ok').click();
+  await tick(); await tick();
     ok(/whole number/.test(host.querySelector('.gen-add-twpa .gen-add-msg').textContent), 'T4 non-integer length refused');
   }
   // T1b: a spec TWPA given as {id} (the wizard's own and every reconstructed chip)
@@ -150,6 +156,7 @@ async function mounted(r, spec) {
     ok(!host.querySelector('.gen-add-tw-use-active'), 'T3 no active-list control');
     ok(/does not declare it/.test((host.querySelector('.gen-add-tw-noactive') || {}).textContent || ''), 'T3 reason');
     host.querySelector('.gen-add-twpa .gen-add-ok').click();
+  await tick(); await tick();
     ok(!(spec.additions || []).some(x => x.target === 'active_twpa_names'), 'T3 not written');
   }
   // F1

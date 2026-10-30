@@ -61,6 +61,7 @@ function world() {
   const dom = new JSDOM('<!doctype html><div id="host"></div><div id="rev"></div>', { runScripts: 'outside-only' });
   const w = dom.window;
   w.fetch = () => Promise.resolve({ json: () => Promise.resolve(ROLES) });
+  require('./gate_action_fetch.cjs').install(w);
   w.eval(JS);
   return w;
 }
@@ -75,17 +76,17 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
 (async () => {
   const w = world();
   const GA = w.GenAdditions;
-  // M1
-  const ow = GA.owners(SPEC()).map(o => o.target);
-  ok(JSON.stringify(ow) === JSON.stringify(['qubits.q1.macros', 'qubits.q2.macros', 'qubit_pairs.q1-2.macros']), 'M1 ' + ow);
-  ok(GA.pairId('qA1', 'qB2') === 'qA1-B2' && GA.pairId('q10', 'q11') === 'q10-11', 'M1 builder id');
-
   const spec = SPEC();
   let saves = 0;
   const host = w.document.getElementById('host');
   const ctx = { spec: () => spec, changed: () => { saves++; } };
   GA.mount(host, ctx);
   await tick(); await tick();
+  // M1
+  const ow = GA.owners(SPEC()).map(o => o.target);
+  ok(JSON.stringify(ow) === JSON.stringify(['qubits.q1.macros', 'qubits.q2.macros', 'qubit_pairs.q1-2.macros']), 'M1 ' + ow);
+  ok(GA.pairId('qA1', 'qB2') === 'qA1-B2' && GA.pairId('q10', 'q11') === 'q10-11', 'M1 builder id');
+
   const prow = () => host.querySelector('.gen-add-owner[data-target="qubit_pairs.q1-2.macros"]');
   ok(!!prow(), 'M2 pair macro row');
   // P5: "+ CZ…" is a row action of the Populate pair table, not of the macro list
@@ -108,6 +109,7 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
   zrow.querySelector('input[data-field="amplitude"]').value = '0.1';
   zrow.querySelector('input[data-field="flat_length"]').value = '20';
   zrow.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   ok(spec.additions && spec.additions.length === 1 && !('length' in spec.additions[0].fields), 'U3 inferred default left to the class');
 
   // M2/M3/M4
@@ -123,6 +125,7 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
   prow().querySelector('.gen-add-name').value = 'cz_hand';
   fq.value = '#/qubits/q1/z/operations/p1';
   prow().querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   const m = spec.additions[1];
   ok(m && m.kind === 'macro' && m.target === 'qubit_pairs.q1-2.macros' && m['class'] === 'pkg.gates.CZGate'
      && m.fields.flux_pulse_qubit === '#/qubits/q1/z/operations/p1' && !('phase_shift_control' in m.fields), 'M4 macro written');
@@ -138,6 +141,7 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
      && fr().querySelector('input[data-field="flux_pulse_qubit"]').value === '#/qubits/q1/z/operations/p1', 'E1 prefilled');
   ef.value = '0.25';
   fr().querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   ok(spec.additions.length === 2 && spec.additions[1].fields.phase_shift_control === 0.25, 'E1 replaced in place');
 
   // C1/C2 two-flux group
@@ -155,6 +159,7 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
   ok(amps.length === 2 && amps[0].value === '' && amps[1].value === '', 'C1 amplitudes start empty');
   const n0 = spec.additions.length;
   ptab().querySelector('.gen-add-cz .gen-add-ok').click();
+  await tick(); await tick();
   ok(spec.additions.length === n0 && /requires/.test(ptab().querySelector('.gen-add-cz .gen-add-msg').textContent), 'C2 refused while empty');
   Array.from(ptab().querySelectorAll('.gen-add-cz-pulse')).slice(0, 2).forEach(function (sec, i) {
     sec.querySelector('input[data-field="length"]').value = '48';
@@ -162,6 +167,7 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
     sec.querySelector('input[data-field="flat_length"]').value = '32';
   });
   ptab().querySelector('.gen-add-cz .gen-add-ok').click();
+  await tick(); await tick();
   const g = spec.additions.slice(n0);
   ok(g.length === 3 && g[0].kind === 'pulse' && g[1].kind === 'pulse' && g[2].kind === 'macro', 'C2 pulses then macro');
   ok(g[0].target === 'qubits.q1.z.operations' && g[1].target === 'qubits.q2.z.operations', 'C2 pulse targets');
@@ -181,6 +187,7 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
   sec.querySelector('input[data-field="amplitude"]').value = '0.1';
   sec.querySelector('input[data-field="flat_length"]').value = '20';
   ptab().querySelector('.gen-add-cz .gen-add-ok').click();
+  await tick(); await tick();
   const last = spec.additions[spec.additions.length - 1];
   ok(last.kind === 'macro' && /^#\/qubits\/q2\/z\/operations\//.test(last.fields.flux_pulse_qubit), 'C3 pulse on the chosen qubit');
   ok(spec.populate.pairs && spec.populate.pairs['q1-q2'].moving_qubit === 'target', 'C3 moving qubit written');

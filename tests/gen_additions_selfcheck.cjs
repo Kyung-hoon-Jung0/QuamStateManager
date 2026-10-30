@@ -45,6 +45,7 @@ function world() {
   const dom = new JSDOM('<!doctype html><div id="host"></div><div id="res"></div>', { runScripts: 'outside-only' });
   const w = dom.window;
   w.fetch = () => Promise.resolve({ json: () => Promise.resolve(ROLES) });
+  require('./gate_action_fetch.cjs').install(w);
   w.eval(JS);
   return w;
 }
@@ -90,11 +91,13 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   zrow.querySelector('.gen-add-name').value = 'snz';
   zrow.querySelector('input[data-field="amplitude"]').value = '0.1';
   zrow.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   ok(!spec.additions, 'A7 no spec write when a required field is empty');
   ok(/Required: flat_length/.test(zrow.textContent), 'A7 says which');
 
   zrow.querySelector('input[data-field="flat_length"]').value = '20';
   zrow.querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   ok(Array.isArray(spec.additions) && spec.additions.length === 1, 'A6 one addition');
   const a = spec.additions[0];
   ok(a.kind === 'pulse' && a.target === 'qubits.q1.z.operations' && a.name === 'snz'

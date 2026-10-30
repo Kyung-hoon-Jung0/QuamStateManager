@@ -38,6 +38,7 @@ function world() {
   const w = dom.window;
   w.fetch = () => Promise.resolve({ json: () => Promise.resolve(ROLES) });
   w.confirm = () => true;   // the gate's ✕ asks first (Z3: it names the pulses that go with it)
+  require('./gate_action_fetch.cjs').install(w);
   w.eval(JS);
   return w;
 }
@@ -90,9 +91,11 @@ async function setup(gate) {
   form().querySelector('input[data-field="length"]').value = '40';
   form().querySelector('input[data-field="amplitude"]').value = '0.1';
   form().querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   ok(!s.spec.additions && /already makes a gate named cz_SNZ/.test(form().querySelector('.gen-add-msg').textContent), 'G3 builder name refused');
   form().querySelector('.gen-add-name').value = 'cz_mine';
   form().querySelector('.gen-add-ok').click();
+  await tick(); await tick();
   ok(s.spec.additions && s.spec.additions.filter(a => a.kind === 'macro').length === 1, 'G3 a free name is added');
   ok(JSON.stringify(s.gates()) === JSON.stringify(['cz_SNZ', 'cz_mine']), 'G1 added gate listed in the row ' + s.gates());
 
@@ -107,7 +110,7 @@ async function setup(gate) {
   d = s.spec.additions.filter(a => a.kind === 'default_gate');
   ok(d.length === 1 && d[0].to === 'cz_SNZ', 'G2 replaced, never two');
   // G3 the macro form refuses the alias name
-  ok(/default-gate alias/.test(s.GA.gateNameClash(s.spec, 'qubit_pairs.q1-2.macros', 'cz', -1) || ''), 'G3 alias name refused');
+  ok(/default-gate alias/.test(require('./gate_action_fetch.cjs').compute('resolve', {spec:s.spec,pair:'q1-q2',action:{gate:{name:'cz'},items:[]}}).errors.join('; ') || ''), 'G3 alias name refused');
   change(s.w, dsel(), '');
   ok(!s.spec.additions.some(a => a.kind === 'default_gate'), 'G2 none removes it');
 
@@ -125,7 +128,7 @@ async function setup(gate) {
   ok(JSON.stringify(s.gates()) === JSON.stringify(['cz_coupler']), 'G7 coupler gates ' + s.gates());
   ok(s.row().querySelector('.gen-gate-default').getAttribute('data-gate') === 'cz_coupler'
      && /the build's \(cz_coupler\)/.test(s.row().querySelector('select.gen-gate-default-sel').options[0].textContent), 'G7 the build marks its default');
-  ok(/already makes a gate named cz/.test(s.GA.gateNameClash(s.spec, 'qubit_pairs.q1-2.macros', 'cz', -1) || ''), 'G7 cz is the build\'s on a coupler chip');
+  ok(/already makes a gate named cz/.test(require('./gate_action_fetch.cjs').compute('resolve', {spec:s.spec,pair:'q1-q2',action:{gate:{name:'cz'},items:[]}}).errors.join('; ') || ''), 'G7 cz is the build\'s on a coupler chip');
 
   // G8
   const rev = s.w.document.getElementById('rev');

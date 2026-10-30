@@ -45504,6 +45504,12 @@ def generate_roles():
     GET is a cache read (never spawns); POST runs the role probe (an explicit
     press). ``modules`` (comma list / JSON list) names lab modules to look in --
     lab packages are never walked."""
+    if request.args.get("spec"):
+        from quam_state_manager.core.gate_action import display_context
+        try:
+            return jsonify({"display": display_context(json.loads(request.args["spec"]))})
+        except (ValueError, TypeError, AttributeError) as exc:
+            return jsonify({"error": str(exc)}), 400
     from quam_state_manager.core import role_manifest
     python_path = config_generator.get_selected_env(current_app.instance_path)
     if not python_path:
@@ -45557,6 +45563,21 @@ def generate_roles():
                     "roots": role_manifest.root_capabilities(man),
                     "cards": {"version": deck.get("version"), "hash": deck.get("hash")},
                     "agent_connected": _agent_connected()})
+
+
+@bp.route("/generate/additions/gate-action", methods=["POST"])
+def generate_gate_action():
+    """Read-only CZ choices and bundle, with form numbers left untouched."""
+    from quam_state_manager.core import gate_action
+    data = json_object()
+    spec = data.get("spec")
+    action = data.get("action")
+    if not isinstance(spec, dict) or not isinstance(action, dict):
+        return jsonify({"ok": False, "errors": ["spec and action must be objects"]}), 400
+    try:
+        return jsonify(gate_action.resolve(spec, data.get("pair"), action))
+    except (ValueError, TypeError) as exc:
+        return jsonify({"ok": False, "errors": [str(exc)]}), 400
 
 
 def _proposal_manifest(spec: dict, adds: list) -> dict | None:
