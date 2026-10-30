@@ -54,7 +54,7 @@
   },
   {
    "data": {
-    "amplitude": "0.05",
+    "amplitude": "0.1",
     "coupler_amplitude": "0.0",
     "flat_length": "200",
     "gate_name": "g_cz_bipolar",
@@ -71,7 +71,7 @@
   },
   {
    "data": {
-    "amplitude": "0.05",
+    "amplitude": "0.1",
     "coupler_amplitude": "0.0",
     "flat_length": "200",
     "gate_name": "g_cz_flattop",
@@ -87,7 +87,7 @@
   },
   {
    "data": {
-    "amplitude": "0.05",
+    "amplitude": "0.1",
     "flat_length": "200",
     "gate_name": "g_cz_flattop_erf",
     "gate_type": "cz_flattop_erf",
@@ -103,7 +103,7 @@
   },
   {
    "data": {
-    "amplitude": "0.05",
+    "amplitude": "0.1",
     "coupler_amplitude": "0.0",
     "gate_name": "g_cz_parametric",
     "gate_type": "cz_parametric",
@@ -119,7 +119,7 @@
   },
   {
    "data": {
-    "amplitude": "0.05",
+    "amplitude": "0.1",
     "flat_length": "200",
     "gate_name": "g_cz_snz",
     "gate_type": "cz_snz",
@@ -135,7 +135,7 @@
   },
   {
    "data": {
-    "amplitude": "0.05",
+    "amplitude": "0.1",
     "coupler_amplitude": "0.0",
     "coupler_length": "100",
     "gate_name": "g_cz_unipolar",

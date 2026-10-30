@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
+# One UI fallback. Actual class defaults from a probed manifest remain authoritative.
+FLUX_AMPLITUDE_DEFAULT = 0.1
+
 # ---------------------------------------------------------------------------
 # a pair's 2Q gate names (the builder's convention, read by the wizard)
 # ---------------------------------------------------------------------------
@@ -39,7 +42,7 @@ GATE_TYPES: dict[str, dict[str, Any]] = {
         "label": "CZ Unipolar (square pulse)",
         "arch": "flux",
         "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
+            ("amplitude", "Flux amplitude", FLUX_AMPLITUDE_DEFAULT, "float"),
             ("length", "Flux length (ns)", 100, "int"),
             ("coupler_amplitude", "Coupler amplitude", 0.0, "float"),
             ("coupler_length", "Coupler length (ns)", 100, "int"),
@@ -51,7 +54,7 @@ GATE_TYPES: dict[str, dict[str, Any]] = {
         "label": "CZ Flat-top (Gaussian envelope)",
         "arch": "flux",
         "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
+            ("amplitude", "Flux amplitude", FLUX_AMPLITUDE_DEFAULT, "float"),
             ("flat_length", "Flat length (ns)", 200, "int"),
             ("smoothing_length", "Smoothing length (ns)", 20, "int"),
             ("coupler_amplitude", "Coupler amplitude", 0.0, "float"),
@@ -63,7 +66,7 @@ GATE_TYPES: dict[str, dict[str, Any]] = {
         "label": "CZ Parametric (AC-flux modulated)",
         "arch": "flux",
         "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
+            ("amplitude", "Flux amplitude", FLUX_AMPLITUDE_DEFAULT, "float"),
             ("length", "Flux length (ns)", 100, "int"),
             ("modulation_frequency", "Modulation freq (Hz)", 250_000_000.0, "float"),
             ("coupler_amplitude", "Coupler amplitude", 0.0, "float"),
@@ -103,7 +106,7 @@ ENV_GATE_TYPES: dict[str, dict[str, Any]] = {
         "label": "CZ Bipolar (cosine, net-zero)",
         "arch": "flux",
         "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
+            ("amplitude", "Flux amplitude", FLUX_AMPLITUDE_DEFAULT, "float"),
             ("flat_length", "Flat length (ns)", 200, "int"),
             ("smoothing_length", "Smoothing length (ns)", 20, "int"),
             ("post_zero_padding_length", "Post-zero padding (ns)", 20, "int"),
@@ -116,7 +119,7 @@ ENV_GATE_TYPES: dict[str, dict[str, Any]] = {
         "label": "CZ SNZ (sudden net-zero, qubit line only)",
         "arch": "flux",
         "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
+            ("amplitude", "Flux amplitude", FLUX_AMPLITUDE_DEFAULT, "float"),
             ("flat_length", "Flat length (ns)", 200, "int"),
             ("t_phi_eff", "t_phi_eff (ns)", 0.0, "float"),
             ("padding", "Padding (ns)", 20, "int"),
@@ -128,7 +131,7 @@ ENV_GATE_TYPES: dict[str, dict[str, Any]] = {
         "label": "CZ Flat-top Erf (qubit line only)",
         "arch": "flux",
         "fields": [
-            ("amplitude", "Flux amplitude", 0.05, "float"),
+            ("amplitude", "Flux amplitude", FLUX_AMPLITUDE_DEFAULT, "float"),
             ("flat_length", "Flat length (ns)", 200, "int"),
             ("risetime_samples", "Risetime (samples)", 16, "int"),
             ("post_zero_padding_length", "Post-zero padding (ns)", 20, "int"),

@@ -24,6 +24,8 @@ included with ``creatable=False`` because real chip states use them; the
 
 from __future__ import annotations
 
+from quam_state_manager.core.add_catalog import FLUX_AMPLITUDE_DEFAULT
+
 import math
 from collections import Counter
 from dataclasses import dataclass, field
@@ -141,7 +143,7 @@ _AXIS_ANGLE_OPT = _p(
     "axis_angle", "Axis angle", "float", None, unit="rad",
     doc="IQ axis angle; None targets a single channel / the I port",
 )
-_AMPLITUDE = _p("amplitude", "Amplitude", "float", 0.1, unit="V", required=True)
+_AMPLITUDE = _p("amplitude", "Amplitude", "float", FLUX_AMPLITUDE_DEFAULT, unit="V", required=True)
 
 _READOUT_PARAMS = (
     _p("integration_weights", "Integration weights", "list_float",
