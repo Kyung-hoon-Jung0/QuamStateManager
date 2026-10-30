@@ -76,3 +76,16 @@ def test_rule_is_stored_with_id_and_rev_and_replaced_by_id():
     stored = out["spec"]["addition_rules"]
     assert [x["id"] for x in stored] == ["other", "r9"]
     assert stored[1]["rev"] == 1
+
+
+def test_a_new_rule_without_an_id_applies_with_the_signature_its_check_gave():
+    """The Set-all path sends a rule that has no id yet; the check and the
+    apply must sign the same rule, and the written instances carry the id the
+    apply assigned."""
+    s, r = spec(), rule()
+    r.pop("id", None)
+    plan = rules.expand(s, r, manifest())
+    out = rules.apply(s, r, plan["rule_sig"], ["q1-2"], manifest())
+    assert out["added"] == ["q1-2"]
+    rid = out["rule"]["id"]
+    assert rid and all(a["rule_id"] == rid for a in out["spec"]["additions"])

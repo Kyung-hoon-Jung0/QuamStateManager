@@ -72,7 +72,8 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
             judged.update(status=add_verdict.CANT, reason="excluded from this rule")
         planned = resolved["additions"] if not resolved["errors"] else judged.get("additions", [])
         for a in planned:
-            a["rule_id"] = rule["id"]
+            if rule.get("id"):
+                a["rule_id"] = rule["id"]
             a["copied_value"] = {k: v for k, v in (a.get("fields") or {}).items()
                                  if isinstance(v, (int, float)) and not isinstance(v, bool)}
             if choices.get(pid):
@@ -121,11 +122,13 @@ def apply(spec, rule, rule_sig, pairs, manifest, choices=None):
     Pair defaults (``gate.as_default``) are left untouched here.
     Returns ``{spec, added, skipped, rule}``; the input spec is not changed.
     """
-    rule = deepcopy(rule)
-    rule.setdefault("id", "r" + __import__("uuid").uuid4().hex[:8])
+    # The signature covers the rule exactly as the person checked it; an id
+    # for a new rule is assigned only after the check passed.
     plan = expand(spec, rule, manifest, choices=choices)
     if plan["rule_sig"] != rule_sig:
         raise StaleRule(plan["rule_sig"])
+    rule = deepcopy(rule)
+    rule.setdefault("id", "r" + __import__("uuid").uuid4().hex[:8])
     by_pid = {additions.quam_pair_id(p): row for p, row in zip(spec.get("qubit_pairs") or [], plan["pairs"])}
     choices = choices or {}
     new, added, skipped = deepcopy(spec), [], []
@@ -136,7 +139,10 @@ def apply(spec, rule, rule_sig, pairs, manifest, choices=None):
         elif row["status"] == add_verdict.READY or (
                 row["status"] == add_verdict.NEEDS_LOOK and choices.get(pid) in ("control", "target")
                 and not row.get("errors") and row.get("additions")):
-            new.setdefault("additions", []).extend(deepcopy(row["additions"]))
+            rows = deepcopy(row["additions"])
+            for a in rows:
+                a["rule_id"] = rule["id"]
+            new.setdefault("additions", []).extend(rows)
             added.append(pid)
         else:
             skipped.append({"pair": pid, "reason": row.get("reason") or row["status"]})
