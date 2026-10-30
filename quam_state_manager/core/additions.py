@@ -376,8 +376,30 @@ def _owners(state: dict, add: dict, field: str, manifest: dict | None) -> list[t
                     for n, p in q[moving]]
         return q["control"] + q["target"]
     if field in ("flux_pulse_high", "flux_pulse_low"):
-        return q["control"] + q["target"]
+        # a both-movers gate plays the high pulse on the qubit with the higher
+        # f_01 (ties go to the control) [derived: the class's qubit_high /
+        # qubit_low properties]; unknown frequencies leave either qubit open
+        f = {r: _f01(state, roles[r]) for r in ("control", "target")}
+        if f["control"] is None or f["target"] is None:
+            return q["control"] + q["target"]
+        high = "control" if f["control"] >= f["target"] else "target"
+        pick = high if field == "flux_pulse_high" else ("target" if high == "control" else "control")
+        word = "higher" if field == "flux_pulse_high" else "lower"
+        return [(n.replace(f"(the pair's {pick})", f"(the pair's {pick}, the {word}-frequency qubit)"), p)
+                for n, p in q[pick]]
     return q["control"] + q["target"] + coupler
+
+
+def _f01(state: dict, qubit: str | None) -> float | None:
+    """A qubit's ``f_01`` as a number (followed through a pointer), or None."""
+    if not qubit:
+        return None
+    ok, node = _walk(state, ["qubits", qubit, "f_01"])
+    if ok and is_pointer(node):
+        ok, _, node = _follow(state, ["qubits", qubit, "f_01"], node)
+    if ok and isinstance(node, (int, float)) and not isinstance(node, bool):
+        return float(node)
+    return None
 
 
 def _ops_under(state: dict, path: list[str]) -> dict[str, list[str]]:
