@@ -15,6 +15,8 @@ choice_here (control | target). Numeric field values are copied untouched.
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import json
 
 from quam_state_manager.core import additions
 from quam_state_manager.core.add_names import ADDITION_NAME_RE, pulse_name, unordered_key
@@ -166,8 +168,39 @@ def resolve(doc: dict, pair, action: dict) -> dict:
     if any(a.get("target") == ow["target"] and a.get("name") == name for a in existing):
         errors.append(f"{name} is already added on {ow['pair']}")
     if not is_chip(doc):
-        before = set(additions.gate_name_errors(doc))
-        errors.extend(e for e in additions.gate_name_errors(dict(doc, additions=existing + [macro])) if e not in before)
+        # Only this pair can acquire a new gate-name conflict.
+        local = dict(doc, qubit_pairs=[pair_members(doc, pair)])
+        before = set(additions.gate_name_errors(local))
+        errors.extend(e for e in additions.gate_name_errors(dict(local, additions=existing + [macro])) if e not in before)
     adds.append(macro)
+    inputs = pair_inputs(doc, pair, action)
     return {"ok": not errors, "owner": ow, "choices": choices, "additions": adds,
+            "inputs": inputs, "instance_sig": input_signature(inputs),
             "moving_qubit": moving, "errors": errors, "reason": role_input(doc, pair)["reason"]}
+
+
+def input_signature(inputs: dict) -> str:
+    """Canonical input identity, shared by resolve and the rule diff."""
+    return hashlib.sha1(json.dumps(inputs, sort_keys=True, separators=(",", ":"),
+                                   ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def pair_inputs(doc: dict, pair, rule: dict) -> dict:
+    """Only this pair's role and placement facts belong in its review token."""
+    c, t = pair_members(doc, pair)
+    if is_chip(doc):
+        node = doc["qubit_pairs"].get(additions.quam_pair_id((c, t)), {})
+        lines = {q: doc["qubits"][q].get("z") for q in (c, t)}
+        # Operations are outputs, not placement inputs.
+        lines = {q: {k: v for k, v in (z or {}).items() if k != "operations"}
+                 if z is not None else None for q, z in lines.items()}
+        lines["coupler"] = {k: v for k, v in (node.get("coupler") or {}).items() if k != "operations"}
+        classes = {q: doc["qubits"][q].get("__class__") for q in (c, t)}
+    else:
+        node = ((doc.get("populate") or {}).get("pairs") or {}).get(additions._long((c, t)), {})
+        lines = [ln for ln in doc.get("lines") or [] if
+                 (ln.get("line") in ("flux", "z") and ln.get("element") in (c, t)) or
+                 (ln.get("line") == "coupler" and ln.get("element") == additions._long((c, t)))]
+        classes = {q: (doc.get("qubit_class_overrides") or {}).get(q, doc.get("qubit_class")) for q in (c, t)}
+    return dict(role_input(doc, pair), lines=lines, classes=classes,
+                cz_variant=node.get("cz_variant"), cz_order=node.get("cz_order"), rev=rule.get("rev", 1))

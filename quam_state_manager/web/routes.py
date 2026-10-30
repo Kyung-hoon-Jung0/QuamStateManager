@@ -45617,6 +45617,24 @@ def generate_gate_action():
         return jsonify({"ok": False, "errors": [str(exc)]}), 400
 
 
+@bp.route("/generate/additions/rules/expand", methods=["POST"])
+def generate_rules_expand():
+    """Read-only rule preview; agents may use the same checks as the wizard."""
+    from quam_state_manager.core import addition_rules
+    data = json_object()
+    spec, rule = data.get("spec"), data.get("rule")
+    if not isinstance(spec, dict) or not isinstance(rule, dict):
+        return jsonify(ok=False, error="spec and rule must be objects"), 400
+    try:
+        classes = [{"class": rule.get("gate", {}).get("macro_class")}]
+        classes.extend({"class": i.get("pulse_class")} for i in rule.get("items") or [])
+        man = _proposal_manifest(spec, list(spec.get("additions") or []) + classes)
+        pending = man is None and bool(config_generator.get_selected_env(current_app.instance_path))
+        return jsonify(addition_rules.expand(spec, rule, man, choices=data.get("choices"), pending=pending))
+    except (ValueError, TypeError, KeyError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+
+
 def _proposal_manifest(spec: dict, adds: list) -> dict | None:
     """The cached role manifest covering *adds*' classes (never spawns)."""
     python_path = config_generator.get_selected_env(current_app.instance_path)

@@ -62,7 +62,7 @@ def current_numbers(doc: dict, rule: dict) -> dict:
     return numbers
 
 
-def judge_pairs(doc: dict, pairs, rule: dict, manifest: dict | None = None, *, lab_check=None) -> list[dict]:
+def judge_pairs(doc: dict, pairs, rule: dict, manifest: dict | None = None, *, lab_check=None, index=None) -> list[dict]:
     """One result per pair; ``lab_check(writes, info=...)`` is called ONCE.
 
     A chip adapter supplies the existing _lab_write_refusal bound to its store.
@@ -77,7 +77,7 @@ def judge_pairs(doc: dict, pairs, rule: dict, manifest: dict | None = None, *, l
         source_error = None
     except ValueError as exc:
         numbers, source_error = {}, str(exc)
-    index = None if chip else additions.SpecIndex(doc)
+    index = None if chip else (index if index is not None else additions.SpecIndex(doc))
     for pair in pairs:
         reason_suffix = gate_action.role_input(doc, pair)["reason"]
         result = {"pair": additions.quam_pair_id(gate_action.pair_members(doc, pair)),
