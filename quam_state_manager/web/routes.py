@@ -2075,6 +2075,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # all (measured: it did not). The call is idempotent -- a fresh config
         # answers "already-fresh" and starts nothing.
         _maybe_warm_generated_config(current, current_app.instance_path)
+        _maybe_check_env_upgrade(current, current_app.instance_path)
         _prewarm_search_index(current)
         _maybe_prewarm_lab_worker(current, current_app.instance_path)   # w9/labwarm
         return current
@@ -2185,9 +2186,69 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # already in RAM by the time anyone clicks that pulse. Gated on the
         # chip actually having one: every other chip pays nothing.
         _maybe_warm_generated_config(ctx, current_app.instance_path)
+        _maybe_check_env_upgrade(ctx, current_app.instance_path)
         _prewarm_search_index(ctx)
         _maybe_prewarm_lab_worker(ctx, current_app.instance_path)   # w9/labwarm
         return ctx
+
+
+_env_upgrade_inflight: set[str] = set()
+_env_upgrade_lock = threading.Lock()
+
+
+def _maybe_check_env_upgrade(ctx, inst) -> None:
+    """Queue observation work; activation performs no probe or recording."""
+    from quam_state_manager.core import env_seen
+
+    if not ctx or not ctx.get("path") or not ctx.get("store") or not env_seen.live_context(ctx):
+        return
+    app = current_app._get_current_object()
+    if app.config.get("TESTING") and not app.config.get("SM_ENV_UPGRADE_IN_TESTS"):
+        return
+    key = env_seen.chip_key(ctx["path"])
+    with _env_upgrade_lock:
+        if key in _env_upgrade_inflight:
+            return
+        _env_upgrade_inflight.add(key)
+
+    def run():
+        from quam_state_manager.core import activity, state_env_schema, state_env_baseline
+        try:
+            activity.wait_quiet()
+            if not env_seen.live_context(ctx):
+                return
+            python_path = config_generator.get_selected_env(inst)
+            if not python_path:
+                return
+            manifest = state_env_schema.manifest_for_store(ctx["store"], python_path, inst)
+            if manifest is None:
+                ctx["env_upgrade_error"] = "could not check: environment probe failed"
+                return
+            with ctx["store"]._lock:
+                requested = state_env_schema.harvest_classes(ctx["store"].state)
+            manifest = state_env_baseline.select_classes(manifest, requested)
+            manifest = {**manifest, "schema_format": state_env_schema.SCHEMA_FORMAT}
+            body_key = state_env_baseline.record_baseline(inst, manifest, python_path=python_path)
+            body = state_env_baseline.load_baseline(inst, body_key) if body_key else None
+            if body is None:
+                ctx["env_upgrade_error"] = "could not check: reference recording failed"
+                return
+            ctx["env_upgrade_event"] = env_seen.observe(inst, key, python_path, body, context=ctx)
+            ctx["env_upgrade_body"] = body
+            ctx["env_upgrade_env"] = python_path
+            ctx.pop("env_upgrade_error", None)
+        except Exception:
+            ctx["env_upgrade_error"] = "could not check: environment observation failed"
+            logger.warning("environment observation failed", exc_info=True)
+        finally:
+            with _env_upgrade_lock:
+                _env_upgrade_inflight.discard(key)
+
+    starter = app.config.get("SM_ENV_UPGRADE_STARTER")
+    if starter is not None:
+        starter(run)
+    else:
+        threading.Thread(target=run, daemon=True, name="env-upgrade-observe").start()
 
 
 _schema_warm_inflight: set[str] = set()

@@ -243,6 +243,20 @@ def _hash(value: Any) -> str:
                                      default=str).encode("utf-8")).hexdigest()
 
 
+def select_classes(manifest: dict, class_paths: list[str]) -> dict:
+    """Narrow an env cache union to requested classes and their ancestors."""
+    available = manifest.get("classes") or {}
+    selected = {}
+    stack = list(class_paths)
+    while stack:
+        path = stack.pop()
+        if path in selected or path not in available:
+            continue
+        selected[path] = available[path]
+        stack.extend(available[path].get("bases") or [])
+    return {**manifest, "classes": selected}
+
+
 def normalize_env_path(path: str) -> str:
     """One path identity for aliases and the windowed Windows interpreter."""
     if not path:
@@ -262,6 +276,9 @@ def _protected_keys(instance_path: Any) -> set[str] | None:
             for entry in record.get("envs", {}).values():
                 if entry.get("baseline_key"):
                     keys.add(entry["baseline_key"])
+                pending = (entry.get("pending") or {}).get("previous") or {}
+                if pending.get("baseline_key"):
+                    keys.add(pending["baseline_key"])
         except Exception:  # noqa: BLE001
             return None
     return keys
