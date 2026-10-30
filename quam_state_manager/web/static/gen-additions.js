@@ -1273,6 +1273,7 @@
       if (sa) sa.insertBefore(el("td", { className: "gen-gates-setall" }), sa.children[1] || null);
     }
     var spec = ctx.spec();
+    if (GR()) GR().bindCards(ctx, table);
     var sa2 = table.querySelector("tr.gen-pop-setall");
     if (sa2) {
       var sat = sa2.querySelector("td.gen-gates-setall");
@@ -1656,6 +1657,7 @@
         "The environment's classes have not been read yet, so classes and fields are checked at build time."));
     }
     box.appendChild(wrap);
+    if (window.GenRules && window.GenRules.renderReviewLines) window.GenRules.renderReviewLines(wrap, spec || {});
     return { count: items.length, refused: bad };
   }
 

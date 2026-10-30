@@ -1107,7 +1107,208 @@
     openReview({ ctx: ctx, rule: rule, mode: "reset", pid: pid, opener: opener });
   }
 
-  function renderCards() { /* the Rules card: 6e */ }
+  /* ---- the Rules card (4.12) and the Review lines (4.13) -------------------- */
+
+  var _cardCtx = null, _cardTable = null;
+  var _statusErr = null;       // the server's words when the last status refresh failed
+
+  function bindCards(ctx, table) {
+    _cardCtx = ctx; _cardTable = table;
+    renderCards();
+    refreshStatuses(ctx);
+  }
+
+  function pairIdOf(p) {
+    return window.GenAdditions && window.GenAdditions.pairId ? window.GenAdditions.pairId(String(p[0]), String(p[1])) : String(p[0]) + "-" + String(p[1]);
+  }
+
+  function statusFresh(spec, rule) {
+    var st = rule.id && _status[rule.id];
+    return !!st && st.sig === specSig(spec, rule, null);
+  }
+
+  // Ask the server again for every rule whose last answer is not for the current content.
+  function refreshStatuses(ctx, force) {
+    var spec = ctx.spec();
+    var todo = rulesOf(spec).filter(function (r) { return r.id && (force || !statusFresh(spec, r)); });
+    if (!todo.length) return Promise.resolve([]);
+    var seq = _seq;
+    var ctl = typeof AbortController === "function" ? new AbortController() : null;
+    if (_bg.ctl) { try { _bg.ctl.abort(); } catch (e) { /* done */ } }
+    _bg.ctl = ctl;
+    return Promise.all(todo.map(function (rule) {
+      var sig = specSig(spec, rule, null);
+      return post(EXPAND_URL, { spec: spec, rule: rule }, ctl && ctl.signal).then(function (res) {
+        if (seq !== _seq || sig !== specSig(ctx.spec(), ruleById(ctx.spec(), rule.id) || rule, null)) return null;
+        if (!res.body || res.body.ok === false) {
+          _statusErr = (res.body && res.body.error) || "the server did not answer";
+          return null;
+        }
+        _statusErr = null;
+        noteExpand(rule, res.body, sig);
+        return res.body;
+      }).catch(function (e) {
+        if (!(e && e.name === "AbortError")) _statusErr = String(e && e.message || e);
+        return null;
+      });
+    }));
+  }
+
+  function newReadyRows(rule) {
+    var st = _status[rule.id];
+    if (!st) return [];
+    return Object.keys(st.rows).map(function (k) { return st.rows[k]; })
+      .filter(function (r) { return r.status === G_READY && !r.existing; });
+  }
+  function needRows(rule) {
+    var st = _status[rule.id];
+    if (!st) return [];
+    return Object.keys(st.rows).map(function (k) { return st.rows[k]; }).filter(function (r) { return r.status === G_LOOK; });
+  }
+  function editedRows(rule) {
+    var st = _status[rule.id];
+    if (!st) return [];
+    return Object.keys(st.rows).map(function (k) { return st.rows[k]; }).filter(function (r) { return r.edited; });
+  }
+
+  function cardModel(spec, rule) {
+    var total = (spec.qubit_pairs || []).length, n = countOn(spec, rule);
+    var cls = shortName(rule.gate.macro_class);
+    var info = window.GenAdditions && window.GenAdditions.classInfo ? window.GenAdditions.classInfo(rule.gate.macro_class) : null;
+    var parts = [rule.gate.name, (info && info.label ? info.label + " (" + cls + ")" : cls)];
+    if (rule.source) {
+      var alive = (spec.qubit_pairs || []).some(function (p) { return sameKey(rule.source, pairIdOf(p)); });
+      parts.push("from " + rule.source + (alive ? "" : " (pair deleted)"));
+    } else parts.push("for all pairs (no source)");
+    var cr = spec.pair_gate === "cr";
+    if (cr) parts.push("not applicable to cross-resonance — " + plural(n, "gate") + " kept, nothing applies");
+    else {
+      parts.push("on " + n + " of " + total + " pairs");
+      var ed = editedRows(rule).length;
+      if (ed) parts.push(ed + " edited here");
+    }
+    var needs = cr ? [] : needRows(rule), fresh = cr ? [] : newReadyRows(rule);
+    var second = [];
+    if (needs.length) second.push("◐ " + needs.length + " need" + (needs.length === 1 ? "s" : "") + " a look (" + (needs[0].reason || "pair facts changed") + ")");
+    if (fresh.length) second.push(plural(fresh.length, "new pair") + " " + fresh.map(function (r) { return r.pair; }).join(", "));
+    return { line1: parts.join(" · "), line2: second.join("  ·  "), needs: needs, fresh: fresh, cr: cr };
+  }
+
+  function cardBtn(label, cls, onClick) {
+    var b = el("button", { type: "button", className: "secondary " + cls }, label);
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function renderCards() {
+    var ctx = _cardCtx;
+    if (!ctx || !_cardTable || !_cardTable.isConnected) return;
+    var spec = ctx.spec(), rules = rulesOf(spec);
+    var host = document.getElementById("gen-rule-cards");
+    if (!host) {
+      host = el("div", { id: "gen-rule-cards", className: "gen-rule-cards" });
+      var anchor = _cardTable.closest("#gen-pop-pairs") || _cardTable.parentNode;
+      anchor.parentNode.insertBefore(host, anchor);
+    }
+    var focusedCls = null, focusedRule = null;
+    var act = document.activeElement;
+    if (act && host.contains(act)) {
+      focusedCls = (act.className || "").split(" ").filter(function (c) { return /^gen-rule-card-/.test(c); })[0] || null;
+      focusedRule = act.closest ? (act.closest(".gen-rule-card") || {}).getAttribute && act.closest(".gen-rule-card").getAttribute("data-rule") : null;
+    }
+    var keep = {};
+    rules.forEach(function (rule) {
+      var card = host.querySelector('.gen-rule-card[data-rule="' + rule.id + '"]');
+      if (!card) {
+        card = el("div", { className: "gen-rule-card", "data-rule": rule.id, tabindex: "-1", role: "group", "aria-live": "polite" });
+        host.appendChild(card);
+      }
+      keep[rule.id] = true;
+      card.setAttribute("aria-label", "Rule " + rule.gate.name);
+      var m = cardModel(spec, rule);
+      card.innerHTML = "";
+      card.appendChild(el("div", { className: "gen-rule-card-line1" }, m.line1));
+      if (m.line2) card.appendChild(el("div", { className: "gen-rule-card-line2" }, m.line2));
+      var btns = el("div", { className: "gen-rule-card-btns" });
+      if (m.needs.length) btns.appendChild(cardBtn("Review " + m.needs.length + "…", "gen-rule-card-review", function () {
+        openReview({ ctx: ctx, rule: ruleById(ctx.spec(), rule.id) || rule, mode: "review", opener: btns.querySelector(".gen-rule-card-review") });
+      }));
+      if (m.fresh.length) btns.appendChild(cardBtn(m.fresh.length === 1 ? "Add to " + m.fresh[0].pair : "Add to " + m.fresh.length + " new pairs", "gen-rule-card-addnew", function () {
+        openApply({ ctx: ctx, rule: clone(ruleById(ctx.spec(), rule.id) || rule), opener: btns.querySelector(".gen-rule-card-addnew") });
+      }));
+      if (!m.cr) btns.appendChild(cardBtn("Apply to more pairs…", "gen-rule-card-more", function () {
+        openApply({ ctx: ctx, rule: clone(ruleById(ctx.spec(), rule.id) || rule), opener: btns.querySelector(".gen-rule-card-more") });
+      }));
+      btns.appendChild(cardBtn("Edit rule…", "gen-rule-card-edit", function () { editRule(ctx, rule.id, btns.querySelector(".gen-rule-card-edit")); }));
+      var mb = el("button", { type: "button", className: "secondary gen-rule-card-menu", "aria-label": "Actions for rule " + rule.gate.name,
+                              "aria-haspopup": "menu", "aria-expanded": "false" }, "⋯");
+      mb.addEventListener("click", function () { menu(mb, ruleMenuItems(ctx, rule.id, mb), { label: "Rule " + rule.gate.name }); });
+      btns.appendChild(mb);
+      card.appendChild(btns);
+    });
+    Array.prototype.forEach.call(host.querySelectorAll(".gen-rule-card"), function (c) {
+      if (!keep[c.getAttribute("data-rule")]) c.parentNode.removeChild(c);
+    });
+    if (focusedCls && focusedRule) {
+      var again = host.querySelector('.gen-rule-card[data-rule="' + focusedRule + '"] .' + focusedCls);
+      if (again) again.focus();
+    }
+  }
+
+  function editRule(ctx, ruleId, opener) {
+    var spec = ctx.spec(), rule = ruleById(spec, ruleId);
+    var tr = _cardTable && _cardTable.querySelector("tr.gen-pop-setall");
+    if (!rule || !tr || !window.GenAdditions || !window.GenAdditions.openRuleForm) return;
+    var n = (spec.qubit_pairs || []).length;
+    window.GenAdditions.openRuleForm(tr, ctx, opener, clone(rule), "Save → review " + plural(n, "pair"), function (built) {
+      var sp = ctx.spec();
+      rulesTxn(sp, "edit rule " + built.gate.name);
+      sp.addition_rules = sp.addition_rules.map(function (r) { return r.id === built.id ? built : r; });
+      delete _status[built.id];
+      resetRuleRuntime();
+      ctx.changed();
+      if (window.GenAdditions.refresh) window.GenAdditions.refresh();
+      renderCards();
+      openReview({ ctx: ctx, rule: built, mode: "review", opener: opener });
+    });
+  }
+
+  /* The Review step's lines: computed from the MODEL (+ the last answers), never from the DOM,
+   * because the Additions list may not be mounted (mountAdditionsWhenNear). Pure. */
+  function ruleReviewCounts(spec, status, err) {
+    status = status || _status;
+    var out = [];
+    rulesOf(spec).forEach(function (rule) {
+      var gates = 0, numbers = 0, pairs = {};
+      (spec.additions || []).forEach(function (a) {
+        if (a.rule_id !== rule.id) return;
+        numbers += Object.keys(a.copied_value || {}).length;
+        if (a.kind === "macro") {
+          gates++;
+          pairs[a.target] = 1;
+        }
+      });
+      var line = "rule " + rule.gate.name + ": " + plural(gates, "gate") + " on " + plural(Object.keys(pairs).length, "pair");
+      if (numbers) line += " · " + numbers + " numbers are copied initial values from " + (rule.source || "the form") + " (recalibrate per pair)";
+      var st = status[rule.id];
+      var unreviewed = st ? Object.keys(st.rows).filter(function (k) { return st.rows[k].status === G_LOOK; }).length : 0;
+      if (unreviewed) line += " · " + plural(unreviewed, "pair") + " " + (unreviewed === 1 ? "has" : "have") + " unreviewed changes (Populate › Rule › Review)";
+      if (err) line += " · rules not checked: " + err;
+      out.push(line);
+    });
+    return out;
+  }
+
+  function renderReviewLines(box, spec) {
+    var lines = ruleReviewCounts(spec, _status, _settleErr);
+    if (!lines.length || !box) return null;
+    var ul = el("ul", { className: "gen-add-review-list gen-rule-review-lines" });
+    lines.forEach(function (l) { ul.appendChild(el("li", { className: "gen-rule-review-line" }, l)); });
+    box.appendChild(ul);
+    return ul;
+  }
+  var _settleErr = null;
+
   function focusCard(id, fallback) {
     var card = id && document.querySelector('.gen-rule-card[data-rule="' + id + '"]');
     if (card) { card.focus(); return; }
@@ -1173,6 +1374,9 @@
   }
 
   window.GenRules = {
+    bindCards: bindCards, refreshStatuses: refreshStatuses, ruleReviewCounts: ruleReviewCounts,
+    renderReviewLines: renderReviewLines, editRule: editRule, statusFresh: statusFresh,
+    setSettleError: function (e) { _settleErr = e || null; },
     renameRules: renameRules, rulesOf: rulesOf, ruleById: ruleById, unorderedKey: unorderedKey, specSig: specSig,
     resetRuleRuntime: resetRuleRuntime, reset: resetRuleRuntime, specChanged: specChanged,
     openApply: openApply, closeApply: function () { if (_open) closeApply(_open, "cancel"); },
