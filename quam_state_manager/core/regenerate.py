@@ -65,6 +65,17 @@ def reconstruct_from_folder(
                                                 source_hash=source_hash)
     rec = regen_spec.reconstruct_spec(state, wiring)
     rec.source_hash = source_hash
+    # The chip changed since its build (a recalibration): the exact sidecar
+    # no longer applies, but the objects it ADDED are still additions --
+    # carry that record so the rebuild keeps marking them as such.
+    for cand in (folder, *(Path(d) for d in sidecar_dirs)):
+        carried = regen_spec.sidecar_additions(cand, state)
+        if carried:
+            rec.spec["additions"] = carried
+            rec.info_notes.append(
+                f"{len(carried)} addition{'s' if len(carried) != 1 else ''} carried from this "
+                "chip's build record, with the chip's current values.")
+            break
     return rec
 
 

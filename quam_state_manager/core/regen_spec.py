@@ -26,6 +26,7 @@ this best-effort reconstruction (exact vs inferred). See
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -581,6 +582,58 @@ def load_spec_sidecar(folder: Path | str, state: dict, wiring: dict) -> dict | N
         return spec if isinstance(spec, dict) else None
     except (OSError, ValueError):
         return None
+
+
+def _at(root, segs):
+    node = root
+    for k in segs:
+        if not isinstance(node, dict) or k not in node:
+            return _MISSING
+        node = node[k]
+    return node
+
+
+_MISSING = object()
+
+
+def sidecar_additions(folder: Path | str, state: dict) -> list[dict]:
+    """The additions record of *folder*'s spec sidecar, for a chip that
+    CHANGED since that build (a recalibration moves the content hash, so the
+    exact sidecar no longer applies -- but the objects it added are still
+    the chip's additions). Kept: each addition whose object still exists in
+    *state*, with its values re-read from *state* (the chip's current
+    numbers, never the build's). Best-effort -- never raises."""
+    try:
+        p = Path(folder) / _SIDECAR_DIR / _SIDECAR_FILE
+        if not p.is_file():
+            return []
+        payload = json.loads(p.read_text(encoding="utf-8"))
+        adds = ((payload or {}).get("spec") or {}).get("additions") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    out: list[dict] = []
+    for a in adds:
+        if not isinstance(a, dict):
+            continue
+        b = copy.deepcopy(a)
+        kind = b.get("kind")
+        tgt = [s for s in str(b.get("target") or "").split(".") if s]
+        if kind == "field":
+            cur = _at(state, tgt)
+            if cur is _MISSING:
+                continue
+            b["value"] = copy.deepcopy(cur)
+        elif kind == "default_gate":
+            if _at(state, tgt + [str(b.get("name") or "cz")]) is _MISSING:
+                continue
+        else:
+            obj = _at(state, tgt + [str(b.get("name") or "")])
+            if not isinstance(obj, dict):
+                continue
+            flds = b.get("fields") if isinstance(b.get("fields"), dict) else {}
+            b["fields"] = {k: copy.deepcopy(obj[k]) if k in obj else v for k, v in flds.items()}
+        out.append(b)
+    return out
 
 
 def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:

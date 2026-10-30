@@ -89,3 +89,46 @@ def test_wizard_p2fix_selfcheck():
         pytest.skip("jsdom not installed")
     assert p.returncode == 0, p.stdout + p.stderr
     assert p.stdout.startswith("ok ")
+
+
+# -- a recalibrated chip keeps its additions record through Re-generate -----
+def _chip_with_addition(tmp_path):
+    import json
+    from quam_state_manager.core import regen_spec
+    state = {"qubits": {"q1": {"xy": {"operations": {
+        "x_lab": {"__class__": "labpkg.pulses.LabPulse", "length": 40, "amplitude": 0.1}}}}}}
+    wiring = {"wiring": {"qubits": {"q1": {}}}}
+    d = tmp_path / "chip"
+    d.mkdir()
+    (d / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (d / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+    spec = {"qubits": ["q1"], "additions": [
+        {"kind": "pulse", "target": "qubits.q1.xy.operations", "name": "x_lab",
+         "class": "labpkg.pulses.LabPulse", "fields": {"length": 40, "amplitude": 0.1},
+         "env": {"python": "py", "versions": {}}},
+        {"kind": "pulse", "target": "qubits.q1.xy.operations", "name": "gone",
+         "class": "labpkg.pulses.LabPulse", "fields": {}}]}
+    regen_spec.write_spec_sidecar(d, spec, state, wiring)
+    return d, state, wiring
+
+
+def test_recalibrated_chip_keeps_its_additions(tmp_path):
+    import json
+    from quam_state_manager.core import regenerate
+    d, state, wiring = _chip_with_addition(tmp_path)
+    # a recalibration: the content hash moves, the exact sidecar no longer applies
+    state["qubits"]["q1"]["xy"]["operations"]["x_lab"]["amplitude"] = 0.237
+    (d / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    rec = regenerate.reconstruct_from_folder(d)
+    assert not rec.exact
+    adds = rec.spec.get("additions") or []
+    assert [a["name"] for a in adds] == ["x_lab"], adds          # an object that is gone is not carried
+    assert adds[0]["fields"]["amplitude"] == 0.237               # the chip's current number, never the build's
+    assert adds[0].get("env"), "the build record (the wizard's 'carried' marking) survives"
+
+
+def test_unchanged_chip_still_uses_the_exact_sidecar(tmp_path):
+    from quam_state_manager.core import regenerate
+    d, _, _ = _chip_with_addition(tmp_path)
+    rec = regenerate.reconstruct_from_folder(d)
+    assert rec.exact and len(rec.spec["additions"]) == 2
