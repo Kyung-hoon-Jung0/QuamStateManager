@@ -10,7 +10,7 @@
     return result;
   }
   function notice(text) {
-    const node = document.getElementById('env-rename-result');
+    const node = document.getElementById('env-rename-result') || document.getElementById('env-upgrade-status');
     if (node) node.textContent = text;
     else if (window.showToast) window.showToast(text, 'info');
   }
@@ -22,10 +22,32 @@
         confirmed: true, meaning_unchanged: !!row.querySelector('.env-rename-meaning:checked')};
     });
   }
+  function refreshCard() {
+    // the card re-polls itself (hx-trigger every 2s) while the check runs
+    if (window.htmx && document.getElementById('diag-env-card')) {
+      window.htmx.ajax('GET', '/diagnostics/env-card?poll=1', {target: '#diag-env-card', swap: 'outerHTML'});
+    }
+  }
+  function replaceReport(html) {
+    const target = document.getElementById('env-upgrade-report');
+    if (!target) return;
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    const fresh = holder.querySelector('#env-upgrade-report');
+    if (!fresh) return;
+    target.replaceWith(fresh);
+    if (window.htmx) window.htmx.process(fresh);
+  }
   window.EnvUpgrade = {
+    _replaceReport: replaceReport,
     check: async function (python) {
-      try { await post('check', {python: python}); notice('Check queued; refresh Diagnostics when it finishes.'); }
-      catch (error) { notice(error.message); }
+      const button = document.getElementById('env-upgrade-check');
+      if (button) button.disabled = true;
+      try {
+        await post('check', {python: python});
+        notice('Checking…');
+        refreshCard();
+      } catch (error) { notice(error.message); if (button) button.disabled = false; }
     },
     acknowledge: async function () {
       try { await post('acknowledge'); window.htmx.ajax('GET', '/diagnostics/env-card', '#diag-env-card'); }
@@ -65,11 +87,13 @@
           headers: {'Content-Type': 'application/json'}, body: JSON.stringify({reference: button.dataset.key,
             python: row.querySelector('.env-reference-python').value,
             name_filter: row.querySelector('.env-reference-filter').value})});
-        if (!response.ok) throw new Error('Comparison could not finish');
+        if (!response.ok) {
+          let reason = 'Comparison could not finish';
+          try { reason = (await response.json()).error || reason; } catch (ignored) { /* not JSON */ }
+          throw new Error(reason);
+        }
         const html = await response.text();
-        const target = document.getElementById('env-upgrade-report');
-        if (window.htmx) window.htmx.swap(target, html, {swapStyle: 'outerHTML'});
-        else target.outerHTML = html;
+        replaceReport(html);
       } catch (error) { notice(error.message); } finally { button.disabled = false; }
     },
     removeReference: async function (button) {

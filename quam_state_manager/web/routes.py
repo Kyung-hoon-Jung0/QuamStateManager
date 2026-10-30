@@ -2376,17 +2376,37 @@ def _chip_needs_generated_config(store, ctx: dict | None = None,
 
 def _record_env_waveform(ctx, inst, python_path, outcome):
     from quam_state_manager.core import env_seen, waveform_refs
-    if not env_seen.live_context(ctx) or ctx["store"].change_log:
+    if not env_seen.live_context(ctx):
+        ctx["env_reference_status"] = "Reference not recorded: this is not a live state"
+        return None
+    if ctx["store"].change_log:
+        ctx["env_reference_status"] = "Reference not recorded: the state has unapplied edits"
         return None
     body = ctx.get("env_upgrade_body")
     if body is None:
         ctx["env_reference_pending"] = outcome
+        ctx["env_reference_status"] = "Reference waits for the environment check to finish"
         return None
     if env_seen.normalize_env_path(ctx.get("env_upgrade_env") or python_path) != env_seen.normalize_env_path(python_path):
+        ctx["env_reference_status"] = "Reference not recorded: the config ran in a different env than the check"
         return None
+    warnings = ((outcome.get("result") or {}).get("warnings") or [])
     key = waveform_refs.record(inst, env_seen.chip_key(ctx["path"]), python_path, body,
                                outcome, context=ctx)
-    ctx["env_reference_status"] = "reference recorded" if key else "reference not recorded"
+    if key:
+        path = Path(inst) / "waveform_refs" / f"{key}.json"
+        try:
+            size = path.stat().st_size
+            count = len(safe_io.read_json(path).get("traces") or {})
+        except (OSError, ValueError):
+            size, count = 0, 0
+        text = f"{size / 1048576:.1f} MB" if size >= 1048576 else f"{max(1, round(size / 1024))} KB"
+        ctx["env_reference_status"] = f"Reference recorded: {count} waveforms, {text}"
+    elif warnings:
+        ctx["env_reference_status"] = (f"Reference not recorded: generate_config() reported {len(warnings)} "
+                                       "warning(s), so the config is partial")
+    else:
+        ctx["env_reference_status"] = "Reference not recorded: the config could not be captured"
     return key
 
 
@@ -47316,7 +47336,8 @@ def diagnostics_env_card():
     # Types card / findings / pill re-read the new schema through their
     # existing diagnostics-changed listeners -- they kept the pre-probe count
     # until a reload. A plain GET never triggers (no loop, no new poller).
-    if request.args.get("poll") == "1" and not env_card.get("probing"):
+    if (request.args.get("poll") == "1" and not env_card.get("probing")
+            and not (env_card.get("upgrade") or {}).get("checking")):
         resp.headers["HX-Trigger"] = "diagnostics-changed"
     return resp
 
@@ -47823,6 +47844,9 @@ def config_regenerate():
         return resp
 
     err = outcome.get("error") or "previewer reported an error"
+    _failed_ctx = _active_ctx()
+    if _failed_ctx:
+        _failed_ctx["env_reference_status"] = f"Reference not recorded: config generation failed ({str(err)[:300]})"
     trace = ""
     if outcome.get("result"):
         trace = outcome["result"].get("traceback") or ""

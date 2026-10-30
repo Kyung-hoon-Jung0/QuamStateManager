@@ -16197,3 +16197,9 @@ td.gen-gates { min-width: 12rem; }
 .gen-add-prop .gen-add-field { display: inline-flex; gap: 0.4rem; align-items: center; margin-right: 0.8rem; font-size: 0.85em; }
 .gen-add-prop .gen-add-field input { width: 9rem; margin: 0; padding: 0.15rem 0.4rem; height: auto; }
 .landing-agent-line { margin: 0.5rem 0 0; font-size: 0.85em; }
+
+/* env-upgrade card: long class paths and interpreter paths wrap, never widen the pane */
+.env-upgrade-report { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.env-upgrade-report code, .env-upgrade-report pre { overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; }
+.env-upgrade-report table { table-layout: fixed; width: 100%; }
+.env-upgrade-report .env-sig-table th { width: 9rem; text-align: left; }

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import secrets
 import tempfile
+from datetime import datetime
 
 from flask import current_app, jsonify, render_template, request
 
@@ -58,6 +59,68 @@ def _legacy_acknowledged(inst, transition, body):
     seen = baseline._load_index(inst).get("seen_transitions") or {}
     return next((key + ":" + transition["sig"] for key in keys
                  if (seen.get(key) or {}).get("sig") == transition["sig"]), None)
+
+
+def env_name(python_path):
+    """The env's folder name: python.exe sits in the env root (Windows) or in bin/."""
+    if not python_path:
+        return ""
+    folder = Path(python_path).parent
+    if folder.name.lower() in ("bin", "scripts"):
+        folder = folder.parent
+    return folder.name or str(python_path)
+
+
+def local_minute(stamp):
+    try:
+        return datetime.fromisoformat(str(stamp)).astimezone().strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return str(stamp or "")
+
+
+def size_text(size):
+    size = int(size or 0)
+    return f"{size / 1048576:.1f} MB" if size >= 1048576 else f"{max(1, round(size / 1024))} KB"
+
+
+def checking(ctx):
+    """True while a background environment check for this chip is in flight."""
+    from quam_state_manager.web import routes
+    key = env_seen.chip_key((ctx or {}).get("path") or "")
+    with routes._env_upgrade_lock:
+        return any(k.startswith(key + "|") for k in routes._env_upgrade_inflight)
+
+
+def _probe_versions(inst, python_path):
+    entry = config_generator._load_probe_cache(inst).get(python_path) or {}
+    versions = (entry.get("result") or {}).get("versions") or {}
+    return {k: v for k, v in versions.items() if k in env_seen.VERSIONS and v}
+
+
+def present_references(inst, key):
+    rows = []
+    for reference in waveform_refs.list_references(inst, key):
+        rows.append({**reference, "env_name": env_name(reference.get("python_path")),
+                     "local_time": local_minute(reference.get("recorded_at")),
+                     "size_text": size_text(reference.get("size")),
+                     "waveforms": len(reference.get("traces") or {})})
+    return rows
+
+
+def compare_rows(case):
+    """Waveform rows for the table: differing first, identical folded."""
+    rows = case.get("rows") or []
+    order = {"differs": 0, "not comparable": 1, "numerically equal": 2, "bit-identical": 3}
+    shown = sorted((r for r in rows if r.get("label") != "bit-identical"),
+                   key=lambda r: order.get(r.get("label"), 1))
+    identical = [r for r in rows if r.get("label") == "bit-identical"]
+    differ = sum(1 for r in rows if r.get("label") == "differs")
+    total = len(rows)
+    if total and len(identical) == total:
+        summary = f"All {total} waveforms are bit-identical to the reference"
+    else:
+        summary = f"{differ} of {total} differ"
+    return {"shown": shown, "identical": identical, "summary": summary, "total": total}
 
 
 def model(ctx, inst):
@@ -113,7 +176,23 @@ def model(ctx, inst):
     raw_body = {**body, "classes": {path: {**entry, "fields": env_upgrade._fields(entry)}
                                    for path, entry in body.get("classes", {}).items()}}
     resolved = type_verdicts.resolve_for_manifest(inst, raw_body)
-    return {"report": report, "env": env, "versions": body.get("versions") or {},
+    selected = ctx.get("env_upgrade_env") or config_generator.get_selected_env(inst)
+    versions = body.get("versions") or (_probe_versions(inst, selected) if selected else {})
+    event = (report or {}).get("event") or {}
+    transition_seen = bool(report and event.get("changed") and not event.get("first"))
+    consequence = bool(report and any(report["cases"][n]["rows"] for n in ("2", "3", "4", "5", "6")))
+    entry = next((e for e in baseline.list_baselines(inst) if e.get("key") == body.get("key")), {})
+    refs = present_references(inst, key) if ctx.get("path") else []
+    if report and not transition_seen and report["cases"]["6"].get("message") == env_upgrade.NO_REFERENCE:
+        report["cases"]["6"] = {**report["cases"]["6"],
+                                "message": "not compared: no environment change"}
+    return {"report": report, "env": env, "versions": versions,
+            "env_name": env_name(selected), "remembered_name": env_name(remembered), "no_env": not selected,
+            "checking": checking(ctx), "transition": transition_seen, "consequence": consequence,
+            "since": local_minute(entry.get("first_seen") or body.get("recorded_at"))[:10],
+            "latest_reference": refs[0] if refs else None,
+            "case_names": env_upgrade.CASE_NAMES,
+            "compare": compare_rows((report or {}).get("cases", {}).get("6") or {}),
             "schema_transition": transition, "schema_rows": _env_change_rows(transition, resolved),
             "schema_verdicts": resolved,
             "remembered": remembered if remembered and baseline.normalize_env_path(remembered) !=
@@ -164,8 +243,15 @@ def dispatch(action):
             lines += [view["error"] or "could not check: report not recorded"]
         return "\n".join([*lines, view["footer"]]), 200, {"Content-Type": "text/plain; charset=utf-8"}
     if action == "references":
-        refs = waveform_refs.list_references(inst, key)
-        return render_template("_env_upgrade_references.html", references=refs)
+        try:
+            envs = [{"name": e.get("name"), "python": e.get("python")}
+                    for e in config_generator.discover_envs() if e.get("python")]
+        except Exception:  # noqa: BLE001 -- discovery failure only empties the list
+            envs = []
+        return render_template("_env_upgrade_references.html", references=present_references(inst, key),
+                               envs=envs, selected=view["env"] if not view["no_env"] else "")
+    if action == "status":
+        return jsonify(ok=True, checking=view["checking"])
     if request.method != "POST":
         return jsonify(error="use an explicit action"), 405
     payload = request.get_json(silent=True) or request.form
@@ -173,8 +259,20 @@ def dispatch(action):
         if action == "check":
             if not view["editable"]:
                 raise ValueError("environment history checks need a writable live state")
+            if not (payload.get("python") or not view["no_env"]):
+                raise ValueError("No Python environment selected; pick one in Generate Config first")
+            if payload.get("python") and not config_generator.known_interpreter(payload["python"], inst):
+                raise ValueError("that environment is not one SM discovered")
             routes._maybe_check_env_upgrade(ctx, inst, python_path_override=payload.get("python"))
-            return jsonify(ok=True, message="check queued")
+            return jsonify(ok=True, checking=checking(ctx), message="Checking...")
+        if action == "record":
+            if not view["editable"]:
+                raise ValueError("a reference is recorded for a writable live state only")
+            if view["no_env"]:
+                raise ValueError("No Python environment selected; pick one in Generate Config first")
+            ctx["env_reference_status"] = None
+            routes.config_regenerate()
+            return render_template("_env_upgrade_card.html", upgrade=model(ctx, inst))
         if action == "acknowledge":
             report = view["report"]
             if not report or not report.get("banner"):
@@ -192,9 +290,11 @@ def dispatch(action):
                 (Path(inst) / "waveform_refs" / f"{reference_key}.json").unlink()
                 return jsonify(ok=True)
             python = payload.get("python") or env
+            if not config_generator.known_interpreter(python, inst, also=[reference.get("python_path")]):
+                raise ValueError("choose an environment SM discovered")
             comparison = waveform_refs.compare(inst, reference_key, python,
                                                  name_filter=payload.get("name_filter") or "")
-            comparison["current_env"] = python
+            comparison["current_env"] = env_name(python)
             ctx["env_upgrade_report"]["cases"]["6"] = {"case": 6, **comparison}
             ctx["env_upgrade_report"]["non_waveform"] = comparison.get("non_waveform") or []
             return render_template("_env_upgrade_card.html", upgrade=model(ctx, inst))

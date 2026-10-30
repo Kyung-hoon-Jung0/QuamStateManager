@@ -106,8 +106,11 @@ class Base(QuamRoot):
     assert result["cases"]["6"]["rows"][0]["onset_lag"] == 3
     assert "VERDICT case 6: found" in "\n".join(result["verdicts"])
     assert all(result["cases"][str(n)]["status"] == "none_found" for n in range(1, 5))
-    # The fixture's save() guard really differs from QuamRoot.save; case 5 must name only it.
-    assert {row["method"] for row in result["cases"]["5"]["rows"]} == {"save"}
+    # The fixture's save() guard differs from QuamRoot.save, but the parent did not change
+    # since the reference: an FYI, never an upgrade finding.
+    assert result["cases"]["5"]["rows"] == []
+    assert any("lab override signature differs from parent (unchanged since reference)" in text
+               and text.endswith(".save") for text in result["fyi"])
     assert {path.name: path.read_bytes() for path in command_folder.iterdir()} == before
 
 

@@ -35,8 +35,11 @@ def metrics(before: list[float], after: list[float], threshold: float = 1e-12) -
                      (before[i] if i < len(before) else 0))
                  for i in range(max(len(before), len(after)))), default=0)
     peak = max(map(abs, before), default=0)
+    reason = ("" if onset_old is not None and onset_new is not None else
+              "all-zero waveform" if onset_old is None and onset_new is None else
+              "no onset in the reference" if onset_old is None else "no onset in the current env")
     return {"onset_lag": onset_new - onset_old if onset_old is not None and onset_new is not None else None,
-            "lag_unit": "samples", "length_difference": len(after) - len(before),
+            "onset_reason": reason, "lag_unit": "samples", "length_difference": len(after) - len(before),
             "relative_deviation": delta / peak if peak else (0 if delta == 0 else None)}
 
 

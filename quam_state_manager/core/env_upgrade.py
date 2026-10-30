@@ -8,6 +8,8 @@ from quam_state_manager.core import state_env_baseline as baseline
 from quam_state_manager.core.state_env_validate import analyze_state
 
 OLDER_REFERENCE = "not checked: reference recorded by an older SM"
+CASE_NAMES = {"1": "new optional fields", "2": "new required fields", "3": "fields gone / renamed",
+              "4": "classes that no longer import", "5": "override signatures", "6": "waveforms"}
 SIGNATURE_HEADING = ("May fail at run time \u2014 signature differs "
                      "(heuristic; the call site is not checked)")
 WAVEFORM_SCOPE = "samples written to the QM config \u2014 not measured hardware timing"
@@ -144,10 +146,11 @@ def report(state: dict, current: dict | None, reference: dict | None = None, *,
                          reference.get("schema_format") == current.get("schema_format") == 4)
     if not reference_current:
         cases["1"] = _case(1, message=OLDER_REFERENCE if reference else "not checked: no schema reference")
-        cases["5"] = _case(5, message=OLDER_REFERENCE if reference else "not checked: no schema reference")
+        cases["5"] = _case(5, message=OLDER_REFERENCE if reference else "not checked: no reference")
     else:
         additions = []
         signatures = []
+        unreferenced = []
         rename_candidates = {(row["defining_class"], c["field"])
                              for row in unknown for c in row["candidates"]}
         for path, entry in classes.items():
@@ -164,12 +167,24 @@ def report(state: dict, current: dict | None, reference: dict | None = None, *,
             for method, sig in (entry.get("signatures") or {}).items():
                 if sig.get("error"):
                     continue
-                if _signature_shape(sig.get("own")) != _signature_shape(sig.get("parent")):
+                old_sig = (old_entry.get("signatures") or {}).get(method) or {}
+                reference_parent = old_sig.get("parent")
+                if reference_parent is None or old_sig.get("error"):
+                    unreferenced.append(f"{path}.{method}")
+                    continue
+                own, parent = _signature_shape(sig.get("own")), _signature_shape(sig.get("parent"))
+                if parent != _signature_shape(reference_parent):
+                    # the upgrade changed the call contract under the lab's override
                     signatures.append({"class": path, "method": method, **sig,
-                        "reference_parent": ((old_entry.get("signatures") or {}).get(method) or {}).get("parent"),
-                        "label": "signatures differ", "heuristic": True})
+                        "reference_parent": reference_parent,
+                        "label": "parent signature changed since the reference", "heuristic": True})
+                elif own != parent:
+                    result["fyi"].append(f"lab override signature differs from parent (unchanged since "
+                                         f"reference): {path}.{method}")
         cases["1"] = _case(1, additions)
         cases["5"] = _case(5, signatures)
+        if unreferenced and not signatures:
+            cases["5"] = _case(5, message=f"not checked: no reference signature for {len(unreferenced)} methods")
         if any("bases" not in e or "signatures" not in e for e in previous.values()):
             cases["1"] = _case(1, message=OLDER_REFERENCE)
             cases["5"] = _case(5, message=OLDER_REFERENCE)

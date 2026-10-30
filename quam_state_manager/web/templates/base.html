@@ -1891,6 +1891,7 @@
 
         // Auto-expand inspector when content is swapped in (qubit click, search, etc.)
         scope.listen(document.body, "htmx:afterSwap", function(evt) {
+            if (!evt.detail || !evt.detail.target) return;
             var tid = evt.detail.target.id;
 
             if (tid === "status-bar") {

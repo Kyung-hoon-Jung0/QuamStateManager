@@ -23,8 +23,10 @@ def config(samples, *, name="cz_test"):
 
 def test_metrics_numerical_examples():
     result = refs.metrics([0, 2, 0], [0, 0, 0, 2, 0])
-    assert result == {"onset_lag": 2, "lag_unit": "samples", "length_difference": 2,
+    assert result == {"onset_lag": 2, "onset_reason": "", "lag_unit": "samples", "length_difference": 2,
                       "relative_deviation": 1.0}
+    zero = refs.metrics([0, 0], [0, 0])
+    assert zero["onset_lag"] is None and zero["onset_reason"] == "all-zero waveform"
     assert refs.metrics([2, 4], [1, 5])["relative_deviation"] == .25
     assert refs.metrics([0], [0])["relative_deviation"] == 0
     assert refs.metrics([0], [1])["relative_deviation"] is None

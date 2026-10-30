@@ -1,67 +1,87 @@
 <section id="env-upgrade-report" class="env-upgrade-report">
-  <p><strong>Checked in:</strong> <code>{{ upgrade.env }}</code>
-    ({% for name, version in upgrade.versions.items() %}{{ name }} {{ version }}{% if not loop.last %}, {% endif %}{% endfor %})</p>
+  {% set needs_env = 'No Python environment selected; pick one in Generate Config' %}
+  {% if upgrade.no_env %}
+  <p class="env-upgrade-noenv">No Python environment selected. <a href="/generate" hx-get="/generate" hx-target="#table-pane" hx-push-url="true">Pick one in Generate Config</a> to check this state against it.</p>
+  {% else %}
+  <p><strong>Checked in:</strong> <code title="{{ upgrade.env }}">{{ upgrade.env_name or upgrade.env }}</code>
+    {% if upgrade.versions %}({% for name, version in upgrade.versions.items() %}{{ name }} {{ version }}{% if not loop.last %}, {% endif %}{% endfor %}){% endif %}</p>
+  {% endif %}
   {% if upgrade.remembered %}<p>This project's remembered environment is
-    <code>{{ upgrade.remembered }}</code>; this check did not run there
+    <code title="{{ upgrade.remembered }}">{{ upgrade.remembered_name }}</code>; this check did not run there
     <button class="btn-sm" data-python="{{ upgrade.remembered }}" onclick="EnvUpgrade.check(this.dataset.python)">Check it</button></p>{% endif %}
-  {% if upgrade.recording %}<p class="muted">{{ upgrade.recording }}</p>{% endif %}
   {% if upgrade.error %}<p>{{ upgrade.error }}</p>{% endif %}
+  {% if upgrade.checking %}<p class="env-upgrade-checking" role="status">Checking {{ upgrade.env_name }}&hellip; <progress></progress></p>{% endif %}
   {% if upgrade.report %}
     {% set report = upgrade.report %}
-    {% if report.event.direction %}<p>{{ report.event.direction }}</p>{% endif %}
+    {% set prominent = upgrade.transition or upgrade.consequence %}
+    {% if not prominent %}
+    <p class="env-upgrade-compact">No environment change since {{ upgrade.since or 'the first check' }}.
+      {% if upgrade.latest_reference %}Reference recorded {{ upgrade.latest_reference.local_time }}.{% else %}No reference recorded yet.{% endif %}</p>
+    <details class="env-upgrade-details"><summary>Details</summary>
+    {% elif report.event.direction %}<p>{{ report.event.direction }}</p>
+    {% endif %}
     {% if upgrade.all_clear %}<p>Checked 5 kinds of change; none found</p>{% endif %}
     {% for heading, numbers in [('Stops loading', ['2','3','4']), (upgrade.signature_heading, ['5']), ('Changes output', ['6']), ('FYI', ['1'])] %}
-    <details {% if heading != 'FYI' %}open{% endif %}>
+    <details {% if heading != 'FYI' and prominent %}open{% endif %}>
       <summary><strong>{{ heading }}</strong></summary>
       {% if heading == 'Changes output' %}<p>{{ report.waveform_scope }}</p>{% endif %}
       {% for number in numbers %}{% set case = report.cases[number] %}
-      <p>Case {{ number }}: {{ case.message }}</p>
-      {% if number == '6' and not case.rows and upgrade.previous_not_installed %}<p>the previous version is not installed in any environment SM knows; install it in a separate env to compare</p>{% endif %}
+      <p class="env-case-line">{{ upgrade.case_names[number] | capitalize }}: {{ case.message }}</p>
+      {% if number == '6' and not case.rows and upgrade.previous_not_installed and upgrade.transition %}<p>the previous version is not installed in any environment SM knows; install it in a separate env to compare</p>{% endif %}
       {% if number == '6' and case.reference_state_hash %}<p>State {{ case.reference_state_hash }} &rarr; {{ case.current_state_hash }}
         {% if case.current_env %}in <code>{{ case.current_env }}</code>{% endif %}</p>{% endif %}
-      {% for row in case.rows %}
+      {% if number == '6' and case.rows %}{% set cmp = upgrade.compare %}
+      <p class="env-wave-summary"><strong>{{ cmp.summary }}</strong></p>
+      {% if cmp.shown %}<table class="env-wave-table"><thead><tr><th>element / operation</th><th>I/Q</th><th>result</th><th>lag (samples)</th><th>length &Delta;</th><th>max rel &Delta;</th></tr></thead><tbody>
+        {% for row in cmp.shown %}<tr><td><code>{{ row.element }} / {{ row.operation }}</code></td><td>{{ row.channel }}</td><td>{{ row.label }}</td>
+          <td>{% if row.onset_lag is none %}&mdash;{% if row.onset_reason %} <span class="muted">({{ row.onset_reason }})</span>{% endif %}{% else %}{{ row.onset_lag }}{% endif %}</td>
+          <td>{% if row.length_difference is none %}&mdash;{% else %}{{ row.length_difference }}{% endif %}</td>
+          <td>{% if row.relative_deviation is none %}&mdash;{% else %}{{ row.relative_deviation }}{% endif %}</td></tr>{% endfor %}
+      </tbody></table>{% endif %}
+      {% if cmp.identical %}<details class="env-wave-identical"><summary>{{ cmp.identical | length }} of {{ cmp.total }} bit-identical &mdash; show</summary>
+        {% for row in cmp.identical %}<div><code>{{ row.element }} / {{ row.operation }} / {{ row.channel }}</code></div>{% endfor %}</details>{% endif %}
+      {% endif %}
+      {% if number != '6' %}{% for row in case.rows %}
       <div class="env-upgrade-finding">
-        {% if row.element %}
-          <p><code>{{ row.element }} / {{ row.operation }} / {{ row.channel }}</code>: {{ row.label }}
-          {% if row.onset_lag is defined %}; onset lag {{ row.onset_lag }} {{ row.lag_unit }},
-            length difference {{ row.length_difference }} samples, max relative deviation {{ row.relative_deviation }}{% endif %}</p>
-        {% else %}
-          <p><code>{{ row['class'] }}{% if row.field %}.{{ row.field }}{% endif %}{% if row.method %}.{{ row.method }}{% endif %}</code>
-          {{ row.label or '' }}{% if row.count %} ({{ row.count }} objects){% endif %}</p>
-          {% if row.default_removed %}<p>Default removed.</p>{% endif %}
-          {% if row.was_declared %}<p>Was declared in the previous env.</p>{% endif %}
-          {% if row.error %}<pre>{{ row.error }}</pre>{% endif %}
-          {% for frame in row.frames %}<p><code>{{ frame.file }}:{{ frame.line }}</code></p>{% endfor %}
-          {% if number == '4' %}<p>Cached catalog candidates (same leaf name):
-            {% if row.candidate_status != 'checked' %}{{ row.candidate_status }}{% else %}
-            {% for candidate in row.candidates %}<code>{{ candidate }}</code> {% else %}none found{% endfor %}{% endif %}</p>{% endif %}
-          {% if number == '5' %}<p>Own: <code>{{ row.own.text }}</code>; parent: <code>{{ row.parent.text }}</code>;
-            reference parent: <code>{{ row.reference_parent.text or 'not checked' }}</code></p>{% endif %}
-          {% if row.paths %}<details><summary>Objects checked ({{ row.paths | length }})</summary>
-            {% for path in row.paths %}<div><code>{{ path }}</code></div>{% endfor %}</details>{% endif %}
-          {% if number == '3' %}{% for candidate in row.candidates %}
-          <div class="env-rename-row" data-class="{{ row.defining_class }}" data-old="{{ row.field }}" data-new="{{ candidate.field }}">
-            <p>Candidate (heuristic): <code>{{ candidate.field }}</code>; type {{ candidate.type }},
-              default {{ candidate.default if candidate.has_default else 'no default' }}. {{ candidate.doc or '' }}</p>
-            {% if upgrade.editable %}<label><input type="checkbox" class="env-rename-confirm"> Confirm this candidate</label>
-              <label><input type="checkbox" class="env-rename-meaning"> meaning and unit unchanged</label>{% endif %}
-          </div>{% endfor %}{% endif %}
-        {% endif %}
+        <p><code title="{{ row['class'] }}{% if row.field %}.{{ row.field }}{% endif %}{% if row.method %}.{{ row.method }}{% endif %}">{{ row['class'].rsplit('.', 1)[-1] }}{% if row.field %}.{{ row.field }}{% endif %}{% if row.method %}.{{ row.method }}{% endif %}</code>
+        {{ row.label or '' }}{% if row.count %} ({{ row.count }} objects){% endif %}</p>
+        {% if row.default_removed %}<p>Default removed.</p>{% endif %}
+        {% if row.was_declared %}<p>Was declared in the previous env.</p>{% endif %}
+        {% if row.error %}<pre>{{ row.error }}</pre>{% endif %}
+        {% for frame in row.frames %}<p><code>{{ frame.file }}:{{ frame.line }}</code></p>{% endfor %}
+        {% if number == '4' %}<p>Cached catalog candidates (same leaf name):
+          {% if row.candidate_status != 'checked' %}{{ row.candidate_status }}{% else %}
+          {% for candidate in row.candidates %}<code>{{ candidate }}</code> {% else %}none found{% endfor %}{% endif %}</p>{% endif %}
+        {% if number == '5' %}<table class="env-sig-table"><tbody>
+          <tr><th>own</th><td><code>{{ row.own.text }}</code></td></tr>
+          <tr><th>parent</th><td><code>{{ row.parent.text }}</code></td></tr>
+          <tr><th>reference parent</th><td><code>{{ row.reference_parent.text or 'not checked' }}</code></td></tr>
+        </tbody></table>{% endif %}
+        {% if row.paths %}<details><summary>Objects checked ({{ row.paths | length }})</summary>
+          {% for path in row.paths %}<div><code>{{ path }}</code></div>{% endfor %}</details>{% endif %}
+        {% if number == '3' %}{% for candidate in row.candidates %}
+        <div class="env-rename-row" data-class="{{ row.defining_class }}" data-old="{{ row.field }}" data-new="{{ candidate.field }}">
+          <p>Candidate (heuristic): <code>{{ candidate.field }}</code>; type {{ candidate.type }},
+            default {{ candidate.default if candidate.has_default else 'no default' }}. {{ candidate.doc or '' }}</p>
+          {% if upgrade.editable %}<label><input type="checkbox" class="env-rename-confirm"> Confirm this candidate</label>
+            <label><input type="checkbox" class="env-rename-meaning"> meaning and unit unchanged</label>{% endif %}
+        </div>{% endfor %}{% endif %}
       </div>
-      {% endfor %}
+      {% endfor %}{% endif %}
       {% endfor %}
       {% if heading == 'Changes output' %}{% for row in report.non_waveform %}<p>Config values changed: <code>{{ row.path }}</code>
         <code>{{ row.old }}</code> &rarr; <code>{{ row.new }}</code></p>{% endfor %}{% endif %}
       {% if heading == 'FYI' %}{% for text in report.fyi %}<p>{{ text }}</p>{% endfor %}{% endif %}
     </details>
     {% endfor %}
+    {% if not prominent %}</details>{% endif %}
     {% if upgrade.editable and report.cases['3'].rows %}
       <button class="btn-sm" onclick="EnvUpgrade.testRenames()">Test load in this env</button>
       <button class="btn-sm" id="env-rename-apply" disabled onclick="EnvUpgrade.applyRenames()">Stage reviewed renames</button>
       <p id="env-rename-result" role="status"></p>
     {% endif %}
     {% if report.banner %}<button class="btn-sm" onclick="EnvUpgrade.acknowledge()">Acknowledge these findings</button>{% endif %}
-  {% else %}<p>could not check: report not recorded</p>{% endif %}
+  {% elif not upgrade.no_env and not upgrade.checking and not upgrade.error %}<p>Not checked yet in this environment.</p>{% endif %}
   <p>A reference contains generate_config() waveform arrays and the exact JSON files used to generate them.</p>
   <details id="env-upgrade-schema-details"><summary>Schema details</summary>
     {% with transition=upgrade.schema_transition, rows=upgrade.schema_rows, verdicts=upgrade.schema_verdicts %}
@@ -69,9 +89,14 @@
     {% endwith %}
   </details>
   <button class="btn-sm" hx-get="/env-upgrade/references" hx-target="#env-upgrade-references">References</button>
-  {% if upgrade.editable %}<button class="btn-sm" hx-post="/config/regenerate" hx-target="#diag-env-deep">Generate config and record reference</button>{% endif %}
+  {% if upgrade.editable %}<button class="btn-sm" hx-post="/env-upgrade/record" hx-target="#env-upgrade-report" hx-swap="outerHTML"
+    hx-indicator="#env-upgrade-record-busy" hx-disabled-elt="this"
+    {% if upgrade.no_env or upgrade.checking %}disabled title="{{ needs_env if upgrade.no_env else 'Wait for the check to finish' }}"{% endif %}>Generate config and record reference</button>{% endif %}
   <button class="btn-sm" onclick="EnvUpgrade.copyText()">Copy as text</button>
-  {% if upgrade.editable %}<button class="btn-sm" onclick="EnvUpgrade.check()">Check this env</button>{% endif %}
+  {% if upgrade.editable %}<button class="btn-sm" id="env-upgrade-check" onclick="EnvUpgrade.check()"
+    {% if upgrade.no_env or upgrade.checking %}disabled title="{{ needs_env if upgrade.no_env else 'A check is running' }}"{% endif %}>Check this env</button>{% endif %}
+  <span id="env-upgrade-record-busy" class="htmx-indicator muted">Generating config and recording a reference&hellip; (about 10&ndash;60 s)</span>
+  <p id="env-upgrade-status" role="status">{{ upgrade.recording or '' }}</p>
   <div id="env-upgrade-references"></div>
   <p class="muted env-upgrade-footer">{{ upgrade.footer }}</p>
 </section>

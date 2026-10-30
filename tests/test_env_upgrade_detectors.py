@@ -187,3 +187,45 @@ def test_offline_fault_verdict_and_other_cases_unchanged(tmp_path, fault):
         row = after["cases"]["4"]["rows"][0]
         assert row["frames"][0]["file"].endswith("extension_fixture.py")
         assert row["candidates"] == ["moved.Parent"]
+
+
+def _with_signatures(manifest, *, own, parent):
+    manifest["classes"]["extension.Child"]["signatures"] = {
+        "apply": {"own": {"parameters": own, "text": f"({own})"},
+                  "parent": {"parameters": parent, "text": f"({parent})"}}}
+    return manifest
+
+
+def test_override_signature_reports_only_a_parent_change_since_the_reference():
+    state = {"__class__": "extension.Child", "old": 1}
+    # A lab override that always differed from its (unchanged) parent: FYI, not a finding.
+    old = _with_signatures(schemas(), own="self, x, y", parent="self, x")
+    current = _with_signatures(schemas(), own="self, x, y", parent="self, x")
+    result = env_upgrade.report(state, current, reference(old))
+    assert result["cases"]["5"]["rows"] == []
+    assert result["cases"]["5"]["status"] == "none_found"
+    assert any("unchanged since reference" in text and text.endswith("extension.Child.apply")
+               for text in result["fyi"])
+    # The upgrade changed the parent's call contract under the override: a finding.
+    changed = _with_signatures(schemas(), own="self, x, y", parent="self, x, *, z")
+    result = env_upgrade.report(state, changed, reference(old))
+    rows = result["cases"]["5"]["rows"]
+    assert [row["method"] for row in rows] == ["apply"]
+    assert rows[0]["reference_parent"]["text"] == "(self, x)"
+    assert "parent signature changed" in rows[0]["label"]
+    # Own equals the new parent, parent still changed: the contract moved, still reported.
+    followed = _with_signatures(schemas(), own="self, x, *, z", parent="self, x, *, z")
+    assert len(env_upgrade.report(state, followed, reference(old))["cases"]["5"]["rows"]) == 1
+
+
+def test_override_signature_without_a_reference_is_not_checked():
+    state = {"__class__": "extension.Child", "old": 1}
+    current = _with_signatures(schemas(), own="self, x, y", parent="self, x")
+    result = env_upgrade.report(state, current, None)
+    assert result["cases"]["5"]["status"] == "not_checked"
+    assert result["cases"]["5"]["message"] == "not checked: no reference"
+    # A reference that has the class but not this method: nothing to compare.
+    result = env_upgrade.report(state, current, reference(schemas()))
+    assert result["cases"]["5"]["rows"] == []
+    assert result["cases"]["5"]["status"] == "not_checked"
+    assert "no reference signature" in result["cases"]["5"]["message"]
