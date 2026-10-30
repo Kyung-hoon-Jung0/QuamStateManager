@@ -200,3 +200,17 @@ def test_real_computation_only_fault_has_known_lag_on_matched_state(tmp_path, mo
     assert compared["rows"][0]["onset_lag"] == 3
     assert compared["rows"][0]["relative_deviation"] == pytest.approx(1.0)
     assert compared["reference_state_hash"] == compared["current_state_hash"]
+
+
+def test_preview_forwards_strict_to_the_previewer(tmp_path, monkeypatch):
+    """A comparison run must reach run_config_preview with strict=True (no empty-key retry)."""
+    from quam_state_manager.core import config_generator, waveform_refs
+    (tmp_path / "state.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "wiring.json").write_text("{}", encoding="utf-8")
+    seen = []
+    monkeypatch.setattr(config_generator, "run_config_preview",
+                        lambda python, folder, **kw: seen.append(kw) or {"ok": False})
+    waveform_refs.preview("python", tmp_path, strict=True)
+    waveform_refs.preview("python", tmp_path)
+    assert seen[0].get("strict") is True
+    assert "strict" not in seen[1]
