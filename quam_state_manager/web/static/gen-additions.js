@@ -9,6 +9,11 @@
  *   outcome(report)           -> "ok" | "mixed" | "refused" | "none"
  *   renderReview(box, info)   -> the Review step's list of additions (before Generate)
  *
+ * Presets (phase 4): "+ Readout…" on a resonator (a readout pulse, plus a
+ * measure macro pointing at it where the env's quam_builder has one) and
+ * "+ Pulsed mode…" on a TWPA (field additions: extras.twpa_pulse_mode, the
+ * pump_ pulse the builder writes, active_twpa_names where the root declares it).
+ *
  * The class lists come from the selected env's role manifest (/generate/roles):
  * official and lab classes are labelled, every field form is generated from the
  * class's own fields (defaults prefilled, docstring as hover). Nothing here
@@ -482,6 +487,226 @@
     });
   }
 
+  function slug(path) { return shortName(path).replace(/[^A-Za-z0-9]+/g, "_").toLowerCase(); }
+
+  function fieldLabel(target, value) {
+    return target + " = " + (typeof value === "string" ? JSON.stringify(value) : JSON.stringify(value));
+  }
+
+  /* The readout preset on a resonator channel: a readout pulse class (lab or
+   * official), and -- only where this env's quam_builder ships a transmon
+   * MeasureMacro -- a measure macro on the qubit pointing at that pulse. */
+  function renderReadoutGroup(box, ch, ctx, rerender) {
+    box.innerHTML = "";
+    var pulses = (roles && roles.pulses) || {};
+    var ro = {};
+    Object.keys(pulses).forEach(function (p) { if (pulses[p].readout) ro[p] = pulses[p]; });
+    var cap = (roles && roles.readout) || { mode: "pulse_only", reason: "unknown" };
+    var mpath = roles && roles.measure_macro;
+    var mcls = mpath && ((roles.macros_qubit || {})[mpath]);
+    var withMacro = cap.mode === "pulse_and_macro" && !!mcls;
+    var form = el("div", { className: "gen-add-form gen-add-ro", "data-target": ch.target });
+    form.appendChild(el("p", { className: "gen-add-cz-head" },
+      "Readout on " + ch.qubit + " — a readout pulse on the resonator" +
+      (withMacro ? " and a measure macro on the qubit that plays it." : ".")));
+    var row = el("div", { className: "gen-add-row" });
+    var sel = classSelect(ro, "Readout pulse class");
+    sel.classList.add("gen-add-ro-class");
+    var name = el("input", { className: "gen-add-name gen-add-ro-name", type: "text",
+                             placeholder: "operation name", "aria-label": "Readout pulse name" });
+    name.setAttribute("data-auto", "1");
+    row.appendChild(sel); row.appendChild(name);
+    form.appendChild(row);
+    var fbox = el("div", { className: "gen-add-fields" });
+    form.appendChild(fbox);
+    var mrow = el("div", { className: "gen-add-row gen-add-ro-macro" });
+    var cb = null, mname = null;
+    if (withMacro) {
+      cb = el("input", { type: "checkbox", className: "gen-add-ro-use", "aria-label": "Also a measure macro" });
+      cb.checked = true;
+      var cbl = el("label", { className: "gen-add-cz-usel" });
+      cbl.appendChild(cb);
+      cbl.appendChild(document.createTextNode("also a measure macro (" + shortName(mpath) + ") on " + ch.qubit + " named"));
+      mrow.appendChild(cbl);
+      mname = el("input", { className: "gen-add-name gen-add-ro-mname", type: "text", value: "measure",
+                            "aria-label": "Measure macro name" });
+      mrow.appendChild(mname);
+      cb.addEventListener("change", function () { mname.disabled = !cb.checked; });
+    } else {
+      mrow.appendChild(el("span", { className: "muted gen-add-ro-only" },
+        "Pulse only: " + (cap.reason || "no measure macro class in this environment") +
+        ", so measurement goes through the pulse itself."));
+    }
+    form.appendChild(mrow);
+    var msg = el("p", { className: "gen-add-msg muted" });
+    var actions = el("div", { className: "gen-add-actions" });
+    var ok = el("button", { type: "button", className: "btn-sm gen-add-ok" }, "Add readout");
+    var cancel = el("button", { type: "button", className: "btn-sm secondary gen-add-cancel" }, "Cancel");
+    actions.appendChild(ok); actions.appendChild(cancel);
+    form.appendChild(actions); form.appendChild(msg);
+    box.appendChild(form);
+    if (!Object.keys(ro).length) {
+      fbox.appendChild(el("p", { className: "muted" }, "This environment offers no readout pulse class."));
+      ok.disabled = true;
+    }
+    var ff = null;
+    sel.addEventListener("change", function () {
+      fbox.innerHTML = ""; ff = null;
+      var c = ro[sel.value];
+      if (!c) return;
+      if (name.getAttribute("data-auto") === "1") name.value = "readout_" + slug(sel.value);
+      fbox.appendChild(el("p", { className: "gen-add-origin muted", title: sel.value },
+        (c.origin === "lab" ? "Lab class" : "Official class") + (c.doc ? " — " + c.doc.split("\n")[0] : "") +
+        " · array fields (weights) take a JSON list, e.g. [0.1, 0.2]"));
+      ff = fieldsForm(fbox, c, { idPrefix: ch.target + "-ro" });
+    });
+    name.addEventListener("input", function () { name.setAttribute("data-auto", "0"); });
+    cancel.addEventListener("click", function () { box.innerHTML = ""; });
+    ok.addEventListener("click", function () {
+      var c = ro[sel.value];
+      var nm = (name.value || "").trim();
+      if (!c) { msg.textContent = "Choose a readout pulse class."; return; }
+      if (!/^[A-Za-z0-9_\-]+$/.test(nm)) { msg.textContent = "Name: letters, digits, '_' or '-'."; return; }
+      var spec = ctx.spec();
+      var got = ff ? ff.collect() : { fields: {}, missing: [] };
+      if (got.missing.length) { msg.textContent = "Required: " + got.missing.join(", "); return; }
+      var adds = list(spec);
+      if (adds.some(function (a) { return a.target === ch.target && a.name === nm; })) {
+        msg.textContent = nm + " is already added here."; return;
+      }
+      var macro = null;
+      if (cb && cb.checked) {
+        var mn = (mname.value || "").trim();
+        var mt = "qubits." + ch.qubit + ".macros";
+        if (!/^[A-Za-z0-9_\-]+$/.test(mn)) { msg.textContent = "Macro name: letters, digits, '_' or '-'."; return; }
+        if (adds.some(function (a) { return a.target === mt && a.name === mn; })) {
+          msg.textContent = mn + " is already added on " + ch.qubit + "."; return;
+        }
+        macro = { kind: "macro", target: mt, name: mn, "class": mpath,
+                  fields: { pulse: "#/qubits/" + ch.qubit + "/resonator/operations/" + nm } };
+      }
+      if (!Array.isArray(spec.additions)) spec.additions = [];
+      spec.additions.push({ kind: "pulse", target: ch.target, name: nm, "class": sel.value, fields: got.fields });
+      if (macro) spec.additions.push(macro);
+      ctx.changed();
+      rerender();
+    });
+  }
+
+  // Does the chip's root declare active_twpa_names? true / false / null (unknown)
+  function rootDeclares(spec, field) {
+    var roots = (roles && roles.roots) || {};
+    if (spec.quam_class) return roots[spec.quam_class] ? !!roots[spec.quam_class][field] : null;
+    var builders = Object.keys(roots).filter(function (r) { return roots[r].extras && roots[r].origin !== "lab"; });
+    if (!builders.length) return null;
+    var yes = builders.filter(function (r) { return roots[r][field]; }).length;
+    return yes === builders.length ? true : (yes === 0 ? false : null);
+  }
+
+  /* Pulsed TWPA, honestly: not a class. extras.twpa_pulse_mode, the pump
+   * pulse on the non-sticky pump_ channel (the builder writes one named
+   * "pump"; its length / amplitude are set here only if given), and
+   * active_twpa_names when the chip's root declares it. */
+  function renderTwpaGroup(box, t, ctx, rerender) {
+    box.innerHTML = "";
+    var spec = ctx.spec();
+    var form = el("div", { className: "gen-add-form gen-add-twpa", "data-twpa": t });
+    form.appendChild(el("p", { className: "gen-add-cz-head" },
+      "Pulsed mode on " + t + " — not a class: a flag in extras, the pump pulse on the non-sticky pump_ " +
+      "channel, and the active TWPA list where the chip's root has one. The lab code that reads the flag " +
+      "is yours; this only writes the state it reads."));
+    var flag = el("label", { className: "gen-add-field" });
+    var fcb = el("input", { type: "checkbox", className: "gen-add-tw-flag", "aria-label": "extras.twpa_pulse_mode" });
+    fcb.checked = true;
+    flag.appendChild(fcb);
+    flag.appendChild(document.createTextNode(" extras.twpa_pulse_mode = true"));
+    form.appendChild(flag);
+    var pbox = el("div", { className: "gen-add-fields" });
+    pbox.appendChild(el("p", { className: "muted" },
+      "pump_ pulse \"pump\" (written by the builder): leave blank to keep the builder's value."));
+    var len = el("input", { type: "text", className: "gen-add-tw-len", placeholder: "length (ns)", "aria-label": "Pump length" });
+    var amp = el("input", { type: "text", className: "gen-add-tw-amp", placeholder: "amplitude", "aria-label": "Pump amplitude" });
+    [["length", len], ["amplitude", amp]].forEach(function (x) {
+      var lab = el("label", { className: "gen-add-field" });
+      lab.appendChild(el("span", { className: "gen-add-fname" }, x[0]));
+      lab.appendChild(x[1]);
+      pbox.appendChild(lab);
+    });
+    form.appendChild(pbox);
+    var decl = rootDeclares(spec, "active_twpa_names");
+    var acb = null, aval = null;
+    var arow = el("div", { className: "gen-add-row gen-add-tw-active" });
+    if (decl === false) {
+      arow.appendChild(el("span", { className: "muted gen-add-tw-noactive" },
+        "active_twpa_names: not set — the chip's root does not declare it in this environment" +
+        (roles && roles.versions && roles.versions.quam_builder ? " (quam_builder " + roles.versions.quam_builder + ")" : "") + "."));
+    } else {
+      acb = el("input", { type: "checkbox", className: "gen-add-tw-use-active", "aria-label": "Set active_twpa_names" });
+      acb.checked = decl === true;
+      var al = el("label", { className: "gen-add-cz-usel" });
+      al.appendChild(acb);
+      al.appendChild(document.createTextNode(" active_twpa_names ="));
+      arow.appendChild(al);
+      aval = el("input", { type: "text", className: "gen-add-tw-active-val", value: JSON.stringify([t]),
+                           "aria-label": "active_twpa_names value" });
+      arow.appendChild(aval);
+      if (decl === null) arow.appendChild(el("span", { className: "muted" },
+        "the root is chosen at build time; refused there if it does not declare the field"));
+    }
+    form.appendChild(arow);
+    var msg = el("p", { className: "gen-add-msg muted" });
+    var actions = el("div", { className: "gen-add-actions" });
+    var ok = el("button", { type: "button", className: "btn-sm gen-add-ok" }, "Add pulsed mode");
+    var cancel = el("button", { type: "button", className: "btn-sm secondary gen-add-cancel" }, "Cancel");
+    actions.appendChild(ok); actions.appendChild(cancel);
+    form.appendChild(actions); form.appendChild(msg);
+    box.appendChild(form);
+    cancel.addEventListener("click", function () { box.innerHTML = ""; });
+    ok.addEventListener("click", function () {
+      var out = [];
+      var problems = [];
+      if (fcb.checked) out.push({ kind: "field", target: "extras.twpa_pulse_mode", value: true });
+      var base = "twpas." + t + ".pump_.operations.pump.";
+      [["length", len, true], ["amplitude", amp, false]].forEach(function (x) {
+        var v = (x[1].value || "").trim();
+        if (v === "") return;
+        var n = Number(v);
+        if (!isFinite(n) || (x[2] && Math.round(n) !== n)) { problems.push(x[0] + " must be a " + (x[2] ? "whole number" : "number")); return; }
+        out.push({ kind: "field", target: base + x[0], value: n });
+      });
+      if (acb && acb.checked) {
+        var parsed = null;
+        try { parsed = JSON.parse(aval.value); } catch (e) { parsed = null; }
+        if (!Array.isArray(parsed)) problems.push("active_twpa_names must be a JSON list, e.g. [\"" + t + "\"]");
+        else out.push({ kind: "field", target: "active_twpa_names", value: parsed });
+      }
+      if (problems.length) { msg.textContent = problems.join("; "); return; }
+      if (!out.length) { msg.textContent = "Nothing to add."; return; }
+      var spec2 = ctx.spec();
+      if (!Array.isArray(spec2.additions)) spec2.additions = [];
+      out.forEach(function (f) {
+        var i = -1;
+        spec2.additions.forEach(function (a, j) { if (a.kind === "field" && a.target === f.target) i = j; });
+        if (i >= 0) spec2.additions[i] = f; else spec2.additions.push(f);
+      });
+      ctx.changed();
+      rerender();
+    });
+  }
+
+  function fieldRow(spec, a, i, host, ctx) {
+    var r = el("div", { className: "gen-add-item gen-add-field-item", "data-index": String(i) });
+    r.appendChild(el("span", { className: "gen-add-ch-label" }, fieldLabel(a.target, a.value)));
+    var rm = el("button", { type: "button", className: "btn-sm secondary gen-add-rm", title: "Remove this field" }, "✕");
+    rm.addEventListener("click", function () {
+      spec.additions.splice(i, 1);
+      if (!spec.additions.length) delete spec.additions;
+      ctx.changed(); mount(host, ctx);
+    });
+    r.appendChild(rm);
+    return r;
+  }
+
   function itemRow(spec, a, i, host, ctx, box, cfgFor) {
     var r = el("div", { className: "gen-add-item", "data-index": String(i) });
     var pool = a.kind === "macro"
@@ -554,13 +779,20 @@
       var add = el("button", { type: "button", className: "btn-sm secondary gen-add-btn" }, "+ Add pulse");
       if (!ready) add.disabled = true;
       head.appendChild(add);
-      item.appendChild(head);
       var box = el("div", { className: "gen-add-formbox" });
+      if (/\.resonator\.operations$/.test(ch.target)) {
+        var rb = el("button", { type: "button", className: "btn-sm secondary gen-add-robtn",
+                                title: "A readout pulse class and, where this environment has one, a measure macro" }, "+ Readout…");
+        if (!ready) rb.disabled = true;
+        head.appendChild(rb);
+        rb.addEventListener("click", function () { renderReadoutGroup(box, ch, ctx, function () { mount(host, ctx); }); });
+      }
+      item.appendChild(head);
       var cfgFor = function () {
         return { kind: "pulse", target: ch.target, classes: (roles && roles.pulses) || {}, classLabel: "Pulse class", ch: ch };
       };
       list(spec).forEach(function (a, i) {
-        if (a.target !== ch.target || a.kind === "macro") return;
+        if (a.target !== ch.target || a.kind === "macro" || a.kind === "field") return;
         item.appendChild(itemRow(spec, a, i, host, ctx, box, cfgFor));
       });
       item.appendChild(box);
@@ -600,6 +832,30 @@
       mtable.appendChild(item);
     });
     host.appendChild(mtable);
+
+    var twpas = (spec.twpas || []).map(function (t) { return t && typeof t === "object" ? String(t.id) : String(t); });
+    var fieldIdx = [];
+    list(spec).forEach(function (a, i) { if (a.kind === "field") fieldIdx.push(i); });
+    if (twpas.length || fieldIdx.length) {
+      host.appendChild(el("p", { className: "gen-add-sub" }, "Fields and presets"));
+      var ftable = el("div", { className: "gen-add-list gen-add-fieldlist" });
+      twpas.forEach(function (t) {
+        var item = el("div", { className: "gen-add-owner", "data-twpa": t });
+        var head = el("div", { className: "gen-add-ch-head" });
+        head.appendChild(el("span", { className: "gen-add-ch-label" }, t + " · TWPA"));
+        var b = el("button", { type: "button", className: "btn-sm secondary gen-add-twbtn",
+                               title: "Pulsed pump: a flag, the pump_ pulse, and the active TWPA list" }, "+ Pulsed mode…");
+        if (!ready) b.disabled = true;
+        head.appendChild(b);
+        item.appendChild(head);
+        var box = el("div", { className: "gen-add-formbox" });
+        item.appendChild(box);
+        b.addEventListener("click", function () { renderTwpaGroup(box, t, ctx, function () { mount(host, ctx); }); });
+        ftable.appendChild(item);
+      });
+      fieldIdx.forEach(function (i) { ftable.appendChild(fieldRow(spec, spec.additions[i], i, host, ctx)); });
+      host.appendChild(ftable);
+    }
   }
 
   function outcome(rep) {
@@ -621,13 +877,16 @@
     var ul = el("ul", { className: "gen-add-result-list" });
     added.forEach(function (e) {
       var li = el("li", { className: "gen-add-ok-item" });
-      li.textContent = "✓ " + e.path + " (" + shortName(e["class"]) + ", " + e.origin + ")";
+      li.textContent = e.kind === "field" ? "✓ " + fieldLabel(e.path, e.value) + " (field)"
+        : "✓ " + e.path + " (" + shortName(e["class"]) + ", " + e.origin + ")";
       ul.appendChild(li);
     });
     refused.forEach(function (e) {
       var li = el("li", { className: "gen-add-refused" });
       li.style.color = "var(--sm-danger, #d33)";
-      li.textContent = "✗ " + e.target + "." + e.name + " (" + shortName(e["class"]) + ") — " + e.reason;
+      li.textContent = e.kind === "field"
+        ? "✗ " + fieldLabel((e.target ? e.target + "." : "") + e.name, e.value) + " (field) — " + e.reason
+        : "✗ " + e.target + "." + e.name + " (" + shortName(e["class"]) + ") — " + e.reason;
       ul.appendChild(li);
     });
     box.appendChild(ul);
@@ -640,19 +899,27 @@
   function renderReview(box, info, spec) {
     if (!box) return null;
     var items = (info && info.items) || list(spec || {}).map(function (a, i) {
+      if (a.kind === "field") {
+        var k = String(a.target || "").lastIndexOf(".");
+        return { index: i, kind: "field", target: k >= 0 ? a.target.slice(0, k) : "",
+                 name: k >= 0 ? a.target.slice(k + 1) : a.target, value: a.value };
+      }
       return { index: i, kind: a.kind, target: a.target, name: a.name, "class": a["class"] };
     });
     if (!items.length) return null;
     var bad = items.filter(function (e) { return e.reason; }).length;
     var wrap = el("div", { className: "gen-add-review" });
     wrap.appendChild(el("p", { className: "gen-cap-subhead" },
-      "Additions (" + items.length + ", pulses before macros)" +
+      "Additions (" + items.length + ", pulses, then macros, then fields)" +
       (bad ? " — " + bad + " will be refused:" : " — checked against the built chip and in the environment during the build:")));
     var ul = el("ul", { className: "gen-add-review-list" });
     items.forEach(function (e) {
       var li = el("li", { className: e.reason ? "gen-add-review-bad" : "gen-add-review-item" });
-      li.textContent = (e.reason ? "✗ " : "") + e.kind + " " + e.target + "." + e.name + " (" + shortName(e["class"]) +
-        (e.origin ? ", " + e.origin : "") + ")" + (e.reason ? " — " + e.reason : "");
+      li.textContent = e.kind === "field"
+        ? (e.reason ? "✗ " : "") + "field " + fieldLabel((e.target ? e.target + "." : "") + e.name, e.value) +
+          (e.reason ? " — " + e.reason : "")
+        : (e.reason ? "✗ " : "") + e.kind + " " + e.target + "." + e.name + " (" + shortName(e["class"]) +
+          (e.origin ? ", " + e.origin : "") + ")" + (e.reason ? " — " + e.reason : "");
       ul.appendChild(li);
     });
     wrap.appendChild(ul);

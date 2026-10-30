@@ -359,3 +359,259 @@ def test_qdac_qubit_z_pulse_is_refused_on_the_built_chip():
     spec["qubits"] = ["q1"]
     rep = additions.apply_additions(st, spec, MAN)
     assert "QdacBiasLine" in rep["refused"][0]["reason"] and "plays no pulses" in rep["refused"][0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# the roles route carries what the presets need; the wizard (jsdom)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def client(tmp_path):
+    from quam_state_manager.web.app import create_app
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    return app.test_client()
+
+
+def test_roles_route_carries_readout_and_root_capabilities(client, monkeypatch):
+    man = {"versions": {"quam_builder": "0.4.0"}, "classes": {
+        CW: {"role": "pulse", "origin": "lab", "fields": {},
+             "mro": ["quam.components.pulses.SquareReadoutPulse", "quam.components.pulses.ReadoutPulse"]},
+        SQ: {"role": "pulse", "origin": "official", "fields": {}, "mro": ["quam.components.pulses.Pulse"]},
+        ROOT: {"role": "root", "origin": "lab", "fields": {"extras": {}, "active_twpa_names": {}}}}}
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda _p: "py")
+    monkeypatch.setattr(role_manifest, "roles_for_env", lambda *a, **k: man)
+    body = client.get("/generate/roles").get_json()
+    assert body["pulses"][CW]["readout"] is True and body["pulses"][SQ]["readout"] is False
+    assert body["readout"]["mode"] == "pulse_only" and "0.4.0" in body["readout"]["reason"]
+    assert body["roots"][ROOT] == {"origin": "lab", "active_twpa_names": True, "extras": True}
+    assert body["measure_macro"].endswith(".MeasureMacro")
+
+
+def test_wizard_selfcheck():
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    p = subprocess.run(["node", str(Path(__file__).with_name("gen_additions_p4_selfcheck.cjs"))],
+                       capture_output=True, text=True, encoding="utf-8")
+    if p.returncode == 2 and "jsdom not installed" in p.stderr:
+        pytest.skip("jsdom not installed")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert " 0 failed" in p.stdout
+
+
+# ---------------------------------------------------------------------------
+# real builds: readout preset per quam_builder version
+# ---------------------------------------------------------------------------
+
+def _build(tmp_path, py, spec=None):
+    from tests.test_lab_additions_p2 import _real_spec
+    out = tmp_path / "chip"
+    spec = spec or _real_spec()
+    o = config_generator.run_generator(py, "build", spec, out, timeout=900)
+    assert o.get("ok"), o
+    return out, spec
+
+
+def _verify_and_preview(tmp_path, py, out, spec, modules=()):
+    classes = sorted({a["class"] for a in spec["additions"] if a.get("class")})
+    man = role_manifest.probe_roles(py, None, state_classes=classes, modules=list(modules))["manifest"]
+    rep = additions.apply_and_verify(py, out, spec, man)
+    (tmp_path / "additions_report.json").write_text(json.dumps(rep, indent=1), encoding="utf-8")
+    prev = config_generator.run_config_preview(py, out)
+    return man, rep, prev, json.loads((out / "state.json").read_text(encoding="utf-8"))
+
+
+def test_real_build_readout_preset_with_measure_macro(tmp_path):
+    from tests.test_lab_additions_p2 import _env
+    py = _env("QSM_OFFICIAL_PYTHON", "qsm_official")
+    if not py:
+        pytest.skip("environment absent")
+    out, spec = _build(tmp_path, py)
+    sro = "quam.components.pulses.SquareReadoutPulse"
+    spec["additions"] = [
+        {"kind": "pulse", "target": "qubits.q1.resonator.operations", "name": "readout_sq", "class": sro,
+         "fields": {"length": 1200, "amplitude": 0.05}},
+        {"kind": "macro", "target": "qubits.q1.macros", "name": "measure", "class": role_manifest._MEASURE_MACRO,
+         "fields": {"pulse": "#/qubits/q1/resonator/operations/readout_sq"}},
+        # fault: the macro points at a readout pulse that does not exist
+        {"kind": "macro", "target": "qubits.q1.macros", "name": "measure_bad", "class": role_manifest._MEASURE_MACRO,
+         "fields": {"pulse": "#/qubits/q1/resonator/operations/no_such"}},
+    ]
+    man, rep, prev, st = _verify_and_preview(tmp_path, py, out, spec)
+    assert role_manifest.readout_capability(man)["mode"] == "pulse_and_macro"
+    assert [e["name"] for e in rep["added"]] == ["readout_sq", "measure"], rep["refused"]
+    assert "points at nothing" in rep["refused"][0]["reason"]
+    assert prev.get("ok"), prev
+    assert st["qubits"]["q1"]["macros"]["measure"]["pulse"] == "#/qubits/q1/resonator/operations/readout_sq"
+
+
+def test_real_build_lab_readout_pulse_with_weights(tmp_path):
+    from tests.test_lab_additions_p2 import _env
+    py = _env("QSM_LAB_ENV_PYTHON")
+    if not py:
+        pytest.skip("QSM_LAB_ENV_PYTHON not given")
+    mod = os.environ.get("QSM_LAB_READOUT_MODULE", "quam_config.complex_weights_pulse")
+    cls = mod + "." + os.environ.get("QSM_LAB_READOUT_CLASS", "ComplexWeightsReadoutPulse")
+    out, spec = _build(tmp_path, py)
+    n = 400
+    w_re = [round(0.5 + 0.001 * i, 6) for i in range(n)]
+    w_im = [round(-0.25 + 0.0005 * i, 6) for i in range(n)]
+    spec["additions"] = [
+        {"kind": "pulse", "target": "qubits.q1.resonator.operations", "name": "readout_cw", "class": cls,
+         "fields": {"length": n, "amplitude": 0.05, "weights_real": w_re, "weights_imag": w_im}},
+        # fault: a scalar where the class declares a list
+        {"kind": "pulse", "target": "qubits.q2.resonator.operations", "name": "readout_cw", "class": cls,
+         "fields": {"length": n, "amplitude": 0.05, "weights_real": 1.0}},
+        {"kind": "macro", "target": "qubits.q1.macros", "name": "measure", "class": role_manifest._MEASURE_MACRO,
+         "fields": {"pulse": "#/qubits/q1/resonator/operations/readout_cw"}},
+    ]
+    man, rep, prev, st = _verify_and_preview(tmp_path, py, out, spec, modules=[mod])
+    cap = role_manifest.readout_capability(man)
+    by = {(e["target"], e["name"]): e["reason"] for e in rep["refused"]}
+    assert [e["name"] for e in rep["added"]] == ["readout_cw"], rep["refused"]
+    assert "does not fit its type" in by[("qubits.q2.resonator.operations", "readout_cw")]
+    if cap["mode"] == "pulse_only":
+        assert "not in this environment" in by[("qubits.q1.macros", "measure")]
+    assert "qubits.q1.resonator.operations.readout_cw" in rep["verified"]["own_code"]
+    assert prev.get("ok"), prev
+    assert st["qubits"]["q1"]["resonator"]["operations"]["readout_cw"]["weights_real"] == w_re
+
+
+# ---------------------------------------------------------------------------
+# real builds: pulsed TWPA preset (fields only)
+# ---------------------------------------------------------------------------
+
+def _twpa_spec():
+    from tests.test_lab_additions_p2 import _real_spec
+    spec = _real_spec()
+    spec["twpas"] = [{"id": "twpa1"}]
+    spec["lines"] = spec["lines"] + [{"element": "twpa1", "line": "twpa_pump", "channel": None}]
+    spec["instruments"]["controllers"][0]["fems"].append({"slot": 3, "fem": "mw"})
+    return spec
+
+
+def _preset(length=20000, amplitude=None, active=("twpa1",)):
+    out = [_field("extras.twpa_pulse_mode", True),
+           _field("twpas.twpa1.pump_.operations.pump.length", length)]
+    if amplitude is not None:
+        out.append(_field("twpas.twpa1.pump_.operations.pump.amplitude", amplitude))
+    if active is not None:
+        out.append(_field("active_twpa_names", list(active)))
+    return out
+
+
+@pytest.mark.parametrize("var, default", [("QSM_OFFICIAL_PYTHON", "qsm_official"), ("QSM_LAB_ENV_PYTHON", None)])
+def test_real_build_pulsed_twpa_preset(tmp_path, var, default):
+    from tests.test_lab_additions_p2 import _env
+    py = _env(var, default)
+    if not py:
+        pytest.skip(f"{var} not given")
+    out, spec = _build(tmp_path, py, _twpa_spec())
+    spec["additions"] = _preset() + [
+        # faults: an undeclared root field, a field inside a container, a wrong type
+        _field("twpa_pulse_mode", True),
+        _field("twpas.twpa1.pump_.operations.pump2", 1),
+        _field("twpas.twpa1.pump_.operations.pump.amplitude", "loud"),
+    ]
+    man, rep, prev, st = _verify_and_preview(tmp_path, py, out, spec)
+    roots = role_manifest.root_capabilities(man)
+    declared = roots[st["__class__"]]["active_twpa_names"]
+    added = {e["path"] for e in rep["added"]}
+    by = {(e["target"] + "." if e["target"] else "") + e["name"]: e["reason"] for e in rep["refused"]}
+    assert {"extras.twpa_pulse_mode", "twpas.twpa1.pump_.operations.pump.length"} <= added, by
+    assert ("active_twpa_names" in added) == declared, (declared, by)
+    if not declared:
+        assert "is not a field of" in by["active_twpa_names"]
+    assert "is not a field of" in by["twpa_pulse_mode"]
+    assert "not an object with fields" in by["twpas.twpa1.pump_.operations.pump2"]
+    assert "does not fit its type" in by["twpas.twpa1.pump_.operations.pump.amplitude"]
+    assert prev.get("ok"), prev
+    assert st["extras"]["twpa_pulse_mode"] is True
+    assert st["twpas"]["twpa1"]["pump_"]["operations"]["pump"]["length"] == 20000
+
+
+def test_pulsed_twpa_round_trip_on_a_copy_of_a_real_state(tmp_path):
+    """A copy of a real pulsed-TWPA state, its pulsed parts taken back to what
+    the builder writes, then the preset applied: the TWPA, the flag and the
+    active list come back equal to the source, and the lab env loads it."""
+    from tests.test_lab_additions_p2 import _env
+    py = _env("QSM_LAB_ENV_PYTHON")
+    src = os.environ.get("QSM_PULSED_TWPA_STATE")
+    if not (py and src and (Path(src) / "state.json").is_file()):
+        pytest.skip("QSM_LAB_ENV_PYTHON / QSM_PULSED_TWPA_STATE not given")
+    import shutil
+    out = tmp_path / "chip"
+    out.mkdir()
+    for n in ("state.json", "wiring.json"):
+        shutil.copyfile(Path(src) / n, out / n)
+    source = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    t = next(iter(source["twpas"]))
+    pump = source["twpas"][t]["pump_"]["operations"]["pump"]
+    stripped = copy.deepcopy(source)
+    stripped["extras"].pop("twpa_pulse_mode", None)
+    sp = stripped["twpas"][t]["pump_"]["operations"]["pump"]
+    sp["length"], sp["amplitude"] = 2000, 0.5          # the builder's pump_ pulse
+    stripped["active_twpa_names"] = ["placeholder"]
+    (out / "state.json").write_text(json.dumps(stripped, indent=4), encoding="utf-8")
+    spec = {"qubits": sorted(source["qubits"]), "twpas": [t],
+            "additions": [_field("extras.twpa_pulse_mode", source["extras"]["twpa_pulse_mode"]),
+                          _field(f"twpas.{t}.pump_.operations.pump.length", pump["length"]),
+                          _field(f"twpas.{t}.pump_.operations.pump.amplitude", pump["amplitude"]),
+                          _field("active_twpa_names", source["active_twpa_names"])]}
+    man = role_manifest.probe_roles(py, None, state_path=str(out / "state.json"))["manifest"]
+    rep = additions.apply_and_verify(py, out, spec, man)
+    (tmp_path / "additions_report.json").write_text(json.dumps(rep, indent=1), encoding="utf-8")
+    assert len(rep["added"]) == 4, rep["refused"]
+    back = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    assert back["twpas"] == source["twpas"]
+    assert back["extras"] == source["extras"]
+    assert back["active_twpa_names"] == source["active_twpa_names"]
+    assert back == source
+    prev = config_generator.run_config_preview(py, out)
+    assert prev.get("ok"), prev
+
+
+# ---------------------------------------------------------------------------
+# real build: a QDAC chip (the bias replaces z on a QDAC-only qubit)
+# ---------------------------------------------------------------------------
+
+def test_real_build_qdac_chip_refuses_z_pulses_on_the_qdac_qubit(tmp_path):
+    from tests.test_generate_qdac_live_build import _qdac_test_spec
+    from tests.test_lab_additions_p2 import _env
+    py = _env("QSM_QDAC_PYTHON")
+    if not py:
+        pytest.skip("QSM_QDAC_PYTHON not given")
+    from quam_state_manager.core import capabilities
+    spec = _qdac_test_spec()
+    probe = config_generator.probe_capabilities(py, None)
+    root = capabilities.qpu_root_check(spec, {"capabilities": probe.get("capabilities"),
+                                              "versions": probe.get("versions"),
+                                              "qpu_roots": probe.get("qpu_roots")})
+    assert not root["blocker"], root
+    spec["quam_class"] = root["chosen"]          # the build route's own root pick
+    out, spec = _build(tmp_path, py, spec)
+    built = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    assert "QdacBias" in built["qubits"]["q1"]["z"]["__class__"]
+
+    def pulse(target, name):
+        return {"kind": "pulse", "target": target, "name": name, "class": FLAT,
+                "fields": {"length": 48, "amplitude": 0.05, "flat_length": 32}}
+    spec["additions"] = [pulse("qubits.q1.z.operations", "z_on_qdac"),
+                         pulse("qubits.q1.xy.operations", "xy_flat"),
+                         pulse("qubits.q1.resonator.operations", "ro_flat"),
+                         pulse("qubits.q2.z.operations", "z_flat")]
+    pre = {e["name"]: e.get("reason") for e in additions.precheck(spec, None)}
+    assert "QDAC-II" in pre["z_on_qdac"] and pre["xy_flat"] is None
+    # the built-chip check says it too when the spec does not name the QDAC qubit
+    nospec = copy.deepcopy(spec)
+    nospec.pop("qdac")
+    nospec["lines"].append({"element": "q1", "line": "flux"})
+    st = copy.deepcopy(built)
+    r = additions.apply_additions(st, {**nospec, "additions": spec["additions"][:1]}, None)
+    assert "QdacBiasLine" in r["refused"][0]["reason"]
+    man, rep, prev, st = _verify_and_preview(tmp_path, py, out, spec)
+    assert [e["name"] for e in rep["added"]] == ["xy_flat", "ro_flat", "z_flat"], rep["refused"]
+    assert "plays no pulses" in rep["refused"][0]["reason"]
+    assert prev.get("ok"), prev
+    assert "QdacBias" in st["qubits"]["q1"]["z"]["__class__"] and "operations" not in st["qubits"]["q1"]["z"]

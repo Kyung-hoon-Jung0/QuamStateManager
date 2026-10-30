@@ -45663,7 +45663,9 @@ def generate_roles():
         public = not c.get("abstract") and not path.rsplit(".", 1)[-1].startswith("_")
         if c.get("role") == "pulse" and public:
             pulses[path] = {"origin": c.get("origin"), "doc": c.get("doc"),
-                            "fields": c.get("fields") or {}}
+                            "fields": c.get("fields") or {},
+                            "readout": any(str(m).rsplit(".", 1)[-1] in ("ReadoutPulse", "BaseReadoutPulse")
+                                           for m in (c.get("mro") or []))}
         elif c.get("role") in macros and public:
             macros[c["role"]][path] = {"origin": c.get("origin"), "doc": c.get("doc"),
                                        "fields": c.get("fields") or {},
@@ -45675,7 +45677,10 @@ def generate_roles():
     return jsonify({"ok": True, "error": err, "versions": man.get("versions") or {},
                     "modules": man.get("modules") or {}, "pulses": pulses,
                     "macros_qubit": macros["macro_qubit"], "macros_pair": macros["macro_pair"],
-                    "qubit_fields": sorted(qubit_fields)})
+                    "qubit_fields": sorted(qubit_fields),
+                    "readout": role_manifest.readout_capability(man),
+                    "measure_macro": role_manifest._MEASURE_MACRO,
+                    "roots": role_manifest.root_capabilities(man)})
 
 
 @bp.route("/generate/build", methods=["POST"])

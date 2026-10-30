@@ -180,7 +180,7 @@ def spec_channel_reason(spec: dict, target: str) -> str | None:
             return f"pair {p} has no {need} line"
     elif segs[0] == "twpas" and len(segs) == 4:
         t = segs[1]
-        if t not in {str(x) for x in spec.get("twpas") or []}:
+        if t not in {str(x.get("id")) if isinstance(x, dict) else str(x) for x in spec.get("twpas") or []}:
             return f"TWPA {t} is not in this chip"
     return None
 
