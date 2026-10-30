@@ -112,7 +112,8 @@ async function setup(gate) {
 
   // G4 removing the gate removes its default
   change(s.w, dsel(), 'cz_mine');
-  const rm = s.w.document.querySelector('.gen-add-owner[data-target="qubit_pairs.q1-2.macros"] .gen-add-rm');
+  // an added gate is listed (and removed) once: in the Qubit pairs table
+  const rm = s.row().querySelector('.gen-gate-rm[data-gate="cz_mine"]');
   rm.click();
   ok(!(s.spec.additions || []).some(a => a.kind === 'default_gate' || a.kind === 'macro'), 'G4 default goes with its gate');
   ok(JSON.stringify(s.gates()) === JSON.stringify(['cz_SNZ']), 'G4 row redrawn ' + s.gates());

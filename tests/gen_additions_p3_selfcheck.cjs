@@ -128,14 +128,16 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
      && m.fields.flux_pulse_qubit === '#/qubits/q1/z/operations/p1' && !('phase_shift_control' in m.fields), 'M4 macro written');
 
   // E1 edit
-  const edit = prow().querySelector('.gen-add-edit');
-  ok(edit && edit.textContent === 'cz_hand', 'E1 edit button');
+  // an added pair gate is edited where it is listed: its chip in the Qubit pairs table
+  const edit = ptab().querySelector('.gen-gate-added[data-gate="cz_hand"]');
+  ok(edit && /cz_hand/.test(edit.textContent), 'E1 edit button');
   edit.click();
-  const ef = prow().querySelector('input[data-field="phase_shift_control"]');
-  ok(prow().querySelector('.gen-add-ok').textContent === 'Save' && prow().querySelector('.gen-add-name').value === 'cz_hand'
-     && prow().querySelector('input[data-field="flux_pulse_qubit"]').value === '#/qubits/q1/z/operations/p1', 'E1 prefilled');
+  const fr = () => ptab().querySelector('.gen-gates-formrow');
+  const ef = fr().querySelector('input[data-field="phase_shift_control"]');
+  ok(fr().querySelector('.gen-add-ok').textContent === 'Save' && fr().querySelector('.gen-add-name').value === 'cz_hand'
+     && fr().querySelector('input[data-field="flux_pulse_qubit"]').value === '#/qubits/q1/z/operations/p1', 'E1 prefilled');
   ef.value = '0.25';
-  prow().querySelector('.gen-add-ok').click();
+  fr().querySelector('.gen-add-ok').click();
   ok(spec.additions.length === 2 && spec.additions[1].fields.phase_shift_control === 0.25, 'E1 replaced in place');
 
   // C1/C2 two-flux group

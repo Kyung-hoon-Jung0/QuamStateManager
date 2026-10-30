@@ -75,3 +75,17 @@ def test_the_trust_model_is_written_down():
     for ep in ("main.generate_proposal_accept", "main.generate_proposal_dismiss",
                "main.generate_proposals_context"):
         assert ep in callers.PERSON_ONLY
+
+
+def test_wizard_p2fix_selfcheck():
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    p = subprocess.run(["node", str(Path(__file__).with_name("gen_additions_p2fix_selfcheck.cjs"))],
+                       capture_output=True, text=True, encoding="utf-8")
+    if p.returncode == 2 and "jsdom not installed" in p.stderr:
+        pytest.skip("jsdom not installed")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert p.stdout.startswith("ok ")

@@ -762,7 +762,41 @@
       renderForm(box, cfg, ctx, function () { mount(host, ctx); });
     });
     r.appendChild(rm);
+    r.appendChild(el("span", { className: "gen-add-lint", "data-lint-index": String(i) }));
     return r;
+  }
+
+  /* ---- live lint: every listed addition is judged by the server's one lint
+   * (/generate/additions/lint -> additions.lint_proposal) before Build ---- */
+  var LINT_DELAY_MS = 400;
+  var lintTimer = null, lintGen = 0;
+  function scheduleLint(host, spec) {
+    if (lintTimer) clearTimeout(lintTimer);
+    var gen = ++lintGen;
+    lintTimer = setTimeout(function () { lintTimer = null; runLint(host, spec, gen); }, LINT_DELAY_MS);
+  }
+  function runLint(host, spec, gen) {
+    var adds = list(spec);
+    Array.prototype.forEach.call(host.querySelectorAll(".gen-add-lint[data-lint-index]"), function (slot) {
+      var i = +slot.getAttribute("data-lint-index");
+      var a = adds[i];
+      if (!a) return;
+      var others = adds.filter(function (_, j) { return j !== i; });
+      var body = { spec: Object.assign({}, spec, { additions: others }), addition: a };
+      postJSON("/generate/additions/lint", body).then(function (res) {
+        if (gen !== lintGen || !slot.isConnected) return;   // a newer edit owns the screen
+        var j = res.body || {};
+        slot.innerHTML = "";
+        (j.errors || []).forEach(function (e) {
+          var x = el("span", { className: "gen-add-lint-err" }, "✗ " + e);
+          x.style.color = "var(--sm-danger, #d33)";
+          slot.appendChild(x);
+        });
+        (j.warnings || []).forEach(function (w) {
+          slot.appendChild(el("span", { className: "muted gen-add-lint-warn" }, "⚠ " + w));
+        });
+      }).catch(function () { /* offline: the build still checks it */ });
+    });
   }
 
   /* ---- one convention for a pair's 2Q gates (P5) ---------------------------
@@ -870,6 +904,18 @@
     g.added.forEach(function (a) {
       var c = chip(a.name, "added", " (" + shortName(a.cls) + ")");
       c.addEventListener("click", function () { openForm(tr, pid, long, ctx, { index: a.index, add: list(ctx.spec())[a.index] }); });
+      var rm = el("button", { type: "button", className: "btn-sm secondary gen-gate-rm", "data-gate": a.name,
+                              title: "Remove the added gate " + a.name }, "✕");
+      rm.addEventListener("click", function () {
+        var sp = ctx.spec();
+        sp.additions = list(sp).filter(function (d, j) {
+          // the gate, and a default that named it
+          return j !== a.index && !(d.kind === "default_gate" && d.target === g.target && d.to === a.name);
+        });
+        if (!sp.additions.length) delete sp.additions;
+        ctx.changed(); refreshAll();
+      });
+      chips.appendChild(rm);
     });
     if (!g.builder.length && !g.added.length)
       chips.appendChild(el("span", { className: "muted gen-gate-none" }, "no gate yet"));
@@ -1191,10 +1237,15 @@
       var cfgFor = function () {
         return { kind: "macro", target: ow.target, classes: pool, classLabel: "Macro class", owner: ow };
       };
+      var nGates = 0;
       list(spec).forEach(function (a, i) {
         if (a.target !== ow.target || a.kind !== "macro") return;
+        // a pair's macros are its gates: listed once, in the Qubit pairs table
+        if (ow.kind === "pair") { nGates++; return; }
         item.appendChild(itemRow(spec, a, i, host, ctx, box, cfgFor));
       });
+      if (nGates) item.appendChild(el("p", { className: "muted gen-add-gates-there" },
+        nGates + " added gate" + (nGates > 1 ? "s" : "") + " — listed in the Qubit pairs table"));
       item.appendChild(box);
       add.addEventListener("click", function () { renderForm(box, cfgFor(), ctx, function () { mount(host, ctx); }); });
       mtable.appendChild(item);
@@ -1225,6 +1276,7 @@
       host.appendChild(ftable);
     }
     if (pairTable && pairCtx && pairTable.isConnected) decoratePairTable(pairTable, pairCtx);
+    if (list(spec).length) scheduleLint(host, spec);
   }
 
   function aliasLabel(e) { return e.target + "." + e.name + " → " + e.to + " (default gate)"; }
@@ -1310,5 +1362,6 @@
                           renderResult: renderResult, outcome: outcome, renderReview: renderReview,
                           decoratePairTable: decoratePairTable, builderGates: builderGates,
                           pairGates: pairGates, gateNameClash: gateNameClash, GATE_RULE: GATE_RULE,
+                          LINT_DELAY_MS: LINT_DELAY_MS,
                           _reset: function () { roles = null; rolesLoading = false; } };
 })();
