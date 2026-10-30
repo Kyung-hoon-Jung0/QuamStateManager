@@ -145,3 +145,9 @@ def test_z2_the_wizard_rename_rewrites_the_additions():
 
 def test_z3_a_gate_takes_its_pulses_and_says_how_many():
     _run("gen_additions_gate_remove_selfcheck.cjs")
+
+
+def test_the_additions_section_is_never_left_blank_while_display_facts_load():
+    """A mount whose display fetch is in flight, answers for an older spec, fails, or is deferred
+    shows a loading line or the reason with a Retry -- never an empty host."""
+    _run("gen_additions_display_wait_selfcheck.cjs")

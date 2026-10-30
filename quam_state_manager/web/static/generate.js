@@ -9620,20 +9620,31 @@
     recomputeLOs();      // …so renderConflicts() can ring its ports
   }
 
-  var _addObs = null;
+  var _addObs = null, _addTimer = null;
   function mountAdditionsWhenNear(host, ctx) {
     if (!window.GenAdditions || !host) return;
     if (_addObs) { _addObs.disconnect(); _addObs = null; }
-    if (host.childNodes.length || typeof window.IntersectionObserver !== "function") {
+    if (_addTimer) { clearTimeout(_addTimer); _addTimer = null; }
+    var drawn = host.childNodes.length && !host.querySelector(".gen-add-display-wait");
+    if (drawn || typeof window.IntersectionObserver !== "function") {
       window.GenAdditions.mount(host, ctx);     // already drawn: redraw now
       return;
     }
+    // Until it is near the view the section says it is coming, and GenAdditions knows its host, so a
+    // refresh() reaches it. An IntersectionObserver never fires in a tab that does not render (a
+    // background tab), so a timer mounts it anyway: the section must not stay blank.
+    if (window.GenAdditions.defer) window.GenAdditions.defer(host, ctx);
+    var go = function () {
+      if (_addObs) { _addObs.disconnect(); _addObs = null; }
+      if (_addTimer) { clearTimeout(_addTimer); _addTimer = null; }
+      if (host.isConnected) window.GenAdditions.mount(host, ctx);
+    };
     _addObs = new window.IntersectionObserver(function (ents) {
       if (!ents.some(function (e) { return e.isIntersecting; })) return;
-      _addObs.disconnect(); _addObs = null;
-      if (host.isConnected) window.GenAdditions.mount(host, ctx);
+      go();
     }, { rootMargin: "600px 0px" });
     _addObs.observe(host);
+    _addTimer = setTimeout(go, 4000);
   }
 
   // -- step 7: output folder -------------------------------------------

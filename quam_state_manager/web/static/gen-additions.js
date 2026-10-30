@@ -96,20 +96,59 @@
 
   function list(spec) { return Array.isArray(spec.additions) ? spec.additions : []; }
 
-  var displayFacts = null, displaySig = null, displayLoading = false;
+  // Display facts (pair ids, control/target, builder gates) come from the server for the CURRENT spec.
+  // A fetch carries the sig it was asked for; an answer for an older spec is kept but not trusted, and
+  // the next mount asks again. A failed or stuck fetch is remembered as displayError so the section can
+  // say why and offer a retry instead of staying blank.
+  var displayFacts = null, displaySig = null, displayLoading = false, displayError = null, displaySeq = 0;
+  var DISPLAY_TIMEOUT_MS = 20000;
+  function displayInputs(spec) {
+    return { qubits: spec.qubits, qubit_pairs: spec.qubit_pairs, lines: spec.lines,
+             populate: spec.populate, pair_gate: spec.pair_gate };
+  }
   function ensureDisplay(spec, done) {
-    var inputs = { qubits: spec.qubits, qubit_pairs: spec.qubit_pairs, lines: spec.lines,
-                   populate: spec.populate, pair_gate: spec.pair_gate };
+    var inputs = displayInputs(spec);
     var sig = JSON.stringify(inputs);
     if (displaySig === sig) return true;
-    if (!displayLoading) {
+    if (!displayLoading && !displayError) {
       displayLoading = true;
+      var seq = ++displaySeq;
+      var settled = false;
+      var finish = function (err, res) {
+        if (settled || seq !== displaySeq) return;
+        settled = true;
+        displayLoading = false;
+        if (err) displayError = err;
+        else if (!res || typeof res !== "object") displayError = "the server sent no display facts";
+        else if (!res.display && res.error) displayError = String(res.error);
+        else { displayFacts = res.display || {}; displaySig = sig; displayError = null; }
+        try { done(); } catch (e) { if (window.console) console.error(e); }
+      };
+      var timer = setTimeout(function () { finish("no answer after " + (DISPLAY_TIMEOUT_MS / 1000) + " s"); },
+                             DISPLAY_TIMEOUT_MS);
       fetch("/generate/roles", { method: "POST", headers: { "Content-Type": "application/json" },
-                                 body: JSON.stringify({ display_spec: inputs }) }).then(function (r) { return r.json(); })
-        .then(function (res) { displayLoading = false; displayFacts = res.display; displaySig = sig; done(); })
-        .catch(function () { displayLoading = false; });
+                                 body: JSON.stringify({ display_spec: inputs }) })
+        .then(function (r) { return r.json(); })
+        .then(function (res) { clearTimeout(timer); finish(null, res); },
+              function (e) { clearTimeout(timer); finish(String((e && e.message) || e)); });
     }
     return false;
+  }
+  function retryDisplay() { displayError = null; displayLoading = false; displaySeq++; refreshAll(); }
+
+  // What the host shows while the display facts are not current: a loading line, or the failure and a retry.
+  function displayPlaceholder(host) {
+    var box = el("div", { className: "gen-add-display-wait" });
+    if (displayError) {
+      box.appendChild(el("span", { className: "muted gen-add-display-error" },
+        "Could not read the chip's pair facts for additions: " + displayError + " "));
+      var b = el("button", { type: "button", className: "btn-sm secondary gen-add-display-retry" }, "Retry");
+      b.addEventListener("click", retryDisplay);
+      box.appendChild(b);
+    } else {
+      box.appendChild(el("span", { className: "muted gen-add-display-loading" }, "Loading the additions…"));
+    }
+    host.appendChild(box);
   }
 
   function loadRoles(probe, modules, done) {
@@ -1523,8 +1562,12 @@
       typedModules = oldMods.value;
       if (document.activeElement === oldMods) keepFocus = { s: oldMods.selectionStart, e: oldMods.selectionEnd };
     }
+    if (!ensureDisplay(spec, function () { refreshAll(); })) {
+      host.innerHTML = "";
+      displayPlaceholder(host);
+      return;
+    }
     host.innerHTML = "";
-    if (!ensureDisplay(spec, function () { refreshAll(); })) return;
     var chs = channels(spec);
     if (!roles) {
       host.appendChild(el("p", { className: "muted" }, "Loading classes from the environment…"));
@@ -1876,5 +1919,6 @@
                           decoratePairTable: decoratePairTable, builderGates: builderGates,
                           pairGates: pairGates, GATE_RULE: GATE_RULE,
                           LINT_DELAY_MS: LINT_DELAY_MS,
-                          _reset: function () { roles = null; rolesLoading = false; displaySig = null; displayFacts = null; } };
+                          _reset: function () { roles = null; rolesLoading = false; displaySig = null; displayFacts = null; displayLoading = false; displayError = null; displaySeq++; },
+                          defer: function (host, ctx) { if (host) { addHost = host; addCtx = ctx; if (!host.childNodes.length) displayPlaceholder(host); } } };
 })();
