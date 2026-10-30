@@ -361,7 +361,8 @@ _FINDINGS_CAP = 300
 _EXAMPLES_CAP = 5
 
 
-def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) -> dict:
+def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
+                  uncapped: bool = False) -> dict:
     """One walk → ``{"findings": [...], "types": {path: TypeSpec},
     "summary": {...}}``.
 
@@ -404,7 +405,7 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) ->
         key = (kind, cls, field, code)
         rec = findings.get(key)
         if rec is None:
-            if len(findings) >= _FINDINGS_CAP:
+            if not uncapped and len(findings) >= _FINDINGS_CAP:
                 truncated[0] = True
                 return
             rec = findings[key] = {
@@ -417,7 +418,7 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) ->
             rec["severity"] = "error"
             rec["detail"] = detail
         rec["count"] += 1
-        if len(rec["example_paths"]) < _EXAMPLES_CAP:
+        if uncapped or len(rec["example_paths"]) < _EXAMPLES_CAP:
             rec["example_paths"].append(path)
 
     if not manifest or not isinstance(state, dict):

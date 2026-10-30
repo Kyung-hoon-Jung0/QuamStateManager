@@ -2236,6 +2236,17 @@ def _maybe_check_env_upgrade(ctx, inst) -> None:
             ctx["env_upgrade_event"] = env_seen.observe(inst, key, python_path, body, context=ctx)
             ctx["env_upgrade_body"] = body
             ctx["env_upgrade_env"] = python_path
+            from quam_state_manager.core import env_upgrade
+            event = ctx["env_upgrade_event"]
+            pending = event.get("current", {}).get("pending")
+            display_event = pending or event
+            previous_key = (display_event.get("previous") or {}).get("baseline_key")
+            reference = state_env_baseline.load_baseline(inst, previous_key) if previous_key else None
+            with ctx["store"]._lock:
+                state = copy.deepcopy(ctx["store"].state)
+            ctx["env_upgrade_report"] = env_upgrade.report(
+                state, {**manifest, "schema_format": state_env_schema.SCHEMA_FORMAT}, reference,
+                catalog=state_env_schema.catalog_for_env(python_path, inst) or {}, event=display_event)
             ctx.pop("env_upgrade_error", None)
         except Exception:
             ctx["env_upgrade_error"] = "could not check: environment observation failed"

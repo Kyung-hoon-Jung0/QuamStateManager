@@ -335,9 +335,12 @@ def _signature(method) -> dict:
 def _override_signatures(cls) -> dict:
     result = {}
     for name, method in vars(cls).items():
-        if name.startswith("__") or not (inspect.isfunction(method) or
+        if not (inspect.isfunction(method) or
                                          isinstance(method, (classmethod, staticmethod))):
             continue
+        function = method.__func__ if isinstance(method, (classmethod, staticmethod)) else method
+        if getattr(getattr(function, "__code__", None), "co_filename", None) == "<string>":
+            continue  # dataclass-generated methods were not defined by this class's author
         parent = next((b for b in cls.__mro__[1:] if name in vars(b)), None)
         if parent is None:
             continue

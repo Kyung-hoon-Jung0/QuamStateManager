@@ -89,8 +89,11 @@ def test_background_observation_runs_after_quiet_gate(loaded, monkeypatch):
         routes._maybe_check_env_upgrade(ctx, app.instance_path)
     assert calls == []
     queued[0]()
-    assert calls == ["quiet", "probe"]
+    assert calls.count("probe") == 1
+    assert calls.index("quiet") < calls.index("probe")
     assert ctx["env_upgrade_event"]["first"]
+    assert not ctx["env_upgrade_report"]["banner"]
+    assert ctx["env_upgrade_report"]["footer"].startswith("Not checked:")
 
 
 def test_wheel_install_flips_signature_and_open_triggers_transition(loaded, tmp_path, monkeypatch):
