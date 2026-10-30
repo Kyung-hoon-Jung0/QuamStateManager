@@ -43,7 +43,8 @@ def test_cz_chip_map_client():
     # the content-match wording and the unchecked chip identity.
     # v1.4.1: 95 -> 114, compact partner geometry and both-theme mark/text contrast.
     # v1.5.1: 114 -> 123, pin the compact map footer and its redraw lifecycle.
-    assert "123 assertions passed" in result.stdout
+    # 2026-10-30: 123 -> 130, the dark-theme readability section (loss hue, diamonds on top, label avoidance).
+    assert "130 assertions passed" in result.stdout
 
 
 def test_the_page_reads_title_status_figures_card_then_the_collapsed_notes(tmp_path):
@@ -96,3 +97,17 @@ def test_selected_row_keeps_muted_text_readable():
     css = (Path(__file__).resolve().parents[1] / 'quam_state_manager/web/static/style.css').read_text(encoding='utf8')
     rule = re.search(r'\.czp-table \.czp-row-selected td\s*\{([^}]*)\}', css)[1]
     assert 'color-mix(in srgb, var(--pico-primary) 8%, transparent)' in rule
+
+
+def test_cz_plan_theme_client():
+    """The flux figure follows the theme tokens (axis text, operating-point ring, loss-area fill)
+    and redraws on a theme switch without a refetch."""
+    root = Path(__file__).resolve().parents[1]
+    probe = subprocess.run(["node", "-e", "require('jsdom')"], cwd=root, env=os.environ.copy(),
+                           capture_output=True, text=True)
+    if probe.returncode:
+        pytest.skip("jsdom not installed")
+    result = subprocess.run(["node", str(root / "tests/cz_plan_theme_selfcheck.cjs")], cwd=root, env=os.environ.copy(),
+                            capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "39 theme assertions passed" in result.stdout

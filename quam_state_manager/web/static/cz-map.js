@@ -72,7 +72,8 @@
         ['xaxis', 'yaxis', 'yaxis2'].forEach(function (k) {
             if (over[k]) L[k] = Object.assign({}, base[k] || base.yaxis || {}, over[k]);
         });
-        return L;
+        // tick text at the house floor; the bar labels keep the size their boxes are measured at
+        return window.PlotTheme && window.PlotTheme.readable ? window.PlotTheme.readable(L, { annotations: false }) : L;
     }
     function config() {
         return window.PlotTheme ? window.PlotTheme.houseConfig({}) : { displaylogo: false, responsive: true };
@@ -249,11 +250,19 @@
     /* A bar label's box (px): the annotation's text at LABEL_FONT plus its pad and border,
        a little larger than Chrome draws it ("q1 4.017": 41 x 17 px measured, 47.2 x 18 here). */
     function labelSize(text) {
-        return { w: 5.4 * String(text).length + 4, h: 18 };
+        return { w: 0.54 * LABEL_FONT * String(text).length + 4, h: LABEL_FONT + 8 };
     }
-    /* A partner label's width (px) at its 11 px font. */
+    /* A partner label's width (px) at PARTNER_FONT (6.4 px a character at 11 px). */
     function partnerWidth(text) {
-        return 6.4 * String(text).length + 2;
+        return 6.4 / 11 * PARTNER_FONT * String(text).length + 2;
+    }
+    /* Label text follows the page's readable floor (12 px times the UI text scale); the
+       label boxes above are measured at that size, so a label that no longer fits its
+       column is dropped to hover rather than drawn over its neighbours. */
+    function setLabelFonts() {
+        var k = window.PlotTheme && window.PlotTheme.textScale ? window.PlotTheme.textScale() : 1;
+        LABEL_FONT = PARTNER_FONT = Math.round(12 * k);
+        PARTNER_H = Math.round(PARTNER_FONT * 1.36);
     }
     /* The partner names of one shared row as lines no wider than the column (one name a line
        at least): {lines: [[name, ...]], w, h} in px. */
@@ -437,6 +446,7 @@
     function render(root, m) {
         var el = root.querySelector('#czp-map');
         if (!el || !m) return Promise.resolve();
+        setLabelFonts();
         var my = ++pseq;
         var loss = root._czLoss || null, curves = (loss && loss.curves) || {};
         var ordSel = root.querySelector('#czp-map-order');
@@ -488,7 +498,9 @@
         var muted = cssVar('--pico-muted-color', '#8a8a8a');
         var ink = cssVar('--pico-color', '#222');
         var card = cssVar('--pico-card-background-color', cssVar('--pico-background-color', '#ffffff'));
-        var traces = [], shapes = [], annotations = [];
+        // the measured loss in its own theme hue (grey read as background on a dark page)
+        var lossInk = window.PlotTheme && window.PlotTheme.lossColor ? window.PlotTheme.lossColor() : muted;
+        var traces = [], shapes = [], annotations = [], opTraces = [];
 
         // ---- columns: separators, safe strips, loss, defects ----
         qs.forEach(function (q, i) {
@@ -527,10 +539,11 @@
             });
         });
         if (G.fillX.length) {
-            traces.push({ type: 'scatter', mode: 'lines', x: G.fillX, y: G.fillY, fill: 'toself', fillcolor: 'rgba(128,128,128,0.16)',
+            traces.push({ type: 'scatter', mode: 'lines', x: G.fillX, y: G.fillY, fill: 'toself',
+                          fillcolor: window.PlotTheme && window.PlotTheme.areaFill ? window.PlotTheme.areaFill(lossInk) : 'rgba(128,128,128,0.16)',
                           line: { width: 0, color: 'rgba(128,128,128,0)' }, hoverinfo: 'skip', showlegend: false, meta: 'loss-fill' });
             traces.push({ type: 'scatter', mode: 'lines', x: G.lineX, y: G.lineY, text: G.lineT, showlegend: false,
-                          line: { color: muted, width: 0.8 }, hovertemplate: '%{text}<extra></extra>', meta: 'loss-line' });
+                          line: { color: lossInk, width: 1.4 }, hovertemplate: '%{text}<extra></extra>', meta: 'loss-line' });
         }
         if (O.lineX.length) {
             traces.push({ type: 'scatter', mode: 'lines', x: O.lineX, y: O.lineY, text: O.lineT, showlegend: false,
@@ -608,11 +621,38 @@
                      y0: columnHeight - 3, y1: columnHeight + 15 };
         }) : [];
         var occupied = [];
-        m.segments.forEach(function (s) {
+        m.segments.forEach(function (s, k) {
             if (col[s.qubit_path] == null) return;
             var i = col[s.qubit_path], y = (s.frequency_hz / 1e9 - yr[0]) * pxPerGHz;
             occupied.push({ x0: (i + 0.12) * colPx, x1: (i + 0.88) * colPx, y0: y - 2, y1: y + 2 });
+            // its operating diamond, drawn at the middle of its slot
+            if (place[k]) {
+                var cx = (place[k].x0 + place[k].x1) / 2 * colPx;
+                occupied.push({ x0: cx - 7, x1: cx + 7, y0: y - 7, y1: y + 7 });
+            }
         });
+        // the measured loss profiles: a partner name never prints over one (a crowded column
+        // drops the name; the segment's hover still names the pair). Chunks of a few samples
+        // keep a long low-loss stretch from blocking the whole column.
+        if (yr) {
+            var CHUNK = 6, run = [];
+            var flushLoss = function () {
+                for (var c = 0; c < run.length; c += CHUNK) {
+                    var part = run.slice(c, c + CHUNK + 1), left = Math.floor(part[0][0] + 1e-9);
+                    var xs = part.map(function (p) { return p[0]; }), ys = part.map(function (p) { return p[1]; });
+                    var right = Math.max.apply(null, xs);
+                    if ((right - left) * colPx < 2) continue;
+                    occupied.push({ x0: left * colPx, x1: right * colPx,
+                                    y0: (Math.min.apply(null, ys) - yr[0]) * pxPerGHz - 1, y1: (Math.max.apply(null, ys) - yr[0]) * pxPerGHz + 1 });
+                }
+                run = [];
+            };
+            G.fillX.forEach(function (x, k) {
+                if (x == null || G.fillY[k] == null) { flushLoss(); return; }
+                run.push([x, G.fillY[k]]);
+            });
+            flushLoss();
+        }
         qs.forEach(function (q, i) {
             if (q.f01_hz == null) return;
             var y = (q.f01_hz / 1e9 - yr[0]) * pxPerGHz;
@@ -651,13 +691,14 @@
             if (point) {
                 point.map_x = (x.x0 + x.x1) / 2;
                 point.map_y = point.y;
-                traces.push({type: 'scatter', mode: 'markers', x: [point.map_x], y: [point.map_y],
-                    marker: {size: 5, color: P[(colour[s.pair] || 0) % P.length]}, customdata: [[s.path, s.pair]],
+                opTraces.push({type: 'scatter', mode: 'markers', x: [point.map_x], y: [point.map_y],
+                    marker: {size: 13, symbol: 'diamond', color: P[(colour[s.pair] || 0) % P.length],
+                        line: {color: window.PlotTheme && window.PlotTheme.markEdge ? window.PlotTheme.markEdge() : card, width: 2}}, customdata: [[s.path, s.pair]],
                     showlegend: false, hoverinfo: 'skip', _czOperating: point});
                 if (point.shifted_frequency_hz != null) {
-                    traces.push({type: 'scatter', mode: 'markers+text', x: [point.map_x], y: [point.shifted_frequency_hz / 1e9],
+                    opTraces.push({type: 'scatter', mode: 'markers+text', x: [point.map_x], y: [point.shifted_frequency_hz / 1e9],
                         text: ['shifted ' + (point.shifted_frequency_hz / 1e9).toFixed(4)], textposition: 'top right',
-                        marker: {size: 7, symbol: 'diamond-open'}, showlegend: false,
+                        marker: {size: 8, symbol: 'diamond-open', color: ink, line: {width: 1.5}}, showlegend: false,
                         hovertext: point.coupler_method, _czOperating: point});
                 }
                 api.save(root);
@@ -727,6 +768,8 @@
                                     line: { color: ink, width: 2 } },
                           hovertemplate: '%{text}<extra></extra>', meta: 'defects-clips' });
         }
+        // the operating points sit on top of the segments and loss profiles they mark
+        traces = traces.concat(opTraces);
         if (partners.length) {
             traces.push({ type: 'scatter', mode: 'markers+text', x: partners.map(function (p) { return p.x; }), y: partners.map(function (p) { return p.y; }),
                           text: partners.map(function (p) { return p.t; }), textposition: partners.map(function (p) { return p.pos; }),

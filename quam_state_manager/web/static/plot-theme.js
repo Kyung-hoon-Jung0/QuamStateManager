@@ -387,7 +387,72 @@
         return { tickformat: '', exponentformat: 'SI' };
     }
 
+    /* Emphasis and area tokens, read at render (so a theme switch plus a redraw follows).
+     * markEdge: the knockout ring around an emphasised marker (an operating point). It is
+     *   the plot's own background tone, so a marker filled in its curve's colour still
+     *   separates from that curve and from the background.
+     * areaFill: a filled area (a measured loss profile) in a series colour at the theme's
+     *   area opacity; dark themes need a stronger fill than light to read at all. */
+    function withAlpha(color, alpha) {
+        var c = String(color || '').trim(), m;
+        if ((m = /^#([0-9a-f]{3})$/i.exec(c))) c = '#' + m[1].split('').map(function (d) { return d + d; }).join('');
+        if ((m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(c))) {
+            return 'rgba(' + [0, 2, 4].map(function (i) { return parseInt(m[1].slice(i, i + 2), 16); }).join(',') + ',' + alpha + ')';
+        }
+        if ((m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(c))) {
+            return 'rgba(' + m[1] + ',' + m[2] + ',' + m[3] + ',' + alpha + ')';
+        }
+        return c;
+    }
+    function markEdge() {
+        return cssVar('--plot-mark-edge', cssVar('--pico-background-color', '#ffffff'));
+    }
+    function areaAlpha() {
+        var a = parseFloat(cssVar('--plot-area-alpha', ''));
+        return isFinite(a) && a > 0 && a <= 1 ? a : 0.16;
+    }
+    function areaFill(color) {
+        return withAlpha(color, areaAlpha());
+    }
+
+    /* Text scale of the page: the body font against the browser default (the app's UI font
+     * size setting moves it), never below 1. */
+    function textScale() {
+        var px = 16;
+        try { px = parseFloat(getComputedStyle(document.body).fontSize) || 16; } catch (e) { /* no body yet */ }
+        return Math.min(1.5, Math.max(1, px / 16));
+    }
+    /* Readable text floors for a figure people must read at a glance: ticks and axis titles
+     * >= 13 px, legend and annotations >= 12 px, all times textScale(). Annotations whose size
+     * other layout code depends on (label boxes) can be left alone with {annotations: false}. */
+    function readable(L, opts) {
+        var k = textScale(), tick = Math.round(13 * k), note = Math.round(12 * k);
+        function floor(font, n) { font = Object.assign({}, font || {}); font.size = Math.max(font.size || 0, n); return font; }
+        L.font = floor(L.font, tick);
+        Object.keys(L).forEach(function (key) {
+            if (!/^[xy]axis\d*$/.test(key) || !L[key]) return;
+            var ax = L[key] = Object.assign({}, L[key]);
+            ax.tickfont = floor(ax.tickfont, tick);
+            if (ax.title) ax.title = Object.assign({}, typeof ax.title === 'string' ? { text: ax.title } : ax.title, { font: floor((ax.title || {}).font, tick) });
+        });
+        if (L.legend) L.legend = Object.assign({}, L.legend, { font: floor(L.legend.font, note) });
+        if (!opts || opts.annotations !== false) {
+            L.annotations = (L.annotations || []).map(function (a) { return Object.assign({}, a, { font: floor(a.font, note) }); });
+        }
+        return L;
+    }
+    function lossColor() {
+        return cssVar('--plot-loss', '#ea580c');
+    }
+
     window.PlotTheme = {
+        textScale: textScale,
+        readable: readable,
+        lossColor: lossColor,
+        withAlpha: withAlpha,
+        markEdge: markEdge,
+        areaAlpha: areaAlpha,
+        areaFill: areaFill,
         houseLayout: houseLayout,
         houseData: houseData,
         axisNumberFormat: axisNumberFormat,

@@ -194,7 +194,18 @@
         var dark = (document.documentElement.getAttribute('data-theme') === 'dark' || document.documentElement.getAttribute('data-theme') === 'qm');
         var P = dark ? ['#79b4fa', '#f49c67', '#57b65f', '#f285b4'] : ['#245ec4', '#a34712', '#006d2c', '#ad326b'];
         var muted = getComputedStyle(document.documentElement).getPropertyValue('--pico-muted-color').trim() || '#8a8a8a';
-        return { q: [P[0], P[1]], plan: P[2] || '#22c55e', res: P[3] || '#a855f7', muted: muted };
+        var T = window.PlotTheme;
+        var ink = getComputedStyle(document.documentElement).getPropertyValue('--pico-color').trim() || (dark ? '#e0e3e7' : '#373c44');
+        return { q: [P[0], P[1]], plan: P[2] || '#22c55e', res: P[3] || '#a855f7', muted: muted, ink: ink,
+                 // the operating point's knockout ring and the loss areas' fill follow the theme tokens
+                 edge: T && T.markEdge ? T.markEdge() : '#ffffff',
+                 loss: T && T.lossColor ? T.lossColor() : '#a16207',
+                 area: function (c) { return T && T.areaFill ? T.areaFill(c) : tint(c, 0.16); } };
+    }
+    /* An operating point: filled in its line's colour, ringed in the plot background so it
+       stands out of the curve it sits on, and larger than every other marker. */
+    function operatingMarker(C, color, size) {
+        return { color: color, size: size, symbol: 'diamond', line: { color: C.edge, width: 2.5 } };
     }
     function tint(hex, alpha) {
         return 'rgba(' + [1, 3, 5].map(function (i) { return parseInt(hex.slice(i, i + 2), 16); }).join(',') + ',' + alpha + ')';
@@ -205,7 +216,8 @@
         ['xaxis', 'xaxis2', 'yaxis', 'yaxis2'].forEach(function (k) {
             if (over[k]) L[k] = Object.assign({}, base[k] || base[k.charAt(0) + 'axis'] || base.yaxis || {}, over[k]);
         });
-        return L;
+        // read at a glance: tick, title, legend and label text never below the house floors
+        return window.PlotTheme && window.PlotTheme.readable ? window.PlotTheme.readable(L) : L;
     }
     function config() {
         return window.PlotTheme ? window.PlotTheme.houseConfig({}) : { displaylogo: false, responsive: true };
@@ -422,7 +434,7 @@
                             if (run[j][3] <= scale) { j++; continue; }
                             var top = j;
                             while (j < run.length && run[j][3] > scale) { if (run[j][3] > run[top][3]) top = j; j++; }
-                            clip.x.push(100 * scale); clip.y.push(run[top][1]); clip.c.push(C.q[k]);
+                            clip.x.push(100 * scale); clip.y.push(run[top][1]); clip.c.push(C.loss);
                             clip.t.push(esc(q.name) + ' run #' + esc(c.run_id) + ': loss ' + pct(run[top][3]) + ' at ' + run[top][1].toFixed(4) +
                                         ' GHz<br>past the panel scale (0–' + Math.round(100 * scale) + ' %): clipped');
                         }
@@ -438,8 +450,8 @@
                 flush();
             });
             if (!xs.length) return;
-            traces.push({ type: 'scatter', mode: 'lines', xaxis: 'x2', x: xs, y: ys, text: ts, fill: 'toself', fillcolor: tint(C.q[k], 0.16),
-                          line: { color: C.q[k], width: 1 }, name: q.name + ' · scan loss (run #' + c.run_id + ')',
+            traces.push({ type: 'scatter', mode: 'lines', xaxis: 'x2', x: xs, y: ys, text: ts, fill: 'toself', fillcolor: C.area(C.loss),
+                          line: { color: C.loss, width: 1.6 }, name: q.name + ' · scan loss (run #' + c.run_id + ')',
                           hovertemplate: '%{text}<extra></extra>', showlegend: false });
         });
         if (!traces.length) return null;
@@ -509,14 +521,14 @@
         var preview = root._czSolvePreview;
         if (preview && preview.op === d.row.path) {
             traces.push({type: 'scatter', mode: 'markers', x: [preview.x], y: [preview.y],
-                name: 'Solve preview', _czOperating: preview, marker: {size: 14, symbol: 'diamond-open'}});
+                name: 'Solve preview', _czOperating: preview, marker: {size: 14, symbol: 'diamond-open', color: C.ink, line: {width: 2}}});
         }
         lines.forEach(function (ln, k) {
             var p = ln.point, q = d.qubits[k];
             if (!ln.moves || p.frequency_hz == null || !q.summary) return;
             var shared = operatingPoint(root, d.row.path, ln.role, ln.operating_point);
             traces.push({ type: 'scatter', mode: 'markers', x: [shared ? shared.x : ln.amplitude_v], y: [shared ? shared.y : ghz(p.frequency_hz)], _czOperating: shared, name: q.name + ' at ' + d.row.operation + ' ' + (p.kind || ''),
-                showlegend: false, marker: { color: C.q[k], size: 12, symbol: 'diamond' },
+                showlegend: false, marker: operatingMarker(C, C.q[k], 20),
                 hovertemplate: hoverEsc(q.name) + ' at ' + hoverEsc(d.row.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra>' + hoverEsc(p.kind) + '</extra>' });
             (ln.lobes || []).slice(1).forEach(function (l) {
                 if (l.point.frequency_hz == null) return;
@@ -527,6 +539,11 @@
             });
             annotations.push({ x: ln.amplitude_v, y: ghz(p.frequency_hz), ax: 0, ay: ghz(q.summary.f01_hz), axref: 'x', ayref: 'y',
                 xref: 'x', yref: 'y', showarrow: true, arrowhead: 3, arrowsize: 1.2, arrowwidth: 1.6, arrowcolor: C.q[k], text: '' });
+            // the operating point names itself: the one label on the figure that is a number
+            var opY = shared ? shared.y : ghz(p.frequency_hz);
+            annotations.push({ _czpOpLabel: true, x: shared ? shared.x : ln.amplitude_v, y: opY, xref: 'x', yref: 'y', showarrow: false,
+                xanchor: 'left', xshift: 14, yanchor: 'top', yshift: -6, text: '<b>op ' + opY.toFixed(4) + ' GHz</b>',
+                font: { size: 13, color: C.ink }, bgcolor: C.edge, bordercolor: C.q[k], borderwidth: 1.5, borderpad: 3 });
         });
         // resonance levels for the moving control at the target's operating height
         el.setAttribute('data-resonance-levels', JSON.stringify(d.time_panel.levels));
@@ -553,7 +570,7 @@
         }
         var over = {
             margin: { l: 64, r: 142, t: 44, b: 120 }, showlegend: true,
-            legend: { orientation: 'h', y: -0.42, x: 0, font: { size: 11 } },
+            legend: { orientation: 'h', y: -0.24, x: 0, font: { size: 11 } },
             xaxis: { title: { text: 'flux amplitude (V)' }, zeroline: true, domain: [0, right] },
             yaxis: { title: { text: 'frequency (GHz)' } },
             shapes: shapes, annotations: annotations, hovermode: 'closest'
@@ -680,7 +697,7 @@
             var notes = L.annotations = (L.annotations || []).slice();
             if (view.offscale) notes.push({ xref: 'paper', x: 0, xanchor: 'left', yref: 'paper',
                 y: view.offscale === 'above' ? 1 : 0, yanchor: view.offscale === 'above' ? 'bottom' : 'top',
-                showarrow: false, font: { size: 10, color: C.q[0] },
+                showarrow: false, font: { size: 12, color: C.q[0] },
                 text: 'idle Δ ' + (view.idle > 0 ? '+' : '') + view.idle.toFixed(1) + ' MHz ' +
                       (view.offscale === 'above' ? '↑' : '↓') + ' off scale' });
             if (!view.gateKnown) notes.push({ xref: 'paper', x: 0.5, yref: 'paper', y: 0.5, showarrow: false,
@@ -863,7 +880,7 @@
         }
         var xs = curve.map(function (c) { return c.amplitude_v; });
         var marker = { x: [p.x], name: 'operating point', mode: 'markers', type: 'scatter', _czOperating: p,
-                       marker: { color: C.q[0], size: 13, symbol: 'diamond', line: { width: 1, color: C.q[0] } } };
+                       marker: operatingMarker(C, C.q[0], 20) };
         var qubitLines = [], qubitLabels = [];
         (d.qubits || []).forEach(function (q, k) {
             var f = q.summary && q.summary.f01_hz;

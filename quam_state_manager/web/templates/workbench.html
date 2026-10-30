@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Sync-Qualibrate · QUAM State Manager + Qualibrate</title>
-  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}" />
+  <link rel="icon" type="image/svg+xml" href="{{ asset_url('favicon.svg') }}" />
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -173,7 +173,7 @@
   </div>
   <div id="wb-drag-capture"></div>
 
-  <script src="{{ url_for('static', filename='split.min.js') }}"></script>
+  <script src="{{ asset_url('split.min.js') }}"></script>
   <script>
     (function () {
       var URL_KEY = "quam_workbench_qb_url";
