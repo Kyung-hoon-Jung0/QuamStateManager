@@ -368,3 +368,34 @@ def test_archive_keeps_the_ordinary_config_warm_but_never_records_a_reference(mo
     ctx = {"store": store, "path": str(tmp_path), "origin": "dataset_archive"}
     assert routes._warm_generated_config_async(ctx, str(tmp_path)) == "no-env"
     assert routes._warm_generated_config_async(ctx, str(tmp_path), reference_only=True) == "not-live"
+
+
+def test_a_failed_observation_names_its_reason_on_the_card_and_logs_a_traceback(loaded, monkeypatch, caplog):
+    import logging
+    from quam_state_manager.core import activity, config_generator, state_env_baseline
+
+    app, client, ctx = loaded
+    queued = []
+    app.config.update(SM_ENV_UPGRADE_IN_TESTS=True, SM_ENV_UPGRADE_STARTER=queued.append)
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda _: "env-a")
+    monkeypatch.setattr(config_generator, "_env_signature", lambda _: "sig-a")
+    monkeypatch.setattr(activity, "wait_quiet", lambda **kwargs: None)
+    monkeypatch.setattr(routes, "_warm_state_schema_async", lambda *a, **k: None)
+    monkeypatch.setattr(state_env_schema, "manifest_for_store",
+                        lambda *a, **k: {"classes": {}, "versions": {"quam": "1.0"}})
+    monkeypatch.setattr(state_env_baseline, "record_baseline", lambda *a, **k: "key-a")
+    monkeypatch.setattr(state_env_baseline, "load_baseline", lambda *a, **k: {"classes": {}})
+
+    def broken(*args, **kwargs):
+        raise KeyError("baseline_key")
+
+    monkeypatch.setattr(env_seen, "observe", broken)
+    assert client.post("/load", data={"folder": ctx["path"]}).status_code == 302
+    with caplog.at_level(logging.WARNING, logger=routes.logger.name):
+        queued.pop(0)()
+    error = ctx["env_upgrade_error"]
+    assert "KeyError" in error and "baseline_key" in error
+    records = [r for r in caplog.records if "environment observation failed" in r.getMessage()]
+    assert records and records[0].exc_info and records[0].levelno >= logging.ERROR
+    html = client.get("/diagnostics").get_data(as_text=True)
+    assert "KeyError" in html and "baseline_key" in html

@@ -2257,9 +2257,11 @@ def _maybe_check_env_upgrade(ctx, inst, *, python_path_override=None) -> None:
             if not app.config.get("TESTING") or app.config.get("SM_ENV_REFERENCE_IN_TESTS"):
                 _warm_generated_config_async(ctx, inst, reference_only=True)
             ctx.pop("env_upgrade_error", None)
-        except Exception:
-            ctx["env_upgrade_error"] = "could not check: environment observation failed"
-            logger.warning("environment observation failed", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 -- the card states the reason
+            detail = str(exc).strip().splitlines()[0][:300] if str(exc).strip() else ""
+            ctx["env_upgrade_error"] = ("could not check: the environment observation raised "
+                                        + type(exc).__name__ + (": " + detail if detail else ""))
+            logger.error("environment observation failed for %s", ctx.get("path"), exc_info=True)
         finally:
             with _env_upgrade_lock:
                 _env_upgrade_inflight.discard(inflight_key)
