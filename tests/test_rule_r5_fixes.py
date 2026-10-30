@@ -80,3 +80,11 @@ def test_a_new_instance_still_gets_a_generated_name():
         ["cz_bm_high_q3_q4", "cz_bm_low_q3_q4"]
 
 
+# --- P1 #3 (Python twin of the rename): auto_new_since follows a qubit rename -------
+
+def test_rename_follows_the_auto_new_record():
+    r = dict(_rule(), auto_new=True, auto_new_since=[unordered_key(["q1", "q2"]), unordered_key(["q10", "q2"])])
+    out = additions.rename_rules([r], {"q1": "qA"}, ["q1", "q2", "q10"], [["q1", "q2"], ["q10", "q2"]])[0]
+    assert out["auto_new_since"] == [unordered_key(["qA", "q2"]), unordered_key(["q10", "q2"])]
+
+

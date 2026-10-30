@@ -7,7 +7,8 @@ Frozen rule schema (v2.1 C7)::
      items: [{role, enabled, pulse_class, fields_struct,
               on_choice: "auto" | "control" | "target"}],
      numbers: {"<role>.<field>": value}, source_names: {role: name} | None,
-     auto_new: False, excluded: [unordered_key], reviewed: {unordered_key: instanceSig}}
+     auto_new: False, auto_new_since: [unordered_key] (pairs known when armed),
+     excluded: [unordered_key], reviewed: {unordered_key: instanceSig}}
 
 Instances add rule_id, copied_value (field -> value), and optionally
 choice_here (control | target). Numeric field values are copied untouched.

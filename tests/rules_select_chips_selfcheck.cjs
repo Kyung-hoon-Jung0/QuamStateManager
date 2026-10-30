@@ -66,6 +66,8 @@ const FEED = { q1: 'feedline1', q2: 'feedline1', q3: 'feedline1', q4: 'feedline2
   ok(!w.dlg(), 'dialog closed after apply');
   ok(w.undo.length === 1 && /add cz_bm to 2 pairs/.test(w.undo[0].label), 'D3 one undo entry: ' + JSON.stringify(w.undo.map(u => u.label)));
   ok(Array.isArray(w.spec.addition_rules) && w.spec.addition_rules[0].auto_new === true, 'D3 the spec now carries the rule (auto_new from the checkbox)');
+  ok((w.spec.addition_rules[0].auto_new_since || []).indexOf('3-4') >= 0 && w.spec.addition_rules[0].auto_new_since.length === 6,
+    'D3 every pair on the chip at arm time (incl. the unticked q3-4) is recorded as known: ' + JSON.stringify(w.spec.addition_rules[0].auto_new_since));
   ok(w.toasts.length === 1 && w.toasts[0].m === 'Added cz_bm to 2 pairs (q2-3, q4-5). Ctrl+Z undoes it.', 'D3 toast: ' + JSON.stringify(w.toasts));
   w.undo[0].fn();
   ok(!w.spec.addition_rules && !(w.spec.additions || []).length, 'D3 undo restores the spec in place');

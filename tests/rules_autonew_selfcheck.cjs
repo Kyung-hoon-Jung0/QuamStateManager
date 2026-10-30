@@ -6,6 +6,8 @@
 //  A5 reason "draft" (a restored session) writes nothing, even with auto_new ON
 //  A6 entering Review sends exactly ONE expand request; the step is reached
 //  A7 a failing settle still lets the user go on, and Review says "rules not checked: <server words>"
+//  A12 a pair that existed when auto_new was armed (left unticked) is never auto-added (D2)
+//  A13 a rule armed without the arm-time record writes nothing and records the pairs it sees
 //  A8 applyDraft strands an in-flight rule answer (the funnel is wired into the wizard)
 'use strict';
 const fs = require('fs');
@@ -83,8 +85,10 @@ function build(o) {
   G.state.spec.qubit_pairs = [['q1', 'q2'], ['q2', 'q3']];
   G.state.pairsTouched = true;
   const rule = Object.assign(T.baseRule(), { id: 'r1', rev: 1, auto_new: !(o && o.autoNew === false), source: null });
+  if (!(o && o.legacy)) rule.auto_new_since = ['1-2', '2-3'];
   G.state.spec.addition_rules = [rule];
-  G.state.spec.additions = [].concat(T.gateBundle('q1-2', 'q1', 'q2', 'cz_bm', { rule_id: 'r1' }), T.gateBundle('q2-3', 'q2', 'q3', 'cz_bm', { rule_id: 'r1' }));
+  G.state.spec.additions = [].concat(T.gateBundle('q1-2', 'q1', 'q2', 'cz_bm', { rule_id: 'r1' }),
+    o && o.untickedQ23 ? [] : T.gateBundle('q2-3', 'q2', 'q3', 'cz_bm', { rule_id: 'r1' }));
   G.goToStep(4);
   return { win, srv, G };
 }
@@ -148,6 +152,22 @@ const undo = (win, shiftKey = false) => {
   G.goToStep(5);
   await T.settle(); await T.settle();
   ok(srv.applies.length === 1, 'A5 control: the same change by a person IS added');
+
+  // A12: q2-3 was on the chip (unticked) when auto_new was armed; only the later q3-4 is added
+  ({ win, srv, G } = build({ untickedQ23: true }));
+  G.state.spec.qubit_pairs.push(['q3', 'q4']);
+  win.GenRules.specChanged('pair_edit', G.state.spec);
+  G.goToStep(5);
+  await T.settle(); await T.settle();
+  ok(srv.applies.length === 1 && J(srv.applies[0].pairs) === '["q3-4"]' && instTargets(G).indexOf('q2-3') < 0,
+    'A12 the unticked pair stays untouched, only the new pair is added: ' + J(srv.applies.map(a => a.pairs)));
+  // A13: no arm-time record -> nothing written; the pairs seen now are recorded
+  ({ win, srv, G } = build({ untickedQ23: true, legacy: true }));
+  win.GenRules.specChanged('pair_edit', G.state.spec);
+  G.goToStep(5);
+  await T.settle(); await T.settle();
+  ok(srv.applies.length === 0 && J(G.state.spec.addition_rules[0].auto_new_since) === '["1-2","2-3"]',
+    'A13 legacy auto_new writes nothing and records the known pairs: ' + J(G.state.spec.addition_rules[0].auto_new_since));
 
   // A6/A7 settle before Review
   ({ win, srv, G } = build({ autoNew: false }));

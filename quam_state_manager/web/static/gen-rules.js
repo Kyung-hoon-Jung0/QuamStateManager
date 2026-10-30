@@ -55,6 +55,17 @@
     return [normIndex(c), normIndex(t)].sort().join("-");
   }
 
+  /* D2 "pairs created later": the pairs that existed when auto_new was armed are recorded
+   * (rule.auto_new_since, unordered keys) and are never auto-added, ticked or not. */
+  function pairKeysOf(spec) {
+    return ((spec && spec.qubit_pairs) || []).filter(function (p) { return Array.isArray(p) && p.length === 2; })
+      .map(function (p) { return unorderedKey(p[0], p[1]); });
+  }
+  function armAutoNew(rule, spec) {
+    rule.auto_new = true;
+    rule.auto_new_since = pairKeysOf(spec);
+  }
+
   function watchedOf(spec) {
     var o = {};
     WATCHED.forEach(function (k) { o[k] = spec ? spec[k] : undefined; });
@@ -642,7 +653,10 @@
       label: "add " + gname + " to " + plural(pids.length, "pair"),
       after: function (sp, rid) {
         var stored = ruleById(sp, rid);
-        if (stored && stored.auto_new !== d.laterEl.checked) stored.auto_new = d.laterEl.checked;
+        if (stored && stored.auto_new !== d.laterEl.checked) {
+          if (d.laterEl.checked) armAutoNew(stored, sp);
+          else { stored.auto_new = false; delete stored.auto_new_since; }
+        }
       } }).then(function (res) {
       d.applying = false;
       if (d.closed) return;
@@ -959,7 +973,8 @@
       { separator: true },
       { label: "Also add to pairs created later", checkbox: true, checked: !!rule.auto_new, onSelect: function () {
           rulesTxn(spec, "auto-add " + rule.gate.name);
-          rule.auto_new = !rule.auto_new;
+          if (rule.auto_new) { rule.auto_new = false; delete rule.auto_new_since; }
+          else armAutoNew(rule, spec);
           after();
           focusCard(rule.id, btn);
         } },
@@ -1240,8 +1255,10 @@
   function newReadyRows(rule) {
     var st = _status[rule.id];
     if (!st) return [];
+    var known = {};
+    (Array.isArray(rule.auto_new_since) ? rule.auto_new_since : []).forEach(function (k) { known[k] = 1; });
     return Object.keys(st.rows).map(function (k) { return st.rows[k]; })
-      .filter(function (r) { return r.status === G_READY && !r.existing; });
+      .filter(function (r) { return r.status === G_READY && !r.existing && !known[r.key]; });
   }
   function needRows(rule) {
     var st = _status[rule.id];
@@ -1445,6 +1462,7 @@
       if (typeof r.source === "string") r.source = pmap.hasOwnProperty(r.source) ? pmap[r.source] : r.source;
       if (Array.isArray(r.excluded)) r.excluded = r.excluded.map(function (k) { return kmap.hasOwnProperty(k) ? kmap[k] : k; });
       if (r.reviewed) r.reviewed = rekey(r.reviewed, kmap);
+      if (Array.isArray(r.auto_new_since)) r.auto_new_since = r.auto_new_since.map(function (k) { return kmap.hasOwnProperty(k) ? kmap[k] : k; });
       if (r.source_names && typeof r.source_names === "object") {
         Object.keys(r.source_names).forEach(function (role) {
           if (typeof r.source_names[role] === "string") r.source_names[role] = rename(r.source_names[role]);
@@ -1500,6 +1518,12 @@
       }
       if (_statusErr) { _settleErr = _statusErr; return null; }
       if (blocked || !rule.auto_new) return null;
+      if (!Array.isArray(rule.auto_new_since)) {
+        // A rule armed before the arm-time record existed: every pair it can see now
+        // counts as known, so nothing the person may have declined is written.
+        rule.auto_new_since = pairKeysOf(ctx.spec());
+        return null;
+      }
       var rows = newReadyRows(rule), st = _status[id];
       if (!rows.length || !st) return null;
       var pids = rows.map(function (r) { return r.pair; });

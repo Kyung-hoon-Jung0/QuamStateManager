@@ -164,7 +164,7 @@ def rename_qubits(adds: list, id_map: dict, qubit_ids, pairs) -> list:
 def rename_rules(rules: list, id_map: dict, qubit_ids, pairs) -> list:
     """*rules* (``spec.addition_rules``) after the qubit rename *id_map*, by the
     same token rule as :func:`rename_qubits`: ``source`` (a pair id),
-    ``excluded`` / ``reviewed`` keys (flip-stable pair keys, re-sorted after
+    ``excluded`` / ``reviewed`` / ``auto_new_since`` keys (flip-stable pair keys, re-sorted after
     the rename) and ``source_names`` values. Other values are kept."""
     from quam_state_manager.core.add_names import unordered_key
     from quam_state_manager.core.regen_merge import _token_renamer
@@ -197,6 +197,8 @@ def rename_rules(rules: list, id_map: dict, qubit_ids, pairs) -> list:
             r["excluded"] = [key(k) for k in r["excluded"]]
         if isinstance(r.get("reviewed"), dict):
             r["reviewed"] = {key(k): v for k, v in r["reviewed"].items()}
+        if isinstance(r.get("auto_new_since"), list):
+            r["auto_new_since"] = [key(k) for k in r["auto_new_since"]]
         if isinstance(r.get("source_names"), dict):
             r["source_names"] = {k: rename(v) if isinstance(v, str) else v
                                  for k, v in r["source_names"].items()}
