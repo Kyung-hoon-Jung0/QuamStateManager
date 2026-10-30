@@ -5,20 +5,20 @@
    the environment SM last recorded and the one selected now, and lets the user
    answer per field. Nothing here is automatic: SM never rewrites a value from
    a schema change. #}
-<div class="tfx-card env-changes-card" role="dialog" aria-modal="true"
+<div class="tfx-card env-changes-card"
      aria-labelledby="envchg-title"
      {% if transition and transition.diff %}data-from="{{ transition.from_key }}"
      data-to="{{ transition.to_key }}" data-sig="{{ transition.sig }}"{% endif %}>
   <div class="ch-head">
     <span class="ch-title" id="envchg-title">Environment schema</span>
-    <button type="button" class="ch-close" title="Close (Esc)"
-            onclick="window.closeEnvSchemaChanges()">&times;</button>
   </div>
 
   {% if not transition %}
   <p class="tfx-none">No environment is selected, or its schema has not been
      probed yet — probe it from the Diagnostics environment card.</p>
 
+  {% elif transition.unavailable %}
+  <p>{{ transition.unavailable }}</p>
   {% elif transition.first %}
   {#- v1.5.1 (r6, P2-12): the only one on record, and since when -#}
   <p class="tfx-none">
@@ -48,7 +48,7 @@
     SM changes <em>nothing</em> in your state because of this — tell it which
     side is right where it matters.
     {% if transition.diff.truncated %}
-    <span class="tfx-warn">Showing the first {{ rows | length }}.</span>
+    <span class="tfx-warn">{{ transition.diff.omitted }} more not listed.</span>
     {% endif %}
   </p>
 
@@ -94,13 +94,7 @@
        instead of offering the same action again. #}
     <span class="tfx-note muted envchg-hidden">You hid this set &mdash; a further
       schema change raises it again.</span>
-    {% elif transition and transition.changed %}
-    <button type="button" class="btn-sync outline"
-            onclick="window.envSchemaDismiss(this)"
-            title="Hide this exact set of schema changes — a further change raises it again">Don&rsquo;t show this again</button>
     {% endif %}
-    <button type="button" class="btn-sync outline"
-            onclick="window.closeEnvSchemaChanges()">Close</button>
     <span class="tfx-note muted">Answers are remembered for this environment
       and apply to every chip you open in it.</span>
   </div>

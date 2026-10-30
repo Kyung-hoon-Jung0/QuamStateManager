@@ -321,3 +321,40 @@ def test_feature_wording_and_no_package_walk_pin():
     for name in ("env_seen", "env_upgrade", "env_rename", "waveform_refs"):
         path = root / "core" / f"{name}.py"
         assert "walk_packages" not in path.read_text(encoding="utf-8")
+
+
+def test_legacy_seen_transition_imports_once_and_new_findings_reappear(loaded):
+    from quam_state_manager.core import state_env_baseline
+    from quam_state_manager.web.env_upgrade_view import model
+
+    app, _, ctx = _review_context(loaded)
+    with app.app_context():
+        transition = model(ctx, app.instance_path)["schema_transition"]
+        assert state_env_baseline.dismiss_transition(app.instance_path, transition["from_key"],
+                                                      transition["to_key"], transition["sig"])
+        assert not model(ctx, app.instance_path)["report"]["banner"]
+        ctx["env_upgrade_report"]["cases"]["3"]["rows"][0]["paths"].append("objects.additional.old")
+        assert model(ctx, app.instance_path)["report"]["banner"]
+        record = env_seen.read(app.instance_path, env_seen.chip_key(ctx["path"]))
+        assert len(record["acknowledgements"]) == 1
+        assert len(record["legacy_ack_imports"]) == 1
+
+
+def test_schema_detail_lists_exact_omitted_count(loaded):
+    from pathlib import Path
+    from quam_state_manager.core import state_env_baseline
+    from quam_state_manager.web.env_upgrade_view import model
+
+    app, client, ctx = _review_context(loaded)
+    key = ctx["env_upgrade_report"]["event"]["previous"]["baseline_key"]
+    old = state_env_baseline.load_baseline(app.instance_path, key)
+    for entry in old["classes"].values():
+        for index in range(30):
+            entry["fields"][f"removed{index}"] = {"t": {"base": "int"}, "d": True, "o": False}
+    path = Path(app.instance_path) / state_env_baseline.BASELINE_DIRNAME / f"{key}.json"
+    path.write_text(json.dumps(old), encoding="utf-8")
+    with app.app_context():
+        transition = model(ctx, app.instance_path)["schema_transition"]
+    assert transition["diff"]["omitted"] > 0
+    html = client.get("/env-upgrade/card").get_data(as_text=True)
+    assert f"{transition['diff']['omitted']} more not listed" in html

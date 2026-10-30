@@ -63,6 +63,11 @@
     {% if report.banner %}<button class="btn-sm" onclick="EnvUpgrade.acknowledge()">Acknowledge these findings</button>{% endif %}
   {% else %}<p>could not check: report not recorded</p>{% endif %}
   <p>A reference contains generate_config() waveform arrays and the exact JSON files used to generate them.</p>
+  <details id="env-upgrade-schema-details"><summary>Schema details</summary>
+    {% with transition=upgrade.schema_transition, rows=upgrade.schema_rows, verdicts=upgrade.schema_verdicts %}
+      {% include '_env_schema_changes.html' %}
+    {% endwith %}
+  </details>
   <button class="btn-sm" hx-get="/env-upgrade/references" hx-target="#env-upgrade-references">References</button>
   {% if upgrade.editable %}<button class="btn-sm" hx-post="/config/regenerate" hx-target="#diag-env-deep">Generate config and record reference</button>{% endif %}
   <button class="btn-sm" onclick="EnvUpgrade.copyText()">Copy as text</button>

@@ -131,6 +131,22 @@ def accepted_renames(instance_path, key):
     return read(instance_path, key).get("accepted_renames", [])
 
 
+def import_legacy_ack(instance_path, key, python_path, previous, current, signature, legacy_token):
+    """Import each legacy memo once, so a changed finding set still reappears."""
+    with _lock:
+        record = read(instance_path, key)
+        imported = record.setdefault("legacy_ack_imports", [])
+        identity = _hash([normalize_env_path(python_path), legacy_token])
+        if identity in imported:
+            return
+        imported.append(identity)
+        ack = acknowledgement_key(python_path, previous, current, signature)
+        record.setdefault("acknowledgements", {})[ack] = datetime.now(timezone.utc).isoformat()
+        path = record_path(instance_path, key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        safe_io.atomic_write_json(path, record)
+
+
 def remember_renames(instance_path, key, python_path, selections, event):
     with _lock:
         record = read(instance_path, key)

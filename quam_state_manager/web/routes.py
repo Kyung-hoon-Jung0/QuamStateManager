@@ -14494,21 +14494,13 @@ def env_schema_changes():
     baseline can distinguish them. With no prior baseline the answer is honest
     ("this run recorded the first one"), never an invented diff.
     """
-    from quam_state_manager.core import state_env_baseline as _seb
-    from quam_state_manager.core import type_verdicts as _tv
+    from quam_state_manager.web.env_upgrade_view import model
     ctx = _active_ctx()
     store = (ctx or {}).get("store")
     if store is None:
         return render_template("_status.html", message="No state loaded",
                                level="warning")
-    manifest, _versions = _env_manifest_and_versions(store)
-    transition = _seb.env_transition(current_app.instance_path, manifest)
-    resolved = {}
-    if manifest:
-        resolved = _tv.resolve_for_manifest(current_app.instance_path, manifest)
-    return render_template("_env_schema_changes.html", transition=transition,
-                           verdicts=resolved,
-                           rows=_env_change_rows(transition, resolved))
+    return render_template("_env_upgrade_card.html", upgrade=model(ctx, current_app.instance_path))
 
 
 def _env_change_rows(transition: dict | None, resolved: dict) -> list[dict]:
@@ -14668,15 +14660,14 @@ def env_schema_dismiss():
     """Memo THIS env transition as seen. Env-scope fact, so it lives with the
     baselines rather than in the chip-keyed prompt memo — and it is delta-gated:
     a further schema change raises it again."""
-    from quam_state_manager.core import state_env_baseline as _seb
-    # QA diagnostics-r2-17: a memo that was not written is not a 200 -- the
-    # client refreshes the card only on success and says so otherwise.
-    if not _seb.dismiss_transition(current_app.instance_path,
-                                   (request.form.get("from_key") or "").strip(),
-                                   (request.form.get("to_key") or "").strip(),
-                                   (request.form.get("sig") or "").strip()):
-        return "Could not hide this set", 400
-    return ""
+    from quam_state_manager.web.env_upgrade_view import model, dispatch
+    view = model(_active_ctx(), current_app.instance_path)
+    transition = view.get("schema_transition") or {}
+    if (not request.form.get("sig") or request.form.get("sig") != transition.get("sig")
+            or request.form.get("from_key") != transition.get("from_key")
+            or request.form.get("to_key") != transition.get("to_key")):
+        return "Could not acknowledge this set", 400
+    return dispatch("acknowledge")
 
 
 @bp.route("/field/type-unassign", methods=["POST"])
@@ -47189,7 +47180,8 @@ def _env_change_summary(store) -> tuple[dict | None, int]:
         if not manifest:
             return None, 0
         inst = current_app.instance_path
-        transition = _seb.env_transition(inst, manifest)
+        from quam_state_manager.web.env_upgrade_view import model
+        transition = model(_active_ctx(), inst).get("schema_transition")
         summary = None
         if transition:
             diff = transition.get("diff") or {}

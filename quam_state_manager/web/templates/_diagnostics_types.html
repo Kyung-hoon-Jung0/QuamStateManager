@@ -148,8 +148,10 @@
            card says the set was hidden and stops calling for a review. #}
         {% if types_card.env_change.dismissed %}<span class="muted diag-env-hidden">
         &middot; you hid this set; a further change raises it again</span>{% endif %}
-        {% else %}
+        {% elif types_card.env_change %}
         unchanged since SM last recorded it
+        {% else %}
+        no baseline on record for this environment yet
         {% endif %}
         {% if types_card.taught %} &middot; you taught SM
         {{ types_card.taught }} type{{ 's' if types_card.taught != 1 }}{% endif %}

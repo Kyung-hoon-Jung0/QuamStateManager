@@ -19,6 +19,47 @@ def reference_for(ctx, inst):
     return baseline.load_baseline(inst, key) if key else None
 
 
+def schema_transition(ctx, inst):
+    """Schema detail uses the same per-chip event and acknowledgement as the card."""
+    body = ctx.get("env_upgrade_body")
+    if not body:
+        return None
+    previous = reference_for(ctx, inst)
+    to_label = baseline.env_label(body.get("versions"))
+    if previous is None:
+        entry = next((entry for entry in baseline.list_baselines(inst)
+                      if entry["key"] == body.get("key")), {})
+        return {"first": True, "changed": False, "to_label": to_label,
+                "since": entry.get("first_seen") or body.get("recorded_at") or ""}
+    if previous.get("schema_format") != body.get("schema_format"):
+        return {"first": False, "changed": False, "unavailable": env_upgrade.OLDER_REFERENCE}
+    cache_key = (previous.get("key"), body.get("key"))
+    cached = ctx.get("env_schema_detail_cache")
+    if cached and cached[0] == cache_key:
+        diff = cached[1]
+    else:
+        diff = baseline.diff_manifests(previous, body)
+        if diff["truncated"]:
+            full = baseline.diff_manifests(previous, body, cap=10**9, per_class_cap=10**9)
+            diff["omitted"] = full["total"] - diff["total"]
+        ctx["env_schema_detail_cache"] = (cache_key, diff)
+    return {"first": False, "changed": bool(diff["rows"]), "diff": diff,
+            "from_key": previous.get("key"), "to_key": body.get("key"),
+            "from_label": baseline.env_label(previous.get("versions")), "to_label": to_label,
+            "sig": baseline.diff_signature(diff), "previous": previous}
+
+
+def _legacy_acknowledged(inst, transition, body):
+    if not transition or not transition.get("sig"):
+        return False
+    previous = transition.get("previous") or {}
+    keys = [f"{transition.get('from_key')}>{transition.get('to_key')}",
+            f"{baseline.stable_env_key(previous.get('versions'))}>{baseline.stable_env_key(body.get('versions'))}"]
+    seen = baseline._load_index(inst).get("seen_transitions") or {}
+    return next((key + ":" + transition["sig"] for key in keys
+                 if (seen.get(key) or {}).get("sig") == transition["sig"]), None)
+
+
 def model(ctx, inst):
     ctx = ctx or {}
     store = ctx.get("store")
@@ -39,14 +80,22 @@ def model(ctx, inst):
     report = copy.deepcopy(ctx.get("env_upgrade_report"))
     env = ctx.get("env_upgrade_env") or config_generator.get_selected_env(inst) or "not selected"
     body = ctx.get("env_upgrade_body") or {}
+    transition = schema_transition(ctx, inst)
     remembered = project_env.remembered(inst, ctx.get("qualibrate_project"))
     key = env_seen.chip_key(ctx.get("path") or "")
     if report:
         event = report.get("event") or {}
         report["findings_signature"] = baseline._hash({k: v["rows"] for k, v in report["cases"].items()})
         report["banner"] = bool(report.get("banner") and env_seen.live_context(ctx))
-        if report["banner"] and env_seen.acknowledged(inst, key, env, event.get("previous") or {},
-                                                      body, report.get("findings_signature")):
+        legacy = _legacy_acknowledged(inst, transition, body)
+        if legacy and report["banner"]:
+            env_seen.import_legacy_ack(inst, key, env, event.get("previous") or {}, body,
+                                       report["findings_signature"], legacy)
+        is_acknowledged = env_seen.acknowledged(inst, key, env, event.get("previous") or {},
+                                                body, report.get("findings_signature"))
+        if transition is not None:
+            transition["dismissed"] = is_acknowledged
+        if report["banner"] and is_acknowledged:
             report["banner"] = False
         accepted = env_seen.accepted_renames(inst, key)
         for row in report["cases"]["3"]["rows"]:
@@ -59,7 +108,14 @@ def model(ctx, inst):
         (entry.get("result", {}).get("versions") or {}).get(name) == previous_versions.get(name)
         for name in env_seen.VERSIONS) for path, entry in config_generator._load_probe_cache(inst).items()
         ) if previous_versions else True
+    from quam_state_manager.core import type_verdicts
+    from quam_state_manager.web.routes import _env_change_rows
+    raw_body = {**body, "classes": {path: {**entry, "fields": env_upgrade._fields(entry)}
+                                   for path, entry in body.get("classes", {}).items()}}
+    resolved = type_verdicts.resolve_for_manifest(inst, raw_body)
     return {"report": report, "env": env, "versions": body.get("versions") or {},
+            "schema_transition": transition, "schema_rows": _env_change_rows(transition, resolved),
+            "schema_verdicts": resolved,
             "remembered": remembered if remembered and baseline.normalize_env_path(remembered) !=
                           baseline.normalize_env_path(env) else None,
             "error": ctx.get("env_upgrade_error"), "recording": ctx.get("env_reference_status"),

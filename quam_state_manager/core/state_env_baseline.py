@@ -524,7 +524,8 @@ def _match_class(path: str, entry: dict, other: dict,
     return None
 
 
-def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
+def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP,
+                   per_class_cap: int = _PER_CLASS_CAP) -> dict:
     """What the ENVIRONMENT changed between two recorded schemas.
 
     Both sides may be a raw manifest or an already-projected baseline body —
@@ -590,7 +591,7 @@ def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
             continue
         per_class = 0
         for name, ospec in ofields.items():
-            if per_class >= _PER_CLASS_CAP:
+            if per_class >= per_class_cap:
                 truncated = True
                 break
             nspec = nfields.get(name)
@@ -610,7 +611,7 @@ def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
                                     else "no longer optional")}):
                     per_class += 1
         for name, nspec in nfields.items():
-            if per_class >= _PER_CLASS_CAP:
+            if per_class >= per_class_cap:
                 truncated = True
                 break
             if name not in ofields:

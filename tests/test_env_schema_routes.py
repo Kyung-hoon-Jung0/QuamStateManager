@@ -7,6 +7,8 @@ makes is explicit, scoped to the environment, visible afterwards and
 revocable.
 """
 import json
+import copy
+import sys
 from pathlib import Path
 
 import pytest
@@ -56,7 +58,7 @@ def env(tmp_path, modern, fork, cls_field):
     chip = tmp_path / "chip"
     chip.mkdir()
     (chip / "state.json").write_text(json.dumps(
-        {"qubits": {"q1": {"__class__": cp, field: 5}}}), encoding="utf-8")
+        {"qubits": {"q1": {"__class__": cp, field: 5, "legacy_unknown": 0}}}), encoding="utf-8")
     (chip / "wiring.json").write_text(json.dumps(
         {"wiring": {}, "network": {"host": "127.0.0.1"}}), encoding="utf-8")
     seb.record_baseline(inst, fork)
@@ -66,6 +68,22 @@ def env(tmp_path, modern, fork, cls_field):
     client.post("/load", data={"folder": str(chip)})
     ctx = app.config["contexts"][app.config["active_context"]]
     ctx["store"].type_policy = tp.load_policy(inst, chip, modern)
+    from quam_state_manager.core import env_seen, env_upgrade
+    current = {**seb.select_classes(modern, [cp]), "schema_format": 4}
+    previous = copy.deepcopy(current)
+    previous["versions"] = fork["versions"]
+    previous["classes"][cp]["fields"]["legacy_unknown"] = {
+        "type": {"base": "int"}, "has_default": True, "default": 0, "defining_class": cp}
+    previous["classes"][cp]["fields"][field]["type"] = {"base": "str"}
+    old_key = seb.record_baseline(inst, previous, python_path=sys.executable)
+    old_body = seb.load_baseline(inst, old_key)
+    current_key = seb.record_baseline(inst, current, python_path=sys.executable)
+    current_body = seb.load_baseline(inst, current_key)
+    key = env_seen.chip_key(str(chip))
+    env_seen.observe(inst, key, sys.executable, old_body, context=ctx)
+    event = env_seen.observe(inst, key, sys.executable, current_body, context=ctx)
+    ctx.update(env_upgrade_env=sys.executable, env_upgrade_body=current_body,
+               env_upgrade_report=env_upgrade.report(ctx["store"].state, current, old_body, event=event))
     return {"app": app, "client": client, "ctx": ctx, "inst": inst,
             "cp": cp, "field": field, "path": f"qubits.q1.{field}",
             "versions": modern["versions"], "manifest": modern}
@@ -184,19 +202,25 @@ class TestFindingsFollowTheOverlay:
 
 class TestDismissal:
     def test_it_is_env_scoped_and_delta_gated(self, env):
-        transition = seb.env_transition(env["inst"], env["manifest"])
+        transition = self._transition(env)
         r = env["client"].post("/env-schema/dismiss", data={
             "from_key": transition["from_key"], "to_key": transition["to_key"],
             "sig": transition["sig"]})
         assert r.status_code == 200
-        assert seb.env_transition(env["inst"], env["manifest"])["dismissed"] is True
+        assert self._transition(env)["dismissed"] is True
+
+    @staticmethod
+    def _transition(env):
+        from quam_state_manager.web.env_upgrade_view import model
+        with env["app"].app_context():
+            return model(env["ctx"], env["inst"])["schema_transition"]
 
     # QA diagnostics-r2-17: the dismissal was stored and never read -- the
     # button had no visible effect. The count stays (docs/79: a dismissal
     # never hides the fact); the card says the set is hidden and stops
     # calling for a review, and the overlay stops offering the same action.
     def _dismiss(self, env, sig=None):
-        t = seb.env_transition(env["inst"], env["manifest"])
+        t = self._transition(env)
         return t, env["client"].post("/env-schema/dismiss", data={
             "from_key": t["from_key"], "to_key": t["to_key"],
             "sig": t["sig"] if sig is None else sig})
@@ -213,15 +237,16 @@ class TestDismissal:
 
     def test_the_overlay_stops_offering_the_same_action(self, env):
         before = env["client"].get("/env-schema/changes").get_data(as_text=True)
-        assert "envSchemaDismiss" in before and "You hid this set" not in before
+        assert "Acknowledge these findings" in before and "You hid this set" not in before
+        assert 'role="dialog"' not in before
         self._dismiss(env)
         after = env["client"].get("/env-schema/changes").get_data(as_text=True)
-        assert "envSchemaDismiss" not in after
+        assert "Acknowledge these findings" not in after
         assert "You hid this set" in after
 
     def test_a_stale_signature_hides_nothing(self, env):
         t, r = self._dismiss(env, sig="not-the-current-set")
-        assert r.status_code == 200
+        assert r.status_code == 400
         html = env["client"].get("/diagnostics/types-card").get_data(as_text=True)
         assert "you hid this set" not in html
         assert f"Review {(t['diff'] or {}).get('total')} schema change" in html
