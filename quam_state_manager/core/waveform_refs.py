@@ -9,17 +9,52 @@ import math
 from pathlib import Path
 import re
 import struct
+import os
 import tempfile
+import threading
 import time
 
 from quam_state_manager.core import config_generator, safe_io, working_copy
-from quam_state_manager.core.env_seen import live_context
+from quam_state_manager.core.env_seen import VERSIONS, live_context
 from quam_state_manager.core.env_upgrade import non_waveform_diff
 from quam_state_manager.core.state_env_baseline import _hash, normalize_env_path
 
 WAVEFORM_REF_FORMAT = 1
 AUTO_RECORD_SECONDS = 60   # real chips load far slower than the synthetic fixtures (see MEASURE_step3.md)
 _MAX_REFERENCE_BYTES = 64_000_000
+# Retention per (chip, env): the newest references up to this count and byte
+# total; the newest reference an observation points at is never deleted.
+MAX_REFERENCES_PER_ENV = 6
+MAX_BYTES_PER_ENV = 48_000_000
+_INDEX_FORMAT = 1
+_HEADER_KEYS = ("format", "key", "identity", "chip_key", "python_path", "versions", "official_digest",
+                "source_fingerprint", "basis", "recorded_at", "files", "other_json", "wall_seconds")
+_index_lock = threading.RLock()
+_index_memo: dict = {}
+
+
+def _same_versions(reference: dict, observation: dict) -> bool:
+    return all((reference.get("versions") or {}).get(name) == (observation.get("versions") or {}).get(name)
+               for name in VERSIONS)
+
+
+def matches(reference: dict, python_path: str, observation: dict) -> bool:
+    """The one predicate: a reference recorded in this env under exactly the
+    versions, official class digest and source fingerprint of ``observation``."""
+    observation = observation or {}
+    return (bool(observation.get("versions"))
+            and reference.get("python_path") == normalize_env_path(python_path)
+            and reference.get("official_digest") == observation.get("official_digest")
+            and reference.get("source_fingerprint") == observation.get("source_fingerprint")
+            and _same_versions(reference, observation))
+
+
+def versions_match(reference: dict, python_path: str, observation: dict) -> bool:
+    """Same env and version strings, whatever the class digest or sources."""
+    observation = observation or {}
+    return (bool(observation.get("versions"))
+            and reference.get("python_path") == normalize_env_path(python_path)
+            and _same_versions(reference, observation))
 
 
 def metrics(before: list[float], after: list[float], threshold: float = 1e-12) -> dict:
@@ -178,8 +213,7 @@ def record(instance_path, chip_key, python_path, body, outcome, *, context, unsa
         for path in sorted(Path(live).rglob("*.json")):
             name = path.relative_to(live).as_posix()
             if name not in inputs:
-                safe_io.read_json(path)
-                metadata["other_json"].append(name)
+                metadata["other_json"].append(name)   # named only, never parsed
     identity = _hash([chip_key, metadata["python_path"], metadata["versions"], metadata["official_digest"], basis])
     metadata["identity"] = identity
     key = _hash([identity, metadata["source_fingerprint"], metadata["files"],
@@ -190,20 +224,138 @@ def record(instance_path, chip_key, python_path, body, outcome, *, context, unsa
     path = directory / f"{key}.json"
     if not path.exists():
         safe_io.atomic_write_json(path, metadata)
+    try:
+        prune(instance_path, chip_key, metadata["python_path"], keep=key)
+    except Exception:  # noqa: BLE001 -- retention never fails the reference just written
+        pass
     return key
 
 
-def list_references(instance_path, chip_key):
+def _header(reference: dict, size: int) -> dict:
+    header = {k: reference.get(k) for k in _HEADER_KEYS}
+    header["waveforms"] = len(reference.get("traces") or {})
+    header["size"] = size
+    return header
+
+
+def _index_path(instance_path) -> Path:
+    # Outside waveform_refs/ so writing it never moves that directory's mtime.
+    return Path(instance_path) / "waveform_refs_index.json"
+
+
+def _all_headers(instance_path) -> list[dict]:
+    """Headers of every reference file, memoized on (dir mtime, names) and kept
+    in a small on-disk index keyed by each file's (mtime_ns, size), so a
+    reference body is parsed once, when it is new, never on a listing."""
     directory = Path(instance_path) / "waveform_refs"
-    result = []
-    for path in directory.glob("*.json"):
+    try:
+        stamp = directory.stat().st_mtime_ns
+        names = tuple(sorted(n for n in os.listdir(directory) if n.endswith(".json")))
+    except OSError:
+        return []
+    memo_key = (stamp, names)
+    with _index_lock:
+        cached = _index_memo.get(str(directory))
+        if cached and cached[0] == memo_key:
+            return cached[1]
         try:
-            reference = safe_io.read_json(path)
-            if reference.get("chip_key") == chip_key:
-                result.append({**reference, "size": path.stat().st_size})
+            index = safe_io.read_json(_index_path(instance_path))
+            entries = index.get("entries") if isinstance(index, dict) and index.get("format") == _INDEX_FORMAT else None
         except (OSError, ValueError):
+            entries = None
+        entries = entries if isinstance(entries, dict) else {}
+        fresh, headers, dirty = {}, [], False
+        for name in names:
+            path = directory / name
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            signature = [info.st_mtime_ns, info.st_size]
+            entry = entries.get(name)
+            if not (isinstance(entry, dict) and entry.get("stat") == signature
+                    and isinstance(entry.get("header"), dict)):
+                try:
+                    entry = {"stat": signature, "header": _header(safe_io.read_json(path), info.st_size)}
+                except (OSError, ValueError, AttributeError):
+                    continue
+                dirty = True
+            fresh[name] = entry
+            headers.append(entry["header"])
+        if dirty or set(fresh) != set(entries):
+            try:
+                safe_io.atomic_write_json(_index_path(instance_path), {"format": _INDEX_FORMAT, "entries": fresh})
+            except OSError:
+                pass
+        _index_memo[str(directory)] = (memo_key, headers)
+        return headers
+
+
+def list_references(instance_path, chip_key):
+    """Reference headers of one chip, newest first; no sample data."""
+    result = [dict(h) for h in _all_headers(instance_path) if h.get("chip_key") == chip_key]
+    return sorted(result, key=lambda r: r.get("recorded_at") or "", reverse=True)
+
+
+def _anchors(instance_path, chip_key) -> list | None:
+    """Every (env, observation) of this chip a reference may be needed for:
+    each env's current observation and each held transition's previous."""
+    from quam_state_manager.core import env_seen
+    try:
+        record = env_seen.read(instance_path, chip_key)
+    except Exception:  # noqa: BLE001 -- unreadable history: retention abstains
+        return None
+    out = []
+    for env, entry in (record.get("envs") or {}).items():
+        out.append((env, entry))
+        for held in ("pending", "acknowledged_event"):
+            previous = ((entry or {}).get(held) or {}).get("previous")
+            if previous:
+                out.append((env, previous))
+    return out
+
+
+def prune(instance_path, chip_key, python_path, *, keep=None) -> list[str]:
+    """Keep the newest references of one (chip, env) within the count and byte
+    caps. Never deleted: ``keep`` and the newest reference matching any anchor
+    (an env's current observation or a transition's previous versions). Input
+    blobs no remaining reference names are deleted too. Returns deleted keys."""
+    anchors = _anchors(instance_path, chip_key)
+    if anchors is None:
+        return []
+    env = normalize_env_path(python_path)
+    group = [r for r in list_references(instance_path, chip_key) if r.get("python_path") == env]
+    protected = {keep} if keep else set()
+    for anchor_env, observation in anchors:
+        newest = next((r for r in group if matches(r, anchor_env, observation)), None)
+        if newest:
+            protected.add(newest["key"])
+    directory = Path(instance_path) / "waveform_refs"
+    removed, count, total = [], 0, 0
+    for reference in group:                       # newest first
+        count += 1
+        total += int(reference.get("size") or 0)
+        if reference["key"] in protected or (count <= MAX_REFERENCES_PER_ENV and total <= MAX_BYTES_PER_ENV):
             continue
-    return sorted(result, key=lambda r: r.get("recorded_at", ""), reverse=True)
+        if not re.fullmatch(r"[0-9a-f]{64}", reference.get("key") or ""):
+            continue
+        try:
+            (directory / f"{reference['key']}.json").unlink(missing_ok=True)
+        except OSError:
+            continue
+        removed.append(reference["key"])
+        count -= 1
+        total -= int(reference.get("size") or 0)
+    if removed:
+        used = {digest for header in _all_headers(instance_path)
+                for digest in (header.get("files") or {}).values()}
+        for blob in (directory / "inputs").glob("*.json"):
+            if blob.stem not in used and re.fullmatch(r"[0-9a-f]{64}", blob.stem):
+                try:
+                    blob.unlink()
+                except OSError:
+                    pass
+    return removed
 
 
 def load(instance_path, key):
@@ -255,6 +407,7 @@ def compare(instance_path, key, python_path, *, name_filter="", transform=None):
         return {**compared, "status": "found" if compared["counts"]["differ"] else "none_found",
                 "attempted": True, "applied": note,
                 "applied_text": f"Compared on the reference inputs{applied}." if note else "",
+                "versions": (outcome.get("result") or {}).get("versions") or {},
                 "reference_state_hash": reference["basis"][:10],
                 "current_state_hash": input_basis(outcome["reference_inputs"])[:10],
                 "non_waveform": non_waveform_diff(reference["config_non_waveform"], outcome["result"]["config"])}

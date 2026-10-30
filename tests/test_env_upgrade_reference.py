@@ -15,7 +15,7 @@ from quam_state_manager.core import state_env_baseline as baseline
 
 def manifest():
     return {"schema_format": 4, "versions": {"quam": "0.6.0", "numpy": "2.0"},
-            "sources": {"source.py": [1, 20]}, "classes": {
+            "sources": {"lab/extension.py": [1, 20]}, "classes": {
                 "official.Parent": {"importable": True, "origin": "official",
                     "bases": ["builtins.object"], "signatures": {}, "fields": {
                         "length": {"type": {"base": "int"}, "has_default": True,
@@ -43,7 +43,7 @@ def test_two_part_digest_tracks_only_its_own_classes():
 def test_fingerprint_detects_computation_only_source_change():
     original = manifest()
     before = baseline.project_manifest(original)
-    original["sources"]["source.py"][0] += 1
+    original["sources"]["lab/extension.py"][0] += 1
     after = baseline.project_manifest(original)
     assert before["source_fingerprint"] != after["source_fingerprint"]
     assert before["official_digest"] == after["official_digest"]
@@ -71,7 +71,7 @@ def test_prune_guard_and_per_env_bound(tmp_path, monkeypatch):
     (seen / "record.json").write_text(json.dumps({"envs": {
         "env-a": {"baseline_key": first}}}), encoding="utf-8")
     for i in range(6):
-        original["sources"]["source.py"][0] = i + 2
+        original["sources"]["lab/extension.py"][0] = i + 2
         baseline.record_baseline(tmp_path, original, python_path="env-a")
         baseline.record_baseline(tmp_path, original, python_path="env-b")
     assert baseline.load_baseline(tmp_path, first) is not None
@@ -84,7 +84,7 @@ def test_byte_budget_prunes_unreferenced_bodies(tmp_path, monkeypatch):
     monkeypatch.setattr(baseline, "_MAX_ENV_BYTES", 1)
     original = manifest()
     baseline.record_baseline(tmp_path, original, python_path="env-a")
-    original["sources"]["source.py"][0] += 1
+    original["sources"]["lab/extension.py"][0] += 1
     newest = baseline.record_baseline(tmp_path, original, python_path="env-a")
     assert [e["key"] for e in baseline.list_baselines(tmp_path)] == [newest]
 

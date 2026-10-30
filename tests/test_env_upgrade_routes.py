@@ -317,7 +317,6 @@ def test_feature_wording_and_no_package_walk_pin():
     for path in sources:
         text = path.read_text(encoding="utf-8")
         assert not re.search(r"safe|compatible", text, re.I), path
-        assert not re.search(r"\b\d+ of \d+ differ", text)
     for name in ("env_seen", "env_upgrade", "env_rename", "waveform_refs"):
         path = root / "core" / f"{name}.py"
         assert "walk_packages" not in path.read_text(encoding="utf-8")

@@ -110,7 +110,10 @@ def test_waveform_compare_is_a_table_with_identical_rows_folded(loaded):
                  "length_difference": 0, "relative_deviation": 0.5})
     _report_ctx(ctx, changed=True, case6={"case": 6, "rows": rows, "status": "found", "message": "x"})
     html = client.get("/env-upgrade/card").get_data(as_text=True)
-    assert "1 of 48 differ" in html and "47 of 48 bit-identical" in html
+    # R2 change 8: three counts, never "N of M differ"
+    assert "1 differ \u00b7 47 identical \u00b7 0 not comparable" in html
+    assert not re.search(r"\d+ of \d+ differ", html)
+    assert "47 of 48 bit-identical" in html
     table = html.split('class="env-wave-table"')[1].split("</table>")[0]
     assert "q1.z / cz" in table and "q3 / x" not in table
     assert "None" not in table and "all-zero waveform" in table
@@ -227,7 +230,7 @@ def test_g3_existing_pre_upgrade_reference_is_named_not_denied(loaded, monkeypat
     assert "install it in a separate env" in html
     monkeypatch.setattr(view.waveform_refs, "list_references", lambda inst, key: [{
         "key": "k", "recorded_at": "2026-10-01T00:00:00+00:00", "versions": {"quam": "0.5.0"},
-        "python_path": sys.executable, "size": 2048, "traces": {}}])
+        "python_path": view.baseline.normalize_env_path(sys.executable), "size": 2048, "traces": {}}])
     html = client.get("/env-upgrade/card").get_data(as_text=True)
     assert "install it in a separate env" not in html
     assert "reference from before the change is recorded" in html
@@ -262,7 +265,7 @@ def test_w2_card_polls_and_reads_comparing_while_the_compare_runs(loaded, monkey
     _transition_ctx(ctx)
     monkeypatch.setattr(view.waveform_refs, "list_references", lambda inst, key: [{
         "key": "k", "recorded_at": "2026-10-01T00:00:00+00:00", "versions": {"quam": "0.5.0"},
-        "python_path": sys.executable, "size": 2048, "traces": {}}])
+        "python_path": view.baseline.normalize_env_path(sys.executable), "size": 2048, "traces": {}}])
     ctx["env_compare_running"] = True
     card = client.get("/diagnostics/env-card?poll=1")
     html = card.get_data(as_text=True)

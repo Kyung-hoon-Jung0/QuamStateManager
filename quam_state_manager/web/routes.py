@@ -2448,7 +2448,7 @@ def _warm_generated_config_async(ctx, inst, *, reference_only=False) -> str:
     if store is None or not folder:
         return "no-chip"
     from quam_state_manager.core import env_seen, waveform_refs
-    from quam_state_manager.core.state_env_baseline import _hash, normalize_env_path
+    from quam_state_manager.core.state_env_baseline import _hash
     if reference_only and not env_seen.live_context(ctx):
         return "not-live"   # a reference is recorded for a live chip only
     if reference_only and (store.change_log or not ctx.get("env_upgrade_body")):
@@ -2470,11 +2470,8 @@ def _warm_generated_config_async(ctx, inst, *, reference_only=False) -> str:
             ctx["env_upgrade_body"].get("source_fingerprint"),
             [ctx["env_upgrade_body"]["versions"].get(v) for v in env_seen.VERSIONS]])
         references = waveform_refs.list_references(inst, env_seen.chip_key(folder))
-        if any(r["basis"] == file_basis and r["official_digest"] == digest and
-               r.get("source_fingerprint") == ctx["env_upgrade_body"].get("source_fingerprint") and
-               r["python_path"] == normalize_env_path(python_path) and
-               all(r["versions"].get(v) == ctx["env_upgrade_body"]["versions"].get(v)
-                   for v in env_seen.VERSIONS) for r in references):
+        if any(r.get("basis") == file_basis and waveform_refs.matches(r, python_path, ctx["env_upgrade_body"])
+               for r in references):
             return "already-recorded"
 
     key = str(folder).lower()
@@ -2528,10 +2525,14 @@ def _warm_generated_config_async(ctx, inst, *, reference_only=False) -> str:
                 logger.info("auto config preview did not produce a config: %s",
                             (outcome.get("error") or "")[:200])
                 ctx["env_reference_status"] = "could not record reference: previewer failed or timed out"
-        except Exception:  # noqa: BLE001 -- never break the chip that is open
+        except Exception as exc:  # noqa: BLE001 -- never break the chip that is open
             with _cfg_warm_lock:
                 _cfg_warm_failed[key] = state_hash
             logger.warning("auto config preview failed", exc_info=True)
+            if reference_only or ctx.get("env_reference_status") == "recording reference...":
+                detail = str(exc).strip().splitlines()[0][:200] if str(exc).strip() else ""
+                ctx["env_reference_status"] = ("could not record reference: " + type(exc).__name__
+                                               + (": " + detail if detail else ""))
         finally:
             with _cfg_warm_lock:
                 _cfg_warm_inflight.discard(key)
@@ -47191,7 +47192,7 @@ def _env_card_state(store: QuamStore) -> dict:
         if _pp.name.lower() in ("bin", "scripts") and _pp.parent.name:
             _pp = _pp.parent
         env_name = _pp.name or None
-    from quam_state_manager.web.env_upgrade_view import model as upgrade_model
+    from quam_state_manager.web.env_upgrade_view import model_once as upgrade_model
     _maybe_recheck_env_upgrade(_active_ctx(), current_app.instance_path)
     upgrade = upgrade_model(_active_ctx(), current_app.instance_path)
     # G2: the header names the SAME current versions as the card body; the
@@ -47248,8 +47249,8 @@ def _env_change_summary(store) -> tuple[dict | None, int]:
         if not manifest:
             return None, 0
         inst = current_app.instance_path
-        from quam_state_manager.web.env_upgrade_view import model
-        transition = model(_active_ctx(), inst).get("schema_transition")
+        from quam_state_manager.web.env_upgrade_view import model_once
+        transition = model_once(_active_ctx(), inst).get("schema_transition")
         summary = None
         if transition:
             diff = transition.get("diff") or {}
@@ -47430,7 +47431,7 @@ def diagnostics_banner():
     store = _store()
     if not store:
         return ""
-    from quam_state_manager.web.env_upgrade_view import model as upgrade_model
+    from quam_state_manager.web.env_upgrade_view import model_once as upgrade_model
     upgrade = upgrade_model(_active_ctx(), current_app.instance_path)
     if upgrade["report"] and upgrade["report"].get("banner"):
         return render_template("_env_upgrade_banner.html", upgrade=upgrade)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 import threading
 
 from quam_state_manager.core import safe_io
@@ -37,21 +38,36 @@ def read(instance_path, key: str) -> dict:
     return result
 
 
+_RELEASE = re.compile(r"(\d+(?:\.\d+)*)(.*)")
+
+
+def _order(old, new):
+    """[derived] Order two version strings by their leading numeric release
+    (missing parts are 0). Returns "upgrade"/"downgrade", or None when the
+    strings cannot be ordered: no leading release, or equal releases with
+    different suffixes (pre-release / local tags are not ranked here)."""
+    a, b = _RELEASE.fullmatch(str(old).strip()), _RELEASE.fullmatch(str(new).strip())
+    if old is None or new is None or not a or not b:
+        return None
+    left = [int(x) for x in a.group(1).split(".")]
+    right = [int(x) for x in b.group(1).split(".")]
+    width = max(len(left), len(right))
+    left += [0] * (width - len(left))
+    right += [0] * (width - len(right))
+    if left == right:
+        return None
+    return "upgrade" if right > left else "downgrade"
+
+
 def direction(previous: dict, current: dict) -> str:
     """Describe direction only when the version strings can be ordered."""
-    from packaging.version import InvalidVersion, Version
-
     labels = []
     for name in VERSIONS:
         old = (previous.get("versions") or {}).get(name)
         new = (current.get("versions") or {}).get(name)
         if old == new:
             continue
-        suffix = "version changed"
-        try:
-            suffix = "upgrade" if Version(str(new)) > Version(str(old)) else "downgrade"
-        except InvalidVersion:
-            pass
+        suffix = _order(old, new) or "version changed"
         labels.append(f"{name.replace('_', '-')} {old} \u2192 {new} ({suffix})")
     if labels:
         return " \u00b7 ".join(labels)
@@ -92,11 +108,21 @@ def observe(instance_path, key: str, python_path: str, body: dict, *, context: d
         previous = record["envs"].get(env)
         event = transition(previous, current)
         # Preserve the event until acknowledged; repeated renders cannot erase it.
-        if event["changed"]:
+        held = (previous or {}).get("pending")
+        if event["changed"] and not event["official_changed"] and held and held.get("official_changed"):
+            # An unacknowledged official transition stays the anchor: its
+            # ``previous`` (the versions before the change) is what the schema
+            # reference, the waveform references and the reviewed plan key on.
+            # A later lab-only change is kept as an additional fact.
+            later = list(held.get("later_changes") or [])
+            later.append({"direction": event["direction"], "lab_changed": event["lab_changed"],
+                          "time": current["time"]})
+            current["pending"] = {**held, "later_changes": later[-20:]}
+        elif event["changed"]:
             current["pending"] = {**event, "previous": {
-                k: v for k, v in previous.items() if k != "pending"}}
-        elif previous and previous.get("pending"):
-            current["pending"] = previous["pending"]
+                k: v for k, v in previous.items() if k not in ("pending", "acknowledged_event")}}
+        elif held:
+            current["pending"] = held
         record["envs"][env] = current
         path = record_path(instance_path, key)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,6 +149,11 @@ def acknowledge(instance_path, key, python_path, previous, current, findings_sig
         record = read(instance_path, key)
         identity = acknowledgement_key(python_path, previous, current, findings_signature)
         record.setdefault("acknowledgements", {})[identity] = datetime.now(timezone.utc).isoformat()
+        entry = record["envs"].get(normalize_env_path(python_path)) or {}
+        if entry.get("pending"):
+            # The card returns to its compact form; the event stays readable so
+            # baseline pruning still protects the body it points at.
+            entry["acknowledged_event"] = entry.pop("pending")
         safe_io.atomic_write_json(record_path(instance_path, key), record)
     return True
 

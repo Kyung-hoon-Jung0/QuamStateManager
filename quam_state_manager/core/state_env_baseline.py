@@ -222,7 +222,7 @@ def project_manifest(manifest: dict) -> dict:
                 classes[path][name] = entry[name]
     body = {"classes": classes, "versions": manifest.get("versions") or {},
             "schema_format": manifest.get("schema_format"),
-            "source_fingerprint": _hash(manifest.get("sources") or {})}
+            "source_fingerprint": _hash(chip_sources(manifest.get("sources") or {}, classes))}
     for origin in ("official", "lab"):
         evidence = {}
         for path, entry in classes.items():
@@ -236,6 +236,29 @@ def project_manifest(manifest: dict) -> dict:
             } if entry.get("fields") is not None else None
         body[f"{origin}_digest"] = _hash(evidence)
     return body
+
+
+def chip_sources(sources: dict, classes: dict) -> dict:
+    """The out-of-env source files that define the given classes.
+
+    ``sources`` is the env-wide probe union (every lab file any chip's classes
+    pulled in); a file only another chip uses must not move this chip's
+    fingerprint. A class's module comes from its canonical name (or, when it
+    did not import, its state path); its ancestors are already among
+    ``classes`` (``select_classes`` follows ``bases``)."""
+    modules = set()
+    for path, entry in (classes or {}).items():
+        name = (entry or {}).get("canonical") or path
+        module = str(name).rsplit(".", 1)[0] if "." in str(name) else ""
+        if module:
+            modules.add(module.replace(".", "/").lower())
+    out = {}
+    for filename, record in (sources or {}).items():
+        norm = str(filename).replace("\\", "/").lower()
+        if any(norm.endswith("/" + m + ".py") or norm.endswith("/" + m + "/__init__.py")
+               or norm == m + ".py" for m in modules):
+            out[filename] = record
+    return out
 
 
 def _hash(value: Any) -> str:
@@ -276,9 +299,10 @@ def _protected_keys(instance_path: Any) -> set[str] | None:
             for entry in record.get("envs", {}).values():
                 if entry.get("baseline_key"):
                     keys.add(entry["baseline_key"])
-                pending = (entry.get("pending") or {}).get("previous") or {}
-                if pending.get("baseline_key"):
-                    keys.add(pending["baseline_key"])
+                for held in ("pending", "acknowledged_event"):
+                    pending = (entry.get(held) or {}).get("previous") or {}
+                    if pending.get("baseline_key"):
+                        keys.add(pending["baseline_key"])
         except Exception:  # noqa: BLE001
             return None
     return keys

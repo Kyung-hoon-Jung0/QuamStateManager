@@ -10,11 +10,7 @@ from quam_state_manager.core import state_env_baseline as baseline, state_env_sc
 def matching_references(instance_path, key, python_path, previous):
     """References recorded in this env under exactly the versions the change came from."""
     return [r for r in waveform_refs.list_references(instance_path, key)
-            if r["python_path"] == baseline.normalize_env_path(python_path)
-            and r.get("official_digest") == previous.get("official_digest")
-            and r.get("source_fingerprint") == previous.get("source_fingerprint")
-            and all(r["versions"].get(name) == (previous.get("versions") or {}).get(name)
-                    for name in env_seen.VERSIONS)]
+            if waveform_refs.matches(r, python_path, previous)]
 
 
 def compare_matched(instance_path, key, python_path, event, body, reference_baseline, reference_key):

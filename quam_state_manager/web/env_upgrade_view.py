@@ -104,11 +104,12 @@ def present_references(inst, key):
         rows.append({**reference, "env_name": env_name(reference.get("python_path")),
                      "local_time": local_minute(reference.get("recorded_at")),
                      "size_text": size_text(reference.get("size")),
-                     "waveforms": len(reference.get("traces") or {})})
+                     "waveforms": reference.get("waveforms", len(reference.get("traces") or {}))})
     return rows
 
 
-def case6_message(report, transition_seen, has_pre_reference, previous_not_installed, compare_running=False):
+def case6_message(report, transition_seen, has_pre_reference, previous_not_installed, compare_running=False,
+                  versions_only_reference=False):
     """The one sentence the card shows for the waveform case."""
     case = report["cases"]["6"]
     if compare_running:
@@ -123,6 +124,10 @@ def case6_message(report, transition_seen, has_pre_reference, previous_not_insta
                     "the load-stopping items above are resolved.")
         return ("A reference from before the change is recorded; the waveform compare has not run yet "
                 "— press Check to run it.")
+    if versions_only_reference:
+        return ("A reference under the same version strings is recorded, but under different class "
+                "definitions or source files, so it is not compared automatically; use Compare under "
+                "References to run it by hand.")
     if previous_not_installed:
         return ("No reference from before this change; the previous version is not installed in any "
                 "environment SM knows — install it in a separate env to compare.")
@@ -137,11 +142,15 @@ def compare_rows(case):
                    key=lambda r: order.get(r.get("label"), 1))
     identical = [r for r in rows if r.get("label") == "bit-identical"]
     differ = sum(1 for r in rows if r.get("label") == "differs")
+    not_comparable = sum(1 for r in rows if r.get("label") == "not comparable")
     total = len(rows)
     if total and len(identical) == total:
         summary = f"All {total} waveforms are bit-identical to the reference"
     else:
-        summary = f"{differ} of {total} differ"
+        # R2 change 8: the three counts, never a share of a total that
+        # includes rows that were never compared
+        summary = (f"{differ} differ \u00b7 {total - differ - not_comparable} identical \u00b7 "
+                   f"{not_comparable} not comparable")
     return {"shown": shown, "identical": identical, "summary": summary, "total": total}
 
 
@@ -210,10 +219,12 @@ def model(ctx, inst):
     consequence = bool(report and any(report["cases"][n]["rows"] for n in ("2", "3", "4", "5", "6")))
     entry = next((e for e in baseline.list_baselines(inst) if e.get("key") == body.get("key")), {})
     refs = present_references(inst, key) if ctx.get("path") else []
-    # G3: a reference recorded under the versions this change came from
-    has_pre_reference = bool(previous_versions) and any(
-        all((ref.get("versions") or {}).get(name) == previous_versions.get(name)
-            for name in env_seen.VERSIONS) for ref in refs)
+    # G3: one predicate with the compare (env_upgrade_service.matching_references)
+    previous_observation = (((report or {}).get("event") or {}).get("previous") or {})
+    checked_env = ctx.get("env_upgrade_env") or selected or ""
+    has_pre_reference = any(waveform_refs.matches(ref, checked_env, previous_observation) for ref in refs)
+    versions_only_reference = not has_pre_reference and any(
+        waveform_refs.versions_match(ref, checked_env, previous_observation) for ref in refs)
     from quam_state_manager.web import routes as _routes
     with _routes._cfg_warm_lock:
         recording_running = (ctx.get("env_reference_status") == "recording reference..."
@@ -221,7 +232,8 @@ def model(ctx, inst):
     compare_running = bool(ctx.get("env_compare_running"))
     if report:
         report["cases"]["6"] = {**report["cases"]["6"], "message": case6_message(
-            report, transition_seen, has_pre_reference, not known_previous, compare_running)}
+            report, transition_seen, has_pre_reference, not known_previous, compare_running,
+            versions_only_reference)}
     return {"report": report, "env": env, "versions": versions,
             "env_name": env_name(selected), "remembered_name": env_name(remembered), "no_env": not selected,
             "checking": checking(ctx), "transition": transition_seen, "consequence": consequence,
@@ -242,6 +254,19 @@ def model(ctx, inst):
                 "Not checked: run-time behaviour of macros, hardware timing, classes not probed (0)"),
             "all_clear": bool(report and all(report["cases"][str(n)]["status"] == "none_found"
                                              for n in range(1, 6)))}
+
+
+def model_once(ctx, inst):
+    """``model`` computed once per request: a Diagnostics render reads it from
+    several cards, and each read lists the references."""
+    from flask import g, has_request_context
+    if not has_request_context():
+        return model(ctx, inst)
+    memo = g.setdefault("_env_upgrade_model", {})
+    key = (id(ctx), str(inst))
+    if key not in memo:
+        memo[key] = model(ctx, inst)
+    return memo[key]
 
 
 def _start_compare(ctx, inst, key, env, event, body, reference, reference_key):
@@ -346,7 +371,14 @@ def dispatch(action):
         return jsonify(ok=True, checking=view["checking"])
     if request.method != "POST":
         return jsonify(error="use an explicit action"), 405
-    payload = request.get_json(silent=True) or request.form
+    from quam_state_manager.web import request_body
+    payload = request_body.json_object(lambda: request.form)
+    for name in ("python", "reference", "name_filter", "token"):
+        request_body.json_text(payload, name)      # a non-text field is a 400, not a 500
+    selections = payload.get("selections")
+    if selections is not None and not (isinstance(selections, list)
+                                       and all(isinstance(item, dict) for item in selections)):
+        return jsonify(ok=False, error="'selections' must be a list of objects"), 400
     try:
         if action == "check":
             if not view["editable"]:
