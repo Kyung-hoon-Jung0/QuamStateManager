@@ -18,7 +18,7 @@ from quam_state_manager.core.env_upgrade import non_waveform_diff
 from quam_state_manager.core.state_env_baseline import _hash, normalize_env_path
 
 WAVEFORM_REF_FORMAT = 1
-AUTO_RECORD_SECONDS = 5
+AUTO_RECORD_SECONDS = 60   # real chips load far slower than the synthetic fixtures (see MEASURE_step3.md)
 _MAX_REFERENCE_BYTES = 64_000_000
 
 
@@ -145,6 +145,8 @@ def record(instance_path, chip_key, python_path, body, outcome, *, context, unsa
     if not live_context(context) or unsaved or not outcome.get("ok"):
         return None
     result = outcome.get("result") or {}
+    if result.get("warnings"):
+        return None  # loader fallbacks or stripped keys do not describe the captured input
     if result.get("config") is None or not outcome.get("reference_inputs"):
         return None
     inputs = outcome["reference_inputs"]
