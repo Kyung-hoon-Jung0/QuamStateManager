@@ -916,6 +916,45 @@
     if (addHost && addCtx) mount(addHost, addCtx);
   }
 
+  /* The pulse additions an added gate plays (its fields point at them by
+   * absolute pointer) and that no other addition still points at: what the
+   * gate created, and what goes when the gate is removed. Returns indices. */
+  function gatePulses(spec, gateIndex) {
+    var adds = list(spec), gate = adds[gateIndex];
+    if (!gate || gate.kind !== "macro") return [];
+    function refs(a) {
+      var out = [];
+      (function walk(v) {
+        if (Array.isArray(v)) v.forEach(walk);
+        else if (v && typeof v === "object") Object.keys(v).forEach(function (k) { walk(v[k]); });
+        else if (typeof v === "string" && v.indexOf("#/") === 0) out.push(v);
+      })(a.fields || {});
+      return out;
+    }
+    var ptrOf = function (a) { return "#/" + String(a.target).split(".").join("/") + "/" + a.name; };
+    var mine = {};
+    refs(gate).forEach(function (r) { mine[r] = true; });
+    var others = {};
+    adds.forEach(function (a, j) {
+      if (j !== gateIndex) refs(a).forEach(function (r) { others[r] = true; });
+    });
+    var out = [];
+    adds.forEach(function (a, j) {
+      if (a.kind !== "pulse") return;
+      var ptr = ptrOf(a);
+      if (mine[ptr] && !others[ptr]) out.push(j);
+    });
+    return out;
+  }
+
+  function gateRemoveText(spec, a, pid, pulses) {
+    var names = pulses.map(function (j) { return list(spec)[j].name; });
+    return "Remove the added gate " + a.name + " from " + pid + "? " + (names.length
+      ? "This also removes the " + names.length + " pulse" + (names.length > 1 ? "s" : "") +
+        " it plays: " + names.join(", ") + "."
+      : "It plays no pulse added here (0 pulses removed).");
+  }
+
   function gatesCell(td, tr, pid, long, ctx) {
     td.innerHTML = "";
     var spec = ctx.spec();
@@ -940,13 +979,16 @@
       var c = chip(a.name, "added", " (" + shortName(a.cls) + ")");
       c.addEventListener("click", function () { openForm(tr, pid, long, ctx, { index: a.index, add: list(ctx.spec())[a.index] }); });
       var rm = el("button", { type: "button", className: "btn-sm secondary gen-gate-rm", "data-gate": a.name,
-                              title: "Remove the added gate " + a.name }, "✕");
+                              title: "Remove the added gate " + a.name + " and the pulses it plays" }, "✕");
       rm.addEventListener("click", function () {
         var sp = ctx.spec();
+        var pulses = gatePulses(sp, a.index);
+        if (typeof window.confirm === "function" && !window.confirm(gateRemoveText(sp, a, pid, pulses))) return;
         additionsTxn(sp, "remove gate " + a.name + " on " + pid);
         sp.additions = list(sp).filter(function (d, j) {
-          // the gate, and a default that named it
-          return j !== a.index && !(d.kind === "default_gate" && d.target === g.target && d.to === a.name);
+          // the gate, the pulses it plays that nothing else plays, and a default that named it
+          return j !== a.index && pulses.indexOf(j) < 0 &&
+            !(d.kind === "default_gate" && d.target === g.target && d.to === a.name);
         });
         if (!sp.additions.length) delete sp.additions;
         ctx.changed(); refreshAll();
@@ -1457,7 +1499,7 @@
   }
 
   window.GenAdditions = { channels: channels, owners: owners, pairId: pairId, mount: mount,
-                          renameQubits: renameQubits,
+                          renameQubits: renameQubits, gatePulses: gatePulses,
                           renderResult: renderResult, outcome: outcome, renderReview: renderReview,
                           decoratePairTable: decoratePairTable, builderGates: builderGates,
                           pairGates: pairGates, gateNameClash: gateNameClash, GATE_RULE: GATE_RULE,

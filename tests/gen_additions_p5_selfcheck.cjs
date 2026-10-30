@@ -37,6 +37,7 @@ function world() {
   const dom = new JSDOM('<!doctype html><div id="host"></div><div id="rev"></div><div id="pt"></div>', { runScripts: 'outside-only' });
   const w = dom.window;
   w.fetch = () => Promise.resolve({ json: () => Promise.resolve(ROLES) });
+  w.confirm = () => true;   // the gate's ✕ asks first (Z3: it names the pulses that go with it)
   w.eval(JS);
   return w;
 }
@@ -116,6 +117,7 @@ async function setup(gate) {
   const rm = s.row().querySelector('.gen-gate-rm[data-gate="cz_mine"]');
   rm.click();
   ok(!(s.spec.additions || []).some(a => a.kind === 'default_gate' || a.kind === 'macro'), 'G4 default goes with its gate');
+  ok(!(s.spec.additions || []).some(a => a.kind === 'pulse'), 'G4 the pulse the gate played goes with it (Z3)');
   ok(JSON.stringify(s.gates()) === JSON.stringify(['cz_SNZ']), 'G4 row redrawn ' + s.gates());
 
   // G7 coupler chip

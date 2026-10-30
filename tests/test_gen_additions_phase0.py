@@ -3,6 +3,10 @@
 Z1 -- an additions edit (add, edit, remove, the Default select, an accepted
       proposal) is ONE wizard Ctrl+Z step covering spec.additions and
       populate.pairs (gen_additions_undo_selfcheck.cjs).
+Z2 -- a qubit rename rewrites spec.additions (target, pointers, name tokens)
+      by the rebuild's rules; the wizard's JS and additions.rename_qubits agree.
+Z3 -- removing an added gate removes the pulses it plays that nothing else
+      plays, after a confirm that states how many.
 Skips without node + jsdom.
 """
 import shutil
@@ -135,3 +139,9 @@ def test_z2_the_wizard_and_the_rebuild_rename_alike(tmp_path):
 
 def test_z2_the_wizard_rename_rewrites_the_additions():
     _run("gen_additions_rename_selfcheck.cjs")
+
+
+# -- Z3: removing a gate removes the pulses it created ---------------------
+
+def test_z3_a_gate_takes_its_pulses_and_says_how_many():
+    _run("gen_additions_gate_remove_selfcheck.cjs")
