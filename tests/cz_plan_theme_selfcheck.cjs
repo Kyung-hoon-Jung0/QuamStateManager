@@ -23,9 +23,9 @@ Object.assign(w, {console});
 // Two token sets, one per theme (values differ in every token the figure must follow).
 const THEMES = {
     light: {'--pico-color': '#373c44', '--pico-muted-color': '#646b79', '--pico-background-color': '#ffffff',
-            '--plot-axis-text': '#373c44', '--plot-grid': 'rgba(60,70,90,0.16)', '--plot-mark-edge': '#ffffff', '--plot-area-alpha': '0.3'},
+            '--plot-axis-text': '#373c44', '--plot-grid': 'rgba(60,70,90,0.16)', '--plot-mark-edge': '#ffffff', '--plot-area-alpha': '0.3', '--plot-loss': '#a16207'},
     dark: {'--pico-color': '#c2c7d0', '--pico-muted-color': '#7b8495', '--pico-background-color': '#13171f',
-           '--plot-axis-text': '#c2c7d0', '--plot-grid': 'rgba(140,150,165,0.18)', '--plot-mark-edge': '#13171f', '--plot-area-alpha': '0.4'},
+           '--plot-axis-text': '#c2c7d0', '--plot-grid': 'rgba(140,150,165,0.18)', '--plot-mark-edge': '#13171f', '--plot-area-alpha': '0.4', '--plot-loss': '#eab308'},
 };
 function setTokens(name) { Object.entries(THEMES[name]).forEach(([k, v]) => html.style.setProperty(k, v)); }
 setTokens('light');
@@ -87,6 +87,15 @@ function themeChecks(name) {
     const fill = lossFill(r);
     check(fill && new RegExp(',' + T['--plot-area-alpha'].replace('.', '\\.') + '\\)$').test(fill.fillcolor),
           name + ': the loss area takes --plot-area-alpha: ' + (fill && fill.fillcolor));
+    const hex = T['--plot-loss'], rgb = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(',');
+    check(fill.fillcolor.startsWith('rgba(' + rgb + ',') && fill.line.color === hex,
+          name + ': the loss area and its outline are the --plot-loss hue, not a qubit colour or grey');
+    check(r.layout.xaxis.tickfont.size >= 13 && r.layout.yaxis.tickfont.size >= 13 && r.layout.xaxis2.tickfont.size >= 13,
+          name + ': tick text at least 13 px');
+    check(r.layout.annotations.every(a => !a.text || a.font.size >= 12), name + ': every label at least 12 px');
+    const label = r.layout.annotations.find(a => /^<b>op 4\.9200 GHz<\/b>$/.test(a.text || ''));
+    check(label && label.bgcolor === T['--plot-mark-edge'] && label.font.color === T['--pico-color'],
+          name + ': the operating point carries its own frequency label on a background box');
 }
 
 (async () => {

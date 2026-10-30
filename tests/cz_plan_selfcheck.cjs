@@ -396,9 +396,10 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     const side = fx.traces.filter(t => t.xaxis === 'x2' && t.fill);
     // v1.4.1: mock palette -> contrast-checked CZ colours with an opaque boundary and pale fill.
     check(fx.layout.xaxis.domain.join() === '0,0.76' && fx.layout.xaxis2.domain.join() === '0.8,1' && fx.layout.xaxis2.range.join() === '0,25' &&
-          side.length === 1 && side[0].fill === 'toself' && side[0].x.slice(0, 5).join() === '0,1,25,0,0' && side[0].line.color === '#245ec4' &&
-          (side[0].opacity || 1) === 1 && side[0].fillcolor === 'rgba(36,94,196,0.16)',
-          'D2: the flux figure carries the qubits\' scan loss in a right panel, in their colours, clipped to the map\'s scale');
+          side.length === 1 && side[0].fill === 'toself' && side[0].x.slice(0, 5).join() === '0,1,25,0,0' && side[0].line.color === '#a16207' &&
+          (side[0].opacity || 1) === 1 && side[0].fillcolor === 'rgba(161,98,7,0.16)',
+          // the loss hue is the theme's --plot-loss (here its fallback), never a qubit colour
+          'D2: the flux figure carries the qubits\' scan loss in a right panel, in the loss hue, clipped to the map\'s scale');
     check(fx.layout.shapes.some(sh => sh.name === 'operating:qa' && sh.y0 === 4.92 && sh.x0 === 0.8), 'D2: the operating frequency is a tick across the loss panel');
     const clip = fx.traces.find(t => t.xaxis === 'x2' && t.mode === 'markers');
     check(clip && clip.x.join() === '25' && clip.y.join() === '4.9' && clip.marker.symbol === 'triangle-right' &&
@@ -415,7 +416,7 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
     const fetchN = E.data.length, renderN = E.renders.length;
     E.D.documentElement.setAttribute('data-theme', 'dark'); await wait(40);
     check(E.renders.length >= renderN + 2 && E.data.length === fetchN &&
-          E.flux().traces.find(t => t.xaxis === 'x2' && t.fill).line.color === '#79b4fa' &&
+          E.flux().traces.find(t => t.xaxis === 'x2' && t.fill).line.color === '#a16207' &&  // loss hue: theme-pinned in cz_plan_theme_selfcheck
           E.flux().layout.shapes.some(s => s.type === 'rect' && s.line.color === '#f49c67' && s.fillcolor === 'rgba(244,156,103,0.08)'),
           'theme toggle redraws both detail figures and defect boundaries from the cached answer');
     function contrast(c, bg) {

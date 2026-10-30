@@ -109,4 +109,4 @@ def test_cz_plan_theme_client():
     result = subprocess.run(["node", str(root / "tests/cz_plan_theme_selfcheck.cjs")], cwd=root, env=os.environ.copy(),
                             capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "27 theme assertions passed" in result.stdout
+    assert "39 theme assertions passed" in result.stdout
