@@ -126,15 +126,15 @@
   function dialogOf(d) { return d.dlg; }
 
   function fieldsLine(numbers, sourceLabel) {
-    var seen = {}, parts = [];
+    var groups = {}, order = [], n = 0;
     Object.keys(numbers || {}).forEach(function (k) {
-      var f = k.slice(k.indexOf(".") + 1), v = numbers[k], key = f + "=" + v;
-      if (seen[key]) return;
-      seen[key] = 1;
-      parts.push(f + " " + v + (/(^|_)length$/.test(f) ? " ns" : ""));
+      var dot = k.indexOf("."), role = dot < 0 ? "" : k.slice(0, dot), f = k.slice(dot + 1), v = numbers[k];
+      if (!groups[role]) { groups[role] = []; order.push(role); }
+      groups[role].push(f + " " + v + (/(^|_)length$/.test(f) ? " ns" : ""));
+      n++;
     });
-    var shown = parts.slice(0, 3).join(", ") + (parts.length > 3 ? ", …" : "");
-    if (!parts.length) return "";
+    if (!n) return "";
+    var shown = order.map(function (r) { return (r ? r + ": " : "") + groups[r].join(", "); }).join("; ");
     return sourceLabel
       ? "Numbers copied from " + sourceLabel + " (current values) as initial values: " + shown
       : "Initial values from the form: " + shown;
@@ -144,7 +144,9 @@
     var cls = (rule.gate && rule.gate.macro_class) || "";
     var info = window.GenAdditions && window.GenAdditions.classInfo ? window.GenAdditions.classInfo(cls) : null;
     var label = info && info.label ? info.label : shortName(cls);
-    var line = label + " (" + shortName(cls) + (info && info.origin === "lab" ? ", lab class" : "") + ") · gate " +
+    var isLab = !!(info && info.origin === "lab");
+    var tag = label === shortName(cls) ? (isLab ? "lab class" : "") : shortName(cls) + (isLab ? ", lab class" : "");
+    var line = label + (tag ? " (" + tag + ")" : "") + " · gate " +
       ((rule.gate && rule.gate.name) || "") + (rule.source ? " · from " + rule.source : "");
     return line;
   }

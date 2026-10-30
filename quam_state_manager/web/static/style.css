@@ -16183,6 +16183,8 @@ button.gen-gate { background: rgba(1, 114, 173, 0.13); color: inherit; cursor: p
 .gen-gates-actions select { width: auto; margin: 0; padding: 0.05rem 1.6rem 0.05rem 0.35rem; font-size: 1em; height: auto; }
 .gen-gates-actions button { width: auto; margin: 0; padding: 0.1rem 0.5rem; font-size: 1em; }
 .gen-gate-deflabel { margin: 0; display: inline-flex; align-items: center; gap: 0.25rem; }
+/* the form row sits above the sticky header/first column, never under them */
+tr.gen-gates-formrow > td { position: relative; z-index: 5; background: var(--pico-background-color); }
 .gen-gates-formbox { position: sticky; left: 0; box-sizing: border-box; padding: 0.3rem 0.4rem; }
 td.gen-gates { min-width: 12rem; }
 /* lab additions P6: the knowledge card line and agent proposals */
@@ -16238,7 +16240,14 @@ dialog.gen-rule-dlg { width: min(60rem, 94vw); max-height: 90vh; overflow: auto;
 .gen-rule-grpwrap > input.gen-rule-grp-cb, .gen-rule-grpwrap > .gen-rule-grp-mark { position: absolute; left: 0; top: 0.2rem; margin: 0; width: auto; }
 .gen-rule-sum { cursor: pointer; font-weight: 600; font-size: 0.9em; display: flex; justify-content: space-between; }
 .gen-rule-row { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; font-size: 0.85em; padding: 0.1rem 0 0.1rem 0.4rem; }
-.gen-rule-row input[type="checkbox"] { width: auto; margin: 0; }
+.gen-rule-row input[type="checkbox"], .gen-rule-grpwrap > input.gen-rule-grp-cb {
+  /* width:auto collapsed Pico's box into a bar: keep a real square, checked vs unchecked clearly distinct */
+  width: 1.1rem; height: 1.1rem; margin: 0; flex: 0 0 auto; cursor: pointer;
+  border: 2px solid var(--pico-muted-color, #888); background-color: transparent; }
+.gen-rule-row input[type="checkbox"]:checked, .gen-rule-grpwrap > input.gen-rule-grp-cb:checked {
+  border-color: var(--pico-primary, #1e88e5); background-color: var(--pico-primary, #1e88e5); }
+.gen-rule-row input[type="checkbox"]:focus-visible, .gen-rule-grpwrap > input.gen-rule-grp-cb:focus-visible {
+  outline: 2px solid var(--pico-primary, #1e88e5); outline-offset: 2px; }
 .gen-rule-pid { font-family: var(--pico-font-family-monospace, monospace); min-width: 4.5rem; }
 .gen-rule-choice { width: auto; margin: 0; padding: 0.05rem 1.4rem 0.05rem 0.3rem; height: auto; font-size: 1em; }
 .gen-rule-cant { font-size: 0.85em; padding-left: 0.4rem; display: flex; gap: 0.6rem; }

@@ -60,8 +60,8 @@ function withRule(extraEdited) {
   const rowPlain = T.mkRow('q3-4', 'Already has it', { existing: true });
   w.GenRules.noteExpand(rule, { pairs: [rowEdited, rowPlain], rule_sig: 'x' }, null);
   await w.decorate();
-  ok(/·rule·edited/.test(w.chip('q2-3', 'cz_bm').textContent) && /·rule$/.test(w.chip('q3-4', 'cz_bm').textContent), 'G10 badges: ' + w.chip('q2-3', 'cz_bm').textContent + ' / ' + w.chip('q3-4', 'cz_bm').textContent);
-  ok(/·rule·from this pair/.test(w.chip('q1-2', 'cz_bm').textContent), 'G10 the source says from this pair');
+  ok(/ · rule · edited/.test(w.chip('q2-3', 'cz_bm').textContent) && / · rule$/.test(w.chip('q3-4', 'cz_bm').textContent), 'G10 badges: ' + w.chip('q2-3', 'cz_bm').textContent + ' / ' + w.chip('q3-4', 'cz_bm').textContent);
+  ok(/ · rule · from this pair/.test(w.chip('q1-2', 'cz_bm').textContent), 'G10 the source says from this pair');
   ok(/1 field edited here \(class\)/.test(w.chip('q2-3', 'cz_bm').title) && /was made from this pair/.test(w.chip('q1-2', 'cz_bm').title), 'G10 hover texts');
   w.more('q2-3', 'cz_bm').click();
   ok(labels().join('|') === 'Edit…|Apply to other pairs…|Reset to rule  (1 field: class)|Remove from this pair  (gate + 2 pulses)|Remove from all 3 pairs…',

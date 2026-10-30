@@ -26,6 +26,8 @@
   var QUBIT_CH = { drive: "xy", flux: "z", resonator: "resonator" };
   var roles = null;          // last /generate/roles answer
   var rolesLoading = false;
+  var typedModules = "";     // the "lab modules" text survives the bar's re-mount
+  var readModules = [];      // the modules the last "Read classes" looked in
   var INFERRED_HINT = "Inferred from the shape: the class computes this from its other fields. " +
     "Leave it as is unless you want to fix it to a number.";
 
@@ -156,12 +158,19 @@
     var paths = Object.keys(classes || {}).sort(function (a, b) {
       return shortName(a).localeCompare(shortName(b)) || a.localeCompare(b);
     });
+    // two module homes of one class short name read identically: append the module path to those
+    var shown = paths.filter(function (p) { return !filter || filter(classes[p]); });
+    var labelOf = function (p) { return shortName(p) + " · " + (classes[p].origin || "official"); };
+    var count = {};
+    shown.forEach(function (p) { count[labelOf(p)] = (count[labelOf(p)] || 0) + 1; });
     ["lab", "official"].forEach(function (origin) {
       var grp = el("optgroup", { label: origin === "lab" ? "Lab classes" : "Official classes" });
       paths.forEach(function (p) {
         if ((classes[p].origin || "official") !== origin) return;
         if (filter && !filter(classes[p])) return;
-        var o = el("option", { value: p }, shortName(p) + " · " + origin);
+        var text = labelOf(p);
+        if (count[text] > 1 && p.lastIndexOf(".") > 0) text += " · " + p.slice(0, p.lastIndexOf("."));
+        var o = el("option", { value: p }, text);
         o.title = p + (classes[p].doc ? "\n" + classes[p].doc : "");
         grp.appendChild(o);
       });
@@ -551,7 +560,14 @@
       var mg = macroFF ? macroFF.collect() : { fields: {}, missing: [] };
       if (mg.missing.length) problems.push("gate requires " + mg.missing.join(", "));
       if (ownerless && !/^[A-Za-z0-9_\-]+$/.test(nm)) problems.push("name: letters, digits, '_' or '-'");
-      if (problems.length) { msg.textContent = problems.join("; "); return; }
+      if (problems.length) {
+        msg.textContent = problems.join("; ");
+        var bad = Array.prototype.slice.call(form.querySelectorAll("input[data-field]")).filter(function (i) {
+          return i.parentNode && i.parentNode.classList.contains("gen-add-required") && !String(i.value).trim();
+        })[0];
+        if (bad) { if (bad.scrollIntoView) bad.scrollIntoView({ block: "nearest" }); bad.focus(); }
+        return;
+      }
       if (ownerless) {
         // A rule: numbers are the form's JSON values, untouched; the rest is structure.
         var rule = prefill ? clone(prefill) : { source: null, source_names: null, auto_new: false, excluded: [], reviewed: {} };
@@ -592,6 +608,8 @@
           spec.populate.pairs[result.owner.long] = spec.populate.pairs[result.owner.long] || {};
           spec.populate.pairs[result.owner.long].moving_qubit = result.moving_qubit;
         }
+        msg.textContent = "";
+        closeFormBox(box);
         ctx.changed(); rerender();
         focusChip(result.owner.pair, nm);   // the cell was rebuilt: focus would fall to <body>
       } catch (e) { msg.textContent = "Could not check the gate: " + String(e); }
@@ -1027,9 +1045,9 @@
     return "added by rule " + rn + " — click to edit";
   }
   function chipSuffix(info) {
-    if (info.kind === "source" && info.look) return "·rule·from this pair·needs a look";
-    return { hand: "", source: "·rule·from this pair", rule: "·rule", edited: "·rule·edited",
-             needs: "·rule·needs a look" }[info.kind];
+    if (info.kind === "source" && info.look) return " · rule · from this pair · needs a look";
+    return { hand: "", source: " · rule · from this pair", rule: " · rule", edited: " · rule · edited",
+             needs: " · rule · needs a look" }[info.kind];
   }
 
   /* Remove an added gate (and the pulses only it plays) from one pair. `exclude`
@@ -1220,6 +1238,13 @@
     td.appendChild(add);
   }
 
+  /* Close a form for good: empty its box and drop its (now empty) full-width row. */
+  function closeFormBox(box) {
+    box.innerHTML = "";
+    var row = box.closest ? box.closest("tr.gen-gates-formrow") : null;
+    if (row && row.parentNode) row.parentNode.removeChild(row);
+  }
+
   function formRowAfter(tr, ctx) {
     var next = tr.nextElementSibling;
     if (!(next && next.classList.contains("gen-gates-formrow"))) {
@@ -1230,6 +1255,7 @@
       tr.parentNode.insertBefore(next, tr.nextSibling);
     }
     var box = next.firstChild.firstChild;
+    if (box.scrollIntoView) box.scrollIntoView({ block: "nearest" });
     var scroller = tr.closest(".gen-pop-host") || tr.closest("table").parentNode;
     if (scroller && scroller.clientWidth) box.style.width = Math.max(320, scroller.clientWidth - 24) + "px";
     return box;
@@ -1456,12 +1482,18 @@
       bar.appendChild(el("span", { className: "muted gen-add-count" },
         nOff + " official and " + nLab + " lab pulse classes, " + nMac + " macro classes" +
         (roles.versions && roles.versions.quam_builder ? " (quam_builder " + roles.versions.quam_builder + ")" : "")));
+      if (readModules.length) bar.appendChild(el("span", { className: "muted gen-add-readfrom" },
+        "read from: " + readModules.join(", ")));
     }
     var mods = el("input", { type: "text", className: "gen-add-modules", placeholder: "lab modules, e.g. my_lab.pulses",
                              title: "Modules to look in for lab classes (comma separated). Lab packages are never walked." });
+    mods.value = typedModules;
+    mods.addEventListener("input", function () { typedModules = mods.value; });
     var read = el("button", { type: "button", className: "btn-sm secondary gen-add-read" }, "Read classes");
     read.addEventListener("click", function () {
+      typedModules = mods.value || "";
       var m = (mods.value || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      readModules = m;
       read.disabled = true; read.textContent = "Reading…";
       loadRoles(true, m, function () { mount(host, ctx); });
     });

@@ -32,7 +32,7 @@ const FEED = { q1: 'feedline1', q2: 'feedline1', q3: 'feedline1', q4: 'feedline2
   ok(/Ready — 3 of 6 pairs/.test(txt()), 'D1 Ready denominator: ' + txt());
   ok(/Needs a look — 1/.test(txt()) && /Already has it — 1/.test(txt()), 'D1 other groups counted');
   ok(/Add cz_bm to other pairs/.test(txt()) && /from q1-2/.test(txt()), 'title and source');
-  ok(/Numbers copied from q1-2 \(current values\) as initial values: amplitude 0.12, length 40 ns/.test(txt()), 'numbers line: ' + w.dlg().querySelector('.gen-rule-nums').textContent);
+  ok(/Numbers copied from q1-2 \(current values\) as initial values: high: amplitude 0\.12, length 40 ns/.test(txt()), 'numbers line: ' + w.dlg().querySelector('.gen-rule-nums').textContent);
   const cb = (pid) => w.dlg().querySelector('.gen-rule-row-cb[data-pair="' + pid + '"]');
   ok(cb('q2-3').checked && cb('q4-5').checked && !cb('q5-6').checked, 'D1 Ready ticked, Needs a look not');
   ok(!w.dlg().querySelector('.gen-rule-row[data-pair="q1-2"] input') && !w.dlg().querySelector('.gen-rule-cant input'), 'D1 Already / Cant have no checkbox');
