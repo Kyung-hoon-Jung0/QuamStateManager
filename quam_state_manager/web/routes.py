@@ -55,7 +55,7 @@ from flask import (
     send_file,
     url_for,
 )
-from quam_state_manager.web.request_body import BadBody, json_object, json_text, provenance
+from quam_state_manager.web.request_body import BadBody, json_object, json_optional_object, json_text, provenance
 from markupsafe import Markup, escape
 from werkzeug.utils import secure_filename
 
@@ -45775,7 +45775,8 @@ def generate_rules_expand():
         classes.extend({"class": i.get("pulse_class")} for i in rule.get("items") or [])
         man = _proposal_manifest(spec, list(spec.get("additions") or []) + classes)
         pending = man is None and bool(config_generator.get_selected_env(current_app.instance_path))
-        return jsonify(addition_rules.expand(spec, rule, man, choices=data.get("choices"), pending=pending))
+        return jsonify(addition_rules.expand(spec, rule, man, choices=json_optional_object(data, "choices"),
+                                             pending=pending))
     except (ValueError, TypeError, KeyError) as exc:
         return jsonify(ok=False, error=str(exc)), 400
 
@@ -45799,9 +45800,7 @@ def generate_rules_apply():
         return jsonify(ok=False, error="spec and rule must be objects"), 400
     if not isinstance(pairs, list) or not all(isinstance(p, str) for p in pairs):
         return jsonify(ok=False, error="pairs must be a list of pair ids"), 400
-    choices = data.get("choices")
-    if choices is not None and not isinstance(choices, dict):
-        return jsonify(ok=False, error="choices must be an object"), 400
+    choices = json_optional_object(data, "choices")
     try:
         man, _pending = _rules_manifest(spec, rule)
         out = addition_rules.apply(spec, rule, data.get("rule_sig"), pairs, man, choices=choices)

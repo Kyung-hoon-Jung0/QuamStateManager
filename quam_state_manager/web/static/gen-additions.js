@@ -549,6 +549,18 @@
             if (k.indexOf(item.on + ".") === 0) vals[k.slice(item.on.length + 1)] = prefill.numbers[k];
           });
           drawFields(vals);
+          if (prefill.source) {
+            // A rule with a source takes its numbers from the source pair's gate at every
+            // apply; an edit here would have no effect, so these fields are read-only.
+            Array.prototype.forEach.call(pf.querySelectorAll("input[data-field]"), function (inp) {
+              if (!Object.prototype.hasOwnProperty.call(prefill.numbers || {}, item.on + "." + inp.getAttribute("data-field"))) return;
+              inp.readOnly = true;
+              inp.classList.add("gen-add-from-source");
+              inp.title = "Numbers come from " + prefill.source + "'s gate; change them there.";
+            });
+            pf.appendChild(el("span", { className: "gen-add-source-note muted" },
+              "Numbers come from " + prefill.source + "'s gate; change them there."));
+          }
         }
         sec.appendChild(inner);
         part.nameInp = pn; part.clsSel = pc; part.where = where;

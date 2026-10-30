@@ -79,6 +79,15 @@ function pick(w, el, v) { el.value = v; el.dispatchEvent(new w.Event('change', {
   const f3 = (() => { w.GenAdditions.openRuleForm(host, w.ctx, opener, rule, 'Save → review 3 pairs', () => {}); return w.document.querySelector('.gen-add-cz-ownerless'); })();
   f3.querySelector('.gen-add-cancel').click();
   ok(w.document.activeElement === opener, 'O5 Cancel returns focus to the opener');
+  // O7 (R5 S4): a rule with a source takes its numbers from that pair's gate, so Edit rule
+  // shows them read-only with the reason, and a source-less rule keeps them editable.
+  ok(!f2.querySelector('[data-field="amplitude"]').readOnly && !f2.querySelector('.gen-add-source-note'), 'O7 source-less: numbers editable');
+  f3.querySelector('.gen-add-cancel') && f3.remove && f3.remove();
+  const sourced = Object.assign(JSON.parse(J(rule)), { source: 'q1-2' });
+  w.GenAdditions.openRuleForm(host, w.ctx, opener, sourced, 'Save → review 3 pairs', () => {});
+  const f4 = Array.from(w.document.querySelectorAll('.gen-add-cz-ownerless')).pop();
+  const amp4 = f4.querySelector('[data-field="amplitude"]');
+  ok(amp4.readOnly && /from q1-2's gate/.test(f4.textContent), 'O7 sourced: numbers read-only, says where they come from');
 
   // O6: pair mode untouched
   m = T.makeAddWorld({ nq: 3 });

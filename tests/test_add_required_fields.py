@@ -1,4 +1,4 @@
-﻿"""Path C refuses bad or missing fields without writing defaults."""
+"""Path C refuses bad or missing fields without writing defaults."""
 import pytest
 from tests.test_add_paths_golden import _shapes, _client
 from quam_state_manager.core import add_catalog

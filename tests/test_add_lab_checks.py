@@ -1,4 +1,4 @@
-﻿"""Copy and Gaussian CZ ask the same lab checker before any write."""
+"""Copy and Gaussian CZ ask the same lab checker before any write."""
 import json
 import pytest
 from tests.test_add_paths_golden import _shapes, _client, _post, recorder

@@ -1,4 +1,4 @@
-﻿"""The catalog fallbacks agree; manifests still own class defaults."""
+"""The catalog fallbacks agree; manifests still own class defaults."""
 from quam_state_manager.core import add_catalog, pulse_catalog
 
 

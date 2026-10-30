@@ -1,4 +1,4 @@
-﻿"""Batch lint preserves the old per-index result with one scan of additions."""
+"""Batch lint preserves the old per-index result with one scan of additions."""
 import json
 from copy import deepcopy
 from statistics import median

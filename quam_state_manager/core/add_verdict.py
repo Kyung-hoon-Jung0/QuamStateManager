@@ -1,4 +1,4 @@
-﻿"""Shared pair verdicts over existing structural, placement and environment checks.
+"""Shared pair verdicts over existing structural, placement and environment checks.
 
 Ready says only that SM's checks pass. Pointer landing and runtime code on a
 spec are checked at Build. New macro classes on a built chip use Re-generate.

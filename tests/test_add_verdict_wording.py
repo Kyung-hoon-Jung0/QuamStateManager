@@ -1,4 +1,4 @@
-﻿"""C10: verdicts name their phase and never promise an unrun check."""
+"""C10: verdicts name their phase and never promise an unrun check."""
 from copy import deepcopy
 from quam_state_manager.core import add_verdict
 

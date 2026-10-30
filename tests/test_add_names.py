@@ -1,4 +1,4 @@
-﻿"""D5 names preserve spec ids and survive the existing rename grammar."""
+"""D5 names preserve spec ids and survive the existing rename grammar."""
 import pytest
 from quam_state_manager.core import add_names, additions, gate_action
 

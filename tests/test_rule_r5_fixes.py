@@ -137,3 +137,14 @@ def test_rename_follows_the_auto_new_record():
     assert out["auto_new_since"] == [unordered_key(["qA", "q2"]), unordered_key(["q10", "q2"])]
 
 
+# --- P2 3.10: malformed choices is a 400 on both doors ----------------------------
+
+def test_expand_answers_400_for_a_malformed_choices(tmp_path):
+    app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+    cl = app.test_client()
+    for bad in (["q1-2"], "q1-2", 3):
+        r = cl.post("/generate/additions/rules/expand", json={"spec": _spec(), "rule": _rule(), "choices": bad})
+        assert r.status_code == 400, (bad, r.status_code)
+        assert "choices" in r.get_json()["error"]
+    ok = cl.post("/generate/additions/rules/expand", json={"spec": _spec(), "rule": _rule(), "choices": None})
+    assert ok.status_code == 200

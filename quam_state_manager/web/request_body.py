@@ -55,6 +55,18 @@ def json_text(data: Any, key: str, default: str = "") -> str:
     raise BadBody(f"'{key}' must be text, not a {type(v).__name__}.")
 
 
+def json_optional_object(data: Any, key: str) -> dict | None:
+    """``data[key]`` when it is a JSON object; missing or null -> None.
+
+    Any other value (a list, text, a number) is a 400 naming the field."""
+    v = data.get(key) if hasattr(data, "get") else None
+    if v is None:
+        return None
+    if isinstance(v, dict):
+        return v
+    raise BadBody(f"'{key}' must be an object, not a {type(v).__name__}.")
+
+
 def provenance(data: Any, *, form: bool = False) -> dict | None:
     """Optional bounded plot origin, with server-verified map settings."""
     if "provenance" not in data:
