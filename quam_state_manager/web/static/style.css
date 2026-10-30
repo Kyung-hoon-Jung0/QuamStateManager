@@ -16197,3 +16197,14 @@ td.gen-gates { min-width: 12rem; }
 .gen-add-prop .gen-add-field { display: inline-flex; gap: 0.4rem; align-items: center; margin-right: 0.8rem; font-size: 0.85em; }
 .gen-add-prop .gen-add-field input { width: 9rem; margin: 0; padding: 0.15rem 0.4rem; height: auto; }
 .landing-agent-line { margin: 0.5rem 0 0; font-size: 0.85em; }
+
+/* Gaussian CZ "to several pairs" dialog */
+#gcz-several { max-width: min(46rem, 94vw); width: 100%; }
+#gcz-several .gcz-sev-select { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .4rem 0; }
+#gcz-several .gcz-sev-select button[aria-pressed="true"] { outline: 2px solid var(--pico-primary, #1095c1); }
+#gcz-several .gcz-sev-group { display: flex; gap: .4rem; align-items: flex-start; }
+#gcz-several .gcz-sev-group > details { flex: 1 1 auto; }
+#gcz-several .gcz-sev-row { display: block; margin: .15rem 0 .15rem 1rem; font-size: .9em; }
+#gcz-several .gcz-sev-reason { margin-left: 1rem; font-size: .9em; }
+#gcz-several .gcz-sev-foot { display: flex; gap: .5rem; justify-content: flex-end; align-items: center; margin-top: .6rem; }
+#gcz-several .gcz-sev-foot > span { margin-right: auto; }

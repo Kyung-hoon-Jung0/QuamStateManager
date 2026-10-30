@@ -23,7 +23,7 @@ CORE = {"htmx.min.js", "split.min.js", "search-query.js", "app.js",
 LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
         "component-map.js", "chip-status.js", "gen-additions.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js",
-        "notes.js", "agent-setup.js", "zline.js", "pulses-vt.js",
+        "notes.js", "agent-setup.js", "zline.js", "pulses-vt.js", "gcz-several.js",
         "cz-plan.js", "cz-map.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15); cz-map.js: its chip map (A14)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
 
 

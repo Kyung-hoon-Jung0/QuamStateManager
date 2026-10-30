@@ -52,8 +52,36 @@
             <button type="submit" class="btn-sm primary">Create in working state</button>
             <small class="muted">6 subtrees, one Review bundle — Apply to live
                 stays yours.</small>
+            <button type="button" class="btn-sm" id="gcz-several-open"
+                    aria-haspopup="dialog">…to several pairs</button>
         </div>
     </form>
+    {# Gaussian CZ to several pairs (D4, C2 b, C10): its own dialog, its own
+       names (<macro>_pulse_<control>_<target>) and no Replace. The groups are
+       drawn by gcz-several.js from POST /api/pulse/gaussian-cz/plan. #}
+    <dialog id="gcz-several" class="gcz-sev" aria-labelledby="gcz-sev-title">
+        <div class="inspector-header-line">
+            <h3 id="gcz-sev-title" style="margin:0">Gaussian CZ — to several pairs</h3>
+            <button type="button" class="inspector-close" data-gcz-close
+                    title="Close" aria-label="Close">&times;</button>
+        </div>
+        <p class="muted">Each pair gets its own pulses:
+            &lt;macro&gt;_pulse_&lt;control&gt;_&lt;target&gt;{% if several_example %}, e.g. {{ several_example }}{% endif %}.</p>
+        <p class="muted">A new macro class on a built chip is not created here in v1; use Re-generate.</p>
+        <p class="muted">Ready = SM's checks and your lab code pass (checked on this chip).</p>
+        <div class="gcz-sev-select" role="group" aria-label="Select pairs">
+            <span>Select:</span>
+            <button type="button" class="btn-sm" data-gcz-select="ready" aria-pressed="false">All ready</button>
+            <button type="button" class="btn-sm" data-gcz-select="none" aria-pressed="false">None</button>
+            <small class="muted" data-gcz-feedline-note>Feedline selection is not offered: this chip's state records no feedline per pair.</small>
+        </div>
+        <div id="gcz-sev-body" class="gcz-sev-body" aria-live="polite">Checking this chip…</div>
+        <div class="gcz-sev-foot">
+            <span id="gcz-sev-status" class="muted" role="status"></span>
+            <button type="button" class="btn-sm" data-gcz-close>Cancel</button>
+            <button type="button" class="btn-sm primary" id="gcz-sev-add" disabled>Add to 0 pairs</button>
+        </div>
+    </dialog>
     {% endif %}
     <div id="gcz-result" style="margin-top:.5rem"></div>
 </div>

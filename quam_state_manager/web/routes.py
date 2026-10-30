@@ -12276,7 +12276,8 @@ _TAB_CHIP_DOORS = frozenset({
     "main.field_type_unassign", "main.pair_add_gate", "main.pulse_edit",
     "main.api_pulse_create", "main.api_pulse_delete", "main.api_pulse_duplicate",
     "main.api_pulse_rename", "main.pair_gate_inspector_switch", "main.api_pulse_copy",
-    "main.api_pulse_gaussian_cz", "main.api_pulse_delete_together",
+    "main.api_pulse_gaussian_cz", "main.api_pulse_gaussian_cz_apply_several",
+    "main.api_pulse_delete_together",
     "main.type_fix_apply", "main.diagnostics_apply_fix",
     "main.save", "main.undo", "main.redo", "main.discard", "main.discard_all",
     "main.state_sync", "main.state_apply_to_live", "main.state_take_live_restore",
@@ -24728,8 +24729,18 @@ def pulse_gaussian_cz_form():
     from quam_state_manager.core import gaussian_cz
     with store._lock:
         pairs = gaussian_cz.eligible_pairs(store.merged)
+    example = ""
+    if pairs:
+        from quam_state_manager.core import gate_action
+        from quam_state_manager.core.add_names import pulse_name
+        try:
+            example = pulse_name(gaussian_cz.VARIANTS[0][0], "pulse",
+                                 *gate_action.pair_members(store.merged, pairs[0]["pair_id"]))
+        except ValueError:
+            example = ""
     return render_template("_pulse_gaussian_cz.html", pairs=pairs,
-                           create_kind="gaussian_cz")
+                           create_kind="gaussian_cz", several_example=example,
+                           several_macro=gaussian_cz.VARIANTS[0][0])
 
 
 def _pulse_copy_form():
@@ -24882,6 +24893,128 @@ def api_pulse_gaussian_cz():
                  + ") — staged in the working state; review, then Apply to "
                    "live."))
     resp = make_response(msg + "\n" + _tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+    return _lab_toast(resp)
+
+
+def _gcz_several_params(body):
+    """``(params, error)`` for the several-pairs dialog: the same three numbers
+    as the single-pair form, defaults included, finite or a 400."""
+    raw = body.get("params") if isinstance(body, dict) else None
+    raw = raw if isinstance(raw, dict) else {}
+    out = {}
+    for key, default, integer in (("padding_length", 20, True),
+                                  ("qubit_filter_mhz", 20.0, False),
+                                  ("coupler_filter_mhz", 20.0, False)):
+        value = raw.get(key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            out[key] = default
+            continue
+        if isinstance(value, bool):
+            return None, "Padding / filter values must be numbers."
+        try:
+            f = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None, "Padding / filter values must be numbers."
+        if not math.isfinite(f):
+            return None, "Padding / filter values must be numbers."
+        out[key] = int(f) if integer else f
+    return out, None
+
+
+@bp.route("/api/pulse/gaussian-cz/plan", methods=["POST"])
+def api_pulse_gaussian_cz_plan():
+    """Read-only: every eligible pair's verdict for Gaussian CZ "to several
+    pairs" (Ready / Can't), one batched lab check, and a ``plan_sig`` that the
+    apply route must echo. Writes nothing."""
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error=_no_chip_msg()), 400
+    from quam_state_manager.core import gaussian_cz_several
+    params, err = _gcz_several_params(request.get_json(silent=True))
+    if err:
+        return jsonify(ok=False, error=err), 400
+    with store._lock:
+        plan = gaussian_cz_several.build(
+            store.merged, params,
+            lab_check=lambda w, info=None: _lab_write_refusal(store, w, info=info))
+    plan.pop("rows")
+    return jsonify(ok=True, params=params, **plan)
+
+
+@bp.route("/api/pulse/gaussian-cz/apply-several", methods=["POST"])
+def api_pulse_gaussian_cz_apply_several():
+    """Write the ticked Ready pairs as ONE batch (one change group, one
+    Ctrl+Z). The plan is made again here; a different ``plan_sig`` means the
+    chip moved since the dialog was opened and nothing is written (409).
+    Person-only (``callers.PERSON_ONLY``)."""
+    ctx = _active_ctx()
+    store = _store()
+    modifier = _modifier()
+    if not store or not modifier:
+        return jsonify(ok=False, error=_no_chip_msg()), 400
+    if ctx and (ctx.get("origin") or "live") != "live":
+        return jsonify(ok=False, error="This chip is a read-only archive: open "
+                                       "the live chip to create macros."), 409
+    lk = _agent_edit_lock_refusal(ctx)
+    if lk is not None:
+        return lk
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(ok=False, error="A JSON body is required"), 400
+    params, err = _gcz_several_params(body)
+    if err:
+        return jsonify(ok=False, error=err), 400
+    wanted = body.get("pairs")
+    if (not isinstance(wanted, list) or not wanted
+            or not all(isinstance(x, str) for x in wanted)):
+        return jsonify(ok=False, error="Tick at least one pair."), 400
+    from quam_state_manager.core import gaussian_cz_several
+    from quam_state_manager.core.add_verdict import READY
+    check = lambda w, info=None: _lab_write_refusal(store, w, info=info)  # noqa: E731
+    wanted = list(dict.fromkeys(wanted))
+    release_lab = _lab_hold(store, [f"qubit_pairs.{p}.macros" for p in wanted])
+    try:
+        with store._lock:
+            plan = gaussian_cz_several.build(store.merged, params, lab_check=check)
+            if plan["plan_sig"] != str(body.get("plan_sig") or ""):
+                return jsonify(ok=False, stale=True, error=(
+                    "The chip changed since this list was made. Nothing was "
+                    "written; reopen the dialog to see the current list.")), 409
+            by_pair = {r["pair"]: r for r in plan["rows"]}
+            bad = [p for p in wanted if p not in by_pair or by_pair[p]["status"] != READY]
+            if bad:
+                return jsonify(ok=False, error=(
+                    "Not ready: " + ", ".join(bad) + ". Nothing was written.")), 400
+            creates = [c for p in wanted for c in by_pair[p]["creates"]]
+            from flask import g
+            lab_info = g.lab_info = {"notes": []}
+            refusal = _lab_write_refusal(store, creates, info=lab_info)
+            if refusal:
+                return jsonify(ok=False, error=str(refusal[0])), 400
+            gid = modifier.new_group_id()
+            done = 0
+            try:
+                for path, value in creates:
+                    modifier.create_subtree(path, value, group_id=gid)
+                    done += 1
+            except Exception as exc:  # noqa: BLE001 -- all-or-nothing
+                for _ in range(done):
+                    try:
+                        modifier.undo()
+                    except Exception:  # noqa: BLE001
+                        break
+                logger.exception("gaussian-cz several create failed; rolled back")
+                from quam_state_manager.core.type_policy import TypeMismatchError
+                code = 400 if isinstance(exc, (TypeMismatchError, ValueError, TypeError)) else 500
+                return jsonify(ok=False, error=f"Creation failed and was rolled back: {exc}"), code
+    finally:
+        release_lab()
+    _reprobe_if_new_classes(store)
+    written = [{"pair": p, "pulses": by_pair[p]["pulses"],
+                "paths": [c[0] for c in by_pair[p]["creates"]]} for p in wanted]
+    resp = jsonify(ok=True, written=written, count=len(wanted),
+                   group=gid, tray_html=_tray_html())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     return _lab_toast(resp)
 
@@ -47962,7 +48095,8 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     "main.api_pulse_duplicate", "main.api_pulse_rename",
     # Every staging door shares the store saved by the plan's next write.
     "main.pair_gate_inspector_switch", "main.api_pulse_copy",
-    "main.api_pulse_gaussian_cz", "main.api_pulse_delete_together",
+    "main.api_pulse_gaussian_cz", "main.api_pulse_gaussian_cz_apply_several",
+    "main.api_pulse_delete_together",
     "main.type_fix_apply", "main.auto_apply_revert",
     "main.state_take_live_restore", "main.chip_profile_set", "main.app_reload",
     # v1.5.1: a refused recovery checkpoint staged back into the tray (or set aside)
