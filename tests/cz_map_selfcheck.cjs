@@ -597,7 +597,7 @@ async function footerPins(only) {
           r21.traces.findIndex(t => t.meta === 'idle') < r21.traces.findIndex(t => t.meta === 'seg'),
           'P1-4: on the 21-qubit map every pair of segments within 6 px in one column sits side by side (' + cl21.close + ' such pairs), over the idle dot ' + cl21.bad.join(', '));
     const p21 = r21.traces.find(t => t.meta === 'partners');
-    const names = t => t.split(/<br>| /);
+    const names = t => t.replace(/^↔ /, '').split(/<br>| /);
     const multi = p21.text.filter(t => names(t).length >= 3);
     // every partner label as the box it prints in (9 px font; anchored at its segment's top right or top left)
     const colPx21 = (1000 - 80) / 21, pbox = k => {
@@ -621,7 +621,7 @@ async function footerPins(only) {
     // v1.4.1: fixed 40 px cutoff -> compact names when their boxes fit the column.
     const pt5 = r5.traces.find(t => t.meta === 'partners');
     const s12 = segments(r5).find(s => s.pair === 'q1-2' && near(s.x0, 0.12));
-    check(pt5 && pt5.x.some((x, k) => near(x, 0.88) && near(pt5.y[k], s12.y) && pt5.text[k] === 'q2'), 'each segment names its partner at its right end');
+    check(pt5 && pt5.x.some((x, k) => near(x, 0.88) && near(pt5.y[k], s12.y) && pt5.text[k] === '↔ q2'), 'each segment names its partner at its right end, marked ↔ so it never reads as the bar owner');
     S21.width = 900; await S21.w.CzMap.paint(S21.root);
     check(S21.last().traces.some(t => t.meta === 'partners' && t.text.some(s => /[A-D]\d/.test(s) && !/q[A-D]/.test(s))), 'columns under 40 px: compact partner names');
     S21.width = 1000; await S21.w.CzMap.paint(S21.root);

@@ -45,7 +45,7 @@
     var MAP_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf',
                       '#bcbd22', '#7f7f7f'];
     var KEY = 'solid accepted fitted model, dashed quad-term or derived estimate, thin stays at idle, diamond planned, ~ extrapolated estimate; ' +
-              'colour = pair (unique around each qubit, not a time step); bar label = first-lobe operating frequency (GHz); nearest resonance = closest across played lobes, framed in the bar colour';
+              'colour = pair (unique around each qubit, not a time step); bar label = first-lobe operating frequency (GHz); ↔ qX = the other qubit of that CZ (the column header is the qubit the bar belongs to); nearest resonance = closest across played lobes, framed in the bar colour';
 
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -605,7 +605,11 @@
                 if (!names.length) return;
                 var top = Math.max.apply(null, gk.map(function (k) { return m.segments[k].frequency_hz / 1e9; }));
                 // a list wider than the column wraps onto lines inside it (never into the next column)
-                var pl = partnerLines(names.map(function (name) { return colPx < 40 ? name.replace(/^q(?=[A-Z0-9])/i, '') : name; }), 0.76 * colPx);
+                // '↔ q3' names the CZ partner, never the bar's own qubit (that is the column header)
+                var shown = names.map(function (name) { return colPx < 40 ? name.replace(/^q(?=[A-Z0-9])/i, '') : name; });
+                // one arrow leads the row's list; a too-narrow column drops it and the legend says it
+                var pl = partnerLines(['↔ ' + shown[0]].concat(shown.slice(1)), 0.76 * colPx);
+                if (pl.w > 0.76 * colPx) pl = partnerLines(shown, 0.76 * colPx);
                 if (pl.w > 0.76 * colPx) return;
                 wanted.push({ i: i, y: top, ypx: (top - (yr ? yr[0] : 0)) * pxPerGHz, w: pl.w, h: pl.h, n: pl.lines.length,
                               t: pl.lines.map(function (l) { return l.map(esc).join(' '); }).join('<br>') });
