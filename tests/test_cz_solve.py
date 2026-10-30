@@ -331,3 +331,16 @@ def test_model_solve_refuses_what_the_forward_map_refuses():
     assert r['reason'] == 'flux direction unknown: sign convention unclear'
     assert r['difference_v'] is None
     assert 'difference unknown' in r['summary']
+
+
+def test_a_missing_qubit_field_is_its_own_clause_in_the_summary():
+    """A refusal reads 'required amplitude: unknown — <reason>', never spliced into
+    the amplitude phrase ('required amplitude of q1 f_01 of q1 is not set')."""
+    doc = state()
+    doc['qubits']['q1'].pop('f_01', None)
+    r = solve(doc)
+    assert not r['ok']
+    assert 'required amplitude: unknown — f_01 of q1 is not set' in r['summary'], r['summary']
+    r2 = C.solve(doc, 'q1-2', 'cz_two', line='control')
+    assert 'required amplitude of q1: unknown — ' in r2['summary'], r2['summary']
+    assert 'required amplitude +' not in r['summary']

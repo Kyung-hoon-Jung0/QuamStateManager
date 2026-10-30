@@ -1198,8 +1198,11 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
     # the partner held where it plays: say whose amplitude it is.
     movers = [ln for ln in row["lines"] if ln["moves"]] if row else []
     whose = f"of {mover['name']} " if mover and len(movers) > 1 else ""
-    result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude {whose}"
-                         + (mv(required) if result["ok"] else result["reason"])
+    # a refusal is its own clause, never spliced into the amplitude phrase
+    answer = (f" {whose}{mv(required)}" if result["ok"]
+              else (f" {whose.rstrip()}" if whose else "") + f": unknown — {result['reason']}")
+    result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude"
+                         + answer
                          + f" | stored {mv(stored)} | difference {mv(difference)}"
                          + f" ({result.get('tier', tier)})")
     # The stored point may sit on a different resonance than the one the target names
