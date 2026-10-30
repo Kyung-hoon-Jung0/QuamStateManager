@@ -72,6 +72,9 @@ def reconstruct_from_folder(
         carried = regen_spec.sidecar_additions(cand, state)
         if carried:
             rec.spec["additions"] = carried
+            rules = regen_spec.sidecar_rules(cand)
+            if rules:
+                rec.spec["addition_rules"] = rules
             rec.info_notes.append(
                 f"{len(carried)} addition{'s' if len(carried) != 1 else ''} carried from this "
                 "chip's build record, with the chip's current values.")

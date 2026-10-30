@@ -632,8 +632,25 @@ def sidecar_additions(folder: Path | str, state: dict) -> list[dict]:
                 continue
             flds = b.get("fields") if isinstance(b.get("fields"), dict) else {}
             b["fields"] = {k: copy.deepcopy(obj[k]) if k in obj else v for k, v in flds.items()}
+            # A rule instance whose object now has another class is no longer
+            # what the rule planned; only that instance is marked edited.
+            if (b.get("rule_id") and isinstance(obj.get("__class__"), str)
+                    and b.get("class") and obj["__class__"] != b["class"]):
+                b["edited"] = True
         out.append(b)
     return out
+
+
+def sidecar_rules(folder: Path | str) -> list[dict]:
+    """The ``addition_rules`` of *folder*'s spec sidecar, verbatim (a rule is
+    SM's record, not a chip value). Best-effort -- never raises."""
+    try:
+        p = Path(folder) / _SIDECAR_DIR / _SIDECAR_FILE
+        rules = (((json.loads(p.read_text(encoding="utf-8")) or {}).get("spec") or {})
+                 .get("addition_rules")) or []
+        return [copy.deepcopy(r) for r in rules if isinstance(r, dict)]
+    except (OSError, ValueError, AttributeError):
+        return []
 
 
 def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:

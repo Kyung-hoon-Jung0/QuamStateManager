@@ -161,6 +161,48 @@ def rename_qubits(adds: list, id_map: dict, qubit_ids, pairs) -> list:
     return out
 
 
+def rename_rules(rules: list, id_map: dict, qubit_ids, pairs) -> list:
+    """*rules* (``spec.addition_rules``) after the qubit rename *id_map*, by the
+    same token rule as :func:`rename_qubits`: ``source`` (a pair id),
+    ``excluded`` / ``reviewed`` keys (flip-stable pair keys, re-sorted after
+    the rename) and ``source_names`` values. Other values are kept."""
+    from quam_state_manager.core.add_names import unordered_key
+    from quam_state_manager.core.regen_merge import _token_renamer
+    tok = {str(o): str(n) for o, n in (id_map or {}).items() if str(o) != str(n)}
+    out = copy.deepcopy(list(rules or []))
+    if not tok:
+        return out
+    rename = _token_renamer(tok, {str(q) for q in qubit_ids or ()})
+    pmap = {}
+    for p in pairs or []:
+        if isinstance(p, (list, tuple)) and len(p) == 2:
+            pmap[quam_pair_id(p)] = quam_pair_id([tok.get(str(p[0]), str(p[0])), tok.get(str(p[1]), str(p[1]))])
+
+    from quam_state_manager.core.script_emitter import _run_build
+    norm = _run_build()._norm_index
+    by_norm = {str(norm(q)): str(q) for q in qubit_ids or ()}
+
+    def key(k):
+        # keys are flip-stable normalised indexes ("1-2"): back to ids, rename, normalise again
+        parts = str(k).split("-")
+        if len(parts) != 2:
+            return rename(str(k))
+        ids = [by_norm.get(p, p) for p in parts]
+        return unordered_key([tok.get(i, i) for i in ids])
+
+    for r in out:
+        if isinstance(r.get("source"), str):
+            r["source"] = pmap.get(r["source"], rename(r["source"]))
+        if isinstance(r.get("excluded"), list):
+            r["excluded"] = [key(k) for k in r["excluded"]]
+        if isinstance(r.get("reviewed"), dict):
+            r["reviewed"] = {key(k): v for k, v in r["reviewed"].items()}
+        if isinstance(r.get("source_names"), dict):
+            r["source_names"] = {k: rename(v) if isinstance(v, str) else v
+                                 for k, v in r["source_names"].items()}
+    return out
+
+
 # ---------------------------------------------------------------------------
 # structural check (validate_spec)
 # ---------------------------------------------------------------------------
