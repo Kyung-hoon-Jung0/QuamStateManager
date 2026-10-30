@@ -12400,6 +12400,15 @@
     // chain must swallow Ctrl+Shift+Z only while the wizard is mounted, never
     // app-wide (the bug the first real-browser pass caught).
     mounted: function () { return !!root(); },
+    // A structural step from a wizard module outside this file (the lab
+    // additions): `restore` puts its snapshot back; the Populate tables are
+    // repainted after it, since the step may change populate.pairs.
+    pushRestore: function (label, restore) {
+      _wizPushRestore(label, function () {
+        restore();
+        if (state.step === 6) renderPopulateTables();
+      });
+    },
     // Returns true when the event was CONSUMED (wizard mounted). Called by the
     // app-wide Ctrl+Z handler before it posts the server /undo.
     tryUndo: function () {

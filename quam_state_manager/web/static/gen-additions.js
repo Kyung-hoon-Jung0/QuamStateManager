@@ -326,6 +326,7 @@
       var got = ff ? ff.collect() : { fields: {}, missing: [] };
       if (got.missing.length) { msg.textContent = "Required: " + got.missing.join(", "); return; }
       var add = { kind: cfg.kind, target: cfg.target, name: nm, "class": sel.value, fields: got.fields };
+      additionsTxn(spec, (cfg.existing ? "edit " : "add ") + cfg.kind + " " + nm);
       if (!Array.isArray(spec.additions)) spec.additions = [];
       if (cfg.existing) spec.additions[cfg.existing.index] = add;
       else spec.additions.push(add);
@@ -495,6 +496,7 @@
       else if (gateNameClash(spec, owner.target, nm, -1)) problems.push(gateNameClash(spec, owner.target, nm, -1));
       if (problems.length) { msg.textContent = problems.join("; "); return; }
       Object.keys(mg.fields).forEach(function (k) { fields[k] = mg.fields[k]; });
+      additionsTxn(spec, "add gate " + nm + " on " + owner.pair);
       if (!Array.isArray(spec.additions)) spec.additions = [];
       newPulses.forEach(function (a) { spec.additions.push(a); });
       spec.additions.push({ kind: "macro", target: owner.target, name: nm, "class": sel.value, fields: fields });
@@ -610,6 +612,7 @@
         macro = { kind: "macro", target: mt, name: mn, "class": mpath,
                   fields: { pulse: "#/qubits/" + ch.qubit + "/resonator/operations/" + nm } };
       }
+      additionsTxn(spec, "add readout " + nm + " on " + ch.qubit);
       if (!Array.isArray(spec.additions)) spec.additions = [];
       spec.additions.push({ kind: "pulse", target: ch.target, name: nm, "class": sel.value, fields: got.fields });
       if (macro) spec.additions.push(macro);
@@ -710,6 +713,7 @@
       if (problems.length) { msg.textContent = problems.join("; "); return; }
       if (!out.length) { msg.textContent = "Nothing to add."; return; }
       var spec2 = ctx.spec();
+      additionsTxn(spec2, "add pulsed mode on " + t);
       if (!Array.isArray(spec2.additions)) spec2.additions = [];
       out.forEach(function (f) {
         var i = -1;
@@ -727,6 +731,7 @@
     r.appendChild(el("span", { className: "muted" }, " · field"));
     var rm = el("button", { type: "button", className: "btn-sm secondary gen-add-rm", title: "Remove this field" }, "✕");
     rm.addEventListener("click", function () {
+      additionsTxn(spec, "remove field " + a.target);
       spec.additions.splice(i, 1);
       if (!spec.additions.length) delete spec.additions;
       ctx.changed(); mount(host, ctx);
@@ -748,6 +753,7 @@
       (a.proposed_by ? " · proposed by " + String(a.proposed_by).replace(/^by_/, "") + ", accepted" : "")));
     var rm = el("button", { type: "button", className: "btn-sm secondary gen-add-rm", title: "Remove this addition" }, "✕");
     rm.addEventListener("click", function () {
+      additionsTxn(spec, "remove " + a.kind + " " + a.name);
       spec.additions.splice(i, 1);
       // a default that named the removed gate goes with it
       if (a.kind === "macro") spec.additions = spec.additions.filter(function (d) {
@@ -878,6 +884,33 @@
 
   var pairCtx = null, pairTable = null, addHost = null, addCtx = null;
 
+  function clone(v) { return JSON.parse(JSON.stringify(v)); }
+
+  /* One additions edit = ONE wizard Ctrl+Z step. Called right before the edit
+   * writes: it snapshots everything an additions edit may change -- the
+   * additions list and populate.pairs (the CZ form sets a pair's
+   * moving_qubit) -- under one label (the RuleTxn shape: {label, additions,
+   * populate_pairs}). Undo puts both back and repaints. Without the wizard's
+   * undo stack (another page, a test) it does nothing. */
+  function additionsTxn(spec, label) {
+    var u = window._wizUndo;
+    if (!u || typeof u.pushRestore !== "function") return null;
+    var txn = {
+      label: label,
+      additions: Array.isArray(spec.additions) ? clone(spec.additions) : null,
+      populate_pairs: spec.populate && spec.populate.pairs ? clone(spec.populate.pairs) : null,
+    };
+    u.pushRestore(label, function () {
+      if (txn.additions) spec.additions = clone(txn.additions); else delete spec.additions;
+      if (txn.populate_pairs) {
+        spec.populate = spec.populate || {};
+        spec.populate.pairs = clone(txn.populate_pairs);
+      } else if (spec.populate) delete spec.populate.pairs;
+      refreshAll();
+    });
+    return txn;
+  }
+
   function refreshAll() {
     if (pairTable && pairCtx) decoratePairTable(pairTable, pairCtx);
     if (addHost && addCtx) mount(addHost, addCtx);
@@ -910,6 +943,7 @@
                               title: "Remove the added gate " + a.name }, "✕");
       rm.addEventListener("click", function () {
         var sp = ctx.spec();
+        additionsTxn(sp, "remove gate " + a.name + " on " + pid);
         sp.additions = list(sp).filter(function (d, j) {
           // the gate, and a default that named it
           return j !== a.index && !(d.kind === "default_gate" && d.target === g.target && d.to === a.name);
@@ -932,6 +966,7 @@
     names.forEach(function (n) { sel.appendChild(el("option", { value: n }, n)); });
     sel.value = g.chosen ? g.chosen.to : "";
     sel.addEventListener("change", function () {
+      additionsTxn(ctx.spec(), "default gate of " + pid);
       setDefault(ctx.spec(), pairGates(ctx.spec(), pid, long), sel.value);
       ctx.changed(); refreshAll();
     });
@@ -1082,6 +1117,7 @@
           if (!res.body.ok) { msg.textContent = (res.body.errors || ["refused"]).join("; "); return; }
           if (res.body.addition) {
             var spec = ctx.spec();
+            additionsTxn(spec, "accept proposal " + (res.body.addition.name || res.body.addition.target || ""));
             if (!Array.isArray(spec.additions)) spec.additions = [];
             spec.additions.push(res.body.addition);
             ctx.changed();
