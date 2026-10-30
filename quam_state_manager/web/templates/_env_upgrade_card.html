@@ -21,6 +21,7 @@
     {% elif report.event.direction %}<p>{{ report.event.direction }}</p>
     {% endif %}
     {% for fact in report.event.later_changes or [] %}<p class="env-later-change">Also since then: {{ fact.direction }}</p>{% endfor %}
+    {% for name in report.event.unreadable or [] %}<p class="env-later-change">Could not read {{ name | replace('_', '-') }} version</p>{% endfor %}
     {% if upgrade.all_clear %}<p>Checked 5 kinds of change; none found</p>{% endif %}
     {% for heading, numbers in [('Stops loading', ['2','3','4']), (upgrade.signature_heading, ['5']), ('Changes output', ['6']), ('FYI', ['1'])] %}
     <details {% if heading != 'FYI' and prominent %}open{% endif %}>

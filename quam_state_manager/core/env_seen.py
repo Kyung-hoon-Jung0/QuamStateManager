@@ -10,6 +10,32 @@ from quam_state_manager.core import safe_io
 from quam_state_manager.core.state_env_baseline import _hash, normalize_env_path
 
 VERSIONS = ("quam", "quam_builder", "qualang_tools", "qm", "numpy", "scipy")
+# The packages whose change is an environment upgrade of its own; numpy and
+# scipy are recorded and reported but never anchor a transition.
+OFFICIAL_VERSIONS = ("quam", "quam_builder", "qualang_tools", "qm")
+
+
+def _known(value) -> bool:
+    """A version that could not be read is unknown, not a version."""
+    return value is not None and str(value).strip().lower() not in ("", "none", "unknown")
+
+
+def _version_pairs(previous: dict, current: dict, names=VERSIONS):
+    """(name, old, new) for every package whose version is KNOWN on both
+    sides and differs; an unreadable side is never a change."""
+    out = []
+    for name in names:
+        old = (previous.get("versions") or {}).get(name)
+        new = (current.get("versions") or {}).get(name)
+        if _known(old) and _known(new) and old != new:
+            out.append((name, old, new))
+    return out
+
+
+def unreadable(current: dict) -> list:
+    """Packages whose version this observation could not read."""
+    return [name for name in VERSIONS
+            if not _known((current.get("versions") or {}).get(name))]
 _lock = threading.RLock()
 
 
@@ -62,11 +88,7 @@ def _order(old, new):
 def direction(previous: dict, current: dict) -> str:
     """Describe direction only when the version strings can be ordered."""
     labels = []
-    for name in VERSIONS:
-        old = (previous.get("versions") or {}).get(name)
-        new = (current.get("versions") or {}).get(name)
-        if old == new:
-            continue
+    for name, old, new in _version_pairs(previous, current):
         suffix = _order(old, new) or "version changed"
         labels.append(f"{name.replace('_', '-')} {old} \u2192 {new} ({suffix})")
     if labels:
@@ -83,13 +105,14 @@ def transition(previous: dict | None, current: dict) -> dict:
     if previous is None:
         return {"first": True, "changed": False, "official_changed": False,
                 "lab_changed": False, "direction": "", "previous": None}
-    versions_changed = any((previous.get("versions") or {}).get(k) !=
-                           (current.get("versions") or {}).get(k) for k in VERSIONS)
-    official_changed = previous.get("official_digest") != current.get("official_digest")
-    changed = (versions_changed or official_changed or
+    official_versions_changed = bool(_version_pairs(previous, current, OFFICIAL_VERSIONS))
+    other_versions_changed = bool(_version_pairs(previous, current))
+    official_changed = (official_versions_changed or
+                        previous.get("official_digest") != current.get("official_digest"))
+    changed = (other_versions_changed or official_changed or
                previous.get("source_fingerprint") != current.get("source_fingerprint"))
     return {"first": False, "changed": changed,
-            "official_changed": versions_changed or official_changed,
+            "official_changed": official_changed,
             "lab_changed": previous.get("lab_digest") != current.get("lab_digest"),
             "direction": direction(previous, current), "previous": previous}
 
@@ -113,7 +136,8 @@ def observe(instance_path, key: str, python_path: str, body: dict, *, context: d
             # An unacknowledged official transition stays the anchor: its
             # ``previous`` (the versions before the change) is what the schema
             # reference, the waveform references and the reviewed plan key on.
-            # A later lab-only change is kept as an additional fact.
+            # A later change that is not itself official (lab files, numpy /
+            # scipy, a fingerprint) is kept as an additional fact.
             later = list(held.get("later_changes") or [])
             later.append({"direction": event["direction"], "lab_changed": event["lab_changed"],
                           "time": current["time"]})
@@ -123,11 +147,14 @@ def observe(instance_path, key: str, python_path: str, body: dict, *, context: d
                 k: v for k, v in previous.items() if k not in ("pending", "acknowledged_event")}}
         elif held:
             current["pending"] = held
+        missing = unreadable(current)
+        if current.get("pending"):
+            current["pending"] = {**current["pending"], "unreadable": missing}
         record["envs"][env] = current
         path = record_path(instance_path, key)
         path.parent.mkdir(parents=True, exist_ok=True)
         safe_io.atomic_write_json(path, record)
-    return {**event, "recorded": True, "current": current}
+    return {**event, "unreadable": missing, "recorded": True, "current": current}
 
 
 def acknowledgement_key(python_path, previous, current, findings_signature):

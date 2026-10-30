@@ -242,6 +242,14 @@ def _entry_fresh(entry: dict, modules: list[str]) -> bool:
 # probe
 # ---------------------------------------------------------------------------
 
+def _served_versions(entry: dict, versions: dict) -> dict:
+    """The versions a cached entry answers with: the library versions the
+    probe itself reported, else the metadata key (an entry written before
+    the library versions were stored)."""
+    stored = entry.get("library_versions")
+    return dict(stored) if isinstance(stored, dict) and stored else dict(versions or {})
+
+
 def probe_state_schema(python_path: str, class_paths: list[str], instance_path=None, *,
                        force: bool = False, timeout: int = 180) -> dict:
     """Run (or cache-serve) the schema dump for *class_paths* in the env.
@@ -278,6 +286,10 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
                 manifest = _decorate({"classes": cached_classes,
                                       "pulse_roster": entry.get("pulse_roster") or {}},
                                      requested=requested)
+                # The cold path answers with the in-env library versions
+                # (numpy / scipy included); a hit must answer the same set,
+                # not the metadata probe's narrower cache key.
+                result["versions"] = _served_versions(entry, versions)
                 result.update(ok=True, cached=True,
                               classes=manifest["classes"],
                               pulse_roster=manifest["pulse_roster"],
@@ -336,6 +348,7 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
             cache[python_path] = {
                 "format": SCHEMA_FORMAT,
                 "versions": versions,
+                "library_versions": parsed.get("versions") or {},
                 "signature": _env_signature(python_path),
                 "classes": classes,
                 "pulse_roster": roster,
@@ -593,7 +606,7 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
         manifest = _decorate({"classes": classes,
                               "pulse_roster": entry.get("pulse_roster") or {}},
                              requested=requested)
-        manifest["versions"] = entry.get("versions") or {}
+        manifest["versions"] = _served_versions(entry, entry.get("versions") or {})
         manifest["pulse_modules"] = entry.get("pulse_modules") or {}
         manifest["sources"] = entry.get("sources") or {}
         return manifest
