@@ -9,7 +9,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QUAM State Manager</title>
     <link rel="icon" type="image/svg+xml"
-          href="{{ url_for('static', filename='favicon.svg') }}">
+          href="{{ asset_url('favicon.svg') }}">
     {# Apply theme as early as possible to prevent FOUC. QM is the default;
        users who explicitly chose 'light' have it persisted in localStorage.
        docs/156: the boot is a partial — the standalone /calc-window runs the
@@ -31,7 +31,7 @@
       try { if (window.self !== window.top) document.documentElement.classList.add('sm-in-frame'); } catch (e) { document.documentElement.classList.add('sm-in-frame'); }
       window.__activeDataPath = {{ (active_dataset_path if active_dataset_path is defined and active_dataset_path else '')|tojson }};
     </script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='pico.min.css') }}">
+    <link rel="stylesheet" href="{{ asset_url('pico.min.css') }}">
     {# Stylesheet up top so CSS downloads in parallel with the scripts. #}
     <link rel="stylesheet" href="{{ asset_url('style.css') }}">
     {# Scripts load eagerly (NOT deferred): UI_CONFIG (app.js) is read by
@@ -61,9 +61,9 @@
        also never shows a stale value. Pinned by
        tests/v130_history_cache_selfcheck.cjs. #}
     <meta name="htmx-config" content='{"attributesToSettle":["width","height"],"historyCacheSize":0}'>
-    <script src="{{ url_for('static', filename='htmx.min.js') }}"></script>
+    <script src="{{ asset_url('htmx.min.js') }}"></script>
     <script src="{{ asset_url('tab-chip.js') }}"></script>
-    <script src="{{ url_for('static', filename='split.min.js') }}"></script>
+    <script src="{{ asset_url('split.min.js') }}"></script>
     {# The one query grammar (space=AND, standalone |=OR) — must precede every
        matcher that consumes it: app.js (trees), bulk/pair-edit, dataset-virtual. #}
     <script src="{{ asset_url('search-query.js') }}"></script>
@@ -172,7 +172,7 @@
        off, reveal them so the UTC fallback text still shows. #}
     <noscript><style>.ts-local{visibility:visible}</style></noscript>
 </head>
-<body class="app-shell exp-list-compact" data-plotly-src="{{ url_for('static', filename='plotly.min.js') }}"{% if experimental %} data-sm-runner="1"{% endif %}>
+<body class="app-shell exp-list-compact" data-plotly-src="{{ asset_url('plotly.min.js') }}"{% if experimental %} data-sm-runner="1"{% endif %}>
     {# queue #8 follow-up: the body renders compact so a first visit never flashes
        wrapped rows -- but a user who chose Full names ('0' in localStorage) got
        the REVERSE flash until app.js restored it. Read the key here, first thing

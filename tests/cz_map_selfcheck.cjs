@@ -828,6 +828,60 @@ async function footerPins(only) {
           gaveUp.includes('The change history was still being prepared after 60 s; the axis check of the loss scans was not done') &&
           !gaveUp.includes('follows'), 'fix3 P2-5: when the re-asks run out the note says the check was not done, not that it follows');
     SA.close();
+
+    {
+    // ---- dark-theme readability (2026-10-30): the loss in its own token hue, operating points on
+    //      top, readable label text, and partner names that never print over a loss profile ----
+    const opsMap = opMap(map5);
+    const themed = w => {
+        // the page's operating points, as the plan page's blob holds them
+        const blob = w.document.createElement('script');
+        blob.id = 'cz-operating-points'; blob.type = 'application/json';
+        const body = typeof opsMap === 'function' ? opsMap('/cz-plan/map?op=cz_SNZ') : opsMap;
+        blob.textContent = JSON.stringify(body.segments.filter(sg => sg.frequency_hz != null)
+            .map(sg => ({op: sg.path, line: sg.role, y: sg.frequency_hz / 1e9, frequency_hz: sg.frequency_hz})));
+        w.document.getElementById('czp-root').appendChild(blob);
+        w.PlotTheme = Object.assign({}, w.PlotTheme, {
+            lossColor: () => '#eab308', markEdge: () => '#13171f', textScale: () => 1,
+            areaFill: c => 'rgba(234,179,8,0.4)'.replace('234,179,8', [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16)).join(','))});
+    };
+    // a lossier copy of the same scans, so the profiles reach where partner names sit
+    const lossBig = JSON.parse(JSON.stringify(loss5));
+    Object.values(lossBig.curves || {}).forEach(e => [e.scan, e.marker_curve].forEach(c => c && (c.pieces || [])
+        .forEach(pc => { pc.loss = (pc.loss || []).map(l => typeof l === 'number' ? Math.min(0.24, l * 8 + 0.12) : l); })));
+    const SThm = await page({map: opMap(map5), loss: lossBig, sel: 'qubit_pairs.q3-4.macros.cz_SNZ', rows: ops5, width: 1100, beforeScripts: themed});
+    const SNoL = await page({map: opMap(map5), loss: null, sel: 'qubit_pairs.q3-4.macros.cz_SNZ', rows: ops5, width: 1100, beforeScripts: themed});
+    const rt = SThm.last(), rn = SNoL.last();
+    const lf = rt.traces.find(t => t.meta === 'loss-fill'), ll = rt.traces.find(t => t.meta === 'loss-line');
+    check(lf && lf.fillcolor === 'rgba(234,179,8,0.4)' && ll && ll.line.color === '#eab308',
+          'the measured loss draws in the --plot-loss hue (fill and outline), not grey: ' + (lf && lf.fillcolor) + ' / ' + (ll && ll.line.color));
+    const idx = pred => rt.traces.map((t, i) => pred(t) ? i : -1).filter(i => i >= 0);
+    const ops = idx(t => t._czOperating && t.marker && t.marker.symbol === 'diamond');
+    const under = idx(t => ['seg', 'loss-fill', 'loss-line'].includes(t.meta));
+    check(ops.length > 0 && Math.min(...ops) > Math.max(...under),
+          'operating diamonds are drawn above every segment and loss profile (ops ' + ops + ' vs ' + Math.max(...under) + ')');
+    check(rt.traces.filter(t => t._czOperating && t.marker && t.marker.symbol === 'diamond')
+            .every(t => t.marker.size >= 12 && t.marker.line && t.marker.line.color === '#13171f'),
+          'each operating diamond is ringed in --plot-mark-edge and at least 12 px');
+    const pt = rt.traces.find(t => t.meta === 'partners');
+    check(pt && pt.textfont.size >= 12, 'partner names are at least 12 px');
+    // the profile's bounding chunks, in data units, from the fill polygon itself
+    const boxes = [];
+    let run = [];
+    const flush = () => { if (run.length) boxes.push({x0: Math.floor(run[0][0] + 1e-9), x1: Math.max(...run.map(p => p[0])),
+                                                       y0: Math.min(...run.map(p => p[1])), y1: Math.max(...run.map(p => p[1]))}); run = []; };
+    lf.x.forEach((x, k) => { if (x == null) flush(); else { run.push([x, lf.y[k]]); if (run.length > 6) { flush(); run.push([x, lf.y[k]]); } } });
+    flush();
+    const inside = (x, y) => boxes.some(b => b.x1 - b.x0 > 0.02 && x > b.x0 + 0.01 && x < b.x1 - 0.01 && y > b.y0 && y < b.y1);
+    check(pt.x.every((x, k) => !inside(x, pt.y[k])), 'no partner name is anchored inside a measured loss profile');
+    const key = (t, k) => t.x[k].toFixed(3) + '@' + t.y[k].toFixed(4);
+    const ptn = rn.traces.find(t => t.meta === 'partners'), withLoss = new Set(pt.x.map((_, k) => key(pt, k)));
+    const displaced = ptn.x.map((_, k) => k).filter(k => !withLoss.has(key(ptn, k)));
+    check(displaced.length > 0, 'the loss profiles move or drop at least one partner name that sits there without them');
+    // a dropped name is still in its segment's hover: every pair keeps its name somewhere
+    check(segments(rt).every(s => s.text.includes(s.pair)), 'every segment hover names its pair, so a dropped label loses nothing');
+    SThm.close(); SNoL.close();
+    }
     [S5, S13, S21, SV].forEach(S => S.close());
     console.log(checks + ' assertions passed');
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -43,7 +43,8 @@ def test_cz_chip_map_client():
     # the content-match wording and the unchecked chip identity.
     # v1.4.1: 95 -> 114, compact partner geometry and both-theme mark/text contrast.
     # v1.5.1: 114 -> 123, pin the compact map footer and its redraw lifecycle.
-    assert "123 assertions passed" in result.stdout
+    # 2026-10-30: 123 -> 130, the dark-theme readability section (loss hue, diamonds on top, label avoidance).
+    assert "130 assertions passed" in result.stdout
 
 
 def test_the_page_reads_title_status_figures_card_then_the_collapsed_notes(tmp_path):

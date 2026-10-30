@@ -11,7 +11,7 @@
 <body>
 <div id="instrument-diagram" style="width:1400px"></div>
 <div id="port-popup" class="port-popup hidden" hidden><span id="popup-label"></span><span id="popup-role-badge"></span><div id="popup-body"></div></div>
-<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script src="{{ asset_url('app.js') }}"></script>
 <script>
 (function () {
     var host = document.getElementById('instrument-diagram');

@@ -250,11 +250,19 @@
     /* A bar label's box (px): the annotation's text at LABEL_FONT plus its pad and border,
        a little larger than Chrome draws it ("q1 4.017": 41 x 17 px measured, 47.2 x 18 here). */
     function labelSize(text) {
-        return { w: 5.4 * String(text).length + 4, h: 18 };
+        return { w: 0.54 * LABEL_FONT * String(text).length + 4, h: LABEL_FONT + 8 };
     }
-    /* A partner label's width (px) at its 11 px font. */
+    /* A partner label's width (px) at PARTNER_FONT (6.4 px a character at 11 px). */
     function partnerWidth(text) {
-        return 6.4 * String(text).length + 2;
+        return 6.4 / 11 * PARTNER_FONT * String(text).length + 2;
+    }
+    /* Label text follows the page's readable floor (12 px times the UI text scale); the
+       label boxes above are measured at that size, so a label that no longer fits its
+       column is dropped to hover rather than drawn over its neighbours. */
+    function setLabelFonts() {
+        var k = window.PlotTheme && window.PlotTheme.textScale ? window.PlotTheme.textScale() : 1;
+        LABEL_FONT = PARTNER_FONT = Math.round(12 * k);
+        PARTNER_H = Math.round(PARTNER_FONT * 1.36);
     }
     /* The partner names of one shared row as lines no wider than the column (one name a line
        at least): {lines: [[name, ...]], w, h} in px. */
@@ -438,6 +446,7 @@
     function render(root, m) {
         var el = root.querySelector('#czp-map');
         if (!el || !m) return Promise.resolve();
+        setLabelFonts();
         var my = ++pseq;
         var loss = root._czLoss || null, curves = (loss && loss.curves) || {};
         var ordSel = root.querySelector('#czp-map-order');

@@ -18,13 +18,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml"
-          href="{{ url_for('static', filename='favicon.svg') }}">
+          href="{{ asset_url('favicon.svg') }}">
     <title>Chip report{% if has_chip and 'overview' in (checked or []) %} — {{ chip_name }}{% endif %}</title>
     {# BOTH sheets, same order as base.html — the --pico-* base tokens live
        in pico.min.css; without it the dark background token resolved to
        nothing and the body rendered transparent-on-white. #}
-    <link rel="stylesheet" href="{{ url_for('static', filename='pico.min.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ asset_url('pico.min.css') }}">
+    <link rel="stylesheet" href="{{ asset_url('style.css') }}">
     <style>
         /* report-local layout — theme TOKENS, not hardcoded colors, so the
            page (and the downloaded copy, which inlines the stylesheet under
@@ -206,8 +206,8 @@
     <footer class="rep-foot">Chip report made by QUAM State Manager. Charts in this file are
         static pictures of the values listed beside them; nothing in it reaches the network.</footer>
 
-    <script src="{{ url_for('static', filename='topo-graph.js') }}"></script>
-    <script src="{{ url_for('static', filename='component-map.js') }}"></script>
+    <script src="{{ asset_url('topo-graph.js') }}"></script>
+    <script src="{{ asset_url('component-map.js') }}"></script>
     {# The ONE script a downloaded file keeps, and only when the raw section is
        in it: it turns the embedded JSON into a collapsible tree on demand.
        Self-contained; no network. #}
@@ -523,8 +523,8 @@
                     el.removeAttribute('data-rep-raw-ready');
                     el.innerHTML = '<p class="rep-note">Opening the tree&hellip;</p>';
                 });
-                var urls = ['{{ url_for('static', filename='pico.min.css') }}',
-                            '{{ url_for('static', filename='style.css') }}'];
+                var urls = ['{{ asset_url('pico.min.css') }}',
+                            '{{ asset_url('style.css') }}'];
                 var pruned = null;
                 try { pruned = usedCss(doc, urls); } catch (e) { pruned = null; }
                 var css = pruned !== null ? Promise.resolve(pruned) : Promise.all(urls.map(function (u) {
