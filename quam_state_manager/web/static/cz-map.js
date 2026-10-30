@@ -608,7 +608,7 @@
                 // '↔ q3' names the CZ partner, never the bar's own qubit (that is the column header)
                 var shown = names.map(function (name) { return colPx < 40 ? name.replace(/^q(?=[A-Z0-9])/i, '') : name; });
                 // one arrow leads the row's list; a too-narrow column drops it and the legend says it
-                var pl = partnerLines(['↔ ' + shown[0]].concat(shown.slice(1)), 0.76 * colPx);
+                var pl = partnerLines(['↔'].concat(shown), 0.76 * colPx);   // the arrow wraps like a name, never vanishes
                 if (pl.w > 0.76 * colPx) pl = partnerLines(shown, 0.76 * colPx);
                 if (pl.w > 0.76 * colPx) return;
                 wanted.push({ i: i, y: top, ypx: (top - (yr ? yr[0] : 0)) * pxPerGHz, w: pl.w, h: pl.h, n: pl.lines.length,
