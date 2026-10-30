@@ -84,6 +84,40 @@ window.fetch = function (url, opts) {
   ok(ajax.some(function (a) { return /diagnostics\/env-card\?poll=1/.test(a[1]); }), 'card asked to poll');
   ok(/Checking/.test(window.document.getElementById('env-upgrade-status').textContent), 'status says Checking');
 
+  // G7 / G8: a staged review, then an undo
+  const doc = window.document;
+  doc.body.insertAdjacentHTML('beforeend',
+    '<div id="pending-tray" data-change-count="0"></div>' +
+    '<div id="env-upgrade-report"><div class="env-remove-row" data-class="c" data-field="f">' +
+    '<input type="checkbox" class="env-remove-confirm" checked></div>' +
+    '<div class="env-rename-row" data-class="c" data-old="a" data-new="b"><input type="checkbox" class="env-rename-confirm" checked>' +
+    '<input type="checkbox" class="env-rename-meaning" checked></div>' +
+    '<button id="env-rename-apply">Stage</button><p id="env-rename-result"></p></div>');
+  const dup = doc.querySelectorAll('#env-upgrade-report');
+  // keep only the last card so getElementById finds the review one
+  for (let i = 0; i < dup.length - 1; i++) dup[i].remove();
+  ok(window.EnvUpgrade._skippedText([]) === '', 'G7: empty skipped list renders nothing');
+  ok(window.EnvUpgrade._skippedText([{path: 'a.b', reason: 'pointer'}]) === '; skipped: a.b (pointer)', 'G7: skipped items are readable text');
+  answer = function (url) {
+    if (/rename-test/.test(url)) return { ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, token: 't', moves: [], removals: 1, skipped: [], message: 'Quam.load passed' }); } };
+    return { ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, changes: 3, skipped: [], message: 'Working copy updated; use Apply' }); } };
+  };
+  await window.EnvUpgrade.testRenames();
+  await window.EnvUpgrade.applyRenames();
+  await flush();
+  ok(doc.getElementById('env-rename-result').textContent === 'Working copy updated; use Apply', 'G7: no "skipped: []" in the status');
+  doc.getElementById('pending-tray').setAttribute('data-change-count', '64');
+  doc.dispatchEvent(new window.CustomEvent('sm:tray-swapped'));
+  ok(doc.querySelector('.env-remove-confirm').checked, 'G8: ticks stay while the edits are staged');
+  doc.getElementById('pending-tray').setAttribute('data-change-count', '0');
+  doc.dispatchEvent(new window.CustomEvent('sm:tray-swapped'));
+  ok(!doc.querySelector('.env-remove-confirm').checked && !doc.querySelector('.env-rename-confirm').checked, 'G8: tray count dropping clears the ticks');
+  ok(doc.getElementById('env-rename-result').textContent === '', 'G8: tray count dropping clears the status');
+  doc.querySelector('.env-remove-confirm').checked = true;
+  doc.getElementById('env-rename-result').textContent = 'Working copy updated';
+  doc.dispatchEvent(new window.CustomEvent('stateRestored'));
+  ok(!doc.querySelector('.env-remove-confirm').checked && doc.getElementById('env-rename-result').textContent === '', 'G8: stateRestored clears ticks and status');
+
   if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
   console.log('all ok');
 })().catch(function (e) { console.error(e); process.exit(1); });

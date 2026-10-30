@@ -187,6 +187,14 @@ def model(ctx, inst):
     consequence = bool(report and any(report["cases"][n]["rows"] for n in ("2", "3", "4", "5", "6")))
     entry = next((e for e in baseline.list_baselines(inst) if e.get("key") == body.get("key")), {})
     refs = present_references(inst, key) if ctx.get("path") else []
+    # G3: a reference recorded under the versions this change came from
+    has_pre_reference = bool(previous_versions) and any(
+        all((ref.get("versions") or {}).get(name) == previous_versions.get(name)
+            for name in env_seen.VERSIONS) for ref in refs)
+    from quam_state_manager.web import routes as _routes
+    with _routes._cfg_warm_lock:
+        recording_running = (ctx.get("env_reference_status") == "recording reference..."
+                             and str(ctx.get("path") or "").lower() in _routes._cfg_warm_inflight)
     if report and not transition_seen and report["cases"]["6"].get("message") == env_upgrade.NO_REFERENCE:
         report["cases"]["6"] = {**report["cases"]["6"],
                                 "message": "not compared: no environment change"}
@@ -203,9 +211,10 @@ def model(ctx, inst):
                           baseline.normalize_env_path(env) else None,
             "error": ctx.get("env_upgrade_error"), "recording": ctx.get("env_reference_status"),
             "previous_not_installed": not known_previous,
+            "has_pre_reference": has_pre_reference, "recording_running": recording_running,
             "editable": env_seen.live_context(ctx), "signature_heading": env_upgrade.SIGNATURE_HEADING,
-            "footer": (report or {}).get("footer") or
-                "Not checked: run-time behaviour of macros, hardware timing, classes not probed (0)",
+            "footer": "" if not selected else ((report or {}).get("footer") or
+                "Not checked: run-time behaviour of macros, hardware timing, classes not probed (0)"),
             "all_clear": bool(report and all(report["cases"][str(n)]["status"] == "none_found"
                                              for n in range(1, 6)))}
 

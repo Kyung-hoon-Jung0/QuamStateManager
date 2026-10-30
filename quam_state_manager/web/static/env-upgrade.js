@@ -30,6 +30,41 @@
         confirmed: true, meaning_unchanged: !!row.querySelector('.env-rename-meaning:checked')};
     });
   }
+  function skippedText(skipped) {
+    // readable items; nothing at all when there is nothing to say
+    if (!skipped || !skipped.length) return '';
+    return '; skipped: ' + skipped.map(function (s) {
+      return typeof s === 'string' ? s : (s.path || '') + (s.reason ? ' (' + s.reason + ')' : '');
+    }).join(', ');
+  }
+  function trayCount() {
+    const tray = document.getElementById('pending-tray');
+    const n = tray ? parseInt(tray.getAttribute('data-change-count'), 10) : NaN;
+    return isNaN(n) ? null : n;
+  }
+  // G8: the staged edits were undone or the state was replaced -- the card's
+  // "Working copy updated" line and its ticks no longer describe anything
+  let stagedAt = null;
+  let awaitingTray = false;
+  function resetReview() {
+    tested = null;
+    stagedAt = null;
+    awaitingTray = false;
+    Array.from(document.querySelectorAll('.env-rename-confirm, .env-rename-meaning, .env-remove-confirm'))
+      .forEach(function (box) { box.checked = false; });
+    const apply = document.getElementById('env-rename-apply');
+    if (apply) apply.disabled = true;
+    const result = document.getElementById('env-rename-result');
+    if (result) result.textContent = '';
+    const status = document.getElementById('env-upgrade-status');
+    if (status && /^Working copy updated/.test(status.textContent)) status.textContent = '';
+  }
+  document.addEventListener('stateRestored', resetReview);
+  document.addEventListener('sm:tray-swapped', function () {
+    const now = trayCount();
+    if (awaitingTray && now) { stagedAt = now; awaitingTray = false; return; }
+    if (stagedAt !== null && now !== null && now < stagedAt) resetReview();
+  });
   function refreshCard() {
     // the card re-polls itself (hx-trigger every 2s) while the check runs
     if (window.htmx && document.getElementById('diag-env-card')) {
@@ -48,6 +83,8 @@
   }
   window.EnvUpgrade = {
     _replaceReport: replaceReport,
+    _resetReview: resetReview,
+    _skippedText: skippedText,
     check: async function (python) {
       const button = document.getElementById('env-upgrade-check');
       if (button) button.disabled = true;
@@ -77,7 +114,7 @@
         tested = {token: result.token, selections: selected};
         button.disabled = false;
         notice(result.message + ': ' + result.moves.length + ' renames, ' + result.removals + ' removals' +
-          (result.skipped.length ? '; skipped: ' + result.skipped.map(function (s) { return s.path + ' (' + s.reason + ')'; }).join(', ') : ''));
+          skippedText(result.skipped));
       } catch (error) { notice(error.message); }
     },
     applyRenames: async function () {
@@ -86,8 +123,10 @@
         const result = await post('rename-apply', {token: tested.token, selections: selections()});
         tested = null;
         document.getElementById('env-rename-apply').disabled = true;
-        notice(result.message + '; skipped: ' + JSON.stringify(result.skipped));
+        notice(result.message + skippedText(result.skipped));
         document.body.dispatchEvent(new CustomEvent('diagnostics-changed'));
+        // the tray count after the staged edits land; a later drop means an undo
+        awaitingTray = true;
       } catch (error) { notice(error.message); }
     },
     compare: async function (button) {

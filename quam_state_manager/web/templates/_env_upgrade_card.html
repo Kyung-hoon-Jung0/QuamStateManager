@@ -27,7 +27,8 @@
       {% if heading == 'Changes output' %}<p>{{ report.waveform_scope }}</p>{% endif %}
       {% for number in numbers %}{% set case = report.cases[number] %}
       <p class="env-case-line">{{ upgrade.case_names[number] | capitalize }}: {{ case.message }}</p>
-      {% if number == '6' and not case.rows and upgrade.previous_not_installed and upgrade.transition %}<p>the previous version is not installed in any environment SM knows; install it in a separate env to compare</p>{% endif %}
+      {% if number == '6' and not case.rows and upgrade.transition and upgrade.has_pre_reference %}<p>A reference from before the change is recorded; the waveform compare runs once the load-stopping items above are resolved.</p>
+      {% elif number == '6' and not case.rows and upgrade.previous_not_installed and upgrade.transition %}<p>the previous version is not installed in any environment SM knows; install it in a separate env to compare</p>{% endif %}
       {% if number == '6' and case.reference_state_hash %}<p>State {{ case.reference_state_hash }} &rarr; {{ case.current_state_hash }}
         {% if case.current_env %}in <code>{{ case.current_env }}</code>{% endif %}</p>{% endif %}
       {% if number == '6' and case.rows %}{% set cmp = upgrade.compare %}
@@ -105,6 +106,6 @@
   <span id="env-upgrade-record-busy" class="htmx-indicator muted">Generating config and recording a reference&hellip; (about 10&ndash;60 s)</span>
   <p id="env-upgrade-status" role="status">{{ upgrade.recording or '' }}</p>
   <div id="env-upgrade-references"></div>
-  <p class="muted env-upgrade-footer">{{ upgrade.footer }}</p>
+  {% if upgrade.footer %}<p class="muted env-upgrade-footer">{{ upgrade.footer }}</p>{% endif %}
 </section>
-<script src="{{ url_for('static', filename='env-upgrade.js') }}"></script>
+<script src="{{ asset_url('env-upgrade.js') }}"></script>

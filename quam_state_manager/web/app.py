@@ -889,13 +889,18 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # `asset_url(filename)` — like url_for('static', ...) but appends ?v=<mtime>
     # so editing a JS/CSS file changes its URL and busts the year-long cache,
     # with no build/hashing step. Falls back to the plain URL if stat fails.
+    _asset_mtimes: dict = {}   # computed once per process (startup cost only)
+
     def _asset_url(filename: str) -> str:
         from flask import url_for
-        try:
-            mtime = int(os.path.getmtime(os.path.join(static_dir, filename)))
-            return url_for("static", filename=filename, v=mtime)
-        except OSError:
-            return url_for("static", filename=filename)
+        mtime = _asset_mtimes.get(filename)
+        if mtime is None:
+            try:
+                mtime = int(os.path.getmtime(os.path.join(static_dir, filename)))
+            except OSError:
+                return url_for("static", filename=filename)
+            _asset_mtimes[filename] = mtime
+        return url_for("static", filename=filename, v=mtime)
 
     app.jinja_env.globals["asset_url"] = _asset_url
     # P0-1: what a change not confirmed on the chip says, one wording everywhere

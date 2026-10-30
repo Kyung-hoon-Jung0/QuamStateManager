@@ -47191,15 +47191,19 @@ def _env_card_state(store: QuamStore) -> dict:
         env_name = _pp.name or None
     from quam_state_manager.web.env_upgrade_view import model as upgrade_model
     _maybe_recheck_env_upgrade(_active_ctx(), current_app.instance_path)
+    upgrade = upgrade_model(_active_ctx(), current_app.instance_path)
+    # G2: the header names the SAME current versions as the card body; the
+    # cached manifest may predate an in-place package swap
+    shown_versions = upgrade.get("versions") or (manifest or {}).get("versions") or {}
     return {
         "selected": python_path,
-        "upgrade": upgrade_model(_active_ctx(), current_app.instance_path),
+        "upgrade": upgrade,
         "env_name": env_name,
         "env_path": checked,
         "selected_exists": bool(python_path and Path(python_path).is_file()),
         "warm": manifest is not None,
         "probing": probing,
-        "versions": (manifest or {}).get("versions") or {},
+        "versions": shown_versions,
         "missing_classes": missing,
     }
 
@@ -47379,7 +47383,8 @@ def diagnostics_env_card():
     # existing diagnostics-changed listeners -- they kept the pre-probe count
     # until a reload. A plain GET never triggers (no loop, no new poller).
     if (request.args.get("poll") == "1" and not env_card.get("probing")
-            and not (env_card.get("upgrade") or {}).get("checking")):
+            and not (env_card.get("upgrade") or {}).get("checking")
+            and not (env_card.get("upgrade") or {}).get("recording_running")):
         resp.headers["HX-Trigger"] = "diagnostics-changed"
     return resp
 

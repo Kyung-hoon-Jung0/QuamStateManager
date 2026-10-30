@@ -178,3 +178,79 @@ def test_shared_after_swap_listener_tolerates_a_targetless_swap():
     base = (Path(__file__).resolve().parent.parent / "quam_state_manager/web/templates/base.html").read_text(encoding="utf-8")
     head = base.split('scope.listen(document.body, "htmx:afterSwap", function(evt) {', 1)[1][:200]
     assert "if (!evt.detail || !evt.detail.target) return;" in head
+
+
+# ---- second GUI round ------------------------------------------------------
+
+def test_g1_card_keeps_polling_while_a_reference_records(loaded, monkeypatch):
+    monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda inst: sys.executable)
+    _, client, ctx = loaded
+    folder_key = str(ctx["path"]).lower()
+    ctx["env_reference_status"] = "recording reference..."
+    routes._cfg_warm_inflight.add(folder_key)
+    try:
+        card = client.get("/diagnostics/env-card?poll=1")
+        assert 'hx-trigger="every 2s"' in card.get_data(as_text=True)
+        assert "HX-Trigger" not in card.headers
+    finally:
+        routes._cfg_warm_inflight.discard(folder_key)
+    ctx["env_reference_status"] = "Reference recorded: 3 waveforms, 1 KB"
+    card = client.get("/diagnostics/env-card?poll=1")
+    html = card.get_data(as_text=True)
+    assert 'hx-trigger="every 2s"' not in html and "Reference recorded: 3 waveforms" in html
+    assert card.headers.get("HX-Trigger") == "diagnostics-changed"
+
+
+def test_g2_header_names_the_same_versions_as_the_card(loaded, monkeypatch):
+    monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda inst: sys.executable)
+    monkeypatch.setattr(routes, "_live_env_manifest",
+                        lambda store: {"versions": {"quam_builder": "0.4.0"}, "missing_classes": []})
+    _, client, ctx = loaded
+    _report_ctx(ctx, changed=True)
+    ctx["env_upgrade_body"] = {"versions": {"quam_builder": "0.6.0"}}
+    html = client.get("/diagnostics/env-card").get_data(as_text=True)
+    header = html.split("checked against", 1)[1].split("</span>", 1)[0]
+    assert "quam_builder 0.6.0" in header and "0.4.0" not in header
+
+
+def _transition_ctx(ctx):
+    _report_ctx(ctx, changed=True, signature_rows=[{
+        "class": "lab.Gate", "method": "apply", "label": "x",
+        "own": {"text": "(self)"}, "parent": {"text": "(self)"}, "reference_parent": {"text": "(self)"}}])
+    ctx["env_upgrade_report"]["event"]["previous"] = {"versions": {"quam": "0.5.0"}}
+
+
+def test_g3_existing_pre_upgrade_reference_is_named_not_denied(loaded, monkeypatch):
+    _, client, ctx = loaded
+    _transition_ctx(ctx)
+    html = client.get("/env-upgrade/card").get_data(as_text=True)
+    assert "install it in a separate env" in html
+    monkeypatch.setattr(view.waveform_refs, "list_references", lambda inst, key: [{
+        "key": "k", "recorded_at": "2026-10-01T00:00:00+00:00", "versions": {"quam": "0.5.0"},
+        "python_path": sys.executable, "size": 2048, "traces": {}}])
+    html = client.get("/env-upgrade/card").get_data(as_text=True)
+    assert "install it in a separate env" not in html
+    assert "reference from before the change is recorded" in html
+    assert "once the load-stopping items" in html
+
+
+def test_g4_g5_no_env_says_it_once_and_hides_the_probe_footer(loaded, monkeypatch):
+    monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda inst: None)
+    _, client, _ = loaded
+    html = client.get("/diagnostics/env-card").get_data(as_text=True)
+    visible = re.sub(r"<[^>]+>", " ", html)   # tooltips are attributes, not sentences
+    assert visible.lower().count("no python environment selected") == 1
+    assert "classes not probed" not in html
+    monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda inst: sys.executable)
+    assert "classes not probed" in client.get("/diagnostics/env-card").get_data(as_text=True)
+
+
+def test_g6_static_scripts_carry_a_content_based_version(loaded):
+    from pathlib import Path
+    templates = Path(__file__).resolve().parent.parent / "quam_state_manager/web/templates"
+    offenders = [t.name for t in templates.glob("*.html")
+                 if re.search(r"url_for\(\s*['\"]static['\"]\s*,\s*filename\s*=\s*['\"][^'\"]+\.js", t.read_text(encoding="utf-8"))]
+    assert offenders == []
+    _, client, _ = loaded
+    html = client.get("/env-upgrade/card").get_data(as_text=True)
+    assert re.search(r"env-upgrade\.js\?v=\d+", html)
