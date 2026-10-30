@@ -103,3 +103,59 @@ def test_listing_a_pair_the_rule_already_covers_replaces_its_instance():
     assert again["added"] == ["q1-2"] and len(again["spec"]["additions"]) == n
     pulse = next(a for a in again["spec"]["additions"] if a["kind"] == "pulse")
     assert pulse["fields"]["length"] == 48
+
+
+def test_new_rule_does_not_adopt_an_unrelated_hand_gate():
+    s, r = _setup()
+    s['additions'] = deepcopy(_plan(s, r)['pairs'][0]['additions'])
+    for a in s['additions']:
+        a.pop('rule_id', None)
+    r.pop('id')
+    row = _plan(s, r)['pairs'][0]
+    assert row['status'] == "Can't" and 'already exists' in row['reason']
+
+
+def test_apply_keeps_per_pair_choice_and_writes_moving_and_default_once():
+    s, r = _setup()
+    r['items'][0]['on_choice'] = 'auto'
+    r['gate']['as_default'] = True
+    choices = {'q1-2': 'target'}
+    plan = rules.expand(s, r, manifest(), choices=choices)
+    out = rules.apply(s, r, plan['rule_sig'], ['q1-2', 'q1-2'], manifest(), choices=choices)
+    assert out['added'] == ['q1-2']
+    after = out['spec']
+    assert after['populate']['pairs']['q1-q2']['moving_qubit'] == 'target'
+    default = [a for a in after['additions'] if a['kind'] == 'default_gate']
+    assert len(default) == 1 and default[0]['to'] == 'cz_bm'
+    row = _plan(after, out['rule'])['pairs'][0]
+    assert row['status'] == 'Already has it' and not row['errors']
+    assert all(a['choice_here'] == 'target' for a in row['additions'])
+    # A stored high/low choice must survive an expand after the dialog closes too.
+    s, r = _setup()
+    r['items'][0].update(role='high', on_choice='auto')
+    r['numbers'] = {'high.amplitude': .12}
+    s['populate']['qubit'] = {}
+    plan = rules.expand(s, r, manifest(), choices=choices)
+    out = rules.apply(s, r, plan['rule_sig'], ['q1-2'], manifest(), choices=choices)
+    assert _plan(out['spec'], out['rule'])['pairs'][0]['status'] == 'Already has it'
+
+
+def test_source_gate_is_adopted_without_changing_saved_names_or_values():
+    s, r = _setup()
+    s['additions'] = deepcopy(_plan(s, r)['pairs'][0]['additions'])
+    pulse, gate = s['additions']
+    gate['fields']['flux_pulse_qubit'] = gate['fields']['flux_pulse_qubit'].replace(pulse['name'], 'stored_pulse')
+    pulse['name'] = 'stored_pulse'
+    for a in s['additions']:
+        a.pop('rule_id', None)
+        a.pop('copied_value', None)
+    before = deepcopy(s)
+    r.update(source='q1-2', source_names={'moving': 'stored_pulse'})
+    r['numbers'] = {}
+    out = rules.apply(s, r, _plan(s, r)['rule_sig'], ['q2-3'], manifest())
+    source = rules.bundle(out['spec'], out['rule'], 'q1-2')
+    assert all(a['rule_id'] == r['id'] for a in source)
+    assert source[0]['name'] == 'stored_pulse' and source[0]['fields'] == before['additions'][0]['fields']
+    assert source[0]['copied_value'] == {'length': 40, 'amplitude': .05}
+    assert out['rule']['numbers'] == r['numbers'] | {'moving.length': 40, 'moving.amplitude': .05}
+    assert _plan(out['spec'], out['rule'])['pairs'][0]['status'] == 'Already has it'

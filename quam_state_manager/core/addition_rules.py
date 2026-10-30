@@ -54,7 +54,7 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
     """Plan every pair without mutating inputs or generating any files."""
     choices = choices or {}
     own = {id(a) for p in spec.get("qubit_pairs") or [] for a in bundle(spec, rule, p)
-           if a.get("rule_id") == rule.get("id") or
+           if (rule.get("id") and a.get("rule_id") == rule["id"]) or
            (rule.get("source") and unordered_key(gate_action.pair_members(spec, rule["source"])) == unordered_key(p))}
     clean = dict(spec, additions=[a for a in spec.get("additions") or [] if id(a) not in own])
     # Read source numbers before excluding its gate from collision checks.
@@ -69,18 +69,20 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
     for pair in spec.get("qubit_pairs") or []:
         pid = additions.quam_pair_id(pair)
         key = unordered_key(pair)
+        current = bundle(spec, rule, pair)
         local = action
-        if choices.get(pid) in ("control", "target"):
+        choice = choices.get(pid) or next((a.get("choice_here") for a in current
+                     if rule.get("id") and a.get("rule_id") == rule["id"] and a.get("choice_here")), None)
+        if choice in ("control", "target"):
             local = deepcopy(action)
             for item in local.get("items") or []:
                 if item.get("on_choice", "auto") == "auto" and item["role"] != "coupler":
-                    item["on_choice"] = choices[pid] if item["role"] != "low" else ("target" if choices[pid] == "control" else "control")
+                    item["on_choice"] = choice if item["role"] != "low" else ("target" if choice == "control" else "control")
         # Source numbers have already been captured; judge must not read the removed source.
         judged = add_verdict.judge_pairs(clean, [pair], dict(local, source=None), manifest, index=index)[0]
         resolved = gate_action.resolve(clean, pair, local)
-        current = bundle(spec, rule, pair)
         delta, instance_sig = diff_and_signature(resolved, current)
-        existing = bool(current) and (any(a.get("rule_id") == rule.get("id") for a in current) or
+        existing = bool(current) and (bool(rule.get("id")) and any(a.get("rule_id") == rule["id"] for a in current) or
                     bool(rule.get("source")) and key == unordered_key(gate_action.pair_members(spec, rule["source"])))
         edited = bool(existing and delta)
         if existing:
@@ -99,8 +101,8 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
                 a["rule_id"] = rule["id"]
             a["copied_value"] = {k: v for k, v in (a.get("fields") or {}).items()
                                  if isinstance(v, (int, float)) and not isinstance(v, bool)}
-            if choices.get(pid):
-                a["choice_here"] = choices[pid]
+            if choice:
+                a["choice_here"] = choice
         judged.update(additions=planned, instance_sig=instance_sig, diff_vs_current=delta if existing else [],
                       edited=edited, existing=existing, key=key, choices=resolved["choices"],
                       errors=list(resolved["errors"]),
@@ -142,7 +144,7 @@ def apply(spec, rule, rule_sig, pairs, manifest, choices=None):
 
     Only a Ready pair, or a Needs-a-look pair a ``choices`` entry resolves
     cleanly, is written. Anything else listed is skipped with its reason.
-    Pair defaults (``gate.as_default``) are left untouched here.
+    Apply the resolved moving choice and requested default with the bundle.
     Returns ``{spec, added, skipped, rule}``; the input spec is not changed.
     """
     # The signature covers the rule exactly as the person checked it; an id
@@ -152,10 +154,11 @@ def apply(spec, rule, rule_sig, pairs, manifest, choices=None):
         raise StaleRule(plan["rule_sig"])
     rule = deepcopy(rule)
     rule.setdefault("id", "r" + __import__("uuid").uuid4().hex[:8])
+    rule["numbers"] = add_verdict.current_numbers(spec, rule)
     by_pid = {additions.quam_pair_id(p): row for p, row in zip(spec.get("qubit_pairs") or [], plan["pairs"])}
     choices = choices or {}
     new, added, skipped = deepcopy(spec), [], []
-    for pid in pairs or []:
+    for pid in dict.fromkeys(pairs or []):
         row = by_pid.get(pid)
         if row is None:
             skipped.append({"pair": pid, "reason": "no such pair"})
@@ -181,4 +184,18 @@ def apply(spec, rule, rule_sig, pairs, manifest, choices=None):
             added.append(pid)
         else:
             skipped.append({"pair": pid, "reason": row.get("reason") or row["status"]})
+    for pid in added:
+        row = by_pid[pid]
+        if row.get("moving_qubit"):
+            new.setdefault("populate", {}).setdefault("pairs", {}).setdefault(row["long"], {})["moving_qubit"] = row["moving_qubit"]
+        if rule.get("gate", {}).get("as_default"):
+            target = gate_action.owner(new, pid)["target"]
+            new["additions"] = [a for a in new["additions"] if not (a.get("kind") == "default_gate" and a.get("target") == target)]
+            new["additions"].append(dict(kind="default_gate", target=target, name="cz", to=rule["gate"]["name"], rule_id=rule["id"]))
+    # Adopting a hand gate as the source adds provenance, never renames it.
+    if rule.get("source"):
+        for a in bundle(new, rule, rule["source"]):
+            a["rule_id"] = rule["id"]
+            a.setdefault("copied_value", {k: v for k, v in (a.get("fields") or {}).items()
+                                         if isinstance(v, (int, float)) and not isinstance(v, bool)})
     return {"spec": new, "added": added, "skipped": skipped, "rule": _store_rule(new, rule)}
