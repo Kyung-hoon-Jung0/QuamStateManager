@@ -637,6 +637,9 @@ def sidecar_additions(folder: Path | str, state: dict) -> list[dict]:
             if (b.get("rule_id") and isinstance(obj.get("__class__"), str)
                     and b.get("class") and obj["__class__"] != b["class"]):
                 b["edited"] = True
+            # The chip's class is what the person has now; the rebuild keeps it.
+            if isinstance(obj.get("__class__"), str) and b.get("class"):
+                b["class"] = obj["__class__"]
         out.append(b)
     return out
 

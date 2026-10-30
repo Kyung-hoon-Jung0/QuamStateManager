@@ -103,6 +103,32 @@ def test_writable_matches_what_apply_writes():
     assert sorted(out["added"]) == sorted(p["pair"] for p in plan["pairs"] if p["writable"])
 
 
+# --- P1 #5: Regenerate carries the chip's class ------------------------------------
+
+def test_regenerate_carries_the_chips_class_and_the_rule_reads_it_as_edited(tmp_path):
+    s, r = _installed()
+    pulse = next(a for a in s["additions"] if a["kind"] == "pulse" and a["name"] == "cz_bm_high_q1_q2")
+    state = {"qubits": {}, "qubit_pairs": {}}
+    for a in s["additions"]:
+        node = state
+        for seg in a["target"].split("."):
+            node = node.setdefault(seg, {})
+        node[a["name"]] = dict(a.get("fields") or {}, __class__=a["class"])
+    state["qubits"][pulse["target"].split(".")[1]]["z"]["operations"][pulse["name"]]["__class__"] = "pkg.Other"
+    d = tmp_path / ".regen"
+    d.mkdir()
+    (d / "generate_spec.json").write_text(json.dumps({"content_hash": "x", "spec": {
+        "additions": s["additions"], "addition_rules": [r]}}), encoding="utf-8")
+    got = regen_spec.sidecar_additions(tmp_path, state)
+    carried = next(a for a in got if a["name"] == "cz_bm_high_q1_q2")
+    assert carried["class"] == "pkg.Other" and carried["edited"] is True
+    assert all(a["class"] == "pkg.Pulse" for a in got if a["kind"] == "pulse" and a is not carried)
+    s2 = dict(s, additions=got)
+    row = next(p for p in R.expand(s2, r, dict(MAN, classes=dict(MAN["classes"], **{
+        "pkg.Other": {"role": "pulse", "fields": {}}})))["pairs"] if p["pair"] == "q1-2")
+    assert row["edited"] is True
+
+
 # --- P1 #3 (Python twin of the rename): auto_new_since follows a qubit rename -------
 
 def test_rename_follows_the_auto_new_record():
