@@ -303,6 +303,8 @@
       if (list(spec).some(function (a, i) { return i !== skipIndex && a.target === cfg.target && a.name === nm; })) {
         msg.textContent = nm + " is already added here."; return;
       }
+      var clash = cfg.kind === "macro" ? gateNameClash(spec, cfg.target, nm, skipIndex) : null;
+      if (clash) { msg.textContent = clash; return; }
       var got = ff ? ff.collect() : { fields: {}, missing: [] };
       if (got.missing.length) { msg.textContent = "Required: " + got.missing.join(", "); return; }
       var add = { kind: cfg.kind, target: cfg.target, name: nm, "class": sel.value, fields: got.fields };
@@ -405,7 +407,8 @@
             ? "sets this pair's moving qubit for the whole build" : "idle frequencies not known yet: choose"));
         } else {
           head.appendChild(el("span", { className: "gen-add-cz-where" },
-            where === "coupler" ? owner.pair + " coupler" : where + " z"));
+            where === "coupler" ? owner.pair + " coupler"
+              : where + " z" + (item.on === "high" ? " (higher f_01)" : item.on === "low" ? " (lower f_01)" : "")));
         }
         sec.appendChild(head);
         var inner = el("div", { className: "gen-add-cz-inner" });
@@ -471,6 +474,7 @@
       if (mg.missing.length) problems.push("gate requires " + mg.missing.join(", "));
       if (adds.some(function (a) { return a.target === owner.target && a.name === nm; }))
         problems.push(nm + " is already added on " + owner.pair);
+      else if (gateNameClash(spec, owner.target, nm, -1)) problems.push(gateNameClash(spec, owner.target, nm, -1));
       if (problems.length) { msg.textContent = problems.join("; "); return; }
       Object.keys(mg.fields).forEach(function (k) { fields[k] = mg.fields[k]; });
       if (!Array.isArray(spec.additions)) spec.additions = [];
@@ -627,10 +631,10 @@
     frow.appendChild(flag);
     form.appendChild(frow);
     form.appendChild(el("p", { className: "muted gen-add-cz-sub" },
-      "pump_ pulse \"pump\" (the builder writes it): leave a value blank to keep the builder's."));
+      "pump_ pulse \"pump\" (the builder writes it): nothing is prefilled; a blank value keeps what the builder writes."));
     var pbox = el("div", { className: "gen-add-fields" });
-    var len = el("input", { type: "text", className: "gen-add-tw-len", placeholder: "length (ns)", "aria-label": "Pump length" });
-    var amp = el("input", { type: "text", className: "gen-add-tw-amp", placeholder: "amplitude", "aria-label": "Pump amplitude" });
+    var len = el("input", { type: "text", className: "gen-add-tw-len", placeholder: "blank = the builder's length (ns)", "aria-label": "Pump length" });
+    var amp = el("input", { type: "text", className: "gen-add-tw-amp", placeholder: "blank = the builder's amplitude", "aria-label": "Pump amplitude" });
     [["length", len], ["amplitude", amp]].forEach(function (x) {
       var lab = el("label", { className: "gen-add-field" });
       lab.appendChild(el("span", { className: "gen-add-fname" }, x[0]));
@@ -726,6 +730,10 @@
     var rm = el("button", { type: "button", className: "btn-sm secondary gen-add-rm", title: "Remove this addition" }, "✕");
     rm.addEventListener("click", function () {
       spec.additions.splice(i, 1);
+      // a default that named the removed gate goes with it
+      if (a.kind === "macro") spec.additions = spec.additions.filter(function (d) {
+        return !(d.kind === "default_gate" && d.target === a.target && d.to === a.name);
+      });
       if (!spec.additions.length) delete spec.additions;
       ctx.changed(); mount(host, ctx);
     });
@@ -738,8 +746,206 @@
     return r;
   }
 
+  /* ---- one convention for a pair's 2Q gates (P5) ---------------------------
+   * The Populate "Qubit pairs" table is the one place a pair's gates are
+   * listed: the ones the build makes (mirror of run_build._finalize_pair_gates,
+   * core/additions.builder_gate_names), the ones added here, and the default.
+   * The default is written as the alias macros.cz -> <gate> (the shape the
+   * builder itself writes on a tunable-coupler chip); SM's CZ plan reads `cz`
+   * first, official CZ nodes play macros[operation] (default cz_unipolar). */
+  var DEFAULT_GATE = "cz";
+  var NODE_DEFAULT = "cz_unipolar";
+  var CZ_VARIANTS = ["unipolar", "flattop", "bipolar", "SNZ", "flattop_erf"];
+  var GATE_RULE = "One list of gates per pair: what the build makes, and what you add. " +
+    "Default writes macros.cz → that gate, which SM's CZ plan reads first and a CZ node plays with " +
+    "operation=cz (left alone, the official CZ nodes play " + NODE_DEFAULT + "). Two gates never share a name.";
+
+  function builderGates(spec, long) {
+    var g = String(spec.pair_gate || "").toLowerCase();
+    if (g === "cz_coupler") return ["cz_coupler", DEFAULT_GATE];
+    if (g === "cr") {
+      var zz = ((spec && spec.lines) || []).some(function (ln) {
+        return ln && (ln.line === "zz" || ln.line === "zz_drive") && String(ln.element) === long;
+      });
+      return zz ? ["cr", "stark_cz"] : ["cr"];
+    }
+    if (g === "cz_fixed" || g === "cz_tunable") {
+      var req = ((((spec.populate || {}).pairs) || {})[long] || {}).cz_variant || "all";
+      return (req === "all" ? CZ_VARIANTS : [req]).map(function (v) { return "cz_" + v; });
+    }
+    return [];
+  }
+
+  function pairGates(spec, pid, long) {
+    var tgt = "qubit_pairs." + pid + ".macros";
+    var b = builderGates(spec, long);
+    var added = [], chosen = null, chosenIdx = -1;
+    list(spec).forEach(function (a, i) {
+      if (a.target !== tgt) return;
+      if (a.kind === "macro") added.push({ name: a.name, index: i, cls: a["class"] });
+      if (a.kind === "default_gate") { chosen = a; chosenIdx = i; }
+    });
+    var effective = chosen ? chosen.to
+      : (b.indexOf(DEFAULT_GATE) >= 0 ? b[0] : null);
+    return { target: tgt, builder: b, added: added, chosen: chosen, chosenIndex: chosenIdx,
+             effective: effective, by: chosen ? "chosen" : (effective ? "builder" : null) };
+  }
+
+  function pairOfTarget(spec, target) {
+    var m = /^qubit_pairs\.([^.]+)\.macros$/.exec(String(target));
+    if (!m) return null;
+    var hit = null;
+    (spec.qubit_pairs || []).forEach(function (p) {
+      if (Array.isArray(p) && p.length === 2 && pairId(String(p[0]), String(p[1])) === m[1])
+        hit = { pid: m[1], long: p[0] + "-" + p[1] };
+    });
+    return hit;
+  }
+
+  // Why an added gate may not take *name* on *target*, or null.
+  function gateNameClash(spec, target, name, skipIndex) {
+    var p = pairOfTarget(spec, target);
+    if (!p) return null;
+    var g = pairGates(spec, p.pid, p.long);
+    if (g.builder.indexOf(name) >= 0)
+      return "The build already makes a gate named " + name + " on " + p.pid + "; name the added gate differently.";
+    if (g.chosen && g.chosen.name === name && g.chosenIndex !== skipIndex)
+      return name + " is this pair's default-gate alias; name the added gate differently.";
+    return null;
+  }
+
+  function setDefault(spec, g, to) {
+    if (!Array.isArray(spec.additions)) spec.additions = [];
+    if (g.chosenIndex >= 0) spec.additions.splice(g.chosenIndex, 1);
+    if (to) spec.additions.push({ kind: "default_gate", target: g.target, name: DEFAULT_GATE, to: to });
+    if (!spec.additions.length) delete spec.additions;
+  }
+
+  var pairCtx = null, pairTable = null, addHost = null, addCtx = null;
+
+  function refreshAll() {
+    if (pairTable && pairCtx) decoratePairTable(pairTable, pairCtx);
+    if (addHost && addCtx) mount(addHost, addCtx);
+  }
+
+  function gatesCell(td, tr, pid, long, ctx) {
+    td.innerHTML = "";
+    var spec = ctx.spec();
+    var g = pairGates(spec, pid, long);
+    var chips = el("div", { className: "gen-gates" });
+    function chip(name, kind, extra) {
+      var c = el(kind === "added" ? "button" : "span",
+                 { className: "gen-gate gen-gate-" + kind + (name === g.effective ? " gen-gate-default" : ""),
+                   "data-gate": name, type: kind === "added" ? "button" : null }, name);
+      if (kind === "added") c.setAttribute("type", "button"); else c.removeAttribute("type");
+      c.title = (kind === "builder" ? "made by the build" : "added here — click to edit") +
+        (name === g.effective ? "; the pair's default gate (macros.cz)" : "") + (extra || "");
+      if (name === g.effective) c.insertBefore(el("span", { className: "gen-gate-star", "aria-label": "default" }, "★ "), c.firstChild);
+      chips.appendChild(c);
+      return c;
+    }
+    g.builder.forEach(function (n) {
+      if (n === DEFAULT_GATE && g.builder.length > 1) return;   // the coupler chip's alias, shown as ★
+      chip(n, "builder", n === NODE_DEFAULT ? "; what the official CZ nodes play by default" : "");
+    });
+    g.added.forEach(function (a) {
+      var c = chip(a.name, "added", " (" + shortName(a.cls) + ")");
+      c.addEventListener("click", function () { openForm(tr, pid, long, ctx, { index: a.index, add: list(ctx.spec())[a.index] }); });
+    });
+    if (!g.builder.length && !g.added.length)
+      chips.appendChild(el("span", { className: "muted gen-gate-none" }, "no gate yet"));
+    td.appendChild(chips);
+    var row = el("div", { className: "gen-gates-actions" });
+    var dl = el("label", { className: "gen-gate-deflabel" }, "Default ");
+    var sel = el("select", { className: "gen-gate-default-sel", "aria-label": "Default gate of " + pid });
+    var names = g.builder.filter(function (n) { return n !== DEFAULT_GATE; })
+      .concat(g.added.map(function (a) { return a.name; }));
+    sel.appendChild(el("option", { value: "" }, g.by === "builder"
+      ? "the build's (" + g.effective + ")" : "none (nodes: " + NODE_DEFAULT + ")"));
+    names.forEach(function (n) { sel.appendChild(el("option", { value: n }, n)); });
+    sel.value = g.chosen ? g.chosen.to : "";
+    sel.addEventListener("change", function () {
+      setDefault(ctx.spec(), pairGates(ctx.spec(), pid, long), sel.value);
+      ctx.changed(); refreshAll();
+    });
+    dl.appendChild(sel);
+    row.appendChild(dl);
+    var cz = el("button", { type: "button", className: "btn-sm secondary gen-add-czbtn",
+                            title: "A CZ gate class, the flux pulse(s) it plays, and the gate pointing at them" }, "+ CZ…");
+    if (!(roles && roles.ok)) cz.disabled = true;
+    cz.addEventListener("click", function () { openForm(tr, pid, long, ctx, null); });
+    row.appendChild(cz);
+    td.appendChild(row);
+  }
+
+  function openForm(tr, pid, long, ctx, existing) {
+    var next = tr.nextElementSibling;
+    if (!(next && next.classList.contains("gen-gates-formrow"))) {
+      next = el("tr", { className: "gen-gates-formrow", "data-rid": tr.getAttribute("data-rid") });
+      var cell = el("td", { colspan: String(tr.children.length) });
+      // the form stays in view however wide the table scrolls
+      cell.appendChild(el("div", { className: "gen-gates-formbox" }));
+      next.appendChild(cell);
+      tr.parentNode.insertBefore(next, tr.nextSibling);
+    }
+    var box = next.firstChild.firstChild;
+    var scroller = tr.closest(".gen-pop-host") || tr.closest("table").parentNode;
+    if (scroller && scroller.clientWidth) box.style.width = Math.max(320, scroller.clientWidth - 24) + "px";
+    var spec = ctx.spec();
+    var ow = owners(spec).filter(function (o) { return o.kind === "pair" && o.pair === pid; })[0];
+    if (!ow) return;
+    if (existing) {
+      renderForm(box, { kind: "macro", target: ow.target, classes: (roles && roles.macros_pair) || {},
+                        classLabel: "Macro class", owner: ow, existing: existing }, ctx, refreshAll);
+    } else {
+      renderCzGroup(box, ow, ctx, refreshAll);
+    }
+  }
+
+  /* Decorate the Populate pair table (built by generate.js) with a Gates column. */
+  function decoratePairTable(table, ctx) {
+    if (!table) return;
+    pairCtx = ctx; pairTable = table;
+    if (!roles) { loadRoles(false, null, function () { refreshAll(); }); }
+    var hr = table.querySelector("thead tr");
+    if (hr && !hr.querySelector(".gen-gates-th")) {
+      var th = el("th", { className: "gen-gates-th", title: GATE_RULE }, "Gates");
+      hr.insertBefore(th, hr.children[1] || null);
+      var sa = table.querySelector("tr.gen-pop-setall");
+      if (sa) sa.insertBefore(el("td", { className: "gen-gates-setall" }), sa.children[1] || null);
+    }
+    var spec = ctx.spec();
+    var byLong = {};
+    (spec.qubit_pairs || []).forEach(function (p) {
+      if (Array.isArray(p) && p.length === 2) byLong[p[0] + "-" + p[1]] = pairId(String(p[0]), String(p[1]));
+    });
+    Array.prototype.forEach.call(table.querySelectorAll("tbody tr[data-rid]"), function (tr) {
+      if (tr.classList.contains("gen-gates-formrow")) return;
+      var long = tr.getAttribute("data-rid");
+      var pid = byLong[long];
+      if (!pid) return;
+      var td = tr.querySelector("td.gen-gates");
+      if (!td) {
+        td = el("td", { className: "gen-gates" });
+        tr.insertBefore(td, tr.children[1] || null);
+        // the variant cell changes which gates the build makes
+        tr.addEventListener("change", function (ev) {
+          if (ev.target && ev.target.closest && ev.target.closest("td.gen-gates")) return;
+          setTimeout(function () { gatesCell(td, tr, pid, long, ctx); }, 0);
+        });
+      }
+      gatesCell(td, tr, pid, long, ctx);
+    });
+    var note = table.parentNode && table.parentNode.querySelector(".gen-gates-rule");
+    if (!note && table.parentNode) {
+      note = el("p", { className: "muted gen-gates-rule" }, GATE_RULE);
+      table.parentNode.insertBefore(note, table);
+    }
+  }
+
   function mount(host, ctx) {
     if (!host) return;
+    addHost = host; addCtx = ctx;
     var spec = ctx.spec();
     host.innerHTML = "";
     var chs = channels(spec);
@@ -771,6 +977,15 @@
     });
     bar.appendChild(mods); bar.appendChild(read);
     host.appendChild(bar);
+    // a re-generate from a chip built with additions: they came from its build record
+    var carried = list(spec).filter(function (a) { return a && a.env && typeof a.env === "object"; });
+    if (carried.length) {
+      var vb = (carried[0].env.versions || {}).quam_builder;
+      host.appendChild(el("p", { className: "muted gen-add-carried", title: String(carried[0].env.python || "") },
+        carried.length + " addition" + (carried.length > 1 ? "s" : "") + " carried from this chip's own build record" +
+        (vb ? " (recorded with quam_builder " + vb + ")" : "") +
+        "; the rebuild places them again and checks them in the selected environment."));
+    }
     if (!chs.length && !(spec.qubits || []).length) {
       host.appendChild(el("p", { className: "muted" }, "No channels yet — add lines in the Qubits step."));
       return;
@@ -819,11 +1034,8 @@
       head.appendChild(add);
       var box = el("div", { className: "gen-add-formbox" });
       if (ow.kind === "pair") {
-        var cz = el("button", { type: "button", className: "btn-sm secondary gen-add-czbtn",
-                                title: "A CZ gate class, the flux pulse(s) it plays, and the gate pointing at them" }, "+ CZ…");
-        if (!ready) cz.disabled = true;
-        head.appendChild(cz);
-        cz.addEventListener("click", function () { renderCzGroup(box, ow, ctx, function () { mount(host, ctx); }); });
+        head.appendChild(el("span", { className: "muted gen-add-czhere" },
+          "CZ gates and the default: the Qubit pairs table below"));
       }
       item.appendChild(head);
       var cfgFor = function () {
@@ -862,7 +1074,10 @@
       fieldIdx.forEach(function (i) { ftable.appendChild(fieldRow(spec, spec.additions[i], i, host, ctx)); });
       host.appendChild(ftable);
     }
+    if (pairTable && pairCtx && pairTable.isConnected) decoratePairTable(pairTable, pairCtx);
   }
+
+  function aliasLabel(e) { return e.target + "." + e.name + " → " + e.to + " (default gate)"; }
 
   function outcome(rep) {
     rep = rep || {};
@@ -883,14 +1098,16 @@
     var ul = el("ul", { className: "gen-add-result-list" });
     added.forEach(function (e) {
       var li = el("li", { className: "gen-add-ok-item" });
-      li.textContent = e.kind === "field" ? "✓ " + fieldLabel(e.path, e.value) + " (field)"
+      li.textContent = e.kind === "default_gate" ? "✓ " + aliasLabel(e)
+        : e.kind === "field" ? "✓ " + fieldLabel(e.path, e.value) + " (field)"
         : "✓ " + e.path + " (" + shortName(e["class"]) + ", " + e.origin + ")";
       ul.appendChild(li);
     });
     refused.forEach(function (e) {
       var li = el("li", { className: "gen-add-refused" });
       li.style.color = "var(--sm-danger, #d33)";
-      li.textContent = e.kind === "field"
+      li.textContent = e.kind === "default_gate" ? "✗ " + aliasLabel(e) + " — " + e.reason
+        : e.kind === "field"
         ? "✗ " + fieldLabel((e.target ? e.target + "." : "") + e.name, e.value) + " (field) — " + e.reason
         : "✗ " + e.target + "." + e.name + " (" + shortName(e["class"]) + ") — " + e.reason;
       ul.appendChild(li);
@@ -910,7 +1127,7 @@
         return { index: i, kind: "field", target: k >= 0 ? a.target.slice(0, k) : "",
                  name: k >= 0 ? a.target.slice(k + 1) : a.target, value: a.value };
       }
-      return { index: i, kind: a.kind, target: a.target, name: a.name, "class": a["class"] };
+      return { index: i, kind: a.kind, target: a.target, name: a.name, "class": a["class"], to: a.to };
     });
     if (!items.length) return null;
     var bad = items.filter(function (e) { return e.reason; }).length;
@@ -921,7 +1138,9 @@
     var ul = el("ul", { className: "gen-add-review-list" });
     items.forEach(function (e) {
       var li = el("li", { className: e.reason ? "gen-add-review-bad" : "gen-add-review-item" });
-      li.textContent = e.kind === "field"
+      li.textContent = e.kind === "default_gate"
+        ? (e.reason ? "✗ " : "") + aliasLabel(e) + (e.reason ? " — " + e.reason : "")
+        : e.kind === "field"
         ? (e.reason ? "✗ " : "") + "field " + fieldLabel((e.target ? e.target + "." : "") + e.name, e.value) +
           (e.reason ? " — " + e.reason : "")
         : (e.reason ? "✗ " : "") + e.kind + " " + e.target + "." + e.name + " (" + shortName(e["class"]) +
@@ -939,5 +1158,7 @@
 
   window.GenAdditions = { channels: channels, owners: owners, pairId: pairId, mount: mount,
                           renderResult: renderResult, outcome: outcome, renderReview: renderReview,
+                          decoratePairTable: decoratePairTable, builderGates: builderGates,
+                          pairGates: pairGates, gateNameClash: gateNameClash, GATE_RULE: GATE_RULE,
                           _reset: function () { roles = null; rolesLoading = false; } };
 })();

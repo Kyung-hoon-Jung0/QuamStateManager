@@ -43,7 +43,7 @@ from datetime import datetime
 from pathlib import Path
 from pprint import pformat
 
-from quam_state_manager.core import qdac_lf_recipe
+from quam_state_manager.core import additions, qdac_lf_recipe
 from quam_state_manager.core.regen_script import _fmt
 
 logger = logging.getLogger(__name__)
@@ -475,7 +475,8 @@ def _qdac_pins(spec: dict, allocation: dict) -> dict:
     return out
 
 
-def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = None) -> str:
+def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = None,
+                adds: list | None = None) -> str:
     lines = spec.get("lines", []) or []
     flux_tunable = _is_flux_tunable(spec)
     zz_lines = any(ln.get("line") == "zz_drive" for ln in lines)
@@ -556,6 +557,8 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
         w("QDAC_PINS = %s" % pformat(pins, indent=4, width=88, sort_dicts=True))
         w("")
 
+    if adds:
+        w(additions.recipe_block(adds))
     if qdac_qubits:
         w(_runtime_block(_QDAC_CONSTS, _QDAC_FUNCS))
     else:
@@ -613,6 +616,10 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     w("_link_input_downconverters_to_outputs(")
     w('    Path(STATE_DIR) / "state.json", Path(STATE_DIR) / "wiring.json")')
     w("")
+    if adds:
+        w("# Additions last, as in the wizard: a JSON pass over the saved state.")
+        w('_apply_additions(Path(STATE_DIR) / "state.json")')
+        w("")
     w('print(f"populated + saved: {len(machine.qubits)} qubits, "')
     w('      f"{len(machine.qubit_pairs)} pairs, "')
     w('      f"macros: { {p: sorted(m.macros) for p, m in machine.qubit_pairs.items()} }")')
@@ -829,12 +836,15 @@ def _emit_readme(spec: dict, versions: dict, chip: str, stamp: str) -> str:
 # --- public API ---------------------------------------------------------------
 
 def emit_bundle(spec: dict, allocation: dict | None, versions: dict | None,
-                chip_name: str | None = None, stamp: str | None = None) -> dict:
+                chip_name: str | None = None, stamp: str | None = None,
+                additions_report: dict | None = None) -> dict:
     """Render the 4-file bundle → ``{filename: source}``.
 
     ``allocation`` is the build result's ``read_allocation`` dict (reference
     comments only — fidelity comes from insertion-order mirroring);
     ``versions`` feeds the README's env pins. Pure — writes nothing.
+    ``additions_report`` (the build's additions report) limits the recipe's
+    ``ADDITIONS`` to what the build kept; None emits every ``spec.additions``.
     """
     chip = chip_name or "chip"
     # A person reads this date: the build machine's LOCAL day (a UTC stamp
@@ -842,7 +852,9 @@ def emit_bundle(spec: dict, allocation: dict | None, versions: dict | None,
     stamp = stamp or datetime.now().strftime("%Y-%m-%d")
     bundle = {
         "01_make_wiring.py": _emit_wiring(spec, allocation or {}, chip, stamp),
-        "02_build_machine.py": _emit_build(spec, chip, stamp, allocation or {}),
+        "02_build_machine.py": _emit_build(
+            spec, chip, stamp, allocation or {},
+            additions.kept_additions(spec, additions_report)),
         "03_generate_config.py": _emit_config_check(chip, stamp,
                                                    spec.get("quam_class")),
         "README.md": _emit_readme(spec, versions or {}, chip, stamp),

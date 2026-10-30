@@ -16155,3 +16155,21 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
 .gen-add-cz-pulse input[type="checkbox"].gen-add-cz-use { width: auto; flex: 0 0 auto; height: auto; margin: 0 0.2rem; }
 .gen-add-cz-usel { font-size: 0.82em; display: inline-flex; align-items: center; gap: 0.25rem; margin: 0; }
 .gen-add-review-list li.gen-add-review-bad { color: var(--sm-danger, #d33); }
+
+/* Generate Config -- lab additions, phase 5: one list of 2Q gates per pair */
+.gen-gates-rule { font-size: 0.82em; margin: 0 0 0.35rem; }
+td.gen-gates { min-width: 14rem; max-width: 26rem; vertical-align: top; }
+.gen-gates { display: flex; flex-wrap: wrap; gap: 0.2rem; margin-bottom: 0.2rem; }
+.gen-gate { display: inline-block; font-family: var(--pico-font-family-monospace, monospace); font-size: 0.78em;
+  padding: 0 0.35rem; border-radius: 0.25rem; border: 1px solid var(--pico-muted-border-color, #8885);
+  line-height: 1.5; width: auto; margin: 0; }
+button.gen-gate { background: rgba(1, 114, 173, 0.13); color: inherit; cursor: pointer; }
+.gen-gate-builder { color: var(--pico-muted-color); }
+.gen-gate-default { border-color: #c8a100; font-weight: 600; color: inherit; }
+.gen-gate-star { color: #c8a100; }
+.gen-gates-actions { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; font-size: 0.82em; }
+.gen-gates-actions select { width: auto; margin: 0; padding: 0.05rem 1.6rem 0.05rem 0.35rem; font-size: 1em; height: auto; }
+.gen-gates-actions button { width: auto; margin: 0; padding: 0.1rem 0.5rem; font-size: 1em; }
+.gen-gate-deflabel { margin: 0; display: inline-flex; align-items: center; gap: 0.25rem; }
+.gen-gates-formbox { position: sticky; left: 0; box-sizing: border-box; padding: 0.3rem 0.4rem; }
+td.gen-gates { min-width: 12rem; }

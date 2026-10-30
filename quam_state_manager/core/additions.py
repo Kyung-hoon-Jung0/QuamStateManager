@@ -46,12 +46,13 @@ from quam_state_manager.core.pointer_path import _walk, pointer_to_abs
 
 logger = logging.getLogger(__name__)
 
-KINDS = ("pulse", "macro", "field")
+KINDS = ("pulse", "macro", "field", "default_gate")
 _LIST_HEADS = ("list", "List", "tuple", "Tuple", "Sequence")
 _NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 _TARGET_RE = re.compile(r"^[A-Za-z_][\w\-]*(\.[\w\-]+)+\.operations$")
 _MACRO_TARGET_RE = re.compile(r"^(qubits|qubit_pairs)\.[\w\-]+\.macros$")
-_MACRO_ROLE = {"qubits": "macro_qubit", "qubit_pairs": "macro_pair"}
+_PAIR_MACROS_RE = re.compile(r"^qubit_pairs\.[\w\-]+\.macros$")
+_MACRO_ROLE ={"qubits": "macro_qubit", "qubit_pairs": "macro_pair"}
 _ROLE_WORDS = {"macro_qubit": "a qubit macro", "macro_pair": "a pair macro", "pulse": "a pulse"}
 # a plain-``str`` macro field whose NAME says it holds an operation name [derived]
 _NAME_FIELD_RE = re.compile(r"(^|_)(pulse|pulse_name|operation|operation_name|op_name)$")
@@ -109,8 +110,23 @@ def structural_errors(spec: dict) -> list[str]:
             continue
         kind = a.get("kind")
         if kind not in KINDS:
-            errors.append(f"{where}: unknown kind {kind!r} (expected 'pulse', 'macro' or 'field')")
+            errors.append(f"{where}: unknown kind {kind!r} (expected 'pulse', 'macro', 'field' "
+                          "or 'default_gate')")
         t, n, c = a.get("target"), a.get("name"), a.get("class")
+        if kind == "default_gate":
+            to = a.get("to")
+            if not isinstance(t, str) or not _PAIR_MACROS_RE.match(t):
+                errors.append(f"{where}: a default gate's target must be qubit_pairs.<pair>.macros "
+                              f"(got {t!r})")
+            if not isinstance(n, str) or not _NAME_RE.match(n):
+                errors.append(f"{where}: name must be letters, digits, '_' or '-' (got {n!r})")
+            if not isinstance(to, str) or not _NAME_RE.match(to) or to == n:
+                errors.append(f"{where}: 'to' must name another gate of the pair (got {to!r})")
+            if isinstance(t, str):
+                if ("default_gate", t) in seen:
+                    errors.append(f"{where}: {t} has two default gates")
+                seen.add(("default_gate", t))
+            continue
         if kind == "field":
             if not isinstance(t, str) or not _FIELD_TARGET_RE.match(t):
                 errors.append(f"{where}: a field target must be a dot path (got {t!r})")
@@ -139,6 +155,96 @@ def structural_errors(spec: dict) -> list[str]:
             if key in seen:
                 errors.append(f"{where}: {t}.{n} is added twice")
             seen.add(key)
+    if not errors:
+        errors.extend(gate_name_errors(spec))
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# one convention for a pair's 2Q gates: the Populate pair table and the
+# "+ CZ..." additions describe ONE set of gates per pair
+# ---------------------------------------------------------------------------
+
+# The alias a "default gate" addition writes: ``macros.cz = "#./<gate>"`` --
+# the shape the builder itself writes on a tunable-coupler chip
+# (``run_build._seed_coupler_cz``), and the name SM's CZ plan reads first
+# (``cz_gate_plan``: ``operation == "cz"``, else the pair's first gate).
+DEFAULT_GATE_NAME = "cz"
+# What the official CZ nodes play when their ``operation`` parameter is left
+# alone (their ``parameters.py`` default). [measured: the CZ node parameters]
+NODE_DEFAULT_OPERATION = "cz_unipolar"
+_CZ_VARIANTS = ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf")
+
+
+def _long(pair) -> str:
+    return f"{pair[0]}-{pair[1]}" if isinstance(pair, (list, tuple)) else str(pair)
+
+
+def builder_gate_names(spec: dict, pair) -> list[str]:
+    """The 2Q gate names the official build writes on *pair* (mirror of
+    ``run_build._finalize_pair_gates``): ``cz_<variant>`` for every variant
+    asked for on a flux CZ chip (a variant whose pulse class the env lacks is
+    skipped there with a warning), ``cz_coupler`` + its ``cz`` alias on a
+    tunable-coupler chip, ``cr`` (+ ``stark_cz`` with a ZZ line) on a CR chip."""
+    gate = str(spec.get("pair_gate") or "").lower()
+    if gate == "cz_coupler":
+        return ["cz_coupler", DEFAULT_GATE_NAME]
+    if gate == "cr":
+        zz = any(isinstance(ln, dict) and ln.get("line") in ("zz", "zz_drive")
+                 and str(ln.get("element")) == _long(pair) for ln in spec.get("lines") or [])
+        return ["cr"] + (["stark_cz"] if zz else [])
+    if gate in ("cz_fixed", "cz_tunable"):
+        pop = ((spec.get("populate") or {}).get("pairs") or {})
+        vals = pop.get(_long(pair)) or pop.get(quam_pair_id(pair) or "") or {}
+        req = vals.get("cz_variant") or "all"
+        return [f"cz_{v}" for v in (_CZ_VARIANTS if req == "all" else (req,))]
+    return []
+
+
+def pair_gate_table(spec: dict) -> dict[str, dict]:
+    """Per pair id: the ``builder`` gate names, the ``added`` macro names, and
+    the ``default`` (``{"name", "to", "by"}``; ``by`` is ``"chosen"`` for a
+    default-gate addition, ``"builder"`` for the coupler chip's own alias)."""
+    adds = [a for a in (spec.get("additions") or []) if isinstance(a, dict)]
+    out: dict[str, dict] = {}
+    for p in spec.get("qubit_pairs") or []:
+        pid = quam_pair_id(p)
+        if not pid:
+            continue
+        tgt = f"qubit_pairs.{pid}.macros"
+        b = builder_gate_names(spec, p)
+        added = [a.get("name") for a in adds if a.get("kind") == "macro" and a.get("target") == tgt]
+        d = next((a for a in adds if a.get("kind") == "default_gate" and a.get("target") == tgt), None)
+        if d is not None:
+            default = {"name": d.get("name"), "to": d.get("to"), "by": "chosen"}
+        elif DEFAULT_GATE_NAME in b:
+            default = {"name": DEFAULT_GATE_NAME, "to": b[0], "by": "builder"}
+        else:
+            default = None
+        out[pid] = {"target": tgt, "builder": b, "added": added, "default": default}
+    return out
+
+
+def gate_name_errors(spec: dict) -> list[str]:
+    """Two gates of one pair never share a name: an added macro may not take a
+    name the builder writes or the default alias, and a default must name a
+    gate the pair will have. [derived: a pair's gates are keys of one dict]"""
+    errors = []
+    for pid, row in pair_gate_table(spec).items():
+        d = row["default"]
+        chosen = d if d and d.get("by") == "chosen" else None
+        for n in row["added"]:
+            if n in row["builder"]:
+                errors.append(f"pair {pid}: the build already makes a gate named {n}; "
+                              "name the added gate differently")
+            elif chosen and n == chosen.get("name"):
+                errors.append(f"pair {pid}: {n} is the default-gate alias; "
+                              "name the added gate differently")
+        if chosen:
+            names = (set(row["builder"]) | set(row["added"])) - {chosen.get("name")}
+            if chosen.get("to") not in names:
+                errors.append(f"pair {pid}: the default gate {chosen.get('to')} is not one of "
+                              "this pair's gates")
     return errors
 
 
@@ -507,6 +613,9 @@ def _entry(i: int, add: dict, manifest: dict | None, reason: str | None = None) 
         parent, _, last = str(add.get("target") or "").rpartition(".")
         e = {"index": i, "kind": "field", "target": parent, "name": last, "class": None,
              "origin": "field", "value": add.get("value")}
+    elif add.get("kind") == "default_gate":
+        e = {"index": i, "kind": "default_gate", "target": add.get("target"),
+             "name": add.get("name"), "class": None, "origin": "alias", "to": add.get("to")}
     else:
         e = {"index": i, "kind": add.get("kind"), "target": add.get("target"),
              "name": add.get("name"), "class": add.get("class"),
@@ -519,7 +628,7 @@ def _entry(i: int, add: dict, manifest: dict | None, reason: str | None = None) 
 def placement_order(adds: list[dict]) -> list[int]:
     """Indices in the order they are placed: every pulse before any macro
     (a macro may reference a pulse the same spec adds), stable otherwise."""
-    rank = {"pulse": 0, "macro": 1, "field": 2}
+    rank = {"pulse": 0, "macro": 1, "default_gate": 2, "field": 3}
     return sorted(range(len(adds)), key=lambda i: (rank.get(adds[i].get("kind"), 0), i))
 
 
@@ -601,6 +710,33 @@ def _unset_field(state: dict, path: str, undo: dict | None) -> None:
         parent.pop(segs[-1], None)
 
 
+def default_gate_reason(state: dict, add: dict, refused: dict[str, str] | None = None) -> str | None:
+    """Why a default-gate alias cannot be written on *state*, or None. The
+    alias replaces only another alias (the coupler chip's own ``cz``), never a
+    gate object. [derived]"""
+    t, n, to = add["target"], add["name"], add["to"]
+    gone = f"{t}.{to}"
+    if refused and gone in refused:
+        return f"the default gate {to} is an addition that was refused"
+    ok, macros = _walk(state, t.split("."))
+    if not (ok and isinstance(macros, dict)):
+        return f"{t} does not exist in the built chip"
+    if to not in macros:
+        return f"{t} has no gate named {to} in the built chip"
+    cur = macros.get(n)
+    if n in macros and not is_pointer(cur):
+        return (f"{t} already has a gate object named {n}; the default is an alias "
+                "and never replaces a gate")
+    return None
+
+
+def _set_alias(state: dict, add: dict) -> dict:
+    _, macros = _walk(state, add["target"].split("."))
+    undo = {"had": add["name"] in macros, "old": copy.deepcopy(macros.get(add["name"]))}
+    macros[add["name"]] = f"#./{add['to']}"
+    return undo
+
+
 def apply_additions(state: dict, spec: dict, manifest: dict | None) -> dict:
     """Add every acceptable addition to *state* IN PLACE.
 
@@ -624,7 +760,7 @@ def apply_additions(state: dict, spec: dict, manifest: dict | None) -> dict:
 
     for i in placement_order(adds):
         a = adds[i]
-        if a.get("kind") == "field":
+        if a.get("kind") in ("field", "default_gate"):
             continue      # set after the pulses and macros it may name
         reason = (spec_channel_reason(spec, a["target"]) or manifest_reason(a, manifest))
         segs = a["target"].split(".")
@@ -666,6 +802,16 @@ def apply_additions(state: dict, spec: dict, manifest: dict | None) -> dict:
                 changed = True
     placed.sort(key=lambda t: t[0])
     report["added"] = [dict(_entry(i, a, manifest), path=".".join(p)) for i, a, p in placed]
+    for i in placement_order(adds):
+        a = adds[i]
+        if a.get("kind") != "default_gate":
+            continue
+        why = default_gate_reason(state, a, refused)
+        if why:
+            refuse(i, a, why)
+            continue
+        report["added"].append(dict(_entry(i, a, manifest), path=f"{a['target']}.{a['name']}",
+                                    undo=_set_alias(state, a)))
     for i in placement_order(adds):
         a = adds[i]
         if a.get("kind") != "field":
@@ -796,14 +942,14 @@ def apply_and_verify(python_path: str | None, out_dir, spec: dict,
         wiring = out_dir / "wiring.json"
 
         def _checks(entries):
-            return [e["path"] for e in entries if e.get("kind") != "field"
+            return [e["path"] for e in entries if e.get("kind") not in ("field", "default_gate")
                     and _needs_own_code(e["class"], manifest, e.get("kind"))]
 
         by_path = {e["path"]: e for e in report["added"]}
 
         def _drop(path):
             e = by_path.get(path)
-            if e is not None and e.get("kind") == "field":
+            if e is not None and e.get("kind") in ("field", "default_gate"):
                 _unset_field(state, path, e.get("undo"))
             else:
                 remove(state, path)
@@ -855,7 +1001,7 @@ def apply_and_verify(python_path: str | None, out_dir, spec: dict,
                         report["refused"].append({**e, "reason": f"the environment refused it: {why}"})
                         gone[e["path"]] = f"{e['target']}.{e['name']}"
 
-            pulses = [e for e in report["added"] if e.get("kind") != "macro"]
+            pulses = [e for e in report["added"] if e.get("kind") not in ("macro", "default_gate")]
             macros = [e for e in report["added"] if e.get("kind") == "macro"]
             _round(pulses, [])
             for path in gone:
@@ -870,6 +1016,21 @@ def apply_and_verify(python_path: str | None, out_dir, spec: dict,
                 else:
                     alive.append(e)
             _round(alive, list(keep))
+            for path in gone:
+                _drop(path)
+            # a default alias needs the gate it names (base, an addition kept)
+            aliases = []
+            for e in report["added"]:
+                if e.get("kind") != "default_gate":
+                    continue
+                a = adds[e["index"]]
+                if f"{a['target']}.{a['to']}" in gone:
+                    report["refused"].append(
+                        {**e, "reason": f"the default gate {a['to']} is an addition that was refused"})
+                    _drop(e["path"])
+                else:
+                    aliases.append(e)
+            _round(aliases, list(keep))
             for path in gone:
                 _drop(path)
             keep.sort(key=lambda e: e["index"])
@@ -900,6 +1061,123 @@ def apply_and_verify(python_path: str | None, out_dir, spec: dict,
         return report
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# the editable recipe (script_emitter / regen_script share this one block)
+# ---------------------------------------------------------------------------
+
+_RECIPE_KEYS = ("kind", "target", "name", "class", "fields", "to", "value")
+
+
+def kept_additions(spec: dict, report: dict | None) -> list[dict]:
+    """The additions a build KEPT (``report["added"]``), in spec order and
+    without the sidecar stamps. ``report`` None = every addition (no build)."""
+    adds = [a for a in (spec.get("additions") or []) if isinstance(a, dict)]
+    if report is not None:
+        keep = {e.get("index") for e in report.get("added") or []}
+        adds = [a for i, a in enumerate(adds) if i in keep]
+    return [{k: copy.deepcopy(a[k]) for k in _RECIPE_KEYS if k in a} for a in adds]
+
+
+_RECIPE_FUNC = '''
+_ADD_RANK = {"pulse": 0, "macro": 1, "default_gate": 2, "field": 3}
+
+
+def _apply_additions(state_path):
+    """Write ADDITIONS into the saved state.json, in the wizard's placement
+    order: pulses, then macros, then default-gate aliases, then fields. The
+    same JSON pass the State Manager ran after its build (it verified these in
+    the environment then; re-check with 03_generate_config.py)."""
+    p = Path(state_path)
+    st = json.loads(p.read_text(encoding="utf-8"))
+    for a in sorted(ADDITIONS, key=lambda a: _ADD_RANK.get(a["kind"], 0)):
+        segs = a["target"].split(".")
+        node = st
+        if a["kind"] == "field":
+            for s in segs[:-1]:
+                if not isinstance(node.get(s), dict):
+                    node[s] = {}
+                node = node[s]
+            node[segs[-1]] = a["value"]
+            continue
+        for s in segs[:-1]:
+            node = node[s]
+        box = node.setdefault(segs[-1], {})
+        if a["kind"] == "default_gate":
+            box[a["name"]] = "#./" + a["to"]
+        else:
+            body = {"__class__": a["class"]}
+            body.update(a.get("fields") or {})
+            box[a["name"]] = body
+    p.write_text(json.dumps(st, indent=4), encoding="utf-8")
+    print(f"additions: {len(ADDITIONS)} written into {p}")
+'''
+
+
+def recipe_block(adds: list[dict]) -> str:
+    """Python source (stdlib ``json`` + ``pathlib.Path``) defining
+    ``ADDITIONS`` and ``_apply_additions(state_path)``; empty without additions."""
+    if not adds:
+        return ""
+    from pprint import pformat
+    return ("# ============================ EDIT: additions =========================\n"
+            "# Objects the official builder does not write, added after its save\n"
+            "# (pulses, macros, the pair's default-gate alias, declared fields).\n"
+            "ADDITIONS = " + pformat(adds, indent=4, width=88, sort_dicts=False) + "\n"
+            + _RECIPE_FUNC)
+
+
+def restore_paths(merged: dict, built: dict, paths: list[str]) -> list[str]:
+    """Additions are authoritative on the paths they name (re-generate): put
+    the *built* (fresh build + additions) value back at each path of
+    *merged*, replacing whatever the merge carried, grafted or re-typed there.
+    Returns the paths whose merged value differed. [derived: REVIEW_1 Q5]"""
+    changed = []
+    for p in paths:
+        segs = p.split(".")
+        ok, val = _walk(built, segs)
+        if not ok:
+            continue
+        node = merged
+        for s_ in segs[:-1]:
+            if not isinstance(node.get(s_), dict):
+                node[s_] = {}
+            node = node[s_]
+        if node.get(segs[-1]) != val:
+            changed.append(p)
+        node[segs[-1]] = copy.deepcopy(val)
+    return changed
+
+
+def env_change_notes(spec: dict, manifest: dict | None, python_path: str | None) -> list[str]:
+    """What differs between the env each addition was recorded in (its sidecar
+    stamp) and this one: the interpreter, quam / quam_builder versions, and a
+    class whose field schema hash moved. Additions are re-checked here either
+    way; this only says why a result may differ from the first build."""
+    notes, seen = [], set()
+    versions = (manifest or {}).get("versions") or {}
+    for a in spec.get("additions") or []:
+        if not isinstance(a, dict) or not isinstance(a.get("env"), dict):
+            continue
+        env = a["env"]
+        if env.get("python") and python_path and env["python"] != python_path and "py" not in seen:
+            seen.add("py")
+            notes.append(f"The additions were recorded with another environment ({env['python']}); "
+                         "they were re-checked in this one.")
+        for k in ("quam", "quam_builder"):
+            old, new = (env.get("versions") or {}).get(k), versions.get(k)
+            if old and new and old != new and k not in seen:
+                seen.add(k)
+                notes.append(f"{k} {old} when the additions were recorded, {new} now.")
+        cls = a.get("class")
+        if cls and a.get("schema_hash") and manifest:
+            now = schema_hash(manifest, str(cls))
+            if now and now != a["schema_hash"] and cls not in seen:
+                seen.add(cls)
+                notes.append(f"{str(cls).rsplit('.', 1)[-1]}'s fields changed since the additions were "
+                             f"recorded (schema {a['schema_hash']} -> {now}); re-checked against the new fields.")
+    return notes
 
 
 def stamp(spec: dict, manifest: dict | None, python_path: str | None) -> list[dict]:

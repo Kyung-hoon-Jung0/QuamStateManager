@@ -9051,6 +9051,12 @@
       setPopHost("gen-pop-pairs",
         buildPopTable("pairs", pairs, pairPopCols(), "Pair"),
         "No qubit pairs defined.");
+      // P5: one list of gates per pair (built + added + the default), "+ CZ…" per row.
+      if (window.GenAdditions && window.GenAdditions.decoratePairTable) {
+        window.GenAdditions.decoratePairTable(
+          document.getElementById("gen-pop-tbl-pairs"),
+          { spec: function () { return state.spec; }, changed: saveDraft });
+      }
     }
     renderPairOrderNote();
     // First-paint validation: covers step entry, draft restore, unit toggle

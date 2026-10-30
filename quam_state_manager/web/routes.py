@@ -45815,6 +45815,7 @@ def generate_build():
                     result.get("allocation") or {},
                     result.get("versions") or probe.get("versions") or {},
                     chip_name=Path(output_path).name or "chip",
+                    additions_report=outcome.get("additions"),
                 )
                 outcome["scripts"] = {
                     "dir": scripts_dir,

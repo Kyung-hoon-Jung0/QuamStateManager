@@ -88,6 +88,12 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
   await tick(); await tick();
   const prow = () => host.querySelector('.gen-add-owner[data-target="qubit_pairs.q1-2.macros"]');
   ok(!!prow(), 'M2 pair macro row');
+  // P5: "+ CZ…" is a row action of the Populate pair table, not of the macro list
+  ok(!prow().querySelector('.gen-add-czbtn'), 'P5 no CZ button in the macro list');
+  w.document.body.insertAdjacentHTML('beforeend', '<div id="pt"><table id="gen-pop-tbl-pairs"><thead><tr><th>Pair</th><th>CZ amp</th></tr></thead>' +
+    '<tbody><tr class="gen-pop-setall"><td>Set all</td><td></td></tr><tr data-group="pairs" data-rid="q1-q2"><td>q1-q2</td><td></td></tr></tbody></table></div>');
+  GA.decoratePairTable(w.document.getElementById('gen-pop-tbl-pairs'), ctx);
+  const ptab = () => w.document.getElementById('gen-pop-tbl-pairs');
 
   // a pulse addition first (for the pointer picker)
   const zrow = host.querySelector('.gen-add-ch[data-target="qubits.q1.z.operations"]');
@@ -133,27 +139,27 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
   ok(spec.additions.length === 2 && spec.additions[1].fields.phase_shift_control === 0.25, 'E1 replaced in place');
 
   // C1/C2 two-flux group
-  prow().querySelector('.gen-add-czbtn').click();
-  const cs = prow().querySelector('select.gen-add-cz-class');
+  ptab().querySelector('.gen-add-czbtn').click();
+  const cs = ptab().querySelector('select.gen-add-cz-class');
   change(w, cs, 'lab_pkg.gates.TwoFluxGate');
-  const secs = Array.from(prow().querySelectorAll('.gen-add-cz-pulse')).map(s => s.getAttribute('data-field'));
+  const secs = Array.from(ptab().querySelectorAll('.gen-add-cz-pulse')).map(s => s.getAttribute('data-field'));
   ok(JSON.stringify(secs) === JSON.stringify(['flux_pulse_qubit', 'flux_pulse_target', 'coupler_flux_pulse']), 'C1 sections ' + secs);
-  const where = Array.from(prow().querySelectorAll('.gen-add-cz-where')).map(e => e.textContent);
+  const where = Array.from(ptab().querySelectorAll('.gen-add-cz-where')).map(e => e.textContent);
   ok(where[0] === 'q1 z' && where[1] === 'q2 z', 'C1 control / target ' + where);
-  const pcs = prow().querySelectorAll('select.gen-add-cz-pclass');
+  const pcs = ptab().querySelectorAll('select.gen-add-cz-pclass');
   change(w, pcs[0], 'pkg.pulses.FlatTopGaussianPulse');
   change(w, pcs[1], 'pkg.pulses.FlatTopGaussianPulse');
-  const amps = prow().querySelectorAll('.gen-add-cz-pulse input[data-field="amplitude"]');
+  const amps = ptab().querySelectorAll('.gen-add-cz-pulse input[data-field="amplitude"]');
   ok(amps.length === 2 && amps[0].value === '' && amps[1].value === '', 'C1 amplitudes start empty');
   const n0 = spec.additions.length;
-  prow().querySelector('.gen-add-cz .gen-add-ok').click();
-  ok(spec.additions.length === n0 && /requires/.test(prow().querySelector('.gen-add-cz .gen-add-msg').textContent), 'C2 refused while empty');
-  Array.from(prow().querySelectorAll('.gen-add-cz-pulse')).slice(0, 2).forEach(function (sec, i) {
+  ptab().querySelector('.gen-add-cz .gen-add-ok').click();
+  ok(spec.additions.length === n0 && /requires/.test(ptab().querySelector('.gen-add-cz .gen-add-msg').textContent), 'C2 refused while empty');
+  Array.from(ptab().querySelectorAll('.gen-add-cz-pulse')).slice(0, 2).forEach(function (sec, i) {
     sec.querySelector('input[data-field="length"]').value = '48';
     sec.querySelector('input[data-field="amplitude"]').value = i ? '0.05' : '0.1';
     sec.querySelector('input[data-field="flat_length"]').value = '32';
   });
-  prow().querySelector('.gen-add-cz .gen-add-ok').click();
+  ptab().querySelector('.gen-add-cz .gen-add-ok').click();
   const g = spec.additions.slice(n0);
   ok(g.length === 3 && g[0].kind === 'pulse' && g[1].kind === 'pulse' && g[2].kind === 'macro', 'C2 pulses then macro');
   ok(g[0].target === 'qubits.q1.z.operations' && g[1].target === 'qubits.q2.z.operations', 'C2 pulse targets');
@@ -162,26 +168,26 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
   ok(!('coupler_flux_pulse' in g[2].fields), 'C2 optional coupler pulse not added unless asked');
 
   // C3 single mover
-  prow().querySelector('.gen-add-czbtn').click();
-  change(w, prow().querySelector('select.gen-add-cz-class'), 'pkg.gates.CZGate');
-  const on = prow().querySelector('select.gen-add-cz-on');
+  ptab().querySelector('.gen-add-czbtn').click();
+  change(w, ptab().querySelector('select.gen-add-cz-class'), 'pkg.gates.CZGate');
+  const on = ptab().querySelector('select.gen-add-cz-on');
   ok(!!on, 'C3 moving choice');
   on.value = 'q2';
-  change(w, prow().querySelector('select.gen-add-cz-pclass'), 'pkg.pulses.FlatTopGaussianPulse');
-  const sec = prow().querySelector('.gen-add-cz-pulse');
+  change(w, ptab().querySelector('select.gen-add-cz-pclass'), 'pkg.pulses.FlatTopGaussianPulse');
+  const sec = ptab().querySelector('.gen-add-cz-pulse');
   sec.querySelector('input[data-field="length"]').value = '40';
   sec.querySelector('input[data-field="amplitude"]').value = '0.1';
   sec.querySelector('input[data-field="flat_length"]').value = '20';
-  prow().querySelector('.gen-add-cz .gen-add-ok').click();
+  ptab().querySelector('.gen-add-cz .gen-add-ok').click();
   const last = spec.additions[spec.additions.length - 1];
   ok(last.kind === 'macro' && /^#\/qubits\/q2\/z\/operations\//.test(last.fields.flux_pulse_qubit), 'C3 pulse on the chosen qubit');
   ok(spec.populate.pairs && spec.populate.pairs['q1-q2'].moving_qubit === 'target', 'C3 moving qubit written');
 
   // C4 both movers: q2 is higher (5.1 GHz)
-  prow().querySelector('.gen-add-czbtn').click();
-  change(w, prow().querySelector('select.gen-add-cz-class'), 'lab_pkg.gates.BothGate');
-  const w4 = Array.from(prow().querySelectorAll('.gen-add-cz-where')).map(e => e.textContent);
-  ok(w4[0] === 'q2 z' && w4[1] === 'q1 z', 'C4 high/low from frequencies ' + w4);
+  ptab().querySelector('.gen-add-czbtn').click();
+  change(w, ptab().querySelector('select.gen-add-cz-class'), 'lab_pkg.gates.BothGate');
+  const w4 = Array.from(ptab().querySelectorAll('.gen-add-cz-where')).map(e => e.textContent);
+  ok(w4[0] === 'q2 z (higher f_01)' && w4[1] === 'q1 z (lower f_01)', 'C4 high/low from frequencies ' + w4);
 
   // O1
   ok(GA.outcome({ added: [1], refused: [] }) === 'ok' && GA.outcome({ added: [1], refused: [1] }) === 'mixed'

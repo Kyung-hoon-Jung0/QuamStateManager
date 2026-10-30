@@ -42,6 +42,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from quam_state_manager.core import additions
+
 # gate family (spec ``pair_gate`` / per-pair) -> the string the template's
 # ``pair_gates.add_pair_gate`` expects. Fixed + tunable both seed a "CZ".
 _GATE_STR = {"cz_tunable": "CZ", "cz_fixed": "CZ", "cr": "CR"}
@@ -92,7 +94,8 @@ def _dict_block(name: str, d: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def emit_build_script(spec: dict, chip_name: str | None = None) -> str:
+def emit_build_script(spec: dict, chip_name: str | None = None,
+                      additions_report: dict | None = None) -> str:
     """Return the source of a standalone ``build_<chip>.py`` for ``spec``.
 
     ``spec`` is a :func:`core.regen_spec.reconstruct_spec` spec (network,
@@ -366,6 +369,17 @@ def emit_build_script(spec: dict, chip_name: str | None = None) -> str:
     w('            print(f"  {pid}: {gate} -> {list(pair.macros.keys())}")')
     w('')
     w('machine.save()')
+    adds = additions.kept_additions(spec, additions_report)
+    if adds:
+        w('')
+        w('import json')
+        w('from pathlib import Path')
+        w('')
+        w(additions.recipe_block(adds))
+        w('# Additions last, as in the wizard: a JSON pass over the saved state,')
+        w('# then a fresh load so generate_config() below sees them.')
+        w('_apply_additions(Path(os.environ.get("QUAM_STATE_PATH", ".")) / "state.json")')
+        w('machine = Quam.load()')
     w('cfg = machine.generate_config()')
     w('print(f"saved + generate_config() OK: {len(cfg[\'elements\'])} elements")')
     w('')

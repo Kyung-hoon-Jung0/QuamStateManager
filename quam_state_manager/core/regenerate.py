@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import (config_generator, path_match, regen_merge, regen_script, regen_spec,
+from . import (additions, config_generator, path_match, regen_merge, regen_script, regen_spec,
                rename_lineage, safe_io)
 
 
@@ -306,6 +306,28 @@ def pending_fsp_offers(old_folder: Path | str, spec: dict,
             if p.get("amps") and regen_populate.fsp_ack_mode(p, fsp_ack) is None]
 
 
+def _regen_additions(python_path: str, out_dir: Path, spec: dict, instance_path,
+                     probe=None) -> dict:
+    """Apply + verify ``spec.additions`` on the fresh rebuild, and say where
+    the env differs from the one the additions were recorded in (the sidecar
+    stamps each addition with env identity + its class schema hash).
+    *probe* (tests) replaces :func:`role_manifest.probe_roles`."""
+    from . import role_manifest
+    classes = sorted({str(a.get("class")) for a in spec.get("additions") or []
+                      if isinstance(a, dict) and a.get("class")})
+    manifest = None
+    try:
+        res = (probe or role_manifest.probe_roles)(
+            python_path, instance_path, state_classes=classes)
+        manifest = (res or {}).get("manifest") or None
+    except Exception:  # noqa: BLE001 -- an unknown manifest is never a blocker
+        manifest = None
+    report = additions.apply_and_verify(python_path, out_dir, spec, manifest)
+    report.setdefault("notes", []).extend(additions.env_change_notes(spec, manifest, python_path))
+    report["stamped"] = additions.stamp(spec, manifest, python_path)
+    return report
+
+
 def run_regenerate(
     python_path: str,
     old_folder: Path | str,
@@ -323,6 +345,7 @@ def run_regenerate(
     populate_filled: list | None = None,
     scripts_enabled: bool = True,
     qubit_sources: dict | None = None,
+    additions_probe=None,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -390,6 +413,17 @@ def run_regenerate(
     if not outcome.get("ok"):
         outcome["merge"] = None
         return outcome
+
+    # Lab additions: placed on the FRESH build first (the same pass as
+    # Generate), so the merge below sees them as paths the rebuild wrote.
+    # They are authoritative on the paths they name: the merge result gets
+    # them back verbatim (no tier-1 carry, no graft, no keep_classes swap on
+    # them), so a chip built with additions is never given a second copy.
+    add_report = None
+    if isinstance(spec, dict) and spec.get("additions"):
+        add_report = _regen_additions(python_path, out_dir, spec, instance_path,
+                                      probe=additions_probe)
+        outcome["additions"] = add_report
 
     try:
         old_state, old_wiring = (old_source if old_source is not None
@@ -486,6 +520,9 @@ def run_regenerate(
                                       twpa_ids=_spec_twpa_ids(spec),
                                       env_fields=env_fields)
     result.stats.populate_conflicts.extend(pop_conflicts)
+    if add_report and add_report.get("added"):
+        add_report["merge_skipped"] = additions.restore_paths(
+            result.merged, new_state, [e["path"] for e in add_report["added"]])
     result.stats.qubits_renamed = qubits_renamed
     result.stats.pairs_renamed = pairs_renamed
     chain = list(source_chain)
@@ -557,7 +594,8 @@ def run_regenerate(
             chip = out_dir.name or "chip"
             res = outcome.get("result") or {}
             bundle = script_emitter.emit_bundle(
-                spec, res.get("allocation"), res.get("versions"), chip)
+                spec, res.get("allocation"), res.get("versions"), chip,
+                additions_report=add_report)
             # r16 ⓪-4: honor the wizard's script-path box (previously ignored
             # here — everything landed in a hardcoded build_scripts/ regardless).
             bundle_dir = Path(scripts_dir) if scripts_dir else out_dir / "build_scripts"
@@ -577,7 +615,12 @@ def run_regenerate(
 
     # Exact-spec sidecar keyed by the OUTPUT chip's hash, so a later re-generate
     # FROM this folder uses the exact spec instead of re-inferring. Best-effort.
-    regen_spec.write_spec_sidecar(out_dir, spec, result.merged, new_wiring)
+    regen_spec.write_spec_sidecar(
+        out_dir, (dict(spec, additions=add_report["stamped"])
+                  if add_report and "stamped" in add_report else spec),
+        result.merged, new_wiring)
+    if add_report is not None:
+        add_report.pop("stamped", None)
 
     s = result.stats
     class_groups = regen_merge.class_change_groups(
