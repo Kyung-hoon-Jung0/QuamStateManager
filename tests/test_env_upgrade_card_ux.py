@@ -352,3 +352,26 @@ def test_custom_interpreter_option_shows_folder_name_with_full_path_in_title(loa
     option = re.search(r"<option[^>]*selected[^>]*>[^<]*</option>", html).group(0)
     assert ">venv_up</option>" in option and "title=\"" + custom in option
     assert ">" + custom + "<" not in option
+
+
+def test_before_tag_follows_the_from_versions_with_an_upgrade_in_one_env(loaded, monkeypatch):
+    """Two references in one env, recorded before then after an upgrade; the
+    tag goes on the one whose versions equal the transition's FROM side."""
+    _, client, ctx = loaded
+    env = r"c:\envs\venv_up\python.exe"
+    base = {"quam": "0.6.0", "qualang_tools": "0.22.0", "qm": "1.4.1", "numpy": "2.5.3", "scipy": "1.18.1"}
+    before = {**base, "quam_builder": "0.4.0"}
+    after = {**base, "quam_builder": "0.6.0"}
+    refs = [_ref("b" * 64, "2026-10-31T01:21:00+00:00", after, env),
+            _ref("a" * 64, "2026-10-31T01:19:00+00:00", before, env)]
+    monkeypatch.setattr(view.waveform_refs, "list_references", lambda inst, key: refs)
+    for tagged_versions, expected in ((before, [False, True]), (after, [True, False])):
+        rows = view.present_references("i", "k", env, {"versions": tagged_versions, "official_digest": "d",
+                                                       "source_fingerprint": "s"})
+        assert [r["is_before"] for r in rows] == expected
+    none = view.present_references("i", "k", env, {"versions": {**base, "quam_builder": "0.5.0"},
+                                                   "official_digest": "d", "source_fingerprint": "s"})
+    assert not any(r["is_before"] for r in none)
+    # only the differing package is shown, the full list sits in the title
+    assert [r["versions_text"] for r in none] == ["quam_builder 0.6.0", "quam_builder 0.4.0"]
+    assert "numpy 2.5.3" in none[0]["versions_full"]

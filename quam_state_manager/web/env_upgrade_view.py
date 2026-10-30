@@ -98,22 +98,33 @@ def _probe_versions(inst, python_path):
     return {k: v for k, v in versions.items() if k in env_seen.VERSIONS and v}
 
 
-def versions_text(versions):
+def versions_text(versions, names=None):
     """Recorded official package versions, e.g. "quam_builder 0.4.0, quam 0.6.0"."""
     versions = versions or {}
-    return ", ".join(f"{name} {versions[name]}" for name in env_seen.VERSIONS if versions.get(name))
+    return ", ".join(f"{name} {versions[name]}" for name in (names or env_seen.VERSIONS) if versions.get(name))
+
+
+def _short_names(references):
+    """The packages worth showing on a row: those that differ between the
+    references, else just quam and quam_builder."""
+    differing = [n for n in env_seen.VERSIONS
+                 if len({(r.get("versions") or {}).get(n) for r in references}) > 1]
+    return differing or ["quam", "quam_builder"]
 
 
 def present_references(inst, key, checked_env=None, previous=None):
     """Reference rows; the newest one recorded under the transition's previous
     versions (in the checked env) is tagged ``is_before``."""
     rows, tagged = [], False
-    for reference in waveform_refs.list_references(inst, key):
+    listed = waveform_refs.list_references(inst, key)
+    names = _short_names(listed)
+    for reference in listed:
         before = bool(not tagged and checked_env and previous
                       and waveform_refs.matches(reference, checked_env, previous))
         tagged = tagged or before
         rows.append({**reference, "env_name": env_name(reference.get("python_path")),
-                     "versions_text": versions_text(reference.get("versions")), "is_before": before,
+                     "versions_text": versions_text(reference.get("versions"), names),
+                     "versions_full": versions_text(reference.get("versions")), "is_before": before,
                      "local_time": local_minute(reference.get("recorded_at")),
                      "size_text": size_text(reference.get("size")),
                      "waveforms": reference.get("waveforms", len(reference.get("traces") or {}))})

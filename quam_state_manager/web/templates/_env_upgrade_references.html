@@ -2,7 +2,7 @@
 {% for reference in references %}
 <div class="env-reference">
   <span title="{{ reference.key }} &middot; {{ reference.python_path }}"><code>{{ reference.env_name }}</code>
-  {% if reference.versions_text %}&middot; {{ reference.versions_text }} {% endif %}{% if reference.is_before %}<strong class="env-reference-before">&middot; before the upgrade</strong> {% endif %}
+  {% if reference.versions_text %}<span title="{{ reference.versions_full }}">&middot; {{ reference.versions_text }}</span> {% endif %}{% if reference.is_before %}<strong class="env-reference-before">&middot; before the upgrade</strong> {% endif %}
   &middot; {{ reference.local_time }} &middot; {{ reference.waveforms }} waveforms &middot; {{ reference.size_text }}</span>
   <p>Generated from: {% for file in reference.files %}<code>{{ file }}</code> {% endfor %}</p>
   {% if reference.other_json %}<p>Not part of this comparison:
