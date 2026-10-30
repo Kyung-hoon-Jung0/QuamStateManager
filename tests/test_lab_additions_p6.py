@@ -66,6 +66,11 @@ class TestCards:
         assert additions.card_of(MAN6, TWO)["id"] == "cz_two_flux"
         assert additions.card_of(MAN6, CZ)["id"] == "cz_gate"
 
+    def test_without_a_manifest_the_card_follows_the_field_names(self):
+        r = additions.lint_proposal(_spec(), _cz(cls="lab.g.Unknown", flux_pulse_qubit="#/a",
+                                                 flux_pulse_target="#/b"), None)
+        assert r["card"] == "cz_two_flux"
+
     def test_a_class_with_no_card(self):
         assert additions.card_of(MAN6, LAB_MAC) is None
 

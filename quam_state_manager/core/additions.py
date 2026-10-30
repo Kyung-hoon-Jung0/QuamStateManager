@@ -960,6 +960,11 @@ def lint_proposal(spec: dict, add: Any, manifest: dict | None, *, author: str = 
         want = ("pulse" if kind == "pulse"
                 else _MACRO_ROLE.get(str(add.get("target", "")).split(".")[0], "macro_pair"))
         card = card_of(manifest, qclass, role=want)
+        if card is None and entry is None:
+            # no manifest entry: the card follows the field names the addition carries
+            card = addition_cards.card_for(
+                {"path": qclass, "fields": dict.fromkeys(add.get("fields") or {}, {})},
+                role=want, deck=_deck())
     agent = author not in AUTHORS_PERSON
     typed = set(typed or ())
     judged = add

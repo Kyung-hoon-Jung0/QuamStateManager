@@ -16173,3 +16173,15 @@ button.gen-gate { background: rgba(1, 114, 173, 0.13); color: inherit; cursor: p
 .gen-gate-deflabel { margin: 0; display: inline-flex; align-items: center; gap: 0.25rem; }
 .gen-gates-formbox { position: sticky; left: 0; box-sizing: border-box; padding: 0.3rem 0.4rem; }
 td.gen-gates { min-width: 12rem; }
+/* lab additions P6: the knowledge card line and agent proposals */
+.gen-add-fields > .gen-add-card { grid-column: 1 / -1; }
+.gen-add-card { margin: 0 0 0.3rem; font-size: 0.85em; }
+.gen-add-pending:empty { display: none; }
+.gen-add-prop { border: 1px solid var(--pico-muted-border-color, #444); border-left: 3px solid var(--pico-primary, #1e88e5); border-radius: 6px; padding: 0.45rem 0.7rem; margin: 0.4rem 0; }
+.gen-add-prop p { margin: 0.15rem 0; }
+.gen-add-prop-by { font-weight: 600; }
+.gen-add-prop-why, .gen-add-prop-card { font-size: 0.85em; }
+.gen-add-prop-warn { font-size: 0.85em; color: var(--sm-warn, #d29922); }
+.gen-add-prop .gen-add-field { display: inline-flex; gap: 0.4rem; align-items: center; margin-right: 0.8rem; font-size: 0.85em; }
+.gen-add-prop .gen-add-field input { width: 9rem; margin: 0; padding: 0.15rem 0.4rem; height: auto; }
+.landing-agent-line { margin: 0.5rem 0 0; font-size: 0.85em; }
