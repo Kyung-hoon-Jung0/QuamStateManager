@@ -142,3 +142,55 @@ def test_wheel_install_flips_signature_and_open_triggers_transition(loaded, tmp_
     assert "quam" in ctx["env_upgrade_event"]["direction"]
     assert "99.0 (upgrade)" in ctx["env_upgrade_event"]["direction"]
     assert force_values and not any(force_values)
+
+
+def test_reference_auto_record_uses_existing_single_flight_and_attempt_memo(loaded, monkeypatch):
+    from quam_state_manager.core import activity, waveform_refs
+
+    app, _, ctx = loaded
+    ctx["env_upgrade_body"] = {"official_digest": "a", "versions": {"quam": "0.6.0"}}
+    calls = []
+
+    class Immediate:
+        def __init__(self, *, target, **kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(routes.threading, "Thread", Immediate)
+    monkeypatch.setattr(activity, "wait_quiet", lambda **kwargs: None)
+    monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda _: "python")
+
+    def preview(*args, **kwargs):
+        calls.append(kwargs)
+        return {"ok": False, "error": "timeout"}
+
+    monkeypatch.setattr(waveform_refs, "preview", preview)
+    routes._cfg_warm_inflight.clear()
+    routes._cfg_warm_failed.clear()
+    try:
+        routes._cfg_warm_inflight.add("another-state")
+        assert routes._warm_generated_config_async(ctx, app.instance_path, reference_only=True) == "busy"
+        assert not calls
+        routes._cfg_warm_inflight.clear()
+        assert routes._warm_generated_config_async(ctx, app.instance_path, reference_only=True) == "started"
+        assert calls == [{"timeout": 5}]
+        assert routes._warm_generated_config_async(ctx, app.instance_path, reference_only=True) == "attempted-before"
+        assert len(calls) == 1
+        ctx["env_upgrade_body"]["official_digest"] = "b"
+        assert routes._warm_generated_config_async(ctx, app.instance_path, reference_only=True) == "started"
+        assert len(calls) == 2
+    finally:
+        routes._cfg_warm_failed.clear()
+        routes._cfg_warm_inflight.clear()
+
+
+def test_reference_auto_record_rejects_unsaved_edits(loaded, monkeypatch):
+    app, _, ctx = loaded
+    ctx["env_upgrade_body"] = {"official_digest": "a"}
+    ctx["store"].change_log.append(object())
+    try:
+        assert routes._warm_generated_config_async(ctx, app.instance_path, reference_only=True) == "not-recordable"
+    finally:
+        ctx["store"].change_log.clear()

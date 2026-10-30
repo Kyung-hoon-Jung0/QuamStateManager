@@ -2247,6 +2247,11 @@ def _maybe_check_env_upgrade(ctx, inst) -> None:
             ctx["env_upgrade_report"] = env_upgrade.report(
                 state, {**manifest, "schema_format": state_env_schema.SCHEMA_FORMAT}, reference,
                 catalog=state_env_schema.catalog_for_env(python_path, inst) or {}, event=display_event)
+            pending_outcome = ctx.pop("env_reference_pending", None)
+            if pending_outcome:
+                _record_env_waveform(ctx, inst, python_path, pending_outcome)
+            if not app.config.get("TESTING") or app.config.get("SM_ENV_REFERENCE_IN_TESTS"):
+                _warm_generated_config_async(ctx, inst, reference_only=True)
             ctx.pop("env_upgrade_error", None)
         except Exception:
             ctx["env_upgrade_error"] = "could not check: environment observation failed"
@@ -2368,7 +2373,21 @@ def _chip_needs_generated_config(store, ctx: dict | None = None,
     return verdict
 
 
-def _warm_generated_config_async(ctx, inst) -> str:
+def _record_env_waveform(ctx, inst, python_path, outcome):
+    from quam_state_manager.core import env_seen, waveform_refs
+    if not env_seen.live_context(ctx) or ctx["store"].change_log:
+        return None
+    body = ctx.get("env_upgrade_body")
+    if body is None:
+        ctx["env_reference_pending"] = outcome
+        return None
+    key = waveform_refs.record(inst, env_seen.chip_key(ctx["path"]), python_path, body,
+                               outcome, context=ctx)
+    ctx["env_reference_status"] = "reference recorded" if key else "reference not recorded"
+    return key
+
+
+def _warm_generated_config_async(ctx, inst, *, reference_only=False) -> str:
     """Generate this chip's config in the background, when it is the only way
     to draw one of its pulses (docs/189).
 
@@ -2384,11 +2403,33 @@ def _warm_generated_config_async(ctx, inst) -> str:
     folder = ctx.get("path") if ctx else None
     if store is None or not folder:
         return "no-chip"
-    if store.generated_config is not None and not _config_stale(store):
+    from quam_state_manager.core import env_seen, waveform_refs
+    from quam_state_manager.core.state_env_baseline import _hash, normalize_env_path
+    if not env_seen.live_context(ctx):
+        return "not-live"
+    if reference_only and (store.change_log or not ctx.get("env_upgrade_body")):
+        return "not-recordable"
+    if not reference_only and store.generated_config is not None and not _config_stale(store):
         return "already-fresh"
     python_path = config_generator.get_selected_env(inst)
     if not python_path:
         return "no-env"          # honest: the user picks the env, never SM
+    working = ctx.get("working_copy")
+    input_folder = getattr(working, "working_folder", None) or folder
+    reference_attempt = None
+    if reference_only:
+        f_state, f_wiring = safe_io.read_state_wiring(Path(input_folder))
+        file_basis = working_copy.content_hash(f_state, f_wiring)
+        digest = ctx["env_upgrade_body"].get("official_digest")
+        reference_attempt = "reference:" + _hash([
+            folder, python_path, digest, file_basis,
+            [ctx["env_upgrade_body"]["versions"].get(v) for v in env_seen.VERSIONS]])
+        references = waveform_refs.list_references(inst, env_seen.chip_key(folder))
+        if any(r["basis"] == file_basis and r["official_digest"] == digest and
+               r["python_path"] == normalize_env_path(python_path) and
+               all(r["versions"].get(v) == ctx["env_upgrade_body"]["versions"].get(v)
+                   for v in env_seen.VERSIONS) for r in references):
+            return "already-recorded"
 
     key = str(folder).lower()
     # RAM P10: ONE generation subprocess at a time, machine-wide. Browsing ten
@@ -2407,13 +2448,21 @@ def _warm_generated_config_async(ctx, inst) -> str:
             return "running"
         if _cfg_warm_inflight:
             return "busy"
-        if _cfg_warm_failed.get(key) == state_hash:
+        if reference_attempt and reference_attempt in _cfg_warm_failed:
+            return "attempted-before"
+        if not reference_only and _cfg_warm_failed.get(key) == state_hash:
             return "failed-before"   # same chip content; a retry buys nothing
         _cfg_warm_inflight.add(key)
+        if reference_attempt:
+            _cfg_warm_failed[reference_attempt] = state_hash
+            ctx["env_reference_status"] = "recording reference..."
 
     def _run():
         try:
-            outcome = config_generator.run_config_preview(python_path, folder)
+            from quam_state_manager.core import activity
+            activity.wait_quiet()
+            outcome = waveform_refs.preview(python_path, input_folder,
+                timeout=waveform_refs.AUTO_RECORD_SECONDS if reference_only else 120)
             result = outcome.get("result") if outcome.get("ok") else None
             if result and result.get("config") is not None:
                 store.generated_config = result.get("config")
@@ -2421,9 +2470,10 @@ def _warm_generated_config_async(ctx, inst) -> str:
                     "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "versions": result.get("versions") or {},
                     "warnings": result.get("warnings") or [],
-                    "basis_hash": state_hash,
+                    "basis_hash": waveform_refs.input_basis(outcome["reference_inputs"]),
                     "auto": True,
                 }
+                _record_env_waveform(ctx, inst, python_path, outcome)
                 with _cfg_warm_lock:
                     _cfg_warm_failed.pop(key, None)
             else:
@@ -2431,6 +2481,7 @@ def _warm_generated_config_async(ctx, inst) -> str:
                     _cfg_warm_failed[key] = state_hash
                 logger.info("auto config preview did not produce a config: %s",
                             (outcome.get("error") or "")[:200])
+                ctx["env_reference_status"] = "could not record reference: previewer failed or timed out"
         except Exception:  # noqa: BLE001 -- never break the chip that is open
             with _cfg_warm_lock:
                 _cfg_warm_failed[key] = state_hash
@@ -2452,6 +2503,9 @@ def _maybe_warm_generated_config(ctx, inst) -> None:
     """
     store = ctx.get("store") if ctx else None
     if store is None or not ctx.get("path"):
+        return
+    from quam_state_manager.core.env_seen import live_context
+    if not live_context(ctx):
         return
     # The house rule for every background warm (docs/135's conda probe is the
     # precedent): the suite does not spawn subprocesses, and a daemon thread
@@ -47718,10 +47772,12 @@ def config_regenerate():
         # fall back to the in-memory hash only when it provably equals the files.
         basis_hash = _config_state_hash(store) if not unsaved else None
 
-    outcome = config_generator.run_config_preview(python_path, folder)
+    from quam_state_manager.core import waveform_refs
+    outcome = waveform_refs.preview(python_path, folder)
 
     if outcome.get("ok") and outcome.get("result"):
         result = outcome["result"]
+        basis_hash = waveform_refs.input_basis(outcome["reference_inputs"])
         store.generated_config = result.get("config")
         store.generated_config_meta = {
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -47736,6 +47792,9 @@ def config_regenerate():
             "chip_class": result.get("chip_class"),
             "loaded_class": result.get("loaded_class"),
         }
+        ctx = _active_ctx()
+        if ctx:
+            _record_env_waveform(ctx, current_app.instance_path, python_path, outcome)
         resp = make_response(_deep_validate_verdict(
             python_path, meta=store.generated_config_meta, unsaved=unsaved,
         ) if deep else render_template(
