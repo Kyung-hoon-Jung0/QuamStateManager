@@ -789,9 +789,13 @@
       rule = rulesOf(spec).filter(function (r) {
         return r.source && sameKey(r.source, pid) && r.gate && r.gate.name === add.name;
       })[0] || null;
-      return rule ? { kind: "source", rule: rule } : { kind: "hand", rule: null };
+      if (!rule) return { kind: "hand", rule: null };
     }
-    if (rule.source && sameKey(rule.source, pid)) return { kind: "source", rule: rule };
+    if (rule.source && sameKey(rule.source, pid)) {
+      // The person's own gate is still the source; a flip can still ask for a look.
+      var srow = rule.id ? statusRow(rule.id, pid) : null;
+      return { kind: "source", rule: rule, row: srow, look: !!(srow && srow.status === G_LOOK) };
+    }
     var row = statusRow(rule.id, pid);
     var kind = row && row.status === G_LOOK ? "needs" : (row && row.edited ? "edited" : "rule");
     return { kind: kind, rule: rule, row: row };

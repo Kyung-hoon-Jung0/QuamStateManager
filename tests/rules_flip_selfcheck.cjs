@@ -82,6 +82,10 @@ const before = JSON.parse(JSON.stringify(sp));
 setInput(cell('q1'), '4.6');
 setInput(cell('q2'), '4.8');
 setInput(cell('q3'), '5.0');
+// X2: the flip's redraw is the decorated pair table (Gates column + Set-all gate cell).
+ok(!!win.document.querySelector('#gen-pop-tbl-pairs th.gen-gates-th'), 'the redrawn pair table keeps its Gates column');
+ok(!!win.document.querySelector('#gen-pop-tbl-pairs td.gen-gates-setall'), 'the redrawn pair table keeps its Set-all gate cell');
+ok(!!win.document.querySelector('#gen-pop-tbl-pairs tr[data-rid="q2-q1"]'), 'the redrawn table has the flipped row');
 const ids = sp.qubit_pairs.map(function (p) { return p[0] + '-' + p[1]; });
 ok(ids[0] === 'q2-q1' && ids[1] === 'q3-q2', 'both pairs flipped (got ' + ids.join(',') + ')');
 
@@ -108,6 +112,13 @@ ok(win.GenRules.countOn(sp, sp.addition_rules[0]) === 2, 'card count is 2 of 2 a
 const stale = JSON.parse(JSON.stringify(sp));
 stale.additions.forEach(function (a) { if (a.target === 'qubit_pairs.q3-2.macros') a.target = 'qubit_pairs.q2-3.macros'; });
 ok(win.GenRules.countOn(stale, stale.addition_rules[0]) === 1, 'a gate left on a pair id the spec no longer names is not counted');
+
+// The person's source gate asks for a look too when the server says so.
+win.GenRules.noteExpand(sp.addition_rules[0], { pairs: [{ pair: 'q2-1', status: 'Needs a look',
+  reason: 'control and target swapped by Populate frequency' }] }, 'x');
+const src = sp.additions.filter(function (a) { return a.target === 'qubit_pairs.q2-1.macros'; })[0];
+const info = win.GenRules.gateInfo(sp, 'q2-1', src);
+ok(info.kind === 'source' && info.look === true, 'the source gate carries the look (got ' + info.kind + '/' + info.look + ')');
 
 console.log('SPEC_JSON ' + JSON.stringify(sp));
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

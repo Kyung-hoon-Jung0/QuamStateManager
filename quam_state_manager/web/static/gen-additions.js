@@ -1015,17 +1015,19 @@
 
   function chipTitle(info, a) {
     var rn = info.rule ? info.rule.gate.name : a.name;
-    if (info.kind === "source") return "rule " + rn + " was made from this pair — click to edit";
+    if (info.kind === "source") return "rule " + rn + " was made from this pair" +
+      (info.look ? " · needs a look: " + ((info.row && info.row.reason) || "pair facts changed") : "") + " — click to edit";
     if (info.kind === "edited") {
       var fs = (info.row && info.row.diff_vs_current || []).map(function (d) { return d.field; })
         .filter(function (f, i, arr) { return arr.indexOf(f) === i; });
       return "from rule " + rn + " · " + fs.length + " field" + (fs.length === 1 ? "" : "s") + " edited here (" +
         fs.join(", ") + ") — click to edit";
     }
-    if (info.kind === "needs") return "from rule " + rn + " · this pair's facts changed — review it";
+    if (info.kind === "needs") return "from rule " + rn + " · " + ((info.row && info.row.reason) || "this pair's facts changed") + " — review it";
     return "added by rule " + rn + " — click to edit";
   }
   function chipSuffix(info) {
+    if (info.kind === "source" && info.look) return "·rule·from this pair·needs a look";
     return { hand: "", source: "·rule·from this pair", rule: "·rule", edited: "·rule·edited",
              needs: "·rule·needs a look" }[info.kind];
   }

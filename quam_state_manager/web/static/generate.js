@@ -6491,6 +6491,21 @@
     note.hidden = false;
   }
 
+  // The ONE way the Populate pair table is drawn: the table, then its Gates
+  // column, Set-all gate cell, gate chips and rule cards (decoratePairTable).
+  // A redraw that skipped the decoration left a bare table with no gates and a
+  // stale rule card until a reload (X2).
+  function renderPairPopTable(pairs) {
+    setPopHost("gen-pop-pairs",
+      pairs.length ? buildPopTable("pairs", pairs, pairPopCols(), "Pair") : null,
+      "No qubit pairs defined.");
+    var tbl = document.getElementById("gen-pop-tbl-pairs");
+    if (tbl && window.GenAdditions && window.GenAdditions.decoratePairTable) {
+      window.GenAdditions.decoratePairTable(tbl,
+        { spec: function () { return state.spec; }, changed: saveDraft, feedlines: feedlineMap });
+    }
+  }
+
   // A qubit RF_freq commit may re-orient CZ pairs: rebuild the pairs table
   // (its row keys changed) + surface what moved.
   function czOrientAfterFreqEdit() {
@@ -6500,9 +6515,8 @@
       var pairs = state.spec.qubit_pairs
         .filter(function (p) { return p[0] && p[1]; })
         .map(function (p) { return p[0] + "-" + p[1]; });
-      setPopHost("gen-pop-pairs",
-        pairs.length ? buildPopTable("pairs", pairs, pairPopCols(), "Pair") : null,
-        "No qubit pairs defined.");
+      renderPairPopTable(pairs);
+      saveDraft();
       showMessage(flips.map(function (f) {
         return "Pair " + f.from + " reordered to " + f.to;
       }).join("; ") + " — control is the higher-frequency qubit.", "info");
@@ -9087,17 +9101,7 @@
         buildPopTable("twpa", twpaIds, POP_TWPA_COLS, "TWPA"),
         "No TWPAs defined.");
     }
-    if (pairs.length) {
-      setPopHost("gen-pop-pairs",
-        buildPopTable("pairs", pairs, pairPopCols(), "Pair"),
-        "No qubit pairs defined.");
-      // P5: one list of gates per pair (built + added + the default), "+ CZ…" per row.
-      if (window.GenAdditions && window.GenAdditions.decoratePairTable) {
-        window.GenAdditions.decoratePairTable(
-          document.getElementById("gen-pop-tbl-pairs"),
-          { spec: function () { return state.spec; }, changed: saveDraft, feedlines: feedlineMap });
-      }
-    }
+    if (pairs.length) renderPairPopTable(pairs);
     renderPairOrderNote();
     // First-paint validation: covers step entry, draft restore, unit toggle
     // and power-mode flip (all of which land here) — a restored 15.3 GHz
