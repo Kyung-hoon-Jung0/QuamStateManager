@@ -1,0 +1,14 @@
+<p>References</p>
+{% for reference in references %}
+<div class="env-reference">
+  <code>{{ reference.chip_key }}</code> &middot; <code>{{ reference.python_path }}</code>
+  &middot; {{ reference.recorded_at }} &middot; {{ reference.size }} bytes
+  <p>Generated from: {% for file in reference.files %}<code>{{ file }}</code> {% endfor %}</p>
+  {% if reference.other_json %}<p>Not part of this comparison:
+    {% for file in reference.other_json %}<code>{{ file }}</code> {% endfor %}</p>{% endif %}
+  <label>Name filter <input class="env-reference-filter" type="text"></label>
+  <label>Compare with env&hellip; <input class="env-reference-python" type="text" value="{{ reference.python_path }}"></label>
+  <button class="btn-sm" data-key="{{ reference.key }}" onclick="EnvUpgrade.compare(this)">Compare</button>
+  <button class="btn-sm" data-key="{{ reference.key }}" onclick="EnvUpgrade.removeReference(this)">Delete reference</button>
+</div>
+{% else %}<p>No reference from before this change &mdash; waveforms not compared.</p>{% endfor %}

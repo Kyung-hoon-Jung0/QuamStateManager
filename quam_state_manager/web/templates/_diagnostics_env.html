@@ -71,6 +71,7 @@
   </p>
   {% endif %}
   {% endif %}
+  {% with upgrade=env_card.upgrade %}{% include '_env_upgrade_card.html' %}{% endwith %}
 </div>
 {% if not oob %}
 <script>

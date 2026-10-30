@@ -103,7 +103,7 @@ from quam_state_manager.generator.probe_state_schema import dump_schemas
 from quam_state_manager.core.state_env_baseline import project_manifest
 from quam_state_manager.core.env_upgrade import report, verdict_lines
 folder = Path(sys.argv[1])
-current = dump_schemas(["extension_fixture.Child", "official_fixture.Other"], pulse_roster=False)
+current = dump_schemas(["extension_fixture.Child", "official_fixture.Other", "extension_broken.Broken"], pulse_roster=False)
 current["schema_format"] = 4
 old_path = folder / "reference.json"
 if old_path.exists():
@@ -112,7 +112,8 @@ else:
     old = dict(project_manifest(current), version=2)
     old_path.write_text(json.dumps(old))
 state = {"first": {"__class__": "extension_fixture.Child", "length": 4, "old": 1, "extra_phase": 0.0},
-         "second": {"__class__": "official_fixture.Other"}}
+         "second": {"__class__": "official_fixture.Other"},
+         "third": {"__class__": "extension_broken.Broken"}}
 result = report(state, current, old, catalog={"moved.Parent": {"importable": True}})
 (folder / "report.json").write_text(json.dumps(result))
 print("\\n".join(verdict_lines(result)))
@@ -126,6 +127,8 @@ def _fault_run(tmp_path, fault):
         "from official_fixture import Parent\nfrom dataclasses import dataclass\n"
         "@dataclass(kw_only=True)\nclass Child(Parent):\n    extra_phase: float = 0.0\n"
         "    def samples(self, length):\n        return [1]\n", encoding="utf-8")
+    (tmp_path / "extension_broken.py").write_text(
+        "from official_fixture import Anchor\nclass Broken(Anchor):\n    pass\n", encoding="utf-8")
 
     def write(variant):
         fields = "    length: int = 4\n"
@@ -140,6 +143,10 @@ def _fault_run(tmp_path, fault):
                   f"class {name}:\n{fields}    def samples(self, length{phase}):\n        return [1]\n")
         source += "@dataclass\nclass Other:\n" + (
             "    extra_default: int = 1\n" if variant == "combined" else "    pass\n")
+        if variant != "combined":
+            source += "@dataclass\nclass Anchor:\n    pass\n"
+        else:
+            source = source.replace("return [1]", "return [0, 0, 1]")
         (site / "__init__.py").write_text(source, encoding="utf-8")
         # Disable bytecode so equal-length source variants cannot reuse stale code.
 
@@ -165,7 +172,7 @@ def _fault_run(tmp_path, fault):
 @pytest.mark.parametrize("fault", ["1", "2", "3", "4", "5", "combined"])
 def test_offline_fault_verdict_and_other_cases_unchanged(tmp_path, fault):
     before, after, lines = _fault_run(tmp_path, fault)
-    changed = {"1", "2", "3", "5"} if fault == "combined" else {fault}
+    changed = {"1", "2", "3", "4", "5"} if fault == "combined" else {fault}
     for n in map(str, range(1, 6)):
         assert before["cases"][n]["status"] == "none_found"
         assert after["cases"][n]["status"] == ("found" if n in changed else "none_found")
@@ -174,6 +181,8 @@ def test_offline_fault_verdict_and_other_cases_unchanged(tmp_path, fault):
     assert all(f"VERDICT case {n}: found" in lines for n in changed)
     if "5" in changed:
         assert [row["method"] for row in after["cases"]["5"]["rows"]] == ["samples"]
+    if fault == "combined":
+        assert after["cases"]["6"]["message"] == "blocked by the items above"
     if fault == "4":
         row = after["cases"]["4"]["rows"][0]
         assert row["frames"][0]["file"].endswith("extension_fixture.py")

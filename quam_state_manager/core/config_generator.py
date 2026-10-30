@@ -1602,7 +1602,7 @@ def run_config_preview(
     python_path: str,
     state_folder,
     timeout: int = 120,
-    *, strict: bool = False,
+    *, strict: bool = False, load_only: bool = False,
 ) -> dict:
     """Run ``run_generate_config.py`` in a subprocess and return the parsed result.
 
@@ -1641,6 +1641,7 @@ def run_config_preview(
                 "--state-folder", str(state_folder),
                 "--out", str(work_dir),
                 *(["--strict-input"] if strict else []),
+                *(["--load-only"] if load_only else []),
             ],
             work_dir, timeout, outcome,
             no_result_label="config previewer",

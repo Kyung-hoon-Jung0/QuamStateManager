@@ -184,6 +184,8 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("warning", "CZ gate pulse IDs", "Pointer-linked gate pulses have an ID matching their operation key when no explicit ID was set."),
     ]),
     ("env", [
+        ("warning", "Method signatures differ", "Lab-defined overrides are compared with parent signatures; this heuristic does not check call sites."),
+        ("warning", "Generated waveform samples", "Explicit matched-state comparison checks samples written to the QM config, not measured hardware timing."),
         ("error", "Classes importable in the selected env", "Every __class__ the state references imports in the selected python environment (third-party packages included) — an unimportable class makes Quam.load() fail."),
         ("error", "Fields exist on the env's classes", "Every key under a __class__-bearing node is a real field of that class in the selected env — an unknown field raises AttributeError('Unexpected attribute') at Quam.load(). Free-form dicts (extras, operations) are never flagged."),
         ("error", "Required fields present", "Fields the env's class requires (no default) exist in the state."),

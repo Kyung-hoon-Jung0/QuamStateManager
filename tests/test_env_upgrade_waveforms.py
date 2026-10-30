@@ -82,6 +82,19 @@ def test_reference_inputs_are_shared_and_schema_format_is_independent(tmp_path):
     assert refs.load(tmp_path, second)["basis"] == refs.load(tmp_path, first)["basis"]
 
 
+def test_computation_only_recording_retains_the_earlier_samples(tmp_path):
+    original = outcome()
+    body = {"official_digest": "same", "source_fingerprint": "before"}
+    first = refs.record(tmp_path, "key", "python", body, original, context={})
+    original["result"]["config"] = config([0, 0, 1])
+    body["source_fingerprint"] = "after"
+    second = refs.record(tmp_path, "key", "python", body, original, context={})
+    assert first != second
+    old, new = refs.load(tmp_path, first), refs.load(tmp_path, second)
+    assert old["identity"] == new["identity"]
+    assert refs.compare_traces(old["traces"], new["traces"])["rows"][0]["onset_lag"] == 1
+
+
 def test_corrupt_reference_and_missing_reference_abstain(tmp_path):
     key = "a" * 64
     assert refs.compare(tmp_path, key, sys.executable)["status"] == "not_checked"

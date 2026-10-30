@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import json
 
 from quam_state_manager.core import state_env_baseline as baseline
 from quam_state_manager.core.state_env_validate import analyze_state
@@ -136,6 +137,7 @@ def report(state: dict, current: dict | None, reference: dict | None = None, *,
         imports.append({"class": path, "error": entry.get("error"),
                         "frames": entry.get("error_frames") or [],
                         "candidates": sorted(candidates), "candidate_source": "cached catalog only",
+                        "candidate_status": "checked" if catalog is not None else "could not check: catalog not cached",
                         "paths": [p for p, obj in instances if obj["__class__"] == path]})
     cases["4"] = _case(4, imports)
     reference_current = (reference and reference.get("version") == 2 and
@@ -203,3 +205,16 @@ def verdict_lines(result: dict) -> list[str]:
     """Stable case lines shared by offline drivers and presentation code."""
     return [f"VERDICT case {n}: {case['status']} - {case['message']}"
             for n, case in result["cases"].items()]
+
+
+def text_report(result: dict, python_path: str, versions: dict) -> str:
+    """Plain-text evidence shared by Copy as text and the command line."""
+    lines = [f"Checked in: {python_path} ({json.dumps(versions, sort_keys=True)})",
+             result.get("event", {}).get("direction") or "", WAVEFORM_SCOPE]
+    for line, case in zip(verdict_lines(result), result["cases"].values()):
+        lines.append(line)
+        lines.extend(json.dumps(row, sort_keys=True, ensure_ascii=True) for row in case["rows"])
+    lines.extend(json.dumps(row, sort_keys=True, ensure_ascii=True) for row in result.get("non_waveform", []))
+    lines.extend(result.get("fyi", []))
+    lines.append(result["footer"])
+    return "\n".join(lines)

@@ -102,3 +102,43 @@ def observe(instance_path, key: str, python_path: str, body: dict, *, context: d
         path.parent.mkdir(parents=True, exist_ok=True)
         safe_io.atomic_write_json(path, record)
     return {**event, "recorded": True, "current": current}
+
+
+def acknowledgement_key(python_path, previous, current, findings_signature):
+    return _hash([normalize_env_path(python_path), previous.get("official_digest"),
+                  current.get("official_digest"), findings_signature])
+
+
+def acknowledged(instance_path, key, python_path, previous, current, findings_signature):
+    identity = acknowledgement_key(python_path, previous, current, findings_signature)
+    return identity in read(instance_path, key).get("acknowledgements", {})
+
+
+def acknowledge(instance_path, key, python_path, previous, current, findings_signature, *, context, event):
+    """One event memo; the finding signature makes a changed set reappear."""
+    if (not live_context(context) or event.get("first") or not event.get("official_changed")
+            or not event.get("stops_loading")):
+        return False
+    with _lock:
+        record = read(instance_path, key)
+        identity = acknowledgement_key(python_path, previous, current, findings_signature)
+        record.setdefault("acknowledgements", {})[identity] = datetime.now(timezone.utc).isoformat()
+        safe_io.atomic_write_json(record_path(instance_path, key), record)
+    return True
+
+
+def accepted_renames(instance_path, key):
+    return read(instance_path, key).get("accepted_renames", [])
+
+
+def remember_renames(instance_path, key, python_path, selections, event):
+    with _lock:
+        record = read(instance_path, key)
+        accepted = record.setdefault("accepted_renames", [])
+        for item in selections:
+            value = {k: item[k] for k in ("class", "old", "new")}
+            value.update(python_path=normalize_env_path(python_path),
+                         from_digest=(event.get("previous") or {}).get("official_digest"))
+            if value not in accepted:
+                accepted.append(value)
+        safe_io.atomic_write_json(record_path(instance_path, key), record)

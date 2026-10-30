@@ -194,3 +194,130 @@ def test_reference_auto_record_rejects_unsaved_edits(loaded, monkeypatch):
         assert routes._warm_generated_config_async(ctx, app.instance_path, reference_only=True) == "not-recordable"
     finally:
         ctx["store"].change_log.clear()
+
+
+def _review_context(loaded):
+    import sys
+    from quam_state_manager.core import env_upgrade, state_env_baseline
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.core.modifier import Modifier
+
+    app, client, ctx = loaded
+    state = {"objects": {"first": {"__class__": "extension.Child", "old": 2}},
+             "ref": "#/objects/first/old"}
+    ctx["store"] = QuamStore.from_dicts(state, {"wiring": {"ref": "#/objects/first/old"}})
+    ctx["modifier"] = Modifier(ctx["store"])
+    before = {"schema_format": 4, "versions": {"quam": "0.6.0"}, "classes": {}}
+    for cls, origin, bases in [("official.Parent", "official", []),
+                               ("extension.Child", "lab", ["official.Parent"])]:
+        before["classes"][cls] = {"importable": True, "origin": origin, "bases": bases,
+            "signatures": {}, "fields": {"old": {"type": {"base": "int"}, "has_default": True,
+                "defining_class": "official.Parent", "default": 1}}}
+    import copy
+    current = copy.deepcopy(before)
+    for entry in current["classes"].values():
+        entry["fields"]["new"] = entry["fields"].pop("old")
+    old_key = state_env_baseline.record_baseline(app.instance_path, before, python_path=sys.executable)
+    old_body = state_env_baseline.load_baseline(app.instance_path, old_key)
+    new_key = state_env_baseline.record_baseline(app.instance_path, current, python_path=sys.executable)
+    body = state_env_baseline.load_baseline(app.instance_path, new_key)
+    key = env_seen.chip_key(ctx["path"])
+    env_seen.observe(app.instance_path, key, sys.executable, old_body, context=ctx)
+    event = env_seen.observe(app.instance_path, key, sys.executable, body, context=ctx)
+    ctx["env_upgrade_env"] = sys.executable
+    ctx["env_upgrade_body"] = body
+    ctx["env_upgrade_report"] = env_upgrade.report(state, current, old_body, event=event)
+    return app, client, ctx
+
+
+def test_card_has_scoped_groups_evidence_and_footer(loaded):
+    _, client, _ = _review_context(loaded)
+    html = client.get("/env-upgrade/card").get_data(as_text=True)
+    assert "Checked in:" in html
+    assert "Stops loading" in html
+    assert "signature differs" in html and "call site is not checked" in html
+    assert "samples written to the QM config" in html
+    assert "meaning and unit unchanged" in html
+    assert "Not checked: run-time behaviour of macros, hardware timing, classes not probed" in html
+    assert "Confirm this candidate" in html
+    assert "accept-all" not in html.lower()
+
+
+def test_copy_text_and_acknowledgement_delta_gate(loaded):
+    _, client, ctx = _review_context(loaded)
+    assert "VERDICT case 3: found" in client.get("/env-upgrade/text").get_data(as_text=True)
+    assert "env-upgrade-banner" in client.get("/diagnostics/banner").get_data(as_text=True)
+    assert client.post("/env-upgrade/acknowledge", json={}).get_json()["ok"]
+    from quam_state_manager.web.env_upgrade_view import model
+    from flask import current_app
+    app = loaded[0]
+    with app.app_context():
+        assert not model(ctx, app.instance_path)["report"]["banner"]
+        ctx["env_upgrade_report"]["cases"]["3"]["rows"][0]["paths"].append("objects.other.old")
+        assert model(ctx, app.instance_path)["report"]["banner"]
+
+
+def test_rename_needs_test_token_and_changes_working_copy_only(loaded, monkeypatch):
+    from pathlib import Path
+    app, client, ctx = _review_context(loaded)
+    live_before = (Path(ctx["path"]) / "state.json").read_bytes()
+    selections = [{"class": "official.Parent", "old": "old", "new": "new",
+                   "confirmed": True, "meaning_unchanged": True}]
+    payload = {"selections": selections}
+    assert client.post("/env-upgrade/rename-apply", json=payload).status_code == 400
+    calls = []
+
+    def test_load(python, folder, **kwargs):
+        calls.append(kwargs)
+        state = json.loads((folder / "state.json").read_text())
+        assert state["objects"]["first"]["new"] == 2
+        assert state["ref"] == "#/objects/first/new"
+        return {"ok": True}
+
+    monkeypatch.setattr(routes.config_generator, "run_config_preview", test_load)
+    tested = client.post("/env-upgrade/rename-test", json=payload)
+    assert tested.status_code == 200, tested.get_json()
+    payload["token"] = tested.get_json()["token"]
+    assert calls == [{"strict": True, "load_only": True}]
+    applied = client.post("/env-upgrade/rename-apply", json=payload)
+    assert applied.status_code == 200, applied.get_json()
+    assert ctx["store"].state["objects"]["first"]["new"] == 2
+    assert (Path(ctx["path"]) / "state.json").read_bytes() == live_before
+    ctx["modifier"].undo_group()
+    assert ctx["store"].state["objects"]["first"]["old"] == 2
+
+
+def test_stale_load_test_cannot_stage_a_different_state(loaded, monkeypatch):
+    _, client, ctx = _review_context(loaded)
+    payload = {"selections": [{"class": "official.Parent", "old": "old", "new": "new",
+                               "confirmed": True, "meaning_unchanged": True}]}
+    monkeypatch.setattr(routes.config_generator, "run_config_preview", lambda *a, **k: {"ok": True})
+    payload["token"] = client.post("/env-upgrade/rename-test", json=payload).get_json()["token"]
+    ctx["store"].state["objects"]["first"]["old"] = 3
+    assert client.post("/env-upgrade/rename-apply", json=payload).status_code == 400
+
+
+def test_archive_card_has_no_rename_controls_or_banner(loaded):
+    app, client, ctx = _review_context(loaded)
+    ctx["origin"] = "dataset_archive"
+    html = client.get("/env-upgrade/card").get_data(as_text=True)
+    assert "Confirm this candidate" not in html
+    assert "Acknowledge these findings" not in html
+    assert client.post("/env-upgrade/rename-test", json={"selections": []}).status_code == 400
+
+
+def test_feature_wording_and_no_package_walk_pin():
+    import ast
+    from pathlib import Path
+    import re
+
+    root = Path(__file__).resolve().parents[1] / "quam_state_manager"
+    sources = [*root.joinpath("web/templates").glob("_env_upgrade*.html"),
+               root / "web/static/env-upgrade.js"]
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        assert not re.search(r"safe|compatible", text, re.I), path
+        assert not re.search(r"\b\d+ of \d+ differ", text)
+    for name in ("env_seen", "env_upgrade", "env_rename", "waveform_refs"):
+        path = root / "core" / f"{name}.py"
+        assert "walk_packages" not in path.read_text(encoding="utf-8")

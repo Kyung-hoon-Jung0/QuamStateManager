@@ -335,6 +335,7 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--strict-input", action="store_true",
                         help="require the declared root and disable the empty-key retry")
+    parser.add_argument("--load-only", action="store_true", help="test loading without generating config")
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out)
@@ -360,7 +361,11 @@ def main(argv=None) -> int:
             raise FileNotFoundError(
                 f"state.json not found in {state_folder}"
             )
-        result.update(run_generate_config(state_folder, strict=args.strict_input))
+        if args.load_only:
+            machine = _load_machine(state_folder, strict=args.strict_input)
+            result["loaded_class"] = f"{type(machine).__module__}.{type(machine).__qualname__}"
+        else:
+            result.update(run_generate_config(state_folder, strict=args.strict_input))
         result["status"] = "ok"
     except Exception as exc:  # noqa: BLE001 - top-level guard
         result["status"] = "error"

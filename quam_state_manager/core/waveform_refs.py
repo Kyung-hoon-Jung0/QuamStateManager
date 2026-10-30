@@ -162,6 +162,7 @@ def record(instance_path, chip_key, python_path, body, outcome, *, context, unsa
     metadata = {"format": WAVEFORM_REF_FORMAT, "chip_key": chip_key,
                 "python_path": normalize_env_path(python_path), "versions": result.get("versions") or {},
                 "official_digest": body.get("official_digest"), "basis": basis,
+                "source_fingerprint": body.get("source_fingerprint"),
                 "files": files, "traces": traces(result["config"]),
                 "config_non_waveform": {"integration_weights": result["config"].get("integration_weights", {}),
                                         "controllers": result["config"].get("controllers", {})},
@@ -174,11 +175,16 @@ def record(instance_path, chip_key, python_path, body, outcome, *, context, unsa
             if name not in inputs:
                 safe_io.read_json(path)
                 metadata["other_json"].append(name)
-    key = _hash([chip_key, metadata["python_path"], metadata["versions"], metadata["official_digest"], basis])
+    identity = _hash([chip_key, metadata["python_path"], metadata["versions"], metadata["official_digest"], basis])
+    metadata["identity"] = identity
+    key = _hash([identity, metadata["source_fingerprint"], metadata["files"],
+                 metadata["traces"], metadata["config_non_waveform"]])
     metadata["key"] = key
     if len(json.dumps(metadata).encode("utf-8")) > _MAX_REFERENCE_BYTES:
         return None
-    safe_io.atomic_write_json(directory / f"{key}.json", metadata)
+    path = directory / f"{key}.json"
+    if not path.exists():
+        safe_io.atomic_write_json(path, metadata)
     return key
 
 

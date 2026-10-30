@@ -1,0 +1,6 @@
+<div class="topo-change-banner" role="alert" id="env-upgrade-banner">
+  <span>Environment change: Stops loading findings were found. {{ upgrade.report.event.direction }}</span>
+  <button class="btn-sm" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true">Review Diagnostics</button>
+  <button class="btn-sm" onclick="EnvUpgrade.acknowledge(); this.parentElement.remove()">Acknowledge these findings</button>
+</div>
+<script src="{{ url_for('static', filename='env-upgrade.js') }}"></script>
