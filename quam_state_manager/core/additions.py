@@ -271,20 +271,45 @@ def gate_name_errors(spec: dict) -> list[str]:
 # per-addition checks
 # ---------------------------------------------------------------------------
 
-def spec_channel_reason(spec: dict, target: str) -> str | None:
+class SpecIndex:
+    """What :func:`spec_channel_reason` reads of a spec, read ONCE: the qubit
+    ids, the builder's pair ids, the (line, element) pairs and the pair ids
+    each pair-channel line serves. A check over N additions reads it once
+    instead of re-deriving every pair id per addition (which made a precheck
+    O(additions x pairs))."""
+
+    __slots__ = ("qubits", "pair_ids", "lines", "pair_lines", "twpas")
+
+    def __init__(self, spec: dict):
+        self.qubits = {str(x) for x in spec.get("qubits") or []}
+        self.pair_ids = _pair_ids(spec)
+        lines = [ln for ln in (spec.get("lines") or []) if isinstance(ln, dict)]
+        self.lines = {(ln.get("line"), str(ln.get("element"))) for ln in lines}
+        self.pair_lines: dict = {}
+        for need in set(_PAIR_CHANNEL.values()):
+            self.pair_lines[need] = {quam_pair_id(ln.get("element")) for ln in lines
+                                     if ln.get("line") == need}
+        self.twpas = {str(x.get("id")) if isinstance(x, dict) else str(x)
+                      for x in spec.get("twpas") or []}
+
+
+def spec_channel_reason(spec: dict, target: str, index: SpecIndex | None = None) -> str | None:
     """Why the spec cannot have *target*'s channel, or None. Only shapes the
-    wizard knows are judged; anything else is left to the built chip."""
+    wizard knows are judged; anything else is left to the built chip.
+    *index* = the spec's :class:`SpecIndex` when the caller judges many."""
     segs = target.split(".")
-    lines = [ln for ln in (spec.get("lines") or []) if isinstance(ln, dict)]
+    if segs[0] not in ("qubits", "qubit_pairs", "twpas") or len(segs) not in (3, 4):
+        return None
+    idx = index if index is not None else SpecIndex(spec)
     if segs[0] == "qubits" and len(segs) == 3:
-        if segs[1] not in {str(x) for x in spec.get("qubits") or []}:
+        if segs[1] not in idx.qubits:
             return f"qubit {segs[1]} is not in this chip"
         return None
     if segs[0] == "qubit_pairs" and len(segs) == 3:
-        return _pair_reason(spec, segs[1])
+        return _pair_reason(spec, segs[1], idx.pair_ids)
     if segs[0] == "qubits" and len(segs) == 4:
         q, ch = segs[1], segs[2]
-        if q not in {str(x) for x in spec.get("qubits") or []}:
+        if q not in idx.qubits:
             return f"qubit {q} is not in this chip"
         need = _QUBIT_CHANNEL.get(ch)
         qd = (((spec.get("qdac") or {}).get("qubits")) or {}).get(q)
@@ -294,27 +319,25 @@ def spec_channel_reason(spec: dict, target: str) -> str | None:
                 "its z is a QdacBiasLine (a DC level), which plays no pulses; put the pulse "
                 "on xy or the resonator")
             return f"qubit {q} is biased by the QDAC-II: {rule}"
-        if need and not any(ln.get("line") == need and str(ln.get("element")) == q
-                            for ln in lines):
+        if need and (need, q) not in idx.lines:
             return f"qubit {q} has no {need} line, so it has no {ch} channel"
     elif segs[0] == "qubit_pairs" and len(segs) == 4:
         p, ch = segs[1], segs[2]
-        why = _pair_reason(spec, p)
+        why = _pair_reason(spec, p, idx.pair_ids)
         if why:
             return why
         need = _PAIR_CHANNEL.get(ch)
-        if need and not any(ln.get("line") == need and quam_pair_id(ln.get("element")) == p
-                            for ln in lines):
+        if need and p not in idx.pair_lines.get(need, ()):
             return f"pair {p} has no {need} line"
     elif segs[0] == "twpas" and len(segs) == 4:
         t = segs[1]
-        if t not in {str(x.get("id")) if isinstance(x, dict) else str(x) for x in spec.get("twpas") or []}:
+        if t not in idx.twpas:
             return f"TWPA {t} is not in this chip"
     return None
 
 
-def _pair_reason(spec: dict, p: str) -> str | None:
-    ids = _pair_ids(spec)
+def _pair_reason(spec: dict, p: str, ids: set | None = None) -> str | None:
+    ids = _pair_ids(spec) if ids is None else ids
     if p in ids:
         return None
     alias = quam_pair_id(p) if "-" in p else None
@@ -799,11 +822,12 @@ def apply_additions(state: dict, spec: dict, manifest: dict | None) -> dict:
         if a.get("kind") != "field":
             refused[f"{a['target']}.{a['name']}"] = f"{a['target']}.{a['name']}"
 
+    index = SpecIndex(spec)
     for i in placement_order(adds):
         a = adds[i]
         if a.get("kind") in ("field", "default_gate"):
             continue      # set after the pulses and macros it may name
-        reason = (spec_channel_reason(spec, a["target"]) or manifest_reason(a, manifest))
+        reason = (spec_channel_reason(spec, a["target"], index) or manifest_reason(a, manifest))
         segs = a["target"].split(".")
         container = None
         if reason is None:
@@ -878,13 +902,14 @@ def _field_precheck(spec: dict, add: dict, manifest: dict | None) -> str | None:
     return field_reason({"__class__": root}, add, manifest)
 
 
-def _core_reason(spec: dict, a: dict, manifest: dict | None) -> str | None:
+def _core_reason(spec: dict, a: dict, manifest: dict | None,
+                 index: SpecIndex | None = None) -> str | None:
     """What can be judged without the built chip (the spec's channels, the
     env's class manifest)."""
     if a.get("kind") == "field" and isinstance(a.get("target"), str):
         return _field_precheck(spec, a, manifest)
     if isinstance(a.get("target"), str) and isinstance(a.get("class"), str):
-        return spec_channel_reason(spec, a["target"]) or manifest_reason(a, manifest)
+        return spec_channel_reason(spec, a["target"], index) or manifest_reason(a, manifest)
     return None
 
 
@@ -897,9 +922,12 @@ def precheck(spec: dict, manifest: dict | None) -> list[dict]:
     agent's proposal passes."""
     adds = [a for a in (spec.get("additions") or []) if isinstance(a, dict)]
     out = []
+    # linear: the spec is read once (SpecIndex); a non-structural lint never
+    # reads the other additions, so none are copied per addition
+    index = SpecIndex(spec)
     for i in placement_order(adds):
         a = adds[i]
-        lint = lint_proposal(spec, a, manifest, structural=False, others=adds[:i] + adds[i + 1:])
+        lint = lint_proposal(spec, a, manifest, structural=False, others=(), index=index)
         e = _entry(i, a, manifest, lint["errors"][0] if lint["errors"] else None)
         e["card"] = lint["card"]
         if lint["warnings"]:
@@ -958,7 +986,8 @@ def _placeholder(f: dict) -> Any:
 
 
 def lint_proposal(spec: dict, add: Any, manifest: dict | None, *, author: str = "person",
-                  typed=(), structural: bool = True, others: list | None = None) -> dict:
+                  typed=(), structural: bool = True, others: list | None = None,
+                  index: SpecIndex | None = None) -> dict:
     """Judge one addition. Returns ``{"ok", "errors", "warnings", "card",
     "needs_person"}``: *errors* refuse it, *warnings* are the card's
     conventions it departs from (a person decides), *needs_person* the
@@ -1029,7 +1058,7 @@ def lint_proposal(spec: dict, add: Any, manifest: dict | None, *, author: str = 
                        and addition_cards.calibration_field(n, card, _deck()))
         if needs:
             judged = dict(add, fields=dict(fields, **{n: _placeholder(meta[n]) for n in needs}))
-    why = _core_reason(spec, judged, manifest)
+    why = _core_reason(spec, judged, manifest, index)
     if why:
         errors.append(why)
     if kind in ("pulse", "macro") and qclass and entry is None and not why:
