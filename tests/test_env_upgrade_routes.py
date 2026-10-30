@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from quam_state_manager.core import env_seen, state_env_schema
+from quam_state_manager.core import env_seen, state_env_schema, waveform_refs
 from quam_state_manager.web.app import create_app
 from quam_state_manager.web import routes
 
@@ -175,7 +175,7 @@ def test_reference_auto_record_uses_existing_single_flight_and_attempt_memo(load
         assert not calls
         routes._cfg_warm_inflight.clear()
         assert routes._warm_generated_config_async(ctx, app.instance_path, reference_only=True) == "started"
-        assert calls == [{"timeout": 5}]
+        assert calls == [{"timeout": waveform_refs.AUTO_RECORD_SECONDS}]
         assert routes._warm_generated_config_async(ctx, app.instance_path, reference_only=True) == "attempted-before"
         assert len(calls) == 1
         ctx["env_upgrade_body"]["official_digest"] = "b"
@@ -358,3 +358,13 @@ def test_schema_detail_lists_exact_omitted_count(loaded):
     assert transition["diff"]["omitted"] > 0
     html = client.get("/env-upgrade/card").get_data(as_text=True)
     assert f"{transition['diff']['omitted']} more not listed" in html
+
+
+def test_archive_keeps_the_ordinary_config_warm_but_never_records_a_reference(monkeypatch, tmp_path):
+    """The docs/189 warm still serves archive runs; only reference recording is live-only."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda inst: None)
+    store = SimpleNamespace(generated_config=None, change_log=[])
+    ctx = {"store": store, "path": str(tmp_path), "origin": "dataset_archive"}
+    assert routes._warm_generated_config_async(ctx, str(tmp_path)) == "no-env"
+    assert routes._warm_generated_config_async(ctx, str(tmp_path), reference_only=True) == "not-live"
