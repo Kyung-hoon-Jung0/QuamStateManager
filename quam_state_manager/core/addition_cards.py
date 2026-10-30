@@ -100,6 +100,25 @@ def overlay_path(instance_path) -> Path:
     return Path(instance_path) / OVERLAY_NAME
 
 
+# An overlay is lab data a person approved, possibly drafted by an agent: its
+# ``naming.strip`` may use only a literal alternation with ``?`` (no ``*``,
+# ``+`` or ``{}``, so matching is linear) and its text fields are capped.
+_OVERLAY_STRIP_RE = re.compile(r"^[A-Za-z0-9_^$|?()]{0,40}$")
+_OVERLAY_TEXT_MAX = 500
+
+
+def _overlay_reason(c: dict) -> str | None:
+    """What an OVERLAY card may not carry that a shipped card may."""
+    strip = (c.get("naming") or {}).get("strip")
+    if strip is not None and not (isinstance(strip, str) and _OVERLAY_STRIP_RE.match(strip)):
+        return ("naming.strip in an overlay must be at most 40 characters of letters, digits, "
+                "'_', '^', '$', '|', '?' and parentheses")
+    for k in ("title", "notes"):
+        if k in c and not (isinstance(c[k], str) and len(c[k]) <= _OVERLAY_TEXT_MAX):
+            return f"{k} must be text of at most {_OVERLAY_TEXT_MAX} characters"
+    return None
+
+
 def load_cards(*, version: str = "v1", instance_path=None) -> dict:
     """``{"version", "hash", "cards": [...], "dropped": [(id, why)],
     "refused_overlay": [(id, why)], "calibration_field_patterns": [...]}``."""
@@ -117,7 +136,7 @@ def load_cards(*, version: str = "v1", instance_path=None) -> dict:
         ov = _read(overlay_path(instance_path))
         ids = {c["id"] for c in kept}
         for c in (ov or {}).get("cards") or []:
-            why = _lint_card(c)
+            why = _lint_card(c) or _overlay_reason(c)
             if why is None and c["id"] in ids:
                 why = "an overlay may only ADD a card; this id is a shipped card"
             if why:
@@ -129,7 +148,9 @@ def load_cards(*, version: str = "v1", instance_path=None) -> dict:
         logger.warning("additions card %s dropped: %s", cid, why)
     for cid, why in refused:
         logger.warning("additions overlay card %s refused: %s", cid, why)
-    cards = lab + [dict(c, origin="shipped") for c in kept]
+    # shipped cards first: an overlay covers a class no shipped card covers and
+    # can never take a shipped card's class over
+    cards = [dict(c, origin="shipped") for c in kept] + lab
     pats = [p for p in pack.get("calibration_field_patterns") or [] if isinstance(p, str)]
     canon = json.dumps({"v": pack.get("version"), "cards": cards, "pats": pats}, sort_keys=True)
     return {"version": pack.get("version"), "hash": hashlib.sha256(canon.encode()).hexdigest()[:16],
@@ -266,7 +287,7 @@ def public_card(card: dict | None) -> dict | None:
 
 def overlay_card_reason(card: Any, instance_path=None) -> str | None:
     """Why *card* cannot be added to the lab overlay, or None."""
-    why = _lint_card(card)
+    why = _lint_card(card) or _overlay_reason(card)
     if why:
         return why
     deck = load_cards(instance_path=instance_path)

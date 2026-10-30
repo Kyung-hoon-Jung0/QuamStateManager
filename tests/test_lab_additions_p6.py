@@ -96,11 +96,12 @@ class TestOverlay:
     def _write(self, tmp_path, cards):
         addition_cards.overlay_path(tmp_path).write_text(json.dumps({"cards": cards}), encoding="utf-8")
 
-    def test_a_new_card_is_added_and_tried_first(self, tmp_path):
+    def test_a_new_card_is_added_after_the_shipped_ones(self, tmp_path):
         self._write(tmp_path, [{"id": "lab_odd", "role": "macro_qubit", "match": {"fields_all": ["note"]},
                                 "placement": {"target": "qubits.<qubit>.macros"}}])
         d = addition_cards.load_cards(instance_path=tmp_path)
-        assert d["cards"][0]["id"] == "lab_odd" and d["cards"][0]["origin"] == "overlay"
+        # shipped cards are tried first (an overlay never takes a shipped class over)
+        assert d["cards"][-1]["id"] == "lab_odd" and d["cards"][-1]["origin"] == "overlay"
         assert addition_cards.card_for(dict(MAN6["classes"][LAB_MAC], path=LAB_MAC), deck=d)["id"] == "lab_odd"
 
     def test_an_overlay_never_replaces_a_shipped_card(self, tmp_path):
