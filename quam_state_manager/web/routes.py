@@ -24807,13 +24807,19 @@ def api_pulse_gaussian_cz():
         return render_template("_status.html", level="error",
                                message="Padding / filter values must be numbers."), 400
 
+    suffix_ids = None
+    if request.form.get("suffix_ids"):
+        try:
+            suffix_ids = json.loads(request.form["suffix_ids"])
+        except ValueError:
+            return render_template("_status.html", level="error", message="suffix_ids must be a JSON pair"), 400
     release_lab = _lab_hold(store, [f"qubit_pairs.{pair_id}.macros"])
     try:
         with store._lock:
             result = gaussian_cz.plan(store.merged, pair_id,
                                       padding_length=padding,
                                       qubit_filter_mhz=q_mhz,
-                                      coupler_filter_mhz=c_mhz)
+                                      coupler_filter_mhz=c_mhz, suffix_ids=suffix_ids)
             if "error" in result:
                 return render_template("_status.html", message=result["error"],
                                        level="error"), 400

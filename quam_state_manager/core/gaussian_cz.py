@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from quam_state_manager.core.add_names import pulse_name
+
 from quam_state_manager.core.pointer_path import resolve_field_target
 
 _QB_COMMON = "quam_builder.common.pulses."
@@ -113,10 +115,13 @@ def eligible_pairs(merged: dict) -> list[dict[str, Any]]:
 
 def plan(merged: dict, pair_id: str, *, padding_length: int = 20,
          qubit_filter_mhz: float = 20.0,
-         coupler_filter_mhz: float = 20.0) -> dict[str, Any]:
+         coupler_filter_mhz: float = 20.0,
+         suffix_ids: tuple[str, str] | None = None) -> dict[str, Any]:
     """Validate + build. Returns ``{"creates": [(path, value)], "existing":
     [...], "sources": {...}}`` or ``{"error": str}`` — never raises on chip
     shape (every refusal names what is missing, the script's own guard set)."""
+    if suffix_ids is not None and (not isinstance(suffix_ids, (tuple, list)) or len(suffix_ids) != 2):
+        return {"error": "suffix_ids must contain control and target"}
     pairs = merged.get("qubit_pairs") or {}
     p = pairs.get(pair_id)
     if not isinstance(p, dict):
@@ -164,9 +169,19 @@ def plan(merged: dict, pair_id: str, *, padding_length: int = 20,
             return {"error": f"Pair '{pair_id}': the coupler has no "
                              "operations dict."}
 
+    if suffix_ids is not None:
+        actual = tuple(_qubit_name(merged, pair_id, "qubit_" + role) for role in ("control", "target"))
+        if tuple(suffix_ids) != actual:
+            return {"error": "suffix_ids must match this pair's control and target"}
+
     creates: list[tuple[str, Any]] = []
     existing: list[str] = []
     for gname, pulse_cls in VARIANTS:
+        try:
+            qname = f"{gname}_pulse" if suffix_ids is None else pulse_name(gname, "pulse", *suffix_ids)
+            cname = f"{gname}_coupler_pulse" if suffix_ids is None else pulse_name(gname, "coupler_pulse", *suffix_ids)
+        except ValueError as exc:
+            return {"error": str(exc), "status": "Can't"}
         macro_path = f"qubit_pairs.{pair_id}.macros.{gname}"
         if isinstance(macros.get(gname), dict):
             existing.append(macro_path)
@@ -176,11 +191,11 @@ def plan(merged: dict, pair_id: str, *, padding_length: int = 20,
             "fidelity": {},
             "duration": "#./inferred_duration",
             "flux_pulse_qubit": _pulse(
-                pulse_cls, pulse_id=f"{gname}_pulse", pulse_length=flat_len,
+                pulse_cls, pulse_id=qname, pulse_length=flat_len,
                 padding_length=padding_length, amplitude=qubit_amp,
                 filter_mhz=qubit_filter_mhz),
             "coupler_flux_pulse": (_pulse(
-                pulse_cls, pulse_id=f"{gname}_coupler_pulse",
+                pulse_cls, pulse_id=cname,
                 pulse_length=flat_len, padding_length=padding_length,
                 amplitude=coupler_amp, filter_mhz=coupler_filter_mhz)
                 if has_coupler else None),
@@ -195,22 +210,27 @@ def plan(merged: dict, pair_id: str, *, padding_length: int = 20,
         }
         creates.append((macro_path, macro))
 
-        z_op_path = f"qubits.{mq}.z.operations.{gname}_pulse"
-        if f"{gname}_pulse" in (z.get("operations") or {}):
+        z_op_path = f"qubits.{mq}.z.operations.{qname}"
+        if qname in (z.get("operations") or {}):
+            if suffix_ids is not None:
+                return {"error": f"{mq} z already carries {qname} from another pair", "status": "Can't"}
             existing.append(z_op_path)
         creates.append((z_op_path,
                         _linked_pulse(pulse_cls, macro_ref + "/flux_pulse_qubit")))
 
         if has_coupler:
             c_op_path = (f"qubit_pairs.{pair_id}.coupler.operations."
-                         f"{gname}_coupler_pulse")
-            if f"{gname}_coupler_pulse" in ((p.get("coupler") or {})
+                         f"{cname}")
+            if cname in ((p.get("coupler") or {})
                                             .get("operations") or {}):
                 existing.append(c_op_path)
             creates.append((c_op_path,
                             _linked_pulse(pulse_cls,
                                           macro_ref + "/coupler_flux_pulse")))
 
+    if suffix_ids is not None and existing:
+        return {"error": f"a gate or operation named {existing[0].rsplit('.', 1)[-1]} already exists",
+                "status": "Can't"}
     return {
         "creates": creates,
         "existing": existing,

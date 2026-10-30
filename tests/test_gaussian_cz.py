@@ -357,3 +357,36 @@ class TestBarePulseRecognized:
         assert p["ok"] is False and p.get("digital_only") is True
         assert "digital marker only" in p["error"]
         assert "unrecognized" not in p["error"].lower()
+
+
+def test_several_pairs_suffix_and_no_replace(tmp_path):
+    """A shared moving qubit gets separate operations for both pairs."""
+    from copy import deepcopy
+    from tests.test_add_paths_golden import _client
+    state = _chip(moving="target")
+    state["qubits"]["q3"] = deepcopy(state["qubits"]["q1"])
+    state["qubits"]["q3"]["id"] = "q3"
+    second = deepcopy(state["qubit_pairs"]["q1-2"])
+    second.update(id="q2-3", qubit_control="#/qubits/q2", qubit_target="#/qubits/q3", moving_qubit="control")
+    state["qubit_pairs"]["q2-3"] = second
+    client = _client(tmp_path, "chain", state, _WIRING)
+    for pid, ids in (("q1-2", ("q1", "q2")), ("q2-3", ("q2", "q3"))):
+        response = client.post("/api/pulse/gaussian-cz", data={"pair_id": pid, "suffix_ids": json.dumps(ids)})
+        assert response.status_code == 200, response.data.decode()
+        assert b"Replace existing" not in response.data
+    response = client.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-2", "suffix_ids": '["q1","q2"]', "overwrite": "1"})
+    assert response.status_code == 400
+    assert b"q2 z already carries cz_gaussian_unipolar_pulse_q1_q2 from another pair" in response.data
+    assert b"Replace existing" not in response.data
+    # Pure plan proves both names still point to their own pair's calibration.
+    for pid, ids in (("q1-2", ("q1", "q2")), ("q2-3", ("q2", "q3"))):
+        plan = gaussian_cz.plan(state, pid, suffix_ids=ids)
+        assert not plan["existing"]
+        op = dict(plan["creates"])["qubits.q2.z.operations.cz_gaussian_unipolar_pulse_" + "_".join(ids)]
+        assert op["amplitude"] == f"#/qubit_pairs/{pid}/macros/cz_gaussian_unipolar/flux_pulse_qubit/amplitude"
+
+
+def test_suffix_none_preserves_legacy_names_and_invalid_pair_ids_refuse():
+    result = gaussian_cz.plan(_chip(), "q1-2", suffix_ids=None)
+    assert dict(result["creates"])["qubit_pairs.q1-2.macros.cz_gaussian_unipolar"]["flux_pulse_qubit"]["id"] == "cz_gaussian_unipolar_pulse"
+    assert "error" in gaussian_cz.plan(_chip(), "q1-2", suffix_ids=("q2", "q1"))
