@@ -79,6 +79,7 @@ PERSON_ONLY = {
     "main.generate_proposal_accept": "accepting an agent's proposal",
     "main.generate_proposal_dismiss": "dismissing an agent's proposal",
     "main.generate_proposals_context": "recording the wizard's draft chip",
+    "main.generate_rules_apply": "adding a gate rule to pairs",
 }
 
 #: The person's guardrails: an attempt on one is itself worth a journal line.

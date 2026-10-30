@@ -45635,6 +45635,38 @@ def generate_rules_expand():
         return jsonify(ok=False, error=str(exc)), 400
 
 
+def _rules_manifest(spec: dict, rule: dict):
+    """(manifest, pending) for a rule's classes, as the expand route reads them."""
+    classes = [{"class": rule.get("gate", {}).get("macro_class")}]
+    classes.extend({"class": i.get("pulse_class")} for i in rule.get("items") or [])
+    man = _proposal_manifest(spec, list(spec.get("additions") or []) + classes)
+    pending = man is None and bool(config_generator.get_selected_env(current_app.instance_path))
+    return man, pending
+
+
+@bp.route("/generate/additions/rules/apply", methods=["POST"])
+def generate_rules_apply():
+    """Write a rule's planned additions for the ticked pairs (a person's press)."""
+    from quam_state_manager.core import addition_rules
+    data = json_object()
+    spec, rule, pairs = data.get("spec"), data.get("rule"), data.get("pairs")
+    if not isinstance(spec, dict) or not isinstance(rule, dict):
+        return jsonify(ok=False, error="spec and rule must be objects"), 400
+    if not isinstance(pairs, list) or not all(isinstance(p, str) for p in pairs):
+        return jsonify(ok=False, error="pairs must be a list of pair ids"), 400
+    choices = data.get("choices")
+    if choices is not None and not isinstance(choices, dict):
+        return jsonify(ok=False, error="choices must be an object"), 400
+    try:
+        man, _pending = _rules_manifest(spec, rule)
+        out = addition_rules.apply(spec, rule, data.get("rule_sig"), pairs, man, choices=choices)
+    except addition_rules.StaleRule as exc:
+        return jsonify(ok=False, error=str(exc), rule_sig=exc.rule_sig), 409
+    except (ValueError, TypeError, KeyError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    return jsonify(ok=True, **out)
+
+
 def _proposal_manifest(spec: dict, adds: list) -> dict | None:
     """The cached role manifest covering *adds*' classes (never spawns)."""
     python_path = config_generator.get_selected_env(current_app.instance_path)

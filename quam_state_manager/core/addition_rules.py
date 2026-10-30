@@ -79,6 +79,7 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
                 a["choice_here"] = choices[pid]
         judged.update(additions=planned, instance_sig=instance_sig, diff_vs_current=delta if existing else [],
                       edited=edited, existing=existing, key=key, choices=resolved["choices"],
+                      errors=list(resolved["errors"]),
                       moving_qubit=resolved["moving_qubit"], long=additions._long(pair),
                       control=str(pair[0]))
         rows.append(judged)
@@ -91,3 +92,52 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
                   additions=spec.get("additions"), result=rows)
     return dict(ok=True, pending=pending, groups=groups, pairs=rows,
                 rule_sig=gate_action.input_signature(inputs))
+
+
+class StaleRule(Exception):
+    """The chip changed since the rule was checked; the caller answers 409."""
+
+    def __init__(self, rule_sig):
+        super().__init__("The chip changed since this was checked — check again.")
+        self.rule_sig = rule_sig
+
+
+def _store_rule(spec, rule):
+    """*rule* with an id and revision, stored in ``spec['addition_rules']``."""
+    import uuid
+    rule = deepcopy(rule)
+    rule.setdefault("id", "r" + uuid.uuid4().hex[:8])
+    rule.setdefault("rev", 1)
+    rules = [r for r in spec.get("addition_rules") or [] if r.get("id") != rule["id"]]
+    spec["addition_rules"] = rules + [rule]
+    return rule
+
+
+def apply(spec, rule, rule_sig, pairs, manifest, choices=None):
+    """Write the planned additions of the listed pairs; refuse a stale check.
+
+    Only a Ready pair, or a Needs-a-look pair a ``choices`` entry resolves
+    cleanly, is written. Anything else listed is skipped with its reason.
+    Pair defaults (``gate.as_default``) are left untouched here.
+    Returns ``{spec, added, skipped, rule}``; the input spec is not changed.
+    """
+    rule = deepcopy(rule)
+    rule.setdefault("id", "r" + __import__("uuid").uuid4().hex[:8])
+    plan = expand(spec, rule, manifest, choices=choices)
+    if plan["rule_sig"] != rule_sig:
+        raise StaleRule(plan["rule_sig"])
+    by_pid = {additions.quam_pair_id(p): row for p, row in zip(spec.get("qubit_pairs") or [], plan["pairs"])}
+    choices = choices or {}
+    new, added, skipped = deepcopy(spec), [], []
+    for pid in pairs or []:
+        row = by_pid.get(pid)
+        if row is None:
+            skipped.append({"pair": pid, "reason": "no such pair"})
+        elif row["status"] == add_verdict.READY or (
+                row["status"] == add_verdict.NEEDS_LOOK and choices.get(pid) in ("control", "target")
+                and not row.get("errors") and row.get("additions")):
+            new.setdefault("additions", []).extend(deepcopy(row["additions"]))
+            added.append(pid)
+        else:
+            skipped.append({"pair": pid, "reason": row.get("reason") or row["status"]})
+    return {"spec": new, "added": added, "skipped": skipped, "rule": _store_rule(new, rule)}
