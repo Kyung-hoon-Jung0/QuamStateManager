@@ -194,7 +194,17 @@
         var dark = (document.documentElement.getAttribute('data-theme') === 'dark' || document.documentElement.getAttribute('data-theme') === 'qm');
         var P = dark ? ['#79b4fa', '#f49c67', '#57b65f', '#f285b4'] : ['#245ec4', '#a34712', '#006d2c', '#ad326b'];
         var muted = getComputedStyle(document.documentElement).getPropertyValue('--pico-muted-color').trim() || '#8a8a8a';
-        return { q: [P[0], P[1]], plan: P[2] || '#22c55e', res: P[3] || '#a855f7', muted: muted };
+        var T = window.PlotTheme;
+        var ink = getComputedStyle(document.documentElement).getPropertyValue('--pico-color').trim() || muted;
+        return { q: [P[0], P[1]], plan: P[2] || '#22c55e', res: P[3] || '#a855f7', muted: muted, ink: ink,
+                 // the operating point's knockout ring and the loss areas' fill follow the theme tokens
+                 edge: T && T.markEdge ? T.markEdge() : '#ffffff',
+                 area: function (c) { return T && T.areaFill ? T.areaFill(c) : tint(c, 0.16); } };
+    }
+    /* An operating point: filled in its line's colour, ringed in the plot background so it
+       stands out of the curve it sits on, and larger than every other marker. */
+    function operatingMarker(C, color, size) {
+        return { color: color, size: size, symbol: 'diamond', line: { color: C.edge, width: 2.5 } };
     }
     function tint(hex, alpha) {
         return 'rgba(' + [1, 3, 5].map(function (i) { return parseInt(hex.slice(i, i + 2), 16); }).join(',') + ',' + alpha + ')';
@@ -438,8 +448,8 @@
                 flush();
             });
             if (!xs.length) return;
-            traces.push({ type: 'scatter', mode: 'lines', xaxis: 'x2', x: xs, y: ys, text: ts, fill: 'toself', fillcolor: tint(C.q[k], 0.16),
-                          line: { color: C.q[k], width: 1 }, name: q.name + ' · scan loss (run #' + c.run_id + ')',
+            traces.push({ type: 'scatter', mode: 'lines', xaxis: 'x2', x: xs, y: ys, text: ts, fill: 'toself', fillcolor: C.area(C.q[k]),
+                          line: { color: C.q[k], width: 1.4 }, name: q.name + ' · scan loss (run #' + c.run_id + ')',
                           hovertemplate: '%{text}<extra></extra>', showlegend: false });
         });
         if (!traces.length) return null;
@@ -509,14 +519,14 @@
         var preview = root._czSolvePreview;
         if (preview && preview.op === d.row.path) {
             traces.push({type: 'scatter', mode: 'markers', x: [preview.x], y: [preview.y],
-                name: 'Solve preview', _czOperating: preview, marker: {size: 14, symbol: 'diamond-open'}});
+                name: 'Solve preview', _czOperating: preview, marker: {size: 14, symbol: 'diamond-open', color: C.ink, line: {width: 2}}});
         }
         lines.forEach(function (ln, k) {
             var p = ln.point, q = d.qubits[k];
             if (!ln.moves || p.frequency_hz == null || !q.summary) return;
             var shared = operatingPoint(root, d.row.path, ln.role, ln.operating_point);
             traces.push({ type: 'scatter', mode: 'markers', x: [shared ? shared.x : ln.amplitude_v], y: [shared ? shared.y : ghz(p.frequency_hz)], _czOperating: shared, name: q.name + ' at ' + d.row.operation + ' ' + (p.kind || ''),
-                showlegend: false, marker: { color: C.q[k], size: 12, symbol: 'diamond' },
+                showlegend: false, marker: operatingMarker(C, C.q[k], 16),
                 hovertemplate: hoverEsc(q.name) + ' at ' + hoverEsc(d.row.operation) + '<br>amplitude: %{x:.4f} V<br>%{y:.4f} GHz<extra>' + hoverEsc(p.kind) + '</extra>' });
             (ln.lobes || []).slice(1).forEach(function (l) {
                 if (l.point.frequency_hz == null) return;
@@ -863,7 +873,7 @@
         }
         var xs = curve.map(function (c) { return c.amplitude_v; });
         var marker = { x: [p.x], name: 'operating point', mode: 'markers', type: 'scatter', _czOperating: p,
-                       marker: { color: C.q[0], size: 13, symbol: 'diamond', line: { width: 1, color: C.q[0] } } };
+                       marker: operatingMarker(C, C.q[0], 16) };
         var qubitLines = [], qubitLabels = [];
         (d.qubits || []).forEach(function (q, k) {
             var f = q.summary && q.summary.f01_hz;

@@ -387,7 +387,39 @@
         return { tickformat: '', exponentformat: 'SI' };
     }
 
+    /* Emphasis and area tokens, read at render (so a theme switch plus a redraw follows).
+     * markEdge: the knockout ring around an emphasised marker (an operating point). It is
+     *   the plot's own background tone, so a marker filled in its curve's colour still
+     *   separates from that curve and from the background.
+     * areaFill: a filled area (a measured loss profile) in a series colour at the theme's
+     *   area opacity; dark themes need a stronger fill than light to read at all. */
+    function withAlpha(color, alpha) {
+        var c = String(color || '').trim(), m;
+        if ((m = /^#([0-9a-f]{3})$/i.exec(c))) c = '#' + m[1].split('').map(function (d) { return d + d; }).join('');
+        if ((m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(c))) {
+            return 'rgba(' + [0, 2, 4].map(function (i) { return parseInt(m[1].slice(i, i + 2), 16); }).join(',') + ',' + alpha + ')';
+        }
+        if ((m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(c))) {
+            return 'rgba(' + m[1] + ',' + m[2] + ',' + m[3] + ',' + alpha + ')';
+        }
+        return c;
+    }
+    function markEdge() {
+        return cssVar('--plot-mark-edge', cssVar('--pico-background-color', '#ffffff'));
+    }
+    function areaAlpha() {
+        var a = parseFloat(cssVar('--plot-area-alpha', ''));
+        return isFinite(a) && a > 0 && a <= 1 ? a : 0.16;
+    }
+    function areaFill(color) {
+        return withAlpha(color, areaAlpha());
+    }
+
     window.PlotTheme = {
+        withAlpha: withAlpha,
+        markEdge: markEdge,
+        areaAlpha: areaAlpha,
+        areaFill: areaFill,
         houseLayout: houseLayout,
         houseData: houseData,
         axisNumberFormat: axisNumberFormat,

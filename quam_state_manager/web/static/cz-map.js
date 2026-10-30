@@ -527,10 +527,11 @@
             });
         });
         if (G.fillX.length) {
-            traces.push({ type: 'scatter', mode: 'lines', x: G.fillX, y: G.fillY, fill: 'toself', fillcolor: 'rgba(128,128,128,0.16)',
+            traces.push({ type: 'scatter', mode: 'lines', x: G.fillX, y: G.fillY, fill: 'toself',
+                          fillcolor: window.PlotTheme && window.PlotTheme.areaFill ? window.PlotTheme.areaFill(muted) : 'rgba(128,128,128,0.16)',
                           line: { width: 0, color: 'rgba(128,128,128,0)' }, hoverinfo: 'skip', showlegend: false, meta: 'loss-fill' });
             traces.push({ type: 'scatter', mode: 'lines', x: G.lineX, y: G.lineY, text: G.lineT, showlegend: false,
-                          line: { color: muted, width: 0.8 }, hovertemplate: '%{text}<extra></extra>', meta: 'loss-line' });
+                          line: { color: muted, width: 1.2 }, hovertemplate: '%{text}<extra></extra>', meta: 'loss-line' });
         }
         if (O.lineX.length) {
             traces.push({ type: 'scatter', mode: 'lines', x: O.lineX, y: O.lineY, text: O.lineT, showlegend: false,
@@ -652,12 +653,13 @@
                 point.map_x = (x.x0 + x.x1) / 2;
                 point.map_y = point.y;
                 traces.push({type: 'scatter', mode: 'markers', x: [point.map_x], y: [point.map_y],
-                    marker: {size: 5, color: P[(colour[s.pair] || 0) % P.length]}, customdata: [[s.path, s.pair]],
+                    marker: {size: 10, symbol: 'diamond', color: P[(colour[s.pair] || 0) % P.length],
+                        line: {color: window.PlotTheme && window.PlotTheme.markEdge ? window.PlotTheme.markEdge() : card, width: 2}}, customdata: [[s.path, s.pair]],
                     showlegend: false, hoverinfo: 'skip', _czOperating: point});
                 if (point.shifted_frequency_hz != null) {
                     traces.push({type: 'scatter', mode: 'markers+text', x: [point.map_x], y: [point.shifted_frequency_hz / 1e9],
                         text: ['shifted ' + (point.shifted_frequency_hz / 1e9).toFixed(4)], textposition: 'top right',
-                        marker: {size: 7, symbol: 'diamond-open'}, showlegend: false,
+                        marker: {size: 8, symbol: 'diamond-open', color: ink, line: {width: 1.5}}, showlegend: false,
                         hovertext: point.coupler_method, _czOperating: point});
                 }
                 api.save(root);

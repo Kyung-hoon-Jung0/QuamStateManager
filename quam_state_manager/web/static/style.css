@@ -11756,9 +11756,14 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     --plot-colorway-3: #34d399; --plot-colorway-4: #e879f9;
     --plot-colorway-5: #fbbf24; --plot-colorway-6: #2dd4bf;
     --plot-colorway-7: #fb7185; --plot-colorway-8: #a8a29e;
+    /* knockout ring of an emphasised marker; opacity of a filled area (PlotTheme.markEdge / areaFill) */
+    --plot-mark-edge: var(--pico-background-color);
+    --plot-area-alpha: 0.4;
 }
 [data-theme="light"] {
     --plot-grid: rgba(60, 70, 90, 0.16);
+    --plot-mark-edge: var(--pico-background-color);
+    --plot-area-alpha: 0.3;
     --plot-colorway-1: #2563eb; --plot-colorway-2: #d97706;
     --plot-colorway-3: #059669; --plot-colorway-4: #c026d3;
     --plot-colorway-5: #ca8a04; --plot-colorway-6: #0d9488;
@@ -15861,6 +15866,8 @@ details.jargon > .jargon-explain {
     --lo-c11: #0369a1;
     --plot-grid: #ffffff1a;
     --plot-axis-text: var(--pico-color);
+    --plot-mark-edge: var(--pico-background-color);
+    --plot-area-alpha: 0.4;
     --plot-hover-bg: var(--pico-card-background-color);
     --plot-hover-text: var(--pico-color);
     --plot-colorway-1: #3a86ff;
