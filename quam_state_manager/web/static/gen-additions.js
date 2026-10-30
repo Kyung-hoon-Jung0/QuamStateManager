@@ -335,6 +335,7 @@
       var got = ff ? ff.collect() : { fields: {}, missing: [] };
       if (got.missing.length) { msg.textContent = "Required: " + got.missing.join(", "); return; }
       var add = { kind: cfg.kind, target: cfg.target, name: nm, "class": sel.value, fields: got.fields };
+      if (ex) ["rule_id", "copied_value", "choice_here"].forEach(function (k) { if (k in ex) add[k] = ex[k]; });
       if (cfg.kind === "macro" && cfg.target.indexOf("qubit_pairs.") === 0) {
         var judged = await postJSON("/generate/additions/lint", {
           spec: Object.assign({}, spec, { additions: list(spec).filter(function (a, i) { return i !== skipIndex; }) }),
@@ -356,19 +357,37 @@
     return facts && facts.roles[item.on] || null;
   }
 
+  var OWNERLESS_WHERE = {
+    high: "the higher-f_01 qubit's z, decided per pair",
+    low: "the lower-f_01 qubit's z, decided per pair",
+    coupler: "the pair's coupler, where the pair has one",
+    moving: "the moving qubit's z",
+    control: "the control qubit's z", target: "the target qubit's z",
+  };
+
   /* The one-click CZ group on a pair: a CZ macro class, the flux pulse(s) it
    * plays as pulse additions, and the macro pointing at them. No number is
-   * filled in that the class does not default. */
-  function renderCzGroup(box, owner, ctx, rerender) {
+   * filled in that the class does not default.
+   *
+   * owner === null is the OWNERLESS form (a rule for many pairs): no pair id
+   * anywhere, "plays on" becomes an on_choice select, and the main button hands
+   * a rule to opts.onContinue instead of writing. opts = {rule (prefill),
+   * okLabel, opener, onContinue(rule)}. */
+  function renderCzGroup(box, owner, ctx, rerender, opts) {
+    opts = opts || {};
     box.innerHTML = "";
+    var ownerless = !owner;
+    var prefill = opts.rule || null;
     var macros = (roles && roles.macros_pair) || {};
     var czClasses = {};
     Object.keys(macros).forEach(function (p) { if (macros[p].cz) czClasses[p] = macros[p]; });
     var pulses = (roles && roles.pulses) || {};
-    var form = el("div", { className: "gen-add-form gen-add-cz", "data-target": owner.target });
-    form.appendChild(el("p", { className: "gen-add-cz-head" },
-      "CZ on " + owner.pair + " — a gate class, the flux pulse(s) it plays, and the gate pointing at them. " +
-      "Everything stays editable in the list before you generate."));
+    var tgtKey = ownerless ? "all-pairs" : owner.target;
+    var form = el("div", { className: "gen-add-form gen-add-cz" + (ownerless ? " gen-add-cz-ownerless" : ""), "data-target": tgtKey });
+    form.appendChild(el("p", { className: "gen-add-cz-head" }, ownerless
+      ? "CZ on all pairs — a gate class, the flux pulse(s) it plays, and the gate pointing at them"
+      : "CZ on " + owner.pair + " — a gate class, the flux pulse(s) it plays, and the gate pointing at them. " +
+        "Everything stays editable in the list before you generate."));
     var row = el("div", { className: "gen-add-row" });
     var sel = classSelect(czClasses, "CZ gate class");
     sel.classList.add("gen-add-cz-class");
@@ -379,7 +398,8 @@
     form.appendChild(body);
     var msg = el("p", { className: "gen-add-msg muted" });
     var actions = el("div", { className: "gen-add-actions" });
-    var ok = el("button", { type: "button", className: "btn-sm gen-add-ok" }, "Add CZ");
+    var ok = el("button", { type: "button", className: "btn-sm gen-add-ok" },
+      ownerless ? (opts.okLabel || "Continue → choose pairs") : "Add CZ");
     var cancel = el("button", { type: "button", className: "btn-sm secondary gen-add-cancel" }, "Cancel");
     actions.appendChild(ok); actions.appendChild(cancel);
     form.appendChild(actions); form.appendChild(msg);
@@ -390,9 +410,20 @@
     }
     var parts = [];   // [{item, nameInp, clsSel, ff, onSel, enabled}]
     var macroFF = null;
+    var namesLine = null;
+
+    function exampleNames() {
+      if (!ownerless) return "";
+      var p = (ctx.spec().qubit_pairs || [])[0] || ["q2", "q3"];
+      var first = parts[0] && parts[0].item;
+      var role = first ? (first.on === "moving" ? "pulse" : first.on) : "pulse";
+      var gname = (name.value || "").trim() || "cz_x";
+      return "Pulse names: " + gname + "_" + role + "_<control>_<target>, e.g. " +
+        gname + "_" + role + "_" + p[0] + "_" + p[1] + " — one per pair, never shared.";
+    }
 
     function draw() {
-      body.innerHTML = ""; parts = []; macroFF = null;
+      body.innerHTML = ""; parts = []; macroFF = null; namesLine = null;
       var cls = czClasses[sel.value];
       if (!cls) return;
       var slug = shortName(sel.value).replace(/[^A-Za-z0-9]+/g, "_").toLowerCase().replace(/^cz_?(gate_?)?/, "") || "gate";
@@ -402,7 +433,8 @@
       body.appendChild(el("p", { className: "gen-add-origin muted", title: sel.value },
         (cls.origin === "lab" ? "Lab class" : "Official class") + (cls.doc ? " — " + cls.doc.split("\n")[0] : "")));
       cls.cz.forEach(function (item) {
-        if (item.on === "coupler" && !owner.coupler) return;
+        if (!ownerless && item.on === "coupler" && !owner.coupler) return;
+        var pre = prefill ? (prefill.items || []).filter(function (i) { return i.role === item.on; })[0] : null;
         var part = { item: item, enabled: true };
         var sec = el("div", { className: "gen-add-cz-pulse", "data-field": item.field });
         var head = el("div", { className: "gen-add-row" });
@@ -410,15 +442,28 @@
         head.appendChild(title);
         if (item.on === "coupler" && !item.required) {
           var cb = el("input", { type: "checkbox", className: "gen-add-cz-use", "aria-label": "Add a coupler pulse" });
-          cb.checked = false; part.enabled = false;
+          cb.checked = !!(pre && pre.enabled !== false); part.enabled = cb.checked;
           var cbl = el("label", { className: "gen-add-cz-usel" });
           cbl.appendChild(cb);
           cbl.appendChild(document.createTextNode("also a coupler pulse (optional)"));
           head.appendChild(cbl);
           cb.addEventListener("change", function () { part.enabled = cb.checked; inner.hidden = !cb.checked; });
         }
-        var where = recipeOn(item, owner, ctx.spec());
-        if (item.on === "moving" || ((item.on === "high" || item.on === "low") && !where)) {
+        var where = ownerless ? null : recipeOn(item, owner, ctx.spec());
+        if (ownerless) {
+          if (item.on === "moving") {
+            head.appendChild(el("span", { className: "gen-add-cz-where" }, OWNERLESS_WHERE.moving + " "));
+            var oc = el("select", { className: "gen-add-cz-on gen-add-cz-onchoice", "aria-label": "Plays on" });
+            [["auto", "per pair (its moving qubit)"], ["control", "control"], ["target", "target"]].forEach(function (o) {
+              oc.appendChild(el("option", { value: o[0] }, o[1]));
+            });
+            oc.value = (pre && pre.on_choice) || "auto";
+            head.appendChild(oc);
+            part.onSel = oc;
+          } else {
+            head.appendChild(el("span", { className: "gen-add-cz-where" }, OWNERLESS_WHERE[item.on] || "decided per pair"));
+          }
+        } else if (item.on === "moving" || ((item.on === "high" || item.on === "low") && !where)) {
           var on = el("select", { className: "gen-add-cz-on", "aria-label": "Plays on" });
           [["control", owner.control], ["target", owner.target_q]].forEach(function (o) {
             on.appendChild(el("option", { value: o[1] }, o[1] + " (" + o[0] + ")"));
@@ -443,15 +488,25 @@
         var pn = el("input", { className: "gen-add-name gen-add-cz-pname", type: "text",
                                readOnly: true, placeholder: "Named for this pair when added",
                                "aria-label": "Pulse name" });
+        if (ownerless) pn.hidden = true;
         r2.appendChild(pc); r2.appendChild(pn);
         inner.appendChild(r2);
         var pf = el("div", { className: "gen-add-fields" });
         inner.appendChild(pf);
-        pc.addEventListener("change", function () {
+        function drawFields(values) {
           pf.innerHTML = ""; part.ff = null;
           var c = pulses[pc.value];
-          if (c) part.ff = fieldsForm(pf, c, { idPrefix: owner.target + "-" + item.field });
-        });
+          if (c) part.ff = fieldsForm(pf, c, { idPrefix: tgtKey + "-" + item.field, values: values || {} });
+        }
+        pc.addEventListener("change", function () { drawFields({}); });
+        if (pre && pre.pulse_class && pulses[pre.pulse_class]) {
+          pc.value = pre.pulse_class;
+          var vals = Object.assign({}, pre.fields_struct || {});
+          Object.keys(prefill.numbers || {}).forEach(function (k) {
+            if (k.indexOf(item.on + ".") === 0) vals[k.slice(item.on.length + 1)] = prefill.numbers[k];
+          });
+          drawFields(vals);
+        }
         sec.appendChild(inner);
         part.nameInp = pn; part.clsSel = pc; part.where = where;
         parts.push(part);
@@ -461,26 +516,65 @@
       body.appendChild(el("p", { className: "muted gen-add-cz-sub" }, "Gate fields"));
       body.appendChild(rest);
       macroFF = fieldsForm(rest, cls, { skip: cls.cz.map(function (i) { return i.field; }),
-                                         idPrefix: owner.target + "-macro" });
+                                         idPrefix: tgtKey + "-macro", values: prefill ? (prefill.fields || {}) : {} });
+      if (ownerless) {
+        namesLine = el("p", { className: "gen-add-cz-names muted" }, exampleNames());
+        body.appendChild(namesLine);
+      }
     }
     sel.addEventListener("change", draw);
-    name.addEventListener("input", function () { name.setAttribute("data-auto", "0"); });
-    cancel.addEventListener("click", function () { box.innerHTML = ""; });
+    name.addEventListener("input", function () {
+      name.setAttribute("data-auto", "0");
+      if (namesLine) namesLine.textContent = exampleNames();
+    });
+    cancel.addEventListener("click", function () {
+      box.innerHTML = "";
+      if (opts.opener && opts.opener.isConnected) opts.opener.focus();
+    });
+    if (prefill && prefill.gate) {
+      sel.value = prefill.gate.macro_class; sel.title = sel.value;
+      name.value = prefill.gate.name; name.setAttribute("data-auto", "0");
+      draw();
+    }
     ok.addEventListener("click", async function () {
       if (ok.disabled) return;
       var cls = czClasses[sel.value], nm = (name.value || "").trim();
       if (!cls) { msg.textContent = "Choose a CZ gate class."; return; }
       var spec = ctx.spec(), snapshot = JSON.stringify(spec), problems = [];
-      var items = parts.filter(function (part) { return part.enabled; }).map(function (part) {
+      var collected = parts.filter(function (part) { return part.enabled; }).map(function (part) {
         var got = part.ff ? part.ff.collect() : { fields: {}, missing: [] };
+        if (ownerless && !part.clsSel.value) problems.push(part.item.field + " pulse: choose a pulse class");
         if (got.missing.length) problems.push(part.item.field + " pulse requires " + got.missing.join(", "));
-        return { role: part.item.on, field: part.item.field, enabled: true,
-          on_choice: part.onSel ? (part.onSel.value === owner.control ? "control" : "target") : "auto",
-          pulse_class: part.clsSel.value, fields: got.fields };
+        return { part: part, got: got };
       });
       var mg = macroFF ? macroFF.collect() : { fields: {}, missing: [] };
       if (mg.missing.length) problems.push("gate requires " + mg.missing.join(", "));
+      if (ownerless && !/^[A-Za-z0-9_\-]+$/.test(nm)) problems.push("name: letters, digits, '_' or '-'");
       if (problems.length) { msg.textContent = problems.join("; "); return; }
+      if (ownerless) {
+        // A rule: numbers are the form's JSON values, untouched; the rest is structure.
+        var rule = prefill ? clone(prefill) : { source: null, source_names: null, auto_new: false, excluded: [], reviewed: {} };
+        rule.kind = "pair_gate";
+        rule.gate = { name: nm, macro_class: sel.value, as_default: !!(prefill && prefill.gate && prefill.gate.as_default) };
+        rule.numbers = {}; rule.fields = mg.fields;
+        rule.items = collected.map(function (c) {
+          var struct = {};
+          Object.keys(c.got.fields).forEach(function (k) {
+            var v = c.got.fields[k];
+            if (typeof v === "number") rule.numbers[c.part.item.on + "." + k] = v; else struct[k] = v;
+          });
+          return { role: c.part.item.on, field: c.part.item.field, enabled: true, pulse_class: c.part.clsSel.value,
+                   fields_struct: struct, on_choice: c.part.onSel ? c.part.onSel.value : "auto" };
+        });
+        if (prefill) rule.rev = (prefill.rev || 0) + 1;
+        if (opts.onContinue) opts.onContinue(rule);
+        return;
+      }
+      var items = collected.map(function (c) {
+        return { role: c.part.item.on, field: c.part.item.field, enabled: true,
+          on_choice: c.part.onSel ? (c.part.onSel.value === owner.control ? "control" : "target") : "auto",
+          pulse_class: c.part.clsSel.value, fields: c.got.fields };
+      });
       ok.disabled = true;
       try {
         var response = await postJSON("/generate/additions/gate-action", { spec: spec, pair: owner.long,
@@ -498,6 +592,7 @@
           spec.populate.pairs[result.owner.long].moving_qubit = result.moving_qubit;
         }
         ctx.changed(); rerender();
+        focusChip(result.owner.pair, nm);   // the cell was rebuilt: focus would fall to <body>
       } catch (e) { msg.textContent = "Could not check the gate: " + String(e); }
       finally { ok.disabled = false; }
     });
@@ -857,9 +952,11 @@
       label: label,
       additions: Array.isArray(spec.additions) ? clone(spec.additions) : null,
       populate_pairs: spec.populate && spec.populate.pairs ? clone(spec.populate.pairs) : null,
+      rules: Array.isArray(spec.addition_rules) ? clone(spec.addition_rules) : null,
     };
     u.pushRestore(label, function () {
       if (txn.additions) spec.additions = clone(txn.additions); else delete spec.additions;
+      if (txn.rules) spec.addition_rules = clone(txn.rules); else delete spec.addition_rules;
       if (txn.populate_pairs) {
         spec.populate = spec.populate || {};
         spec.populate.pairs = clone(txn.populate_pairs);
@@ -913,6 +1010,112 @@
       : "It plays no pulse added here (0 pulses removed).");
   }
 
+  var GR = function () { return window.GenRules || null; };
+
+  function chipTitle(info, a) {
+    var rn = info.rule ? info.rule.gate.name : a.name;
+    if (info.kind === "source") return "rule " + rn + " was made from this pair — click to edit";
+    if (info.kind === "edited") {
+      var fs = (info.row && info.row.diff_vs_current || []).map(function (d) { return d.field; })
+        .filter(function (f, i, arr) { return arr.indexOf(f) === i; });
+      return "from rule " + rn + " · " + fs.length + " field" + (fs.length === 1 ? "" : "s") + " edited here (" +
+        fs.join(", ") + ") — click to edit";
+    }
+    if (info.kind === "needs") return "from rule " + rn + " · this pair's facts changed — review it";
+    return "added by rule " + rn + " — click to edit";
+  }
+  function chipSuffix(info) {
+    return { hand: "", source: "·rule·from this pair", rule: "·rule", edited: "·rule·edited",
+             needs: "·rule·needs a look" }[info.kind];
+  }
+
+  /* Remove an added gate (and the pulses only it plays) from one pair. `exclude`
+   * records the pair in its rule so a later apply does not put it back. */
+  function removeGateFrom(sp, a, g, exclude, rule, pid) {
+    var pulses = gatePulses(sp, a.index);
+    sp.additions = list(sp).filter(function (d, j) {
+      return j !== a.index && pulses.indexOf(j) < 0 &&
+        !(d.kind === "default_gate" && d.target === g.target && d.to === a.name);
+    });
+    if (!sp.additions.length) delete sp.additions;
+    if (exclude && rule && GR()) {
+      var parts = GR().pairParts(pid);
+      var key = GR().unorderedKey(parts[0], parts[1]);
+      rule.excluded = rule.excluded || [];
+      if (rule.excluded.indexOf(key) < 0) rule.excluded.push(key);
+    }
+  }
+
+  /* Every instance of a rule leaves (gate + its exclusive pulses + a default that named it). */
+  function removeAllInstances(sp, rule) {
+    var guard = 0;
+    for (;;) {
+      var idx = -1;
+      list(sp).forEach(function (d, j) { if (idx < 0 && d.kind === "macro" && d.rule_id === rule.id) idx = j; });
+      if (idx < 0 || guard++ > 5000) break;
+      var gate = list(sp)[idx], pulses = gatePulses(sp, idx);
+      sp.additions = list(sp).filter(function (d, j) {
+        return j !== idx && pulses.indexOf(j) < 0 &&
+          !(d.kind === "default_gate" && d.target === gate.target && d.to === gate.name);
+      });
+    }
+    if (!sp.additions.length) delete sp.additions;
+  }
+
+  function askRemove(sp, a, pid, pulses, info, preset, opener, done) {
+    if (info.rule && info.kind !== "source" && GR() && GR().confirmRemove) {
+      GR().confirmRemove({ gate: a.name, pid: pid, pulses: pulses.length, total: GR().countOn(sp, info.rule),
+                           preset: preset, opener: opener }, done);
+      return;
+    }
+    var ok = !(typeof window.confirm === "function") || window.confirm(gateRemoveText(sp, a, pid, pulses));
+    done(ok ? "this" : null);
+  }
+
+  function doRemove(ctx, a, pid, long, g, info, how) {
+    var sp = ctx.spec();
+    var rule = info.rule && info.kind !== "source" ? ruleOf(sp, info.rule.id) : null;
+    additionsTxn(sp, (how === "all" ? "remove " + a.name + " from all pairs" : "remove gate " + a.name + " on " + pid));
+    if (how === "all" && rule) removeAllInstances(sp, rule);
+    else removeGateFrom(sp, a, g, !!rule, rule, pid);
+    ctx.changed(); refreshAll();
+  }
+  function ruleOf(sp, id) { return GR() ? GR().ruleById(sp, id) : null; }
+
+  function focusChip(pid, name) {
+    if (!pairTable) return;
+    var c = pairTable.querySelector('.gen-gate-added[data-gate="' + name + '"][data-pair="' + pid + '"]');
+    if (c) c.focus();
+  }
+
+  function gateMenuItems(ctx, tr, pid, long, a, g, info) {
+    var sp = ctx.spec();
+    var pulses = gatePulses(sp, a.index);
+    var more = function () { return tr.querySelector('.gen-gate-more[data-gate="' + a.name + '"]'); };
+    var items = [
+      { label: "Edit…", onSelect: function () { openForm(tr, pid, long, ctx, { index: a.index, add: list(ctx.spec())[a.index] }); } },
+      { label: "Apply to other pairs…", onSelect: function () {
+          if (GR()) GR().applyToOthers(ctx, pid, list(ctx.spec())[a.index], more()); } },
+    ];
+    if (info.kind === "edited" && info.row) {
+      var fs = (info.row.diff_vs_current || []).map(function (d) { return d.field; })
+        .filter(function (f, i, arr) { return arr.indexOf(f) === i; });
+      items.push({ label: "Reset to rule  (" + fs.length + " field" + (fs.length === 1 ? "" : "s") + ": " + fs.join(", ") + ")",
+        onSelect: function () { if (GR()) GR().resetToRule(ctx, info.rule, pid, more()); } });
+    }
+    items.push({ separator: true });
+    items.push({ label: "Remove from this pair  (gate + " + pulses.length + " pulse" + (pulses.length === 1 ? "" : "s") + ")",
+      onSelect: function () {
+        askRemove(ctx.spec(), a, pid, pulses, info, "this", more(), function (how) { if (how) doRemove(ctx, a, pid, long, g, info, how === "all" ? "all" : "this"); });
+      } });
+    if (info.rule && info.kind !== "source" && GR()) {
+      items.push({ label: "Remove from all " + GR().countOn(sp, info.rule) + " pairs…", onSelect: function () {
+        askRemove(ctx.spec(), a, pid, pulses, info, "all", more(), function (how) { if (how) doRemove(ctx, a, pid, long, g, info, how === "all" ? "all" : "this"); });
+      } });
+    }
+    return items;
+  }
+
   function gatesCell(td, tr, pid, long, ctx) {
     td.innerHTML = "";
     var spec = ctx.spec();
@@ -922,7 +1125,7 @@
       var c = el(kind === "added" ? "button" : "span",
                  { className: "gen-gate gen-gate-" + kind + (name === g.effective ? " gen-gate-default" : ""),
                    "data-gate": name, type: kind === "added" ? "button" : null }, name);
-      if (kind === "added") c.setAttribute("type", "button"); else c.removeAttribute("type");
+      if (kind === "added") { c.setAttribute("type", "button"); c.setAttribute("data-pair", pid); } else c.removeAttribute("type");
       c.title = (kind === "builder" ? "made by the build" : "added here — click to edit") +
         (name === g.effective ? "; the pair's default gate (macros.cz)" : "") + (extra || "");
       if (name === g.effective) c.insertBefore(el("span", { className: "gen-gate-star", "aria-label": "default" }, "★ "), c.firstChild);
@@ -934,22 +1137,33 @@
       chip(n, "builder", n === NODE_DEFAULT ? "; what the official CZ nodes play by default" : "");
     });
     g.added.forEach(function (a) {
+      var add = list(spec)[a.index];
+      var info = GR() ? GR().gateInfo(spec, pid, add) : { kind: "hand", rule: null };
       var c = chip(a.name, "added", " (" + shortName(a.cls) + ")");
+      if (info.kind !== "hand") {
+        c.appendChild(el("span", { className: "gen-gate-badge gen-gate-badge-" + info.kind }, chipSuffix(info)));
+        c.title = chipTitle(info, a);
+      }
       c.addEventListener("click", function () { openForm(tr, pid, long, ctx, { index: a.index, add: list(ctx.spec())[a.index] }); });
+      var mb = el("button", { type: "button", className: "btn-sm secondary gen-gate-more", "data-gate": a.name,
+                              "aria-label": "Actions for " + a.name + " on " + pid, "aria-haspopup": "menu", "aria-expanded": "false",
+                              title: "Edit, apply to other pairs, remove" }, "⋯");
+      mb.addEventListener("click", function () {
+        if (!GR()) return;
+        var sp = ctx.spec();
+        var gg = pairGates(sp, pid, long);
+        var cur = gg.added.filter(function (x) { return x.name === a.name; })[0] || a;
+        var now = GR().gateInfo(sp, pid, list(sp)[cur.index]);
+        GR().menu(mb, gateMenuItems(ctx, tr, pid, long, cur, gg, now), { label: "Actions for " + a.name });
+      });
+      chips.appendChild(mb);
       var rm = el("button", { type: "button", className: "btn-sm secondary gen-gate-rm", "data-gate": a.name,
                               title: "Remove the added gate " + a.name + " and the pulses it plays" }, "✕");
       rm.addEventListener("click", function () {
         var sp = ctx.spec();
         var pulses = gatePulses(sp, a.index);
-        if (typeof window.confirm === "function" && !window.confirm(gateRemoveText(sp, a, pid, pulses))) return;
-        additionsTxn(sp, "remove gate " + a.name + " on " + pid);
-        sp.additions = list(sp).filter(function (d, j) {
-          // the gate, the pulses it plays that nothing else plays, and a default that named it
-          return j !== a.index && pulses.indexOf(j) < 0 &&
-            !(d.kind === "default_gate" && d.target === g.target && d.to === a.name);
-        });
-        if (!sp.additions.length) delete sp.additions;
-        ctx.changed(); refreshAll();
+        var nowInfo = GR() ? GR().gateInfo(sp, pid, list(sp)[a.index]) : { kind: "hand", rule: null };
+        askRemove(sp, a, pid, pulses, nowInfo, "this", rm, function (how) { if (how) doRemove(ctx, a, pid, long, g, nowInfo, how === "all" ? "all" : "this"); });
       });
       chips.appendChild(rm);
     });
@@ -980,12 +1194,34 @@
     td.appendChild(row);
   }
 
-  function openForm(tr, pid, long, ctx, existing) {
+  /* The Set-all row's Gates cell: one line per rule, and the way to make one. */
+  function setAllCell(td, tr, ctx) {
+    td.innerHTML = "";
+    var spec = ctx.spec();
+    if (!GR()) return;
+    GR().rulesOf(spec).forEach(function (rule) {
+      var line = el("div", { className: "gen-rule-summary", "data-rule": rule.id });
+      var n = GR().countOn(spec, rule);
+      line.appendChild(el("span", { className: "gen-rule-summary-text" },
+        rule.gate.name + " · " + n + " of " + (spec.qubit_pairs || []).length + " pairs"));
+      var mb = el("button", { type: "button", className: "btn-sm secondary gen-rule-more", "aria-label": "Actions for rule " + rule.gate.name,
+                              "aria-haspopup": "menu", "aria-expanded": "false" }, "⋯");
+      mb.addEventListener("click", function () { GR().menu(mb, GR().ruleMenuItems(ctx, rule.id, mb), { label: "Rule " + rule.gate.name }); });
+      line.appendChild(mb);
+      td.appendChild(line);
+    });
+    var add = el("button", { type: "button", className: "btn-sm secondary gen-setall-gate",
+                             title: "One gate on every pair: choose pairs next" }, "+ Gate for all pairs…");
+    if (!(roles && roles.ok)) add.disabled = true;
+    add.addEventListener("click", function () { openSetAllForm(tr, ctx, add, null); });
+    td.appendChild(add);
+  }
+
+  function formRowAfter(tr, ctx) {
     var next = tr.nextElementSibling;
     if (!(next && next.classList.contains("gen-gates-formrow"))) {
-      next = el("tr", { className: "gen-gates-formrow", "data-rid": tr.getAttribute("data-rid") });
+      next = el("tr", { className: "gen-gates-formrow", "data-rid": tr.getAttribute("data-rid") || "setall" });
       var cell = el("td", { colspan: String(tr.children.length) });
-      // the form stays in view however wide the table scrolls
       cell.appendChild(el("div", { className: "gen-gates-formbox" }));
       next.appendChild(cell);
       tr.parentNode.insertBefore(next, tr.nextSibling);
@@ -993,6 +1229,26 @@
     var box = next.firstChild.firstChild;
     var scroller = tr.closest(".gen-pop-host") || tr.closest("table").parentNode;
     if (scroller && scroller.clientWidth) box.style.width = Math.max(320, scroller.clientWidth - 24) + "px";
+    return box;
+  }
+
+  /* The ownerless CZ form (no pair): ends in a rule handed to the Apply dialog. */
+  function openSetAllForm(tr, ctx, opener, rule, okLabel, onSave) {
+    var box = formRowAfter(tr, ctx);
+    renderCzGroup(box, null, ctx, refreshAll, {
+      rule: rule, opener: opener, okLabel: okLabel,
+      onContinue: function (built) {
+        box.innerHTML = "";
+        if (onSave) onSave(built);
+        else if (GR()) GR().openApply({ ctx: ctx, rule: built, opener: opener });
+      },
+    });
+    var first = box.querySelector("select, input");
+    if (first) first.focus();
+  }
+
+  function openForm(tr, pid, long, ctx, existing) {
+    var box = formRowAfter(tr, ctx);
     var spec = ctx.spec();
     var ow = owners(spec).filter(function (o) { return o.kind === "pair" && o.pair === pid; })[0];
     if (!ow) return;
@@ -1017,6 +1273,11 @@
       if (sa) sa.insertBefore(el("td", { className: "gen-gates-setall" }), sa.children[1] || null);
     }
     var spec = ctx.spec();
+    var sa2 = table.querySelector("tr.gen-pop-setall");
+    if (sa2) {
+      var sat = sa2.querySelector("td.gen-gates-setall");
+      if (sat) setAllCell(sat, sa2, ctx);
+    }
     if (!ensureDisplay(spec, function () { refreshAll(); })) return;
     var byLong = {};
     (spec.qubit_pairs || []).forEach(function (p) {
@@ -1465,7 +1726,13 @@
     return null;
   }
 
-  window.GenAdditions = { classInfo: classInfo, refresh: function () { refreshAll(); }, channels: channels, owners: owners, pairId: pairId, mount: mount,
+  // The role->field list of a macro class (roles manifest), for turning an existing gate into a rule.
+  function czItems(cls) {
+    var m = ((roles && roles.macros_pair) || {})[cls];
+    return m && m.cz ? m.cz : null;
+  }
+
+  window.GenAdditions = { openRuleForm: openSetAllForm, removeRuleInstances: removeAllInstances, czItems: czItems, focusChip: focusChip, el: el, classInfo: classInfo, refresh: function () { refreshAll(); }, channels: channels, owners: owners, pairId: pairId, mount: mount,
                           renameQubits: renameQubits, gatePulses: gatePulses,
                           renderResult: renderResult, outcome: outcome, renderReview: renderReview,
                           decoratePairTable: decoratePairTable, builderGates: builderGates,

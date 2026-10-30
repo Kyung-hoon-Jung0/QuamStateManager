@@ -1314,6 +1314,10 @@
     if (Array.isArray(sp.additions) && window.GenAdditions && window.GenAdditions.renameQubits) {
       sp.additions = window.GenAdditions.renameQubits(sp.additions, map, sp.qubits, sp.qubit_pairs);
     }
+    // ... and so do the rules (source, excluded / reviewed keys, source_names), same rule.
+    if (Array.isArray(sp.addition_rules) && window.GenRules && window.GenRules.renameRules) {
+      sp.addition_rules = window.GenRules.renameRules(sp.addition_rules, map, sp.qubits, sp.qubit_pairs);
+    }
     sp.qubits =(sp.qubits || []).map(function (q) { return map[q] || q; });
     sp.qubit_pairs = (sp.qubit_pairs || []).map(function (p) {
       return [map[p[0]] || p[0], map[p[1]] || p[1]];

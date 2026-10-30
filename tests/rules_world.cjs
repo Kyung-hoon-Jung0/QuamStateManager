@@ -37,7 +37,7 @@ function installServer(w, opts) {
     const pairs = (body.spec.qubit_pairs || []).map(p => {
       const pid = pidOf(p);
       const st = s.statusOf(pid, body.spec, body);
-      return mkRow(pid, st, s.extraRow(pid, st, body));
+      return mkRow(pid, st, Object.assign(body.rule && body.rule.numbers ? { numbers: body.rule.numbers } : {}, s.extraRow(pid, st, body)));
     });
     const groups = {};
     ['Ready', 'Needs a look', "Can't", 'Already has it'].forEach(g => { groups[g] = pairs.filter(r => r.status === g); });
@@ -115,10 +115,77 @@ function makeWorld(o) {
   return { w, srv, spec };
 }
 
+
+// ---- a gen-additions + gen-rules world with a Populate pair table ------------------------
+const F = (raw, has_default, kind, default_repr) => ({ raw, has_default: !!has_default, kind: kind || 'plain', default_repr });
+const ROLES = {
+  ok: true, versions: {}, qubit_fields: [],
+  pulses: { 'pkg.P': { origin: 'lab', fields: { amplitude: F('float', true, 'plain', '0.1'), length: F('int', true, 'plain', '40') } },
+            'pkg.Q': { origin: 'lab', fields: { amplitude: F('float', true, 'plain', '0.1'), length: F('int', true, 'plain', '40') } } },
+  macros_pair: {
+    'pkg.G': { origin: 'lab', default_name: 'cz_bm', doc: 'CZ both-movers', fields: {},
+      cz: [{ field: 'flux_pulse_high', on: 'high', required: true }, { field: 'flux_pulse_low', on: 'low', required: true }] },
+    'pkg.M': { origin: 'official', default_name: 'cz_m', doc: 'CZ moving', fields: {},
+      cz: [{ field: 'flux_pulse_qubit', on: 'moving', required: true }] } },
+  macros_qubit: {}, roots: {},
+};
+const ptr = (q, n) => '#/qubits/' + q + '/z/operations/' + n;
+function pulse(q, n, cls, fields) { return { kind: 'pulse', target: 'qubits.' + q + '.z.operations', name: n, 'class': cls || 'pkg.P', fields: fields || { amplitude: 0.12, length: 40 } }; }
+function gateBundle(pid, c, t, name, extra) {
+  const h = name + '_high_' + c + '_' + t, l = name + '_low_' + c + '_' + t;
+  const rid = extra && extra.rule_id;
+  const tag = (a) => rid ? Object.assign(a, { rule_id: rid, copied_value: { amplitude: 0.12, length: 40 } }) : a;
+  return [tag(pulse(t, h)), tag(pulse(c, l)),
+    Object.assign({ kind: 'macro', target: 'qubit_pairs.' + pid + '.macros', name, 'class': 'pkg.G',
+      fields: { flux_pulse_high: ptr(t, h), flux_pulse_low: ptr(c, l) } }, rid ? { rule_id: rid } : {})];
+}
+
+function makeAddWorld(o) {
+  o = o || {};
+  const base = makeWorld(Object.assign({}, o, { additions: true }));
+  const w = base.w, spec = base.spec;
+  const longs = (spec.qubit_pairs || []).map(p => p[0] + '-' + p[1]);
+  const origFetch = w.fetch;
+  w.fetch = function (url, opts) {
+    const u = String(url);
+    if (u.indexOf('/generate/roles') >= 0 && u.indexOf('spec=') >= 0) {
+      const pairs = {};
+      (spec.qubit_pairs || []).forEach(p => {
+        const pidx = p[0] + '-' + p[1].replace(/^q/, '');
+        pairs[p[0] + '-' + p[1]] = { kind: 'pair', target: 'qubit_pairs.' + pidx + '.macros', label: pidx, pair: pidx, long: p[0] + '-' + p[1], control: p[0], target_q: p[1], coupler: false,
+          builder: ['cz_unipolar'], roles: {} };
+      });
+      return Promise.resolve({ status: 200, json: () => Promise.resolve({ display: { pairs } }) });
+    }
+    if (u.indexOf('/generate/roles') >= 0) return Promise.resolve({ status: 200, json: () => Promise.resolve(ROLES) });
+    if (u.indexOf('/additions/gate-action') >= 0) {
+      const b = JSON.parse(opts.body);
+      const c = b.pair.split('-')[0], t = b.pair.split('-')[1], pid = c + '-' + t.replace(/^q/, '');
+      w.gateActions = (w.gateActions || []); w.gateActions.push(b);
+      const adds = gateBundle(pid, c, t, b.action.gate.name);
+      return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true, owner: { pair: pid, long: b.pair, control: c, target_q: t },
+        additions: adds, moving_qubit: null, errors: [] }) });
+    }
+    return origFetch(url, opts);
+  };
+  const doc = w.document;
+  doc.getElementById('pt').innerHTML = '<table id="gen-pop-tbl-pairs"><thead><tr><th>Pair</th><th>x</th></tr></thead><tbody>' +
+    '<tr class="gen-pop-setall"><td>Set all →</td><td></td></tr>' +
+    (spec.qubit_pairs || []).map(p => '<tr data-group="pairs" data-rid="' + p[0] + '-' + p[1] + '"><td>' + p[0] + '-' + p[1] + '</td><td></td></tr>').join('') +
+    '</tbody></table>';
+  w.table = () => doc.getElementById('gen-pop-tbl-pairs');
+  w.decorate = async () => { w.GenAdditions.decoratePairTable(w.table(), w.ctx); await settle(); };
+  w.chip = (pid, name) => doc.querySelector('.gen-gate-added[data-gate="' + name + '"][data-pair="' + pid + '"]');
+  w.more = (pid, name) => doc.querySelector('tr[data-rid="' + pid.replace(/^q(\d+)-(\d+)$/, 'q$1-q$2') + '"] .gen-gate-more[data-gate="' + name + '"]');
+  w.menuItems = () => Array.from(doc.querySelectorAll('.gen-rule-menu [role="menuitem"], .gen-rule-menu [role="menuitemcheckbox"]'));
+  w.GenAdditions.mount(doc.getElementById('host'), w.ctx);
+  return base;
+}
+
 let fails = 0, asserts = 0;
 function ok(c, m) { asserts++; if (!c) { fails++; console.error('FAIL ' + m); } }
 function done(name) {
   console.log((fails ? 'FAILED ' : 'OK ') + name + ': ' + asserts + ' assertions, ' + fails + ' failed');
   process.exit(fails ? 1 : 0);
 }
-module.exports = { makeWorld, mkRow, baseSpec, baseRule, applyOk, pidOf, settle, wait, tick, ok, done, read };
+module.exports = { makeAddWorld, ROLES, pulse, gateBundle, ptr, makeWorld, mkRow, baseSpec, baseRule, applyOk, pidOf, settle, wait, tick, ok, done, read };

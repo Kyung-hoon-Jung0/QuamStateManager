@@ -600,6 +600,31 @@
     renderCards();
   }
 
+  /* One apply, shared by the dialog, Reset to rule and the review dialog: the server
+   * re-expands and answers with the whole new spec; the client swaps it in as ONE undo entry.
+   * Resolves {ok:true, out} or {ok:false, stale, reason} (never re-sent). */
+  function commitApply(o) {
+    var ctx = o.ctx, spec = ctx.spec(), seq = _seq, sig = specSig(spec, o.rule, o.choices && Object.keys(o.choices).length ? o.choices : null);
+    var body = { spec: spec, rule: o.rule, rule_sig: o.answer.rule_sig, pairs: o.pids };
+    if (o.choices && Object.keys(o.choices).length) body.choices = o.choices;
+    return post(APPLY_URL, body).then(function (res) {
+      if (seq !== _seq) return { ok: false, stale: true, reason: "The chip changed while this was open" };
+      if (res.status === 409 || !res.body || res.body.ok === false) {
+        return { ok: false, stale: true, reason: (res.body && res.body.error) || "The chip changed while this was open" };
+      }
+      var out = res.body, before = clone(spec);
+      replaceInPlace(spec, out.spec);
+      var rid = (out.rule && out.rule.id) || o.rule.id;
+      if (o.after) o.after(spec, rid, out);
+      pushUndo(spec, o.label, before, function () { ctx.changed(); refreshViews(); });
+      resetRuleRuntime();
+      ctx.changed();
+      noteExpand({ id: rid }, null);
+      refreshViews();
+      return { ok: true, out: out, rid: rid };
+    });
+  }
+
   function doApply(d) {
     if (d.applyBtn.disabled) return;
     var pids = tickedPids(d);
@@ -608,40 +633,33 @@
     var spec = d.ctx.spec(), seq = _seq, sig = currentSig(d);
     var choices = {};
     pids.forEach(function (p) { if (d.choices[p]) choices[p] = d.choices[p]; });
-    var body = { spec: spec, rule: d.rule, rule_sig: d.answer.rule_sig, pairs: pids };
-    if (Object.keys(choices).length) body.choices = choices;
-    post(APPLY_URL, body).then(function (res) {
+    var gname = (d.rule.gate && d.rule.gate.name) || "gate";
+    commitApply({ ctx: d.ctx, rule: d.rule, answer: d.answer, pids: pids, choices: choices,
+      label: "add " + gname + " to " + plural(pids.length, "pair"),
+      after: function (sp, rid) {
+        var stored = ruleById(sp, rid);
+        if (stored && stored.auto_new !== d.laterEl.checked) stored.auto_new = d.laterEl.checked;
+      } }).then(function (res) {
       d.applying = false;
       if (d.closed) return;
-      if (seq !== _seq || sig !== currentSig(d)) { renderFoot(d); return; }   // content moved: the stale path owns it
-      if (res.status === 409 || !res.body || res.body.ok === false) {
+      if (!res.ok) {
+        if (seq !== _seq || sig !== currentSig(d)) { renderFoot(d); return; }   // content moved: the stale path owns it
         d.status = "stale";
-        d.staleReason = (res.body && res.body.error) || "The chip changed while this was open";
+        d.staleReason = res.reason;
         d.specSnap = watchedOf(spec);
         render(d);
         d.cancelBtn.focus();
         recheck(d, "conflict", 0);   // ask again for the current answer; never re-send this apply
         return;
       }
-      var out = res.body, next = out.spec;
-      var label = "add " + ((d.rule.gate && d.rule.gate.name) || "gate") + " to " + plural((out.added || []).length, "pair");
-      var before = clone(spec);
-      replaceInPlace(spec, next);
-      var rid = (out.rule && out.rule.id) || d.rule.id;
-      var stored = ruleById(spec, rid);
-      if (stored && stored.auto_new !== d.laterEl.checked) stored.auto_new = d.laterEl.checked;
-      pushUndo(spec, label, before, function () { d.ctx.changed(); refreshViews(); });
+      var out = res.out;
       closeApply(d, "applied");
-      resetRuleRuntime();
-      d.ctx.changed();
-      if (d.cache) d.cache(null, null);
-      refreshViews();
       var msg = addedText(d.rule, out.added || []);
       if ((out.skipped || []).length) {
-        msg += " " + plural(out.skipped.length, "pair") + " skipped: " + out.skipped.map(function (s) { return s.pair + " — " + s.reason; }).join("; ") + ".";
+        msg += " " + plural(out.skipped.length, "pair") + " skipped: " + out.skipped.map(function (x) { return x.pair + " — " + x.reason; }).join("; ") + ".";
       }
       toast(msg, "info");
-      focusCard(rid);
+      focusCard(res.rid);
     }).catch(function (e) {
       d.applying = false;
       d.status = "error"; d.error = "Could not add the gate: " + String(e && e.message || e);
@@ -653,7 +671,8 @@
     if (_open) closeApply(_open, "replaced");
     var d = { ctx: opts.ctx, rule: opts.rule, opener: opts.opener || document.activeElement, status: "loading",
               answer: null, ticks: {}, choices: {}, reqN: 0, pending: true, closed: false, applying: false,
-              feedline: null, cache: opts.cache || null, landed: false };
+              feedline: null, cache: null, landed: false };
+    d.cache = opts.cache || function (answer, sig) { noteExpand(d.rule, answer, sig); };
     d.specSnap = watchedOf(d.ctx.spec());
     var dlg = buildDialog(d);
     document.body.appendChild(dlg);
@@ -731,13 +750,415 @@
     return node;
   }
 
-  /* ---- placeholders the later steps fill ------------------------------- */
+  /* ---- what the last answers said, per rule (feeds badges and the card) ---- */
 
-  function renderCards() { /* 6e */ }
-  function focusCard(id) {
-    var card = document.querySelector('.gen-rule-card[data-rule="' + id + '"]');
-    if (card) card.focus();
+  var _status = {};          // rule id -> {rows: {pid: row}, sig}
+  function noteExpand(rule, answer, sig) {
+    if (!rule || !rule.id) return;
+    if (!answer) { delete _status[rule.id]; return; }
+    var rows = {};
+    (answer.pairs || []).forEach(function (r) { rows[r.pair] = r; });
+    _status[rule.id] = { rows: rows, sig: sig || null, rule_sig: answer.rule_sig };
+    if (window.GenAdditions && window.GenAdditions.refresh) {
+      Promise.resolve().then(function () { window.GenAdditions.refresh(); renderCards(); });
+    }
   }
+  function statusRow(ruleId, pid) {
+    var st = _status[ruleId];
+    return st && st.rows[pid] || null;
+  }
+
+  /* ---- model readers used by the Gates cell -------------------------------- */
+
+  function pairParts(pid) {
+    var s = String(pid), i = s.indexOf("-");
+    return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)];
+  }
+  function sameKey(a, b) {
+    var x = pairParts(a), y = pairParts(b);
+    return unorderedKey(x[0], x[1]) === unorderedKey(y[0], y[1]);
+  }
+  function pidOfTarget(target) {
+    var m = /^qubit_pairs\.([^.]+)\.macros$/.exec(String(target || ""));
+    return m ? m[1] : null;
+  }
+
+  function gateInfo(spec, pid, add) {
+    var rule = add && add.rule_id ? ruleById(spec, add.rule_id) : null;
+    if (!rule) {
+      rule = rulesOf(spec).filter(function (r) {
+        return r.source && sameKey(r.source, pid) && r.gate && r.gate.name === add.name;
+      })[0] || null;
+      return rule ? { kind: "source", rule: rule } : { kind: "hand", rule: null };
+    }
+    if (rule.source && sameKey(rule.source, pid)) return { kind: "source", rule: rule };
+    var row = statusRow(rule.id, pid);
+    var kind = row && row.status === G_LOOK ? "needs" : (row && row.edited ? "edited" : "rule");
+    return { kind: kind, rule: rule, row: row };
+  }
+
+  // The pairs a rule is on: its instances, plus the source gate where that still exists.
+  function countOn(spec, rule) {
+    var seen = {};
+    (spec.additions || []).forEach(function (a) {
+      if (a.kind !== "macro" || a.name !== (rule.gate && rule.gate.name)) return;
+      var pid = pidOfTarget(a.target);
+      if (!pid) return;
+      if (a.rule_id === rule.id || (rule.source && sameKey(rule.source, pid))) {
+        var p = pairParts(pid);
+        seen[unorderedKey(p[0], p[1])] = 1;
+      }
+    });
+    return Object.keys(seen).length;
+  }
+
+  /* ---- a rule from a gate that already exists --------------------------- */
+
+  var ROLE_OF_FIELD = { flux_pulse_qubit: "moving", flux_pulse_high: "high", flux_pulse_low: "low",
+                        flux_pulse_control: "control", flux_pulse_target: "target", coupler_flux_pulse: "coupler" };
+  function pulseByPointer(spec, ptr) {
+    var m = /^#\/(.+)\/([^/]+)$/.exec(String(ptr));
+    if (!m) return null;
+    var target = m[1].split("/").join(".");
+    return (spec.additions || []).filter(function (a) { return a.kind === "pulse" && a.target === target && a.name === m[2]; })[0] || null;
+  }
+  function ruleFromGate(spec, pid, add) {
+    var cz = (window.GenAdditions && window.GenAdditions.czItems && window.GenAdditions.czItems(add["class"])) || null;
+    var items = [], names = {}, rest = {};
+    Object.keys(add.fields || {}).forEach(function (fn) {
+      var v = add.fields[fn];
+      var pulse = typeof v === "string" && v.charAt(0) === "#" ? pulseByPointer(spec, v) : null;
+      var role = null;
+      if (cz) cz.forEach(function (c) { if (c.field === fn) role = c.on; });
+      if (!role) role = ROLE_OF_FIELD[fn] || null;
+      if (pulse && role) {
+        var struct = {};
+        Object.keys(pulse.fields || {}).forEach(function (k) {
+          if (typeof pulse.fields[k] !== "number") struct[k] = clone(pulse.fields[k]);
+        });
+        items.push({ role: role, field: fn, enabled: true, pulse_class: pulse["class"], fields_struct: struct, on_choice: "auto" });
+        names[role] = pulse.name;
+      } else rest[fn] = clone(v);
+    });
+    return { kind: "pair_gate", source: pid, gate: { name: add.name, macro_class: add["class"], as_default: false },
+             items: items, numbers: {}, fields: rest, source_names: items.length ? names : null,
+             auto_new: false, excluded: [], reviewed: {} };
+  }
+
+  function applyToOthers(ctx, pid, add, opener) {
+    var spec = ctx.spec();
+    var info = gateInfo(spec, pid, add);
+    var rule = info.rule ? clone(info.rule) : ruleFromGate(spec, pid, add);
+    openApply({ ctx: ctx, rule: rule, opener: opener });
+  }
+
+  /* ---- the ✕ confirm of a rule's gate: two radios (4.3) ---------------------- */
+
+  function confirmRemove(o, done) {
+    var dlg = el("dialog", { className: "gen-rule-dlg gen-rule-mini", "aria-labelledby": "gen-rule-rm-title" });
+    dlg.appendChild(el("p", { id: "gen-rule-rm-title", className: "gen-rule-rm-title" },
+      "Remove " + o.gate + " from " + o.pid + "?  Its " + plural(o.pulses, "pulse") + " go with it."));
+    var radios = {};
+    [["this", "This pair only — exclude it from the rule"], ["all", "All " + o.total + " pairs"]].forEach(function (r) {
+      var lab = el("label", { className: "gen-rule-rm-opt" });
+      var inp = el("input", { type: "radio", name: "gen-rule-rm", value: r[0] });
+      inp.checked = (o.preset || "this") === r[0];
+      radios[r[0]] = inp;
+      lab.appendChild(inp); lab.appendChild(document.createTextNode(" " + r[1]));
+      dlg.appendChild(lab);
+    });
+    var foot = el("div", { className: "gen-rule-foot" });
+    var rm = el("button", { type: "button", className: "gen-rule-rm-ok" }, "Remove");
+    var cancel = el("button", { type: "button", className: "secondary gen-rule-rm-cancel" }, "Cancel");
+    foot.appendChild(rm); foot.appendChild(cancel);
+    dlg.appendChild(foot);
+    document.body.appendChild(dlg);
+    var finished = false;
+    function finish(how) {
+      if (finished) return;
+      finished = true;
+      document.removeEventListener("keydown", onKey, true);
+      try { if (typeof dlg.close === "function") dlg.close(); } catch (e) { /* closed */ }
+      if (dlg.parentNode) dlg.parentNode.removeChild(dlg);
+      if (!how && o.opener && o.opener.isConnected) o.opener.focus();
+      done(how);
+    }
+    function onKey(ev) { if (ev.key === "Escape") { ev.preventDefault(); finish(null); } }
+    document.addEventListener("keydown", onKey, true);
+    rm.addEventListener("click", function () { finish(radios.all.checked ? "all" : "this"); });
+    cancel.addEventListener("click", function () { finish(null); });
+    dlg.addEventListener("cancel", function (ev) { ev.preventDefault(); finish(null); });
+    if (typeof dlg.showModal === "function") { try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); } }
+    else dlg.setAttribute("open", "");
+    (radios[o.preset || "this"] || radios.this).focus();
+    return dlg;
+  }
+
+  /* ---- a rule-level undo entry (rules, additions, populate pairs) ----------- */
+
+  function rulesTxn(spec, label, refresh) {
+    var u = window._wizUndo;
+    if (!u || typeof u.pushRestore !== "function") return;
+    var snap = { additions: clone(spec.additions), rules: clone(spec.addition_rules),
+                 pairs: spec.populate && spec.populate.pairs ? clone(spec.populate.pairs) : undefined };
+    u.pushRestore(label, function () {
+      if (snap.additions) spec.additions = clone(snap.additions); else delete spec.additions;
+      if (snap.rules) spec.addition_rules = clone(snap.rules); else delete spec.addition_rules;
+      if (snap.pairs) { spec.populate = spec.populate || {}; spec.populate.pairs = clone(snap.pairs); }
+      else if (spec.populate) delete spec.populate.pairs;
+      (refresh || refreshViews)();
+    });
+  }
+
+  function ruleMenuItems(ctx, ruleId, btn) {
+    var spec = ctx.spec(), rule = ruleById(spec, ruleId);
+    if (!rule) return [{ label: "This rule is gone", disabled: true }];
+    var n = countOn(spec, rule);
+    var after = function () { ctx.changed(); refreshViews(); };
+    return [
+      { label: "Stop as a rule — keep the " + n + " gates", onSelect: function () {
+          rulesTxn(spec, "stop rule " + rule.gate.name);
+          (spec.additions || []).forEach(function (a) { if (a.rule_id === rule.id) { delete a.rule_id; delete a.copied_value; delete a.choice_here; } });
+          spec.addition_rules = spec.addition_rules.filter(function (r) { return r.id !== rule.id; });
+          if (!spec.addition_rules.length) delete spec.addition_rules;
+          delete _status[rule.id];
+          after();
+          toast("Stopped rule " + rule.gate.name + " — its " + n + " gates stay as they are. Ctrl+Z undoes it.");
+          focusCard(null, btn);
+        } },
+      { label: "Remove the rule and its " + n + " gates…", onSelect: function () {
+          var ok = typeof window.confirm !== "function" ||
+            window.confirm("Remove rule " + rule.gate.name + " and its " + n + " gates (with the pulses only they play)?");
+          if (!ok) return;
+          rulesTxn(spec, "remove rule " + rule.gate.name);
+          if (window.GenAdditions && window.GenAdditions.removeRuleInstances) window.GenAdditions.removeRuleInstances(spec, rule);
+          spec.addition_rules = spec.addition_rules.filter(function (r) { return r.id !== rule.id; });
+          if (!spec.addition_rules.length) delete spec.addition_rules;
+          delete _status[rule.id];
+          after();
+          toast("Removed rule " + rule.gate.name + " and its " + n + " gates. Ctrl+Z undoes it.");
+          focusCard(null, btn);
+        } },
+      { separator: true },
+      { label: "Also add to pairs created later", checkbox: true, checked: !!rule.auto_new, onSelect: function () {
+          rulesTxn(spec, "auto-add " + rule.gate.name);
+          rule.auto_new = !rule.auto_new;
+          after();
+          focusCard(rule.id, btn);
+        } },
+    ];
+  }
+
+  /* ---- Reset to rule and the review dialog (4.11) ----------------------------- */
+
+  function fieldDiffHtml(d) {
+    var pre = (d.name || d.kind) + "  " + d.field + "  ";
+    var o = d.old == null ? "—" : String(d.old), n = d.new == null ? "—" : String(d.new);
+    var s = pre + o + " → " + n;
+    return s;
+  }
+
+  // mode "review": every Needs-a-look pair of the rule; mode "reset": one pair back to the rule.
+  function openReview(opts) {
+    var ctx = opts.ctx, mode = opts.mode || "review";
+    var dlg = el("dialog", { className: "gen-rule-dlg gen-rule-review", "aria-labelledby": "gen-rule-rv-title" });
+    var title = el("h3", { id: "gen-rule-rv-title" });
+    var head = el("div", { className: "gen-rule-head" });
+    var xb = el("button", { type: "button", className: "gen-rule-x secondary", "aria-label": "Close" }, "✕");
+    head.appendChild(title); head.appendChild(xb);
+    dlg.appendChild(head);
+    var sub = el("p", { className: "gen-rule-sub" }, mode === "reset"
+      ? "These fields go back to the rule's values. Nothing is written until you choose."
+      : "Recalculated with the pairs' current facts. Nothing is written until you choose.");
+    dlg.appendChild(sub);
+    var list = el("div", { className: "gen-rule-rv-list" });
+    dlg.appendChild(list);
+    var foot = el("div", { className: "gen-rule-foot" });
+    var keepAll = el("button", { type: "button", className: "secondary gen-rule-rv-keepall" }, "Keep all as is");
+    var applyAll = el("button", { type: "button", className: "gen-rule-rv-applyall" }, "Apply all");
+    if (mode !== "reset") { foot.appendChild(keepAll); foot.appendChild(applyAll); }
+    dlg.appendChild(foot);
+    document.body.appendChild(dlg);
+    var r = { closed: false, answer: null, busy: false };
+    function ruleNow() { return ruleById(ctx.spec(), opts.rule.id) || opts.rule; }
+    function pending() {
+      var rows = (r.answer && r.answer.pairs) || [];
+      return rows.filter(function (row) {
+        return mode === "reset" ? row.pair === opts.pid : row.status === G_LOOK;
+      });
+    }
+    function close(refocus) {
+      if (r.closed) return; r.closed = true;
+      document.removeEventListener("keydown", onKey, true);
+      abortRv();
+      try { if (typeof dlg.close === "function") dlg.close(); } catch (e) { /* closed */ }
+      if (dlg.parentNode) dlg.parentNode.removeChild(dlg);
+      if (refocus && opts.opener && opts.opener.isConnected) opts.opener.focus();
+    }
+    var rvCtl = null;
+    function abortRv() { if (rvCtl) { try { rvCtl.abort(); } catch (e) { /* done */ } rvCtl = null; } }
+    function onKey(ev) { if (ev.key === "Escape" && !_menu) { ev.preventDefault(); close(true); } }
+    document.addEventListener("keydown", onKey, true);
+    xb.addEventListener("click", function () { close(true); });
+    dlg.addEventListener("cancel", function (ev) { ev.preventDefault(); close(true); });
+
+    function draw() {
+      var rows = pending();
+      list.innerHTML = "";
+      title.textContent = mode === "reset"
+        ? "Reset " + opts.pid + " to rule " + ruleNow().gate.name
+        : ruleNow().gate.name + " — " + plural(rows.length, "pair") + " would change";
+      applyAll.textContent = "Apply all " + plural(rows.length, "change");
+      keepAll.disabled = applyAll.disabled = !rows.length || r.busy;
+      if (!r.answer) { list.appendChild(el("p", { className: "muted" }, "Checking…")); return; }
+      if (!rows.length) {
+        list.appendChild(el("p", { className: "gen-rule-rv-none" }, mode === "reset" ? "Nothing differs from the rule here." : "Nothing is waiting for a look."));
+        if (mode !== "reset") { dlg.setAttribute("data-empty", "1"); }
+        return;
+      }
+      rows.forEach(function (row) {
+        var box = el("div", { className: "gen-rule-rv-pair", "data-pair": row.pair });
+        box.appendChild(el("p", { className: "gen-rule-rv-head" }, row.pair + " — " +
+          (mode === "reset" ? "edited here" : (row.reason || "facts changed"))));
+        (row.diff_vs_current || []).forEach(function (d) {
+          var line = el("div", { className: "gen-rule-rv-line" }, fieldDiffHtml(d));
+          if (typeof d.old === "number" && typeof d.new === "number" && window.ValueDelta && window.ValueDelta.chipHtml) {
+            var chip = el("span", { className: "gen-rule-rv-delta" });
+            chip.innerHTML = window.ValueDelta.chipHtml(d.old, d.new);
+            line.appendChild(chip);
+          }
+          box.appendChild(line);
+        });
+        var btns = el("div", { className: "gen-rule-rv-btns" });
+        var keep = el("button", { type: "button", className: "secondary gen-rule-rv-keep", "data-pair": row.pair },
+          mode === "reset" ? "Cancel" : "Keep as is");
+        var app = el("button", { type: "button", className: "gen-rule-rv-apply", "data-pair": row.pair },
+          mode === "reset" ? "Reset to rule" : "Apply change");
+        btns.appendChild(app); btns.appendChild(keep);
+        box.appendChild(btns);
+        keep.addEventListener("click", function () {
+          if (mode === "reset") { close(true); return; }
+          keepPairs([row]);
+        });
+        app.addEventListener("click", function () { applyPairs([row]); });
+        list.appendChild(box);
+      });
+    }
+
+    function load(why) {
+      abortRv();
+      r.busy = true;
+      var ctl = typeof AbortController === "function" ? new AbortController() : null;
+      rvCtl = ctl;
+      var seq = _seq, spec = ctx.spec(), rule = ruleNow(), sig = specSig(spec, rule, null);
+      post(EXPAND_URL, { spec: spec, rule: rule }, ctl && ctl.signal).then(function (res) {
+        if (r.closed || seq !== _seq || sig !== specSig(ctx.spec(), ruleNow(), null)) return;
+        r.busy = false;
+        if (!res.body || res.body.ok === false) { r.answer = null; list.innerHTML = ""; list.appendChild(el("p", { className: "gen-rule-status-error" }, (res.body && res.body.error) || "Could not check the pairs.")); return; }
+        r.answer = res.body;
+        noteExpand(rule, res.body, sig);
+        draw();
+        if (why === "open") {
+          var first = list.querySelector(mode === "reset" ? ".gen-rule-rv-apply" : ".gen-rule-rv-keep");
+          (first || xb).focus();
+        } else if (!pending().length) { close(true); }
+      }).catch(function (e) { if (!(e && e.name === "AbortError")) { r.busy = false; } });
+    }
+
+    function applyPairs(rows) {
+      if (r.busy || !rows.length) return;
+      r.busy = true; draw();
+      var rule = ruleNow();
+      commitApply({ ctx: ctx, rule: rule, answer: r.answer, pids: rows.map(function (x) { return x.pair; }),
+                    label: mode === "reset" ? "reset " + opts.pid + " to rule " + rule.gate.name
+                      : (rows.length === 1 ? "apply change to " + rows[0].pair : "apply " + rows.length + " changes") })
+        .then(function (res) {
+          r.busy = false;
+          if (!res.ok) { r.answer = null; draw(); load("again"); return; }
+          toast((mode === "reset" ? "Reset " + opts.pid + " to rule " + rule.gate.name : "Applied " + plural(rows.length, "change")) + ". Ctrl+Z undoes it.");
+          load("again");
+        });
+    }
+    function keepPairs(rows) {
+      var spec = ctx.spec(), rule = ruleById(spec, opts.rule.id);
+      if (!rule) return;
+      rulesTxn(spec, "keep " + rows.length + " pair" + (rows.length === 1 ? "" : "s") + " as is");
+      rule.reviewed = rule.reviewed || {};
+      rows.forEach(function (row) { rule.reviewed[row.key] = row.instance_sig; });
+      ctx.changed();
+      resetRuleRuntimeKeepOpen();
+      renderCards();
+      if (window.GenAdditions && window.GenAdditions.refresh) window.GenAdditions.refresh();
+      load("again");
+    }
+    keepAll.addEventListener("click", function () { keepPairs(pending()); });
+    applyAll.addEventListener("click", function () { applyPairs(pending()); });
+    if (typeof dlg.showModal === "function") { try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); } }
+    else dlg.setAttribute("open", "");
+    draw();
+    xb.focus();
+    load("open");
+    return { dlg: dlg, close: close };
+  }
+  // A rule edit (reviewed) changes the question, not the content: bump nothing else.
+  function resetRuleRuntimeKeepOpen() { abortInFlight(); }
+
+  function resetToRule(ctx, rule, pid, opener) {
+    openReview({ ctx: ctx, rule: rule, mode: "reset", pid: pid, opener: opener });
+  }
+
+  function renderCards() { /* the Rules card: 6e */ }
+  function focusCard(id, fallback) {
+    var card = id && document.querySelector('.gen-rule-card[data-rule="' + id + '"]');
+    if (card) { card.focus(); return; }
+    if (fallback && fallback.isConnected) fallback.focus();
+  }
+  /* A qubit rename (generate.js applyQubitIdMap) re-expressed in the rules: `source`, the
+   * keys of `excluded`/`reviewed` and the values of `source_names` follow by the rebuild's own
+   * token rule ("_"-delimited tokens, longest first, so q1 -> qA leaves q10 alone). map = {old: new};
+   * qubitIds / pairs = the spec's BEFORE the rename. Python twin: core/additions.py::rename_rules. */
+  function renameRules(rules, map, qubitIds, pairs) {
+    var tok = {};
+    Object.keys(map || {}).forEach(function (o) { if (String(map[o]) !== o) tok[o] = String(map[o]); });
+    var out = clone(rules || []);
+    if (!Object.keys(tok).length) return out;
+    var seen = {};
+    var every = Object.keys(tok).concat((qubitIds || []).map(String)).filter(function (k) {
+      if (!k || seen[k]) return false; seen[k] = true; return true;
+    }).sort(function (a, b) { return b.length - a.length; });
+    var pat = new RegExp("(?<![^_])(?:" + every.map(function (k) {
+      return k.replace(/[.*+?^${}()|[\]\-]/g, "\$&");
+    }).join("|") + ")(?![^_])", "g");
+    var rename = function (t) { return String(t).replace(pat, function (m) { return tok.hasOwnProperty(m) ? tok[m] : m; }); };
+    var pmap = {}, kmap = {};
+    var pairId = window.GenAdditions && window.GenAdditions.pairId;
+    (pairs || []).forEach(function (p) {
+      if (!Array.isArray(p) || p.length !== 2) return;
+      var c = String(p[0]), t = String(p[1]);
+      var nc = tok.hasOwnProperty(c) ? tok[c] : c, nt = tok.hasOwnProperty(t) ? tok[t] : t;
+      if (pairId) pmap[pairId(c, t)] = pairId(nc, nt);
+      kmap[unorderedKey(c, t)] = unorderedKey(nc, nt);
+    });
+    function rekey(obj, keyMap) {
+      if (!obj || typeof obj !== "object") return obj;
+      var o = {};
+      Object.keys(obj).forEach(function (k) { o[keyMap.hasOwnProperty(k) ? keyMap[k] : k] = obj[k]; });
+      return o;
+    }
+    out.forEach(function (r) {
+      if (!r || typeof r !== "object") return;
+      if (typeof r.source === "string") r.source = pmap.hasOwnProperty(r.source) ? pmap[r.source] : r.source;
+      if (Array.isArray(r.excluded)) r.excluded = r.excluded.map(function (k) { return kmap.hasOwnProperty(k) ? kmap[k] : k; });
+      if (r.reviewed) r.reviewed = rekey(r.reviewed, kmap);
+      if (r.source_names && typeof r.source_names === "object") {
+        Object.keys(r.source_names).forEach(function (role) {
+          if (typeof r.source_names[role] === "string") r.source_names[role] = rename(r.source_names[role]);
+        });
+      }
+    });
+    return out;
+  }
+
   function specChanged(reason, spec) {
     var d = _open;
     if (!d || d.closed || d.applying) return;
@@ -752,10 +1173,13 @@
   }
 
   window.GenRules = {
-    rulesOf: rulesOf, ruleById: ruleById, unorderedKey: unorderedKey, specSig: specSig,
+    renameRules: renameRules, rulesOf: rulesOf, ruleById: ruleById, unorderedKey: unorderedKey, specSig: specSig,
     resetRuleRuntime: resetRuleRuntime, reset: resetRuleRuntime, specChanged: specChanged,
     openApply: openApply, closeApply: function () { if (_open) closeApply(_open, "cancel"); },
     menu: menu, closeMenu: closeMenu, renderCards: renderCards,
+    gateInfo: gateInfo, countOn: countOn, pairParts: pairParts, applyToOthers: applyToOthers,
+    resetToRule: resetToRule, confirmRemove: confirmRemove, ruleMenuItems: ruleMenuItems, openReview: openReview,
+    ruleFromGate: ruleFromGate, noteExpand: noteExpand, statusRow: statusRow, commitApply: commitApply,
     _state: function () { return { seq: _seq, open: _open }; },
   };
 })();
