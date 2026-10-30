@@ -1396,7 +1396,68 @@
     return { count: items.length, refused: bad };
   }
 
+  /* A qubit rename (the wizard's applyQubitIdMap) re-expressed in the
+   * additions, by the rebuild's own rules (regen_merge.token_pattern /
+   * _renamed_pointer; the Python twin is additions.rename_qubits, pinned for
+   * parity): a pair id after qubit_pairs is swapped whole; every other target
+   * segment, every pointer in fields / value, the name and a default gate's
+   * `to` get their "_"-delimited qubit-id tokens renamed (below extras kept
+   * verbatim). So a pointer that names an addition keeps naming it.
+   * map = {old: new}; qubitIds / pairs = the spec's BEFORE the rename. */
+  function renameQubits(adds, map, qubitIds, pairs) {
+    var tok = {};
+    Object.keys(map || {}).forEach(function (o) { if (String(map[o]) !== o) tok[o] = String(map[o]); });
+    var out = clone(adds || []);
+    if (!Object.keys(tok).length) return out;
+    var seen = {};
+    var every = Object.keys(tok).concat((qubitIds || []).map(String)).filter(function (k) {
+      if (!k || seen[k]) return false; seen[k] = true; return true;
+    }).sort(function (a, b) { return b.length - a.length; });
+    var pat = new RegExp("(?<![^_])(?:" + every.map(function (k) {
+      return k.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+    }).join("|") + ")(?![^_])", "g");
+    var rename = function (t) { return t.replace(pat, function (m) { return tok.hasOwnProperty(m) ? tok[m] : m; }); };
+    var pmap = {};
+    (pairs || []).forEach(function (p) {
+      if (!Array.isArray(p) || p.length !== 2) return;
+      var c = String(p[0]), t = String(p[1]);
+      pmap[pairId(c, t)] = pairId(tok.hasOwnProperty(c) ? tok[c] : c, tok.hasOwnProperty(t) ? tok[t] : t);
+    });
+    function pointer(s) {
+      var i = s.indexOf("/");
+      if (i < 0 || i === s.length - 1) return s;
+      var segs = s.slice(i + 1).split("/"), free = false;
+      var res = segs.map(function (seg, k) {
+        if (free) return seg;
+        var prev = k ? segs[k - 1] : null;
+        var v = prev === "qubit_pairs" ? (pmap.hasOwnProperty(seg) ? pmap[seg] : seg) : rename(seg);
+        free = seg === "extras";
+        return v;
+      });
+      return s.slice(0, i) + "/" + res.join("/");
+    }
+    function ptrs(node) {
+      if (Array.isArray(node)) return node.map(ptrs);
+      if (node && typeof node === "object") {
+        var o = {};
+        Object.keys(node).forEach(function (k) { o[k] = ptrs(node[k]); });
+        return o;
+      }
+      if (typeof node === "string" && node.charAt(0) === "#") return pointer(node);
+      return node;
+    }
+    out.forEach(function (a) {
+      if (!a || typeof a !== "object") return;
+      if (typeof a.target === "string") a.target = pointer("#/" + a.target.split(".").join("/")).slice(2).split("/").join(".");
+      ["name", "to"].forEach(function (k) { if (typeof a[k] === "string") a[k] = rename(a[k]); });
+      if ("fields" in a) a.fields = ptrs(a.fields);
+      if ("value" in a) a.value = ptrs(a.value);
+    });
+    return out;
+  }
+
   window.GenAdditions = { channels: channels, owners: owners, pairId: pairId, mount: mount,
+                          renameQubits: renameQubits,
                           renderResult: renderResult, outcome: outcome, renderReview: renderReview,
                           decoratePairTable: decoratePairTable, builderGates: builderGates,
                           pairGates: pairGates, gateNameClash: gateNameClash, GATE_RULE: GATE_RULE,

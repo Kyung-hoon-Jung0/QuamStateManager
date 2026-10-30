@@ -107,6 +107,61 @@ def _pair_ids(spec: dict) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# a qubit rename in the wizard: the additions follow by the rebuild's rules
+# ---------------------------------------------------------------------------
+
+def rename_qubits(adds: list, id_map: dict, qubit_ids, pairs) -> list:
+    """*adds* re-expressed after the qubit rename *id_map* ({old: new}), by the
+    rules the rebuild's own rename uses (``regen_merge.token_pattern`` /
+    ``_renamed_pointer``): a pair id after ``qubit_pairs`` is swapped whole,
+    every other segment of a ``target`` and every pointer in ``fields`` /
+    ``value`` has its ``_``-delimited qubit-id tokens renamed (``extras``
+    below it kept verbatim), and so do ``name`` and ``to`` -- so a pointer
+    that names an addition keeps naming it. *qubit_ids* = every id before the
+    rename, *pairs* = the spec pairs before it. The wizard runs the same rule
+    in gen-additions.js (``GenAdditions.renameQubits``, parity-pinned)."""
+    from quam_state_manager.core.regen_merge import _renamed_pointer, _token_renamer
+    tok = {str(o): str(n) for o, n in (id_map or {}).items() if str(o) != str(n)}
+    out = copy.deepcopy(list(adds or []))
+    if not tok:
+        return out
+    rename = _token_renamer(tok, {str(q) for q in qubit_ids or ()})
+    pmap = {}
+    for p in pairs or []:
+        if isinstance(p, (list, tuple)) and len(p) == 2:
+            old = quam_pair_id(p)
+            new = quam_pair_id([tok.get(str(p[0]), str(p[0])), tok.get(str(p[1]), str(p[1]))])
+            if old and new:
+                pmap[old] = new
+
+    def dot(t):
+        return _renamed_pointer("#/" + t.replace(".", "/"), pmap, rename)[2:].replace("/", ".")
+
+    def ptrs(node):
+        if isinstance(node, dict):
+            return {k: ptrs(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [ptrs(v) for v in node]
+        if isinstance(node, str) and node.startswith("#"):
+            return _renamed_pointer(node, pmap, rename)
+        return node
+
+    for a in out:
+        if not isinstance(a, dict):
+            continue
+        if isinstance(a.get("target"), str):
+            a["target"] = dot(a["target"])
+        for k in ("name", "to"):
+            if isinstance(a.get(k), str):
+                a[k] = rename(a[k])
+        if "fields" in a:
+            a["fields"] = ptrs(a["fields"])
+        if "value" in a:
+            a["value"] = ptrs(a["value"])
+    return out
+
+
+# ---------------------------------------------------------------------------
 # structural check (validate_spec)
 # ---------------------------------------------------------------------------
 

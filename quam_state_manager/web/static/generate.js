@@ -1308,7 +1308,13 @@
   // step 5.
   function applyQubitIdMap(map) {
     var sp = state.spec;
-    sp.qubits = (sp.qubits || []).map(function (q) { return map[q] || q; });
+    // The lab additions follow the rename by the rebuild's own rules (target,
+    // pointers and the qubit tokens inside names together), read against the
+    // ids and pairs BEFORE the rename.
+    if (Array.isArray(sp.additions) && window.GenAdditions && window.GenAdditions.renameQubits) {
+      sp.additions = window.GenAdditions.renameQubits(sp.additions, map, sp.qubits, sp.qubit_pairs);
+    }
+    sp.qubits =(sp.qubits || []).map(function (q) { return map[q] || q; });
     sp.qubit_pairs = (sp.qubit_pairs || []).map(function (p) {
       return [map[p[0]] || p[0], map[p[1]] || p[1]];
     });
