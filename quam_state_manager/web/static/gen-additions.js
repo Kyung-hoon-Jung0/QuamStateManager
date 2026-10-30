@@ -1515,6 +1515,14 @@
     if (!host) return;
     addHost = host; addCtx = ctx;
     var spec = ctx.spec();
+    // The bar is rebuilt on every mount (e.g. when the role manifest arrives). Read the live box first so
+    // text typed without an input event survives, and put focus and caret back afterwards.
+    var oldMods = host.querySelector ? host.querySelector("input.gen-add-modules") : null;
+    var keepFocus = null;
+    if (oldMods) {
+      typedModules = oldMods.value;
+      if (document.activeElement === oldMods) keepFocus = { s: oldMods.selectionStart, e: oldMods.selectionEnd };
+    }
     host.innerHTML = "";
     if (!ensureDisplay(spec, function () { refreshAll(); })) return;
     var chs = channels(spec);
@@ -1551,6 +1559,11 @@
       loadRoles(true, m, function () { mount(host, ctx); });
     });
     bar.appendChild(mods); bar.appendChild(read);
+    if (keepFocus) {
+      setTimeout(function () {
+        try { mods.focus(); mods.setSelectionRange(keepFocus.s, keepFocus.e); } catch (e) { /* detached */ }
+      }, 0);
+    }
     if (roles.ok && roles.agent_connected) {
       var ask = el("button", { type: "button", className: "btn-sm secondary gen-add-ask",
                                title: "The connected agent reads this draft and the knowledge cards and proposes " +

@@ -8,6 +8,7 @@
 //  G6  changing the row's CZ variant redraws its gates
 //  G7  a tunable-coupler chip: the build's own cz alias marks cz_coupler as default
 //  G8  review / result read a default_gate entry as "target.cz -> gate (default gate)"
+//  Z1  a re-render (role manifest arrival) keeps the typed lab-modules text, focus and caret
 //  U2  the pulsed-TWPA pump fields prefill nothing and say a blank keeps the builder's
 //
 // Run: node tests/gen_additions_p5_selfcheck.cjs   (needs jsdom)
@@ -152,6 +153,20 @@ async function setup(gate) {
   s9.spec.additions = [{ kind: 'field', target: 'extras.x', value: 1 }];
   s9.GA.mount(s9.w.document.getElementById('host'), s9.ctx);
   ok(!s9.w.document.querySelector('.gen-add-carried'), 'G9 not on a fresh spec');
+
+  // Z1 typed text, focus and caret survive the re-render that the manifest's arrival causes
+  const sz = await setup();
+  const hz = sz.w.document.getElementById('host');
+  let box = hz.querySelector('input.gen-add-modules');
+  box.focus();
+  box.value = 'quam_config.two_flux_gate';          // set without an input event on purpose
+  box.setSelectionRange(5, 9);
+  sz.GA.mount(hz, sz.ctx);                           // the re-render
+  await tick(); await tick();
+  const box2 = hz.querySelector('input.gen-add-modules');
+  ok(box2 && box2.value === 'quam_config.two_flux_gate', 'Z1 value kept ' + (box2 && box2.value));
+  ok(sz.w.document.activeElement === box2, 'Z1 focus kept');
+  ok(box2 && box2.selectionStart === 5 && box2.selectionEnd === 9, 'Z1 caret kept');
 
   console.log((fails ? 'FAILED ' : 'ok ') + `(${asserts} assertions, ${fails} failed)`);
   process.exit(fails ? 1 : 0);
