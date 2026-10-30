@@ -13,7 +13,7 @@ def test_spec_pair_addresses_builder_coupler():
         "items": [{"role": "coupler", "pulse_class": "pkg.Pulse", "fields": {"length": 40}}]})
     assert got["ok"], got
     assert got["additions"][0]["target"] == "qubit_pairs.q1-2.coupler.operations"
-    assert got["additions"][-1]["fields"]["coupler_flux_pulse"] == "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler"
+    assert got["additions"][-1]["fields"]["coupler_flux_pulse"] == "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler_q1_q2"
 
 
 def test_no_handmade_pair_id():

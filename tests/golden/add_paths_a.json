@@ -157,13 +157,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -229,13 +229,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -248,13 +248,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_mine_pulse_q2_q3"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -321,13 +321,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -340,13 +340,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_mine_pulse_q2_q3"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -358,7 +358,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
@@ -367,7 +367,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q1_q2",
      "target": "qubits.q2.z.operations"
     },
     {
@@ -376,15 +376,15 @@
       "amplitude": 0.3
      },
      "kind": "pulse",
-     "name": "cz_bm_coupler",
+     "name": "cz_bm_coupler_q1_q2",
      "target": "qubit_pairs.q1-2.coupler.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
-      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler_q1_q2",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high_q1_q2",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low_q1_q2",
       "wait": 8
      },
      "kind": "macro",
@@ -457,13 +457,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -476,13 +476,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_mine_pulse_q2_q3"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -494,7 +494,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
@@ -503,7 +503,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q1_q2",
      "target": "qubits.q2.z.operations"
     },
     {
@@ -512,15 +512,15 @@
       "amplitude": 0.3
      },
      "kind": "pulse",
-     "name": "cz_bm_coupler",
+     "name": "cz_bm_coupler_q1_q2",
      "target": "qubit_pairs.q1-2.coupler.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
-      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler_q1_q2",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high_q1_q2",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low_q1_q2",
       "wait": 8
      },
      "kind": "macro",
@@ -533,7 +533,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
@@ -542,14 +542,14 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low",
+      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high_q2_q3",
+      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low_q2_q3",
       "wait": 8
      },
      "kind": "macro",
@@ -621,13 +621,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -640,13 +640,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_mine_pulse_q2_q3"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -658,7 +658,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
@@ -667,7 +667,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q1_q2",
      "target": "qubits.q2.z.operations"
     },
     {
@@ -676,15 +676,15 @@
       "amplitude": 0.3
      },
      "kind": "pulse",
-     "name": "cz_bm_coupler",
+     "name": "cz_bm_coupler_q1_q2",
      "target": "qubit_pairs.q1-2.coupler.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
-      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler_q1_q2",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high_q1_q2",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low_q1_q2",
       "wait": 8
      },
      "kind": "macro",
@@ -697,7 +697,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
@@ -706,14 +706,14 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low",
+      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high_q2_q3",
+      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low_q2_q3",
       "wait": 8
      },
      "kind": "macro",
@@ -796,13 +796,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -815,13 +815,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_mine_pulse_q2_q3"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -833,7 +833,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
@@ -842,7 +842,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q1_q2",
      "target": "qubits.q2.z.operations"
     },
     {
@@ -851,15 +851,15 @@
       "amplitude": 0.3
      },
      "kind": "pulse",
-     "name": "cz_bm_coupler",
+     "name": "cz_bm_coupler_q1_q2",
      "target": "qubit_pairs.q1-2.coupler.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
-      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler_q1_q2",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high_q1_q2",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low_q1_q2",
       "wait": 8
      },
      "kind": "macro",
@@ -872,7 +872,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
@@ -881,14 +881,14 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low",
+      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high_q2_q3",
+      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low_q2_q3",
       "wait": 8
      },
      "kind": "macro",
@@ -902,7 +902,7 @@
      "to": "cz_mine"
     }
    ],
-   "msg": "cz_gate_pulse is already added on qubits.q1.z.operations; cz_mine is already added on q1-2",
+   "msg": "cz_mine_pulse_q1_q2 is already added on qubits.q1.z.operations; cz_mine is already added on q1-2",
    "populate_pairs": {
     "q1-q2": {
      "cz_variant": "all",
@@ -962,13 +962,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -981,13 +981,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_mine_pulse_q2_q3"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -999,7 +999,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
@@ -1008,7 +1008,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q1_q2",
      "target": "qubits.q2.z.operations"
     },
     {
@@ -1017,15 +1017,15 @@
       "amplitude": 0.3
      },
      "kind": "pulse",
-     "name": "cz_bm_coupler",
+     "name": "cz_bm_coupler_q1_q2",
      "target": "qubit_pairs.q1-2.coupler.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
-      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler_q1_q2",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high_q1_q2",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low_q1_q2",
       "wait": 8
      },
      "kind": "macro",
@@ -1038,7 +1038,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
@@ -1047,14 +1047,14 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q2_q3",
      "target": "qubits.q3.z.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low",
+      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high_q2_q3",
+      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low_q2_q3",
       "wait": 8
      },
      "kind": "macro",
@@ -1236,13 +1236,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_qA1_qB2",
      "target": "qubits.qA1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_mine_pulse_qA1_qB2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -1304,13 +1304,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_qA1_qB2",
      "target": "qubits.qA1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_mine_pulse_qA1_qB2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -1322,7 +1322,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_qA1_qB2",
      "target": "qubits.qB2.z.operations"
     },
     {
@@ -1331,7 +1331,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_qA1_qB2",
      "target": "qubits.qA1.z.operations"
     },
     {
@@ -1340,15 +1340,15 @@
       "amplitude": 0.3
      },
      "kind": "pulse",
-     "name": "cz_bm_coupler",
+     "name": "cz_bm_coupler_qA1_qB2",
      "target": "qubit_pairs.qA1-B2.coupler.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "coupler_flux_pulse": "#/qubit_pairs/qA1-B2/coupler/operations/cz_bm_coupler",
-      "flux_pulse_high": "#/qubits/qB2/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/qA1/z/operations/cz_bm_low",
+      "coupler_flux_pulse": "#/qubit_pairs/qA1-B2/coupler/operations/cz_bm_coupler_qA1_qB2",
+      "flux_pulse_high": "#/qubits/qB2/z/operations/cz_bm_high_qA1_qB2",
+      "flux_pulse_low": "#/qubits/qA1/z/operations/cz_bm_low_qA1_qB2",
       "wait": 8
      },
      "kind": "macro",
@@ -1416,13 +1416,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_qA1_qB2",
      "target": "qubits.qA1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_mine_pulse_qA1_qB2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -1434,7 +1434,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_qA1_qB2",
      "target": "qubits.qB2.z.operations"
     },
     {
@@ -1443,7 +1443,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_qA1_qB2",
      "target": "qubits.qA1.z.operations"
     },
     {
@@ -1452,15 +1452,15 @@
       "amplitude": 0.3
      },
      "kind": "pulse",
-     "name": "cz_bm_coupler",
+     "name": "cz_bm_coupler_qA1_qB2",
      "target": "qubit_pairs.qA1-B2.coupler.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "coupler_flux_pulse": "#/qubit_pairs/qA1-B2/coupler/operations/cz_bm_coupler",
-      "flux_pulse_high": "#/qubits/qB2/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/qA1/z/operations/cz_bm_low",
+      "coupler_flux_pulse": "#/qubit_pairs/qA1-B2/coupler/operations/cz_bm_coupler_qA1_qB2",
+      "flux_pulse_high": "#/qubits/qB2/z/operations/cz_bm_high_qA1_qB2",
+      "flux_pulse_low": "#/qubits/qA1/z/operations/cz_bm_low_qA1_qB2",
       "wait": 8
      },
      "kind": "macro",
@@ -1534,13 +1534,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_qA1_qB2",
      "target": "qubits.qA1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_mine_pulse_qA1_qB2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -1552,7 +1552,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_qA1_qB2",
      "target": "qubits.qB2.z.operations"
     },
     {
@@ -1561,7 +1561,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_qA1_qB2",
      "target": "qubits.qA1.z.operations"
     },
     {
@@ -1570,15 +1570,15 @@
       "amplitude": 0.3
      },
      "kind": "pulse",
-     "name": "cz_bm_coupler",
+     "name": "cz_bm_coupler_qA1_qB2",
      "target": "qubit_pairs.qA1-B2.coupler.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "coupler_flux_pulse": "#/qubit_pairs/qA1-B2/coupler/operations/cz_bm_coupler",
-      "flux_pulse_high": "#/qubits/qB2/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/qA1/z/operations/cz_bm_low",
+      "coupler_flux_pulse": "#/qubit_pairs/qA1-B2/coupler/operations/cz_bm_coupler_qA1_qB2",
+      "flux_pulse_high": "#/qubits/qB2/z/operations/cz_bm_high_qA1_qB2",
+      "flux_pulse_low": "#/qubits/qA1/z/operations/cz_bm_low_qA1_qB2",
       "wait": 8
      },
      "kind": "macro",
@@ -1592,7 +1592,7 @@
      "to": "cz_mine"
     }
    ],
-   "msg": "cz_gate_pulse is already added on qubits.qA1.z.operations; cz_mine is already added on qA1-B2",
+   "msg": "cz_mine_pulse_qA1_qB2 is already added on qubits.qA1.z.operations; cz_mine is already added on qA1-B2",
    "populate_pairs": {
     "qA1-qB2": {
      "moving_qubit": "control"
@@ -1750,13 +1750,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -1819,13 +1819,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -1837,7 +1837,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
@@ -1846,14 +1846,14 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q1/z/operations/cz_bm_low",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high_q1_q2",
+      "flux_pulse_low": "#/qubits/q1/z/operations/cz_bm_low_q1_q2",
       "wait": 8
      },
      "kind": "macro",
@@ -1921,13 +1921,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -1939,7 +1939,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
@@ -1948,14 +1948,14 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q1/z/operations/cz_bm_low",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high_q1_q2",
+      "flux_pulse_low": "#/qubits/q1/z/operations/cz_bm_low_q1_q2",
       "wait": 8
      },
      "kind": "macro",
@@ -2030,13 +2030,13 @@
       "length": 60
      },
      "kind": "pulse",
-     "name": "cz_gate_pulse",
+     "name": "cz_mine_pulse_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "pkg.gates.CZGate",
      "fields": {
-      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_mine_pulse_q1_q2"
      },
      "kind": "macro",
      "name": "cz_mine",
@@ -2048,7 +2048,7 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_high",
+     "name": "cz_bm_high_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
@@ -2057,14 +2057,14 @@
       "amplitude": 0.07
      },
      "kind": "pulse",
-     "name": "cz_bm_low",
+     "name": "cz_bm_low_q1_q2",
      "target": "qubits.q1.z.operations"
     },
     {
      "class": "lab.gates.BothMoversGate",
      "fields": {
-      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
-      "flux_pulse_low": "#/qubits/q1/z/operations/cz_bm_low",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high_q1_q2",
+      "flux_pulse_low": "#/qubits/q1/z/operations/cz_bm_low_q1_q2",
       "wait": 8
      },
      "kind": "macro",
@@ -2078,7 +2078,7 @@
      "to": "cz_mine"
     }
    ],
-   "msg": "cz_gate_pulse is already added on qubits.q1.z.operations; cz_mine is already added on q1-2",
+   "msg": "cz_mine_pulse_q1_q2 is already added on qubits.q1.z.operations; cz_mine is already added on q1-2",
    "populate_pairs": {
     "q1-q2": {
      "cz_variant": "unipolar",

@@ -441,7 +441,7 @@
         var pc = classSelect(pulses, "Pulse class");
         pc.classList.add("gen-add-cz-pclass");
         var pn = el("input", { className: "gen-add-name gen-add-cz-pname", type: "text",
-                               value: name.value + "_" + (item.on === "moving" ? "pulse" : item.on),
+                               readOnly: true, placeholder: "Named for this pair when added",
                                "aria-label": "Pulse name" });
         r2.appendChild(pc); r2.appendChild(pn);
         inner.appendChild(r2);
@@ -476,7 +476,7 @@
         if (got.missing.length) problems.push(part.item.field + " pulse requires " + got.missing.join(", "));
         return { role: part.item.on, field: part.item.field, enabled: true,
           on_choice: part.onSel ? (part.onSel.value === owner.control ? "control" : "target") : "auto",
-          name: (part.nameInp.value || "").trim(), pulse_class: part.clsSel.value, fields: got.fields };
+          pulse_class: part.clsSel.value, fields: got.fields };
       });
       var mg = macroFF ? macroFF.collect() : { fields: {}, missing: [] };
       if (mg.missing.length) problems.push("gate requires " + mg.missing.join(", "));

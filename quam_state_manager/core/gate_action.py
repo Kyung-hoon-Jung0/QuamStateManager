@@ -17,7 +17,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from quam_state_manager.core import additions
-from quam_state_manager.core.add_names import ADDITION_NAME_RE
+from quam_state_manager.core.add_names import ADDITION_NAME_RE, pulse_name, unordered_key
 
 ROLE_FIELDS = {"moving": "flux_pulse_qubit", "pulse": "flux_pulse_qubit",
                "high": "flux_pulse_high", "low": "flux_pulse_low",
@@ -133,7 +133,15 @@ def resolve(doc: dict, pair, action: dict) -> dict:
         if q == "coupler" and not ow["coupler"]:
             errors.append("this pair has no coupler")
             continue
-        nm = item.get("name") or name + "_" + ("pulse" if role == "moving" else role)
+        source = action.get("source")
+        source_here = source and unordered_key(pair_members(doc, source)) == unordered_key(pair_members(doc, pair))
+        stored = (action.get("source_names") or {}).get(role) if source_here else None
+        try:
+            nm = stored or pulse_name(name, "pulse" if role == "moving" else role,
+                                      ow["control"], ow["target_q"])
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
         if not ADDITION_NAME_RE.fullmatch(nm):
             errors.append(f"the name {nm} is not a valid name")
         target = (f"qubit_pairs.{ow['pair']}.coupler.operations" if q == "coupler"

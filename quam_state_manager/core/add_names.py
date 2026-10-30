@@ -28,3 +28,11 @@ def unordered_key(pair) -> str:
     c, t = pair.split("-") if isinstance(pair, str) else pair
     norm = _run_build()._norm_index
     return "-".join(map(str, sorted((norm(c), norm(t)), key=str)))
+
+
+def pulse_name(gate, role, control, target) -> str:
+    """D5: preserve spec order and ids verbatim; refuse invalid names."""
+    name = f"{gate}_{role}_{control}_{target}"
+    if not (ADDITION_NAME_RE.fullmatch(name) and OPERATION_NAME_RE.fullmatch(name)):
+        raise ValueError(f"the name {name} is not a valid name")
+    return name
