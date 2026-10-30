@@ -106,6 +106,9 @@ window.fetch = function (url, opts) {
   await window.EnvUpgrade.applyRenames();
   await flush();
   ok(doc.getElementById('env-rename-result').textContent === 'Working copy updated; use Apply', 'G7: no "skipped: []" in the status');
+  ok(ajax.some(function (a) { return a[0] === 'GET' && a[1] === '/state/tray' && a[2].target === '#pending-tray'; }),
+     'W4: Stage refreshes the top-bar pending tray');
+  ok(ajax.some(function (a) { return /diagnostics\/env-card\?poll=1/.test(a[1]); }), 'W2: Stage re-renders the card');
   doc.getElementById('pending-tray').setAttribute('data-change-count', '64');
   doc.dispatchEvent(new window.CustomEvent('sm:tray-swapped'));
   ok(doc.querySelector('.env-remove-confirm').checked, 'G8: ticks stay while the edits are staged');

@@ -127,6 +127,11 @@
         document.body.dispatchEvent(new CustomEvent('diagnostics-changed'));
         // the tray count after the staged edits land; a later drop means an undo
         awaitingTray = true;
+        // the staged edits must reach the top-bar tray now (same call the Live-Edit paths use)
+        if (window.htmx && document.getElementById('pending-tray')) {
+          try { await window.htmx.ajax('GET', '/state/tray', {target: '#pending-tray', swap: 'outerHTML'}); }
+          catch (ignored) { /* the tray refreshes on its own poll otherwise */ }
+        }
         refreshCard();  // the matched-state compare runs server-side; the card polls until it ends
       } catch (error) { notice(error.message); }
     },
