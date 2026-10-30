@@ -31,6 +31,16 @@ the bridge's tools, a hook, an agent trying ``curl`` after a refusal. Forging
 now takes a deliberate, multi-step impersonation, which the refusal text does
 not explain.
 
+The trust model, in one line: ``X-SM-Agent`` (and ``X-SM-Actor``) is a
+LABEL, never an authority. A header can only take rights away -- a request
+that names an agent is refused a person's press -- and never grants one: a
+person's press is proven by the cookie alone (:func:`from_person`). So a
+route that must be a person's goes in ``PERSON_ONLY`` (or calls
+:func:`from_person`); no route decides "this is a person" from the absence
+of the header. ``routes._request_actor`` reads the header only to name WHO
+in a record (a journal line, a proposal's author), after this gate decided
+WHETHER the press is allowed.
+
 The test client is exempt unless a test asks (``PROVE_CALLERS``), the same
 switch the CSRF guard already has under ``TESTING``.
 """
@@ -66,6 +76,9 @@ PERSON_ONLY = {
     "agent_setup.connect": "connecting an agent CLI to SM",
     "agent_setup.disconnect": "disconnecting an agent CLI from SM",
     "agent_setup.context_post": "rewriting the lab context the agents read",
+    "main.generate_proposal_accept": "accepting an agent's proposal",
+    "main.generate_proposal_dismiss": "dismissing an agent's proposal",
+    "main.generate_proposals_context": "recording the wizard's draft chip",
 }
 
 #: The person's guardrails: an attempt on one is itself worth a journal line.

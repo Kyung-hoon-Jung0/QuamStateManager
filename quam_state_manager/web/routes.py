@@ -45706,7 +45706,8 @@ def generate_proposals_context():
     """The wizard records its draft spec so an agent's proposal is judged
     against the chip the person is building."""
     from quam_state_manager.core import addition_proposals
-    if _request_actor().startswith("by_"):
+    from quam_state_manager.web import callers
+    if not callers.from_person():
         return jsonify({"ok": False, "error": "the wizard records its own draft"}), 403
     spec = json_object().get("spec")
     if not isinstance(spec, dict):
@@ -45729,9 +45730,11 @@ def generate_proposal_accept(pid):
     """A person accepts a proposal: linted again as THEIR addition, with the
     fields they typed; the browser then adds it to spec.additions."""
     from quam_state_manager.core import addition_proposals
-    if _request_actor().startswith("by_"):
+    from quam_state_manager.web import callers
+    if not callers.from_person():
         # an agent proposes; only a person accepts (its own Accept would
-        # write a card overlay and pass its numbers as a person's)
+        # write a card overlay and pass its numbers as a person's). The
+        # callers gate already refused it; this is the same proof, not the header.
         return jsonify({"ok": False, "errors": ["only a person accepts a proposal, in the wizard"]}), 403
     data = json_object()
     spec = data.get("spec") if isinstance(data.get("spec"), dict) else {}
@@ -45746,6 +45749,9 @@ def generate_proposal_accept(pid):
 @bp.route("/generate/proposals/<pid>/dismiss", methods=["POST"])
 def generate_proposal_dismiss(pid):
     from quam_state_manager.core import addition_proposals
+    from quam_state_manager.web import callers
+    if not callers.from_person():
+        return jsonify({"ok": False, "error": "only a person dismisses a proposal, in the wizard"}), 403
     it = addition_proposals.decide(current_app.instance_path, pid, "dismissed", _request_actor())
     return jsonify({"ok": it is not None})
 
