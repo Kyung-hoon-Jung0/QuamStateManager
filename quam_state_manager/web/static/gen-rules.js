@@ -439,7 +439,7 @@
     d.laterLabel.hidden = !!allCant;
     d.cancelBtn.textContent = allCant ? "Close" : "Cancel";
     d.applyBtn.textContent = allCant ? "Nothing to add" : (answer && d.status !== "loading" ? "Add to " + plural(n, "pair") : "Add to … pairs");
-    d.applyBtn.disabled = !(d.status === "ready" && !d.pending && !d.applying && n > 0);
+    d.applyBtn.disabled = !(d.status === "ready" && !d.pending && !(d.answer && d.answer.pending) && !d.applying && n > 0);
     d.dlg.classList.toggle("gen-rule-allcant-state", !!allCant);
   }
 
@@ -610,7 +610,9 @@
     var body = { spec: spec, rule: o.rule, rule_sig: o.answer.rule_sig, pairs: o.pids };
     if (o.choices && Object.keys(o.choices).length) body.choices = o.choices;
     return post(APPLY_URL, body).then(function (res) {
-      if (seq !== _seq) return { ok: false, stale: true, reason: "The chip changed while this was open" };
+      if (seq !== _seq || sig !== specSig(ctx.spec(), o.rule, o.choices && Object.keys(o.choices).length ? o.choices : null)) {
+        return { ok: false, stale: true, reason: "The chip changed while this was open" };
+      }
       if (res.status === 409 || !res.body || res.body.ok === false) {
         return { ok: false, stale: true, reason: (res.body && res.body.error) || "The chip changed while this was open" };
       }
@@ -633,8 +635,8 @@
     if (!pids.length) return;
     d.applying = true; renderFoot(d);
     var spec = d.ctx.spec(), seq = _seq, sig = currentSig(d);
-    var choices = {};
-    pids.forEach(function (p) { if (d.choices[p]) choices[p] = d.choices[p]; });
+    // The preview signature includes every choice, including unticked rows.
+    var choices = clone(d.choices);
     var gname = (d.rule.gate && d.rule.gate.name) || "gate";
     commitApply({ ctx: d.ctx, rule: d.rule, answer: d.answer, pids: pids, choices: choices,
       label: "add " + gname + " to " + plural(pids.length, "pair"),
@@ -645,7 +647,10 @@
       d.applying = false;
       if (d.closed) return;
       if (!res.ok) {
-        if (seq !== _seq || sig !== currentSig(d)) { renderFoot(d); return; }   // content moved: the stale path owns it
+        if (seq !== _seq || sig !== currentSig(d)) {
+          markStale(d, describeChange(d.specSnap || {}, d.ctx.spec()));
+          return;
+        }
         d.status = "stale";
         d.staleReason = res.reason;
         d.specSnap = watchedOf(spec);

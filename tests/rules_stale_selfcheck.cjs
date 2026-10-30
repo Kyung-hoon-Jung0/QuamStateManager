@@ -83,5 +83,58 @@ const { ok } = T;
   srv.hold = false; srv.release(); await T.settle();
   ok(srv.expands[srv.expands.length - 1].choices['q2-3'] === 'target', 'S7 the choice rides the expand');
   ok(!w.applyBtn().disabled, 'S7 Apply back with the answer');
+  // S8: apply is asynchronous too; a same-sequence edit must survive its late response.
+  ({ w, srv, spec } = T.makeWorld({ nq: 3 }));
+  let releaseApply;
+  const fetchBefore = w.fetch;
+  w.fetch = (url, opts) => String(url).includes('/rules/apply')
+    ? new w.Promise(resolve => { releaseApply = () => fetchBefore(url, opts).then(resolve); })
+    : fetchBefore(url, opts);
+  const rule = T.baseRule();
+  const applying = w.GenRules.commitApply({ ctx: w.ctx, rule, answer: { rule_sig: 'preview' }, pids: ['q1-2'], label: 'apply' });
+  spec.populate.qubit.q1 = { RF_freq: 8e9 };
+  releaseApply();
+  const refused = await applying;
+  ok(refused.ok === false && refused.stale && spec.populate.qubit.q1.RF_freq === 8e9 && !spec.additions && w.undo.length === 0,
+    'S8 a late apply for an older sig writes nothing and adds no undo entry');
+
+  // S9: choosing then unticking a row must retain the question that rule_sig signed.
+  ({ w, srv, spec } = T.makeWorld({ nq: 3, server: { statusOf: (pid) => pid === 'q1-2' ? 'Ready' : 'Needs a look',
+    extraRow: (pid, st) => st === 'Needs a look' ? { reason: 'high: needs a look: choose' } : {} } }));
+  w.GenRules.openApply({ ctx: w.ctx, rule: T.baseRule() });
+  await T.settle();
+  const choice = w.document.querySelector('.gen-rule-choice');
+  choice.value = 'target'; choice.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await T.settle();
+  const unchecked = w.document.querySelector('.gen-rule-row-cb[data-pair="q2-3"]');
+  unchecked.checked = false; unchecked.dispatchEvent(new w.Event('change', { bubbles: true }));
+  w.applyBtn().click(); await T.settle();
+  ok(srv.applies.length === 1 && srv.applies[0].choices['q2-3'] === 'target' && srv.applies[0].pairs.join() === 'q1-2',
+    'S9 all preview choices ride apply even when only another pair is ticked');
+
+  // S10: a warming manifest cannot be applied even if a row was ticked.
+  ({ w, srv, spec } = T.makeWorld({ nq: 3 }));
+  const original = w.fetch;
+  w.fetch = (url, opts) => original(url, opts).then(res => ({ status: res.status,
+    json: () => res.json().then(body => Object.assign(body, { pending: true })) }));
+  w.GenRules.openApply({ ctx: w.ctx, rule: T.baseRule() });
+  await T.settle();
+  ok(w.applyBtn().disabled, 'S10 Apply stays off while the manifest is warming');
+
+  ({ w, srv, spec } = T.makeWorld({ nq: 3 }));
+  const realFetch = w.fetch;
+  w.fetch = (url, opts) => String(url).includes('/rules/apply')
+    ? new w.Promise(resolve => { releaseApply = () => realFetch(url, opts).then(resolve); })
+    : realFetch(url, opts);
+  w.GenRules.openApply({ ctx: w.ctx, rule: T.baseRule() });
+  await T.settle();
+  w.applyBtn().click();
+  spec.populate.qubit.q1 = { RF_freq: 8e9 };
+  w.GenRules.specChanged('freq', spec);
+  srv.hold = true;
+  releaseApply(); await T.settle();
+  ok(w.dlg().getAttribute('data-state') === 'stale' && w.applyBtn().disabled &&
+    w.document.querySelector('.gen-rule-body').hasAttribute('inert'),
+    'S11 a chip edit during apply dims the obsolete preview and rechecks');
   T.done('rules_stale_selfcheck');
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
