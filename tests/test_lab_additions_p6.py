@@ -274,8 +274,10 @@ class TestRoutes:
 
     def test_the_landing_line(self):
         from pathlib import Path
-        t = (Path(additions.__file__).parents[1] / "web" / "templates" / "_landing_projects.html").read_text("utf-8")
+        t = (Path(additions.__file__).parents[1] / "web" / "templates" / "_landing_shell.html").read_text("utf-8")
         assert 'href="/agent/setup">Connect an agent (optional)</a>' in t
+        frag = (Path(additions.__file__).parents[1] / "web" / "templates" / "_landing_projects.html").read_text("utf-8")
+        assert "Connect an agent" not in frag  # the projects fragment stays byte-identical
 
     def test_the_ask_button_only_with_a_connected_agent(self):
         from pathlib import Path

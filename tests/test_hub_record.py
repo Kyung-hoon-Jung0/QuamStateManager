@@ -1136,6 +1136,8 @@ DOOR_SITES = {
     ("generator/run_experiment.py", "_restore_files", "named"): (1, "the run's scratch copy (docs/245)"),
     ("generator/run_generate_config.py", "_retry_loop", "named"): (2, "a scratch folder (config preview)"),
     ("core/history_rekey.py", "migrate_history_rekey_v4", "named"): (1, "a history-dir migration journal"),
+    ("core/additions.py", "_write_folder", "named"): (2, "a mkdtemp scratch folder for the env check of Generate additions"),
+    ("core/additions.py", "apply_and_verify", "named"): (1, "the NEW folder Generate builds (its verified additions)"),
 }
 
 #: Receivers of ``.save(`` that are instance-dir stores, never a chip.

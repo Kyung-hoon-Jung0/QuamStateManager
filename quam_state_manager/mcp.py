@@ -26,7 +26,7 @@ the paths -- when a human edited something in the window the agent never
 saw (docs/120's gate), instead of forcing.
 
 Protocol surface: initialize, notifications/initialized, ping, tools/list,
-tools/call. 26 tools. Newline-delimited JSON on stdio.
+tools/call. 29 tools. Newline-delimited JSON on stdio.
 """
 
 from __future__ import annotations

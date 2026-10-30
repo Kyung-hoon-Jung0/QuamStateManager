@@ -35,6 +35,17 @@ _NON_STAGING_POSTS = {
     'agent_setup.journal_setup',
     'agent_setup.context_post',
     'agent_setup.test_call',
+    # Lab additions (Generate Config): none of these touches the open chip's store or
+    # working copy. They write instance sidecars only (role-probe cache, the wizard's
+    # draft context, the proposal queue, a person-accepted card overlay) or lint; the
+    # additions themselves reach a chip only inside a NEW folder built by /generate/build.
+    'main.generate_roles',
+    'main.generate_proposals_context',
+    'main.generate_proposal_accept',
+    'main.generate_proposal_dismiss',
+    'main.generate_additions_lint',
+    'agent.generate_propose',
+    'agent.generate_propose_card',
 
     'main.api_pulse_compare',
     'main.api_pulse_lab_waveform',
