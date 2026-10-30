@@ -32,6 +32,8 @@ def library_versions() -> dict:
         "quam_builder": ("quam-builder", "quam_builder"),
         "quam": ("quam",),
         "qm": ("qm-qua", "qm"),
+        "numpy": ("numpy",),
+        "scipy": ("scipy",),
     }
     out = {}
     for mod, dists in candidates.items():
@@ -47,6 +49,26 @@ def library_versions() -> dict:
                 break
         out[mod] = ver or "<not installed>"
     return out
+
+
+def is_out_of_env_source(filename: str) -> bool:
+    """Use the source freshness boundary for both provenance and tracebacks."""
+    import os
+    import sys
+
+    if not isinstance(filename, str) or not filename.endswith(".py"):
+        return False
+    nf = os.path.normcase(os.path.abspath(filename))
+    roots = {os.path.normcase(os.path.abspath(p)) for p in
+             (sys.prefix, sys.base_prefix, getattr(sys, "exec_prefix", "")) if p}
+    if any(nf == r or nf.startswith(r + os.sep) for r in roots):
+        return False
+    if os.sep + "site-packages" + os.sep in nf:
+        return False
+    if os.path.basename(os.path.dirname(nf)) == "generator" and \
+            os.path.basename(nf).startswith(("probe_", "run_", "_script_common")):
+        return False
+    return True
 
 
 def out_of_env_sources() -> dict:
@@ -65,10 +87,6 @@ def out_of_env_sources() -> dict:
     import os
     import sys
 
-    roots = set()
-    for p in {sys.prefix, sys.base_prefix, getattr(sys, "exec_prefix", "")}:
-        if p:
-            roots.add(os.path.normcase(os.path.abspath(p)))
     out = {}
     for mod in list(sys.modules.values()):
         f = getattr(mod, "__file__", None)
@@ -78,14 +96,7 @@ def out_of_env_sources() -> dict:
             af = os.path.abspath(f)
         except (OSError, ValueError):
             continue
-        nf = os.path.normcase(af)
-        if any(nf == r or nf.startswith(r + os.sep) for r in roots):
-            continue
-        if os.sep + "site-packages" + os.sep in nf:
-            continue
-        # SM's own generator scripts are the launcher, not lab code
-        if os.path.basename(os.path.dirname(nf)) == "generator" and \
-                os.path.basename(nf).startswith(("probe_", "run_", "_script_common")):
+        if not is_out_of_env_source(af):
             continue
         try:
             st = os.stat(af)

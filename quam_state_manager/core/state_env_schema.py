@@ -55,7 +55,7 @@ STATE_SCHEMA_SCRIPT = _script_path("probe_state_schema.py")
 # pulse classes (``lab: true``) and the manifest records the out-of-env
 # ``sources`` it was computed from; a format-2 entry has neither, and serving
 # it would hide a class the lab added for as long as the env's versions hold.
-SCHEMA_FORMAT = 3
+SCHEMA_FORMAT = 4
 _PULSE_MODULES_FILENAME = "pulse_class_modules.json"
 _SCHEMA_CACHE_FILENAME = "state_schema_cache.json"
 _CATALOG_CACHE_FILENAME = "state_schema_catalog.json"   # the Config Manual's full class catalogue (docs/141 4h)
@@ -355,7 +355,8 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
             from quam_state_manager.core import state_env_baseline
             state_env_baseline.record_baseline(
                 instance_path,
-                {"classes": classes, "versions": result["versions"]},
+                {"classes": classes, "versions": result["versions"],
+                 "sources": result["sources"], "schema_format": SCHEMA_FORMAT},
                 python_path=str(python_path or ""))
         except Exception:  # noqa: BLE001
             logger.warning("recording the schema baseline failed", exc_info=True)

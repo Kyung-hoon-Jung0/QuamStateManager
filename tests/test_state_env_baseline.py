@@ -98,8 +98,8 @@ class TestTheStore:
                                                         "quam_builder": "0.4.0"}})
         keys = [e["key"] for e in seb.list_baselines(tmp_path)]
         assert len(keys) <= seb._MAX_BASELINES
-        newest = seb.env_key({"quam": f"0.{seb._MAX_BASELINES + 2}.0",
-                              "quam_builder": "0.4.0"})
+        newest = seb.record_baseline(tmp_path, {**modern, "versions": {
+            "quam": f"0.{seb._MAX_BASELINES + 2}.0", "quam_builder": "0.4.0"}})
         assert newest in keys
 
     def test_an_unidentifiable_env_is_not_recorded(self, tmp_path):
@@ -225,11 +225,11 @@ class TestOneEnvOneAnswer:
         a = self._with(modern, qm="1.3.1")
         b_fresh = self._with(modern, qm="1.4.1")                 # probe path
         b_cached = self._with(b_fresh, quam_builder_commit="fedc89cb70")
-        seb.record_baseline(tmp_path, a)
+        a_key = seb.record_baseline(tmp_path, a)
         seb.record_baseline(tmp_path, b_fresh)
         t1 = seb.env_transition(tmp_path, b_fresh)
         t2 = seb.env_transition(tmp_path, b_cached)
-        assert t1["from_key"] == t2["from_key"] == seb.stable_env_key(a["versions"])
+        assert t1["from_key"] == t2["from_key"] == a_key
         assert t1["to_key"] == t2["to_key"]
         assert t1["sig"] == t2["sig"]
 
@@ -237,7 +237,7 @@ class TestOneEnvOneAnswer:
             self, tmp_path, modern):
         a = self._with(modern, qm="1.3.1")
         b = self._with(modern, qm="1.4.1")
-        seb.record_baseline(tmp_path, a)
+        a_key = seb.record_baseline(tmp_path, a)
         # what the pre-fix code wrote for the SAME env through the cached path
         legacy = seb.env_key({**b["versions"], "quam_builder_commit": "fedc89cb70"})
         body = seb.project_manifest(b)
@@ -254,7 +254,7 @@ class TestOneEnvOneAnswer:
         (seb.baseline_dir(tmp_path) / seb.INDEX_FILENAME).write_text(
             json.dumps(index), encoding="utf-8")
         prev = seb.previous_baseline(tmp_path, seb.stable_env_key(b["versions"]))
-        assert prev["key"] == seb.stable_env_key(a["versions"])
+        assert prev["key"] == a_key
 
     def test_a_class_only_one_side_probed_is_not_a_library_change(self, modern):
         # two chips' class inventories, one library: nothing changed

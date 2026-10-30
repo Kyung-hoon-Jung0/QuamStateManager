@@ -738,6 +738,8 @@ print(json.dumps({
     "quam_builder": _v("quam-builder"),
     "quam": _v("quam"),
     "qm": _v("qm-qua") or _v("qm"),
+    "numpy": _v("numpy"),
+    "scipy": _v("scipy"),
     "quam_builder_commit": _commit("quam-builder"),
 }))
 """
