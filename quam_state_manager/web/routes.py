@@ -24807,52 +24807,62 @@ def api_pulse_gaussian_cz():
         return render_template("_status.html", level="error",
                                message="Padding / filter values must be numbers."), 400
 
-    with store._lock:
-        result = gaussian_cz.plan(store.merged, pair_id,
-                                  padding_length=padding,
-                                  qubit_filter_mhz=q_mhz,
-                                  coupler_filter_mhz=c_mhz)
-        if "error" in result:
-            return render_template("_status.html", message=result["error"],
-                                   level="error"), 400
-        if result["existing"] and request.form.get("overwrite") != "1":
-            body = render_template(
-                "_status.html", level="warning",
-                message=("Already present on this pair: "
-                         + ", ".join(p.split(".")[-1] for p in result["existing"])
-                         + " — create again to replace them (the old subtrees "
-                           "are removed in the same undo group)."))
-            body += ('<button type="button" class="btn-sm" '
-                     'onclick="var f=document.getElementById(\'gcz-form\');'
-                     'var i=document.createElement(\'input\');i.type=\'hidden\';'
-                     'i.name=\'overwrite\';i.value=\'1\';f.appendChild(i);'
-                     'window.htmx&&htmx.trigger(f,\'submit\');">'
-                     'Replace existing</button>')
-            return body, 409
+    release_lab = _lab_hold(store, [f"qubit_pairs.{pair_id}.macros"])
+    try:
+        with store._lock:
+            result = gaussian_cz.plan(store.merged, pair_id,
+                                      padding_length=padding,
+                                      qubit_filter_mhz=q_mhz,
+                                      coupler_filter_mhz=c_mhz)
+            if "error" in result:
+                return render_template("_status.html", message=result["error"],
+                                       level="error"), 400
+            if result["existing"] and request.form.get("overwrite") != "1":
+                body = render_template(
+                    "_status.html", level="warning",
+                    message=("Already present on this pair: "
+                             + ", ".join(p.split(".")[-1] for p in result["existing"])
+                             + " — create again to replace them (the old subtrees "
+                               "are removed in the same undo group)."))
+                body += ('<button type="button" class="btn-sm" '
+                         'onclick="var f=document.getElementById(\'gcz-form\');'
+                         'var i=document.createElement(\'input\');i.type=\'hidden\';'
+                         'i.name=\'overwrite\';i.value=\'1\';f.appendChild(i);'
+                         'window.htmx&&htmx.trigger(f,\'submit\');">'
+                         'Replace existing</button>')
+                return body, 409
 
-        gid = modifier.new_group_id()
-        done = 0
-        try:
-            for path in result["existing"]:
-                modifier.delete_subtree(path, group_id=gid)
-                done += 1
-            for path, value in result["creates"]:
-                modifier.create_subtree(path, value, group_id=gid)
-                done += 1
-        except Exception as exc:  # noqa: BLE001 — all-or-nothing
-            for _ in range(done):
-                try:
-                    modifier.undo()
-                except Exception:  # noqa: BLE001
-                    break
-            logger.exception("gaussian-cz create failed; rolled back")
-            # docs/190 F50: a caught, rolled-back validation failure (a type
-            # mismatch in the caller's numbers) is a refusal, not a 500.
-            from quam_state_manager.core.type_policy import TypeMismatchError
-            code = 400 if isinstance(exc, (TypeMismatchError, ValueError, TypeError)) else 500
-            return render_template(
-                "_status.html", level="error",
-                message=f"Creation failed and was rolled back: {exc}"), code
+            from flask import g
+            lab_info = g.lab_info = {"notes": []}
+            refusal = _lab_write_refusal(store, result["creates"], info=lab_info)
+            if refusal:
+                return render_template("_status.html", level="error", message=refusal[0]), 400
+
+            gid = modifier.new_group_id()
+            done = 0
+            try:
+                for path in result["existing"]:
+                    modifier.delete_subtree(path, group_id=gid)
+                    done += 1
+                for path, value in result["creates"]:
+                    modifier.create_subtree(path, value, group_id=gid)
+                    done += 1
+            except Exception as exc:  # noqa: BLE001 — all-or-nothing
+                for _ in range(done):
+                    try:
+                        modifier.undo()
+                    except Exception:  # noqa: BLE001
+                        break
+                logger.exception("gaussian-cz create failed; rolled back")
+                # docs/190 F50: a caught, rolled-back validation failure (a type
+                # mismatch in the caller's numbers) is a refusal, not a 500.
+                from quam_state_manager.core.type_policy import TypeMismatchError
+                code = 400 if isinstance(exc, (TypeMismatchError, ValueError, TypeError)) else 500
+                return render_template(
+                    "_status.html", level="error",
+                    message=f"Creation failed and was rolled back: {exc}"), code
+    finally:
+        release_lab()
 
     _reprobe_if_new_classes(store)
     src = result["sources"]
@@ -24867,7 +24877,7 @@ def api_pulse_gaussian_cz():
                    "live."))
     resp = make_response(msg + "\n" + _tray_oob())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
-    return resp
+    return _lab_toast(resp)
 
 
 @bp.route("/api/pulse/create", methods=["POST"])
@@ -27057,34 +27067,43 @@ def api_pulse_copy():
                      "slot holding a pulse)")), 400
     kept: list[str] = []
     dropped: list[str] = []
-    with store._lock:
-        try:
-            chan = store.get_value(chan_path)
-        except (KeyError, TypeError, ValueError, IndexError):
-            chan = None
-        ops = chan.get("operations") if isinstance(chan, dict) else None
-        if not isinstance(ops, dict):
-            return render_template(
-                "_status.html", level="error",
-                message=(f"{chan_label} has no operations dict — this channel "
-                         "cannot hold pulses")), 400
-        if op_name in ops:
-            return render_template(
-                "_status.html", level="error",
-                message=f"{chan_label} already has an operation named {op_name!r}"), 409
-        try:
-            body, notes = copy_pulse_to(store.merged, src, dst,
-                                        kept_out=kept, dropped_out=dropped)
-        except ValueError as exc:
-            return render_template("_status.html", message=str(exc),
-                                   level="error"), 400
-        if _channel_single(chan) and _template_is_iq(None, body):
-            return _iq_on_single_refusal(chan_label)
-        try:
-            modifier.create_subtree(dst, body)
-        except (KeyError, ValueError, TypeError, IndexError) as exc:
-            return render_template("_status.html", message=str(exc),
-                                   level="error"), 400
+    release_lab = _lab_hold(store, [dst])
+    try:
+        with store._lock:
+            try:
+                chan = store.get_value(chan_path)
+            except (KeyError, TypeError, ValueError, IndexError):
+                chan = None
+            ops = chan.get("operations") if isinstance(chan, dict) else None
+            if not isinstance(ops, dict):
+                return render_template(
+                    "_status.html", level="error",
+                    message=(f"{chan_label} has no operations dict — this channel "
+                             "cannot hold pulses")), 400
+            if op_name in ops:
+                return render_template(
+                    "_status.html", level="error",
+                    message=f"{chan_label} already has an operation named {op_name!r}"), 409
+            try:
+                body, notes = copy_pulse_to(store.merged, src, dst,
+                                            kept_out=kept, dropped_out=dropped)
+            except ValueError as exc:
+                return render_template("_status.html", message=str(exc),
+                                       level="error"), 400
+            if _channel_single(chan) and _template_is_iq(None, body):
+                return _iq_on_single_refusal(chan_label)
+            from flask import g
+            lab_info = g.lab_info = {"notes": []}
+            refusal = _lab_write_refusal(store, [(dst, body)], info=lab_info)
+            if refusal:
+                return render_template("_status.html", level="error", message=refusal[0]), 400
+            try:
+                modifier.create_subtree(dst, body)
+            except (KeyError, ValueError, TypeError, IndexError) as exc:
+                return render_template("_status.html", message=str(exc),
+                                       level="error"), 400
+    finally:
+        release_lab()
     _invalidate_engine_cache()
     _reprobe_if_new_classes(store)
     logger.info("pulse copy %s -> %s (materialized: %s)", src, dst, notes)
@@ -27099,7 +27118,7 @@ def api_pulse_copy():
     if dropped:
         msg += (" — dropped " + ", ".join(dropped)
                 + " (it named the source; the copy is named by its key)")
-    return _pulse_mutation_response(_render_pulse_detail(dst, status_msg=msg))
+    return _lab_toast(_pulse_mutation_response(_render_pulse_detail(dst, status_msg=msg)))
 
 
 def _reprobe_if_new_classes(store) -> bool:
