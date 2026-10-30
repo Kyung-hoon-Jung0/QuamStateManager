@@ -20,3 +20,11 @@ ADDITION_NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 # browser) and the server's check are one string.
 OPERATION_NAME_PATTERN = "[a-zA-Z][a-zA-Z0-9_]{0,63}"
 OPERATION_NAME_RE = re.compile("^" + OPERATION_NAME_PATTERN + "$")
+
+
+def unordered_key(pair) -> str:
+    """Flip-stable pair identity, sorted lexically by normalized index."""
+    from quam_state_manager.core.script_emitter import _run_build
+    c, t = pair.split("-") if isinstance(pair, str) else pair
+    norm = _run_build()._norm_index
+    return "-".join(map(str, sorted((norm(c), norm(t)), key=str)))

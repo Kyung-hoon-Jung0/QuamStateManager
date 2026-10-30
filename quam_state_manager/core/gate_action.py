@@ -19,6 +19,11 @@ from copy import deepcopy
 from quam_state_manager.core import additions
 from quam_state_manager.core.add_names import ADDITION_NAME_RE
 
+ROLE_FIELDS = {"moving": "flux_pulse_qubit", "pulse": "flux_pulse_qubit",
+               "high": "flux_pulse_high", "low": "flux_pulse_low",
+               "control": "flux_pulse_control", "target": "flux_pulse_target",
+               "coupler": "coupler_flux_pulse"}
+
 
 def pair_members(doc: dict, pair) -> tuple[str, str]:
     if isinstance(pair, (list, tuple)) and len(pair) == 2:
@@ -142,10 +147,7 @@ def resolve(doc: dict, pair, action: dict) -> dict:
                 pf[key[len(prefix):]] = value
         adds.append({"kind": "pulse", "target": target, "name": nm,
                      "class": item.get("pulse_class"), "fields": pf})
-        field = item.get("field") or {"moving": "flux_pulse_qubit", "pulse": "flux_pulse_qubit",
-                "high": "flux_pulse_high", "low": "flux_pulse_low",
-                "control": "flux_pulse_control", "target": "flux_pulse_target",
-                "coupler": "coupler_flux_pulse"}.get(role, role)
+        field = item.get("field") or ROLE_FIELDS.get(role, role)
         fields[field] = "#/" + target.replace(".", "/") + "/" + nm
         if role in ("moving", "pulse"):
             moving = "control" if q == ow["control"] else "target"

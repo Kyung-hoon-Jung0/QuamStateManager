@@ -25073,6 +25073,14 @@ def _lab_edit_refusal(store, dot_path: str, write_path: str, value) -> str | Non
     return got[0] if got else None
 
 
+def _pair_addition_verdicts(store, pairs, rule, manifest=None):
+    """Chip-side adapter: all pairs share one call to the existing lab check."""
+    from quam_state_manager.core.add_verdict import judge_pairs
+    with store._lock:
+        return judge_pairs(store.merged, pairs, rule, manifest,
+                           lab_check=lambda writes, **kw: _lab_write_refusal(store, writes, **kw))
+
+
 def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
                        info: dict | None = None,
                        fills_slot: str | bool | None = None):
