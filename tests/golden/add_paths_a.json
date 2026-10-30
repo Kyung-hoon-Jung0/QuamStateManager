@@ -1,0 +1,2091 @@
+{
+ "chain3_coupler": [
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all"
+    },
+    "q2-q3": {
+     "cz_variant": "all"
+    }
+   },
+   "step": "pulse_xy"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    }
+   ],
+   "offered": [
+    "#/qubits/q1/xy/operations/x_lab"
+   ],
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all"
+    },
+    "q2-q3": {
+     "cz_variant": "all"
+    }
+   },
+   "step": "macro_qubit"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all"
+    },
+    "q2-q3": {
+     "cz_variant": "all"
+    }
+   },
+   "step": "readout"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all",
+     "moving_qubit": "control"
+    },
+    "q2-q3": {
+     "cz_variant": "all"
+    }
+   },
+   "step": "cz_moving_q1-q2"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q2-3.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all",
+     "moving_qubit": "control"
+    },
+    "q2-q3": {
+     "cz_variant": "all",
+     "moving_qubit": "target"
+    }
+   },
+   "step": "cz_moving_q2-q3"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q2-3.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q2.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.3
+     },
+     "kind": "pulse",
+     "name": "cz_bm_coupler",
+     "target": "qubit_pairs.q1-2.coupler.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q1-2.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all",
+     "moving_qubit": "control"
+    },
+    "q2-q3": {
+     "cz_variant": "all",
+     "moving_qubit": "target"
+    }
+   },
+   "step": "cz_highlow_q1-q2",
+   "where": {
+    "coupler_flux_pulse": "q1-2 coupler",
+    "flux_pulse_high": "q1 z (higher f_01)",
+    "flux_pulse_low": "q2 z (lower f_01)"
+   }
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q2-3.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q2.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.3
+     },
+     "kind": "pulse",
+     "name": "cz_bm_coupler",
+     "target": "qubit_pairs.q1-2.coupler.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q2-3.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all",
+     "moving_qubit": "control"
+    },
+    "q2-q3": {
+     "cz_variant": "all",
+     "moving_qubit": "target"
+    }
+   },
+   "step": "cz_highlow_q2-q3",
+   "where": {
+    "flux_pulse_high": "chosen:q3",
+    "flux_pulse_low": "chosen:q3"
+   }
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q2-3.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q2.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.3
+     },
+     "kind": "pulse",
+     "name": "cz_bm_coupler",
+     "target": "qubit_pairs.q1-2.coupler.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q2-3.macros"
+    },
+    {
+     "kind": "default_gate",
+     "name": "cz",
+     "target": "qubit_pairs.q1-2.macros",
+     "to": "cz_mine"
+    }
+   ],
+   "options": [
+    "",
+    "cz_unipolar",
+    "cz_flattop",
+    "cz_bipolar",
+    "cz_SNZ",
+    "cz_flattop_erf",
+    "cz_mine",
+    "cz_bm"
+   ],
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all",
+     "moving_qubit": "control"
+    },
+    "q2-q3": {
+     "cz_variant": "all",
+     "moving_qubit": "target"
+    }
+   },
+   "step": "default_gate"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q2-3.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q2.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.3
+     },
+     "kind": "pulse",
+     "name": "cz_bm_coupler",
+     "target": "qubit_pairs.q1-2.coupler.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q2-3.macros"
+    },
+    {
+     "kind": "default_gate",
+     "name": "cz",
+     "target": "qubit_pairs.q1-2.macros",
+     "to": "cz_mine"
+    }
+   ],
+   "msg": "cz_gate_pulse is already added on qubits.q1.z.operations; cz_mine is already added on q1-2",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all",
+     "moving_qubit": "control"
+    },
+    "q2-q3": {
+     "cz_variant": "all",
+     "moving_qubit": "target"
+    }
+   },
+   "step": "cz_refused"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q3/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q2-3.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q2.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.3
+     },
+     "kind": "pulse",
+     "name": "cz_bm_coupler",
+     "target": "qubit_pairs.q1-2.coupler.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_bm_coupler",
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q2/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q3.z.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "flux_pulse_high": "#/qubits/q3/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q3/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q2-3.macros"
+    },
+    {
+     "kind": "default_gate",
+     "name": "cz",
+     "target": "qubit_pairs.q1-2.macros",
+     "to": "cz_mine"
+    },
+    {
+     "kind": "field",
+     "target": "extras.twpa_pulse_mode",
+     "value": true
+    },
+    {
+     "kind": "field",
+     "target": "twpas.twpa1.pump_.operations.pump.length",
+     "value": 200
+    },
+    {
+     "kind": "field",
+     "target": "active_twpa_names",
+     "value": [
+      "twpa1"
+     ]
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "all",
+     "moving_qubit": "control"
+    },
+    "q2-q3": {
+     "cz_variant": "all",
+     "moving_qubit": "target"
+    }
+   },
+   "step": "twpa_pulsed"
+  }
+ ],
+ "lettered_coupler": [
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.qA1.xy.operations"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {},
+   "step": "pulse_xy"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.qA1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/qA1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.qA1.macros"
+    }
+   ],
+   "offered": [
+    "#/qubits/qA1/xy/operations/x_lab"
+   ],
+   "populate_pairs": {},
+   "step": "macro_qubit"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.qA1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/qA1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.qA1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.qA1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/qA1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.qA1.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {},
+   "step": "readout"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.qA1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/qA1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.qA1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.qA1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/qA1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.qA1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.qA1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.qA1-B2.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "qA1-qB2": {
+     "moving_qubit": "control"
+    }
+   },
+   "step": "cz_moving_qA1-qB2"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.qA1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/qA1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.qA1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.qA1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/qA1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.qA1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.qA1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.qA1-B2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.qB2.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.qA1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.3
+     },
+     "kind": "pulse",
+     "name": "cz_bm_coupler",
+     "target": "qubit_pairs.qA1-B2.coupler.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "coupler_flux_pulse": "#/qubit_pairs/qA1-B2/coupler/operations/cz_bm_coupler",
+      "flux_pulse_high": "#/qubits/qB2/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/qA1/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.qA1-B2.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "qA1-qB2": {
+     "moving_qubit": "control"
+    }
+   },
+   "step": "cz_highlow_qA1-qB2",
+   "where": {
+    "coupler_flux_pulse": "qA1-B2 coupler",
+    "flux_pulse_high": "qB2 z (higher f_01)",
+    "flux_pulse_low": "qA1 z (lower f_01)"
+   }
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.qA1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/qA1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.qA1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.qA1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/qA1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.qA1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.qA1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.qA1-B2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.qB2.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.qA1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.3
+     },
+     "kind": "pulse",
+     "name": "cz_bm_coupler",
+     "target": "qubit_pairs.qA1-B2.coupler.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "coupler_flux_pulse": "#/qubit_pairs/qA1-B2/coupler/operations/cz_bm_coupler",
+      "flux_pulse_high": "#/qubits/qB2/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/qA1/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.qA1-B2.macros"
+    },
+    {
+     "kind": "default_gate",
+     "name": "cz",
+     "target": "qubit_pairs.qA1-B2.macros",
+     "to": "cz_mine"
+    }
+   ],
+   "options": [
+    "",
+    "cz_coupler",
+    "cz_mine",
+    "cz_bm"
+   ],
+   "populate_pairs": {
+    "qA1-qB2": {
+     "moving_qubit": "control"
+    }
+   },
+   "step": "default_gate"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.qA1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/qA1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.qA1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.qA1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/qA1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.qA1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.qA1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/qA1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.qA1-B2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.qB2.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.qA1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.3
+     },
+     "kind": "pulse",
+     "name": "cz_bm_coupler",
+     "target": "qubit_pairs.qA1-B2.coupler.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "coupler_flux_pulse": "#/qubit_pairs/qA1-B2/coupler/operations/cz_bm_coupler",
+      "flux_pulse_high": "#/qubits/qB2/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/qA1/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.qA1-B2.macros"
+    },
+    {
+     "kind": "default_gate",
+     "name": "cz",
+     "target": "qubit_pairs.qA1-B2.macros",
+     "to": "cz_mine"
+    }
+   ],
+   "msg": "cz_gate_pulse is already added on qubits.qA1.z.operations; cz_mine is already added on qA1-B2",
+   "populate_pairs": {
+    "qA1-qB2": {
+     "moving_qubit": "control"
+    }
+   },
+   "step": "cz_refused"
+  }
+ ],
+ "pair2_plain": [
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "unipolar"
+    }
+   },
+   "step": "pulse_xy"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    }
+   ],
+   "offered": [
+    "#/qubits/q1/xy/operations/x_lab"
+   ],
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "unipolar"
+    }
+   },
+   "step": "macro_qubit"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "unipolar"
+    }
+   },
+   "step": "readout"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "unipolar",
+     "moving_qubit": "control"
+    }
+   },
+   "step": "cz_moving_q1-q2"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q1/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q1-2.macros"
+    }
+   ],
+   "msg": "",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "unipolar",
+     "moving_qubit": "control"
+    }
+   },
+   "step": "cz_highlow_q1-q2",
+   "where": {
+    "flux_pulse_high": "chosen:q1",
+    "flux_pulse_low": "chosen:q1"
+   }
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q1/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "kind": "default_gate",
+     "name": "cz",
+     "target": "qubit_pairs.q1-2.macros",
+     "to": "cz_mine"
+    }
+   ],
+   "options": [
+    "",
+    "cz_unipolar",
+    "cz_mine",
+    "cz_bm"
+   ],
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "unipolar",
+     "moving_qubit": "control"
+    }
+   },
+   "step": "default_gate"
+  },
+  {
+   "additions": [
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.25
+     },
+     "kind": "pulse",
+     "name": "x_lab",
+     "target": "qubits.q1.xy.operations"
+    },
+    {
+     "class": "lab.macros.ResetMacro",
+     "fields": {
+      "pi_pulse": "#/qubits/q1/xy/operations/x_lab",
+      "rounds": 3
+     },
+     "kind": "macro",
+     "name": "reset_lab",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquareReadoutPulse",
+     "fields": {
+      "amplitude": 0.05,
+      "length": 1000
+     },
+     "kind": "pulse",
+     "name": "readout_square",
+     "target": "qubits.q1.resonator.operations"
+    },
+    {
+     "class": "pkg.macros.MeasureMacro",
+     "fields": {
+      "pulse": "#/qubits/q1/resonator/operations/readout_square"
+     },
+     "kind": "macro",
+     "name": "measure",
+     "target": "qubits.q1.macros"
+    },
+    {
+     "class": "pkg.pulses.SquarePulse",
+     "fields": {
+      "amplitude": 0.12,
+      "length": 60
+     },
+     "kind": "pulse",
+     "name": "cz_gate_pulse",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "pkg.gates.CZGate",
+     "fields": {
+      "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_gate_pulse"
+     },
+     "kind": "macro",
+     "name": "cz_mine",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_high",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.pulses.FluxPulse",
+     "fields": {
+      "amplitude": 0.07
+     },
+     "kind": "pulse",
+     "name": "cz_bm_low",
+     "target": "qubits.q1.z.operations"
+    },
+    {
+     "class": "lab.gates.BothMoversGate",
+     "fields": {
+      "flux_pulse_high": "#/qubits/q1/z/operations/cz_bm_high",
+      "flux_pulse_low": "#/qubits/q1/z/operations/cz_bm_low",
+      "wait": 8
+     },
+     "kind": "macro",
+     "name": "cz_bm",
+     "target": "qubit_pairs.q1-2.macros"
+    },
+    {
+     "kind": "default_gate",
+     "name": "cz",
+     "target": "qubit_pairs.q1-2.macros",
+     "to": "cz_mine"
+    }
+   ],
+   "msg": "cz_gate_pulse is already added on qubits.q1.z.operations; cz_mine is already added on q1-2",
+   "populate_pairs": {
+    "q1-q2": {
+     "cz_variant": "unipolar",
+     "moving_qubit": "control"
+    }
+   },
+   "step": "cz_refused"
+  }
+ ]
+}

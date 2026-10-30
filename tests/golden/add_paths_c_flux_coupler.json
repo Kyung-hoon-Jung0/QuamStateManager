@@ -1,0 +1,167 @@
+{
+ "form": {},
+ "steps": [
+  {
+   "data": {
+    "gate_name": "g_cr_gate",
+    "gate_type": "cr_gate",
+    "qc_correction_phase": "0.0",
+    "qt_correction_phase": "0.0"
+   },
+   "message": "cr_gate needs a pair with a cross-resonance channel — this pair's architecture doesn't support it. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "amplitude": "0.05",
+    "coupler_amplitude": "0.0",
+    "flat_length": "200",
+    "gate_name": "g_cz_bipolar",
+    "gate_type": "cz_bipolar",
+    "phase_shift_control": "0.0",
+    "phase_shift_target": "0.0",
+    "post_zero_padding_length": "20",
+    "smoothing_length": "20"
+   },
+   "message": "cz_bipolar needs pulse classes the selected environment does not verify — probe/select the env that ships them first. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "amplitude": "0.05",
+    "coupler_amplitude": "0.0",
+    "flat_length": "200",
+    "gate_name": "g_cz_flattop",
+    "gate_type": "cz_flattop",
+    "phase_shift_control": "0.0",
+    "phase_shift_target": "0.0",
+    "smoothing_length": "20"
+   },
+   "message": "cz_flattop writes its flux pulses into the gate (qubit_pairs.q1-2.macros.g_cz_flattop.coupler_flux_pulse, qubit_pairs.q1-2.macros.g_cz_flattop.flux_pulse_qubit) — a new pulse. Pulses are added on the Pulses page: + New pulse -> \"Gaussian CZ from cz_flattop\" builds the gate with its channel ops, or use your lab's gate script. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "amplitude": "0.05",
+    "flat_length": "200",
+    "gate_name": "g_cz_flattop_erf",
+    "gate_type": "cz_flattop_erf",
+    "phase_shift_control": "0.0",
+    "phase_shift_target": "0.0",
+    "post_zero_padding_length": "20",
+    "risetime_samples": "16"
+   },
+   "message": "cz_flattop_erf needs pulse classes the selected environment does not verify — probe/select the env that ships them first. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "amplitude": "0.05",
+    "coupler_amplitude": "0.0",
+    "gate_name": "g_cz_parametric",
+    "gate_type": "cz_parametric",
+    "length": "100",
+    "modulation_frequency": "250000000.0",
+    "phase_shift_control": "0.0",
+    "phase_shift_target": "0.0"
+   },
+   "message": "cz_parametric is unavailable: this chip carries no ParametricCZGate macro to copy the class path from, and recent quam-builder releases removed the class — a guessed path would make state.json unloadable. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "amplitude": "0.05",
+    "flat_length": "200",
+    "gate_name": "g_cz_snz",
+    "gate_type": "cz_snz",
+    "padding": "20",
+    "phase_shift_control": "0.0",
+    "phase_shift_target": "0.0",
+    "t_phi_eff": "0.0"
+   },
+   "message": "cz_snz needs pulse classes the selected environment does not verify — probe/select the env that ships them first. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "amplitude": "0.05",
+    "coupler_amplitude": "0.0",
+    "coupler_length": "100",
+    "gate_name": "g_cz_unipolar",
+    "gate_type": "cz_unipolar",
+    "length": "100",
+    "phase_shift_control": "0.0",
+    "phase_shift_target": "0.0"
+   },
+   "message": "cz_unipolar writes its flux pulses into the gate (qubit_pairs.q1-2.macros.g_cz_unipolar.coupler_flux_pulse, qubit_pairs.q1-2.macros.g_cz_unipolar.flux_pulse_qubit) — a new pulse. Pulses are added on the Pulses page: + New pulse -> \"Gaussian CZ from cz_flattop\" builds the gate with its channel ops, or use your lab's gate script. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "gate_name": "g_stark_cz",
+    "gate_type": "stark_cz",
+    "qc_correction_phase": "0.0",
+    "qt_correction_phase": "0.0"
+   },
+   "message": "stark_cz needs a pair with a ZZ drive channel — this pair's architecture doesn't support it. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "gate_name": "1bad",
+    "gate_type": "cr_gate"
+   },
+   "message": "Gate name must start with a letter and contain only letters, digits, or underscores (max 64). ×",
+   "ops": [],
+   "status": 400,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "gate_name": "g_x",
+    "gate_type": "nope"
+   },
+   "message": "Unknown gate type: 'nope' ×",
+   "ops": [],
+   "status": 400,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "gate_name": "g_cr_gate",
+    "gate_type": "cr_gate"
+   },
+   "message": "cr_gate needs a pair with a cross-resonance channel — this pair's architecture doesn't support it. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  },
+  {
+   "data": {
+    "gate_name": "g_typo",
+    "gate_type": "cr_gate",
+    "qc_correction_phase": "abc"
+   },
+   "message": "cr_gate needs a pair with a cross-resonance channel — this pair's architecture doesn't support it. ×",
+   "ops": [],
+   "status": 409,
+   "url": "/pair/q1-2/gate"
+  }
+ ]
+}

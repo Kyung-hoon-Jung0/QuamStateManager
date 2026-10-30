@@ -1,0 +1,1639 @@
+{
+ "forms": {
+  "": {
+   "channel": [
+    "xy",
+    "z",
+    "resonator",
+    "xy_detuned"
+   ],
+   "gate": [],
+   "json:pulse-catalog-data": {
+    "BlackmanIntegralPulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Adiabatic ramp from v_start to v_end",
+     "group": "Flux / Bipolar",
+     "iq": "optional",
+     "label": "Blackman integral ramp",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 100,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "V start",
+       "name": "v_start",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 0.1,
+       "kind": "float",
+       "label": "V end",
+       "name": "v_end",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.BlackmanIntegralPulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "CosineBipolarPulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Net-zero bipolar: cosine rise, + flat, cosine switch, - flat, fall",
+     "group": "Flux / Bipolar",
+     "iq": "optional",
+     "label": "Cosine bipolar",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 124,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.05,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 100,
+       "kind": "int",
+       "label": "Flat length",
+       "name": "flat_length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam_builder.architecture.superconducting.components.pulses.CosineBipolarPulse",
+     "qclass_how": "catalog",
+     "verify": null
+    },
+    "DragCosinePulse": {
+     "channels": [
+      "xy"
+     ],
+     "doc": "Cosine DRAG (leakage + AC-Stark compensation)",
+     "group": "Control",
+     "iq": "always",
+     "label": "DRAG (Cosine)",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 40,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": true,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": 0.1,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "DRAG α",
+       "name": "alpha",
+       "required": true,
+       "synth": true,
+       "unit": ""
+      },
+      {
+       "default": -220000000.0,
+       "kind": "float",
+       "label": "Anharmonicity",
+       "name": "anharmonicity",
+       "required": true,
+       "synth": true,
+       "unit": "Hz"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "Detuning",
+       "name": "detuning",
+       "required": false,
+       "synth": true,
+       "unit": "Hz"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.DragCosinePulse",
+     "qclass_how": "reused",
+     "verify": null
+    },
+    "DragGaussianPulse": {
+     "channels": [
+      "xy"
+     ],
+     "doc": "Gaussian DRAG (leakage + AC-Stark compensation)",
+     "group": "Control",
+     "iq": "always",
+     "label": "DRAG (Gaussian)",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 40,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": true,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": 0.1,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 8.0,
+       "kind": "float",
+       "label": "Sigma",
+       "name": "sigma",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "DRAG α",
+       "name": "alpha",
+       "required": true,
+       "synth": true,
+       "unit": ""
+      },
+      {
+       "default": -220000000.0,
+       "kind": "float",
+       "label": "Anharmonicity",
+       "name": "anharmonicity",
+       "required": true,
+       "synth": true,
+       "unit": "Hz"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "Detuning",
+       "name": "detuning",
+       "required": false,
+       "synth": true,
+       "unit": "Hz"
+      },
+      {
+       "default": true,
+       "kind": "bool",
+       "label": "Subtracted",
+       "name": "subtracted",
+       "required": false,
+       "synth": true,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.DragGaussianPulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "ErfSquarePulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Flat top with erf edges (Quil ErfSquare)",
+     "group": "Flux / Bipolar",
+     "iq": "never",
+     "label": "Erf square",
+     "length_mode": "inferred",
+     "params": [
+      {
+       "default": 0.05,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 100,
+       "kind": "int",
+       "label": "Flat length",
+       "name": "flat_length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 16,
+       "kind": "int",
+       "label": "Risetime",
+       "name": "risetime_samples",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 1000000000.0,
+       "kind": "float",
+       "label": "Sample rate",
+       "name": "sample_rate",
+       "required": false,
+       "synth": true,
+       "unit": "Hz"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "Phase",
+       "name": "phase",
+       "required": false,
+       "synth": true,
+       "unit": "cycles"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "Detuning",
+       "name": "detuning",
+       "required": false,
+       "synth": true,
+       "unit": "Hz"
+      },
+      {
+       "default": true,
+       "kind": "bool",
+       "label": "Positive polarity",
+       "name": "positive_polarity",
+       "required": false,
+       "synth": true,
+       "unit": ""
+      },
+      {
+       "default": 0,
+       "kind": "int",
+       "label": "Post zero padding",
+       "name": "post_zero_padding_length",
+       "required": false,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.ErfSquarePulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "FlatTopBlackmanPulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Square with Blackman-window rise/fall",
+     "group": "Flux / Bipolar",
+     "iq": "optional",
+     "label": "Flat-top (Blackman edges)",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 120,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.05,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 100,
+       "kind": "int",
+       "label": "Flat length",
+       "name": "flat_length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.FlatTopBlackmanPulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "FlatTopCosinePulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Square with cosine rise/fall",
+     "group": "Flux / Bipolar",
+     "iq": "optional",
+     "label": "Flat-top (Cosine edges)",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 120,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.05,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 0,
+       "kind": "int",
+       "label": "Flat length",
+       "name": "flat_length",
+       "required": false,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.FlatTopCosinePulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "FlatTopGaussianPulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Square with Gaussian rise/fall (σ = rise/5)",
+     "group": "Flux / Bipolar",
+     "iq": "optional",
+     "label": "Flat-top (Gaussian edges)",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 120,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.05,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 100,
+       "kind": "int",
+       "label": "Flat length",
+       "name": "flat_length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.FlatTopGaussianPulse",
+     "qclass_how": "reused",
+     "verify": null
+    },
+    "FlatTopTanhPulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Square with tanh rise/fall (±4 span)",
+     "group": "Flux / Bipolar",
+     "iq": "optional",
+     "label": "Flat-top (tanh edges)",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 120,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.05,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 0,
+       "kind": "int",
+       "label": "Flat length",
+       "name": "flat_length",
+       "required": false,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.FlatTopTanhPulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "GaussianFilteredSquarePulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Square smoothed by a 1D Gaussian filter",
+     "group": "Flux / Bipolar",
+     "iq": "optional",
+     "label": "Gaussian-filtered square",
+     "length_mode": "inferred",
+     "params": [
+      {
+       "default": 100,
+       "kind": "int",
+       "label": "Core length",
+       "name": "pulse_length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0,
+       "kind": "int",
+       "label": "Post zero padding",
+       "name": "post_zero_padding_length",
+       "required": false,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.05,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 50.0,
+       "kind": "float",
+       "label": "Filter freq",
+       "name": "gaussian_filter_frequency_mhz",
+       "required": true,
+       "synth": true,
+       "unit": "MHz"
+      },
+      {
+       "default": 1000000000.0,
+       "kind": "float",
+       "label": "Sample rate",
+       "name": "sample_rate",
+       "required": false,
+       "synth": true,
+       "unit": "Hz"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.GaussianFilteredSquarePulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "GaussianFilteredSymmetricBipolarPulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Net-zero bipolar smoothed by a Gaussian filter",
+     "group": "Flux / Bipolar",
+     "iq": "optional",
+     "label": "Gaussian-filtered bipolar",
+     "length_mode": "inferred",
+     "params": [
+      {
+       "default": 100,
+       "kind": "int",
+       "label": "Core length",
+       "name": "pulse_length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0,
+       "kind": "int",
+       "label": "Post zero padding",
+       "name": "post_zero_padding_length",
+       "required": false,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.05,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 50.0,
+       "kind": "float",
+       "label": "Filter freq",
+       "name": "gaussian_filter_frequency_mhz",
+       "required": true,
+       "synth": true,
+       "unit": "MHz"
+      },
+      {
+       "default": 1000000000.0,
+       "kind": "float",
+       "label": "Sample rate",
+       "name": "sample_rate",
+       "required": false,
+       "synth": true,
+       "unit": "Hz"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.GaussianFilteredSymmetricBipolarPulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "GaussianPulse": {
+     "channels": [
+      "xy",
+      "z"
+     ],
+     "doc": "Gaussian envelope",
+     "group": "Control",
+     "iq": "optional",
+     "label": "Gaussian",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 40,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.1,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 8.0,
+       "kind": "float",
+       "label": "Sigma",
+       "name": "sigma",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": true,
+       "kind": "bool",
+       "label": "Subtracted",
+       "name": "subtracted",
+       "required": false,
+       "synth": true,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.GaussianPulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "SNZPulse": {
+     "channels": [
+      "z"
+     ],
+     "doc": "Di Carlo bipolar flux pulse with B-samples",
+     "group": "Flux / Bipolar",
+     "iq": "optional",
+     "label": "SNZ (sudden net-zero)",
+     "length_mode": "inferred",
+     "params": [
+      {
+       "default": 0.05,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": 20,
+       "kind": "int",
+       "label": "Flat length",
+       "name": "flat_length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "tφ (effective)",
+       "name": "t_phi_eff",
+       "required": false,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0,
+       "kind": "int",
+       "label": "Padding",
+       "name": "padding",
+       "required": false,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.SNZPulse",
+     "qclass_how": "prefix",
+     "verify": null
+    },
+    "SquarePulse": {
+     "channels": [
+      "xy",
+      "z",
+      "resonator"
+     ],
+     "doc": "Constant amplitude",
+     "group": "Control",
+     "iq": "optional",
+     "label": "Square",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 100,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.1,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.SquarePulse",
+     "qclass_how": "reused",
+     "verify": null
+    },
+    "SquareReadoutPulse": {
+     "channels": [
+      "resonator"
+     ],
+     "doc": "Constant readout pulse + integration weights",
+     "group": "Readout",
+     "iq": "optional",
+     "label": "Square readout",
+     "length_mode": "explicit",
+     "params": [
+      {
+       "default": 1000,
+       "kind": "int",
+       "label": "Length",
+       "name": "length",
+       "required": true,
+       "synth": true,
+       "unit": "ns"
+      },
+      {
+       "default": 0.01,
+       "kind": "float",
+       "label": "Amplitude",
+       "name": "amplitude",
+       "required": true,
+       "synth": true,
+       "unit": "V"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Axis angle",
+       "name": "axis_angle",
+       "required": false,
+       "synth": true,
+       "unit": "rad"
+      },
+      {
+       "default": "#./default_integration_weights",
+       "kind": "list_float",
+       "label": "Integration weights",
+       "name": "integration_weights",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": 0.0,
+       "kind": "float",
+       "label": "IW angle",
+       "name": "integration_weights_angle",
+       "required": false,
+       "synth": false,
+       "unit": "rad"
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "Threshold",
+       "name": "threshold",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "float",
+       "label": "RUS exit threshold",
+       "name": "rus_exit_threshold",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": "ON",
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.SquareReadoutPulse",
+     "qclass_how": "reused",
+     "verify": null
+    },
+    "WaveformPulse": {
+     "channels": [
+      "xy",
+      "z",
+      "resonator"
+     ],
+     "doc": "Pre-computed sample arrays (length = len(I))",
+     "group": "Control",
+     "iq": "optional",
+     "label": "Arbitrary waveform",
+     "length_mode": "derived",
+     "params": [
+      {
+       "default": [
+        0.0,
+        0.1,
+        0.1,
+        0.0
+       ],
+       "kind": "list_float",
+       "label": "Waveform I",
+       "name": "waveform_I",
+       "required": true,
+       "synth": true,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "list_float",
+       "label": "Waveform Q",
+       "name": "waveform_Q",
+       "required": false,
+       "synth": true,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Id",
+       "name": "id",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      },
+      {
+       "default": null,
+       "kind": "str",
+       "label": "Digital marker",
+       "name": "digital_marker",
+       "required": false,
+       "synth": false,
+       "unit": ""
+      }
+     ],
+     "qclass": "quam.components.pulses.WaveformPulse",
+     "qclass_how": "prefix",
+     "verify": null
+    }
+   },
+   "json:pulse-existing-data": {
+    "pair:q0-1/cross_resonance": [
+     "flattop",
+     "square"
+    ],
+    "pair:q0-1/zz_drive": [
+     "flattop",
+     "square"
+    ],
+    "pair:q1-0/cross_resonance": [
+     "flattop",
+     "square"
+    ],
+    "pair:q1-2/cross_resonance": [
+     "flattop",
+     "square"
+    ],
+    "pair:q2-1/cross_resonance": [
+     "flattop",
+     "square"
+    ],
+    "q0/resonator": [
+     "readout"
+    ],
+    "q0/xy": [
+     "const",
+     "cr_flattop_q1-0",
+     "cr_square_q1-0",
+     "saturation",
+     "x180",
+     "x180_DragCosine"
+    ],
+    "q1/resonator": [
+     "readout"
+    ],
+    "q1/xy": [
+     "const",
+     "cr_flattop_q0-1",
+     "cr_flattop_q2-1",
+     "cr_square_q0-1",
+     "cr_square_q2-1",
+     "saturation",
+     "x180",
+     "x180_DragCosine"
+    ],
+    "q1/xy_detuned": [
+     "zz_square_q0-1"
+    ],
+    "q2/resonator": [
+     "readout"
+    ],
+    "q2/xy": [
+     "const",
+     "cr_flattop_q1-2",
+     "cr_square_q1-2",
+     "saturation",
+     "x180",
+     "x180_DragCosine"
+    ]
+   },
+   "json:pulse-gate-defs-data": {
+    "cz_bipolar": {
+     "has_coupler_slot": true,
+     "label": "CZ Bipolar (cosine, net-zero)"
+    },
+    "cz_flattop": {
+     "has_coupler_slot": true,
+     "label": "CZ Flat-top (Gaussian envelope)"
+    },
+    "cz_flattop_erf": {
+     "has_coupler_slot": false,
+     "label": "CZ Flat-top Erf (qubit line only)"
+    },
+    "cz_snz": {
+     "has_coupler_slot": false,
+     "label": "CZ SNZ (sudden net-zero, qubit line only)"
+    },
+    "cz_unipolar": {
+     "has_coupler_slot": true,
+     "label": "CZ Unipolar (square pulse)"
+    }
+   },
+   "json:pulse-pair-channels-data": {
+    "q0-1": [
+     "cross_resonance",
+     "zz_drive"
+    ],
+    "q1-0": [
+     "cross_resonance"
+    ],
+    "q1-2": [
+     "cross_resonance"
+    ],
+    "q2-1": [
+     "cross_resonance"
+    ]
+   },
+   "json:pulse-pairs-data": {},
+   "json:pulse-pairs-info-data": {
+    "q0-1": {
+     "control": "q0",
+     "f_control": 4900000000.0,
+     "f_target": 5200000000.0,
+     "gates": {},
+     "new_gates": [],
+     "orient_ok": false,
+     "target": "q1"
+    },
+    "q1-0": {
+     "control": "q1",
+     "f_control": 5200000000.0,
+     "f_target": 4900000000.0,
+     "gates": {},
+     "new_gates": [],
+     "orient_ok": true,
+     "target": "q0"
+    },
+    "q1-2": {
+     "control": "q1",
+     "f_control": 5200000000.0,
+     "f_target": 5000000000.0,
+     "gates": {},
+     "new_gates": [],
+     "orient_ok": true,
+     "target": "q2"
+    },
+    "q2-1": {
+     "control": "q2",
+     "f_control": 5000000000.0,
+     "f_target": 5200000000.0,
+     "gates": {},
+     "new_gates": [],
+     "orient_ok": false,
+     "target": "q1"
+    }
+   },
+   "json:pulse-qdac-only-data": {},
+   "pair": [],
+   "pc_channel": [
+    "cross_resonance",
+    "zz_drive"
+   ],
+   "pc_pair": [
+    "q0-1",
+    "q1-0",
+    "q1-2",
+    "q2-1"
+   ],
+   "pulse_type": [
+    "SquarePulse",
+    "GaussianPulse",
+    "DragGaussianPulse",
+    "DragCosinePulse",
+    "WaveformPulse",
+    "SquareReadoutPulse",
+    "FlatTopGaussianPulse",
+    "FlatTopCosinePulse",
+    "FlatTopTanhPulse",
+    "FlatTopBlackmanPulse",
+    "BlackmanIntegralPulse",
+    "ErfSquarePulse",
+    "SNZPulse",
+    "GaussianFilteredSquarePulse",
+    "GaussianFilteredSymmetricBipolarPulse",
+    "CosineBipolarPulse"
+   ],
+   "qubit": [
+    "q0",
+    "q1",
+    "q2"
+   ],
+   "slot": []
+  },
+  "copy": {
+   "channel": [
+    "xy",
+    "z",
+    "resonator",
+    "xy_detuned"
+   ],
+   "json:pulse-pair-channels-data": {
+    "q0-1": [
+     "cross_resonance",
+     "zz_drive"
+    ],
+    "q1-0": [
+     "cross_resonance"
+    ],
+    "q1-2": [
+     "cross_resonance"
+    ],
+    "q2-1": [
+     "cross_resonance"
+    ]
+   },
+   "pc_channel": [
+    "cross_resonance",
+    "zz_drive"
+   ],
+   "pc_pair": [
+    "q0-1",
+    "q1-0",
+    "q1-2",
+    "q2-1"
+   ],
+   "qubit": [
+    "q0",
+    "q1",
+    "q2"
+   ]
+  },
+  "gaussian_cz": {}
+ },
+ "steps": [
+  {
+   "data": {
+    "amplitude": "0.1",
+    "channel": "xy",
+    "length": "40",
+    "op_name": "gauss_probe",
+    "pulse_type": "GaussianPulse",
+    "qubit": "q0",
+    "sigma": "8.0",
+    "target_kind": "qubit"
+   },
+   "ops": [
+    [
+     "create_subtree",
+     "qubits.q0.xy.operations.gauss_probe",
+     {
+      "__class__": "quam.components.pulses.GaussianPulse",
+      "amplitude": 0.1,
+      "length": 40,
+      "sigma": 8.0
+     },
+     null
+    ]
+   ],
+   "status": 200,
+   "url": "/api/pulse/create"
+  },
+  {
+   "data": {
+    "amplitude": "0.05",
+    "channel": "z",
+    "length": "60",
+    "op_name": "sq_flux",
+    "pulse_type": "SquarePulse",
+    "qubit": "q0",
+    "target_kind": "qubit"
+   },
+   "message": "'q0' has no z.operations dict — this channel cannot hold pulses yet ×",
+   "ops": [],
+   "status": 400,
+   "url": "/api/pulse/create"
+  },
+  {
+   "data": {
+    "amplitude": "0.05",
+    "channel": "xy",
+    "length": "60",
+    "op_name": "1bad",
+    "pulse_type": "SquarePulse",
+    "qubit": "q0",
+    "target_kind": "qubit"
+   },
+   "message": "Name must start with a letter (letters/digits/_, max 64) ×",
+   "ops": [],
+   "status": 400,
+   "url": "/api/pulse/create"
+  },
+  {
+   "data": {
+    "amplitude": "0.2",
+    "gate": "cz_empty",
+    "length": "48",
+    "pair": "q0-1",
+    "pulse_type": "SquarePulse",
+    "slot": "flux_pulse_qubit",
+    "target_kind": "pair"
+   },
+   "message": "Gate 'cz_empty' not found on 'q0-1' ×",
+   "ops": [],
+   "status": 404,
+   "url": "/api/pulse/create"
+  },
+  {
+   "data": {
+    "amplitude": "0.1",
+    "gate": "cz_empty",
+    "length": "48",
+    "pair": "q0-1",
+    "pulse_type": "SquarePulse",
+    "slot": "coupler_flux_pulse",
+    "target_kind": "pair"
+   },
+   "message": "Gate 'cz_empty' not found on 'q0-1' ×",
+   "ops": [],
+   "status": 404,
+   "url": "/api/pulse/create"
+  },
+  {
+   "data": {
+    "channel": "xy",
+    "op_name": "gauss_copy",
+    "path": "qubits.q0.xy.operations.gauss_probe",
+    "qubit": "q2",
+    "target_kind": "qubit"
+   },
+   "ops": [
+    [
+     "create_subtree",
+     "qubits.q2.xy.operations.gauss_copy",
+     {
+      "__class__": "quam.components.pulses.GaussianPulse",
+      "amplitude": 0.1,
+      "length": 40,
+      "sigma": 8.0
+     },
+     null
+    ]
+   ],
+   "status": 200,
+   "url": "/api/pulse/copy"
+  },
+  {
+   "data": {
+    "channel": "xy",
+    "op_name": "gauss_probe",
+    "path": "qubits.q0.xy.operations.gauss_probe",
+    "qubit": "q0",
+    "target_kind": "qubit"
+   },
+   "message": "q0.xy already has an operation named 'gauss_probe' ×",
+   "ops": [],
+   "status": 409,
+   "url": "/api/pulse/copy"
+  },
+  {
+   "data": {
+    "pair_id": "q0-1"
+   },
+   "message": "Pair 'q0-1' has no 'cz_flattop' macro to source amplitude/duration from. ×",
+   "ops": [],
+   "status": 400,
+   "url": "/api/pulse/gaussian-cz"
+  },
+  {
+   "data": {
+    "pair_id": "q0-1"
+   },
+   "message": "Pair 'q0-1' has no 'cz_flattop' macro to source amplitude/duration from. ×",
+   "ops": [],
+   "status": 400,
+   "url": "/api/pulse/gaussian-cz"
+  },
+  {
+   "data": {
+    "overwrite": "1",
+    "padding_length": "16",
+    "pair_id": "q0-1"
+   },
+   "message": "Pair 'q0-1' has no 'cz_flattop' macro to source amplitude/duration from. ×",
+   "ops": [],
+   "status": 400,
+   "url": "/api/pulse/gaussian-cz"
+  }
+ ]
+}
