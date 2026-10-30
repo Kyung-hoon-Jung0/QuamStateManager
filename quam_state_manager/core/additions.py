@@ -621,11 +621,11 @@ def _owners(state: dict, add: dict, field: str, manifest: dict | None) -> list[t
         # a both-movers gate plays the high pulse on the qubit with the higher
         # f_01 (ties go to the control) [derived: the class's qubit_high /
         # qubit_low properties]; unknown frequencies leave either qubit open
-        f = {r: _f01(state, roles[r]) for r in ("control", "target")}
-        if f["control"] is None or f["target"] is None:
+        from quam_state_manager.core.gate_action import role_owner
+        chosen = role_owner(state, segs[1], on)
+        if chosen is None:
             return q["control"] + q["target"]
-        high = "control" if f["control"] >= f["target"] else "target"
-        pick = high if on == "high" else ("target" if high == "control" else "control")
+        pick = "control" if chosen == roles["control"] else "target"
         word = "higher" if on == "high" else "lower"
         return [(n.replace(f"(the pair's {pick})", f"(the pair's {pick}, the {word}-frequency qubit)"), p)
                 for n, p in q[pick]]

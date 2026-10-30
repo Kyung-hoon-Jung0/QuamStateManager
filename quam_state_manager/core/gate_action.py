@@ -23,7 +23,13 @@ from quam_state_manager.core.add_names import ADDITION_NAME_RE
 def pair_members(doc: dict, pair) -> tuple[str, str]:
     if isinstance(pair, (list, tuple)) and len(pair) == 2:
         return tuple(map(str, pair))
-    for p in doc.get("qubit_pairs") or []:
+    pairs = doc.get("qubit_pairs") or {}
+    if isinstance(pairs, dict) and pair in pairs:
+        pp = ["qubit_pairs", pair]
+        node = pairs[pair]
+        return tuple(additions._qubit_of(doc, pp + ["qubit_" + r], node.get("qubit_" + r))
+                     for r in ("control", "target"))
+    for p in pairs:
         if isinstance(p, (list, tuple)) and (additions._long(p) == pair or additions.quam_pair_id(p) == pair):
             return tuple(map(str, p))
     if isinstance(pair, str) and pair.count("-") == 1:
@@ -35,10 +41,30 @@ def owner(doc: dict, pair) -> dict:
     c, t = pair_members(doc, pair)
     pid = additions.quam_pair_id((c, t))
     long = additions._long((c, t))
+    chip_pair = (doc.get("qubit_pairs") or {}).get(pid, {}) if is_chip(doc) else {}
     return {"target": f"qubit_pairs.{pid}.macros", "label": pid, "kind": "pair",
             "pair": pid, "long": long, "control": c, "target_q": t,
-            "coupler": any(ln.get("line") == "coupler" and ln.get("element") == long
+            "coupler": bool(chip_pair.get("coupler")) if is_chip(doc) else any(ln.get("line") == "coupler" and ln.get("element") == long
                            for ln in doc.get("lines") or [] if isinstance(ln, dict))}
+
+
+def is_chip(doc: dict) -> bool:
+    return isinstance(doc.get("qubits"), dict)
+
+
+def role_input(doc: dict, pair) -> dict:
+    """One role input, interpreted at the document's build phase."""
+    c, t = pair_members(doc, pair)
+    if is_chip(doc):
+        values = (doc.get("qubit_pairs") or {}).get(additions.quam_pair_id((c, t)), {})
+        freqs = {q: additions._f01(doc, q) for q in (c, t)}
+        reason = "by chip f_01"
+    else:
+        pop = doc.get("populate") or {}
+        values = (pop.get("pairs") or {}).get(additions._long((c, t)), {})
+        freqs = {q: ((pop.get("qubit") or {}).get(q) or {}).get("RF_freq") for q in (c, t)}
+        reason = "by Populate frequency"
+    return {"frequencies": freqs, "moving_qubit": values.get("moving_qubit"), "reason": reason}
 
 
 def role_owner(doc: dict, pair, role: str, on_choice: str = "auto") -> str | None:
@@ -51,14 +77,11 @@ def role_owner(doc: dict, pair, role: str, on_choice: str = "auto") -> str | Non
         return "coupler"
     if role in ("control", "target"):
         return c if role == "control" else t
-    pop = doc.get("populate") or {}
+    inputs = role_input(doc, pair)
     if role in ("moving", "pulse"):
-        vals = (pop.get("pairs") or {}).get(additions._long((c, t))) or {}
-        moving = vals.get("moving_qubit")
-        return {"control": c, "target": t}.get(moving)
+        return {"control": c, "target": t}.get(inputs["moving_qubit"])
     if role in ("high", "low"):
-        qs = pop.get("qubit") or {}
-        fc, ft = ((qs.get(q) or {}).get("RF_freq") for q in (c, t))
+        fc, ft = (inputs["frequencies"][q] for q in (c, t))
         if not all(isinstance(f, (int, float)) and not isinstance(f, bool) and f for f in (fc, ft)):
             return None
         high = c if fc >= ft else t
@@ -132,8 +155,9 @@ def resolve(doc: dict, pair, action: dict) -> dict:
         errors.append(f"the name {name} is not a valid name")
     if any(a.get("target") == ow["target"] and a.get("name") == name for a in existing):
         errors.append(f"{name} is already added on {ow['pair']}")
-    before = set(additions.gate_name_errors(doc))
-    errors.extend(e for e in additions.gate_name_errors(dict(doc, additions=existing + [macro])) if e not in before)
+    if not is_chip(doc):
+        before = set(additions.gate_name_errors(doc))
+        errors.extend(e for e in additions.gate_name_errors(dict(doc, additions=existing + [macro])) if e not in before)
     adds.append(macro)
     return {"ok": not errors, "owner": ow, "choices": choices, "additions": adds,
-            "moving_qubit": moving, "errors": errors}
+            "moving_qubit": moving, "errors": errors, "reason": role_input(doc, pair)["reason"]}
