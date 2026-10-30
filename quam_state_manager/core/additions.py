@@ -146,6 +146,9 @@ def structural_errors(spec: dict) -> list[str]:
         if kind == "field":
             if not isinstance(t, str) or not _FIELD_TARGET_RE.match(t):
                 errors.append(f"{where}: a field target must be a dot path (got {t!r})")
+            elif any(s.startswith("__") for s in t.split(".")):
+                errors.append(f"{where}: a field addition sets a value, never a serialisation "
+                              f"key such as __class__ (got {t!r})")
             if "value" not in a:
                 errors.append(f"{where}: a field addition needs a value")
             if isinstance(t, str):
@@ -905,6 +908,19 @@ def precheck(spec: dict, manifest: dict | None) -> list[dict]:
 AUTHORS_PERSON = ("person", "wizard", "import")
 
 
+_AGENT_FIELD_ROOTS_REFUSED = ("wiring", "ports", "network")
+
+
+def _as_number(v: Any) -> Any:
+    """A numeric string as its number (``"0.5"`` -> 0.5), else None."""
+    if isinstance(v, str):
+        try:
+            return float(v.strip())
+        except ValueError:
+            return None
+    return None
+
+
 def _num_like(v: Any) -> bool:
     if isinstance(v, bool):
         return False
@@ -971,16 +987,31 @@ def lint_proposal(spec: dict, add: Any, manifest: dict | None, *, author: str = 
     if agent:
         fields = add.get("fields") or {}
         for k, v in fields.items():
-            if k in typed or is_pointer(v) or not addition_cards.calibration_field(k, card, _deck()):
+            if k in typed or not addition_cards.calibration_field(k, card, _deck()):
                 continue
-            if _num_like(v) and not _default_equals(meta.get(k) or {}, v):
+            if is_pointer(v) and str((meta.get(k) or {}).get("kind") or "").startswith("pointer"):
+                continue      # a pointer FIELD (flux_pulse_high, ...) names a pulse, not a number
+            if is_pointer(v):
+                # a pointer in a calibration field borrows another object's number
+                errors.append(f"field {k} is a calibration value; an agent may not point it at "
+                              f"another value ({v[:60]}) -- leave it out or let a person type it")
+            elif _num_like(v) and not _default_equals(meta.get(k) or {}, v):
                 errors.append(f"field {k} is a calibration value ({json.dumps(v)[:40]}); an agent "
                               "may not set it -- leave it out (the class default applies) or let a "
                               "person type it")
         if kind == "field":
-            leaf = str(add.get("target") or "").rsplit(".", 1)[-1]
-            if (leaf not in typed and _num_like(add.get("value"))
-                    and addition_cards.calibration_field(leaf, None, _deck())):
+            tgt = str(add.get("target") or "")
+            segs = tgt.split(".")
+            leaf = segs[-1]
+            val = add.get("value")
+            if segs[0] in _AGENT_FIELD_ROOTS_REFUSED:
+                errors.append(f"{segs[0]} is the instrument wiring; an agent may not set a "
+                              "field there -- a person edits it")
+            elif leaf not in typed and segs[0] != "extras" and (
+                    addition_cards.calibration_field(leaf, None, _deck())
+                    or _num_like(val) or _num_like(_as_number(val))):
+                # a calibration leaf in ANY spelling (number, numeric text, a
+                # pointer to another value), or any number outside extras
                 errors.append(f"{leaf} is a calibration value; an agent may not set it")
         needs = sorted(n for n, f in meta.items()
                        if not f.get("has_default") and n not in fields and n not in typed

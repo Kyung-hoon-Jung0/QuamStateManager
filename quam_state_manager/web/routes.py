@@ -45706,6 +45706,8 @@ def generate_proposals_context():
     """The wizard records its draft spec so an agent's proposal is judged
     against the chip the person is building."""
     from quam_state_manager.core import addition_proposals
+    if _request_actor().startswith("by_"):
+        return jsonify({"ok": False, "error": "the wizard records its own draft"}), 403
     spec = json_object().get("spec")
     if not isinstance(spec, dict):
         return jsonify({"ok": False, "error": "spec must be an object"}), 400
@@ -45727,6 +45729,10 @@ def generate_proposal_accept(pid):
     """A person accepts a proposal: linted again as THEIR addition, with the
     fields they typed; the browser then adds it to spec.additions."""
     from quam_state_manager.core import addition_proposals
+    if _request_actor().startswith("by_"):
+        # an agent proposes; only a person accepts (its own Accept would
+        # write a card overlay and pass its numbers as a person's)
+        return jsonify({"ok": False, "errors": ["only a person accepts a proposal, in the wizard"]}), 403
     data = json_object()
     spec = data.get("spec") if isinstance(data.get("spec"), dict) else {}
     typed = data.get("fields") if isinstance(data.get("fields"), dict) else {}
