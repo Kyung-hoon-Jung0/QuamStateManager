@@ -368,6 +368,13 @@ def _type_ok(raw: str, kind: str, value: Any) -> bool:
     return True
 
 
+def not_probed_note(qclass: str) -> str:
+    """The one sentence for a class the environment has not been probed for:
+    an unknown, never a claim that the class does not exist."""
+    return (f"the environment has not been probed for {qclass} yet, so its fields are not "
+            "checked here; the environment's own build checks them")
+
+
 def manifest_reason(add: dict, manifest: dict | None) -> str | None:
     """Why the env's role manifest refuses *add*, or None. No manifest: None
     (an unknown is never a blocker -- the env build decides)."""
@@ -376,6 +383,10 @@ def manifest_reason(add: dict, manifest: dict | None) -> str | None:
     qclass = add["class"]
     c = _class_entry(manifest, qclass)
     if c is None:
+        if "missing_classes" in manifest and qclass not in manifest["missing_classes"]:
+            # the cached probe was never asked about this class: an unknown,
+            # not an absence -- the environment's own build decides
+            return None
         return (f"class {qclass} is not in this environment (not importable, or not "
                 "in a module the environment was asked to look in)")
     want = ("pulse" if add.get("kind", "pulse") == "pulse"
@@ -1021,6 +1032,8 @@ def lint_proposal(spec: dict, add: Any, manifest: dict | None, *, author: str = 
     why = _core_reason(spec, judged, manifest)
     if why:
         errors.append(why)
+    if kind in ("pulse", "macro") and qclass and entry is None and not why:
+        warnings.append(not_probed_note(qclass))
     if card is not None:
         tgt = str(add.get("target") or "")
         if not addition_cards.placement_ok(card, tgt):
