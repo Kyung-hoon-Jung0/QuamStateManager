@@ -87,3 +87,19 @@ def test_an_agent_cannot_rewrite_the_wizard_draft(client):
     r = client.post("/generate/proposals/context", headers=_AG, json={"spec": SPEC})
     assert r.status_code == 403
     assert client.post("/generate/proposals/context", headers=_H, json={"spec": SPEC}).get_json()["ok"]
+
+
+# --------------------------------------------------------------- pairs never drop silently
+
+def test_a_cz_tunable_pair_without_a_coupler_line_is_refused():
+    from quam_state_manager.core.config_generator import validate_spec
+    s = {"qubits": ["q1", "q2"], "qubit_pairs": [["q1", "q2"]], "pair_gate": "cz_tunable", "twpas": [],
+         "instruments": {"controllers": [{"con": 1, "fems": [{"slot": 1, "fem": "mw"}, {"slot": 2, "fem": "lf"}]}],
+                         "opx_plus": [], "octaves": []},
+         "lines": [{"element": q, "line": ln, "channel": None} for q in ("q1", "q2")
+                   for ln in ("resonator", "drive", "flux")]}
+    errs = validate_spec(s)
+    assert any("cz_tunable requires a coupler flux line for q1-q2" in e and "leaves this pair out" in e
+               for e in errs), errs
+    s["lines"].append({"element": "q1-q2", "line": "coupler", "channel": None})
+    assert not any("coupler flux line" in e for e in validate_spec(s))
