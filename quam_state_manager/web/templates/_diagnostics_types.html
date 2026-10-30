@@ -60,6 +60,13 @@
   </div>
   {% endif %}
 
+  {% if types_card and types_card.env_deferred %}
+  <div class="diag-types-row">
+    <div class="diag-types-label">Environment-schema mismatches</div>
+    <div class="diag-types-body"><p class="diag-types-caption muted env-upgrade-deferred">The environment changed;
+      <a href="#env-upgrade-report">the Environment match card</a> lists what no longer matches.</p></div>
+  </div>
+  {% endif %}
   {% if types_card and types_card.env.count %}
   <div class="diag-types-row">
     <div class="diag-types-label">Environment-schema mismatches</div>

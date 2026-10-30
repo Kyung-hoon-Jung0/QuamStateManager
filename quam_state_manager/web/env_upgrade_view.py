@@ -160,6 +160,10 @@ def model(ctx, inst):
             transition["dismissed"] = is_acknowledged
         if report["banner"] and is_acknowledged:
             report["banner"] = False
+        if store is not None:
+            with store._lock:
+                for row in report["cases"]["3"]["rows"]:
+                    row["values"] = removal_values(store.state, list(row.get("paths") or []))
         accepted = env_seen.accepted_renames(inst, key)
         for row in report["cases"]["3"]["rows"]:
             row["candidates"] = [candidate for candidate in row["candidates"] if not any(
@@ -209,15 +213,41 @@ def model(ctx, inst):
 def _plan(ctx, payload, inst):
     selections = payload.get("selections") or []
     if not selections:
-        raise ValueError("select and confirm individual rename rows")
+        raise ValueError("tick a rename candidate or a removal to review first")
+    rows = (model(ctx, inst)["report"] or {}).get("cases", {}).get("3", {}).get("rows", [])
     allowed = set()
-    for row in (model(ctx, inst)["report"] or {}).get("cases", {}).get("3", {}).get("rows", []):
+    removable = {}
+    for row in rows:
         allowed.update((row["defining_class"], row["field"], c["field"]) for c in row["candidates"])
-    if any((row.get("class"), row.get("old"), row.get("new")) not in allowed for row in selections):
+        removable[(row.get("class"), row.get("field"))] = list(row.get("paths") or [])
+    renames = [row for row in selections if not row.get("remove")]
+    removals = [row for row in selections if row.get("remove")]
+    if any((row.get("class"), row.get("old"), row.get("new")) not in allowed for row in renames):
         raise ValueError("rename candidate is no longer present in this report")
+    if any((row.get("class"), row.get("field")) not in removable for row in removals):
+        raise ValueError("removal is no longer present in this report")
+    if any(not row.get("confirmed") for row in removals):
+        raise ValueError("confirm each removal after reviewing its values")
     with ctx["store"]._lock:
-        return env_rename.plan(ctx["store"].state, ctx["store"].wiring,
-            ctx["env_upgrade_body"], selections, reference_for(ctx, inst))
+        planned = env_rename.plan(ctx["store"].state, ctx["store"].wiring,
+            ctx["env_upgrade_body"], renames, reference_for(ctx, inst))
+        return env_rename.add_removals(planned, [
+            {"paths": removable[(row["class"], row["field"])]} for row in removals])
+
+
+def removal_values(state, paths, limit=50):
+    """The values a reviewed removal would drop, as short JSON text."""
+    out = []
+    for path in paths[:limit]:
+        node = state
+        try:
+            for part in path.split("."):
+                node = node[int(part)] if isinstance(node, list) else node[part]
+        except (KeyError, IndexError, ValueError, TypeError):
+            continue
+        text = json.dumps(node, sort_keys=True, default=str)
+        out.append({"path": path, "value": text if len(text) <= 160 else text[:157] + "..."})
+    return out
 
 
 def dispatch(action):
@@ -310,11 +340,14 @@ def dispatch(action):
                     (folder / "wiring.json").write_text(json.dumps(planned["wiring"]), encoding="utf-8")
                     outcome = config_generator.run_config_preview(env, folder, strict=True, load_only=True)
                 if not outcome.get("ok"):
-                    return jsonify(ok=False, error=outcome.get("error"), skipped=planned["skipped"]), 400
+                    return jsonify(ok=False, error="Quam.load failed in this env: " + str(outcome.get("error") or "no reason given"),
+                                   skipped=planned["skipped"]), 400
                 token = secrets.token_urlsafe(24)
                 ctx["env_rename_test"] = {"plan": planned["signature"], "env_signature": signature,
                                            "token": token}
-                return jsonify(ok=True, token=token, moves=planned["moves"], skipped=planned["skipped"])
+                return jsonify(ok=True, token=token, moves=planned["moves"], skipped=planned["skipped"],
+                               removals=len(planned.get("removals") or []),
+                               message="Quam.load passed in this env with the reviewed changes")
             tested = ctx.get("env_rename_test") or {}
             if (tested.get("plan") != planned["signature"] or tested.get("env_signature") != signature
                     or not secrets.compare_digest(tested.get("token", ""), payload.get("token") or "")):
@@ -324,7 +357,8 @@ def dispatch(action):
                 if planned["signature"] != tested.get("plan"):
                     raise ValueError("test load again after a state change")
                 entries = env_rename.apply(ctx["modifier"], planned)
-            env_seen.remember_renames(inst, key, env, payload["selections"], view["report"]["event"])
+            env_seen.remember_renames(inst, key, env, [row for row in payload["selections"] if not row.get("remove")],
+                                      view["report"]["event"])
             ctx["env_upgrade_report"] = env_upgrade.report(planned["state"], ctx["env_upgrade_body"],
                 reference_for(ctx, inst), event=view["report"]["event"])
             ctx.pop("env_rename_test", None)

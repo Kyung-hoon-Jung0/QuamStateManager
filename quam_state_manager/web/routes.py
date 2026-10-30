@@ -2221,6 +2221,8 @@ def _maybe_check_env_upgrade(ctx, inst, *, python_path_override=None) -> None:
             python_path = python_path_override or config_generator.get_selected_env(inst)
             if not python_path:
                 return
+            signature = config_generator._env_signature(python_path)
+            ctx["env_upgrade_sig_tried"] = (config_generator.interpreter_key(python_path), signature)
             manifest = state_env_schema.manifest_for_store(ctx["store"], python_path, inst)
             if manifest is None:
                 ctx["env_upgrade_error"] = "could not check: environment probe failed"
@@ -2237,6 +2239,7 @@ def _maybe_check_env_upgrade(ctx, inst, *, python_path_override=None) -> None:
             ctx["env_upgrade_event"] = env_seen.observe(inst, key, python_path, body, context=ctx)
             ctx["env_upgrade_body"] = body
             ctx["env_upgrade_env"] = python_path
+            ctx["env_upgrade_sig"] = signature
             from quam_state_manager.core import env_upgrade
             event = ctx["env_upgrade_event"]
             pending = event.get("current", {}).get("pending")
@@ -2266,6 +2269,22 @@ def _maybe_check_env_upgrade(ctx, inst, *, python_path_override=None) -> None:
         starter(run)
     else:
         threading.Thread(target=run, daemon=True, name="env-upgrade-observe").start()
+
+
+def _maybe_recheck_env_upgrade(ctx, inst) -> bool:
+    """Diagnostics shown: re-run the environment check when the selected env's
+    installed packages moved since the last check (or none ran yet). The
+    signature is stat/listdir only; the check itself runs in the background."""
+    if not ctx or not ctx.get("store"):
+        return False
+    python_path = config_generator.get_selected_env(inst)
+    if not python_path:
+        return False
+    now = (config_generator.interpreter_key(python_path), config_generator._env_signature(python_path))
+    if ctx.get("env_upgrade_sig_tried") == now:
+        return False      # checked (or tried) at exactly these installed packages
+    _maybe_check_env_upgrade(ctx, inst)
+    return True
 
 
 _schema_warm_inflight: set[str] = set()
@@ -46937,6 +46956,21 @@ def _env_findings_context(store) -> tuple[dict, str, bool] | None:
     return manifest, label, probing
 
 
+ENV_UPGRADE_DEFERRED = ("The environment changed; the Environment match card on Diagnostics "
+                        "lists what no longer matches.")
+
+
+def _env_upgrade_owns_schema(ctx: dict | None) -> bool:
+    """On an environment transition with load-stopping findings, the env-upgrade
+    card owns the schema facts; the older schema surfaces defer to it."""
+    report = (ctx or {}).get("env_upgrade_report") or {}
+    event = report.get("event") or {}
+    if not event.get("changed") or event.get("first"):
+        return False
+    cases = report.get("cases") or {}
+    return any((cases.get(n) or {}).get("rows") for n in ("2", "3", "4"))
+
+
 def _env_rows_unacked(ctx: dict | None, memo: dict) -> tuple[list, int]:
     """The memo's raw env-schema rows minus the acknowledged ones, each kept
     row stamped with the ack_key/ack_detail its card button sends -- the same
@@ -46944,6 +46978,8 @@ def _env_rows_unacked(ctx: dict | None, memo: dict) -> tuple[list, int]:
     (state_env_validate.unacknowledged_rows). Cold env -> (rows, 0)."""
     from quam_state_manager.core import state_env_validate as _sev
     rows = list(memo.get("env_findings") or [])
+    if _env_upgrade_owns_schema(ctx):
+        return [], 0     # the Environment match card reports these on a transition
     try:
         store = (ctx or {}).get("store")
         if store is None:
@@ -47082,6 +47118,10 @@ def _active_chip_findings(store: QuamStore, *, budget_s: float | None = None) ->
                          else max(0.0, budget_s - (time.monotonic() - t0))))
     if env is None:
         return None
+    if _env_upgrade_owns_schema(_active_ctx()):
+        env = [diagnostics.Finding("warning", "env_upgrade_schema", "Environment change report",
+                                   ENV_UPGRADE_DEFERRED,
+                                   detail="See the Environment match card for evidence and limits.")]
     findings = findings + env + _hub_ledger_findings(store)
     upgrade_report = ((_active_ctx() or {}).get("env_upgrade_report") or {})
     for number in (1, 5, 6):
@@ -47150,6 +47190,7 @@ def _env_card_state(store: QuamStore) -> dict:
             _pp = _pp.parent
         env_name = _pp.name or None
     from quam_state_manager.web.env_upgrade_view import model as upgrade_model
+    _maybe_recheck_env_upgrade(_active_ctx(), current_app.instance_path)
     return {
         "selected": python_path,
         "upgrade": upgrade_model(_active_ctx(), current_app.instance_path),
@@ -47185,6 +47226,7 @@ def _types_card_state(ctx: dict | None) -> dict | None:
         card["env"]["warm"] = _live_env_manifest(store) is not None   # QA diagnostics-r2-16
         # docs/79: the library's own movements + what the user has taught SM.
         card["env_change"], card["taught"] = _env_change_summary(store)
+        card["env_deferred"] = _env_upgrade_owns_schema(ctx)
         return card
     except Exception:  # noqa: BLE001 — the card must never break /diagnostics
         logger.warning("types-card state failed", exc_info=True)

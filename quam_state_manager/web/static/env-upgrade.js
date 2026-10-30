@@ -15,6 +15,14 @@
     else if (window.showToast) window.showToast(text, 'info');
   }
   function selections() {
+    const removals = Array.from(document.querySelectorAll('.env-remove-row')).filter(function (row) {
+      return row.querySelector('.env-remove-confirm:checked');
+    }).map(function (row) {
+      return {class: row.dataset.class, field: row.dataset.field, remove: true, confirmed: true};
+    });
+    return removals.concat(renames());
+  }
+  function renames() {
     return Array.from(document.querySelectorAll('.env-rename-row')).filter(function (row) {
       return row.querySelector('.env-rename-confirm:checked');
     }).map(function (row) {
@@ -63,10 +71,13 @@
       button.disabled = true;
       try {
         const selected = selections();
+        if (!selected.length) { notice('Tick a rename candidate or a removal first.'); return; }
+        notice('Running Quam.load in this env…');
         const result = await post('rename-test', {selections: selected});
         tested = {token: result.token, selections: selected};
         button.disabled = false;
-        notice('Load completed. ' + result.moves.length + ' moves; skipped: ' + JSON.stringify(result.skipped));
+        notice(result.message + ': ' + result.moves.length + ' renames, ' + result.removals + ' removals' +
+          (result.skipped.length ? '; skipped: ' + result.skipped.map(function (s) { return s.path + ' (' + s.reason + ')'; }).join(', ') : ''));
       } catch (error) { notice(error.message); }
     },
     applyRenames: async function () {

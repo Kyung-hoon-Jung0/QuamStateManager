@@ -65,7 +65,14 @@
             default {{ candidate.default if candidate.has_default else 'no default' }}. {{ candidate.doc or '' }}</p>
           {% if upgrade.editable %}<label><input type="checkbox" class="env-rename-confirm"> Confirm this candidate</label>
             <label><input type="checkbox" class="env-rename-meaning"> meaning and unit unchanged</label>{% endif %}
-        </div>{% endfor %}{% endif %}
+        </div>{% endfor %}
+        {% if not row.candidates %}<p>No rename candidate found.</p>{% endif %}
+        {% if row.paths %}<div class="env-remove-row" data-class="{{ row['class'] }}" data-field="{{ row.field }}">
+          <details><summary>Values that a removal would drop ({{ row.paths | length }})</summary>
+            {% for item in row['values'] %}<div><code>{{ item.path }}</code> = <code>{{ item.value }}</code></div>{% endfor %}</details>
+          {% if upgrade.editable %}<label><input type="checkbox" class="env-remove-confirm"> Remove this field from the working copy (reviewed; live only via Apply)</label>{% endif %}
+        </div>{% endif %}
+        {% endif %}
       </div>
       {% endfor %}{% endif %}
       {% endfor %}
@@ -77,7 +84,7 @@
     {% if not prominent %}</details>{% endif %}
     {% if upgrade.editable and report.cases['3'].rows %}
       <button class="btn-sm" onclick="EnvUpgrade.testRenames()">Test load in this env</button>
-      <button class="btn-sm" id="env-rename-apply" disabled onclick="EnvUpgrade.applyRenames()">Stage reviewed renames</button>
+      <button class="btn-sm" id="env-rename-apply" disabled onclick="EnvUpgrade.applyRenames()">Stage reviewed changes</button>
       <p id="env-rename-result" role="status"></p>
     {% endif %}
     {% if report.banner %}<button class="btn-sm" onclick="EnvUpgrade.acknowledge()">Acknowledge these findings</button>{% endif %}

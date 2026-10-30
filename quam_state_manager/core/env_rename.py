@@ -91,6 +91,41 @@ def plan(state, wiring, manifest, selections, reference=None):
     return result
 
 
+def add_removals(planned, removals):
+    """Fold reviewed removals of fields the environment no longer declares into
+    a plan. Each removal names its leaf paths; a leaf another value points at is
+    skipped with the referrer named, never removed."""
+    state_copy, wiring_copy = planned["state"], planned["wiring"]
+    referrers = []
+    for tree in (state_copy, wiring_copy):
+        for holder, value in _leaves(tree):
+            if isinstance(value, str) and value.startswith(("#/", "#./", "#../")):
+                target = pointer_to_abs(value, holder.split("."))
+                if target:
+                    referrers.append((holder, ".".join(str(p) for p in target)))
+    removed = []
+    for removal in removals:
+        for path in removal["paths"]:
+            try:
+                parent, leaf = _parent(state_copy, path)
+                key = int(leaf) if isinstance(parent, list) else leaf
+                value = parent[key]
+            except (KeyError, IndexError, ValueError, TypeError):
+                planned["skipped"].append({"path": path, "reason": "no longer present"})
+                continue
+            using = [holder for holder, target in referrers
+                     if (target == path or target.startswith(path + "."))
+                     and not (holder == path or holder.startswith(path + "."))]
+            if using:
+                planned["skipped"].append({"path": path, "reason": "referenced by " + using[0]})
+                continue
+            removed.append({"path": path, "value": copy.deepcopy(value)})
+            del parent[key]
+    planned["removals"] = removed
+    planned["signature"] = _hash({k: v for k, v in planned.items() if k != "signature"})
+    return planned
+
+
 def apply(modifier, planned):
     """One modifier group for pointer edits and every leaf move; rollback on error."""
     with modifier.store._lock:
@@ -102,6 +137,8 @@ def apply(modifier, planned):
                                                    group_id=group))
             for move in planned["moves"]:
                 entries.extend(modifier.rename_subtree(move["old"], move["new"], group_id=group))
+            for removal in planned.get("removals") or []:
+                entries.append(modifier.delete_subtree(removal["path"], group_id=group))
         except Exception:
             modifier._rollback(entries)
             raise
