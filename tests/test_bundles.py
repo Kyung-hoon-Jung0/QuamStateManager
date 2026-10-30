@@ -21,7 +21,7 @@ CORE = {"htmx.min.js", "split.min.js", "search-query.js", "app.js",
         "sidebar-typeahead.js", "auto-apply.js",
         "plot-theme.js", "calc.js", "manual.js", "undo-trail.js"}
 LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
-        "component-map.js", "chip-status.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
+        "component-map.js", "chip-status.js", "gen-additions.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js",
         "notes.js", "agent-setup.js", "zline.js", "pulses-vt.js",
         "cz-plan.js", "cz-map.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15); cz-map.js: its chip map (A14)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
@@ -72,7 +72,7 @@ def test_every_page_ships_the_core_and_only_its_own_bundles(client):
         ("/zline", {"zline.js"}, {"bulk-edit.js", "chip-status.js", "generate.js", "pulses.js"}),
         ("/explorer", set(), LAZY),
         ("/topology", {"chip-status.js", "topo-graph.js", "component-map.js"}, {"bulk-edit.js", "generate.js"}),
-        ("/generate", {"generate.js", "generate_preview.js", "wiring-grid.js", "pulses.js", "topo-graph.js"}, {"bulk-edit.js", "chip-status.js"}),
+        ("/generate", {"gen-additions.js", "generate.js", "generate_preview.js", "wiring-grid.js", "pulses.js", "topo-graph.js"}, {"bulk-edit.js", "chip-status.js"}),
         ("/datasets", {"dataset-virtual.js", "ndview.js"}, {"bulk-edit.js", "generate.js"}),
         # A14: the CZ map draws the chip with TopoGraph.layoutFor -- the page carries it
         ("/cz-plan", {"topo-graph.js", "cz-map.js", "cz-plan.js"}, {"bulk-edit.js", "chip-status.js", "generate.js"}),

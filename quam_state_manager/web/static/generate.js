@@ -9556,6 +9556,10 @@
     // QA F16: a deep link straight to step 6 has no wiring allocation yet, so
     // no LO map and no conflict box — ask for one (the answer re-derives).
     if (!state.allocation) maybeAutoAllocate();
+    // Lab additions (phase 2): "+ Add pulse" per channel; the list rides spec.additions.
+    if (window.GenAdditions) window.GenAdditions.mount(
+      document.getElementById("gen-pop-additions"),
+      { spec: function () { return state.spec; }, changed: saveDraft });
     renderPopTopo();     // read-only chip-board mirror (toggleable)
     renderPopWiring();   // build the diagram first…
     reconcileReadoutBanks();   // converge any pre-allocation divergent-FSP banks
@@ -10385,6 +10389,11 @@
         se.textContent = "⚠ Python scripts export failed: " + res.scripts_error +
           " (the chip itself built fine)";
         el.appendChild(se);
+      }
+
+      // Lab additions: what was added, and what was refused with its reason.
+      if (res.additions && window.GenAdditions) {
+        el.appendChild(window.GenAdditions.renderResult(res.additions));
       }
 
       // Re-generate value-merge transparency — nothing is hidden: how many

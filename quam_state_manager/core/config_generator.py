@@ -419,6 +419,10 @@ def validate_spec(spec) -> list[str]:
                 f"({ch_lo} to {ch_hi}), so at most {ch_hi} qubits can be QDAC-biased; "
                 "put the rest on LF-FEM flux lines.")
 
+    # -- additions (lab additions, phase 2) ---------------------------------
+    from quam_state_manager.core import additions as _additions
+    errors.extend(_additions.structural_errors(spec))
+
     # -- lines -------------------------------------------------------------
     lines = spec.get("lines", []) or []
     if not isinstance(lines, list):
@@ -1555,6 +1559,38 @@ def run_generator(
         )
     finally:
         _cleanup_work_dir(work_dir)
+
+
+ADDITIONS_VERIFY_SCRIPT = _script_path("run_additions_verify.py")
+
+
+def run_additions_verify(python_path: str, folders: dict, timeout: int = 600) -> dict:
+    """Load each candidate folder fresh in the env (``Quam.load`` +
+    ``generate_config`` + listed objects' own ``calculate_waveform``).
+
+    *folders* is ``{key: {"folder", "own_code"}}``. Returns ``{"ok", "error",
+    "folders": {key: {"ok", "stage", "error"}}}``. Never raises."""
+    out = {"ok": False, "error": None, "folders": {}}
+    if not ADDITIONS_VERIFY_SCRIPT.exists():
+        out["error"] = f"verify script not found: {ADDITIONS_VERIFY_SCRIPT}"
+        return out
+    outcome = _blank_outcome()
+    work_dir = Path(tempfile.mkdtemp(prefix="quamaddv_work_"))
+    try:
+        (work_dir / "_spec.json").write_text(json.dumps({"folders": folders}), encoding="utf-8")
+        _run_script_outcome(
+            [python_path, str(ADDITIONS_VERIFY_SCRIPT), "--spec", str(work_dir / "_spec.json"),
+             "--out", str(work_dir / "_result.json")],
+            work_dir, timeout, outcome,
+            no_result_label="additions check", error_fallback="additions check reported an error")
+    finally:
+        _cleanup_work_dir(work_dir)
+    parsed = outcome.get("result") or {}
+    if not outcome.get("ok"):
+        out["error"] = outcome.get("error") or "the additions check failed to run"
+        return out
+    out.update(ok=True, folders=parsed.get("folders") or {})
+    return out
 
 
 def run_config_preview(

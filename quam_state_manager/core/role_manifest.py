@@ -33,7 +33,7 @@ from quam_state_manager.core.state_env_schema import _cache_lock
 logger = logging.getLogger(__name__)
 
 ROLES_SCRIPT = _script_path("probe_roles.py")
-ROLE_FORMAT = 1
+ROLE_FORMAT = 2   # 2: per-class and per-field docstrings
 _CACHE_FILENAME = "role_manifest_cache.json"
 _MAX_CACHED_ENVS = 5
 _MEASURE_MACRO = "quam_builder.architecture.superconducting.custom_gates.single_qubit_gates.MeasureMacro"

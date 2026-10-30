@@ -158,8 +158,18 @@ def origin_of(cls) -> str:
     return "official" if top in OFFICIAL_PACKAGES else "lab"
 
 
+def _docs(cls) -> tuple:
+    """(class summary, per-field docs) from the class's own docstrings; never raises."""
+    try:
+        from probe_state_schema import _class_docs
+        return _class_docs(cls)
+    except Exception:  # noqa: BLE001 -- documentation is optional
+        return None, {}
+
+
 def dump_fields(cls, fk, names: dict) -> dict:
     fields = getattr(cls, "__dataclass_fields__", None) or {}
+    _summary, docs = _docs(cls)
     out = {}
     for f in fields.values():
         if getattr(f, "_field_type", None) is not dataclasses._FIELD:  # type: ignore[attr-defined]
@@ -174,7 +184,7 @@ def dump_fields(cls, fk, names: dict) -> dict:
         out[f.name] = {"raw": raw, "has_default": bool(has_default or has_factory),
                        "default_repr": repr(default) if has_default else (
                            "<factory>" if has_factory else None),
-                       **info}
+                       "doc": docs.get(f.name), **info}
     return out
 
 
@@ -237,6 +247,7 @@ def probe(spec: dict) -> dict:
                 "bases": [_path_of(b) for b in obj.__bases__],
                 "mro": [_path_of(b) for b in obj.__mro__[1:] if b is not object],
                 "fields": dump_fields(obj, fk, names),
+                "doc": _docs(obj)[0],
             }
         except Exception as exc:  # noqa: BLE001
             classes[path] = {"role": "other", "origin": origin_of(obj),

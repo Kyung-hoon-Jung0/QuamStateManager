@@ -45582,6 +45582,82 @@ _BUILD_BUSY_MSG = ("A build into this folder is already running (a second press,
                    "then check the folder before generating again.")
 
 
+def _additions_manifest(python_path: str, spec: dict, *, spawn: bool) -> dict | None:
+    """The env's role manifest covering every class *spec*'s additions name
+    (and the modules they live in). ``spawn=False`` is a cache read only."""
+    from quam_state_manager.core import role_manifest
+    classes = sorted({str(a.get("class")) for a in (spec.get("additions") or [])
+                      if isinstance(a, dict) and a.get("class")})
+    if not spawn:
+        return role_manifest.roles_for_env(python_path, current_app.instance_path,
+                                           state_classes=classes)
+    res = role_manifest.probe_roles(python_path, current_app.instance_path,
+                                    state_classes=classes)
+    return res.get("manifest") or None
+
+
+def _apply_build_additions(python_path: str, out_dir: Path, spec: dict) -> dict:
+    """Apply + verify ``spec.additions`` on a finished build, then keep them
+    (with env identity + schema hash) in the exact-spec sidecar."""
+    from quam_state_manager.core import additions, regen_spec
+    try:
+        manifest = _additions_manifest(python_path, spec, spawn=True)
+    except Exception:  # noqa: BLE001 -- an unknown manifest is never a blocker
+        logger.warning("role manifest probe failed", exc_info=True)
+        manifest = None
+    report = additions.apply_and_verify(python_path, out_dir, spec, manifest)
+    try:
+        st, wr = safe_io.read_state_wiring(out_dir)
+        kept = dict(spec, additions=additions.stamp(spec, manifest, python_path))
+        regen_spec.write_spec_sidecar(out_dir, kept, st, wr)
+    except (OSError, ValueError) as exc:
+        report.setdefault("notes", []).append(f"spec sidecar not written: {exc}")
+    return report
+
+
+@bp.route("/generate/roles", methods=["GET", "POST"])
+def generate_roles():
+    """The selected env's pulse classes for the wizard's "+ Add pulse" form.
+
+    GET is a cache read (never spawns); POST runs the role probe (an explicit
+    press). ``modules`` (comma list / JSON list) names lab modules to look in --
+    lab packages are never walked."""
+    from quam_state_manager.core import role_manifest
+    python_path = config_generator.get_selected_env(current_app.instance_path)
+    if not python_path:
+        return jsonify({"ok": False, "error": "No environment selected."})
+    if request.method == "POST":
+        data = json_object()
+        mods = data.get("modules") or []
+        if isinstance(mods, str):
+            mods = [m.strip() for m in mods.split(",") if m.strip()]
+        mods = [m for m in mods if isinstance(m, str)]
+        res = role_manifest.probe_roles(python_path, current_app.instance_path,
+                                        modules=mods)
+        man, err = res.get("manifest") or None, res.get("error")
+    else:
+        mods = [m for m in (request.args.get("modules") or "").split(",") if m]
+        man = role_manifest.roles_for_env(python_path, current_app.instance_path,
+                                          modules=mods)
+        err = None if man else "not probed yet"
+    if not man:
+        return jsonify({"ok": False, "cold": request.method == "GET", "error": err})
+    pulses, qubit_fields = {}, {}
+    for path, c in (man.get("classes") or {}).items():
+        if not isinstance(c, dict):
+            continue
+        if c.get("role") == "pulse" and not c.get("abstract") and not path.rsplit(".", 1)[-1].startswith("_"):
+            pulses[path] = {"origin": c.get("origin"), "doc": c.get("doc"),
+                            "fields": c.get("fields") or {}}
+        elif c.get("role") == "qubit":
+            for n, f in (c.get("fields") or {}).items():
+                if f.get("kind") in ("plain", "scalar_or_pointer"):
+                    qubit_fields[n] = 1
+    return jsonify({"ok": True, "error": err, "versions": man.get("versions") or {},
+                    "modules": man.get("modules") or {}, "pulses": pulses,
+                    "qubit_fields": sorted(qubit_fields)})
+
+
 @bp.route("/generate/build", methods=["POST"])
 @_one_build_per_output_folder
 def generate_build():
@@ -45688,6 +45764,11 @@ def generate_build():
         outcome = config_generator.run_generator(
             python_path, "build", spec, Path(output_path), timeout=600
         )
+        # Lab additions (phase 2): a JSON pass over the saved state, then the
+        # env's own load / generate_config / class code. Degrade-only.
+        if outcome.get("ok") and spec.get("additions"):
+            outcome["additions"] = _apply_build_additions(
+                python_path, Path(output_path), spec)
         # QA F12: a success whose QM config the QM would reject says so.
         if outcome.get("ok"):
             try:

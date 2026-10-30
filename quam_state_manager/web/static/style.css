@@ -16098,3 +16098,33 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
 .czp-table .czp-no-quad { font-size: .85em; }
 .czp-wrap-fits .czp-table tbody tr:first-child td { padding-top: .8rem; }
 @media (max-width: 900px) { .czp-detail .czp-plots { grid-template-columns: minmax(0, 1fr); } }
+
+/* Generate Config -- pulse additions (lab additions, phase 2) */
+#gen-pop-additions { max-height: none; }
+.gen-add-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.4rem; }
+.gen-add-bar .gen-add-modules { flex: 1 1 16rem; max-width: 26rem; margin: 0; padding: 0.2rem 0.45rem; font-size: 0.85em; height: auto; }
+.gen-add-bar button, .gen-add-ch-head button, .gen-add-actions button, .gen-add-item button { width: auto; margin: 0; padding: 0.15rem 0.6rem; font-size: 0.85em; }
+.gen-add-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.gen-add-ch { border: 1px solid var(--pico-muted-border-color, #3333); border-radius: 6px; padding: 0.3rem 0.5rem; }
+.gen-add-ch-head { display: flex; align-items: center; gap: 0.6rem; }
+.gen-add-ch-label { min-width: 9rem; font-weight: 600; font-size: 0.9em; }
+.gen-add-item { display: flex; align-items: center; gap: 0.4rem; margin: 0.2rem 0 0 1rem; font-size: 0.85em; }
+.gen-add-item .gen-add-rm { padding: 0 0.4rem; }
+.gen-add-form { margin: 0.4rem 0 0.2rem 1rem; }
+.gen-add-row { display: flex; gap: 0.5rem; }
+.gen-add-row select, .gen-add-row input { margin: 0; padding: 0.2rem 0.45rem; font-size: 0.85em; height: auto; }
+.gen-add-row select { flex: 2 1 0; }
+.gen-add-row input { flex: 1 1 0; }
+.gen-add-origin { margin: 0.3rem 0; font-size: 0.85em; }
+.gen-add-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.25rem 0.8rem; }
+.gen-add-field { display: grid; grid-template-columns: 8.5rem 1fr; align-items: center; gap: 0.4rem; margin: 0; font-size: 0.85em; }
+.gen-add-field input { margin: 0; padding: 0.15rem 0.4rem; font-size: 0.95em; height: auto; }
+.gen-add-fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gen-add-required .gen-add-fname { font-weight: 600; }
+.gen-add-pointable { font-family: var(--pico-font-family-monospace, monospace); }
+.gen-add-actions { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+.gen-add-msg { margin: 0.2rem 0 0; font-size: 0.85em; }
+.gen-add-result { margin-top: 0.5rem; }
+.gen-add-result-head { font-weight: 600; margin: 0.2rem 0; }
+.gen-add-result-list { margin: 0; padding-left: 1.2rem; font-size: 0.9em; }
+.gen-add-result-list li.gen-add-refused { color: var(--sm-danger, #d33); }
