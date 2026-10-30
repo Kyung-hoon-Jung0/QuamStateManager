@@ -799,11 +799,17 @@
 
   // The pairs a rule is on: its instances, plus the source gate where that still exists.
   function countOn(spec, rule) {
+    // Only gates on a pair the spec has count: a gate left on a pair id the spec
+    // no longer names is not "on" anything.
+    var live = {};
+    (spec.qubit_pairs || []).forEach(function (p) {
+      if (Array.isArray(p) && p.length === 2) live[pairIdOf(p)] = 1;
+    });
     var seen = {};
     (spec.additions || []).forEach(function (a) {
       if (a.kind !== "macro" || a.name !== (rule.gate && rule.gate.name)) return;
       var pid = pidOfTarget(a.target);
-      if (!pid) return;
+      if (!pid || !live[pid]) return;
       if (a.rule_id === rule.id || (rule.source && sameKey(rule.source, pid))) {
         var p = pairParts(pid);
         seen[unorderedKey(p[0], p[1])] = 1;
@@ -1314,6 +1320,15 @@
     if (card) { card.focus(); return; }
     if (fallback && fallback.isConnected) fallback.focus();
   }
+  /* A CZ orientation flip renames one pair id (no qubit renamed): a rule's `source`
+   * follows the pair. `excluded` / `reviewed` keys are flip-stable already. */
+  function flipPairRules(rules, oldPid, newPid) {
+    var out = clone(rules || []);
+    out.forEach(function (r) {
+      if (r && typeof r === "object" && r.source === oldPid) r.source = newPid;
+    });
+    return out;
+  }
   /* A qubit rename (generate.js applyQubitIdMap) re-expressed in the rules: `source`, the
    * keys of `excluded`/`reviewed` and the values of `source_names` follow by the rebuild's own
    * token rule ("_"-delimited tokens, longest first, so q1 -> qA leaves q10 alone). map = {old: new};
@@ -1432,7 +1447,7 @@
     bindCards: bindCards, refreshStatuses: refreshStatuses, ruleReviewCounts: ruleReviewCounts,
     renderReviewLines: renderReviewLines, editRule: editRule, statusFresh: statusFresh,
     setSettleError: function (e) { _settleErr = e || null; },
-    renameRules: renameRules, rulesOf: rulesOf, ruleById: ruleById, unorderedKey: unorderedKey, specSig: specSig,
+    renameRules: renameRules, flipPair: flipPairRules, rulesOf: rulesOf, ruleById: ruleById, unorderedKey: unorderedKey, specSig: specSig,
     resetRuleRuntime: resetRuleRuntime, reset: resetRuleRuntime, specChanged: specChanged,
     openApply: openApply, closeApply: function () { if (_open) closeApply(_open, "cancel"); },
     menu: menu, closeMenu: closeMenu, renderCards: renderCards,

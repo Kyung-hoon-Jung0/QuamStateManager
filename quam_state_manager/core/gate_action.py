@@ -39,6 +39,13 @@ def pair_members(doc: dict, pair) -> tuple[str, str]:
     for p in pairs:
         if isinstance(p, (list, tuple)) and (additions._long(p) == pair or additions.quam_pair_id(p) == pair):
             return tuple(map(str, p))
+    # A pair id written before a CZ orientation flip names the same pair:
+    # identity is membership, the spec's current order wins.
+    if isinstance(pair, str) and pair.count("-") == 1:
+        want = unordered_key(pair)
+        for p in pairs:
+            if isinstance(p, (list, tuple)) and len(p) == 2 and unordered_key(p) == want:
+                return tuple(map(str, p))
     if isinstance(pair, str) and pair.count("-") == 1:
         return tuple(pair.split("-"))
     raise ValueError("choose a valid pair")

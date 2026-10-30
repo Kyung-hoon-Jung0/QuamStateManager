@@ -6396,6 +6396,17 @@
     var oldId = pair[0] + "-" + pair[1];
     var t = pair[0]; pair[0] = pair[1]; pair[1] = t;
     var newId = pair[0] + "-" + pair[1];
+    // The lab additions and rules follow the pair by membership: a flip renames
+    // the builder's pair id ("q1-2" -> "q2-1") and nothing on the pair may be
+    // left behind on the old id (that silently dropped every gate of the pair).
+    var sp0 = state.spec;
+    var GA = window.GenAdditions, GR = window.GenRules;
+    if (GA && GA.pairId) {
+      var oldPid = GA.pairId(String(pair[1]), String(pair[0]));
+      var newPid = GA.pairId(String(pair[0]), String(pair[1]));
+      if (Array.isArray(sp0.additions) && GA.flipPair) sp0.additions = GA.flipPair(sp0.additions, oldPid, newPid);
+      if (Array.isArray(sp0.addition_rules) && GR && GR.flipPair) sp0.addition_rules = GR.flipPair(sp0.addition_rules, oldPid, newPid);
+    }
     var pop = state.spec.populate || {};
     if (pop.pairs && pop.pairs[oldId]) {
       pop.pairs[newId] = pop.pairs[oldId];

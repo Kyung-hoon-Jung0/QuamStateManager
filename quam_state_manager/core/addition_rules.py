@@ -30,6 +30,26 @@ def diff_and_signature(resolved, current):
     return delta, gate_action.input_signature(resolved["inputs"])
 
 
+def role_swap_reason(delta, pair, basis):
+    """``control and target swapped by ...`` when the gate's role pointers moved
+    between the pair's two qubits (a CZ orientation flip), else None. [derived]"""
+    c, t = map(str, pair)
+    moved = set()
+    for d in delta:
+        if d["kind"] != "macro":
+            continue
+        qo, qn = (_qubit_of_pointer(d.get(k)) for k in ("old", "new"))
+        if qo in (c, t) and qn in (c, t) and qo != qn:
+            moved.add((qo, qn))
+    return f"control and target swapped {basis}" if moved else None
+
+
+def _qubit_of_pointer(v):
+    if isinstance(v, str) and v.startswith("#/qubits/"):
+        return v.split("/")[2]
+    return None
+
+
 def expand(spec, rule, manifest=None, *, choices=None, pending=False):
     """Plan every pair without mutating inputs or generating any files."""
     choices = choices or {}
@@ -64,8 +84,11 @@ def expand(spec, rule, manifest=None, *, choices=None, pending=False):
                     bool(rule.get("source")) and key == unordered_key(gate_action.pair_members(spec, rule["source"])))
         edited = bool(existing and delta)
         if existing:
-            judged.update(status=add_verdict.NEEDS_LOOK if delta and (rule.get("reviewed") or {}).get(key) != instance_sig
-                          else add_verdict.ALREADY, reason="pair facts changed" if delta else "this rule is already on this pair")
+            look = delta and (rule.get("reviewed") or {}).get(key) != instance_sig
+            why = "this rule is already on this pair"
+            if delta:
+                why = role_swap_reason(delta, pair, gate_action.role_input(clean, pair)["reason"]) or "pair facts changed"
+            judged.update(status=add_verdict.NEEDS_LOOK if look else add_verdict.ALREADY, reason=why)
         elif source_error:
             judged.update(status=add_verdict.NEEDS_LOOK, reason=source_error)
         if key in (rule.get("excluded") or []):

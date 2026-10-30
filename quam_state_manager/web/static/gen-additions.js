@@ -1722,6 +1722,41 @@
     return out;
   }
 
+  /* A CZ orientation flip (generate.js flipPairOrder) renames ONE pair id,
+   * "q1-2" -> "q2-1", with no qubit renamed. The additions follow the pair by
+   * membership: the pair segment after `qubit_pairs` in every target and
+   * pointer is swapped; qubit-side targets (a z line) and names stay, since
+   * they name the physical qubit and the pair the gate was made for. */
+  function flipPair(adds, oldPid, newPid) {
+    var out = clone(adds || []);
+    if (!oldPid || !newPid || oldPid === newPid) return out;
+    function seg(path, sep) {
+      var parts = String(path).split(sep);
+      for (var k = 1; k < parts.length; k++) {
+        if (parts[k - 1] === "qubit_pairs" && parts[k] === oldPid) parts[k] = newPid;
+        if (parts[k - 1] === "extras") break;
+      }
+      return parts.join(sep);
+    }
+    function ptrs(node) {
+      if (Array.isArray(node)) return node.map(ptrs);
+      if (node && typeof node === "object") {
+        var o = {};
+        Object.keys(node).forEach(function (k) { o[k] = ptrs(node[k]); });
+        return o;
+      }
+      if (typeof node === "string" && node.charAt(0) === "#") return seg(node, "/");
+      return node;
+    }
+    out.forEach(function (a) {
+      if (!a || typeof a !== "object") return;
+      if (typeof a.target === "string") a.target = seg(a.target, ".");
+      if ("fields" in a) a.fields = ptrs(a.fields);
+      if ("value" in a) a.value = ptrs(a.value);
+    });
+    return out;
+  }
+
   // The class label/origin the loaded role manifest knows (for the rule dialog's header).
   function classInfo(cls) {
     var all = [(roles && roles.macros_pair) || {}, (roles && roles.pulses) || {}];
@@ -1736,7 +1771,7 @@
   }
 
   window.GenAdditions = { openRuleForm: openSetAllForm, removeRuleInstances: removeAllInstances, czItems: czItems, focusChip: focusChip, el: el, classInfo: classInfo, refresh: function () { refreshAll(); }, channels: channels, owners: owners, pairId: pairId, mount: mount,
-                          renameQubits: renameQubits, gatePulses: gatePulses,
+                          renameQubits: renameQubits, flipPair: flipPair, gatePulses: gatePulses,
                           renderResult: renderResult, outcome: outcome, renderReview: renderReview,
                           decoratePairTable: decoratePairTable, builderGates: builderGates,
                           pairGates: pairGates, GATE_RULE: GATE_RULE,
