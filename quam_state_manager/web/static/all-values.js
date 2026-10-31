@@ -643,7 +643,7 @@
         var ap = document.getElementById('av-apply');
         var aps = document.getElementById('av-apply-sync');
         var rs = document.getElementById('av-reset');
-        if (dc) dc.textContent = n ? (n.toLocaleString() + ' un-applied') : '';
+        if (dc) dc.textContent = n ? (n.toLocaleString() + ' unapplied') : '';
         if (ap) ap.disabled = (n === 0 || state.applying);
         if (aps) aps.disabled = (n === 0 || state.applying);
         if (rs) rs.disabled = (n === 0 || state.applying);
@@ -1074,7 +1074,7 @@
 
     // First activation of the All-values tab: wire + load. Re-activation: re-grab the
     // (possibly fresh-after-swap) DOM, then re-paint the already-loaded model into it;
-    // refresh cheaply (conditional GET) only when there are no un-applied edits to
+    // refresh cheaply (conditional GET) only when there are no unapplied edits to
     // clobber. After an HTMX swap the model is intact but the new tbody is empty, so we
     // must always force a render — load()'s 304 path also calls back to scheduleRender.
     function activate() {
