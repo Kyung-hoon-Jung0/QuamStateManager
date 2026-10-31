@@ -56,7 +56,7 @@
         <label for="gen-env-custom-path" class="muted gen-env-custom-label">Custom interpreter <b>or venv folder</b> (uv/.venv supported):</label>
         <div class="gen-env-custom-row">
           <input type="text" id="gen-env-custom-path" autocomplete="off"
-                 placeholder="C:\my_repo\.venv  ·  /path/to/.venv  ·  …\Scripts\python.exe">
+                 placeholder="C:/my_repo/.venv  ·  /path/to/.venv  ·  …/Scripts/python.exe">
           <button type="button" class="btn-sync gen-env-custom-use" onclick="QuamGen.useCustomEnv()">Use this</button>
         </div>
         <span id="gen-env-custom-status" class="muted"></span>
@@ -69,12 +69,12 @@
         go into <code>wiring.json</code>'s <code>network</code> block.</p>
       <div class="gen-field">
         <label for="gen-net-host">Host IP</label>
-        <input type="text" id="gen-net-host" placeholder="127.0.0.1"
+        <input type="text" id="gen-net-host" placeholder="e.g. 127.0.0.1"
                autocomplete="off">
       </div>
       <div class="gen-field">
         <label for="gen-net-cluster">Cluster name</label>
-        <input type="text" id="gen-net-cluster" placeholder="my_cluster"
+        <input type="text" id="gen-net-cluster" placeholder="e.g. my_cluster"
                autocomplete="off">
       </div>
       <div class="gen-field">
@@ -522,7 +522,7 @@
           Follows the state folder (<code>state_gen_scripts</code>) until you change it</span></label>
         <div class="path-input-group">
           <input type="text" id="gen-scripts-path"
-                 placeholder="&lt;state folder&gt;\state_gen_scripts"
+                 placeholder="&lt;state folder&gt;/state_gen_scripts"
                  autocomplete="off">
           <button type="button" class="outline btn-sm btn-browse"
                   onclick="openFolderBrowser('gen-scripts-path')"

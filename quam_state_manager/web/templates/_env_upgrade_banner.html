@@ -1,9 +1,30 @@
 {%- set _c = upgrade.report.cases or {} -%}
-{%- set _n = ((_c.get('2') or {}).get('rows') or [])|length + ((_c.get('3') or {}).get('rows') or [])|length + ((_c.get('4') or {}).get('rows') or [])|length -%}
-<div class="topo-change-banner ui-notice ui-notice--warn" role="alert" id="env-upgrade-banner">
+{%- set _r2 = (_c.get('2') or {}).get('rows') or [] -%}
+{%- set _r3 = (_c.get('3') or {}).get('rows') or [] -%}
+{%- set _r4 = (_c.get('4') or {}).get('rows') or [] -%}
+{%- set _nf = _r2|length + _r3|length -%}
+{%- set _nc = _r4|length -%}
+{%- set _n = _nf + _nc -%}
+{%- set _parts = [] -%}
+{%- if _nf %}{% set _ = _parts.append(_nf ~ ' field' ~ ('s' if _nf != 1 else '')) %}{% endif -%}
+{%- if _nc %}{% set _ = _parts.append(_nc ~ ' class' ~ ('es' if _nc != 1 else '')) %}{% endif -%}
+{%- set _items = [] -%}
+{%- for r in _r2 %}{% set _ = _items.append((r.get('class') or '?') ~ '.' ~ (r.get('field') or '?') ~ ' — now required') %}{% endfor -%}
+{%- for r in _r3 %}{% set _ = _items.append((r.get('class') or '?') ~ '.' ~ (r.get('field') or '?') ~ ' — no longer declared' ~ ((' (maybe renamed to ' ~ (r.get('candidates')|map(attribute='field')|join(', ')) ~ ')') if r.get('candidates') else '')) %}{% endfor -%}
+{%- for r in _r4 %}{% set _ = _items.append((r.get('class') or '?') ~ ' — no longer imports') %}{% endfor -%}
+<div class="topo-change-banner ui-notice ui-notice--warn" id="env-upgrade-banner">
   <span class="ui-notice-icon" aria-hidden="true">&#9888;</span>
   <strong class="ui-notice-key">Environment changed</strong>
-  <span class="ui-notice-text">{{ upgrade.report.event.direction }}{% if _n %} &mdash; {{ _n }} finding{{ 's' if _n != 1 }} stop loading.{% else %} &mdash; some fields stop loading.{% endif %}</span>
+  <span class="ui-notice-text" role="alert">{{ upgrade.report.event.direction }}{% if _n %} &mdash; {{ _parts|join(' and ') }} your chip uses no longer load.{% else %} &mdash; some fields stop loading.{% endif %}</span>
+  {%- if _n %}
+  <details class="ui-disclosure" id="env-upgrade-list">
+    <summary class="ui-disclosure-summary">Which {{ 'ones' if _n != 1 else 'one' }}</summary>
+    <ul>
+      {%- for it in _items[:8] %}<li><code>{{ it }}</code></li>{% endfor %}
+      {%- if _items|length > 8 %}<li>and {{ _items|length - 8 }} more &mdash; see Review</li>{% endif %}
+    </ul>
+  </details>
+  {%- endif %}
   <div class="ui-actions">
     <button class="btn-sm" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true">Review</button>
     <button class="btn-sm secondary" onclick="EnvUpgrade.acknowledge(); this.closest('#env-upgrade-banner').remove()">Acknowledge</button>

@@ -16,7 +16,11 @@
   <div class="diag-env-head">
     <strong>Types &amp; values</strong>
     {% if not types_card or not types_card.total %}
+    {% if types_card and not types_card.env.warm %}
+    <span class="ui-verdict ui-verdict--neutral"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">not checked</strong><span class="ui-verdict-why">no value is stored as text; the environment's types are not read yet</span></span>
+    {% else %}
     <span class="diag-env-ok">&#10003; every value's type is consistent</span>
+    {% endif %}
     {% else %}
     <span class="diag-env-versions">
       {%- if types_card.strnum.count %}{{ types_card.strnum.count }} stored as text{% endif -%}

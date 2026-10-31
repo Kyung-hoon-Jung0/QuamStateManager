@@ -10,7 +10,7 @@
     {# QA diagnostics-r2-16: with no env / a gone interpreter the env findings
        are withdrawn (_live_env_manifest) -- the card says so, and links. #}
     {% if not env_card.selected %}
-      <span class="muted">&mdash; no environment findings are listed until one is selected.</span>
+      <span class="ui-verdict ui-verdict--neutral"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">not checked</strong><span class="ui-verdict-why">no environment is selected, so no environment findings are listed.</span></span>
     {% elif not env_card.selected_exists %}
       <span class="diag-env-err">selected interpreter
         <code>{{ env_card.selected }}</code> no longer exists —
@@ -30,8 +30,7 @@
              hx-sync="#table-pane:replace">refresh findings</a>
       </span>
     {% else %}
-      <span class="muted">not probed yet — the schema of the selected
-        environment hasn't been read for this chip.</span>
+      <span class="ui-verdict ui-verdict--neutral"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">not checked</strong><span class="ui-verdict-why">the schema of the selected environment has not been read for this chip yet.</span></span>
     {% endif %}
   </div>
 

@@ -10,13 +10,12 @@
    non-modal, dismissible alert. #}
 <div class="topo-change-banner diag-error-banner ui-notice ui-notice--danger" id="diagnostics-banner" role="alert"
      data-diag-sig="{{ diag_sig or (diag_summary.error ~ ':' ~ (active_name or 'this chip')) }}">
-    <span class="topo-change-banner-text ui-notice-text">
-        &#9888;&#65039; <b>{{ diag_summary.error }}</b>
-        error{{ 's' if diag_summary.error != 1 }} on <b>{{ active_chip_label() or active_name or "this chip" }}</b>
-        would crash a node run{% if first_error %} (e.g. <code>{{ first_error.location }}</code>:
-        {{ first_error_msg | truncate(140) }}){% endif %}.
+    <span class="ui-notice-icon" aria-hidden="true">&#9888;</span>
+    <span class="topo-change-banner-text ui-notice-text"{% if first_error %} title="e.g. {{ first_error.location }}: {{ first_error_msg | truncate(140) }}"{% endif %}>
+        <b class="ui-notice-key">{{ diag_summary.error }} error{{ 's' if diag_summary.error != 1 }} would crash a node run.</b>
         Fix before running an experiment.
     </span>
+    <div class="ui-actions">
     <button type="button" class="topo-change-banner-btn btn-sm"
             hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
             hx-swap="innerHTML show:#diag-first-error:top"
@@ -24,6 +23,7 @@
         Review diagnostics</button>
     <button type="button" class="topo-change-banner-dismiss ui-btn-icon" aria-label="Dismiss"
             onclick="window._dismissDiagBanner && window._dismissDiagBanner()">&#10005;</button>
+    </div>
 </div>
 {# A13: the slot re-fetches on every `diagnostics-changed` (i.e. every edit), so a
    plain hidden=true would re-pop the banner on the next edit while the user is

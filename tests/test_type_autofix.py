@@ -930,7 +930,8 @@ class TestTheDiagnosticsCard:
         c = created.test_client()
         c.post("/load", data={"folder": str(clean)})
         html = c.get("/diagnostics/types-card").get_data(as_text=True)
-        assert "consistent" in html
+        # R4-TL-6: with no environment read, the env half is "not checked", never a green tick
+        assert "not checked" in html and "no value is stored as text" in html
         assert "Auto-correct" not in html
         assert c.get("/type-alert").status_code == 204   # never prompts a clean chip
 
