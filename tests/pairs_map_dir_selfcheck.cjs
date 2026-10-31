@@ -1,0 +1,101 @@
+/* jsdom selfcheck for the Pairs map direction drawing (D-94, D-98).
+ *
+ * Every pair edge carries one arrow at the target end, the moving qubit is a
+ * ring beside it, and the pair id is written along the edge. declutterLabels()
+ * places each label so that nothing a reader must tell apart overlaps. jsdom
+ * has no layout, so getBBox / getComputedTextLength are given a geometric
+ * stand-in (text width = 0.6 em per character, the monospace-ish upper bound
+ * of the UI font) and the real placement code runs on top of it. The real
+ * browser measurement is in the stage-5 report; this pins that the placement
+ * reaches ZERO overlaps on a lattice fixture and that the font floor (12 px,
+ * D-6) holds.
+ */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+let JSDOM;
+try { ({ JSDOM } = require('jsdom')); } catch (e) { console.error('jsdom not installed'); process.exit(2); }
+
+const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
+let fails = 0, checks = 0;
+function ok(c, m) { checks++; if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
+
+const dom = new JSDOM('<!doctype html><html><body><div id="m"></div></body></html>', { runScripts: 'outside-only' });
+const win = dom.window;
+
+// ---- geometric stand-ins for the two layout calls the placement uses ------
+function num(el, a) { return parseFloat(el.getAttribute(a)) || 0; }
+function bboxOf(el) {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'circle') { const r = num(el, 'r'); return { x: num(el, 'cx') - r, y: num(el, 'cy') - r, width: 2 * r, height: 2 * r }; }
+  if (tag === 'line') {
+    const x1 = num(el, 'x1'), y1 = num(el, 'y1'), x2 = num(el, 'x2'), y2 = num(el, 'y2');
+    return { x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) };
+  }
+  if (tag === 'polygon' || tag === 'polyline') {
+    const pts = (el.getAttribute('points') || '').trim().split(/\s+/).map((p) => p.split(',').map(Number));
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+  }
+  if (tag === 'text') {
+    const f = num(el, 'font-size') || 12, w = (el.textContent || '').length * 0.6 * f;
+    return { x: num(el, 'x') - w / 2, y: num(el, 'y') - f / 2, width: w, height: f };
+  }
+  let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
+  for (const c of el.children) {
+    if (c.tagName.toLowerCase() === 'title') continue;
+    const b = bboxOf(c);
+    lo = [Math.min(lo[0], b.x), Math.min(lo[1], b.y)]; hi = [Math.max(hi[0], b.x + b.width), Math.max(hi[1], b.y + b.height)];
+  }
+  return isFinite(lo[0]) ? { x: lo[0], y: lo[1], width: hi[0] - lo[0], height: hi[1] - lo[1] } : { x: 0, y: 0, width: 0, height: 0 };
+}
+win.SVGElement.prototype.getBBox = function () { return bboxOf(this); };
+win.SVGElement.prototype.getComputedTextLength = function () {
+  return (this.textContent || '').length * 0.6 * (parseFloat(this.getAttribute('font-size')) || 12);
+};
+win.SVGElement.prototype.getBoundingClientRect = function () { return { width: 100, height: 100, top: 0, left: 0, right: 100, bottom: 100 }; };
+
+win.eval(fs.readFileSync(path.join(STATIC, 'topo-graph.js'), 'utf8'));
+
+// A 4x3 lattice: horizontal, vertical and anti-parallel neighbours, couplers,
+// moving qubits on both ends and frequencies for the chevrons.
+const nodes = [], edges = [];
+for (let r = 0; r < 3; r++) {
+  for (let c = 0; c < 4; c++) {
+    nodes.push({ id: 'q' + r + c, grid_location: c + ',' + r, f_01: 5.0e9 + ((r * 4 + c) % 3) * 1.5e8 });
+  }
+}
+function e(a, b, extra) { edges.push(Object.assign({ pair_id: a + '-' + b, source: a, target: b }, extra || {})); }
+for (let r = 0; r < 3; r++) {
+  for (let c = 0; c < 3; c++) e('q' + r + c, 'q' + r + (c + 1), { moving_qubit: 'control' });
+}
+for (let r = 0; r < 2; r++) {
+  for (let c = 0; c < 4; c++) e('q' + (r + 1) + c, 'q' + r + c, { moving_qubit: c % 2 ? 'target' : 'control' });
+}
+
+
+const m = win.document.getElementById('m');
+win.TopoGraph.renderLayout(m, { nodes: nodes, edges: edges, highlight: 'pairs', cell: 120 });
+const svg = m.querySelector('svg.cm-svg');
+ok(!!svg && svg.classList.contains('cm-dir'), 'the map carries the direction drawing (cm-dir)');
+ok(m.querySelectorAll('.cm-dir-arrow').length === edges.length, 'one arrow per pair edge (' + edges.length + ')');
+ok(m.querySelectorAll('.cm-dir-label').length === edges.length, 'one along-the-edge label per pair edge');
+ok(m.querySelectorAll('.cm-dir-m').length === edges.filter((x) => x.moving_qubit).length, 'one moving ring per edge that declares a moving qubit');
+
+const placed = Array.from(m.querySelectorAll('.cm-dir-label')).every((t) => t.hasAttribute('data-px') && t.hasAttribute('transform'));
+ok(placed, 'every label was placed by declutterLabels (rotated along its edge)');
+const fonts = Array.from(m.querySelectorAll('.cm-dir-label')).map((t) => parseFloat(t.getAttribute('font-size')));
+ok(Math.min(...fonts) >= 12, 'no label is drawn under 12 px (D-6), min ' + Math.min(...fonts));
+ok(m.querySelectorAll('.cm-dir-crowded').length === 0, 'no label had to be left crowded');
+ok(parseFloat(m.querySelector('.cm-id').getAttribute('font-size')) >= 12, 'qubit ids stay at or above 12 px');
+
+const ov = win.TopoGraph.labelOverlaps(svg);
+ok(ov.items > edges.length * 3, 'the overlap count looked at stones, labels and glyphs (' + ov.items + ' items)');
+ok(ov.count === 0, 'label overlaps == 0 on the pairs fixture (' + JSON.stringify(ov.pairs.slice(0, 4)) + ')');
+
+const legend = m.querySelector('.cm-dir-legend');
+ok(!!legend && /control → target/.test(legend.textContent) && /moving qubit/.test(legend.textContent)
+   && /lower f/.test(legend.textContent), 'the one-line legend names arrow, ring and chevron');
+
+const summary = fails ? fails + ' check(s) FAILED\n' : 'pairs_map_dir_selfcheck: all checks passed (' + checks + ' assertions)\n';
+process.stdout.write(summary, function () { process.exit(fails ? 1 : 0); });

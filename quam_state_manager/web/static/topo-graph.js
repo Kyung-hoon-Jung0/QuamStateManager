@@ -617,6 +617,213 @@ window.TopoGraph = (function () {
     return svg;
   }
 
+  /* D-94: pair direction as an arrow, labels along the edge.
+   *
+   * Every pair edge carries ONE arrow head at the target end (control ->
+   * target), so "qA2-qA1" and "qA1-qA2" read differently without a letter.
+   * The moving qubit (a role string, never inferred from frequencies — see the
+   * C/T/M note in pairGlyphs) is a small filled dot ON the line beside the
+   * moving end. The pair id is written along the edge with a halo; where it
+   * still meets a stone, a glyph or another label after the wider spacing,
+   * declutterLabels() tries the other side of the line, then a smaller font
+   * (never below DIR_MIN_FONT, D-6).
+   */
+  var DIR_SPACING = 1.5, DIR_MIN_FONT = 12;
+  function r1(v) { return Math.round(v * 10) / 10; }
+  function dirEdgeMarks(e, x1, y1, x2, y2, R, font) {
+    var dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ux = dx / L, uy = dy / L, out = "";
+    var tip = R + 3, ah = Math.max(9, R * 0.36), aw = ah * 0.55;
+    var tx = x2 - ux * tip, ty = y2 - uy * tip, sx = tx - ux * ah, sy = ty - uy * ah;
+    out += '<polygon class="cm-arrow cm-dir-arrow" points="' +
+           r1(sx - uy * aw) + "," + r1(sy + ux * aw) + " " + r1(sx + uy * aw) + "," +
+           r1(sy - ux * aw) + " " + r1(tx) + "," + r1(ty) + '"/>';
+    var mv = e.moving_qubit;
+    if (mv === "control" || mv === "target") {
+      var mr = Math.max(3.5, R * 0.12), d, mx, my;
+      if (mv === "control") { d = R + 3 + mr; mx = x1 + ux * d; my = y1 + uy * d; }
+      else { d = tip + ah + 2 + mr; mx = x2 - ux * d; my = y2 - uy * d; }
+      out += '<circle class="cm-dir-m" cx="' + r1(mx) + '" cy="' + r1(my) + '" r="' + r1(mr) + '">' +
+             "<title>moving qubit: " + esc(mv === "control" ? e.source : e.target) +
+             " (" + mv + ")</title></circle>";
+    }
+    var ang = Math.atan2(dy, dx) * 180 / Math.PI;
+    // Keep text upright; a vertical edge reads in the arrow's own direction
+    // (down -> +90, up -> -90), so the id reads control-first along the arrow.
+    if (ang > 90) ang -= 180;
+    if (ang < -90) ang += 180;
+    var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+    out += '<text class="cm-pair-label cm-dir-label" font-size="' + font + '"' +
+           ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-ang="' + r1(ang) + '"' +
+           ' text-anchor="middle" dominant-baseline="central" x="0" y="0">' +
+           esc(e.pair_id) + "</text>";
+    return out;
+  }
+
+  // ---- small 2-D geometry: convex polygons (SAT) and circles -------------
+  function rectPoly(cx, cy, w, h, angDeg) {
+    var a = angDeg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    var hw = w / 2, hh = h / 2, pts = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
+    return pts.map(function (p) { return [cx + p[0] * c - p[1] * s, cy + p[0] * s + p[1] * c]; });
+  }
+  function bboxPoly(b, pad) {
+    pad = pad || 0;
+    return [[b.x - pad, b.y - pad], [b.x + b.width + pad, b.y - pad],
+            [b.x + b.width + pad, b.y + b.height + pad], [b.x - pad, b.y + b.height + pad]];
+  }
+  function project(poly, ax) {
+    var lo = Infinity, hi = -Infinity;
+    for (var i = 0; i < poly.length; i++) {
+      var d = poly[i][0] * ax[0] + poly[i][1] * ax[1];
+      if (d < lo) lo = d; if (d > hi) hi = d;
+    }
+    return [lo, hi];
+  }
+  function polysHit(A, B, tol) {
+    var polys = [A, B];
+    for (var k = 0; k < 2; k++) {
+      var P = polys[k];
+      for (var i = 0; i < P.length; i++) {
+        var p = P[i], q = P[(i + 1) % P.length];
+        var ax = [-(q[1] - p[1]), q[0] - p[0]], l = Math.sqrt(ax[0] * ax[0] + ax[1] * ax[1]) || 1;
+        ax = [ax[0] / l, ax[1] / l];
+        var a = project(A, ax), b = project(B, ax);
+        if (a[1] - tol <= b[0] || b[1] - tol <= a[0]) return false;
+      }
+    }
+    return true;
+  }
+  function circleHitsPoly(c, P, tol) {
+    // inside, or closer than r to any edge
+    var inside = false;
+    for (var i = 0, j = P.length - 1; i < P.length; j = i++) {
+      if (((P[i][1] > c.y) !== (P[j][1] > c.y)) &&
+          (c.x < (P[j][0] - P[i][0]) * (c.y - P[i][1]) / (P[j][1] - P[i][1]) + P[i][0])) inside = !inside;
+    }
+    if (inside) return true;
+    for (var k = 0; k < P.length; k++) {
+      var a = P[k], b = P[(k + 1) % P.length];
+      var vx = b[0] - a[0], vy = b[1] - a[1], wl = vx * vx + vy * vy || 1;
+      var t = Math.max(0, Math.min(1, ((c.x - a[0]) * vx + (c.y - a[1]) * vy) / wl));
+      var ex = a[0] + vx * t - c.x, ey = a[1] + vy * t - c.y;
+      if (Math.sqrt(ex * ex + ey * ey) < c.r - tol) return true;
+    }
+    return false;
+  }
+  function itemsHit(a, b, tol) {
+    if (a.circle && b.circle) {
+      var dx = a.circle.x - b.circle.x, dy = a.circle.y - b.circle.y;
+      return Math.sqrt(dx * dx + dy * dy) < a.circle.r + b.circle.r - tol;
+    }
+    if (a.circle) return circleHitsPoly(a.circle, b.poly, tol);
+    if (b.circle) return circleHitsPoly(b.circle, a.poly, tol);
+    return polysHit(a.poly, b.poly, tol);
+  }
+  function labelPoly(t) {
+    var f = parseFloat(t.getAttribute("font-size")) || 12;
+    var w = t.getComputedTextLength ? t.getComputedTextLength() : f * 4;
+    var cx = parseFloat(t.getAttribute("data-px")), cy = parseFloat(t.getAttribute("data-py"));
+    if (isNaN(cx)) {   // an unrotated label: its own box
+      var b = t.getBBox();
+      return bboxPoly(b, 0);
+    }
+    return rectPoly(cx, cy, w + 4, f * 1.05, parseFloat(t.getAttribute("data-ang")) || 0);
+  }
+  // The items a reader must be able to tell apart on a map: stones, pair
+  // labels, role / direction glyphs. Lines are not items (an arrow on its
+  // own line is the point).
+  var OVERLAP_ITEMS = ".cm-stone, .cm-pair-label, .cm-role, .cm-arrow, .cm-dir-m, .cm-freq, .cm-coupler";
+  function collectItems(svg, sel) {
+    var out = [];
+    var els = svg.querySelectorAll(sel || OVERLAP_ITEMS);
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i], it = { el: el };
+      if (getComputedStyle(el).opacity === "0" || el.closest(".cm-off")) continue;
+      if (el.tagName.toLowerCase() === "circle") {
+        it.circle = { x: +el.getAttribute("cx"), y: +el.getAttribute("cy"), r: +el.getAttribute("r") };
+      } else if (el.classList.contains("cm-pair-label")) {
+        it.poly = labelPoly(el); it.label = true;
+      } else {
+        it.poly = bboxPoly(el.getBBox(), 0);
+      }
+      it.stone = el.classList.contains("cm-stone");
+      out.push(it);
+    }
+    return out;
+  }
+  /* Count overlapping item pairs (stone-stone excluded). Returns
+   * {count, pairs:[[a,b],...]} with a short description per pair. */
+  function labelOverlaps(svg, sel, tol) {
+    tol = tol == null ? 0.5 : tol;
+    var items = collectItems(svg, sel), pairs = [];
+    function name(it) {
+      var el = it.el;
+      return (el.getAttribute("class") || el.tagName).split(" ")[0] + ":" +
+        (el.textContent || el.getAttribute("data-cm-pair") || "").slice(0, 16);
+    }
+    for (var i = 0; i < items.length; i++) {
+      for (var j = i + 1; j < items.length; j++) {
+        if (items[i].stone && items[j].stone) continue;
+        if (itemsHit(items[i], items[j], tol)) pairs.push([name(items[i]), name(items[j])]);
+      }
+    }
+    return { count: pairs.length, items: items.length, pairs: pairs };
+  }
+  function placeLabel(t, side, f) {
+    var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
+    var ang = +t.getAttribute("data-ang") * Math.PI / 180;
+    var nx = -Math.sin(ang), ny = Math.cos(ang);    // the text frame's "down"
+    var off = f * 0.5 + 10;   // clears the arrow head (half-width ~7 px at the default cell)
+    var px = cx + nx * off * side, py = cy + ny * off * side;
+    t.setAttribute("font-size", f);
+    t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
+    t.setAttribute("x", r1(px)); t.setAttribute("y", r1(py));
+    t.setAttribute("transform", "rotate(" + t.getAttribute("data-ang") + " " + r1(px) + " " + r1(py) + ")");
+  }
+  /* Place each rotated label: above the line first, then below, then one px
+   * smaller at a time down to minFont; a label that still collides keeps the
+   * placement with the fewest hits and is marked .cm-dir-crowded. */
+  function declutterLabels(svg, minFont) {
+    if (!svg || !svg.querySelectorAll) return;
+    minFont = minFont || DIR_MIN_FONT;
+    var fixed = collectItems(svg, ".cm-stone, .cm-arrow, .cm-dir-m, .cm-freq, .cm-coupler, .cm-res");
+    var labels = svg.querySelectorAll("text.cm-dir-label");
+    var placed = [];
+    for (var i = 0; i < labels.length; i++) {
+      var t = labels[i], f0 = parseFloat(t.getAttribute("font-size")) || 14;
+      var best = null;
+      for (var f = f0; f >= minFont - 0.01 && !(best && best.hits === 0); f = (f > minFont && f - 1 < minFont) ? minFont : f - 1) {
+        for (var s = 0; s < 2; s++) {
+          var side = s === 0 ? -1 : 1;
+          placeLabel(t, side, f);
+          var me = { poly: labelPoly(t) }, hits = 0;
+          for (var k = 0; k < fixed.length; k++) if (itemsHit(me, fixed[k], 0.5)) hits++;
+          for (var m = 0; m < placed.length; m++) if (itemsHit(me, placed[m], 0.5)) hits++;
+          if (!best || hits < best.hits) best = { side: side, f: f, hits: hits };
+          if (hits === 0) break;
+        }
+        if (f <= minFont) break;
+      }
+      placeLabel(t, best.side, best.f);
+      t.classList.toggle("cm-dir-crowded", best.hits > 0);
+      placed.push({ poly: labelPoly(t) });
+    }
+  }
+  // A map drawn inside a closed <details> (or before layout) has no text
+  // metrics yet: place its labels the first time it gets a size.
+  function dirDeclutter(svg) {
+    if (!svg) return;
+    function run() { try { declutterLabels(svg); } catch (err) { /* no layout (jsdom) */ } }
+    var r = svg.getBoundingClientRect ? svg.getBoundingClientRect() : null;
+    if (r && r.width > 0 && r.height > 0) { run(); return; }
+    if (typeof ResizeObserver === "undefined") { run(); return; }
+    var ro = new ResizeObserver(function () {
+      var b = svg.getBoundingClientRect();
+      if (b.width > 0 && b.height > 0) { ro.disconnect(); run(); }
+    });
+    ro.observe(svg);
+  }
+
   // Mounted maps share one theme notification listener. Detached hosts are pruned.
   var themeMaps = new Map();
   function onTheme(host, repaint) {
@@ -649,14 +856,17 @@ window.TopoGraph = (function () {
 
     var CELL = opts.cell || 64;
     var R = Math.round(CELL * 0.30);
-    var W = Math.max(CELL, Math.round(lay.cols * CELL));
-    var H = Math.max(CELL, Math.round(lay.rows * CELL));
+    // D-94: only the SPACING grows (x DIR_SPACING); stones keep their size,
+    // so the gap between two stones has room for a label and an arrow.
+    var SP = Math.round(CELL * DIR_SPACING);
+    var W = Math.max(SP, Math.round(lay.cols * SP));
+    var H = Math.max(SP, Math.round(lay.rows * SP));
     var offC = spreadCoincident(lay.positions, 0.22);
     function px(id) {
       var p = lay.positions[id], o = offC[id];
       if (!p) return null;
-      return { x: (p.col + 0.5) * CELL + (o ? o.dx * CELL : 0),
-               y: (p.row + 0.5) * CELL + (o ? o.dy * CELL : 0),
+      return { x: (p.col + 0.5) * SP + (o ? o.dx * SP : 0),
+               y: (p.row + 0.5) * SP + (o ? o.dy * SP : 0),
                shared: !!(o && o.shared) };
     }
     function resAnchor(pt) { return { x: pt.x + R * 0.95, y: pt.y - R * 0.95 }; }
@@ -722,6 +932,7 @@ window.TopoGraph = (function () {
 
     // pair edges (+ CR direction arrows, coupler dots)
     var pairFont = Math.round((CELL * 9 / 64) * 10) / 10;
+    pairFont = Math.round(pairFont * 1.2 * 10) / 10;   // D-98: the pair is this map's subject
     for (var ei = 0; ei < edges.length; ei++) {
       var e = edges[ei];
       var a = px(e.source), b = px(e.target);
@@ -744,32 +955,15 @@ window.TopoGraph = (function () {
              '" data-link-ends="' + esc(e.source + ' ' + e.target) + '">' +
              '<line class="cm-edge-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +
              '<line class="cm-edge-line" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>';
-      if (e.directed) {
-        var ux = (x2 - x1), uy = (y2 - y1), ul = Math.sqrt(ux * ux + uy * uy) || 1;
-        ux /= ul; uy /= ul;
-        var tx = x2 - ux * R * 1.15, ty = y2 - uy * R * 1.15;
-        var ah = R * 0.5, aw = R * 0.24, sx = tx - ux * ah, sy = ty - uy * ah;
-        svg += '<polygon class="cm-arrow" points="' +
-               (sx + -uy * aw) + "," + (sy + ux * aw) + " " +
-               (sx - -uy * aw) + "," + (sy - ux * aw) + " " + tx + "," + ty + '"/>';
-      }
       if (e.has_coupler) {
         svg += '<circle class="cm-coupler" cx="' + ((x1 + x2) / 2) + '" cy="' + ((y1 + y2) / 2) +
                '" r="' + Math.round(R * 0.38) + '"/>';
       }
-      // P1-11 (UX round): the pair's id beside its edge -- the Pairs page
-      // named pairs only in a hover title. Drawn on every map (a highlight
-      // changes emphasis, never the drawing); the stylesheet shows it under
-      // the pairs highlight. An id, never a value (docs/91 section 2.4).
-      var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-      var pdx = x2 - x1, pdy = y2 - y1, pl = Math.sqrt(pdx * pdx + pdy * pdy) || 1;
-      var off = R * 0.8 * (e.directed ? 1.6 : 1);
-      svg += '<text class="cm-pair-label" font-size="' + pairFont + '" x="' +
-             Math.round((mx - pdy / pl * off) * 10) / 10 + '" y="' +
-             Math.round((my + pdx / pl * off) * 10) / 10 +
-             '" text-anchor="middle" dominant-baseline="central">' + esc(e.pair_id) + "</text>";
+      svg += dirEdgeMarks(e, x1, y1, x2, y2, R, pairFont);
       svg += '<line class="cm-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +
-             "<title>" + esc(e.pair_id) + "</title></g>";
+             "<title>" + esc(e.pair_id) + " — control " + esc(e.source) + " → target " +
+             esc(e.target) + (e.moving_qubit ? " · moving: " + esc(e.moving_qubit) : "") +
+             "</title></g>";
     }
 
     // docs/120 item 11: the chevrons (and now the C/T/M role markers) are
@@ -783,13 +977,14 @@ window.TopoGraph = (function () {
     // v1.3.0: drawn AFTER the stones (below), as the Chip Status hero has
     // since docs/126 -- the flux stubs and resonator marks are part of each
     // stone's group and were painted over the C/T/M letters.
-    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true });
+    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: false });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
     // labels inside 1.9x stones. Anchored to the original 10.5px at the
     // original 64px cell, so a default-cell render keeps its exact font.
     var idFont = Math.round((CELL * 10.5 / 64) * 10) / 10;
+    idFont = Math.max(DIR_MIN_FONT, Math.round(idFont * 0.88 * 10) / 10);   // D-98
     // Chain emphasis (docs/93 F3): with opts.emphasisChain set (the page's
     // active chain filter), matching stones read as selected and the rest
     // drop to context — composes with the page highlight, purely additive.
@@ -843,9 +1038,13 @@ window.TopoGraph = (function () {
     var hl = opts.highlight ? " cm-hl-" + esc(String(opts.highlight)) : "";
     mount.innerHTML =
       (lay.mode === "logical" ? '<div class="cm-note">' + esc(LOGICAL_LAYOUT_NOTE) + "</div>" : "") +
-      '<div class="cm-scroll"><svg class="cm-svg' + hl + '" width="' + W + '" height="' + H +
-      '" viewBox="0 0 ' + W + " " + H + '">' + svg + "</svg></div>";
+      '<div class="cm-scroll"><svg class="cm-svg cm-dir' + hl + '" width="' + W + '" height="' + H +
+      '" viewBox="0 0 ' + W + " " + H + '">' + svg + "</svg></div>" +
+      ('<div class="cm-dir-legend"><svg width="22" height="10" aria-hidden="true"><line x1="1" y1="5" x2="14" y2="5"/><polygon points="12,1 21,5 12,9"/></svg>' +
+             'control → target<span class="cm-dir-legend-m"><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4"/></svg>moving qubit</span>' +
+             '<span class="cm-dir-legend-m"><svg width="14" height="12" aria-hidden="true"><polyline points="2,2 7,6 2,10"/><polyline points="7,2 12,6 7,10"/></svg>points to the lower f₀₁</span></div>');
 
+    dirDeclutter(mount.querySelector("svg.cm-svg"));
     // Theme repaint replaces SVG children; keep delegated bindings and indices current.
     if (mount._detailBinding) {
       var binding = mount._detailBinding;
@@ -1309,6 +1508,8 @@ window.TopoGraph = (function () {
     spreadCoincident: spreadCoincident,
     pairGlyphs: pairGlyphs,
     renderLayout: renderLayout,
+    labelOverlaps: labelOverlaps,
+    declutterLabels: declutterLabels,
     edgeStyleForGate: edgeStyleForGate,
     legendForGate: legendForGate,
     renderStatic: renderStatic,

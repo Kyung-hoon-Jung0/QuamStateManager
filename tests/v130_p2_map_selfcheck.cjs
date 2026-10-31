@@ -1,9 +1,8 @@
 /* jsdom selfcheck for v1.3.0 P2 L2: on the Pairs / Flux / Resonators component
- * maps nothing is painted over a qubit id or a C/T/M role letter.
+ * maps nothing is painted over a qubit id or a direction mark (D-94).
  *  - the pair lines run under every stone: an opaque disc (cm-occluder) under
  *    each stone hides them even where the page dims the stone itself;
- *  - the role markers come after the stones' groups, so a flux stub or a
- *    resonator mark (part of a stone's group) never covers a letter.
+ *  - the direction marks (arrow, moving ring) sit outside every stone.
  * Run: node tests/v130_p2_map_selfcheck.cjs   (driven by tests/test_v130_p2_layout.py)
  */
 'use strict';
@@ -25,15 +24,20 @@ let n = 0;
 for (const highlight of ['pairs', 'flux', 'resonators']) {
   win.TopoGraph.renderLayout(mount, { nodes, edges, highlight });
   const edge = mount.querySelector('.cm-edge');
-  const roles = mount.querySelectorAll('.cm-role');
-  assert.ok(edge && roles.length >= 3, highlight + ': pair line and C/T/M markers are drawn'); n++;
+  // D-94: direction is the edge's own arrow + moving ring (no C/T/M letters)
+  const arrow = mount.querySelector('.cm-edge .cm-dir-arrow'), ring = mount.querySelector('.cm-edge .cm-dir-m');
+  assert.ok(edge && arrow && ring, highlight + ': pair line, its arrow and the moving ring are drawn'); n++;
+  assert.equal(mount.querySelectorAll('.cm-role').length, 0, highlight + ': no C/T/M role letters'); n++;
   const marks = mount.querySelectorAll('.cm-node .cm-flux, .cm-node .cm-res');
   assert.ok(marks.length === 4, highlight + ': both stones carry a flux stub and a resonator mark'); n++;
-  for (const role of roles) {
-    assert.ok(after(edge, role), highlight + ': role letters are painted after the pair lines'); n++;
-    for (const mark of marks) {
-      assert.ok(after(mark, role), highlight + ': role letters are painted after the flux/resonator marks'); n++;
-    }
+  // the arrow tip and the ring sit OUTSIDE each stone, so the stones painted
+  // after the edges never cover them
+  const stones = Array.from(mount.querySelectorAll('.cm-stone')).map((c) => [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')]);
+  const tip = arrow.getAttribute('points').split(' ')[2].split(',').map(Number);
+  const rc = [+ring.getAttribute('cx'), +ring.getAttribute('cy'), +ring.getAttribute('r')];
+  for (const st of stones) {
+    assert.ok(Math.hypot(tip[0] - st[0], tip[1] - st[1]) > st[2], highlight + ': the arrow tip is outside every stone'); n++;
+    assert.ok(Math.hypot(rc[0] - st[0], rc[1] - st[1]) > st[2] + rc[2], highlight + ': the moving ring is outside every stone'); n++;
   }
   for (const node of mount.querySelectorAll('.cm-node')) {
     const disc = node.querySelector('.cm-occluder');

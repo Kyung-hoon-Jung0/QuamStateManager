@@ -49,7 +49,7 @@ const TOPO = {
   ],
   edges: [
     { pair_id: 'qA2-qA1', source: 'qA2', target: 'qA1', directed: false, has_coupler: true, active: null },
-    { pair_id: 'qA1-qA3', source: 'qA1', target: 'qA3', directed: true, has_coupler: false, active: true },
+    { pair_id: 'qA1-qA3', source: 'qA1', target: 'qA3', directed: true, has_coupler: false, active: true, moving_qubit: 'control' },
   ],
 };
 
@@ -82,7 +82,22 @@ function checkRenderLayout() {
   ok(svg.getAttribute('class').indexOf('cm-hl-pairs') !== -1, 'highlight mode rides the svg root class');
   ok(m.querySelectorAll('.cm-stone').length === 3, 'all 3 stones drawn');
   ok(m.querySelectorAll('.cm-edge').length === 2, 'both pair edges drawn');
-  ok(m.querySelectorAll('.cm-arrow').length === 1, 'CR direction arrow drawn');
+  // D-94: EVERY pair edge carries one arrow head at the TARGET end
+  ok(m.querySelectorAll('.cm-arrow.cm-dir-arrow').length === 2, 'one control -> target arrow per pair edge');
+  {
+    const g = m.querySelector('[data-cm="p:qA1-qA3"]');
+    const tip = g.querySelector('.cm-dir-arrow').getAttribute('points').split(' ')[2].split(',').map(Number);
+    // qA1 = control, qA3 = target: measure against the drawn stone centres
+    const at = (id) => { const c = m.querySelector('[data-cm="q:' + id + '"] .cm-stone'); return [+c.getAttribute('cx'), +c.getAttribute('cy')]; };
+    const dist = (p, id) => Math.hypot(p[0] - at(id)[0], p[1] - at(id)[1]);
+    ok(dist(tip, 'qA3') < dist(tip, 'qA1'), 'the arrow tip sits at the target (qA3) end');
+    const ring = g.querySelector('.cm-dir-m');
+    const rp = ring ? [+ring.getAttribute('cx'), +ring.getAttribute('cy')] : [1e9, 1e9];
+    ok(!!ring && dist(rp, 'qA1') < dist(rp, 'qA3'), 'the moving-qubit ring sits beside the moving (control) qubit');
+    ok(!m.querySelector('[data-cm="p:qA2-qA1"] .cm-dir-m'), 'no ring where no moving qubit is declared');
+    ok(m.querySelectorAll('.cm-role-txt').length === 0, 'no C/T/M letters on the component map (the arrow says it)');
+    ok(!!m.querySelector('.cm-dir-legend'), 'the one-line legend sits under the map');
+  }
   ok(m.querySelectorAll('.cm-coupler').length === 1, 'coupler dot drawn on the has_coupler edge');
   ok(m.querySelectorAll('.cm-res').length === 3, 'resonator marks for all 3 (all have rr_port)');
   ok(m.querySelectorAll('.cm-flux').length === 2, 'flux stubs only for qubits WITH a z_port');
@@ -111,7 +126,7 @@ function checkRenderLayout() {
     const cls = t.getAttribute('class') || '';
     const isId = idSet[s] && cls === 'cm-id';
     const isRole = roleSet[s] && cls.indexOf('cm-role-txt') !== -1;
-    const isPair = pairSet[s] && cls === 'cm-pair-label';
+    const isPair = pairSet[s] && cls === 'cm-pair-label cm-dir-label';
     if (!isId && !isRole && !isPair) onlyIdsOrRoles = false;
     if (/[0-9]/.test(s) && !idSet[s] && !isPair) anyNumeric = true;
   });
@@ -126,19 +141,20 @@ function checkRenderLayout() {
   ok(strip(m.innerHTML) === strip(m2.innerHTML),
      'highlight changes EMPHASIS only — drawings byte-identical up to the mode class');
 
-  // F2 (docs/93): text scales with the cell — default cell keeps the exact
-  // legacy 10.5px; a 120px cell scales geometry AND font together.
+  // F2 (docs/93): text scales with the cell. D-98: the qubit id is one step
+  // smaller (x0.88) but never under 12px (D-6); the pair label one step larger.
   const idEl = m.querySelector('.cm-id');
-  ok(idEl.getAttribute('font-size') === '10.5', 'default cell renders the legacy 10.5px id font');
+  ok(idEl.getAttribute('font-size') === '12', 'default cell: id font 10.5 x 0.88 floored at 12px');
+  ok(m.querySelector('.cm-dir-label').getAttribute('font-size') === '10.8', 'default cell: pair label 9 x 1.2 = 10.8px');
   const mBig = win.document.createElement('div');
   win.document.body.appendChild(mBig);
   win.TopoGraph.renderLayout(mBig, { nodes: TOPO.nodes, edges: TOPO.edges, highlight: 'pairs', cell: 120 });
   const bigSvg = mBig.querySelector('svg');
-  ok(parseInt(bigSvg.getAttribute('width'), 10) === 240,
-     'cell:120 doubles the drawing width (2 cols -> 240, got ' + bigSvg.getAttribute('width') + ')');
+  ok(parseInt(bigSvg.getAttribute('width'), 10) === 360,
+     'cell:120 with x1.5 spacing: 2 cols -> 360 (got ' + bigSvg.getAttribute('width') + ')');
   ok(mBig.querySelector('.cm-stone').getAttribute('r') === '36', 'cell:120 -> 36px stones (0.30 ratio kept)');
-  ok(mBig.querySelector('.cm-id').getAttribute('font-size') === '19.7',
-     'cell:120 -> 19.7px id font (anchored to 10.5@64)');
+  ok(mBig.querySelector('.cm-id').getAttribute('font-size') === '17.3',
+     'cell:120 -> 17.3px id font (19.7 x 0.88, D-98)');
 
   // F5 (docs/93): the frequency-inequality chevron — one per PHYSICAL pair,
   // apex at the lower-f_01 qubit, honest gates, Δ only in the tooltip.
@@ -155,7 +171,7 @@ function checkRenderLayout() {
     const pts = g.querySelector('.cm-freqchev').getAttribute('points').split(' ')
       .map((p) => p.split(',').map(Number));
     const apex = pts[1], armTip = pts[0];
-    const qA1x = 0.5 * 64, qA2x = 1.5 * 64;   // stone centres, default cell
+    const qA1x = 0.5 * 96, qA2x = 1.5 * 96;   // stone centres, default cell, x1.5 spacing (D-94)
     ok(Math.abs(apex[0] - qA1x) < Math.abs(armTip[0] - qA1x),
        'chevron apex points toward the LOWER-f qubit (qA1)');
     ok(Math.abs(apex[0] - qA2x) > Math.abs(armTip[0] - qA2x),
