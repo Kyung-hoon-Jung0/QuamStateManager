@@ -39,18 +39,41 @@
     function badge(text, tone) { return el("span", "ui-badge ui-badge--" + (tone || "neutral"), text); }
     function count(text) { return el("span", "ui-count", text); }
     function note(text) { return el("p", "ui-note", text); }
-    function check(text, checked) {
+    function check(text, checked, disabled) {
         var l = el("label", "ui-check");
         var i = document.createElement("input");
         i.type = "checkbox";
         if (checked) i.setAttribute("checked", "");
+        if (disabled) i.setAttribute("disabled", "");
         l.appendChild(i);
         l.appendChild(document.createTextNode(String(text)));
         return l;
     }
 
-    function head(title, level, eyebrow, gist, cnt, acts, data, bdg) {
-        var h = el("header", data ? "ui-head ui-head--data" : "ui-head");
+    function pill(text, tone) { return el("span", "ui-pill ui-pill--" + (tone || "neutral"), text); }
+    // The middle gives way; the last segment (from the last . or /) never does.
+    function path(p) {
+        p = String(p);
+        var i = Math.max(p.lastIndexOf("."), p.lastIndexOf("/"));
+        if (i <= 0) i = p.length;
+        var n = el("span", "ui-path");
+        n.title = p;
+        n.appendChild(el("span", "ui-path-head", p.slice(0, i)));
+        n.appendChild(el("span", "ui-path-tail", p.slice(i)));
+        return n;
+    }
+    function headFold() {
+        var b = el("button", "ui-btn-icon ui-head-fold");
+        b.type = "button";
+        // the same words _ui_head_boot.html keeps on a server-rendered one
+        var c = document.documentElement.classList.contains("ui-heads-compact");
+        b.setAttribute("aria-label", c ? "Unfold the page header" : "Fold the page header");
+        b.setAttribute("aria-expanded", c ? "false" : "true");
+        b.title = "Fold or unfold the page header (all pages)";
+        return b;
+    }
+    function head(title, level, eyebrow, gist, cnt, acts, data, bdg, page) {
+        var h = el("header", (data ? "ui-head ui-head--data" : "ui-head") + (page ? " ui-head--page" : ""));
         if (eyebrow && !data) h.appendChild(el("div", "ui-head-eyebrow", eyebrow));
         var t = el("h" + (level || 2), "ui-head-title", title);
         if (has(cnt)) { t.appendChild(document.createTextNode(" ")); t.appendChild(count(cnt)); }
@@ -58,6 +81,7 @@
         h.appendChild(t);
         if (acts && acts.length) h.appendChild(actions(acts));
         if (gist && !data) h.appendChild(el("p", "ui-head-gist", gist));
+        if (page) h.appendChild(headFold());
         return h;
     }
     function notice(tone, key, text, acts) {
@@ -180,7 +204,7 @@
 
     function render(s) {
         switch (s && s.part) {
-            case "head": return head(s.title, s.level, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge);
+            case "head": return head(s.title, s.level, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge, s.page);
             case "notice": return notice(s.tone, s.key, s.text, s.actions);
             case "callout": return callout(s.tone, s.title, s.text);
             case "verdict": return verdict(s.tone, s.key, s.why);
@@ -191,7 +215,9 @@
             case "badge": return badge(s.text, s.tone);
             case "count": return count(s.text);
             case "note": return note(s.text);
-            case "check": return check(s.text, s.checked);
+            case "check": return check(s.text, s.checked, s.disabled);
+            case "pill": return pill(s.text, s.tone);
+            case "path": return path(s.text);
             case "segmented": return segmented(s.options, s.label);
             case "disclosure": return disclosure(s.summary, s.count, s.body, s.open);
             case "dialog": return dialog(s);
@@ -200,7 +226,7 @@
     }
 
     window.UI = {
-        button: button, actions: actions, chip: chip, badge: badge, count: count, note: note, check: check,
+        button: button, actions: actions, chip: chip, badge: badge, count: count, note: note, check: check, pill: pill, path: path, headFold: headFold,
         head: head, notice: notice, callout: callout, verdict: verdict, table: table, segmented: segmented,
         disclosure: disclosure, item: item, dialog: dialog, render: render,
         /* The /ui-kit page: fill every script-side slot from the page's spec list. */

@@ -1,0 +1,37 @@
+{# D-103: the page-head fold, applied BEFORE the first paint (no flash).
+   ONE app-wide choice in localStorage quam_head_compact ('1' folded, '0'
+   unfolded); with no stored choice a window shorter than 820 px starts
+   folded. The class lives on <html>, which every htmx swap keeps. A press
+   on any .ui-head-fold flips it and stores the choice. Folding hides the
+   gist and eyebrow only; the actions are never hidden (ui-kit.css). #}
+    <script>
+      (function() {
+        var d = document.documentElement, K = 'quam_head_compact', C = 'ui-heads-compact';
+        try {
+          var v = localStorage.getItem(K);
+          if (v === '1' || (v === null && window.innerHeight < 820)) d.classList.add(C);
+        } catch (e) {}
+        function sync(root) {
+          var c = d.classList.contains(C);
+          (root || document).querySelectorAll('.ui-head-fold').forEach(function(b) {
+            b.setAttribute('aria-expanded', c ? 'false' : 'true');
+            b.setAttribute('aria-label', c ? 'Unfold the page header' : 'Fold the page header');
+          });
+        }
+        window.UiHead = {
+          toggle: function() {
+            var c = d.classList.toggle(C);
+            try { localStorage.setItem(K, c ? '1' : '0'); } catch (e) {}
+            sync();
+            return c;
+          },
+          sync: sync
+        };
+        document.addEventListener('click', function(e) {
+          var b = e.target && e.target.closest ? e.target.closest('.ui-head-fold') : null;
+          if (b) { e.preventDefault(); window.UiHead.toggle(); }
+        });
+        document.addEventListener('DOMContentLoaded', function() { sync(); });
+        document.addEventListener('htmx:load', function(e) { sync(e.target); });
+      })();
+    </script>

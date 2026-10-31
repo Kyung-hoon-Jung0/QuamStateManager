@@ -85,6 +85,16 @@
     --ui-dialog-max-h: 82vh;
     --ui-disclosure-marker: "\25B8";
     --ui-disclosure-marker-open: "\25BE";
+    /* K16 checkbox (D-105): the sidebar's rounded box, one look app-wide */
+    --ui-check-size: 18px;
+    --ui-r-check: 4px;
+    --ui-bw-check: 1.5px;
+    --ui-check-border: color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
+    --ui-check-bg: color-mix(in srgb, var(--pico-primary) 5%, transparent);
+    --ui-check-ring: 0 0 0 3px color-mix(in srgb, var(--pico-primary) 30%, transparent);
+    /* K3 page head fold (D-103): the glyph names what a press does */
+    --ui-fold-up: "\25B4";
+    --ui-fold-down: "\25BE";
 }
 
 /* K3 head ------------------------------------------------------------- */
@@ -95,6 +105,18 @@
 .ui-head > .ui-actions { order: 4; flex-basis: 100%; }
 .ui-head--data > .ui-actions { order: 2; flex-basis: auto; }
 .ui-head--data { flex-wrap: nowrap; align-items: center; }
+/* D-103: a page head folds to one row -- title and actions stay, the gist
+   and eyebrow hide. One app-wide choice: .ui-heads-compact on <html>
+   (_ui_head_boot.html sets it before the first paint). The fold button sits
+   at the right end; the head keeps room for it. */
+.ui-head--page { position: relative; padding-right: var(--ui-icon-btn); }
+.ui-head-fold { position: absolute; top: 0; right: 0; font-size: var(--ui-fs-md); }
+.ui-head-fold::before { content: var(--ui-fold-up); }
+.ui-heads-compact .ui-head-fold::before { content: var(--ui-fold-down); }
+.ui-heads-compact .ui-head--page > .ui-head-fold { top: 50%; transform: translateY(-50%); }
+.ui-heads-compact .ui-head--page { flex-wrap: nowrap; align-items: center; }
+.ui-heads-compact .ui-head--page .ui-head-gist, .ui-heads-compact .ui-head--page .ui-head-eyebrow { display: none; }
+.ui-heads-compact .ui-head--page > .ui-actions { order: 2; flex: 0 1 auto; width: auto; }
 .ui-count { font-weight: var(--ui-fw-normal); font-size: var(--ui-fs-md); color: var(--ui-text-2); font-variant-numeric: tabular-nums; }
 
 /* K2 action row + icon button ---------------------------------------- */
@@ -113,9 +135,32 @@
 .ui-badge--danger { color: var(--ui-danger-text); background: var(--ui-danger-bg); border-color: var(--ui-danger-border); }
 .ui-badge--ok { color: var(--ui-ok-text); border-color: var(--ui-ok-border); }
 .ui-note { margin: 0; max-width: var(--ui-measure); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-read); color: var(--ui-text-2); }
-.ui-check > input { margin: 0; }
 .ui-dialog-foot > .ui-check { margin-right: auto; }
 .ui-check { display: inline-flex; align-items: center; gap: var(--ui-gap-2); margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-text); }
+/* K16 checkbox (D-105): drawn by the kit, never by the browser or Pico. A
+   label wraps it (.ui-check) or the input carries .ui-check-box itself. The
+   tick is two borders rotated 45 degrees, sized from the box. */
+.ui-check > input, .ui-check-box { -webkit-appearance: none; appearance: none; position: relative; flex: 0 0 auto; width: var(--ui-check-size); height: var(--ui-check-size); margin: 0; padding: 0; vertical-align: middle; border: var(--ui-bw-check) solid var(--ui-check-border); border-radius: var(--ui-r-check); background-color: var(--ui-check-bg); background-image: none; box-shadow: none; cursor: pointer; }
+.ui-check > input:hover, .ui-check-box:hover { border-color: var(--ui-accent); }
+.ui-check > input:focus-visible, .ui-check-box:focus-visible { outline: 0; box-shadow: var(--ui-check-ring); }
+.ui-check > input:checked, .ui-check-box:checked, .ui-check > input:indeterminate, .ui-check-box:indeterminate { border-color: var(--ui-accent); background-color: var(--ui-accent); background-image: none; }
+.ui-check > input::after, .ui-check-box::after { content: ""; position: absolute; left: 30%; top: 8%; width: 30%; height: 55%; border: solid var(--ui-on-accent); border-width: 0 var(--ui-bw-check) var(--ui-bw-check) 0; transform: rotate(45deg); opacity: 0; }
+.ui-check > input:checked::after, .ui-check-box:checked::after { opacity: 1; }
+.ui-check > input:indeterminate::after, .ui-check-box:indeterminate::after { left: 22%; top: 44%; width: 56%; height: 0; border-width: var(--ui-bw-check) 0 0; transform: none; opacity: 1; }
+.ui-check > input:disabled, .ui-check-box:disabled { opacity: .5; cursor: default; }
+
+/* K9 pill (D-44): a human label (a state, a metric name) -- UI font, round
+   ends. A machine name (a key) is a .ui-chip; a long path is a .ui-path. */
+.ui-pill { display: inline-block; align-self: flex-start; width: auto; padding: 0 var(--ui-gap-2); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-pill); background: var(--ui-surface-2); color: var(--ui-text); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw-normal); line-height: var(--ui-lh-read); white-space: nowrap; }
+.ui-pill--accent { color: var(--ui-accent); border-color: var(--ui-accent-border); background: var(--ui-accent-bg); }
+.ui-pill--warn { color: var(--ui-warn-text); border-color: var(--ui-warn-border); background: var(--ui-warn-bg); }
+.ui-pill--danger { color: var(--ui-danger-text); border-color: var(--ui-danger-border); background: var(--ui-danger-bg); }
+.ui-pill--ok { color: var(--ui-ok-text); border-color: var(--ui-ok-border); background: var(--ui-ok-bg); }
+/* K9 path (D-44): a long dotted path loses its MIDDLE, never its last
+   segment; the whole path is in the title. */
+.ui-path { display: inline-flex; align-self: flex-start; max-width: 100%; min-width: 0; vertical-align: bottom; font-family: var(--ui-font-mono); font-size: var(--ui-fs-sm); color: var(--ui-text); white-space: nowrap; }
+.ui-path-head { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ui-path-tail { flex: 0 0 auto; }
 
 /* K4 notice (page top) ------------------------------------------------ */
 .ui-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); margin: 0; padding: var(--ui-gap-1) var(--ui-gap-3); border: 0; border-radius: 0; box-shadow: none; animation: none; border-left: var(--ui-bw-strip) solid var(--ui-border-strong); background: var(--ui-surface-2); color: var(--ui-text); font-size: var(--ui-fs-md); line-height: var(--ui-lh-dense); }

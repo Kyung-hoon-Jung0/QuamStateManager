@@ -27,6 +27,11 @@ def _parts():
                                             "actions": [{"label": "New pulse", "cls": "btn-sm"}]}),
         ("Head", "Long title, no actions", {"part": "head", "title": LONG, "gist": LONG}),
         ("Head", "Empty count", {"part": "head", "data": True, "title": "Runs", "count": "0"}),
+        ("Head", "Page head with the fold button (D-103)", {"part": "head", "page": True, "title": "Diagnostics",
+                                                            "gist": "Every check on the open chip, grouped by what it would break.",
+                                                            "actions": [P_SECOND]}),
+        ("Head", "Data page head with the fold button", {"part": "head", "page": True, "data": True, "title": "Pairs",
+                                                         "count": "32", "actions": [{"label": "Add gate", "cls": "btn-sm"}]}),
     ]
     # K2 action rows
     out += [
@@ -73,6 +78,18 @@ def _parts():
             {"part": "badge", "text": "neutral"}, {"part": "badge", "text": "accent", "tone": "accent"},
             {"part": "badge", "text": "warn", "tone": "warn"}, {"part": "badge", "text": "danger", "tone": "danger"},
             {"part": "badge", "text": "ok", "tone": "ok"}, {"part": "count", "text": "3 of 4"}]}),
+        ("Pieces", "Pills: human labels (D-44)", {"part": "item", "title": "pills", "body": [
+            {"part": "pill", "text": "T1"}, {"part": "pill", "text": "selected", "tone": "accent"},
+            {"part": "pill", "text": "stale", "tone": "warn"}, {"part": "pill", "text": "failed", "tone": "danger"},
+            {"part": "pill", "text": "in sync", "tone": "ok"}]}),
+        ("Pieces", "Paths: the middle gives way (D-44)", {"part": "item", "title": "paths", "body": [
+            {"part": "path", "text": "qubit_pairs.qD3-qC4.macros.cz_bipolar.flux_pulse_qubit.amplitude"},
+            {"part": "path", "text": "C:/data/lab/2026-10-31/#1234_ramsey/node.json"},
+            {"part": "path", "text": "short"}]}),
+        ("Pieces", "Checkboxes (D-105)", {"part": "item", "title": "checkboxes", "body": [
+            {"part": "check", "text": "Diagnosis"}, {"part": "check", "text": "Ticked", "checked": True},
+            {"part": "check", "text": "Disabled", "disabled": True},
+            {"part": "check", "text": "Disabled, ticked", "checked": True, "disabled": True}]}),
         ("Pieces", "Callout note", {"part": "callout", "tone": "note", "title": "Not checked",
                                     "text": "Timing on hardware; only the samples written to the config are compared."}),
         ("Pieces", "Callout warn", {"part": "callout", "tone": "warn", "title": "Will be skipped",

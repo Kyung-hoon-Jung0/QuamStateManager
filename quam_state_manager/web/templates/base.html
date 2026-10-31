@@ -15,6 +15,7 @@
        docs/156: the boot is a partial — the standalone /calc-window runs the
        same one, so a window opened from this page looks like this page. #}
     {% include '_theme_boot.html' %}
+    {% include '_ui_head_boot.html' %}
     {# Render-time chip fingerprint token (topology-only). Set on every FULL page
        load; HTMX fragment swaps deliberately don't reset it, so it stays pinned to
        the chip that was active when this page was rendered. Sent as expect_chip on

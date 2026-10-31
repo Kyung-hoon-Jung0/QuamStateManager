@@ -23,16 +23,34 @@
 
 {%- macro ui_note(text) -%}<p class="ui-note">{{ text }}</p>{%- endmacro -%}
 
-{%- macro ui_check(text, checked=False) -%}
-<label class="ui-check"><input type="checkbox"{% if checked %} checked{% endif %}>{{ text }}</label>
+{%- macro ui_check(text, checked=False, disabled=False) -%}
+<label class="ui-check"><input type="checkbox"{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}>{{ text }}</label>
 {%- endmacro -%}
 
-{%- macro ui_head(title, level=2, eyebrow=None, gist=None, count=None, actions=None, data=False, badge=None) -%}
-<header class="ui-head{% if data %} ui-head--data{% endif %}">
+{#- K9 pill: a human label (D-44). -#}
+{%- macro ui_pill(text, tone='neutral') -%}<span class="ui-pill ui-pill--{{ tone }}">{{ text }}</span>{%- endmacro -%}
+
+{#- K9 path: the middle gives way, the last segment (from the last . or /)
+    never does; the whole path is the title. -#}
+{%- macro ui_path(path) -%}
+{%- set _p = path | string -%}
+{%- set _i = [_p.rfind('.'), _p.rfind('/')] | max -%}
+{%- set _i = _i if _i > 0 else _p | length -%}
+<span class="ui-path" title="{{ _p }}"><span class="ui-path-head">{{ _p[:_i] }}</span><span class="ui-path-tail">{{ _p[_i:] }}</span></span>
+{%- endmacro -%}
+
+{#- D-103: the one fold button of a page head (the last child). Its glyph
+    comes from CSS (.ui-heads-compact on <html>); _ui_head_boot.html keeps
+    aria-expanded true to the app-wide state. -#}
+{%- macro ui_head_fold() -%}<button type="button" class="ui-btn-icon ui-head-fold" aria-label="Fold the page header" aria-expanded="true" title="Fold or unfold the page header (all pages)"></button>{%- endmacro -%}
+
+{%- macro ui_head(title, level=2, eyebrow=None, gist=None, count=None, actions=None, data=False, badge=None, page=False) -%}
+<header class="ui-head{% if data %} ui-head--data{% endif %}{% if page %} ui-head--page{% endif %}">
 {%- if eyebrow and not data %}<div class="ui-head-eyebrow">{{ eyebrow }}</div>{% endif -%}
 <h{{ level }} class="ui-head-title">{{ title }}{% if count is defined and count is not none %} {{ ui_count(count) }}{% endif %}{% if badge %}{{ ui_badge(badge.text, badge.tone or 'neutral') }}{% endif %}</h{{ level }}>
 {%- if actions %}{{ ui_actions(actions) }}{% endif -%}
 {%- if gist and not data %}<p class="ui-head-gist">{{ gist }}</p>{% endif -%}
+{%- if page %}{{ ui_head_fold() }}{% endif -%}
 </header>
 {%- endmacro -%}
 
@@ -98,7 +116,7 @@
 
 {%- macro ui_render(s) -%}
 {%- set p = s.part -%}
-{%- if p == 'head' %}{{ ui_head(s.title, s.level or 2, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge) }}
+{%- if p == 'head' %}{{ ui_head(s.title, s.level or 2, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge, s.page) }}
 {%- elif p == 'notice' %}{{ ui_notice(s.tone, s.key, s.text, s.actions) }}
 {%- elif p == 'callout' %}{{ ui_callout(s.tone, s.title, s.text) }}
 {%- elif p == 'verdict' %}{{ ui_verdict(s.tone, s.key, s.why) }}
@@ -109,7 +127,9 @@
 {%- elif p == 'badge' %}{{ ui_badge(s.text, s.tone or 'neutral') }}
 {%- elif p == 'count' %}{{ ui_count(s.text) }}
 {%- elif p == 'note' %}{{ ui_note(s.text) }}
-{%- elif p == 'check' %}{{ ui_check(s.text, s.checked) }}
+{%- elif p == 'check' %}{{ ui_check(s.text, s.checked, s.disabled) }}
+{%- elif p == 'pill' %}{{ ui_pill(s.text, s.tone or 'neutral') }}
+{%- elif p == 'path' %}{{ ui_path(s.text) }}
 {%- elif p == 'segmented' %}{{ ui_segmented(s.options, s.label) }}
 {%- elif p == 'disclosure' %}{{ ui_disclosure(s.summary, s.count, s.body or (), s.open) }}
 {%- elif p == 'dialog' %}{{ ui_dialog(s.head, s.size or 'm', s.body or (), s.foot or (), s.foot_actions, s.close is not sameas false) }}

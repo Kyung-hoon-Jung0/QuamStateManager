@@ -2024,37 +2024,22 @@ details.tree-branch-active > summary {
 /* Hover highlight across the whole row. Brighter in dark mode (below) so the
    tint is actually distinguishable on the dark background. */
 .tree-entry-label:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
-/* docs/161 (customer: the tick box was too small and nobody knew what it was
-   for): a 12 px native box became an 18 px custom one -- SQUARE (a box wider
-   than tall reads as a text field), rounded, a soft SM-blue border that
-   brightens on row hover, and a solid SM-blue fill with a white check when
-   ticked. The ✓ is drawn with two borders rotated 45° (no image, inherits
-   the theme). Pico's own accent styling is bypassed via appearance:none. */
-.tree-entry-label input[type=checkbox] {
-    appearance: none; -webkit-appearance: none;
-    margin: 0.08em 0 0 0; width: 22px; height: 22px; flex-shrink: 0; cursor: pointer;
-    border: 1.5px solid color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
-    border-radius: 5px; background: color-mix(in srgb, var(--pico-primary) 5%, transparent);
-    position: relative; transition: border-color .12s, background .12s, box-shadow .12s;
-}
-.tree-entry-label:hover input[type=checkbox],
-.tree-entry-label input[type=checkbox]:hover { border-color: var(--pico-primary); }
-.tree-entry-label input[type=checkbox]:focus-visible {
-    outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--pico-primary) 30%, transparent);
-}
-.tree-entry-label input[type=checkbox]:checked {
-    background: var(--pico-primary); border-color: var(--pico-primary);
-}
+/* docs/161, D-105: the run tick is the kit checkbox (.ui-check-box, drawn in
+   ui-kit.css -- the Diagnosis box is the same part). Here only what the
+   sidebar adds: its size (docs/165 raised it to 22 px), the row hover that
+   brightens the border, and the ghost tick below. */
+.tree-entry-label input[type=checkbox] { margin: 0.08em 0 0 0; width: 22px; height: 22px; border-radius: 5px; transition: border-color .12s, background .12s, box-shadow .12s; }
+.tree-entry-label:hover input[type=checkbox] { border-color: var(--pico-primary); }
 /* docs/165 (customer): the tick exists in EVERY state — what changes is how
    loud it is. Empty, it is a faint grey ghost, which is what tells a person
    the box is tickable at all; under the pointer it comes up; ticked it turns
    white on the filled blue box. Three steps, so the control announces itself
    instead of waiting to be discovered. */
-.tree-entry-label input[type=checkbox]::after { content: ""; position: absolute; left: 6.5px; top: 2.5px; width: 6px; height: 11px; border: solid var(--pico-muted-color); border-width: 0 2.6px 2.6px 0; transform: rotate(45deg); opacity: 0.34; transition: opacity .12s, border-color .12s; }
+.tree-entry-label input[type=checkbox]::after { border-color: var(--pico-muted-color); border-width: 0 2.6px 2.6px 0; opacity: 0.34; transition: opacity .12s, border-color .12s; }
 .tree-entry-label:hover input[type=checkbox]::after,
 .tree-entry-label input[type=checkbox]:hover::after,
 .tree-entry-label input[type=checkbox]:focus-visible::after { opacity: 0.8; }
-.tree-entry-label input[type=checkbox]:checked::after { border-color: #fff; opacity: 1; }
+.tree-entry-label input[type=checkbox]:checked::after { border-color: var(--pico-primary-inverse); opacity: 1; }
 /* the compare hint under the buttons: shown only while nothing is ticked (app.js) */
 .compare-hint {
     display: block; flex: 1 1 100%; margin: .1rem 0 0; font-size: .8em; line-height: 1.3;
@@ -5212,17 +5197,19 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
     border: 1px solid var(--pico-muted-border-color); border-radius: var(--topo-card-radius);
     padding: 0.65rem 0.85rem; border-top: 4px solid var(--topo-card-accent);
     background: var(--pico-card-background-color, var(--pico-background-color));
+    position: relative; container-type: inline-size;
 }
-.topo-card-title { font-size: var(--topo-card-title-size); text-transform: uppercase; letter-spacing: 0.04em; color: var(--pico-muted-color); margin-bottom: 0.2rem; }
-.topo-card-value { font-size: var(--topo-card-value-size); font-weight: 700; font-family: monospace; line-height: 1.2; }
-.topo-card-sub { font-size: var(--topo-card-sub-size); color: var(--pico-muted-color); margin-top: 0.15rem; font-family: monospace; }
+.topo-card-title { font-size: var(--topo-card-title-size); text-transform: none; letter-spacing: 0; color: var(--pico-muted-color); margin-bottom: 0.2rem; }
+.topo-card-value { font-size: var(--topo-card-value-size); font-weight: 700; font-family: var(--font-ui); font-variant-numeric: tabular-nums; line-height: 1.2; white-space: nowrap; }
+.topo-card-sub { font-size: var(--topo-card-sub-size); color: var(--pico-muted-color); margin-top: 0.15rem; font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
 /* v1.3.0 B2: one stat / range / count never breaks inside itself (chip-status.js metricTile) */
 .topo-card-sub .tcs-k { white-space: nowrap; }
 
 /* docs/150: Overview per-panel customization (v1 — display preferences only).
    The kebab appears on hover; the ghost tile adds a panel; the stat tag marks
    a big number that is not the default median. */
-.topo-card { position: relative; }
+/* R4-CS-1: "21 qubits, 32 pairs" stays one line -- the long tile scales to the card width */
+.topo-card[data-tile-id="chip_size"] .topo-card-value { font-size: min(var(--topo-card-value-size), 11.5cqi); }
 .ov-tile-menu {
     position: absolute; top: 2px; right: 4px; padding: 0 5px; margin: 0;
     background: none; border: none; cursor: pointer; line-height: 1.3;
@@ -10535,7 +10522,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
    its title says why SM states no power for it */
 .bulk-phys-why { display: block; font-size: 0.7em; opacity: 0.45; font-family: var(--font-ui); cursor: help; }
 .bulk-band-warn-count, #bulk-band-warn { color: var(--color-error-text); font-size: 0.82em; font-weight: 600; }
-.bulk-apply-col { text-align: center; position: sticky; right: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); }
+.bulk-apply-col { text-align: center; position: sticky; right: calc(-1 * var(--table-pane-pad-h, 0px)); z-index: 1; min-width: 4.6em; padding: 0 .4em; white-space: nowrap; background: var(--pico-card-background-color); border-left: 1px solid var(--pico-muted-border-color); box-shadow: -6px 0 6px -6px color-mix(in srgb, black 35%, transparent); }
 .btn-xs { padding: 0.05rem 0.5rem; font-size: 0.78em; width: auto; margin: 0; }
 .bulk-row-error { display: block; color: var(--color-error-text); font-size: 0.72em; max-width: 20ch; white-space: normal; }
 /* These two error spans use display:block, which OVERRIDES the HTML `hidden`
@@ -12861,7 +12848,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .ch-tab[aria-pressed="true"] {
     color: var(--pico-primary); border-color: var(--pico-primary); font-weight: 600;
 }
-.ch-view[hidden] { display: none; }
+.ch-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .ch-chg-table .ch-chips { white-space: normal; }
 .ch-chipwrap { display: inline-flex; align-items: center; margin: .1rem .35rem .1rem 0; }
 .ch-chip {

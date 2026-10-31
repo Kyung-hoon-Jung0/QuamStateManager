@@ -19,6 +19,7 @@ from quam_state_manager.web.app import create_app
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CSS = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+_KIT = (_ROOT / "quam_state_manager" / "web" / "static" / "ui-kit.css").read_text(encoding="utf-8")
 _BASE = (_ROOT / "quam_state_manager" / "web" / "templates" / "base.html").read_text(encoding="utf-8")
 _MACROS = (_ROOT / "quam_state_manager" / "web" / "templates" / "_sidebar_tree_macros.html").read_text(encoding="utf-8")
 _APP_JS = (_ROOT / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
@@ -39,19 +40,23 @@ class TestTickBox:
         afterthought. Square is the part that must never drift: a non-square
         box reads as a text field."""
         r = _rule(".tree-entry-label input[type=checkbox]")
-        assert "appearance: none" in r
-        assert "width: 22px" in r and "height: 22px" in r        # square — never a text-field shape
+        assert "width: 22px" in r and "height: 22px" in r        # square -- never a text-field shape
         assert "border-radius: 5px" in r
-        assert "var(--pico-primary)" in r                          # the theme's own blue, no literal
+        # D-105: the drawing is the kit checkbox, the same part as Diagnosis
+        assert re.search(r'<input type="checkbox" class="ui-check-box" name="paths"', _MACROS)
+        kit = re.sub(r"/\*.*?\*/", "", _KIT, flags=re.S)
+        m = re.search(r"\.ui-check > input, \.ui-check-box \{([^}]*)\}", kit)
+        assert m and "appearance: none" in m.group(1) and "var(--ui-check-border)" in m.group(1)
 
     def test_the_tick_has_three_states_and_is_visible_before_it_is_ticked(self):
         """docs/165 (customer): an empty box did not say it was tickable. The
-        tick mark now EXISTS in every state and only its loudness changes --
-        a faint grey ghost when empty, brighter under the pointer, white on
-        the filled blue box when ticked. The geometry lives on the base rule
-        so the three states cannot drift into three different shapes."""
+        tick mark EXISTS in every state and only its loudness changes -- a
+        faint grey ghost when empty, brighter under the pointer, on-accent on
+        the filled box when ticked. The tick's shape is the kit's (D-105);
+        the sidebar sets only colour and loudness."""
+        kit = re.sub(r"/\*.*?\*/", "", _KIT, flags=re.S)
+        assert re.search(r"\.ui-check-box::after \{[^}]*rotate\(45deg\)", kit)   # the tick's shape, defined once
         base = _rule(".tree-entry-label input[type=checkbox]::after")
-        assert "rotate(45deg)" in base                 # the tick's shape, defined once
         assert "var(--pico-muted-color)" in base       # grey while empty, no literal
         ghost = float(re.search(r"opacity:\s*([0-9.]+)", base).group(1))
         assert 0 < ghost < 0.5, f"empty must be a HINT, not a tick: {ghost}"
@@ -62,10 +67,9 @@ class TestTickBox:
         hover = float(re.search(r"opacity:\s*([0-9.]+)", m.group(1)).group(1))
         assert hover > ghost, f"hover must be louder than empty ({hover} vs {ghost})"
 
-        on = _rule(".tree-entry-label input[type=checkbox]:checked")
-        assert "background: var(--pico-primary)" in on          # the box fills
+        assert re.search(r"\.ui-check-box:checked[^{]*\{[^}]*background-color: var\(--ui-accent\)", kit)  # the box fills
         mark = _rule(".tree-entry-label input[type=checkbox]:checked::after")
-        assert "border-color: #fff" in mark                     # the tick turns white
+        assert "border-color: var(--pico-primary-inverse)" in mark          # the tick turns light
         assert float(re.search(r"opacity:\s*([0-9.]+)", mark).group(1)) == 1.0
 
     def test_row_hover_brightens_the_box(self):
@@ -73,7 +77,7 @@ class TestTickBox:
         assert re.search(r"\.tree-entry-label:hover input\[type=checkbox\][^{]*\{[^}]*border-color: var\(--pico-primary\)", css)
 
     def test_the_box_says_what_it_is_for(self):
-        m = re.search(r'<input type="checkbox" name="paths"[^>]*>', _MACROS)
+        m = re.search(r'<input type="checkbox" class="ui-check-box" name="paths"[^>]*>', _MACROS)
         assert m and 'title="Tick to select this run' in m.group(0)
         assert "Compare Selected" in m.group(0) and "Trend Tracker" in m.group(0)
 

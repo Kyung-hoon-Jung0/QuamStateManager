@@ -25,6 +25,11 @@
   <span class="ui-tabs-end"><label class="ui-check"><input type="checkbox">Diagnosis</label><button type="button" class="ui-btn-icon" title="Edit thresholds" aria-label="Edit thresholds">&#9881;</button></span>
 </div>
 </section>
+{#- D-105 a bare box, D-103 a folded page head (the class _ui_head_boot.html puts on <html>) -#}
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Bare checkbox and a folded page head</h2>
+<p><input type="checkbox" class="ui-check-box" aria-label="Sample box"> <input type="checkbox" class="ui-check-box" checked aria-label="Sample box, ticked"></p>
+<div class="ui-heads-compact">{{ ui.ui_head('Folded page head', 2, 'Eyebrow', 'This gist hides while the head is folded; the actions stay.', None, [{'label': 'Review', 'cls': 'btn-sm'}], page=True) }}</div>
+</section>
 {#- K11 states + K12 search (stage 4): markup only, existing elements gain the classes -#}
 <section class="ui-kit-section"><h2 class="ui-kit-section-title">States and search</h2>
 <p class="ui-state ui-state--empty"><span class="ui-state-key">No data folder yet.</span> Link one in the sidebar to list runs here.</p>
