@@ -470,7 +470,10 @@ window.TopoGraph = (function () {
       return hz >= 1e9 ? (hz / 1e9).toFixed(2) + " GHz" : (hz / 1e6).toFixed(1) + " MHz";
     }
     var chevW = Math.round(Math.max(1.6, CELL * 0.028) * 10) / 10;
-    var chevDone = {};
+    var chevDone = {}, hasCoupler = {};
+    edges.forEach(function (x) {
+      if (x && x.has_coupler) hasCoupler[String(x.source) < String(x.target) ? x.source + "|" + x.target : x.target + "|" + x.source] = 1;
+    });
     for (var ci = 0; ci < edges.length; ci++) {
       var ce = edges[ci];
       if (ce == null || ce.source == null || ce.target == null) continue;
@@ -491,8 +494,11 @@ window.TopoGraph = (function () {
       var cul = Math.sqrt(cux * cux + cuy * cuy) || 1;
       cux /= cul; cuy /= cul;
       var cnx = -cuy, cny = cux;
-      var cmx = (loPt.x + hiPt.x) / 2 + cnx * CELL * 0.16;
-      var cmy = (loPt.y + hiPt.y) / 2 + cny * CELL * 0.16;
+      // A coupler dot (r = 0.30 * 0.38 cell) sits on the midpoint too: on a
+      // map that draws it, move the chevron clear of the dot (D-94).
+      var coff = CELL * ((opts.couplerClear && (ce.has_coupler || hasCoupler[ckey])) ? 0.24 : 0.16);
+      var cmx = (loPt.x + hiPt.x) / 2 + cnx * coff;
+      var cmy = (loPt.y + hiPt.y) / 2 + cny * coff;
       var arm = CELL * 0.10, half = CELL * 0.075, gap = CELL * 0.09;
       var chev = "";
       for (var cg = 0; cg < 2; cg++) {
@@ -655,6 +661,7 @@ window.TopoGraph = (function () {
     var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
     out += '<text class="cm-pair-label cm-dir-label" font-size="' + font + '"' +
            ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-ang="' + r1(ang) + '"' +
+           (e.has_coupler ? ' data-clear="' + r1(Math.round(R * 0.38) + 3) + '"' : "") +
            ' text-anchor="middle" dominant-baseline="central" x="0" y="0">' +
            esc(e.pair_id) + "</text>";
     return out;
@@ -773,7 +780,9 @@ window.TopoGraph = (function () {
     var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
     var ang = +t.getAttribute("data-ang") * Math.PI / 180;
     var nx = -Math.sin(ang), ny = Math.cos(ang);    // the text frame's "down"
-    var off = f * 0.5 + 10;   // clears the arrow head (half-width ~7 px at the default cell)
+    // clears the arrow head (half-width ~7 px at the default cell), and the
+    // coupler dot on the midpoint where the edge has one
+    var off = f * 0.5 + Math.max(10, +t.getAttribute("data-clear") || 0);
     var px = cx + nx * off * side, py = cy + ny * off * side;
     t.setAttribute("font-size", f);
     t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
@@ -977,7 +986,7 @@ window.TopoGraph = (function () {
     // v1.3.0: drawn AFTER the stones (below), as the Chip Status hero has
     // since docs/126 -- the flux stubs and resonator marks are part of each
     // stone's group and were painted over the C/T/M letters.
-    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: false });
+    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: false, couplerClear: true });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny

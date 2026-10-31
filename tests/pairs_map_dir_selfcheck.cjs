@@ -97,5 +97,18 @@ const legend = m.querySelector('.cm-dir-legend');
 ok(!!legend && /control → target/.test(legend.textContent) && /moving qubit/.test(legend.textContent)
    && /lower f/.test(legend.textContent), 'the one-line legend names arrow, ring and chevron');
 
+// A coupler chip: every pair carries a coupler dot at its midpoint, beside
+// the frequency chevron. The chevron must move clear of it.
+{
+  const cedges = edges.map((x) => Object.assign({}, x, { has_coupler: true }));
+  const mc = win.document.createElement('div');
+  win.document.body.appendChild(mc);
+  win.TopoGraph.renderLayout(mc, { nodes: nodes, edges: cedges, highlight: 'pairs', cell: 120 });
+  ok(mc.querySelectorAll('.cm-coupler').length === cedges.length && mc.querySelectorAll('.cm-freq').length > 0,
+     'coupler fixture: one coupler dot per pair, chevrons drawn');
+  const ovc = win.TopoGraph.labelOverlaps(mc.querySelector('svg.cm-svg'));
+  ok(ovc.count === 0, 'coupler fixture: overlaps == 0 (' + JSON.stringify(ovc.pairs.slice(0, 4)) + ')');
+}
+
 const summary = fails ? fails + ' check(s) FAILED\n' : 'pairs_map_dir_selfcheck: all checks passed (' + checks + ' assertions)\n';
 process.stdout.write(summary, function () { process.exit(fails ? 1 : 0); });
