@@ -229,3 +229,15 @@ def test_staging_doors_refuse_before_mutating_a_held_chip(tmp_path, monkeypatch,
     else:
         assert response.status_code == 409, response.get_data(as_text=True)
     assert (chip.log(), chip.journal(), chip.live_state()) == before
+
+
+def test_env_upgrade_posts_are_locked_and_its_reads_stay_live(tmp_path, monkeypatch):
+    """rename-apply stages into the working copy and check/record/compare spawn an env
+    subprocess, so the POST endpoint is locked during a run; the card's GET reads are not."""
+    from quam_state_manager.web import routes
+    chip = Chip(tmp_path)
+    monkeypatch.setattr(routes.scheduler, "is_active", lambda *a, **k: True)
+    client = chip.app.test_client()
+    r = client.post("/env-upgrade/rename-apply", json={"selections": []})
+    assert r.status_code == 409 and r.get_json()["error"] == "scheduler_running"
+    assert client.get("/env-upgrade/status").status_code != 409
