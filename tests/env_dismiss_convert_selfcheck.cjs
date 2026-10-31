@@ -47,7 +47,10 @@ window.ResizeObserver = global.ResizeObserver;
 
 const triggers = [];
 window.htmx = {
-    ajax: function () { return Promise.resolve(); },
+    ajax: function (method, url) {
+        if (url === '/diagnostics') document.getElementById('table-pane').innerHTML = CHANGES_HTML;
+        return Promise.resolve();
+    },
     trigger: function (el, name) { triggers.push(name); },
     process: function () {},
 };
@@ -55,10 +58,10 @@ global.htmx = window.htmx;
 
 /* The overlay the server renders for a changed env transition. */
 const CHANGES_HTML =
-    '<div class="tfx-card env-changes-card" data-from="fromK" data-to="toK" data-sig="SIG">' +
+    '<details id="env-upgrade-schema-details"><div class="tfx-card env-changes-card" data-from="fromK" data-to="toK" data-sig="SIG">' +
     '<div class="tfx-actions"><button type="button" id="dismiss"' +
     ' onclick="window.envSchemaDismiss(this)">Don’t show this again</button></div>' +
-    '<div class="tfx-error" hidden></div></div>';
+    '<div class="tfx-error" hidden></div></div></details>';
 
 let dismissStatus = 200, dismissBody = null;
 window.fetch = global.fetch = function (url, opts) {
@@ -96,7 +99,8 @@ function toasts() { return Array.prototype.map.call(d.querySelectorAll('#status-
     /* 1. a successful dismissal refreshes the card */
     window.openEnvSchemaChanges();
     await flush(30);
-    ok(overlayOpen() && !!d.getElementById('dismiss'), 'the overlay opened with the dismiss button');
+    ok(!overlayOpen() && !!d.getElementById('dismiss'), 'schema review navigates into Diagnostics');
+    ok(d.getElementById('env-upgrade-schema-details').open, 'the card schema detail opens');
     triggers.length = 0;
     window.envSchemaDismiss(d.getElementById('dismiss'));
     await flush(30);

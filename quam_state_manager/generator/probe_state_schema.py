@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import importlib
+import inspect
 import json
 import re
 import sys
@@ -71,6 +72,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _script_common import library_versions as _library_versions  # noqa: E402
 from _script_common import out_of_env_sources as _out_of_env_sources  # noqa: E402
+from _script_common import is_out_of_env_source as _is_out_of_env_source  # noqa: E402
 from probe_capabilities import _PULSE_HOMES  # noqa: E402  (single-source triplet)
 
 # Third-party lab packages subclass quam components, so their MRO hits a
@@ -306,6 +308,9 @@ def _dump_fields(cls) -> dict | None:
                 default, default_repr = None, "<factory>"
 
         out[name] = {
+            "defining_class": next(
+                (f"{b.__module__}.{b.__qualname__}" for b in cls.__mro__
+                 if name in vars(b).get("__annotations__", {})), None),
             "type": ts,
             "optional": bool(ts.get("optional")),
             "has_default": bool(has_default or has_factory),
@@ -317,6 +322,43 @@ def _dump_fields(cls) -> dict | None:
     return out
 
 
+def _signature(method) -> dict:
+    """Capture names, parameter kinds and count without annotation churn."""
+    if isinstance(method, (classmethod, staticmethod)):
+        method = method.__func__
+    sig = inspect.signature(method)
+    return {"text": str(sig), "parameters": [
+        {"name": p.name, "kind": str(p.kind)} for p in sig.parameters.values()],
+        "count": str(len(sig.parameters))}
+
+
+def _override_signatures(cls) -> dict:
+    result = {}
+    for name, method in vars(cls).items():
+        if not (inspect.isfunction(method) or
+                                         isinstance(method, (classmethod, staticmethod))):
+            continue
+        function = method.__func__ if isinstance(method, (classmethod, staticmethod)) else method
+        if getattr(getattr(function, "__code__", None), "co_filename", None) == "<string>":
+            continue  # dataclass-generated methods were not defined by this class's author
+        parent = next((b for b in cls.__mro__[1:] if name in vars(b)), None)
+        if parent is None:
+            continue
+        try:
+            result[name] = {"own": _signature(method),
+                            "parent": _signature(vars(parent)[name]),
+                            "parent_class": f"{parent.__module__}.{parent.__qualname__}"}
+        except (TypeError, ValueError) as exc:
+            result[name] = {"error": f"{type(exc).__name__}: {exc}"}
+    return result
+
+
+def _error_frames(exc) -> list[dict]:
+    return [{"file": f.filename, "line": f.lineno, "function": f.name}
+            for f in traceback.extract_tb(exc.__traceback__)
+            if _is_out_of_env_source(f.filename)]
+
+
 def _dump_class(path: str) -> dict:
     entry = {"importable": False, "canonical": None, "bases": [],
              "is_dataclass": False, "fields": None, "error": None}
@@ -324,12 +366,18 @@ def _dump_class(path: str) -> dict:
         cls = _import_class(path)
     except Exception as exc:  # noqa: BLE001 — third-party lab packages absent etc.
         entry["error"] = f"{type(exc).__name__}: {exc}"
+        entry["error_type"] = type(exc).__name__
+        entry["error_frames"] = _error_frames(exc)
         return entry
     if not isinstance(cls, type):
         entry["error"] = f"{path!r} resolves to {type(cls).__name__}, not a class"
         return entry
     entry["importable"] = True
     entry["canonical"] = f"{cls.__module__}.{cls.__qualname__}"
+    filename = getattr(sys.modules.get(cls.__module__), "__file__", None)
+    entry["origin"] = ("lab" if filename and _is_out_of_env_source(filename)
+                       else "official" if filename or cls.__module__ == "builtins" else "unknown")
+    entry["signatures"] = _override_signatures(cls)
     try:
         import inspect as _inspect
         entry["abstract"] = bool(_inspect.isabstract(cls))     # listed, badged, never offered as instantiable
@@ -338,8 +386,7 @@ def _dump_class(path: str) -> dict:
     entry["bases"] = [
         f"{b.__module__}.{b.__qualname__}"
         for b in cls.__mro__[1:]
-        if _COMPONENT_MODULE_RE.match(getattr(b, "__module__", "") or "")
-    ][:8]
+    ]
     entry["is_dataclass"] = bool(
         dataclasses.is_dataclass(cls) or getattr(cls, "__dataclass_fields__", None))
     try:
@@ -709,6 +756,11 @@ def dump_schemas(class_paths: list[str], pulse_roster: bool = True,
             classes[path] = {"importable": False, "canonical": None, "bases": [],
                              "is_dataclass": False, "fields": None,
                              "error": f"{type(exc).__name__}: {exc}"}
+    # Probe only the ancestors of explicitly requested classes, never a package tree.
+    for entry in list(classes.values()):
+        for base in entry.get("bases") or []:
+            if base not in classes:
+                classes[base] = _dump_class(base)
     result = {
         "python": sys.version.split()[0],
         "versions": _library_versions(),

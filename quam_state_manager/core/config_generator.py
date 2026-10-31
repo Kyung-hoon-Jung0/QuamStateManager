@@ -21,6 +21,7 @@ generator subprocess.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -738,6 +739,8 @@ print(json.dumps({
     "quam_builder": _v("quam-builder"),
     "quam": _v("quam"),
     "qm": _v("qm-qua") or _v("qm"),
+    "numpy": _v("numpy"),
+    "scipy": _v("scipy"),
     "quam_builder_commit": _commit("quam-builder"),
 }))
 """
@@ -1197,7 +1200,42 @@ def _env_signature(python_path: str) -> str | None:
             parts.append(str(sp.stat().st_mtime_ns))
         except OSError:
             pass
+    # A directory mtime can stay put while installed distributions change (a
+    # copy that preserves times, a replace of same-named entries, a venv whose
+    # packages come from its base env). The installed distribution NAMES carry
+    # the versions, so they join the signature; listing is stat-free.
+    for folder in [sp, *_base_site_packages(python_path)]:
+        if folder is None:
+            continue
+        try:
+            names = sorted(n for n in os.listdir(folder)
+                           if n.endswith((".dist-info", ".egg-info", ".egg-link", ".pth")))
+        except OSError:
+            continue
+        parts.append(hashlib.sha1("|".join(names).encode("utf-8")).hexdigest()[:16])
     return "|".join(parts)
+
+
+def _base_site_packages(python_path: str) -> list:
+    """A venv created with system site-packages also imports its base env's."""
+    env = Path(python_path).parent
+    if env.name.lower() in ("bin", "scripts"):
+        env = env.parent
+    try:
+        text = (env / "pyvenv.cfg").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    values = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            values[key.strip().lower()] = value.strip()
+    if values.get("include-system-site-packages", "").lower() != "true" or not values.get("home"):
+        return []
+    home = Path(values["home"])
+    base = home / ("python.exe" if (home / "python.exe").exists() else "python")
+    found = _site_packages_for(str(base))
+    return [found] if found is not None else []
 
 
 def probe_envs(
@@ -1600,6 +1638,7 @@ def run_config_preview(
     python_path: str,
     state_folder,
     timeout: int = 120,
+    *, strict: bool = False, load_only: bool = False,
 ) -> dict:
     """Run ``run_generate_config.py`` in a subprocess and return the parsed result.
 
@@ -1637,6 +1676,8 @@ def run_config_preview(
                 python_path, str(CONFIG_PREVIEW_SCRIPT),
                 "--state-folder", str(state_folder),
                 "--out", str(work_dir),
+                *(["--strict-input"] if strict else []),
+                *(["--load-only"] if load_only else []),
             ],
             work_dir, timeout, outcome,
             no_result_label="config previewer",

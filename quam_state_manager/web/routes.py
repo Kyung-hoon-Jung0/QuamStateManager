@@ -2075,6 +2075,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # all (measured: it did not). The call is idempotent -- a fresh config
         # answers "already-fresh" and starts nothing.
         _maybe_warm_generated_config(current, current_app.instance_path)
+        _maybe_check_env_upgrade(current, current_app.instance_path)
         _prewarm_search_index(current)
         _maybe_prewarm_lab_worker(current, current_app.instance_path)   # w9/labwarm
         return current
@@ -2185,9 +2186,107 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # already in RAM by the time anyone clicks that pulse. Gated on the
         # chip actually having one: every other chip pays nothing.
         _maybe_warm_generated_config(ctx, current_app.instance_path)
+        _maybe_check_env_upgrade(ctx, current_app.instance_path)
         _prewarm_search_index(ctx)
         _maybe_prewarm_lab_worker(ctx, current_app.instance_path)   # w9/labwarm
         return ctx
+
+
+_env_upgrade_inflight: set[str] = set()
+_env_upgrade_lock = threading.Lock()
+
+
+def _maybe_check_env_upgrade(ctx, inst, *, python_path_override=None) -> None:
+    """Queue observation work; activation performs no probe or recording."""
+    from quam_state_manager.core import env_seen
+
+    if not ctx or not ctx.get("path") or not ctx.get("store") or not env_seen.live_context(ctx):
+        return
+    app = current_app._get_current_object()
+    if app.config.get("TESTING") and not app.config.get("SM_ENV_UPGRADE_IN_TESTS"):
+        return
+    key = env_seen.chip_key(ctx["path"])
+    inflight_key = key + "|" + (python_path_override or "selected")
+    with _env_upgrade_lock:
+        if inflight_key in _env_upgrade_inflight:
+            return
+        _env_upgrade_inflight.add(inflight_key)
+
+    def run():
+        from quam_state_manager.core import activity, state_env_schema, state_env_baseline
+        try:
+            activity.wait_quiet()
+            if not env_seen.live_context(ctx):
+                return
+            python_path = python_path_override or config_generator.get_selected_env(inst)
+            if not python_path:
+                return
+            signature = config_generator._env_signature(python_path)
+            ctx["env_upgrade_sig_tried"] = (config_generator.interpreter_key(python_path), signature)
+            manifest = state_env_schema.manifest_for_store(ctx["store"], python_path, inst)
+            if manifest is None:
+                ctx["env_upgrade_error"] = "could not check: environment probe failed"
+                return
+            with ctx["store"]._lock:
+                requested = state_env_schema.harvest_classes(ctx["store"].state)
+            manifest = state_env_baseline.select_classes(manifest, requested)
+            manifest = {**manifest, "schema_format": state_env_schema.SCHEMA_FORMAT}
+            body_key = state_env_baseline.record_baseline(inst, manifest, python_path=python_path)
+            body = state_env_baseline.load_baseline(inst, body_key) if body_key else None
+            if body is None:
+                ctx["env_upgrade_error"] = "could not check: reference recording failed"
+                return
+            ctx["env_upgrade_event"] = env_seen.observe(inst, key, python_path, body, context=ctx)
+            ctx["env_upgrade_body"] = body
+            ctx["env_upgrade_env"] = python_path
+            ctx["env_upgrade_sig"] = signature
+            from quam_state_manager.core import env_upgrade
+            event = ctx["env_upgrade_event"]
+            pending = event.get("current", {}).get("pending")
+            display_event = pending or event
+            previous_key = (display_event.get("previous") or {}).get("baseline_key")
+            reference = state_env_baseline.load_baseline(inst, previous_key) if previous_key else None
+            with ctx["store"]._lock:
+                state = copy.deepcopy(ctx["store"].state)
+            ctx["env_upgrade_report"] = env_upgrade.report(
+                state, {**manifest, "schema_format": state_env_schema.SCHEMA_FORMAT}, reference,
+                catalog=state_env_schema.catalog_for_env(python_path, inst), event=display_event)
+            pending_outcome = ctx.pop("env_reference_pending", None)
+            if pending_outcome:
+                _record_env_waveform(ctx, inst, python_path, pending_outcome)
+            if not app.config.get("TESTING") or app.config.get("SM_ENV_REFERENCE_IN_TESTS"):
+                _warm_generated_config_async(ctx, inst, reference_only=True)
+            ctx.pop("env_upgrade_error", None)
+        except Exception as exc:  # noqa: BLE001 -- the card states the reason
+            detail = str(exc).strip().splitlines()[0][:300] if str(exc).strip() else ""
+            ctx["env_upgrade_error"] = ("could not check: the environment observation raised "
+                                        + type(exc).__name__ + (": " + detail if detail else ""))
+            logger.error("environment observation failed for %s", ctx.get("path"), exc_info=True)
+        finally:
+            with _env_upgrade_lock:
+                _env_upgrade_inflight.discard(inflight_key)
+
+    starter = app.config.get("SM_ENV_UPGRADE_STARTER")
+    if starter is not None:
+        starter(run)
+    else:
+        threading.Thread(target=run, daemon=True, name="env-upgrade-observe").start()
+
+
+def _maybe_recheck_env_upgrade(ctx, inst) -> bool:
+    """Diagnostics shown: re-run the environment check when the selected env's
+    installed packages moved since the last check (or none ran yet). The
+    signature is stat/listdir only; the check itself runs in the background."""
+    if not ctx or not ctx.get("store"):
+        return False
+    python_path = config_generator.get_selected_env(inst)
+    if not python_path:
+        return False
+    now = (config_generator.interpreter_key(python_path), config_generator._env_signature(python_path))
+    if ctx.get("env_upgrade_sig_tried") == now:
+        return False      # checked (or tried) at exactly these installed packages
+    _maybe_check_env_upgrade(ctx, inst)
+    return True
 
 
 _schema_warm_inflight: set[str] = set()
@@ -2296,7 +2395,43 @@ def _chip_needs_generated_config(store, ctx: dict | None = None,
     return verdict
 
 
-def _warm_generated_config_async(ctx, inst) -> str:
+def _record_env_waveform(ctx, inst, python_path, outcome):
+    from quam_state_manager.core import env_seen, waveform_refs
+    if not env_seen.live_context(ctx):
+        ctx["env_reference_status"] = "Reference not recorded: this is not a live state"
+        return None
+    if ctx["store"].change_log:
+        ctx["env_reference_status"] = "Reference not recorded: the state has unapplied edits"
+        return None
+    body = ctx.get("env_upgrade_body")
+    if body is None:
+        ctx["env_reference_pending"] = outcome
+        ctx["env_reference_status"] = "Reference waits for the environment check to finish"
+        return None
+    if env_seen.normalize_env_path(ctx.get("env_upgrade_env") or python_path) != env_seen.normalize_env_path(python_path):
+        ctx["env_reference_status"] = "Reference not recorded: the config ran in a different env than the check"
+        return None
+    warnings = ((outcome.get("result") or {}).get("warnings") or [])
+    key = waveform_refs.record(inst, env_seen.chip_key(ctx["path"]), python_path, body,
+                               outcome, context=ctx)
+    if key:
+        path = Path(inst) / "waveform_refs" / f"{key}.json"
+        try:
+            size = path.stat().st_size
+            count = len(safe_io.read_json(path).get("traces") or {})
+        except (OSError, ValueError):
+            size, count = 0, 0
+        text = f"{size / 1048576:.1f} MB" if size >= 1048576 else f"{max(1, round(size / 1024))} KB"
+        ctx["env_reference_status"] = f"Reference recorded: {count} waveforms, {text}"
+    elif warnings:
+        ctx["env_reference_status"] = (f"Reference not recorded: generate_config() reported {len(warnings)} "
+                                       "warning(s), so the config is partial")
+    else:
+        ctx["env_reference_status"] = "Reference not recorded: the config could not be captured"
+    return key
+
+
+def _warm_generated_config_async(ctx, inst, *, reference_only=False) -> str:
     """Generate this chip's config in the background, when it is the only way
     to draw one of its pulses (docs/189).
 
@@ -2312,11 +2447,32 @@ def _warm_generated_config_async(ctx, inst) -> str:
     folder = ctx.get("path") if ctx else None
     if store is None or not folder:
         return "no-chip"
-    if store.generated_config is not None and not _config_stale(store):
+    from quam_state_manager.core import env_seen, waveform_refs
+    from quam_state_manager.core.state_env_baseline import _hash
+    if reference_only and not env_seen.live_context(ctx):
+        return "not-live"   # a reference is recorded for a live chip only
+    if reference_only and (store.change_log or not ctx.get("env_upgrade_body")):
+        return "not-recordable"
+    if not reference_only and store.generated_config is not None and not _config_stale(store):
         return "already-fresh"
-    python_path = config_generator.get_selected_env(inst)
+    python_path = (ctx.get("env_upgrade_env") if reference_only else None) or config_generator.get_selected_env(inst)
     if not python_path:
         return "no-env"          # honest: the user picks the env, never SM
+    working = ctx.get("working_copy")
+    input_folder = getattr(working, "working_folder", None) or folder
+    reference_attempt = None
+    if reference_only:
+        f_state, f_wiring = safe_io.read_state_wiring(Path(input_folder))
+        file_basis = working_copy.content_hash(f_state, f_wiring)
+        digest = ctx["env_upgrade_body"].get("official_digest")
+        reference_attempt = "reference:" + _hash([
+            folder, python_path, digest, file_basis,
+            ctx["env_upgrade_body"].get("source_fingerprint"),
+            [ctx["env_upgrade_body"]["versions"].get(v) for v in env_seen.VERSIONS]])
+        references = waveform_refs.list_references(inst, env_seen.chip_key(folder))
+        if any(r.get("basis") == file_basis and waveform_refs.matches(r, python_path, ctx["env_upgrade_body"])
+               for r in references):
+            return "already-recorded"
 
     key = str(folder).lower()
     # RAM P10: ONE generation subprocess at a time, machine-wide. Browsing ten
@@ -2335,13 +2491,21 @@ def _warm_generated_config_async(ctx, inst) -> str:
             return "running"
         if _cfg_warm_inflight:
             return "busy"
-        if _cfg_warm_failed.get(key) == state_hash:
+        if reference_attempt and reference_attempt in _cfg_warm_failed:
+            return "attempted-before"
+        if not reference_only and _cfg_warm_failed.get(key) == state_hash:
             return "failed-before"   # same chip content; a retry buys nothing
         _cfg_warm_inflight.add(key)
+        if reference_attempt:
+            _cfg_warm_failed[reference_attempt] = state_hash
+            ctx["env_reference_status"] = "recording reference..."
 
     def _run():
         try:
-            outcome = config_generator.run_config_preview(python_path, folder)
+            from quam_state_manager.core import activity
+            activity.wait_quiet()
+            outcome = waveform_refs.preview(python_path, input_folder,
+                timeout=waveform_refs.AUTO_RECORD_SECONDS if reference_only else 120)
             result = outcome.get("result") if outcome.get("ok") else None
             if result and result.get("config") is not None:
                 store.generated_config = result.get("config")
@@ -2349,9 +2513,10 @@ def _warm_generated_config_async(ctx, inst) -> str:
                     "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "versions": result.get("versions") or {},
                     "warnings": result.get("warnings") or [],
-                    "basis_hash": state_hash,
+                    "basis_hash": waveform_refs.input_basis(outcome["reference_inputs"]),
                     "auto": True,
                 }
+                _record_env_waveform(ctx, inst, python_path, outcome)
                 with _cfg_warm_lock:
                     _cfg_warm_failed.pop(key, None)
             else:
@@ -2359,10 +2524,15 @@ def _warm_generated_config_async(ctx, inst) -> str:
                     _cfg_warm_failed[key] = state_hash
                 logger.info("auto config preview did not produce a config: %s",
                             (outcome.get("error") or "")[:200])
-        except Exception:  # noqa: BLE001 -- never break the chip that is open
+                ctx["env_reference_status"] = "could not record reference: previewer failed or timed out"
+        except Exception as exc:  # noqa: BLE001 -- never break the chip that is open
             with _cfg_warm_lock:
                 _cfg_warm_failed[key] = state_hash
             logger.warning("auto config preview failed", exc_info=True)
+            if reference_only or ctx.get("env_reference_status") == "recording reference...":
+                detail = str(exc).strip().splitlines()[0][:200] if str(exc).strip() else ""
+                ctx["env_reference_status"] = ("could not record reference: " + type(exc).__name__
+                                               + (": " + detail if detail else ""))
         finally:
             with _cfg_warm_lock:
                 _cfg_warm_inflight.discard(key)
@@ -14367,21 +14537,13 @@ def env_schema_changes():
     baseline can distinguish them. With no prior baseline the answer is honest
     ("this run recorded the first one"), never an invented diff.
     """
-    from quam_state_manager.core import state_env_baseline as _seb
-    from quam_state_manager.core import type_verdicts as _tv
+    from quam_state_manager.web.env_upgrade_view import model
     ctx = _active_ctx()
     store = (ctx or {}).get("store")
     if store is None:
         return render_template("_status.html", message="No state loaded",
                                level="warning")
-    manifest, _versions = _env_manifest_and_versions(store)
-    transition = _seb.env_transition(current_app.instance_path, manifest)
-    resolved = {}
-    if manifest:
-        resolved = _tv.resolve_for_manifest(current_app.instance_path, manifest)
-    return render_template("_env_schema_changes.html", transition=transition,
-                           verdicts=resolved,
-                           rows=_env_change_rows(transition, resolved))
+    return render_template("_env_upgrade_card.html", upgrade=model(ctx, current_app.instance_path))
 
 
 def _env_change_rows(transition: dict | None, resolved: dict) -> list[dict]:
@@ -14541,15 +14703,14 @@ def env_schema_dismiss():
     """Memo THIS env transition as seen. Env-scope fact, so it lives with the
     baselines rather than in the chip-keyed prompt memo — and it is delta-gated:
     a further schema change raises it again."""
-    from quam_state_manager.core import state_env_baseline as _seb
-    # QA diagnostics-r2-17: a memo that was not written is not a 200 -- the
-    # client refreshes the card only on success and says so otherwise.
-    if not _seb.dismiss_transition(current_app.instance_path,
-                                   (request.form.get("from_key") or "").strip(),
-                                   (request.form.get("to_key") or "").strip(),
-                                   (request.form.get("sig") or "").strip()):
-        return "Could not hide this set", 400
-    return ""
+    from quam_state_manager.web.env_upgrade_view import model, dispatch
+    view = model(_active_ctx(), current_app.instance_path)
+    transition = view.get("schema_transition") or {}
+    if (not request.form.get("sig") or request.form.get("sig") != transition.get("sig")
+            or request.form.get("from_key") != transition.get("from_key")
+            or request.form.get("to_key") != transition.get("to_key")):
+        return "Could not acknowledge this set", 400
+    return dispatch("acknowledge")
 
 
 @bp.route("/field/type-unassign", methods=["POST"])
@@ -47050,6 +47211,21 @@ def _env_findings_context(store) -> tuple[dict, str, bool] | None:
     return manifest, label, probing
 
 
+ENV_UPGRADE_DEFERRED = ("The environment changed; the Environment match card on Diagnostics "
+                        "lists what no longer matches.")
+
+
+def _env_upgrade_owns_schema(ctx: dict | None) -> bool:
+    """On an environment transition with load-stopping findings, the env-upgrade
+    card owns the schema facts; the older schema surfaces defer to it."""
+    report = (ctx or {}).get("env_upgrade_report") or {}
+    event = report.get("event") or {}
+    if not event.get("changed") or event.get("first"):
+        return False
+    cases = report.get("cases") or {}
+    return any((cases.get(n) or {}).get("rows") for n in ("2", "3", "4"))
+
+
 def _env_rows_unacked(ctx: dict | None, memo: dict) -> tuple[list, int]:
     """The memo's raw env-schema rows minus the acknowledged ones, each kept
     row stamped with the ack_key/ack_detail its card button sends -- the same
@@ -47057,6 +47233,8 @@ def _env_rows_unacked(ctx: dict | None, memo: dict) -> tuple[list, int]:
     (state_env_validate.unacknowledged_rows). Cold env -> (rows, 0)."""
     from quam_state_manager.core import state_env_validate as _sev
     rows = list(memo.get("env_findings") or [])
+    if _env_upgrade_owns_schema(ctx):
+        return [], 0     # the Environment match card reports these on a transition
     try:
         store = (ctx or {}).get("store")
         if store is None:
@@ -47195,7 +47373,19 @@ def _active_chip_findings(store: QuamStore, *, budget_s: float | None = None) ->
                          else max(0.0, budget_s - (time.monotonic() - t0))))
     if env is None:
         return None
+    if _env_upgrade_owns_schema(_active_ctx()):
+        env = [diagnostics.Finding("warning", "env_upgrade_schema", "Environment change report",
+                                   ENV_UPGRADE_DEFERRED,
+                                   detail="See the Environment match card for evidence and limits.")]
     findings = findings + env + _hub_ledger_findings(store)
+    upgrade_report = ((_active_ctx() or {}).get("env_upgrade_report") or {})
+    for number in (1, 5, 6):
+        case = (upgrade_report.get("cases") or {}).get(str(number)) or {}
+        if case.get("status") == "found":
+            findings.append(diagnostics.Finding(
+                "info" if number == 1 else "warning", f"env_upgrade_{number}",
+                "Environment change report", case.get("message") or "change found",
+                detail="See the Environment match card for evidence and limits."))
     findings.sort(key=lambda f: _DIAG_RANK.get(f.severity, 3))
     return findings
 
@@ -47254,14 +47444,21 @@ def _env_card_state(store: QuamStore) -> dict:
         if _pp.name.lower() in ("bin", "scripts") and _pp.parent.name:
             _pp = _pp.parent
         env_name = _pp.name or None
+    from quam_state_manager.web.env_upgrade_view import model_once as upgrade_model
+    _maybe_recheck_env_upgrade(_active_ctx(), current_app.instance_path)
+    upgrade = upgrade_model(_active_ctx(), current_app.instance_path)
+    # G2: the header names the SAME current versions as the card body; the
+    # cached manifest may predate an in-place package swap
+    shown_versions = upgrade.get("versions") or (manifest or {}).get("versions") or {}
     return {
         "selected": python_path,
+        "upgrade": upgrade,
         "env_name": env_name,
         "env_path": checked,
         "selected_exists": bool(python_path and Path(python_path).is_file()),
         "warm": manifest is not None,
         "probing": probing,
-        "versions": (manifest or {}).get("versions") or {},
+        "versions": shown_versions,
         "missing_classes": missing,
     }
 
@@ -47288,6 +47485,7 @@ def _types_card_state(ctx: dict | None) -> dict | None:
         card["env"]["warm"] = _live_env_manifest(store) is not None   # QA diagnostics-r2-16
         # docs/79: the library's own movements + what the user has taught SM.
         card["env_change"], card["taught"] = _env_change_summary(store)
+        card["env_deferred"] = _env_upgrade_owns_schema(ctx)
         return card
     except Exception:  # noqa: BLE001 — the card must never break /diagnostics
         logger.warning("types-card state failed", exc_info=True)
@@ -47303,7 +47501,8 @@ def _env_change_summary(store) -> tuple[dict | None, int]:
         if not manifest:
             return None, 0
         inst = current_app.instance_path
-        transition = _seb.env_transition(inst, manifest)
+        from quam_state_manager.web.env_upgrade_view import model_once
+        transition = model_once(_active_ctx(), inst).get("schema_transition")
         summary = None
         if transition:
             diff = transition.get("diff") or {}
@@ -47438,9 +47637,18 @@ def diagnostics_env_card():
     # Types card / findings / pill re-read the new schema through their
     # existing diagnostics-changed listeners -- they kept the pre-probe count
     # until a reload. A plain GET never triggers (no loop, no new poller).
-    if request.args.get("poll") == "1" and not env_card.get("probing"):
+    if (request.args.get("poll") == "1" and not env_card.get("probing")
+            and not (env_card.get("upgrade") or {}).get("checking")
+            and not (env_card.get("upgrade") or {}).get("recording_running")
+            and not (env_card.get("upgrade") or {}).get("compare_running")):
         resp.headers["HX-Trigger"] = "diagnostics-changed"
     return resp
+
+
+@bp.route("/env-upgrade/<action>", methods=["GET", "POST"])
+def env_upgrade_action(action):
+    from quam_state_manager.web.env_upgrade_view import dispatch
+    return dispatch(action)
 
 
 @bp.route("/diagnostics/summary")
@@ -47475,6 +47683,10 @@ def diagnostics_banner():
     store = _store()
     if not store:
         return ""
+    from quam_state_manager.web.env_upgrade_view import model_once as upgrade_model
+    upgrade = upgrade_model(_active_ctx(), current_app.instance_path)
+    if upgrade["report"] and upgrade["report"].get("banner"):
+        return render_template("_env_upgrade_banner.html", upgrade=upgrade)
     findings = _active_chip_findings(store)
     summary = diagnostics.summarize(findings)
     if not summary.get("error"):
@@ -47898,10 +48110,12 @@ def config_regenerate():
         # fall back to the in-memory hash only when it provably equals the files.
         basis_hash = _config_state_hash(store) if not unsaved else None
 
-    outcome = config_generator.run_config_preview(python_path, folder)
+    from quam_state_manager.core import waveform_refs
+    outcome = waveform_refs.preview(python_path, folder)
 
     if outcome.get("ok") and outcome.get("result"):
         result = outcome["result"]
+        basis_hash = waveform_refs.input_basis(outcome["reference_inputs"])
         store.generated_config = result.get("config")
         store.generated_config_meta = {
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -47916,6 +48130,9 @@ def config_regenerate():
             "chip_class": result.get("chip_class"),
             "loaded_class": result.get("loaded_class"),
         }
+        ctx = _active_ctx()
+        if ctx:
+            _record_env_waveform(ctx, current_app.instance_path, python_path, outcome)
         resp = make_response(_deep_validate_verdict(
             python_path, meta=store.generated_config_meta, unsaved=unsaved,
         ) if deep else render_template(
@@ -47930,6 +48147,9 @@ def config_regenerate():
         return resp
 
     err = outcome.get("error") or "previewer reported an error"
+    _failed_ctx = _active_ctx()
+    if _failed_ctx:
+        _failed_ctx["env_reference_status"] = f"Reference not recorded: config generation failed ({str(err)[:300]})"
     trace = ""
     if outcome.get("result"):
         trace = outcome["result"].get("traceback") or ""

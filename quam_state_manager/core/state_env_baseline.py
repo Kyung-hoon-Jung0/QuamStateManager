@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 from datetime import datetime, timezone
@@ -51,6 +52,7 @@ INDEX_FILENAME = "_index.json"
 # this is deliberately larger than _MAX_CACHED_ENVS — measured ~40-80 KB each.
 _MAX_BASELINES = 8
 _MAX_BASELINE_BYTES = 4_000_000
+_MAX_ENV_BYTES = 32_000_000
 _DIFF_CAP = 200                 # total rows in one diff
 _PER_CLASS_CAP = 25             # rows from a single class (a rename can't flood)
 
@@ -191,7 +193,7 @@ def normalize_spec(ts: Any) -> dict | None:
 
 
 def project_manifest(manifest: dict) -> dict:
-    """Manifest → the stored baseline body (normalized, defaults dropped)."""
+    """Retain comparison evidence while dropping annotation display churn."""
     classes: dict[str, Any] = {}
     for path, entry in (manifest.get("classes") or {}).items():
         entry = entry or {}
@@ -206,13 +208,139 @@ def project_manifest(manifest: dict) -> dict:
                     "t": normalize_spec(f.get("type")),
                     "o": bool(f.get("optional")),
                     "d": bool(f.get("has_default")),
+                    "defining_class": f.get("defining_class"),
+                    "default": f.get("default"),
+                    "doc": f.get("doc"),
                 }
         classes[path] = {
             "importable": bool(entry.get("importable")),
             "canonical": entry.get("canonical"),
             "fields": projected,
         }
-    return {"classes": classes, "versions": manifest.get("versions") or {}}
+        for name in ("bases", "signatures", "origin", "error", "error_type", "error_frames"):
+            if name in entry:
+                classes[path][name] = entry[name]
+    body = {"classes": classes, "versions": manifest.get("versions") or {},
+            "schema_format": manifest.get("schema_format"),
+            "source_fingerprint": _hash(chip_sources(manifest.get("sources") or {}, classes))}
+    for origin in ("official", "lab"):
+        evidence = {}
+        for path, entry in classes.items():
+            if entry.get("origin") != origin:
+                continue
+            evidence[path] = {k: entry.get(k) for k in
+                              ("importable", "canonical", "bases", "signatures")}
+            evidence[path]["fields"] = {
+                name: {k: spec.get(k) for k in ("t", "o", "d", "defining_class")}
+                for name, spec in (entry.get("fields") or {}).items()
+            } if entry.get("fields") is not None else None
+        body[f"{origin}_digest"] = _hash(evidence)
+    return body
+
+
+def chip_sources(sources: dict, classes: dict) -> dict:
+    """The out-of-env source files that define the given classes.
+
+    ``sources`` is the env-wide probe union (every lab file any chip's classes
+    pulled in); a file only another chip uses must not move this chip's
+    fingerprint. A class's module comes from its canonical name (or, when it
+    did not import, its state path); its ancestors are already among
+    ``classes`` (``select_classes`` follows ``bases``)."""
+    modules = set()
+    for path, entry in (classes or {}).items():
+        name = (entry or {}).get("canonical") or path
+        module = str(name).rsplit(".", 1)[0] if "." in str(name) else ""
+        if module:
+            modules.add(module.replace(".", "/").lower())
+    out = {}
+    for filename, record in (sources or {}).items():
+        norm = str(filename).replace("\\", "/").lower()
+        if any(norm.endswith("/" + m + ".py") or norm.endswith("/" + m + "/__init__.py")
+               or norm == m + ".py" for m in modules):
+            out[filename] = record
+    return out
+
+
+def _hash(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                     default=str).encode("utf-8")).hexdigest()
+
+
+def select_classes(manifest: dict, class_paths: list[str]) -> dict:
+    """Narrow an env cache union to requested classes and their ancestors."""
+    available = manifest.get("classes") or {}
+    selected = {}
+    stack = list(class_paths)
+    while stack:
+        path = stack.pop()
+        if path in selected or path not in available:
+            continue
+        selected[path] = available[path]
+        stack.extend(available[path].get("bases") or [])
+    return {**manifest, "classes": selected}
+
+
+def normalize_env_path(path: str) -> str:
+    """One path identity for aliases and the windowed Windows interpreter."""
+    if not path:
+        return ""
+    result = os.path.normcase(os.path.realpath(path))
+    if os.path.basename(result).lower() == "pythonw.exe":
+        result = os.path.join(os.path.dirname(result), "python.exe")
+    return result
+
+
+def _protected_keys(instance_path: Any) -> set[str] | None:
+    """Return None on unreadable history: eviction must then abstain."""
+    keys = set()
+    for path in (Path(instance_path) / "env_seen").glob("*.json"):
+        try:
+            record = safe_io.read_json(path)
+            for entry in record.get("envs", {}).values():
+                if entry.get("baseline_key"):
+                    keys.add(entry["baseline_key"])
+                for held in ("pending", "acknowledged_event"):
+                    pending = (entry.get(held) or {}).get("previous") or {}
+                    if pending.get("baseline_key"):
+                        keys.add(pending["baseline_key"])
+        except Exception:  # noqa: BLE001
+            return None
+    return keys
+
+
+def _prune(instance_path: Any, entries: list[dict], current_key: str) -> list[dict]:
+    protected = _protected_keys(instance_path)
+    if protected is None:
+        return entries
+    protected.add(current_key)
+    groups: dict[str, list] = {}
+    for entry in entries:
+        groups.setdefault(normalize_env_path(entry.get("python_path") or ""), []).append(entry)
+    removed = set()
+    for group in groups.values():
+        group.sort(key=lambda e: e.get("last_seen") or "")
+        sizes = {}
+        for entry in group:
+            try:
+                sizes[entry["key"]] = (baseline_dir(instance_path) / f"{entry['key']}.json").stat().st_size
+            except OSError:
+                sizes[entry["key"]] = 0
+        total = sum(sizes.values())
+        count = len(group)
+        for entry in group:
+            if count <= _MAX_BASELINES and total <= _MAX_ENV_BYTES:
+                break
+            key = entry["key"]
+            if key in protected:
+                continue
+            try:
+                (baseline_dir(instance_path) / f"{key}.json").unlink(missing_ok=True)
+            except OSError:
+                continue
+            removed.add(key)
+            count -= 1
+            total -= sizes[key]
+    return [e for e in entries if e["key"] not in removed]
 
 
 # ---------------------------------------------------------------------------
@@ -293,14 +421,17 @@ def record_baseline(instance_path: Any, manifest: dict, *,
     versions = manifest.get("versions") or {}
     if not any(versions.get(k) for k in ("quam", "quam_builder")):
         return None                       # an env we cannot identify
-    key = stable_env_key(versions)        # QA F-L: never the commit-bearing key
+    body = project_manifest(manifest)
+    python_path = normalize_env_path(python_path)
+    digest = _hash({k: v for k, v in body.items() if k != "versions"})
+    identity_versions = {k: v for k, v in versions.items() if k != "quam_builder_commit"}
+    key = f"{_hash(python_path)[:16]}@{_hash([identity_versions, digest])[:32]}"
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
         with _baseline_lock:
             d = baseline_dir(instance_path)
             d.mkdir(parents=True, exist_ok=True)
-            body = project_manifest(manifest)
-            body.update({"version": 1, "key": key, "label": env_label(versions),
+            body.update({"version": 2, "key": key, "label": env_label(versions),
                          "python_path": str(python_path or ""),
                          "recorded_at": now})
             blob = json.dumps(body)
@@ -325,18 +456,7 @@ def record_baseline(instance_path: Any, manifest: dict, *,
                 "classes": len(body.get("classes") or {}),
             }
             entries = [e for e in entries if e.get("key") != key] + [entry]
-            # Prune oldest-seen first, but never the one we just recorded.
-            if len(entries) > _MAX_BASELINES:
-                entries.sort(key=lambda e: e.get("last_seen") or "")
-                while len(entries) > _MAX_BASELINES:
-                    victim = entries.pop(0)
-                    if victim.get("key") == key:
-                        entries.append(victim)
-                        continue
-                    try:
-                        (d / f"{victim['key']}.json").unlink(missing_ok=True)
-                    except OSError:
-                        logger.debug("could not prune baseline %s", victim.get("key"))
+            entries = _prune(instance_path, entries, key)
             index["entries"] = entries
             index["previous"] = (index.get("current") or "") \
                 if index.get("current") and index.get("current") != key \
@@ -355,12 +475,17 @@ def load_baseline(instance_path: Any, key: str) -> dict | None:
     # a drive-absolute segment REPLACES the base on Windows (`../` escapes on
     # every OS). env_key() only ever emits this alphabet, so nothing
     # legitimate is rejected.
-    if not key or not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", key):
+    if not key or not re.fullmatch(r"[A-Za-z0-9.@_-]{1,120}", key):
         return None
     path = baseline_dir(instance_path) / f"{key}.json"
     try:
         if not path.exists():
-            return None            # stat first — see _load_index
+            # Resolve version-only links retained by the schema detail view.
+            entry = next((e for e in list_baselines(instance_path)
+                          if stable_env_key(e.get("versions")) == key), None)
+            if entry is None:
+                return None
+            path = baseline_dir(instance_path) / f"{entry['key']}.json"
         body = safe_io.read_json(path)
         return body if isinstance(body, dict) else None
     except Exception:  # noqa: BLE001
@@ -423,7 +548,8 @@ def _match_class(path: str, entry: dict, other: dict,
     return None
 
 
-def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
+def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP,
+                   per_class_cap: int = _PER_CLASS_CAP) -> dict:
     """What the ENVIRONMENT changed between two recorded schemas.
 
     Both sides may be a raw manifest or an already-projected baseline body —
@@ -489,7 +615,7 @@ def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
             continue
         per_class = 0
         for name, ospec in ofields.items():
-            if per_class >= _PER_CLASS_CAP:
+            if per_class >= per_class_cap:
                 truncated = True
                 break
             nspec = nfields.get(name)
@@ -509,7 +635,7 @@ def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
                                     else "no longer optional")}):
                     per_class += 1
         for name, nspec in nfields.items():
-            if per_class >= _PER_CLASS_CAP:
+            if per_class >= per_class_cap:
                 truncated = True
                 break
             if name not in ofields:

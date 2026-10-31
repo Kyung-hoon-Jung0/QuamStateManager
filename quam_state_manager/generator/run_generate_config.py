@@ -44,7 +44,7 @@ RESULT_FILENAME = "_result.json"
 _LOAD_NOTES: list[str] = []
 
 
-def _load_machine(state_folder: Path):
+def _load_machine(state_folder: Path, *, strict: bool = False):
     """Load a QUAM machine from a folder containing state.json + wiring.json.
 
     The authoritative entry point is the top-level ``__class__`` marker in
@@ -73,6 +73,8 @@ def _load_machine(state_folder: Path):
             return machine_cls.load()
         errors.append(f"state.json has no usable __class__ marker ({qclass!r})")
     except Exception as exc:  # noqa: BLE001 — collected and reported below
+        if strict:
+            raise
         errors.append(f"__class__ load failed with {type(exc).__name__}: {exc}")
 
     # 2./3. Known module layouts, oldest first — then the qpu PACKAGE-attr
@@ -112,6 +114,8 @@ def _load_machine(state_folder: Path):
             # TWPA slots). When every such key holds an EMPTY value, dropping
             # it is lossless for a read-only preview — retry from a stripped
             # COPY in a scratch dir (the source folder is never touched).
+            if strict:
+                raise
             retried = _retry_without_unknown_empty_keys(
                 state_folder, machine_cls, exc)
             if retried is not None:
@@ -300,9 +304,9 @@ def _make_config_json_safe(value):
     return value
 
 
-def run_generate_config(state_folder: Path) -> dict:
+def run_generate_config(state_folder: Path, *, strict: bool = False) -> dict:
     """Load + generate. Returns the parts of the envelope this step provides."""
-    machine = _load_machine(state_folder)
+    machine = _load_machine(state_folder, strict=strict)
     config = machine.generate_config()
     return {
         "loaded_class": f"{type(machine).__module__}.{type(machine).__qualname__}",
@@ -329,6 +333,9 @@ def main(argv=None) -> int:
         "--out", required=True,
         help="work directory that _result.json is written to",
     )
+    parser.add_argument("--strict-input", action="store_true",
+                        help="require the declared root and disable the empty-key retry")
+    parser.add_argument("--load-only", action="store_true", help="test loading without generating config")
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out)
@@ -354,7 +361,11 @@ def main(argv=None) -> int:
             raise FileNotFoundError(
                 f"state.json not found in {state_folder}"
             )
-        result.update(run_generate_config(state_folder))
+        if args.load_only:
+            machine = _load_machine(state_folder, strict=args.strict_input)
+            result["loaded_class"] = f"{type(machine).__module__}.{type(machine).__qualname__}"
+        else:
+            result.update(run_generate_config(state_folder, strict=args.strict_input))
         result["status"] = "ok"
     except Exception as exc:  # noqa: BLE001 - top-level guard
         result["status"] = "error"

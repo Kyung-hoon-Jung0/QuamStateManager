@@ -54,6 +54,12 @@ def _client(tmp_path, manifest, *, recorded):
     client.post("/load", data={"folder": str(chip)})
     ctx = app.config["contexts"][app.config["active_context"]]
     ctx["store"].type_policy = tp.load_policy(inst, chip, manifest)
+    if recorded:
+        import sys
+        from quam_state_manager.core import env_upgrade
+        body = seb.load_baseline(inst, seb.stable_env_key(manifest["versions"]))
+        ctx.update(env_upgrade_env=sys.executable, env_upgrade_body=body,
+                   env_upgrade_report=env_upgrade.report(ctx["store"].state, manifest, event={"first": True}))
     return client
 
 

@@ -7037,7 +7037,13 @@ window.TypeAlert = (function () {
             });
     }
 
-    window.openEnvSchemaChanges = function () { open("/env-schema/changes"); };
+    window.openEnvSchemaChanges = function () {
+        if (!window.htmx) return;
+        window.htmx.ajax("GET", "/diagnostics", {target: "#table-pane", swap: "innerHTML"}).then(function () {
+            var detail = document.getElementById("env-upgrade-schema-details");
+            if (detail) detail.open = true;
+        });
+    };
     window.openEnvSchemaVerdicts = function () { open("/env-schema/verdicts"); };
 
     /* docs/168 — "this is correct". The key IS the finding's identity

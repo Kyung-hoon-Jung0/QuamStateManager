@@ -78,6 +78,58 @@ app = typer.Typer(
 )
 console = Console()
 
+env_app = typer.Typer(help="Record references and check environment changes.", no_args_is_help=True)
+app.add_typer(env_app, name="env")
+
+
+def _env_instance_path() -> Path:
+    from quam_state_manager.web.app import _user_data_dir, is_sm_checkout
+    root = Path(__file__).resolve().parents[1]
+    return root / "instance" if is_sm_checkout(root / "pyproject.toml") else Path(_user_data_dir())
+
+
+def _env_command_context(folder: Path) -> dict:
+    from quam_state_manager.core.working_copy import is_run_archive
+    from quam_state_manager.web.routes import _probe_readonly
+    origin = "run_snapshot" if is_run_archive(folder) else "live"
+    return {"path": str(folder), "origin": origin,
+            "live_readonly_hint": _probe_readonly(folder, origin=origin)}
+
+
+@env_app.command("snapshot")
+def env_snapshot(folder: Path = typer.Option(..., "--folder", "-f", exists=True, file_okay=False)):
+    """Record waveform arrays and their JSON inputs in SM's instance directory."""
+    from quam_state_manager.core import config_generator, env_upgrade_service
+    instance = _env_instance_path()
+    python = config_generator.get_selected_env(instance) or sys.executable
+    try:
+        result = env_upgrade_service.snapshot(folder, python, instance, context=_env_command_context(folder))
+    except (OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+    typer.echo(f"{result['message']}: {result['reference']}\nChecked in: {result['checked_in']}")
+
+
+@env_app.command("check")
+def env_check(folder: Path = typer.Option(..., "--folder", "-f", exists=True, file_okay=False),
+              python: str | None = typer.Option(None, "--python"),
+              as_json: bool = typer.Option(False, "--json")):
+    """Print the same evidence and limits as the Environment match card."""
+    from quam_state_manager.core import config_generator, env_upgrade, env_upgrade_service
+    instance = _env_instance_path()
+    interpreter = python or config_generator.get_selected_env(instance) or sys.executable
+    try:
+        result = env_upgrade_service.check(folder, interpreter, instance, context=_env_command_context(folder))
+    except (OSError, ValueError) as exc:
+        typer.echo(_json.dumps({"error": str(exc)}) if as_json else str(exc), err=not as_json)
+        raise typer.Exit(1)
+    if as_json:
+        typer.echo(_json.dumps(result, ensure_ascii=True, sort_keys=True))
+    else:
+        typer.echo(env_upgrade.text_report(result, interpreter, result["versions"]))
+        if result.get("previous_version_note"):
+            typer.echo(result["previous_version_note"])
+
 
 @app.callback()
 def _main_callback(

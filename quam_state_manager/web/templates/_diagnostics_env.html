@@ -3,18 +3,14 @@
    through the normal diagnostics list (domain "Environment match"); this card
    carries only the status line + actions. Self-polls while a probe runs. #}
 <div id="diag-env-card" class="diag-env-card"
-     {% if env_card.probing %}hx-get="/diagnostics/env-card?poll=1" hx-trigger="every 2s"
+     {% if env_card.probing or (env_card.upgrade and (env_card.upgrade.checking or env_card.upgrade.recording_running or env_card.upgrade.compare_running)) %}hx-get="/diagnostics/env-card?poll=1" hx-trigger="every 2s"
      hx-swap="outerHTML"{% endif %}>
   <div class="diag-env-head">
     <strong>Environment match</strong>
     {# QA diagnostics-r2-16: with no env / a gone interpreter the env findings
        are withdrawn (_live_env_manifest) -- the card says so, and links. #}
     {% if not env_card.selected %}
-      <span class="muted">— no python environment selected.
-        <a href="/generate" hx-get="/generate" hx-target="#table-pane"
-           hx-push-url="true">Pick one in Generate Config</a> to validate this
-        state against its quam/quam-builder. No environment findings are
-        listed until one is selected.</span>
+      <span class="muted">&mdash; no environment findings are listed until one is selected.</span>
     {% elif not env_card.selected_exists %}
       <span class="diag-env-err">selected interpreter
         <code>{{ env_card.selected }}</code> no longer exists —
@@ -71,6 +67,7 @@
   </p>
   {% endif %}
   {% endif %}
+  {% with upgrade=env_card.upgrade %}{% include '_env_upgrade_card.html' %}{% endwith %}
 </div>
 {% if not oob %}
 <script>
