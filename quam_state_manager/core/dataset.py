@@ -3242,7 +3242,11 @@ class DatasetStore:
             if key == "success":
                 continue
             if _num(val):
-                return _format_metric(val, "") if math.isfinite(val) else ""
+                # R4-DS-5: a frequency-like key carries its unit (Hz, scaled
+                # by _format_metric); any other key stays unit-less
+                lk = key.lower()
+                unit = "Hz" if ("freq" in lk or lk.endswith("_hz")) else ""
+                return _format_metric(val, unit) if math.isfinite(val) else ""
 
         return ""
 
