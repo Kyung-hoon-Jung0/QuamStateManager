@@ -1328,10 +1328,17 @@
     row.appendChild(dl);
     var cz = el("button", { type: "button", className: "btn-sm secondary gen-add-czbtn",
                             title: "A CZ gate class, the flux pulse(s) it plays, and the gate pointing at them" }, "+ CZ…");
-    if (!(roles && roles.ok)) cz.disabled = true;
+    if (!(roles && roles.ok)) { cz.disabled = true; cz.title = rolesWhyOff(); }
     cz.addEventListener("click", function () { openForm(tr, pid, long, ctx, null); });
     row.appendChild(cz);
     td.appendChild(row);
+  }
+
+  /* Why a gate button is off: the environment's classes are not read (yet). */
+  function rolesWhyOff() {
+    if (!roles) return "Unavailable: the environment's classes are still loading.";
+    return roles.cold ? "Unavailable: the environment's classes have not been read yet."
+                      : "Unavailable: could not read the environment's classes (" + (roles.error || "unknown error") + ").";
   }
 
   /* The Set-all row's Gates cell: one line per rule, and the way to make one. */
@@ -1352,7 +1359,7 @@
     });
     var add = el("button", { type: "button", className: "btn-sm secondary gen-setall-gate",
                              title: "One gate on every pair: choose pairs next" }, "+ Gate for all pairs…");
-    if (!(roles && roles.ok)) add.disabled = true;
+    if (!(roles && roles.ok)) { add.disabled = true; add.title = rolesWhyOff(); }
     add.addEventListener("click", function () { openSetAllForm(tr, ctx, add, null); });
     td.appendChild(add);
   }

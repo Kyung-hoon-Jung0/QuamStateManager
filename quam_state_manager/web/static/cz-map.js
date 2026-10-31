@@ -35,6 +35,7 @@
     var CLUSTER_PX = 6;        // segments of one column this close share the row side by side
     var PARTNER_H = 15;        // line pitch for the 11 px partner font
     var PARTNER_FONT = 11;
+    var SMALL_FONT = 11;       // the floor for every other map text (stone names, ticks, notes)
     var PARTNER_MARKER = 6;    // the partner trace's invisible marker size: it sets Plotly's text offset
     var PARTNER_CLEAR = 2;     // free pixels kept between a partner box and anything it must clear
     var RETRY_N = 20, RETRY_MS = 3000;   // re-asks while the change history is being built
@@ -261,7 +262,7 @@
        column is dropped to hover rather than drawn over its neighbours. */
     function setLabelFonts() {
         var k = window.PlotTheme && window.PlotTheme.textScale ? window.PlotTheme.textScale() : 1;
-        LABEL_FONT = PARTNER_FONT = Math.round(12 * k);
+        LABEL_FONT = PARTNER_FONT = Math.max(11, Math.round(12 * k));
         PARTNER_H = Math.round(PARTNER_FONT * 1.36);
     }
     /* The partner names of one shared row as lines no wider than the column (one name a line
@@ -851,11 +852,11 @@
             traces.push({ type: 'scatter', mode: 'markers+text', yaxis: 'y2', x: placed.map(function (q) { return lay.node[q.path].x; }),
                           y: placed.map(function (q) { return lay.node[q.path].y; }), text: placed.map(function (q) { return esc(q.name); }),
                           hovertext: placed.map(function (q) { return esc(q.name) + (q.grid_location ? ' at ' + esc(q.grid_location) : '') + ' · idle ' + f3(q.f01_hz) + ' GHz'; }),
-                          textfont: { size: 9, color: ink }, textposition: 'middle center', showlegend: false,
-                          marker: { size: 24, color: card, line: { color: ink, width: 1.2 } }, hovertemplate: '%{hovertext}<extra></extra>', meta: 'nodes' });
+                          textfont: { size: SMALL_FONT, color: ink }, textposition: 'middle center', showlegend: false,
+                          marker: { size: 28, color: card, line: { color: ink, width: 1.2 } }, hovertemplate: '%{hovertext}<extra></extra>', meta: 'nodes' });
             if (lay.mode === 'logical') {
                 annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: dd, xanchor: 'left', yanchor: 'top', showarrow: false,
-                                   text: esc(lay.note), font: { size: 10, color: muted }, name: 'logical-note' });
+                                   text: esc(lay.note), font: { size: SMALL_FONT, color: muted }, name: 'logical-note' });
             }
         }
         // the hover highlight: two overlay traces, restyled by index (never a re-render)
@@ -868,7 +869,7 @@
         var lossDrawn = !!(G.fillX.length || O.lineX.length);
         if (lossDrawn || bars.x.length) {
             annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false, yshift: 8,
-                               text: 'loss 0–' + Math.round(100 * scale) + ' %', font: { size: 9, color: muted }, name: 'scale' });
+                               text: 'loss 0–' + Math.round(100 * scale) + ' %', font: { size: SMALL_FONT, color: muted }, name: 'scale' });
         }
 
         // ---- notes under the map: one line per qubit, only when something is off; the
@@ -957,7 +958,7 @@
                      // fix3 P2-7: tick text is pseudo-HTML like every hover
                      ticktext: qs.map(function (q) { return esc(q.name); }),
                      range: [0, n], showgrid: false, zeroline: false, fixedrange: true, side: drawing ? 'top' : 'bottom',
-                     anchor: 'y', tickfont: { size: 10 } },
+                     anchor: 'y', tickfont: { size: SMALL_FONT } },
             yaxis: Object.assign({ title: { text: 'frequency (GHz)' }, domain: [colLo, 1] }, yr ? { range: yr, autorange: false } : {}),
             shapes: shapes, annotations: annotations
         });

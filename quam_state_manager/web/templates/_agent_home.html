@@ -3,6 +3,9 @@
    fed by GET /api/agent/chat/cards. #}
 {# The wiring strip goes FIRST — it is the answer to "how is this an MCP?",
    and it is a sibling of #agent-home for the same reason the dry-run note is. #}
+{% import "_ui.html" as ui %}
+{#- D-102: the page head, foldable (D-103). -#}
+{{ ui.ui_head('Agent', 2, None, 'Chat with Claude or Codex about the open chip; plans, runs and approvals show up here as cards.', page=True) }}
 {% with wiring = agent_wiring, compact = False %}{% include "_agent_wire.html" %}{% endwith %}
 {# The Runner's Dry run, said where the person actually is: agent.js replaces
    #agent-home's innerHTML on mount, so this line lives BESIDE it, not inside.

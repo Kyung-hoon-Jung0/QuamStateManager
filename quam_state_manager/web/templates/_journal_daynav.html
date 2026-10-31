@@ -10,5 +10,6 @@
     <input type="date" name="day_pick" id="jr-day-pick" value="{{ story.day }}" onchange="JournalPage.day(this.value)">
     <button type="button" class="btn-sm outline" onclick="JournalPage.day('{{ story.next_day }}')"
             {% if story.is_today %}disabled{% endif %} title="next day">›</button>
-    {% if not story.is_today %}<button type="button" class="btn-sm outline" onclick="JournalPage.day('')">today</button>{% endif %}
+    {#- the slot is kept on today (disabled), so the strip never shifts -#}
+    <button type="button" class="btn-sm outline" onclick="JournalPage.day('')"{% if story.is_today %} disabled title="already on today"{% endif %}>today</button>
 </span>

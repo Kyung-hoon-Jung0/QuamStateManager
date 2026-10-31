@@ -12242,13 +12242,13 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 
 /* ---- Calibration log (docs/173) ---- */
 .jr-head-actions { display: flex; gap: .6rem; align-items: center; justify-content: space-between; }
-.jr-head-actions > a { flex: 0 0 auto; }
+.jr-head-actions > a { flex: 0 0 auto; font-size: max(11px, .82rem); }
 .jr-folder { font-size: .74rem; max-width: 26rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jr-filters { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .2rem 0 .6rem; }
-.jr-filters input, .jr-filters select { margin: 0; padding: .2rem .45rem; font-size: .82rem; height: auto; width: auto; }
+.jr-filters.jr-filters input, .jr-filters.jr-filters select, .jr-filters.jr-filters button { margin: 0; padding-block: 0; font-size: var(--ui-fs-sm); height: var(--ui-btn-h); min-height: 0; box-sizing: border-box; width: auto; }
 /* the select's own arrow is a background at the right edge: the shorthand above
    took away the room Pico keeps for it and the arrow sat on "everyone" */
-.jr-filters select { padding-right: 1.9rem; }
+.jr-filters.jr-filters select { padding: .2rem 1.9rem .2rem .45rem; }
 .jr-filters .jr-q { min-width: 16rem; }
 .jr-daynav { display: inline-flex; gap: .25rem; align-items: center; }
 .jr-counts { font-size: .8rem; margin: 0 0 .5rem; }
@@ -14325,7 +14325,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-presets { display: inline-flex; flex-wrap: wrap; gap: .3rem; align-items: center; cursor: help; }
 .ag-root .ag-preset { font-size: .78em; padding: .08rem .55rem; border-radius: 999px; background: transparent; color: var(--pico-muted-color); border: 1px solid var(--pico-muted-border-color); cursor: pointer; }
 .ag-root .ag-preset:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
-.ag-presets-toggle { display: none; }
+.ag-root:not(.ag-compact) .ag-presets-toggle { display: none; }
 .ag-form-row .ag-send { margin-left: auto; }
 .ag-root .ag-send { background: var(--pico-primary); color: var(--pico-primary-inverse); border-color: var(--pico-primary); font-weight: 600; padding: .2rem .85rem; }
 /* compact (the float): the strip wraps, the preset chips sit behind one small toggle */
@@ -14920,7 +14920,7 @@ table.data-table.czp-table td.czp-prose, .czp-table td small { font-family: var(
 }
 .czp-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .czp-mover { display: inline-block; margin-right: 0.3rem; font-weight: 600; }
-.czp-tier { display: inline-block; font-size: 0.75em; padding: 0 0.35rem; margin: 0 0.2rem 0.1rem 0; border-radius: 0.6rem;
+.czp-tier { display: inline-block; font-size: max(11px, 0.75em); font-family: var(--pico-font-family); padding: 0 0.35rem; margin: 0 0.2rem 0.1rem 0; border-radius: 0.6rem;
     border: 1px solid var(--pico-primary, #4f9cf9); color: var(--pico-primary, #4f9cf9); white-space: nowrap; }
 .czp-tier-quad { border-style: dashed; color: var(--pico-muted-color, #888); border-color: var(--pico-muted-color, #888); }
 .czp-warn-text { color: var(--color-warning-text, #856404); }
@@ -15894,7 +15894,7 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
 @media (max-width: 1599px) { .czp-detail .czp-plots { grid-template-columns: minmax(0, 1fr); } .czp-detail .czp-plot { height: 540px; } }
 .czp-detail figcaption { font-size: .9rem; }
 .czp-detail figcaption .muted { display: none; }
-.czp-help-hover { color: var(--pico-muted-color); cursor: help; font-size: .8em; white-space: nowrap; }
+.czp-help-hover { color: var(--pico-muted-color); cursor: help; font-size: max(11px, .8em); white-space: nowrap; }
 .czp-card-box, .czp-solve-box { margin: .5rem 0; }
 .czp-variant { color: var(--pico-muted-color); }
 .czp-row[data-pair-start="1"] td { border-top: 2px solid var(--pico-muted-border-color); }
