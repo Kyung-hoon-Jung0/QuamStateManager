@@ -10,7 +10,7 @@
         <span class="pulse-sec-role">{{ sec.role }}</span>
         <span class="pulse-sec-owner">{{ sec.owner }}</span>
         <span class="pulse-sec-op"><code>{{ sec.short }}</code></span>
-        <span class="pulse-sec-class muted">{{ sec.class_short }}</span>
+        {% if sec.class_short %}<span class="pulse-sec-class muted">{{ sec.class_short }}</span>{% endif %}
         <small class="muted">({{ sec.params | length }})</small>
         {% if sec.synth_error %}<span class="pulse-synth-err">{{ sec.synth_error }}</span>{% endif %}
     </summary>

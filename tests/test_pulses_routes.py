@@ -1824,7 +1824,8 @@ class TestTheDetailPutsValuesWhereTheyCanBeRead:
         css = pathlib.Path("quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
         assert ".gcz-params-row { display: flex;" in css
         assert "#gcz-root button[type=submit].btn-sm { width: auto; }" in css
-        assert "#gcz-root .inspector-header-line { display: flex;" in css
+        # R4-TP-2: the head is the shared inspector head, the same as "New pulse"
+        assert "{% include '_inspector_header.html' %}" in html
 
 
 

@@ -306,7 +306,9 @@ class TestL22NoCouplersNoHighlight:
 
     def test_a_chip_with_couplers_keeps_the_map(self):
         tpl = _tpl("_couplers.html").replace("\r\n", "\n")
-        assert "{% if total %}\n{% set cmap_highlight = 'couplers' %}" in tpl
+        # R4-WC-8: no couplers -> one empty-state line; with couplers -> the map
+        assert "{% if not total %}" in tpl
+        assert "{% else %}\n{% set cmap_highlight = 'couplers' %}" in tpl
 
 
 class TestL23PageHeaderToggleClearance:

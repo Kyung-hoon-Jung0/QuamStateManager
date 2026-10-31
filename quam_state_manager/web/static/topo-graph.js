@@ -12,6 +12,8 @@
  * generate.js / pulses.js).
  */
 window.TopoGraph = (function () {
+  // D-101: one coupler-mark radius for the drawing and every clearance that assumes it.
+  function couplerR(R) { return Math.max(7, Math.round(R * 0.42)); }
   "use strict";
 
   // --- pair id ---------------------------------------------------------------
@@ -494,7 +496,7 @@ window.TopoGraph = (function () {
       var cul = Math.sqrt(cux * cux + cuy * cuy) || 1;
       cux /= cul; cuy /= cul;
       var cnx = -cuy, cny = cux;
-      // A coupler dot (r = 0.30 * 0.38 cell) sits on the midpoint too: on a
+      // A coupler dot (r = couplerR, ~0.30 * 0.42 cell) sits on the midpoint too: on a
       // map that draws it, move the chevron clear of the dot (D-94).
       var coff = CELL * ((opts.couplerClear && (ce.has_coupler || hasCoupler[ckey])) ? 0.24 : 0.16);
       var cmx = (loPt.x + hiPt.x) / 2 + cnx * coff;
@@ -661,7 +663,7 @@ window.TopoGraph = (function () {
     var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
     out += '<text class="cm-pair-label cm-dir-label" font-size="' + font + '"' +
            ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-ang="' + r1(ang) + '"' +
-           (e.has_coupler ? ' data-clear="' + r1(Math.round(R * 0.38) + 3) + '"' : "") +
+           (e.has_coupler ? ' data-clear="' + r1(couplerR(R) + 3) + '"' : "") +
            ' text-anchor="middle" dominant-baseline="central" x="0" y="0">' +
            esc(e.pair_id) + "</text>";
     return out;
@@ -966,7 +968,7 @@ window.TopoGraph = (function () {
              '<line class="cm-edge-line" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>';
       if (e.has_coupler) {
         svg += '<circle class="cm-coupler" cx="' + ((x1 + x2) / 2) + '" cy="' + ((y1 + y2) / 2) +
-               '" r="' + Math.round(R * 0.38) + '"/>';
+               '" r="' + couplerR(R) + '"/>';
       }
       svg += dirEdgeMarks(e, x1, y1, x2, y2, R, pairFont);
       svg += '<line class="cm-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +

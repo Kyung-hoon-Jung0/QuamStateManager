@@ -10,7 +10,7 @@
     {% for section in sections %}
     <details open class="detail-section">
         <summary class="section-header">{{ section.name }}</summary>
-        <table class="prop-table" role="grid">
+        <table class="prop-table" role="grid" style="--prop-col-min: 15rem">{# R4-WC-6: one key-column width across sections #}
             <thead>
                 <tr>
                     <th class="col-prop">Property</th>

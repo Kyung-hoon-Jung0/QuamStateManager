@@ -3,16 +3,20 @@
    Same channel-scoped shape as _flux.html / _resonators.html, narrowed to the
    qubits the QDAC actually biases, plus the two things no per-qubit surface
    can show: the instrument itself, and the trigger CABLING. #}
-<div class="table-header-row">
-    <h2>QDAC-II <small class="muted">({{ total }} biased qubit{{ '' if total == 1 else 's' }})</small></h2>
-    <div class="table-filter">
+<div class="table-header-row ui-head ui-head--data">
+    <h2 class="ui-head-title">QDAC-II <small class="muted ui-count">({{ total }} biased qubit{{ '' if total == 1 else 's' }})</small></h2>
+    {% if total %}<div class="table-filter">
         <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter QDAC channels" autocomplete="off"
                oninput="filterTable(this, 'qdac-table')">
         <small id="qdac-table-filter-count" class="muted"></small>
-    </div>
+    </div>{% endif %}
 </div>
 
+{# R4-WC-1: no biased qubit -> one empty-state line, no warning, map or table. #}
+{% if not total %}
+<p class="ui-state ui-state--empty" role="status">No QDAC-biased qubits in this state file.</p>
+{% else %}
 {% if instrument %}
 <p class="qdac-instrument muted">
     <strong>{{ instrument.id or 'qdac' }}</strong>
@@ -119,3 +123,4 @@
 {% set extra_qs = "" %}
 {% set storage_key = "quam_qdac_per_page" %}
 {% include "_pagination.html" %}
+{% endif %}

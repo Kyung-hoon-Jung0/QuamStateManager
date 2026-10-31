@@ -1,20 +1,22 @@
-<div class="table-header-row">
-    <h2>Couplers <small class="muted">({{ total }})</small></h2>
-    <div class="table-filter">
+<div class="table-header-row ui-head ui-head--data">
+    <h2 class="ui-head-title">Couplers <small class="muted ui-count">({{ total }})</small></h2>
+    {% if total %}<div class="table-filter">
         <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter couplers" autocomplete="off"
                oninput="filterTable(this, 'couplers-table')">
         <small id="couplers-table-filter-count" class="muted"></small>
-    </div>
+    </div>{% endif %}
 </div>
 
 {# v1.3.0: with no couplers there is nothing to highlight -- the map drew the
    whole chip "highlighted"; the table's own empty row says why. #}
-{% if total %}
+{% if not total %}
+{# R4-WC-8: no couplers -> one empty-state line, no table head or pagination. #}
+<p class="ui-state ui-state--empty" role="status">No couplers found in this state file.</p>
+{% else %}
 {% set cmap_highlight = 'couplers' %}
 {% set cmap_label = '— coupler edges highlighted' %}
 {% include '_component_map.html' %}
-{% endif %}
 
 <table id="couplers-table" data-refresh-rows data-refresh-url="{{ refresh_url('/couplers') }}" class="data-table ui-num-5 ui-num-6 ui-num-7" role="grid">
     <thead>
@@ -126,3 +128,4 @@
     }
 })();
 </script>
+{% endif %}
