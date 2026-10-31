@@ -77,7 +77,7 @@
             return;
         }
         if (!el) {
-            // A sibling of the pill, never a child: the pill IS a <button>
+            // A sibling of the pill, never a child: the pill IS a button element
             // whose click opens the Review tray, and a chip that means
             // something else cannot live inside it.
             el = document.createElement('button');

@@ -1655,7 +1655,7 @@ window.AgentPanel = (function () {
       "Neither edits SM's agent event log or the CLI's own session files. Running work and approvals stay here; finished plans and runs stay in the Calibration log.</p>" +
       '<p class="ag-err ag-sheet-err" role="alert" hidden></p>' +
       '<div class="ag-sheet-acts"><button type="button" class="btn-sm ag-clear-keep">Archive and clear</button>' +
-      '<button type="button" class="btn-sm ag-danger ag-clear-drop">Delete and clear</button>' +
+      '<button type="button" class="btn-sm danger ag-danger ag-clear-drop">Delete and clear</button>' +
       '<button type="button" class="btn-sm secondary ag-sheet-close">Cancel</button></div>', btn);
     box.__sinceN = typeof S.sinceN === "number" ? S.sinceN : undefined;
     box.onclick = function (e) {
@@ -1734,7 +1734,7 @@ window.AgentPanel = (function () {
       if (had) { var c = box.querySelector(".ag-sheet-close"); if (c) { try { c.focus(); } catch (e) { /* ignore */ } } }
     });
   }
-  var DEL_ASK = 'Delete for good? <button type="button" class="btn-sm ag-danger ag-arch-del-yes">Delete</button>' +
+  var DEL_ASK = 'Delete for good? <button type="button" class="btn-sm danger ag-danger ag-arch-del-yes">Delete</button>' +
     ' <button type="button" class="btn-sm secondary ag-arch-del-no">Keep</button>';
   var DEL_IDLE = '<button type="button" class="btn-sm secondary ag-arch-del">Delete</button>';
   function archClick(box, e) {

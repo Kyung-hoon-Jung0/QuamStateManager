@@ -441,14 +441,23 @@ def test_7_token_contrast_meets_aa_in_every_theme():
     assert not bad, bad
 
 
+_STAGE1_MARK = "/* ===== stage 1:"
+
+
+def _ui_kit_parts():
+    raw = _read(_UI_KIT)
+    assert raw.count(_STAGE1_MARK) == 1, "ui-kit.css has exactly one marked stage-1 section"
+    head, tail = raw.split(_STAGE1_MARK, 1)
+    return list(_blocks(_strip_comments(head))), list(_blocks(_strip_comments(_STAGE1_MARK + tail)))
+
+
 def _ui_kit_rules():
-    css = _strip_comments(_read(_UI_KIT))
-    blocks = list(_blocks(css))
-    return blocks
+    stage0, stage1 = _ui_kit_parts()
+    return stage0 + stage1
 
 
 def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():
-    blocks = _ui_kit_rules()
+    blocks = _ui_kit_parts()[0]
     roots = [b for b in blocks if b[0] == ":root"]
     assert len(roots) == 1, "exactly one :root token block"
     style_vars = set(re.findall(r"(--[\w-]+)\s*:", _strip_comments(_read(_STATIC / "style.css"))))
@@ -464,6 +473,30 @@ def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():
             assert part.startswith(".ui-"), f"selector does not start with .ui-: {part!r}"
             assert ":has(" not in part and "[" not in part and ":where(" not in part, f"forbidden selector: {part!r}"
         assert not any(k.startswith("--") for k, _v in _decls(body)), f"{sel}: variables live in the token block only"
+
+
+# Stage 1 (D-29, D-52): the one section allowed to target existing classes --
+# the listed button selectors and the focus ring, nothing else.
+_STAGE1_SELECTOR = re.compile(
+    r"^(?:button\.btn-sm|\[role=button\]\.btn-sm|summary\.btn-sm|\.btn-sync)"
+    r"(?:\.(?:outline|secondary|danger|primary))*(?::(?:hover|disabled))*$"
+    r"|^(?:input|select|textarea)?:focus-visible$")
+# A button.btn-sm takes its colour through the variables Pico's button rule reads.
+_STAGE1_VARS = {"--pico-border-radius", "--pico-background-color", "--pico-border-color", "--pico-color"}
+
+
+def test_7d_stage1_section_targets_only_the_listed_button_selectors_and_focus():
+    stage1 = _ui_kit_parts()[1]
+    assert stage1, "the stage-1 section has rules"
+    for sel, body, stack in stage1:
+        assert not stack, f"no at-rule blocks in ui-kit.css: {stack}"
+        for part in sel.split(","):
+            part = part.strip()
+            assert _STAGE1_SELECTOR.match(part), f"stage-1 selector outside the allowed list: {part!r}"
+        for k, _v in _decls(body):
+            if k.startswith("--"):
+                assert k in _STAGE1_VARS, f"{sel}: only {sorted(_STAGE1_VARS)} may be set here, not {k}"
+                assert "btn-sm" in sel, f"{sel}: Pico variables are set on button.btn-sm only"
 
 
 _VALUE_PROPS = re.compile(r"^(color|background(-color)?|border(-(top|right|bottom|left))?(-(color|width|style))?|border-radius|"

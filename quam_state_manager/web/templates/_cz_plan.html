@@ -102,7 +102,7 @@
 <label>{{ key }} <input required type="number" step="any" name="{{ key }}" value="{{ f.model.get(key, '') }}"></label>
 {% endfor %}
 <label>Source <input required name="source" value="{{ f.model.get('source', 'manual') }}"></label>
-<button type="submit">Stage coupler model</button><output></output>
+<button type="submit" class="btn-sm">Stage coupler model</button><output></output>
 </form></details>
 {% endfor %}
 </details>

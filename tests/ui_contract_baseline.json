@@ -2,20 +2,6 @@
  "bare_buttons": {
   "static/app.js": 1,
   "static/scheduler.js": 1,
-  "static/sync-badge.js": 1,
-  "templates/_chip_profile.html": 1,
-  "templates/_couplers.html": 1,
-  "templates/_cz_plan.html": 1,
-  "templates/_flux.html": 1,
-  "templates/_generate.html": 1,
-  "templates/_instrument_preview.html": 1,
-  "templates/_instrument_wiring.html": 1,
-  "templates/_map_tools.html": 1,
-  "templates/_pairs.html": 1,
-  "templates/_qubits.html": 1,
-  "templates/_resonators.html": 1,
-  "templates/_wiring.html": 1,
-  "templates/chip_report.html": 2,
   "templates/workbench.html": 8
  },
  "color_literals": {
@@ -30,7 +16,7 @@
   "static/journal.js": 3,
   "static/plot-theme.js": 20,
   "static/pulses.js": 11,
-  "static/style.css": 719,
+  "static/style.css": 714,
   "static/zline.js": 5,
   "templates/_bulkedit.html": 2,
   "templates/_instrument_preview.html": 1,
@@ -564,7 +550,7 @@
   "templates/base.html": 8
  },
  "style_css": {
-  "lines": 16279,
-  "rules": 5943
+  "lines": 16262,
+  "rules": 5937
  }
 }

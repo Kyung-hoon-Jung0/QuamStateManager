@@ -26,6 +26,7 @@
     /* accent */
     --ui-accent: var(--pico-primary);
     --ui-accent-fill: var(--pico-primary-background);
+    --ui-accent-fill-hover: var(--pico-primary-hover-background);
     --ui-on-accent: var(--pico-primary-inverse);
     --ui-accent-border: color-mix(in srgb, var(--pico-primary) 30%, transparent);
     --ui-accent-bg: color-mix(in srgb, var(--pico-primary) 12%, var(--pico-background-color));
@@ -64,6 +65,14 @@
     --ui-gap-4: 1.25rem;
     --ui-dot: 8px;
     --ui-icon-btn: 28px;
+    /* buttons (stage 1a, D-28) */
+    --ui-btn-h: 30px;
+    --ui-btn-h-sm: 26px;
+    --ui-r-btn: 5px;
+    --ui-fs-btn: .88em;
+    --ui-lh-btn: 1.2;
+    --ui-btn-gap: .3em;
+    --ui-focus-w: 2px;
     --ui-shadow: 0 8px 28px color-mix(in srgb, black 35%, transparent);
     --ui-dialog-s: 560px;
     --ui-dialog-m: 760px;
@@ -177,3 +186,70 @@
 .ui-kit-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: var(--ui-gap-4); margin: 0 0 var(--ui-gap-3); }
 .ui-kit-side { min-width: 0; }
 .ui-kit-label { margin: 0 0 var(--ui-gap-1); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
+
+/* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
+ * The only rules in this file that target classes outside .ui-*. Allowed
+ * selectors (tests/test_ui_contract.py): button.btn-sm, [role=button].btn-sm,
+ * summary.btn-sm, .btn-sync, and :focus-visible. Shape is declared directly;
+ * the colour of a button.btn-sm is set through the variables Pico's own button
+ * rule reads, so every existing per-class colour rule in style.css (status
+ * pills, toggles, danger buttons) keeps winning exactly as before. Meaning is
+ * the existing modifier: plain = filled primary, .outline = secondary,
+ * .secondary = quiet, .danger = destructive (never counted as a fill).
+ */
+button.btn-sm,
+[role=button].btn-sm {
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--ui-btn-gap);
+    box-sizing: border-box; width: auto; min-height: var(--ui-btn-h-sm);
+    padding: 0 .45rem; font-size: var(--ui-fs-btn); line-height: var(--ui-lh-btn);
+    vertical-align: middle;
+    --pico-border-radius: var(--ui-r-btn);
+    --pico-background-color: var(--ui-accent-fill);
+    --pico-border-color: var(--ui-accent-fill);
+    --pico-color: var(--ui-on-accent);
+}
+button.btn-sm:hover,
+[role=button].btn-sm:hover { --pico-background-color: var(--ui-accent-fill-hover); --pico-border-color: var(--ui-accent-fill-hover); }
+button.btn-sm.outline,
+[role=button].btn-sm.outline {
+    --pico-background-color: transparent; --pico-border-color: var(--ui-accent-border); --pico-color: var(--ui-accent);
+}
+button.btn-sm.outline:hover,
+[role=button].btn-sm.outline:hover { --pico-background-color: var(--ui-accent-bg); --pico-border-color: var(--ui-accent); --pico-color: var(--ui-accent); }
+button.btn-sm.secondary,
+[role=button].btn-sm.secondary,
+button.btn-sm.outline.secondary,
+[role=button].btn-sm.outline.secondary {
+    --pico-background-color: transparent; --pico-border-color: var(--ui-border-strong); --pico-color: var(--ui-text-2);
+}
+button.btn-sm.secondary:hover,
+[role=button].btn-sm.secondary:hover,
+button.btn-sm.outline.secondary:hover,
+[role=button].btn-sm.outline.secondary:hover { --pico-background-color: var(--ui-surface-2); --pico-border-color: var(--ui-border-strong); --pico-color: var(--ui-text); }
+button.btn-sm.danger,
+[role=button].btn-sm.danger {
+    --pico-background-color: transparent; --pico-border-color: var(--ui-danger-text); --pico-color: var(--ui-danger-text);
+}
+button.btn-sm.danger:hover,
+[role=button].btn-sm.danger:hover { --pico-background-color: var(--ui-danger-text); --pico-border-color: var(--ui-danger-text); --pico-color: var(--ui-surface-1); }
+button.btn-sm:disabled,
+button.btn-sm:disabled:hover,
+button.btn-sm.outline.secondary:disabled {
+    /* direct properties: a disabled button loses any fill, including one a
+       per-class rule in style.css gives it (Pico's .5 opacity is replaced). */
+    opacity: 1; cursor: not-allowed;
+    background-color: transparent; border-color: var(--ui-border); color: var(--ui-text-3);
+}
+summary.btn-sm { display: inline-flex; align-items: center; box-sizing: border-box; min-height: var(--ui-btn-h-sm); }
+
+.btn-sync { min-height: var(--ui-btn-h); width: auto; border-radius: var(--ui-r-btn); border-color: var(--ui-accent-border); }
+.btn-sync.danger { color: var(--ui-danger-text); border-color: var(--ui-danger-text); background: transparent; }
+.btn-sync.danger:hover { color: var(--ui-surface-1); border-color: var(--ui-danger-text); background: var(--ui-danger-text); }
+.btn-sync:disabled,
+.btn-sync:disabled:hover { opacity: 1; cursor: not-allowed; color: var(--ui-text-3); border-color: var(--ui-border); background: transparent; }
+
+/* K17: one focus ring app-wide (Pico's focus box-shadow is removed). */
+:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outline-offset: var(--ui-focus-w); box-shadow: none; }

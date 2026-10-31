@@ -6749,22 +6749,7 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
    "empty" (item 3). No checkbox-anchoring — fixed to the viewport corner so it
    survives virtual-scroll row recycling and HTMX swaps. */
 .ds-compare-bar[data-state="empty"] { display: none; }
-/* Clear = restrained outline; Compare (#ds-compare-btn) = the one filled CTA. */
-.ds-compare-bar .btn-sm {
-    background: transparent; color: var(--pico-muted-color);
-    border: 1px solid var(--pico-muted-border-color); font-weight: 500;
-}
-.ds-compare-bar .btn-sm:hover { background: color-mix(in srgb, var(--pico-muted-color) 10%, transparent); color: var(--pico-contrast); }
-.ds-compare-bar #ds-compare-btn {
-    background: var(--pico-primary-background); color: var(--pico-primary-inverse);
-    border-color: var(--pico-primary-background); font-weight: 600;
-}
-.ds-compare-bar #ds-compare-btn:hover { opacity: 0.9; }
-.ds-compare-bar .btn-sm:disabled,
-.ds-compare-bar .btn-sm[disabled] {
-    opacity: 0.55; cursor: not-allowed;
-    background: transparent; color: var(--pico-muted-color); border-color: var(--pico-muted-border-color);
-}
+/* Clear = quiet (btn-sm outline secondary); Diff = the one filled btn-sm. Look: ui-kit.css. */
 .ds-compare-bar .ds-compare-hint { flex: 1; }
 /* Three-state visibility driven by [data-state] — only one of the four
    .ds-compare-msg-* spans is shown per state. The empty state's hint is
@@ -14410,8 +14395,6 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-sheet-acts { display: flex; flex-wrap: wrap; gap: .4rem; }
 .ag-sheet[aria-busy="true"] button { cursor: progress; opacity: .75; }
 .ag-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .35rem; }
-.ag-root .btn-sm.ag-danger { background: color-mix(in srgb, var(--color-error-border, #dc3545) 80%, #000);
-  border-color: color-mix(in srgb, var(--color-error-border, #dc3545) 80%, #000); color: #fff; }   /* white on it: 6.5:1, both themes */
 .ag-arch-list { list-style: none; margin: 0 0 .25rem; padding: 0; max-height: 14rem; overflow-y: auto; }
 .ag-arch-list li { list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .5rem; margin: 0;
   padding: .3rem 0; border-top: 1px solid var(--pico-muted-border-color); }
