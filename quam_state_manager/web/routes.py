@@ -44323,7 +44323,8 @@ def dataset_load_state(uid):
                          f"({chip_label}). Loading it replaces the working "
                          "state wholesale." + apply_note),
                 action_url=url,
-                action_label="Load into working state anyway",
+                action_label=("Load and apply to live anyway" if apply_req
+                              else "Load into working state anyway"),
                 confirm=("Replace the working state with a snapshot from a "
                          "different/unverified chip?"),
                 target="#ds-load-state-result",

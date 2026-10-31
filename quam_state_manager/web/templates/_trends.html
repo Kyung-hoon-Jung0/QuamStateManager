@@ -1,6 +1,7 @@
 {% if no_workspace %}
+{% import "_ui.html" as ui %}
+{{ ui.ui_head('Trends', page=True, gist='Metric trends across experiment runs.') }}
 <div class="welcome">
-    <h2>Trends</h2>
     {% set _ro = resume_offer() if resume_offer is defined else None %}
     {% if _ro %}<p>No chip is open (SM was restarted or the chip was closed). Re-open it to see its trends:</p>
     {% include "_resume_offer.html" %}{% endif %}

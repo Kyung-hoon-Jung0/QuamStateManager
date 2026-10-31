@@ -6164,11 +6164,11 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
     font-size: .72rem; font-weight: 600; line-height: 1.5; border: 1px solid currentColor;
     overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
 }
-.ds-status-done { color: var(--pico-muted-color); }
 .ds-status-ok { color: var(--color-success-text); }
 .ds-status-run { color: var(--color-warning-text); }
 .ds-status-err { color: var(--color-error-text); }
-.ds-status-unknown { color: var(--pico-muted-color); border-color: transparent; font-weight: 400; }
+/* R4-DS-16: a finished run reads as quiet text; only failed/running/unfinished wear a badge */
+.ds-status-done, .ds-status-unknown { color: var(--pico-muted-color); border-color: transparent; font-weight: 400; }
 .datasets-table-virtual tbody tr {
     height: 32px;
 }
@@ -10614,7 +10614,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .bulk-table .bulk-col-pinned { z-index: 3; background: var(--pico-card-background-color); }
 .bulk-table thead th.bulk-col-pinned { z-index: 4; }
 /* docs/112 (#12): datasets keyboard nav + sort honesty */
-#datasets-tbody tr.ds-row-active > td { outline: 2px solid var(--pico-primary); outline-offset: -2px; }
+#datasets-tbody tr.ds-row-active > td { background: color-mix(in srgb, var(--pico-primary) 14%, var(--pico-card-background-color)); } #datasets-tbody tr.ds-row-active > td:first-child { box-shadow: inset 3px 0 0 var(--pico-primary); }
 /* audit: `.ds-search-wrap` also hosts an absolutely-positioned help "?"
    at right:.4rem — keep clear of it. */
 .ds-sort-newest { margin-left: .4rem; margin-right: 1.6rem; white-space: nowrap; }

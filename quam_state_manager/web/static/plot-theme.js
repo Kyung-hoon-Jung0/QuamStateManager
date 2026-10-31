@@ -208,6 +208,11 @@
             if (!/^legend\d*$/.test(k) || !lg || typeof lg !== 'object' || !(lg.borderwidth > 0) || lg.bgcolor) return;
             out[k] = Object.assign({}, lg, { bgcolor: cssVar('--plot-hover-bg', cssVar('--pico-card-background-color', '#222')) });
         });
+        Object.keys(out).forEach(function (k) {
+            var ax = out[k];
+            if (!/^[xy]axis\d*$/.test(k) || !ax || typeof ax !== 'object') return;
+            out[k] = Object.assign({}, ax, { tickfont: smallFont(ax.tickfont) });
+        });
         if (isDark()) {
             out.font = artistStyle(out.font, text);
             Object.keys(out).forEach(function (key) {
@@ -417,6 +422,14 @@
 
     /* Text scale of the page: the body font against the browser default (the app's UI font
      * size setting moves it), never below 1. */
+    /* R4-CS-6 / R4-DS-13: the ONE floor for tick and axis-title text in small charts
+     * (D-6: no screen text below 11 px). Callers take it from here, never a literal. */
+    var SMALL_TEXT_MIN = 11;
+    function smallFont(font) {
+        font = Object.assign({}, font || {});
+        font.size = Math.max(font.size || 0, Math.round(SMALL_TEXT_MIN * textScale()));
+        return font;
+    }
     function textScale() {
         var px = 16;
         try { px = parseFloat(getComputedStyle(document.body).fontSize) || 16; } catch (e) { /* no body yet */ }
@@ -446,6 +459,8 @@
     }
 
     window.PlotTheme = {
+        SMALL_TEXT_MIN: SMALL_TEXT_MIN,
+        smallFont: smallFont,
         textScale: textScale,
         readable: readable,
         lossColor: lossColor,

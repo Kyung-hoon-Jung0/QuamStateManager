@@ -365,7 +365,7 @@ class TestL25FinishedIsNotSuccess:
 
     def test_the_css_and_the_detail_agree(self):
         css = _css()
-        assert "var(--pico-muted-color)" in _block(css, ".ds-status-done {")
+        assert "var(--pico-muted-color)" in _block(css, ".ds-status-done, .ds-status-unknown {")
         assert "var(--pico-muted-color)" in _block(css, ".status-finished {")
         tpl = _tpl("_dataset_detail.html")
         assert ('<span class="outcome-badge{% if run.status != \'finished\' %} outcome-fail{% endif %}">'

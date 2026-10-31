@@ -10,8 +10,9 @@
 </div>
 {% endif %}
 {% if no_workspace %}
+{% import "_ui.html" as ui %}
+{{ ui.ui_head(page_title, page=True, gist=('Runs you tagged, grouped by tag.' if is_collections else 'Experiment runs in the loaded data folders.')) }}
 <div class="welcome" style="max-width:600px;margin:2rem auto">
-    <h2>{{ page_title }}</h2>
     {% set _ro = resume_offer() if resume_offer is defined else None %}
     {% if _ro %}<p>No chip is open (SM was restarted or the chip was closed). Re-open it to see its runs:</p>
     {% include "_resume_offer.html" %}{% endif %}

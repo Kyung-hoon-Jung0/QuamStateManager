@@ -110,8 +110,8 @@ var UI_CONFIG = {
         trendsMini: {
             height:     220,   /* ⚠ chart height in pixels — keep in sync with --trends-mini-height in style.css */
             xTickAngle: -45,   /* rotation of x-axis labels in degrees (negative = tilt clockwise to avoid overlap) */
-            xTickFont:  { size: 10 },  /* font size of x-axis tick labels */
-            yTickFont:  { size: 10 },  /* font size of y-axis tick labels */
+            xTickFont:  { size: 11 },  /* x tick labels; PlotTheme.smallFont floors it (D-6) */
+            yTickFont:  { size: 11 },  /* y tick labels; PlotTheme.smallFont floors it (D-6) */
             margin:     { t: 10, r: 20, b: 40, l: 70 }  /* blank space around the mini chart in pixels: top/right/bottom/left */
         },
 
@@ -20883,7 +20883,8 @@ window.DatasetTrends = (function () {
     function layoutFor(st, idx) {
         var s = st.data.series[idx];
         var mini = UI_CONFIG.plotly.trendsMini;
-        var xaxis = { title: '', tickfont: mini.xTickFont, ticklabeloverflow: 'allow' };
+        var _sf = (window.PlotTheme && window.PlotTheme.smallFont) || function (f) { return f; };
+        var xaxis = { title: '', tickfont: _sf(mini.xTickFont), ticklabeloverflow: 'allow' };
         if (st.dateAxis) {
             xaxis.type = 'date';
             xaxis.hoverformat = '%Y-%m-%d %H:%M:%S';
@@ -20898,7 +20899,7 @@ window.DatasetTrends = (function () {
             /* v1.5.1 (T1-F7): the axis title carries the unit the run's own fit
                file declares, and the numbers follow the one axis rule
                (PlotTheme.axisNumberFormat: SI prefixes, never "B") */
-            yaxis: yaxisFor(st, idx, Object.assign({ title: metricTitle(st, s.m), tickfont: mini.yTickFont },
+            yaxis: yaxisFor(st, idx, Object.assign({ title: metricTitle(st, s.m), tickfont: _sf(mini.yTickFont) },
                 (window.PlotTheme && window.PlotTheme.axisNumberFormat) ? window.PlotTheme.axisNumberFormat() : {})),
             height: mini.height,
             colorway: UI_CONFIG.plotly.colorway,
