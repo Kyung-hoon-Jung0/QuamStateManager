@@ -11,7 +11,7 @@
     <h3>Version {{ ts | ts_local }} &rarr; now</h3>
     <div class="state-review-head-actions">
       {% if chip_key %}
-      <a class="btn-sync outline version-diff-workbench"
+      <a role="button" class="btn-sync outline version-diff-workbench"
          href="/diff?a={{ ('hist:' ~ chip_key ~ '/' ~ ts) | urlencode }}&amp;b={{ ('working:' ~ path_str) | urlencode }}"
          hx-get="/diff?a={{ ('hist:' ~ chip_key ~ '/' ~ ts) | urlencode }}&amp;b={{ ('working:' ~ path_str) | urlencode }}"
          hx-target="#table-pane" hx-swap="innerHTML" hx-push-url="true"

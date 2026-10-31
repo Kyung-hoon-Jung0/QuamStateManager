@@ -220,7 +220,7 @@
                 {% endif %}
                 {{ source_badge(r.source, 'sv-src') }}{{ foreign_tag(r, 'sv-foreign-tag') }}{{ baseline_tag(r, ledger_versions, 'sv-baseline') }}
                 {% if r.pinned %}<span class="sv-pin" title="Pinned — exempt from pruning">&#128204;</span>{% endif %}
-                {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
+                {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">live chip is on this version</span>{% endif %}
                 {% if r.label %}<span class="sv-label">{{ r.label }}</span>{% endif %}
                 {{ version_label(r, 'listing=versions&limit=' ~ (rows | length), '#state-version-panel') }}
                 {% if r.experiment and r.run_id is none %}<span class="sv-exp muted">after {{ r.experiment }}</span>{% endif %}

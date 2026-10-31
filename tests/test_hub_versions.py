@@ -395,7 +395,7 @@ def test_both_surfaces_name_runs_sm_writes_and_observed_states(env):
     panel = env.client.get("/state/versions").get_data(as_text=True)
     assert 'data-source="ledger"' in panel
     rows = panel.split('<li class="state-version-row')[1:]
-    now = [r for r in rows if "on this now" in r]
+    now = [r for r in rows if "live chip is on this version" in r]
     assert len(now) == 1 and "applied by tester" in text(now[0]), "the live chip holds the SM write"
     words = text(panel)
     # docs/301 F16: the sub-line names the door in words, never its raw id
@@ -746,9 +746,9 @@ def test_an_archive_lists_versions_but_offers_no_write_and_no_live_mark(env):
     panel = c.get("/state/versions").get_data(as_text=True)
     assert 'data-source="ledger"' in panel and "run #3 scan" in text(panel)
     assert "sv-stage" not in panel and "sv-restore" not in panel
-    assert "on this now" not in panel, "run #3's files are open, not a live chip"
+    assert "live chip is on this version" not in panel, "run #3's files are open, not a live chip"
     page = c.get("/state-history", headers={"HX-Request": "true"}).get_data(as_text=True)
-    assert "/restore-live?" not in page and "/stage?" not in page and "on this now" not in page
+    assert "/restore-live?" not in page and "/stage?" not in page and "live chip is on this version" not in page
     r = c.post(f"/state-history/{env.refs[1]}/restore-live")
     assert r.status_code in (400, 403, 409) and "read-only" in r.get_data(as_text=True)
 

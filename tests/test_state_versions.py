@@ -163,7 +163,7 @@ class TestVersionsPanel:
     def test_the_current_version_is_marked(self, client):
         client.post("/state/archive", data={"tag": "t"})
         body = client.get("/state/versions").get_data(as_text=True)
-        assert "sv-current" in body and "on this now" in body
+        assert "sv-current" in body and "live chip is on this version" in body
 
     def test_go_back_uses_the_gated_restore_route(self, client, tmp_path):
         """Not a new write path: the same restore-live State History uses, whose
