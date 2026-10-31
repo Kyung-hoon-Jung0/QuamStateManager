@@ -15,7 +15,7 @@
   "static/journal.js": 3,
   "static/plot-theme.js": 20,
   "static/pulses.js": 11,
-  "static/style.css": 675,
+  "static/style.css": 672,
   "static/zline.js": 5,
   "templates/_bulkedit.html": 2,
   "templates/_instrument_preview.html": 1,
@@ -147,7 +147,7 @@
   "templates/_pulse_params_section.html": 1,
   "templates/_pulse_row.html": 1,
   "templates/_qdac.html": 1,
-  "templates/_qualibrate.html": 2,
+  "templates/_qualibrate.html": 1,
   "templates/_qubit_config.html": 1,
   "templates/_qubit_detail.html": 2,
   "templates/_qubits.html": 4,
@@ -399,7 +399,6 @@
   "pulse-together",
   "pulse-vrow-pending",
   "qualibrate-detail-row",
-  "qualibrate-doctor-",
   "qubit-add-pulse-link",
   "qubit-detail",
   "ref-read-value",
@@ -505,7 +504,7 @@
   "templates/base.html": 8
  },
  "style_css": {
-  "lines": 16146,
-  "rules": 5925
+  "lines": 16136,
+  "rules": 5922
  }
 }

@@ -549,7 +549,6 @@ _STAGE4_SELECTORS = {
     ".ui-disclosure[open] > .ui-disclosure-summary::before",
     ".ui-disclosure-summary > .ui-count",
     "table.data-table th", "table.data-table td",
-    "table.data-table th.ui-table-num", "table.data-table td.ui-table-num",
     ".sidebar-nav a", ".sidebar-nav a:hover:not(.active)",
     ".sidebar-nav .nav-subitems li a", ".sidebar-nav .nav-subitems li a:hover:not(.active)",
     ".tree-search-icon",

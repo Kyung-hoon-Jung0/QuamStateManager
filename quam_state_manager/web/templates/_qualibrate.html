@@ -57,14 +57,17 @@
 
 {# ---- doctor panel ---- #}
 {% if listing.doctor %}
-<details open class="detail-section qualibrate-doctor">
-    <summary class="section-header">Doctor <small class="muted">({{ listing.doctor | length }} finding{{ 's' if listing.doctor | length != 1 }})</small></summary>
+{%- set _sevs = listing.doctor | map(attribute='severity') | list -%}
+{%- set _tone = 'danger' if 'error' in _sevs else ('warn' if 'warning' in _sevs else 'note') -%}
+<details open class="detail-section qualibrate-doctor ui-disclosure ui-callout ui-callout--{{ _tone }}">
+    <summary class="section-header ui-disclosure-summary">Doctor <span class="ui-count">{{ listing.doctor | length }} finding{{ 's' if listing.doctor | length != 1 }}</span></summary>
     <ul class="qualibrate-doctor-list">
     {% for f in listing.doctor %}
-        <li class="qualibrate-doctor-{{ f.severity }}">
-            <span class="qualibrate-doctor-sev">{% if f.severity == 'error' %}&#10007;{% elif f.severity == 'warning' %}&#9888;{% else %}&#8505;{% endif %}</span>
-            {% if f.project %}<code>{{ f.project }}</code> — {% endif %}{{ f.message }}
-            {% if f.suggestion %}<br><small class="muted">&#8627; {{ f.suggestion }}</small>{% endif %}
+        {%- set _ft = 'danger' if f.severity == 'error' else ('warn' if f.severity == 'warning' else 'neutral') %}
+        <li class="qualibrate-doctor-{{ f.severity }} ui-verdict ui-verdict--{{ _ft }}">
+            <span class="ui-dot" aria-hidden="true"></span><strong class="qualibrate-doctor-sev ui-verdict-key">{{ f.severity }}</strong>
+            <span>{% if f.project %}<code class="ui-chip">{{ f.project }}</code> — {% endif %}{{ f.message }}
+            {% if f.suggestion %}<br><small class="muted">&#8627; {{ f.suggestion }}</small>{% endif %}</span>
         </li>
     {% endfor %}
     </ul>

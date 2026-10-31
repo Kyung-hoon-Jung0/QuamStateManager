@@ -8,11 +8,6 @@
         <h2 class="ui-head-title">Calibration log{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
         <p class="muted jr-tagline ui-head-gist">every run, whoever ran it — what it wrote, why, and how it looked</p>
     </div>
-    <div class="jr-head-actions">
-        <a class="btn-sm outline" href="/journal/raw?day={{ story.day }}" hx-get="/journal/raw?day={{ story.day }}"
-           hx-target="#jr-raw" hx-swap="innerHTML" title="The day's markdown file as SM renders it">Raw .md</a>
-        <span class="muted jr-folder" title="{{ story.folder }}">{{ story.folder }}</span>
-    </div>
 </div>
 
 <form id="jr-filters" class="jr-filters" hx-get="/journal/day" hx-target="#jr-body" hx-swap="innerHTML"
@@ -27,10 +22,17 @@
     </select>
 </form>
 
-<div id="jr-raw"></div>
 {# docs/301 F17: hundreds of cards outgrow htmx's localStorage history cache
    (htmx:historyCacheError on leaving, and the retries emptied the cache of
    every other page). htmx's hx-history switch: no snapshot of this page;
    Back re-requests it from the server. It must stay inside this page --
    htmx looks for it anywhere in the document. #}
 <div id="jr-body" hx-history="false">{% include '_journal_body.html' %}</div>
+{# docs/308 stage 4: the folder and the raw file are a page-foot line, not
+   rivals of the title. #}
+<div class="jr-head-actions ui-note">
+    <span>Folder: <span class="jr-folder ui-chip" title="{{ story.folder }}">{{ story.folder }}</span></span>
+    <a class="btn-sm outline" href="/journal/raw?day={{ story.day }}" hx-get="/journal/raw?day={{ story.day }}"
+       hx-target="#jr-raw" hx-swap="innerHTML" title="The day's markdown file as SM renders it">Raw .md</a>
+</div>
+<div id="jr-raw"></div>

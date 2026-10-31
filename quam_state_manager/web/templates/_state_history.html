@@ -9,9 +9,9 @@
            SM saw) -- no longer "snapshots" #}
     </h2>
     <p class="ui-head-gist">every recorded state of the chip — review, compare, roll&nbsp;back</p>
-    <button class="btn-sm outline" hx-post="/state-history/snapshot"
+    <div class="ui-actions"><button class="btn-sm outline" hx-post="/state-history/snapshot"
             hx-target="#table-pane" hx-swap="innerHTML"
-            title="Capture the current state now">Take snapshot</button>
+            title="Capture the current state now">Take snapshot</button></div>
 </div>
 {% if snapshot_note %}<p class="muted sh-snapshot-note" role="status">{{ snapshot_note }}</p>{% endif %}
 {#- v1.5.1 (r6, P2-10): Go to date on a day with no versions says so -#}

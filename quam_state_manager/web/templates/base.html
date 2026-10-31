@@ -1153,7 +1153,7 @@
         <div class="settings-header" id="settings-header">
         <strong class="settings-title">Settings</strong>
         <span class="settings-header-tools">
-        <button type="button" class="calc-close" onclick="toggleSettings()" title="Close" aria-label="Close">&times;</button>
+        <button type="button" class="calc-close ui-btn-icon" onclick="toggleSettings()" title="Close" aria-label="Close">&times;</button>
         </span>
         </div>
         <div class="settings-version muted" id="settings-version">QUAM State Manager {{ sm_version }}</div>
@@ -1324,7 +1324,7 @@
         <div class="manual-header" id="manual-header">
         <strong class="manual-title">Config Manual</strong>
         <span class="manual-header-tools">
-        <button type="button" class="manual-close" onclick="toggleConfigManual()" title="Close  (Esc)" aria-label="Close">&times;</button>
+        <button type="button" class="manual-close ui-btn-icon" onclick="toggleConfigManual()" title="Close  (Esc)" aria-label="Close">&times;</button>
         </span>
         </div>
         <div class="manual-searchbar">
@@ -1342,10 +1342,10 @@
            above other apps, outliving every navigation of this page. calc.js
            hides this under the desktop shell (pywebview), where window.open
            would navigate THIS window instead of opening a second one. #}
-        <button type="button" class="calc-close calc-popout" onclick="openCalcWindow(this)"
+        <button type="button" class="calc-close calc-popout ui-btn-icon" onclick="openCalcWindow(this)"
                 data-calc-window-url="{{ url_for('main.calc_window') }}"
                 title="Open in a separate window" aria-label="Open in a separate window">&#8599;</button>
-        <button type="button" class="calc-close" onclick="toggleCalc()" title="Close" aria-label="Close">&times;</button>
+        <button type="button" class="calc-close ui-btn-icon" onclick="toggleCalc()" title="Close" aria-label="Close">&times;</button>
         </span>
         </div>
         {# the sections + expression footer: ONE partial, shared with /calc-window #}

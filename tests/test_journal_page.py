@@ -62,7 +62,7 @@ class TestThePage:
         h2 = re.search(r"<h2[^>]*>(.*?)</h2>", html, re.S).group(1)
         assert "every run, whoever ran it" not in h2 and 'class="muted jr-tagline ui-head-gist">every run, whoever ran it' in html
         body = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)
-        assert 'class="jr-stat jr-stat-day">' in body and re.search(r'<span class="jr-stat"><b>2</b> runs</span>', body)
+        assert 'class="jr-stat jr-stat-day">' in body and re.search(r'<span class="jr-stat"><b[^>]*>2</b> runs</span>', body)
         assert "Per-target timeline" in body and 'class="jr-sec-title"' in body
         assert re.search(r'<a class="jr-pill jr-out-\w+" href="#card-104"[^>]*>104</a>', body), "a run is a numbered chip"
         assert '<span class="jr-seg-fam">' in body, "the family is named once per segment"

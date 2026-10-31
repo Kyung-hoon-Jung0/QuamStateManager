@@ -188,6 +188,29 @@
 .ui-search.ui-search { height: var(--ui-btn-h); min-height: 0; margin: 0; padding: 0 var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-pill); background-color: var(--ui-surface-0); color: var(--ui-text); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); }
 .ui-search.ui-search::placeholder { color: var(--ui-text-2); opacity: 1; }
 
+/* K8 number columns by position (stage 4): the template puts ui-num-N on a
+   table for each column N whose header sorts as a number, so the column aligns
+   right from the first paint, with no script. */
+.ui-num-1 > thead > tr > th:nth-child(1), .ui-num-1 > tbody > tr > td:nth-child(1) { text-align: right; }
+.ui-num-2 > thead > tr > th:nth-child(2), .ui-num-2 > tbody > tr > td:nth-child(2) { text-align: right; }
+.ui-num-3 > thead > tr > th:nth-child(3), .ui-num-3 > tbody > tr > td:nth-child(3) { text-align: right; }
+.ui-num-4 > thead > tr > th:nth-child(4), .ui-num-4 > tbody > tr > td:nth-child(4) { text-align: right; }
+.ui-num-5 > thead > tr > th:nth-child(5), .ui-num-5 > tbody > tr > td:nth-child(5) { text-align: right; }
+.ui-num-6 > thead > tr > th:nth-child(6), .ui-num-6 > tbody > tr > td:nth-child(6) { text-align: right; }
+.ui-num-7 > thead > tr > th:nth-child(7), .ui-num-7 > tbody > tr > td:nth-child(7) { text-align: right; }
+.ui-num-8 > thead > tr > th:nth-child(8), .ui-num-8 > tbody > tr > td:nth-child(8) { text-align: right; }
+.ui-num-9 > thead > tr > th:nth-child(9), .ui-num-9 > tbody > tr > td:nth-child(9) { text-align: right; }
+.ui-num-10 > thead > tr > th:nth-child(10), .ui-num-10 > tbody > tr > td:nth-child(10) { text-align: right; }
+.ui-num-11 > thead > tr > th:nth-child(11), .ui-num-11 > tbody > tr > td:nth-child(11) { text-align: right; }
+.ui-num-12 > thead > tr > th:nth-child(12), .ui-num-12 > tbody > tr > td:nth-child(12) { text-align: right; }
+.ui-num-13 > thead > tr > th:nth-child(13), .ui-num-13 > tbody > tr > td:nth-child(13) { text-align: right; }
+.ui-num-14 > thead > tr > th:nth-child(14), .ui-num-14 > tbody > tr > td:nth-child(14) { text-align: right; }
+.ui-num-15 > thead > tr > th:nth-child(15), .ui-num-15 > tbody > tr > td:nth-child(15) { text-align: right; }
+
+/* K8: a wide list keeps its first (identity) column in view; the cell keeps
+   the opaque background tables already give it, so the row hover still shows */
+.ui-table-sticky1 > thead > tr > th:first-child, .ui-table-sticky1 > tbody > tr > td:first-child { position: sticky; left: 0; z-index: 1; border-right: var(--ui-bw) solid var(--ui-border-strong); }
+
 /* K13 dialog shell (shape only; real dialogs keep their own element) --- */
 .ui-dialog { display: flex; flex-direction: column; max-height: var(--ui-dialog-max-h); width: var(--ui-dialog-m); max-width: 100%; margin: 0; padding: 0; border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-lg); background: var(--ui-surface-1); color: var(--ui-text); box-shadow: var(--ui-shadow); overflow: hidden; }
 .ui-dialog--s { width: var(--ui-dialog-s); }
@@ -414,10 +437,9 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
 /* K10: the open marker (a details element's own state, no script) */
 .ui-disclosure[open] > .ui-disclosure-summary::before { content: var(--ui-disclosure-marker-open); }
 .ui-disclosure-summary > .ui-count { margin-left: auto; font-size: var(--ui-fs-sm); }
-/* K8 on the list tables: sentence-case head, tabular numbers, numbers to the right */
+/* K8 on the list tables: sentence-case head, tabular numbers */
 table.data-table th { font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); color: var(--ui-text-2); }
 table.data-table td { font-variant-numeric: tabular-nums; }
-table.data-table th.ui-table-num, table.data-table td.ui-table-num { text-align: right; }
 /* D-61: sidebar links read as text, not as links; the selected pill keeps its fill (D-49) */
 .sidebar-nav a { color: var(--ui-text); }
 .sidebar-nav a:hover:not(.active) { background: var(--ui-surface-2); }

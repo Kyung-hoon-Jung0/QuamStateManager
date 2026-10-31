@@ -447,7 +447,7 @@
   {% if none_props or none_qubits or none_triggers %}
     {# docs/158 + F-PH3: the None answer — not the defaults, not every qubit,
        not every source, and not "no data matches" either #}
-    <div class="param-history-empty param-history-none">
+    <div class="param-history-empty param-history-none ui-state ui-state--empty">
       <p><strong>Nothing selected.</strong></p>
       <p class="muted">
         {% set _none = [] %}
@@ -482,7 +482,7 @@
         </div>
       </div>
     {% else %}
-      <div class="param-history-empty">
+      <div class="param-history-empty ui-state ui-state--empty">
         {% if summary.total %}
           <p><strong>No data matches your filters.</strong></p>
           <p class="muted">

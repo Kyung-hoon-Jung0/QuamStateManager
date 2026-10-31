@@ -1045,7 +1045,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
     cursor: grab; user-select: none; touch-action: none;
 }
 .settings-header:active { cursor: grabbing; }
-.settings-title { font-size: 0.85rem; font-weight: 700; }
+.settings-title { font-size: 0.85rem; font-weight: 600; }
 .settings-header-tools { display: flex; gap: 0.15rem; cursor: default; }
 /* B3: the running version is the first line of Settings */
 .settings-version { padding: 0.3rem 0.55rem 0; font-size: 0.78em; }
@@ -1199,7 +1199,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
     cursor: grab; user-select: none; touch-action: none;
 }
 .manual-header:active { cursor: grabbing; }
-.manual-title { font-size: 0.85rem; font-weight: 700; }
+.manual-title { font-size: 0.85rem; font-weight: 600; }
 .manual-header-tools { display: flex; gap: 0.15rem; cursor: default; }
 .manual-close {
     width: 1.6rem; height: 1.6rem; margin: 0; padding: 0; line-height: 1;
@@ -1282,7 +1282,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-header:active { cursor: grabbing; }
 /* B3: once dragged, the popover floats at fixed coords (anchored under the badge until then) */
 .calc-popover.calc-floating { position: fixed; right: auto; top: auto; margin-top: 0; }
-.calc-title { font-size: 0.85rem; font-weight: 700; }
+.calc-title { font-size: 0.85rem; font-weight: 600; }
 .calc-header-tools { display: flex; gap: 0.15rem; cursor: default; }
 .calc-close {
     background: none; border: none; cursor: pointer; padding: 0.1rem 0.3rem;
@@ -5501,16 +5501,9 @@ html.diag-page-live #diagnostics-banner-slot { display: none; }
 .live-drift-embed { margin: 0.5rem 0 1rem; }
 .live-drift-bar {
     display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
-    padding: 0.5rem 0.75rem; margin-bottom: 0.5rem;
-    background: var(--color-info-bg); border: 1px solid var(--color-info-border);
-    border-radius: 6px; color: var(--color-info-text);
+    padding: 0.25rem 0; margin-bottom: 0.5rem;
 }
-.live-drift-summary { display: flex; align-items: baseline; gap: 0.5rem; flex: 1; flex-wrap: wrap; }
-.live-drift-count {
-    font-size: 1.3em; font-weight: 700; color: var(--color-info-text);
-    background: var(--color-info-bg); padding: 0 0.3rem; border-radius: 4px;
-}
-.live-drift-insync { font-weight: 600; }
+.live-drift-summary { flex: 1; }
 .live-drift-note { padding: 0.75rem; }
 .live-drift-table { max-height: 60vh; overflow-y: auto; }   /* .table-scroll gives overflow-x only — add vertical scroll for a long drift list (feedback #4) */
 
@@ -7885,10 +7878,8 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
    every hue readable in both themes. */
 .phf-chip.active .trigger-dot { box-shadow: 0 0 0 1.5px var(--pico-primary-inverse); }
 
-.param-history-empty {
-    padding: 2rem; text-align: center;
-    border: 1px dashed var(--history-cell-border); border-radius: 8px;
-}
+
+.param-history-empty p { margin: 0 0 .25rem; }
 
 /* First-visit CTA: shown when the chip's history index is empty but
  * the workspace alignment scan found ingestible experiments. Bigger
@@ -12136,10 +12127,8 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .qualibrate-topstrip p { margin: .15rem 0; }
 .qualibrate-doctor-list { list-style: none; padding-left: .25rem; margin: .3rem 0; }
 .qualibrate-doctor-list li { margin: .25rem 0; }
-.qualibrate-doctor-error .qualibrate-doctor-sev { color: var(--cell-bad-color, #d62728); }
-.qualibrate-doctor-warning .qualibrate-doctor-sev { color: var(--cell-ok-color, #ff7f0e); }
-.qualibrate-doctor-info .qualibrate-doctor-sev { color: var(--pico-muted-color, #888); }
-.qualibrate-doctor-sev { display: inline-block; width: 1.1em; }
+.qualibrate-doctor-sev { min-width: 4.5em; }
+.qualibrate-doctor-list li > span:last-child { flex: 1 1 30ch; min-width: 0; }
 .qualibrate-path-missing code { opacity: .65; text-decoration: line-through; }
 /* v1.3.0 B2: a project's paths may break; at 1280 px the row ran 60 px past the
    pane and cut the "Open in SM" button, which itself never wraps */
@@ -12265,7 +12254,8 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .agent-human-ran .agent-pill-link { border-style: dashed; }
 
 /* ---- Calibration log (docs/173) ---- */
-.jr-head-actions { display: flex; gap: .6rem; align-items: center; }
+.jr-head-actions { display: flex; gap: .6rem; align-items: center; justify-content: space-between; }
+.jr-head-actions > a { flex: 0 0 auto; }
 .jr-folder { font-size: .74rem; max-width: 26rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jr-filters { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .2rem 0 .6rem; }
 .jr-filters input, .jr-filters select { margin: 0; padding: .2rem .45rem; font-size: .82rem; height: auto; width: auto; }

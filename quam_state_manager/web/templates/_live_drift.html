@@ -39,15 +39,15 @@
   <p class="muted live-drift-note">&#9888;&#65039; Could not read the live chip: {{ error }}</p>
 {% else %}
   <div class="live-drift-bar">
-    <div class="live-drift-summary">
+    <div class="live-drift-summary ui-verdict ui-verdict--{{ 'warn' if total > 0 else 'ok' }}"><span class="ui-dot" aria-hidden="true"></span>
       {% if total > 0 %}
-      <span class="live-drift-count">{{ total }}</span>
-      <span>parameter{{ '' if total == 1 else 's' }} changed on the live chip</span>
+      <strong class="ui-verdict-key">{{ total }}
+      parameter{{ '' if total == 1 else 's' }} changed on the live chip</strong>
       {% else %}
-      <span class="live-drift-insync">&#10003; In sync — no changes since the baseline.</span>
+      <strong class="ui-verdict-key">In sync</strong> <span>— no changes since the baseline.</span>
       {% endif %}
       {% if baseline_utc %}
-      <small class="muted">baseline: {{ baseline_utc | ts_local }}</small>
+      <small class="ui-verdict-why">baseline: {{ baseline_utc | ts_local }}</small>
       {% endif %}
     </div>
     <button class="btn-sm outline" type="button" onclick="resetBaseline()"

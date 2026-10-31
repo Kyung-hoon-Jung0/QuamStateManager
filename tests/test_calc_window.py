@@ -126,7 +126,7 @@ class TestOneSource:
 class TestPopoutDoor:
     def test_the_popover_header_carries_the_door(self):
         head = _BASE[_BASE.index('id="calc-header"'):_BASE.index("{% include '_calc_body.html' %}")]
-        assert 'class="calc-close calc-popout"' in head
+        assert re.search(r'class="calc-close calc-popout(?: [\w-]+)*"', head)
         assert 'onclick="openCalcWindow(this)"' in head
         assert "data-calc-window-url=\"{{ url_for('main.calc_window') }}\"" in head
         # the ↗ sits BEFORE the × (close stays the last thing in the corner)

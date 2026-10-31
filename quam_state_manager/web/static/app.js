@@ -1481,25 +1481,6 @@ window.showWaveformPlot = function(btn) {
  *
  * The <th> needs data-col="N" (0-based column index) and data-type="num"|"str".
  */
-/* K8 (docs/308 stage 4): a column whose header sorts as a number is a number
-   column, so its header and cells align right (ui-table-num). The header's
-   data-type is the one truth both the sort and the alignment read; rows with a
-   colspan (the empty-list row) are left alone. Lists are tens of rows. */
-function alignNumericColumns(root) {
-    root = root || document;
-    var heads = root.matches && root.matches('table') ? root.querySelectorAll('th[data-type="num"]') : root.querySelectorAll('table.data-table th[data-type="num"]');
-    for (var i = 0; i < heads.length; i++) {
-        var th = heads[i], table = th.closest('table'), idx = th.cellIndex;
-        th.classList.add('ui-table-num');
-        var rows = table && table.tBodies[0] ? table.tBodies[0].rows : [];
-        for (var r = 0; r < rows.length; r++) {
-            var c = rows[r].cells;
-            if (c.length > idx && c[0].colSpan === 1) c[idx].classList.add('ui-table-num');
-        }
-    }
-}
-document.addEventListener('DOMContentLoaded', function() { alignNumericColumns(document); });
-document.addEventListener('htmx:afterSwap', function(evt) { var t = evt.target; alignNumericColumns((t && t.closest && t.closest('table')) || t); });
 (function() {
     document.addEventListener('click', function(evt) {
         var th = evt.target.closest('th.sortable');
