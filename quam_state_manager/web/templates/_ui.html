@@ -27,10 +27,10 @@
 <label class="ui-check"><input type="checkbox"{% if checked %} checked{% endif %}>{{ text }}</label>
 {%- endmacro -%}
 
-{%- macro ui_head(title, level=2, eyebrow=None, gist=None, count=None, actions=None, data=False) -%}
+{%- macro ui_head(title, level=2, eyebrow=None, gist=None, count=None, actions=None, data=False, badge=None) -%}
 <header class="ui-head{% if data %} ui-head--data{% endif %}">
 {%- if eyebrow and not data %}<div class="ui-head-eyebrow">{{ eyebrow }}</div>{% endif -%}
-<h{{ level }} class="ui-head-title">{{ title }}{% if count is defined and count is not none %} {{ ui_count(count) }}{% endif %}</h{{ level }}>
+<h{{ level }} class="ui-head-title">{{ title }}{% if count is defined and count is not none %} {{ ui_count(count) }}{% endif %}{% if badge %}{{ ui_badge(badge.text, badge.tone or 'neutral') }}{% endif %}</h{{ level }}>
 {%- if actions %}{{ ui_actions(actions) }}{% endif -%}
 {%- if gist and not data %}<p class="ui-head-gist">{{ gist }}</p>{% endif -%}
 </header>
@@ -98,7 +98,7 @@
 
 {%- macro ui_render(s) -%}
 {%- set p = s.part -%}
-{%- if p == 'head' %}{{ ui_head(s.title, s.level or 2, s.eyebrow, s.gist, s.count, s.actions, s.data) }}
+{%- if p == 'head' %}{{ ui_head(s.title, s.level or 2, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge) }}
 {%- elif p == 'notice' %}{{ ui_notice(s.tone, s.key, s.text, s.actions) }}
 {%- elif p == 'callout' %}{{ ui_callout(s.tone, s.title, s.text) }}
 {%- elif p == 'verdict' %}{{ ui_verdict(s.tone, s.key, s.why) }}

@@ -49,11 +49,12 @@
         return l;
     }
 
-    function head(title, level, eyebrow, gist, cnt, acts, data) {
+    function head(title, level, eyebrow, gist, cnt, acts, data, bdg) {
         var h = el("header", data ? "ui-head ui-head--data" : "ui-head");
         if (eyebrow && !data) h.appendChild(el("div", "ui-head-eyebrow", eyebrow));
         var t = el("h" + (level || 2), "ui-head-title", title);
         if (has(cnt)) { t.appendChild(document.createTextNode(" ")); t.appendChild(count(cnt)); }
+        if (bdg) t.appendChild(badge(bdg.text, bdg.tone));
         h.appendChild(t);
         if (acts && acts.length) h.appendChild(actions(acts));
         if (gist && !data) h.appendChild(el("p", "ui-head-gist", gist));
@@ -179,7 +180,7 @@
 
     function render(s) {
         switch (s && s.part) {
-            case "head": return head(s.title, s.level, s.eyebrow, s.gist, s.count, s.actions, s.data);
+            case "head": return head(s.title, s.level, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge);
             case "notice": return notice(s.tone, s.key, s.text, s.actions);
             case "callout": return callout(s.tone, s.title, s.text);
             case "verdict": return verdict(s.tone, s.key, s.why);

@@ -52,7 +52,7 @@ def _parts():
         ("Verdict", "ok", {"part": "verdict", "tone": "ok", "key": "All 1218 waveforms are bit-identical", "why": "to the reference"}),
         ("Verdict", "warn", {"part": "verdict", "tone": "warn", "key": "2 need a look", "why": "control and target swapped"}),
         ("Verdict", "danger", {"part": "verdict", "tone": "danger", "key": "Stops loading 2 found"}),
-        ("Verdict", "neutral", {"part": "verdict", "tone": "neutral", "key": "None found", "why": "May fail at run time, Changes output"}),
+        ("Verdict", "neutral", {"part": "verdict", "tone": "neutral", "key": "May fail at run time", "why": "none found"}),
         ("Verdict", "Long", {"part": "verdict", "tone": "warn", "key": "Long conclusion", "why": LONG}),
     ]
     # K7 items
@@ -104,9 +104,9 @@ def _review_dialog():
                 "body": [{"part": "table", "columns": ["Pulse", "Plays on now", "After"], "rows": [
                     ["control", {"chip": ctl + ".z"}, {"chip": tgt + ".z"}],
                     ["target", {"chip": tgt + ".z"}, {"chip": ctl + ".z"}]]},
+                    {"part": "note", "text": "Pulse names stay the same; only the channel changes."},
                     {"part": "disclosure", "summary": "Details", "body": [
                         {"part": "note", "text": "qubit_pairs." + pid + ".macros.cz.flux_pulse_control: " + ctl + ".z → " + tgt + ".z"}]}],
-                "note": "Pulse names stay the same; only the channel changes.",
                 "actions": [{"label": "Keep as is", "cls": "btn-sync sm outline"}, {"label": "Apply", "cls": "btn-sync sm"}]}
     return {"part": "dialog", "size": "m",
             "head": {"eyebrow": "Rule review · cz_rule", "title": "2 pairs would change"},
@@ -149,9 +149,10 @@ def _apply_dialog():
 
 def _env_card():
     """E1 + E2: the environment upgrade card head and its verdict summary."""
-    return {"part": "item", "title": "Environment match",
+    return {"part": "item",
             "body": [
                 {"part": "head", "eyebrow": "Environment match", "title": "quam-builder 0.4.0 → 0.6.0", "level": 3,
+                 "badge": {"text": "upgrade", "tone": "accent"},
                  "gist": "Checked in env_new · quam 0.6.0 · qm 1.4.1 · numpy 2.5.3",
                  "actions": [{"label": "Check this env", "cls": "btn-sync sm primary"},
                              {"label": "Record reference", "cls": "btn-sync sm"},
@@ -159,11 +160,10 @@ def _env_card():
                              {"label": "Copy as text", "cls": "btn-sync sm"},
                              {"label": "Re-probe environment", "cls": "btn-sync sm outline"},
                              {"label": "Validate deeply (Quam.load)", "cls": "btn-sync sm outline"}]},
-                {"part": "badge", "text": "upgrade", "tone": "accent"},
                 {"part": "verdict", "tone": "danger", "key": "Stops loading", "why": "2 found"},
                 {"part": "verdict", "tone": "ok", "key": "Changes output", "why": "0 of 1218 waveforms differ"},
                 {"part": "verdict", "tone": "neutral", "key": "FYI", "why": "1 note"},
-                {"part": "verdict", "tone": "neutral", "key": "None found", "why": "May fail at run time"},
+                {"part": "verdict", "tone": "neutral", "key": "May fail at run time", "why": "none found"},
                 {"part": "callout", "tone": "note", "title": "Not checked",
                  "text": "Hardware timing; samples written to the QM config are compared, not measured hardware timing."},
             ]}
