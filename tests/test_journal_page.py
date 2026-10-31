@@ -350,10 +350,11 @@ class TestTheDayNavigationActuallyNavigates:
         c = world["client"]
         today = datetime.now().strftime("%Y-%m-%d")
         on_today = self._nav(c.get(f"/journal/day?day={today}").get_data(as_text=True))
-        assert ">today<" not in on_today, "there is no 'go to today' when you are on it"
-        assert "disabled" in on_today, "and no tomorrow to go to"
+        # R4-AG-8: the slot stays (disabled) on today, so the strip never shifts
+        assert 'disabled title="already on today">today<' in on_today, "no live 'go to today' when you are on it"
+        assert on_today.count("disabled") == 2, "and no tomorrow to go to"
         away = self._nav(c.get(f"/journal/day?day={DAY}").get_data(as_text=True))
-        assert ">today<" in away, "the way back must appear once you have left"
+        assert "\">today<" in away, "the way back must be live once you have left"
         assert "disabled" not in away, "and the next day must become reachable"
 
     def test_the_picker_follows_the_day_it_landed_on(self, world):
@@ -389,7 +390,8 @@ def test_the_filter_select_keeps_room_for_its_arrow_and_the_loose_label_is_not_a
     loose-lines label landed in the run grid's 4.3rem time column ("11 journal..."; clipped:
     true -> false). The rules are pinned here; the measurement is the journey."""
     css = (ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
-    assert re.search(r"\.jr-filters select \{ padding-right: 1\.9rem; \}", css)
+    # R4-AG-8: the toolbar's one-height rule outranks Pico, so the select's room rides the same weight
+    assert re.search(r"\.jr-filters\.jr-filters select \{ padding: \.2rem 1\.9rem \.2rem \.45rem; \}", css)
     assert re.search(r"\.jr-card\.jr-loose > summary \{ display: flex;", css)
 
 

@@ -503,7 +503,7 @@
                 // a narrow band draws as a bare line across the plot: name it where it sits
                 bandLabels.push({ _czpDefectLabel: true, xref: 'paper', x: 0.01, xanchor: 'left', yref: 'y', y: ghz(b.hi_hz),
                     yanchor: 'bottom', showarrow: false, text: q.name + ' defect ' + ghz(b.lo_hz).toFixed(3) + '–' + ghz(b.hi_hz).toFixed(3) + ' GHz',
-                    font: { size: 9, color: col } });
+                    font: { size: 11, color: col } });
             });
             if ((q.tls || []).length) notes.push(q.name + ': ' + q.tls.length + ' measured defect band' + (q.tls.length === 1 ? '' : 's') + ' shaded');
         });
@@ -547,26 +547,29 @@
         });
         // resonance levels for the moving control at the target's operating height
         el.setAttribute('data-resonance-levels', JSON.stringify(d.time_panel.levels));
+        // R4-AG-14: level labels are merged after the span is known (see below).
+        var levelAnns = [];
         d.time_panel.levels.forEach(function (level) {
                 var lv = [level.name, level.frequency_hz];
                 if (lv[1] == null) return;
                 shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(lv[1]), y1: ghz(lv[1]),
                     line: { color: C.res, width: 1, dash: 'dash' }, layer: 'below' });
-                annotations.push({ xref: 'paper', x: 1, xanchor: 'left', xshift: 8, yref: 'y', y: ghz(lv[1]), yanchor: 'bottom', showarrow: false,
-                    text: 'control on ' + lv[0], font: { size: 10, color: C.res } });
+                levelAnns.push({ xref: 'paper', x: 1, xanchor: 'left', xshift: 8, yref: 'y', y: ghz(lv[1]), yanchor: 'bottom', showarrow: false,
+                    text: 'control on ' + lv[0], font: { size: 11, color: C.res },
+                    hovertext: 'control on ' + lv[0] + ' (' + ghz(lv[1]).toFixed(3) + ' GHz)' });
         });
         var plan = d.row.plan;
         if (plan && plan.omega_int_hz) {
             shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(plan.omega_int_hz), y1: ghz(plan.omega_int_hz),
                 line: { color: C.plan, width: 1.4, dash: 'dash' } });
             annotations.push({ xref: 'paper', x: 0, xanchor: 'left', yref: 'y', y: ghz(plan.omega_int_hz), yanchor: 'bottom', showarrow: false,
-                text: 'planned ω_int (' + esc(plan.leakage_qubit || '?') + ' carries |2>)', font: { size: 10, color: C.plan } });
+                text: 'planned ω_int (' + esc(plan.leakage_qubit || '?') + ' carries |2>)', font: { size: 11, color: C.plan } });
         }
         if (d.row.interaction_frequency_hz) {
             var fi = d.row.interaction_frequency_hz;
             shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ghz(fi), y1: ghz(fi), line: { color: C.plan, width: 1.4, dash: 'dash' } });
             annotations.push({ xref: 'paper', x: 0, xanchor: 'left', yref: 'y', y: ghz(fi), yanchor: 'bottom', showarrow: false,
-                text: 'stored interaction frequency', font: { size: 10, color: C.plan } });
+                text: 'stored interaction frequency', font: { size: 11, color: C.plan } });
         }
         var over = {
             margin: { l: 64, r: 142, t: 44, b: 120 }, showlegend: true,
@@ -588,6 +591,17 @@
             var pad = Math.max(0.01, (hi - lo) * 0.04);
             over.yaxis.range = [lo - pad, hi + pad];
         }
+        // R4-AG-14: a level label closer than one 11 px line to a label already drawn would overlap
+        // it; it joins that label's hover text (and the drawn label ends in " …") instead.
+        var plotPx = Math.max(120, (el.clientHeight || 520) - 164);
+        var gap = isFinite(lo) && isFinite(hi) && hi > lo ? 15 * (hi - lo) * 1.08 / plotPx : 0;
+        var drawn = [];
+        levelAnns.sort(function (a, b) { return b.y - a.y; }).forEach(function (ann) {
+            var near = drawn.filter(function (o) { return Math.abs(o.y - ann.y) < gap; })[0];
+            if (!near) { drawn.push(ann); annotations.push(ann); return; }
+            near.hovertext += '<br>' + ann.hovertext;
+            if (near.text.slice(-2) !== ' …') near.text += ' …';
+        });
         el.setAttribute('data-yspan', isFinite(lo) && isFinite(hi) ? lo.toFixed(4) + ' ' + hi.toFixed(4) : '');
         if (side) {
             traces = traces.concat(side.traces);
@@ -675,7 +689,7 @@
             shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: level.lo_mhz, y1: level.hi_mhz, fillcolor: tint(C.res, 0.08), line: { width: 0 }, layer: 'below' });
             shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: lv[1], y1: lv[1], line: { color: C.res, width: 1, dash: 'dash' }, layer: 'below' });
             // Spread the labels along their own levels: a large idle detuning packs them vertically.
-            annotations.push({ xref: 'paper', x: 1 - index * 0.2, xanchor: 'right', yref: 'y2', y: lv[1], yanchor: 'bottom', showarrow: false, text: lv[0], font: { size: 10, color: C.res } });
+            annotations.push({ xref: 'paper', x: 1 - index * 0.2, xanchor: 'right', yref: 'y2', y: lv[1], yanchor: 'bottom', showarrow: false, text: lv[0], font: { size: 11, color: C.res } });
         });
         el.setAttribute('data-dwell', panel.dwell);
         var frequencyTraces = traces.filter(function (t) { return t.yaxis !== 'y2'; });
@@ -888,7 +902,7 @@
             qubitLines.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: f / 1e9, y1: f / 1e9,
                               line: { color: C.q[k] || C.res, width: 1, dash: 'dash' }, layer: 'below' });
             qubitLabels.push({ xref: 'paper', x: 1, xanchor: 'left', xshift: 8, yref: 'y', y: f / 1e9, showarrow: false,
-                               text: q.name + ' idle', font: { size: 10, color: C.q[k] || C.res } });
+                               text: q.name + ' idle', font: { size: 11, color: C.q[k] || C.res } });
         });
         var fluxTraces = [{ type: 'scatter', mode: 'lines', x: xs, y: curve.map(function (c) { return c.coupler_frequency_hz / 1e9; }),
                             name: 'coupler (stored model)', line: { color: C.muted, width: 2 } },
@@ -908,7 +922,7 @@
             idleShapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: iz, y1: iz,
                               line: { color: C.res, width: 1, dash: 'dash' }, layer: 'below' });
             idleNotes.push({ xref: 'paper', x: 1, xanchor: 'left', xshift: 8, yref: 'y', y: iz, showarrow: false,
-                             text: 'idle ZZ ' + iz.toFixed(3) + ' MHz', font: { size: 10, color: C.res } });
+                             text: 'idle ZZ ' + iz.toFixed(3) + ' MHz', font: { size: 11, color: C.res } });
         }
         if (time) time.setAttribute('data-idle-zz-hz', a.idle_zz_hz == null ? '' : a.idle_zz_hz);
         var LT = layout(Object.assign({}, common, { xaxis: { title: { text: 'coupler amplitude (V)' } },
