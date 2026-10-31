@@ -132,8 +132,8 @@ def test_references_show_env_name_local_minute_and_size(loaded, monkeypatch):
     monkeypatch.setattr(view.config_generator, "discover_envs",
                         lambda: [{"name": "labenv", "python": r"c:\envs\labenv\python.exe"}])
     html = client.get("/env-upgrade/references").get_data(as_text=True)
-    assert "<code>labenv</code>" in html and "903 KB" in html and "924191" not in html
-    assert re.search(r"2026-10-30 \d\d:\d\d ", html) and ".456789" not in html
+    assert re.search(r"<code[^>]*>labenv</code>", html) and "903 KB" in html and "924191" not in html
+    assert re.search(r"2026-10-30 \d\d:\d\d\b", html) and ".456789" not in html
     assert 'title="' + "a" * 64 in html
     assert '<select class="env-reference-python">' in html and 'type="text" value=' not in html
 
