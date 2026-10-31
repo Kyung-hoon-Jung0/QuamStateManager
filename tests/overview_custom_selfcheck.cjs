@@ -298,10 +298,9 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     ok(/"t1":"min"/.test(stored(win) || '') && /"gate1q":"min"/.test(stored(win) || ''),
       'C7: the global stat persisted for every stat tile');
     ok(!!win.document.getElementById('ov-settings-pop'), 'C7: the panel stays open after apply');
-    ok(!!pop.querySelector('[data-global-stat="min"].active'), 'C7: the uniform stat shows active');
-    const sel = pop.querySelector('.ov-set-sel[data-tile-id="t1"]');
-    sel.value = 'avg';
-    sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(!!pop.querySelector('[data-global-stat="min"].ui-segmented-on'), 'C7: the uniform stat shows active');
+    pop.querySelector('[data-tile-id="t1"][data-tile-stat="avg"]')
+      .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
     ok(/30\.0/.test(tileById(win, 't1').querySelector('.topo-card-value').textContent),
       'C7: per-tile apply -> T1 back to AVG while others stay MIN');
     ok(!/"t1"/.test(stored(win) || '') && /"gate1q":"min"/.test(stored(win) || ''),

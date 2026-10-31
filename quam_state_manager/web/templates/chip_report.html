@@ -45,6 +45,10 @@
         .chip-report th, .chip-report td { border: 1px solid var(--pico-muted-border-color);
                           padding: 0.28rem 0.5rem; text-align: left; }
         .chip-report th { background: var(--pico-card-background-color); font-weight: 600; }
+        /* a number reads down its column: right-aligned, every digit one width */
+        .chip-report td.rep-num { text-align: right; font-variant-numeric: tabular-nums; }
+        .chip-report .rep-back { margin-right: auto; font-size: 0.85rem; }
+        .chip-report .rep-jump { font-size: 0.8rem; margin: 0 0 0.6rem; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 0.2rem 0.8rem; }
         .chip-report tr:nth-child(even) td {
                           background: color-mix(in srgb, var(--pico-card-background-color) 55%, transparent); }
         .chip-report .rep-off { color: var(--pico-muted-color); }
@@ -161,6 +165,7 @@
        then press the printer icon beside <b>Chip Status</b> again.</p>
 {% else %}
     <div class="rep-toolbar no-print">
+        <a class="rep-back" href="/topology">&larr; Back to Chip Status</a>
         <span class="rep-note" id="rep-status">One offline .html file with the checked sections.</span>
         <button type="button" class="btn-sm" onclick="window.print()">Print</button>
         <button type="button" class="btn-sm outline" id="rep-download">Download HTML</button>
@@ -195,6 +200,10 @@
            Small four-part numeric versions are preserved outside network fields.{% else %}Nothing is hidden: network addresses and
            folder paths are written as stored.{% endif %} Charts in the file are static pictures.</p>
     </section>
+
+    <div class="rep-jump no-print" role="navigation" aria-label="Jump to a section">
+        {% for s in sections if s.available %}<a href="#rep-sec-{{ s.key }}" data-rep-jump="{{ s.key }}"{{ ' hidden' if s.key not in checked }}>{{ s.label }}</a>{% endfor %}
+    </div>
 
     {% for s in sections if s.available %}
     {% if s.key in inline %}{{ inline[s.key] | safe }}{% else %}
@@ -274,7 +283,17 @@
             el.removeAttribute('data-rep-lazy');
             el.setAttribute('data-rep-state', 'failed');
         }
+        /* A cell holding one number (with its unit) is marked so it aligns right. */
+        var NUM = /^[-+−]?(\d[\d,]*(\.\d+)?|\.\d+)(e[-+]?\d+)?\s*(%|[A-Za-zµμ]{1,4})?$/;
+        function nums(root) {
+            Array.prototype.forEach.call((root || document).querySelectorAll('td:not(.rep-id)'), function (td) {
+                if (td.children.length > 1) return;
+                if (NUM.test(td.textContent.trim())) td.classList.add('rep-num');
+            });
+        }
+        nums(document);
         function after(key, el) {
+            nums(el);
             if (key === 'chip_status' && window.ComponentMap) {
                 var m = el.querySelector('#component-map');
                 if (m) ComponentMap.mount(m);
@@ -386,6 +405,8 @@
             b.addEventListener('change', function () {
                 var el = sec(b.value);
                 if (el) el.hidden = !b.checked;
+                var j = document.querySelector('a[data-rep-jump="' + b.value + '"]');
+                if (j) j.hidden = !b.checked;
                 if (el && b.checked && el.getAttribute('data-rep-state') === 'failed') {
                     el.setAttribute('data-rep-lazy', '');
                 }

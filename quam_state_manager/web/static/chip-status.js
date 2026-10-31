@@ -2065,22 +2065,26 @@ window.ChipStatus.mount = function (opts) {
         var stats = ['avg', 'median', 'min', 'max'];
         var uniform = _ovStatTiles.length ? _ovStatOf(prefs, _ovStatTiles[0].id) : null;
         _ovStatTiles.forEach(function(t) { if (_ovStatOf(prefs, t.id) !== uniform) uniform = null; });
+        function segBtn(s, on, attrs) {
+            return '<button type="button" class="ui-segmented-opt' + (on ? ' ui-segmented-on' : '')
+                 + '" aria-pressed="' + (on ? 'true' : 'false') + '" ' + attrs + '>' + s + '</button>';
+        }
         var seg = stats.map(function(s) {
-            return '<button type="button" class="ov-set-seg-btn' + (s === uniform ? ' active' : '')
-                 + '" data-global-stat="' + s + '">' + s + '</button>';
+            return segBtn(s, s === uniform, 'data-global-stat="' + s + '"');
         }).join('');
         var rows = _ovStatTiles.map(function(t) {
             var cur = _ovStatOf(prefs, t.id);
             var opts = stats.map(function(s) {
-                return '<option value="' + s + '"' + (s === cur ? ' selected' : '') + '>' + s + '</option>';
+                return segBtn(s, s === cur, 'data-tile-id="' + _esc(t.id) + '" data-tile-stat="' + s + '"');
             }).join('');
             return '<div class="ov-set-row"><span class="ov-set-title">' + _esc(t.title) + '</span>'
-                 + '<select class="ov-set-sel" data-tile-id="' + _esc(t.id) + '">' + opts + '</select></div>';
+                 + '<div class="ui-segmented ov-set-sel" data-tile-id="'
+                 + _esc(t.id) + '">' + opts + '</div></div>';
         }).join('');
         pop.innerHTML =
               '<div class="ov-set-head">Overview panels</div>'
-            + '<div class="ov-set-global"><span class="ov-set-title">Statistic for ALL panels</span>'
-            + '<div class="ov-set-seg">' + seg + '</div></div>'
+            + '<div class="ov-set-global"><span class="ov-set-title">Statistic for all panels</span>'
+            + '<div class="ui-segmented">' + seg + '</div></div>'
             + '<div class="ov-set-list">' + rows + '</div>'
             + '<div class="ov-set-foot">'
             + '<button type="button" class="btn-sm outline" id="ov-set-reset"'
@@ -2094,6 +2098,7 @@ window.ChipStatus.mount = function (opts) {
             var a = document.activeElement, had = !!(a && pop.contains(a));
             var gs = had && a.getAttribute('data-global-stat');
             var tid = had && a.getAttribute('data-tile-id');
+            var ts = had && a.getAttribute('data-tile-stat');
             var aid = had && a.id;
             _ovRenderSettingsBody(pop);
             if (!had) return;
@@ -2101,7 +2106,8 @@ window.ChipStatus.mount = function (opts) {
             Array.prototype.forEach.call(pop.querySelectorAll('button, select'), function(el) {
                 if (t || el.disabled) return;
                 if ((gs && el.getAttribute('data-global-stat') === gs)
-                    || (tid && el.getAttribute('data-tile-id') === tid) || (aid && el.id === aid)) t = el;
+                    || (tid && el.getAttribute('data-tile-id') === tid && el.getAttribute('data-tile-stat') === ts)
+                    || (aid && el.id === aid)) t = el;
             });
             if (t) { try { t.focus({ preventScroll: true }); } catch (e) {} }
             else _ovFocusFirst(pop);
@@ -2113,9 +2119,9 @@ window.ChipStatus.mount = function (opts) {
                 applyAnd(function(p2) { _ovStatTiles.forEach(function(t) { _ovSetStat(p2, t.id, s); }); });
             });
         });
-        Array.prototype.forEach.call(pop.querySelectorAll('.ov-set-sel'), function(sel) {
-            sel.addEventListener('change', function() {
-                applyAnd(function(p2) { _ovSetStat(p2, sel.getAttribute('data-tile-id'), sel.value); });
+        Array.prototype.forEach.call(pop.querySelectorAll('[data-tile-stat]'), function(b) {
+            b.addEventListener('click', function() {
+                applyAnd(function(p2) { _ovSetStat(p2, b.getAttribute('data-tile-id'), b.getAttribute('data-tile-stat')); });
             });
         });
         var rs = pop.querySelector('#ov-set-reset');
@@ -3831,8 +3837,8 @@ window.ChipStatus.mount = function (opts) {
                     }],
                     layout: {
                         margin: {l: 80, r: 60, t: 5, b: 28},
-                        xaxis: {title: {text: rbLabel + ' \u2014 ' + gateLabel + ', ' + rbKind + ' (%)', font: {size: 10}}, tickfont: {size: 9}},
-                        yaxis: {tickfont: {size: 10}, autorange: 'reversed'},
+                        xaxis: {title: {text: rbLabel + ' \u2014 ' + gateLabel + ', ' + rbKind + ' (%)'}},
+                        yaxis: {autorange: 'reversed'},
                         plot_bgcolor: 'transparent', paper_bgcolor: 'transparent', bargap: 0.2
                     },
                     config: {responsive: true, displayModeBar: false},
@@ -4874,8 +4880,8 @@ window.ChipStatus.mount = function (opts) {
                     }],
                     layout: {
                         margin: {l: 50, r: 60, t: 5, b: 28},
-                        xaxis: {title: {text: xTitle, font: {size: 10}}, tickfont: {size: 9}},
-                        yaxis: {tickfont: {size: 10}, autorange: 'reversed'},
+                        xaxis: {title: {text: xTitle}},
+                        yaxis: {autorange: 'reversed'},
                         plot_bgcolor: 'transparent', paper_bgcolor: 'transparent', bargap: 0.2
                     },
                     config: {responsive: true, displayModeBar: false},
@@ -7420,7 +7426,7 @@ window.ChipTrends = (function () {
         var until = new Date(heldHi).toISOString().slice(0, 10);
         layout.annotations = (layout.annotations || []).concat([{
             x: 1, xref: 'paper', y: 1, yref: 'paper', xanchor: 'right', yanchor: 'top',
-            showarrow: false, text: 'held to ' + until + ' \u2192', font: { size: 9 },
+            showarrow: false, text: 'held to ' + until + ' \u2192', font: { size: 11 },
             hovertext: 'Each line keeps its last value until ' + until
                 + ' (the newest record). Double-click the chart to see the whole span.'
         }]);
@@ -7634,7 +7640,7 @@ window.ChipTrends = (function () {
             // inside the plot, right of the mark: the 8 px top margin
             // (and the hover mode bar) would hide it above
             return { x: m.x, xref: 'x', y: 1, yref: 'paper', yanchor: 'top', xanchor: 'left',
-                     xshift: 3, showarrow: false, text: 'renamed', font: { size: 9 },
+                     xshift: 3, showarrow: false, text: 'renamed', font: { size: 11 },
                      hovertext: 'Renamed in Re-generate: ' + m.words };
         });
     }
@@ -7857,7 +7863,7 @@ window.ChipTrends = (function () {
                 margin: { l: 58, r: 12, t: 32, b: 64 },
                 height: 300,
                 showlegend: true,
-                legend: { orientation: 'h', y: -0.28, font: { size: 10 } },
+                legend: { orientation: 'h', y: -0.28 },
                 colorway: (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.colorway) || undefined,
                 xaxis: { type: axisType, tickangle: axisType === 'date' ? 0 : -40,
                          /* Say the zone on a TIME axis. A snapshot-id axis is
@@ -7865,15 +7871,15 @@ window.ChipTrends = (function () {
                             no zone note -- claiming one there would be the
                             same unstated-basis problem in reverse. */
                          title: axisType === 'date'
-                             ? { text: 'time' + _tzNote(), font: { size: 10 } }
+                             ? { text: 'time' + _tzNote() }
                              : undefined,
-                         tickfont: { size: 9 }, automargin: true },
+                         automargin: true },
                 yaxis: { title: { text: ((c.metric.indexOf('*') >= 0 && c.label) ? c.label : c.metric)
                                         + (c.unit ? ' (' + c.unit + ')' : ''),
                                   font: { size: 11 } },
                          tickformat: _numFmt.tickformat,
                          exponentformat: _numFmt.exponentformat,
-                         tickfont: { size: 10 }, automargin: true,
+                         automargin: true,
                          range: _flat || undefined,
                          autorange: _flat ? false : true },
                 plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
