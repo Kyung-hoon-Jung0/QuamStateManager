@@ -25,6 +25,7 @@
        nothing and the body rendered transparent-on-white. #}
     <link rel="stylesheet" href="{{ asset_url('pico.min.css') }}">
     <link rel="stylesheet" href="{{ asset_url('style.css') }}">
+    <link rel="stylesheet" href="{{ asset_url('ui-kit.css') }}">
     <style>
         /* report-local layout — theme TOKENS, not hardcoded colors, so the
            page (and the downloaded copy, which inlines the stylesheet under
@@ -524,7 +525,8 @@
                     el.innerHTML = '<p class="rep-note">Opening the tree&hellip;</p>';
                 });
                 var urls = ['{{ asset_url('pico.min.css') }}',
-                            '{{ asset_url('style.css') }}'];
+                            '{{ asset_url('style.css') }}',
+                            '{{ asset_url('ui-kit.css') }}'];
                 var pruned = null;
                 try { pruned = usedCss(doc, urls); } catch (e) { pruned = null; }
                 var css = pruned !== null ? Promise.resolve(pruned) : Promise.all(urls.map(function (u) {

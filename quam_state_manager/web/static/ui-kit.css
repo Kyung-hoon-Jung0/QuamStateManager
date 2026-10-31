@@ -1,0 +1,170 @@
+/* QSM UI kit (docs/308). The ONE place a new visual value is defined.
+ *
+ * Two parts, both enforced by tests/test_ui_contract.py:
+ *   1. one :root token block -- aliases of the existing theme variables
+ *      (style.css / Pico own the light, dark and qm values), or color-mix()
+ *      derivations of them. No theme blocks here, no existing variable is
+ *      redeclared, every name starts with --ui-.
+ *   2. part rules -- every selector starts with .ui-, and every value is a
+ *      var(--ui-*) token (or a keyword / unitless number / border width).
+ * Stage 0 adds parts only; no rule here targets an existing class, so no
+ * existing page changes. Markup: templates/_ui.html (Jinja) and
+ * static/ui.js (window.UI) build the same tree; /ui-kit shows every part.
+ */
+
+:root {
+    /* text */
+    --ui-text: var(--pico-color);
+    --ui-text-2: var(--color-text-muted);
+    --ui-text-3: color-mix(in srgb, var(--color-text-muted) 70%, var(--pico-background-color));
+    /* surfaces and borders */
+    --ui-surface-0: var(--pico-background-color);
+    --ui-surface-1: var(--pico-card-background-color);
+    --ui-surface-2: color-mix(in srgb, var(--pico-color) 6%, var(--pico-background-color));
+    --ui-border: var(--pico-muted-border-color);
+    --ui-border-strong: color-mix(in srgb, var(--pico-color) 28%, var(--pico-background-color));
+    /* accent */
+    --ui-accent: var(--pico-primary);
+    --ui-accent-fill: var(--pico-primary-background);
+    --ui-on-accent: var(--pico-primary-inverse);
+    --ui-accent-border: color-mix(in srgb, var(--pico-primary) 30%, transparent);
+    --ui-accent-bg: color-mix(in srgb, var(--pico-primary) 12%, var(--pico-background-color));
+    /* states (no info colour: a note uses the accent) */
+    --ui-warn-text: var(--color-warning-text);
+    --ui-warn-bg: var(--color-warning-bg);
+    --ui-warn-border: var(--color-warning-border);
+    --ui-danger-text: var(--color-error-text);
+    --ui-danger-bg: var(--color-error-bg);
+    --ui-danger-border: var(--color-error-border);
+    --ui-ok-text: var(--color-success-text);
+    --ui-ok-bg: var(--color-success-bg);
+    --ui-ok-border: var(--color-success-border);
+    /* type: derived from the user's S/M/L scale, never from rem */
+    --ui-fs-base: var(--font-size-base);
+    --ui-fs-md: calc(var(--font-size-base) * 15 / 17);
+    --ui-fs-lg: calc(var(--font-size-base) * 21 / 17);
+    --ui-fs-xl: calc(var(--font-size-base) * 28 / 17);
+    --ui-fs-sm: max(12px, calc(var(--font-size-base) * 13 / 17));
+    --ui-fs-xs: max(11px, calc(var(--font-size-base) * 12 / 17));
+    --ui-fw-normal: 400;
+    --ui-fw: 600;
+    --ui-lh-dense: 1.35;
+    --ui-lh-read: 1.55;
+    --ui-measure: 85ch;
+    --ui-font-mono: var(--pico-font-family-monospace);
+    /* shape */
+    --ui-r-sm: 4px;
+    --ui-r-md: 6px;
+    --ui-r-lg: 12px;
+    --ui-bw: 1px;
+    --ui-bw-strip: 3px;
+    --ui-gap-1: .25rem;
+    --ui-gap-2: .5rem;
+    --ui-gap-3: .75rem;
+    --ui-gap-4: 1.25rem;
+    --ui-dot: 8px;
+    --ui-icon-btn: 28px;
+    --ui-shadow: 0 8px 28px color-mix(in srgb, black 35%, transparent);
+    --ui-dialog-s: 560px;
+    --ui-dialog-m: 760px;
+    --ui-dialog-l: 920px;
+    --ui-dialog-max-h: 82vh;
+    --ui-disclosure-marker: "\25B8";
+}
+
+/* K3 head ------------------------------------------------------------- */
+.ui-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); margin: 0 0 var(--ui-gap-3); }
+.ui-head-eyebrow { flex-basis: 100%; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); color: var(--ui-text-2); }
+.ui-head-title { flex: 1 1 auto; margin: 0; font-size: var(--ui-fs-xl); font-weight: var(--ui-fw); line-height: var(--ui-lh-dense); color: var(--ui-text); }
+.ui-head-gist { flex-basis: 100%; order: 3; margin: 0; max-width: var(--ui-measure); font-size: var(--ui-fs-md); line-height: var(--ui-lh-read); color: var(--ui-text-2); }
+.ui-head > .ui-actions { order: 2; }
+.ui-head--data { flex-wrap: nowrap; align-items: center; }
+.ui-count { font-weight: var(--ui-fw-normal); font-size: var(--ui-fs-md); color: var(--ui-text-2); font-variant-numeric: tabular-nums; }
+
+/* K2 action row + icon button ---------------------------------------- */
+.ui-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--ui-gap-2); margin-left: auto; }
+.ui-btn-icon { display: inline-flex; align-items: center; justify-content: center; width: var(--ui-icon-btn); height: var(--ui-icon-btn); padding: 0; margin: 0; border: 0; border-radius: var(--ui-r-sm); background: transparent; color: var(--ui-text-2); font-size: var(--ui-fs-md); cursor: pointer; }
+.ui-btn-icon:hover { background: var(--ui-surface-2); color: var(--ui-text); }
+.ui-btn-icon:disabled { color: var(--ui-text-3); cursor: not-allowed; background: transparent; }
+
+/* K9 small pieces (only what the stage-0 parts use) -------------------- */
+.ui-chip { display: inline-block; padding: 0 var(--ui-gap-1); border-radius: var(--ui-r-sm); background: var(--ui-surface-2); color: var(--ui-text); font-family: var(--ui-font-mono); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-read); overflow-wrap: anywhere; }
+.ui-badge { display: inline-block; padding: 0 var(--ui-gap-2); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-sm); color: var(--ui-text-2); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw); line-height: var(--ui-lh-read); white-space: nowrap; }
+.ui-badge--accent { color: var(--ui-accent); border-color: var(--ui-accent-border); }
+.ui-badge--warn { color: var(--ui-warn-text); background: var(--ui-warn-bg); border-color: var(--ui-warn-border); }
+.ui-badge--danger { color: var(--ui-danger-text); background: var(--ui-danger-bg); border-color: var(--ui-danger-border); }
+.ui-badge--ok { color: var(--ui-ok-text); border-color: var(--ui-ok-border); }
+.ui-note { margin: 0; max-width: var(--ui-measure); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-read); color: var(--ui-text-2); }
+.ui-check { display: inline-flex; align-items: center; gap: var(--ui-gap-2); margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-text); }
+
+/* K4 notice (page top) ------------------------------------------------ */
+.ui-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); padding: var(--ui-gap-1) var(--ui-gap-3); border-left: var(--ui-bw-strip) solid var(--ui-border-strong); background: var(--ui-surface-2); color: var(--ui-text); font-size: var(--ui-fs-md); line-height: var(--ui-lh-dense); }
+.ui-notice--warn { border-left-color: var(--ui-warn-border); background: var(--ui-warn-bg); color: var(--ui-warn-text); }
+.ui-notice--danger { border-left-color: var(--ui-danger-border); background: var(--ui-danger-bg); color: var(--ui-danger-text); }
+.ui-notice--note { border-left-color: var(--ui-accent); background: var(--ui-surface-2); }
+.ui-notice-icon { flex: 0 0 auto; }
+.ui-notice-key { font-weight: var(--ui-fw); }
+.ui-notice-text { flex: 1 1 20ch; }
+
+/* K5 callout (only the note variant is used at stage 0) ---------------- */
+.ui-callout { margin: var(--ui-gap-2) 0; padding: var(--ui-gap-2) var(--ui-gap-3); border-left: var(--ui-bw-strip) solid var(--ui-accent); background: var(--ui-surface-2); color: var(--ui-text); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-read); }
+.ui-callout--note { border-left-color: var(--ui-accent); }
+.ui-callout-title { font-weight: var(--ui-fw); }
+.ui-callout-text { margin: 0; max-width: var(--ui-measure); }
+
+/* K6 verdict ---------------------------------------------------------- */
+.ui-verdict { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); margin: var(--ui-gap-1) 0; font-size: var(--ui-fs-md); line-height: var(--ui-lh-dense); color: var(--ui-text); }
+.ui-verdict-key { font-weight: var(--ui-fw); }
+.ui-verdict-why { color: var(--ui-text-2); font-size: var(--ui-fs-sm); }
+.ui-dot { flex: 0 0 auto; display: inline-block; width: var(--ui-dot); height: var(--ui-dot); border-radius: var(--ui-dot); background: var(--ui-text-2); }
+.ui-verdict--ok .ui-dot { background: var(--ui-ok-border); }
+.ui-verdict--warn .ui-dot { background: var(--ui-warn-border); }
+.ui-verdict--danger .ui-dot { background: var(--ui-danger-border); }
+.ui-verdict--neutral .ui-dot { background: var(--ui-text-3); }
+
+/* K7 item card -------------------------------------------------------- */
+.ui-item { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0 0 var(--ui-gap-3); padding: var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md); background: var(--ui-surface-1); color: var(--ui-text); font-size: var(--ui-fs-md); line-height: var(--ui-lh-read); }
+.ui-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); }
+.ui-item-title { color: var(--ui-text-2); font-size: var(--ui-fs-sm); }
+.ui-item-head > .ui-count { margin-left: auto; font-size: var(--ui-fs-sm); }
+.ui-item-body { margin: 0; max-width: var(--ui-measure); }
+.ui-item-foot { display: flex; align-items: center; gap: var(--ui-gap-2); }
+
+/* K8 table (minimal: the worked examples need one) --------------------- */
+.ui-table { width: auto; margin: 0; border-collapse: collapse; font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); color: var(--ui-text); }
+.ui-table-head { padding: var(--ui-gap-1) var(--ui-gap-3) var(--ui-gap-1) 0; border-bottom: var(--ui-bw) solid var(--ui-border); background: transparent; color: var(--ui-text-2); font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); text-align: left; }
+.ui-table-cell { padding: var(--ui-gap-1) var(--ui-gap-3) var(--ui-gap-1) 0; border-bottom: var(--ui-bw) solid var(--ui-border); background: transparent; color: var(--ui-text); font-size: var(--ui-fs-sm); }
+.ui-table-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ui-table-muted { color: var(--ui-text-2); }
+.ui-table--kv .ui-table-head { color: var(--ui-text-2); font-weight: var(--ui-fw-normal); border-bottom: 0; }
+
+/* K10 / K15 minimal (A2 example) -------------------------------------- */
+.ui-disclosure { margin: var(--ui-gap-2) 0; }
+.ui-disclosure-summary { display: flex; align-items: center; gap: var(--ui-gap-2); cursor: pointer; list-style: none; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); color: var(--ui-text); }
+.ui-disclosure-summary::-webkit-details-marker { display: none; }
+.ui-disclosure-summary::after { display: none; }
+.ui-disclosure-summary::before { content: var(--ui-disclosure-marker); color: var(--ui-text-2); }
+.ui-disclosure-body { padding: var(--ui-gap-2) 0 0 var(--ui-gap-4); }
+.ui-segmented { display: inline-flex; border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-md); overflow: hidden; }
+.ui-segmented-opt { margin: 0; padding: var(--ui-gap-1) var(--ui-gap-3); border: 0; border-radius: 0; background: transparent; color: var(--ui-text-2); font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); width: auto; cursor: pointer; }
+.ui-segmented-opt + .ui-segmented-opt { border-left: var(--ui-bw) solid var(--ui-border-strong); }
+.ui-segmented-on { background: var(--ui-surface-2); color: var(--ui-accent); font-weight: var(--ui-fw); }
+
+/* K13 dialog shell (shape only; real dialogs keep their own element) --- */
+.ui-dialog { display: flex; flex-direction: column; max-height: var(--ui-dialog-max-h); width: var(--ui-dialog-m); max-width: 100%; margin: 0; padding: 0; border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-lg); background: var(--ui-surface-1); color: var(--ui-text); box-shadow: var(--ui-shadow); overflow: hidden; }
+.ui-dialog--s { width: var(--ui-dialog-s); }
+.ui-dialog--m { width: var(--ui-dialog-m); }
+.ui-dialog--l { width: var(--ui-dialog-l); }
+.ui-dialog-head { display: flex; align-items: flex-start; gap: var(--ui-gap-2); padding: var(--ui-gap-3) var(--ui-gap-4) 0; }
+.ui-dialog-head > .ui-head { flex: 1 1 auto; margin: 0; }
+.ui-dialog-head .ui-head-title { font-size: var(--ui-fs-lg); }
+.ui-dialog-body { flex: 1 1 auto; overflow: auto; padding: var(--ui-gap-3) var(--ui-gap-4); }
+.ui-dialog-foot { display: flex; align-items: center; gap: var(--ui-gap-2); padding: var(--ui-gap-3) var(--ui-gap-4); border-top: var(--ui-bw) solid var(--ui-border); background: var(--ui-surface-1); }
+
+/* /ui-kit page layout (the sample page only) --------------------------- */
+.ui-kit-page { max-width: 1500px; color: var(--ui-text); font-size: var(--ui-fs-md); }
+.ui-kit-section { margin: 0 0 var(--ui-gap-4); padding-top: var(--ui-gap-3); border-top: var(--ui-bw) solid var(--ui-border); }
+.ui-kit-section-title { margin: 0 0 var(--ui-gap-2); font-size: var(--ui-fs-lg); font-weight: var(--ui-fw); color: var(--ui-text); }
+.ui-kit-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: var(--ui-gap-4); margin: 0 0 var(--ui-gap-3); }
+.ui-kit-side { min-width: 0; }
+.ui-kit-label { margin: 0 0 var(--ui-gap-1); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }

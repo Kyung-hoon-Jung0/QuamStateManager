@@ -1,0 +1,117 @@
+{#- QSM UI kit parts (docs/308). static/ui.js builds the SAME tag / class /
+    role / text tree from the same spec (tests/ui_kit_selfcheck.cjs).
+    Every text goes through autoescape. A spec is a dict; `ui_render(spec)`
+    dispatches on spec.part, so one fixture renders through both sides.
+
+    Button spec: {label, cls, disabled?, title?, aria_label?}
+      cls is an existing button class string ("btn-sync primary",
+      "btn-sm outline", ...) or "ui-btn-icon". -#}
+
+{%- macro ui_button(b) -%}
+<button type="button" class="{{ b.cls or 'btn-sync' }}"{% if b.title %} title="{{ b.title }}"{% endif %}{% if b.aria_label %} aria-label="{{ b.aria_label }}"{% endif %}{% if b.theme %} data-ui-theme="{{ b.theme }}"{% endif %}{% if b.disabled %} disabled{% endif %}>{{ b.label }}</button>
+{%- endmacro -%}
+
+{%- macro ui_actions(buttons, label=None) -%}
+<div class="ui-actions" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>{% for b in buttons %}{{ ui_button(b) }}{% endfor %}</div>
+{%- endmacro -%}
+
+{%- macro ui_chip(text) -%}<code class="ui-chip">{{ text }}</code>{%- endmacro -%}
+
+{%- macro ui_badge(text, tone='neutral') -%}<span class="ui-badge ui-badge--{{ tone }}">{{ text }}</span>{%- endmacro -%}
+
+{%- macro ui_count(text) -%}<span class="ui-count">{{ text }}</span>{%- endmacro -%}
+
+{%- macro ui_note(text) -%}<p class="ui-note">{{ text }}</p>{%- endmacro -%}
+
+{%- macro ui_check(text, checked=False) -%}
+<label class="ui-check"><input type="checkbox"{% if checked %} checked{% endif %}>{{ text }}</label>
+{%- endmacro -%}
+
+{%- macro ui_head(title, level=2, eyebrow=None, gist=None, count=None, actions=None, data=False) -%}
+<header class="ui-head{% if data %} ui-head--data{% endif %}">
+{%- if eyebrow and not data %}<div class="ui-head-eyebrow">{{ eyebrow }}</div>{% endif -%}
+<h{{ level }} class="ui-head-title">{{ title }}{% if count is defined and count is not none %} {{ ui_count(count) }}{% endif %}</h{{ level }}>
+{%- if actions %}{{ ui_actions(actions) }}{% endif -%}
+{%- if gist and not data %}<p class="ui-head-gist">{{ gist }}</p>{% endif -%}
+</header>
+{%- endmacro -%}
+
+{%- macro ui_notice(tone, key, text, actions=None) -%}
+<div class="ui-notice ui-notice--{{ tone }}" role="{{ 'alert' if tone == 'danger' else 'status' }}">
+<span class="ui-notice-icon" aria-hidden="true">{{ '⚠' if tone in ('warn', 'danger') else 'ℹ' }}</span>
+<strong class="ui-notice-key">{{ key }}</strong>
+<span class="ui-notice-text">{{ text }}</span>
+{%- if actions %}{{ ui_actions(actions) }}{% endif -%}
+</div>
+{%- endmacro -%}
+
+{%- macro ui_callout(tone, title, text) -%}
+<div class="ui-callout ui-callout--{{ tone }}" role="note"><div class="ui-callout-title">{{ title }}</div><p class="ui-callout-text">{{ text }}</p></div>
+{%- endmacro -%}
+
+{%- macro ui_verdict(tone, key, why=None) -%}
+<div class="ui-verdict ui-verdict--{{ tone }}"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">{{ key }}</strong>{% if why %}<span class="ui-verdict-why">{{ why }}</span>{% endif %}</div>
+{%- endmacro -%}
+
+{%- macro ui_cell(c, tag, num) -%}
+<{{ tag }} class="{{ 'ui-table-head' if tag == 'th' else 'ui-table-cell' }}{% if num %} ui-table-num{% endif %}{% if c is mapping and c.muted %} ui-table-muted{% endif %}"{% if tag == 'th' %} scope="{{ 'row' if c is mapping and c.row else 'col' }}"{% endif %}{% if c is mapping and c.title %} title="{{ c.title }}"{% endif %}>
+{%- if c is mapping and c.chip is defined %}{{ ui_chip(c.chip) }}{% elif c is mapping and c.dot is defined %}{{ ui_verdict(c.dot, c.text) }}{% elif c is mapping %}{{ c.text }}{% else %}{{ c }}{% endif -%}
+</{{ tag }}>
+{%- endmacro -%}
+
+{%- macro ui_table(columns, rows, kv=False, numeric=(), label=None) -%}
+<table class="ui-table{% if kv %} ui-table--kv{% endif %}"{% if label %} aria-label="{{ label }}"{% endif %}>
+{%- if columns %}<thead><tr>{% for c in columns %}{{ ui_cell(c, 'th', loop.index0 in numeric) }}{% endfor %}</tr></thead>{% endif -%}
+<tbody>{% for r in rows %}<tr>{% for c in r %}{% if kv and loop.first %}{{ ui_cell({'text': c, 'row': True} if c is string else c, 'th', False) }}{% else %}{{ ui_cell(c, 'td', loop.index0 in numeric) }}{% endif %}{% endfor %}</tr>{% endfor %}</tbody>
+</table>
+{%- endmacro -%}
+
+{%- macro ui_segmented(options, label) -%}
+<div class="ui-segmented" role="group" aria-label="{{ label }}">{% for o in options %}<button type="button" class="ui-segmented-opt{% if o.selected %} ui-segmented-on{% endif %}"{% if not o.command %} aria-pressed="{{ 'true' if o.selected else 'false' }}"{% endif %}>{{ o.label }}</button>{% endfor %}</div>
+{%- endmacro -%}
+
+{#- Containers take a list of child specs. -#}
+{%- macro ui_disclosure(summary, count=None, body=(), open=False) -%}
+<details class="ui-disclosure"{% if open %} open{% endif %}><summary class="ui-disclosure-summary">{{ summary }}{% if count is defined and count is not none %} {{ ui_count(count) }}{% endif %}</summary><div class="ui-disclosure-body">{% for s in body %}{{ ui_render(s) }}{% endfor %}</div></details>
+{%- endmacro -%}
+
+{%- macro ui_item(chip=None, badge=None, title=None, count=None, body=(), note=None, actions=None) -%}
+<article class="ui-item"><div class="ui-item-head">
+{%- if chip %}{{ ui_chip(chip) }}{% endif -%}
+{%- if badge %}{{ ui_badge(badge.text, badge.tone or 'neutral') }}{% endif -%}
+{%- if title %}<span class="ui-item-title">{{ title }}</span>{% endif -%}
+{%- if count is defined and count is not none %}{{ ui_count(count) }}{% endif -%}
+</div>
+{%- for s in body %}{% if s is string %}<p class="ui-item-body">{{ s }}</p>{% else %}{{ ui_render(s) }}{% endif %}{% endfor -%}
+{%- if note %}{{ ui_note(note) }}{% endif -%}
+{%- if actions %}<div class="ui-item-foot">{{ ui_actions(actions) }}</div>{% endif -%}
+</article>
+{%- endmacro -%}
+
+{%- macro ui_dialog(head, size='m', body=(), foot=(), foot_actions=None, close=True) -%}
+<div class="ui-dialog ui-dialog--{{ size }}" role="dialog" aria-label="{{ head.title }}"><div class="ui-dialog-head">{{ ui_head(head.title, head.level or 2, head.eyebrow, head.gist, head.count, None, size != 'l') }}
+{%- if close %}{{ ui_button({'label': '✕', 'cls': 'ui-btn-icon', 'aria_label': 'Close'}) }}{% endif -%}
+</div><div class="ui-dialog-body">{% for s in body %}{{ ui_render(s) }}{% endfor %}</div>
+{%- if foot or foot_actions %}<div class="ui-dialog-foot">{% for s in foot %}{{ ui_render(s) }}{% endfor %}{% if foot_actions %}{{ ui_actions(foot_actions) }}{% endif %}</div>{% endif -%}
+</div>
+{%- endmacro -%}
+
+{%- macro ui_render(s) -%}
+{%- set p = s.part -%}
+{%- if p == 'head' %}{{ ui_head(s.title, s.level or 2, s.eyebrow, s.gist, s.count, s.actions, s.data) }}
+{%- elif p == 'notice' %}{{ ui_notice(s.tone, s.key, s.text, s.actions) }}
+{%- elif p == 'callout' %}{{ ui_callout(s.tone, s.title, s.text) }}
+{%- elif p == 'verdict' %}{{ ui_verdict(s.tone, s.key, s.why) }}
+{%- elif p == 'item' %}{{ ui_item(s.chip, s.badge, s.title, s.count, s.body or (), s.note, s.actions) }}
+{%- elif p == 'table' %}{{ ui_table(s.columns, s.rows, s.kv, s.numeric or (), s.label) }}
+{%- elif p == 'actions' %}{{ ui_actions(s.buttons, s.label) }}
+{%- elif p == 'chip' %}{{ ui_chip(s.text) }}
+{%- elif p == 'badge' %}{{ ui_badge(s.text, s.tone or 'neutral') }}
+{%- elif p == 'count' %}{{ ui_count(s.text) }}
+{%- elif p == 'note' %}{{ ui_note(s.text) }}
+{%- elif p == 'check' %}{{ ui_check(s.text, s.checked) }}
+{%- elif p == 'segmented' %}{{ ui_segmented(s.options, s.label) }}
+{%- elif p == 'disclosure' %}{{ ui_disclosure(s.summary, s.count, s.body or (), s.open) }}
+{%- elif p == 'dialog' %}{{ ui_dialog(s.head, s.size or 'm', s.body or (), s.foot or (), s.foot_actions, s.close is not sameas false) }}
+{%- endif -%}
+{%- endmacro -%}

@@ -34,6 +34,7 @@
     <link rel="stylesheet" href="{{ asset_url('pico.min.css') }}">
     {# Stylesheet up top so CSS downloads in parallel with the scripts. #}
     <link rel="stylesheet" href="{{ asset_url('style.css') }}">
+    <link rel="stylesheet" href="{{ asset_url('ui-kit.css') }}">
     {# Scripts load eagerly (NOT deferred): UI_CONFIG (app.js) is read by
        parse-time inline scripts in full-page template renders (e.g. /topology,
        /trends, /datasets on direct load or refresh); the page BUNDLES below
@@ -141,6 +142,7 @@
         'compare': ['topo-graph.js', 'compare-hub.js', 'diff-panes.js'],
         'journal': ['journal.js'],
         'agent_setup': ['agent-setup.js'],
+        'uikit': ['ui.js'],
     } %}
     {# docs/166: 'pulses' takes the components bundle too — its chip map
        (topo-graph + component-map) is the page's row filter. #}
@@ -160,6 +162,7 @@
         'compare_hub': ['compare'], 'diff': ['compare'],
         'journal': ['journal'],
         'agent_setup': ['agent_setup'],
+        'ui_kit': ['uikit'],
     } %}
     {% set manifest = {} %}
     {% for _b, _files in bundle_files.items() %}{% for _f in _files %}{% if _f not in manifest %}{% set _ = manifest.update({_f: asset_url(_f)}) %}{% endif %}{% endfor %}{% endfor %}
