@@ -1,4 +1,66 @@
-<div class="topo-dashboard">
+{% from "_ui.html" import ui_head_fold %}<div class="topo-dashboard">
+<header class="topology-toolbar ui-head ui-head--data ui-head--page">
+    <h2 class="ui-head-title">Chip Status</h2>
+    {% if diag_summary is defined and diag_summary %}
+      {% if diag_summary.error %}
+      <a class="topo-health-badge bad" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+         title="Open the diagnostics report">&#9940; {{ diag_summary.error }} error{{ 's' if diag_summary.error != 1 }}</a>
+      {% elif diag_summary.warning %}
+      <a class="topo-health-badge warn" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+         title="Open the diagnostics report">&#9888; {{ diag_summary.warning }} warning{{ 's' if diag_summary.warning != 1 }}</a>
+      {% elif diag_summary.info %}
+      <a class="topo-health-badge info" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+         title="Open the diagnostics report">&#9432; {{ diag_summary.info }} note{{ 's' if diag_summary.info != 1 }}</a>
+      {% else %}
+      <span class="topo-health-badge ok" title="No structural problems found">&#10003; healthy</span>
+      {% endif %}
+    {% endif %}
+    <button type="button" class="outline btn-sm history-toggle-btn" onclick="toggleHistoryPanel()">
+        {#- S10 walk: the one history count (routes._versions_count); an ellipsis while
+            the change history catches up -#}
+        History <span class="ui-count"><span id="history-count">{% if history_count is none %}&hellip;{% else %}{{ '{:,}'.format(history_count | default(0)) }}{% endif %}</span></span>
+    </button>
+    {#- v1.5.1 (U P2-23): the printable chip report had only a 24x13 px
+        printer icon in the sidebar -- a labelled entry where the chip is -#}
+    <a class="outline btn-sm topo-report-link" role="button" href="/chip-status/report" target="_blank" rel="noopener"
+       title="Open the printable chip report in a new tab: pick its sections, print it or download it as one HTML file">Chip report</a>
+    {# docs/120 item 11: the "Edge labels" checkbox went with the card
+       diagram it controlled. The hero has no text labels on its edges —
+       direction is the C/T/M markers and the chevrons — so the toggle
+       would have been a control that silently does nothing. #}
+    {{ ui_head_fold() }}
+</header>
+
+{# Phase C — one scrolling dashboard. Sticky SCROLL-SPY jump bar: click
+   smooth-scrolls to the section; scrolling highlights the matching tab. Lives
+   at top level so it stays pinned across every section. #}
+<div class="topo-subnav ui-tabs" role="tablist" aria-label="Chip Status sections">
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="overview"
+            onclick="setChipStatusView('overview', this, true)" title="Jump to the per-metric overview">Overview</button>
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="health"
+            onclick="setChipStatusView('health', this, true)" title="Jump to the chip health summary">Health</button>
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="topology"
+            onclick="setChipStatusView('topology', this, true)" title="Jump to the chip topology diagram">Topology</button>
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="trends"
+            onclick="setChipStatusView('trends', this, true)" title="Jump to the chip-wide trends">Trends</button>
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="fidelity2q"
+            onclick="setChipStatusView('fidelity2q', this, true)" title="Jump to the 2Q gate fidelity panels (RB)">2Q Fid.</button>
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="fidelity1q"
+            onclick="setChipStatusView('fidelity1q', this, true)" title="Jump to the 1Q gate fidelity panels">1Q Fid.</button>
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="readout"
+            onclick="setChipStatusView('readout', this, true)" title="Jump to the readout fidelity panels (GE + GEF)">Read. Fid.</button>
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="coherence"
+            onclick="setChipStatusView('coherence', this, true)" title="Jump to the coherence panels">Coherence</button>
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="frequencies"
+            onclick="setChipStatusView('frequencies', this, true)" title="Jump to the frequency panels">Frequencies</button>
+    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="calibration"
+            onclick="setChipStatusView('calibration', this, true)" title="Jump to the calibration panels">Calibration</button>
+    {# D-97: warn/fail marks are off by default (clean screenshots); D-99: the gear opens the one thresholds editor #}
+    <span class="ui-tabs-end topo-diag-end">
+        <label class="ui-check" title="Mark every value that is outside its spec or a statistical outlier"><input type="checkbox" id="chip-diag-cb" onchange="window.chipSetDiag(this.checked)">Diagnosis</label>
+        <button type="button" class="ui-btn-icon" onclick="window.chipOpenThresholds()" title="Edit the pass / warn / fail thresholds" aria-label="Edit thresholds">&#9881;</button>
+    </span>
+</div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
      Section 1: Summary Stat Cards
@@ -46,71 +108,12 @@
     <div class="topo-health-worst" id="topo-health-worst"></div>
 </div>
 
-{# Phase C — one scrolling dashboard. Sticky SCROLL-SPY jump bar: click
-   smooth-scrolls to the section; scrolling highlights the matching tab. Lives
-   at top level so it stays pinned across every section. #}
-<div class="topo-subnav ui-tabs" role="tablist" aria-label="Chip Status sections">
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="overview"
-            onclick="setChipStatusView('overview', this, true)" title="Jump to the per-metric overview">Overview</button>
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="health"
-            onclick="setChipStatusView('health', this, true)" title="Jump to the chip health summary">Health</button>
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="topology"
-            onclick="setChipStatusView('topology', this, true)" title="Jump to the chip topology diagram">Topology</button>
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="trends"
-            onclick="setChipStatusView('trends', this, true)" title="Jump to the chip-wide trends">Trends</button>
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="fidelity2q"
-            onclick="setChipStatusView('fidelity2q', this, true)" title="Jump to the 2Q gate fidelity panels (RB)">2Q Fid.</button>
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="fidelity1q"
-            onclick="setChipStatusView('fidelity1q', this, true)" title="Jump to the 1Q gate fidelity panels">1Q Fid.</button>
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="readout"
-            onclick="setChipStatusView('readout', this, true)" title="Jump to the readout fidelity panels (GE + GEF)">Read. Fid.</button>
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="coherence"
-            onclick="setChipStatusView('coherence', this, true)" title="Jump to the coherence panels">Coherence</button>
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="frequencies"
-            onclick="setChipStatusView('frequencies', this, true)" title="Jump to the frequency panels">Frequencies</button>
-    <button type="button" class="topo-subnav-btn ui-tab" role="tab" data-view="calibration"
-            onclick="setChipStatusView('calibration', this, true)" title="Jump to the calibration panels">Calibration</button>
-    {# D-97: warn/fail marks are off by default (clean screenshots); D-99: the gear opens the one thresholds editor #}
-    <span class="ui-tabs-end topo-diag-end">
-        <label class="ui-check" title="Mark every value that is outside its spec or a statistical outlier"><input type="checkbox" id="chip-diag-cb" onchange="window.chipSetDiag(this.checked)">Diagnosis</label>
-        <button type="button" class="ui-btn-icon" onclick="window.chipOpenThresholds()" title="Edit the pass / warn / fail thresholds" aria-label="Edit thresholds">&#9881;</button>
-    </span>
-</div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
      Section 2: Topology — HTML/SVG with always-visible property cards
      ═══════════════════════════════════════════════════════════════════ -->
 <div class="topo-section" id="sec-topology">
-    <div class="topology-toolbar ui-head ui-head--data">
-        <h2 class="ui-head-title">Chip Status</h2>
-        {% if diag_summary is defined and diag_summary %}
-          {% if diag_summary.error %}
-          <a class="topo-health-badge bad" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-             title="Open the diagnostics report">&#9940; {{ diag_summary.error }} error{{ 's' if diag_summary.error != 1 }}</a>
-          {% elif diag_summary.warning %}
-          <a class="topo-health-badge warn" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-             title="Open the diagnostics report">&#9888; {{ diag_summary.warning }} warning{{ 's' if diag_summary.warning != 1 }}</a>
-          {% elif diag_summary.info %}
-          <a class="topo-health-badge info" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-             title="Open the diagnostics report">&#9432; {{ diag_summary.info }} note{{ 's' if diag_summary.info != 1 }}</a>
-          {% else %}
-          <span class="topo-health-badge ok" title="No structural problems found">&#10003; healthy</span>
-          {% endif %}
-        {% endif %}
-        <button class="outline btn-sm history-toggle-btn" onclick="toggleHistoryPanel()">
-            {#- S10 walk: the one history count (routes._versions_count); an ellipsis while
-                the change history catches up -#}
-            History (<span id="history-count">{% if history_count is none %}&hellip;{% else %}{{ '{:,}'.format(history_count | default(0)) }}{% endif %}</span>)
-        </button>
-        {#- v1.5.1 (U P2-23): the printable chip report had only a 24x13 px
-            printer icon in the sidebar -- a labelled entry where the chip is -#}
-        <a class="outline btn-sm topo-report-link" role="button" href="/chip-status/report" target="_blank" rel="noopener"
-           title="Open the printable chip report in a new tab: pick its sections, print it or download it as one HTML file">Chip report</a>
-        {# docs/120 item 11: the "Edge labels" checkbox went with the card
-           diagram it controlled. The hero has no text labels on its edges —
-           direction is the C/T/M markers and the chevrons — so the toggle
-           would have been a control that silently does nothing. #}
-    </div>
+    <h3 class="topo-section-title">Topology</h3>
     {# Hero chip map (docs/92 P1): the at-a-glance SVG map — geometry/mode from
        TopoGraph.layoutFor (physical / labelled-logical / none), node fill = the
        selected metric through the SAME palette + physical gate as the heatmaps.

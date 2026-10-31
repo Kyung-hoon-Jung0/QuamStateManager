@@ -231,13 +231,12 @@ const esc = (T) => T.doc.activeElement.dispatchEvent(
     ok(sp && d.activeElement === sp, 'r2-20 opening Panels moves focus INTO the popover (' + d.activeElement.id + ')');
     ok(sp.getAttribute('tabindex') === '-1', 'r2-20 ...onto the popover itself, so a second Enter presses nothing');
     // a keyboard change of a per-tile statistic re-renders the body
-    const sel = sp.querySelector('.ov-set-sel');
+    const sel = sp.querySelector('[data-tile-stat="max"]');
     const tid = sel.getAttribute('data-tile-id');
     sel.focus();
-    sel.value = 'max';
-    sel.dispatchEvent(new T.win.Event('change', { bubbles: true }));
+    click(T, sel);
     const a1 = d.activeElement;
-    ok(a1 !== sel && a1.classList.contains('ov-set-sel') && a1.getAttribute('data-tile-id') === tid && sp.contains(a1),
+    ok(a1 !== sel && a1.getAttribute('data-tile-stat') === 'max' && a1.getAttribute('data-tile-id') === tid && sp.contains(a1),
        'r2-20 a keyboard change keeps focus on the SAME control after the re-render ('
        + a1.tagName + ' ' + a1.getAttribute('data-tile-id') + ')');
     const gb = sp.querySelector('[data-global-stat="median"]');

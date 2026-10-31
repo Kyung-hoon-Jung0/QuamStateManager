@@ -60,7 +60,7 @@ class TestHistoryDrawer:
 
     def test_the_button_counts_what_the_drawer_lists(self, sm):
         html = flat(sm["client"].get("/topology").data.decode())
-        n = int(re.search(r'History \(<span id="history-count">(\d+)</span>\)', html).group(1))
+        n = int(re.search(r'History <span class="ui-count"><span id="history-count">(\d+)</span></span>', html).group(1))
         drawer = flat(sm["client"].get("/api/history").data.decode())
         assert n == listed_count(drawer)
 
@@ -98,7 +98,7 @@ class TestHistoryDrawer:
         drawer = flat(c.get("/api/history").data.decode())
         listed = listed_count(drawer)
         page = flat(c.get("/topology").data.decode())
-        button = int(re.search(r'History \(<span id="history-count">(\d+)</span>\)', page).group(1))
+        button = int(re.search(r'History <span class="ui-count"><span id="history-count">(\d+)</span></span>', page).group(1))
         chip = flat(c.get("/state/version").data.decode())
         top = int(re.search(r'<span class="state-version-count">(\d+)</span>', chip).group(1))
         assert listed < 5, ("fixture: the snapshots fold into the run's state", listed)
