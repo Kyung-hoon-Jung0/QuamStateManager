@@ -44,7 +44,7 @@
         <strong class="sh-event sh-event-{{ r.badge | replace(' ', '-') }}" title="{{ r.hover }}">{{ r.title }}</strong>
         <span class="muted sh-event-sub">{{ r.sub }}</span>{{ version_flags(r, 'hp-flag') }}{{ source_badge(r.source, 'hp-src') }}{{ foreign_tag(r, 'hp-foreign-tag') }}{{ baseline_tag(r, lv, 'hp-baseline') }}
         {% endif %}
-        {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
+        {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">live chip is on this version</span>{% endif %}
     </div>
     {% if r.label %}<div class="sh-label">{{ r.label }}</div>{% endif %}
     {% if r.note %}<div class="sh-note">{{ r.note }}</div>{% endif %}

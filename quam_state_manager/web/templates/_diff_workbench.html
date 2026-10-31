@@ -179,8 +179,8 @@
       {# docs/141 4ac: added/removed are a TWO-sided verdict. For N sources
          "added" names no side, so the N-way payload reports how many keys are
          one-sided instead of printing +0 / -0 beside thousands of them. #}
-      {% if view == 'panes' %}
-      <span class="diff-count diff-count-added">{{ '{:,}'.format(c.get('one_sided', 0)) }} on some sources only</span>
+      {% if view == 'panes' %}{% if c.get('one_sided', 0) %}
+      <span class="diff-count diff-count-added">{{ '{:,}'.format(c.get('one_sided', 0)) }} on some sources only</span>{% endif %}
       {% else %}
       <span class="diff-count diff-count-added">+{{ '{:,}'.format(c.added) }} added</span>
       <span class="diff-count diff-count-removed">&minus;{{ '{:,}'.format(c.removed) }} removed</span>
@@ -285,6 +285,7 @@
         <div class="tree-depth-group">
           <span class="tree-depth-label">Depth:</span>
           <button type="button" class="btn-sm outline" onclick="jsonTreeCollapseAll('diff-tree')">0</button>
+          <button type="button" class="btn-sm outline" onclick="jsonTreeExpandToDepth('diff-tree', 1)">1</button>
           <button type="button" class="btn-sm outline" onclick="jsonTreeExpandToDepth('diff-tree', 2)">2</button>
           <button type="button" class="btn-sm outline" onclick="jsonTreeExpandToDepth('diff-tree', 3)">3</button>
           <button type="button" class="btn-sm outline" onclick="jsonTreeExpandAll('diff-tree')">All</button>

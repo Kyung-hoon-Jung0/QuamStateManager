@@ -317,7 +317,7 @@
   {% endif %}
 
   {#- HISTORY -#}
-  {% if not _archive and (last_apply or applied_log or take_live_backup) %}
+  {% if not _archive and (applied_log or take_live_backup or (last_apply and _nm == 0 and not working_dirty)) %}
   <div class="sp-history">
     <div class="sp-choices-head">History</div>
     {% if take_live_backup %}

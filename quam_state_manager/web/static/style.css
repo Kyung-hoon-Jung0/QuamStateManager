@@ -7814,7 +7814,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     padding: 0.2rem 0.6rem; border-radius: 999px;
     border: 1px solid var(--history-cell-border);
     background: var(--history-cell-bg);
-    cursor: pointer; font-size: 0.85em; user-select: none;
+    cursor: pointer; font-size: 0.85em; user-select: none; color: var(--ui-text);
     transition: background 0.1s, border-color 0.1s;
 }
 .phf-chip:hover { background: var(--history-cell-hover); }
@@ -7859,7 +7859,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 .trigger-dot-manual      { background: var(--trigger-manual); }
 .trigger-dot-auto        { background: var(--trigger-auto); }
 .trigger-dot-experiment  { background: var(--trigger-experiment); }
-.trigger-dot-restore     { background: var(--trigger-manual); }
+.trigger-dot-restore     { background: transparent; box-shadow: inset 0 0 0 2px var(--trigger-manual); border-radius: 2px; }
 /* v1.3.0: on an ACTIVE (primary-filled) source chip the blue and green
    dots vanished into the fill; a ring in the chip's own text colour keeps
    every hue readable in both themes. */

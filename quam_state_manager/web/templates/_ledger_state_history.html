@@ -49,7 +49,7 @@
         {% for p in (r.annotations or []) | map(attribute='project') | select | unique %}<span class="sh-project-badge" title="Captured while scoped to qualibrate project &quot;{{ p }}&quot;">&#9879; {{ p }}</span>{% endfor %}
         {{ source_badge(r.source, 'sh-src') }}{{ foreign_tag(r, 'sh-foreign-tag') }}{{ baseline_tag(r, lv, 'sh-baseline') }}
         {% if r.pinned %}<span class="sh-pin-badge" title="Pinned (kept regardless of retention)">&#128204;</span>{% endif %}
-        {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
+        {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">live chip is on this version</span>{% endif %}
     </div>
     {% if r.legacy and r.experiment %}
     <div class="sh-attribution">after <strong>{{ r.experiment }}</strong>{% if r.run_id is not none %} <span class="muted">run #{{ r.run_id }}</span>{% endif %}</div>
