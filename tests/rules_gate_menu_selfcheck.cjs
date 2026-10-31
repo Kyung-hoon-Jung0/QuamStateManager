@@ -5,7 +5,7 @@
 //  G4 Reset shows old -> new BEFORE it writes, then is ONE undo entry (and writes nothing until pressed)
 //  G5 x on a rule gate: two radios; "this pair only" excludes the pair from the rule; one undo restores both
 //  G6 "All 3 pairs" removes every instance, keeps the source gate; one undo
-//  G7 x on a hand gate keeps the one-branch window.confirm
+//  G7 x on a hand gate: the one-branch mini confirm (no radios; D-70 replaced window.confirm)
 //  G8 "Apply to other pairs..." on a hand gate opens the dialog with a rule made from it (source, names, classes)
 //  G9 the Set-all cell shows "cz_bm · 3 of 3 pairs" and the rule's menu
 //  G10 a rule instance's badge, and edit-in-place keeps rule_id
@@ -87,7 +87,7 @@ function withRule(extraEdited) {
   const u0 = w.undo.length;
   w.document.querySelector('tr[data-rid="q2-q3"] .gen-gate-rm').click();
   const dlg = w.document.querySelector('.gen-rule-mini');
-  ok(!!dlg && /Remove cz_bm from q2-3\?\s+Its 2 pulses go with it\./.test(dlg.textContent), 'G5 confirm text: ' + (dlg && dlg.textContent));
+  ok(!!dlg && /Remove cz_bm from q2-3\?\s*Its 2 pulses go with it\./.test(dlg.textContent), 'G5 confirm text: ' + (dlg && dlg.textContent));
   const radios = Array.from(dlg.querySelectorAll('input[type=radio]'));
   ok(radios.length === 2 && /This pair only — exclude it from the rule/.test(dlg.textContent) && /All 3 pairs/.test(dlg.textContent), 'G5 two radios');
   ok(w.document.activeElement === radios[0] && radios[0].checked, 'G5 focus on the first radio');
@@ -156,7 +156,12 @@ function withRule(extraEdited) {
   w.confirm = (t) => { asked.push(t); return true; };
   await w.decorate();
   w.document.querySelector('.gen-gate-rm').click();
-  ok(asked.length === 1 && !w.document.querySelector('.gen-rule-mini') && !(spec.additions || []).length, 'G7 hand gate: the one-branch confirm, then it is gone');
+  const mini = w.document.querySelector('.gen-rule-mini');
+  ok(asked.length === 0 && !!mini && !mini.querySelector('input[type=radio]') && /Remove the added gate cz_hand from q1-2\?/.test(mini.textContent) &&
+     (spec.additions || []).length > 0, 'G7 hand gate: a one-branch mini confirm, nothing removed yet: ' + (mini && mini.textContent));
+  mini.querySelector('.gen-rule-rm-ok').click();
+  await w.decorate();
+  ok(!w.document.querySelector('.gen-rule-mini') && !(spec.additions || []).length, 'G7 hand gate: Remove, then it is gone');
 
   T.done('rules_gate_menu_selfcheck');
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

@@ -1,20 +1,29 @@
-<p>References</p>
+<p class="ui-note env-reference-heading"><strong>References</strong></p>
 {% for reference in references %}
-<div class="env-reference">
-  <span title="{{ reference.key }} &middot; {{ reference.python_path }}"><code>{{ reference.env_name }}</code>
-  {% if reference.versions_text %}<span title="{{ reference.versions_full }}">&middot; {{ reference.versions_text }}</span> {% endif %}{% if reference.is_before %}<strong class="env-reference-before">&middot; before the upgrade</strong> {% endif %}
-  &middot; {{ reference.local_time }} &middot; {{ reference.waveforms }} waveforms &middot; {{ reference.size_text }}</span>
-  <p>Generated from: {% for file in reference.files %}<code>{{ file }}</code> {% endfor %}</p>
-  {% if reference.other_json %}<p>Not part of this comparison:
-    {% for file in reference.other_json %}<code>{{ file }}</code> {% endfor %}</p>{% endif %}
-  <label>Name filter <input class="env-reference-filter" type="text"></label>
-  <label>Compare with env
-    <select class="env-reference-python">
-      {% set ns = namespace(found=false) %}
-      {% for env in envs %}<option value="{{ env.python }}" {% if env.python == selected %}selected{% set ns.found = true %}{% endif %}>{{ env.name }}</option>{% endfor %}
-      {% if selected and not ns.found %}<option value="{{ selected }}" selected title="{{ selected }}">{{ selected_name }}</option>{% endif %}
-    </select></label>
-  <button class="btn-sm outline" data-key="{{ reference.key }}" onclick="EnvUpgrade.compare(this)">Compare</button>
-  <button class="btn-sm danger" data-key="{{ reference.key }}" onclick="EnvUpgrade.removeReference(this)">Delete reference</button>
-</div>
-{% else %}<p>No references recorded for this state yet.</p>{% endfor %}
+{# E5: one reference = one item; the compare controls are its foot. #}
+<article class="env-reference ui-item">
+  <div class="ui-item-head" title="{{ reference.key }} &middot; {{ reference.python_path }}">
+    <code class="ui-chip">{{ reference.env_name }}</code>
+    <span class="ui-item-title">{{ reference.local_time }}{% if reference.versions_text %} &middot; <span title="{{ reference.versions_full }}">{{ reference.versions_text }}</span>{% endif %}</span>
+    {% if reference.is_before %}<span class="ui-badge ui-badge--accent env-reference-before">before the upgrade</span>{% endif %}
+    <span class="ui-count">{{ reference.waveforms }} waveforms &middot; {{ reference.size_text }}</span>
+  </div>
+  <table class="ui-table ui-table--kv"><tbody>
+    <tr><th class="ui-table-head" scope="row">Generated from</th><td class="ui-table-cell">{% for file in reference.files %}<code class="ui-chip">{{ file }}</code> {% endfor %}</td></tr>
+    {% if reference.other_json %}<tr><th class="ui-table-head" scope="row">Not part of this comparison</th><td class="ui-table-cell">{% for file in reference.other_json %}<code class="ui-chip">{{ file }}</code> {% endfor %}</td></tr>{% endif %}
+  </tbody></table>
+  <div class="ui-item-foot env-reference-foot">
+    <label class="env-reference-field">Compare with
+      <select class="env-reference-python">
+        {% set ns = namespace(found=false) %}
+        {% for env in envs %}<option value="{{ env.python }}" {% if env.python == selected %}selected{% set ns.found = true %}{% endif %}>{{ env.name }}</option>{% endfor %}
+        {% if selected and not ns.found %}<option value="{{ selected }}" selected title="{{ selected }}">{{ selected_name }}</option>{% endif %}
+      </select></label>
+    <label class="env-reference-field">Name filter <input class="env-reference-filter" type="text"></label>
+    <div class="ui-actions">
+      <button class="btn-sm outline" data-key="{{ reference.key }}" onclick="EnvUpgrade.compare(this)">Compare</button>
+      <button class="btn-sm danger" data-key="{{ reference.key }}" onclick="EnvUpgrade.removeReference(this)">Delete</button>
+    </div>
+  </div>
+</article>
+{% else %}<p class="ui-note">No references recorded for this state yet.</p>{% endfor %}

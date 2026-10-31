@@ -103,7 +103,7 @@ function tabbables(w, root) {
     if (e.classList.contains('gen-rule-apply')) return 'apply';
     return e.className;
   });
-  const want = ['gen-rule-x secondary', 'chip:All ready', 'chip:Feedline ▾', 'chip:None', 'grp:Ready', 'sum:Ready', 'row:q1-2', 'grp:Needs a look', 'sum:Needs a look', 'row:q2-3',
+  const want = ['gen-rule-x ui-btn-icon', 'chip:All ready', 'chip:Feedline ▾', 'chip:None', 'grp:Ready', 'sum:Ready', 'row:q1-2', 'grp:Needs a look', 'sum:Needs a look', 'row:q2-3',
     'sum:Can\'t', 'sum:Already has it', 'later', 'cancel', 'apply'];
   // the choice select only shows for a "choose" row; this fixture has none
   ok(J(order) === J(want), 'K7 tab order: ' + J(order));

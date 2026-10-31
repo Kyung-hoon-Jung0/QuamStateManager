@@ -156,7 +156,7 @@ def test_the_summary_never_says_n_of_m_differ(loaded):
             for i, label in enumerate(["differs"] * 3 + ["bit-identical"] * 40 + ["not comparable"] * 5)]
     _card_ctx(ctx, {"case": 6, "rows": rows, "status": "found", "message": "m"})
     html = client.get("/env-upgrade/card").get_data(as_text=True)
-    summary = re.search(r'class="env-wave-summary"><strong>(.*?)</strong>', html).group(1)
+    summary = re.search(r'env-wave-summary"><span class="ui-dot"[^>]*></span><strong class="ui-verdict-key">(.*?)</strong>', html).group(1)
     assert summary == "3 differ \u00b7 40 identical \u00b7 5 not comparable"
     assert not re.search(r"\d+ of \d+ differ", html)
 
@@ -176,8 +176,8 @@ def test_the_compared_env_is_labelled_with_the_versions_it_ran(loaded, monkeypat
     compared["current_env"] = "older-env"
     _card_ctx(ctx, {"case": 6, **compared})
     html = client.get("/env-upgrade/card").get_data(as_text=True)
-    line = re.search(r'class="env-state-hashes"[^>]*>(.*?)</p>', html, re.S).group(1)
-    assert "<code>older-env</code> (quam_builder 0.4.0)" in line and "0.6.0" not in line
+    line = re.search(r'class="env-state-hashes ui-note"[^>]*>(.*?)</p>', html, re.S).group(1)
+    assert "<code class=\"ui-chip\">older-env</code> (quam_builder 0.4.0)" in line and "0.6.0" not in line
 
 
 # -- P1-5 ------------------------------------------------------------------------

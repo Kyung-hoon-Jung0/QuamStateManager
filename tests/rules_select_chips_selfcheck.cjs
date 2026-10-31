@@ -28,11 +28,14 @@ const FEED = { q1: 'feedline1', q2: 'feedline1', q3: 'feedline1', q4: 'feedline2
   srv.hold = false; srv.release(); await T.settle();
 
   const txt = () => w.dlg().textContent;
-  ok(/Ready = SM's checks pass\. Your lab code runs at Build\./.test(txt()), 'header line');
+  ok(/Ready means SM's checks pass\. Your lab code runs when you build\./.test(w.dlg().querySelector('.gen-rule-ready-note').textContent), 'ready note (plan.md section 2 wording)');
   ok(/Ready — 3 of 6 pairs/.test(txt()), 'D1 Ready denominator: ' + txt());
   ok(/Needs a look — 1/.test(txt()) && /Already has it — 1/.test(txt()), 'D1 other groups counted');
   ok(/Add cz_bm to other pairs/.test(txt()) && /from q1-2/.test(txt()), 'title and source');
-  ok(/Numbers copied from q1-2 \(current values\) as initial values: high: amplitude 0\.12, length 40 ns/.test(txt()), 'numbers line: ' + w.dlg().querySelector('.gen-rule-nums').textContent);
+  const numRows = Array.from(w.dlg().querySelectorAll('.gen-rule-nums tbody tr')).map(r => Array.from(r.cells).map(c => c.textContent).join('|'));
+  const numHead = Array.from(w.dlg().querySelectorAll('.gen-rule-nums thead th')).map(c => c.textContent).join('|');
+  ok(numHead === 'Pulse|amplitude|length' && JSON.stringify(numRows) === JSON.stringify(['high|0.12|40 ns']) &&
+     /Copied from q1-2 as starting values/.test(w.dlg().querySelector('.gen-rule-nums').textContent), 'numbers table: ' + numHead + ' / ' + JSON.stringify(numRows));
   const cb = (pid) => w.dlg().querySelector('.gen-rule-row-cb[data-pair="' + pid + '"]');
   ok(cb('q2-3').checked && cb('q4-5').checked && !cb('q5-6').checked, 'D1 Ready ticked, Needs a look not');
   ok(!w.dlg().querySelector('.gen-rule-row[data-pair="q1-2"] input') && !w.dlg().querySelector('.gen-rule-cant input'), 'D1 Already / Cant have no checkbox');

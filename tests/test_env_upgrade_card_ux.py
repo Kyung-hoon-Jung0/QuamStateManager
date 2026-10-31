@@ -34,7 +34,7 @@ def test_no_env_says_what_to_do_and_disables_env_buttons(loaded, monkeypatch):
     assert "No Python environment selected" in html and "Generate Config" in html
     assert "could not check" not in html and "report not recorded" not in html
     assert "Checked in:" not in html
-    for label in ("Check this env", "Generate config and record reference"):
+    for label in ("Check this env", "Record reference"):
         tag = _button(html, label)
         assert "disabled" in tag and "title=" in tag
     answer = client.post("/env-upgrade/check", json={})
@@ -81,11 +81,11 @@ def test_no_transition_is_one_compact_line_with_user_names(loaded):
     _report_ctx(ctx, changed=False)
     html = client.get("/env-upgrade/card").get_data(as_text=True)
     assert "No environment change since" in html
-    assert '<details class="env-upgrade-details">' in html
+    assert '<details class="env-upgrade-details ui-disclosure">' in html
     assert "Case 2" not in html and "Case 6" not in html
     assert "New required fields: none found" in html
     assert "No reference from before this change" not in html
-    assert "(quam 0.6.0)" in html
+    assert '<code class="ui-chip">quam 0.6.0</code>' in html   # versions are chips in the card head (E1)
 
 
 def test_transition_shows_groups_signature_table_and_no_reference_sentence(loaded):
@@ -96,7 +96,7 @@ def test_transition_shows_groups_signature_table_and_no_reference_sentence(loade
     _report_ctx(ctx, changed=True, signature_rows=[row])
     html = client.get("/env-upgrade/card").get_data(as_text=True)
     assert "env-upgrade-details" not in html and "No reference from before this change" in html
-    table = html.split('class="env-sig-table"')[1].split("</table>")[0]
+    table = html.split('class="env-sig-table ui-table ui-table--kv"')[1].split("</table>")[0]
     assert table.count("<tr>") == 3 and "reference parent" in table and ";" not in table
 
 
@@ -114,7 +114,7 @@ def test_waveform_compare_is_a_table_with_identical_rows_folded(loaded):
     assert "1 differ \u00b7 47 identical \u00b7 0 not comparable" in html
     assert not re.search(r"\d+ of \d+ differ", html)
     assert "47 of 48 bit-identical" in html
-    table = html.split('class="env-wave-table"')[1].split("</table>")[0]
+    table = html.split('class="env-wave-table ui-table"')[1].split("</table>")[0]
     assert "q1.z / cz" in table and "q3 / x" not in table
     assert "None" not in table and "all-zero waveform" in table
     assert "not measured hardware timing" in html

@@ -1137,9 +1137,10 @@
     return "added by rule " + rn + " — click to edit";
   }
   function chipSuffix(info) {
-    if (info.kind === "source" && info.look) return " · rule · from this pair · needs a look";
+    // "needs a look" is drawn apart as a warn dot + the visible word "look" (D-72);
+    // the full sentence stays in the chip's title.
     return { hand: "", source: " · rule · from this pair", rule: " · rule", edited: " · rule · edited",
-             needs: " · rule · needs a look" }[info.kind];
+             needs: " · rule" }[info.kind];
   }
 
   /* Remove an added gate (and the pulses only it plays) from one pair. `exclude`
@@ -1181,6 +1182,15 @@
                            preset: preset, opener: opener }, done);
       return;
     }
+    if (GR() && GR().miniConfirm) {
+      var names = pulses.map(function (j) { return list(sp)[j].name; });
+      GR().miniConfirm({ title: "Remove the added gate " + a.name + " from " + pid + "?",
+        gist: names.length ? "This also removes the " + names.length + " pulse" + (names.length > 1 ? "s" : "") + " it plays: " + names.join(", ") + "."
+          : "It plays no pulse added here (0 pulses removed).", okLabel: "Remove", opener: opener },
+        function (how) { done(how ? "this" : null); });
+      return;
+    }
+    // Fallback when the rules script is not on the page (D-70).
     var ok = !(typeof window.confirm === "function") || window.confirm(gateRemoveText(sp, a, pid, pulses));
     done(ok ? "this" : null);
   }
@@ -1255,10 +1265,16 @@
       var c = chip(a.name, "added", " (" + shortName(a.cls) + ")");
       if (info.kind !== "hand") {
         c.appendChild(el("span", { className: "gen-gate-badge gen-gate-badge-" + info.kind }, chipSuffix(info)));
+        if (info.kind === "needs" || (info.kind === "source" && info.look)) {
+          var lk = el("span", { className: "gen-gate-look" });
+          lk.appendChild(el("span", { className: "ui-dot gen-gate-look-dot", "aria-hidden": "true" }));
+          lk.appendChild(document.createTextNode("look"));
+          c.appendChild(lk);
+        }
         c.title = chipTitle(info, a);
       }
       c.addEventListener("click", function () { openForm(tr, pid, long, ctx, { index: a.index, add: list(ctx.spec())[a.index] }); });
-      var mb = el("button", { type: "button", className: "btn-sm secondary gen-gate-more", "data-gate": a.name,
+      var mb = el("button", { type: "button", className: "ui-btn-icon gen-gate-more", "data-gate": a.name,
                               "aria-label": "Actions for " + a.name + " on " + pid, "aria-haspopup": "menu", "aria-expanded": "false",
                               title: "Edit, apply to other pairs, remove" }, "⋯");
       mb.addEventListener("click", function () {
@@ -1270,7 +1286,7 @@
         GR().menu(mb, gateMenuItems(ctx, tr, pid, long, cur, gg, now), { label: "Actions for " + a.name });
       });
       chips.appendChild(mb);
-      var rm = el("button", { type: "button", className: "btn-sm secondary gen-gate-rm", "data-gate": a.name,
+      var rm = el("button", { type: "button", className: "ui-btn-icon gen-gate-rm", "data-gate": a.name,
                               title: "Remove the added gate " + a.name + " and the pulses it plays" }, "✕");
       rm.addEventListener("click", function () {
         var sp = ctx.spec();
@@ -1740,9 +1756,12 @@
     var oc = outcome(rep);
     var box = el("div", { className: "gen-add-result gen-add-result-" + oc });
     var added = rep.added || [], refused = rep.refused || [];
-    box.appendChild(el("p", { className: "gen-add-result-head" },
-      (oc === "refused" ? "✗ " : oc === "mixed" ? "⚠ " : "") +
+    // A7: the outcome as one kit verdict (dot colour + words, never colour alone).
+    var head = el("div", { className: "gen-add-result-head ui-verdict ui-verdict--" + (oc === "refused" ? "danger" : oc === "mixed" ? "warn" : oc === "none" ? "neutral" : "ok") });
+    head.appendChild(el("span", { className: "ui-dot", "aria-hidden": "true" }));
+    head.appendChild(el("strong", { className: "ui-verdict-key" },
       "Additions: " + added.length + " added" + (refused.length ? ", " + refused.length + " refused" : "")));
+    box.appendChild(head);
     var ul = el("ul", { className: "gen-add-result-list" });
     added.forEach(function (e) {
       var li = el("li", { className: "gen-add-ok-item" });
@@ -1753,7 +1772,6 @@
     });
     refused.forEach(function (e) {
       var li = el("li", { className: "gen-add-refused" });
-      li.style.color = "var(--sm-danger, #d33)";
       li.textContent = e.kind === "default_gate" ? "✗ " + aliasLabel(e) + " — " + e.reason
         : e.kind === "field"
         ? "✗ " + fieldLabel((e.target ? e.target + "." : "") + e.name, e.value) + " (field) — " + e.reason
@@ -1761,7 +1779,7 @@
       ul.appendChild(li);
     });
     box.appendChild(ul);
-    (rep.notes || []).forEach(function (n) { box.appendChild(el("p", { className: "muted" }, n)); });
+    (rep.notes || []).forEach(function (n) { box.appendChild(el("p", { className: "ui-note" }, n)); });
     return box;
   }
 

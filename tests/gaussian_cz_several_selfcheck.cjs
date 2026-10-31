@@ -47,7 +47,7 @@ const text = () => $('#gcz-several').textContent.replace(/\s+/g, ' ');
         'Gaussian CZ — to several pairs',
         'Each pair gets its own pulses: <macro>_pulse_<control>_<target>, e.g. cz_gaussian_unipolar_pulse_q1_q2.',
         'A new macro class on a built chip is not created here in v1; use Re-generate.',
-        "Ready = SM's checks and your lab code pass (checked on this chip).",
+        "Ready means SM's checks and your lab code pass (checked on this chip).",
         'Select:', 'All ready', 'None',
         'Ready — 2 of 3 pairs', 'by chip f_01', 'Can’t — 1',
         'a gate named cz_gaussian_unipolar already exists',
@@ -57,7 +57,8 @@ const text = () => $('#gcz-several').textContent.replace(/\s+/g, ' ');
 
     const rows = [...d.querySelectorAll('input[data-gcz-pair]')];
     ok(rows.length === 2 && rows.every((b) => b.checked), 'Ready rows ticked by default');
-    ok(/q1-2\s+moves q2 · cz_gaussian_unipolar_pulse_q1_q2/.test(t), 'row wording');
+    const cells = rows[0].closest('tr') ? [...rows[0].closest('tr').cells].map((c) => c.textContent) : [];
+    ok(JSON.stringify(cells.slice(1)) === JSON.stringify(['q1-2', 'Ready', 'q2', 'cz_gaussian_unipolar_pulse_q1_q2']), 'row cells: ' + JSON.stringify(cells));
     const cant = $('.gcz-sev-cant');
     ok(cant && !cant.querySelector('input'), "Can't has no checkbox");
     const gbox = $('input[data-gcz-group]');

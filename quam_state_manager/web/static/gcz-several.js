@@ -47,8 +47,12 @@
         }
         var all = d.querySelector('[data-gcz-select="ready"]');
         var none = d.querySelector('[data-gcz-select="none"]');
-        if (all) all.setAttribute('aria-pressed', String(boxes.length > 0 && on === boxes.length));
-        if (none) none.setAttribute('aria-pressed', String(boxes.length > 0 && on === 0));
+        // The lit option = the ticks are exactly that preset (same exception to D-50 as gen-rules.js).
+        [[all, boxes.length > 0 && on === boxes.length], [none, boxes.length > 0 && on === 0]].forEach(function (x) {
+            if (!x[0]) return;
+            x[0].setAttribute('aria-pressed', String(x[1]));
+            x[0].classList.toggle('ui-segmented-on', x[1]);
+        });
         var head = d.querySelector('input[data-gcz-group]');
         if (head) {
             head.checked = boxes.length > 0 && on === boxes.length;
@@ -66,38 +70,58 @@
             var gbox = el('input', { type: 'checkbox', 'data-gcz-group': '1', checked: 'checked',
                                      'aria-label': 'Tick every ready pair' });
             gbox.checked = true;
-            var det = el('details', { open: '' });
-            var sum = el('summary');
+            var det = el('details', { open: '', 'class': 'ui-disclosure' });
+            var sum = el('summary', { 'class': 'ui-disclosure-summary' });
             sum.appendChild(el('span', null, 'Ready — ' + ready.length + ' of ' + plan.total + ' pairs'));
-            if (plan.reason_suffix) sum.appendChild(el('small', { 'class': 'muted' }, ' ' + plan.reason_suffix));
+            if (plan.reason_suffix) sum.appendChild(el('span', { 'class': 'ui-count' }, ' ' + plan.reason_suffix));
             det.appendChild(sum);
-            ready.forEach(function (r) {
-                var lab = el('label', { 'class': 'gcz-sev-row' });
-                var cb = el('input', { type: 'checkbox', 'data-gcz-pair': r.pair, value: r.pair });
-                cb.checked = true;
-                lab.appendChild(cb);
-                lab.appendChild(document.createTextNode(' ' + r.pair + '  moves ' + r.moving +
-                    ' · ' + (r.pulses || []).join(', ')));
-                det.appendChild(lab);
+            // The same group table as the rules' Apply dialog (D-56, D-62).
+            var tbl = el('table', { 'class': 'ui-table gcz-sev-tbl' });
+            var hr = el('tr');
+            ['', 'Pair', 'Status', 'Moving qubit', 'Pulse names'].forEach(function (c, i) {
+                var th = el('th', { 'class': 'ui-table-head', scope: 'col' }, c);
+                if (!i) th.setAttribute('aria-label', 'Select');
+                hr.appendChild(th);
             });
+            tbl.appendChild(el('thead')).appendChild(hr);
+            var tb = el('tbody');
+            ready.forEach(function (r) {
+                var tr = el('tr', { 'class': 'gcz-sev-row' });
+                var cb = el('input', { type: 'checkbox', 'data-gcz-pair': r.pair, value: r.pair, 'aria-label': r.pair });
+                cb.checked = true;
+                var c0 = el('td', { 'class': 'ui-table-cell' }); c0.appendChild(cb); tr.appendChild(c0);
+                var c1 = el('td', { 'class': 'ui-table-cell' }); c1.appendChild(el('code', { 'class': 'ui-chip' }, r.pair)); tr.appendChild(c1);
+                var c2 = el('td', { 'class': 'ui-table-cell' });
+                var v = el('div', { 'class': 'ui-verdict ui-verdict--ok' });
+                v.appendChild(el('span', { 'class': 'ui-dot', 'aria-hidden': 'true' }));
+                v.appendChild(el('strong', { 'class': 'ui-verdict-key' }, 'Ready'));
+                c2.appendChild(v); tr.appendChild(c2);
+                tr.appendChild(el('td', { 'class': 'ui-table-cell' }, r.moving));
+                var names = (r.pulses || []).join(', ');
+                tr.appendChild(el('td', { 'class': 'ui-table-cell ui-table-muted gcz-sev-names', title: names }, names));
+                tb.appendChild(tr);
+            });
+            tbl.appendChild(tb);
+            det.appendChild(tbl);
             wrap.appendChild(gbox);
             wrap.appendChild(det);
             body.appendChild(wrap);
         } else {
-            body.appendChild(el('p', { 'class': 'muted' }, 'No pair is ready.'));
+            body.appendChild(el('p', { 'class': 'ui-note' }, 'No pair is ready.'));
         }
         if (cant.length) {
             var n = cant.reduce(function (a, c) { return a + c.pairs.length; }, 0);
-            var cdet = el('details', { open: '', 'class': 'gcz-sev-cant' });
-            cdet.appendChild(el('summary', null, 'Can’t — ' + n));
+            var cdet = el('details', { open: '', 'class': 'gcz-sev-cant ui-disclosure' });
+            cdet.appendChild(el('summary', { 'class': 'ui-disclosure-summary' }, 'Can’t — ' + n));
             cant.forEach(function (c) {
                 var line = el('div', { 'class': 'gcz-sev-reason' });
-                line.textContent = c.pairs.length + ' — ' + c.reason + '   ' + c.pairs.join(', ');
+                line.appendChild(el('span', null, c.pairs.length + ' — ' + c.reason));
+                line.appendChild(el('span', { 'class': 'gcz-sev-reason-pairs' }, c.pairs.join(', ')));
                 cdet.appendChild(line);
             });
             body.appendChild(cdet);
         }
-        (plan.notes || []).forEach(function (t) { body.appendChild(el('p', { 'class': 'muted' }, t)); });
+        (plan.notes || []).forEach(function (t) { body.appendChild(el('p', { 'class': 'ui-note' }, t)); });
         refresh();
     }
 

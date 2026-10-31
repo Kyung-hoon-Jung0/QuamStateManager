@@ -82,7 +82,8 @@ function pick(w, el, v) { el.value = v; el.dispatchEvent(new w.Event('change', {
   w.GenRules.openApply({ ctx: w.ctx, rule, opener });
   await T.settle();
   const nums = w.dlg().querySelector('.gen-rule-nums').textContent;
-  ok(/control: amplitude 0\.12, flat_length 20 ns; target: amplitude 0\.08, flat_length 20 ns/.test(nums), 'X5 grouped by role, every field: ' + nums);
+  const numRows = Array.from(w.dlg().querySelectorAll('.gen-rule-nums tbody tr')).map(r => Array.from(r.cells).map(c => c.textContent).join('|'));
+  ok(JSON.stringify(numRows) === JSON.stringify(['control|0.12|20 ns', 'target|0.08|20 ns']), 'X5 a row per role, every field: ' + JSON.stringify(numRows) + ' ' + nums);
   const sub = w.dlg().querySelector('.gen-rule-sub, .gen-rule-class');
   const head = w.dlg().textContent;
   ok(!/\b(\w+) \(\1[,)]/.test(head), 'X6 the class name is not repeated: ' + head.slice(0, 120));

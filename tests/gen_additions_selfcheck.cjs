@@ -130,7 +130,9 @@ const tick = () => new Promise(r => setTimeout(r, 0));
     notes: [] });
   ok(/1 added, 1 refused/.test(node.textContent), 'R1 counts');
   const red = node.querySelector('.gen-add-refused');
-  ok(red && /must be even/.test(red.textContent) && /d33|danger/.test(red.getAttribute('style') || ''), 'R1 refused in red with reason');
+  // the red comes from the class rule (style.css .gen-add-result-list li.gen-add-refused), not an inline style
+  ok(red && /must be even/.test(red.textContent) && !red.getAttribute('style') &&
+     node.querySelector('.gen-add-result-head.ui-verdict--warn'), 'R1 refused with reason; a mixed outcome is a warn verdict');
   ok(node.querySelector('.gen-add-ok-item') && /qubits\.q1\.z\.operations\.snz/.test(node.textContent), 'R1 added listed');
   const empty = GA.renderResult({ added: [], refused: [] });
   ok(/0 added/.test(empty.textContent) && !empty.querySelector('.gen-add-refused'), 'R2 empty');

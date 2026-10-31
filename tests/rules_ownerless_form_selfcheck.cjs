@@ -54,7 +54,8 @@ function pick(w, el, v) { el.value = v; el.dispatchEvent(new w.Event('change', {
   const body = m.srv.expands[0];
   ok(!!body && body.rule.source === null && body.rule.gate.name === 'cz_bm' && body.rule.items.map(i => i.role).join() === 'high,low', 'O4 expand got the rule: ' + J(body && body.rule));
   ok(body.rule.numbers['high.length'] === 45 && body.rule.numbers['high.amplitude'] === 0.12 && typeof body.rule.numbers['low.length'] === 'number', 'O4 numbers are JSON numbers: ' + J(body.rule.numbers));
-  ok(/Initial values from the form: high: amplitude 0\.12, length 45 ns; low: length 45 ns/.test(w.dlg().textContent), 'O4 the dialog names the initial values');
+  const numRows = Array.from(w.dlg().querySelectorAll('.gen-rule-nums tbody tr')).map(r => Array.from(r.cells).map(c => c.textContent).join('|'));
+  ok(J(numRows) === J(['high|0.12|45 ns', 'low|—|45 ns']) && /Starting values from the form/.test(w.dlg().querySelector('.gen-rule-nums').textContent), 'O4 the dialog names the initial values: ' + J(numRows));
   ok(!/from q1-2/.test(w.dlg().textContent), 'O4 no "from <pair>" for a rule without a source');
   w.cancelBtn().click();
   ok(doc.activeElement === btn, 'O4 Cancel returns focus to the Set-all button');

@@ -39,6 +39,48 @@
   function shortName(p) { return String(p || "").split(".").pop(); }
   function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")); }
 
+  /* -- kit parts (ui-kit.css; the same tree as window.UI in ui.js, a /ui-kit-only bundle) -- */
+  function kitHead(eyebrow, titleEl, gistEl) {
+    var h = el("header", { className: "ui-head" });
+    if (eyebrow) h.appendChild(el("div", { className: "ui-head-eyebrow" }, eyebrow));
+    titleEl.classList.add("ui-head-title");
+    h.appendChild(titleEl);
+    if (gistEl) { gistEl.classList.add("ui-head-gist"); h.appendChild(gistEl); }
+    return h;
+  }
+  function kitChip(text) { return el("code", { className: "ui-chip" }, text); }
+  function kitBadge(text, tone) { return el("span", { className: "ui-badge ui-badge--" + (tone || "neutral") }, text); }
+  function kitVerdict(tone, key, why) {
+    var v = el("div", { className: "ui-verdict ui-verdict--" + tone });
+    v.appendChild(el("span", { className: "ui-dot", "aria-hidden": "true" }));
+    v.appendChild(el("strong", { className: "ui-verdict-key" }, key));
+    if (why) v.appendChild(el("span", { className: "ui-verdict-why" }, why));
+    return v;
+  }
+  // cells: a string, or {text|node, muted, num, title}
+  function kitTable(columns, rows, cls) {
+    var t = el("table", { className: "ui-table" + (cls ? " " + cls : "") });
+    var hr = el("tr");
+    columns.forEach(function (c) { hr.appendChild(el("th", { className: "ui-table-head", scope: "col" }, c)); });
+    t.appendChild(el("thead")).appendChild(hr);
+    var tb = el("tbody");
+    rows.forEach(function (r) { tb.appendChild(kitRow(r)); });
+    t.appendChild(tb);
+    return t;
+  }
+  function kitRow(r, attrs) {
+    var tr = el("tr", attrs || null);
+    r.forEach(function (c) {
+      var o = c && typeof c === "object" && !c.nodeType ? c : { text: c };
+      var td = el("td", { className: "ui-table-cell" + (o.muted ? " ui-table-muted" : "") + (o.num ? " ui-table-num" : "") + (o.cls ? " " + o.cls : "") });
+      if (o.node) td.appendChild(o.node);
+      else if (o.text != null) td.textContent = String(o.text);
+      if (o.title) td.title = o.title;
+      tr.appendChild(td);
+    });
+    return tr;
+  }
+
   /* ---- the model (pure) ------------------------------------------------ */
 
   function rulesOf(spec) { return Array.isArray(spec && spec.addition_rules) ? spec.addition_rules : []; }
@@ -136,19 +178,27 @@
 
   function dialogOf(d) { return d.dlg; }
 
-  function fieldsLine(numbers, sourceLabel) {
-    var groups = {}, order = [], n = 0;
+  // The copied starting numbers as one table: a row per pulse role, a column per field.
+  function numbersTable(numbers, sourceLabel) {
+    var roles = [], fields = [], v = {};
     Object.keys(numbers || {}).forEach(function (k) {
-      var dot = k.indexOf("."), role = dot < 0 ? "" : k.slice(0, dot), f = k.slice(dot + 1), v = numbers[k];
-      if (!groups[role]) { groups[role] = []; order.push(role); }
-      groups[role].push(f + " " + v + (/(^|_)length$/.test(f) ? " ns" : ""));
-      n++;
+      var dot = k.indexOf("."), role = dot < 0 ? "" : k.slice(0, dot), f = k.slice(dot + 1);
+      if (roles.indexOf(role) < 0) roles.push(role);
+      if (fields.indexOf(f) < 0) fields.push(f);
+      v[role + "|" + f] = numbers[k] + (/(^|_)length$/.test(f) ? " ns" : "");
     });
-    if (!n) return "";
-    var shown = order.map(function (r) { return (r ? r + ": " : "") + groups[r].join(", "); }).join("; ");
-    return sourceLabel
-      ? "Numbers copied from " + sourceLabel + " (current values) as initial values: " + shown
-      : "Initial values from the form: " + shown;
+    if (!roles.length) return null;
+    var frag = document.createDocumentFragment();
+    frag.appendChild(kitTable(["Pulse"].concat(fields), roles.map(function (r) {
+      return [r || "—"].concat(fields.map(function (f) {
+        var x = v[r + "|" + f];
+        return { text: x == null ? "—" : x, num: x != null };
+      }));
+    }), "gen-rule-nums-table"));
+    frag.appendChild(el("p", { className: "ui-note gen-rule-nums-src" }, sourceLabel
+      ? "Copied from " + sourceLabel + " as starting values — recalibrate each pair."
+      : "Starting values from the form."));
+    return frag;
   }
 
   function classLine(rule) {
@@ -157,9 +207,8 @@
     var label = info && info.label ? info.label : shortName(cls);
     var isLab = !!(info && info.origin === "lab");
     var tag = label === shortName(cls) ? (isLab ? "lab class" : "") : shortName(cls) + (isLab ? ", lab class" : "");
-    var line = label + (tag ? " (" + tag + ")" : "") + " · gate " +
-      ((rule.gate && rule.gate.name) || "") + (rule.source ? " · from " + rule.source : "");
-    return line;
+    // The gate name is the dialog title; the gist names where it comes from and its class.
+    return (rule.source ? "From " + rule.source + " · " : "") + label + (tag ? " (" + tag + ")" : "");
   }
 
   function rowOfPid(d, pid) {
@@ -174,18 +223,6 @@
       return { text: "no moving qubit set for this pair — which qubit moves?", labels: ["control ", "target "] };
     }
     return { text: "idle frequencies not typed yet — which qubit is higher?", labels: ["", ""] };
-  }
-
-  function rowSummary(row) {
-    var ch = row.choices || {};
-    var roles = Object.keys(ch).filter(function (r) { return ch[r]; }).map(function (r) {
-      return r + " → " + (ch[r] === "coupler" ? "coupler" : ch[r] + " z");
-    });
-    var names = (row.additions || []).filter(function (a) { return a.kind === "pulse"; })
-      .map(function (a) { return a.name; });
-    var out = roles.join(" · ");
-    if (names.length) out += (out ? " · " : "") + names.join(", ");
-    return out;
   }
 
   function reasonTail(row) {
@@ -239,30 +276,36 @@
   /* -- render -------------------------------------------------------------- */
 
   function buildDialog(d) {
-    var dlg = el("dialog", { className: "gen-rule-dlg", "aria-labelledby": "gen-rule-title" });
-    var head = el("div", { className: "gen-rule-head" });
+    var dlg = el("dialog", { className: "gen-rule-dlg ui-dialog ui-dialog--l", "aria-labelledby": "gen-rule-title" });
+    var head = el("div", { className: "gen-rule-head ui-dialog-head" });
     d.titleEl = el("h3", { id: "gen-rule-title" });
-    d.xBtn = el("button", { type: "button", className: "gen-rule-x secondary", "aria-label": "Close" }, "✕");
-    head.appendChild(d.titleEl); head.appendChild(d.xBtn);
-    dlg.appendChild(head);
+    d.xBtn = el("button", { type: "button", className: "gen-rule-x ui-btn-icon", "aria-label": "Close" }, "✕");
     d.subEl = el("p", { className: "gen-rule-sub" });
-    d.numsEl = el("p", { className: "gen-rule-nums muted" });
-    d.noteEl = el("p", { className: "gen-rule-ready-note muted" }, "Ready = SM's checks pass. Your lab code runs at Build.");
-    dlg.appendChild(d.subEl); dlg.appendChild(d.numsEl); dlg.appendChild(d.noteEl);
+    head.appendChild(kitHead("Apply to other pairs", d.titleEl, d.subEl)); head.appendChild(d.xBtn);
+    dlg.appendChild(head);
+    var top = el("div", { className: "gen-rule-top" });
+    d.numsEl = el("div", { className: "gen-rule-nums" });
+    d.noteEl = el("div", { className: "gen-rule-ready-note ui-callout ui-callout--note", role: "note" });
+    var noteText = el("p", { className: "ui-callout-text" });
+    noteText.appendChild(el("strong", {}, "Ready"));
+    noteText.appendChild(document.createTextNode(" means SM's checks pass. Your lab code runs when you build."));
+    d.noteEl.appendChild(noteText);
+    top.appendChild(d.numsEl); top.appendChild(d.noteEl);
     d.selectEl = el("div", { className: "gen-rule-select", role: "group", "aria-label": "Select pairs" });
-    dlg.appendChild(d.selectEl);
+    top.appendChild(d.selectEl);
     d.statusEl = el("p", { className: "gen-rule-status", role: "status" });
-    dlg.appendChild(d.statusEl);
-    d.bodyEl = el("div", { className: "gen-rule-body" });
+    top.appendChild(d.statusEl);
+    dlg.appendChild(top);
+    d.bodyEl = el("div", { className: "gen-rule-body ui-dialog-body" });
     dlg.appendChild(d.bodyEl);
-    var foot = el("div", { className: "gen-rule-foot" });
-    var lab = el("label", { className: "gen-rule-later" });
+    var foot = el("div", { className: "gen-rule-foot ui-dialog-foot" });
+    var lab = el("label", { className: "gen-rule-later ui-check" });
     d.laterEl = el("input", { type: "checkbox", className: "gen-rule-later-cb" });
     lab.appendChild(d.laterEl);
     lab.appendChild(document.createTextNode(" Also add to pairs created later"));
     d.laterLabel = lab;
-    d.cancelBtn = el("button", { type: "button", className: "gen-rule-cancel secondary" }, "Cancel");
-    d.applyBtn = el("button", { type: "button", className: "gen-rule-apply" }, "Add to … pairs");
+    d.cancelBtn = el("button", { type: "button", className: "gen-rule-cancel btn-sync outline" }, "Cancel");
+    d.applyBtn = el("button", { type: "button", className: "gen-rule-apply btn-sync primary" }, "Add to … pairs");
     foot.appendChild(lab); foot.appendChild(d.cancelBtn); foot.appendChild(d.applyBtn);
     dlg.appendChild(foot);
     d.footEl = foot;
@@ -272,7 +315,7 @@
   }
 
   function chipBtn(label, pressed, onClick, extra) {
-    var b = el("button", { type: "button", className: "gen-rule-chip secondary" + (extra || ""),
+    var b = el("button", { type: "button", className: "gen-rule-chip ui-segmented-opt" + (pressed ? " ui-segmented-on" : "") + (extra || ""),
                            "aria-pressed": pressed ? "true" : "false" }, label);
     b.addEventListener("click", onClick);
     return b;
@@ -281,6 +324,10 @@
   function renderSelect(d) {
     d.selectEl.innerHTML = "";
     d.selectEl.appendChild(el("span", { className: "gen-rule-select-label" }, "Select:"));
+    // Exception to D-50 (commands show no selected look): the lit option says the ticks
+    // below are exactly that preset, which would otherwise mean counting rows; the
+    // same state is already in aria-pressed for assistive tech.
+    var seg = el("div", { className: "ui-segmented" });
     var ready = ((d.answer && d.answer.pairs) || []).filter(function (r) { return r.status === G_READY; })
       .map(function (r) { return r.pair; });
     var ticked = tickedPids(d);
@@ -304,7 +351,8 @@
     }, " gen-rule-chip-feed");
     cFeed.setAttribute("aria-haspopup", "menu");
     var cNone = chipBtn("None", none, function () { d.feedline = null; selectPairs(d, []); });
-    [cAll, cFeed, cNone].forEach(function (b) { b.disabled = !enabled; d.selectEl.appendChild(b); });
+    [cAll, cFeed, cNone].forEach(function (b) { b.disabled = !enabled; seg.appendChild(b); });
+    d.selectEl.appendChild(seg);
   }
 
   function selectPairs(d, pids) {
@@ -316,15 +364,12 @@
   }
 
   function groupHead(label, n, total, open) {
-    var sum = el("summary", { className: "gen-rule-sum" });
+    var sum = el("summary", { className: "gen-rule-sum ui-disclosure-summary" });
     sum.appendChild(el("span", { className: "gen-rule-sum-label" }, label + " — " + n + (total != null ? " of " + total + " pairs" : "")));
-    sum.appendChild(el("span", { className: "gen-rule-sum-toggle muted" }, open ? "▾ collapse" : "▸ expand"));
     return sum;
   }
 
   function bindSummary(det, sum) {
-    var t = sum.querySelector(".gen-rule-sum-toggle");
-    det.addEventListener("toggle", function () { t.textContent = det.open ? "▾ collapse" : "▸ expand"; });
     sum.addEventListener("keydown", function (ev) {
       if (ev.key === "ArrowRight" || ev.key === "Enter") { ev.preventDefault(); det.open = true; }
       else if (ev.key === "ArrowLeft") { ev.preventDefault(); det.open = false; }
@@ -344,8 +389,42 @@
     return cb;
   }
 
+  var STATUS_TONE = {}, STATUS_WORD = {};
+  STATUS_TONE[G_READY] = "ok"; STATUS_TONE[G_LOOK] = "warn"; STATUS_TONE[G_CANT] = "danger"; STATUS_TONE[G_HAS] = "neutral";
+  STATUS_WORD[G_READY] = "Ready"; STATUS_WORD[G_LOOK] = "Look"; STATUS_WORD[G_CANT] = "Can't"; STATUS_WORD[G_HAS] = "Has it";
+
+  function playsOn(row) {
+    var ch = row.choices || {};
+    return Object.keys(ch).filter(function (r) { return ch[r]; }).map(function (r) {
+      return r + " → " + (ch[r] === "coupler" ? "coupler" : ch[r] + " z");
+    }).join(" · ");
+  }
+  function pulseNames(row) {
+    return (row.additions || []).filter(function (a) { return a.kind === "pulse"; })
+      .map(function (a) { return a.name; }).join(", ");
+  }
+
+  // One group's rows as a kit table (D-62): tick | Pair | Status | Plays on | Pulse names | Why.
+  function groupTable(d, rows) {
+    var t = el("table", { className: "ui-table gen-rule-tbl" });
+    var hr = el("tr");
+    ["Select", "Pair", "Status", "Plays on", "Pulse names", "Why"].forEach(function (c, i) {
+      var th = el("th", { className: "ui-table-head" + (i ? "" : " gen-rule-c-tick"), scope: "col" }, i ? c : "");
+      if (!i) th.setAttribute("aria-label", c);
+      hr.appendChild(th);
+    });
+    t.appendChild(el("thead")).appendChild(hr);
+    var tb = el("tbody");
+    rows.forEach(function (r) { tb.appendChild(rowEl(d, r)); });
+    t.appendChild(tb);
+    return t;
+  }
+
   function rowEl(d, row) {
-    var li = el("div", { className: "gen-rule-row gen-rule-row-" + (tickable(row) ? "tick" : "plain"), "data-pair": row.pair });
+    var tr = el("tr", { className: "gen-rule-row gen-rule-row-" + (tickable(row) ? "tick" : "plain"), "data-pair": row.pair });
+    function td(cls) { var c = el("td", { className: "ui-table-cell" + (cls ? " " + cls : "") }); tr.appendChild(c); return c; }
+    var cTick = td("gen-rule-c-tick"), cPair = td(), cStatus = td(), cOn = td("gen-rule-c-on"),
+        cNames = td("ui-table-muted gen-rule-c-names"), cWhy = td("ui-table-muted gen-rule-c-why");
     if (tickable(row)) {
       var cb = el("input", { type: "checkbox", className: "gen-rule-row-cb", "aria-label": row.pair, "data-pair": row.pair });
       cb.checked = !!d.ticks[row.pair];
@@ -360,14 +439,19 @@
         var again = d.bodyEl.querySelector('.gen-rule-row-cb[data-pair="' + row.pair + '"]');
         if (again) again.focus();
       });
-      li.appendChild(cb);
+      cTick.appendChild(cb);
     }
-    li.appendChild(el("span", { className: "gen-rule-pid" }, row.pair));
+    var pid = kitChip(row.pair); pid.classList.add("gen-rule-pid");
+    cPair.appendChild(pid);
+    cStatus.appendChild(kitVerdict(STATUS_TONE[row.status] || "neutral", STATUS_WORD[row.status] || row.status));
+    cStatus.title = row.status;
+    var names = pulseNames(row);
+    if (names) { cNames.textContent = names; cNames.title = names; }
     var needsChoice = needsChoiceOf(row);
     var chosen = Object.prototype.hasOwnProperty.call(d.choices, row.pair);
     if (needsChoice || chosen) {
       var ct = chooseText(row);
-      li.appendChild(el("span", { className: "gen-rule-reason" }, needsChoice ? ct.text : rowSummary(row)));
+      if (!needsChoice) cOn.appendChild(el("span", { className: "gen-rule-reason" }, playsOn(row)));
       var qs = [String(row.control), String((row.long || "").split("-").pop() || "")];
       var sel = el("select", { className: "gen-rule-choice", "aria-label": "Choice for " + row.pair, "data-pair": row.pair });
       sel.appendChild(el("option", { value: "control" }, ct.labels[0] + qs[0]));
@@ -378,19 +462,25 @@
         d.ticks[row.pair] = true;
         recheck(d, "choice", 0);
       });
-      li.appendChild(sel);
-      if (needsChoice) li.appendChild(el("span", { className: "gen-rule-hint muted" },
-        "tick to add with that choice; or type RF freq in Populate and come back"));
-    } else if (row.status === G_READY) {
-      li.appendChild(el("span", { className: "gen-rule-reason" }, rowSummary(row)));
-      var tail = reasonTail(row);
-      if (tail) li.appendChild(el("span", { className: "gen-rule-tail muted" }, tail));
+      cOn.appendChild(sel);
+      if (needsChoice) {
+        cWhy.appendChild(el("span", { className: "gen-rule-reason" }, ct.text));
+        cWhy.appendChild(el("span", { className: "gen-rule-hint" },
+          " — tick to add with that choice; or type RF freq in Populate and come back"));
+      }
     } else {
-      li.appendChild(el("span", { className: "gen-rule-reason" }, row.reason || ""));
-      if (row.status === G_LOOK && !tickable(row))
-        li.appendChild(el("span", { className: "gen-rule-hint gen-rule-nowrite muted" }, "not added from here"));
+      var on = playsOn(row);
+      if (on) cOn.appendChild(el("span", { className: "gen-rule-reason" }, on));
+      if (row.status === G_READY) {
+        var tail = reasonTail(row);
+        if (tail) cWhy.appendChild(el("span", { className: "gen-rule-tail" }, tail));
+      } else {
+        cWhy.appendChild(el("span", { className: "gen-rule-reason" }, row.reason || ""));
+        if (row.status === G_LOOK && !tickable(row))
+          cWhy.appendChild(el("span", { className: "gen-rule-hint gen-rule-nowrite" }, " — not added from here"));
+      }
     }
-    return li;
+    return tr;
   }
 
   function cantByReason(rows) {
@@ -429,7 +519,7 @@
       if (!list.length) return;
       var wrap = el("div", { className: "gen-rule-grpwrap", "data-group": g });
       var open = g !== G_HAS;
-      var det = el("details", { className: "gen-rule-grp" });
+      var det = el("details", { className: "gen-rule-grp ui-disclosure" });
       det.open = open;
       var sum = groupHead(g, list.length, (g === G_READY || (g === G_CANT && allCant)) ? total : null, open);
       det.appendChild(sum);
@@ -446,7 +536,7 @@
           det.appendChild(line);
         });
       } else {
-        list.forEach(function (r) { det.appendChild(rowEl(d, r)); });
+        det.appendChild(groupTable(d, list));
       }
       wrap.appendChild(det);
       frag.appendChild(wrap);
@@ -478,8 +568,10 @@
     d.subEl.textContent = classLine(rule);
     var rows = (d.answer && d.answer.pairs) || [];
     var nums = rows.length ? rows[0].numbers : null;
-    d.numsEl.textContent = nums ? fieldsLine(nums, rule.source) : "";
-    d.numsEl.hidden = !d.numsEl.textContent;
+    d.numsEl.textContent = "";
+    var nt = nums ? numbersTable(nums, rule.source) : null;
+    if (nt) d.numsEl.appendChild(nt);
+    d.numsEl.hidden = !nt;
   }
 
   function render(d) {
@@ -907,23 +999,33 @@
 
   /* ---- the ✕ confirm of a rule's gate: two radios (4.3) ---------------------- */
 
-  function confirmRemove(o, done) {
-    var dlg = el("dialog", { className: "gen-rule-dlg gen-rule-mini", "aria-labelledby": "gen-rule-rm-title" });
-    dlg.appendChild(el("p", { id: "gen-rule-rm-title", className: "gen-rule-rm-title" },
-      "Remove " + o.gate + " from " + o.pid + "?  Its " + plural(o.pulses, "pulse") + " go with it."));
+  // The one small confirm box of the rules (A5, D-48 size S): optional radio choices,
+  // [Cancel] then the action on the right as the danger button (D-31: a single-action
+  // confirm puts the risk button where the primary would be, and has no fill).
+  // done(value) gets the chosen radio value (or "ok" without radios), or null on cancel.
+  function miniConfirm(o, done) {
+    var dlg = el("dialog", { className: "gen-rule-dlg gen-rule-mini ui-dialog ui-dialog--s", "aria-labelledby": "gen-rule-rm-title" });
+    var head = el("div", { className: "ui-dialog-head" });
+    var t = el("h3", { id: "gen-rule-rm-title", className: "gen-rule-rm-title" }, o.title);
+    head.appendChild(kitHead(null, t, o.gist ? el("p", {}, o.gist) : null));
+    dlg.appendChild(head);
+    var body = el("div", { className: "ui-dialog-body" });
     var radios = {};
-    [["this", "This pair only — exclude it from the rule"], ["all", "All " + o.total + " pairs"]].forEach(function (r) {
-      var lab = el("label", { className: "gen-rule-rm-opt" });
+    (o.choices || []).forEach(function (r) {
+      var lab = el("label", { className: "gen-rule-rm-opt ui-check" });
       var inp = el("input", { type: "radio", name: "gen-rule-rm", value: r[0] });
-      inp.checked = (o.preset || "this") === r[0];
+      inp.checked = (o.preset || o.choices[0][0]) === r[0];
       radios[r[0]] = inp;
       lab.appendChild(inp); lab.appendChild(document.createTextNode(" " + r[1]));
-      dlg.appendChild(lab);
+      body.appendChild(lab);
     });
-    var foot = el("div", { className: "gen-rule-foot" });
-    var rm = el("button", { type: "button", className: "gen-rule-rm-ok" }, "Remove");
-    var cancel = el("button", { type: "button", className: "secondary gen-rule-rm-cancel" }, "Cancel");
-    foot.appendChild(rm); foot.appendChild(cancel);
+    if (o.choices && o.choices.length) dlg.appendChild(body);
+    var foot = el("div", { className: "gen-rule-foot ui-dialog-foot" });
+    var acts = el("div", { className: "ui-actions" });
+    var cancel = el("button", { type: "button", className: "btn-sync outline gen-rule-rm-cancel" }, "Cancel");
+    var rm = el("button", { type: "button", className: "btn-sync danger gen-rule-rm-ok" }, o.okLabel || "Remove");
+    acts.appendChild(cancel); acts.appendChild(rm);
+    foot.appendChild(acts);
     dlg.appendChild(foot);
     document.body.appendChild(dlg);
     var finished = false;
@@ -938,13 +1040,27 @@
     }
     function onKey(ev) { if (ev.key === "Escape") { ev.preventDefault(); finish(null); } }
     document.addEventListener("keydown", onKey, true);
-    rm.addEventListener("click", function () { finish(radios.all.checked ? "all" : "this"); });
+    rm.addEventListener("click", function () {
+      var v = "ok";
+      Object.keys(radios).forEach(function (k) { if (radios[k].checked) v = k; });
+      finish(v);
+    });
     cancel.addEventListener("click", function () { finish(null); });
     dlg.addEventListener("cancel", function (ev) { ev.preventDefault(); finish(null); });
     if (typeof dlg.showModal === "function") { try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); } }
     else dlg.setAttribute("open", "");
-    (radios[o.preset || "this"] || radios.this).focus();
+    var first = radios[o.preset] || radios[(o.choices && o.choices[0] && o.choices[0][0])] || cancel;
+    first.focus();
     return dlg;
+  }
+
+  /* ---- the ✕ confirm of a rule's gate: two radios (4.3) ---------------------- */
+
+  function confirmRemove(o, done) {
+    return miniConfirm({ title: "Remove " + o.gate + " from " + o.pid + "?",
+      gist: "Its " + plural(o.pulses, "pulse") + " go with it.",
+      choices: [["this", "This pair only — exclude it from the rule"], ["all", "All " + o.total + " pairs"]],
+      preset: o.preset || "this", opener: o.opener }, done);
   }
 
   /* ---- a rule-level undo entry (rules, additions, populate pairs) ----------- */
@@ -980,9 +1096,9 @@
           focusCard(null, btn);
         } },
       { label: "Remove the rule and its " + n + " gates…", onSelect: function () {
-          var ok = typeof window.confirm !== "function" ||
-            window.confirm("Remove rule " + rule.gate.name + " and its " + n + " gates (with the pulses only they play)?");
-          if (!ok) return;
+          miniConfirm({ title: "Remove rule " + rule.gate.name + " and its " + plural(n, "gate") + "?",
+            gist: "The pulses only these gates play go with them. Ctrl+Z undoes it.", okLabel: "Remove", opener: btn }, function (how) {
+          if (!how) return;
           rulesTxn(spec, "remove rule " + rule.gate.name);
           if (window.GenAdditions && window.GenAdditions.removeRuleInstances) window.GenAdditions.removeRuleInstances(spec, rule);
           spec.addition_rules = spec.addition_rules.filter(function (r) { return r.id !== rule.id; });
@@ -991,6 +1107,7 @@
           after();
           toast("Removed rule " + rule.gate.name + " and its " + n + " gates. Ctrl+Z undoes it.");
           focusCard(null, btn);
+          });
         } },
       { separator: true },
       { label: "Also add to pairs created later", checkbox: true, checked: !!rule.auto_new, onSelect: function () {
@@ -1037,9 +1154,11 @@
       if (d.field === "class_") { cls[d.name] = 1; if (d.old != null && d.new == null) removed.push(d.name); else if (d.old == null && d.new != null) added.push(d.name); }
     });
     var gone = {}; removed.concat(added).forEach(function (n) { gone[n] = 1; });
+    var moveRows = [], renameRows = [];
     function addMove(who, a, b) {
       if (!a || !b || a === b || seenMove[who]) return;
       seenMove[who] = 1; moves.push(who + " moves " + a + " → " + b);
+      moveRows.push([who.replace(/ pulse$/, ""), a, b]);
     }
     diff.forEach(function (d) {
       if (d.field === "class_") return;
@@ -1058,7 +1177,7 @@
     removed.forEach(function (o) {
       var ro = roleOfName(rule, o);
       var n = added.filter(function (x) { return !used[x] && roleOfName(rule, x) === ro; })[0];
-      if (n) { used[n] = 1; renames.push(o + " → " + n); }
+      if (n) { used[n] = 1; renames.push(o + " → " + n); renameRows.push(["name", o, n]); }
       else other.push("pulse " + o + " removed");
     });
     added.forEach(function (n) { if (!used[n]) other.push("pulse " + n + " added"); });
@@ -1067,29 +1186,36 @@
     parts = parts.concat(other);
     // Every existing instance keeps its stored names (plan v2.1 section 1.3 rule 1).
     var kept = !renames.length && moves.length;
-    return { parts: parts, kept: kept };
+    // rows: the moves and renames as table rows (Pulse | Plays on now | After); other: the rest in words
+    return { parts: parts, kept: kept, rows: moveRows.concat(renameRows), other: other };
   }
 
   // mode "review": every Needs-a-look pair of the rule; mode "reset": one pair back to the rule.
   function openReview(opts) {
     var ctx = opts.ctx, mode = opts.mode || "review";
-    var dlg = el("dialog", { className: "gen-rule-dlg gen-rule-review", "aria-labelledby": "gen-rule-rv-title" });
+    var dlg = el("dialog", { className: "gen-rule-dlg gen-rule-review ui-dialog ui-dialog--l", "aria-labelledby": "gen-rule-rv-title" });
     var title = el("h3", { id: "gen-rule-rv-title" });
-    var head = el("div", { className: "gen-rule-head" });
-    var xb = el("button", { type: "button", className: "gen-rule-x secondary", "aria-label": "Close" }, "✕");
-    head.appendChild(title); head.appendChild(xb);
-    dlg.appendChild(head);
+    var head = el("div", { className: "gen-rule-head ui-dialog-head" });
+    var xb = el("button", { type: "button", className: "gen-rule-x ui-btn-icon", "aria-label": "Close" }, "✕");
     var sub = el("p", { className: "gen-rule-sub" }, mode === "reset"
       ? "These fields go back to the rule's values. Nothing is written until you choose."
-      : "Recalculated with the pairs' current facts. Nothing is written until you choose.");
-    dlg.appendChild(sub);
-    var list = el("div", { className: "gen-rule-rv-list" });
+      : "Recalculated with each pair's current frequencies. Nothing is written until you choose.");
+    var eyebrow = el("div", { className: "ui-head-eyebrow" });
+    var hd = kitHead(null, title, sub);
+    hd.insertBefore(eyebrow, hd.firstChild);
+    head.appendChild(hd); head.appendChild(xb);
+    dlg.appendChild(head);
+    var list = el("div", { className: "gen-rule-rv-list ui-dialog-body" });
     dlg.appendChild(list);
-    var foot = el("div", { className: "gen-rule-foot" });
-    var keepAll = el("button", { type: "button", className: "secondary gen-rule-rv-keepall" }, "Keep all as is");
-    var applyAll = el("button", { type: "button", className: "gen-rule-rv-applyall" }, "Apply all");
-    if (mode !== "reset") { foot.appendChild(keepAll); foot.appendChild(applyAll); }
-    dlg.appendChild(foot);
+    var foot = el("div", { className: "gen-rule-foot ui-dialog-foot" });
+    var keepAll = el("button", { type: "button", className: "btn-sync outline gen-rule-rv-keepall" }, "Keep all as is");
+    var applyAll = el("button", { type: "button", className: "btn-sync primary gen-rule-rv-applyall" }, "Apply all");
+    if (mode !== "reset") {
+      var fa = el("div", { className: "ui-actions" });
+      fa.appendChild(keepAll); fa.appendChild(applyAll);
+      foot.appendChild(fa);
+      dlg.appendChild(foot);
+    }
     document.body.appendChild(dlg);
     var r = { closed: false, answer: null, busy: false };
     function ruleNow() { return ruleById(ctx.spec(), opts.rule.id) || opts.rule; }
@@ -1117,9 +1243,10 @@
     function draw() {
       var rows = pending();
       list.innerHTML = "";
+      eyebrow.textContent = (mode === "reset" ? "Reset to rule · " : "Rule review · ") + ruleNow().gate.name;
       title.textContent = mode === "reset"
-        ? "Reset " + opts.pid + " to rule " + ruleNow().gate.name
-        : ruleNow().gate.name + " — " + plural(rows.length, "pair") + " would change";
+        ? "Reset " + opts.pid + " to the rule"
+        : plural(rows.length, "pair") + " would change";
       applyAll.textContent = "Apply all " + plural(rows.length, "change");
       keepAll.disabled = applyAll.disabled = !rows.length || r.busy;
       if (!r.answer) { list.appendChild(el("p", { className: "muted" }, "Checking…")); return; }
@@ -1129,17 +1256,32 @@
         return;
       }
       rows.forEach(function (row) {
-        var box = el("div", { className: "gen-rule-rv-pair", "data-pair": row.pair });
-        box.appendChild(el("p", { className: "gen-rule-rv-head" }, row.pair + " — " +
-          (mode === "reset" ? "edited here" : (row.reason || "facts changed"))));
+        var box = el("article", { className: "gen-rule-rv-pair ui-item", "data-pair": row.pair });
+        // The reason as one badge + where it came from in muted words (plan.md section 2).
+        var why = mode === "reset" ? "edited here" : (row.reason || "facts changed");
+        var src = /\s(by .+)$/.exec(why);
+        var badgeText = (src ? why.slice(0, src.index) : why).replace(/^control and target swapped$/, "control ↔ target swapped");
+        var rh = el("div", { className: "gen-rule-rv-head ui-item-head" });
+        rh.appendChild(kitChip(row.pair));
+        rh.appendChild(kitBadge(badgeText, "warn"));
+        if (src) rh.appendChild(el("span", { className: "ui-item-title" }, src[1]));
+        box.appendChild(rh);
         var rnow = ruleNow(), diff = row.diff_vs_current || [];
         var sm = reviewSummary(rnow, diff, !!(rnow.source && sameKey(rnow.source, row.pair)));
-        sm.parts.forEach(function (t) { box.appendChild(el("div", { className: "gen-rule-rv-plain" }, t)); });
-        if (sm.kept) box.appendChild(el("div", { className: "gen-rule-rv-kept muted" },
-          "Pulse names on this pair are kept; only where the pulses play changes."));
-        var det = el("details", { className: "gen-rule-rv-details" });
-        det.appendChild(el("summary", {}, "Details"));
-        if (diff.length) box.appendChild(det);
+        if (sm.rows.length) {
+          var tb = kitTable(["Pulse", "Plays on now", "After"], sm.rows, "gen-rule-rv-moves");
+          Array.prototype.forEach.call(tb.tBodies[0].rows, function (tr) { tr.className = "gen-rule-rv-plain"; });
+          box.appendChild(tb);
+        }
+        sm.other.forEach(function (t) { box.appendChild(el("p", { className: "gen-rule-rv-plain gen-rule-rv-other ui-item-body" }, t)); });
+        if (sm.kept) box.appendChild(el("p", { className: "gen-rule-rv-kept ui-note" },
+          "Pulse names stay the same; only the channel changes."));
+        var det = el("details", { className: "gen-rule-rv-details ui-disclosure" });
+        det.appendChild(el("summary", { className: "ui-disclosure-summary" }, "Details"));
+        var detBody = el("div", { className: "ui-disclosure-body" });
+        det.appendChild(detBody);
+        var rf = el("div", { className: "gen-rule-rv-btns ui-item-foot" });
+        if (diff.length) rf.appendChild(det);
         diff.forEach(function (d) {
           var line = el("div", { className: "gen-rule-rv-line" }, fieldDiffHtml(d));
           if (typeof d.old === "number" && typeof d.new === "number" && window.ValueDelta && window.ValueDelta.chipHtml) {
@@ -1147,15 +1289,18 @@
             chip.innerHTML = window.ValueDelta.chipHtml(d.old, d.new);
             line.appendChild(chip);
           }
-          det.appendChild(line);
+          detBody.appendChild(line);
         });
-        var btns = el("div", { className: "gen-rule-rv-btns" });
-        var keep = el("button", { type: "button", className: "secondary gen-rule-rv-keep", "data-pair": row.pair },
+        var btns = el("div", { className: "ui-actions" });
+        // Inside a card Apply is the secondary look: the dialog's one fill is "Apply all" (D-1).
+        // In reset mode there is no foot, so the card's action is the one fill.
+        var keep = el("button", { type: "button", className: "btn-sm outline secondary gen-rule-rv-keep", "data-pair": row.pair },
           mode === "reset" ? "Cancel" : "Keep as is");
-        var app = el("button", { type: "button", className: "gen-rule-rv-apply", "data-pair": row.pair },
-          mode === "reset" ? "Reset to rule" : "Apply change");
-        btns.appendChild(app); btns.appendChild(keep);
-        box.appendChild(btns);
+        var app = el("button", { type: "button", className: (mode === "reset" ? "btn-sm" : "btn-sm outline") + " gen-rule-rv-apply", "data-pair": row.pair },
+          mode === "reset" ? "Reset to rule" : "Apply");
+        btns.appendChild(keep); btns.appendChild(app);
+        rf.appendChild(btns);
+        box.appendChild(rf);
         keep.addEventListener("click", function () {
           if (mode === "reset") { close(true); return; }
           keepPairs([row]);
@@ -1301,27 +1446,29 @@
     var total = (spec.qubit_pairs || []).length, n = countOn(spec, rule);
     var cls = shortName(rule.gate.macro_class);
     var info = window.GenAdditions && window.GenAdditions.classInfo ? window.GenAdditions.classInfo(rule.gate.macro_class) : null;
-    var parts = [rule.gate.name, (info && info.label ? info.label + " (" + cls + ")" : cls)];
+    var title = [(info && info.label ? info.label + " (" + cls + ")" : cls)];
     if (rule.source) {
       var alive = (spec.qubit_pairs || []).some(function (p) { return sameKey(rule.source, pairIdOf(p)); });
-      parts.push("from " + rule.source + (alive ? "" : " (pair deleted)"));
-    } else parts.push("for all pairs (no source)");
-    var cr = spec.pair_gate === "cr";
-    if (cr) parts.push("not applicable to cross-resonance — " + plural(n, "gate") + " kept, nothing applies");
+      title.push("from " + rule.source + (alive ? "" : " (pair deleted)"));
+    } else title.push("for all pairs (no source)");
+    var cr = spec.pair_gate === "cr", count = "";
+    if (cr) title.push("not applicable to cross-resonance — " + plural(n, "gate") + " kept, nothing applies");
     else {
-      parts.push("on " + n + " of " + total + " pairs");
+      count = n + " of " + total + " pairs";
       var ed = editedRows(rule).length;
-      if (ed) parts.push(ed + " edited here");
+      if (ed) count += " · " + ed + " edited here";
     }
     var needs = cr ? [] : needRows(rule), fresh = cr ? [] : newReadyRows(rule);
-    var second = [];
-    if (needs.length) second.push("◐ " + needs.length + " need" + (needs.length === 1 ? "s" : "") + " a look (" + (needs[0].reason || "pair facts changed") + ")");
-    if (fresh.length) second.push(plural(fresh.length, "new pair") + " " + fresh.map(function (r) { return r.pair; }).join(", "));
-    return { line1: parts.join(" · "), line2: second.join("  ·  "), needs: needs, fresh: fresh, cr: cr };
+    var look = needs.length ? { key: needs.length + " need" + (needs.length === 1 ? "s" : "") + " a look",
+                                why: needs[0].reason || "pair facts changed" } : null;
+    var freshText = fresh.length ? plural(fresh.length, "new pair") + ": " + fresh.map(function (r) { return r.pair; }).join(", ") : "";
+    return { name: rule.gate.name, title: title.join(" · "), count: count, look: look, freshText: freshText,
+             needs: needs, fresh: fresh, cr: cr };
   }
 
-  function cardBtn(label, cls, onClick) {
-    var b = el("button", { type: "button", className: "secondary " + cls }, label);
+  // Card buttons: Review is the card's one fill when it is there (D-1); the rest are secondary.
+  function cardBtn(label, cls, onClick, primary) {
+    var b = el("button", { type: "button", className: (primary ? "btn-sm " : "btn-sm outline secondary ") + cls }, label);
     b.addEventListener("click", onClick);
     return b;
   }
@@ -1346,19 +1493,30 @@
     rules.forEach(function (rule) {
       var card = host.querySelector('.gen-rule-card[data-rule="' + rule.id + '"]');
       if (!card) {
-        card = el("div", { className: "gen-rule-card", "data-rule": rule.id, tabindex: "-1", role: "group", "aria-live": "polite" });
+        card = el("div", { className: "gen-rule-card ui-item", "data-rule": rule.id, tabindex: "-1", role: "group", "aria-live": "polite" });
         host.appendChild(card);
       }
       keep[rule.id] = true;
       card.setAttribute("aria-label", "Rule " + rule.gate.name);
       var m = cardModel(spec, rule);
       card.innerHTML = "";
-      card.appendChild(el("div", { className: "gen-rule-card-line1" }, m.line1));
-      if (m.line2) card.appendChild(el("div", { className: "gen-rule-card-line2" }, m.line2));
-      var btns = el("div", { className: "gen-rule-card-btns" });
+      var h = el("div", { className: "gen-rule-card-line1 ui-item-head" });
+      h.appendChild(kitChip(m.name));
+      h.appendChild(el("span", { className: "ui-item-title" }, m.title));
+      if (m.count) h.appendChild(el("span", { className: "ui-count" }, m.count));
+      card.appendChild(h);
+      if (m.look || m.freshText) {
+        var l2 = el("div", { className: "gen-rule-card-line2" });
+        if (m.look) l2.appendChild(kitVerdict("warn", m.look.key, m.look.why));
+        if (m.freshText) l2.appendChild(el("p", { className: "ui-item-body" }, m.freshText));
+        card.appendChild(l2);
+      }
+      var foot = el("div", { className: "gen-rule-card-foot ui-item-foot" });
+      var btns = el("div", { className: "gen-rule-card-btns ui-actions" });
+      foot.appendChild(btns);
       if (m.needs.length) btns.appendChild(cardBtn("Review " + m.needs.length + "…", "gen-rule-card-review", function () {
         openReview({ ctx: ctx, rule: ruleById(ctx.spec(), rule.id) || rule, mode: "review", opener: btns.querySelector(".gen-rule-card-review") });
-      }));
+      }, true));
       if (m.fresh.length) btns.appendChild(cardBtn(m.fresh.length === 1 ? "Add to " + m.fresh[0].pair : "Add to " + m.fresh.length + " new pairs", "gen-rule-card-addnew", function () {
         openApply({ ctx: ctx, rule: clone(ruleById(ctx.spec(), rule.id) || rule), opener: btns.querySelector(".gen-rule-card-addnew") });
       }));
@@ -1366,11 +1524,11 @@
         openApply({ ctx: ctx, rule: clone(ruleById(ctx.spec(), rule.id) || rule), opener: btns.querySelector(".gen-rule-card-more") });
       }));
       btns.appendChild(cardBtn("Edit rule…", "gen-rule-card-edit", function () { editRule(ctx, rule.id, btns.querySelector(".gen-rule-card-edit")); }));
-      var mb = el("button", { type: "button", className: "secondary gen-rule-card-menu", "aria-label": "Actions for rule " + rule.gate.name,
+      var mb = el("button", { type: "button", className: "ui-btn-icon gen-rule-card-menu", "aria-label": "Actions for rule " + rule.gate.name,
                               "aria-haspopup": "menu", "aria-expanded": "false" }, "⋯");
       mb.addEventListener("click", function () { menu(mb, ruleMenuItems(ctx, rule.id, mb), { label: "Rule " + rule.gate.name }); });
       btns.appendChild(mb);
-      card.appendChild(btns);
+      card.appendChild(foot);
     });
     Array.prototype.forEach.call(host.querySelectorAll(".gen-rule-card"), function (c) {
       if (!keep[c.getAttribute("data-rule")]) c.parentNode.removeChild(c);
@@ -1587,7 +1745,7 @@
     openApply: openApply, closeApply: function () { if (_open) closeApply(_open, "cancel"); },
     menu: menu, closeMenu: closeMenu, renderCards: renderCards,
     gateInfo: gateInfo, countOn: countOn, pairParts: pairParts, applyToOthers: applyToOthers,
-    resetToRule: resetToRule, confirmRemove: confirmRemove, ruleMenuItems: ruleMenuItems, openReview: openReview,
+    resetToRule: resetToRule, confirmRemove: confirmRemove, miniConfirm: miniConfirm, ruleMenuItems: ruleMenuItems, openReview: openReview,
     ruleFromGate: ruleFromGate, noteExpand: noteExpand, statusRow: statusRow, commitApply: commitApply,
     _state: function () { return { seq: _seq, open: _open }; },
   };

@@ -32,8 +32,12 @@ function build(extra) {
   await w.decorate(); await T.settle();
   const card = () => w.document.querySelector('.gen-rule-card');
   const txt = () => card().textContent;
-  ok(/^cz_bm · G · from q1-2 · on 3 of 4 pairs · 1 edited here/.test(card().querySelector('.gen-rule-card-line1').textContent), 'D1 line 1: ' + card().querySelector('.gen-rule-card-line1').textContent);
-  ok(card().querySelector('.gen-rule-card-line2').textContent === '◐ 2 need a look (pair facts changed)  ·  1 new pair q4-5', 'D1 line 2: ' + card().querySelector('.gen-rule-card-line2').textContent);
+  const l1 = card().querySelector('.gen-rule-card-line1');
+  const part = (sel) => { const e = l1.querySelector(sel); return e ? e.textContent : null; };
+  ok(part('.ui-chip') === 'cz_bm' && part('.ui-item-title') === 'G · from q1-2' && part('.ui-count') === '3 of 4 pairs · 1 edited here', 'D1 line 1: ' + l1.textContent);
+  const l2 = card().querySelector('.gen-rule-card-line2');
+  ok(l2.querySelector('.ui-verdict--warn .ui-verdict-key').textContent === '2 need a look' && l2.querySelector('.ui-verdict-why').textContent === 'pair facts changed' &&
+     l2.querySelector('.ui-item-body').textContent === '1 new pair: q4-5', 'D1 line 2: ' + l2.textContent);
   const btns = Array.from(card().querySelectorAll('.gen-rule-card-btns button')).map(b => b.textContent);
   ok(J(btns) === J(['Review 2…', 'Add to q4-5', 'Apply to more pairs…', 'Edit rule…', '⋯']), 'D1 buttons: ' + J(btns));
 
@@ -42,7 +46,7 @@ function build(extra) {
   card().querySelector('.gen-rule-card-review').click();
   await T.settle();
   const rv = () => w.document.querySelector('.gen-rule-review');
-  ok(!!rv() && /cz_bm — 2 pairs would change/.test(rv().textContent), 'D2 title: ' + (rv() && rv().querySelector('h3').textContent));
+  ok(!!rv() && /Rule review · cz_bm/.test(rv().textContent) && /2 pairs would change/.test(rv().querySelector('h3').textContent), 'D2 title: ' + (rv() && rv().querySelector('h3').textContent));
   ok(/amplitude\s+0\.12 → 0\.2/.test(rv().textContent), 'D2 old → new per pair');
   ok(rv().querySelector('.gen-rule-rv-delta').textContent.includes('+0.08'), 'D2 the numeric review uses the shipped ValueDelta');
   ok(w.document.activeElement.classList.contains('gen-rule-rv-keep') && w.document.activeElement.getAttribute('data-pair') === 'q2-3', 'D2 focus: first Keep as is');
@@ -84,7 +88,7 @@ function build(extra) {
   await T.settle(); await T.settle();
   const c2 = w.document.querySelector('.gen-rule-card');
   ok(!!c2 && w.document.activeElement === c2, 'D5 after Apply the focus is the Rules card: ' + (w.document.activeElement && w.document.activeElement.className));
-  ok(/cz_bm · G · for all pairs \(no source\)/.test(c2.textContent), 'D5 a rule without a source reads "for all pairs (no source)": ' + c2.textContent);
+  ok(c2.querySelector('.ui-chip').textContent === 'cz_bm' && /^G · for all pairs \(no source\)$/.test(c2.querySelector('.ui-item-title').textContent), 'D5 a rule without a source reads "for all pairs (no source)": ' + c2.textContent);
 
   // D6
   m = build(); ({ w, spec } = m);
@@ -118,12 +122,12 @@ function build(extra) {
   w.document.querySelector('.gen-rule-card-review').click();
   await T.settle();
   const box = (pid) => rv().querySelector('.gen-rule-rv-pair[data-pair="' + pid + '"]');
-  const plain = (pid) => Array.from(box(pid).querySelectorAll('.gen-rule-rv-plain')).map(e => e.textContent);
-  ok(J(plain('q1-2')) === J(['high pulse moves q2 z → q1 z', 'low pulse moves q1 z → q2 z']), 'D7 source pair in plain words: ' + J(plain('q1-2')));
-  ok(J(plain('q2-3')) === J(['high pulse moves q2 z → q3 z']), 'D7 other pair: a move, no rename: ' + J(plain('q2-3')));
-  ok(J(plain('q3-4')) === J(['pulses renamed cz_bm_high_q3_q4 → cz_bm_high_q4_q3']), 'D7 remove+add still reads as a rename: ' + J(plain('q3-4')));
+  const plain = (pid) => Array.from(box(pid).querySelectorAll('.gen-rule-rv-plain')).map(e => e.cells ? Array.from(e.cells).map(c => c.textContent).join('|') : e.textContent);
+  ok(J(plain('q1-2')) === J(['high|q2 z|q1 z', 'low|q1 z|q2 z']), 'D7 source pair in plain words: ' + J(plain('q1-2')));
+  ok(J(plain('q2-3')) === J(['high|q2 z|q3 z']), 'D7 other pair: a move, no rename: ' + J(plain('q2-3')));
+  ok(J(plain('q3-4')) === J(['name|cz_bm_high_q3_q4|cz_bm_high_q4_q3']), 'D7 remove+add still reads as a rename: ' + J(plain('q3-4')));
   ok(!!box('q1-2').querySelector('.gen-rule-rv-kept') && !!box('q2-3').querySelector('.gen-rule-rv-kept') &&
-     /names on this pair are kept/.test(box('q2-3').querySelector('.gen-rule-rv-kept').textContent) &&
+     /Pulse names stay the same; only the channel changes\./.test(box('q2-3').querySelector('.gen-rule-rv-kept').textContent) &&
      !box('q3-4').querySelector('.gen-rule-rv-kept'), 'D7 every existing pair with a move says its names are kept');
   const det = box('q2-3').querySelector('details.gen-rule-rv-details');
   ok(!!det && !det.open && det.querySelectorAll('.gen-rule-rv-line').length === 2 &&

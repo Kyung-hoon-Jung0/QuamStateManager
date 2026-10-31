@@ -11,7 +11,7 @@
 //  C3  CZ group (single mover): the moving-qubit choice is written to populate.pairs.<long id>.moving_qubit
 //  C4  CZ group (both movers): high / low follow the populate frequencies
 //  U3  a '#./inferred_*' default says on hover that it is inferred from the shape
-//  O1  outcome(): ok / mixed / refused / none; the result head marks mixed and refused
+//  O1  outcome(): ok / mixed / refused / none; the result head is a warn / danger verdict for mixed / refused
 //  V1  renderReview lists additions in placement order, refusals with their reason
 //
 // Run: node tests/gen_additions_p3_selfcheck.cjs   (needs jsdom)
@@ -202,9 +202,9 @@ const change = (w, sel, v) => { sel.value = v; sel.dispatchEvent(new w.Event('ch
   ok(GA.outcome({ added: [1], refused: [] }) === 'ok' && GA.outcome({ added: [1], refused: [1] }) === 'mixed'
      && GA.outcome({ added: [], refused: [1] }) === 'refused' && GA.outcome({}) === 'none', 'O1 outcome');
   const mixed = GA.renderResult({ added: [{ path: 'a.b', class: 'x.Y', origin: 'lab' }], refused: [{ target: 't', name: 'n', class: 'x.Y', reason: 'r' }] });
-  ok(mixed.classList.contains('gen-add-result-mixed') && /^⚠/.test(mixed.textContent), 'O1 mixed head');
+  ok(mixed.classList.contains('gen-add-result-mixed') && !!mixed.querySelector('.gen-add-result-head.ui-verdict--warn') && /refused/.test(mixed.textContent), 'O1 mixed head: a warn verdict that says refused');
   const bad = GA.renderResult({ added: [], refused: [{ target: 't', name: 'n', class: 'x.Y', reason: 'r' }] });
-  ok(bad.classList.contains('gen-add-result-refused') && /^✗/.test(bad.textContent), 'O1 refused head');
+  ok(bad.classList.contains('gen-add-result-refused') && !!bad.querySelector('.gen-add-result-head.ui-verdict--danger') && /refused/.test(bad.textContent), 'O1 refused head: a danger verdict that says refused');
 
   // V1
   const rev = w.document.getElementById('rev');

@@ -83,6 +83,7 @@
     --ui-dialog-l: 920px;
     --ui-dialog-max-h: 82vh;
     --ui-disclosure-marker: "\25B8";
+    --ui-disclosure-marker-open: "\25BE";
 }
 
 /* K3 head ------------------------------------------------------------- */
