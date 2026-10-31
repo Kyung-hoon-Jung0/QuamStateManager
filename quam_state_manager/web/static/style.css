@@ -10503,7 +10503,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
 .bulk-cell.bulk-cell-bad { border-color: var(--color-error-text); box-shadow: inset 0 0 0 1px var(--color-error-text); }
 /* PERSISTENT "modified since load" marker — a prominent red box that survives
    apply + HTMX re-nav (server-rendered from the change-log, resolved-path matched). */
-.bulk-cell.bulk-cell-modified { border-bottom-color: var(--color-error-text); box-shadow: inset 0 -1px 0 var(--color-error-text); background: color-mix(in srgb, var(--color-error-text) 12%, transparent); }
+.bulk-cell.bulk-cell-modified { border-bottom-color: var(--color-warning-border); box-shadow: inset 0 -1px 0 var(--color-warning-border); background: color-mix(in srgb, var(--color-warning-border) 12%, transparent); }
 .bulk-applied-flash { background: color-mix(in srgb, var(--callout-ok-border, #2e7d32) 24%, transparent) !important; transition: background 0.7s; }
 /* (No font-style on pointer cells — the ↗ glyph already flags the alias, and the
    old italic just made those numbers harder to read / look like a different font.) */
@@ -10812,8 +10812,8 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
     color: var(--pico-muted-color); padding: 0 3px;
 }
 .bulk-cell-list.bulk-cell-modified {
-    color: var(--pico-color); box-shadow: inset 0 -2px 0 var(--color-error-text);
-    background: color-mix(in srgb, var(--color-error-text) 12%, transparent);
+    color: var(--pico-color); box-shadow: inset 0 -2px 0 var(--color-warning-border);
+    background: color-mix(in srgb, var(--color-warning-border) 12%, transparent);
 }
 .bulk-list-edit {
     all: unset; cursor: pointer; margin-left: 0.15rem; padding: 0 0.2em; border-radius: 3px;
