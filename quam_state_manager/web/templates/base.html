@@ -1191,7 +1191,8 @@
         <div class="settings-group">
         <small class="settings-label">Accessibility</small>
         <div class="settings-options">
-        <button onclick="toggleColorblindMode()" class="settings-opt" id="colorblind-toggle">Colorblind mode</button>
+        <label class="ui-check"><input type="checkbox" id="colorblind-toggle" onchange="toggleColorblindMode()">Colorblind mode</label>
+        <script>try{document.getElementById('colorblind-toggle').checked=localStorage.getItem('quam_colorblind')==='1';}catch(e){}</script>
         </div>
         </div>
         {# docs/263: ONE zone. The per-browser choice that lived here merged
@@ -1211,7 +1212,8 @@
         <div class="settings-group">
         <small class="settings-label">Layout</small>
         <div class="settings-options">
-        <button onclick="toggleTopbar()" class="settings-opt" id="topbar-toggle">Hide top bar</button>
+        <label class="ui-check"><input type="checkbox" id="topbar-toggle" onchange="toggleTopbar()">Hide top bar</label>
+        <script>(function(){var c=document.getElementById('topbar-toggle');c.checked=document.documentElement.classList.contains('topbar-hidden');new MutationObserver(function(){c.checked=document.documentElement.classList.contains('topbar-hidden');}).observe(document.documentElement,{attributes:true,attributeFilter:['class']});})();</script>
         </div>
         </div>
         {# docs/160 (customer, CRITICAL): Ctrl+Z after Apply-to-live writes the
@@ -1222,9 +1224,9 @@
         <div class="settings-group">
         <small class="settings-label">Undo <span class="muted">(after Apply to live)</span></small>
         <div class="settings-options">
-        <button onclick="toggleUndoLive()" class="settings-opt{% if undo_live %} settings-opt-active{% endif %}" id="undo-live-toggle"
-                data-on="{{ '1' if undo_live else '0' }}"
-                title="ON: Ctrl+Z / Ctrl+Shift+Z on an already-applied change writes the live chip right away (through the same Apply door, refused if the chip moved). OFF: the reverted value only waits in the review tray until you press Apply.">Ctrl+Z writes live: {{ 'ON' if undo_live else 'OFF' }}</button>
+        <label class="ui-check" title="On: Ctrl+Z / Ctrl+Shift+Z on an already-applied change writes the live chip right away (through the same Apply door, refused if the chip moved). Off: the reverted value only waits in the review tray until you press Apply."><input type="checkbox" id="undo-live-toggle"
+                data-on="{{ '1' if undo_live else '0' }}"{% if undo_live %} checked{% endif %}
+                onchange="toggleUndoLive()">Ctrl+Z writes live</label>
         </div>
         </div>
         {# docs/109: how MW amplitude annotations read — some labs think in dBm,

@@ -6,8 +6,11 @@
   {# E1: the card head. The direction "a -> b (upgrade)" is the title, its kind a badge. #}
   {% set dir_main, dir_tag = (direction.rsplit(' (', 1) if direction.endswith(')') and ' (' in direction else [direction, '']) %}
   <header class="ui-head env-upgrade-head">
-    <div class="ui-head-eyebrow">Environment match</div>
-    <h3 class="ui-head-title">{% if prominent and direction %}{{ dir_main }}{% if dir_tag %}<span class="ui-badge ui-badge--accent">{{ dir_tag[:-1] }}</span>{% endif %}{% elif report %}No environment change{% else %}Environment check{% endif %}</h3>
+    {# R4-TL-6: the enclosing card already says "Environment match"; this head
+       carries a title only when it states something of its own. #}
+    {% if (prominent and direction) or report %}
+    <h3 class="ui-head-title">{% if prominent and direction %}{{ dir_main }}{% if dir_tag %}<span class="ui-badge ui-badge--accent">{{ dir_tag[:-1] }}</span>{% endif %}{% else %}No environment change{% endif %}</h3>
+    {% endif %}
     {% if not upgrade.no_env %}
     <p class="ui-head-gist">Checked in: <code class="ui-chip" title="{{ upgrade.env }}">{{ upgrade.env_name or upgrade.env }}</code>
       {%- for name, version in (upgrade.versions or {}).items() %} <code class="ui-chip">{{ name }} {{ version }}</code>{% endfor %}</p>

@@ -185,11 +185,11 @@ def test_banner_counts_errors_not_values_for_one_shared_amplitude(tmp_path):
     ops["readout2"] = dict(ops["readout"], amplitude="#../readout/amplitude")
     body = _client_for(tmp_path, st, _wiring()).get("/diagnostics/banner").get_data(as_text=True)
     text = re.sub(r"\s+", " ", body)
-    assert "<b>2</b> errors on" in text, text[:400]
+    assert "2 errors would crash a node run." in text, text[:400]
     assert " values on" not in text
     assert _FIXED_EXAMPLE not in text
     # the example names one of the counted errors
-    assert "<code>qubits.q1.resonator.operations.readout" in text
+    assert 'title="e.g. qubits.q1.resonator.operations.readout' in text
 
 
 def test_banner_example_follows_the_error_kind(tmp_path):
@@ -198,7 +198,7 @@ def test_banner_example_follows_the_error_kind(tmp_path):
     wi["wiring"]["qubits"]["q1"]["rr"]["opx_output"] = "#/ports/mw_outputs/con1/1/7"
     body = _client_for(tmp_path, _state(0.3), wi).get("/diagnostics/banner").get_data(as_text=True)
     text = re.sub(r"\s+", " ", body)
-    assert "<b>1</b> error on" in text, text[:400]
+    assert "1 error would crash a node run." in text, text[:400]
     assert "would crash a node run" in text
     assert "DAC range" not in text and "waveform" not in text
     assert "port 7" in text           # the missing port is what it names
@@ -224,12 +224,12 @@ def test_banner_example_follows_the_error_kind(tmp_path):
     del st["custom"]                            # the type mismatch is the only error
     st["qubits"]["qA1"]["f_01"] = "6.25e9"      # str in a float field: Quam.load() raises
     text = _env_banner("env1", st)
-    assert "<b>1</b> error on" in text, text[:400]
-    assert "<code>Transmon.f_01</code>: expected float, got str" in text, text[:400]
+    assert "1 error would crash a node run." in text, text[:400]
+    assert "e.g. Transmon.f_01: expected float, got str" in text, text[:400]
     assert text.count("Transmon.f_01") == 1, text[:400]
     st["qubits"]["qA2"] = dict(st["qubits"]["qA1"])
     text = _env_banner("env2", st)
-    assert "<code>Transmon.f_01 (2×)</code>: expected float, got str" in text, text[:400]
+    assert "e.g. Transmon.f_01 (2×): expected float, got str" in text, text[:400]
     assert text.count("Transmon.f_01") == 1, text[:400]
 
 

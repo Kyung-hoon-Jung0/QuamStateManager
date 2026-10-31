@@ -53,7 +53,7 @@
            placeholder="chip name">
     <input type="text" name="data_folder" id="cnb-name-df"
            aria-label="Data folder (optional)"
-           placeholder="data folder — e.g. D:\data\myproject"
+           placeholder="data folder — e.g. D:/data/myproject"
            list="cnb-df-options"
            title="Optional: this chip's experiment-data root (an ABSOLUTE path) — stored in extras.data_folder so Datasets auto-pairs with it">
     <datalist id="cnb-df-options">
@@ -86,7 +86,7 @@
   <form class="cnb-form cnb-df-form" hx-post="/chip-data-folder/set"
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="text" id="cnb-df-input" name="value"
-           aria-label="Data folder path" placeholder="e.g. D:\data\myproject"
+           aria-label="Data folder path" placeholder="e.g. D:/data/myproject"
            list="cnb-df-options">
     <datalist id="cnb-df-options">
       {% for c in data_folder_candidates %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}

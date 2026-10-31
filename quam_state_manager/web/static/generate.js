@@ -530,6 +530,21 @@
     }
   }
 
+  // R4-TL-4 (look only): a blocked Next on step 2 marks the empty or bad
+  // field red, so the press is not silent. Cleared on the next input.
+  function markNetworkInvalid() {
+    var net = state.spec.network || {};
+    [["gen-net-host", !net.host || !/^[A-Za-z0-9._:%\[\]-]+$/.test(net.host)],
+     ["gen-net-cluster", !net.cluster_name]].forEach(function (p) {
+      var el = document.getElementById(p[0]);
+      if (!el) return;
+      if (p[1]) {
+        el.setAttribute("aria-invalid", "true");
+        el.addEventListener("input", function () { el.removeAttribute("aria-invalid"); }, { once: true });
+      } else el.removeAttribute("aria-invalid");
+    });
+  }
+
   function tryNext() {
     var guard = stepGuards[state.step];
     var err = guard ? guard() : null;
@@ -539,6 +554,7 @@
       // the fold there: say it beside the button too (QA review of F7/F5).
       var st = state.step === 5 && document.getElementById("gen-allocate-status");
       if (st) st.textContent = "✗ " + err;
+      if (state.step === 2) markNetworkInvalid();
       return;
     }
     if (state.step < STEP_COUNT) {
