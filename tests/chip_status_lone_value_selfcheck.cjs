@@ -128,10 +128,13 @@ setTimeout(function () {
   const multi2qChart = 'rb-StandardRB-cz-SNZ-chart';
   const multi1qChart = 'mp-f-01-chart';
 
+  // D-96: on the chip map the scale colour is the EDGE line; the value pill
+  // carries the low-saturation mix of it (checked by its own pins)
+  const lone2qLine = doc.querySelector('#rb-StandardRB-cz-flattop .tmap-eline[data-pair="q1-2"]');
   ok(lone2qCell && lone2qCell.getAttribute('data-heat-t') === '0.500000'
-     && norm(lone2qCell.style.backgroundColor) === CITRUS.mid,
-    'L1: the lone 2Q tile sits mid-scale — t=' + (lone2qCell && lone2qCell.getAttribute('data-heat-t'))
-    + ' bg=' + (lone2qCell && lone2qCell.style.backgroundColor));
+     && lone2qLine && norm(lone2qLine.getAttribute('stroke')) === CITRUS.mid,
+    'L1: the lone 2Q value sits mid-scale — t=' + (lone2qCell && lone2qCell.getAttribute('data-heat-t'))
+    + ' line=' + (lone2qLine && lone2qLine.getAttribute('stroke')));
   const b2 = barColor(lone2qChart, 'q1-2');
   ok(norm(b2) === CITRUS.mid, 'L2: the lone 2Q bar is the same mid stop as its tile — ' + b2);
   const b1 = barColor(lone1qChart, 'q1');

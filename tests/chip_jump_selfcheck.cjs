@@ -288,28 +288,31 @@ function world(topo, opts) {
     ok(J.current() === null, 'a bare Chip Status page (no ?view=) carries no live jump over from the previous visit');
   }
 
-  // ── F-03: the 2Q pair grid uses only the tracks its pairs occupy ─────────
+  // ── F-03 / D-96: a chip with a layout draws the 2Q panel as the chip map ──
+  // (qubits on their own grid, one value pill per pair at its edge midpoint);
+  // the compacted pair-track grid F-03 pinned is now only the no-layout list.
   {
     const T = world(CHAIN);
     T.win.setChipStatusView('fidelity2q', null, false);
-    const g = T.doc.querySelector('.topo-2q-pair-grid');
+    const g = T.doc.querySelector('.tmap.tmap-2q');
     // jsdom's CSSOM drops grid-template-*: read the attribute the builder wrote
     const tpl = (el, prop) => { const m = el && (el.getAttribute('style') || '').match(new RegExp(prop + ':([^;]*)')); return m ? m[1].replace(/\s+/g, '') : ''; };
-    const cols = tpl(g, 'grid-template-columns');
-    ok(cols === 'repeat(4,var(--topo-panel-cell-size))',
-       'F-03 a 5-qubit chain lays its 4 pairs on 4 tracks, not 8 (' + cols + ')');
-    const at = Array.from(g.querySelectorAll('[data-pair]')).map((c) => c.getAttribute('data-pair') + '@' + c.style.gridColumn.split('/')[0].trim());
-    ok(at.join(',') === 'q1-q2@1,q2-q3@2,q3-q4@3,q4-q5@4', 'F-03 ...in chain order, no blank track between them (' + at + ')');
+    ok(!!g && tpl(g, 'grid-template-columns') === 'repeat(5,var(--topo-panel-cell-size))',
+       'D-96 a 5-qubit chain draws its 2Q panel on the 5-column qubit grid (' + tpl(g, 'grid-template-columns') + ')');
+    const pills = Array.from(g.querySelectorAll('.tmap-pill[data-pair]'));
+    const at = pills.map((c) => c.getAttribute('data-pair') + '@' + Math.round(parseFloat(c.style.left)));
+    ok(at.join(',') === 'q1-q2@20,q2-q3@40,q3-q4@60,q4-q5@80', 'D-96 ...one pill per pair at its edge midpoint, in chain order (' + at + ')');
+    ok(g.querySelectorAll('.tmap-qdot').length === 5, 'D-96 ...and one small dot per qubit');
 
-    // a square lattice already uses every doubled track: unchanged
     const SQ = { nodes: [node('a', '0,0'), node('b', '1,0'), node('c', '0,1'), node('d', '1,1')],
                  edges: [edge('a', 'b'), edge('c', 'd'), edge('a', 'c'), edge('b', 'd')] };
     const S = world(SQ);
     S.win.setChipStatusView('fidelity2q', null, false);
-    const gs = S.doc.querySelector('.topo-2q-pair-grid');
-    ok(tpl(gs, 'grid-template-columns') === 'repeat(3,var(--topo-panel-cell-size))'
-       && tpl(gs, 'grid-template-rows') === 'repeat(3,auto)',
-       'F-03 a 2x2 lattice keeps its 3x3 doubled grid (' + tpl(gs, 'grid-template-columns') + ' x ' + tpl(gs, 'grid-template-rows') + ')');
+    const gs = S.doc.querySelector('.tmap.tmap-2q');
+    ok(!!gs && tpl(gs, 'grid-template-columns') === 'repeat(2,var(--topo-panel-cell-size))'
+       && tpl(gs, 'grid-template-rows') === 'repeat(2,var(--topo-panel-cell-size))'
+       && gs.querySelectorAll('.tmap-pill').length === 4,
+       'D-96 a 2x2 lattice: a 2x2 map with four edge pills');
   }
 
   // ── QA F-17: Escape closes the Overview popovers and the History drawer ──

@@ -1057,19 +1057,104 @@ window.ChipStatus.mount = function (opts) {
         return [parseInt(hex.substring(0,2),16), parseInt(hex.substring(2,4),16), parseInt(hex.substring(4,6),16)];
     }
 
+    // the one place a computed colour becomes a CSS string
+    function _rgbCss(c) { return 'rgb(' + c.join(',') + ')'; }
+
     function interpolateColor(t, stops) {
         t = Math.max(0, Math.min(1, t));
         var idx = t * (stops.length - 1);
         var lo = Math.floor(idx), hi = Math.min(lo + 1, stops.length - 1);
         var f = idx - lo;
         var c1 = hexToRgb(stops[lo]), c2 = hexToRgb(stops[hi]);
-        return 'rgb(' + Math.round(c1[0]+(c2[0]-c1[0])*f) + ',' + Math.round(c1[1]+(c2[1]-c1[1])*f) + ',' + Math.round(c1[2]+(c2[2]-c1[2])*f) + ')';
+        return _rgbCss([0, 1, 2].map(function (i) { return Math.round(c1[i] + (c2[i] - c1[i]) * f); }));
     }
 
     function textColorForBg(rgbStr) {
         var m = rgbStr.match(/\d+/g);
         if (!m) return '#222';
         return (0.299*parseInt(m[0]) + 0.587*parseInt(m[1]) + 0.114*parseInt(m[2])) < 160 ? '#fff' : '#222';
+    }
+
+    /* ── D-96: the metric panels drawn as the chip map ──
+       A node is a circle (name small, value
+       large, unit once in the panel head); its fill is the panel's scale
+       colour mixed 38 % into the card surface (low saturation) and
+       its text is whichever of a dark / light ink has the higher WCAG
+       contrast on THAT fill (D-53). A warn / fail verdict against the spec is
+       an outline + the existing triangle (D-63). 2Q metrics are drawn on the
+       edges. A chip with no positions keeps today's tiles (hasGrid false). */
+    var _TMAP_MIX = 0.38, _TMAP_INKS = [[20, 23, 28], [242, 244, 247]];
+    function _tmapSurface() {
+        var probe = document.createElement('span');
+        probe.style.cssText = 'position:absolute;visibility:hidden;color:var(--ui-surface-1, var(--pico-card-background-color))';
+        document.body.appendChild(probe);
+        var m = (getComputedStyle(probe).color.match(/[\d.]+/g) || [255, 255, 255]).map(Number);
+        probe.remove();
+        m = m.slice(0, 3);
+        // D-96: the tile ground is the LIGHT one in every theme -- on a dark
+        // surface both ends of the scale came out dark and the digits sank
+        return _tmapLum(m) < 0.5 ? [250, 250, 248] : m;
+    }
+    function _tmapLum(c) {
+        var a = c.map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+        return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+    }
+    function _tmapContrast(a, b) {
+        var la = _tmapLum(a), lb = _tmapLum(b);
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+    // {bg, fg, cr}: the low-saturation fill and the better ink on it
+    function _tmapPaint(scaleRgbStr, surface) {
+        var c = (scaleRgbStr.match(/\d+/g) || [128, 128, 128]).map(Number);
+        var mix = [0, 1, 2].map(function (i) { return Math.round(c[i] * _TMAP_MIX + surface[i] * (1 - _TMAP_MIX)); });
+        var c0 = _tmapContrast(_TMAP_INKS[0], mix), c1 = _tmapContrast(_TMAP_INKS[1], mix);
+        var ink = c0 >= c1 ? _TMAP_INKS[0] : _TMAP_INKS[1];
+        return { bg: _rgbCss(mix), fg: _rgbCss(ink),
+                 cr: Math.round(Math.max(c0, c1) * 100) / 100 };
+    }
+    // the one unit a panel's values are shown in (the title carries it once)
+    function _tmapUnit(key) {
+        if (/^T1$|^T2/.test(key)) return '\u00b5s';
+        if (/fidelity/.test(key) || /^2q:/.test(key)) return '%';
+        if (key === 'f_01' || key === 'readout_frequency') return 'GHz';
+        if (key === 'anharmonicity') return 'MHz';
+        return '';
+    }
+    function _tmapNum(key, v) {
+        if (v == null || typeof v !== 'number') return '\u2014';
+        if (/^2q:/.test(key)) return (v * 100).toFixed(2);
+        if (/^T1$|^T2/.test(key)) return (v * 1e6).toFixed(1);
+        if (/fidelity/.test(key)) return (v * 100).toFixed(2);
+        if (key === 'f_01' || key === 'readout_frequency') return (v / 1e9).toFixed(4);
+        if (key === 'anharmonicity') return (v / 1e6).toFixed(1);
+        return Math.abs(v) >= 100 ? v.toFixed(1) : v.toPrecision(4);
+    }
+    function _tmapTitle(title, key) {
+        var u = _tmapUnit(key);
+        return (u && title.indexOf('(') < 0) ? title + ' (' + u + ')' : title;
+    }
+    // edges as one underlay in grid units (cell centres at col+0.5, row+0.5)
+    function _tmapEdgeSvg(cols, rows, edgeFn) {
+        var s = '<svg class="tmap-edges" viewBox="0 0 ' + cols + ' ' + rows + '" preserveAspectRatio="none" aria-hidden="true">';
+        topo.edges.forEach(function (e) {
+            var a = gridPositions[e.source], b = gridPositions[e.target];
+            if (!a || !b) return;
+            var extra = edgeFn ? edgeFn(e) : '';
+            if (extra === null) return;
+            s += '<line x1="' + (a.col + 0.5) + '" y1="' + (a.row + 0.5) + '" x2="' + (b.col + 0.5)
+               + '" y2="' + (b.row + 0.5) + '" vector-effect="non-scaling-stroke"' + (extra || '') + '/>';
+        });
+        return s + '</svg>';
+    }
+    function _tmapLegend(key, agg, stops) {
+        var surf = _tmapSurface();
+        var g = [0, 0.25, 0.5, 0.75, 1].map(function (t) { return _tmapPaint(interpolateColor(t, stops), surf).bg; });
+        var u = _tmapUnit(key);
+        return '<div class="tmap-legend"><span>' + _tmapNum(key, agg.min) + '</span>'
+             + '<span class="tmap-legend-grad" style="background:linear-gradient(90deg,' + g.join(',') + ')"></span>'
+             + '<span>' + _tmapNum(key, agg.max) + (u ? ' ' + u : '') + '</span>'
+             + '<span class="tmap-legend-diag"><span class="tmap-legend-sep">\u00b7</span><span class="tmap-legend-flag tmap-legend-warn"></span>warn'
+             + '<span class="tmap-legend-flag tmap-legend-fail"></span>fail (vs spec)</span></div>';
     }
 
     // ── Color palette definitions ────────────────────────────────────
@@ -3615,7 +3700,8 @@ window.ChipStatus.mount = function (opts) {
                 var sectionHtml = '<div class="topo-section" id="' + secId + '" data-density-panel="' + _esc(dKey) + '">';
                 // Stat line is its OWN block below the title (not inside the <h4>) so
                 // at narrow width it wraps cleanly instead of lapping onto the grid.
-                sectionHtml += '<h4 class="topo-metric-panel-title">' + gateLabel
+                var _tmap = hasGrid;
+                sectionHtml += '<h4 class="topo-metric-panel-title">' + gateLabel + (_tmap ? ' (%)' : '')
                     + window.ChipStatus.density.controlHtml(dKey)
                     + window.ChipStatus.metaInfo.toggleHtml(dKey) + '</h4>';
                 sectionHtml += '<div class="topo-metric-panel-stat">'
@@ -3625,59 +3711,96 @@ window.ChipStatus.mount = function (opts) {
                     + '</div>';
 
                 // ── Side-by-side: grid (left) + bar chart (right) ────
+                if (_tmap) sectionHtml += _tmapLegend('2q:', agg, stops);
                 sectionHtml += '<div class="topo-metric-panel-row">';
 
-                // Pair topology grid
-                if (hasPairGrid) {
-                    sectionHtml += '<div class="topo-2q-pair-grid" style="grid-template-columns:repeat(' + pairGridCols + ',var(--topo-panel-cell-size));grid-template-rows:repeat(' + pairGridRows + ',auto)">';
+                if (_tmap) {
+                    // D-96: qubits as small dots, each pair's value ON its edge
+                    var _surf9 = _tmapSurface();
+                    var vbp = {};
+                    pairs.forEach(function (p) { vbp[p.pair_id] = p; });
+                    sectionHtml += '<div class="tmap tmap-2q topo-2q-pair-grid" style="grid-template-columns:repeat(' + gridCols + ',var(--topo-panel-cell-size));grid-template-rows:repeat(' + gridRows + ',var(--topo-panel-cell-size))">';
+                    sectionHtml += _tmapEdgeSvg(gridCols, gridRows, function (e) {
+                        var p = vbp[e.pair_id || e.id], dp = ' data-pair="' + _esc(e.pair_id || e.id) + '"';
+                        return p ? ' class="tmap-eline"' + dp + ' stroke="' + interpolateColor(_tOf(p.value), stops) + '"'
+                                 : ' class="tmap-eline tmap-eline-none"' + dp;
+                    });
+                    topo.nodes.forEach(function (n) {
+                        var gp = gridPositions[n.id];
+                        if (!gp) return;
+                        sectionHtml += '<div class="tmap-qdot" style="grid-column:' + (gp.col + 1) + ';grid-row:' + (gp.row + 1) + '"><span>' + _esc(n.id) + '</span></div>';
+                    });
+                    topo.edges.forEach(function (e) {
+                        var a = gridPositions[e.source], b = gridPositions[e.target];
+                        if (!a || !b) return;
+                        var pid = e.pair_id || e.id, pidE = _esc(pid), p = vbp[pid];
+                        var left = ((a.col + b.col) / 2 + 0.5) / gridCols * 100, top = ((a.row + b.row) / 2 + 0.5) / gridRows * 100;
+                        var pos = 'left:' + left.toFixed(3) + '%;top:' + top.toFixed(3) + '%;';
+                        if (!p) {
+                            sectionHtml += '<div class="heatmap-cell heatmap-cell-none tmap-pill" data-pair="' + pidE + '" title="' + pidE + ' \u2014 ' + gateLabel + ': not measured \u00b7 click to inspect" style="' + pos + '"><span class="heatmap-cell-value">\u2014</span></div>';
+                            return;
+                        }
+                        var ht = _tOf(p.value), paint = _tmapPaint(interpolateColor(ht, stops), _surf9);
+                        var physOk = p.value > 0 && p.value <= 1.0000001;
+                        var vd = physOk ? _verdict(p.value, thresholds['cz_fidelity']) : null;
+                        var isOut = scorer && physOk && scorer.isOutlier(p.value);
+                        sectionHtml += '<div class="heatmap-cell tmap-pill tmap-painted' + (vd === 'warn' || vd === 'fail' ? ' tmap-' + vd + ' tmap-flag' : '') + (isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" data-heat-t="' + ht.toFixed(6) + '" data-tmap-cr="' + paint.cr + '"'
+                            + ' title="' + pidE + ' (' + _esc(e.source) + ' \u2192 ' + _esc(e.target) + ') \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + (p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '') + ' ' + rbKind + (p.run != null ? ' \u00b7 run #' + p.run : '') + (vd === 'warn' || vd === 'fail' ? ' \u00b7 ' + vd + ' vs spec' : '') + ' \u00b7 click to inspect"'
+                            + ' style="' + pos + '--ui-map-bg:' + paint.bg + ';--ui-map-fg:' + paint.fg + ';"><span class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + '</span></div>';
+                    });
                 } else {
-                    sectionHtml += '<div class="topo-heatmap-grid">';
-                }
-
-                // Render a cell for EVERY pair at its grid position — pairs with
-                // no RB data for THIS gate show a grey em dash instead of leaving a
-                // gap, so the topology shape is preserved and an uncalibrated pair
-                // is a visible to-do, not invisible. (Without a grid we can only
-                // place the data pairs.)
-                var valueByPair = {};
-                pairs.forEach(function(p) { valueByPair[p.pair_id] = p; });
-                var cellPairs = hasPairGrid
-                    ? topo.edges.filter(function(e) { return pairGridPositions[e.pair_id]; })
-                    : pairs;
-                cellPairs.forEach(function(e) {
-                    var pid = e.pair_id || e.id;
-                    var pidE = _esc(pid);
-                    var pos = pairGridPositions[pid];
-                    var posStyle = pos ? ('grid-column:' + (pos.col + 1) + ';grid-row:' + (pos.row + 1) + ';') : '';
-                    var p = valueByPair[pid];
-                    if (!p) {
-                        sectionHtml += '<div class="heatmap-cell heatmap-cell-none" data-pair="' + pidE + '" '
-                            + 'title="' + pidE + ' \u2014 ' + gateLabel + ': not measured \u00b7 click to inspect" '
-                            + 'style="' + posStyle + '">'
-                            + '<div class="heatmap-cell-name">' + pidE + '</div>'
-                            // Python's None reached the screen as a WORD. The
-                            // title beside it already says "not measured" and the
-                            // panel header says "(1/20 qubits)", so three places
-                            // described the same absence and one of them used a
-                            // foreign language's null literal. An em dash is what
-                            // the hero map already prints for exactly this.
-                            + '<div class="heatmap-cell-value">—</div></div>';
-                        return;
+                    // Pair topology grid
+                    if (hasPairGrid) {
+                        sectionHtml += '<div class="topo-2q-pair-grid" style="grid-template-columns:repeat(' + pairGridCols + ',var(--topo-panel-cell-size));grid-template-rows:repeat(' + pairGridRows + ',auto)">';
+                    } else {
+                        sectionHtml += '<div class="topo-heatmap-grid">';
                     }
-                    var ht = _tOf(p.value);
-                    var bg = interpolateColor(ht, stops), fg = textColorForBg(bg);
-                    var _physOk = p.value > 0 && p.value <= 1.0000001;
-                    var _isOut = scorer && _physOk && scorer.isOutlier(p.value);
-                    var _outTip = _isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(p.value).toFixed(1) + '\u00d7 MAD from chip median ' + (scorer.median * 100).toFixed(2) + '%)' : '';
-                    var _errTip = p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '';
-                    var _runTip = p.run != null ? ' \u00b7 run #' + p.run : '';
-                    sectionHtml += '<div class="heatmap-cell' + (_isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" '
-                        + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + _errTip + ' ' + rbKind + _runTip + _outTip + ' \u00b7 click to inspect" '
-                        + 'data-heat-t="' + ht.toFixed(6) + '" '
-                        + 'style="' + posStyle + 'background-color:' + bg + ';color:' + fg + '">'
-                        + '<div class="heatmap-cell-name">' + pidE + '</div>'
-                        + '<div class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + '%</div></div>';
-                });
+
+                    // Render a cell for EVERY pair at its grid position — pairs with
+                    // no RB data for THIS gate show a grey em dash instead of leaving a
+                    // gap, so the topology shape is preserved and an uncalibrated pair
+                    // is a visible to-do, not invisible. (Without a grid we can only
+                    // place the data pairs.)
+                    var valueByPair = {};
+                    pairs.forEach(function(p) { valueByPair[p.pair_id] = p; });
+                    var cellPairs = hasPairGrid
+                        ? topo.edges.filter(function(e) { return pairGridPositions[e.pair_id]; })
+                        : pairs;
+                    cellPairs.forEach(function(e) {
+                        var pid = e.pair_id || e.id;
+                        var pidE = _esc(pid);
+                        var pos = pairGridPositions[pid];
+                        var posStyle = pos ? ('grid-column:' + (pos.col + 1) + ';grid-row:' + (pos.row + 1) + ';') : '';
+                        var p = valueByPair[pid];
+                        if (!p) {
+                            sectionHtml += '<div class="heatmap-cell heatmap-cell-none" data-pair="' + pidE + '" '
+                                + 'title="' + pidE + ' \u2014 ' + gateLabel + ': not measured \u00b7 click to inspect" '
+                                + 'style="' + posStyle + '">'
+                                + '<div class="heatmap-cell-name">' + pidE + '</div>'
+                                // Python's None reached the screen as a WORD. The
+                                // title beside it already says "not measured" and the
+                                // panel header says "(1/20 qubits)", so three places
+                                // described the same absence and one of them used a
+                                // foreign language's null literal. An em dash is what
+                                // the hero map already prints for exactly this.
+                                + '<div class="heatmap-cell-value">—</div></div>';
+                            return;
+                        }
+                        var ht = _tOf(p.value);
+                        var bg = interpolateColor(ht, stops), fg = textColorForBg(bg);
+                        var _physOk = p.value > 0 && p.value <= 1.0000001;
+                        var _isOut = scorer && _physOk && scorer.isOutlier(p.value);
+                        var _outTip = _isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(p.value).toFixed(1) + '\u00d7 MAD from chip median ' + (scorer.median * 100).toFixed(2) + '%)' : '';
+                        var _errTip = p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '';
+                        var _runTip = p.run != null ? ' \u00b7 run #' + p.run : '';
+                        sectionHtml += '<div class="heatmap-cell' + (_isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" '
+                            + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + _errTip + ' ' + rbKind + _runTip + _outTip + ' \u00b7 click to inspect" '
+                            + 'data-heat-t="' + ht.toFixed(6) + '" '
+                            + 'style="' + posStyle + 'background-color:' + bg + ';color:' + fg + ';">'
+                            + '<div class="heatmap-cell-name">' + pidE + '</div>'
+                            + '<div class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + '%</div></div>';
+                    });
+                }
                 sectionHtml += '</div>'; // close grid
 
                 // Bar chart (right side)
@@ -4603,7 +4726,8 @@ window.ChipStatus.mount = function (opts) {
             // good-direction arrow + plain-language tooltip from META — so direction
             // and blurb have one source, even though the display string stays bespoke.
             // docs/141 4o: the panel's own S / M / L sits right of its title.
-            sectionHtml += '<h4 class="topo-metric-panel-title">' + labelHtml(def.key, false, def.title, true)   // queue #5: no bare arrow on a panel title
+            var _tmap = hasGrid;
+            sectionHtml += '<h4 class="topo-metric-panel-title">' + labelHtml(def.key, false, _tmap ? _tmapTitle(def.title, def.key) : def.title, true)   // queue #5: no bare arrow on a panel title
                 + window.ChipStatus.density.controlHtml(def.key)
                 + window.ChipStatus.metaInfo.toggleHtml(def.key) + '</h4>';
             sectionHtml += '<div class="topo-metric-panel-stat">'
@@ -4614,58 +4738,89 @@ window.ChipStatus.mount = function (opts) {
 
             // ── Side-by-side: grid (left) + bar chart (right) ────────
             var chartId = secId + '-chart';
+            if (_tmap) sectionHtml += _tmapLegend(def.key, agg, stops);
             sectionHtml += '<div class="topo-metric-panel-row">';
 
-            // Grid arranged by topology position
-            if (hasGrid) {
-                sectionHtml += '<div class="topo-metric-topo-grid" style="grid-template-columns:repeat(' + gridCols + ',var(--topo-panel-cell-size));grid-template-rows:repeat(' + gridRows + ',auto)">';
+            if (_tmap) {
+                // D-96: the same cells, drawn as circles on the chip map
+                var _surf9 = _tmapSurface(), _th9 = thresholds[def.key];
+                sectionHtml += '<div class="tmap topo-metric-topo-grid" style="grid-template-columns:repeat(' + gridCols + ',var(--topo-panel-cell-size));grid-template-rows:repeat(' + gridRows + ',var(--topo-panel-cell-size))">';
+                sectionHtml += _tmapEdgeSvg(gridCols, gridRows);
+                topo.nodes.forEach(function (n) {
+                    var gp = gridPositions[n.id];
+                    if (!gp) return;
+                    var nidE = _esc(n.id);
+                    var pos = 'grid-column:' + (gp.col + 1) + ';grid-row:' + (gp.row + 1) + ';';
+                    if (_badFit(n, def.key)) {
+                        var raw = n.metrics[def.key].raw;
+                        sectionHtml += '<div class="heatmap-cell tmap-node tmap-badfit" data-qubit="' + nidE + '" data-metric="' + def.key + '" title="' + nidE + ' \u2014 ' + def.title + ': ' + prop.fmtFn(raw) + ' is unphysical (likely a failed fit) \u2014 excluded from stats &amp; colour \u00b7 click to inspect" style="' + pos + '">'
+                            + '<span class="heatmap-cell-name">' + nidE + '</span><span class="heatmap-cell-value">' + _tmapNum(def.key, raw) + '</span></div>';
+                        return;
+                    }
+                    var v = _mv(n, def.key), ht = (v != null && agg.count > 1) ? (v - agg.min) / range : (v != null ? 0.5 : null);
+                    var vd = _verdict(v, _th9);
+                    var isOut = scorer && v != null && scorer.isOutlier(v);
+                    var cls = 'heatmap-cell tmap-node' + (v == null ? ' heatmap-cell-none' : '')
+                        + (vd === 'warn' || vd === 'fail' ? ' tmap-' + vd + ' tmap-flag' : '') + (isOut ? ' topo-outlier' : '');
+                    var paint = ht != null ? _tmapPaint(interpolateColor(ht, stops), _surf9) : null;
+                    if (paint) cls += ' tmap-painted';
+                    var tip = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured')
+                        + (vd === 'warn' || vd === 'fail' ? ' \u00b7 ' + vd + ' vs spec' : '')
+                        + (isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(v).toFixed(1) + '\u00d7 MAD from chip median ' + prop.fmtFn(scorer.median) + ')' : '')
+                        + ' \u00b7 click to inspect';
+                    sectionHtml += '<div class="' + cls + '" data-qubit="' + nidE + '" data-metric="' + def.key + '"'
+                        + (typeof v === 'number' ? ' data-heat-v="' + v + '"' : '')
+                        + (ht != null ? ' data-heat-t="' + ht.toFixed(6) + '"' : '')
+                        + (paint ? ' data-tmap-cr="' + paint.cr + '"' : '')
+                        + ' title="' + tip + '" style="' + pos + (paint ? '--ui-map-bg:' + paint.bg + ';--ui-map-fg:' + paint.fg + ';' : '') + '">'
+                        + '<span class="heatmap-cell-name">' + nidE + '</span>'
+                        + '<span class="heatmap-cell-value">' + _tmapNum(def.key, v) + '</span></div>';
+                });
             } else {
+                // D-96 fallback: a chip with no layout keeps the tile list
                 sectionHtml += '<div class="topo-heatmap-grid">';
-            }
 
-            topo.nodes.forEach(function(n) {
-                var posStyle = '';
-                if (hasGrid && gridPositions[n.id]) {
-                    posStyle = 'grid-column:' + (gridPositions[n.id].col + 1) + ';grid-row:' + (gridPositions[n.id].row + 1) + ';';
-                }
+                topo.nodes.forEach(function(n) {
+                    var posStyle = '';
 
-                // Measured-but-unphysical (e.g. \u2212473\u00b5s T2): a distinct "bad fit" cell
-                // showing the raw value struck through \u2014 NOT a red "fail" (that would
-                // call a failed fit a bad qubit) and excluded from stats/colour above.
-                var nidE = _esc(n.id);
-                if (_badFit(n, def.key)) {
-                    var _raw = n.metrics[def.key].raw;
-                    sectionHtml += '<div class="heatmap-cell heatmap-cell-bad" data-qubit="' + nidE + '" data-metric="' + def.key + '" '
-                        + 'title="' + nidE + ' \u2014 ' + def.title + ': ' + prop.fmtFn(_raw) + ' is unphysical (likely a failed fit) \u2014 excluded from stats &amp; colour \u00b7 click to inspect" '
-                        + 'style="' + posStyle + '">'
+                    // Measured-but-unphysical (e.g. \u2212473\u00b5s T2): a distinct "bad fit" cell
+                    // showing the raw value struck through \u2014 NOT a red "fail" (that would
+                    // call a failed fit a bad qubit) and excluded from stats/colour above.
+                    var nidE = _esc(n.id);
+                    if (_badFit(n, def.key)) {
+                        var _raw = n.metrics[def.key].raw;
+                        sectionHtml += '<div class="heatmap-cell heatmap-cell-bad" data-qubit="' + nidE + '" data-metric="' + def.key + '" '
+                            + 'title="' + nidE + ' \u2014 ' + def.title + ': ' + prop.fmtFn(_raw) + ' is unphysical (likely a failed fit) \u2014 excluded from stats &amp; colour \u00b7 click to inspect" '
+                            + 'style="' + posStyle + '">'
+                            + '<div class="heatmap-cell-name">' + nidE + '</div>'
+                            + '<div class="heatmap-cell-value">' + prop.fmtFn(_raw) + '</div></div>';
+                        return;
+                    }
+
+                    var v = _mv(n, def.key);
+                    var bg, fg, ht = null;
+                    if (v != null && agg.count > 1) {
+                        ht = (v - agg.min) / range;
+                        bg = interpolateColor(ht, stops);
+                        fg = textColorForBg(bg);
+                    } else { bg = dCfg.nullCellColor; fg = '#666'; }
+
+                    var tAttr = ht != null ? 'data-heat-t="' + ht.toFixed(6) + '" ' : '';
+                    var noneCls = (v == null) ? ' heatmap-cell-none' : '';
+                    var _isOut = scorer && v != null && scorer.isOutlier(v);
+                    var outlCls = _isOut ? ' topo-outlier' : '';
+                    var _t1 = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured')
+                        + (_isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(v).toFixed(1) + '\u00d7 MAD from chip median ' + prop.fmtFn(scorer.median) + ')' : '')
+                        + ' \u00b7 click to inspect';
+                    var _vAttr = (typeof v === 'number') ? ' data-heat-v="' + v + '"' : '';
+                    sectionHtml += '<div class="heatmap-cell' + noneCls + outlCls + '" data-qubit="' + nidE + '" data-metric="' + def.key + '"' + _vAttr + ' title="' + _t1 + '" '
+                        + tAttr
+                        + 'style="' + posStyle + (v == null ? '' : 'background-color:' + bg + ';color:' + fg + ';') + '">'
                         + '<div class="heatmap-cell-name">' + nidE + '</div>'
-                        + '<div class="heatmap-cell-value">' + prop.fmtFn(_raw) + '</div></div>';
-                    return;
-                }
-
-                var v = _mv(n, def.key);
-                var bg, fg, ht = null;
-                if (v != null && agg.count > 1) {
-                    ht = (v - agg.min) / range;
-                    bg = interpolateColor(ht, stops);
-                    fg = textColorForBg(bg);
-                } else { bg = dCfg.nullCellColor; fg = '#666'; }
-
-                var tAttr = ht != null ? 'data-heat-t="' + ht.toFixed(6) + '" ' : '';
-                var noneCls = (v == null) ? ' heatmap-cell-none' : '';
-                var _isOut = scorer && v != null && scorer.isOutlier(v);
-                var outlCls = _isOut ? ' topo-outlier' : '';
-                var _t1 = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured')
-                    + (_isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(v).toFixed(1) + '\u00d7 MAD from chip median ' + prop.fmtFn(scorer.median) + ')' : '')
-                    + ' \u00b7 click to inspect';
-                var _vAttr = (typeof v === 'number') ? ' data-heat-v="' + v + '"' : '';
-                sectionHtml += '<div class="heatmap-cell' + noneCls + outlCls + '" data-qubit="' + nidE + '" data-metric="' + def.key + '"' + _vAttr + ' title="' + _t1 + '" '
-                    + tAttr
-                    + 'style="' + posStyle + (v == null ? '' : 'background-color:' + bg + ';color:' + fg + ';') + '">'
-                    + '<div class="heatmap-cell-name">' + nidE + '</div>'
-                    + '<div class="heatmap-cell-value">'
-                    + (v != null ? prop.fmtFn(v) : '—') + '</div></div>';
-            });
+                        + '<div class="heatmap-cell-value">'
+                        + (v != null ? prop.fmtFn(v) : '—') + '</div></div>';
+                });
+            }
             sectionHtml += '</div>'; // close grid
 
             // Bar chart (right side)
@@ -6093,8 +6248,19 @@ window.ChipStatus.mount = function (opts) {
     // (Health tiles, verdict banner, worst-qubit list, report card) — they
     // just no longer repaint the numbers. Reads the stored data-heat-t; no
     // rebuild.
+    var _tmapSurfKey = null, _tmapSurfVal = null;
     function _paintCell(cell) {
         var t = parseFloat(cell.getAttribute('data-heat-t'));
+        if (cell.classList.contains('tmap-node') || cell.classList.contains('tmap-pill')) {
+            // D-96: the low-saturation fill + its ink, recomputed on a palette switch
+            if (isNaN(t)) return;
+            var k = document.documentElement.getAttribute('data-theme') || '';
+            if (_tmapSurfKey !== k) { _tmapSurfKey = k; _tmapSurfVal = _tmapSurface(); }
+            var p9 = _tmapPaint(interpolateColor(t, dCfg.colorScale), _tmapSurfVal);
+            cell.classList.add('tmap-painted'); cell.style.setProperty('--ui-map-bg', p9.bg); cell.style.setProperty('--ui-map-fg', p9.fg);
+            cell.setAttribute('data-tmap-cr', p9.cr);
+            return;
+        }
         if (!isNaN(t)) { var bg = interpolateColor(t, dCfg.colorScale); cell.style.background = bg; cell.style.color = textColorForBg(bg); }
         else { cell.style.background = ''; cell.style.color = ''; }   // missing/unphysical → neutral (None style shows)
     }
