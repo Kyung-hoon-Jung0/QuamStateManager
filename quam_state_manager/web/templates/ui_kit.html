@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block table_content %}
+{#- docs/308: the UI kit sample page. Each spec is rendered by the Jinja
+    macro (left) and by static/ui.js (right, filled at load from the spec
+    list below); tests/ui_kit_selfcheck.cjs compares the two trees. -#}
+<div class="ui-kit-page">
+{{ ui.ui_head('UI kit', 1, None, 'Every part of the kit in each state, rendered by the template macro and by ui.js side by side.', None,
+              [{'label': 'Light', 'cls': 'btn-sm outline', 'theme': 'light'}, {'label': 'Dark', 'cls': 'btn-sm outline', 'theme': 'dark'}, {'label': 'QM', 'cls': 'btn-sm outline', 'theme': 'qm'}]) }}
+{%- set ns = namespace(section=None) %}
+{%- for section, label, spec in specs %}
+{%- if section != ns.section %}{% if ns.section is not none %}</section>{% endif %}<section class="ui-kit-section"><h2 class="ui-kit-section-title">{{ section }}</h2>{% set ns.section = section %}{% endif %}
+<div class="ui-kit-pair">
+  <div class="ui-kit-side"><p class="ui-kit-label">{{ label }} · template</p><div id="uk-m-{{ loop.index0 }}">{{ ui.ui_render(spec) }}</div></div>
+  <div class="ui-kit-side"><p class="ui-kit-label">{{ label }} · ui.js</p><div id="uk-j-{{ loop.index0 }}"></div></div>
+</div>
+{%- endfor %}
+{% if ns.section is not none %}</section>{% endif %}
+<script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
+</div>
+{% endblock %}

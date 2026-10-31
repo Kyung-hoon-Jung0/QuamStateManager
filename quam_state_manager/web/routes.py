@@ -7212,6 +7212,15 @@ def help_page():
     return render_template(template, **_ctx(page="help"))
 
 
+@bp.route("/ui-kit")
+def ui_kit_page():
+    """docs/308: the UI kit sample page -- every part in each state, rendered
+    by the Jinja macros and by ui.js side by side, plus worked examples.
+    Linked from the bottom of /help only; never in the sidebar."""
+    from quam_state_manager.web.ui_kit_fixtures import specs
+    return render_template("ui_kit.html", **_ctx(page="ui_kit", specs=specs()))
+
+
 @bp.route("/calc-window")
 def calc_window():
     """docs/156 (user feedback): the Calculator as its OWN browser window.
