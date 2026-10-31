@@ -10448,7 +10448,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
 .bulk-col-group-start { border-left: 2px solid var(--pico-muted-border-color); }
 /* Frozen first column (qubit id) + its sticky-header corner. */
 .bulk-corner, .bulk-rowhead { position: sticky; left: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); font-weight: 600; text-align: left; padding-right: 10px; border-right: 1px solid var(--pico-muted-border-color); }
-.bulk-rowhead { font-size: calc(0.92rem * var(--bulk-fs)); }   /* match the cell text size */
+.bulk-rowhead { font-size: calc(0.92rem * var(--bulk-fs)); vertical-align: middle; }   /* match the cell text size */
 .bulk-corner { z-index: 3; }
 .bulk-rowhead { z-index: 1; }
 .bulk-table tbody tr:hover .bulk-rowhead { background: var(--pico-card-sectioning-background-color); }
@@ -10490,7 +10490,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
 .bulk-cell.bulk-cell-bad { border-color: var(--color-error-text); box-shadow: inset 0 0 0 1px var(--color-error-text); }
 /* PERSISTENT "modified since load" marker — a prominent red box that survives
    apply + HTMX re-nav (server-rendered from the change-log, resolved-path matched). */
-.bulk-cell.bulk-cell-modified { border-bottom-color: var(--color-warning-border); box-shadow: inset 0 -1px 0 var(--color-warning-border); background: color-mix(in srgb, var(--color-warning-border) 12%, transparent); }
+.bulk-cell.bulk-cell-modified { border-bottom-color: var(--color-warning-border); box-shadow: inset 0 -1px 0 var(--color-warning-border); }
 .bulk-applied-flash { background: color-mix(in srgb, var(--callout-ok-border, #2e7d32) 24%, transparent) !important; transition: background 0.7s; }
 /* (No font-style on pointer cells — the ↗ glyph already flags the alias, and the
    old italic just made those numbers harder to read / look like a different font.) */
@@ -10735,7 +10735,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
     color: var(--pico-primary); cursor: pointer;
 }
 .bulk-ro-link:hover { text-decoration: underline; }
-#bulk-pair-search-count, #bulk-pair-dirty-count { font-size: 0.82em; }
+#bulk-pair-search-count, #bulk-pair-dirty-count { font-size: 0.82em; white-space: nowrap; }
 
 /* Conflict tray: the destructive 'Overwrite live (force)' must LOOK dangerous
    (coloured text + border per the theme rule), not like a neutral outline button. */
@@ -10787,7 +10787,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 /* Pico's input[type=search]{margin-bottom:1rem} (0,1,1) beats `.bulk-search{margin:0}`
    (0,1,0) — defeat it with a 2-class selector so the search box doesn't add dead space. */
 .bulk-search-wrap .bulk-search { margin-bottom: 0; }
-.bulk-search-count { font-size: 0.78em; }
+.bulk-search-count { font-size: 0.78em; white-space: nowrap; min-width: 5.5em; display: inline-block; }
 
 /* ── r6 item 4: dynamic (derived) columns — list cells, JSON modal, hint ── */
 /* List-value preview cell: mono + muted + ellipsed; the ✎ shows on row hover. */
@@ -10799,9 +10799,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
     color: var(--pico-muted-color); padding: 0 3px;
 }
 .bulk-cell-list.bulk-cell-modified {
-    color: var(--pico-color); box-shadow: inset 0 -2px 0 var(--color-warning-border);
-    background: color-mix(in srgb, var(--color-warning-border) 12%, transparent);
-}
+    color: var(--pico-color); box-shadow: inset 0 -2px 0 var(--color-warning-border); }
 .bulk-list-edit {
     all: unset; cursor: pointer; margin-left: 0.15rem; padding: 0 0.2em; border-radius: 3px;
     color: var(--pico-muted-color); font-size: 0.9em; line-height: 1;

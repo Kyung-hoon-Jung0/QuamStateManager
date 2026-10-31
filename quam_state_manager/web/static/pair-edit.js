@@ -578,7 +578,7 @@
         var t = table(); if (!t) return;
         var n = _dirtyCount(t);
         var cnt = document.getElementById(P + '-dirty-count');
-        if (cnt) cnt.textContent = n ? (n + ' un-applied ' + (n === 1 ? 'edit' : 'edits')) : '';
+        if (cnt) cnt.textContent = n ? (n + ' unapplied ' + (n === 1 ? 'edit' : 'edits')) : '';
         var all = document.getElementById(P + '-apply-all'); if (all) all.disabled = n === 0;
         var aps = document.getElementById(P + '-apply-sync'); if (aps) aps.disabled = n === 0;
         var rst = document.getElementById(P + '-reset'); if (rst) rst.disabled = n === 0;
