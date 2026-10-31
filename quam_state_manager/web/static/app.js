@@ -12390,7 +12390,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         row.classList.add("tree-paste-target");
         var btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "btn-sm tree-paste-btn";
+        btn.className = "btn-sm outline tree-paste-btn";
         btn.textContent = "⎘ paste";   // ⎘
         btn.title = "Paste the copied '" + m.key + "' value into this empty field";
         (function(nd) { btn.onclick = function(e) { e.stopPropagation(); _pasteIntoNode(nd); }; })(node);
@@ -18145,7 +18145,7 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
           + '<input type="text" class="plot-apply-new-input" value="' + _ppEscape(String(u.value)) + '">'
           + '<span class="plot-apply-delta val-delta" hidden></span></div>'
           + '<div class="plot-apply-row-action">'
-          + '<button type="button" class="primary btn-sm plot-apply-row-btn">Apply</button></div>'
+          + '<button type="button" class="outline btn-sm plot-apply-row-btn">Apply</button></div>'
           + provHtml
           + '<div class="plot-apply-row-history muted" hidden></div>'
           + '<div class="plot-apply-row-domainwarn" hidden'

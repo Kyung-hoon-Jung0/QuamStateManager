@@ -83,7 +83,7 @@
             {# r8 feedback: users want the project's paths + ports at a glance —
                a read-only TOML/effective-config popup, working even when the
                state_path dangles (that is exactly when you want to look). #}
-            <button type="button" class="btn-sm landing-card-config"
+            <button type="button" class="btn-sm outline landing-card-config"
                     hx-get="/qualibrate/project-config/{{ p.name | urlencode }}"
                     hx-target="#landing-config-body" hx-swap="innerHTML"
                     onclick="var b=document.getElementById('landing-config-body');if(b)b.innerHTML='<p class=muted>loading&hellip;</p>';document.getElementById('landing-config-dialog').showModal()"

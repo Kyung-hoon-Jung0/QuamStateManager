@@ -9,6 +9,7 @@
          to scroll down to navigate (the bottom nav stays too). #}
       <span class="gen-progress" id="gen-progress-top">Step 1 of 8</span>
       <button type="button" class="btn-sync" id="gen-back-top" disabled>&larr; Back</button>
+      {#- ui-exception: the same Next as the bottom bar; on a long step the bottom one is below the fold -#}
       <button type="button" class="btn-sync primary" id="gen-next-top">Next &rarr;</button>
       <button type="button" class="outline btn-sm" id="gen-reset-step"
               title="Reset only this step; other steps and the environment are kept">Reset step</button>
@@ -56,7 +57,7 @@
         <div class="gen-env-custom-row">
           <input type="text" id="gen-env-custom-path" autocomplete="off"
                  placeholder="C:\my_repo\.venv  ·  /path/to/.venv  ·  …\Scripts\python.exe">
-          <button type="button" class="btn-sync primary gen-env-custom-use" onclick="QuamGen.useCustomEnv()">Use this</button>
+          <button type="button" class="btn-sync gen-env-custom-use" onclick="QuamGen.useCustomEnv()">Use this</button>
         </div>
         <span id="gen-env-custom-status" class="muted"></span>
       </div>
@@ -242,7 +243,7 @@
       <div class="gen-band gen-band-layout">
         <div class="gen-band-head"><span class="gen-band-title">Chip layout</span>
           <span class="muted" id="gen-topo-caption"></span>
-          <button type="button" class="btn-sm gen-topo-renumber" id="gen-topo-renumber" hidden
+          <button type="button" class="btn-sm outline gen-topo-renumber" id="gen-topo-renumber" hidden
                   title="Close the gaps in qubit ids">Renumber</button>
         </div>
         <div class="gen-topo-controls">
@@ -319,7 +320,7 @@
       {# Back / Next sit on this row (not the global footer) so the keyboard
          flow is Auto-allocate -> Enter -> Tab -> Back -> Tab -> Next. #}
       <div class="gen-allocate-row">
-        <button type="button" class="btn-sync primary" id="gen-allocate-btn">Auto-allocate</button>
+        <button type="button" class="btn-sync" id="gen-allocate-btn">Auto-allocate</button>
         <span id="gen-allocate-status" class="muted"></span>
         <span class="gen-wiring-nav">
           <button type="button" class="btn-sync" id="gen-wiring-back">&larr; Back</button>

@@ -29,7 +29,7 @@
             {% include '_qualibrate_env_note.html' %}
             <form hx-post="/qualibrate/use-default-location" class="locate-use-form"
                   hx-confirm="Forget the chosen folder and go back to the default/env resolution?">
-                <button type="submit" class="btn-sm">Reset to default location</button>
+                <button type="submit" class="btn-sm secondary">Reset to default location</button>
             </form>
             {% endif %}
         </div>
@@ -55,7 +55,7 @@
           class="landing-current-project">
         <input type="hidden" name="project" value="{{ active_project }}">
         <input type="hidden" name="from" value="landing">
-        <button type="submit" class="btn-sm landing-current-btn"
+        <button type="submit" class="btn-sm outline landing-current-btn"
                 title="Load the chip QUAlibrate's active project points at, then open its Qubits page">
             Open QUAlibrate's current project: {{ active_project }}</button>
     </form>
@@ -67,7 +67,7 @@
     <form method="post" action="/load" hx-post="/load" hx-target="#table-pane"
           class="landing-current-project">
         <input type="hidden" name="folder" value="{{ _ap.native }}">
-        <button type="submit" class="btn-sm landing-current-btn"
+        <button type="submit" class="btn-sm outline landing-current-btn"
                 title="QUAlibrate's active project '{{ _ap.name }}' has no projects/{{ _ap.name }} folder; this opens the chip its root config points at ({{ _ap.native }})">
             Open QUAlibrate's current chip: {{ _ap.label }}</button>
         <span class="muted landing-current-note">project '{{ _ap.name }}' has no folder; its root config's state_path is used</span>
@@ -105,7 +105,7 @@
        — the most common first action had no button. It is one now, next to
        the manual. #}
     <div class="landing-cta">
-        <button class="btn-sm landing-cta-open" onclick="window.smOpenStateFolder &amp;&amp; window.smOpenStateFolder()"
+        <button class="btn-sm{% if resume_path %} outline{% endif %} landing-cta-open" onclick="window.smOpenStateFolder &amp;&amp; window.smOpenStateFolder()"
                 title="Open a chip's quam_state folder (state.json + wiring.json)">&#128193; Open a state folder&hellip;</button>
         <a class="btn-sm outline" href="/help" hx-get="/help" hx-target="#table-pane"
            hx-push-url="true">&#63; How SM works &mdash; 2 min</a>

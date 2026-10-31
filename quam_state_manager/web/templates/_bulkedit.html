@@ -114,7 +114,7 @@
         <span class="bulk-band-warn" id="bulk-band-warn" aria-live="polite" hidden></span>
         <span class="bulk-dirty-count" id="bulk-dirty-count" aria-live="polite"></span>
         {% if rows %}
-        <button type="button" class="btn-sm" id="bulk-apply-all" onclick="BulkEdit.applyAll()" disabled
+        <button type="button" class="btn-sm outline" id="bulk-apply-all" onclick="BulkEdit.applyAll()" disabled
                 title="Apply these edits to the working state (the live chip stays untouched — review in the tray, then apply to live).">Apply all</button>
         {% if chip_origin != 'dataset_archive' %}
         <button type="button" class="btn-sm btn-apply-live" id="bulk-apply-sync" onclick="BulkEdit.applyAll(true)" disabled
@@ -240,7 +240,7 @@
                 <button type="button" class="btn-xs outline" id="av-expand-all" title="Expand every group">Expand all</button>
                 <button type="button" class="btn-xs outline" id="av-collapse-all" title="Collapse every group">Collapse all</button>
                 <span class="bulk-dirty-count" id="av-dirty-count" aria-live="polite"></span>
-                <button type="button" class="btn-sm" id="av-apply" disabled
+                <button type="button" class="btn-sm outline" id="av-apply" disabled
                         title="Apply these edits to the working state (the live chip stays untouched).">Apply all</button>
                 {% if chip_origin != 'dataset_archive' %}
                 <button type="button" class="btn-sm btn-apply-live" id="av-apply-sync" disabled

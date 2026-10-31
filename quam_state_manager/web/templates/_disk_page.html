@@ -29,7 +29,7 @@
     </div>
 
     <div class="disk-actions">
-        <button type="button" class="btn-sm" onclick="diskGuardReclaim()"
+        <button type="button" class="btn-sm danger" onclick="diskGuardReclaim()"
                 {% if disk.reclaimable_bytes < RECLAIM_FLOOR %}disabled{% endif %}
                 title="Deletes only the caches SM rebuilds by itself">
             Clear rebuildable cache{% if disk.reclaimable_bytes >= RECLAIM_FLOOR %}

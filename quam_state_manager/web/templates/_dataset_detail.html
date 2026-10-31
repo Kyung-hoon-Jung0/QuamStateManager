@@ -510,7 +510,7 @@
             Stage&nbsp;only lets you review first. With no chip open, opens read-only.</small>
         <button hx-post="/dataset/{{ uid }}/load-state?mode=archive"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
-                class="btn-sm ds-load-archive-btn"
+                class="btn-sm outline ds-load-archive-btn"
                 title="Switch SM to this run's frozen quam_state, read-only. Your chip's files and working state are untouched — the status badge offers the way back.">Open read-only</button>
     </div>
     <div id="ds-load-state-result" aria-live="polite"></div>

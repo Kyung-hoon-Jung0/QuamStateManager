@@ -638,7 +638,7 @@
                                 aria-haspopup="true" aria-expanded="false">&#9662;</button>
                     </div>
                     <div id="recents-dropdown" class="recents-dropdown" hidden></div>
-                    <button type="submit" class="btn-sm">State Load</button>
+                    <button type="submit" class="btn-sm outline">State Load</button>
                     {# F17: a normal block BELOW the form row — inside the flex
                        .path-input-group the panel became a row item whose
                        min-content (an unbreakable path) overflowed the sidebar. #}
@@ -875,7 +875,7 @@
                         <button type="button" class="outline btn-sm btn-browse"
                                 onclick="openFolderBrowser('workspace-path-input', 'dataset')" title="Browse folders">&#128193;</button>
                     </div>
-                    <button type="submit" class="btn-sm">Dataset Load</button>
+                    <button type="submit" class="btn-sm outline">Dataset Load</button>
                 </form>
                 <form id="compare-form" class="compare-form compare-buttons">
                     <button type="submit" class="outline btn-sm btn-compare"
@@ -1412,7 +1412,7 @@
         <div class="browser-newfolder" id="browser-newfolder-row" hidden>
             <input type="text" id="browser-newfolder-name" placeholder="New folder name"
                    onkeydown="if(event.key==='Enter'){event.preventDefault();createBrowserFolder();}else if(event.key==='Escape'){toggleNewFolder();}">
-            <button class="btn-sm" type="button" onclick="createBrowserFolder()">Create</button>
+            <button class="btn-sm outline" type="button" onclick="createBrowserFolder()">Create</button>
             <span class="browser-newfolder-err" id="browser-newfolder-err" aria-live="polite"></span>
         </div>
         <details class="browser-recent" id="browser-recent" open>

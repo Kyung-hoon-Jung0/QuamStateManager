@@ -640,16 +640,16 @@ window.AgentPanel = (function () {
         envHtml = envelopeHtml(p, S.envelope[p.id]);           // docs/261: the envelope first, its Start inside it
       } else if (p.status === "draft") {
         acts = '<button type="button" class="btn-sm ag-start" onclick="AgentPanel.startPlan(\'' + esc(p.id) + '\')">Start — ' + (mayN ? mayN + " value(s) may change" : "values may change") + "</button> " +
-          '<button type="button" class="btn-sm ag-cancel" onclick="AgentPanel.cancelPlan(\'' + esc(p.id) + '\')">Cancel</button>';
+          '<button type="button" class="btn-sm secondary ag-cancel" onclick="AgentPanel.cancelPlan(\'' + esc(p.id) + '\')">Cancel</button>';
       } else if (p.status === "running") {
-        acts = '<button type="button" class="btn-sm ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button> ' +
-          '<button type="button" class="btn-sm ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>';
+        acts = '<button type="button" class="btn-sm secondary ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button> ' +
+          '<button type="button" class="btn-sm danger ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>';
       } else if (p.status === "stopping") {
-        acts = '<button type="button" class="btn-sm ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>';
+        acts = '<button type="button" class="btn-sm danger ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>';
       }
     }
     if (p.pre_ts) {
-      acts += ' <a class="btn-sm ag-revert" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>';
+      acts += ' <a class="btn-sm outline ag-revert" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>';
     }
     var html = head + '<div class="ag-steps">' + rows + "</div>" +
       '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (mayN ? " (" + mayCount + ")" : "") + "</summary>" + mayHtml + "</details>" +
@@ -778,7 +778,7 @@ window.AgentPanel = (function () {
     // review R2-11: a RUN request is allowed, not written
     var acts = S.observer ? '<span class="muted">observing</span>' :
       '<button type="button" class="btn-sm ag-approve" onclick="AgentPanel.approve(\'' + esc(a.id) + '\', this)">' + (isRun ? "Allow run" : "Write to chip") + "</button> " +
-      '<button type="button" class="btn-sm ag-reject" onclick="AgentPanel.reject(\'' + esc(a.id) + '\')">Reject</button>';
+      '<button type="button" class="btn-sm secondary ag-reject" onclick="AgentPanel.reject(\'' + esc(a.id) + '\')">Reject</button>';
     var pl = a.plan_id && S.plans[a.plan_id];
     var where = a.plan_id ? ' <span class="muted ag-ap-plan">plan ' + esc(pl ? pl.title : a.plan_id) + (a.step !== undefined && a.step !== null ? " · step " + esc(a.step) : "") + "</span>" : "";
     var html = '<div class="ag-ap-head"><span class="ag-plan-st ag-st-waiting">' + (isRun ? "run request" : "approval") + "</span> <strong><code>" + esc(a.node || "") + "</code></strong> " + esc((a.targets || []).join(" ")) +
@@ -890,10 +890,10 @@ window.AgentPanel = (function () {
          only. Each door is offered only where it does something: "Stop after this run" while an armed
          plan or a run could go on; "Stop now" while something runs or thinks; never for a session
          that is over. */
-      if (armed || runActive) acts.push('<button type="button" class="btn-sm ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button>');
-      if (alive || armed || runActive) acts.push('<button type="button" class="btn-sm ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>');
-      if (sessionOpen()) acts.push('<button type="button" class="btn-sm" onclick="AgentPanel.endSession()">End session</button>');   // docs/247: a Codex conversation between turns too
-      if (canClear(m)) acts.push('<button type="button" class="btn-sm ag-clear" onclick="AgentPanel.clearAsk(this)" title="Start a fresh conversation: archive or delete this one, and the agent forgets it">Clear…</button>');   // docs/297
+      if (armed || runActive) acts.push('<button type="button" class="btn-sm secondary ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button>');
+      if (alive || armed || runActive) acts.push('<button type="button" class="btn-sm danger ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>');
+      if (sessionOpen()) acts.push('<button type="button" class="btn-sm secondary" onclick="AgentPanel.endSession()">End session</button>');   // docs/247: a Codex conversation between turns too
+      if (canClear(m)) acts.push('<button type="button" class="btn-sm secondary ag-clear" onclick="AgentPanel.clearAsk(this)" title="Start a fresh conversation: archive or delete this one, and the agent forgets it">Clear…</button>');   // docs/297
     }
     acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> view only' + (S.observer ? ' <span class="ag-observing">— this window cannot start, stop or approve</span>' : "") + "</label>");
     var nArch = (S.conv && S.conv.archives) || 0;
@@ -1654,9 +1654,9 @@ window.AgentPanel = (function () {
       '<p class="muted ag-sheet-note"><b>Archive</b> keeps a read-only copy under Archived; <b>Delete</b> keeps no copy in SM. ' +
       "Neither edits SM's agent event log or the CLI's own session files. Running work and approvals stay here; finished plans and runs stay in the Calibration log.</p>" +
       '<p class="ag-err ag-sheet-err" role="alert" hidden></p>' +
-      '<div class="ag-sheet-acts"><button type="button" class="btn-sm ag-clear-keep">Archive and clear</button>' +
-      '<button type="button" class="btn-sm danger ag-danger ag-clear-drop">Delete and clear</button>' +
-      '<button type="button" class="btn-sm secondary ag-sheet-close">Cancel</button></div>', btn);
+      '<div class="ag-sheet-acts"><button type="button" class="btn-sm danger ag-danger ag-clear-drop">Delete and clear</button>' +
+      '<button type="button" class="btn-sm secondary ag-sheet-close">Cancel</button>' +
+      '<button type="button" class="btn-sm ag-clear-keep">Archive and clear</button></div>', btn);   // D-31: [danger] [cancel] [primary]
     box.__sinceN = typeof S.sinceN === "number" ? S.sinceN : undefined;
     box.onclick = function (e) {
       var b = e.target.closest && e.target.closest("button");
@@ -1837,8 +1837,8 @@ window.AgentPanel = (function () {
       '<select class="ag-backend" title="which CLI drives"></select>' +
       '<label class="ag-actor-wrap" title="who is at the keyboard IN THIS TAB — the person SM records for Start / Stop / mode / “I ran it”; another tab keeps its own name, a new tab starts from the last one set. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist id="ag-actor-list"></datalist><small class="ag-actor-record">' + esc(actorLabel()) + '</small></label>' +
       '<span class="ag-presets" title="a preset fills a draft; nothing starts before a plan card\'s Start">' +
-      '<button type="button" class="btn-sm ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
-      PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join("") + "</span>" +
+      '<button type="button" class="btn-sm outline ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
+      PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm outline ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join("") + "</span>" +
       '<button type="submit" class="btn-sm ag-send">Send</button></div></form>' +
       '<div id="ag-toast" class="ag-toast" hidden></div></div>';
   }

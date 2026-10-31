@@ -17,7 +17,7 @@
             <li data-kind="{{ a.kind }}"><code>{{ a.path }}</code> <span class="muted">&mdash; {{ a.role }}</span></li>
             {% endfor %}
         </ul>
-        <button type="button" class="btn-sm pulse-delete-together"
+        <button type="button" class="btn-sm danger pulse-delete-together"
                 title="Deletes these {{ together | length }} paths in one batch (one Ctrl+Z); your lab code checks the batch again as a whole"
                 onclick="PulsesPage.deleteTogether(this)">{{ label }}</button>
         <span class="muted pulse-together-note">one batch, one Ctrl+Z &mdash; checked again as a whole</span>

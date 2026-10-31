@@ -52,7 +52,7 @@
             <button type="submit" class="btn-sm primary">Create in working state</button>
             <small class="muted">6 subtrees, one Review bundle — Apply to live
                 stays yours.</small>
-            <button type="button" class="btn-sm" id="gcz-several-open"
+            <button type="button" class="btn-sm outline" id="gcz-several-open"
                     aria-haspopup="dialog">…to several pairs</button>
         </div>
     </form>
@@ -71,14 +71,14 @@
         <p class="muted">Ready = SM's checks and your lab code pass (checked on this chip).</p>
         <div class="gcz-sev-select" role="group" aria-label="Select pairs">
             <span>Select:</span>
-            <button type="button" class="btn-sm" data-gcz-select="ready" aria-pressed="false">All ready</button>
-            <button type="button" class="btn-sm" data-gcz-select="none" aria-pressed="false">None</button>
+            <button type="button" class="btn-sm secondary" data-gcz-select="ready" aria-pressed="false">All ready</button>
+            <button type="button" class="btn-sm secondary" data-gcz-select="none" aria-pressed="false">None</button>
             <small class="muted" data-gcz-feedline-note>Feedline selection is not offered: this chip's state records no feedline per pair.</small>
         </div>
         <div id="gcz-sev-body" class="gcz-sev-body" aria-live="polite">Checking this chip…</div>
         <div class="gcz-sev-foot">
             <span id="gcz-sev-status" class="muted" role="status"></span>
-            <button type="button" class="btn-sm" data-gcz-close>Cancel</button>
+            <button type="button" class="btn-sm secondary" data-gcz-close>Cancel</button>
             <button type="button" class="btn-sm primary" id="gcz-sev-add" disabled>Add to 0 pairs</button>
         </div>
     </dialog>

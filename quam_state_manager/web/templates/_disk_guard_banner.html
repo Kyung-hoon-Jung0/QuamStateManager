@@ -36,7 +36,7 @@
     </span>
     <span class="topo-change-banner-actions">
         {% if disk.reclaimable_bytes >= RECLAIM_FLOOR %}
-        <button type="button" class="btn-sm" onclick="window.diskGuardReclaim && diskGuardReclaim()"
+        <button type="button" class="btn-sm danger" onclick="window.diskGuardReclaim && diskGuardReclaim()"
                 title="Delete only the caches SM rebuilds by itself — snapshots and unapplied edits are never touched">
             Clear {{ sz(disk.reclaimable_bytes) }} of cache</button>
         {% endif %}

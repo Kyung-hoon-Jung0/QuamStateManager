@@ -113,7 +113,7 @@ window.AgentSetup = (function () {
     }
     var tested = ((d.record || {}).tested || {})[k];
     var acts = connected
-      ? '<button type="button" class="btn-sm asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test</button>'
+      ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test</button>'
         + '<button type="button" class="asx-link" onclick="AgentSetup.disconnect(\'' + k + '\')">Disconnect</button>'
       : '<button type="button" class="btn-sm asx-btn" onclick="AgentSetup.preview(\'' + k + '\')">Connect</button>';
     var warn = "";
@@ -171,7 +171,7 @@ window.AgentSetup = (function () {
       + '<span id="as-dryrun-msg"></span></div>');
     env.push('<div class="asx-row" id="as-journal"><span class="asx-k">Journal folder</span><span class="asx-v asx-grow">'
       + '<input id="as-jroot" type="text" value="' + esc(j.configured ? j.root : (j.suggested || "")) + '" placeholder="a folder beside the lab\'s data">'
-      + '<button type="button" class="btn-sm asx-btn-2" onclick="AgentSetup.journal()">' + (j.configured ? "Change" : "Use this folder") + "</button></span>"
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.journal()">' + (j.configured ? "Change" : "Use this folder") + "</button></span>"
       + (j.configured ? state("ok", "Saved") : state("todo", "Not saved yet")) + "</div>"
       + '<label class="asx-opt asx-indent"><input type="checkbox" id="as-jsays"' + (j.claude_says ? " checked" : "") + "> Also record what the agent says at the end of a turn</label>");
     parts.push(card("env", 2, "Where runs and notes live", envDone, env.join("")));
@@ -180,7 +180,7 @@ window.AgentSetup = (function () {
     parts.push(card("context", 3, "Tell the agent about this device", !!ctxDone,
       (ctxUnread.length ? '<p class="ag-err asx-small">Codex never reads ' + esc(ctxUnread.join(", ")) + ": write the notes again to move them into AGENTS.md.</p>" : "")
       + (ctxDone ? '<p class="asx-small muted">Written for ' + Object.keys(d.context).map(esc).join(" and ") + ". You can update the answers any time.</p>" : '<p class="asx-lead">A few questions SM cannot read from the chip (how flux is biased, what must never be touched). The agent reads the answers before it acts.</p>')
-      + '<div id="as-ctx">' + (d.calibrations_folder ? '<button type="button" class="btn-sm ' + (ctxDone ? "asx-btn-2" : "asx-btn") + '" onclick="AgentSetup.loadContext()">' + (ctxDone ? "Edit the answers" : "Answer the questions") + "</button>"
+      + '<div id="as-ctx">' + (d.calibrations_folder ? '<button type="button" class="btn-sm ' + (ctxDone ? "outline asx-btn-2" : "asx-btn") + '" onclick="AgentSetup.loadContext()">' + (ctxDone ? "Edit the answers" : "Answer the questions") + "</button>"
         : '<p class="muted asx-small">Set the calibrations folder first (step 2).</p>') + "</div>"));
 
     // 4. test
@@ -188,7 +188,7 @@ window.AgentSetup = (function () {
     // the card is #as-test-sec: #as-test is the result box inside it (one id, one element)
     parts.push(card("test-sec", 4, "Check it works", testedOk,
       '<p class="asx-lead">Asks the agent one read-only question through SM and shows how long it took and what it answered.</p>'
-      + '<div class="asx-tile-acts">' + testable.map(function (k) { return '<button type="button" class="btn-sm asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test ' + esc(NAMES[k]) + "</button>"; }).join("") + "</div>"
+      + '<div class="asx-tile-acts">' + testable.map(function (k) { return '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test ' + esc(NAMES[k]) + "</button>"; }).join("") + "</div>"
       + '<div id="as-test">' + (S.lastTest || "") + "</div>"));
 
     // limits -- the PERSON's (docs/252): SM refuses an agent's request to change them
@@ -205,7 +205,7 @@ window.AgentSetup = (function () {
         + '<label>Stop by <input id="as-lim-stop" type="text" placeholder="HH:MM" value="' + v(lim.stop_by) + '"></label>'
         + '<label>Webhook <input id="as-lim-hook" type="text" placeholder="https://..." value="' + v(lim.webhook_url) + '"></label>'
         + '<label>Max |&Delta;| per family <input id="as-lim-delta" type="text" placeholder=\'{"ramsey": 2e6}\' value="' + v(delta) + '"></label>'
-        + '</div><div class="asx-tile-acts"><button type="button" class="btn-sm asx-btn-2" onclick="AgentSetup.saveLimits()">Save limits</button></div>'
+        + '</div><div class="asx-tile-acts"><button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.saveLimits()">Save limits</button></div>'
         + '<div id="as-lim-msg"></div></div></details>');
     }
 

@@ -76,7 +76,7 @@
         </details>
         <span class="bulk-search-count muted" id="{{ gid }}-search-count" aria-live="polite"></span>
         <span class="bulk-dirty-count" id="{{ gid }}-dirty-count" aria-live="polite"></span>
-        <button type="button" class="btn-sm" id="{{ gid }}-apply-all" onclick="{{ js }}.applyAll()" disabled
+        <button type="button" class="btn-sm outline" id="{{ gid }}-apply-all" onclick="{{ js }}.applyAll()" disabled
                 title="Apply these edits to the working state (the live chip stays untouched).">Apply all</button>
         {% if chip_origin != 'dataset_archive' %}
         <button type="button" class="btn-sm btn-apply-live" id="{{ gid }}-apply-sync" onclick="{{ js }}.applyAll(true)" disabled

@@ -10114,7 +10114,7 @@ tr.gen-pop-row-linked > td {
 }
 .preview-banner-label { font-size: 0.95rem; }
 .preview-banner-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-.preview-clear { background: var(--outcome-fail-color, #c0392b); color: #fff; border: none; }
+/* .preview-clear: colour comes from .btn-sm.secondary (stage 1b, D-90) */
 .preview-issues { margin-bottom: 0.8rem; }
 .preview-issues.hidden, .hidden { display: none; }
 
@@ -14481,7 +14481,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-plan-acts .ag-mode, .ag-plan-acts .ag-mode-ro { margin-right: auto; font-size: .9em; color: var(--pico-muted-color); }
 .ag-mode select { display: inline-block; width: auto; margin: 0 0 0 .2rem; padding: .05rem 1.6rem .05rem .4rem; height: auto; font-size: .92em; }
 .ag-root .ag-start, .ag-root .ag-approve { background: var(--pico-primary); color: var(--pico-primary-inverse); border-color: var(--pico-primary); font-weight: 600; }
-.ag-root .ag-stop-now { background: var(--pico-del-color, #b00020); border-color: var(--pico-del-color, #b00020); color: #fff; font-weight: 600; }   /* review R2-7: legible in both themes */
+.ag-root .ag-stop-now { font-weight: 600; }   /* colour comes from .btn-sm.danger (stage 1b, D-30/D-90) */
 .ag-root .ag-cancel, .ag-root .ag-reject { border-color: var(--pico-muted-border-color); color: var(--pico-muted-color); background: transparent; }
 .ag-ap-rows { width: 100%; font-size: .9em; margin: .2rem 0; } .ag-ap-rows td, .ag-ap-rows th { padding: .1rem .35rem; }
 .ag-root .ag-ap-rows input { width: 100%; margin: 0; padding: .05rem .3rem; height: auto; font-size: .95em; }
@@ -15397,8 +15397,7 @@ table.data-table.czp-table td.czp-prose, .czp-table td small { font-family: var(
 .asx-chk.asx-no { color: var(--pico-muted-color); }
 .asx-tile-acts { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: .35rem 0 .2rem; }
 .asx-tile-acts .btn-sm, .asx-btn, .asx-btn-2 { width: auto; margin: 0; }
-.asx-btn { background: var(--color-accent); border-color: var(--color-accent); color: #fff; font-weight: 600; padding: .22rem .9rem; }
-.asx-btn-2 { background: transparent; border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent); color: var(--color-accent); padding: .2rem .75rem; }
+/* .asx-btn / .asx-btn-2 are hook classes only: colour and shape come from .btn-sm / .btn-sm.outline (stage 1b, D-90) */
 .asx-link { background: none; border: 0; padding: 0; margin: 0; width: auto; color: var(--color-accent); font-size: .8rem; cursor: pointer; text-decoration: none; }
 .asx-link:hover { text-decoration: underline; }
 .asx-opt { display: flex; align-items: center; gap: .4rem; font-size: .76rem; color: var(--pico-muted-color); margin: .25rem 0 0; }

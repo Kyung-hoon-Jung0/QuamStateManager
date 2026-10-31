@@ -141,7 +141,7 @@
             st.setAttribute('data-state', 'checking'); st.textContent = 'checking…';
             row.appendChild(st);
             var btn = document.createElement('button');
-            btn.type = 'button'; btn.className = 'btn-sm' + (chosen ? ' outline' : '');
+            btn.type = 'button'; btn.className = 'btn-sm outline';
             btn.textContent = chosen ? 'In use' : (isCur ? 'Use this (suggested)' : 'Use this');
             btn.disabled = true;           // until its probe says the QM stack is there
             btn.addEventListener('click', function () { pick(env.python); });

@@ -487,7 +487,7 @@ class TestTheDeleteStep:
 
     def test_a_delete_the_lab_is_asked_about_says_checking(self, started):
         t = self._detail(started, "qubit_pairs.q1-q2.macros.czl.flux_pulse_qubit")
-        i = t.index('class="btn-sm pulse-confirm-delete"')
+        i = t.index('class="btn-sm danger pulse-confirm-delete"')
         after = t[i:t.index("</form>", i)]
         assert ('class="htmx-indicator muted pulse-delete-checking" role="status" '
                 'data-lab-indicator data-lab-state="cold">Checking with your lab code&hellip;</span>') in after

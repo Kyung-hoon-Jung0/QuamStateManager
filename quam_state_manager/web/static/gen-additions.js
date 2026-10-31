@@ -1482,7 +1482,7 @@
       lab.appendChild(inp); r.appendChild(lab); inputs[f] = inp;
     });
     var actions = el("div", { className: "gen-add-actions" });
-    var ok = el("button", { type: "button", className: "btn-sm gen-add-prop-accept" }, "Accept");
+    var ok = el("button", { type: "button", className: "btn-sm outline gen-add-prop-accept" }, "Accept");
     var no = el("button", { type: "button", className: "btn-sm secondary gen-add-prop-dismiss" }, "Dismiss");
     var msg = el("p", { className: "gen-add-msg muted" });
     actions.appendChild(ok); actions.appendChild(no);

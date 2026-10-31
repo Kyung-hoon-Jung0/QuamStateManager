@@ -8,7 +8,7 @@
   {% endif %}
   {% if upgrade.remembered %}<p>This project's remembered environment is
     <code title="{{ upgrade.remembered }}">{{ upgrade.remembered_name }}</code>; this check did not run there
-    <button class="btn-sm" data-python="{{ upgrade.remembered }}" onclick="EnvUpgrade.check(this.dataset.python)">Check it</button></p>{% endif %}
+    <button class="btn-sm outline" data-python="{{ upgrade.remembered }}" onclick="EnvUpgrade.check(this.dataset.python)">Check it</button></p>{% endif %}
   {% if upgrade.error %}<p>{{ upgrade.error }}</p>{% endif %}
   {% if upgrade.checking %}<p class="env-upgrade-checking" role="status">Checking {{ upgrade.env_name }}&hellip; <progress></progress></p>{% endif %}
   {% if upgrade.report %}
@@ -84,11 +84,11 @@
     {% endfor %}
     {% if not prominent %}</details>{% endif %}
     {% if upgrade.editable and report.cases['3'].rows %}
-      <button class="btn-sm" onclick="EnvUpgrade.testRenames()">Test load in this env</button>
+      <button class="btn-sm outline" onclick="EnvUpgrade.testRenames()">Test load in this env</button>
       <button class="btn-sm" id="env-rename-apply" disabled onclick="EnvUpgrade.applyRenames()">Stage reviewed changes</button>
       <p id="env-rename-result" role="status"></p>
     {% endif %}
-    {% if report.banner %}<button class="btn-sm" onclick="EnvUpgrade.acknowledge()">Acknowledge these findings</button>{% endif %}
+    {% if report.banner %}<button class="btn-sm secondary" onclick="EnvUpgrade.acknowledge()">Acknowledge these findings</button>{% endif %}
   {% elif not upgrade.no_env and not upgrade.checking and not upgrade.error %}<p>Not checked yet in this environment.</p>{% endif %}
   <p>A reference contains generate_config() waveform arrays and the exact JSON files used to generate them.</p>
   <details id="env-upgrade-schema-details"><summary>Schema details</summary>
@@ -96,12 +96,12 @@
       {% include '_env_schema_changes.html' %}
     {% endwith %}
   </details>
-  <button class="btn-sm" hx-get="/env-upgrade/references" hx-target="#env-upgrade-references">References</button>
-  {% if upgrade.editable %}<button class="btn-sm" hx-post="/env-upgrade/record" hx-target="#env-upgrade-report" hx-swap="outerHTML"
+  <button class="btn-sm outline" hx-get="/env-upgrade/references" hx-target="#env-upgrade-references">References</button>
+  {% if upgrade.editable %}<button class="btn-sm outline" hx-post="/env-upgrade/record" hx-target="#env-upgrade-report" hx-swap="outerHTML"
     hx-indicator="#env-upgrade-record-busy" hx-disabled-elt="this"
     {% if upgrade.no_env or upgrade.checking %}disabled title="{{ needs_env if upgrade.no_env else 'Wait for the check to finish' }}"{% endif %}>Generate config and record reference</button>{% endif %}
-  <button class="btn-sm" onclick="EnvUpgrade.copyText()">Copy as text</button>
-  {% if upgrade.editable %}<button class="btn-sm" id="env-upgrade-check" onclick="EnvUpgrade.check()"
+  <button class="btn-sm secondary" onclick="EnvUpgrade.copyText()">Copy as text</button>
+  {% if upgrade.editable %}<button class="btn-sm{% if report and report.cases['3'].rows %} outline{% endif %}" id="env-upgrade-check" onclick="EnvUpgrade.check()"
     {% if upgrade.no_env or upgrade.checking %}disabled title="{{ needs_env if upgrade.no_env else 'A check is running' }}"{% endif %}>Check this env</button>{% endif %}
   <span id="env-upgrade-record-busy" class="htmx-indicator muted">Generating config and recording a reference&hellip; (about 10&ndash;60 s)</span>
   <p id="env-upgrade-status" role="status">{{ upgrade.recording or '' }}</p>

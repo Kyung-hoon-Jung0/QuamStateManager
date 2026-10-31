@@ -14,7 +14,7 @@
       {% for env in envs %}<option value="{{ env.python }}" {% if env.python == selected %}selected{% set ns.found = true %}{% endif %}>{{ env.name }}</option>{% endfor %}
       {% if selected and not ns.found %}<option value="{{ selected }}" selected title="{{ selected }}">{{ selected_name }}</option>{% endif %}
     </select></label>
-  <button class="btn-sm" data-key="{{ reference.key }}" onclick="EnvUpgrade.compare(this)">Compare</button>
-  <button class="btn-sm" data-key="{{ reference.key }}" onclick="EnvUpgrade.removeReference(this)">Delete reference</button>
+  <button class="btn-sm outline" data-key="{{ reference.key }}" onclick="EnvUpgrade.compare(this)">Compare</button>
+  <button class="btn-sm danger" data-key="{{ reference.key }}" onclick="EnvUpgrade.removeReference(this)">Delete reference</button>
 </div>
 {% else %}<p>No references recorded for this state yet.</p>{% endfor %}

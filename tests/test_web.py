@@ -750,7 +750,7 @@ class TestBrowse:
         assert "workspace-path-input" in html
         assert "openFolderBrowser" in html
         assert "btn-browse" in html
-        assert 'class="btn-sm">State Load</button>' in html
+        assert 'class="btn-sm outline">State Load</button>' in html
 
     def test_browse_button_renders_in_load_form(self, client):
         resp = client.get("/")

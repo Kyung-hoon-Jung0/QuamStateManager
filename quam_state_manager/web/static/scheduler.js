@@ -196,7 +196,7 @@
         '<span class="sched-badge sched-badge-' + esc(it.kind) + '">' + esc(it.kind) + "</span>" + hook +
         '<span class="sched-lib-name">' + esc(it.name) + "</span>" +
         '<span class="sched-lib-desc muted">' + esc(it.description || "") + "</span>" +
-        '<button type="button" class="btn-sm sched-lib-add" aria-label="Add ' + esc(it.name)
+        '<button type="button" class="btn-sm outline sched-lib-add" aria-label="Add ' + esc(it.name)
           + ' to queue">+ Add</button>';
       row.querySelector(".sched-lib-add").addEventListener("click", function (e) {
         self.addToQueue(it, e.currentTarget);

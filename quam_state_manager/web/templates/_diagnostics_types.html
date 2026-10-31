@@ -170,6 +170,7 @@
                 onclick="window.openEnvSchemaChanges && window.openEnvSchemaChanges()"
                 title="You hid this set — open it again to see what the library changed">Review again&hellip;</button>
         {% else %}
+        {#- ui-exception: a second, independent repair on its own row of this card (schema movement vs numbers stored as text); each row's only next step -#}
         <button type="button" class="btn-sm"
                 onclick="window.openEnvSchemaChanges && window.openEnvSchemaChanges()"
                 title="See what the library changed, and tell SM which side is right">Review {{ types_card.env_change.count }} schema change{{ 's' if types_card.env_change.count != 1 }}&hellip;</button>

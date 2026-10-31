@@ -12,7 +12,7 @@
        server's active context, not ``active_name`` — which is the chip's
        IDENTITY name and can be None (an unnamed chip), hiding the button
        even though the rack is right there (customer-reported). #}
-    <button type="button" class="btn-sync primary iw-modify-btn"
+    <button type="button" class="btn-sync iw-modify-btn"
             hx-get="/regenerate?step=5" hx-target="#table-pane"
             hx-sync="#table-pane:replace" hx-push-url="true"
             title="Open this chip in Re-generate at the Wiring step — drag ports to rewire, then rebuild with calibrated values carried over">
