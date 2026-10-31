@@ -132,8 +132,12 @@ const nat = parseFloat(svg().dataset.natW);
 ok(femLabels().length === 8, 'A1 all 8 FEMs rendered, got ' + femLabels().length);
 ok(femLabels().filter((l) => /lf-fem/.test(l)).length === 5,
    'A1 all 5 LF FEMs rendered');
-ok(svg().getAttribute('viewBox') === '0 0 ' + nat + ' ' + svg().dataset.natH,
-   'A1 svg carries a viewBox matching its natural size');
+// D-95: the chassis head replaces the drawing's title row, so the view box
+// starts 30 px down and its height is the natural height that remains
+ok(svg().getAttribute('viewBox') === '0 30 ' + nat + ' ' + svg().dataset.natH,
+   'A1 svg carries a viewBox matching its natural size (title row cut)');
+ok(!!svg().closest('section.iw-chassis') && /^Chassis 1 · /.test(svg().closest('.iw-chassis').querySelector('.iw-chassis-head').textContent),
+   'A1 the drawing sits in one chassis block with its head');
 // The exact defect was a WIDTH LIMIT WITHOUT A VIEWBOX: that combination
 // shrinks the box and crops the drawing. Limiting the width is fine once a
 // viewBox makes the drawing scale with it.
@@ -246,6 +250,30 @@ ok(isFit(), 'A6 a blocked localStorage does not make the button inert');
 ok(btnText() === '1:1', 'A6 and the bar reflects the new mode');
 ls.setItem = (k, v) => { store[k] = String(v); };
 ls.getItem = (k) => (k in store ? store[k] : null);
+
+/* -- D-95: stacked chassis share ONE scale -------------------------------- */
+{
+  try { localStorage.removeItem('quam_instrument_fit'); } catch (e) { /* */ }
+  const two = rack();
+  const small = {};
+  for (let slot = 1; slot <= 4; slot++) {
+    small[String(slot)] = { type: 'lf-fem', input_ports: {},
+      output_ports: { '1': [{ role: 'z', element: 'p' + slot, label: 'p' + slot, port_type: 'out' }] } };
+  }
+  two.controllers['2'] = { fems: small, max_output_port: 8 };
+  setHostWidth(700);
+  window.renderInstrumentWiring('instrument-diagram', two, {});
+  const svgs = host.querySelectorAll('svg.instrument-svg');
+  const blocks = host.querySelectorAll('section.iw-chassis');
+  ok(svgs.length === 2 && blocks.length === 2, 'D-95 two chassis -> two stacked blocks, one drawing each');
+  ok(/^Chassis 2 · /.test(blocks[1].querySelector('.iw-chassis-head').textContent)
+     && /4 FEMs/.test(blocks[1].querySelector('.iw-chassis-meta').textContent), 'D-95 the second head names its chassis and FEM count');
+  const wA = parseFloat(svgs[0].dataset.natW), wB = parseFloat(svgs[1].dataset.natW);
+  const pct = (el) => { const m = /min\(([\d.]+)%/.exec(el.style.width); return m ? parseFloat(m[1]) : null; };
+  ok(wA > wB && pct(svgs[0]) === 100, 'D-95 the widest chassis fits the full width');
+  ok(pct(svgs[1]) !== null && Math.abs(pct(svgs[1]) - 100 * wB / wA) < 0.01,
+     'D-95 the narrower chassis is drawn at the SAME scale (' + pct(svgs[1]) + '% = its width / the widest)');
+}
 
 // pretendToBeVisual keeps a rAF loop alive, so this harness has to say it is
 // done explicitly — and process.exit() truncates a pending stdout write on a

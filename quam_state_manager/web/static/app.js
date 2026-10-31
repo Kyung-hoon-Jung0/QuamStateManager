@@ -14981,6 +14981,11 @@ function _applyInstrumentFit(container) {
             // blown up past natural size, in a picture whose whole job is to
             // be a faithful rack. Cap at the drawing's own width.
             svg.style.width = 'min(100%, ' + w + 'px)';
+            // D-95: stacked chassis share ONE scale (the widest one's fit), so a
+            // port is the same size in every chassis; the page scrolls down.
+            if (svgs.length > 1 && widest) {
+                svg.style.width = 'min(' + (100 * w / widest).toFixed(3) + '%, ' + w + 'px)';
+            }
             if (!svg.style.width) svg.style.width = Math.min(avail, w) + 'px';  // no min() support
             svg.style.height = 'auto';
             svg.style.maxWidth = w + 'px';
@@ -15311,7 +15316,27 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             }
         });
 
-        container.appendChild(svg);
+        // D-95: one chassis per block, stacked, each with its own head. The
+        // drawing's own title row is not drawn: the view box starts below it,
+        // so no empty band sits under the head.
+        var chIdx = Object.keys(controllers).indexOf(ctrlName) + 1;
+        var block = document.createElement('section');
+        block.className = 'iw-chassis';
+        block.setAttribute('data-controller', ctrlName);
+        var head = document.createElement('h4');
+        head.className = 'iw-chassis-head';
+        head.textContent = 'Chassis ' + chIdx + ' · ' + ctrlName;
+        var meta = document.createElement('span');
+        meta.className = 'iw-chassis-meta';
+        meta.textContent = femIds.length + ' FEM' + (femIds.length === 1 ? '' : 's');
+        head.appendChild(meta);
+        block.appendChild(head);
+        var cut = 30, nh = svgH - cut;
+        svg.setAttribute('viewBox', '0 ' + cut + ' ' + svgW + ' ' + nh);
+        svg.setAttribute('height', nh);
+        svg.dataset.natH = nh;
+        block.appendChild(svg);
+        container.appendChild(block);
     });
 
     // v1.5.1 (U P2-20): what each colour means -- only the roles drawn here
