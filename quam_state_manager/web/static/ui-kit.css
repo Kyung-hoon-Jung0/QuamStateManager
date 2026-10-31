@@ -240,6 +240,11 @@ button.btn-sm.outline.secondary:disabled {
     opacity: 1; cursor: not-allowed;
     background-color: transparent; border-color: var(--ui-border); color: var(--ui-text-3);
 }
+/* Layout exceptions to width:auto: these submits were full-width rows before
+   stage 1a (Pico's button[type=submit] width) and are meant to be. Width only. */
+#load-form > button.btn-sm,
+.sidebar-add-form > button.btn-sm,
+.landing-current-project > button.btn-sm { width: 100%; }
 summary.btn-sm { display: inline-flex; align-items: center; box-sizing: border-box; min-height: var(--ui-btn-h-sm); }
 
 .btn-sync { min-height: var(--ui-btn-h); width: auto; border-radius: var(--ui-r-btn); border-color: var(--ui-accent-border); }

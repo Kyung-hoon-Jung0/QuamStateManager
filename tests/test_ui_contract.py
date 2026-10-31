@@ -481,6 +481,10 @@ _STAGE1_SELECTOR = re.compile(
     r"^(?:button\.btn-sm|\[role=button\]\.btn-sm|summary\.btn-sm|\.btn-sync)"
     r"(?:\.(?:outline|secondary|danger|primary))*(?::(?:hover|disabled))*$"
     r"|^(?:input|select|textarea)?:focus-visible$")
+# Full-width rows that keep their pre-1a width (the sidebar State Load and
+# Dataset Load submits, the landing "open current project" button): width only.
+_STAGE1_FULL_WIDTH = {"#load-form > button.btn-sm", ".sidebar-add-form > button.btn-sm",
+                      ".landing-current-project > button.btn-sm"}
 # A button.btn-sm takes its colour through the variables Pico's button rule reads.
 _STAGE1_VARS = {"--pico-border-radius", "--pico-background-color", "--pico-border-color", "--pico-color"}
 
@@ -490,8 +494,11 @@ def test_7d_stage1_section_targets_only_the_listed_button_selectors_and_focus():
     assert stage1, "the stage-1 section has rules"
     for sel, body, stack in stage1:
         assert not stack, f"no at-rule blocks in ui-kit.css: {stack}"
-        for part in sel.split(","):
-            part = part.strip()
+        parts = [x.strip() for x in sel.split(",")]
+        if all(x in _STAGE1_FULL_WIDTH for x in parts):
+            assert [k for k, _v in _decls(body)] == ["width"], f"{sel}: a full-width exception sets width only"
+            continue
+        for part in parts:
             assert _STAGE1_SELECTOR.match(part), f"stage-1 selector outside the allowed list: {part!r}"
         for k, _v in _decls(body):
             if k.startswith("--"):
