@@ -44,6 +44,14 @@ _NON_STAGING_POSTS = {
     'main.generate_proposal_accept',
     'main.generate_proposal_dismiss',
     'main.generate_additions_lint',
+    # Addition rules: pure functions of the posted wizard spec (expand / apply return a new
+    # spec as JSON; gate-action resolves one chip action) -- nothing is staged or written.
+    'main.generate_gate_action',
+    'main.generate_rules_expand',
+    'main.generate_rules_apply',
+    # Gaussian CZ planner: reads the chip under its lock and returns a plan; the write is
+    # the separate apply-several route, which is locked.
+    'main.api_pulse_gaussian_cz_plan',
     'agent.generate_propose',
     'agent.generate_propose_card',
 
