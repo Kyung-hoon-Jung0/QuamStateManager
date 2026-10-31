@@ -1710,6 +1710,7 @@
         var dirty = _cells(tr).some(_isDirty);
         var btn = tr.querySelector('.bulk-row-apply');
         if (btn) btn.disabled = !dirty;
+        tr.classList.toggle('bulk-row-dirty', dirty);   // D-86
         return dirty;
     }
     // Dedup key for counting AND writing. Only LINKABLE cells (resolvable → a real

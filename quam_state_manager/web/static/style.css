@@ -10470,7 +10470,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
        length) so each cell fits its full number — no CSS `width` (which clipped),
        and crucially no `:focus` width change (which shrank the box on click). */
     width: auto !important;   /* let the `size` attr drive width; beat Pico's input{width:100%} */
-    min-width: 5ch; margin: 0; padding: 0.05rem 0.25rem;
+    min-width: 5ch; margin: 0; padding: 0.05rem 0.25rem; border-color: transparent; border-bottom-color: var(--ui-border-strong); border-radius: 0; --pico-form-element-background-color: transparent; --pico-form-element-active-background-color: transparent; /* A/B-5 c: underline; colours only, width = Pico's (bulk_virt PAD_PX mirror) */
     /* The app's good monospace (Consolas/Cascadia/JetBrains) — NOT the generic
        `monospace` (≈Courier) — plus tabular figures so every digit is the same
        width and columns of numbers line up. letter-spacing is a user knob. */
@@ -10503,7 +10503,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
 .bulk-cell.bulk-cell-bad { border-color: var(--color-error-text); box-shadow: inset 0 0 0 1px var(--color-error-text); }
 /* PERSISTENT "modified since load" marker — a prominent red box that survives
    apply + HTMX re-nav (server-rendered from the change-log, resolved-path matched). */
-.bulk-cell.bulk-cell-modified { border: 1.5px solid var(--color-error-text); background: color-mix(in srgb, var(--color-error-text) 12%, transparent); }
+.bulk-cell.bulk-cell-modified { border-bottom-color: var(--color-error-text); box-shadow: inset 0 -1px 0 var(--color-error-text); background: color-mix(in srgb, var(--color-error-text) 12%, transparent); }
 .bulk-applied-flash { background: color-mix(in srgb, var(--callout-ok-border, #2e7d32) 24%, transparent) !important; transition: background 0.7s; }
 /* (No font-style on pointer cells — the ↗ glyph already flags the alias, and the
    old italic just made those numbers harder to read / look like a different font.) */
@@ -10524,7 +10524,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
 .bulk-shared { color: var(--color-warning-text); font-size: 0.85em; margin-left: 1px; cursor: help; }
 .bulk-shared-legend { color: var(--color-warning-text); }
 /* MW-FEM band-range / LO-conflict warning (advisory — apply still allowed). */
-.bulk-cell.bulk-band-warn { border: 1.5px solid var(--color-error-text); background: color-mix(in srgb, var(--color-error-text) 14%, transparent); }
+.bulk-cell.bulk-band-warn { border-color: var(--color-error-text); box-shadow: inset 0 -1px 0 var(--color-error-text); background: color-mix(in srgb, var(--color-error-text) 14%, transparent); }
 .bulk-band-msg { display: block; color: var(--color-error-text); font-size: 0.7em; max-width: 24ch; white-space: normal; }
 /* docs/109: the TRUE physical output under an amplitude cell (MW dBm / LF V) —
    always visible (feedback: all data on screen, never hover-only), muted so it
@@ -10812,7 +10812,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
     color: var(--pico-muted-color); padding: 0 3px;
 }
 .bulk-cell-list.bulk-cell-modified {
-    color: var(--pico-color); border: 1.5px solid var(--color-error-text); border-radius: 3px;
+    color: var(--pico-color); box-shadow: inset 0 -2px 0 var(--color-error-text);
     background: color-mix(in srgb, var(--color-error-text) 12%, transparent);
 }
 .bulk-list-edit {

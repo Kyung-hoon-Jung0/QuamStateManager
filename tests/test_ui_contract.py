@@ -526,7 +526,7 @@ _KEYWORDS = {"none", "transparent", "0", "solid", "dashed", "inherit", "currentc
 # Stage 5 (D-94..D-98): the chip maps and the wiring chassis. Every selector
 # names a stage-5 class; existing map classes appear only beside one, and the
 # only variables set here are the map-scoped --ui-map-* sizes.
-_STAGE5_CLASS = re.compile(r"\.(?:cm-dir|tmap|iw-chassis)(?:-[\w-]+)?(?![\w-])")
+_STAGE5_CLASS = re.compile(r"\.(?:cm-dir|tmap|iw-chassis|bulk-cell|bulk-row-apply)(?:-[\w-]+)?(?![\w-])")
 
 
 def test_7e_stage5_section_targets_only_stage5_classes():

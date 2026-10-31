@@ -558,6 +558,7 @@
         var dirty = _cells(tr).some(_isDirty);
         var btn = tr.querySelector('.bulk-row-apply');
         if (btn) btn.disabled = !dirty;
+        tr.classList.toggle('bulk-row-dirty', dirty);   // D-86
         return dirty;
     }
     function _dedupKey(c) {
