@@ -78,7 +78,7 @@
             // The same group table as the rules' Apply dialog (D-56, D-62).
             var tbl = el('table', { 'class': 'ui-table gcz-sev-tbl' });
             var hr = el('tr');
-            ['', 'Pair', 'Status', 'Moving qubit', 'Pulse names'].forEach(function (c, i) {
+            ['', 'Pair', 'Moving qubit', 'Pulse names'].forEach(function (c, i) {
                 var th = el('th', { 'class': 'ui-table-head', scope: 'col' }, c);
                 if (!i) th.setAttribute('aria-label', 'Select');
                 hr.appendChild(th);
@@ -91,11 +91,6 @@
                 cb.checked = true;
                 var c0 = el('td', { 'class': 'ui-table-cell' }); c0.appendChild(cb); tr.appendChild(c0);
                 var c1 = el('td', { 'class': 'ui-table-cell' }); c1.appendChild(el('code', { 'class': 'ui-chip' }, r.pair)); tr.appendChild(c1);
-                var c2 = el('td', { 'class': 'ui-table-cell' });
-                var v = el('div', { 'class': 'ui-verdict ui-verdict--ok' });
-                v.appendChild(el('span', { 'class': 'ui-dot', 'aria-hidden': 'true' }));
-                v.appendChild(el('strong', { 'class': 'ui-verdict-key' }, 'Ready'));
-                c2.appendChild(v); tr.appendChild(c2);
                 tr.appendChild(el('td', { 'class': 'ui-table-cell' }, r.moving));
                 var names = (r.pulses || []).join(', ');
                 tr.appendChild(el('td', { 'class': 'ui-table-cell ui-table-muted gcz-sev-names', title: names }, names));

@@ -404,11 +404,11 @@
       .map(function (a) { return a.name; }).join(", ");
   }
 
-  // One group's rows as a kit table (D-62): tick | Pair | Status | Plays on | Pulse names | Why.
+  // One group's rows as a kit table (D-62): tick | Pair | Plays on (the group title names the status) | Pulse names | Why.
   function groupTable(d, rows) {
     var t = el("table", { className: "ui-table gen-rule-tbl" });
     var hr = el("tr");
-    ["Select", "Pair", "Status", "Plays on", "Pulse names", "Why"].forEach(function (c, i) {
+    ["Select", "Pair", "Plays on", "Pulse names", "Why"].forEach(function (c, i) {
       var th = el("th", { className: "ui-table-head" + (i ? "" : " gen-rule-c-tick"), scope: "col" }, i ? c : "");
       if (!i) th.setAttribute("aria-label", c);
       hr.appendChild(th);
@@ -423,7 +423,7 @@
   function rowEl(d, row) {
     var tr = el("tr", { className: "gen-rule-row gen-rule-row-" + (tickable(row) ? "tick" : "plain"), "data-pair": row.pair });
     function td(cls) { var c = el("td", { className: "ui-table-cell" + (cls ? " " + cls : "") }); tr.appendChild(c); return c; }
-    var cTick = td("gen-rule-c-tick"), cPair = td(), cStatus = td(), cOn = td("gen-rule-c-on"),
+    var cTick = td("gen-rule-c-tick"), cPair = td(), cOn = td("gen-rule-c-on"),
         cNames = td("ui-table-muted gen-rule-c-names"), cWhy = td("ui-table-muted gen-rule-c-why");
     if (tickable(row)) {
       var cb = el("input", { type: "checkbox", className: "gen-rule-row-cb", "aria-label": row.pair, "data-pair": row.pair });
@@ -443,8 +443,7 @@
     }
     var pid = kitChip(row.pair); pid.classList.add("gen-rule-pid");
     cPair.appendChild(pid);
-    cStatus.appendChild(kitVerdict(STATUS_TONE[row.status] || "neutral", STATUS_WORD[row.status] || row.status));
-    cStatus.title = row.status;
+    pid.title = row.status;
     var names = pulseNames(row);
     if (names) { cNames.textContent = names; cNames.title = names; }
     var needsChoice = needsChoiceOf(row);
