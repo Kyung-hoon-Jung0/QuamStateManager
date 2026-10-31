@@ -140,13 +140,17 @@
   function displayPlaceholder(host) {
     var box = el("div", { className: "gen-add-display-wait" });
     if (displayError) {
-      box.appendChild(el("span", { className: "muted gen-add-display-error" },
+      box.className += " ui-verdict ui-verdict--danger";
+      box.appendChild(el("span", { className: "ui-dot", "aria-hidden": "true" }));
+      box.appendChild(el("span", { className: "ui-verdict-why gen-add-display-error" },
         "Could not read the chip's pair facts for additions: " + displayError + " "));
-      var b = el("button", { type: "button", className: "btn-sm secondary gen-add-display-retry" }, "Retry");
+      var b = el("button", { type: "button", className: "btn-sm outline gen-add-display-retry" }, "Retry");
       b.addEventListener("click", retryDisplay);
       box.appendChild(b);
     } else {
-      box.appendChild(el("span", { className: "muted gen-add-display-loading" }, "Loading the additions…"));
+      box.className += " ui-verdict ui-verdict--neutral";
+      box.appendChild(el("span", { className: "ui-dot", "aria-hidden": "true" }));
+      box.appendChild(el("span", { className: "ui-verdict-why gen-add-display-loading" }, "Loading the additions…"));
     }
     host.appendChild(box);
   }
@@ -232,8 +236,9 @@
       var f = cls.fields[fn];
       if (fn === "id" || skip.indexOf(fn) >= 0) return;
       var lab = el("label", { className: "gen-add-field" + (f.has_default ? "" : " gen-add-required") });
-      lab.appendChild(el("span", { className: "gen-add-fname", title: f.doc || "" },
-        fn + (f.has_default ? "" : " *")));
+      var fname = el("span", { className: "gen-add-fname", title: f.doc || "" }, fn);
+      if (!f.has_default) fname.appendChild(el("span", { className: "ui-dot gen-add-req-dot", role: "img", "aria-label": "required", title: "required" }));
+      lab.appendChild(fname);
       var inferred = isInferred(f);
       var inp = el("input", { type: "text", "data-field": fn, "data-raw": f.raw || "",
                               "data-default": defaultText(f),
@@ -520,7 +525,9 @@
         var part = { item: item, enabled: true };
         var sec = el("div", { className: "gen-add-cz-pulse", "data-field": item.field });
         var head = el("div", { className: "gen-add-row" });
-        var title = el("span", { className: "gen-add-cz-label" }, item.field + " →");
+        var title = el("span", { className: "gen-add-cz-label" });
+        title.appendChild(el("code", { className: "ui-chip" }, item.field));
+        title.appendChild(el("span", { className: "gen-add-cz-arrow" }, " →"));
         head.appendChild(title);
         if (item.on === "coupler" && !item.required) {
           var cb = el("input", { type: "checkbox", className: "gen-add-cz-use", "aria-label": "Add a coupler pulse" });
@@ -994,12 +1001,16 @@
         if (!slot.isConnected) return;
         slot.innerHTML = "";
         (j.errors || []).forEach(function (e) {
-          var x = el("span", { className: "gen-add-lint-err" }, "✗ " + e);
-          x.style.color = "var(--sm-danger, #d33)";
+          var x = el("span", { className: "gen-add-lint-err" });
+          x.appendChild(el("span", { className: "ui-badge ui-badge--danger" }, "✗ error"));
+          x.appendChild(document.createTextNode(" " + e));
           slot.appendChild(x);
         });
         (j.warnings || []).forEach(function (w) {
-          slot.appendChild(el("span", { className: "muted gen-add-lint-warn" }, "⚠ " + w));
+          var y = el("span", { className: "gen-add-lint-warn" });
+          y.appendChild(el("span", { className: "ui-badge ui-badge--warn" }, "⚠ warning"));
+          y.appendChild(document.createTextNode(" " + w));
+          slot.appendChild(y);
         });
       });
     }).catch(function () { /* offline: the build still checks it */ });
@@ -1586,7 +1597,7 @@
     host.innerHTML = "";
     var chs = channels(spec);
     if (!roles) {
-      host.appendChild(el("p", { className: "muted" }, "Loading classes from the environment…"));
+      host.appendChild(el("p", { className: "ui-note" }, "Loading classes from the environment…"));
       loadRoles(false, null, function () { mount(host, ctx); });
       return;
     }
@@ -1609,7 +1620,7 @@
                              title: "Modules to look in for lab classes (comma separated). Lab packages are never walked." });
     mods.value = typedModules;
     mods.addEventListener("input", function () { typedModules = mods.value; });
-    var read = el("button", { type: "button", className: "btn-sm secondary gen-add-read" }, "Read classes");
+    var read = el("button", { type: "button", className: "btn-sm outline gen-add-read" }, "Read classes");
     read.addEventListener("click", function () {
       typedModules = mods.value || "";
       var m = (mods.value || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
@@ -1652,8 +1663,8 @@
     host.appendChild(el("p", { className: "gen-add-sub" }, "Pulses"));
     var table = el("div", { className: "gen-add-list" });
     chs.forEach(function (ch) {
-      var item = el("div", { className: "gen-add-ch", "data-target": ch.target });
-      var head = el("div", { className: "gen-add-ch-head" });
+      var item = el("div", { className: "gen-add-ch ui-item", "data-target": ch.target });
+      var head = el("div", { className: "gen-add-ch-head ui-item-head" });
       head.appendChild(el("span", { className: "gen-add-ch-label" }, ch.label));
       var add = el("button", { type: "button", className: "btn-sm secondary gen-add-btn" }, "+ Add pulse");
       if (!ready) add.disabled = true;
@@ -1683,8 +1694,8 @@
     host.appendChild(el("p", { className: "gen-add-sub" }, "Macros"));
     var mtable = el("div", { className: "gen-add-list gen-add-macros" });
     owners(spec).forEach(function (ow) {
-      var item = el("div", { className: "gen-add-owner", "data-target": ow.target });
-      var head = el("div", { className: "gen-add-ch-head" });
+      var item = el("div", { className: "gen-add-owner ui-item", "data-target": ow.target });
+      var head = el("div", { className: "gen-add-ch-head ui-item-head" });
       head.appendChild(el("span", { className: "gen-add-ch-label" }, ow.label + " · macros"));
       var pool = ow.kind === "pair" ? (roles && roles.macros_pair) || {} : (roles && roles.macros_qubit) || {};
       var add = el("button", { type: "button", className: "btn-sm secondary gen-add-mbtn" }, "+ Add macro");
@@ -1722,7 +1733,7 @@
       var ftable = el("div", { className: "gen-add-list gen-add-fieldlist" });
       twpas.forEach(function (t) {
         var item = el("div", { className: "gen-add-owner", "data-twpa": t });
-        var head = el("div", { className: "gen-add-ch-head" });
+        var head = el("div", { className: "gen-add-ch-head ui-item-head" });
         head.appendChild(el("span", { className: "gen-add-ch-label" }, t + " · TWPA"));
         var b = el("button", { type: "button", className: "btn-sm secondary gen-add-twbtn",
                                title: "Pulsed pump: a flag, the pump_ pulse, and the active TWPA list" }, "+ Pulsed mode…");

@@ -11,12 +11,11 @@
   "static/cz-plan.js": 16,
   "static/dataset-virtual.js": 4,
   "static/ds-scroll-anchor.js": 1,
-  "static/gen-additions.js": 1,
   "static/generate.js": 1,
   "static/journal.js": 3,
   "static/plot-theme.js": 20,
   "static/pulses.js": 11,
-  "static/style.css": 680,
+  "static/style.css": 679,
   "static/zline.js": 5,
   "templates/_bulkedit.html": 2,
   "templates/_instrument_preview.html": 1,
@@ -64,7 +63,7 @@
   "static/chip-status.js": 4,
   "static/cz-plan.js": 11,
   "static/dataset-virtual.js": 3,
-  "static/gen-additions.js": 27,
+  "static/gen-additions.js": 26,
   "static/gen-rules.js": 13,
   "static/generate.js": 12,
   "static/manual.js": 2,
@@ -290,7 +289,6 @@
   "gen-add-display-wait",
   "gen-add-formbox",
   "gen-add-lint",
-  "gen-add-lint-err",
   "gen-add-name",
   "gen-add-ok-item",
   "gen-add-prop-head",
@@ -471,7 +469,6 @@
  "inline_styles": {
   "static/app.js": 1,
   "static/chip-status.js": 14,
-  "static/gen-additions.js": 1,
   "static/generate.js": 3,
   "templates/_bulkedit.html": 1,
   "templates/_chip_compare.html": 1,
@@ -508,7 +505,7 @@
   "templates/base.html": 8
  },
  "style_css": {
-  "lines": 16171,
-  "rules": 5937
+  "lines": 16166,
+  "rules": 5934
  }
 }

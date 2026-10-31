@@ -63,8 +63,8 @@
   {% if types_card and types_card.env_deferred %}
   <div class="diag-types-row">
     <div class="diag-types-label">Environment-schema mismatches</div>
-    <div class="diag-types-body"><p class="diag-types-caption muted env-upgrade-deferred">The environment changed;
-      <a href="#env-upgrade-report">the Environment match card</a> lists what no longer matches.</p></div>
+    <div class="diag-types-body"><p class="diag-types-caption muted env-upgrade-deferred"><strong>Environment changed.</strong>
+      What no longer matches is listed in <a href="#env-upgrade-report">Environment match</a>.</p></div>
   </div>
   {% endif %}
   {% if types_card and types_card.env.count %}

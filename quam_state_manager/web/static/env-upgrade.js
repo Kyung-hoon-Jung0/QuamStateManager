@@ -157,4 +157,20 @@
       catch (error) { notice(error.message); }
     }
   };
+  // E1: the probe / deep-validate buttons live in the card's action row but belong to the
+  // Diagnostics env card. A card-only swap (Record reference) re-renders the card without
+  // them, so the whole env card is fetched once to bring them back.
+  if (!window.__envUpgradeDiagRefill) {
+    window.__envUpgradeDiagRefill = true;
+    document.addEventListener('htmx:afterSettle', function () {
+      const card = document.getElementById('env-upgrade-report');
+      const outer = document.getElementById('diag-env-card');
+      if (!card || !outer || !outer.contains(card) || !outer.hasAttribute('data-diag-actions')) return;
+      if (card.querySelector('[data-diag-action]')) return;
+      const now = Date.now();
+      if (now - (window.__envUpgradeDiagRefillAt || 0) < 5000) return;   // never a loop
+      window.__envUpgradeDiagRefillAt = now;
+      if (window.htmx) window.htmx.ajax('GET', '/diagnostics/env-card', {target: '#diag-env-card', swap: 'outerHTML'});
+    });
+  }
 }());

@@ -1192,10 +1192,6 @@ html.topbar-hidden .topbar-reveal { display: block; }
   position: sticky; top: 0; z-index: 3; background: var(--pico-background-color, #fff); }
 .tsr-head { padding: 0.3rem 0.5rem; font-size: 0.8em; border-bottom: 1px solid var(--pico-muted-border-color); position: sticky; top: 0; background: var(--pico-background-color); }
 .tsr-head code { overflow-wrap: anywhere; word-break: break-all; }   /* JT-06: a 300-char no-match query wraps, never scrolls sideways */
-.tsr-row { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.15rem 0.5rem; text-decoration: none; color: inherit; font-size: 0.85em; }
-.tsr-row:hover { background: var(--pico-card-background-color); }
-.tsr-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tsr-val { flex: 0 1 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); color: var(--pico-muted-color); }
 .manual-popover.manual-floating { position: fixed; right: auto; top: auto; margin-top: 0; }
 .manual-header {
     display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto;
@@ -2590,14 +2586,6 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     color: var(--pico-del-color); border-color: var(--pico-del-color);
 }
 .btn-discard:hover { background: var(--color-error-bg); }
-/* docs/107: mass-revert in the drawer foot — same visual language as the
-   per-change ✕ (one act, one look), sized to sit beside its Save neighbour. */
-.btn-discard-all {
-    font-family: var(--font-ui);
-    margin: 0;
-    color: var(--pico-del-color); border-color: var(--pico-del-color);
-}
-.btn-discard-all:hover { background: var(--color-error-bg); }
 
 /* ---------------------------------------------------------------- */
 /* Welcome page                                                      */
@@ -9137,7 +9125,11 @@ table.gen-pop-table { font-size: 0.833em; border-collapse: collapse; }
 table.gen-pop-table th, table.gen-pop-table td { padding: 1px 4px; white-space: nowrap; }
 table.gen-pop-table th { color: var(--pico-muted-color); font-weight: 600; }
 /* sticky header row + sticky qubit/pair-id first column */
-table.gen-pop-table thead th { position: sticky; top: 0; z-index: 3; background: var(--pico-background-color); }
+/* D-21: the column-resize helper (app.js enhanceColumnResize) writes an inline
+   position:relative on every header it enhances; that un-stuck every header but the
+   Gates one added later, which then slid over the rows alone. Sticky is positioned, so the
+   resize handle still anchors to it: !important keeps every header in the one sticky row. */
+table.gen-pop-table thead th { position: sticky !important; top: 0; z-index: 3; background: var(--pico-background-color); }
 table.gen-pop-table tbody td:first-child,
 table.gen-pop-table thead th:first-child { position: sticky; left: 0; z-index: 2; background: var(--pico-background-color); }
 table.gen-pop-table thead th:first-child { z-index: 4; }
@@ -15962,7 +15954,10 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar .topbar-more-menu > ul.top
 .gen-add-bar .gen-add-modules { flex: 1 1 16rem; max-width: 26rem; margin: 0; padding: 0.2rem 0.45rem; font-size: 0.85em; height: auto; }
 .gen-add-bar button, .gen-add-ch-head button, .gen-add-actions button, .gen-add-item button { width: auto; margin: 0; padding: 0.15rem 0.6rem; font-size: 0.85em; }
 .gen-add-list { display: flex; flex-direction: column; gap: 0.25rem; }
-.gen-add-ch, .gen-add-owner { border: 1px solid var(--pico-muted-border-color, #3333); border-radius: 6px; padding: 0.3rem 0.5rem; }
+.gen-add-ch.ui-item, .gen-add-owner.ui-item { padding: var(--ui-gap-2) var(--ui-gap-3); margin: 0 0 var(--ui-gap-2); gap: 0; }
+.gen-add-req-dot { margin-left: 0.3em; vertical-align: middle; background: var(--ui-danger-border); }
+.gen-add-lint-err, .gen-add-lint-warn { font-size: var(--ui-fs-sm); }
+.gen-add-cz-arrow { color: var(--ui-text-2); }
 .gen-add-ch-head { flex-wrap: wrap; display: flex; align-items: center; gap: 0.6rem; }
 .gen-add-ch-label { min-width: 9rem; font-weight: 600; font-size: 0.9em; }
 .gen-add-item { display: flex; align-items: center; gap: 0.4rem; margin: 0.2rem 0 0 1rem; font-size: 0.85em; }

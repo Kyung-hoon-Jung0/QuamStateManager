@@ -21,6 +21,7 @@
         {% if upgrade.no_env or upgrade.checking %}disabled title="{{ needs_env if upgrade.no_env else 'Wait for the check to finish' }}"{% else %}title="Generates the config in this env and stores its waveforms as a reference"{% endif %}>Record reference</button>{% endif %}
       <button class="btn-sm outline" hx-get="/env-upgrade/references" hx-target="#env-upgrade-references">References</button>
       <button class="btn-sm outline secondary" onclick="EnvUpgrade.copyText()">Copy as text</button>
+      {{ diag_actions | default('') }}
     </div>
   </header>
   <span id="env-upgrade-record-busy" class="htmx-indicator ui-note">Generating config and recording a reference&hellip; (about 10&ndash;60 s)</span>

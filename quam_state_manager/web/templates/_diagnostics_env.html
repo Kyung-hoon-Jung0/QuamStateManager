@@ -2,7 +2,7 @@
    state ↔ selected-python-env schema validation. The FINDINGS themselves flow
    through the normal diagnostics list (domain "Environment match"); this card
    carries only the status line + actions. Self-polls while a probe runs. #}
-<div id="diag-env-card" class="diag-env-card"
+<div id="diag-env-card" class="diag-env-card"{% if env_card.upgrade and env_card.selected and env_card.selected_exists and (env_card.warm or not env_card.probing) %} data-diag-actions{% endif %}
      {% if env_card.probing or (env_card.upgrade and (env_card.upgrade.checking or env_card.upgrade.recording_running or env_card.upgrade.compare_running)) %}hx-get="/diagnostics/env-card?poll=1" hx-trigger="every 2s"
      hx-swap="outerHTML"{% endif %}>
   <div class="diag-env-head">
@@ -36,9 +36,11 @@
   </div>
 
   {% if env_card.selected and env_card.selected_exists %}
-  <div class="diag-env-actions">
+  {# E1: the probe / deep-validate buttons join the Environment match card's one action row
+     (quiet secondary, at its end); without a card they keep their own row. #}
+  {% set diag_actions %}
     {% if not env_card.probing %}
-    <button type="button" class="btn-sm outline"
+    <button type="button" class="btn-sm outline secondary" data-diag-action
             onclick="diagEnvProbe(this, {{ '1' if env_card.warm else '0' }})">
       {{ "Re-probe environment" if env_card.warm else "Probe environment" }}
     </button>
@@ -46,15 +48,16 @@
     {% if env_card.warm %}
     {# QA F-R: deep=1 -> /config/regenerate answers with a verdict line
        (_diagnostics_env_deep.html), not the Config Viewer's controls #}
-    <button type="button" class="btn-sm outline"
+    <button type="button" class="btn-sm outline secondary" data-diag-action
             hx-post="/config/regenerate" hx-vals='{"deep": "1"}' hx-target="#diag-env-deep"
             hx-swap="innerHTML" hx-indicator="#diag-env-deep-busy" hx-disabled-elt="this"
             title="The acid test: actually Quam.load() + generate_config() this state inside the selected environment">
       Validate deeply (Quam.load)
     </button>
-    <span id="diag-env-deep-busy" class="htmx-indicator muted">running Quam.load() + generate_config() in the env&hellip; (~20 s)</span>
     {% endif %}
-  </div>
+  {% endset %}
+  {% if not env_card.upgrade %}<div class="diag-env-actions">{{ diag_actions }}</div>{% endif %}
+    <span id="diag-env-deep-busy" class="htmx-indicator muted">running Quam.load() + generate_config() in the env&hellip; (~20 s)</span>
   {# QA diagnostics-r2-03: config-status-host joins the /config/regenerate
      error-body allowance (app.js htmx:beforeSwap) -- without it a failed
      Validate deeply dropped its 502 explanation and showed a generic toast. #}
@@ -67,7 +70,7 @@
   </p>
   {% endif %}
   {% endif %}
-  {% with upgrade=env_card.upgrade %}{% include '_env_upgrade_card.html' %}{% endwith %}
+  {% with upgrade=env_card.upgrade, diag_actions=(diag_actions if env_card.selected and env_card.selected_exists else '') %}{% include '_env_upgrade_card.html' %}{% endwith %}
 </div>
 {% if not oob %}
 <script>
