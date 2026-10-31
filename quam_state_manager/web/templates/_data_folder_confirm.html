@@ -4,9 +4,9 @@
    Swapped into #chip-name-banner (the 409 is allow-listed in app.js).
    force_cross only overrides reachability — a not-a-path value can never
    reach this fragment (one ack never collapses two gates). #}
-<div id="chip-name-banner" class="chip-name-banner cnb-dangling cnb-confirm" role="region"
+<div id="chip-name-banner" class="chip-name-banner cnb-dangling cnb-confirm ui-notice ui-notice--warn" role="region"
      aria-label="Data folder confirmation">
-  <span class="cnb-text">
+  <span class="cnb-text ui-notice-text">
     <code>{{ value }}</code> isn't reachable from this machine. Labs share
     state across OSes — store it anyway? (It is bridged automatically
     wherever it IS visible.)
@@ -15,8 +15,8 @@
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="hidden" name="value" value="{{ value }}">
     <input type="hidden" name="force_cross" value="1">
-    <button type="submit" class="cnb-set">Store anyway</button>
-    <button type="button" class="cnb-no"
+    <button type="submit" class="cnb-set btn-sm">Store anyway</button>
+    <button type="button" class="cnb-no btn-sm secondary"
             hx-get="/chip-name/banner"
             hx-target="#chip-name-banner" hx-swap="outerHTML">Cancel</button>
   </form>

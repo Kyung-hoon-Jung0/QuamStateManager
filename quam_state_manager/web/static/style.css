@@ -2474,7 +2474,7 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .state-status-notice:hover { filter: brightness(1.12); }
 /* Folder names are user-controlled and can be long — cap them so one name
    can't push the whole topbar cluster into wrapping. Full name in tooltip. */
-.state-status-name { opacity: .65; font-weight: 400; margin-left: .1rem;
+.state-status-name { color: var(--ui-text-2); font-weight: 400; margin-left: .1rem;
     max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
 
 .tray-bar {
@@ -3474,18 +3474,7 @@ input.sort-key-filter { width: 9rem; margin: 0; padding: .12rem .4rem; font-size
 
 /* Date filter tabs relocated into the Sort topbar (item 1). Right-aligned pill
    row that wraps; mirrors the chain-tab look without a nested <ul>. */
-.ds-date-tabs { display: flex; flex-wrap: wrap; gap: .25rem; align-items: center; margin-left: auto; }
-/* Segmented control (docs/45 A5): text tabs + a 2px active underline, no pill fill. */
-.ds-date-tab {
-    display: inline-block; padding: .1rem .45rem; border-radius: 0; cursor: pointer;
-    text-decoration: none; font-size: .8em; border: 0; border-bottom: 2px solid transparent;
-    color: var(--pico-muted-color); white-space: nowrap;
-}
-.ds-date-tab:hover { background: none; color: var(--pico-color); }
-.ds-date-tab.active {
-    background: none; color: var(--pico-color);
-    border-bottom-color: var(--pico-primary); font-weight: 600;
-}
+.ds-date-tabs { margin-left: auto; }   /* look = .ui-tabs */
 
 /* ---------------------------------------------------------------- */
 /* Pagination                                                        */
@@ -4382,10 +4371,8 @@ td.col-delta .val-delta { margin-left: 0; }
        negative top parks the bar flush at the border edge and its background
        covers the strip. */
     position: sticky; top: calc(-1 * var(--table-pane-pad-v)); z-index: 20;
-    display: flex; flex-wrap: wrap; gap: 0.3rem;
-    margin: 0; padding: calc(0.45rem + var(--table-pane-pad-v)) 0 0.5rem 0;
-    border-bottom: 1px solid var(--pico-muted-border-color);
-    background: var(--pico-background-color);
+    margin: 0; padding: calc(0.45rem + var(--table-pane-pad-v)) 0 0 0;
+    background: var(--pico-background-color);   /* opaque: covers what scrolls under the pinned bar; tab look = .ui-tabs */
 }
 /* QA chipstatus-r2-10: with the chrome collapsed the pane starts at y=0, the
    very band the floating ☰ + sync/Auto-Sync card (fixed, z 120) sits on. The
@@ -4396,28 +4383,7 @@ td.col-delta .val-delta { margin-left: 0; }
 html.topbar-hidden .topo-subnav {
     padding-top: calc(0.45rem + var(--table-pane-pad-v) + var(--floating-chrome-h));
 }
-.topo-subnav-btn {
-    /* v1.3.0 B2: .6rem, not .7rem -- at 1280 px the ten tabs overflowed the bar by
-       under a pixel, "Calibration" wrapped alone onto a second row, and the
-       taller bar then covered every jumped-to section's header (scroll-margin
-       is one row) */
-    margin: 0; padding: 0.25rem 0.6rem;
-    font-size: 0.85em; line-height: 1.3;
-    /* NOT var(--pico-color): Pico's button reset ([role=button],…,button) locally
-       redefines --pico-color to --pico-primary-inverse (#fff white) on every <button>,
-       so var(--pico-color) here resolves to white and the pill text vanishes on the
-       transparent background (only the :hover/.active colors below were visible).
-       --pico-contrast is the high-emphasis foreground and is NOT shadowed. */
-    background: transparent; color: var(--pico-contrast);
-    border: 1px solid var(--pico-muted-border-color); border-radius: 999px;
-    cursor: pointer; white-space: nowrap;
-}
-.topo-subnav-btn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
-.topo-subnav-btn.active {
-    background: var(--pico-primary-background);
-    color: var(--pico-primary-inverse);
-    border-color: var(--pico-primary-background); font-weight: 600;
-}
+.topo-subnav-btn { margin: 0; white-space: nowrap; }   /* look = .ui-tab (docs/308 stage 2, A/B-2 b) */
 
 /* Left-sidebar Chip Status sub-items (mirror the in-page tab row, kept in sync). */
 .nav-with-sub { display: block; }
@@ -5446,7 +5412,7 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
     outline: 2px solid var(--pico-primary, #0172ad); outline-offset: 1px; z-index: 4;
 }
 .heatmap-cell.topo-outlier { position: relative; }
-.heatmap-cell.topo-outlier::after {
+html.diag-on .heatmap-cell.topo-outlier::after {   /* D-97: only while "Diagnosis" is ticked */
     /* The full-colour ⚠️ emoji (amber triangle + black !) — self-coloured so it
        pops on any cell background; a small drop-shadow lifts it off the tile. */
     content: "\26A0\FE0F"; position: absolute; top: -1px; right: 0;
@@ -5496,52 +5462,23 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 /* ---------------------------------------------------------------- */
 /* Topology: Live change detection banner                            */
 /* ---------------------------------------------------------------- */
-.topo-change-banner {
-    display: flex; align-items: center; gap: 0.75rem;
-    padding: 0.5rem 1rem; margin-bottom: 0.75rem;
-    background: var(--color-warning-bg); border: 1px solid var(--color-warning-border); border-radius: 6px;
-    font-size: 0.88em; color: var(--color-warning-text);
-    animation: topo-banner-in 0.3s ease-out;
-}
+.topo-change-banner { display: flex; align-items: center; gap: 0.75rem; }   /* look = .ui-notice (docs/308 stage 2) */
 .topo-change-banner-text { flex: 1; }
 /* Zero Pico's per-button margins (button margin-right + [type=button]
    margin-bottom) so every button in this align-items:center banner shares one
    baseline — otherwise "View changes" rides ~16px higher than "Reset baseline". */
 .topo-change-banner button { margin: 0; }
-.topo-change-banner-btn {
-    padding: 0.25rem 0.75rem; background: var(--color-warning-border); color: #533f03;
-    border: none; border-radius: 4px; cursor: pointer;
-    font-size: 0.85em; font-weight: 600;
-}
-.topo-change-banner-btn:hover { background: #e0a800; }
-.topo-change-banner-dismiss {
-    background: none; border: none; color: var(--color-warning-text);
-    cursor: pointer; font-size: 1.1em; padding: 0.2rem;
-}
-@keyframes topo-banner-in {
-    from { opacity: 0; transform: translateY(-8px); }
-    to   { opacity: 1; transform: translateY(0); }
-}
+
 /* Live-diverged + working-copy-GC banners reuse the topo-change-banner look.
    When rendered at base.html level (between the top bar and the app grid)
    give them breathing room; inside #table-pane the defaults are fine. */
-.live-diverged-banner, .wc-gc-banner { margin: 0.5rem 1rem; }
+.live-diverged-banner { margin: 0.5rem 1rem; }
 #table-pane .live-diverged-banner { margin: 0 0 0.75rem 0; }
 
 /* Diagnostics error banner — the crash-class (error) variant of the change
    banner (a value the QUA compiler would reject). Red accent via the error
    tokens, mirroring .toast-error so it reads in both light/dark themes; the
    error border is a solid red fill, so white button text stays legible. */
-.diag-error-banner {
-    background: var(--color-error-bg);
-    border: 1px solid var(--color-error-border);
-    border-left: 4px solid var(--color-error-border);
-    color: var(--color-error-text);
-    margin: 0.5rem 1rem;
-}
-.diag-error-banner .topo-change-banner-btn { background: var(--color-error-border); color: #fff; }
-.diag-error-banner .topo-change-banner-btn:hover { background: #b02a37; }
-.diag-error-banner .topo-change-banner-dismiss { color: var(--color-error-text); }
 /* QA F-I: the crash banner points AT /diagnostics; on that page it repeats the
    error pill and its Review button reloads the page you are on, while taking
    ~70 px from a short window. #diag-findings exists only in _diagnostics.html.
@@ -9982,24 +9919,7 @@ tr.gen-pop-row-linked > td {
 .chip-compare-go { margin-left: auto; }
 .chip-compare-go[disabled] { opacity: 0.5; cursor: not-allowed; }
 
-.chip-compare-tabs {
-    display: flex; gap: 0.25rem;
-    border-bottom: 1px solid var(--pico-muted-border-color, rgba(127, 127, 127, 0.2));
-    margin: 0.6rem 0 0.8rem;
-}
-.chip-compare-tab {
-    background: none; border: none;
-    padding: 0.45rem 0.9rem;
-    color: var(--pico-muted-color);
-    border-bottom: 2px solid transparent;
-    cursor: pointer; font-size: 0.95em;
-}
-.chip-compare-tab:hover { color: var(--pico-contrast); }
-.chip-compare-tab.active {
-    color: var(--pico-contrast);
-    border-bottom-color: var(--pico-primary, #636ef1);
-    font-weight: 500;
-}
+.chip-compare-tabs { margin: 0.6rem 0 0.8rem; }   /* look = .ui-tabs */
 
 .chip-compare-grid {
     display: grid; gap: 0.7rem;
@@ -12447,8 +12367,8 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
    headers; the per-target strip is segments of small numbered chips; the run
    rows are a grid so every column lines up; cards become rows in one frame. */
 .jr-head { align-items: flex-start; }
-.jr-head-title h2 { font-size: 1.32rem; margin: 0; line-height: 1.25; }
-.jr-tagline { margin: .05rem 0 0; font-size: .76rem; }
+.jr-head-title h2 { margin: 0; }
+.jr-tagline { margin: .05rem 0 0; }
 .jr-counts { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin: .15rem 0 .35rem; font-size: .76rem; }
 .jr-stat { padding: .04rem .5rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); line-height: 1.5; white-space: nowrap; }
 .jr-stat b { font-weight: 700; }
@@ -12817,45 +12737,16 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 }
 
 /* ── First-open chip-name banner (docs/20 v2) ─────────────────────────── */
-.chip-name-banner {
-    display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
-    margin: .45rem .75rem 0; padding: .45rem .7rem;
-    border: 1px solid var(--pico-primary);
-    border-left-width: 4px; border-radius: 8px;
-    background: var(--pico-card-background-color);
-    font-size: .84rem;
-}
+.chip-name-banner { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }   /* look = .ui-notice */
 .cnb-text { flex: 1 1 320px; min-width: 240px; }
 .cnb-text code { font-size: .8em; display: inline-block; padding: 0 .3em; max-width: 40ch;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .cnb-form { display: flex; align-items: center; gap: .35rem; margin: 0; flex-wrap: wrap; }
-.cnb-form input[type=text] {
-    width: 12rem; margin: 0; padding: .15rem .45rem; height: 1.7em;
-    font-size: .82rem;
-}
-.cnb-form .cnb-set, .cnb-form .cnb-no {
-    width: auto; margin: 0; padding: .18em .7rem; font-size: .78rem;
-    border-radius: .5rem; line-height: 1.3;
-}
-.cnb-form .cnb-no {
-    background: transparent; border: 1px solid var(--pico-muted-border-color);
-    color: var(--pico-contrast);
-}
-.chip-name-banner.cnb-dangling {
-    border-color: var(--cell-ok-color, #ff7f0e);
-    font-size: .78rem; color: var(--color-text-muted);
-}
+.cnb-form input[type=text] { width: 12rem; margin: 0; padding: 0 .45rem; height: var(--ui-btn-h-sm); font-size: var(--ui-fs-sm); }
+.cnb-form button, .cnb-form .cnb-set, .cnb-form .cnb-no { margin: 0; white-space: nowrap; }
 /* r10: dangling-fix + record-suggestion forms */
-.cnb-note { font-size: .72rem; }
-.cnb-form .cnb-use, .cnb-form .cnb-clear {
-    width: auto; margin: 0; padding: .18em .55rem; font-size: .74rem;
-    border-radius: .5rem; line-height: 1.3;
-    background: transparent; border: 1px solid var(--pico-primary);
-    color: var(--pico-primary); max-width: 14rem; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap;
-}
-.cnb-form .cnb-clear { border-color: var(--pico-muted-border-color);
-    color: var(--pico-contrast); }
+.cnb-note { color: var(--ui-text-2); }
+.cnb-form .cnb-use { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
 .cnb-df-form input[type=text] { width: 10rem; }
 /* One line for the unreachable-folder text: the path shrinks (ellipsis, full
    value in its title) instead of wrapping the label onto a second row. */
@@ -12868,29 +12759,15 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 /* Room for the absolute session-hide x: the base banner rule above resets the
    padding-right that the .cnb-x block asks for, so Clear sat under the x. */
 .chip-name-banner.cnb-dangling { padding-right: 2.1rem; }
-.chip-name-banner.cnb-suggest { border-color: var(--pico-primary); }
 /* The chip-name prompt: one row at >= 1280 px, at most two (text / form) below.
    The explanation truncates (full text in the title) instead of wrapping. */
-.chip-name-banner.cnb-name { gap: .5em .8em; padding: .25em .6em; font-size: .8rem; }
-.cnb-name .cnb-text { flex: 1 1 9em; min-width: 0; display: flex; align-items: baseline;
-    gap: .4em; white-space: nowrap; }
-.cnb-name .cnb-text strong { flex: none; }
-.cnb-name .cnb-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-    color: var(--color-text-muted); }
-.cnb-name .cnb-form { flex: 1 1 auto; flex-wrap: nowrap; gap: .3em; min-width: 0; }
+.chip-name-banner.cnb-name { gap: .3em .6em; }
+.cnb-name .cnb-text { flex: 1 1 18em; min-width: 0; }
+.cnb-name .cnb-form { flex: 0 1 auto; flex-wrap: wrap; gap: .3em; min-width: 0; }
 .cnb-name .cnb-form input[type=text] { flex: 0 1 8em; width: 8em; min-width: 5em; }
 .cnb-name .cnb-form #cnb-name-df { flex: 1 1 12em; width: 12em; min-width: 6em; }
-@media (min-width: 1280px) {
-    .chip-name-banner.cnb-name { flex-wrap: nowrap; }
-    .cnb-name .cnb-form { flex: 0 1 auto; }
-}
 /* docs/301 F26: the "stop asking" x is a small text button -- unstyled, Pico's
    button rule drew it as a full-width primary block beside its two answers */
-.cnb-form .cnb-dismiss {
-    width: auto; margin: 0; padding: .1rem .4rem; font-size: .85rem; line-height: 1.2;
-    background: transparent; border: 0; color: var(--pico-muted-color); box-shadow: none;
-}
-.cnb-form .cnb-dismiss:hover, .cnb-form .cnb-dismiss:focus-visible { color: var(--pico-contrast); }
 .fh-chart { margin: 0 0 .3rem; min-height: 128px; }
 .fh-show-all { width: auto; margin: 0 0 0 .4rem; padding: .05rem .5rem; font-size: .76rem;
     line-height: 1.3; background: transparent; border: 1px solid var(--pico-primary);
@@ -13078,8 +12955,6 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    SM's own strips rather than a new kind of alarm. Amber at `warn`, red only
    once it is genuinely past the limit -- an amber that never escalates teaches
    people to ignore it, and a red that arrives early teaches the same thing. */
-.disk-guard-banner { border-left: 3px solid var(--color-warning-text, #d9a441); }
-.disk-guard-banner.disk-guard-over { border-left-color: var(--color-error-text); }
 .disk-guard-banner code { font-size: .85em; }
 
 .disk-page { padding: .2rem 0 1rem; }
@@ -13204,21 +13079,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    purpose — a run typically writes a handful of parameters and the useful
    unit is the group, not the row. All colours come from existing SM tokens so
    both themes follow automatically. */
-.ph-tabs {
-    display: flex; gap: 0.25rem; margin: 0.5rem 0 0.25rem;
-    border-bottom: 1px solid var(--pico-muted-border-color);
-}
-.ph-tab {
-    background: none; border: none; border-bottom: 2px solid transparent;
-    margin: 0; padding: 0.3rem 0.75rem; width: auto; cursor: pointer;
-    color: var(--pico-muted-color); font-size: 0.9em; line-height: 1.6;
-    border-radius: 0;
-}
-.ph-tab:hover { color: var(--pico-contrast); background: none; }
-.ph-tab.active {
-    color: var(--pico-contrast); font-weight: 600;
-    border-bottom-color: var(--pico-primary);
-}
+.ph-tabs { margin: 0.5rem 0 0.25rem; }   /* look = .ui-tabs */
 .ph-changes-bar {
     display: flex; align-items: center; gap: 0.4rem;
     margin: 0.5rem 0; flex-wrap: wrap;
@@ -13505,7 +13366,9 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
 .state-version-count { opacity: 0.6; font-size: 0.9em; }
 /* v1.3.0 B2: on the light theme the faded chip name and version count measured
    2.66:1 and 2.45:1 (grey at .6-.65 opacity on white); .85 clears 3:1. Dark is unchanged. */
-[data-theme="light"] .state-status-name, [data-theme="light"] .state-version-count { opacity: .85; }
+[data-theme="light"] .state-version-count { opacity: .85; }
+/* W6 (docs/308 stage 2): Pico's light muted #646b79 fell to 4.0:1 on tinted bands; same selector weight as Pico's light block, later */
+:root:not([data-theme="dark"]):not([data-theme="qm"]) { --pico-muted-color: #555c68; }
 /* "live is on this version, and SM has moved past it". Deliberately a mark on
    the id rather than a different id: the id is still true, it is just no longer
    the whole truth. */

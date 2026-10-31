@@ -116,7 +116,7 @@ class TestSectionOrder:
         assert p.comments >= 8
 
     def test_the_subnav_follows_the_page_and_has_no_gate_tab(self):
-        views = re.findall(r'class="topo-subnav-btn" role="tab" data-view="(\w+)"', WIRING)
+        views = re.findall(r'class="topo-subnav-btn ui-tab" role="tab" data-view="(\w+)"', WIRING)
         assert views == ["overview", "health", "topology", "trends", "fidelity2q", "fidelity1q",
                          "readout", "coherence", "frequencies", "calibration"]
         assert "Gate (2Q)" not in WIRING

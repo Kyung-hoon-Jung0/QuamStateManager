@@ -16,9 +16,9 @@
    that teaches people to ignore the banner. #}
 {%- set RECLAIM_FLOOR = 52428800 -%}{# 50 MB #}
 {% if disk and disk.level in ('warn', 'over') %}
-<div class="topo-change-banner disk-guard-banner{% if disk.level == 'over' %} disk-guard-over{% endif %}"
+<div class="topo-change-banner disk-guard-banner ui-notice {% if disk.level == 'over' %}disk-guard-over ui-notice--danger{% else %}ui-notice--warn{% endif %}"
      id="disk-guard-banner" role="status">
-    <span class="topo-change-banner-text">
+    <span class="topo-change-banner-text ui-notice-text">
         {% if disk.level == 'over' %}&#128190;{% else %}&#9888;&#65039;{% endif %}
         SM's own folder is <b>{{ sz(disk.bytes) }}</b>
         {%- if disk.level == 'over' %} — past the {{ '%g'|format(disk.limit_gb) }} GB you set
@@ -34,7 +34,7 @@
         <span class="muted">{{ sz(disk.reclaimable_bytes) }} of that is rebuildable cache.</span>
         {% endif %}
     </span>
-    <span class="topo-change-banner-actions">
+    <span class="topo-change-banner-actions ui-actions">
         {% if disk.reclaimable_bytes >= RECLAIM_FLOOR %}
         <button type="button" class="btn-sm danger" onclick="window.diskGuardReclaim && diskGuardReclaim()"
                 title="Delete only the caches SM rebuilds by itself — snapshots and unapplied edits are never touched">

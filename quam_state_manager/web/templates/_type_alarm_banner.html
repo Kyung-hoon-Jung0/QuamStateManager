@@ -4,8 +4,8 @@
    This banner announces it on every page, jumps to the first offending field,
    and dismisses per anomaly-SET (a new anomaly re-raises it). #}
 {% if type_alarm %}
-<div id="type-alarm-banner" class="topo-change-banner type-alarm-banner" role="alert">
-  <span class="type-alarm-text">&#9888;
+<div id="type-alarm-banner" class="topo-change-banner type-alarm-banner ui-notice ui-notice--warn" role="alert">
+  <span class="type-alarm-text ui-notice-text">&#9888;
     {% if type_alarm.count %}
     <strong>{{ type_alarm.count }} value{{ 's' if type_alarm.count != 1 }} stored as TEXT</strong>
     but read{{ 's' if type_alarm.count == 1 }} like a number

@@ -108,9 +108,12 @@ class TestContrast:
 
     def test_light_topbar_metadata_clears_three_to_one(self):
         css = _css()
-        block = _block(css, '[data-theme="light"] .state-status-name, [data-theme="light"] .state-version-count {')
+        block = _block(css, '[data-theme="light"] .state-version-count {')
         op = float(re.search(r"opacity:\s*([\d.]+)", block).group(1))
         assert op >= 0.85
+        # docs/308 stage 2 (W6): the chip name is muted by colour, never by opacity
+        name = _block(css, "\n.state-status-name {")
+        assert "opacity" not in name and "var(--ui-text-2)" in name
 
 
 class TestWording:
@@ -139,9 +142,12 @@ class TestChipStatus:
         """At .7rem side padding the bar overflowed by under a pixel at 1280 px
         and "Calibration" wrapped alone; the taller bar then hid every jumped-to
         section header (the scroll margin is one row)."""
-        block = _block(_css(), ".topo-subnav-btn {\n")
-        pad = re.search(r"padding:\s*[\d.]+rem\s+([\d.]+)rem", block)
-        assert pad and float(pad.group(1)) <= 0.6
+        # docs/308 stage 2: the look is the kit's underline tab; side padding
+        # is --ui-gap-2 (.5rem), below the .6rem that fitted ten tabs at 1280
+        kit = (ROOT / "quam_state_manager" / "web" / "static" / "ui-kit.css").read_text(encoding="utf-8")
+        block = re.search(r"\.ui-tab \{([^}]*)\}", kit).group(1)
+        assert re.search(r"padding:\s*var\(--ui-gap-1\)\s+var\(--ui-gap-2\)", block), block
+        assert "--ui-gap-2: .5rem" in kit
 
     def test_tile_sub_pieces_never_break_inside(self):
         assert "white-space: nowrap" in _block(_css(), ".topo-card-sub .tcs-k {")

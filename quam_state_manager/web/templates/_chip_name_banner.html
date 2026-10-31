@@ -16,9 +16,9 @@
    be many (and even share a data folder), so this only ever ASKS. Yes stages
    through the validated /chip-name/set path (stage-only; Apply publishes);
    No memoizes token::identity and the fill-in prompt takes over. #}
-<div id="chip-name-banner" class="chip-name-banner cnb-suggest" role="region"
+<div id="chip-name-banner" class="chip-name-banner cnb-suggest ui-notice ui-notice--note" role="region"
      aria-label="Chip identity confirmation">
-  <span class="cnb-text">
+  <span class="cnb-text ui-notice-text">
     <strong>This chip appears to be &lsquo;{{ identity_confirm.name }}&rsquo;</strong>{% if identity_confirm.data_folder %} (data folder <code>{{ identity_confirm.data_folder }}</code>){% endif %}
     — same hardware fingerprint as that chip's history (last recorded
     {{ identity_confirm.when }}). Its <code>extras</code> identity was wiped
@@ -28,9 +28,9 @@
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="hidden" name="name" value="{{ identity_confirm.name }}">
     {% if identity_confirm.data_folder %}<input type="hidden" name="data_folder" value="{{ identity_confirm.data_folder }}">{% endif %}
-    <button type="submit" class="cnb-set"
+    <button type="submit" class="cnb-set btn-sm"
             title="Stages extras.chip_name{% if identity_confirm.data_folder %} + extras.data_folder{% endif %} into the working state — Apply to live publishes it">Yes — restore this identity</button>
-    <button type="button" class="cnb-no" hx-post="/chip-identity/decline"
+    <button type="button" class="cnb-no btn-sm secondary" hx-post="/chip-identity/decline"
             hx-include="closest form"
             hx-target="#chip-name-banner" hx-swap="outerHTML"
             title="Not this chip — switch to entering the name / data folder yourself">No — different chip</button>
@@ -38,12 +38,13 @@
   </form>
 </div>
 {% elif chip_name_prompt %}
-<div id="chip-name-banner" class="chip-name-banner cnb-name" role="region"
+<div id="chip-name-banner" class="chip-name-banner cnb-name ui-notice ui-notice--note" role="region"
      aria-label="Chip name prompt">
   {# one compact row: the why lives in the title, the text truncates before it wraps #}
-  <span class="cnb-text" title="Naming it (stored in extras.chip_name) keeps history, trends and run attribution stable even when state folders move or share a parent directory.">
-    <strong>No chip name set.</strong>
-    <span class="cnb-note">Stored in extras.chip_name; keeps history and run attribution stable.</span>
+  <span class="ui-notice-icon" aria-hidden="true">&#8505;</span>
+  <span class="cnb-text ui-notice-text" title="Naming it (stored in extras.chip_name) keeps history, trends and run attribution stable even when state folders move or share a parent directory.">
+    <strong class="ui-notice-key">No chip name.</strong>
+    <span class="cnb-note">Set one to keep history and run attribution stable.</span>
   </span>
   <form class="cnb-form" hx-post="/chip-name/set"
         hx-target="#chip-name-banner" hx-swap="outerHTML">
@@ -58,11 +59,11 @@
     <datalist id="cnb-df-options">
       {% for c in data_folder_candidates %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
     </datalist>
-    <button type="submit" class="cnb-set">Set name</button>
-    <button type="button" class="cnb-no"
+    <button type="submit" class="cnb-set btn-sm">Set name</button>
+    <button type="button" class="cnb-no btn-sm outline"
             onclick="openFolderBrowser('cnb-name-df','dataset',{autoSubmit:false})"
             title="Pick the data folder — fills the box only; Set name commits">Browse&hellip;</button>
-    <button type="button" class="cnb-no" hx-post="/chip-name/decline"
+    <button type="button" class="cnb-no btn-sm secondary" hx-post="/chip-name/decline"
             hx-include="closest form"
             hx-target="#chip-name-banner" hx-swap="outerHTML"
             title="Don't ask again for this chip">Not now</button>
@@ -74,10 +75,10 @@
    permanent fact of viewing another machine's chip, and the full lecture
    re-appeared on every page with no way to put it away. The ✕ hides it for
    THIS browser session only (a new dangling value shows it again). #}
-<div id="chip-name-banner" class="chip-name-banner cnb-dangling" role="region"
+<div id="chip-name-banner" class="chip-name-banner cnb-dangling ui-notice ui-notice--warn" role="region"
      aria-label="Data folder not reachable"
      data-banner-sig="dangle:{{ extras_data_dangling | join(',') }}">
-  <span class="cnb-text">
+  <span class="cnb-text ui-notice-text">
     Data folder not reachable:
     {% for raw in extras_data_dangling %}<code title="{{ raw }}">{{ raw }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
     <span class="cnb-note">(<code>extras.data_folder</code>{% if extras_data_dangling | length > 1 %} — setting one folder replaces all {{ extras_data_dangling | length }}{% endif %})</span>
@@ -90,19 +91,19 @@
     <datalist id="cnb-df-options">
       {% for c in data_folder_candidates %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
     </datalist>
-    <button type="submit" class="cnb-set">Set</button>
+    <button type="submit" class="cnb-set btn-sm">Set</button>
     {% for c in data_folder_candidates[:2] %}
-    <button type="submit" class="cnb-use" name="use" value="{{ c.value }}"
+    <button type="submit" class="cnb-use btn-sm outline" name="use" value="{{ c.value }}"
             title="{{ c.value }}">Use {{ c.label | truncate(46) }}</button>
     {% endfor %}
-    <button type="button" class="cnb-no"
+    <button type="button" class="cnb-no btn-sm outline"
             onclick="openFolderBrowser('cnb-df-input','dataset')"
             title="Pick the folder — selecting stages it immediately">Browse…</button>
-    <button type="submit" class="cnb-no cnb-clear" name="clear" value="1"
+    <button type="submit" class="cnb-no cnb-clear btn-sm secondary" name="clear" value="1"
             hx-confirm="Remove extras.data_folder from the working state?"
             title="Remove the declared data folder">Clear</button>
   </form>
-  <button type="button" class="cnb-x" aria-label="Hide for this session"
+  <button type="button" class="cnb-x ui-btn-icon" aria-label="Hide for this session"
           title="Hide this notice for this browser session"
           onclick="try{sessionStorage.setItem('quam_banner_hide', this.closest('[data-banner-sig]').getAttribute('data-banner-sig'));}catch(e){}; this.closest('#chip-name-banner').remove();">&times;</button>
 </div>
@@ -116,9 +117,9 @@
   } catch (e) {}
 })();</script>
 {% elif data_folder_suggest %}
-<div id="chip-name-banner" class="chip-name-banner cnb-suggest" role="region"
+<div id="chip-name-banner" class="chip-name-banner cnb-suggest ui-notice ui-notice--note" role="region"
      aria-label="Data folder suggestion">
-  <span class="cnb-text">
+  <span class="cnb-text ui-notice-text">
     Record <code>{{ data_folder_suggest.candidate.value }}</code> as this
     chip's data folder (<code>extras.data_folder</code>)? Datasets and run
     attribution then pair with it wherever the chip is opened.
@@ -126,8 +127,8 @@
   <form class="cnb-form" hx-post="/chip-data-folder/set"
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="hidden" name="use" value="{{ data_folder_suggest.candidate.value }}">
-    <button type="submit" class="cnb-set">Record</button>
-    <button type="button" class="cnb-no" hx-post="/chip-data-folder/decline"
+    <button type="submit" class="cnb-set btn-sm">Record</button>
+    <button type="button" class="cnb-no btn-sm secondary" hx-post="/chip-data-folder/decline"
             hx-include="closest form"
             hx-target="#chip-name-banner" hx-swap="outerHTML"
             title="Don't ask again for this chip">Not now</button>

@@ -59,6 +59,7 @@
     --ui-r-lg: 12px;
     --ui-bw: 1px;
     --ui-bw-strip: 3px;
+    --ui-bw-tab: 2px;
     --ui-gap-1: .25rem;
     --ui-gap-2: .5rem;
     --ui-gap-3: .75rem;
@@ -85,7 +86,7 @@
 .ui-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); margin: 0 0 var(--ui-gap-3); padding: 0; border: 0; background: transparent; }
 .ui-head-eyebrow { flex-basis: 100%; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); color: var(--ui-text-2); }
 .ui-head-title { flex: 1 1 auto; margin: 0; font-size: var(--ui-fs-xl); font-weight: var(--ui-fw); line-height: var(--ui-lh-dense); color: var(--ui-text); }
-.ui-head-gist { flex-basis: 100%; order: 3; margin: 0; max-width: var(--ui-measure); font-size: var(--ui-fs-md); line-height: var(--ui-lh-read); color: var(--ui-text-2); }
+.ui-head-gist { flex-basis: 100%; order: 3; margin: 0; max-width: none; padding-right: max(0px, calc(100% - var(--ui-measure))); font-size: var(--ui-fs-md); line-height: var(--ui-lh-read); color: var(--ui-text-2); }
 .ui-head > .ui-actions { order: 4; flex-basis: 100%; }
 .ui-head--data > .ui-actions { order: 2; flex-basis: auto; }
 .ui-head--data { flex-wrap: nowrap; align-items: center; }
@@ -112,13 +113,15 @@
 .ui-check { display: inline-flex; align-items: center; gap: var(--ui-gap-2); margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-text); }
 
 /* K4 notice (page top) ------------------------------------------------ */
-.ui-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); padding: var(--ui-gap-1) var(--ui-gap-3); border-left: var(--ui-bw-strip) solid var(--ui-border-strong); background: var(--ui-surface-2); color: var(--ui-text); font-size: var(--ui-fs-md); line-height: var(--ui-lh-dense); }
+.ui-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); margin: 0; padding: var(--ui-gap-1) var(--ui-gap-3); border: 0; border-radius: 0; box-shadow: none; animation: none; border-left: var(--ui-bw-strip) solid var(--ui-border-strong); background: var(--ui-surface-2); color: var(--ui-text); font-size: var(--ui-fs-md); line-height: var(--ui-lh-dense); }
 .ui-notice--warn { border-left-color: var(--ui-warn-border); background: var(--ui-warn-bg); color: var(--ui-warn-text); }
 .ui-notice--danger { border-left-color: var(--ui-danger-border); background: var(--ui-danger-bg); color: var(--ui-danger-text); }
 .ui-notice--note { border-left-color: var(--ui-accent); background: var(--ui-surface-2); }
 .ui-notice-icon { flex: 0 0 auto; }
 .ui-notice-key { font-weight: var(--ui-fw); }
-.ui-notice-text { flex: 1 1 20ch; }
+.ui-notice-text { flex: 0 1 auto; min-width: 0; }
+.ui-notice > .ui-actions { margin-left: auto; flex-wrap: wrap; }
+.ui-notice + .ui-notice { border-top: var(--ui-bw) solid var(--ui-border); }
 
 /* K5 callout (only the note variant is used at stage 0) ---------------- */
 .ui-callout { margin: var(--ui-gap-2) 0; padding: var(--ui-gap-2) var(--ui-gap-3); border-left: var(--ui-bw-strip) solid var(--ui-accent); background: var(--ui-surface-2); color: var(--ui-text); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-read); }
@@ -178,6 +181,13 @@
 .ui-dialog-head .ui-head-title { font-size: var(--ui-fs-lg); }
 .ui-dialog-body { flex: 1 1 auto; overflow: auto; padding: var(--ui-gap-3) var(--ui-gap-4); }
 .ui-dialog-foot { display: flex; align-items: center; gap: var(--ui-gap-2); padding: var(--ui-gap-3) var(--ui-gap-4); border-top: var(--ui-bw) solid var(--ui-border); background: var(--ui-surface-1); }
+
+/* K14 tabs (stage 2, D-49): underline tabs; the selection mark is never a fill */
+.ui-tabs { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0; border-bottom: var(--ui-bw) solid var(--ui-border); }
+.ui-tab { display: inline-block; width: auto; margin: 0 0 calc(-1 * var(--ui-bw)); padding: var(--ui-gap-1) var(--ui-gap-2); border: 0; border-bottom: var(--ui-bw-tab) solid transparent; border-radius: 0; background: transparent; color: var(--ui-text-2); font-size: var(--ui-fs-md); font-weight: var(--ui-fw-normal); line-height: var(--ui-lh-dense); text-decoration: none; white-space: nowrap; cursor: pointer; box-shadow: none; }
+.ui-tab:hover { background: transparent; color: var(--ui-text); border-bottom-color: var(--ui-border-strong); }
+.ui-tab.active { background: transparent; color: var(--ui-text); border-bottom-color: var(--ui-accent); font-weight: var(--ui-fw); }
+.ui-tabs-end { display: inline-flex; align-items: center; gap: var(--ui-gap-1); margin-left: auto; align-self: center; }
 
 /* /ui-kit page layout (the sample page only) --------------------------- */
 .ui-kit-page { max-width: 1500px; color: var(--ui-text); font-size: var(--ui-fs-md); }

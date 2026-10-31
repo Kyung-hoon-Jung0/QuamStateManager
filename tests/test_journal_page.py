@@ -59,8 +59,8 @@ class TestThePage:
         and each run row is a grid of cells."""
         c = world["client"]
         html = c.get(f"/journal?day={DAY}").get_data(as_text=True)
-        h2 = re.search(r"<h2>(.*?)</h2>", html, re.S).group(1)
-        assert "every run, whoever ran it" not in h2 and 'class="muted jr-tagline">every run, whoever ran it' in html
+        h2 = re.search(r"<h2[^>]*>(.*?)</h2>", html, re.S).group(1)
+        assert "every run, whoever ran it" not in h2 and 'class="muted jr-tagline ui-head-gist">every run, whoever ran it' in html
         body = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)
         assert 'class="jr-stat jr-stat-day">' in body and re.search(r'<span class="jr-stat"><b>2</b> runs</span>', body)
         assert "Per-target timeline" in body and 'class="jr-sec-title"' in body

@@ -35,11 +35,12 @@ CSS = ROOT / "quam_state_manager/web/static/style.css"
 
 
 @pytest.mark.parametrize("selector, expected, forbidden", [
-    (".cnb-note", r"font-size:", r"display:\s*block"),
+    # docs/308 stage 2: the notice look is .ui-notice; these keep the layout
+    (".cnb-note", r"color:", r"display:\s*block"),
     (".cnb-text code", r"padding:\s*0\s+0?\.3em", None),
     (".cnb-text code", r"text-overflow:\s*ellipsis", None),
-    (".cnb-form input[type=text]", r"height:\s*1\.7em\s*;", None),
-    (".cnb-form .cnb-use, .cnb-form .cnb-clear", r"max-width:\s*14rem", None),
+    (".cnb-form input[type=text]", r"height:\s*var\(--ui-btn-h-sm\)\s*;", None),
+    (".cnb-form .cnb-use", r"max-width:\s*14rem", None),
 ])
 def test_banner_css(selector, expected, forbidden):
     css = CSS.read_text(encoding="utf-8")
@@ -108,12 +109,10 @@ def test_topbar_reload_accessible_whole_label(tmp_path):
 
 
 @pytest.mark.parametrize("selector, expected", [
-    # the chip-name prompt: one row at >= 1280 px, the explanation truncates instead of wrapping
-    (".chip-name-banner.cnb-name", r"padding:\s*\.25em \.6em"),
-    (".cnb-name .cnb-text", r"white-space:\s*nowrap"),
+    # docs/308 stage 2 (D-37/D-38, plan §0): the chip-name prompt is a kit notice
+    # (look = .ui-notice); the sentence wraps when narrow instead of truncating
     (".cnb-name .cnb-text", r"min-width:\s*0"),
-    (".cnb-name .cnb-note", r"text-overflow:\s*ellipsis"),
-    (".cnb-name .cnb-form", r"flex-wrap:\s*nowrap"),
+    (".cnb-name .cnb-form", r"flex-wrap:\s*wrap"),
     (".cnb-name .cnb-form #cnb-name-df", r"width:\s*12em"),
 ])
 def test_chip_name_banner_compact_css(selector, expected):
@@ -122,10 +121,11 @@ def test_chip_name_banner_compact_css(selector, expected):
     assert any(re.search(expected, rule) for rule in rules), rules
 
 
-def test_chip_name_banner_one_row_at_1280_css():
+def test_chip_name_banner_never_truncates_css():
     css = CSS.read_text(encoding="utf-8")
-    block = re.search(r"@media \(min-width: 1280px\) \{\s*\.chip-name-banner\.cnb-name \{([^}]+)\}", css)
-    assert block and re.search(r"flex-wrap:\s*nowrap", block.group(1))
+    for sel in (".cnb-name .cnb-note", ".cnb-name .cnb-text"):
+        for rule in re.findall(r"^" + re.escape(sel) + r"\s*\{([^}]+)\}", css, re.M):
+            assert "ellipsis" not in rule and "nowrap" not in rule, rule
 
 
 def test_chip_name_banner_compact_markup(tmp_path):
@@ -133,6 +133,6 @@ def test_chip_name_banner_compact_markup(tmp_path):
     page = Elements(client.get("/qubits").get_data(as_text=True))
     banner = page.one(id="chip-name-banner")
     assert "cnb-name" in banner[1]["class"].split()
-    text = next(node for node in page.nodes if node[0] == "span" and node[1].get("class") == "cnb-text"
+    text = next(node for node in page.nodes if node[0] == "span" and "cnb-text" in node[1].get("class", "").split()
                 and banner in node[2])
     assert "extras.chip_name" in text[1]["title"]

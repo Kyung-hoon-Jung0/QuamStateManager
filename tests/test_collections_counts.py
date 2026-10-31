@@ -29,7 +29,7 @@ def _setup(tmp_path, tag_ids):
 
 
 def _head(html):
-    m = re.search(r'class="ds-head-title">.*?<small class="muted">\((.*?)\)</small>', html, re.S)
+    m = re.search(r'class="ds-head-title ui-head-title">.*?<small class="muted ui-count">\((.*?)\)</small>', html, re.S)
     assert m, "the header count"
     return m.group(1)
 

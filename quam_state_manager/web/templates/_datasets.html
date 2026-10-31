@@ -56,8 +56,8 @@
     {% endfor %}
 </div>
 {% endif %}
-<div class="table-header-row">
-    <h2 class="ds-head-title">{{ page_title }} <small class="muted">({{ '{:,}'.format(total or 0) }} runs{% if stats %}, {{ '{:,}'.format(stats.experiment_types or 0) }} types, {{ '{:,}'.format(stats.unique_qubits | length) }} qubits{% endif %})</small>
+<div class="table-header-row ui-head ui-head--data">
+    <h2 class="ds-head-title ui-head-title">{{ page_title }} <small class="muted ui-count">({{ '{:,}'.format(total or 0) }} runs{% if stats %}, {{ '{:,}'.format(stats.experiment_types or 0) }} types, {{ '{:,}'.format(stats.unique_qubits | length) }} qubits{% endif %})</small>
         {# docs/126 ⑥ — the times' basis, stated where they are read: SM shows
            the run folders' own timestamps verbatim (the acquisition PC's
            local clock) and never converts them. #}
@@ -290,12 +290,12 @@
         {% if dates | length > 1 %}
         {# QA F10 (review): a Collections tab stays on Collections. #}
         {% set _tab_base = '/collections' if is_collections else '/datasets' %}
-        <div class="ds-date-tabs" role="tablist" aria-label="Filter by date">
-            <a class="ds-date-tab{% if not active_date %} active{% endif %}"
+        <div class="ui-tabs ds-date-tabs" role="tablist" aria-label="Filter by date">
+            <a class="ui-tab ds-date-tab{% if not active_date %} active{% endif %}"
                hx-get="{{ _tab_base }}{% if search %}?q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
                onclick="var e=document.getElementById('ds-active-date');if(e)e.value=''">All dates</a>
             {% for d in dates %}
-            <a class="ds-date-tab{% if active_date == d %} active{% endif %}"
+            <a class="ui-tab ds-date-tab{% if active_date == d %} active{% endif %}"
                hx-get="{{ _tab_base }}?date={{ d }}{% if search %}&q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
                onclick="var e=document.getElementById('ds-active-date');if(e)e.value='{{ d }}'">{{ d[5:] }}</a>
             {% endfor %}

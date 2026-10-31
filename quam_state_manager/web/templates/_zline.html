@@ -3,8 +3,8 @@
    and the line's own flux pulses, ideal vs what leaves the DAC. The physics
    and every refusal live in core/zline_filters.py; zline.js only draws. #}
 <div id="zline-root" class="zline-root" data-selected="{{ selected }}">
-<div class="table-header-row">
-    <h2>Z-line distortion{% if not missing %} <small class="muted">({{ rows | length }} flux line{{ '' if rows|length == 1 else 's' }})</small>{% endif %}</h2>
+<div class="table-header-row ui-head ui-head--data">
+    <h2 class="ui-head-title">Z-line distortion{% if not missing %} <small class="muted ui-count">({{ rows | length }} flux line{{ '' if rows|length == 1 else 's' }})</small>{% endif %}</h2>
 </div>
 <p class="muted zline-lede">
     What the port's output filters do to a flux pulse: the <strong>exponential</strong> (IIR) and

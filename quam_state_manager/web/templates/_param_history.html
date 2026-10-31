@@ -18,12 +18,13 @@
      data-experiment-snapshot-count="{{ (snap_summary or summary).by_trigger.get('experiment', 0) }}"
      data-importable-count="{{ importable_count }}"
      data-pending-import-count="{{ pending_import_count }}">
-  <div class="param-history-header">
+  <div class="param-history-header ui-head">
+    <div class="ui-head-eyebrow">State History</div>
     {# Project lens (docs/63): display-only suffix when the loaded chip carries
        a qualibrate-project scope AND we're viewing that chip (an archived
        ?chip_key= view is someone else's history — no suffix). #}
-    <h2 style="margin:0">Param History{% if project_scope and is_loaded_chip %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
-    <p class="muted" style="margin:0">
+    <h2 class="ui-head-title">Param History{% if project_scope and is_loaded_chip %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
+    <p class="muted ui-head-gist">
       How each tracked field in <code>state.json</code> drifts across every modification —
       saves, manual edits, and experiment runs.
     </p>
@@ -42,9 +43,9 @@
   {# docs/83: the curated grid answers "how has T1 drifted"; Changes answers
      "what did that run change?" across EVERY numeric parameter. S10 walk:
      an archived chip has its Changes too (its own ledger, ?chip_key=). #}
-  <div class="ph-tabs">
-    <button type="button" class="ph-tab active" aria-current="page">Trends</button>
-    <button type="button" class="ph-tab" hx-get="/param-history/changes{% if not is_loaded_chip %}?chip_key={{ active_chip_key | urlencode }}{% endif %}"
+  <div class="ui-tabs ph-tabs">
+    <button type="button" class="ui-tab ph-tab active" aria-current="page">Trends</button>
+    <button type="button" class="ui-tab ph-tab" hx-get="/param-history/changes{% if not is_loaded_chip %}?chip_key={{ active_chip_key | urlencode }}{% endif %}"
             hx-target="#param-history-root" hx-swap="outerHTML"
             hx-push-url="true"
             title="Every numeric parameter's change points, newest first">Changes</button>

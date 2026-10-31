@@ -33,7 +33,7 @@ def _rule(selector: str) -> str:
 
 
 def _header_row() -> str:
-    i = TPL.index('<div class="table-header-row">')
+    i = TPL.index('<div class="table-header-row ui-head ui-head--data">')
     return TPL[i:TPL.index('id="dataset-search"', i)]
 
 
@@ -56,13 +56,13 @@ def test_the_title_wraps_between_its_segments_not_inside_them():
     row = _header_row()
     h2 = re.search(r"<h2[^>]*>", row).group(0)
     assert "nowrap" not in h2, h2
-    assert 'class="ds-head-title"' in h2
+    assert 'ds-head-title' in h2
     assert re.search(r"white-space:\s*nowrap", _rule(".ds-head-title > small"))
     # the run-count contract dataset-virtual.js rewrites
     # (`.table-header-row h2 > small`, /^\([\d,]+ runs/) is kept
     # S10 walk: "({{ total }} runs" -> "({{ '{:,}'.format(total or 0) }} runs" -- the count is grouped
-    assert re.search(r'<h2 class="ds-head-title">\{\{ page_title \}\} '
-                     r"<small class=\"muted\">\(\{\{ '\{:,\}'\.format\(total or 0\) \}\} runs", row)
+    assert re.search(r'<h2 class="ds-head-title ui-head-title">\{\{ page_title \}\} '
+                     r"<small class=\"muted ui-count\">\(\{\{ '\{:,\}'\.format\(total or 0\) \}\} runs", row)
 
 
 def test_the_column_menu_opens_leftward_inside_the_pane():

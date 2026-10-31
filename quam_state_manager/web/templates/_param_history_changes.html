@@ -31,11 +31,11 @@
 
   {% with notes=hub_notes %}{% include '_hub_notes.html' %}{% endwith %}
 
-  <div class="ph-tabs">
-    <button type="button" class="ph-tab" hx-get="/param-history{% if cq %}?{{ cq }}&amp;since=all{% endif %}"
+  <div class="ui-tabs ph-tabs">
+    <button type="button" class="ui-tab ph-tab" hx-get="/param-history{% if cq %}?{{ cq }}&amp;since=all{% endif %}"
             hx-target="#param-history-root" hx-swap="outerHTML"
             hx-push-url="true">Trends</button>
-    <button type="button" class="ph-tab active" aria-current="page">Changes</button>
+    <button type="button" class="ui-tab ph-tab active" aria-current="page">Changes</button>
   </div>
 
   <form class="ph-changes-bar" hx-get="/param-history/changes"

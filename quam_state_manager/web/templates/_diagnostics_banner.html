@@ -8,21 +8,21 @@
    (one edited amplitude two pulses read is two), and its example is the first
    of them, not a fixed waveform line. Load is never blocked; this is a
    non-modal, dismissible alert. #}
-<div class="topo-change-banner diag-error-banner" id="diagnostics-banner" role="alert"
+<div class="topo-change-banner diag-error-banner ui-notice ui-notice--danger" id="diagnostics-banner" role="alert"
      data-diag-sig="{{ diag_sig or (diag_summary.error ~ ':' ~ (active_name or 'this chip')) }}">
-    <span class="topo-change-banner-text">
+    <span class="topo-change-banner-text ui-notice-text">
         &#9888;&#65039; <b>{{ diag_summary.error }}</b>
         error{{ 's' if diag_summary.error != 1 }} on <b>{{ active_chip_label() or active_name or "this chip" }}</b>
         would crash a node run{% if first_error %} (e.g. <code>{{ first_error.location }}</code>:
         {{ first_error_msg | truncate(140) }}){% endif %}.
         Fix before running an experiment.
     </span>
-    <button type="button" class="topo-change-banner-btn"
+    <button type="button" class="topo-change-banner-btn btn-sm"
             hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
             hx-swap="innerHTML show:#diag-first-error:top"
             onclick="window._diagShowBucket && window._diagShowBucket('error'); document.querySelectorAll('.diag-error-banner').forEach(function(b){b.hidden=true})">
         Review diagnostics</button>
-    <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
+    <button type="button" class="topo-change-banner-dismiss ui-btn-icon" aria-label="Dismiss"
             onclick="window._dismissDiagBanner && window._dismissDiagBanner()">&#10005;</button>
 </div>
 {# A13: the slot re-fetches on every `diagnostics-changed` (i.e. every edit), so a

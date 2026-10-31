@@ -16,6 +16,15 @@
 </div>
 {%- endfor %}
 {% if ns.section is not none %}</section>{% endif %}
+{#- K14 tabs (stage 2): markup only, an existing tab row gains the classes -#}
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Tabs</h2>
+<div class="ui-tabs" role="tablist" aria-label="Sample tabs">
+  <button type="button" class="ui-tab active" role="tab" aria-selected="true">Overview</button>
+  <button type="button" class="ui-tab" role="tab" aria-selected="false">Health</button>
+  <button type="button" class="ui-tab" role="tab" aria-selected="false">Trends</button>
+  <span class="ui-tabs-end"><label class="ui-check"><input type="checkbox">Diagnosis</label><button type="button" class="ui-btn-icon" title="Edit thresholds" aria-label="Edit thresholds">&#9881;</button></span>
+</div>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

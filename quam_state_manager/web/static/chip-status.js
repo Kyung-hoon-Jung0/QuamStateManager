@@ -6519,12 +6519,12 @@ window.ChipStatus.liveDetection = function () {
     function ensureBanner() {
         if (banner) return banner;
         banner = document.createElement('div');
-        banner.className = 'topo-change-banner';
+        banner.className = 'topo-change-banner ui-notice ui-notice--warn';
         banner.innerHTML =
             '<span style="font-size:1.2em">⚠</span>' +
-            '<span class="topo-change-banner-text">Live chip state changed on disk</span>' +
-            '<button class="topo-change-banner-btn">Review changes</button>' +
-            '<button class="topo-change-banner-dismiss">✕</button>';
+            '<span class="topo-change-banner-text ui-notice-text">Live chip state changed on disk</span>' +
+            '<button class="topo-change-banner-btn btn-sm">Review changes</button>' +
+            '<button class="topo-change-banner-dismiss ui-btn-icon" aria-label="Dismiss">✕</button>';
         banner.querySelector('.topo-change-banner-btn').addEventListener('click', function() {
             dismiss();
             if (window.openReview) window.openReview();
@@ -7772,4 +7772,34 @@ window.ChipTrends = (function () {
     return { toggle: toggle, togglePath: togglePath, setPath: setPath, enter: enter,
              suggest: suggest, render: render, setCols: setCols, reload: _reload,
              storedQuery: storedQuery, hold: hold, busy: busy };
+})();
+
+/* D-97: the Diagnosis switch -- warn/fail marks on the tiles show only while it
+   is ticked (default off, remembered per browser in quam_chip_diag). D-99: the
+   gear beside it opens the one thresholds editor (docs/167). */
+(function () {
+    var KEY = 'quam_chip_diag';
+    function apply(on) {
+        document.documentElement.classList.toggle('diag-on', !!on);
+        var cb = document.getElementById('chip-diag-cb');
+        if (cb) cb.checked = !!on;
+    }
+    window.chipSetDiag = function (on) {
+        try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) { /* storage blocked */ }
+        apply(on);
+    };
+    window.chipOpenThresholds = function () {
+        var host = document.getElementById('topo-thresh-editor');
+        if (!host || typeof window.toggleThresholdEditor !== 'function') return;
+        if (host.hidden) window.toggleThresholdEditor();
+        try { host.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engine */ }
+    };
+    function restore() {
+        var v = null;
+        try { v = localStorage.getItem(KEY); } catch (e) { /* storage blocked */ }
+        apply(v === '1');
+    }
+    restore();
+    document.addEventListener('DOMContentLoaded', restore);
+    document.addEventListener('htmx:afterSettle', restore);
 })();

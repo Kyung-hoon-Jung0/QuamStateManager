@@ -10,8 +10,8 @@
 {% if unknown_pair is not none %}
 <p class="czp-unknown-pair" role="status">Unknown pair: <code>{{ unknown_pair }}</code>. No operation selected.</p>
 {% endif %}
-<div class="table-header-row">
-    <h2>CZ gate plan <small class="muted">({{ rows | length }} operation{{ '' if rows|length == 1 else 's' }})</small></h2>
+<div class="table-header-row ui-head ui-head--data">
+    <h2 class="ui-head-title">CZ gate plan <small class="muted ui-count">({{ rows | length }} operation{{ '' if rows|length == 1 else 's' }})</small></h2>
 </div>
 <div class="muted czp-lede">
     Where each CZ operation moves its qubits on the chip, and how lossy those frequencies were when measured.

@@ -3,8 +3,8 @@
    through tomllib/tomli_w (comments destroyed on its next write) and a typo
    hard-errors every qualibrate process; guided overlay fixes arrive in a
    later tier. #}
-<div class="table-header-row">
-    <h2>QUAlibrate Projects <small class="muted">({{ listing.projects | length }})</small></h2>
+<div class="table-header-row ui-head">
+    <h2 class="ui-head-title">QUAlibrate Projects <small class="muted ui-count">({{ listing.projects | length }})</small></h2>
 </div>
 {% if show_running_banner %}<div id="qualibrate-running-slot" hx-swap-oob="innerHTML">{% include '_qualibrate_running_banner.html' %}</div>{% endif %}
 

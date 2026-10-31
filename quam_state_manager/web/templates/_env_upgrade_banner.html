@@ -1,6 +1,12 @@
-<div class="topo-change-banner" role="alert" id="env-upgrade-banner">
-  <span>Environment change: Stops loading findings were found. {{ upgrade.report.event.direction }}</span>
-  <button class="btn-sm" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true">Review Diagnostics</button>
-  <button class="btn-sm secondary" onclick="EnvUpgrade.acknowledge(); this.parentElement.remove()">Acknowledge these findings</button>
+{%- set _c = upgrade.report.cases or {} -%}
+{%- set _n = ((_c.get('2') or {}).get('rows') or [])|length + ((_c.get('3') or {}).get('rows') or [])|length + ((_c.get('4') or {}).get('rows') or [])|length -%}
+<div class="topo-change-banner ui-notice ui-notice--warn" role="alert" id="env-upgrade-banner">
+  <span class="ui-notice-icon" aria-hidden="true">&#9888;</span>
+  <strong class="ui-notice-key">Environment changed</strong>
+  <span class="ui-notice-text">{{ upgrade.report.event.direction }}{% if _n %} &mdash; {{ _n }} finding{{ 's' if _n != 1 }} stop loading.{% else %} &mdash; some fields stop loading.{% endif %}</span>
+  <div class="ui-actions">
+    <button class="btn-sm" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true">Review</button>
+    <button class="btn-sm secondary" onclick="EnvUpgrade.acknowledge(); this.closest('#env-upgrade-banner').remove()">Acknowledge</button>
+  </div>
 </div>
 <script src="{{ asset_url('env-upgrade.js') }}"></script>

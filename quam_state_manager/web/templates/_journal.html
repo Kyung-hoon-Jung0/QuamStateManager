@@ -3,10 +3,10 @@
    day or filter change swaps only that. #}
 {# customer feedback 2026-09-08: the tagline used to sit INSIDE the h2 (it rendered at
    heading size); the title is one line, the tagline a small muted line under it. #}
-<div class="table-header-row jr-head">
+<div class="table-header-row jr-head ui-head">
     <div class="jr-head-title">
-        <h2>Calibration log{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
-        <p class="muted jr-tagline">every run, whoever ran it — what it wrote, why, and how it looked</p>
+        <h2 class="ui-head-title">Calibration log{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
+        <p class="muted jr-tagline ui-head-gist">every run, whoever ran it — what it wrote, why, and how it looked</p>
     </div>
     <div class="jr-head-actions">
         <a class="btn-sm outline" href="/journal/raw?day={{ story.day }}" hx-get="/journal/raw?day={{ story.day }}"

@@ -1,7 +1,6 @@
-<div class="table-header-row diag-header-row">
-  <h2>Diagnostics
-    <small class="muted">structural checks on state &amp; wiring{% if has_config %} &amp; config{% endif %}</small>
-  </h2>
+<div class="table-header-row diag-header-row ui-head">
+  <h2 class="ui-head-title">Diagnostics</h2>
+  <p class="ui-head-gist">Structural checks on state &amp; wiring{% if has_config %} &amp; config{% endif %}.</p>
   {% if diag_catalog %}
   <button type="button" class="diag-whatis-badge"
           onclick="document.getElementById('diag-checks-dialog').showModal()"

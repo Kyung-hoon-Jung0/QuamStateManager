@@ -10,12 +10,12 @@
 
 {% set qs_paths %}{% for p in paths_raw %}&paths={{ p | urlencode }}{% endfor %}{% endset %}
 
-<div class="chip-compare-tabs" role="tablist">
-    <button class="chip-compare-tab active" data-tab="topology"
+<div class="ui-tabs chip-compare-tabs" role="tablist">
+    <button class="ui-tab chip-compare-tab active" data-tab="topology"
             onclick="switchChipCompareTab(this)"
             hx-get="/chip-compare/topology?ref={{ ref_idx }}{{ qs_paths }}"
             hx-target="#chip-compare-content" hx-swap="innerHTML">Topology</button>
-    <button class="chip-compare-tab" data-tab="diff" id="chip-compare-diff-tab"
+    <button class="ui-tab chip-compare-tab" data-tab="diff" id="chip-compare-diff-tab"
             onclick="switchChipCompareTab(this)"
             hx-get="/chip-compare/diff?ref={{ ref_idx }}{{ qs_paths }}"
             hx-include="#chip-compare-tolerance"

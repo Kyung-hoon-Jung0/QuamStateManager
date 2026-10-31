@@ -3,9 +3,9 @@
    loading both. All three answers swap this strip in place. #}
 <div id="dataset-roots-banner">
 {% if dataset_roots_ask %}
-<div class="chip-name-banner cnb-suggest" role="region"
+<div class="chip-name-banner cnb-suggest ui-notice ui-notice--note" role="region"
      aria-label="Project dataset folders question">
-  <span class="cnb-text">
+  <span class="cnb-text ui-notice-text">
     <strong>New data folder for project &lsquo;{{ dataset_roots_ask.project }}&rsquo;:</strong>
     {% for r in dataset_roots_ask.new %}<code>{{ r }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
     This project currently scopes {{ dataset_roots_ask.current | length }}
@@ -15,11 +15,11 @@
   <form class="cnb-form" hx-post="/project-roots/confirm"
         hx-target="#dataset-roots-banner" hx-swap="outerHTML">
     <input type="hidden" name="project" value="{{ dataset_roots_ask.project }}">
-    <button type="submit" name="choice" value="new_only" class="cnb-set"
+    <button type="submit" name="choice" value="new_only" class="cnb-set btn-sm"
             title="The project's Datasets view scopes to the new folder only; the old folder stays available under All">Use only the new path</button>
-    <button type="submit" name="choice" value="both" class="cnb-no"
+    <button type="submit" name="choice" value="both" class="cnb-no btn-sm outline"
             title="Keep the previous folder(s) in this project's scope too">Keep both</button>
-    <button type="submit" name="choice" value="decline" class="cnb-dismiss"
+    <button type="submit" name="choice" value="decline" class="cnb-dismiss ui-btn-icon"
             aria-label="Stop asking for this project"
             title="Stop asking for this project — new folders merge silently (the old behavior)">&#10005;</button>
   </form>

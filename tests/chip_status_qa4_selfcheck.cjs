@@ -47,7 +47,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The strip in the template's own order -- the page's first section is read
 // from _wiring.html, so a future reorder cannot leave this pin stale.
 const VIEWS = [];
-WIRING_TPL.replace(/class="topo-subnav-btn" role="tab" data-view="([a-z0-9]+)"/g, (m, v) => { VIEWS.push(v); return m; });
+WIRING_TPL.replace(/class="topo-subnav-btn ui-tab" role="tab" data-view="([a-z0-9]+)"/g, (m, v) => { VIEWS.push(v); return m; });
 const FIRST = VIEWS[0];
 const STRIP = '<div class="topo-subnav">' + VIEWS.map((v) =>
   '<button type="button" class="topo-subnav-btn" data-view="' + v + '">' + v + '</button>').join('') + '</div>';

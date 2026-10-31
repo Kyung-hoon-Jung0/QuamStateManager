@@ -27,8 +27,8 @@
 </div>
 </details>
 {% elif instance_peers %}
-<div class="topo-change-banner multi-instance-banner" id="multi-instance-banner" role="alert">
-    <span class="topo-change-banner-text">
+<div class="topo-change-banner multi-instance-banner ui-notice ui-notice--warn" id="multi-instance-banner" role="alert">
+    <span class="topo-change-banner-text ui-notice-text">
         &#9888;&#65039; <b>{{ active_chip_label() or active_name or "This chip" }}</b> is also open in
         {% if instance_peers|length == 1 %}another State Manager window
             ({{ instance_peers[0].label }}){% else %}{{ instance_peers|length }}
@@ -36,7 +36,7 @@
         &mdash; edits made there and here <b>overwrite each other</b>, because
         both windows share one working copy of these files.
     </span>
-    <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
+    <button type="button" class="topo-change-banner-dismiss ui-btn-icon" aria-label="Dismiss"
             onclick="document.querySelectorAll('.multi-instance-banner').forEach(function(b){b.hidden=true})">&#10005;</button>
 </div>
 {# Dismissal is deliberately for THIS view only — no memo file. Which windows

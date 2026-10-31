@@ -509,7 +509,7 @@
         try { h = parseInt(sessionStorage.getItem('quam_diag_banner_h') || '0', 10) || 0; } catch (e) {}
         if (!slot || h <= 0) return;
         var ph = document.createElement('div');
-        ph.className = 'topo-change-banner diag-error-banner diag-banner-placeholder';
+        ph.className = 'topo-change-banner diag-error-banner ui-notice ui-notice--danger diag-banner-placeholder';
         ph.setAttribute('aria-hidden', 'true');
         ph.style.height = h + 'px';
         if (slot.firstElementChild) return;

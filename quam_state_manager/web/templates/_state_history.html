@@ -1,14 +1,14 @@
 {# State History — full-chip snapshots over time, framed by the experiment
    that produced each. Review / diff / compare / restore. Backed by the same
    HistoryManager store that powers Param History (no new capture). #}
-<div class="table-header-row">
+<div class="table-header-row ui-head">
     {# Project lens (docs/63): display-only suffix when the loaded chip
        carries a qualibrate-project scope. #}
-    <h2>State History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}
+    <h2 class="ui-head-title">State History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}
         {# S10 walk: the list is the chip's recorded states (runs, SM writes, states
            SM saw) -- no longer "snapshots" #}
-        <small class="muted">every recorded state of the chip — review, compare, roll&nbsp;back</small>
     </h2>
+    <p class="ui-head-gist">every recorded state of the chip — review, compare, roll&nbsp;back</p>
     <button class="btn-sm outline" hx-post="/state-history/snapshot"
             hx-target="#table-pane" hx-swap="innerHTML"
             title="Capture the current state now">Take snapshot</button>

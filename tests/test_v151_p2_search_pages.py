@@ -70,7 +70,7 @@ def test_chip_status_carries_a_labelled_chip_report_link(tmp_path):
     html = c.get("/topology", headers={"HX-Request": "true"}).get_data(as_text=True)
     m = re.search(r'<a class="outline btn-sm topo-report-link"[^>]*href="/chip-status/report"[^>]*>([^<]+)</a>', html)
     assert m and m.group(1).strip() == "Chip report", "the report is named where the chip is"
-    toolbar = html[html.index('class="topology-toolbar"'):]
+    toolbar = html[html.index('class="topology-toolbar'):]
     assert toolbar.index("topo-report-link") < toolbar.index("</div>")
 
 

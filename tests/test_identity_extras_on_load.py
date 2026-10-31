@@ -212,10 +212,8 @@ def test_a_stale_answer_never_scopes_the_project_to_a_withdrawn_root(tmp_path, m
 
 
 def test_the_stop_asking_button_is_a_small_text_button():
-    import re
-    css = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "static"
-           / "style.css").read_text(encoding="utf-8")
-    rule = re.search(r"\.cnb-form \.cnb-dismiss\s*\{([^}]*)\}", css)
-    assert rule, "the x had no rule, so Pico drew it as a full-width primary button"
-    body = rule.group(1)
-    assert "width: auto" in body and "background: transparent" in body, body
+    # docs/308 stage 2: the x is the kit's icon button (no fill, 28 px), not a
+    # Pico full-width primary
+    tpl = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates"
+           / "_dataset_roots_banner.html").read_text(encoding="utf-8")
+    assert 'class="cnb-dismiss ui-btn-icon"' in tpl

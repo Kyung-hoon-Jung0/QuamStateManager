@@ -192,12 +192,12 @@ class TestL10SelectChevronLane:
 class TestL11L13HistoryHeaders:
     def test_roll_back_stays_together(self):
         """L11: the State History subtitle left "back" alone on a line."""
-        assert "roll&nbsp;back</small>" in _tpl("_state_history.html")
+        assert "roll&nbsp;back</p>" in _tpl("_state_history.html")   # docs/308 stage 2: the gist left the h2
 
     def test_the_param_history_title_comes_before_its_notices(self):
         """L13: the cache/lazy notices rendered above the page title."""
         tpl = _tpl("_param_history_changes.html")
-        assert tpl.index('<div class="param-history-header">') < tpl.index("'_hub_notes.html'")
+        assert tpl.index('<div class="param-history-header') < tpl.index("'_hub_notes.html'")
 
 
 class TestL12HelpHeaderAlignment:
@@ -313,7 +313,7 @@ class TestL23PageHeaderToggleClearance:
     """The pane's top-right header toggle overlapped "Modify wiring..."."""
 
     def test_the_wiring_header_keeps_the_toggle_lane(self):
-        assert '<div class="table-header-row iw-header">' in _tpl("_instrument_wiring.html")
+        assert '<div class="table-header-row iw-header ui-head ui-head--data">' in _tpl("_instrument_wiring.html")
         assert "padding-right: 1.8rem" in _block(_css(), ".iw-header {")
 
 

@@ -13,12 +13,12 @@
      data-a="{{ a_ref }}" data-b="{{ b_ref }}" data-tab="{{ tab }}"
      data-view="{{ view }}" data-n="{{ srcs | length }}" data-base="{{ base }}">
 
-  <div class="diff-wb-head">
-    <h2 style="margin:0">Diff</h2>
-    <p class="muted" style="margin:0">
+  <div class="diff-wb-head ui-head ui-head--data">
+    <h2 class="ui-head-title">Diff</h2>
+  </div>
+  <p class="ui-note">
       What is different between versions of this chip — and by how much.
     </p>
-  </div>
 
   <form class="diff-wb-pickers" hx-get="/diff" hx-target="#diff-root"
         hx-swap="outerHTML" hx-push-url="true" hx-trigger="change">
@@ -104,9 +104,9 @@
   })();
   </script>
 
-  <div class="ph-tabs diff-wb-tabs">
+  <div class="ui-tabs ph-tabs diff-wb-tabs">
     {% for t in tabs %}
-    <button type="button" class="ph-tab{% if t == tab %} active{% endif %}"
+    <button type="button" class="ui-tab ph-tab{% if t == tab %} active{% endif %}"
             hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}&amp;base={{ base }}"
             hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true">
       {{ {'state': 'state.json', 'wiring': 'wiring.json',
