@@ -34,7 +34,7 @@
         {% include '_pulse_row.html' %}
     {% endfor %}
     {% else %}
-        <tr><td colspan="9" class="muted" style="text-align:center;padding:2rem">
+        <tr><td colspan="9" class="ui-state ui-state--empty">
             No pulses found{% if active_channel %} on this channel{% endif %}.
         </td></tr>
     {% endif %}

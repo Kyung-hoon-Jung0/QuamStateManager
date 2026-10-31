@@ -78,7 +78,7 @@
                one, so a date tab or a Rescan never disturbs the user's own
                filters. `| default('')` because the no-workspace branch renders
                this partial without the variable. #}
-            <input type="search" id="dataset-search" name="keep_q"
+            <input class="ui-search" type="search" id="dataset-search" name="keep_q"
                    placeholder="{{ search_hint('tag:', 'is:') }}"
                    title="{{ search_title('tag:flagged', 'is:bookmarked', 'run:', 'q:') }}"
                    value="{{ search_value | default(search | default('')) }}"

@@ -447,20 +447,25 @@ _STAGE1_MARK = "/* ===== stage 1:"
 _STAGE5_MARK = "/* ===== stage 5:"
 
 
+_STAGE4_MARK = "/* ===== stage 4:"
+
+
 def _ui_kit_parts():
-    """(stage 0, stage 1, stage 5) rule lists, split at the section marks."""
+    """(stage 0, stage 1, stage 5, stage 4) rule lists, split at the section marks."""
     raw = _read(_UI_KIT)
     assert raw.count(_STAGE1_MARK) == 1, "ui-kit.css has exactly one marked stage-1 section"
     assert raw.count(_STAGE5_MARK) == 1, "ui-kit.css has exactly one marked stage-5 section"
+    assert raw.count(_STAGE4_MARK) == 1, "ui-kit.css has exactly one marked stage-4 section"
     head, tail = raw.split(_STAGE1_MARK, 1)
     mid, last = tail.split(_STAGE5_MARK, 1)
+    s5, s4 = last.split(_STAGE4_MARK, 1)
     return (list(_blocks(_strip_comments(head))), list(_blocks(_strip_comments(_STAGE1_MARK + mid))),
-            list(_blocks(_strip_comments(_STAGE5_MARK + last))))
+            list(_blocks(_strip_comments(_STAGE5_MARK + s5))), list(_blocks(_strip_comments(_STAGE4_MARK + s4))))
 
 
 def _ui_kit_rules():
-    stage0, stage1, stage5 = _ui_kit_parts()
-    return stage0 + stage1 + stage5
+    stage0, stage1, stage5, stage4 = _ui_kit_parts()
+    return stage0 + stage1 + stage5 + stage4
 
 
 def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():
@@ -535,6 +540,30 @@ def test_7e_stage5_section_targets_only_stage5_classes():
         for k, _v in _decls(body):
             if k.startswith("--"):
                 assert k.startswith("--ui-map-"), f"{sel}: only --ui-map-* sizes may be set here, not {k}"
+
+
+# Stage 4 (W5/W7/W8/W15): the existing SHARED selectors whose every consumer
+# moved onto the kit in one commit (decisions D-145 note). The list is closed:
+# a new existing-class selector here is a decision, not a convenience.
+_STAGE4_SELECTORS = {
+    ".ui-disclosure[open] > .ui-disclosure-summary::before",
+    ".ui-disclosure-summary > .ui-count",
+    "table.data-table th", "table.data-table td",
+    "table.data-table th.ui-table-num", "table.data-table td.ui-table-num",
+    ".sidebar-nav a", ".sidebar-nav a:hover:not(.active)",
+    ".sidebar-nav .nav-subitems li a", ".sidebar-nav .nav-subitems li a:hover:not(.active)",
+    ".tree-search-icon",
+}
+
+
+def test_7f_stage4_section_targets_only_the_listed_shared_selectors():
+    stage4 = _ui_kit_parts()[3]
+    assert stage4, "the stage-4 section has rules"
+    for sel, body, stack in stage4:
+        assert not stack, f"no at-rule blocks in ui-kit.css: {stack}"
+        for part in (x.strip() for x in sel.split(",")):
+            assert part in _STAGE4_SELECTORS, f"stage-4 selector outside the listed set: {part!r}"
+        assert not any(k.startswith("--") for k, _v in _decls(body)), f"{sel}: variables live in the token block only"
 
 
 def test_11_ui_kit_values_are_tokens():

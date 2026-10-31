@@ -19,7 +19,7 @@
 <div class="table-header-row ui-head ui-head--data">
     <h2 class="ui-head-title">Qubits <small class="muted ui-count">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+        <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter qubits" autocomplete="off"
                oninput="filterTable(this, 'qubits-table')">
         <small id="qubits-table-filter-count" class="muted"></small>
@@ -115,7 +115,7 @@
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="16" class="muted" style="text-align:center;padding:2rem">No qubits found in this state file.</td></tr>
+        <tr><td colspan="16" class="ui-state ui-state--empty">No qubits found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

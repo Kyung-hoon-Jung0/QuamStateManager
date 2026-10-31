@@ -6,7 +6,7 @@
 <div class="table-header-row">
     <h2>QDAC-II <small class="muted">({{ total }} biased qubit{{ '' if total == 1 else 's' }})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+        <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter QDAC channels" autocomplete="off"
                oninput="filterTable(this, 'qdac-table')">
         <small id="qdac-table-filter-count" class="muted"></small>
@@ -110,7 +110,7 @@
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="11" class="muted" style="text-align:center;padding:2rem">No QDAC-biased qubits in this state file.</td></tr>
+        <tr><td colspan="11" class="ui-state ui-state--empty">No QDAC-biased qubits in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

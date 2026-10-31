@@ -5817,12 +5817,10 @@ window.ChipStatus.mount = function (opts) {
             var failQubits = Object.keys(below).filter(function(k) { return below[k] === 'fail'; });
             var verdict = (diagErr > 0 || failCount > 0 || czFailCount > 0) ? 'fail'
                         : (belowCount > 0 || czBelow > 0 || diagWarn > 0) ? 'warn' : 'pass';
-            var icon = verdict === 'fail' ? '⛔' : (verdict === 'warn' ? '⚠' : '✓');
             var headline;
             if (verdict === 'pass' && measuredCount === 0) {
                 // Nothing was measured, so nothing passed. Say that.
                 verdict = 'unknown';
-                icon = 'ⓘ';
                 headline = 'No coherence or fidelity data on this chip yet — '
                          + 'nothing to judge'
                          + (diagTotal ? '' : ', and no structural issues found') + '.';
@@ -5873,9 +5871,14 @@ window.ChipStatus.mount = function (opts) {
                     + (moreN > 0 ? ' <span class="verdict-avoid-more">+' + moreN + ' more</span>' : '')
                     + '</span>';
             }
-            banner.className = 'topo-verdict-banner ' + verdict;
-            banner.innerHTML = '<span class="verdict-icon">' + icon + '</span>'
-                + '<span class="verdict-text">' + headline + avoid + '</span>';
+            // K6 (docs/308 stage 4): a dot + one bold conclusion + the evidence
+            // sentence unchanged; green lives on the dot only (D-7).
+            var KIT = { pass: ['ok', 'Ready'], warn: ['warn', 'Needs a look'],
+                        fail: ['danger', 'Not ready'], unknown: ['neutral', 'Not measured yet'] }[verdict];
+            banner.className = 'topo-verdict-banner ' + verdict + ' ui-verdict ui-verdict--' + KIT[0];
+            banner.innerHTML = '<span class="ui-dot" aria-hidden="true"></span>'
+                + '<strong class="ui-verdict-key">' + KIT[1] + '</strong>'
+                + '<span class="verdict-text ui-verdict-why">' + headline + avoid + '</span>';
             banner.hidden = false;
         }
 

@@ -59,6 +59,7 @@
     --ui-r-md: 6px;
     --ui-r-lg: 12px;
     --ui-r-round: 50%;
+    --ui-r-pill: 999px;
     --ui-bw: 1px;
     --ui-bw-strip: 3px;
     --ui-bw-tab: 2px;
@@ -130,13 +131,15 @@
 /* K5 callout (only the note variant is used at stage 0) ---------------- */
 .ui-callout { margin: var(--ui-gap-2) 0; padding: var(--ui-gap-2) var(--ui-gap-3); border-left: var(--ui-bw-strip) solid var(--ui-accent); background: var(--ui-surface-2); color: var(--ui-text); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-read); }
 .ui-callout--note { border-left-color: var(--ui-accent); }
+.ui-callout--warn { border-left-color: var(--ui-warn-border); background: var(--ui-warn-bg); color: var(--ui-warn-text); }
+.ui-callout--danger { border-left-color: var(--ui-danger-border); background: var(--ui-danger-bg); color: var(--ui-danger-text); }
 .ui-callout-title { font-weight: var(--ui-fw); }
 .ui-callout-text { margin: 0; max-width: var(--ui-measure); }
 
 /* K6 verdict ---------------------------------------------------------- */
 .ui-verdict { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); margin: var(--ui-gap-1) 0; font-size: var(--ui-fs-md); line-height: var(--ui-lh-dense); color: var(--ui-text); }
 .ui-verdict-key { font-weight: var(--ui-fw); }
-.ui-verdict-why { color: var(--ui-text-2); font-size: var(--ui-fs-sm); }
+.ui-verdict-why { flex: 1 1 20ch; min-width: 0; color: var(--ui-text-2); font-size: var(--ui-fs-sm); }
 .ui-dot { flex: 0 0 auto; display: inline-block; width: var(--ui-dot); height: var(--ui-dot); border-radius: var(--ui-dot); background: var(--ui-text-2); }
 .ui-verdict--ok .ui-dot { background: var(--ui-ok-border); }
 .ui-verdict--warn .ui-dot { background: var(--ui-warn-border); }
@@ -174,6 +177,16 @@
 .ui-segmented-opt { margin: 0; padding: var(--ui-gap-1) var(--ui-gap-3); border: 0; border-radius: 0; background: transparent; color: var(--ui-text-2); font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); width: auto; cursor: pointer; }
 .ui-segmented-opt + .ui-segmented-opt { border-left: var(--ui-bw) solid var(--ui-border-strong); }
 .ui-segmented-on { background: var(--ui-surface-2); color: var(--ui-accent); font-weight: var(--ui-fw); }
+
+/* K11 state (stage 4, D-46): icon + one sentence + at most one button, left aligned */
+.ui-state { margin: 0; padding: var(--ui-gap-3); color: var(--ui-text-2); font-size: var(--ui-fs-md); line-height: var(--ui-lh-read); text-align: left; }
+.ui-state-key { color: var(--ui-text); font-weight: var(--ui-fw); }
+.ui-state--empty { color: var(--ui-text-2); }
+.ui-state--error { color: var(--ui-danger-text); }
+
+/* K12 search (stage 4, D-47): the search_hint() box, one pill shape app-wide */
+.ui-search.ui-search { height: var(--ui-btn-h); min-height: 0; margin: 0; padding: 0 var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-pill); background-color: var(--ui-surface-0); color: var(--ui-text); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); }
+.ui-search.ui-search::placeholder { color: var(--ui-text-2); opacity: 1; }
 
 /* K13 dialog shell (shape only; real dialogs keep their own element) --- */
 .ui-dialog { display: flex; flex-direction: column; max-height: var(--ui-dialog-max-h); width: var(--ui-dialog-m); max-width: 100%; margin: 0; padding: 0; border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-lg); background: var(--ui-surface-1); color: var(--ui-text); box-shadow: var(--ui-shadow); overflow: hidden; }
@@ -394,3 +407,21 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
 .iw-chassis-meta { font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); color: var(--ui-text-2); }
 /* the head names the chassis; the drawing's own title would repeat it */
 .iw-chassis svg.instrument-svg .iw-title { display: none; }
+
+/* ===== stage 4: existing shared selectors moved onto the kit (docs/308, W5/W7/W15, D-43/D-45/D-61) =====
+   Every consumer of these selectors moves in this one section; the old
+   declarations left style.css in the same commit (decisions D-145 note). */
+/* K10: the open marker (a details element's own state, no script) */
+.ui-disclosure[open] > .ui-disclosure-summary::before { content: var(--ui-disclosure-marker-open); }
+.ui-disclosure-summary > .ui-count { margin-left: auto; font-size: var(--ui-fs-sm); }
+/* K8 on the list tables: sentence-case head, tabular numbers, numbers to the right */
+table.data-table th { font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); color: var(--ui-text-2); }
+table.data-table td { font-variant-numeric: tabular-nums; }
+table.data-table th.ui-table-num, table.data-table td.ui-table-num { text-align: right; }
+/* D-61: sidebar links read as text, not as links; the selected pill keeps its fill (D-49) */
+.sidebar-nav a { color: var(--ui-text); }
+.sidebar-nav a:hover:not(.active) { background: var(--ui-surface-2); }
+.sidebar-nav .nav-subitems li a { color: var(--ui-text-2); }
+.sidebar-nav .nav-subitems li a:hover:not(.active) { color: var(--ui-text); background: var(--ui-surface-2); }
+/* K12: the search glyph is one neutral colour, not a colour emoji */
+.tree-search-icon { filter: grayscale(1); }

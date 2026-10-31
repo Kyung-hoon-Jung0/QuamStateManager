@@ -25,6 +25,12 @@
   <span class="ui-tabs-end"><label class="ui-check"><input type="checkbox">Diagnosis</label><button type="button" class="ui-btn-icon" title="Edit thresholds" aria-label="Edit thresholds">&#9881;</button></span>
 </div>
 </section>
+{#- K11 states + K12 search (stage 4): markup only, existing elements gain the classes -#}
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">States and search</h2>
+<p class="ui-state ui-state--empty"><span class="ui-state-key">No data folder yet.</span> Link one in the sidebar to list runs here.</p>
+<p class="ui-state ui-state--error"><span class="ui-state-key">Could not read the run.</span> data.json: unexpected end of file</p>
+<input type="search" class="ui-search" placeholder="{{ search_hint() }}" title="{{ search_title() }}" aria-label="Sample search">
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

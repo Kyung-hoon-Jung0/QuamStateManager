@@ -297,13 +297,12 @@ class TestNoDataIsNotInSpec:
         assert "Chip looks healthy — all ' + nodes.length + ' qubits in spec" in src
 
     def test_the_unknown_banner_is_not_styled_as_success(self):
-        from pathlib import Path
-        css = Path("quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
-        assert ".topo-verdict-banner.unknown" in css
-        i = css.index(".topo-verdict-banner.unknown")
-        rule = css[i:i + 220]
-        assert "success" not in rule
-
+        """Nothing measured is neutral, never the ok (green) verdict. Since
+        docs/308 stage 4 the banner is a K6 ui-verdict line: the dot and the
+        word carry the state, so the mapping is what is pinned."""
+        src = self._js()
+        assert "unknown: ['neutral', 'Not measured yet']" in src
+        assert "pass: ['ok', 'Ready']" in src
 
 def _run_selfcheck(name, timeout=120):
     """Run one tests/<name> jsdom selfcheck over the shipped JS; skip without

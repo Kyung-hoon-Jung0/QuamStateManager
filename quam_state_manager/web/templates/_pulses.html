@@ -30,7 +30,7 @@
 <div class="table-header-row ui-head ui-head--data">
     <h2 class="ui-head-title">Pulses <small class="muted ui-count" id="pulses-total">({{ total }})</small></h2>
     <div class="table-filter">
-        <input type="search" name="q" value="{{ active_query or '' }}"
+        <input class="ui-search" type="search" name="q" value="{{ active_query or '' }}"
                placeholder="{{ search_hint() }}" title="{{ search_title() }}" autocomplete="off"
                hx-get="/pulses?rows=1&channel={{ active_channel }}&per_page={{ per_page }}"
                hx-trigger="keyup changed delay:200ms, search"

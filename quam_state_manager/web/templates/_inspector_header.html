@@ -86,7 +86,7 @@
    qubit/pair re-renders this partial and naturally resets the search. #}
 {% if inspector_type in ('qubit', 'pair') %}
 <div class="detail-search">
-    <input type="search" class="detail-search-input"
+    <input type="search" class="detail-search-input ui-search"
            placeholder="{{ search_hint() }}" title="{{ search_title() }}"
            aria-label="Filter properties"
            oninput="filterDetailPanel(this)">

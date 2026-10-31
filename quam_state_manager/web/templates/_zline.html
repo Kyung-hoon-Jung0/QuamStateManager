@@ -13,7 +13,7 @@
 </p>
 
 {% if missing %}
-<p class="muted zline-missing" role="status" style="text-align:center;padding:2rem">{{ missing }}</p>
+<p class="zline-missing ui-state ui-state--empty" role="status">{{ missing }}</p>
 {% elif rows %}
 <table id="zline-table" class="data-table zline-table" role="grid">
     <thead>
@@ -85,6 +85,6 @@
     </div>
 </section>
 {% else %}
-<p class="muted" style="text-align:center;padding:2rem">No flux lines in this state file &mdash; no qubit has a <code>z</code> channel and no pair a <code>coupler</code> with an <code>opx_output</code>.</p>
+<p class="ui-state ui-state--empty">No flux lines in this state file &mdash; no qubit has a <code>z</code> channel and no pair a <code>coupler</code> with an <code>opx_output</code>.</p>
 {% endif %}
 </div>

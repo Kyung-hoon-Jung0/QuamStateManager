@@ -59,8 +59,8 @@
     </div>
     <div id="czp-card" class="czp-card"></div>
     <details class="czp-solve-box"><summary>Solve amplitude and stage a proposal</summary><div id="czp-solve"></div></details>
-    <details id="czp-notes-box" class="czp-notes-box">
-        <summary id="czp-notes-summary">Notes</summary>
+    <details id="czp-notes-box" class="czp-notes-box ui-disclosure">
+        <summary id="czp-notes-summary" class="ui-disclosure-summary">Notes</summary>
         <ul id="czp-notes" class="zline-notes czp-notes"></ul>
     </details>
 </section>
@@ -163,7 +163,7 @@
 
 
 {% else %}
-<p class="muted" style="text-align:center;padding:2rem">No CZ operations on this chip &mdash; no qubit pair has a macro of a CZ gate class.</p>
+<p class="ui-state ui-state--empty">No CZ operations on this chip &mdash; no qubit pair has a macro of a CZ gate class.</p>
 {% endif %}
 {% endif %}
 </div>

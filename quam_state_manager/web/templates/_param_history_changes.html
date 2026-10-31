@@ -51,7 +51,7 @@
         focus, caret and the value being typed) across those swaps; the one
         control that changes the filter from outside the box (Clear) is a
         plain navigation, so nothing ever needs to overwrite it. #}
-    <input type="text" id="ph-changes-prefix" hx-preserve="true" name="prefix" class="tree-search" value="{{ prefix }}"
+    <input type="text" id="ph-changes-prefix" hx-preserve="true" name="prefix" class="tree-search ui-search" value="{{ prefix }}"
            placeholder="{{ search_hint() }}" title="{{ search_title() }} Matches the parameter path."
            autocomplete="off" list="ph-param-paths">
     {#- the typeahead's datalist is preserved with the input: a swap would

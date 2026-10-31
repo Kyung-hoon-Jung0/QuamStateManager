@@ -319,7 +319,7 @@
                     <div id="topbar-more-menu" class="topbar-more-menu" role="group" aria-label="More controls" hidden>
                     <ul class="topbar-more-list">
                 <li class="search-box">
-                    <input type="search" id="global-search" name="q"
+                    <input class="ui-search" type="search" id="global-search" name="q"
                            placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                            hx-get="/search" hx-trigger="keyup changed delay:150ms"
                            hx-target="#inspector-pane" hx-sync="#inspector-pane:queue last"
@@ -336,7 +336,7 @@
                    fresh render. It asks what to reload -- the chip only, or the chip
                    and the Python env (app.js: SmReload). The compact step shows
                    only the reload icon. #}
-                <li class="topbar-reload-li"><button type="button" class="topbar-reload" id="topbar-reload" aria-label="Reload"
+                <li><button type="button" class="topbar-reload" id="topbar-reload" aria-label="Reload"
                         aria-haspopup="dialog" aria-expanded="false"
                         title="Reload &#8212; re-read the chip (and optionally the Python env) and redraw the page"><span class="tbm-ico" aria-hidden="true">&#8635;</span><span class="rl-long"> Reload</span></button></li>
                 {# docs/120 item 10 — the working-state VERSION, in the slot the
@@ -1328,7 +1328,7 @@
         </span>
         </div>
         <div class="manual-searchbar">
-        <input type="search" class="manual-search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+        <input type="search" class="manual-search ui-search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Search the config manual" autocomplete="off">
         </div>
         <div class="manual-body"><p class="muted manual-note">Loading…</p></div>

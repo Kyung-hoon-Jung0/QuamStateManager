@@ -1,7 +1,7 @@
 <div class="table-header-row ui-head ui-head--data">
     <h2 class="ui-head-title">Qubit Pairs <small class="muted ui-count">({{ total }})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+        <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter pairs" autocomplete="off"
                oninput="filterTable(this, 'pairs-table')">
         <small id="pairs-table-filter-count" class="muted"></small>
@@ -86,7 +86,7 @@
     {% endif %}
     {% endfor %}
     {% else %}
-        <tr><td colspan="8" class="muted" style="text-align:center;padding:2rem">No qubit pairs found in this state file.</td></tr>
+        <tr><td colspan="8" class="ui-state ui-state--empty">No qubit pairs found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>
@@ -148,7 +148,7 @@
     {% endif %}
     {% endfor %}
     {% else %}
-        <tr><td colspan="8" class="muted" style="text-align:center;padding:2rem">No qubit pairs found in this state file.</td></tr>
+        <tr><td colspan="8" class="ui-state ui-state--empty">No qubit pairs found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

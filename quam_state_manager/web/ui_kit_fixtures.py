@@ -75,6 +75,10 @@ def _parts():
             {"part": "badge", "text": "ok", "tone": "ok"}, {"part": "count", "text": "3 of 4"}]}),
         ("Pieces", "Callout note", {"part": "callout", "tone": "note", "title": "Not checked",
                                     "text": "Timing on hardware; only the samples written to the config are compared."}),
+        ("Pieces", "Callout warn", {"part": "callout", "tone": "warn", "title": "Will be skipped",
+                                    "text": "The selected environment has no class for this line; the build keeps going without it."}),
+        ("Pieces", "Callout danger", {"part": "callout", "tone": "danger", "title": "Cannot build",
+                                      "text": "No root class in this environment can hold these qubits."}),
         ("Pieces", "Table", {"part": "table", "columns": ["Pair", "Status", "Length (ns)"], "numeric": [2], "rows": [
             [{"chip": "q1-2"}, {"dot": "ok", "text": "ready"}, "40"],
             [{"chip": "q2-3"}, {"dot": "warn", "text": "look"}, "1200"]]}),

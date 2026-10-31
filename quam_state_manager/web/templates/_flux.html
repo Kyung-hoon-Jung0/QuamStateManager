@@ -1,7 +1,7 @@
 <div class="table-header-row ui-head ui-head--data">
     <h2 class="ui-head-title">Flux <small class="muted ui-count">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+        <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter flux channels" autocomplete="off"
                oninput="filterTable(this, 'flux-table')">
         <small id="flux-table-filter-count" class="muted"></small>
@@ -73,7 +73,7 @@
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="{{ 11 if qdac_rows else 7 }}" class="muted" style="text-align:center;padding:2rem">No flux channels found in this state file.</td></tr>
+        <tr><td colspan="{{ 11 if qdac_rows else 7 }}" class="ui-state ui-state--empty">No flux channels found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

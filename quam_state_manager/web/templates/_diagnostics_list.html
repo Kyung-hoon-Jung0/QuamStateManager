@@ -29,10 +29,10 @@
 
 <div class="diag-summary" id="diag-filter-bar">
   {% if diag_summary.total == 0 %}
-    <span class="diag-ok">&#10003; No structural issues found</span>
+    <span class="ui-verdict ui-verdict--ok"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">No structural issues found</strong></span>
   {% elif ns.e + ns.w + ns.a + ns.i == 0 and ns.k %}
-    <span class="diag-ok">&#10003; No active issues</span>
-    <span class="muted">&middot; {{ ns.k }} acknowledged by you &mdash; listed below, revocable</span>
+    <span class="ui-verdict ui-verdict--ok"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">No active issues</strong>
+    <span class="ui-verdict-why">&middot; {{ ns.k }} acknowledged by you &mdash; listed below, revocable</span></span>
   {% else %}
     {% if ns.e %}<button type="button" class="diag-pill diag-error" data-bucket="error" aria-pressed="true" title="Show/hide errors (would crash a node run)">{{ ns.e }} error{{ 's' if ns.e != 1 }}</button>{% endif %}
     {% if ns.w %}<button type="button" class="diag-pill diag-warning" data-bucket="warning" aria-pressed="true" title="Show/hide warnings">{{ ns.w }} warning{{ 's' if ns.w != 1 }}</button>{% endif %}
