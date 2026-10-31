@@ -51,12 +51,14 @@
     --ui-fw: 600;
     --ui-lh-dense: 1.35;
     --ui-lh-read: 1.55;
+    --ui-lh-tight: 1.15;
     --ui-measure: 85ch;
     --ui-font-mono: var(--pico-font-family-monospace);
     /* shape */
     --ui-r-sm: 4px;
     --ui-r-md: 6px;
     --ui-r-lg: 12px;
+    --ui-r-round: 50%;
     --ui-bw: 1px;
     --ui-bw-strip: 3px;
     --ui-bw-tab: 2px;
@@ -74,6 +76,7 @@
     --ui-lh-btn: 1.2;
     --ui-btn-gap: .3em;
     --ui-focus-w: 2px;
+    --ui-ring: 0 0 0 2px var(--ui-accent);
     --ui-shadow: 0 8px 28px color-mix(in srgb, black 35%, transparent);
     --ui-dialog-s: 560px;
     --ui-dialog-m: 760px;
@@ -268,3 +271,125 @@ summary.btn-sm { display: inline-flex; align-items: center; box-sizing: border-b
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outline-offset: var(--ui-focus-w); box-shadow: none; }
+
+/* ===== stage 5: chip maps and the wiring chassis (D-94..D-98) =====
+ * The only rules here that target map markup. Every selector names one of the
+ * stage-5 classes (cm-dir*, tmap*, iw-chassis*); the existing classes they sit
+ * next to (cm-freqchev, heatmap-cell*, topo-outlier, iw-title) appear only as
+ * context. Values are --ui-* tokens; a size that depends on the panel cell is
+ * a scoped --ui-map-* variable set on the map itself.
+ */
+/* Pairs / component map (D-94, D-98): arrow = control -> target, label along the edge */
+.cm-dir .cm-pair-label.cm-dir-label {
+    opacity: 1; font-weight: var(--ui-fw); fill: var(--ui-text);
+    paint-order: stroke; stroke: var(--ui-surface-1); stroke-width: 4px; stroke-linejoin: round;
+}
+.cm-dir .cm-arrow.cm-dir-arrow { fill: var(--ui-text-2); }
+.cm-dir.cm-hl-pairs .cm-arrow.cm-dir-arrow { fill: var(--ui-accent); }
+/* the moving qubit: a hollow ring ON the line beside it (a filled dot read as an arrow tail) */
+.cm-dir .cm-dir-m { fill: var(--ui-surface-1); stroke: var(--ui-text); stroke-width: 2px; }
+/* the frequency-order chevrons (docs/93) stay, but quiet: the arrow is the direction */
+.cm-dir.cm-hl-pairs .cm-freq .cm-freqchev { stroke: var(--ui-text-3); }
+.cm-dir-legend {
+    display: flex; align-items: center; gap: var(--ui-gap-2); flex-wrap: wrap;
+    font-size: var(--ui-fs-sm); color: var(--ui-text-2); margin-top: var(--ui-gap-2);
+}
+.cm-dir-legend svg line { stroke: var(--ui-accent); stroke-width: 2; }
+.cm-dir-legend svg polygon { fill: var(--ui-accent); }
+.cm-dir-legend svg circle { fill: none; stroke: var(--ui-text); stroke-width: 2; }
+.cm-dir-legend svg polyline { fill: none; stroke: var(--ui-text-3); stroke-width: 2; }
+.cm-dir-legend-m { display: inline-flex; align-items: center; gap: var(--ui-gap-1); margin-left: var(--ui-gap-3); }
+/* the Pulses page's pick map shows only what can be pressed (docs/166) */
+.cmap[data-cm-pick="1"] .cm-dir-m,
+.cmap[data-cm-pick="1"] .cm-dir-label,
+.cmap[data-cm-pick="1"] .cm-dir-legend { display: none; }
+
+/* Chip Status metric panels as the chip map (D-96) */
+.tmap {
+    position: relative; display: grid; gap: 0;
+    --ui-map-fs-value: max(16px, min(var(--ui-fs-lg), calc(var(--topo-panel-cell-size) * .2)));
+    --ui-map-fs-pill: max(14px, min(var(--ui-fs-lg), calc(var(--topo-panel-cell-size) * .19)));
+}
+.tmap-edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.tmap-edges line { stroke: var(--ui-border-strong); stroke-width: 2; }
+.tmap .heatmap-cell.tmap-node {
+    position: relative; z-index: 1; place-self: center;
+    width: calc(var(--topo-panel-cell-size) * .8); height: calc(var(--topo-panel-cell-size) * .8);
+    min-height: 0; padding: 0; border-radius: var(--ui-r-round);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+    background: var(--ui-surface-2); color: var(--ui-text);
+    border: var(--ui-bw) solid var(--ui-border);
+}
+.tmap .heatmap-cell.tmap-node:hover { transform: none; box-shadow: var(--ui-ring); }
+.tmap .tmap-node .heatmap-cell-name {
+    font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); margin: 0; line-height: var(--ui-lh-tight); color: inherit;
+}
+.tmap .tmap-node .heatmap-cell-value {
+    font-size: var(--ui-map-fs-value); font-family: var(--ui-font-mono); font-variant-numeric: tabular-nums;
+    font-weight: var(--ui-fw); line-height: var(--ui-lh-tight);
+}
+.tmap .heatmap-cell.tmap-node.heatmap-cell-none { background: transparent; border-style: dashed; color: var(--ui-text-3); }
+.tmap .tmap-node.tmap-badfit .heatmap-cell-value { text-decoration: line-through; }
+.tmap .heatmap-cell.tmap-node.tmap-badfit { border-style: dashed; }
+/* 2Q: small qubit dots, the value on the edge */
+.tmap-2q .tmap-edges line.tmap-eline { stroke-width: 5; stroke-linecap: round; }
+.tmap-2q .tmap-edges line.tmap-eline-none { stroke: var(--ui-border-strong); stroke-width: 2; stroke-dasharray: 4 4; }
+.tmap-qdot {
+    position: relative; z-index: 1; place-self: center;
+    width: calc(var(--topo-panel-cell-size) * .34); height: calc(var(--topo-panel-cell-size) * .34);
+    border-radius: var(--ui-r-round); border: var(--ui-bw) solid var(--ui-border-strong);
+    background: var(--ui-surface-1); color: var(--ui-text-2);
+    display: flex; align-items: center; justify-content: center; font-size: var(--ui-fs-sm);
+}
+.tmap .heatmap-cell.tmap-pill {
+    position: absolute; z-index: 2; transform: translate(-50%, -50%);
+    width: auto; min-height: 0; padding: 1px 6px; border-radius: var(--ui-r-md);
+    background: var(--ui-surface-1); color: var(--ui-text);
+    border: var(--ui-bw) solid var(--ui-border); white-space: nowrap; line-height: var(--ui-lh-btn);
+}
+.tmap .heatmap-cell.tmap-pill:hover { transform: translate(-50%, -50%); box-shadow: var(--ui-ring); }
+.tmap .tmap-pill .heatmap-cell-value {
+    font-size: var(--ui-map-fs-pill); font-family: var(--ui-font-mono); font-variant-numeric: tabular-nums; font-weight: var(--ui-fw);
+}
+.tmap .heatmap-cell.tmap-pill.heatmap-cell-none { background: var(--ui-surface-1); color: var(--ui-text-3); }
+/* the fill and ink chip-status.js computed for this value (D-53, D-96);
+   after the node and pill shapes so it wins at equal specificity */
+.tmap .heatmap-cell.tmap-painted { background: var(--ui-map-bg); color: var(--ui-map-fg); }
+.tmap-legend {
+    display: flex; align-items: center; flex-wrap: wrap; gap: var(--ui-gap-2);
+    font-size: var(--ui-fs-sm); color: var(--ui-text-2); margin: 2px 0 var(--ui-gap-2);
+    font-variant-numeric: tabular-nums;
+}
+.tmap-legend-grad { display: inline-block; width: 120px; height: 10px; border-radius: var(--ui-r-sm); border: var(--ui-bw) solid var(--ui-border); }
+.tmap-legend-sep { margin: 0 var(--ui-gap-1); }
+.tmap-legend-flag { display: inline-block; width: 12px; height: 12px; border-radius: var(--ui-r-round); margin: 0 var(--ui-gap-1) 0 var(--ui-gap-2); }
+.tmap-legend-warn { border: var(--ui-bw-strip) solid var(--ui-warn-border); }
+.tmap-legend-fail { border: var(--ui-bw-strip) solid var(--ui-danger-border); }
+/* D-97: warn / fail vs spec = outline + the triangle the tiles already use
+   (D-63), shown only while the Diagnosis switch puts .diag-on on <html>.
+   Without that class (the default, or a page with no switch) the map is
+   clean: no outline, no triangle, no legend part. */
+html.diag-on .tmap .heatmap-cell.tmap-warn { border: var(--ui-bw-strip) solid var(--ui-warn-border); }
+html.diag-on .tmap .heatmap-cell.tmap-fail { border: var(--ui-bw-strip) solid var(--ui-danger-border); }
+html.diag-on .tmap .tmap-flag::after {
+    content: "\26A0\FE0F"; position: absolute; top: -2px; right: -2px;
+    font-size: var(--ui-fs-sm); line-height: var(--ui-lh-btn); pointer-events: none;
+}
+/* on a pill the triangle sits outside its corner, never on the digits */
+html.diag-on .tmap .tmap-pill.tmap-flag::after,
+html.diag-on .tmap .tmap-pill.topo-outlier::after { top: -11px; right: -11px; font-size: var(--ui-fs-xs); }
+html:not(.diag-on) .tmap .tmap-flag::after,
+html:not(.diag-on) .tmap .topo-outlier.tmap-node::after,
+html:not(.diag-on) .tmap .topo-outlier.tmap-pill::after { content: none; }
+html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
+
+/* Instrument Wiring (D-95): one block per chassis, stacked, one shared scale */
+.iw-chassis { display: block; margin: 0 0 var(--ui-gap-3); }
+.iw-chassis + .iw-chassis { padding-top: var(--ui-gap-3); border-top: var(--ui-bw) solid var(--ui-border); }
+.iw-chassis-head {
+    display: flex; align-items: baseline; gap: var(--ui-gap-2);
+    margin: 0 0 var(--ui-gap-1); font-size: var(--ui-fs-md); font-weight: var(--ui-fw); color: var(--ui-text);
+}
+.iw-chassis-meta { font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); color: var(--ui-text-2); }
+/* the head names the chassis; the drawing's own title would repeat it */
+.iw-chassis svg.instrument-svg .iw-title { display: none; }

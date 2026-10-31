@@ -444,16 +444,23 @@ def test_7_token_contrast_meets_aa_in_every_theme():
 _STAGE1_MARK = "/* ===== stage 1:"
 
 
+_STAGE5_MARK = "/* ===== stage 5:"
+
+
 def _ui_kit_parts():
+    """(stage 0, stage 1, stage 5) rule lists, split at the section marks."""
     raw = _read(_UI_KIT)
     assert raw.count(_STAGE1_MARK) == 1, "ui-kit.css has exactly one marked stage-1 section"
+    assert raw.count(_STAGE5_MARK) == 1, "ui-kit.css has exactly one marked stage-5 section"
     head, tail = raw.split(_STAGE1_MARK, 1)
-    return list(_blocks(_strip_comments(head))), list(_blocks(_strip_comments(_STAGE1_MARK + tail)))
+    mid, last = tail.split(_STAGE5_MARK, 1)
+    return (list(_blocks(_strip_comments(head))), list(_blocks(_strip_comments(_STAGE1_MARK + mid))),
+            list(_blocks(_strip_comments(_STAGE5_MARK + last))))
 
 
 def _ui_kit_rules():
-    stage0, stage1 = _ui_kit_parts()
-    return stage0 + stage1
+    stage0, stage1, stage5 = _ui_kit_parts()
+    return stage0 + stage1 + stage5
 
 
 def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():
@@ -508,7 +515,26 @@ def test_7d_stage1_section_targets_only_the_listed_button_selectors_and_focus():
 
 _VALUE_PROPS = re.compile(r"^(color|background(-color)?|border(-(top|right|bottom|left))?(-(color|width|style))?|border-radius|"
                           r"outline(-color)?|box-shadow|font-size|font-weight|font-family|line-height|gap|row-gap|column-gap)$")
-_KEYWORDS = {"none", "transparent", "0", "solid", "inherit", "currentcolor", "normal", "initial"}
+_KEYWORDS = {"none", "transparent", "0", "solid", "dashed", "inherit", "currentcolor", "normal", "initial"}
+
+
+# Stage 5 (D-94..D-98): the chip maps and the wiring chassis. Every selector
+# names a stage-5 class; existing map classes appear only beside one, and the
+# only variables set here are the map-scoped --ui-map-* sizes.
+_STAGE5_CLASS = re.compile(r"\.(?:cm-dir|tmap|iw-chassis)(?:-[\w-]+)?(?![\w-])")
+
+
+def test_7e_stage5_section_targets_only_stage5_classes():
+    stage5 = _ui_kit_parts()[2]
+    assert stage5, "the stage-5 section has rules"
+    for sel, body, stack in stage5:
+        assert not stack, f"no at-rule blocks in ui-kit.css: {stack}"
+        for part in (x.strip() for x in sel.split(",")):
+            assert _STAGE5_CLASS.search(part), f"stage-5 selector names no stage-5 class: {part!r}"
+            assert ":has(" not in part, f"forbidden selector: {part!r}"
+        for k, _v in _decls(body):
+            if k.startswith("--"):
+                assert k.startswith("--ui-map-"), f"{sel}: only --ui-map-* sizes may be set here, not {k}"
 
 
 def test_11_ui_kit_values_are_tokens():
