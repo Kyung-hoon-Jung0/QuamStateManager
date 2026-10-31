@@ -3,11 +3,11 @@
    Creation lands in the WORKING COPY like every edit (one Review bundle,
    one Ctrl+Z); Apply to live stays the user's explicit act (docs/107). #}
 <div id="gcz-root" class="pulse-create-card">
-    <div class="inspector-header-line">
-        <h3 style="margin:0">Gaussian CZ macros</h3>
-        <button class="inspector-close" onclick="document.getElementById('inspector-pane').innerHTML=''"
-                title="Close" aria-label="Close">&times;</button>
-    </div>
+    {# R4-TP-2: the same inspector head as "New pulse" (one head, one close). #}
+    {% set inspector_type = "pulse" %}
+    {% set inspector_label = "New pulse" %}
+    {% set inspector_sub = "Gaussian CZ macros" %}
+    {% include '_inspector_header.html' %}
     {% set create_kind = 'gaussian_cz' %}
     {% include '_pulse_create_choice.html' %}
     {# docs/190 F20: the four fields are 2-digit numbers and this paragraph is

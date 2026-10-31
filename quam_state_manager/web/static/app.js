@@ -14931,6 +14931,23 @@ function _syncInstrumentSizeBar(container, key, fit, eff, widest, avail) {
     });
 }
 
+/* R4-WC-2: a label drawn smaller than 9 px on screen cannot be read, it only
+   adds noise. Hide it at the scale the rack is actually drawn at (the one
+   shared scale of D-95) and bring it back when the rack grows again; the
+   port circle keeps its role colour and its hover still names the port. */
+var _INSTR_MIN_LABEL_PX = 9;
+function _instrHideTinyLabels(svg, natW) {
+    var shown = svg.getBoundingClientRect().width;
+    if (!natW || !shown) return;
+    var s = shown / natW;
+    Array.prototype.forEach.call(svg.querySelectorAll('text'), function(t) {
+        var fs = parseFloat(t.getAttribute('font-size')) || 0;
+        var tiny = fs > 0 && fs * s < _INSTR_MIN_LABEL_PX;
+        if (tiny) t.setAttribute('data-iw-tiny', '1'); else t.removeAttribute('data-iw-tiny');
+        t.style.display = tiny ? 'none' : '';
+    });
+}
+
 function _applyInstrumentFit(container) {
     _watchInstrumentResize(container);   // armed even while it currently fits
     var svgs = container.querySelectorAll('svg.instrument-svg');
@@ -14996,6 +15013,7 @@ function _applyInstrumentFit(container) {
             svg.style.height = Math.round(h * mult) + 'px';
             svg.style.maxWidth = 'none';   // the crop this replaced
         }
+        _instrHideTinyLabels(svg, w);
     });
     if (sizeKey) {
         // The size bar replaces the Fit/1:1 bar on this surface: same note,
@@ -15373,7 +15391,11 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
     if (assignments.length === 0) {
         var emptyC = _svgEl('circle');
         var iw2 = UI_CONFIG.instrumentWiring;
-        _svgAttrs(emptyC, {cx: cx, cy: cy, r: r, fill: iw2.unassignedFill, stroke: iw2.unassignedStroke, 'stroke-width': 1.5});
+        // R4-WC-2: on the read-only rack an unused port is a small muted dot, so
+        // the wired ports carry the picture; the wizard keeps the full ring (a drop target).
+        _svgAttrs(emptyC, editable
+            ? {cx: cx, cy: cy, r: r, fill: iw2.unassignedFill, stroke: iw2.unassignedStroke, 'stroke-width': 1.5}
+            : {cx: cx, cy: cy, r: Math.max(4, Math.round(r * 0.4)), fill: iw2.unassignedFill, stroke: iw2.unassignedStroke, 'stroke-width': 1});
         cell.appendChild(emptyC);
     } else if (assignments.length === 1) {
         _appendPortCircle(cell, cx, cy, r, roleColors, assignments[0], rawWiring, editable, onPortHover);

@@ -3641,7 +3641,7 @@ table.prop-table th {
 }
 table.prop-table td { padding: var(--prop-table-td-pad-v) var(--prop-table-td-pad-h); vertical-align: middle; line-height: var(--prop-table-lh); }
 .prop-table .col-val { font-family: var(--font-mono); }
-.col-prop { width: var(--prop-col-width); white-space: nowrap; }
+.col-prop { width: var(--prop-col-width); min-width: var(--prop-col-min, 0); white-space: nowrap; }
 .col-val  { width: var(--val-col-width); }
 table.prop-table tbody tr:hover td { background: var(--prop-table-row-hover-bg); }
 /* Click-to-copy affordance on dataset Property/Parameter tables. */
@@ -4611,7 +4611,7 @@ html.topbar-hidden .topo-hero-controls {
 .cm-id { font-weight: 600; fill: var(--pico-color); pointer-events: none; }
 .cm-edge-line { stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 3; stroke-linecap: round; }
 .cm-arrow { fill: var(--pico-muted-border-color, rgba(128,128,128,.65)); }
-.cm-coupler { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.4; }
+.cm-coupler { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-primary); stroke-width: 2; }   /* D-101: a component, never dimmed as context */
 .cm-res { fill: none; stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.6; }
 .cm-flux { stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 2; stroke-linecap: round; }
 .cm-feed { fill: none; stroke: var(--pico-muted-border-color, rgba(128,128,128,.5)); stroke-width: 1.3; stroke-dasharray: 5 4; }
@@ -4635,18 +4635,18 @@ html.topbar-hidden .topo-hero-controls {
 .cm-qdac-tee { stroke-dasharray: 3 2; }
 
 /* highlight modes (docs/91 §3.3) — emphasis only, nothing appears/disappears */
-.cm-hl-qdac .cm-edge-line, .cm-hl-qdac .cm-arrow, .cm-hl-qdac .cm-coupler,
+.cm-hl-qdac .cm-edge-line, .cm-hl-qdac .cm-arrow,
 .cm-hl-qdac .cm-res, .cm-hl-qdac .cm-feed, .cm-hl-qdac .cm-freq { opacity: .22; }
 .cm-hl-qdac .cm-stone, .cm-hl-qdac .cm-id { opacity: .5; }
 .cm-hl-qdac .cm-flux { opacity: .35; }
 .cm-hl-qdac .cm-qdac { stroke: var(--pico-primary); stroke-width: 3.5; opacity: 1; }
 
-.cm-hl-qubits .cm-edge-line, .cm-hl-qubits .cm-arrow, .cm-hl-qubits .cm-coupler,
+.cm-hl-qubits .cm-edge-line, .cm-hl-qubits .cm-arrow,
 .cm-hl-qubits .cm-res, .cm-hl-qubits .cm-flux, .cm-hl-qubits .cm-feed,
 .cm-hl-qubits .cm-freq { opacity: .22; }
 .cm-hl-qubits .cm-stone { stroke: var(--pico-primary); stroke-width: 2.2; }
 
-.cm-hl-pairs .cm-res, .cm-hl-pairs .cm-flux, .cm-hl-pairs .cm-feed, .cm-hl-pairs .cm-coupler { opacity: .22; }
+.cm-hl-pairs .cm-res, .cm-hl-pairs .cm-flux, .cm-hl-pairs .cm-feed { opacity: .22; }
 /* P1-11: the qubits stay readable under the pairs highlight (they were .5,
    near invisible in both themes) and the pair ids are written on the map */
 .cm-hl-pairs .cm-stone { opacity: .8; }
@@ -4657,7 +4657,7 @@ html.topbar-hidden .topo-hero-controls {
 .cm-hl-pairs .cm-arrow { fill: var(--pico-primary); }
 .cm-hl-pairs .cm-freq .cm-freqchev { stroke: var(--pico-primary); }
 
-.cm-hl-resonators .cm-edge-line, .cm-hl-resonators .cm-arrow, .cm-hl-resonators .cm-coupler,
+.cm-hl-resonators .cm-edge-line, .cm-hl-resonators .cm-arrow,
 .cm-hl-resonators .cm-flux, .cm-hl-resonators .cm-freq { opacity: .22; }
 .cm-hl-resonators .cm-stone, .cm-hl-resonators .cm-id { opacity: .5; }
 .cm-hl-resonators .cm-res { stroke: var(--pico-primary); stroke-width: 2.2; }
@@ -4700,7 +4700,7 @@ html.topbar-hidden .topo-hero-controls {
 .cm-feed-swatch.cm-feed-s6 { background: var(--cm-feed-6); }
 .cm-feed-swatch.cm-feed-s7 { background: var(--cm-feed-7); }
 
-.cm-hl-flux .cm-res, .cm-hl-flux .cm-feed, .cm-hl-flux .cm-coupler,
+.cm-hl-flux .cm-res, .cm-hl-flux .cm-feed,
 .cm-hl-flux .cm-freq { opacity: .22; }
 .cm-hl-flux .cm-stone, .cm-hl-flux .cm-id { opacity: .5; }
 .cm-hl-flux .cm-edge-line, .cm-hl-flux .cm-arrow { opacity: .55; }   /* neighbour links = crosstalk candidates */
@@ -5717,8 +5717,9 @@ p.ds-replot-fatal { padding: 0 0.2rem; overflow-wrap: anywhere; }
 .tree-delta {
     font-size: 0.88em; font-weight: 600; margin-left: 0.3em;
 }
-.tree-highlight > .tree-row {
-    background: var(--tree-match-strong-bg);
+/* R4-TP-6: a search hit marks its KEY, not a full-width band across the row */
+.tree-highlight > .tree-row > .tree-key {
+    background: var(--tree-match-strong-bg); border-radius: 3px; padding: 0 .15em; transition: background 1s ease;
 }
 .tree-search-hidden { display: none; }
 /* QA JT-16: Depth "All" above the row budget says so before the pause */
@@ -7181,12 +7182,6 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 .figure-qubit-actions { float: right; }
 .figure-qubit-actions .btn-sm { padding: .1rem .35rem; font-size: .7rem; margin-left: .2rem; }
 
-/* ── Plot click-to-edit highlight on Explorer tree node ── */
-.tree-node.tree-highlight > .tree-row {
-    background: var(--tree-match-strong-bg, rgba(255, 235, 59, 0.35));
-    border-radius: 3px;
-    transition: background 1s ease;
-}
 .tree-edit-popup {
     display: inline-block;
     margin-left: .6em;
@@ -12628,10 +12623,10 @@ tr.ph-not-kept .ba-new, li.jr-not-kept .ba-new { text-decoration: line-through; 
    HOVER-REVEAL (r-feedback: dozens of always-on icons overwhelm a long
    parameter list — the house .bulk-td:hover idiom): visible on row hover /
    input focus / keyboard focus only. */
-form.inline-edit.fh-host { display: block; position: relative; }
-form.inline-edit.fh-host .edit-input { padding-right: 1.5rem; }
+form.inline-edit.fh-host { display: flex; align-items: center; position: relative; --fh-right: 1.55rem; }   /* R4-WC-6: the ? stays on the input's line; the clock sits left of it */
+form.inline-edit.fh-host .edit-input { padding-right: 1.5rem; flex: 1 1 auto; min-width: 0; width: auto; margin-bottom: 0; }
 .field-hist-btn {
-    position: absolute; right: .18rem; top: 50%; transform: translateY(-50%);
+    position: absolute; right: var(--fh-right, .18rem); top: 50%; transform: translateY(-50%);
     background: none; border: none; cursor: pointer; padding: 0;
     margin: 0; width: auto; font-size: .9rem; line-height: 1;
     /* docs/114 (#16): visible at REST — an invisible affordance is an
@@ -14463,9 +14458,6 @@ tr.diag-row-collapsed { display: none; }
 
 /* docs/190 F53: the Gaussian CZ header laid its close x under the title, unlike
    every other inspector header; and Pico stretches a submit to 100%. */
-#gcz-root .inspector-header-line { display: flex; align-items: center; gap: .5rem; }
-#gcz-root .inspector-header-line h3 { flex: 1 1 auto; }
-#gcz-root .inspector-header-line .inspector-close { margin-left: auto; }
 #gcz-root button[type=submit].btn-sm { width: auto; }
 
 /* docs/190 F38: a pointer that resolves and one that DANGLES wore the same

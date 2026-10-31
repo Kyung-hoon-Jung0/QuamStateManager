@@ -6,6 +6,13 @@
 {% if not full_page %}
 <div id="live-diverged-slot" hx-swap-oob="outerHTML">{% include '_live_diverged_banner.html' %}</div>
 {% endif %}
+{% from '_ui.html' import ui_head_fold %}
+{# D-102: every page carries the one page head; it folds (D-103). #}
+<div class="ui-head ui-head--page">
+    <h2 class="ui-head-title">Live edit - Json Tree view</h2>
+    <p class="ui-head-gist">Every key of state.json and wiring.json; edit in place.</p>
+    {{ ui_head_fold() }}
+</div>
 <div class="tree-file-tabs" id="explorer-tabs">
     <span class="tree-file-tab active" onclick="switchExplorerTab('state')">state.json</span>
     <span class="tree-file-tab" onclick="switchExplorerTab('wiring')">wiring.json</span>
