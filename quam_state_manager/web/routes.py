@@ -47393,8 +47393,17 @@ def diagnostics_env_card():
     return resp
 
 
-@bp.route("/env-upgrade/<action>", methods=["GET", "POST"])
+@bp.route("/env-upgrade/<action>", methods=["GET"])
 def env_upgrade_action(action):
+    from quam_state_manager.web.env_upgrade_view import dispatch
+    return dispatch(action)
+
+
+@bp.route("/env-upgrade/<action>", methods=["POST"])
+def env_upgrade_post(action):
+    """The env-upgrade card's actions: rename-apply stages into the working copy and
+    check/record/compare/rename-test spawn an env subprocess, so this POST endpoint is
+    a scheduler mutator (the GET reads above stay live during a run)."""
     from quam_state_manager.web.env_upgrade_view import dispatch
     return dispatch(action)
 
@@ -48102,6 +48111,9 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     # (no OPX, but CPU/RAM contention with a live experiment). Sibling routes above
     # were locked but these were omitted.
     "main.regenerate_build", "main.regenerate_reconstruct", "main.fit_audit_run",
+    # env-upgrade card: rename-apply stages a reviewed rename/removal into the working
+    # copy; check/record/compare/rename-test spawn an env subprocess
+    "main.env_upgrade_post",
 }
 
 

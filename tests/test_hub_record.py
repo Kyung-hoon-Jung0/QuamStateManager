@@ -1137,6 +1137,8 @@ DOOR_SITES = {
     ("generator/run_generate_config.py", "_retry_loop", "named"): (2, "a scratch folder (config preview)"),
     ("core/history_rekey.py", "migrate_history_rekey_v4", "named"): (1, "a history-dir migration journal"),
     ("core/additions.py", "_write_folder", "named"): (2, "a mkdtemp scratch folder for the env check of Generate additions"),
+    ("core/waveform_refs.py", "compare", "named"): (1, "a TemporaryDirectory holding a reference's stored inputs"),
+    ("web/env_upgrade_view.py", "dispatch", "named"): (2, "a TemporaryDirectory for the rename test load"),
     ("core/additions.py", "apply_and_verify", "named"): (1, "the NEW folder Generate builds (its verified additions)"),
 }
 
