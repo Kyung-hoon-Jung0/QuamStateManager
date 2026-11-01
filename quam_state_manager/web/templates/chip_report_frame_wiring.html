@@ -2,9 +2,11 @@
 {# docs/277: a bare page whose only job is to let the screen's own
    renderInstrumentWiring (app.js) draw the rack, so the shareable report can
    import the SAME picture /instrument shows. Loaded in a hidden frame by the
-   report page and removed as soon as the drawing is taken. #}
-<html lang="en" data-theme="dark">
+   report page and removed as soon as the drawing is taken. The renderer bakes
+   theme colours into the SVG, so the report asks for a theme with ?theme=. #}
+<html lang="en" data-theme="light">
 <head>
+{% include "_theme_boot.html" %}
     <meta charset="utf-8">
     <title>Instrument wiring</title>
 </head>

@@ -534,6 +534,18 @@ class TestOffline:
         assert "app.js" in b and "renderInstrumentWiring('instrument-diagram'" in b
         assert '"q1.xy"' in b                                    # the same model, inlined
 
+    def test_the_wiring_rack_is_drawn_per_theme_and_the_file_keeps_the_light_one(self, chip_client):
+        # the renderer bakes theme colours into the SVG, so the frame follows
+        # ?theme= and the report keeps a light copy for paper and the file
+        c, _ = chip_client
+        b = c.get("/chip-status/report/frame/wiring?theme=light").get_data(as_text=True)
+        assert "window.resolveSMTheme" in b and 'data-theme="dark"' not in b
+        r = c.get("/chip-status/report").get_data(as_text=True)
+        assert "/chip-status/report/frame/wiring?theme=" in r
+        assert "['light', screen]" in r
+        assert "if (v.getAttribute('data-iw-theme') !== 'light') v.remove();" in r
+        assert "window.syncWiring('light')" in r
+
 
 class TestRawPayload:
     def test_plain_when_small_packed_when_large(self):

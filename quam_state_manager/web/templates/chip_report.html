@@ -348,12 +348,14 @@
             return pending[key];
         }
         /* Instrument wiring: the rack is drawn by the screen's own renderer in
-           a hidden frame and its SVG imported here (docs/277 section 6). */
-        function drawWiring(el) {
-            var host = el.querySelector('[data-rep-iw]');
-            if (!host) return Promise.resolve();
-            if (wiringP) return wiringP;
-            wiringP = new Promise(function (res) {
+           a hidden frame and its SVG imported here (docs/277 section 6). The
+           renderer bakes theme colours into the SVG, so the rack is drawn once
+           per theme it is shown in: always light (paper and the file), plus the
+           screen's theme when that differs. syncWiring() shows the copy that
+           matches the page, or the light one when the page's theme was not
+           drawn. */
+        function drawFrame(theme) {
+            return new Promise(function (res) {
                 var fr = document.createElement('iframe');
                 fr.setAttribute('aria-hidden', 'true');
                 fr.tabIndex = -1;
@@ -363,27 +365,10 @@
                     if (over) return;
                     over = true;
                     clearInterval(timer);
-                    if (svgs && svgs.length) {
-                        host.textContent = '';
-                        svgs.forEach(function (s) {
-                            var n = document.importNode(s, true);
-                            var w = parseFloat(n.getAttribute('width')) || 0;
-                            n.removeAttribute('style');
-                            n.style.width = '100%';
-                            if (w) n.style.maxWidth = w + 'px';
-                            n.style.height = 'auto';
-                            host.appendChild(n);
-                        });
-                        host.setAttribute('data-rep-iw', 'ok');
-                    } else if (state === 'empty') {
-                        host.innerHTML = '<p class="rep-note">' + esc(why) + '</p>';
-                        host.setAttribute('data-rep-iw', 'empty');
-                    } else {
-                        host.innerHTML = '<p class="rep-fail" role="alert">Could not be built: ' + esc(why || 'the rack was not drawn') + '</p>';
-                        host.setAttribute('data-rep-iw', 'failed');
-                    }
+                    var out = { state: state, why: why, svgs: [] };
+                    (svgs || []).forEach(function (s) { out.svgs.push(document.importNode(s, true)); });
                     if (fr.parentNode) fr.parentNode.removeChild(fr);
-                    res();
+                    res(out);
                 }
                 timer = setInterval(function () {
                     var d = null;
@@ -406,8 +391,64 @@
                         }
                     }, 300);
                 });
-                fr.src = '/chip-status/report/frame/wiring';
+                fr.src = '/chip-status/report/frame/wiring?theme=' + encodeURIComponent(theme);
                 document.body.appendChild(fr);
+            });
+        }
+        window.syncWiring = function (theme) {
+            var t = theme || document.documentElement.getAttribute('data-theme');
+            document.querySelectorAll('.rep-iw-host').forEach(function (host) {
+                var vs = host.querySelectorAll('[data-iw-theme]');
+                var has = Array.prototype.some.call(vs, function (v) { return v.getAttribute('data-iw-theme') === t; });
+                var show = has ? t : 'light';
+                vs.forEach(function (v) { v.hidden = v.getAttribute('data-iw-theme') !== show; });
+                // a theme the rack was never drawn in: draw it once, then show it
+                if (!has && vs.length && !theme && !host['_iwDrawing_' + t]) {
+                    host['_iwDrawing_' + t] = true;
+                    drawFrame(t).then(function (r) {
+                        if (r.state !== 'ok' || !r.svgs.length) return;
+                        host.appendChild(iwVariant(t, r.svgs));
+                        window.syncWiring();
+                    });
+                }
+            });
+        };
+        function iwVariant(theme, svgs) {
+            var v = document.createElement('div');
+            v.setAttribute('data-iw-theme', theme);
+            svgs.forEach(function (n) {
+                var w = parseFloat(n.getAttribute('width')) || 0;
+                n.removeAttribute('style');
+                n.style.width = '100%';
+                if (w) n.style.maxWidth = w + 'px';
+                n.style.height = 'auto';
+                v.appendChild(n);
+            });
+            return v;
+        }
+        function drawWiring(el) {
+            var host = el.querySelector('[data-rep-iw]');
+            if (!host) return Promise.resolve();
+            if (wiringP) return wiringP;
+            var screen = document.documentElement.getAttribute('data-theme');
+            var themes = screen && screen !== 'light' ? ['light', screen] : ['light'];
+            wiringP = Promise.all(themes.map(drawFrame)).then(function (rs) {
+                var first = rs[0];
+                if (first.state === 'ok' && first.svgs.length) {
+                    host.textContent = '';
+                    rs.forEach(function (r, i) {
+                        if (r.state !== 'ok' || !r.svgs.length) return;
+                        host.appendChild(iwVariant(themes[i], r.svgs));
+                    });
+                    host.setAttribute('data-rep-iw', 'ok');
+                    window.syncWiring();
+                } else if (first.state === 'empty') {
+                    host.innerHTML = '<p class="rep-note">' + esc(first.why) + '</p>';
+                    host.setAttribute('data-rep-iw', 'empty');
+                } else {
+                    host.innerHTML = '<p class="rep-fail" role="alert">Could not be built: ' + esc(first.why || 'the rack was not drawn') + '</p>';
+                    host.setAttribute('data-rep-iw', 'failed');
+                }
             });
             return wiringP;
         }
@@ -551,6 +592,10 @@
                     else el.removeAttribute('hidden');
                 });
                 doc.setAttribute('data-theme', 'light');
+                doc.querySelectorAll('[data-iw-theme]').forEach(function (v) {
+                    if (v.getAttribute('data-iw-theme') !== 'light') v.remove();
+                    else { v.removeAttribute('hidden'); v.removeAttribute('data-iw-theme'); }
+                });
                 doc.querySelectorAll('#rep-panel, #rep-download, #rep-status, .rep-theme, iframe').forEach(function (el) { el.remove(); });
                 doc.querySelectorAll('[data-rep-raw-tree]').forEach(function (el) {
                     el.removeAttribute('data-rep-raw-ready');
@@ -631,14 +676,17 @@
         if (!b) return;
         root.setAttribute('data-theme', b.getAttribute('data-rep-theme'));
         mark();
+        if (window.syncWiring) window.syncWiring();
     });
     window.addEventListener('beforeprint', function () {
         onScreen = root.getAttribute('data-theme');
         root.setAttribute('data-theme', 'light');
+        if (window.syncWiring) window.syncWiring('light');
     });
     window.addEventListener('afterprint', function () {
         if (onScreen) root.setAttribute('data-theme', onScreen);
         onScreen = null;
+        if (window.syncWiring) window.syncWiring();
     });
     mark();
 })();
