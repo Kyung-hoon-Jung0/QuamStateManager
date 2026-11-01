@@ -389,6 +389,42 @@ async function checkComponentMap() {
   ok(fetches === 1, 'opening it loads exactly once');
   ok(win2.localStorage.getItem('quam_component_map_open') === '1', 'the choice persists');
 
+  // R4-WC-3 (UD-3 a): the parsed `open` fires one toggle nobody pressed -- it
+  // must not be stored as a choice; an unsized map is capped (55vh, never below
+  // an 11px label, never when the table head would stay below the fold)
+  async function capWorld(innerH, headTop, saved) {
+    const w = makeWorld(PANE_HTML);
+    w.localStorage.removeItem('quam_component_map_open');
+    if (saved) w.localStorage.setItem('quam_component_map_open', saved);
+    Object.defineProperty(w, 'innerHeight', { value: innerH, configurable: true });
+    const gcs = w.getComputedStyle.bind(w);
+    w.getComputedStyle = function (el) { return el.tagName && el.tagName.toLowerCase() === 'text' ? { fontSize: (17.3 * 192 / 900) + 'px' } : gcs(el); };
+    const orig = w.Element.prototype.getBoundingClientRect;
+    w.Element.prototype.getBoundingClientRect = function () {
+      const t = this.tagName.toLowerCase();
+      if (t === 'svg') { const h = parseFloat(this.style.height) || 900; return { top: 0, left: 0, width: h, height: h }; }
+      if (t === 'text') return { top: 0, left: 0, width: 20, height: 17 };
+      if (t === 'thead') return { top: headTop, left: 0, width: 800, height: 30 };
+      return orig.call(this);
+    };
+    const root = w.document.getElementById('component-map');
+    w.ComponentMap.mount(root);
+    await tick(); await tick();
+    return { w, root, svg: root.querySelector('svg') };
+  }
+  {
+    const a = await capWorld(950, 1210);
+    ok(a.w.localStorage.getItem('quam_component_map_open') === null, 'WC-3: the parse-time toggle echo is not stored as a choice');
+    ok(a.root.getAttribute('data-cm-capped') === '1' && parseFloat(a.svg.style.height) === 572,
+       'WC-3: unsized at 950px -> capped at the 11px-label floor (572 = 900*11/17.3), not at 55vh');
+    a.root.removeAttribute('open'); a.root.dispatchEvent(new a.w.Event('toggle'));
+    ok(a.w.localStorage.getItem('quam_component_map_open') === '0', 'WC-3: a real close is still remembered');
+    const b = await capWorld(768, 1196);
+    ok(!b.root.hasAttribute('data-cm-capped') && !b.svg.style.height, 'WC-3: when even the floor leaves the table head below the fold, the map is left alone');
+    const c = (await capWorld(950, 1210, '1')).root;
+    ok(!c.hasAttribute('data-cm-capped'), 'WC-3: a remembered choice is never capped');
+  }
+
   // F2: the mount's data-cell reaches renderLayout through ComponentMap
   const win3 = makeWorld(PANE_HTML.replace('data-highlight="pairs"', 'data-highlight="pairs" data-cell="120"'));
   win3.ComponentMap.mount(win3.document.getElementById('component-map'));

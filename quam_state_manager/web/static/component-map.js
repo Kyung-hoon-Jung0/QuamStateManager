@@ -262,6 +262,42 @@ window.ComponentMap = (function () {
     pane.addEventListener("mouseleave", _paneLeave);
   }
 
+  // R4-WC-3 (UD-3 a): with no remembered choice the map may be scaled down so
+  // the table head reaches the first screen -- target 55vh, never below the
+  // scale at which the smallest drawn label is 11px (D-6), and not at all
+  // when even the floor would leave the table head below the fold. A uniform
+  // scale cannot create an overlap. A remembered choice is never touched.
+  var CAP_VH = 0.55, LABEL_FLOOR_PX = 11;
+  function _capFirstView(root, body) {
+    try {
+      if (root.getAttribute("data-open-key")) return;          // a pick mount keeps its own size
+    } catch (e) { return; }
+    if (!root._cmapUnsized) return;
+    var svg = body.querySelector("svg");
+    if (!svg) return;
+    var box = svg.getBoundingClientRect();
+    if (!box.height || !box.width) return;
+    var minFont = Infinity;
+    var ts = svg.querySelectorAll("text");
+    for (var i = 0; i < ts.length; i++) {
+      var r = ts[i].getBoundingClientRect();
+      if (!r.height) continue;                                  // hidden symbol labels
+      var f = parseFloat(getComputedStyle(ts[i]).fontSize);
+      if (f > 0 && f < minFont) minFont = f;
+    }
+    var vbw = (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) || box.width;
+    var px = minFont === Infinity ? 0 : minFont * box.width / vbw;  // smallest label as drawn now
+    var floor = px > 0 ? box.height * Math.min(1, LABEL_FLOOR_PX / px) : box.height;
+    var target = Math.max(window.innerHeight * CAP_VH, floor);
+    if (target >= box.height) return;
+    var head = document.querySelector("#table-pane table thead");
+    if (head && head.getBoundingClientRect().top - (box.height - target) > window.innerHeight - 24) return;
+    var k = target / box.height;
+    svg.style.width = Math.round(box.width * k) + "px";
+    svg.style.height = Math.round(target) + "px";
+    root.setAttribute("data-cm-capped", "1");
+  }
+
   function mount(root) {
     if (!root || !window.TopoGraph) return;
     var body = root.querySelector(".cmap-body");
@@ -277,8 +313,19 @@ window.ComponentMap = (function () {
       if (saved === "0") root.removeAttribute("open");
       else if (saved === "1") root.setAttribute("open", "open");
     } catch (e) {}
+    // R4-WC-3: a parsed `open` attribute fires one `toggle` nobody pressed;
+    // storing it made every visit look like a remembered choice
+    var unsized = false;
+    try { unsized = localStorage.getItem(openKey(root)) === null; } catch (e) {}
+    root._cmapUnsized = unsized;
+    var initOpen = root.open, firstToggle = true;
     root.addEventListener("toggle", function () {
-      try { localStorage.setItem(openKey(root), root.open ? "1" : "0"); } catch (e) {}
+      var echo = firstToggle && root.open === initOpen;
+      firstToggle = false;
+      if (!echo) {
+        root._cmapUnsized = false;
+        try { localStorage.setItem(openKey(root), root.open ? "1" : "0"); } catch (e) {}
+      }
       if (root.open && !root._cmapLoaded) load();
     });
 
@@ -310,6 +357,7 @@ window.ComponentMap = (function () {
             emphasisChain: root.getAttribute("data-chain") || "",
           });
           _renderFeedLegend(body, highlight, mine.api);
+          _capFirstView(root, body);
           _bindMapEvents(body);
         })
         .catch(function () {

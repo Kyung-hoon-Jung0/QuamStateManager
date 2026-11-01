@@ -162,9 +162,14 @@ window.AgentSetup = (function () {
 
     // 2. where runs live
     var env = [];
-    env.push('<div class="asx-row"><span class="asx-k">Calibrations folder</span><span class="asx-v">'
-      + (d.calibrations_folder ? '<code class="asx-path">' + esc(d.calibrations_folder) + "</code>" : state("todo", "Not set"))
-      + '</span><a class="asx-link" href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-push-url="true">' + (d.calibrations_folder ? "Change" : "Set it") + " in Experiment Runner →</a></div>");
+    // R4-AG-1 (UD-5 a): the folder is set HERE, through the same settings door
+    // the hidden Experiment Runner uses (POST /scheduler/settings) -- the
+    // journal row's shape, plus the shared folder browser
+    env.push('<div class="asx-row" id="as-calib"><span class="asx-k">Calibrations folder</span><span class="asx-v asx-grow">'
+      + '<input id="as-calroot" type="text" value="' + esc(d.calibrations_folder || "") + '" placeholder="the folder that holds the calibration nodes">'
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseCalib()">Browse…</button>'
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.calib()">' + (d.calibrations_folder ? "Change" : "Use this folder") + "</button></span>"
+      + (d.calibrations_folder ? state("ok", "Saved") : state("todo", "Not set")) + '<span id="as-calib-msg"></span></div>');
     env.push('<div class="asx-row" id="as-dryrun"><span class="asx-k">Hardware</span><span class="asx-v">'
       + '<label class="asx-switch"><input type="checkbox" id="as-dryrun-box"' + (dry ? " checked" : "") + ' onchange="AgentSetup.dryRun(this)"><span class="asx-knob"></span>'
       + '<span class="asx-dry-text">' + dryText(dry) + "</span></label></span>"
@@ -312,6 +317,19 @@ window.AgentSetup = (function () {
     api("POST", "/api/agent/setup/journal", { root: root, claude_says: says }).then(function (r) {
       if (r.status !== 200) { alertErr(r.body.error, "#as-journal"); return; }
       load();
+    });
+  }
+  function browseCalib() {
+    if (window.openFolderBrowser) window.openFolderBrowser("as-calroot", "", { autoSubmit: false });
+  }
+  function calib() {
+    var v = ((document.getElementById("as-calroot") || {}).value || "").trim();
+    var msg = document.getElementById("as-calib-msg");
+    if (!v) { if (msg) msg.innerHTML = '<p class="ag-err">Enter or browse to a folder first.</p>'; return; }
+    api("POST", "/scheduler/settings", { calibrations_folder: v }).then(function (r) {
+      var b = r.body || {};
+      if (r.status === 200 && b.ok !== false) { load(); return; }
+      if (msg) msg.innerHTML = '<p class="ag-err">' + esc(b.error || ("not saved (HTTP " + r.status + ")")) + "</p>";
     });
   }
   function dryRun(el) {
@@ -505,5 +523,5 @@ window.AgentSetup = (function () {
 
   return { init: init, load: load, preview: preview, connect: connect, cancel: cancel, disconnect: disconnect, journal: journal,
            loadContext: loadContext, answer: answer, previewContext: previewContext, writeContext: writeContext,
-           test: test, dryRun: dryRun, saveLimits: saveLimits, diffLines: diffLines, _state: S };
+           test: test, dryRun: dryRun, calib: calib, browseCalib: browseCalib, saveLimits: saveLimits, diffLines: diffLines, _state: S };
 })();
