@@ -1818,6 +1818,14 @@ window._anchorPopover = function (pop, btn) {
     if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
     if (left < pad) left = pad;
     var top = r.bottom + 4;
+    // user-view sweep: a tool opened from the sidebar opens BESIDE it, top-
+    // aligned with its row, so it never covers the sidebar entries under it
+    var side = btn.closest && btn.closest("#sidebar");
+    var sr = side && side.getBoundingClientRect();
+    if (sr && sr.width > 0 && sr.right + pad + w <= window.innerWidth - pad) {
+        left = sr.right + pad;
+        top = r.top;
+    }
     if (top + h > window.innerHeight - pad) {
         var above = r.top - h - 4;
         top = above >= pad ? above : Math.max(pad, window.innerHeight - h - pad);
@@ -6561,8 +6569,15 @@ window.StateHistory = (function () {
             cb.checked = false; sel = selected();
             if (window.showToast) window.showToast("Pick exactly two snapshots to compare.", "info");
         }
+        _label(sel.length);
+    }
+    // user-view sweep: the button names the live tick count, never "2 selected"
+    // over an empty selection
+    function _label(n) {
         var btn = document.getElementById('sh-compare-btn');
-        if (btn) btn.disabled = sel.length !== 2;
+        if (!btn) return;
+        btn.disabled = n !== 2;
+        btn.textContent = n === 2 ? 'Compare 2 selected' : 'Compare (' + n + ' of 2 ticked)';
     }
     function compareSelected() {
         var sel = selected();
@@ -6571,8 +6586,7 @@ window.StateHistory = (function () {
         _openDiffForSnapshots(sel[0].value, sel[1].value);
     }
     function init() {
-        var btn = document.getElementById('sh-compare-btn');
-        if (btn) btn.disabled = selected().length !== 2;
+        _label(selected().length);
     }
     return { toggleSelect: toggleSelect, compareSelected: compareSelected, init: init };
 })();
@@ -27759,7 +27773,20 @@ window.StateVersions = (function () {
     function close() {
         var p = panel(); if (!p) return;
         p.hidden = true;
+        _menuBehind(p, false);
         var c = chip(); if (c) c.setAttribute('aria-expanded', 'false');
+    }
+    /* user-view sweep: opened from the overflow menu, the panel replaces the
+       menu's other items instead of leaving them open behind it; closing the
+       panel brings back exactly the items this hid. */
+    function _menuBehind(p, open) {
+        var list = p.closest && p.closest('#topbar-more-menu .topbar-more-list');
+        if (!list) return;
+        Array.prototype.forEach.call(list.children, function (li) {
+            if (li.contains(p)) return;
+            if (open && !li.hidden) { li.hidden = true; li.setAttribute('data-sv-hid', '1'); }
+            else if (!open && li.getAttribute('data-sv-hid')) { li.hidden = false; li.removeAttribute('data-sv-hid'); }
+        });
     }
     function _clampToViewport(p) {
         // The panel is CSS-anchored left:0 under its topbar chip; a chip far
@@ -27779,6 +27806,7 @@ window.StateVersions = (function () {
         // htmx fills the panel from the same click; only visibility is ours.
         var opening = p.hidden;
         p.hidden = !opening;
+        _menuBehind(p, opening);
         var c = chip(); if (c) c.setAttribute('aria-expanded', opening ? 'true' : 'false');
         if (opening) {
             requestAnimationFrame(function () { _clampToViewport(p); });
@@ -28472,6 +28500,12 @@ window.TopbarMore = (function () {
         var m = menu(), b = btn();
         if (!m || !b) return;
         m.hidden = false;
+        // items a since-closed Versions panel stood in for come back
+        Array.prototype.forEach.call(m.querySelectorAll('[data-sv-hid]'), function (li) {
+            var svp = document.getElementById('state-version-panel');
+            if (svp && !svp.hidden) return;
+            li.hidden = false; li.removeAttribute('data-sv-hid');
+        });
         b.setAttribute('aria-expanded', 'true');
         if (focusFirst !== false) {
             var it = items();

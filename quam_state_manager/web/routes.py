@@ -5855,6 +5855,9 @@ def chip_name_set():
     _maybe_data_folder_suggest(ctx)
     body = render_template(
         "_status.html", level="success",
+        # user-view sweep: a "staged" notice goes once a live write lands
+        # (the same stamp a failed write's notice carries, LiveWriteNotice)
+        live_fail_at=_live_landed_stamp(), live_fail_chip=_ctx_chip_key(ctx) or "",
         message=f"Chip name '{name}' staged — Save + Apply to live makes it"
                 f" permanent (future runs then carry it automatically){cross_note}")
     resp = make_response(body + _tray_oob())
@@ -6427,6 +6430,7 @@ def chip_data_folder_set():
     adopted = value not in (ctx.get("extras_data_dangling") or [])
     body = render_template(
         "_status.html", level="success",
+        live_fail_at=_live_landed_stamp(), live_fail_chip=_ctx_chip_key(ctx) or "",
         message=("Data folder staged — Save + Apply to live makes it permanent"
                  + (" (and it is now a registered dataset root)"
                     if adopted and v["ok"] else "")))
@@ -13676,7 +13680,9 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
             newest = None if pts[-1]["removed"] else pts[-1]["value"]
         current = vh.comparable(tgt) if tgt.get("has_current") else None
         out["notes"][key] = vh.notes(st, res["ledger"], current=current, newest=newest,
-                                   origin=ctx.get("origin") or "live")
+                                   origin=ctx.get("origin") or "live",
+                                   declared=ctx.get("extras_data_declared"),
+                                   dangling=ctx.get("extras_data_dangling"))
     return out
 
 
@@ -21019,7 +21025,9 @@ def _versions_read_rows(ctx, snapshots, *, limit: int = 40, offset: int = 0,
     # folder's timeline" over rows drawn right below
     listing = dict(res.get("foreign") or {}, uncertain=int(res.get("uncertain") or 0))
     notes = list(vh.notes(res.get("status"), lane.get("ledger") or {"has_runs": res.get("has_runs")},
-                          origin=ctx.get("origin") or "live", listing=listing))
+                          origin=ctx.get("origin") or "live", listing=listing,
+                          declared=ctx.get("extras_data_declared"),
+                          dangling=ctx.get("extras_data_dangling")))
     if res.get("pending"):
         n = res["pending"]
         notes.append({"level": "info", "code": "matching",
@@ -38954,6 +38962,11 @@ def param_history():
         r["svg_inner"] = HistoryManager.render_sparkline_svg_inner(
             r["values"], current=cur_num,
         )
+        # user-view sweep: the range the sparkline spans, printed under it
+        _nums = [v.get("value") for v in (r.get("values") or []) if isinstance(v, dict)
+                 and isinstance(v.get("value"), (int, float)) and not isinstance(v.get("value"), bool)
+                 and math.isfinite(v.get("value"))]
+        r["low"], r["high"] = (min(_nums), max(_nums)) if _nums else (None, None)
 
     # Multi-chip metadata for the selector + alignment banner.
     #
@@ -39229,7 +39242,9 @@ def hub_link_folder():
     linked = [{**r, "fs_key": _hub_root_key(r["path"])}
               for r in hub_sync.status(chip_dir).get("roots", []) if "decided_same" in r.get("sources", [])]
     return render_template("_hub_link_folder.html", scan=scan, rows=rows, linked=linked,
-                           chip_key=chip_dir.name)
+                           chip_key=chip_dir.name,
+                           declared=list(ctx.get("extras_data_declared") or []),
+                           dangling=list(ctx.get("extras_data_dangling") or []))
 
 
 @bp.route("/hub/unlink-folder", methods=["POST"])

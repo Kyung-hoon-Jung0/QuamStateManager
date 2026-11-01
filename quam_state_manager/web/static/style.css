@@ -1119,7 +1119,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
     background: var(--pico-background-color);
     border: 1.5px solid color-mix(in srgb, var(--pico-primary) 60%, transparent);
     border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 1px color-mix(in srgb, var(--pico-primary) 12%, transparent);
-    margin-top: 0.2rem; font-size: 13px;
+    margin-top: 0.2rem; font-size: 16px;
     resize: both; overflow: hidden;
 }
 .manual-hidden { display: none; }
@@ -1231,7 +1231,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .manual-class[open] > summary::before { transform: rotate(90deg); }
 .manual-class-name { font-weight: 700; font-family: var(--font-mono); font-size: 0.95em; color: var(--pico-color); }
 .manual-class-doc { display: block; margin: 0.05rem 0 0.2rem; font-size: 0.9em; color: var(--pico-color); line-height: 1.35; }
-.manual-badge { font-size: 0.72em; padding: 0.02rem 0.42rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); white-space: nowrap; }
+.manual-badge { font-size: 0.75em; padding: 0.02rem 0.42rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); white-space: nowrap; }
 .manual-badge.manual-used { border-color: var(--pico-primary); color: var(--pico-primary); }
 .manual-badge.manual-req { border-color: var(--color-warning-text); color: var(--color-warning-text); }
 .manual-entry { padding: 0.38rem 0.2rem 0.38rem 0.35rem; border-top: 1px solid var(--pico-muted-border-color); }
@@ -1248,7 +1248,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .manual-allowed { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.25rem; }
 .manual-chip { font-size: 0.82em; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-color); }
 .manual-meta, .manual-examples, .manual-source { font-size: 0.8em; margin-top: 0.22rem; color: var(--pico-muted-color); }
-.manual-examples code, .manual-source code { font-size: 0.95em; }
+.manual-examples code, .manual-source code, .manual-meta code { font-size: 0.95em; }
 .manual-goto { text-decoration: none; }
 .manual-goto code { color: var(--pico-primary); }
 .manual-goto:hover code { text-decoration: underline; }
