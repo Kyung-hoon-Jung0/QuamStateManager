@@ -539,16 +539,19 @@
   // R4-TL-4 (look only): a blocked Next on step 2 marks the empty or bad
   // field red, so the press is not silent. Cleared on the next input.
   function markNetworkInvalid() {
-    var net = state.spec.network || {};
+    var net = state.spec.network || {}, first = null;
     [["gen-net-host", !net.host || !/^[A-Za-z0-9._:%\[\]-]+$/.test(net.host)],
      ["gen-net-cluster", !net.cluster_name]].forEach(function (p) {
       var el = document.getElementById(p[0]);
       if (!el) return;
       if (p[1]) {
+        if (!first) first = el;
         el.setAttribute("aria-invalid", "true");
         el.addEventListener("input", function () { el.removeAttribute("aria-invalid"); }, { once: true });
       } else el.removeAttribute("aria-invalid");
     });
+    // D-119 (TL-4): the press moves focus to the first field to fix
+    if (first) try { first.focus({ preventScroll: false }); } catch (e) { first.focus(); }
   }
 
   function tryNext() {

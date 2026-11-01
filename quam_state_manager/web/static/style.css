@@ -189,7 +189,6 @@
     --topo-prop-row-size:       1.20em; /* property label+value row font size */
     --topo-prop-row-height:     32px;   /* min-height of each property row — sync with layout.rowHeight in app.js */
     --topo-prop-label-width:    84px;   /* width of the label column (e.g. "T1", "RO_fg") */
-    --topo-card-more-size:      1.12em; /* "... more ›" button font size */
 
     /* -- Popup overlays (qubit detail + pair detail) -- */
     --topo-popup-header-size:   1.25em; /* popup title (e.g. "q6 — details") */
@@ -1095,7 +1094,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
    and the expression footer stay put while the sections scroll. */
 .calc-popover {
     position: absolute; right: 0; top: 100%; z-index: 120;
-    width: 348px; max-width: 96vw; height: min(560px, 80vh); max-height: 94vh;
+    width: 348px; max-width: 96vw; max-height: 94vh;
     min-width: 260px; min-height: 200px;
     display: flex; flex-direction: column;
     background: var(--pico-background-color);
@@ -7050,7 +7049,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     display: block; box-sizing: border-box; font-family: inherit;
 }
 .ds-note-textarea:focus { border-color: var(--pico-primary); background: var(--pico-card-background-color); outline: none; }
-.ds-note-textarea::placeholder { color: var(--pico-muted-color); }
+.ds-note-textarea::placeholder, .gen-field input::placeholder { color: var(--pico-muted-color); font-style: italic; opacity: 0.8; } /* D-119 */
 /* v1.5.1 (U P2-22): the note's Save and its saved state */
 .ds-note-actions { display: flex; align-items: center; gap: .5rem; }
 .ds-note-actions[hidden] { display: none; }

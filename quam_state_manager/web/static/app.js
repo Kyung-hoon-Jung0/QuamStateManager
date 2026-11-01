@@ -1826,6 +1826,19 @@ window._anchorPopover = function (pop, btn) {
         left = sr.right + pad;
         top = r.top;
     }
+    // D-120 (TL-3): a second or third open tool window cascades, never stacks
+    if (side) {
+        var n = 0;
+        ["settings-dropdown", "calc-popover", "manual-popover"].forEach(function (id) {
+            var o = document.getElementById(id);
+            if (o && o !== pop && o.getClientRects().length) n++;
+        });
+        left += 28 * n; top += 28 * n;
+        // the window just opened comes to the front
+        window._toolZ = (window._toolZ || 130) + 1;
+        pop.style.zIndex = String(window._toolZ);
+        if (left + w > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - w - pad);
+    }
     if (top + h > window.innerHeight - pad) {
         var above = r.top - h - 4;
         top = above >= pad ? above : Math.max(pad, window.innerHeight - h - pad);
