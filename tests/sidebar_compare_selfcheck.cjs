@@ -70,13 +70,14 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   const all = boxes(win);
   click(win, all[0]);
   ok(cmpDisabled(win) === true, 'still disabled with ONE tick');
-  ok(win.document.getElementById('compare-hint').hidden === true, 'one tick hides the hint (the button count takes over)');
+  ok(/one more run/.test(win.document.getElementById('compare-hint').textContent), 'one tick turns the hint into the next step (the button count takes over)');
   for (let i = 1; i < 5; i++) click(win, all[i]);
-  ok(checked(win) === 5 && label(win) === 'Compare Selected (5)' && !cmpDisabled(win), 'five ticks: count 5, button enabled');
+  ok(checked(win) === 5 && label(win) === 'Compare (5)' && !cmpDisabled(win), 'five ticks: count 5, button enabled');
+  ok(win.document.getElementById('compare-hint').hidden === false && win.document.getElementById('compare-hint').style.visibility === 'hidden', 'uv-4: the hint keeps its slot (no list jump) once the count is on the button');
   click(win, all[5]);
   ok(all[5].checked === false && checked(win) === 5, 'the SIXTH tick is refused');
   ok(toasts.length === 1 && /Up to 5 runs/.test(toasts[0].m), 'and says why (toast): ' + (toasts[0] && toasts[0].m));
-  ok(label(win) === 'Compare Selected (5)', 'the count stays 5');
+  ok(label(win) === 'Compare (5)', 'the count stays 5');
   ok(JSON.parse(store.quam_sidebar_compare_sel).length === 5 && JSON.parse(store.quam_sidebar_compare_sel)[4] === '/w/run4', 'sessionStorage mirrors the five');
   // unticking one frees a slot
   click(win, all[2]);
@@ -97,10 +98,10 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   click(win, all[0]);
   ok(trend().disabled === true, 'Trend Tracker is still disabled with ONE tick');
   click(win, all[1]);
-  ok(trend().disabled === false && trend().textContent === 'Trend Tracker (2)',
+  ok(trend().disabled === false && trend().textContent === 'Trend (2)',
      'two ticks enable it (' + trend().textContent + ')');
   win.compareClearSelection();
-  ok(trend().disabled === true && trend().textContent === 'Trend Tracker',
+  ok(trend().disabled === true && trend().textContent === 'Trend',
      'Clear disables it again (' + trend().textContent + ')');
 }
 
@@ -128,7 +129,7 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   tree.dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
   const now = boxes(win);
   ok(checked(win) === 3 && now[1].checked && now[3].checked && now[6].checked, 'after the swap the same three are ticked again');
-  ok(label(win) === 'Compare Selected (3)', 'and the count is right');
+  ok(label(win) === 'Compare (3)', 'and the count is right');
   win.compareClearSelection();
   ok(checked(win) === 0 && JSON.parse(store.quam_sidebar_compare_sel).length === 0, 'Clear empties the ticks AND the mirror');
   tree.innerHTML = treeHtml(8);
@@ -142,7 +143,7 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   await settle();
   const all = boxes(win);
   click(win, all[0]); click(win, all[1]); click(win, all[2]);
-  ok(checked(win) === 3 && label(win) === 'Compare Selected (3)', 'fixture: three ticked');
+  ok(checked(win) === 3 && label(win) === 'Compare (3)', 'fixture: three ticked');
   // the tree's group cap offers "Show all N" with hx-target="closest ul"
   const ul = win.document.getElementById('grp');
   ul.innerHTML = treeHtml(12).replace(/^<ul id="grp">/, '').replace(/<\/ul>$/, '');
@@ -150,7 +151,7 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   await settle();
   ok(checked(win) === 3,
      'a swap of an element INSIDE #sidebar-tree re-applies the ticks (' + checked(win) + ')');
-  ok(label(win) === 'Compare Selected (3)',
+  ok(label(win) === 'Compare (3)',
      'and the button still names three (' + label(win) + ')');
 }
 
@@ -170,7 +171,7 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   ok(checked(win) === 0, 'fixture: the filter shows none of the three');
   // v1.5.1 (U P2-7): the label is the count; the off-view runs have their own line
   const offLine = win.document.getElementById('compare-offview');
-  ok(label(win) === 'Compare Selected (3)' && !offLine.hidden && /^3 of the 3 selected are not in view/.test(offLine.textContent),
+  ok(label(win) === 'Compare (3)' && !offLine.hidden && /^3 of the 3 selected are not in view/.test(offLine.textContent),
      'three are selected but off screen (' + label(win) + ' / ' + offLine.textContent + ')');
 
   click(win, boxes(win)[0]);                      // tick run5 while filtered
@@ -184,7 +185,7 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   all = boxes(win);
   ok(checked(win) === 4 && all[0].checked && all[1].checked && all[2].checked && all[5].checked,
      'clearing the filter brings all four back (' + checked(win) + ')');
-  ok(label(win) === 'Compare Selected (4)', 'and the count agrees (' + label(win) + ')');
+  ok(label(win) === 'Compare (4)', 'and the count agrees (' + label(win) + ')');
 }
 
 // 3d. docs/141 4ac -- the off-screen ticks are SUBMITTED, so the number on the
@@ -230,7 +231,7 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   const { win } = makeWorld(['/w/run1', '/w/ghost']);
   await settle();
   ok(checked(win) === 1, 'the one real remembered run is re-ticked');
-  ok(label(win) === 'Compare Selected' && cmpDisabled(win),
+  ok(label(win) === 'Compare' && cmpDisabled(win),
      'a path no tree ever showed does not inflate the count (' + label(win) + ')');
   const form = win.document.getElementById('compare-form');
   ok(form.querySelectorAll('input.sidebar-sel-offscreen').length === 0,
@@ -243,7 +244,7 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   await settle();
   const all = boxes(win);
   ok(all[2].checked && all[5].checked && checked(win) === 2, 'a reload re-ticks the remembered runs that still exist');
-  ok(label(win) === 'Compare Selected (2)' && !cmpDisabled(win), 'count and button follow');
+  ok(label(win) === 'Compare (2)' && !cmpDisabled(win), 'count and button follow');
 }
 
 // 5. the HX-Trigger toast bridge

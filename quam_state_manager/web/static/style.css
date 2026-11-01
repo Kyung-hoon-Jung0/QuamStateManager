@@ -2027,13 +2027,9 @@ details.tree-branch-active > summary {
    brightens the border, and the ghost tick below. */
 .tree-entry-label input[type=checkbox] { margin: 0.08em 0 0 0; width: 22px; height: 22px; border-radius: 5px; transition: border-color .12s, background .12s, box-shadow .12s; }
 .tree-entry-label:hover input[type=checkbox] { border-color: var(--pico-primary); }
-/* docs/165, amended by UD-4 (D-106): at rest the 22 px box alone says it is
-   tickable (a resting ghost tick read as ticked); the tick appears under the
-   pointer or keyboard focus, and ticked it is white on the filled blue box. */
-.tree-entry-label input[type=checkbox]::after { border-color: var(--pico-muted-color); border-width: 0 2.6px 2.6px 0; opacity: 0; transition: opacity .12s, border-color .12s; }
-.tree-entry-label:hover input[type=checkbox]::after,
-.tree-entry-label input[type=checkbox]:hover::after,
-.tree-entry-label input[type=checkbox]:focus-visible::after { opacity: 0.8; }
+/* uv-4: the tick is drawn ONLY when ticked (a grey ghost tick under the
+   pointer read as ticked); ticked it is white on the filled blue box. */
+.tree-entry-label input[type=checkbox]::after { border-width: 0 2.6px 2.6px 0; opacity: 0; }
 .tree-entry-label input[type=checkbox]:checked::after { border-color: var(--pico-primary-inverse); opacity: 1; }
 /* the compare hint under the buttons: shown only while nothing is ticked (app.js) */
 .compare-hint {

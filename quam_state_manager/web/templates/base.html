@@ -885,9 +885,9 @@
                 </form>
                 <form id="compare-form" class="compare-form compare-buttons">
                     <button type="submit" class="outline btn-sm btn-compare"
-                            hx-post="/compare" hx-target="#table-pane">Compare Selected</button>
+                            hx-post="/compare" hx-target="#table-pane" aria-label="Compare selected runs">Compare</button>
                     <button type="submit" class="outline btn-sm btn-trend"
-                            hx-post="/trend" hx-target="#table-pane">Trend Tracker</button>
+                            hx-post="/trend" hx-target="#table-pane" aria-label="Trend tracker for selected runs">Trend</button>
                     {# Multi-select helpers: live count lands on the Compare
                        button; shift-click selects a range (app.js). #}
                     <button type="button" class="outline btn-sm btn-compare-clear"

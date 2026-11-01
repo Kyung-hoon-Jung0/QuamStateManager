@@ -161,12 +161,12 @@ function makeWorld() {
         { bubbles: true, shiftKey: !!shift }));
     }
     click(all[0]);
-    ok(win.document.querySelector('.btn-compare').textContent === 'Compare Selected',
+    ok(win.document.querySelector('.btn-compare').textContent === 'Compare',
       'R4: single selection keeps the plain label');
     click(all[3], true);   // shift-click: range 0..3 all checked
     ok(all[1].checked && all[2].checked && all[3].checked,
       'R4: shift-click checks the whole range');
-    ok(win.document.querySelector('.btn-compare').textContent === 'Compare Selected (4)',
+    ok(win.document.querySelector('.btn-compare').textContent === 'Compare (4)',
       'R4: live count on the Compare button');
     ok(win.document.getElementById('compare-clear').hidden === false,
       'R4: Clear chip visible while selected');

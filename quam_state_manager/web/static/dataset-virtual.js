@@ -568,8 +568,11 @@
         if (sec < 60 * 86400) return Math.round(sec / (7 * 86400)) + 'w ago';
         // the day in the viewer's chosen zone (docs/244), not the browser's
         var v = window.SnapTime ? window.SnapTime.axisValue(d) : null;
-        if (v) return (+v.slice(5, 7)) + '/' + (+v.slice(8, 10));
-        return (d.getMonth() + 1) + '/' + d.getDate();
+        // older than the relative ladder: the day AND the time (a bare "3/1"
+        // could not tell two runs of that day apart)
+        if (v) return (+v.slice(5, 7)) + '/' + (+v.slice(8, 10)) + ' ' + v.slice(11, 16);
+        var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+        return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     }
     function fmtDuration(s) {
         if (s == null || s === '' || isNaN(s)) return '-';
@@ -649,7 +652,9 @@
         {key: 'status', label: 'Status', on: true, w: 104, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"
          render: function (r) { return statusChip(r.status); }},
         {key: 'metric', label: 'Key Metric', on: true, w: 108, sortKey: 'metric', type: 'num', cls: 'col-metric',   // L9: 96 clipped -3.0143e-05
-         render: function (r) { return (r.metric == null || r.metric === '') ? '-' : escapeHtml(r.metric); }},
+         render: function (r) { return (r.metric == null || r.metric === '')
+             ? '<span class="muted" title="No key metric: this run saved no finite fit number (no fit results, or the fit did not converge). Open the run for its fit details.">-</span>'
+             : escapeHtml(r.metric); }},
         {key: 'when', label: 'When', on: true, w: 88, sortKey: 'when', type: 'num',
          render: function (r) { return '<span title="' + escapeHtml(_whenTitle(r)) + '">' + escapeHtml(fmtRelative(r)) + '</span>'; }},
         {key: 'tags', label: 'Tags', on: true, w: 180, cls: 'col-tags',
