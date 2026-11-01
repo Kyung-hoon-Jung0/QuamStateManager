@@ -1119,7 +1119,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
     background: var(--pico-background-color);
     border: 1.5px solid color-mix(in srgb, var(--pico-primary) 60%, transparent);
     border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 1px color-mix(in srgb, var(--pico-primary) 12%, transparent);
-    margin-top: 0.2rem; font-size: 13px;
+    margin-top: 0.2rem; font-size: 16px;
     resize: both; overflow: hidden;
 }
 .manual-hidden { display: none; }
@@ -1231,7 +1231,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .manual-class[open] > summary::before { transform: rotate(90deg); }
 .manual-class-name { font-weight: 700; font-family: var(--font-mono); font-size: 0.95em; color: var(--pico-color); }
 .manual-class-doc { display: block; margin: 0.05rem 0 0.2rem; font-size: 0.9em; color: var(--pico-color); line-height: 1.35; }
-.manual-badge { font-size: 0.72em; padding: 0.02rem 0.42rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); white-space: nowrap; }
+.manual-badge { font-size: 0.75em; padding: 0.02rem 0.42rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); white-space: nowrap; }
 .manual-badge.manual-used { border-color: var(--pico-primary); color: var(--pico-primary); }
 .manual-badge.manual-req { border-color: var(--color-warning-text); color: var(--color-warning-text); }
 .manual-entry { padding: 0.38rem 0.2rem 0.38rem 0.35rem; border-top: 1px solid var(--pico-muted-border-color); }
@@ -1248,7 +1248,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .manual-allowed { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.25rem; }
 .manual-chip { font-size: 0.82em; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-color); }
 .manual-meta, .manual-examples, .manual-source { font-size: 0.8em; margin-top: 0.22rem; color: var(--pico-muted-color); }
-.manual-examples code, .manual-source code { font-size: 0.95em; }
+.manual-examples code, .manual-source code, .manual-meta code { font-size: 0.95em; }
 .manual-goto { text-decoration: none; }
 .manual-goto code { color: var(--pico-primary); }
 .manual-goto:hover code { text-decoration: underline; }
@@ -2027,13 +2027,9 @@ details.tree-branch-active > summary {
    brightens the border, and the ghost tick below. */
 .tree-entry-label input[type=checkbox] { margin: 0.08em 0 0 0; width: 22px; height: 22px; border-radius: 5px; transition: border-color .12s, background .12s, box-shadow .12s; }
 .tree-entry-label:hover input[type=checkbox] { border-color: var(--pico-primary); }
-/* docs/165, amended by UD-4 (D-106): at rest the 22 px box alone says it is
-   tickable (a resting ghost tick read as ticked); the tick appears under the
-   pointer or keyboard focus, and ticked it is white on the filled blue box. */
-.tree-entry-label input[type=checkbox]::after { border-color: var(--pico-muted-color); border-width: 0 2.6px 2.6px 0; opacity: 0; transition: opacity .12s, border-color .12s; }
-.tree-entry-label:hover input[type=checkbox]::after,
-.tree-entry-label input[type=checkbox]:hover::after,
-.tree-entry-label input[type=checkbox]:focus-visible::after { opacity: 0.8; }
+/* uv-4: the tick is drawn ONLY when ticked (a grey ghost tick under the
+   pointer read as ticked); ticked it is white on the filled blue box. */
+.tree-entry-label input[type=checkbox]::after { border-width: 0 2.6px 2.6px 0; opacity: 0; }
 .tree-entry-label input[type=checkbox]:checked::after { border-color: var(--pico-primary-inverse); opacity: 1; }
 /* the compare hint under the buttons: shown only while nothing is ticked (app.js) */
 .compare-hint {
@@ -4620,7 +4616,7 @@ td.col-delta .val-delta { margin-left: 0; }
 /* highlight modes (docs/91 §3.3) — emphasis only, nothing appears/disappears */
 .cm-hl-qdac .cm-edge-line, .cm-hl-qdac .cm-arrow,
 .cm-hl-qdac .cm-res, .cm-hl-qdac .cm-feed, .cm-hl-qdac .cm-freq { opacity: .22; }
-.cm-hl-qdac .cm-stone, .cm-hl-qdac .cm-id { opacity: .5; }
+.cm-hl-qdac .cm-stone { opacity: .5; }
 .cm-hl-qdac .cm-flux { opacity: .35; }
 .cm-hl-qdac .cm-qdac { stroke: var(--pico-primary); stroke-width: 3.5; opacity: 1; }
 
@@ -4642,7 +4638,7 @@ td.col-delta .val-delta { margin-left: 0; }
 
 .cm-hl-resonators .cm-edge-line, .cm-hl-resonators .cm-arrow,
 .cm-hl-resonators .cm-flux, .cm-hl-resonators .cm-freq { opacity: .22; }
-.cm-hl-resonators .cm-stone, .cm-hl-resonators .cm-id { opacity: .5; }
+.cm-hl-resonators .cm-stone { opacity: .5; }
 .cm-hl-resonators .cm-res { stroke: var(--pico-primary); stroke-width: 2.2; }
 /* docs/93 F4 — colour encodes FEEDLINE IDENTITY on this page only (elsewhere
    colour still means selected/not). Each slot pairs its validated hue with a
@@ -4685,13 +4681,13 @@ td.col-delta .val-delta { margin-left: 0; }
 
 .cm-hl-flux .cm-res, .cm-hl-flux .cm-feed,
 .cm-hl-flux .cm-freq { opacity: .22; }
-.cm-hl-flux .cm-stone, .cm-hl-flux .cm-id { opacity: .5; }
+.cm-hl-flux .cm-stone { opacity: .5; }
 .cm-hl-flux .cm-edge-line, .cm-hl-flux .cm-arrow { opacity: .55; }   /* neighbour links = crosstalk candidates */
 .cm-hl-flux .cm-flux { stroke: var(--pico-primary); stroke-width: 3; }
 
 .cm-hl-couplers .cm-res, .cm-hl-couplers .cm-flux, .cm-hl-couplers .cm-feed,
 .cm-hl-couplers .cm-freq { opacity: .22; }
-.cm-hl-couplers .cm-stone, .cm-hl-couplers .cm-id { opacity: .5; }
+.cm-hl-couplers .cm-stone { opacity: .5; }
 .cm-hl-couplers .cm-edge-line, .cm-hl-couplers .cm-arrow { opacity: .3; }
 .cm-hl-couplers .cm-edge-hascoupler .cm-edge-line { stroke: var(--pico-primary); stroke-width: 3; opacity: 1; }
 .cm-hl-couplers .cm-coupler { stroke: var(--pico-primary); fill: var(--pico-primary); opacity: 1; }
@@ -8287,13 +8283,13 @@ button.recents-item:focus {
 .gen-chassis-count-field select,
 #gen-chip-arch, #gen-pair-gate,
 #gen-naming-preset, #gen-preset-select,
-#gen-env-custom-path, #gen-output-path {
+#gen-env-custom-path, #gen-output-path, #gen-scripts-path {
     margin: 0; height: auto; width: auto;
     font-size: 0.867em; line-height: 1.3;
     --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
     --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
 }
-#gen-env-custom-path, #gen-output-path {
+#gen-env-custom-path, #gen-output-path, #gen-scripts-path {
     font-family: var(--font-mono);   /* paths read better monospaced */
 }
 
@@ -8527,7 +8523,7 @@ button.recents-item:focus {
     border: 1px solid var(--pico-muted-border-color);
     background: var(--pico-card-background-color);
     font-size: 0.95em;
-    position: sticky; top: 0; z-index: 5;
+    position: sticky; bottom: 0; z-index: 5;
 }
 .gen-wiring-monitor.gen-monitor-ok  { border-color: #2ea043; }
 .gen-wiring-monitor.gen-monitor-bad { border-color: #d0342c; }

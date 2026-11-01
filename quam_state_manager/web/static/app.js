@@ -1818,6 +1818,14 @@ window._anchorPopover = function (pop, btn) {
     if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
     if (left < pad) left = pad;
     var top = r.bottom + 4;
+    // user-view sweep: a tool opened from the sidebar opens BESIDE it, top-
+    // aligned with its row, so it never covers the sidebar entries under it
+    var side = btn.closest && btn.closest("#sidebar");
+    var sr = side && side.getBoundingClientRect();
+    if (sr && sr.width > 0 && sr.right + pad + w <= window.innerWidth - pad) {
+        left = sr.right + pad;
+        top = r.top;
+    }
     if (top + h > window.innerHeight - pad) {
         var above = r.top - h - 4;
         top = above >= pad ? above : Math.max(pad, window.innerHeight - h - pad);
@@ -2046,7 +2054,7 @@ window.setFontSize = function(size) {
         if (cmp) {
             // v1.5.1 (U P2-7): the count only -- "(2, 2 not in view)" broke the
             // narrow button over five lines; the off-view count has its own line
-            cmp.textContent = n > 1 ? 'Compare Selected (' + n + ')' : 'Compare Selected';
+            cmp.textContent = n > 1 ? 'Compare (' + n + ')' : 'Compare';
             cmp.disabled = n < 2;
             cmp.title = n < 2 ? 'Tick 2\u20135 runs to diff them side by side'
                               : (n > MAX_DIFF
@@ -2061,8 +2069,7 @@ window.setFontSize = function(size) {
         }
         var trend = document.querySelector('#compare-form .btn-trend');
         if (trend) {
-            trend.textContent = n > 1
-                ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
+            trend.textContent = n > 1 ? 'Trend (' + n + ')' : 'Trend';
             // QA F3: the same floor as Compare Selected -- below two ticks a
             // press could only be refused (the refusal used to replace the
             // whole table pane).
@@ -2075,8 +2082,16 @@ window.setFontSize = function(size) {
         // docs/161: the "what are these boxes for" line shows only while
         // nothing is ticked -- once a tick exists the count on the button
         // says it
+        // uv-4: the slot stays reserved (visibility, not display) so the
+        // first tick does not shift the run list under the pointer
         var hint = document.getElementById('compare-hint');
-        if (hint) hint.hidden = n > 0;
+        if (hint) {
+            hint.hidden = false;
+            if (!hint.dataset.idle) hint.dataset.idle = hint.textContent;
+            hint.textContent = n === 1 ? 'Tick one more run to compare or trend (Shift+click ticks a range).'
+                                       : hint.dataset.idle;
+            hint.style.visibility = n > 1 ? 'hidden' : '';
+        }
     }
     window.syncCompareCount = syncCompareCount;
 
@@ -6561,8 +6576,15 @@ window.StateHistory = (function () {
             cb.checked = false; sel = selected();
             if (window.showToast) window.showToast("Pick exactly two snapshots to compare.", "info");
         }
+        _label(sel.length);
+    }
+    // user-view sweep: the button names the live tick count, never "2 selected"
+    // over an empty selection
+    function _label(n) {
         var btn = document.getElementById('sh-compare-btn');
-        if (btn) btn.disabled = sel.length !== 2;
+        if (!btn) return;
+        btn.disabled = n !== 2;
+        btn.textContent = n === 2 ? 'Compare 2 selected' : 'Compare (' + n + ' of 2 ticked)';
     }
     function compareSelected() {
         var sel = selected();
@@ -6571,8 +6593,7 @@ window.StateHistory = (function () {
         _openDiffForSnapshots(sel[0].value, sel[1].value);
     }
     function init() {
-        var btn = document.getElementById('sh-compare-btn');
-        if (btn) btn.disabled = selected().length !== 2;
+        _label(selected().length);
     }
     return { toggleSelect: toggleSelect, compareSelected: compareSelected, init: init };
 })();
@@ -14940,6 +14961,10 @@ function _syncInstrumentSizeBar(container, key, fit, eff, widest, avail) {
    shared scale of D-95) and bring it back when the rack grows again; the
    port circle keeps its role colour and its hover still names the port. */
 var _INSTR_MIN_LABEL_PX = 9;
+/* uv-2: a structural label (FEM name, OUT/IN/DIG, port row number, title)
+   is never hidden: it is drawn at >= 9 px on screen instead, whatever the
+   scale, because without it the rack is a field of anonymous dots. */
+function _iwKeep(t) { t.setAttribute('data-iw-keep', '1'); return t; }
 function _instrHideTinyLabels(svg, natW) {
     var shown = svg.getBoundingClientRect().width;
     if (!natW || !shown) return;
@@ -14950,6 +14975,14 @@ function _instrHideTinyLabels(svg, natW) {
             // size is the room it was given, never more (it is no headline)
             var room = parseFloat(t.getAttribute('data-cap-fs')) || 20;
             t.setAttribute('font-size', Math.min(room, Math.max(11, 11 / s)).toFixed(1));
+            return;
+        }
+        if (t.getAttribute('data-iw-keep')) {
+            var base = parseFloat(t.getAttribute('data-iw-fs') || t.getAttribute('font-size')) || 10;
+            t.setAttribute('data-iw-fs', base);
+            t.setAttribute('font-size', Math.max(base, _INSTR_MIN_LABEL_PX / s).toFixed(2));
+            t.removeAttribute('data-iw-tiny');
+            t.style.display = '';
             return;
         }
         var fs = parseFloat(t.getAttribute('font-size')) || 0;
@@ -15135,7 +15168,9 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
     // readout markers) — femW is per-controller, computed below.
     var outSubW = 82, inSubW = 66, digSubW = 66, femGap = 16;
     var rowH = 56, circleR = 21;
-    var marginLeft = 40, marginTop = 58, marginBottom = 40;
+    // uv-2: marginTop/marginBottom leave a header band above each FEM block
+    // for its identity label (it used to sit under the block).
+    var marginLeft = 40, marginTop = 78, marginBottom = 22;
 
     var controllers = (data && data.controllers) || {};
     if (Object.keys(controllers).length === 0) {
@@ -15218,7 +15253,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         });
         var capH = capLines ? capLines * capLineH + 6 : 0;
         var nBlocks = Math.ceil(femIds.length / perRow);
-        var blockStride = rows * rowH + marginBottom + capH + 36;
+        var blockStride = rows * rowH + marginBottom + capH + 56;
         var totalFemW = perRow * femW + Math.max(0, perRow - 1) * femGap;
         var svgW = marginLeft + totalFemW + 20;
         var svgH = marginTop + (nBlocks - 1) * blockStride + rows * rowH + marginBottom + capH;
@@ -15247,6 +15282,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         // Controller title
         var iwTitle = _svgText(svgW / 2, 22, ctrlName + ' \u2014 OPX1000 Wiring', 14, '600', '#333', 'middle');
         iwTitle.setAttribute('class', 'iw-title');   // docs/290: themed (a fixed #333 vanished on dark)
+        iwTitle.setAttribute('data-iw-keep', '1');
         svg.appendChild(iwTitle);
 
         // Background rect for the grid area
@@ -15264,10 +15300,10 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
 
             // Row number labels on the left margin
             for (var rn = 1; rn <= rows; rn++) {
-                svg.appendChild(_svgText(
+                svg.appendChild(_iwKeep(_svgText(
                     marginLeft - 6, marginTop + bkY + (rn - 1) * rowH + rowH / 2 + 4,
                     rn, 10, '400', iw.rowLabelColor, 'end'
-                ));
+                )));
             }
         }
 
@@ -15304,8 +15340,8 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             svg.appendChild(subSep);
 
             // Sub-column header labels
-            svg.appendChild(_svgText(outCx, top - 4, 'OUT', 10, '700', iw.subLabelColor, 'middle'));
-            svg.appendChild(_svgText(inCx,  top - 4, 'IN',  10, '700', iw.subLabelColor, 'middle'));
+            svg.appendChild(_iwKeep(_svgText(outCx, top - 4, 'OUT', 10, '700', iw.subLabelColor, 'middle')));
+            svg.appendChild(_iwKeep(_svgText(inCx,  top - 4, 'IN',  10, '700', iw.subLabelColor, 'middle')));
 
             if (hasDigital) {
                 // Dashed separator between IN and DIG + the DIG header
@@ -15316,14 +15352,17 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                     stroke: iw.subSeparatorColor, 'stroke-width': 1, 'stroke-dasharray': '4,4'
                 });
                 svg.appendChild(digSep);
-                svg.appendChild(_svgText(digCx, top - 4, 'DIG', 10, '700', iw.subLabelColor, 'middle'));
+                svg.appendChild(_iwKeep(_svgText(digCx, top - 4, 'DIG', 10, '700', iw.subLabelColor, 'middle')));
             }
 
-            // FEM label at bottom
-            svg.appendChild(_svgText(
-                femX + femW / 2, top + rows * rowH + capH + marginBottom - 8,
-                'FEM\u00a0' + femId + '  (' + femData.type + ')', 10, '400', iw.femLabelColor, 'middle'
+            // uv-2: the FEM's identity heads its column (it sat under the block,
+            // where a wrapped block's label read as the next block's).
+            var femLbl = _iwKeep(_svgText(
+                femX + femW / 2, top - 24,
+                'FEM\u00a0' + femId + '  (' + femData.type + ')', 10, '600', iw.femLabelColor, 'middle'
             ));
+            femLbl.setAttribute('class', 'iw-fem-label');
+            svg.appendChild(femLbl);
 
             capByFem[femId].forEach(function(line, li) {
                 var shown = line.text;
@@ -15386,7 +15425,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                     // v1.5.1 (U P2-20): the input's OWN number -- drawn where the
                     // front panel has it (MW-FEM input 2 at the last row), it read
                     // as "IN 8" against the output row numbers on the left
-                    var inLbl = _svgText(inCx, ipy + inR + 9, 'in ' + portNumAtRow, 9, '700', iw.subLabelColor, 'middle');
+                    var inLbl = _svgText(inCx, ipy + inR + 13, 'in ' + portNumAtRow, 9, '700', iw.subLabelColor, 'middle');
                     inLbl.setAttribute('class', 'iw-in-port-label');
                     svg.appendChild(inLbl);
                 } else {
@@ -15407,7 +15446,9 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         block.setAttribute('data-controller', ctrlName);
         var head = document.createElement('h4');
         head.className = 'iw-chassis-head';
-        head.textContent = 'Chassis ' + chIdx + ' · ' + ctrlName;
+        // uv-2: the wizard keys controllers by number ("1"); it names them
+        // con<N> everywhere else (the monitor's "con1 slot 1"), so say that.
+        head.textContent = 'Chassis ' + chIdx + ' · ' + (/^\d+$/.test(ctrlName) ? 'con' + ctrlName : ctrlName);
         var meta = document.createElement('span');
         meta.className = 'iw-chassis-meta';
         meta.textContent = femIds.length + ' FEM' + (femIds.length === 1 ? '' : 's');
@@ -15646,6 +15687,25 @@ function _appendWiringLegend(container, roleColors) {
         item.appendChild(document.createTextNode(r === 'other' ? 'Other' : _WIRING_ROLE_WORDS[r]));
         box.appendChild(item);
     });
+    // uv-2: the uncoloured marks and the DIG column need a key too -- a free
+    // port (exists, nothing wired), a row where the FEM has no port at all
+    // (drawn smaller), and what the DIG column is.
+    var iw = UI_CONFIG.instrumentWiring;
+    [['iw-key-free', 'Free port', '.8rem', iw.unassignedFill, iw.unassignedStroke],
+     ['iw-key-none', 'No port on this row', '.45rem', iw.emptyPortFill, iw.emptyPortStroke],
+     ['iw-key-dig', 'DIG = digital outputs (triggers)', null]].forEach(function (k) {
+        var item = document.createElement('span');
+        item.className = 'iw-legend-item ' + k[0];
+        item.setAttribute('role', 'listitem');
+        if (k[2]) {
+            var sw = document.createElement('span');
+            sw.className = 'iw-legend-swatch';
+            sw.style.cssText = 'width:' + k[2] + ';height:' + k[2] + ';background:' + k[3] + ';border-color:' + k[4];
+            item.appendChild(sw);
+        }
+        item.appendChild(document.createTextNode(k[1]));
+        box.appendChild(item);
+    });
     container.appendChild(box);
 }
 
@@ -15774,9 +15834,17 @@ function _showPortPopup(event, assignment) {
     // as the wizard's slot menu / drag ghost — r15, docs/70).
     var z = parseFloat(document.documentElement.style.zoom);
     if (!isFinite(z) || z <= 0) z = 1;
-    var px = event.clientX + 14;
-    var py = event.clientY - 10;
-    if (px + 340 > window.innerWidth) px = event.clientX - 340;
+    // uv-2: open BESIDE the whole port cell (a feedline cluster is up to six
+    // dots), on whichever side has room, so the card never covers the cluster
+    // it describes.
+    var cellEl = event.target && event.target.closest ? event.target.closest('.iw-port') : null;
+    var cr = cellEl ? cellEl.getBoundingClientRect()
+        : {left: event.clientX, right: event.clientX, top: event.clientY};
+    var pw = popup.offsetWidth || 340, ph = popup.offsetHeight || 200;
+    var px = cr.right + 10;
+    if (px + pw > window.innerWidth - 4) px = cr.left - 10 - pw;
+    if (px < 4) px = Math.max(4, event.clientX + 14);
+    var py = Math.max(4, Math.min(cr.top - 10, window.innerHeight - ph - 4));
     popup.style.left = (px / z) + 'px';
     popup.style.top = (py / z) + 'px';
 }
@@ -15801,7 +15869,10 @@ function _fmtVal(v, type) {
 
 /** Format a number to fixed decimals, or return null if value is null/undefined. */
 function _fmtNum(v, d) {
-    return (v != null && typeof v === 'number') ? v.toFixed(d) : null;
+    // uv-2: the shared renderer keeps the significant figures (a 4.46e-4
+    // threshold printed as 0.0004 under toFixed(4)).
+    if (v == null || typeof v !== 'number') return null;
+    return window.ValueDelta ? window.ValueDelta.formatValue(v) : v.toFixed(d);
 }
 
 /** Return role-specific key/value pairs for the port hover popup. */
@@ -27912,7 +27983,20 @@ window.StateVersions = (function () {
     function close() {
         var p = panel(); if (!p) return;
         p.hidden = true;
+        _menuBehind(p, false);
         var c = chip(); if (c) c.setAttribute('aria-expanded', 'false');
+    }
+    /* user-view sweep: opened from the overflow menu, the panel replaces the
+       menu's other items instead of leaving them open behind it; closing the
+       panel brings back exactly the items this hid. */
+    function _menuBehind(p, open) {
+        var list = p.closest && p.closest('#topbar-more-menu .topbar-more-list');
+        if (!list) return;
+        Array.prototype.forEach.call(list.children, function (li) {
+            if (li.contains(p)) return;
+            if (open && !li.hidden) { li.hidden = true; li.setAttribute('data-sv-hid', '1'); }
+            else if (!open && li.getAttribute('data-sv-hid')) { li.hidden = false; li.removeAttribute('data-sv-hid'); }
+        });
     }
     function _clampToViewport(p) {
         // The panel is CSS-anchored left:0 under its topbar chip; a chip far
@@ -27932,6 +28016,7 @@ window.StateVersions = (function () {
         // htmx fills the panel from the same click; only visibility is ours.
         var opening = p.hidden;
         p.hidden = !opening;
+        _menuBehind(p, opening);
         var c = chip(); if (c) c.setAttribute('aria-expanded', opening ? 'true' : 'false');
         if (opening) {
             requestAnimationFrame(function () { _clampToViewport(p); });
@@ -28625,6 +28710,12 @@ window.TopbarMore = (function () {
         var m = menu(), b = btn();
         if (!m || !b) return;
         m.hidden = false;
+        // items a since-closed Versions panel stood in for come back
+        Array.prototype.forEach.call(m.querySelectorAll('[data-sv-hid]'), function (li) {
+            var svp = document.getElementById('state-version-panel');
+            if (svp && !svp.hidden) return;
+            li.hidden = false; li.removeAttribute('data-sv-hid');
+        });
         b.setAttribute('aria-expanded', 'true');
         if (focusFirst !== false) {
             var it = items();

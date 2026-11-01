@@ -12,7 +12,7 @@
    whole chip "highlighted"; the table's own empty row says why. #}
 {% if not total %}
 {# R4-WC-8: no couplers -> one empty-state line, no table head or pagination. #}
-<p class="ui-state ui-state--empty" role="status">No couplers found in this state file.</p>
+<p class="ui-state ui-state--empty" role="status">No couplers found in this state file. A coupler is listed here when a qubit pair carries a <code>coupler</code> object (<code>qubit_pairs.&lt;pair&gt;.coupler</code>); no pair on this chip has one.</p>
 {% else %}
 {% set cmap_highlight = 'couplers' %}
 {% set cmap_label = '— coupler edges highlighted' %}

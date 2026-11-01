@@ -661,7 +661,7 @@ def test_a_runs_missing_blob_stops_its_diff_not_its_exact_files(env):
     panel = env.client.get("/state/versions").get_data(as_text=True)
     row = panel.split(f'value="{env.refs[0]}"')[1].split("</li>")[0]
     assert "Missing ledger blob" in row and "sv-stage" in row and "sv-restore" in row
-    assert re.search(r'class="btn-xs outline sv-diff" disabled', row), "Diff cannot be rebuilt"
+    assert re.search(r'class="btn-sm outline sv-diff" disabled', row), "Diff cannot be rebuilt"
     page = text(env.client.get("/state-history").get_data(as_text=True))
     assert "Missing ledger blob" in page
     body = text(env.client.get(f"/state/versions/{env.refs[0]}/diff").get_data(as_text=True))

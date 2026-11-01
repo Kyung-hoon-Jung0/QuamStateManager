@@ -779,7 +779,7 @@
             traces.push({ type: 'scatter', mode: 'markers+text', x: partners.map(function (p) { return p.x; }), y: partners.map(function (p) { return p.y; }),
                           text: partners.map(function (p) { return p.t; }), textposition: partners.map(function (p) { return p.pos; }),
                           marker: { size: PARTNER_MARKER, opacity: 0 },
-                          textfont: { size: PARTNER_FONT, color: ink }, hoverinfo: 'skip', showlegend: false, cliponaxis: false, meta: 'partners' });
+                          textfont: { size: PARTNER_FONT, color: ink, shadow: 'auto' }, hoverinfo: 'skip', showlegend: false, cliponaxis: false, meta: 'partners' });
         }
 
         // ---- the chip drawing: leaders, bars, nodes ----
@@ -854,6 +854,10 @@
                           hovertext: placed.map(function (q) { return esc(q.name) + (q.grid_location ? ' at ' + esc(q.grid_location) : '') + ' · idle ' + f3(q.f01_hz) + ' GHz'; }),
                           textfont: { size: SMALL_FONT, color: ink }, textposition: 'middle center', showlegend: false,
                           marker: { size: 28, color: card, line: { color: ink, width: 1.2 } }, hovertemplate: '%{hovertext}<extra></extra>', meta: 'nodes' });
+            // user-view sweep: the bar labels are bare numbers (a unit on each one would push
+            // labels to hover only), so the drawing names their unit once
+            if (items.length) annotations.push({ xref: 'paper', yref: 'paper', x: 1, y: dd, xanchor: 'right', yanchor: 'top', showarrow: false,
+                                                 text: 'bar labels: GHz', font: { size: SMALL_FONT, color: muted }, name: 'bar-unit' });
             if (lay.mode === 'logical') {
                 annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: dd, xanchor: 'left', yanchor: 'top', showarrow: false,
                                    text: esc(lay.note), font: { size: SMALL_FONT, color: muted }, name: 'logical-note' });

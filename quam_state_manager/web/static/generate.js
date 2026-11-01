@@ -446,6 +446,12 @@
     r.querySelectorAll(".gen-panel").forEach(function (panel) {
       panel.classList.toggle("active", Number(panel.dataset.step) === state.step);
     });
+    // uv-2: the Wiring step gets the whole pane -- in the page's 900/1100 px
+    // reading column an 8-FEM rack wrapped into three rows of 734 px.
+    var wide = !!r.querySelector(".gen-panel.active #gen-wiring-diagram");
+    [r, r.closest(".regen")].forEach(function (el) {
+      if (el) el.style.maxWidth = wide ? "none" : "";
+    });
 
     r.querySelectorAll("#gen-steps li").forEach(function (li) {
       var n = Number(li.dataset.step);

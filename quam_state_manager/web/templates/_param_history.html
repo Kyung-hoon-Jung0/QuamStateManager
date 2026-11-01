@@ -507,7 +507,7 @@
         <thead>
           <tr>
             <th class="phg-corner">Qubit</th>
-            {% for p in properties %}<th>{{ p }}</th>{% endfor %}
+            {% for p in properties %}{% set _u = (1.0 | qty(p, 'unit')) %}<th{% if _u %} title="{{ p }}, shown in {{ _u }}"{% endif %}>{{ p }}{% if _u %} ({{ _u }}){% endif %}</th>{% endfor %}
           </tr>
         </thead>
         <tbody>
@@ -529,10 +529,13 @@
                     {# S10 walk (N4): an archived chip's cell shows its newest recorded value #}
                     <span class="history-cell-value{% if latest %} history-cell-latest{% endif %}"
                           {%- if latest %} title="Newest recorded value{% if latest.t %} ({{ latest.t | format_ts_zone }}){% endif %}: this chip is not open, so it has no current value here"{% endif %}>
-                      {% if cur is not none %}{{ '%.4g' % cur if cur is number else cur }}{% elif latest and latest.value is not none %}{{ '%.4g' % latest.value if latest.value is number else latest.value }}{% else %}—{% endif %}
+                      {#- user-view sweep: a value with a known unit is scaled to the header's unit -#}
+                      {% if cur is not none %}{{ ((cur | qty(p)) if (1.0 | qty(p, 'unit')) else '%.4g' % cur) if cur is number else cur }}{% elif latest and latest.value is not none %}{{ ((latest.value | qty(p)) if (1.0 | qty(p, 'unit')) else '%.4g' % latest.value) if latest.value is number else latest.value }}{% else %}—{% endif %}
                     </span>
                   </div>
                   <svg class="history-cell-spark" viewBox="0 0 100 30" preserveAspectRatio="none">{% if cell and cell.svg_inner %}{{ cell.svg_inner|safe }}{% endif %}</svg>
+                  {#- user-view sweep: the sparkline's range, so a flat-looking line says how flat -#}
+                  {% if cell and cell.svg_inner and cell.low is number and cell.high is number %}<div class="topo-spark-axis" title="lowest and highest recorded value"><span>{{ (cell.low | qty(p)) if (1.0 | qty(p, 'unit')) else '%.4g' % cell.low }}</span><span>{{ (cell.high | qty(p)) if (1.0 | qty(p, 'unit')) else '%.4g' % cell.high }}</span></div>{% endif %}
                 </td>
               {% endfor %}
             </tr>

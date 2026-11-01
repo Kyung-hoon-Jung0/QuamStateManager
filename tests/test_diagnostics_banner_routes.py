@@ -146,7 +146,7 @@ def test_dismissal_sig_is_stable_while_lowering_a_still_bad_value(tmp_path):
 
 def test_summary_badge_reflects_error(tmp_path):
     body = _client(tmp_path, 1.5).get("/diagnostics/summary").get_data(as_text=True)
-    assert "diag-error" in body and "issue" in body
+    assert "diag-error" in body and "to fix" in body
 
 
 def test_summary_badge_healthy_when_clean(tmp_path):

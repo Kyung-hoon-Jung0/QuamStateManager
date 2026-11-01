@@ -32,7 +32,9 @@
 {# docs/308 stage 4: the folder and the raw file are a page-foot line, not
    rivals of the title. #}
 <div class="jr-head-actions ui-note">
-    <span>Folder: <span class="jr-folder ui-chip" title="{{ story.folder }}">{{ story.folder }}</span></span>
+    {# user-view sweep: the END of a path names the folder, so a long one is cut in the middle #}
+    {% set _f = story.folder | string %}
+    <span>Folder: <span class="jr-folder ui-chip" title="{{ _f }}">{{ (_f[:16] ~ '…' ~ _f[-30:]) if _f | length > 48 else _f }}</span></span>
     <a class="btn-sm outline" href="/journal/raw?day={{ story.day }}" hx-get="/journal/raw?day={{ story.day }}"
        hx-target="#jr-raw" hx-swap="innerHTML" title="The day's markdown file as SM renders it">Raw .md</a>
 </div>

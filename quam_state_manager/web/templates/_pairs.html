@@ -100,8 +100,8 @@
             <th class="sortable" data-col="3" data-type="str">Active</th>
             <th class="sortable" data-col="4" data-type="str">Moving</th>
             <th class="sortable" data-col="5" data-type="num">CZ Flattop Amp</th>
-            <th class="sortable" data-col="6" data-type="num">Bell Fidelity</th>
-            <th class="sortable" data-col="7" data-type="num">Detuning <span class="unit">(V)</span></th>
+            <th class="sortable" data-col="6" data-type="num" title="Bell state fidelity. Mark: &#10003; at 0.95 or above, &#9888; from 0.85 to 0.95, &#10007; below 0.85.">Bell Fidelity</th>
+            <th class="sortable" data-col="7" data-type="num" title="qubit_pairs.&lt;pair&gt;.detuning. Its class declares volts; a value too large to be volts is shown raw, without a unit.">Detuning <span class="unit">(V)</span></th>
         </tr>
     </thead>
     <tbody>
@@ -143,7 +143,8 @@
             {% if p.get('bell_gate') and p.bell_gate != 'cz_flattop' %}<small class="muted">{{ p.bell_gate }}</small>{% endif %}
             {% else %}-{% endif %}
         </td>
-        <td>{{ p.detuning | qty('pair_detuning') }}</td>
+        {%- set _dt = p.detuning | pair_detuning_cell %}
+        <td>{% if _dt[1] %}<span class="muted" data-unit-doubt="1" title="Stored detuning = {{ _dt[0] }}: too large to be volts, so the stored unit is unknown. Shown raw.">{{ _dt[0] }} (raw, unit?)</span>{% else %}{{ _dt[0] }}{% endif %}</td>
     </tr>
     {% endif %}
     {% endfor %}
@@ -152,6 +153,7 @@
     {% endif %}
     </tbody>
 </table>
+<p class="muted" data-bell-legend><small>Bell Fidelity mark: &#10003; &ge; 0.95 &middot; &#9888; 0.85&ndash;0.95 &middot; &#10007; &lt; 0.85</small></p>
 {% endif %}
 
 {% set base_url = "/pairs" %}
