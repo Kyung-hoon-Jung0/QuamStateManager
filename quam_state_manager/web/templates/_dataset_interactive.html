@@ -1,6 +1,6 @@
 {# Interactive-figures menu for one run. Rendered into #ds-interactive-container;
    each .ds-interactive-plot lazy-loads its Plotly JSON via /interactive/plot. #}
-{% if reproduction_hint %}<p class="muted">{{ reproduction_hint }}</p>{% endif %}
+{% if reproduction_hint %}{% set hp = reproduction_hint.split('Generate Config') %}<p class="muted">{{ hp[0] }}{% if hp|length > 1 %}<a href="/generate">Generate Config</a>{{ hp[1:]|join('Generate Config') }}{% endif %}</p>{% endif %}
 {% if figures %}
 <div class="ds-interactive-toolbar">
     <span class="ds-interactive-toolbar-label">Columns</span>
@@ -30,6 +30,11 @@
              id="ds-iplot-{{ run_id }}-{{ loop.index }}"
              data-run-id="{{ uid }}" data-fig="{{ fig.key }}"
              style="min-height:340px"></div>
+        {% elif not fig.available %}
+        <p class="muted ds-interactive-unavail">Not drawn: {{ fig.reason }}. SM could not
+            reconstruct this figure from the run's saved arrays &mdash; open the
+            <strong>Raw Data</strong> tab to see what the run saved, or the
+            <strong>Figures</strong> tab for its saved images.</p>
         {% endif %}
     </div>
     {% endfor %}

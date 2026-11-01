@@ -26,6 +26,7 @@ FAMILY = ("1Q_11_power_rabi", "1Q_29_power_rabi_ef")
 
 # Preference order for the signal variable to plot.
 _SIGNAL_VARS = ("state", "IQ_abs", "I")
+_NO_SIG = "no signal variable (looked for " + ", ".join(_SIGNAL_VARS) + ")"
 
 
 def _signal_var(present: set) -> str | None:
@@ -53,7 +54,7 @@ def menu(bundle):
     sig = _signal_var(bundle.raw_vars) or _signal_var(bundle.fit_vars)
     specs = []
     for q in qubits:
-        avail, reason = (True, "") if sig else (False, "no signal variable")
+        avail, reason = (True, "") if sig else (False, _NO_SIG)
         # Base "amplitude" matches the experiment's saved-figure name so the
         # static-PNG fallback dedups against this interactive tile.
         specs.append(FigureSpec(
@@ -72,7 +73,7 @@ def build(bundle, key):
     qidx = qubit_index(src, qname)
     sig = _signal_var(set(src["vars"]))
     if sig is None:
-        return FigureSpec(key=key, title="Power Rabi", available=False, reason="no signal variable")
+        return FigureSpec(key=key, title="Power Rabi", available=False, reason=_NO_SIG)
 
     z, dims = qslice(src, sig, qidx)          # dims minus qubit
     z = np.asarray(z, dtype=float)

@@ -48,25 +48,19 @@ class TestTickBox:
         m = re.search(r"\.ui-check > input, \.ui-check-box \{([^}]*)\}", kit)
         assert m and "appearance: none" in m.group(1) and "var(--ui-check-border)" in m.group(1)
 
-    def test_the_tick_shows_only_under_the_pointer_focus_or_ticked(self):
+    def test_the_tick_shows_only_when_ticked(self):
         """docs/165 gave the empty box a resting ghost tick; UD-4 (D-106)
-        replaced it: at rest the 22 px box alone says it is tickable (the
-        ghost read as ticked), the tick comes up under the pointer and on
-        keyboard focus, and is on-accent on the filled box when ticked. The
-        tick's shape is the kit's (D-105)."""
+        showed it under the pointer; the uv-4 user-view sweep removed that
+        too (a grey tick under the pointer read as ticked). The tick is drawn
+        ONLY on a ticked box, on-accent on the filled box. The tick's shape
+        is the kit's (D-105)."""
         kit = re.sub(r"/\*.*?\*/", "", _KIT, flags=re.S)
         assert re.search(r"\.ui-check-box::after \{[^}]*rotate\(45deg\)", kit)   # the tick's shape, defined once
         base = _rule(".tree-entry-label input[type=checkbox]::after")
-        assert "var(--pico-muted-color)" in base       # grey while empty, no literal
         ghost = float(re.search(r"opacity:\s*([0-9.]+)", base).group(1))
-        assert ghost == 0, f"UD-4: no tick at rest: {ghost}"
-        assert re.search(r"\.tree-entry-label input\[type=checkbox\]:focus-visible::after", _CSS)
-
+        assert ghost == 0, f"no tick at rest: {ghost}"
         css = re.sub(r"/\*.*?\*/", "", _CSS, flags=re.S)
-        m = re.search(r"\.tree-entry-label:hover input\[type=checkbox\]::after[^{]*\{([^}]*)\}", css)
-        assert m, "hovering the row must bring the tick up"
-        hover = float(re.search(r"opacity:\s*([0-9.]+)", m.group(1)).group(1))
-        assert hover > ghost, f"hover must be louder than empty ({hover} vs {ghost})"
+        assert not re.search(r"\.tree-entry-label[^{]*:(hover|focus-visible)[^{]*::after", css),             "an unticked box must not draw a tick under the pointer or focus"
 
         assert re.search(r"\.ui-check-box:checked[^{]*\{[^}]*background-color: var\(--ui-accent\)", kit)  # the box fills
         mark = _rule(".tree-entry-label input[type=checkbox]:checked::after")
@@ -80,7 +74,7 @@ class TestTickBox:
     def test_the_box_says_what_it_is_for(self):
         m = re.search(r'<input type="checkbox" class="ui-check-box" name="paths"[^>]*>', _MACROS)
         assert m and 'title="Tick to select this run' in m.group(0)
-        assert "Compare Selected" in m.group(0) and "Trend Tracker" in m.group(0)
+        assert "Compare diffs" in m.group(0) and "Trend plots" in m.group(0)
 
 
 class TestRowSize:
@@ -111,7 +105,7 @@ class TestHint:
         assert 'id="compare-hint"' in form and "Tick runs in the list" in form
         # the JS toggles it: shown at 0 ticks, hidden otherwise
         i = _APP_JS.index("function syncCompareCount()")
-        assert "hint.hidden = n > 0" in _APP_JS[i:i + 2500]
+        assert "hint.style.visibility = n > 1" in _APP_JS[i:i + 2700]  # uv-4: slot kept
 
     def test_hint_style_is_quiet(self):
         r = _rule(".compare-hint")

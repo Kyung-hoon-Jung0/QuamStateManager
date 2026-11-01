@@ -50,11 +50,11 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms || 40));
     off.forEach((b) => b.click());
     await tick();
     const cmp = d.querySelector('#compare-form .btn-compare');
-    ok(cmp.textContent === 'Compare Selected (' + off.length + ')', 'ticked in view: ' + cmp.textContent);
+    ok(cmp.textContent === 'Compare (' + off.length + ')', 'ticked in view: ' + cmp.textContent);
     // the filter swaps the tree for rows that do not include the ticked ones
     swapTree(FX.filtered_tree);
     await tick();
-    ok(cmp.textContent === 'Compare Selected (' + off.length + ')',
+    ok(cmp.textContent === 'Compare (' + off.length + ')',
        'the label stays short with them out of view: ' + cmp.textContent);
     const line = d.getElementById('compare-offview');
     ok(!!line && !line.hidden && line.textContent === off.length + ' of the ' + off.length + ' selected are not in view (filtered or folded away)',

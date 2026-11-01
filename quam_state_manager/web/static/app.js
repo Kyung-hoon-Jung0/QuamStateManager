@@ -2046,7 +2046,7 @@ window.setFontSize = function(size) {
         if (cmp) {
             // v1.5.1 (U P2-7): the count only -- "(2, 2 not in view)" broke the
             // narrow button over five lines; the off-view count has its own line
-            cmp.textContent = n > 1 ? 'Compare Selected (' + n + ')' : 'Compare Selected';
+            cmp.textContent = n > 1 ? 'Compare (' + n + ')' : 'Compare';
             cmp.disabled = n < 2;
             cmp.title = n < 2 ? 'Tick 2\u20135 runs to diff them side by side'
                               : (n > MAX_DIFF
@@ -2061,8 +2061,7 @@ window.setFontSize = function(size) {
         }
         var trend = document.querySelector('#compare-form .btn-trend');
         if (trend) {
-            trend.textContent = n > 1
-                ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
+            trend.textContent = n > 1 ? 'Trend (' + n + ')' : 'Trend';
             // QA F3: the same floor as Compare Selected -- below two ticks a
             // press could only be refused (the refusal used to replace the
             // whole table pane).
@@ -2075,8 +2074,16 @@ window.setFontSize = function(size) {
         // docs/161: the "what are these boxes for" line shows only while
         // nothing is ticked -- once a tick exists the count on the button
         // says it
+        // uv-4: the slot stays reserved (visibility, not display) so the
+        // first tick does not shift the run list under the pointer
         var hint = document.getElementById('compare-hint');
-        if (hint) hint.hidden = n > 0;
+        if (hint) {
+            hint.hidden = false;
+            if (!hint.dataset.idle) hint.dataset.idle = hint.textContent;
+            hint.textContent = n === 1 ? 'Tick one more run to compare or trend (Shift+click ticks a range).'
+                                       : hint.dataset.idle;
+            hint.style.visibility = n > 1 ? 'hidden' : '';
+        }
     }
     window.syncCompareCount = syncCompareCount;
 
